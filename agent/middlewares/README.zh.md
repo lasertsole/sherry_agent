@@ -26,6 +26,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
+  - [ToolResultEvictionMiddleware](#toolresultevictionmiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -85,6 +86,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
+    ToolResultEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
@@ -144,6 +146,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 更紧的迭代预算（60 而非 90）。
 - 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
+- 没有 `ToolResultEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片）。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
@@ -154,7 +157,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序） | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库） |
-| `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库） |
+| `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → ToolResultEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state） |
 | `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
@@ -359,6 +362,53 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **两条路径共用同一水位，写入幂等。** 工具返回时写入的结果在后续每个边界都会被再次扫到，边界写入的 AI 消息在下一边界也会被再次扫到；图状态会累积，但水位保证每条消息只有一行——跨进程重启同样成立（消息 id 与内容指纹都能跨检查点序列化存活）。写入失败只记日志、**不**登记墓碑，下一边界会重试该批次（fail-open——落库绝不弄坏回合或工具结果）。
 
 > 压缩路径不再做任何持久化：`compaction_persistence.py` 模块与 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。一次 compact 只做压缩并调度压缩时 nudge（见 Summarization 小节）。
+
+### ToolResultEvictionMiddleware
+
+**模块：** `agent/middlewares/tool_result_eviction/core.py` · **类：** `ToolResultEvictionMiddleware(AgentMiddleware)`
+**钩子：** 仅 `wrap_tool_call` / `awrap_tool_call`
+
+在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线不注册本中间件：子会话保留完整工具结果。
+
+**两条缩减路径**
+
+| 结果 | 处理 |
+|---|---|
+| 普通工具，文本 > `evict_threshold_chars`（20 000 字符） | 全文写入 `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`，内容替换为 head/tail 预览 |
+| `read_file`（P2-4） | 文件已在磁盘——内容截为前 4 000 字符 + 恢复提示，**不写文件** |
+| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | 永不驱逐（`excluded_tools`）；`read_file` 也在该集合中，但走上面的切片路径 |
+
+**预览格式**（`pub/func/message/eviction.py::build_preview`，`preview_head_lines=5`、`preview_tail_lines=5`）：
+
+```text
+[evicted to: <path>]
+--- head (5 lines) ---
+<前 5 行>
+...
+--- tail (5 lines) ---
+<后 5 行>
+[full content: N chars, evicted at <ts>]
+
+Use read_file(file_path='<path>', offset=0, limit=100) to read the full content in chunks.]
+```
+
+（`offset=0` 会被 `read_file` 的 `max(1, …)` 收敛为 1，指针始终有效。）替换由 `model_copy` 生成，消息 `id`、`status`、`name`、`additional_kwargs` 全部保留；多模态非文本块原样保留，只替换文本部分。
+
+**三处存储**
+
+| 位置 | 内容 |
+|---|---|
+| graph state / checkpointer / 下一次模型调用 | 仅预览 |
+| MesMemory（`messages` 表） | 完整原文（由内层在工具返回时写入） |
+| `SESSIONS_DIR/<session_id>/evicted/` | 逐字节一致的副本（`load_evicted()` / `read_file` 可取回） |
+
+**水位安全。** `model_copy` 同时携带内层落库写入的进程内 `_db_persisted` 标记，下一次模型边界会跳过预览；当原文落库成功时，还会为替换消息的水位键写入墓碑——覆盖"重启后标记丢失且预览指纹与原文不再一致"的场景。两种情况都不会为同一逻辑消息写入第二行；若原文落库失败则不写墓碑，边界会以预览内容重试。
+
+**路径安全与生命周期。** `session_id` 需通过单段安全校验（`config/path.py::is_safe_session_segment`）；空 / `.` / `..` / 含分隔符的 id 直接跳过且不落盘。`clear_session()` 会对整个 `SESSIONS_DIR/<session_id>/` 目录 rmtree，驱逐文件随会话一并删除。已驱逐的消息不会二次驱逐（幂等标记检查）。
+
+**与压缩期 read_file 切片的互补关系**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：本中间件覆盖工具执行时，压缩路径覆盖上下文压力时（head 30 % + tail 30 %，`max_tool_output_chars = 2 000`，并给出解析得出的 1-based 续读 offset）。压缩再次切分已切片载荷时无法解析被截断的 JSON，会确定性地回退到"从头重读"提示；执行期切片本身也是幂等的。两条提示不会冲突，是同一消息的分阶段缩减。
+
+**配置**（`config/features/agent_side/tool_result_eviction.py`）：`enabled=True`、`evict_threshold_chars=20_000`、`preview_head_lines=5`、`preview_tail_lines=5`、`eviction_subdir="evicted"`、`excluded_tools`（上述 8 个）。
 
 ### LLMRetryMiddleware
 

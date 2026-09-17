@@ -26,6 +26,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
+  - [ToolResultEvictionMiddleware](#toolresultevictionmiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -85,6 +86,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
+    ToolResultEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
@@ -145,6 +147,7 @@ Differences vs the main agent:
 - A tighter iteration budget (60 instead of 90).
 - No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop).
 - No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
+- No `ToolResultEvictionMiddleware`: child transcripts keep their full tool results (no eviction files, no read_file slice).
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
@@ -157,7 +160,7 @@ Differences vs the main agent:
 | `before_agent` (list order) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
 | `after_model` (reverse order) | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush) |
-| `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary) |
+| `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → ToolResultEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
 | `after_agent` (reverse order) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 Only middlewares that implement a given hook participate in that phase; the table shows where each would run if it did.
@@ -362,6 +365,53 @@ The shared batch pipeline (both hooks):
 **Idempotent through one shared watermark.** A tool result written on return is seen again at every later boundary, and an AI message written at a boundary is seen again at the next one; graph state accumulates, but the watermark keeps each message to a single row — across process restarts too (message ids and content fingerprints survive checkpoint serialization). A writer error is logged and NOT tombstoned, so the same batch is retried at the next boundary (fail-open — persistence never breaks the turn or the tool result).
 
 > The compression path no longer persists anything: its `compaction_persistence.py` module and the `_persist_discarded_messages_sync` / `_apersist_discarded_messages` call sites were removed. A compact only compacts and schedules the compression-time nudges (see the Summarization section).
+
+### ToolResultEvictionMiddleware
+
+**Module:** `agent/middlewares/tool_result_eviction/core.py` · **Class:** `ToolResultEvictionMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_tool_call` / `awrap_tool_call` only
+
+Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Not registered in the worker pipeline: child transcripts keep their full tool results.
+
+**Two reduction paths**
+
+| Result | Action |
+|---|---|
+| generic tool, text > `evict_threshold_chars` (20 000 chars) | full text written to `SESSIONS_DIR/<session_id>/evicted/<tool_call_id>_<md5[:8]>.txt`; content replaced by a head/tail preview |
+| `read_file` (P2-4) | file already on disk — content sliced to the first 4 000 chars + recovery notice, **no file written** |
+| `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list` | never evicted (`excluded_tools`); `read_file` is listed there too but is routed through the slice path above |
+
+**Preview format** (`pub/func/message/eviction.py::build_preview`, `preview_head_lines=5`, `preview_tail_lines=5`):
+
+```text
+[evicted to: <path>]
+--- head (5 lines) ---
+<first 5 lines>
+...
+--- tail (5 lines) ---
+<last 5 lines>
+[full content: N chars, evicted at <ts>]
+
+Use read_file(file_path='<path>', offset=0, limit=100) to read the full content in chunks.]
+```
+
+(`offset=0` is clamped to 1 by `read_file`'s `max(1, …)`, so the pointer is always valid.) The replacement is built with `model_copy`, so the message `id`, `status`, `name`, and `additional_kwargs` survive; multimodal non-text blocks are preserved and only the text portion is replaced.
+
+**The three stores**
+
+| Where | What it holds |
+|---|---|
+| graph state / checkpointer / next model call | the preview only |
+| MesMemory (`messages` table) | the full text, written by the inner persistence flush at tool return |
+| `SESSIONS_DIR/<session_id>/evicted/` | a byte-identical copy (`load_evicted()` / `read_file` retrieves it) |
+
+**Watermark safety.** `model_copy` also carries the inner flush's in-process `_db_persisted` marker, so the next model boundary skips the preview. When the raw write succeeded, the replacement's watermark key is additionally tombstoned — that covers a restart where the marker is lost and the preview's content fingerprint no longer matches the raw one. Either way no second row is written for the same logical message; when the raw write failed, nothing is tombstoned and the boundary retries with the preview content.
+
+**Path safety & lifecycle.** `session_id` is validated as a single safe path segment (`config/path.py::is_safe_session_segment`); an empty / `.` / `..` / separator-containing id skips eviction without touching disk. `clear_session()` rmtree's the whole `SESSIONS_DIR/<session_id>/` folder, so eviction files are deleted together with the session. An already-previewed message is never evicted twice (idempotent marker check).
+
+**Complementarity with the compression-time read_file clip** (`pub/func/message/target_truncation.py::_truncate_read_file_content`): this middleware covers tool execution, the compression path covers context pressure (head 30 % + tail 30 % of `max_tool_output_chars = 2 000` with a parser-derived 1-based continuation offset). A later compression pass that re-clips an execution-sliced payload cannot parse the truncated JSON, so it deterministically falls back to its "re-read from the start" notice; the execution-time slice helper is itself idempotent. The two notices therefore never conflict — they are staged reductions of the same message.
+
+**Config** (`config/features/agent_side/tool_result_eviction.py`): `enabled=True`, `evict_threshold_chars=20_000`, `preview_head_lines=5`, `preview_tail_lines=5`, `eviction_subdir="evicted"`, `excluded_tools` (the 8 names above).
 
 ### LLMRetryMiddleware
 

@@ -30,7 +30,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper) | `agent/tools/subagent/spawn/core.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (39 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (40 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -52,14 +52,17 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
-  │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
-  │    → MaxTokensBoost → HeartbeatStaleness → HITL → MessagePersistence → LLMRetry → Summarization
-  │    → TodoContinuationEnforcer(E3)
+  │    → ToolResultEviction → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7)
+  │    → OutputRepetitionGuard → MaxTokensBoost → HeartbeatStaleness → HITL → MessagePersistence
+  │    → LLMRetry → Summarization → TodoContinuationEnforcer(E3)
   │    (MessagePersistence flushes tool results the moment they return via
   │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
   │     is also the first after_model hook — new human/ai/tool messages reach
   │     MesMemory before HITL rewrites denials or interrupts. HITL denials are the
-  │     exception: its short-circuit bypasses the wrap layer and lands next boundary)
+  │     exception: its short-circuit bypasses the wrap layer and lands next boundary.
+  │     ToolResultEviction wraps outside MessagePersistence: the raw result is
+  │     persisted first, then replaced by an evicted-head/tail preview before it
+  │     reaches state; read_file results are sliced, never offloaded)
   │
   ├─ tools: build_main_tools() → taskflow(13) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...
@@ -96,9 +99,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 20 per-object TypedDicts (summarization, guardrails, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, ...) |
+| `config/features/agent_side/` | 21 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, ...) |
 | `config/features/infra_side/` | 19 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 39 TypedDicts + instances re-exported |
+| `config/features/__init__.py` | Aggregator — all 40 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
