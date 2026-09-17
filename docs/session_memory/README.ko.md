@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-SESSION 메모리 플랜의 전체 14개 기능(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)이 구현되었으며 LT-1…LT-8 장기 작업 편성도 포함됩니다. 설계 규칙: 모든 기능은 기존 인프라(계층형 facts, 세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
+SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)이 구현되었으며 LT-1…LT-8 장기 작업 편성도 포함됩니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
 
 > 상태(2026-09-13): 플랜 폐기. 이 README가 참조 기준입니다.
 
@@ -20,7 +20,6 @@ SESSION 메모리 플랜의 전체 14개 기능(opencode-dev / oh-my-openagent /
 | P1-5 | 메시지 트리 + 제로카피 fork | 마이그레이션 v14(`parent_message_id`, `session_leafs`) |
 | P2-1 | 추가 전용 이벤트 로그 + 프로젝터 | 마이그레이션 v16, `context_engine/events/` |
 | P2-2 | Context Epoch 스냅샷 | 마이그레이션 v17(`context_epoch` 테이블), `ContextEpoch` |
-| P2-3 | 이중 워터마크 facts 추출 | `context_engine/facts/`, `TieredMemoryStore.add_fact`로 기록 |
 | P2-4(부분) | steer/queue 이중 전달 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
 | LT-1…8 | TaskFlow 편성 | `docs/long-running-tasks/` |
@@ -40,7 +39,6 @@ SESSION 메모리 플랜의 전체 14개 기능(opencode-dev / oh-my-openagent /
 
 ## 주요 컴포넌트
 
-- **`context_engine/facts/`** —— 이중 워터마크 커서(`cursor.py`, `state_register.db` 영속화), 보조 LLM 추출기(`extractor.py`, json_repair 파싱 + 카테고리 폴백), 큐 편성(`queue.py`). `ContextEngineHook.aafter_agent`에 fire-and-forget 백그라운드 작업으로 연결되며 facts는 기존 `TieredMemoryStore.add_fact`(facts/*.md)로 기록됩니다.
 - **`context_engine/events/`** —— 추가 전용 이벤트 로그(세션별 무결 시퀀스: `types.py`, `store.py`), 체크포인트 이벤트를 P1-1 읽기 모델에 매핑하는 `EventProjector`.
 - **`context_engine/embeddings/`** —— 벡터 의미 검색: 지연 embed 백엔드(프로젝트 임베드 모델, 테스트에서 대체 가능), 멱등 LEFT-JOIN 인덱서, 코사인 순위付け. `message_search` 도구(`semantic: true`)로 노출.
 - **`agent/tools/message_search.py`** —— 2단계 조회: 영속화된 `messages` 테이블에서 FTS5를 먼저 검색하고, 일치 항목이 없으면 세션의 최신 체크포인트(`SRC_DIR/checkpoints/sqlite.db`의 `state["messages"]`)로 폴백하여 아직 영속화되지 않은 턴을 최신순으로 키워드 매칭합니다(`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars`로 상한). 폴백 히트에는 `source="checkpoint"`가 붙습니다.
@@ -57,7 +55,6 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/store/test_message_tree.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
-    tests/context_engine/facts/test_facts_extraction.py \
     tests/context_engine/embeddings/test_semantic_search.py \
     tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
@@ -68,4 +65,4 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
 uv run python evals/evals.py session_memory
 ```
 
-평가 샌드박스에서 라이브 서브시스템을 채점——7개 체크: 쿨다운 재시작 생존, 락 상호 배제, 체크포인트 복원, 멱등 리플레이, 컨텍스트 프로젝션, 실 LLM facts 추출, 실 임베드 의미 순위. `evals/session_memory/suite.py` 참조.
+평가 샌드박스에서 라이브 서브시스템을 채점——6개 체크: 쿨다운 재시작 생존, 락 상호 배제, 체크포인트 복원, 멱등 리플레이, 컨텍스트 프로젝션, 실 임베드 의미 순위. `evals/session_memory/suite.py` 참조.

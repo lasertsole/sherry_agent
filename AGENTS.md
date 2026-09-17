@@ -27,11 +27,10 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
 | `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board) | `agent/tools/taskflow/config.py` |
 | `agent/tools/todolist/` | Session-scoped todo planning layer | `agent/tools/todolist/service.py` |
-| `agent/tools/memory_tiered.py` | LT-1 tiered facts store (facts/*.md) | `get_tiered_store()` |
 | `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper) | `agent/tools/subagent/spawn/core.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (35 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (38 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -92,10 +91,10 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 20 per-object TypedDicts (summarization, guardrails, iteration, memory_flush, tiered_memory, taskflow_infra, todolist_infra, tools_timeouts, ...) |
-| `config/features/infra_side/` | 18 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
+| `config/features/agent_side/` | 19 per-object TypedDicts (summarization, guardrails, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, ...) |
+| `config/features/infra_side/` | 19 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
 | `config/features/__init__.py` | Aggregator — all 38 TypedDicts + instances re-exported |
-| `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, FACTS_DIR, ...) |
+| `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
 
@@ -159,7 +158,6 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - `Summarization` has both sync (`_apply_compression`) and async (`_aapply_compression`) paths — changes must cover both
 - `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
-- `workspace/memory/facts/` is created at runtime by TieredMemoryStore — gitignored
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
 - `.gitignore` line `*.db` ignores all SQLite files — DB files are never committed
 - pre-push hook runs basedpyright on the entire diff — must be 0 errors before push

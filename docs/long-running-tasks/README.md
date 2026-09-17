@@ -2,9 +2,9 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 13 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a global cross-session flow board, and carries context forward through a three-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
+> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 13 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a global cross-session flow board, and carries context forward through a two-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
 
-Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/tools/memory_tiered.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py` (LT-3 facts baseline + LT-7 block), `agent/middlewares/subagent_completion_drain/core.py` (LT-5 backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
+Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py` (LT-7 block), `agent/middlewares/subagent_completion_drain/core.py` (LT-5 backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
 
 ## Table of Contents
 
@@ -17,7 +17,6 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/tool
 - [Progress Report](#-progress-report)
 - [Idle Detection](#-idle-detection)
 - [Cross-Session Board (GAP-9)](#-cross-session-board-gap-9)
-- [Tiered Memory](#-tiered-memory)
 - [Pre-Compression Memory Flush](#-pre-compression-memory-flush)
 - [Summary ↔ TaskFlow Coordination](#-summary--taskflow-coordination)
 - [Subagent Memory Backflow (LT-5)](#-subagent-memory-backflow-lt-5)
@@ -33,7 +32,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/tool
 
 ## 🎯 Overview
 
-The long-running-task stack lets the main agent decompose a multi-turn job into a **durable flow** whose steps may depend on each other, dispatch each ready step to a child subagent, and survive process restarts. Seven subsystems cooperate:
+The long-running-task stack lets the main agent decompose a multi-turn job into a **durable flow** whose steps may depend on each other, dispatch each ready step to a child subagent, and survive process restarts. Six subsystems cooperate:
 
 | # | Subsystem | Entry point | Durable where |
 | :- | :--- | :--- | :--- |
@@ -41,9 +40,8 @@ The long-running-task stack lets the main agent decompose a multi-turn job into 
 | 2 | **Token / cost budget** | `taskflow_budget`, `taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **Deadline** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **Idle detection** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` stale markers |
-| 5 | **Tiered memory** | `memory` tool actions + `agent/tools/memory_tiered.py` | `workspace/memory/*.md` + `facts/*.md` |
-| 6 | **Pre-compression flush** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
-| 7 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
+| 5 | **Pre-compression flush** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
+| 6 | **Continuity / auto-resume** | `context_engine/session_continuity.py`, `workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + prompt blocks |
 
 The design contract throughout is **error-as-text**: tools never raise business errors at the model; they return human-readable strings beginning with `Error:`. Every background hook is **fail-open** — an unavailable registry or crashed sweeper degrades to "no long-running-task context", never to a broken turn.
 
@@ -393,55 +391,20 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 The schema has **no `updated_at` column** (GAP-9 is migration-free). `_last_activity_ts()` (`taskflow_list.py:28`) therefore derives "last updated" as the maximum of the activity stamps persisted anywhere on the flow — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has no stamp at all). An empty registry returns `No task flows found`.
 
-## 🧠 Tiered Memory
+## 🧠 Layered Memory
 
-Three layers, distinguished by *how* they reach the model:
+Two layers, distinguished by *how* they reach the model:
 
 | Layer | Store | Location | In the prompt? |
 | :--- | :--- | :--- | :--- |
 | **L1 — curated memory** | `MEMORY.md` (agent notes) + `USER.md` (user profile) | `workspace/memory/` (`MEMORY_DIR`) | Yes — a frozen snapshot, always injected |
-| **L2 — structured facts** | `facts/{category}.md`, 5 fixed categories | `workspace/memory/facts/` (`FACTS_DIR`) | Only a one-line index; full content is read on demand |
-| **L3 — raw history** | `mes_memory.db` (SQLite, WAL, FTS5) | `src/store/mes_memory/mes_memory.db` | No — retrieved by `context_engine` / `message_search` |
+| **L2 — raw history** | `mes_memory.db` (SQLite, WAL, FTS5) | `src/store/mes_memory/mes_memory.db` | No — retrieved by `context_engine` / `message_search` |
 
 Files are **plain text entries separated by the delimiter `§` on its own line** — `ENTRY_DELIMITER = "\n§\n"` (`agent/tools/memory.py:53`), no YAML frontmatter and no bullet prefixing. Entries may be multiline.
 
 Layer 1 is managed by `MemoryStore` (`memory.py:104`): per-file character limits `2200` (memory) and `1375` (user), an injection scan (`_MEMORY_THREAT_PATTERNS`, `memory.py:68`) that rejects prompt-injection and credential-exfiltration content, cross-platform file locking, atomic writes, and exact-match dedup. The live entries are mutated immediately, while the prompt uses a **frozen snapshot** captured at `load_from_disk()` to keep the prefix cache stable for the session.
 
-Layer 2 is managed by `TieredMemoryStore` (`agent/tools/memory_tiered.py:19`) with categories `environment`, `project`, `decisions`, `user_prefs`, `tool_lessons` (`TIERED_MEMORY["facts_categories"]`) and a per-file cap of `TIERED_MEMORY["facts_char_limit"]` = 4000 chars. When a file overflows, the **oldest** entry is evicted first; exact duplicates are reported as already present.
-
-The fact operations are **actions of the single `memory` tool**, not separate tools (`memory.py:641`):
-
-```python
-# MemoryActionSchema.action
-Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"]
-```
-
-| Action | Required args | Returns |
-| :--- | :--- | :--- |
-| `fact_add` | `content`, `target` (category) | JSON `{"success", "message", "category", "entry_count", "usage"}` |
-| `fact_read` | `target` = category or `"all"` | JSON `{"success": true, "facts": {category: text}}` |
-| `fact_search` | `content` (substring query) | JSON `{"success": true, "results": [{"category", "fact"}], "count"}` |
-
-`prompt_builder.build_system_prompt` injects the L1 snapshots via `format_for_system_prompt` and appends the L2 listing `FACTS (on-demand, use memory tool with fact_read/fact_search): …` (`workspace/prompt_builder.py:271-282`). The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
-
-### Facts baseline in the summary prompt (LT-3)
-
-The system prompt only carries a one-line L2 index, so a compression pass could otherwise summarize away the pointer to facts the model still needs. To prevent that, `_build_summary_prompt` (`agent/middlewares/summarization/core.py:1488-1506`) reads **every non-empty fact** through `get_tiered_store().read_facts()` and appends a `<facts-baseline>` block to the summary prompt:
-
-```python
-# summarization/core.py:1496
-baseline_lines = ["<facts-baseline>"]
-baseline_lines.append(
-    "Persistent facts from tiered memory (ground truth, survives compression):"
-)
-for cat, content in non_empty.items():
-    baseline_lines.append(f"[{cat}]")
-    baseline_lines.append(content)
-baseline_lines.append("</facts-baseline>")
-parts.append("\n".join(baseline_lines))
-```
-
-The block is labeled **ground truth** so the compression model preserves it instead of dropping or paraphrasing it. It is appended after the LT-7 TaskFlow block (both are LLM-prompt-only additions, absent from `_build_static_fallback_summary`), and it is fully **best-effort**: any failure while reading the tiered store is swallowed (`except Exception: pass`) and never blocks compression. This is a prompt-only reuse — it does not change what L2 stores or how the `memory` tool reads it.
+The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
 
 ## 🔥 Pre-Compression Memory Flush
 
@@ -485,7 +448,7 @@ def _backflow_shared_memory() -> None:
         memory_store.save_to_disk(target)
 ```
 
-Parent and children share **one process-wide `MemoryStore`** and the same `facts/` directory, so a child's writes are already file-visible. What can drift is the parent's in-memory view — the live entries plus the **frozen snapshot** the system prompt was built from — when a writer outside this process updated `MEMORY.md` / `USER.md`. The **reload-first** order is load-bearing: persisting the stale in-memory list before reloading would clobber a concurrent writer, so the reconcile must load → persist per target.
+Parent and children share **one process-wide `MemoryStore`**, so a child's writes are already file-visible. What can drift is the parent's in-memory view — the live entries plus the **frozen snapshot** the system prompt was built from — when a writer outside this process updated `MEMORY.md` / `USER.md`. The **reload-first** order is load-bearing: persisting the stale in-memory list before reloading would clobber a concurrent writer, so the reconcile must load → persist per target.
 
 Like the drain, the backflow is **fail-open** — a memory-I/O failure is logged and swallowed, and the completion carrier still reaches the parent turn. The drain also appends the Sisyphus verification reminder to internal completion carriers, so the parent is reminded that a completion is a `DoneClaim`, not a verified result (verify via `todoread`, check acceptance criteria, and probe for stale state before marking a todo complete).
 
@@ -656,13 +619,13 @@ All tunables live under `config/features/`, which is a **per-object `TypedDict` 
 
 | Part | Contents |
 | :--- | :--- |
-| `config/features/agent_side/` | **20** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow) |
-| `config/features/infra_side/` | **18** infra-side config modules (server, queues, skills, context engine, runtime, model pricing) |
+| `config/features/agent_side/` | **19** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow) |
+| `config/features/infra_side/` | **19** infra-side config modules (server, queues, skills, context engine, runtime, model pricing) |
 | `config/features/_env.py` | The single shared env helper |
 
 Each module defines `class XxxConfig(TypedDict)` plus a module-level constant `XXX: XxxConfig = {…}`. Env-aware modules define a builder `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` that reads `env or os.environ` and materialises the constant at import time. The env helper is `_env_int(name, default, env)` (`config/features/_env.py:9`), which accepts `1/true/yes/on` and `0/false/no/off/""` and never raises.
 
-The registry currently holds **38 feature objects** — 20 agent-side + 18 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
+The registry currently holds **38 feature objects** — 19 agent-side + 19 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
 
 The constants most relevant to this document:
 
@@ -677,9 +640,6 @@ The constants most relevant to this document:
 | | `waiting_timeout_hours` | 24 |
 | `MODEL_PRICING` (`infra_side/model_pricing.py`) | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
-| `TIERED_MEMORY` (`agent_side/tiered_memory.py`) | `facts_char_limit` | 4000 |
-| | `facts_index_max_chars` | 200 (declared; not consumed by live code) |
-| | `facts_categories` | environment, project, decisions, user_prefs, tool_lessons |
 | `MEMORY_FLUSH` (`agent_side/memory_flush.py`) | `enabled` | `MEMORY_FLUSH_ENABLED` (default 1) |
 | | `model` | `MEMORY_FLUSH_MODEL` (default "") |
 | | `soft_threshold_tokens` | 8000 |
@@ -709,15 +669,15 @@ The constants most relevant to this document:
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/fact_add/…      │                 │ build_system_prompt    │
+│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ TaskFlow store    │          │ MemoryStore (L1)     │                 │ ─ MEMORY/USER snapshot │
-│ task_flows (WAL)  │          │ TieredMemoryStore(L2)│                 │ ─ FACTS index (L2)     │
-│ state_json DAG    │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
-│ + retry/validation│          │  memory_tiered.py    │                 │ ─ Last Session         │
+│ task_flows (WAL)  │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
+│ state_json DAG    │          │  memory.py           │                 │ ─ Last Session         │
+│ + retry/validation│          │                      │                 │                        │
 └────────┬──────────┘          └──────────────────────┘                 └────────────────────────┘
          │ dispatch_child()                                                       ▲
          ▼                                                                        │ continuity json
@@ -737,8 +697,8 @@ The constants most relevant to this document:
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
 │ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+LT-3 facts,     │   │
-└──────────────────────────────┘                   │  +LT-7 TaskFlow)          │   │
+│ _scan_stale_waiting_taskflows│                   │ summary (+LT-7 TaskFlow)  │   │
+└──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
                                                                ▼                    │
@@ -747,7 +707,7 @@ The constants most relevant to this document:
                                                    └───────────────────────────┘
 ```
 
-The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/wrapper/`** package now owns the guards. `agent.wrapper.registry` exposes a process-global, ordered, pluggable chain (`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`) with `GraphWrapperFactory` entries applied **innermost-first**; the defaults reproduce the historical chain — `RepetitionGuardWrapper(phantom_stream_guard=True)` then `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. The stream repetition guard lives in `agent/wrapper/repetition_guard.py` and the context-window guard in `agent/wrapper/context_limit.py`. The **TieredMemoryStore (L2)** backing the `facts/` layer lives in `agent/tools/memory_tiered.py`, and the **LT-5** backflow is performed by `SubagentCompletionDrainMiddleware` in `agent/middlewares/subagent_completion_drain/core.py`.
+The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/wrapper/`** package now owns the guards. `agent.wrapper.registry` exposes a process-global, ordered, pluggable chain (`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`) with `GraphWrapperFactory` entries applied **innermost-first**; the defaults reproduce the historical chain — `RepetitionGuardWrapper(phantom_stream_guard=True)` then `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. The stream repetition guard lives in `agent/wrapper/repetition_guard.py` and the context-window guard in `agent/wrapper/context_limit.py`. The **LT-5** backflow is performed by `SubagentCompletionDrainMiddleware` in `agent/middlewares/subagent_completion_drain/core.py`.
 
 ## 📚 API Reference
 
@@ -774,9 +734,6 @@ The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/
 | Action | Signature | Returns |
 | :--- | :--- | :--- |
 | `add` / `replace` / `remove` | `memory(action, target="memory"\|"user", content, old_text)` | JSON success/error |
-| `fact_add` | `memory(action="fact_add", target=<category>, content=<fact>)` | JSON `{success, message, category, entry_count, usage}` |
-| `fact_read` | `memory(action="fact_read", target=<category>\|"all")` | JSON `{success, facts: {category: text}}` |
-| `fact_search` | `memory(action="fact_search", content=<query>)` | JSON `{success, results: [{category, fact}], count}` |
 
 ### Key functions & constants
 
@@ -799,7 +756,6 @@ The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | Cross-session board read |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 failure classification |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all retry planning/persist |
-| `get_tiered_store` | `agent/tools/memory_tiered.py:118` | L2 facts store + LT-3 baseline source |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 memory backflow reconcile |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | Pluggable graph-wrapper chain |
 
@@ -827,14 +783,14 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (seventeen `unit` t
 | `test_validation.py` | GAP-7 criteria storage, resume echo, override |
 | `test_taskflow_list.py` | GAP-9 board rendering, status filters, last-activity timestamp |
 
-Cross-cutting suites: `tests/agent/middlewares/test_memory_flush.py` (flush thresholds and `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py` (LT-5 memory reconcile on completion drain), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py` (completion-carrier verification reminder), `tests/agent/tools/test_memory_tiered.py` (tiered facts), `tests/context_engine/test_session_continuity.py` (continuity save/prompt), `tests/agent/middlewares/test_todo_continuation.py` (turn-end continuation), `tests/pub/func/message/test_tool_output_prune.py` (one-line summaries), and `tests/workspace/test_prompt_builder_taskflow.py` (pending-flow prompt injection).
+Cross-cutting suites: `tests/agent/middlewares/test_memory_flush.py` (flush thresholds and `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py` (LT-5 memory reconcile on completion drain), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py` (completion-carrier verification reminder), `tests/context_engine/test_session_continuity.py` (continuity save/prompt), `tests/agent/middlewares/test_todo_continuation.py` (turn-end continuation), `tests/pub/func/message/test_tool_output_prune.py` (one-line summaries), and `tests/workspace/test_prompt_builder_taskflow.py` (pending-flow prompt injection).
 
 Run just this area with the standard uv/pytest tooling:
 
 ```bash
 uv run pytest tests/agent/tools/taskflow -q
 uv run pytest tests/agent/middlewares/test_memory_flush.py tests/context_engine/test_session_continuity.py -q
-uv run pytest tests/pub/func/message/test_tool_output_prune.py tests/agent/tools/test_memory_tiered.py -q
+uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 ```
 
 For the full process-isolated suite use `uv run python tests/run_tests_split.py` (Group A runs the `unit` files, Group B runs the `module`/`integration` files).
@@ -847,12 +803,10 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **The pre-compression memory flush is latent.** Production instantiations of `Summarization` (main agent and subagent) do not pass `memory_store` / `llm_factory`, so the flush does not run until a call site wires them; the code is implemented and tested but currently inert.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
-- **Registry size is 38, not 35.** The config registry holds 38 feature objects (20 agent-side + 18 infra-side); the infra-side contract test under-counts at 17 because it omits `MODEL_PRICING`.
-- **`facts_index_max_chars` is declared but unused.** The `TIERED_MEMORY` field exists; no live code reads it.
+- **Registry size is 38.** The config registry holds 38 feature objects (19 agent-side + 19 infra-side); the infra-side contract test covers 18 of them (GATEWAY plus 17 data-driven cases) and omits `MODEL_PRICING`.
 - **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_dispatch` and `taskflow_wait_all` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The LT-7 TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.
 - **Result validation is advisory.** `validation_criteria` are stored and echoed with the result but never enforced by the tool; the orchestrator must judge pass/fail itself. There is no automatic gate that can fail a step for not meeting its criteria.
 - **Retry classification is text-based.** `classify_failure` is a substring heuristic over the result text: a failure phrased outside the pattern table (or a genuine failure hidden by a negated phrase) will not trigger a retry, while an empty `retry_on` retries every classified failure. `taskflow_wait_all` cannot classify a dead child with no result text, so it always consumes retry budget while one remains.
 - **`taskflow_list` is deliberately global.** The cross-session board ignores `creator_session_key` scoping, so any main-agent session can enumerate every flow in the registry (read-only, no `expected_revision`). It is not intended as a per-session view.
-- **The facts baseline is an LLM-prompt-only addition.** The LT-3 `<facts-baseline>` block is appended by `_build_summary_prompt` and is absent from the deterministic fallback summary, exactly like the LT-7 TaskFlow block.

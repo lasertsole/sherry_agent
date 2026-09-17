@@ -2,9 +2,9 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 13 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，回显步骤验收标准供编排者校验，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供全局跨会话 flow 面板，并通过三层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
+> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 13 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，回显步骤验收标准供编排者校验，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供全局跨会话 flow 面板，并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
-事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/tools/memory_tiered.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（LT-3 事实基线 + LT-7 区块）、`agent/middlewares/subagent_completion_drain/core.py`（LT-5 回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
+事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（LT-7 区块）、`agent/middlewares/subagent_completion_drain/core.py`（LT-5 回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -17,7 +17,6 @@
 - [进度报告](#-进度报告)
 - [空闲检测](#-空闲检测)
 - [跨会话面板（GAP-9）](#-跨会话面板gap-9)
-- [分层记忆](#-分层记忆)
 - [压缩前的记忆落盘](#-压缩前的记忆落盘)
 - [摘要 ↔ TaskFlow 协调](#-摘要--taskflow-协调)
 - [子 Agent 记忆回流（LT-5）](#-子-agent-记忆回流lt-5)
@@ -33,7 +32,7 @@
 
 ## 🎯 概览
 
-长时任务栈让主 Agent 能把一个多回合的任务分解为一个**持久化 flow**，其步骤之间可以互相依赖，把每个就绪步骤派发给子 Agent 执行，并在进程重启后继续存在。共有七个子系统协作：
+长时任务栈让主 Agent 能把一个多回合的任务分解为一个**持久化 flow**，其步骤之间可以互相依赖，把每个就绪步骤派发给子 Agent 执行，并在进程重启后继续存在。共有六个子系统协作：
 
 | # | 子系统 | 入口 | 持久化位置 |
 | :- | :--- | :--- | :--- |
@@ -41,9 +40,8 @@
 | 2 | **Token / 成本预算** | `taskflow_budget`、`taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **截止时间** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **空闲检测** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` 中的过期标记 |
-| 5 | **分层记忆** | `memory` 工具动作 + `agent/tools/memory_tiered.py` | `workspace/memory/*.md` + `facts/*.md` |
-| 6 | **压缩前落盘** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
-| 7 | **连续性与自动恢复** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 提示词区块 |
+| 5 | **压缩前落盘** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
+| 6 | **连续性与自动恢复** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + 提示词区块 |
 
 贯穿始终的设计契约是**错误即文本**：工具从不把业务错误抛给模型，而是返回以 `Error:` 开头的人类可读字符串。每个后台钩子都是**失败开放（fail-open）**的——注册表不可用或 sweeper 崩溃只会退化为“没有长时任务上下文”，绝不会破坏一个回合。
 
@@ -395,53 +393,18 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 ## 🧠 分层记忆
 
-三层，区别在于*如何*抵达模型：
+两层，区别在于*如何*抵达模型：
 
 | 层 | 存储 | 位置 | 是否进入提示词？ |
 | :--- | :--- | :--- | :--- |
 | **L1 —— 精炼记忆** | `MEMORY.md`（Agent 笔记）+ `USER.md`（用户画像） | `workspace/memory/`（`MEMORY_DIR`） | 是——冻结快照，始终注入 |
-| **L2 —— 结构化事实** | `facts/{category}.md`，固定的 5 个类别 | `workspace/memory/facts/`（`FACTS_DIR`） | 仅一行索引；完整内容按需读取 |
-| **L3 —— 原始历史** | `mes_memory.db`（SQLite、WAL、FTS5） | `src/store/mes_memory/mes_memory.db` | 否——由 `context_engine` / `message_search` 检索 |
+| **L2 —— 原始历史** | `mes_memory.db`（SQLite、WAL、FTS5） | `src/store/mes_memory/mes_memory.db` | 否——由 `context_engine` / `message_search` 检索 |
 
 文件是**以独占一行的分隔符 `§` 分隔的纯文本条目**——`ENTRY_DELIMITER = "\n§\n"`（`agent/tools/memory.py:53`），没有 YAML frontmatter，也没有项目符号前缀。条目可以跨多行。
 
 第 1 层由 `MemoryStore` 管理（`memory.py:104`）：每个文件的字符上限为 `2200`（memory）和 `1375`（user），注入扫描（`_MEMORY_THREAT_PATTERNS`，`memory.py:68`）会拒绝提示词注入与凭证外泄内容，配合跨平台文件锁、原子写入和精确匹配去重。实时条目会立即改动，而提示词使用的是一份在 `load_from_disk()` 时捕获的**冻结快照**，以保持会话期内前缀缓存稳定。
 
-第 2 层由 `TieredMemoryStore` 管理（`agent/tools/memory_tiered.py:19`），类别为 `environment`、`project`、`decisions`、`user_prefs`、`tool_lessons`（`TIERED_MEMORY["facts_categories"]`），每个文件的上限为 `TIERED_MEMORY["facts_char_limit"]` = 4000 字符。文件溢出时，**最旧**的条目先被淘汰；完全重复的条目会被报告为已存在。
-
-事实操作是**单个 `memory` 工具的动作**，而不是独立的工具（`memory.py:641`）：
-
-```python
-# MemoryActionSchema.action
-Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"]
-```
-
-| 动作 | 必需参数 | 返回 |
-| :--- | :--- | :--- |
-| `fact_add` | `content`、`target`（类别） | JSON `{"success", "message", "category", "entry_count", "usage"}` |
-| `fact_read` | `target` = 类别或 `"all"` | JSON `{"success": true, "facts": {category: text}}` |
-| `fact_search` | `content`（子串查询） | JSON `{"success": true, "results": [{"category", "fact"}], "count"}` |
-
-`prompt_builder.build_system_prompt` 通过 `format_for_system_prompt` 注入 L1 快照，并追加 L2 索引 `FACTS (on-demand, use memory tool with fact_read/fact_search): …`（`workspace/prompt_builder.py:271-282`）。`memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
-
-### 摘要提示词中的事实基线（LT-3）
-
-系统提示词只携带一行 L2 索引，因此一次压缩本可能把模型仍需要的事实指针一并摘要掉。为防止这一点，`_build_summary_prompt`（`agent/middlewares/summarization/core.py:1488-1506`）通过 `get_tiered_store().read_facts()` 读取**所有非空事实**，并把一个 `<facts-baseline>` 区块追加到摘要提示词：
-
-```python
-# summarization/core.py:1496
-baseline_lines = ["<facts-baseline>"]
-baseline_lines.append(
-    "Persistent facts from tiered memory (ground truth, survives compression):"
-)
-for cat, content in non_empty.items():
-    baseline_lines.append(f"[{cat}]")
-    baseline_lines.append(content)
-baseline_lines.append("</facts-baseline>")
-parts.append("\n".join(baseline_lines))
-```
-
-该区块被标注为**基准事实（ground truth）**，以便压缩模型保留它，而不是丢弃或改写它。它被追加在 LT-7 TaskFlow 区块之后（两者都只是 LLM 提示词的补充，不出现在 `_build_static_fallback_summary` 中），并且完全**尽力而为**：读取分层存储时的任何失败都会被吞掉（`except Exception: pass`），绝不阻塞压缩。这只是一次提示词层面的复用——它不改变 L2 存储什么，也不改变 `memory` 工具如何读取它。
+`memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
 ## 🔥 压缩前的记忆落盘
 
@@ -485,7 +448,7 @@ def _backflow_shared_memory() -> None:
         memory_store.save_to_disk(target)
 ```
 
-父 Agent 与子 Agent 共享**同一个进程级 `MemoryStore`** 与同一个 `facts/` 目录，因此子 Agent 的写入在文件层面本已可见。可能发生漂移的是父 Agent 的内存视图——实时条目，以及构建系统提示词时用的那份**冻结快照**——当进程外的写入者更新了 `MEMORY.md` / `USER.md` 时就会如此。**先重载**的顺序是关键的：若在重载前就把陈旧的内存列表持久化，会覆盖并发写入者，因此对账必须对每个目标执行先加载、后持久化。
+父 Agent 与子 Agent 共享**同一个进程级 `MemoryStore`**，因此子 Agent 的写入在文件层面本已可见。可能发生漂移的是父 Agent 的内存视图——实时条目，以及构建系统提示词时用的那份**冻结快照**——当进程外的写入者更新了 `MEMORY.md` / `USER.md` 时就会如此。**先重载**的顺序是关键的：若在重载前就把陈旧的内存列表持久化，会覆盖并发写入者，因此对账必须对每个目标执行先加载、后持久化。
 
 与排空一样，回流也是**失败开放**的——记忆 I/O 失败会被记录并吞掉，完成载体仍会抵达父回合。排空还会向内部完成载体追加 Sisyphus 校验提醒，提醒父 Agent：完成只是一份 `DoneClaim`，而不是已验证的结果（在把待办标记为完成之前，先用 `todoread` 校验、对照验收标准，并排查陈旧状态）。
 
@@ -656,13 +619,13 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **20** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow） |
-| `config/features/infra_side/` | **18** 个基础设施侧配置模块（服务端、队列、技能、上下文引擎、运行时、模型定价） |
+| `config/features/agent_side/` | **19** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow） |
+| `config/features/infra_side/` | **19** 个基础设施侧配置模块（服务端、队列、技能、上下文引擎、运行时、模型定价） |
 | `config/features/_env.py` | 唯一的共享环境辅助函数 |
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **38 个 feature 对象**——Agent 侧 20 + 基础设施侧 18——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **38 个 feature 对象**——Agent 侧 19 + 基础设施侧 19——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -677,9 +640,6 @@ LANE_SYSTEM: LaneSystemConfig = {
 | | `waiting_timeout_hours` | 24 |
 | `MODEL_PRICING`（`infra_side/model_pricing.py`） | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
-| `TIERED_MEMORY`（`agent_side/tiered_memory.py`） | `facts_char_limit` | 4000 |
-| | `facts_index_max_chars` | 200（已声明；实时代码未消费） |
-| | `facts_categories` | environment, project, decisions, user_prefs, tool_lessons |
 | `MEMORY_FLUSH`（`agent_side/memory_flush.py`） | `enabled` | `MEMORY_FLUSH_ENABLED`（默认 1） |
 | | `model` | `MEMORY_FLUSH_MODEL`（默认 ""） |
 | | `soft_threshold_tokens` | 8000 |
@@ -709,15 +669,15 @@ LANE_SYSTEM: LaneSystemConfig = {
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/fact_add/…      │                 │ build_system_prompt    │
+│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ TaskFlow store    │          │ MemoryStore (L1)     │                 │ ─ MEMORY/USER snapshot │
-│ task_flows (WAL)  │          │ TieredMemoryStore(L2)│                 │ ─ FACTS index (L2)     │
-│ state_json DAG    │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
-│ + retry/validation│          │  memory_tiered.py    │                 │ ─ Last Session         │
+│ task_flows (WAL)  │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
+│ state_json DAG    │          │  memory.py           │                 │ ─ Last Session         │
+│ + retry/validation│          │                      │                 │                        │
 └────────┬──────────┘          └──────────────────────┘                 └────────────────────────┘
          │ dispatch_child()                                                       ▲
          ▼                                                                        │ continuity json
@@ -737,8 +697,8 @@ LANE_SYSTEM: LaneSystemConfig = {
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
 │ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+LT-3 facts,     │   │
-└──────────────────────────────┘                   │  +LT-7 TaskFlow)          │   │
+│ _scan_stale_waiting_taskflows│                   │ summary (+LT-7 TaskFlow)  │   │
+└──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
                                                                ▼                    │
@@ -747,7 +707,7 @@ LANE_SYSTEM: LaneSystemConfig = {
                                                    └───────────────────────────┘
 ```
 
-编译后的图不再在 `agent.core.py` 中内联包装：**`agent/wrapper/`** 包现在拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项复现了历史上的硬编码链——先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。支撑 `facts/` 层的 **TieredMemoryStore（L2）** 位于 `agent/tools/memory_tiered.py`，而 **LT-5** 回流由 `agent/middlewares/subagent_completion_drain/core.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
+编译后的图不再在 `agent.core.py` 中内联包装：**`agent/wrapper/`** 包现在拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项复现了历史上的硬编码链——先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。**LT-5** 回流由 `agent/middlewares/subagent_completion_drain/core.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
 
 ## 📚 API 参考
 
@@ -774,9 +734,6 @@ LANE_SYSTEM: LaneSystemConfig = {
 | 动作 | 签名 | 返回 |
 | :--- | :--- | :--- |
 | `add` / `replace` / `remove` | `memory(action, target="memory"\|"user", content, old_text)` | JSON 成功/错误 |
-| `fact_add` | `memory(action="fact_add", target=<类别>, content=<事实>)` | JSON `{success, message, category, entry_count, usage}` |
-| `fact_read` | `memory(action="fact_read", target=<类别>\|"all")` | JSON `{success, facts: {category: text}}` |
-| `fact_search` | `memory(action="fact_search", content=<查询>)` | JSON `{success, results: [{category, fact}], count}` |
 
 ### 关键函数与常量
 
@@ -799,7 +756,6 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 跨会话面板读取 |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 失败分类 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all 重试规划/持久化 |
-| `get_tiered_store` | `agent/tools/memory_tiered.py:118` | L2 事实存储 + LT-3 基线来源 |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 记忆回流对账 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 可插拔图包装链 |
 
@@ -827,14 +783,14 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（十七个 `unit` 测试文
 | `test_validation.py` | GAP-7 标准存储、恢复回显、覆盖 |
 | `test_taskflow_list.py` | GAP-9 面板渲染、状态过滤、最后活动时间戳 |
 
-跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的 LT-5 记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/agent/tools/test_memory_tiered.py`（分层事实）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
+跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的 LT-5 记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
 
 用标准的 uv/pytest 工具只跑这一区块：
 
 ```bash
 uv run pytest tests/agent/tools/taskflow -q
 uv run pytest tests/agent/middlewares/test_memory_flush.py tests/context_engine/test_session_continuity.py -q
-uv run pytest tests/pub/func/message/test_tool_output_prune.py tests/agent/tools/test_memory_tiered.py -q
+uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 ```
 
 要跑完整的进程隔离套件，使用 `uv run python tests/run_tests_split.py`（Group A 跑 `unit` 文件，Group B 跑 `module`/`integration` 文件）。
@@ -847,12 +803,10 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py tests/agent/tools
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 38 而不是 35。** 配置注册表包含 38 个 feature 对象（Agent 侧 20 + 基础设施侧 18）；基础设施侧契约测试只数到 17，因为它遗漏了 `MODEL_PRICING`。
-- **`facts_index_max_chars` 已声明但未使用。** `TIERED_MEMORY` 字段存在；没有实时代码读取它。
+- **注册表规模是 38。** 配置注册表包含 38 个 feature 对象（Agent 侧 19 + 基础设施侧 19）；基础设施侧契约测试覆盖其中 18 个（GATEWAY 加 17 个数据驱动用例），遗漏了 `MODEL_PRICING`。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **LT-7 的 TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。
 - **结果校验是提示性的。** `validation_criteria` 会被存储并随结果一起回显，但工具从不强制执行；编排者必须自行判断通过/失败。不存在能因未满足标准而让步骤失败的自动闸门。
 - **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_wait_all` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。
 - **`taskflow_list` 刻意是全局的。** 跨会话面板忽略 `creator_session_key` 作用域，因此任何主 Agent 会话都能枚举注册表中的每一个 flow（只读，无 `expected_revision`）。它并非按会话视图。
-- **事实基线只是 LLM 提示词的补充。** LT-3 的 `<facts-baseline>` 区块由 `_build_summary_prompt` 追加，不出现在确定性回退摘要中，与 LT-7 TaskFlow 区块完全一样。

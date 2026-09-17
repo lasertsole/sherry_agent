@@ -176,12 +176,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
    - **プラン抽出**：`CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]` が有効で、`_detect_todo_all_complete(session_id)` が todo リストがちょうど全て `completed` / `cancelled` になったと報告したら、ロック `nudge_plan_extraction_lock`（`state_register_mem`）の下で `_nudge_plan_extraction` を起動します。`nudge_plan_extraction_fired` フラグ（`state_register_db`）が完了サイクルごとに 1 回だけの発火を保証し、リストが全て完了でなくなればリセットされます。
    いずれかのロックが保持されている間、`after_agent` は nudge 判定をスキップします（メモリカウンターは引き続き増加）。
 3. 最終ターンを MesMemory に永続化：`slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)`（SQLite）。
-4. 同期 `after_agent` は `run_async` でサブエージェントを実行し、`aafter_agent` は `asyncio.gather` で永続化と nudge を並行実行します。プラン抽出のターンでは、ターンごとの facts パイプラインが譲歩します：`_nudge_plan_extraction` が同じパスで未処理の facts 区間を取り込みます（下記 Part 3）。
+4. 同期 `after_agent` は `run_async` でサブエージェントを実行し、`aafter_agent` は `asyncio.gather` で永続化と nudge を並行実行します。
 
 **Nudge サブエージェント**（`context_engine/nudge.py`）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
 
 - `_MEMORY_REVIEW_PROMPT`（メモリレビュー）：ユーザーの持続的な好みや期待をメモリツールで保存する定期パス。
-- `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：全ての todo が完了したときに 1 回発火するパスで、3 つの成果物を生成します。**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます。**Part 2** は `skill_manage` でスキルライブラリを更新します（旧来の独立したスキルレビュー指針はここに統合）。**Part 3** は `memory(action="fact_add")` で持続的な事実を階層型 facts ストアに書き込みます。このブロックは未処理の facts 区間が存在する場合にのみ描画され、消費ウォーターマークはパス成功後にのみ進みます。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、start-work 台帳（`.omo/start-work/ledger.jsonl`）、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
+- `_PLAN_EXTRACTION_PROMPT`（プラン抽出）：全ての todo が完了したときに 1 回発火するパスで、2 つの成果物を生成します。**Part 1** は `knowledge` ツール（`action="write"`）で構造化 JSON ナレッジを `workspace/knowledge/plans/<plan-name>/` に書き込み、task・wave・plan の 3 層で `failure_set` / `success_path` / `method` を持ちます。**Part 2** は `skill_manage` でスキルライブラリを更新します（旧来の独立したスキルレビュー指針はここに統合）。そのコンテキストは `_build_plan_context` から取得します：プランファイル、todo リスト、start-work 台帳（`.omo/start-work/ledger.jsonl`）、およびこのセッションの subagent runs（`result_text` / `outcome` / タスクのみ）。
 
 > 本ドキュメントの旧版はナレッジグラフ保守（`after_turn`）と `MemoryCache` を主張していました。**現在のコードにはどちらも存在しません。** システムプロンプトは状態レジスタと `build_system_prompt()` から供給され、ミドルウェア層のどこにもナレッジグラフ呼び出しはありません。
 

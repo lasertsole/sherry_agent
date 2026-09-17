@@ -24,7 +24,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **会话检查点**：线程安全的异步 SQLite checkpointer（`langgraph-checkpoint-sqlite`）跨重启持久化 Agent 状态，过期检查点自动清理
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
-- **经验抽取（Experience Extraction）**：五条生命周期路径将对话历史沉淀为可复用经验：每回合 facts 管线（`context_engine/facts/`）、每 10 回合的 memory nudge、todo 全部完成时的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、`facts/*.md`、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：每 10 回合的 memory nudge、todo 全部完成时的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
 - ▶️ _详见 [Experience Extraction README](docs/experience_extraction/README.zh.md) 了解触发条件 × 机制 × 落库位置的完整映射_
 
@@ -138,7 +138,6 @@ EMA_AI_agent/
 ├── context_engine/         # 记忆引擎（MesMemory）
 │   ├── core.py             # 历史检索与 FTS5 搜索 API
 │   ├── store/              # 会话消息存储（SQLite + FTS5，WAL）
-│   ├── facts/              # 每回合 facts 管线（cursor / extractor / queue）
 │   ├── events/             # 追加式事件日志 + projector
 │   ├── embeddings/         # 向量语义搜索（indexer / search）
 │   └── curator/            # 自动技能维护
@@ -396,7 +395,7 @@ uv run python evals/evals.py graph_rag      # 按名称运行单个套件
 | `graph_rag` | multimodal_rag 管线，用 RAGAS 评分（faithfulness、answer relevancy、context recall、context precision） |
 | `subagent` | 真实 `spawn_subagent_direct` 管线在一组确定性任务上的表现（任务成功率 + 延迟） |
 | `long_running_task` | TaskFlow 编排环在有依赖的 DAG 上的表现（步骤成功率、流程完成度、墙钟时间） |
-| `session_memory` | 会话内存栈的 7 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、双水位 facts 抽取、语义搜索排序 |
+| `session_memory` | 会话内存栈的 6 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、语义搜索排序 |
 | `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
 
 每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。

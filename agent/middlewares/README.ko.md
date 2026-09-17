@@ -176,12 +176,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
    - **플랜 추출**: `CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]`가 켜져 있고 `_detect_todo_all_complete(session_id)`가 todo 목록이 방금 전부 `completed` / `cancelled`가 되었다고 보고하면, 락 `nudge_plan_extraction_lock`(`state_register_mem`) 하에서 `_nudge_plan_extraction`을 기동합니다. `nudge_plan_extraction_fired` 플래그(`state_register_db`)가 완료 주기마다 한 번만 발화하도록 보장하며, 목록이 전부 완료가 아니면 리셋됩니다.
    어느 락이든 유지되는 동안 `after_agent`는 nudge 판정을 건너뜁니다(메모리 카운터는 계속 증가).
 3. 마지막 턴을 MesMemory에 영속화: `slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)` (SQLite).
-4. 동기 `after_agent`는 `run_async`로 서브에이전트를 실행하고, `aafter_agent`는 `asyncio.gather`로 영속화와 nudge를 동시에 실행합니다. 플랜 추출 턴에서는 턴별 facts 파이프라인이 양보합니다: `_nudge_plan_extraction`이 같은 패스에서 대기 중인 facts 구간을 흡수합니다(아래 Part 3).
+4. 동기 `after_agent`는 `run_async`로 서브에이전트를 실행하고, `aafter_agent`는 `asyncio.gather`로 영속화와 nudge를 동시에 실행합니다.
 
 **Nudge 서브에이전트** (`context_engine/nudge.py`): 메인 LLM 기반의 독립적인 `create_agent` 인스턴스로, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 모든 도구를 거부하므로, nudge 에이전트는 nudge 단계 화이트리스트에 있는 도구만 사용할 수 있습니다. 프롬프트는 두 개입니다:
 
 - `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 사용자의 지속적 선호와 기대를 메모리 도구로 저장하는 주기적 패스.
-- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): 모든 todo가 완료될 때 한 번 발화하는 패스로, 세 가지 산출물을 생성합니다. **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다. **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(기존의 독립 스킬 리뷰 지침은 여기에 병합됨). **Part 3**은 `memory(action="fact_add")`로 지속적 사실을 계층형 facts 스토어에 기록합니다. 이 블록은 대기 중인 facts 구간이 있을 때만 렌더링되며, 소비 워터마크는 패스가 성공한 뒤에만 전진합니다. 그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, start-work 원장(`.omo/start-work/ledger.jsonl`), 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
+- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): 모든 todo가 완료될 때 한 번 발화하는 패스로, 두 가지 산출물을 생성합니다. **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다. **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(기존의 독립 스킬 리뷰 지침은 여기에 병합됨).  그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, start-work 원장(`.omo/start-work/ledger.jsonl`), 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
 
 > 이 문서의 이전 버전은 지식 그래프 유지관리(`after_turn`)와 `MemoryCache`를 언급했습니다. **현재 코드에는 둘 다 존재하지 않습니다.** 시스템 프롬프트는 상태 레지스터와 `build_system_prompt()`에서 공급되며, 미들웨어 계층 어디에도 지식 그래프 호출은 없습니다.
 

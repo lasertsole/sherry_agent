@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）に加え、LT-1…LT-8 の長時間タスク編成も実装済み。設計ルール：すべての機能は既存インフラ（階層型 facts、セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
+SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）に加え、LT-1…LT-8 の長時間タスク編成も実装済み。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
 
 > 状態（2026-09-13）：プラン退役。本 README が参照先。
 
@@ -20,7 +20,6 @@ SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / he
 | P1-5 | メッセージツリー + ゼロコピー fork | 移行 v14（`parent_message_id`、`session_leafs`） |
 | P2-1 | 追記型イベントログ + プロジェクタ | 移行 v16、`context_engine/events/` |
 | P2-2 | Context Epoch スナップショット | 移行 v17（`context_epoch` テーブル）、`ContextEpoch` |
-| P2-3 | 双ウォーターマーク facts 抽出 | `context_engine/facts/`、`TieredMemoryStore.add_fact` 経由で書込 |
 | P2-4（一部） | steer/queue デュアル配信 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
 | LT-1…8 | TaskFlow 編成 | `docs/long-running-tasks/` |
@@ -40,7 +39,6 @@ SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / he
 
 ## 主要コンポーネント
 
-- **`context_engine/facts/`** —— 双ウォーターマークカーソル（`cursor.py`、`state_register.db` に永続化）、補助 LLM 抽出器（`extractor.py`、json_repair 解析 + カテゴリフォールバック）、キュー編成（`queue.py`）。`ContextEngineHook.aafter_agent` に fire-and-forget で接続され、facts は既存の `TieredMemoryStore.add_fact`（facts/*.md）経由で書き込まれる。
 - **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントを P1-1 読みモデルへ写像する `EventProjector`。
 - **`context_engine/embeddings/`** —— ベクトル意味検索：遅延 embed バックエンド（上書き可能）、冪等 LEFT-JOIN インデクサ、コサイン順位付け。`message_search` ツール（`semantic: true`）で公開。
 - **`agent/tools/message_search.py`** —— 二段階検索：永続化済み `messages` テーブルの FTS5 を先に検索し、ヒットがない場合はセッションの最新チェックポイント（`SRC_DIR/checkpoints/sqlite.db` の `state["messages"]`）へ降格して、未永続化ターンを新しい順にキーワード一致（`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` で上限）。フォールバックのヒットには `source="checkpoint"` を付与。
@@ -57,7 +55,6 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/store/test_message_tree.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
-    tests/context_engine/facts/test_facts_extraction.py \
     tests/context_engine/embeddings/test_semantic_search.py \
     tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
@@ -68,4 +65,4 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
 uv run python evals/evals.py session_memory
 ```
 
-サンドボックス下でライブ子系统を採点——7 チェック：クールダウン再起動存活、ロック相互排除、チェックポイント復元、冪等リプレイ、コンテキスト投影、実 LLM facts 抽出、実 embed 意味順位付け。詳細は `evals/session_memory/suite.py`。
+サンドボックス下でライブ子系统を採点——6 チェック：クールダウン再起動存活、ロック相互排除、チェックポイント復元、冪等リプレイ、コンテキスト投影、実 embed 意味順位付け。詳細は `evals/session_memory/suite.py`。

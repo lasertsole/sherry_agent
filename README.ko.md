@@ -24,7 +24,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **세션 체크포인팅**: 스레드 세이프 비동기 SQLite 체크포인터(`langgraph-checkpoint-sqlite`)가 재시작 후에도 에이전트 상태를 유지하며, 오래된 체크포인트는 자동 정리
 - **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
 - **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
-- **경험 추출(Experience Extraction)**: 다섯 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 턴마다 실행되는 facts 파이프라인(`context_engine/facts/`), 10턴마다의 memory nudge, todo가 모두 완료될 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, `facts/*.md`, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
+- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 10턴마다의 memory nudge, todo가 모두 완료될 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
 - ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
 - ▶️ _트리거 × 메커니즘 × 기록 위치의 전체 매핑은 [Experience Extraction README](docs/experience_extraction/README.ko.md) 참조_
 
@@ -138,7 +138,6 @@ EMA_AI_agent/
 ├── context_engine/         # 메모리 엔진(MesMemory)
 │   ├── core.py             # 히스토리 조회 및 FTS5 검색 API
 │   ├── store/              # 세션 메시지 스토어(SQLite + FTS5, WAL)
-│   ├── facts/              # 턴별 facts 파이프라인(cursor / extractor / queue)
 │   ├── events/             # append-only 이벤트 로그 + projector
 │   ├── embeddings/         # 벡터 시맨틱 검색(indexer / search)
 │   └── curator/            # 자동 스킬 큐레이션
@@ -396,7 +395,7 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 | `graph_rag` | multimodal_rag 파이프라인을 RAGAS로 채점(faithfulness, answer relevancy, context recall, context precision) |
 | `subagent` | 실제 `spawn_subagent_direct` 파이프라인의 결정적 작업 벤치(작업 성공률 + 지연) |
 | `long_running_task` | 의존성 DAG에 대한 TaskFlow 오케스트레이션 루프(스텝 성공률, 흐름 완료, wall time) |
-| `session_memory` | 세션 메모리 스택 7개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 듀얼 워터마크 facts 추출, 시맨틱 검색 랭킹 |
+| `session_memory` | 세션 메모리 스택 6개 점검: 쿨다운, compaction lock, 체크포인트 복원, 멱등 재생, 컨텍스트 적격성, 시맨틱 검색 랭킹 |
 | `nudge_extraction` | plan 추출 과정을 auxiliary LLM이 grounded, 재사용 가능, 비일반적 스킬인지 판정 |
 
 모든 스위트는 `evals/sandbox.py` 안에서 실행되며(저장소 쓰기가 임시 샌드박스로 리디렉션됨), 리포트를 `evals/results/<suite>/<run_id>/`에 기록합니다. 이 디렉터리는 **gitignore**되어 있어 실행별 리포트는 절대 커밋되지 않습니다.

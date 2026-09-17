@@ -2,9 +2,9 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、13 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、グローバルなセッション横断 flow ボードを公開し、3 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、13 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、グローバルなセッション横断 flow ボードを公開し、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
-一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/tools/memory_tiered.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（LT-3 事実ベースライン + LT-7 ブロック）、`agent/middlewares/subagent_completion_drain/core.py`（LT-5 還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
+一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（LT-7 ブロック）、`agent/middlewares/subagent_completion_drain/core.py`（LT-5 還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -17,7 +17,6 @@
 - [進捗レポート](#-進捗レポート)
 - [アイドル検出](#-アイドル検出)
 - [セッション横断ボード（GAP-9）](#-セッション横断ボードgap-9)
-- [階層メモリ](#-階層メモリ)
 - [圧縮前メモリフラッシュ](#-圧縮前メモリフラッシュ)
 - [要約 ↔ TaskFlow 連携](#-要約--taskflow-連携)
 - [サブエージェントメモリ還流（LT-5）](#-サブエージェントメモリ還流lt-5)
@@ -33,7 +32,7 @@
 
 ## 🎯 概要
 
-長時間タスクスタックは、メインエージェントがマルチターンの作業を**永続的な flow** へ分解し、そのステップ同士が依存し合えるようにし、各準備完了ステップを子エージェントへディスパッチし、プロセス再起動を生き延びられるようにします。7 つのサブシステムが協調します：
+長時間タスクスタックは、メインエージェントがマルチターンの作業を**永続的な flow** へ分解し、そのステップ同士が依存し合えるようにし、各準備完了ステップを子エージェントへディスパッチし、プロセス再起動を生き延びられるようにします。6 つのサブシステムが協調します：
 
 | # | サブシステム | 入口 | 永続化先 |
 | :- | :--- | :--- | :--- |
@@ -41,9 +40,8 @@
 | 2 | **トークン / コスト予算** | `taskflow_budget`、`taskflow_resume` | `task_flows.total_tokens` / `total_cost` / `token_budget` |
 | 3 | **締め切り** | `taskflow_create(deadline_hours=…)` + sweeper | `task_flows.deadline_ts` |
 | 4 | **アイドル検出** | sweeper `_scan_stale_waiting_taskflows` | `wait_json` の古いマーカー |
-| 5 | **階層メモリ** | `memory` ツールアクション + `agent/tools/memory_tiered.py` | `workspace/memory/*.md` + `facts/*.md` |
-| 6 | **圧縮前フラッシュ** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
-| 7 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
+| 5 | **圧縮前フラッシュ** | `agent/middlewares/summarization/memory_flush.py` | `workspace/memory/MEMORY.md` |
+| 6 | **継続性 / 自動再開** | `context_engine/session_continuity.py`、`workspace/prompt_builder.py` | `src/data/session_continuity/*.json` + プロンプトブロック |
 
 全体を貫く設計契約は**エラーをテキストとして返す**ことです：ツールは業務エラーをモデルへ投げず、`Error:` で始まる人間可読な文字列を返します。すべてのバックグラウンドフックは**フェイルオープン**です——レジストリが使えなくても sweeper がクラッシュしても、「長時間タスクのコンテキストなし」へ退化するだけで、ターンを壊すことはありません。
 
@@ -395,53 +393,18 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 ## 🧠 階層メモリ
 
-3 つの層は、*どのように*モデルへ届くかで区別されます：
+2 つの層は、*どのように*モデルへ届くかで区別されます：
 
 | 層 | ストア | 場所 | プロンプトに入るか？ |
 | :--- | :--- | :--- | :--- |
 | **L1 —— 精錬メモリ** | `MEMORY.md`（エージェントのノート）+ `USER.md`（ユーザープロファイル） | `workspace/memory/`（`MEMORY_DIR`） | はい——凍結スナップショットとして常に注入 |
-| **L2 —— 構造化事実** | `facts/{category}.md`、固定 5 カテゴリ | `workspace/memory/facts/`（`FACTS_DIR`） | 一行インデックスのみ；全文はオンデマンドで読む |
-| **L3 —— 生の履歴** | `mes_memory.db`（SQLite、WAL、FTS5） | `src/store/mes_memory/mes_memory.db` | いいえ——`context_engine` / `message_search` が取得 |
+| **L2 —— 生の履歴** | `mes_memory.db`（SQLite、WAL、FTS5） | `src/store/mes_memory/mes_memory.db` | いいえ——`context_engine` / `message_search` が取得 |
 
 ファイルは**単独行の区切り文字 `§` で区切られたプレーンテキストのエントリ**です——`ENTRY_DELIMITER = "\n§\n"`（`agent/tools/memory.py:53`）。YAML frontmatter も箇条書きプレフィックスもありません。エントリは複数行にわたれます。
 
 層 1 は `MemoryStore` が管理します（`memory.py:104`）：ファイルごとの文字数上限は `2200`（memory）と `1375`（user）、注入スキャン（`_MEMORY_THREAT_PATTERNS`、`memory.py:68`）がプロンプトインジェクションと認証情報漏洩を拒否し、クロスプラットフォームのファイルロック、アトミック書き込み、完全一致の重複排除を備えます。ライブのエントリは即座に変更される一方、プロンプトは `load_from_disk()` で取得された**凍結スナップショット**を使い、セッション中のプレフィックスキャッシュを安定させます。
 
-層 2 は `TieredMemoryStore` が管理します（`agent/tools/memory_tiered.py:19`）。カテゴリは `environment`、`project`、`decisions`、`user_prefs`、`tool_lessons`（`TIERED_MEMORY["facts_categories"]`）、ファイルごとの上限は `TIERED_MEMORY["facts_char_limit"]` = 4000 文字です。ファイルがあふれると**最も古い**エントリから追い出され、完全な重複は既存として報告されます。
-
-事実操作は独立したツールではなく、**単一の `memory` ツールのアクション**です（`memory.py:641`）：
-
-```python
-# MemoryActionSchema.action
-Literal["add", "replace", "remove", "fact_add", "fact_read", "fact_search"]
-```
-
-| アクション | 必須引数 | 戻り値 |
-| :--- | :--- | :--- |
-| `fact_add` | `content`、`target`（カテゴリ） | JSON `{"success", "message", "category", "entry_count", "usage"}` |
-| `fact_read` | `target` = カテゴリ または `"all"` | JSON `{"success": true, "facts": {category: text}}` |
-| `fact_search` | `content`（部分文字列クエリ） | JSON `{"success": true, "results": [{"category", "fact"}], "count"}` |
-
-`prompt_builder.build_system_prompt` は `format_for_system_prompt` 経由で L1 スナップショットを注入し、L2 インデックス `FACTS (on-demand, use memory tool with fact_read/fact_search): …` を追記します（`workspace/prompt_builder.py:271-282`）。`memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
-
-### 要約プロンプトの事実ベースライン（LT-3）
-
-システムプロンプトは L2 の一行インデックスしか運ばないため、圧縮パスが、モデルがまだ必要とする事実へのポインタを要約で消してしまう可能性がありました。これを防ぐため、`_build_summary_prompt`（`agent/middlewares/summarization/core.py:1488-1506`）が `get_tiered_store().read_facts()` を通じて**非空のすべての事実**を読み、`<facts-baseline>` ブロックを要約プロンプトへ追記します：
-
-```python
-# summarization/core.py:1496
-baseline_lines = ["<facts-baseline>"]
-baseline_lines.append(
-    "Persistent facts from tiered memory (ground truth, survives compression):"
-)
-for cat, content in non_empty.items():
-    baseline_lines.append(f"[{cat}]")
-    baseline_lines.append(content)
-baseline_lines.append("</facts-baseline>")
-parts.append("\n".join(baseline_lines))
-```
-
-このブロックは**グラウンドトゥルース**としてラベル付けされ、圧縮モデルがそれを捨てたり言い換えたりせず保持するようにします。LT-7 TaskFlow ブロックの後に追記され（どちらも LLM プロンプト専用の追加であり、`_build_static_fallback_summary` には現れません）、完全に**ベストエフォート**です：階層ストアの読み取り中の失敗は握りつぶされ（`except Exception: pass`）、圧縮を決してブロックしません。これはプロンプト層での再利用であり、L2 が何を保存するか、`memory` ツールがどう読むかは変えません。
+`memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
 
 ## 🔥 圧縮前メモリフラッシュ
 
@@ -485,7 +448,7 @@ def _backflow_shared_memory() -> None:
         memory_store.save_to_disk(target)
 ```
 
-親と子は**単一のプロセス全体 `MemoryStore`** と同じ `facts/` ディレクトリを共有するため、子の書き込みはすでにファイル可視です。ドリフトしうるのは親のインメモリビュー——ライブエントリと、システムプロンプトの構築に使った**凍結スナップショット**——であり、これはプロセス外の書き手が `MEMORY.md` / `USER.md` を更新したときに起こります。**先に再読込**する順序が要です：古いインメモリ一覧を再読込前に永続化すると並行書き手を上書きしてしまうため、照合はターゲットごとに load → persist でなければなりません。
+親と子は**単一のプロセス全体 `MemoryStore`** を共有するため、子の書き込みはすでにファイル可視です。ドリフトしうるのは親のインメモリビュー——ライブエントリと、システムプロンプトの構築に使った**凍結スナップショット**——であり、これはプロセス外の書き手が `MEMORY.md` / `USER.md` を更新したときに起こります。**先に再読込**する順序が要です：古いインメモリ一覧を再読込前に永続化すると並行書き手を上書きしてしまうため、照合はターゲットごとに load → persist でなければなりません。
 
 排出と同様、還流も**フェイルオープン**です——メモリ I/O の失敗はログに記録されて握りつぶされ、完了キャリアは親ターンへ届きます。また排出は内部完了キャリアに Sisyphus 検証リマインダーを追記し、完了は `DoneClaim` であって検証済み結果ではないことを親に思い出させます（todo を完了にする前に `todoread` で検証し、受け入れ基準に照らし、古い状態を調査します）。
 
@@ -656,13 +619,13 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **20** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
-| `config/features/infra_side/` | **18** 個のインフラ側設定モジュール（サーバー、キュー、スキル、コンテキストエンジン、ランタイム、モデル価格） |
+| `config/features/agent_side/` | **19** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
+| `config/features/infra_side/` | **19** 個のインフラ側設定モジュール（サーバー、キュー、スキル、コンテキストエンジン、ランタイム、モデル価格） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **38 個の feature オブジェクト**を保持します——エージェント側 20 + インフラ側 18——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **38 個の feature オブジェクト**を保持します——エージェント側 19 + インフラ側 19——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -677,9 +640,6 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | | `waiting_timeout_hours` | 24 |
 | `MODEL_PRICING`（`infra_side/model_pricing.py`） | `model_pricing_per_m_tokens` | `glm-5` / `deepseek-chat` / `kimi-latest` / `_default` |
 | | `budget_warn_threshold` | 0.80 |
-| `TIERED_MEMORY`（`agent_side/tiered_memory.py`） | `facts_char_limit` | 4000 |
-| | `facts_index_max_chars` | 200（宣言済み；ライブコード未消費） |
-| | `facts_categories` | environment, project, decisions, user_prefs, tool_lessons |
 | `MEMORY_FLUSH`（`agent_side/memory_flush.py`） | `enabled` | `MEMORY_FLUSH_ENABLED`（既定 1） |
 | | `model` | `MEMORY_FLUSH_MODEL`（既定 ""） |
 | | `soft_threshold_tokens` | 8000 |
@@ -709,15 +669,15 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/fact_add/…      │                 │ build_system_prompt    │
+│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ TaskFlow store    │          │ MemoryStore (L1)     │                 │ ─ MEMORY/USER snapshot │
-│ task_flows (WAL)  │          │ TieredMemoryStore(L2)│                 │ ─ FACTS index (L2)     │
-│ state_json DAG    │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
-│ + retry/validation│          │  memory_tiered.py    │                 │ ─ Last Session         │
+│ task_flows (WAL)  │          │  agent/tools/        │                 │ ─ Pending TaskFlows    │
+│ state_json DAG    │          │  memory.py           │                 │ ─ Last Session         │
+│ + retry/validation│          │                      │                 │                        │
 └────────┬──────────┘          └──────────────────────┘                 └────────────────────────┘
          │ dispatch_child()                                                       ▲
          ▼                                                                        │ continuity json
@@ -737,8 +697,8 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
 │ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+LT-3 facts,     │   │
-└──────────────────────────────┘                   │  +LT-7 TaskFlow)          │   │
+│ _scan_stale_waiting_taskflows│                   │ summary (+LT-7 TaskFlow)  │   │
+└──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
                                                                ▼                    │
@@ -747,7 +707,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
                                                    └───────────────────────────┘
 ```
 
-コンパイル済みグラフはもはや `agent.core.py` 内でインラインにラップされません：**`agent/wrapper/`** パッケージがガードを所有します。`agent.wrapper.registry` はプロセス全体の、順序付きでプラグ可能なチェーン（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`）を公開し、`GraphWrapperFactory` エントリは**最内優先**で適用されます；既定値は歴史的なハードコードチェーンを再現します——まず `RepetitionGuardWrapper(phantom_stream_guard=True)`、次に `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。ストリーム重複ガードは `agent/wrapper/repetition_guard.py`、コンテキストウィンドウガードは `agent/wrapper/context_limit.py` にあります。`facts/` 層を支える **TieredMemoryStore（L2）** は `agent/tools/memory_tiered.py` にあり、**LT-5** 還流は `agent/middlewares/subagent_completion_drain/core.py` の `SubagentCompletionDrainMiddleware` が実行します。
+コンパイル済みグラフはもはや `agent.core.py` 内でインラインにラップされません：**`agent/wrapper/`** パッケージがガードを所有します。`agent.wrapper.registry` はプロセス全体の、順序付きでプラグ可能なチェーン（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`）を公開し、`GraphWrapperFactory` エントリは**最内優先**で適用されます；既定値は歴史的なハードコードチェーンを再現します——まず `RepetitionGuardWrapper(phantom_stream_guard=True)`、次に `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。ストリーム重複ガードは `agent/wrapper/repetition_guard.py`、コンテキストウィンドウガードは `agent/wrapper/context_limit.py` にあります。**LT-5** 還流は `agent/middlewares/subagent_completion_drain/core.py` の `SubagentCompletionDrainMiddleware` が実行します。
 
 ## 📚 API リファレンス
 
@@ -774,9 +734,6 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | アクション | シグネチャ | 戻り値 |
 | :--- | :--- | :--- |
 | `add` / `replace` / `remove` | `memory(action, target="memory"\|"user", content, old_text)` | JSON 成功/エラー |
-| `fact_add` | `memory(action="fact_add", target=<カテゴリ>, content=<事実>)` | JSON `{success, message, category, entry_count, usage}` |
-| `fact_read` | `memory(action="fact_read", target=<カテゴリ>\|"all")` | JSON `{success, facts: {category: text}}` |
-| `fact_search` | `memory(action="fact_search", content=<クエリ>)` | JSON `{success, results: [{category, fact}], count}` |
 
 ### 主要な関数と定数
 
@@ -799,7 +756,6 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | セッション横断ボード読み取り |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 失敗分類 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all 再試行の計画/永続化 |
-| `get_tiered_store` | `agent/tools/memory_tiered.py:118` | L2 事実ストア + LT-3 ベースライン源 |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 メモリ還流の照合 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | プラグ可能なグラフラッパーチェーン |
 
@@ -827,14 +783,14 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（17 個�
 | `test_validation.py` | GAP-7 基準の保存、再開エコー、上書き |
 | `test_taskflow_list.py` | GAP-9 ボード描画、ステータスフィルタ、最終活動タイムスタンプ |
 
-横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時の LT-5 メモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証リマインダー）、`tests/agent/tools/test_memory_tiered.py`（階層事実）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留 flow のプロンプト注入）。
+横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時の LT-5 メモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証リマインダー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留 flow のプロンプト注入）。
 
 標準の uv/pytest ツールでこの領域だけを実行：
 
 ```bash
 uv run pytest tests/agent/tools/taskflow -q
 uv run pytest tests/agent/middlewares/test_memory_flush.py tests/context_engine/test_session_continuity.py -q
-uv run pytest tests/pub/func/message/test_tool_output_prune.py tests/agent/tools/test_memory_tiered.py -q
+uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 ```
 
 完全なプロセス分離スイートには `uv run python tests/run_tests_split.py` を使います（Group A が `unit` ファイル、Group B が `module`/`integration` ファイルを実行）。
@@ -847,12 +803,10 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py tests/agent/tools
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 35 ではなく 38。** 設定レジストリは 38 個の feature オブジェクト（エージェント側 20 + インフラ側 18）を保持します；インフラ側の契約テストは `MODEL_PRICING` を省くため 17 と過少カウントします。
-- **`facts_index_max_chars` は宣言済みだが未使用。** `TIERED_MEMORY` フィールドは存在しますが、ライブコードは読みません。
+- **レジストリ規模は 38。** 設定レジストリは 38 個の feature オブジェクト（エージェント側 19 + インフラ側 19）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING` を省いています。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **LT-7 の TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。
 - **結果検証は助言的。** `validation_criteria` は保存され結果と共にエコーされますが、ツールが強制することはありません；合否はオーケストレータ自身が判断する必要があります。基準未達でステップを失敗させられる自動ゲートはありません。
 - **再試行分類はテキストベース。** `classify_failure` は結果テキストに対する部分文字列ヒューリスティックです：パターン表の外の言い回しの失敗（または否定フレーズに隠れた真の失敗）は再試行を引き起こさず、空の `retry_on` は分類されたすべての失敗を再試行します。`taskflow_wait_all` は結果テキストの無い死亡した子を分類できないため、予算が残る限り常に再試行予算を消費します。
 - **`taskflow_list` は意図的にグローバル。** セッション横断ボードは `creator_session_key` スコープを無視するため、任意のメインエージェントセッションがレジストリ内のすべての flow を列挙できます（読み取り専用、`expected_revision` なし）。セッション単位のビューではありません。
-- **事実ベースラインは LLM プロンプト専用の追加。** LT-3 の `<facts-baseline>` ブロックは `_build_summary_prompt` が追記し、決定論的フォールバック要約には現れません——LT-7 TaskFlow ブロックと全く同じです。

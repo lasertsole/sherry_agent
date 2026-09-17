@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-All 14 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) are implemented, plus the LT-1…LT-8 long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — tiered facts, session continuity, state registers, MesMemory migrations — never a parallel store.
+All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) are implemented, plus the LT-1…LT-8 long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory migrations — never a parallel store.
 
 > Status (2026-09-13): plan retired. This README is the reference.
 
@@ -20,7 +20,6 @@ All 14 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 | P1-5 | Message tree + zero-copy forking | migration v14 (`parent_message_id`, `session_leafs`) |
 | P2-1 | Append-only event log + projector | migration v16, `context_engine/events/` |
 | P2-2 | Context epoch snapshots | migration v17 (`context_epoch` table), `ContextEpoch` |
-| P2-3 | Dual-watermark facts extraction | `context_engine/facts/`, writes via `TieredMemoryStore.add_fact` |
 | P2-4 (partial) | steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
 | LT-1…8 | TaskFlow orchestration | `docs/long-running-tasks/` |
@@ -40,7 +39,6 @@ All 14 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 ## Key Components
 
-- **`context_engine/facts/`** — dual-watermark cursor (`cursor.py`, durable on `state_register.db`), auxiliary-LLM extractor (`extractor.py`, json_repair parsing + category fallback), queue orchestration (`queue.py`). Wired into `ContextEngineHook.aafter_agent` as a fire-and-forget background task; facts are written through the existing `TieredMemoryStore.add_fact` (facts/*.md).
 - **`context_engine/events/`** — append-only event log with gapless per-session sequences (`types.py`, `store.py`), and an `EventProjector` mapping checkpoint events onto the P1-1 read model.
 - **`context_engine/embeddings/`** — vector semantic search: lazy embed backend (project embed model, overridable), idempotent LEFT-JOIN-driven indexer, cosine ranking; exposed by the `message_search` tool (`semantic: true`).
 - **`agent/tools/message_search.py`** — two-stage recall: FTS5 over the persisted `messages` table first; when there is no hit it falls back to the session's newest checkpoint (`SRC_DIR/checkpoints/sqlite.db`, `state["messages"]`), keyword-matching not-yet-persisted turns newest-first (bounded by `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars`); fallback hits are tagged `source="checkpoint"`.
@@ -57,7 +55,6 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/store/test_message_tree.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
-    tests/context_engine/facts/test_facts_extraction.py \
     tests/context_engine/embeddings/test_semantic_search.py \
     tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
@@ -68,4 +65,4 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
 uv run python evals/evals.py session_memory
 ```
 
-Scores the live subsystem under the eval sandbox — 7 checks covering cooldown restart survival, lock mutual exclusion, checkpoint restore, idempotent replay, context projection, real-LLM facts extraction and real-embed semantic ranking. See `evals/session_memory/suite.py`.
+Scores the live subsystem under the eval sandbox — 6 checks covering cooldown restart survival, lock mutual exclusion, checkpoint restore, idempotent replay, context projection and real-embed semantic ranking. See `evals/session_memory/suite.py`.

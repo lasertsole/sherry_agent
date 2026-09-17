@@ -176,12 +176,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
    - **计划提取**：当 `CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]` 开启，且 `_detect_todo_all_complete(session_id)` 报告 todo 列表刚刚全部变为 `completed` / `cancelled` 时，在锁 `nudge_plan_extraction_lock`（`state_register_mem`）下启动 `_nudge_plan_extraction`。`nudge_plan_extraction_fired` 标志（`state_register_db`）保证每个完成周期只触发一次；只要列表未全部完成就重置。
    任一锁被持有时，`after_agent` 跳过 nudge 判定（记忆计数器仍会递增）。
 3. 将最后一个回合持久化到 MesMemory：`slice_last_turn` → `sanitize_tool_use_result_pairing` → `add_messages(session_id, messages)`（SQLite）。
-4. 同步 `after_agent` 通过 `run_async` 运行子 Agent；`aafter_agent` 通过 `asyncio.gather` 并发执行持久化与 nudge。在计划提取回合，逐回合的 facts 管线会让位：`_nudge_plan_extraction` 在同一次运行中吸收待处理的 facts 区间（见下 Part 3）。
+4. 同步 `after_agent` 通过 `run_async` 运行子 Agent；`aafter_agent` 通过 `asyncio.gather` 并发执行持久化与 nudge。
 
 **Nudge 子 Agent**（`context_engine/nudge.py`）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
 
 - `_MEMORY_REVIEW_PROMPT`（记忆复盘）：周期性运行，通过记忆工具保存用户的持久偏好与期望。
-- `_PLAN_EXTRACTION_PROMPT`（计划提取）：在所有 todo 完成时触发一次的运行，产出三项内容。**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`。**Part 2** 通过 `skill_manage` 更新技能库（原先独立的技能复盘指引并入此处）。**Part 3** 通过 `memory(action="fact_add")` 将持久事实写入分层 facts 存储；仅当存在待处理的 facts 区间时才渲染该部分，且只有运行成功后才推进 facts 消费游标。其上下文来自 `_build_plan_context`：计划文件、todo 列表、start-work 台账（`.omo/start-work/ledger.jsonl`）以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
+- `_PLAN_EXTRACTION_PROMPT`（计划提取）：在所有 todo 完成时触发一次的运行，产出两项内容。**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`。**Part 2** 通过 `skill_manage` 更新技能库（原先独立的技能复盘指引并入此处）。其上下文来自 `_build_plan_context`：计划文件、todo 列表、start-work 台账（`.omo/start-work/ledger.jsonl`）以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
 

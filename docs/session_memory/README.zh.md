@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-SESSION 内存计划的全部 14 项能力（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）均已实现，并包含 LT-1…LT-8 长程任务编排。设计规则：所有能力都扩展既有基础设施——分层 facts、会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
+SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）均已实现，并包含 LT-1…LT-8 长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
 
 > 状态（2026-09-13）：计划已退役，本 README 即权威参考。
 
@@ -20,7 +20,6 @@ SESSION 内存计划的全部 14 项能力（借鉴自 opencode-dev / oh-my-open
 | P1-5 | 消息树 + 零拷贝 fork | 迁移 v14（`parent_message_id`、`session_leafs`） |
 | P2-1 | 只增事件日志 + 投影器 | 迁移 v16，`context_engine/events/` |
 | P2-2 | Context Epoch 快照 | 迁移 v17（`context_epoch` 表），`ContextEpoch` |
-| P2-3 | 双水位游标 Facts 提取 | `context_engine/facts/`，经 `TieredMemoryStore.add_fact` 写入 |
 | P2-4（部分） | steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
 | LT-1…8 | TaskFlow 编排 | `docs/long-running-tasks/` |
@@ -40,7 +39,6 @@ SESSION 内存计划的全部 14 项能力（借鉴自 opencode-dev / oh-my-open
 
 ## 关键组件
 
-- **`context_engine/facts/`** —— 双水位游标（`cursor.py`，持久化于 `state_register.db`）、辅助 LLM 提取器（`extractor.py`，json_repair 解析 + 类别回退）、队列编排（`queue.py`）。经 `ContextEngineHook.aafter_agent` 以 fire-and-forget 后台任务接入；事实写入既有 `TieredMemoryStore.add_fact`（facts/*.md）。
 - **`context_engine/events/`** —— 只增事件日志（会话内无间隙序列：`types.py`、`store.py`），`EventProjector` 将检查点事件映射到 P1-1 读模型。
 - **`context_engine/embeddings/`** —— 向量语义搜索：惰性嵌入后端（项目嵌入模型，可覆盖）、幂等 LEFT-JOIN 索引器、余弦排序；由 `message_search` 工具暴露（`semantic: true`）。
 - **`agent/tools/message_search.py`** —— 两段式检索：先在已持久化的 `messages` 表上做 FTS5 搜索；无命中时降级到会话的最新 checkpoint（`SRC_DIR/checkpoints/sqlite.db` 的 `state["messages"]`），由新到旧对尚未持久化的轮次做关键词匹配（受 `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` 限制）；兜底命中标记 `source="checkpoint"`。
@@ -57,7 +55,6 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/store/test_message_tree.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
-    tests/context_engine/facts/test_facts_extraction.py \
     tests/context_engine/embeddings/test_semantic_search.py \
     tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
@@ -68,4 +65,4 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
 uv run python evals/evals.py session_memory
 ```
 
-在评估沙箱内对活体子系统评分——7 项检查覆盖冷却重启存活、锁互斥、检查点回溯、幂等重放、上下文投影、真实 LLM 事实提取与真实嵌入语义排序。见 `evals/session_memory/suite.py`。
+在评估沙箱内对活体子系统评分——6 项检查覆盖冷却重启存活、锁互斥、检查点回溯、幂等重放、上下文投影与真实嵌入语义排序。见 `evals/session_memory/suite.py`。

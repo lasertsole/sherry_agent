@@ -24,7 +24,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **セッションチェックポイント**：スレッドセーフな非同期 SQLite チェックポインター（`langgraph-checkpoint-sqlite`）がエージェント状態を再起動をまたいで永続化し、古いチェックポイントは自動クリーンアップ
 - **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
-- **経験抽出（Experience Extraction）**：5 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。ターンごとの facts パイプライン（`context_engine/facts/`）、10 ターンごとの memory nudge、todo がすべて完了したときの plan 抽出、圧縮前の memory flush、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、`facts/*.md`、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
+- **経験抽出（Experience Extraction）**：4 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。10 ターンごとの memory nudge、todo がすべて完了したときの plan 抽出、圧縮前の memory flush、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
 - ▶️ _トリガー × メカニズム × 書き込み先の全体マップは [Experience Extraction README](docs/experience_extraction/README.ja.md) を参照_
 
@@ -138,7 +138,6 @@ EMA_AI_agent/
 ├── context_engine/         # メモリエンジン（MesMemory）
 │   ├── core.py             # 履歴取得と FTS5 検索 API
 │   ├── store/              # セッションメッセージストア（SQLite + FTS5、WAL）
-│   ├── facts/              # ターンごとの facts パイプライン（cursor / extractor / queue）
 │   ├── events/             # 追記型イベントログ + projector
 │   ├── embeddings/         # ベクトルセマンティック検索（indexer / search）
 │   └── curator/            # 自動スキルキュレーション
@@ -396,7 +395,7 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 | `graph_rag` | multimodal_rag パイプラインを RAGAS で採点（faithfulness、answer relevancy、context recall、context precision） |
 | `subagent` | 実 `spawn_subagent_direct` パイプラインを決定論的タスクのベンチで評価（タスク成功率 + レイテンシ） |
 | `long_running_task` | 依存 DAG 上の TaskFlow オーケストレーションループ（ステップ成功率、フロー完了、wall time） |
-| `session_memory` | セッションメモリスタックの 7 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、デュアルウォーターマーク facts 抽出、セマンティック検索ランキング |
+| `session_memory` | セッションメモリスタックの 6 チェック：クールダウン、compaction lock、チェックポイント復元、冪等リプレイ、コンテキスト適格性、セマンティック検索ランキング |
 | `nudge_extraction` | plan 抽出パスを auxiliary LLM が grounded・再利用可能・非汎用か判定 |
 
 すべてのスイートは `evals/sandbox.py` 内で実行され（リポジトリへの書き込みは一時サンドボックスにリダイレクトされます）、レポートを `evals/results/<suite>/<run_id>/` に書き込みます。このディレクトリは **gitignore** 済みで、実行ごとのレポートがコミットされることはありません。

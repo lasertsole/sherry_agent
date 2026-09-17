@@ -24,7 +24,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Session Checkpointing**: thread-safe async SQLite checkpointer (`langgraph-checkpoint-sqlite`) persists agent state across restarts; stale checkpoints are cleaned automatically
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
-- **Experience Extraction**: five lifecycle paths turn conversation history into durable experience: the per-turn facts pipeline (`context_engine/facts/`), a 10-turn memory nudge, plan extraction when the todo list completes, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, `facts/*.md`, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
+- **Experience Extraction**: four lifecycle paths turn conversation history into durable experience: a 10-turn memory nudge, plan extraction when the todo list completes, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
 - ▶️ _See the [Experience Extraction README](docs/experience_extraction/README.md) for the trigger × mechanism × destination map_
 
@@ -138,7 +138,6 @@ EMA_AI_agent/
 ├── context_engine/         # Memory engine (MesMemory)
 │   ├── core.py             # History retrieval & FTS5 search APIs
 │   ├── store/              # Session message store (SQLite + FTS5, WAL)
-│   ├── facts/              # Per-turn facts pipeline (cursor / extractor / queue)
 │   ├── events/             # Append-only event log + projector
 │   ├── embeddings/         # Vector semantic search (indexer / search)
 │   └── curator/            # Auto-skill curation
@@ -396,7 +395,7 @@ uv run python evals/evals.py graph_rag      # a single suite by name
 | `graph_rag` | The multimodal_rag pipeline, scored with RAGAS (faithfulness, answer relevancy, context recall, context precision) |
 | `subagent` | The real `spawn_subagent_direct` pipeline on a bench of deterministic tasks (task success + latency) |
 | `long_running_task` | The TaskFlow orchestration loop over a dependent DAG (step success, flow completion, wall time) |
-| `session_memory` | The session-memory stack over 7 checks: cooldown, compaction lock, checkpoint restore, idempotent replay, context eligibility, dual-watermark facts extraction, semantic search ranking |
+| `session_memory` | The session-memory stack over 6 checks: cooldown, compaction lock, checkpoint restore, idempotent replay, context eligibility, semantic search ranking |
 | `nudge_extraction` | The plan-extraction pass, judged by an auxiliary LLM for grounded, reusable, non-generic skills |
 
 Every suite runs inside `evals/sandbox.py`, which redirects repo writes into a temp sandbox, and writes its reports under `evals/results/<suite>/<run_id>/`. That directory is **gitignored**; per-run reports are never committed.
