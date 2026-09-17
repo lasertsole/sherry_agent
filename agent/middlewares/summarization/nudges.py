@@ -352,7 +352,10 @@ async def _run_compression_nudges(
 ) -> None:
     """Run the scheduled nudges sequentially under the NUDGE lane (fail-open)."""
     try:
-        from .core import _get_and_reload_system_prompt
+        # Call-time import keeps the patch seam on
+        # ``agent.middlewares.system_prompt.core._get_and_reload_system_prompt``
+        # effective (same contract as before the package move).
+        from agent.middlewares.system_prompt.core import _get_and_reload_system_prompt
 
         system_prompt = _get_and_reload_system_prompt(session_id)
         sanitized = sanitize_tool_use_result_pairing(list(messages))

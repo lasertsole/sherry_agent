@@ -3,7 +3,7 @@
 The suite seeds a self-contained, completed-plan run (plan file + completed
 todos + synthetic subagent run records), invokes the
 production plan-extraction pass
-(``agent.middlewares.system_prompt.nudge._nudge_plan_extraction``), then asks
+(``agent.middlewares.summarization.nudges._nudge_plan_extraction``), then asks
 an auxiliary LLM whether the skill it produced is genuinely grounded in THIS
 run, reusable, and non-generic. Every write is redirected into the sandbox, so
 the repo's real ``skills/auto/`` and ``workspace/`` are never touched.
@@ -397,7 +397,7 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
     """Seed the fixture, run the real extraction, and evaluate every check."""
     from langchain_core.messages import HumanMessage
 
-    from agent.middlewares.system_prompt.nudge import _nudge_plan_extraction
+    from agent.middlewares.summarization.nudges import _nudge_plan_extraction
 
     checks: list[dict[str, Any]] = []
     fixture = await _seed_fixture(session_id, results_dir, sandbox)

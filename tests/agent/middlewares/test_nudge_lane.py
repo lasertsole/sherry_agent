@@ -22,7 +22,7 @@ import pytest
 import runtime.lane.core as lane_core
 from runtime.lane.core import LaneManager, LaneType, lane_slot
 from agent.middlewares.system_prompt import core as ce_core
-from agent.middlewares.system_prompt import nudge
+from agent.middlewares.summarization import nudges as nudge
 
 pytestmark = [pytest.mark.unit]
 

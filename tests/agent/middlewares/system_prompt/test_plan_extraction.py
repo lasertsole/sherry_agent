@@ -21,8 +21,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
 from agent.middlewares.system_prompt import core as ce_core
-from agent.middlewares.system_prompt import nudge as nudge_mod
-from agent.middlewares.system_prompt.nudge import (
+from agent.middlewares.summarization import nudges as nudge_mod
+from agent.middlewares.summarization.nudges import (
     _PLAN_EXTRACTION_FIRED_KEY,
     _detect_todo_all_complete,
     schedule_compression_nudges,

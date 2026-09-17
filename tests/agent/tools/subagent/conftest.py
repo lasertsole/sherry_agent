@@ -17,7 +17,7 @@ _real_init_cache: dict[str, object] = {}
 
 # ``agent.middlewares`` re-exports resolved lazily from their concrete modules.
 # Production code imports these names from the *package* at call time
-# (``nudge.py::_create_nudge_agent``, ``spawn/core.py::_build_child_agent``)
+# (``summarization/nudges.py::_create_nudge_agent``, ``spawn/core.py::_build_child_agent``)
 # and hands them to ``create_agent``. A previous no-op ``lambda: None`` binding
 # here made the package lie: ``create_agent`` received ``None`` middleware
 # entries and crashed with ``AttributeError: type object 'NoneType' has no

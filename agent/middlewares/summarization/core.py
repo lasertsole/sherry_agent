@@ -619,13 +619,13 @@ def _parse_file_ops_from_summary(summary_text: str) -> dict | None:
 def _schedule_compression_todo_update(session_id: str, discarded_messages: Sequence[Any]) -> None:
     """Fire-and-forget the post-compression todo update (never blocks/raises).
 
-    Call-time import keeps ``summarization`` out of the ``system_prompt.nudge``
-    import graph; the scheduler itself gates (feature switch, non-empty todo
-    list, per-session lock) and skips when no event loop is running (sync
-    compression path).
+    Call-time import keeps the nudges module's heavier import graph out of
+    ``summarization.core``; the scheduler itself gates (feature switch,
+    non-empty todo list, per-session lock) and skips when no event loop is
+    running (sync compression path).
     """
     try:
-        from agent.middlewares.system_prompt.nudge import schedule_compression_todo_update
+        from agent.middlewares.summarization.nudges import schedule_compression_todo_update
 
         schedule_compression_todo_update(session_id, discarded_messages)
     except Exception:
@@ -639,11 +639,11 @@ def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> No
     after-agent hook:
     the scheduler advances the memory counter, evaluates the plan-extraction
     single-fire flag, and dispatches under the NUDGE lane when no nudge is
-    already in flight. Call-time import avoids the summarization ↔
-    system_prompt import cycle.
+    already in flight. Call-time import keeps the nudges module out of the
+    summarization module-load graph.
     """
     try:
-        from agent.middlewares.system_prompt.nudge import schedule_compression_nudges
+        from agent.middlewares.summarization.nudges import schedule_compression_nudges
 
         schedule_compression_nudges(session_id, messages)
     except Exception:
