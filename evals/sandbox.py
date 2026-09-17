@@ -166,11 +166,6 @@ class EvalSandbox:
         memory_dir = self.root / "memory"
         memory_dir.mkdir(parents=True, exist_ok=True)
         self._set(memory, "MEMORY_DIR", memory_dir)
-        tiered = importlib.import_module("agent.tools.memory_tiered")
-        facts_dir = self.root / "memory" / "facts"
-        facts_dir.mkdir(parents=True, exist_ok=True)
-        self._set(tiered, "FACTS_DIR", facts_dir)
-        self._set(tiered, "tiered_store", None)
 
         drain = importlib.import_module("agent.middlewares.subagent_completion_drain.core")
 

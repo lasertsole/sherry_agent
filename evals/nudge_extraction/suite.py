@@ -1,7 +1,7 @@
 """Eval suite: real plan-aware extraction scored by an auxiliary-LLM judge.
 
 The suite seeds a self-contained, completed-plan run (plan file + completed
-todos + synthetic subagent run records + a pending facts turn), invokes the
+todos + synthetic subagent run records), invokes the
 production plan-extraction pass
 (``agent.middlewares.context_engine.nudge._nudge_plan_extraction``), then asks
 an auxiliary LLM whether the skill it produced is genuinely grounded in THIS
@@ -274,30 +274,6 @@ def _seed_subagent_runs(session_id: str) -> list[dict[str, str]]:
     return seeded
 
 
-async def _seed_facts_turn(session_id: str) -> int:
-    """Persist one durable-fact turn and enqueue it for Part 3 extraction."""
-    from context_engine.facts.queue import enqueue_turn
-    from context_engine.store import add_messages
-    from context_engine.store.core import get_max_turn_num
-    from langchain_core.messages import HumanMessage
-
-    await add_messages(
-        session_id,
-        [
-            HumanMessage(
-                content=(
-                    "Project convention: every DuckDB CSV load must pass "
-                    "sample_size=-1 and union_by_name=true, and table swaps run "
-                    "inside an explicit transaction to avoid TransactionContext errors."
-                )
-            )
-        ],
-    )
-    turn = get_max_turn_num(session_id)
-    await enqueue_turn(session_id, turn)
-    return turn
-
-
 def _scan_knowledge(plans_dir: Path) -> dict[str, Any]:
     """Summarize the knowledge JSON documents written under the sandbox root."""
     result: dict[str, Any] = {
@@ -399,21 +375,19 @@ async def _judge_skill(context_text: str, skill_text: str) -> dict[str, Any]:
 
 
 async def _seed_fixture(session_id: str, results_dir: Path, sandbox: EvalSandbox) -> dict[str, Any]:
-    """Create the plan file, todos, subagent runs and pending facts turn."""
+    """Create the plan file, todos and subagent runs."""
     plan_path = results_dir / "plans" / f"{_PLAN_NAME}.md"
     plan_path.parent.mkdir(parents=True, exist_ok=True)
     plan_path.write_text(_PLAN_MD, encoding="utf-8")
 
     todos = await _seed_todos(session_id, plan_path)
     subagent_runs = _seed_subagent_runs(session_id)
-    facts_turn = await _seed_facts_turn(session_id)
     return {
         "plan_name": _PLAN_NAME,
         "plan_path": str(plan_path),
         "plan_content": _PLAN_MD,
         "todos": todos,
         "subagent_runs": subagent_runs,
-        "facts_turn": facts_turn,
         "sandbox_auto_skills_dir": str(sandbox.auto_skills_dir),
         "sandbox_knowledge_dir": str(sandbox.knowledge_plans_dir),
     }
@@ -425,8 +399,6 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
 
     from agent.middlewares.context_engine.nudge import _nudge_plan_extraction
 
-    from agent.tools.memory_tiered import get_tiered_store
-
     checks: list[dict[str, Any]] = []
     fixture = await _seed_fixture(session_id, results_dir, sandbox)
     nudge_tool_names = _install_nudge_tools()
@@ -436,7 +408,6 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
     extraction_attempts = 0
     knowledge = _scan_knowledge(sandbox.knowledge_plans_dir)
     skill_files: list[Path] = []
-    facts: dict[str, str] = {}
     # The production pass is fail-open: a transient LLM failure is swallowed and
     # leaves no output. Retry the pass once when it produced nothing at all.
     for attempt in range(1, 3):
@@ -452,12 +423,7 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
             extraction_error = f"{type(exc).__name__}: {exc}"
         knowledge = _scan_knowledge(sandbox.knowledge_plans_dir)
         skill_files = _list_skill_files(sandbox.auto_skills_dir)
-        facts = get_tiered_store().read_facts()
-        produced = (
-            bool(knowledge["files"])
-            or bool(skill_files)
-            or any(content.strip() for content in facts.values())
-        )
+        produced = bool(knowledge["files"]) or bool(skill_files)
         if produced:
             break
     extraction_latency = round(time.monotonic() - extraction_started, 2)
@@ -468,20 +434,6 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
         and knowledge["wave_files"] >= 1
     )
     checks.append({"check": "knowledge_written", "passed": knowledge_passed, "detail": knowledge})
-
-    facts_nonempty = [category for category, content in facts.items() if content.strip()]
-    checks.append(
-        {
-            "check": "facts_written",
-            "passed": len(facts_nonempty) >= 1,
-            "detail": {
-                "categories_with_facts": facts_nonempty,
-                "facts_sample": {
-                    category: facts[category].strip()[:300] for category in facts_nonempty
-                },
-            },
-        }
-    )
 
     skill_text = "\n\n".join(file_path.read_text(encoding="utf-8") for file_path in skill_files)[
         :_MAX_SKILL_CHARS
@@ -511,7 +463,6 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
             "plan_name": fixture["plan_name"],
             "todos": len(fixture["todos"]),
             "subagent_runs": len(fixture["subagent_runs"]),
-            "facts_turn": fixture["facts_turn"],
         },
         "extraction_error": extraction_error,
         "extraction_latency_s": extraction_latency,
@@ -554,7 +505,6 @@ def main() -> None:
     protected = [
         REPO_ROOT / "skills" / "auto",
         REPO_ROOT / "workspace" / "knowledge",
-        REPO_ROOT / "workspace" / "memory" / "facts",
         REPO_ROOT / "skills" / "skills_snapshot.json",
     ]
     protection_before = _snapshot(protected)

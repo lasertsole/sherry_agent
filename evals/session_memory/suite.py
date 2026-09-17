@@ -7,7 +7,6 @@ Scores the session-memory stack end to end under the eval sandbox:
 - P1-1  checkpoint restore recovers the exact pre-compaction context
 - P1-2  crash-retry replay writes once; fresh content never deduped
 - P1-3  ineligible messages leave the history projection
-- P2-3  dual-watermark facts extraction (real auxiliary LLM)
 - P2-5  semantic search ranking (real local embed model)
 
 Deterministic checks assert correctness; LLM/embedding-backed checks assert
@@ -191,27 +190,6 @@ async def check_context_eligible_filter(sid: str) -> dict[str, Any]:
     return {"passed": passed, "projected": len(projected), "stored": len(everything)}
 
 
-async def check_facts_extraction_llm(sid: str, tiered) -> dict[str, Any]:
-    """P2-3: the real auxiliary LLM extracts durable facts from a fixture turn."""
-    from context_engine.facts.queue import enqueue_turn, process_pending
-    from context_engine.store import add_messages
-    from context_engine.store.core import get_max_turn_num
-
-    fixture: BaseMessage = HumanMessage(
-        content="Important project decision: the team adopted uv for dependency "
-        "management and SQLite WAL mode for storage."
-    )
-    await add_messages(sid, [fixture])
-    turn = get_max_turn_num(sid)
-    await enqueue_turn(sid, turn)
-    written = await process_pending(sid, tiered_store=tiered)
-
-    facts = tiered.read_facts()
-    joined = json.dumps(facts, ensure_ascii=False).lower()
-    passed = written >= 1 and ("uv" in joined or "wal" in joined)
-    return {"passed": passed, "facts_written": written, "facts": facts}
-
-
 async def check_semantic_search_ranking(sid: str) -> dict[str, Any]:
     """P2-5: the real embed model ranks the topical message first."""
     from context_engine.embeddings import semantic_search
@@ -229,11 +207,7 @@ async def check_semantic_search_ranking(sid: str) -> dict[str, Any]:
     }
 
 
-async def _run_checks(results_dir: Path) -> list[dict[str, Any]]:
-    from agent.tools.memory import MemoryStore
-    from agent.tools.memory_tiered import TieredMemoryStore
-
-    tiered = TieredMemoryStore(memory_store=MemoryStore(), facts_dir=results_dir / "facts")
+async def _run_checks() -> list[dict[str, Any]]:
     checks: list[dict[str, Any]] = []
 
     async def run(name: str, fn: Callable, *args) -> None:
@@ -263,8 +237,7 @@ async def _run_checks(results_dir: Path) -> list[dict[str, Any]]:
     await run("idempotent_replay", check_idempotent_replay, _sid("idempotent"))
     await run("context_eligible_filter", check_context_eligible_filter, _sid("eligible"))
 
-    # Real-model checks: auxiliary LLM extraction + local embed ranking.
-    await run("facts_extraction_llm", check_facts_extraction_llm, _sid("facts"), tiered)
+    # Real-model check: local embed ranking.
     await run("semantic_search_ranking", check_semantic_search_ranking, _sid("semantic"))
 
     return checks
@@ -280,7 +253,7 @@ def main() -> None:
     sandbox.apply()
     started = time.monotonic()
     try:
-        checks = asyncio.run(_run_checks(results_dir))
+        checks = asyncio.run(_run_checks())
     finally:
         sandbox.restore()
         sandbox.close_aiosqlite_connections()
