@@ -1,4 +1,4 @@
-"""taskflow_list: cross-session board of every task flow (GAP-9).
+"""taskflow_list: cross-session board of every task flow.
 
 Unlike taskflow_summary (one flow) and the session-scoped auto-resume query,
 this tool deliberately ignores creator/session scoping: it is the global board
@@ -28,8 +28,8 @@ def _numeric_ts(value: object) -> float | None:
 def _last_activity_ts(flow: dict) -> float | None:
     """Newest activity stamp persisted anywhere on the flow, or None.
 
-    The schema has no ``updated_at`` column (GAP-9 is migration-free, mirroring
-    GAP-11); activity stamps live inside ``state_json`` (step.dispatched_at,
+    The schema has no ``updated_at`` column (migration-free, mirroring
+    idle detection); activity stamps live inside ``state_json`` (step.dispatched_at,
     result.injected_at) and ``wait_json`` (wait.set_at), so their max is the
     closest honest proxy for "last updated".
     """

@@ -1,4 +1,4 @@
-"""GAP-8: step-level retry policy.
+"""Step-level retry policy.
 
 A step may declare ``retry_policy = {max_retries, retry_delay_seconds,
 retry_on}``. ``retry_count`` counts re-dispatches (the original dispatch is
@@ -185,7 +185,7 @@ async def test_run_task_without_policy_stores_no_retry_policy(
         flow_id="flow-1", task="plain step", session_id=_SESSION
     )
 
-    # Then no policy key is written (pre-GAP-8 shape preserved)
+    # Then no policy key is written (legacy shape preserved)
     step = _step_of(await _flow("flow-1"), "step-1")
     assert "retry_policy" not in step
 

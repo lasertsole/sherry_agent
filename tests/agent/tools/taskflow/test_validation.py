@@ -1,4 +1,4 @@
-"""GAP-7: step result validation criteria plumbing.
+"""Step result validation criteria plumbing.
 
 ``taskflow_run_task`` accepts natural-language ``validation_criteria`` and
 stores them on the step. ``taskflow_resume`` echoes the criteria back together
@@ -7,7 +7,7 @@ against them (the tools never call an LLM themselves). ``taskflow_summary``
 surfaces the criteria so pending manual checks are visible.
 
 Backward compatibility is pinned: without criteria, every response keeps its
-pre-GAP-7 shape and no ``validation_criteria`` key is written to the step.
+legacy shape and no ``validation_criteria`` key is written to the step.
 
 The dispatch seam is monkeypatched; the real spawn pipeline is never invoked.
 """

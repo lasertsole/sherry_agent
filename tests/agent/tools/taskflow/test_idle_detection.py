@@ -1,4 +1,4 @@
-"""Unit tests for GAP-11 idle TaskFlow detection.
+"""Unit tests for idle TaskFlow detection.
 
 Covers two seams:
 

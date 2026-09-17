@@ -1,4 +1,4 @@
-"""Step-level retry policy helpers (GAP-8).
+"""Step-level retry policy helpers.
 
 A step may carry a declarative ``retry_policy`` dict::
 
@@ -67,7 +67,7 @@ def classify_failure(result: str) -> str | None:
 def normalize_policy(step: dict) -> dict | None:
     """Return the step's retry policy with defaults filled, or None.
 
-    A missing/malformed policy degrades to None: the step keeps the pre-GAP-8
+    A missing/malformed policy degrades to None: the step keeps the legacy
     no-retry behavior instead of failing the tool call.
     """
     raw = step.get("retry_policy")

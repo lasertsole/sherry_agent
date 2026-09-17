@@ -1,4 +1,4 @@
-"""Behavior tests for taskflow_progress (GAP-6).
+"""Behavior tests for taskflow_progress.
 
 The tool is a read-only human-readable companion to taskflow_summary: it
 renders completion percentage, status breakdown, the first three actionable

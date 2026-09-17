@@ -25,9 +25,9 @@ Flow exercised:
            -> finish -> summary [counts line]
 
 The same file also carries one E2E test per feature added after the original
-DAG flow: budget tracking (GAP-3), deadlines (GAP-4), the progress report
-(GAP-6), validation criteria (GAP-7), retry policy (GAP-8) and the
-cross-session board (GAP-9). They share the same two fake seams, plus a frozen
+DAG flow: budget tracking, deadlines, the progress report,
+validation criteria, retry policy and the
+cross-session board. They share the same two fake seams, plus a frozen
 clock for the deadline math, so no test depends on wall-clock time.
 """
 
@@ -317,7 +317,7 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
 
 def test_dag_e2e_budget_set_resume_and_query(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
-    """GAP-3: a budget is set, resume accumulates usage, query renders it."""
+    """A budget is set, resume accumulates usage, query renders it."""
     # Given the real tool family and a recording dispatch seam
     fake = _RecordingDispatch("agent:main:subagent:budget-a")
     monkeypatch.setattr(dispatch_mod, "dispatch_child", fake)
@@ -369,7 +369,7 @@ def test_dag_e2e_budget_set_resume_and_query(isolated_db: Path, monkeypatch: pyt
 
 
 def test_dag_e2e_deadline_not_overdue(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
-    """GAP-4: a 24h deadline is created, rendered, and not yet overdue."""
+    """A 24h deadline is created, rendered, and not yet overdue."""
     # Given a frozen wall clock so the deadline math is exact
     frozen_now = 1_800_000_000.0
     monkeypatch.setattr(create_mod, "time", _FrozenTime(frozen_now))
@@ -403,7 +403,7 @@ def test_dag_e2e_deadline_not_overdue(isolated_db: Path, monkeypatch: pytest.Mon
 
 
 def test_dag_e2e_progress_report_tracks_unlock(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
-    """GAP-6: the progress report reflects a done step unlocking a blocked one."""
+    """The progress report reflects a done step unlocking a blocked one."""
     # Given the real tool family and a recording dispatch seam
     fake = _RecordingDispatch(CHILD_A)
     monkeypatch.setattr(dispatch_mod, "dispatch_child", fake)
@@ -450,7 +450,7 @@ def test_dag_e2e_progress_report_tracks_unlock(isolated_db: Path, monkeypatch: p
 def test_dag_e2e_validation_criteria_echo_and_summary(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """GAP-7: criteria are stored, echoed with a warning, and shown in summary."""
+    """Criteria are stored, echoed with a warning, and shown in summary."""
     # Adversarial (misleading_success_output): the child result claims SUCCESS
     # without satisfying the criteria; the tool must still surface the criteria
     # and the explicit warning instead of silently accepting the result.
@@ -502,7 +502,7 @@ def test_dag_e2e_validation_criteria_echo_and_summary(
 def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    """GAP-8: a dead child is re-dispatched once, then exhausted into a note."""
+    """A dead child is re-dispatched once, then exhausted into a note."""
     task = "flaky aggregate"
     policy = {"max_retries": 1, "retry_delay_seconds": 0.0, "retry_on": []}
     fake = _RecordingDispatch("agent:main:subagent:retry-1", "agent:main:subagent:retry-2")
@@ -566,7 +566,7 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
 
 
 def test_dag_e2e_cross_session_board_and_status_filter(isolated_db: Path):
-    """GAP-9: the board lists flows from different sessions and filters status."""
+    """The board lists flows from different sessions and filters status."""
     tools = {t.name: t for t in build_taskflow_tools()}
 
     async def scenario() -> None:

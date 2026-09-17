@@ -76,7 +76,7 @@ _SELECT_COLUMNS_SQL = (
     f"FROM {TABLE_NAME}"
 )
 
-# Additive migration DDL for databases created before GAP-3. Fresh databases
+# Additive migration DDL for databases created before token columns. Fresh databases
 # get these columns from _CREATE_TABLE_SQL; an existing table needs ALTER TABLE.
 # Each statement is attempted independently: the "duplicate column name"
 # OperationalError on an already-migrated column is the expected no-op.
@@ -88,7 +88,7 @@ _TOKEN_COLUMN_DDL: list[str] = [
 
 
 async def _ensure_token_columns(db: aiosqlite.Connection) -> None:
-    """Additive migration: add the GAP-3 token columns when absent."""
+    """Additive migration: add the token columns when absent."""
     for ddl in _TOKEN_COLUMN_DDL:
         try:
             await db.execute(ddl)
@@ -107,12 +107,12 @@ def _ensure_token_columns_sync(conn: sqlite3.Connection) -> None:
             pass
 
 
-# Additive migration DDL for databases created before GAP-4 (no deadline).
+# Additive migration DDL for databases created before deadline support.
 _DEADLINE_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN deadline_ts REAL"
 
 
 async def _ensure_deadline_column(db: aiosqlite.Connection) -> None:
-    """Additive migration: add the GAP-4 deadline_ts column when absent."""
+    """Additive migration: add the deadline_ts column when absent."""
     try:
         await db.execute(_DEADLINE_COLUMN_DDL)
     except aiosqlite.OperationalError:

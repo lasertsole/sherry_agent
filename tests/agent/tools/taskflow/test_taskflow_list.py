@@ -1,4 +1,4 @@
-"""Behavior tests for taskflow_list (GAP-9): the cross-session task board.
+"""Behavior tests for taskflow_list: the cross-session task board.
 
 The tool is the global counterpart of taskflow_summary: it deliberately ignores
 session/channel scoping and lists every flow in the registry, delegating to
@@ -6,8 +6,8 @@ session/channel scoping and lists every flow in the registry, delegating to
 
 Rendered table columns: flow_id, status, description (40 chars), steps
 done/total, creator_session_key (16 chars), and a best-effort last-activity
-timestamp. The schema has no ``updated_at`` column (GAP-9 is migration-free,
-mirroring GAP-11), so the tool derives the newest persisted state timestamp
+timestamp. The schema has no ``updated_at`` column (migration-free,
+mirroring idle detection), so the tool derives the newest persisted state timestamp
 (step.dispatched_at / result.injected_at / wait.set_at) and renders ``-`` when
 the flow carries none.
 

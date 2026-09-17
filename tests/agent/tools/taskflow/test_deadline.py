@@ -1,4 +1,4 @@
-"""Unit tests for GAP-4 task deadlines.
+"""Unit tests for task deadlines.
 
 Covers four seams:
 

@@ -10,13 +10,13 @@
 
 - [개요](#-개요)
 - [TaskFlow DAG 엔진](#-taskflow-dag-엔진)
-- [단계 재시도 정책(GAP-8)](#-단계-재시도-정책gap-8)
+- [단계 재시도 정책](#-단계-재시도-정책)
 - [토큰 / 비용 예산](#-토큰--비용-예산)
 - [작업 데드라인](#-작업-데드라인)
-- [결과 검증(GAP-7)](#-결과-검증gap-7)
+- [결과 검증](#-결과-검증)
 - [진행 보고서](#-진행-보고서)
 - [유휴 감지](#-유휴-감지)
-- [세션 간 보드(GAP-9)](#-세션-간-보드gap-9)
+- [세션 간 보드](#-세션-간-보드)
 - [압축 전 메모리 플러시](#-압축-전-메모리-플러시)
 - [요약 ↔ TaskFlow 조정](#-요약--taskflow-조정)
 - [서브에이전트 메모리 역류(LT-5)](#-서브에이전트-메모리-역류lt-5)
@@ -159,7 +159,7 @@ async def taskflow_run_task(
 
 자식이 **이미 생성된** 상태에서 쓰기가 경합에 지면, `update_flow_with_conflict_retry()`(`_shared.py:191`)가 최신 flow를 다시 읽고 `build_state` 콜백으로 상태를 재구성하며 `PERSIST_MAX_ATTEMPTS = 3`회까지 재시도합니다. flow가 사라졌거나 종단이 되었거나 재시도가 소진되면, 생성된 모든 `child_session_key`를 나열한 오류를 반환하고 호출자에게 **key로 회수하고 절대 재디스패치하지 말라**고 지시합니다.
 
-## 🔁 단계 재시도 정책(GAP-8)
+## 🔁 단계 재시도 정책
 
 단계는 선언적 `retry_policy`를 가질 수 있어, 실패한 자식이 단계의 최종 결과로 수용되는 대신 자동으로 재디스패치됩니다. 정책, 카운터, 대체 자식 세션 key는 모두 `state_json` 안에 있으며(스키마 마이그레이션 없음), 재시도 헬퍼는 `agent/tools/taskflow/tools/_retry.py`에 있습니다.
 
@@ -174,7 +174,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 음이 아닌 수 | `60.0`(`DEFAULT_RETRY_DELAY_SECONDS`) | 각 재디스패치 전에 대기하는 백오프 |
 | `retry_on` | `list[str]` | `[]` | 재시도를 유발하는 실패 유형; 비어 있으면 분류된 모든 실패 |
 
-`validate_policy()`(`_retry.py:120`)는 형식이 잘못된 정책을 `taskflow_run_task` 시점에 거부합니다 — dict가 아닌 정책, 음수/비정수 `max_retries`, 음수/비수치 `retry_delay_seconds`, 문자열 리스트가 아닌 `retry_on` — 어느 것이든 생성이나 쓰기 전에 `Error:` 문자열을 반환합니다. 재개 시점에 누락/잘못된 저장 정책은 `None`(`normalize_policy`)으로 퇴화하여, 호출을 실패시키는 대신 GAP-8 이전의 무재시도 동작으로 되돌립니다.
+`validate_policy()`(`_retry.py:120`)는 형식이 잘못된 정책을 `taskflow_run_task` 시점에 거부합니다 — dict가 아닌 정책, 음수/비정수 `max_retries`, 음수/비수치 `retry_delay_seconds`, 문자열 리스트가 아닌 `retry_on` — 어느 것이든 생성이나 쓰기 전에 `Error:` 문자열을 반환합니다. 재개 시점에 누락/잘못된 저장 정책은 `None`(`normalize_policy`)으로 퇴화하여, 호출을 실패시키는 대신 기존의 무재시도 동작으로 되돌립니다.
 
 `retry_count`(단계에 저장, 기본 `0`)는 **재디스패치** 횟수를 세며 최초 디스패치는 세지 않습니다: 첫 자식이 도는 동안 `0`, 첫 대체 자식이 생성되면 `1`. `retry_count < max_retries`인 동안 재시도가 허용됩니다(`retries_remaining`, `_retry.py:95`). `apply_redispatch()`(`_retry.py:170`)는 단계를 제자리에서 변경합니다 — 새 `child_session_key`, `dispatched_at`, `status = dispatched`, 증가된 `retry_count`.
 
@@ -197,7 +197,7 @@ async def taskflow_run_task(
 | `taskflow_wait_all` | 폴링된 자식이 결과 없이 **사망** 정착 | `plan_settled_retries()`가 예산이 남는 한 정착 단계마다 한 번 재디스패치하고, 소진되면 실패 노트 결과와 함께 `done`으로 표시 |
 | `taskflow_resume` | 주입된 결과 텍스트가 `retry_on`이 허용하는 **실패**로 분류됨 | 대체 자식을 생성하고 실패 결과를 기록하며, 단계를 새 자식 위에서 `dispatched`로 유지 |
 
-- **`taskflow_wait_all`** 은 모든 대상이 정착한 뒤 `_retry_settled_steps()`(`taskflow_wait_all.py:117`)를 호출합니다. 정책이 없는 단계는 아무 동작도 만들지 않으며(레거시 flow는 GAP-8 이전과 바이트 단위로 동일한 출력을 유지), 결과가 이미 주입된 자식은 그대로 둡니다. 호출당 정착 단계마다 **최대 하나**의 재시도 결정만 실행됩니다 — 대체 자식이 생성·기록되고 오케스트레이터가 다시 `wait_all`을 호출해 기다립니다. 도구 안에 백그라운드 재시도 루프는 없습니다. 대체 자식은 `persist_retry_actions()`(`_retry.py:254`)로 영속화되며, `update_flow_with_conflict_retry()`를 통해 계획을 새로 읽은 단계 목록에 다시 적용하므로 동시 작성자가 생성된 대체 자식을 떨어뜨릴 수 없습니다.
+- **`taskflow_wait_all`** 은 모든 대상이 정착한 뒤 `_retry_settled_steps()`(`taskflow_wait_all.py:117`)를 호출합니다. 정책이 없는 단계는 아무 동작도 만들지 않으며(레거시 flow는 바이트 단위로 동일한 출력을 유지), 결과가 이미 주입된 자식은 그대로 둡니다. 호출당 정착 단계마다 **최대 하나**의 재시도 결정만 실행됩니다 — 대체 자식이 생성·기록되고 오케스트레이터가 다시 `wait_all`을 호출해 기다립니다. 도구 안에 백그라운드 재시도 루프는 없습니다. 대체 자식은 `persist_retry_actions()`(`_retry.py:254`)로 영속화되며, `update_flow_with_conflict_retry()`를 통해 계획을 새로 읽은 단계 목록에 다시 적용하므로 동시 작성자가 생성된 대체 자식을 떨어뜨릴 수 없습니다.
 - **`taskflow_resume`** 은 단계를 done으로 표시하기 전에 정책을 확인합니다(`taskflow_resume.py:122-144`). 재시도 가능한 실패에서는 `retry_delay_seconds`만큼 대기한 뒤 대체 자식을 생성하고, 단계는 새 자식 위에서 `dispatched`로 남습니다. 대체 자식 생성 자체가 예외를 던지면 단계는 실패 결과와 함께 `done`으로 남고 응답에는 그 예외를 지목하는 `retry:` 노트가 붙습니다.
 
 ### 소진과 실패 노트
@@ -280,7 +280,7 @@ for flow in overdue:
 
 기한 초과 flow는 `failed`로 표시됩니다. 이미 종단인 flow는 쿼리에서 제외되고, flow별 예외는 로그로 남긴 뒤 삼켜지므로 잘못된 행 하나가 전체 스윕을 중단시키지 않습니다.
 
-## ✅ 결과 검증(GAP-7)
+## ✅ 결과 검증
 
 단계는 자연어 **수용 기준**을 가질 수 있어 오케스트레이터가 자식 결과를 판단할 구체적 근거를 얻습니다. 두 도구 모두 `validation_criteria`를 받습니다:
 
@@ -293,7 +293,7 @@ async def taskflow_run_task(
     expected_revision: int | None = None,
     depends_on: list[str] | None = None,
     validation_criteria: str | None = None,     # stored on the step
-    retry_policy: dict | None = None,           # GAP-8 (see above)
+    retry_policy: dict | None = None,           # (see above)
     session_id: SessionId = "",
 ) -> str
 ```
@@ -318,7 +318,7 @@ if step is not None and redispatched_key is None:
 도구는 결코 기준을 평가하지 않습니다 — 주입된 결과와 나란히 제시할 뿐이며, 응답 끝에 `validation_criteria: …`와 `⚠ Result needs validation against criteria` 블록이 붙습니다. 중요한 가드레일 두 가지:
 
 - `taskflow_resume`에 `validation_criteria`를 전달하면 저장 값이 **덮어써집니다**(예: 자식이 실제로 한 일에 따라 기준을 강화하거나 교정하기 위해).
-- 에코는 단계가 실제로 `done`으로 표시될 때(`redispatched_key is None`)에만 나옵니다. GAP-8로 재디스패치된 단계는 기준을 저장한 채 두고, 최종적으로 성공한 재개에서 에코를 받습니다.
+- 에코는 단계가 실제로 `done`으로 표시될 때(`redispatched_key is None`)에만 나옵니다. 재시도 정책으로 재디스패치된 단계는 기준을 저장한 채 두고, 최종적으로 성공한 재개에서 에코를 받습니다.
 
 판정자는 오케스트레이터(메인 에이전트 모델)입니다: 자식 결과를 기준과 비교한 뒤 단계를 수용할지, 재디스패치할지, flow를 실패시킬지 결정합니다. 자동 합격/불합격 게이트는 없습니다.
 
@@ -361,7 +361,7 @@ Progress Report: <flow_id>
 
 유휴 감지는 flow를 **절대 자동 실패시키지 않습니다** — 마커는 권고용이며 주기마다 갱신됩니다. 이와 별개로 `taskflow_summary`는 대기 상태를 렌더링하고, 대기가 `TASKFLOW_INFRA["waiting_timeout_hours"]`(24시간)를 넘으면 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`를 출력합니다(`taskflow_summary.py:67-90`).
 
-## 📋 세션 간 보드(GAP-9)
+## 📋 세션 간 보드
 
 `taskflow_summary`는 flow 하나를 읽고 자동 재개 판독기는 세션 범위입니다. `taskflow_list`는 의도적으로 그 반대 — 레지스트리 전체를 아우르는 **전역 보드**이므로, 한 채널/채팅에서 시작한 flow가 다른 어디에서나 보입니다:
 
@@ -389,7 +389,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-스키마에는 **`updated_at` 컬럼이 없습니다**(GAP-9는 마이그레이션 없음). 따라서 `_last_activity_ts()`(`taskflow_list.py:28`)는 "마지막 업데이트"를 flow 어딘가에 영속된 활동 스탬프의 최댓값으로 도출합니다 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 이를 UTC 타임스탬프로 렌더링합니다(스탬프가 전혀 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
+스키마에는 **`updated_at` 컬럼이 없습니다**(마이그레이션 없음). 따라서 `_last_activity_ts()`(`taskflow_list.py:28`)는 "마지막 업데이트"를 flow 어딘가에 영속된 활동 스탬프의 최댓값으로 도출합니다 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 이를 UTC 타임스탬프로 렌더링합니다(스탬프가 전혀 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
 
 ## 🧠 계층형 메모리
 
@@ -754,8 +754,8 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 압축 전 플러시 |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md 일괄 추가 |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 세션 간 보드 읽기 |
-| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 실패 분류 |
-| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all 재시도 계획/영속화 |
+| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 실패 분류 |
+| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 재시도 계획/영속화 |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 메모리 역류 조정 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 플러그 가능한 그래프 래퍼 체인 |
 
@@ -779,9 +779,9 @@ TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(17개 `unit`
 | `test_token_budget.py` | 토큰 집계, 비용 계산, 예산 조회/설정/경고/초과 |
 | `test_deadline.py` | `deadline_hours`, 요약 렌더링, sweeper 만료 |
 | `test_idle_detection.py` | active/stale 대기 상태, sweeper 마커, 살아있는 자식 건너뛰기 |
-| `test_retry_policy.py` | GAP-8 정책 검증, 실패 분류, 재디스패치, 소진 |
-| `test_validation.py` | GAP-7 기준 저장, 재개 에코, 덮어쓰기 |
-| `test_taskflow_list.py` | GAP-9 보드 렌더링, 상태 필터, 마지막 활동 타임스탬프 |
+| `test_retry_policy.py` | 정책 검증, 실패 분류, 재디스패치, 소진 |
+| `test_validation.py` | 기준 저장, 재개 에코, 덮어쓰기 |
+| `test_taskflow_list.py` | 보드 렌더링, 상태 필터, 마지막 활동 타임스탬프 |
 
 교차 스위트: `tests/agent/middlewares/test_memory_flush.py`(플러시 임계값과 `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 LT-5 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 리마인더), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 flow 프롬프트 주입).
 

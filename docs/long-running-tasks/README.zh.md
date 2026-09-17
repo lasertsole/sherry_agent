@@ -10,13 +10,13 @@
 
 - [概览](#-概览)
 - [TaskFlow DAG 引擎](#-taskflow-dag-引擎)
-- [步骤重试策略（GAP-8）](#-步骤重试策略gap-8)
+- [步骤重试策略](#-步骤重试策略)
 - [Token / 成本预算](#-token--成本预算)
 - [任务截止时间](#-任务截止时间)
-- [结果校验（GAP-7）](#-结果校验gap-7)
+- [结果校验](#-结果校验)
 - [进度报告](#-进度报告)
 - [空闲检测](#-空闲检测)
-- [跨会话面板（GAP-9）](#-跨会话面板gap-9)
+- [跨会话面板](#-跨会话面板)
 - [压缩前的记忆落盘](#-压缩前的记忆落盘)
 - [摘要 ↔ TaskFlow 协调](#-摘要--taskflow-协调)
 - [子 Agent 记忆回流（LT-5）](#-子-agent-记忆回流lt-5)
@@ -159,7 +159,7 @@ async def taskflow_run_task(
 
 当子 Agent **已经派发**但写入竞争失败时，`update_flow_with_conflict_retry()`（`_shared.py:191`）会重新读取最新的 flow，通过 `build_state` 回调重建状态，并最多重试 `PERSIST_MAX_ATTEMPTS = 3` 次。若 flow 已消失或变为终态，或重试耗尽，它会返回一个列出所有已派发 `child_session_key` 的错误，并指示调用方**按 key 回收，绝不重新派发**。
 
-## 🔁 步骤重试策略（GAP-8）
+## 🔁 步骤重试策略
 
 步骤可以携带一个声明式的 `retry_policy`，让失败的子 Agent 被自动重新派发，而不是被直接当成本步骤的最终结果。策略、计数器与替换子会话 key 全部存放在 `state_json` 中（无需迁移表结构），重试辅助函数位于 `agent/tools/taskflow/tools/_retry.py`。
 
@@ -174,7 +174,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 非负数值 | `60.0`（`DEFAULT_RETRY_DELAY_SECONDS`） | 每次重新派发前休眠的退避时长 |
 | `retry_on` | `list[str]` | `[]` | 触发重试的失败类型；为空表示所有可分类失败 |
 
-`validate_policy()`（`_retry.py:120`）会在 `taskflow_run_task` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而恢复 GAP-8 之前的无重试行为，而不是让该次调用失败。
+`validate_policy()`（`_retry.py:120`）会在 `taskflow_run_task` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而恢复旧版的无重试行为，而不是让该次调用失败。
 
 `retry_count`（存放在步骤上，默认 `0`）统计的是**重新派发**次数，从不统计最初那次派发：第一个子 Agent 运行时为 `0`，生成第一个替换子 Agent 后为 `1`。只要 `retry_count < max_retries` 就允许重试（`retries_remaining`，`_retry.py:95`）。`apply_redispatch()`（`_retry.py:170`）就地改动步骤——写入新的 `child_session_key`、`dispatched_at`、`status = dispatched`，并递增 `retry_count`。
 
@@ -197,7 +197,7 @@ async def taskflow_run_task(
 | `taskflow_wait_all` | 被轮询的子 Agent **死亡**落定且无结果 | `plan_settled_retries()` 在预算尚存时对每个落定步骤重新派发一次，否则以失败说明结果把它标记为 `done` |
 | `taskflow_resume` | 注入的结果文本**可分类为失败**且被 `retry_on` 允许 | 生成替换子 Agent、记录该失败结果，并让步骤在新子 Agent 上保持 `dispatched` |
 
-- **`taskflow_wait_all`** 在每个目标落定后调用 `_retry_settled_steps()`（`taskflow_wait_all.py:117`）。没有策略的步骤不产生任何动作（旧 flow 保持与 GAP-8 之前逐字节一致的输出）；结果已被注入的子 Agent 会被跳过。每次调用对每个落定步骤最多执行**一个**重试决策——生成并记录替换子 Agent，随后编排者再次调用 `wait_all` 等待它。工具内部不存在后台重试循环。替换子 Agent 通过 `persist_retry_actions()`（`_retry.py:254`）持久化，它借助 `update_flow_with_conflict_retry()` 把计划重新应用到刚读取的步骤列表上，因此并发写入者无法丢弃已生成的替换子 Agent。
+- **`taskflow_wait_all`** 在每个目标落定后调用 `_retry_settled_steps()`（`taskflow_wait_all.py:117`）。没有策略的步骤不产生任何动作（旧 flow 保持逐字节一致的输出）；结果已被注入的子 Agent 会被跳过。每次调用对每个落定步骤最多执行**一个**重试决策——生成并记录替换子 Agent，随后编排者再次调用 `wait_all` 等待它。工具内部不存在后台重试循环。替换子 Agent 通过 `persist_retry_actions()`（`_retry.py:254`）持久化，它借助 `update_flow_with_conflict_retry()` 把计划重新应用到刚读取的步骤列表上，因此并发写入者无法丢弃已生成的替换子 Agent。
 - **`taskflow_resume`** 在把步骤标记为 done 之前检查其策略（`taskflow_resume.py:122-144`）。遇到可重试失败时，它先休眠 `retry_delay_seconds`，再生成替换子 Agent；步骤在新子 Agent 上保持 `dispatched`。若替换子 Agent 的生成本身抛异常，步骤会带着失败结果保持 `done`，响应中携带一条列明该异常的 `retry:` 说明。
 
 ### 耗尽与失败说明
@@ -280,7 +280,7 @@ for flow in overdue:
 
 超期的 flow 会被标记为 `failed`；查询会自动排除已经是终态的 flow，而每个 flow 的异常都会被记录并吞掉，因此单条坏数据不会中断整个扫描。
 
-## ✅ 结果校验（GAP-7）
+## ✅ 结果校验
 
 步骤可以携带自然语言的**验收标准**，让编排者有一个具体的依据来判断子 Agent 的结果。两个工具都接受 `validation_criteria`：
 
@@ -293,7 +293,7 @@ async def taskflow_run_task(
     expected_revision: int | None = None,
     depends_on: list[str] | None = None,
     validation_criteria: str | None = None,     # stored on the step
-    retry_policy: dict | None = None,           # GAP-8 (see above)
+    retry_policy: dict | None = None,           # (see above)
     session_id: SessionId = "",
 ) -> str
 ```
@@ -318,7 +318,7 @@ if step is not None and redispatched_key is None:
 工具从不评估这些标准——它只是在注入结果的同时把它们呈现出来，并在响应末尾追加 `validation_criteria: …` 与 `⚠ Result needs validation against criteria` 区块。有两条护栏值得注意：
 
 - 向 `taskflow_resume` 传入 `validation_criteria` 会**覆盖**已存值（例如根据子 Agent 实际所做的工作收紧或修正它）。
-- 只有当步骤确实被标记为 `done`（`redispatched_key is None`）时才会回显；在 GAP-8 下被重新派发的步骤会保留其标准，并在最终成功恢复时得到回显。
+- 只有当步骤确实被标记为 `done`（`redispatched_key is None`）时才会回显；在重试策略下被重新派发的步骤会保留其标准，并在最终成功恢复时得到回显。
 
 编排者（主 Agent 模型）是裁判：把子 Agent 结果与标准比对，然后决定接受该步骤、重新派发，还是让 flow 失败。不存在自动的通过/失败闸门。
 
@@ -361,7 +361,7 @@ Progress Report: <flow_id>
 
 空闲检测**从不自动把 flow 置为失败**——该标记只是提示性的，并且每个周期都会刷新。与此同时，`taskflow_summary` 会渲染等待状态，当等待超过 `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 小时）时打印 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`（`taskflow_summary.py:67-90`）。
 
-## 📋 跨会话面板（GAP-9）
+## 📋 跨会话面板
 
 `taskflow_summary` 读取单个 flow，自动恢复的读取者又限定于会话范围；`taskflow_list` 刻意相反——它是覆盖整个注册表的**全局面板**，因此在一个渠道/聊天中启动的 flow 从任何其他渠道/聊天都可见：
 
@@ -389,7 +389,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-表结构**没有 `updated_at` 列**（GAP-9 无需迁移）。因此 `_last_activity_ts()`（`taskflow_list.py:28`）把“最后更新”推导为 flow 上任何位置持久化的活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（flow 完全没有时间戳时为 `-`）。空注册表返回 `No task flows found`。
+表结构**没有 `updated_at` 列**（无需迁移）。因此 `_last_activity_ts()`（`taskflow_list.py:28`）把“最后更新”推导为 flow 上任何位置持久化的活动时间戳的最大值——`wait.set_at`、每个 `step.dispatched_at`、每个 `result.injected_at`——并渲染为 UTC 时间戳（flow 完全没有时间戳时为 `-`）。空注册表返回 `No task flows found`。
 
 ## 🧠 分层记忆
 
@@ -754,8 +754,8 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 压缩前落盘 |
 | `append_entries` | `agent/tools/memory.py:281` | 批量追加 MEMORY.md |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 跨会话面板读取 |
-| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 失败分类 |
-| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all 重试规划/持久化 |
+| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失败分类 |
+| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 重试规划/持久化 |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 记忆回流对账 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 可插拔图包装链 |
 
@@ -779,9 +779,9 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（十七个 `unit` 测试文
 | `test_token_budget.py` | token 聚合、成本计算、预算查询/设置/警告/超限 |
 | `test_deadline.py` | `deadline_hours`、摘要渲染、sweeper 过期 |
 | `test_idle_detection.py` | active/stale 等待状态、sweeper 标记、存活子 Agent 跳过 |
-| `test_retry_policy.py` | GAP-8 策略校验、失败分类、重新派发、耗尽 |
-| `test_validation.py` | GAP-7 标准存储、恢复回显、覆盖 |
-| `test_taskflow_list.py` | GAP-9 面板渲染、状态过滤、最后活动时间戳 |
+| `test_retry_policy.py` | 策略校验、失败分类、重新派发、耗尽 |
+| `test_validation.py` | 标准存储、恢复回显、覆盖 |
+| `test_taskflow_list.py` | 面板渲染、状态过滤、最后活动时间戳 |
 
 跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的 LT-5 记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
 

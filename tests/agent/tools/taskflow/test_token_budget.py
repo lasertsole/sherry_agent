@@ -1,4 +1,4 @@
-"""Unit tests for GAP-3 token/cost budget tracking.
+"""Unit tests for token/cost budget tracking.
 
 Covers three seams:
 

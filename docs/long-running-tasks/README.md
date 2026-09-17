@@ -10,13 +10,13 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
 
 - [Overview](#-overview)
 - [TaskFlow DAG Engine](#-taskflow-dag-engine)
-- [Step Retry Policy (GAP-8)](#-step-retry-policy-gap-8)
+- [Step Retry Policy](#-step-retry-policy)
 - [Token / Cost Budget](#-token--cost-budget)
 - [Task Deadline](#-task-deadline)
-- [Result Validation (GAP-7)](#-result-validation-gap-7)
+- [Result Validation](#-result-validation)
 - [Progress Report](#-progress-report)
 - [Idle Detection](#-idle-detection)
-- [Cross-Session Board (GAP-9)](#-cross-session-board-gap-9)
+- [Cross-Session Board](#-cross-session-board)
 - [Pre-Compression Memory Flush](#-pre-compression-memory-flush)
 - [Summary ↔ TaskFlow Coordination](#-summary--taskflow-coordination)
 - [Subagent Memory Backflow (LT-5)](#-subagent-memory-backflow-lt-5)
@@ -159,7 +159,7 @@ Every mutation goes through `UPDATE … WHERE flow_id = ? AND expected_revision 
 
 When a child has **already spawned** but the write loses the race, `update_flow_with_conflict_retry()` (`_shared.py:191`) re-reads the fresh flow, rebuilds the state via a `build_state` callback, and retries up to `PERSIST_MAX_ATTEMPTS = 3`. If the flow vanished or turned terminal, or retries are exhausted, it returns an error naming every spawned `child_session_key` and instructs the caller to recover them **by key, never re-dispatch**.
 
-## 🔁 Step Retry Policy (GAP-8)
+## 🔁 Step Retry Policy
 
 A step may carry a declarative `retry_policy` so a failed child is re-dispatched automatically instead of being accepted as the step's final result. The policy, the counter and the replacement child key all live inside `state_json` (no schema migration), and the retry helpers are `agent/tools/taskflow/tools/_retry.py`.
 
@@ -174,7 +174,7 @@ A step may carry a declarative `retry_policy` so a failed child is re-dispatched
 | `retry_delay_seconds` | non-negative number | `60.0` (`DEFAULT_RETRY_DELAY_SECONDS`) | Backoff slept before each re-dispatch |
 | `retry_on` | `list[str]` | `[]` | Failure types that trigger a retry; empty = every classified failure |
 
-`validate_policy()` (`_retry.py:120`) rejects a malformed policy at `taskflow_run_task` time — a non-dict policy, a negative/non-int `max_retries`, a negative/non-numeric `retry_delay_seconds`, or a `retry_on` that is not a list of strings — with an `Error:` string before any spawn or write. At resume time a missing/malformed stored policy degrades to `None` (`normalize_policy`), which restores the pre-GAP-8 no-retry behavior rather than failing the call.
+`validate_policy()` (`_retry.py:120`) rejects a malformed policy at `taskflow_run_task` time — a non-dict policy, a negative/non-int `max_retries`, a negative/non-numeric `retry_delay_seconds`, or a `retry_on` that is not a list of strings — with an `Error:` string before any spawn or write. At resume time a missing/malformed stored policy degrades to `None` (`normalize_policy`), which restores the legacy no-retry behavior rather than failing the call.
 
 `retry_count` (stored on the step, default `0`) counts **re-dispatches**, never the original dispatch: `0` while the first child runs, `1` once the first replacement is spawned. A retry is allowed while `retry_count < max_retries` (`retries_remaining`, `_retry.py:95`). `apply_redispatch()` (`_retry.py:170`) mutates the step in place — new `child_session_key`, `dispatched_at`, `status = dispatched`, bumped `retry_count`.
 
@@ -197,7 +197,7 @@ A clean result never retries. With a non-empty `retry_on`, only a matching class
 | `taskflow_wait_all` | a polled child settled **dead** with no result | `plan_settled_retries()` re-dispatches once per settled step while budget remains, else marks it `done` with a failure-note result |
 | `taskflow_resume` | the injected result text **classifies as a failure** allowed by `retry_on` | spawns a replacement, records the failure result, and keeps the step `dispatched` on the new child |
 
-- **`taskflow_wait_all`** calls `_retry_settled_steps()` (`taskflow_wait_all.py:117`) after every target settles. Steps without a policy produce no action (legacy flows keep the byte-identical pre-GAP-8 output); a child whose result was already injected is left alone. At most **one** retry decision per settled step is executed per call — the replacement is spawned and recorded, and the orchestrator calls `wait_all` again to wait for it. No background retry loop lives in the tool. Replacement children are persisted through `persist_retry_actions()` (`_retry.py:254`), which re-applies the plan onto a freshly-read step list via `update_flow_with_conflict_retry()` so a concurrent writer cannot drop a spawned replacement.
+- **`taskflow_wait_all`** calls `_retry_settled_steps()` (`taskflow_wait_all.py:117`) after every target settles. Steps without a policy produce no action (legacy flows keep the byte-identical output); a child whose result was already injected is left alone. At most **one** retry decision per settled step is executed per call — the replacement is spawned and recorded, and the orchestrator calls `wait_all` again to wait for it. No background retry loop lives in the tool. Replacement children are persisted through `persist_retry_actions()` (`_retry.py:254`), which re-applies the plan onto a freshly-read step list via `update_flow_with_conflict_retry()` so a concurrent writer cannot drop a spawned replacement.
 - **`taskflow_resume`** checks the step's policy before marking it done (`taskflow_resume.py:122-144`). On a retryable failure it sleeps `retry_delay_seconds` and spawns a replacement; the step stays `dispatched` on the new child. If the replacement spawn itself raises, the step is left `done` with the failure result and the response carries a `retry:` note naming the exception.
 
 ### Exhaustion and failure notes
@@ -280,7 +280,7 @@ for flow in overdue:
 
 Overdue flows are marked `failed`; already-terminal flows are excluded by the query, and per-flow exceptions are logged and swallowed so one bad row cannot abort the sweep.
 
-## ✅ Result Validation (GAP-7)
+## ✅ Result Validation
 
 A step can carry natural-language **acceptance criteria** so the orchestrator has something concrete to judge a child's result against. Both tools accept `validation_criteria`:
 
@@ -293,7 +293,7 @@ async def taskflow_run_task(
     expected_revision: int | None = None,
     depends_on: list[str] | None = None,
     validation_criteria: str | None = None,     # stored on the step
-    retry_policy: dict | None = None,           # GAP-8 (see above)
+    retry_policy: dict | None = None,           # (see above)
     session_id: SessionId = "",
 ) -> str
 ```
@@ -318,7 +318,7 @@ if step is not None and redispatched_key is None:
 The tool never evaluates the criteria — it only surfaces them alongside the injected result, and the response gains a trailing `validation_criteria: …` + `⚠ Result needs validation against criteria` block. Two guardrails matter:
 
 - Passing `validation_criteria` to `taskflow_resume` **overrides** the stored value (for example to tighten or correct it based on what the child actually did).
-- The echo is emitted only when the step is actually marked `done` (`redispatched_key is None`); a step re-dispatched under GAP-8 keeps its criteria stored and gets the echo on the eventual successful resume.
+- The echo is emitted only when the step is actually marked `done` (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and gets the echo on the eventual successful resume.
 
 The orchestrator (the main-agent model) is the judge: compare the child result against the criteria, then decide to accept the step, re-dispatch, or fail the flow. There is no automatic pass/fail gate.
 
@@ -361,7 +361,7 @@ A flow parked with `taskflow_set_waiting` may have its child crash without ever 
 
 The flow is **never auto-failed** by idle detection — the marker is advisory and refreshed each cycle. Independently, `taskflow_summary` renders the wait status and prints `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch` when the wait exceeds `TASKFLOW_INFRA["waiting_timeout_hours"]` (`taskflow_summary.py:67-90`).
 
-## 📋 Cross-Session Board (GAP-9)
+## 📋 Cross-Session Board
 
 `taskflow_summary` reads one flow and the auto-resume readers are session-scoped; `taskflow_list` is the deliberate opposite — a **global board** over the whole registry, so a flow started in one channel/chat is visible from any other:
 
@@ -389,7 +389,7 @@ flow-1  | running | Build the parser                         | 2/5   | agent:mai
 flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:main:sess  | 2026-09-12 13:58:07
 ```
 
-The schema has **no `updated_at` column** (GAP-9 is migration-free). `_last_activity_ts()` (`taskflow_list.py:28`) therefore derives "last updated" as the maximum of the activity stamps persisted anywhere on the flow — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has no stamp at all). An empty registry returns `No task flows found`.
+The schema has **no `updated_at` column** (migration-free). `_last_activity_ts()` (`taskflow_list.py:28`) therefore derives "last updated" as the maximum of the activity stamps persisted anywhere on the flow — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has no stamp at all). An empty registry returns `No task flows found`.
 
 ## 🧠 Layered Memory
 
@@ -754,8 +754,8 @@ The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | Pre-compression flush |
 | `append_entries` | `agent/tools/memory.py:281` | Batch MEMORY.md append |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | Cross-session board read |
-| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | GAP-8 failure classification |
-| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | GAP-8 wait_all retry planning/persist |
+| `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | failure classification |
+| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all retry planning/persist |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 memory backflow reconcile |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | Pluggable graph-wrapper chain |
 
@@ -779,9 +779,9 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (seventeen `unit` t
 | `test_token_budget.py` | Token aggregation, cost math, budget query/set/warning/exceeded |
 | `test_deadline.py` | `deadline_hours`, summary rendering, sweeper expiry |
 | `test_idle_detection.py` | Active/stale wait status, sweeper marker, live-child skip |
-| `test_retry_policy.py` | GAP-8 policy validation, failure classification, re-dispatch, exhaustion |
-| `test_validation.py` | GAP-7 criteria storage, resume echo, override |
-| `test_taskflow_list.py` | GAP-9 board rendering, status filters, last-activity timestamp |
+| `test_retry_policy.py` | policy validation, failure classification, re-dispatch, exhaustion |
+| `test_validation.py` | criteria storage, resume echo, override |
+| `test_taskflow_list.py` | board rendering, status filters, last-activity timestamp |
 
 Cross-cutting suites: `tests/agent/middlewares/test_memory_flush.py` (flush thresholds and `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py` (LT-5 memory reconcile on completion drain), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py` (completion-carrier verification reminder), `tests/context_engine/test_session_continuity.py` (continuity save/prompt), `tests/agent/middlewares/test_todo_continuation.py` (turn-end continuation), `tests/pub/func/message/test_tool_output_prune.py` (one-line summaries), and `tests/workspace/test_prompt_builder_taskflow.py` (pending-flow prompt injection).
 

@@ -4,7 +4,7 @@ Idempotency: the (child_session_key, result) pair is fingerprinted; resuming
 with the SAME pair again is a no-op that neither re-injects nor bumps the
 revision, so announce-pipeline redeliveries cannot corrupt the state.
 
-Failure-aware retry (GAP-8): when the step carries a retry_policy and the
+Failure-aware retry: when the step carries a retry_policy and the
 result text classifies as a failure allowed by ``retry_on``, the step is
 re-dispatched instead of marked done - the failure result is still recorded.
 """

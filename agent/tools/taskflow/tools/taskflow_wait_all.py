@@ -122,7 +122,7 @@ async def _retry_settled_steps(
     """Auto-retry settled steps with a policy; return appended report lines.
 
     Returns "" when no settled step carries a retry policy, so legacy flows
-    keep the byte-identical pre-GAP-8 wait_all output. At most ONE retry
+    keep their byte-identical wait_all output. At most ONE retry
     decision per settled step is executed per call: the replacement child is
     spawned and recorded, and the orchestrator calls wait_all again to wait for
     it. No background retry loop lives in this tool.

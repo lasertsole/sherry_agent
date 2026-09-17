@@ -1,4 +1,4 @@
-"""Per-model token pricing and the token-budget warning threshold (GAP-3).
+"""Per-model token pricing and the token-budget warning threshold.
 
 Prices are USD per 1,000,000 tokens and are estimates used only for budget
 warnings, never for billing. A model absent from the table falls back to the
