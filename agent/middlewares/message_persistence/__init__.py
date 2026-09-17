@@ -1,0 +1,1 @@
+from .core import MessagePersistenceMiddleware as MessagePersistenceMiddleware

@@ -15,6 +15,7 @@ from .max_tokens_boost import MaxTokensBoostMiddleware as MaxTokensBoostMiddlewa
 from .tool_guardrails import ToolGuardrails as ToolGuardrails
 from .iteration_budget import IterationBudget as IterationBudget
 from .system_prompt import system_prompt_injection as system_prompt_injection
+from .message_persistence import MessagePersistenceMiddleware as MessagePersistenceMiddleware
 from .tool_call_normalize import ToolCallNormalize as ToolCallNormalize
 from .path_guard import PathGuard as PathGuard
 from .heartbeat_staleness import HeartbeatStaleness as HeartbeatStaleness

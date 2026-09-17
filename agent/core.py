@@ -27,6 +27,7 @@ from .middlewares import (
     HeartbeatStaleness,
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
+    MessagePersistenceMiddleware,
     LLMRetryMiddleware,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
@@ -193,6 +194,13 @@ async def built_agent(
                 MaxTokensBoostMiddleware(),
                 HeartbeatStaleness(),
                 HumanInTheLoop(HITLConfig()),
+                # Registered directly after HITL so its after_model node runs
+                # FIRST — langchain 1.3.9 chains after_model nodes in reverse
+                # registration order (factory.py: model -> after_model[-1] ->
+                # ... -> after_model[0]). The AI message is therefore persisted
+                # before HITL strips denied tool calls or raises a
+                # GraphInterrupt, and no other hook can skip the flush.
+                MessagePersistenceMiddleware(),
                 # Between HITL and Summarization: INNER relative to
                 # MaxTokensBoost (it only sees genuine truncations) and OUTER
                 # relative to Summarization (the retry loop wraps the
