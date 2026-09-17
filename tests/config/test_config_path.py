@@ -62,10 +62,10 @@ class TestSubPaths:
 
         assert TEMP_DIR == ROOT_DIR / "temp"
 
-    def test_sessions_dir_is_subdir_of_root(self):
-        from config.path import ROOT_DIR, SESSIONS_DIR
+    def test_sessions_dir_is_subdir_of_workspace(self):
+        from config.path import WORKSPACE_DIR, SESSIONS_DIR
 
-        assert SESSIONS_DIR == ROOT_DIR / "sessions"
+        assert SESSIONS_DIR == WORKSPACE_DIR / "sessions"
 
     def test_static_dir_is_subdir_of_root(self):
         from config.path import ROOT_DIR, STATIC_DIR

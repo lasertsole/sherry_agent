@@ -32,15 +32,6 @@ STATIC_DIR = ROOT_DIR / "static"
 TEMP_DIR = ROOT_DIR / "temp"
 
 MODELS_DIR = ROOT_DIR / "models"
-SESSIONS_DIR = ROOT_DIR / "sessions"
-SKILLS_DIR = ROOT_DIR / "skills"
-AUTO_SKILLS_DIR = SKILLS_DIR / "auto/"
-PLUGIN_SKILLS_DIR = SKILLS_DIR / "plugins"
-SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
-# A SKILL.md is only discoverable when it lives under one of these top-level
-# roots beneath SKILLS_DIR. A SKILL.md directly under skills/ or under an
-# unexpected subdirectory is ignored by the loader and the skill index.
-SKILL_DISCOVERY_ROOTS: tuple[str, ...] = ("builtin", "auto", "plugins")
 WORKSPACE_DIR = ROOT_DIR / "workspace"
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
@@ -54,6 +45,17 @@ HEARTBEAT_PATH = WORKSPACE_DIR / "HEARTBEAT.md"
 # The HEARTBEAT template is language-independent; it lives directly under the
 # template dir (English text), NOT inside the locale subdirectories.
 HEARTBEAT_TEMPLATE_PATH = WORKSPACE_TEMPLATE_DIR / "HEARTBEAT.md"
+# Session-scoped working tree: each session owns {session_id}/ under the
+# workspace (future home of {session_id}/plans/), keeping persona data in one root.
+SESSIONS_DIR = WORKSPACE_DIR / "sessions"
+SKILLS_DIR = ROOT_DIR / "skills"
+AUTO_SKILLS_DIR = SKILLS_DIR / "auto/"
+PLUGIN_SKILLS_DIR = SKILLS_DIR / "plugins"
+SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
+# A SKILL.md is only discoverable when it lives under one of these top-level
+# roots beneath SKILLS_DIR. A SKILL.md directly under skills/ or under an
+# unexpected subdirectory is ignored by the loader and the skill index.
+SKILL_DISCOVERY_ROOTS: tuple[str, ...] = ("builtin", "auto", "plugins")
 
 # Additional directories
 MEMORY_INDEX_DIR = MEMORY_DIR / "index"
