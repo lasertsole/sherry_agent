@@ -2,7 +2,7 @@
 
 Covers:
 - ``_reconcile_denials_for_persistence``
-  (agent/middlewares/summarization/compaction_persistence.py)
+  (agent/middlewares/message_persistence/prepare.py)
   — re-attaches denied tool calls (stripped by ``HumanInTheLoop.after_model``) onto
   a copy of the preceding AIMessage so the denial ToolMessage survives
   ``sanitize_tool_use_result_pairing`` and is persisted to MesMemory.
@@ -19,7 +19,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from pub.func import sanitize_tool_use_result_pairing
-from agent.middlewares.summarization.compaction_persistence import (
+from agent.middlewares.message_persistence.prepare import (
     _reconcile_denials_for_persistence,
 )
 

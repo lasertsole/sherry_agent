@@ -650,32 +650,10 @@ def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> No
         logger.exception("compression nudge scheduling failed (fail-open)")
 
 
-def _persist_discarded_messages_sync(
-    session_id: str,
-    original_messages: Sequence[Any],
-    preserved: Sequence[Any],
-) -> None:
-    """Flush the discarded prefix before replacement (sync path, fail-open)."""
-    try:
-        from .compaction_persistence import persist_discarded_messages_sync
-
-        persist_discarded_messages_sync(session_id, original_messages, preserved)
-    except Exception:
-        logger.exception("compaction persistence failed (fail-open)")
-
-
-async def _apersist_discarded_messages(
-    session_id: str,
-    original_messages: Sequence[Any],
-    preserved: Sequence[Any],
-) -> None:
-    """Async twin of :func:`_persist_discarded_messages_sync` (fail-open)."""
-    try:
-        from .compaction_persistence import persist_discarded_messages
-
-        await persist_discarded_messages(session_id, original_messages, preserved)
-    except Exception:
-        logger.exception("compaction persistence failed (fail-open)")
+# Message persistence no longer runs here: every model boundary flushes new
+# messages to MesMemory via ``MessagePersistenceMiddleware`` (registered in
+# ``agent/core.py``), so the compression path only compacts and schedules the
+# compression-time nudges below.
 
 
 # ======================================================================
@@ -1851,10 +1829,6 @@ class Summarization(AgentMiddleware):
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
 
-                # Flush the ORIGINAL discarded prefix before the summary pair
-                # replaces it; persisted_message_ids makes the flush write-once
-                # across T2->T1 re-compression and process restarts.
-                _persist_discarded_messages_sync(session_id, original_messages, preserved)
                 _schedule_compression_nudges(session_id, original_messages)
 
                 _schedule_compression_todo_update(session_id, messages_to_summarize)
@@ -1960,10 +1934,6 @@ class Summarization(AgentMiddleware):
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
 
-                # Flush the ORIGINAL discarded prefix before the summary pair
-                # replaces it; persisted_message_ids makes the flush write-once
-                # across T2->T1 re-compression and process restarts.
-                await _apersist_discarded_messages(session_id, original_messages, preserved)
                 _schedule_compression_nudges(session_id, original_messages)
 
                 _schedule_compression_todo_update(session_id, messages_to_summarize)
