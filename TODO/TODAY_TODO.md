@@ -1,0 +1,96 @@
+- [ ] `config/path.py`: `WORKSPACE_DIR` 定义移到 `SESSIONS_DIR` 之前，然后 `SESSIONS_DIR = WORKSPACE_DIR / "sessions"`
+- [ ] `tests/config/test_config_path.py:65-68`: 断言从 `ROOT_DIR / "sessions"` 改为 `WORKSPACE_DIR / "sessions"`
+- [ ] P0-2 持久化问题：去掉 `agent/middlewares/context_engine/core.py` 的 `aafter_agent` 中持久化消息到 messages 表的功能，改为只在压缩中间件（`summarization/core.py`）里做——压缩替换前先 `add_messages` 持久化被压缩的消息
+- [ ] `message_search` 两段式查询：messages 表查不到时降级到 checkpointer（`SRC_DIR/checkpoints/sqlite.db`）的最新 checkpoint，反序列化 `state["messages"]` 做关键词匹配兜底
+- [ ] 剔除 `agent/middlewares/context_engine/core.py` 的 `aafter_agent` 中的 nudge 调度（memory review + plan extraction），合并到压缩中间件——压缩时已有 `_schedule_compression_todo_update`，将持久化与 nudge 统一在压缩时触发
+- [ ] 删除 facts 自动提取管线：`context_engine/facts/` 整个目录、`agent/middlewares/context_engine/core.py` 中 `_run_facts_pipeline` 及其调用、`prompt_builder.py` 中 facts listing 注入、`memory` 工具的 `fact_add`/`fact_read`/`fact_search` action、`agent/tools/memory_tiered.py`，以及相关配置和测试
+- [ ] 用 LangChain `@dynamic_prompt` 替代 `ContextEngineHook` 中间件，补齐两个优化：1) same-content skip — return existing SystemMessage when content matches to preserve prefix cache byte-identity; 2) 3-tier prompt cache (state_register_mem → state_register_db → build_system_prompt) to avoid rebuilding expensive prompt on every model call
+- [ ] Plan files 路径迁移：`.omo/plans/*.md` → `SESSIONS_DIR/{session_id}/plans/*.md`，同步修改 todolist 文档、`boulder.json` 中的 `active_plan` 路径引用、`prompt_builder.py` 中 plan 读取路径
+- [ ] 清除 GAP-N 残留编号：这些是已完成的计划文档残留的 feature 编号（GAP-3/4/6/7/8/9/11），散落在代码注释和文档中污染语义。需要清理以下文件：
+  - **源码注释**：
+    - `agent/tools/taskflow/registry/store_sqlite.py` — GAP-3 (line 79,91), GAP-4 (line 110,115)
+    - `agent/tools/taskflow/tools/_retry.py` — GAP-8 (line 1,70)
+    - `agent/tools/taskflow/tools/taskflow_wait_all.py` — GAP-8 (line 125)
+    - `agent/tools/taskflow/tools/taskflow_resume.py` — GAP-8 (line 7)
+    - `agent/tools/taskflow/tools/taskflow_list.py` — GAP-9 (line 1,31), GAP-11 (line 32)
+    - `config/features/infra_side/model_pricing.py` — GAP-3 (line 1)
+  - **测试文件 docstring**：
+    - `tests/agent/tools/taskflow/test_deadline.py` — GAP-4 (line 1)
+    - `tests/agent/tools/taskflow/test_dag_e2e.py` — GAP-3/4/6/7/8/9 (line 28-30,320,372,406,453,505,569)
+    - `tests/agent/tools/taskflow/test_validation.py` — GAP-7 (line 1,10)
+    - `tests/agent/tools/taskflow/test_token_budget.py` — GAP-3 (line 1)
+    - `tests/agent/tools/taskflow/test_taskflow_progress.py` — GAP-6 (line 1)
+    - `tests/agent/tools/taskflow/test_taskflow_list.py` — GAP-9 (line 1,9), GAP-11 (line 10)
+    - `tests/agent/tools/taskflow/test_retry_policy.py` — GAP-8 (line 1,188)
+    - `tests/agent/tools/taskflow/test_idle_detection.py` — GAP-11 (line 1)
+  - **文档（4 语言各一份，内容相同）**：
+    - `docs/long-running-tasks/README.md` — GAP-7/8/9 散布在 TOC、标题、正文、表格中
+    - `docs/long-running-tasks/README.zh.md` — 同上
+    - `docs/long-running-tasks/README.ja.md` — 同上
+    - `docs/long-running-tasks/README.ko.md` — 同上
+  - 清理方式：删除 `GAP-N` 前缀标记，保留实际语义描述。如 `## 🔁 Step Retry Policy (GAP-8)` → `## 🔁 Step Retry Policy`，`# GAP-9 is migration-free` → `# migration-free`
+- [ ] 清除 P0-N / P1-N / P2-N 拋留编号（SESSION plan 功能编号）：散落在代码注释和文档中，同 GAP-N 一样污染语义。需要清理以下文件：
+  - **源码注释**：
+    - `agent/tools/memory.py:326` — P0-1
+    - `agent/middlewares/context_engine/core.py:146,355` — P2-3
+    - `agent/tools/python_repl.py:46` — P0-2
+    - `agent/tools/message_search.py:36,482` — P2-5
+    - `agent/tools/terminal.py:91` — P0-2
+    - `agent/tools/file_tools/search_scan.py:1` — P0-4
+    - `agent/middlewares/summarization/core.py:115,862,1797,1830,1933` — P0-1, P0-2, P0-3
+    - `agent/middlewares/summarization/memory_flush.py:1` — P0-1
+    - `agent/middlewares/summarization/compaction_lock.py:1` — P0-3
+    - `context_engine/store/core.py:212,226,272,331,337,406,433,460` — P1-1, P1-2, P1-3, P1-5
+    - `context_engine/facts/__init__.py:1` — P2-3
+    - `context_engine/events/__init__.py:1` — P2-1
+    - `context_engine/embeddings/__init__.py:1` — P2-5
+    - `context_engine/embeddings/indexer.py:1` — P2-5
+    - `context_engine/core.py:40` — P1-3
+    - `runtime/session/state_register.py:265` — P2-2
+  - **测试文件**：
+    - `tests/context_engine/events/test_events.py:1` — P2-1
+    - `evals/session_memory/suite.py:1` — SESSION plan
+  - **文档**：
+    - `docs/experience_extraction/README.md:182` — P2-3, P0-1
+    - `docs/session_memory/README.{md,zh,ja,ko}:5,26` — "SESSION plan" + "P0-P2" + "LT-1…8"
+    - `README.md:148` — "SESSION plan capabilities (P0–P2)"
+  - 清理方式：删除 `SESSION plan P0-N` / `P1-N` / `P2-N` 前缀标记，保留语义描述
+- [ ] 清除 LT-N 拋留编号（长程任务编排功能编号 LT-1/2/3/5/7/8）：散落在代码、测试和文档中。需要清理以下文件：
+  - **源码注释**：
+    - `agent/tools/taskflow/tools/_shared.py:44` — LT-2
+    - `agent/middlewares/summarization/core.py:1903,1944,2031,2038` — LT-3, LT-7
+    - `agent/middlewares/subagent_completion_drain/core.py:40,128` — LT-5
+    - `context_engine/session_continuity.py:7,181,216` — LT-8, LT-2
+    - `context_engine/facts/__init__.py:5` — LT-1
+    - `workspace/prompt_builder.py:301` — LT-1
+    - `config/features/agent_side/tiered_memory.py:1` — LT-1
+    - `server/DAO/messages.py:17,27` — LT-8
+    - `agent/tools/memory.py` — LT-1 引用
+  - **测试文件**：
+    - `tests/workspace/test_prompt_builder_taskflow.py:1` — LT-2
+    - `tests/workspace/test_prompt_builder_facts.py:1` — LT-1
+    - `tests/agent/tools/test_memory_tiered.py:1` — LT-1
+    - `tests/agent/middlewares/test_summarization_comprehensive.py:1903,1944,2031,2038` — LT-7, LT-3
+    - `tests/agent/middlewares/test_lt5_memory_backflow.py:1,4` — LT-5（含文件名 lt5）
+    - `tests/agent/middlewares/test_subagent_completion_drain_reminder.py:56` — LT-5
+    - `tests/agent/tools/taskflow/test_store_sqlite.py:225` — LT-2
+    - `tests/agent/tools/subagent/conftest.py:319,320` — LT-5
+    - `tests/agent/tools/todolist/test_todolist_e2e.py:7,214,485,582,674` — LT-1
+  - **文档（4 语言各一份）**：
+    - `docs/long-running-tasks/README.{md,zh,ja,ko}` — LT-3, LT-5, LT-7, LT-8 散布在 TOC、标题、正文、表格、ASCII 架构图中
+    - `docs/session_memory/README.{md,zh,ja,ko}:5,26` — "LT-1…8"
+    - `AGENTS.md:30` — LT-1
+  - 清理方式：删除 `LT-N` 前缀标记，保留语义描述。`test_lt5_memory_backflow.py` 文件名不改（重命名涉及更多引用），只改文件内容中的 LT-5 标记
+- [ ] 清除 E-N 拋留编号（TodoList 执行层编号 E2/3/4/5/6/7）：散落在代码注释中。需要清理以下文件：
+  - **源码注释**：
+    - `agent/core.py:177` — E3
+    - `agent/middlewares/task_intent/core.py:1,26,27,204` — E7, E3
+    - `agent/tools/todolist/verifier.py:1,4` — E5
+    - `agent/middlewares/todo_continuation/core.py:1,42,55` — E3
+    - `agent/middlewares/subagent_completion_drain/core.py:40,128` — E5
+    - `agent/middlewares/summarization/core.py:155` — E7
+    - `agent/tools/todolist/tools/__init__.py:6` — E2
+    - `agent/tools/todolist/config.py:33` — E6
+    - `agent/tools/todolist/stagnation_tracker.py:1` — E3
+    - `agent/tools/todolist/service.py:5,7,47,79,127,188` — E6, E4
+  - 清理方式：删除 `E3` / `E4` / `E5` / `E6` / `E7` 前缀标记，保留语义描述。如 `"""E3 todo-continuation enforcer"""` → `"""Todo-continuation enforcer"""`

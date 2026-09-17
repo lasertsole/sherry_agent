@@ -3,13 +3,17 @@
 > 基于 `PROTECTION_COMPARISON.md` 对比报告，筛选 DeepAgents 中 Sherry 可落地的防护能力，给出具体实现方案。
 > 优先级：P0(安全关键，建议立即实施) → P1(增强体验) → P2(长期优化)
 >
-> **P0 处置记录（2026-09-17）**：P0-1 已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow`/`_raise_if_symlink_loop`，read/write/patch 全走，另见 `docs/sandbox/README*`）；P0-3 **已废弃**（base64+eval 无安全增益，且会削弱现有危险命令/敏感文件防线；terminal 本就以 shell 语义执行）；P0-4 已落地（配置键 `file_tools_search_max_matches`/`file_tools_search_time_budget_s`/`file_tools_search_prune_dirs` + `search_scan.py` 的 `bounded_walk`，提交 `6073f7c`/`c77846e`/`4db42e0`）。三个小节已从本页移除。
+> **P0 处置记录（2026-09-17）**：P0-1 已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow`/`_raise_if_symlink_loop`，read/write/patch 全走，另见 `docs/sandbox/README*`）；P0-3 **已废弃**（base64+eval 无安全增益，且会削弱现有危险命令/敏感文件防线；terminal 本就以 shell 语义执行）；P0-4 已落地（配置键 `file_tools_search_max_matches`/`file_tools_search_time_budget_s`/`file_tools_search_prune_dirs` + `search_scan.py` 的 `bounded_walk`，提交 `6073f7c`/`c77846e`/`4db42e0`）。
+>
+> **P0-2 处置记录（2026-09-17）**：经对比 opencode-dev、oh-my-openagent、openclaw、hermes-agent 四个项目，全部都在工具执行时将大结果驱逐到文件。方案采用 DeepAgents 的 `wrap_tool_call` 拦截策略——大内容从不进入 state，在工具返回后立即写文件并替换为 head+tail 预览。
+>
+> **P2-4 处置记录（2026-09-17）**：依赖 P0-2。在 `wrap_tool_call` 中对 `name == "read_file"` 的结果走切片路径（不写文件，文件已在磁盘），与 `target_truncation.py` 的压缩时切片互补。
 
 ---
 
 ## 目录
 
-1. [P0-2：工具结果消息驱逐 (卸载到文件 + head/tail预览)](#p0-2工具结果消息驱逐)
+1. [P0-2：工具结果消息驱逐 (wrap_tool_call 主动驱逐 + head/tail预览)](#p0-2工具结果消息驱逐)
 2. [P1-1：参数截断 (TruncateArgsSettings)](#p1-1参数截断)
 3. [P1-2：溢出尾部裁剪 (快速恢复路径)](#p1-2溢出尾部裁剪)
 4. [P1-3：模型感知摘要默认值](#p1-3模型感知摘要默认值)
@@ -30,79 +34,89 @@
 
 ### 问题
 
-Sherry 当前对超大工具结果仅做截断（默认500行/2000行上限），被截断的内容永久丢失。DeepAgents 将大型工具结果卸载到文件系统，替换为 head+tail 预览，模型可按需重新读取完整内容。
+Sherry 的工具结果**完整进入 state**，超大输出（如 terminal 50K 字符、search 全量匹配）占据大量上下文。现有截断全部发生在**压缩流程内**（summarization 的 `target_truncate_tool_outputs` / `truncate_to_budget`），是被动截断——大内容已经污染了 state 和前缀缓存，截断后内容永久丢失。
+
+横向对比 opencode-dev、oh-my-openagent、openclaw、hermes-agent 四个项目，**全部都在工具执行时（非压缩时）将大结果驱逐到文件**，只放预览到上下文。
 
 ### DeepAgents 做法
 
-- `_offload_tool_message_content()` 将大型工具结果写入文件
-- `_create_content_preview()` 生成 head+tail 预览（各5行）
-- 工具消息内容替换为预览 + 文件路径引用
-- read_file 结果切片而非卸载（文件已在后端）
+`FilesystemMiddleware.wrap_tool_call`（`filesystem.py:3605-3654`）在工具返回后、消息进入 state **之前**拦截：
+
+1. 工具在 `TOOLS_EXCLUDED_FROM_EVICTION` 列表中 → 不驱逐（结果本就在后端文件系统）
+2. `content_str = _extract_text_from_message(message)` — 提取文本
+3. `len(content_str) <= threshold` → 不驱逐
+4. 否则 → `_offload_tool_message_content()`：写文件 + 替换为 head+tail 预览 + 文件路径引用
+
+**关键设计**：大内容**从不进入 state**，进入 state 的从一开始就是预览。因此不破坏前缀缓存、不增加 checkpointer 体积、不触发后续截断。
+
+非文本块（图片/音频）通过 `_build_evicted_content` 保留，只替换文本部分。
 
 ### 具体实现方案
 
 #### 文件清单
 
-| 文件                                             | 修改类型 | 说明                             |
-| ------------------------------------------------ | -------- | -------------------------------- |
-| `agent/middlewares/message_eviction.py`          | 新建     | 驱逐逻辑（函数级，非独立中间件） |
-| `agent/middlewares/summarization/core.py`             | 修改     | 在压缩流程内调用驱逐             |
-| `config/features/agent_side/message_eviction.py` | 新建     | 驱逐配置 TypedDict               |
-| `config/features/agent_side/__init__.py`         | 修改     | 导出新配置                       |
-| `config/features/__init__.py`                    | 修改     | 导出新配置                       |
+| 文件                                                 | 修改类型 | 说明                                                                        |
+| ---------------------------------------------------- | -------- | --------------------------------------------------------------------------- |
+| `agent/middlewares/tool_result_eviction/__init__.py` | 新建     | 导出中间件                                                                  |
+| `agent/middlewares/tool_result_eviction/core.py`     | 新建     | `wrap_tool_call` / `awrap_tool_call` 实现                                   |
+| `pub/func/message/eviction.py`                       | 新建     | 纯函数：`evict_tool_result` / `load_evicted` / `build_preview`              |
+| `config/features/agent_side/tool_result_eviction.py` | 新建     | 配置 TypedDict + 实例                                                       |
+| `config/features/agent_side/__init__.py`             | 修改     | 导出新配置                                                                  |
+| `config/features/__init__.py`                        | 修改     | 导出新配置                                                                  |
+| `agent/core.py`                                      | 修改     | 中间件列表中插入 `ToolResultEvictionMiddleware`（在 `ToolGuardrails` 之后） |
+| `agent/middlewares/__init__.py`                      | 修改     | 导出新中间件                                                                |
 
 #### 配置设计
 
-**`config/features/agent_side/message_eviction.py`**:
+**`config/features/agent_side/tool_result_eviction.py`**:
 
 ```python
 from typing import TypedDict
 
 
-class MessageEviction(TypedDict):
+class ToolResultEvictionConfig(TypedDict):
     """工具结果消息驱逐配置。"""
 
-    # 超过此字符数的工具结果将被驱逐到文件系统
-    tool_result_evict_threshold: int
-
+    enabled: bool
+    # 超过此字符数的工具结果将被驱逐到文件系统（~5000 tokens）
+    evict_threshold_chars: int
     # 预览头尾行数
     preview_head_lines: int
     preview_tail_lines: int
-
-    # 驱逐文件存储目录（相对于 SESSIONS_DIR/{session_id}/，session 删除时自动清理）
+    # 驱逐文件存储子目录（相对于 SESSIONS_DIR/{session_id}/）
     eviction_subdir: str
-
-    # 驱逐文件最大保留数（LRU清理）
-    max_evicted_files: int
-
-    # 是否启用内联媒体驱逐
-    evict_inline_media: bool
+    # 不驱逐的工具（结果本就在后端文件系统）
+    excluded_tools: frozenset[str]
 
 
-MESSAGE_EVICTION: MessageEviction = {
-    "tool_result_evict_threshold": 20_000,  # ~5000 tokens
+TOOL_RESULT_EVICTION: ToolResultEvictionConfig = {
+    "enabled": True,
+    "evict_threshold_chars": 20_000,
     "preview_head_lines": 5,
     "preview_tail_lines": 5,
-    "eviction_subdir": "evicted",  # → SESSIONS_DIR/{session_id}/evicted/
-    "max_evicted_files": 100,
-    "evict_inline_media": True,
+    "eviction_subdir": "evicted",
+    "excluded_tools": frozenset({
+        "read_file",       # 文件已在磁盘，用 offset/limit 恢复
+        "write_file",
+        "patch_file",
+        "search_files",
+        "list_files",
+        "memory",
+        "skill_view",
+        "skill_list",
+    }),
 }
 ```
 
-#### 实现代码
+#### 核心纯函数
 
-**`agent/middlewares/message_eviction.py`**:
+**`pub/func/message/eviction.py`**:
 
 ```python
-"""工具结果消息驱逐逻辑。
+"""工具结果消息驱逐纯函数。
 
-将超大型工具结果卸载到文件系统，
-替换为 head+tail 预览 + 文件路径引用。
-模型可按需重新读取完整内容。
-
-仅在压缩流程内调用，不作为独立中间件。
-原因：驱逐改写消息内容会破坏前缀缓存，
-只在压缩时（前缀本来就会被重写）一起做，避免额外缓存失效。
+将超大工具结果卸载到文件系统，替换为 head+tail 预览 + 文件路径引用。
+模型可按需用 read_file(offset, limit) 重新读取完整内容。
 """
 
 from __future__ import annotations
@@ -111,148 +125,190 @@ import hashlib
 import time
 from pathlib import Path
 
-from langchain_core.messages import BaseMessage, ToolMessage
+from langchain_core.messages import ToolMessage
 
 from config import SESSIONS_DIR
-from config.features.agent_side.message_eviction import MESSAGE_EVICTION
+from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
 
 _PREVIEW_TEMPLATE = """\
 [evicted to: {path}]
 --- head ({head_n} lines) ---
 {head}
-{midline_marker}
+{midline}
 --- tail ({tail_n} lines) ---
 {tail}
 [full content: {total_chars} chars, evicted at {ts}]
-"""
+
+Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.]"""
 
 
-def evict_large_tool_results(
-    messages: list[BaseMessage],
-    session_id: str,
-) -> list[BaseMessage] | None:
-    """驱逐超大工具结果到文件系统，返回新消息列表。
-
-    仅在压缩流程（T1-T5）内调用。被驱逐的工具结果写入
-    SESSIONS_DIR/{session_id}/evicted/ 下，session 删除时由
-    clear_session() 的 shutil.rmtree 自动清理。
-
-    Args:
-        messages: 当前消息列表
-        session_id: 会话ID，用于隔离驱逐文件
-
-    Returns:
-        驱逐后的新消息列表；如无驱逐则返回 None。
-    """
-    threshold = MESSAGE_EVICTION["tool_result_evict_threshold"]
-    modified = False
-    new_messages = []
-
-    eviction_dir = _get_eviction_dir(session_id)
-
-    for msg in messages:
-        if not isinstance(msg, ToolMessage):
-            new_messages.append(msg)
-            continue
-
-        content = msg.content
-        if not isinstance(content, str) or len(content) <= threshold:
-            new_messages.append(msg)
-            continue
-
-        # 驱逐到文件
-        evicted_path = _write_eviction(msg, eviction_dir)
-        preview = _build_preview(content, evicted_path)
-        new_msg = ToolMessage(
-            content=preview,
-            tool_call_id=msg.tool_call_id,
-            name=msg.name,
-        )
-        new_messages.append(new_msg)
-        modified = True
-
-    return new_messages if modified else None
-
-
-def _get_eviction_dir(session_id: str) -> Path:
+def get_eviction_dir(session_id: str) -> Path:
     """返回 session 的驱逐目录，按需创建。"""
-    d = Path(SESSIONS_DIR) / session_id / MESSAGE_EVICTION["eviction_subdir"]
+    d = Path(SESSIONS_DIR) / session_id / TOOL_RESULT_EVICTION["eviction_subdir"]
     d.mkdir(parents=True, exist_ok=True)
     return d
 
 
-def _write_eviction(msg: ToolMessage, eviction_dir: Path) -> Path:
+def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
+    """驱逐超大工具结果到文件系统，返回替换后的预览消息。
+
+    返回 None 表示未达阈值或被排除，调用方应保留原消息。
+    """
+    threshold = TOOL_RESULT_EVICTION["evict_threshold_chars"]
+    excluded = TOOL_RESULT_EVICTION["excluded_tools"]
+
+    if (getattr(msg, "name", "") or "") in excluded:
+        return None
+
     content = msg.content if isinstance(msg.content, str) else str(msg.content)
-    key = f"{msg.tool_call_id}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
-    path = eviction_dir / f"{key}.txt"
-    path.write_text(content, encoding="utf-8")
-    return path
+    if len(content) <= threshold:
+        return None
+
+    eviction_dir = get_eviction_dir(session_id)
+    tc_id = getattr(msg, "tool_call_id", "") or "unknown"
+    key = f"{tc_id}_{hashlib.md5(content.encode()).hexdigest()[:8]}"
+    file_path = eviction_dir / f"{key}.txt"
+    file_path.write_text(content, encoding="utf-8")
+
+    preview = _build_preview(content, file_path)
+    return ToolMessage(
+        content=preview,
+        tool_call_id=msg.tool_call_id,
+        name=msg.name,
+        id=msg.id,
+        status=getattr(msg, "status", "success"),
+    )
 
 
-def _build_preview(content: str, path: Path) -> str:
+def _build_preview(content: str, file_path: Path) -> str:
     lines = content.splitlines()
-    head_n = MESSAGE_EVICTION["preview_head_lines"]
-    tail_n = MESSAGE_EVICTION["preview_tail_lines"]
+    head_n = TOOL_RESULT_EVICTION["preview_head_lines"]
+    tail_n = TOOL_RESULT_EVICTION["preview_tail_lines"]
     head = "\n".join(lines[:head_n])
     tail = "\n".join(lines[-tail_n:])
     midline = "..." if len(lines) > head_n + tail_n else ""
     return _PREVIEW_TEMPLATE.format(
-        path=str(path),
-        head_n=min(head_n, len(lines)),
-        tail_n=min(tail_n, len(lines)),
-        head=head,
-        midline_marker=midline,
-        tail=tail,
-        total_chars=len(content),
+        path=str(file_path), head_n=min(head_n, len(lines)),
+        tail_n=min(tail_n, len(lines)), head=head, midline=midline,
+        tail=tail, total_chars=len(content),
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )
 ```
 
-#### 集成方式（嵌入 Summarization 压缩流程）
+#### 中间件实现
 
-在 `agent/middlewares/summarization/core.py` 的压缩入口（T1-T5 路由决策后、调 LLM 摘要前）插入驱逐步骤：
+**`agent/middlewares/tool_result_eviction/core.py`**:
 
 ```python
-# summarization/core.py 压缩流程内，摘要前先驱逐:
+"""工具结果驱逐中间件。
 
-def _apply_compression(self, state, session_id: str):
-    from agent.middlewares.message_eviction import evict_large_tool_results
+在 wrap_tool_call 中拦截超大工具结果，写入文件系统后替换为 head+tail 预览。
+大内容从不进入 state，因此不破坏前缀缓存。
 
-    # Step 1: 驱逐超大工具结果到文件（减少压缩输入体积）
-    messages = state.get("messages", [])
-    evicted = evict_large_tool_results(messages, session_id)
-    if evicted is not None:
-        state["messages"] = evicted
-        messages = evicted
+中间件链位置：在 ToolGuardrails 之后、ToolCallNormalize 之前。
+- ToolGuardrails 负责安全预检，结果可能被阻止
+- 本中间件只处理"安全且过大"的结果
+"""
 
-    # Step 2: 原有压缩逻辑（调 LLM 摘要）
-    # ... 现有 T1-T5 路由 + 4路由溢出处理 ...
+from __future__ import annotations
+
+from typing import override
+
+from langchain.agents.middleware.types import AgentMiddleware, ToolCallRequest
+from langchain_core.messages import ToolMessage
+from loguru import logger
+
+from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
+from pub.func.message.eviction import evict_tool_result
+
+
+class ToolResultEvictionMiddleware(AgentMiddleware):
+    """驱逐超大工具结果到文件系统。"""
+
+    def __init__(self) -> None:
+        self._enabled = TOOL_RESULT_EVICTION["enabled"]
+
+    @override
+    def wrap_tool_call(self, request: ToolCallRequest, handler) -> ToolMessage:
+        result = handler(request)
+        return self._maybe_evict(result, request)
+
+    @override
+    async def awrap_tool_call(self, request: ToolCallRequest, handler) -> ToolMessage:
+        result = await handler(request)
+        return self._maybe_evict(result, request)
+
+    def _maybe_evict(self, result: ToolMessage, request: ToolCallRequest) -> ToolMessage:
+        if not self._enabled:
+            return result
+        session_id = self._get_session_id(request)
+        if not session_id:
+            return result
+        evicted = evict_tool_result(result, session_id)
+        if evicted is not None:
+            logger.debug(
+                "Evicted tool result ({} chars → file), tool={}, session={}",
+                len(str(result.content)), getattr(result, "name", "?"), session_id,
+            )
+            return evicted
+        return result
+
+    @staticmethod
+    def _get_session_id(request: ToolCallRequest) -> str:
+        ctx = getattr(request, "context", None) or {}
+        return ctx.get("session_id", "")
 ```
 
-**为什么不做独立中间件**：驱逐改写消息列表中的 ToolMessage 内容，会从该点起破坏前缀缓存。如果作为 `before_model` 钩子每次调用前都驱逐，会在**没有压缩压力时**白白打破缓存。只在压缩流程内调用，前缀本来就要被摘要重写，驱逐不额外增加缓存失效。
+> **注意**：`ToolCallRequest` 的 context 字段名需根据 LangChain 1.3.9 实际 API 确认。备选：通过 `request.runtime.state` 获取 StateSchema 中的 `session_id`。
+
+#### 中间件注册
+
+在 `agent/core.py` 的中间件列表中，将 `ToolResultEvictionMiddleware` 插入到 `ToolGuardrails` **之后**：
+
+```python
+middlewares = [
+    TodoContinuationEnforcer(),           # FIRST
+    ContextEngineHook(),
+    MultimodalProcessor(),
+    IterationBudget(),
+    ToolGuardrails(),
+    ToolResultEvictionMiddleware(),       # ← 新增
+    ToolCallNormalize(),
+    # ...
+    Summarization(),                     # LAST
+]
+```
 
 #### Session 删除时自动清理
 
-驱逐文件存储在 `SESSIONS_DIR/{session_id}/evicted/` 下。`server/DAO/messages.py::clear_session()` 第47行已执行 `shutil.rmtree(SESSIONS_DIR/{session_id}/)`，**驱逐文件随之自动清理，无需修改 `clear_session`**。
+驱逐文件存储在 `SESSIONS_DIR/{session_id}/evicted/` 下。`clear_session()`（`server/DAO/messages.py:44-47`）的 `shutil.rmtree` 会自动清理整个 session 目录，**无需修改**。
+
+#### 缓存安全
+
+大内容**从不进入 state**，进入 state 的从一开始就是预览。因此：
+
+- 不破坏前缀缓存（大内容从未在 prefix 中）
+- 不增加 checkpointer 体积（预览远小于完整内容）
+- 不触发后续截断（预览已在阈值内）
+
+#### 与压缩流程的协同
 
 ```
-clear_session() 清理链：
-  (0) 保存 session 终态
-  (1) 删除 mes_memory 消息行
-  (2) 删除 checkpointer 记录
-  (3) shutil.rmtree(SESSIONS_DIR/{session_id}/)  ← 驱逐文件在此自动清除
-  (4) 清理内存状态 + state_register_db
+工具返回 → wrap_tool_call 驱逐(写文件+预览) → state 中只有预览
+  → 上下文压力降低 → 压缩触发频率下降
+  → 即使触发压缩，截断的是预览(小体积)而非原始内容
 ```
 
 #### 与 P1-2 溢出尾部裁剪的协同
 
 ```
-压缩触发 (T1-T5):
-  → Step 1: 消息驱逐（P0-2）— 大工具结果写文件，替换为预览
-  → Step 2: 压缩（调 LLM 摘要）— 压缩后体积进一步降低
-  → 若仍溢出:
-    → P1-2 溢出尾部裁剪 — 快速移除尾部 ToolMessage 预览，秒级重试
-    → 裁剪不够 → 完整压缩再试
+正常流程:
+  工具结果 > 20K chars → P0-2 驱逐(写文件+预览) → state 中保持小体积
+
+溢出恢复:
+  ContextOverflowError
+    → P1-2 尾部裁剪(秒级，裁的是预览不是原始内容)
+    → 裁剪不够 → 降级到 T4/T5 完整压缩(调 LLM)
 ```
 
 ---
@@ -271,10 +327,10 @@ Sherry 在压缩上下文时截断的是完整的消息，但旧工具调用中�
 
 #### 文件清单
 
-| 文件                                            | 修改类型 | 说明           |
-| ----------------------------------------------- | -------- | -------------- |
+| 文件                                                          | 修改类型 | 说明           |
+| ------------------------------------------------------------- | -------- | -------------- |
 | `agent/middlewares/summarization/summarization_components.py` | 修改     | 添加参数截断器 |
-| `config/features/agent_side/summarization.py`   | 修改     | 添加截断配置   |
+| `config/features/agent_side/summarization.py`                 | 修改     | 添加截断配置   |
 
 #### 配置新增
 
@@ -343,15 +399,13 @@ Sherry 每次遇到 ContextOverflowError 都走完整压缩管线（T4/T5 → �
 
 `_clip_overflow_tail()` 在捕获 `ContextOverflowError` 后，直接从消息列表尾部移除连续的 ToolMessage 批次，直到请求降到窗口以内，立即重试。不调 LLM，秒级恢复。只有裁剪不够时才降级到完整摘要。
 
-配合 `_offload_tool_message_content()`（P0-2 消息驱逐），被裁剪的工具结果已先写入文件，裁剪的只是 head+tail 预览，完整内容不丢失。
-
 ### 具体实现方案
 
 #### 文件清单
 
 | 文件                                          | 修改类型 | 说明                                |
 | --------------------------------------------- | -------- | ----------------------------------- |
-| `agent/middlewares/summarization/core.py`          | 修改     | 在 T4/T5 恢复路径前插入快速裁剪路径 |
+| `agent/middlewares/summarization/core.py`     | 修改     | 在 T4/T5 恢复路径前插入快速裁剪路径 |
 | `agent/middlewares/overflow_clip.py`          | 新建     | 尾部裁剪实现                        |
 | `config/features/agent_side/summarization.py` | 修改     | 添加裁剪配置                        |
 
@@ -468,7 +522,7 @@ def _handle_overflow(self, state, error_chars):
 
 ```
 正常流程:
-  工具结果 > 20K chars → P0-2 消息驱逐(写文件+预览) → 消息列表保持小体积
+  工具结果 > 20K chars → P0-2 驱逐(写文件+预览) → state 中保持小体积
 
 溢出恢复:
   ContextOverflowError
@@ -742,21 +796,21 @@ Sherry 缺少威胁模型文档，安全评审缺少系统性参考。
 
 ## 数据分类
 
-| 类别 | 示例             | 存储位置             |
-| ---- | ---------------- | -------------------- |
-| 敏感 | API keys, tokens | env vars (scrub_env) |
-| 私密 | 对话历史         | SQLite (WAL)         |
-| 内部 | 工具结果         | 消息列表 + 驱逐文件  |
+| 类别 | 示例             | 存储位置                                        |
+| ---- | ---------------- | ----------------------------------------------- |
+| 敏感 | API keys, tokens | env vars (scrub_env)                            |
+| 私密 | 对话历史         | SQLite (WAL)                                    |
+| 内部 | 工具结果         | 消息列表 + 驱逐文件（`sessions/{id}/evicted/`） |
 
 ## 威胁分析
 
-| 威胁         | 现有防护       | 差距             |
-| ------------ | -------------- | ---------------- |
-| 路径遍历     | 三道结构门禁 + O_NOFOLLOW | 已落地（`path_utils.py`） |
-| 符号链接攻击 | `O_NOFOLLOW` + 循环检测 | 已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow` / `_raise_if_symlink_loop`，read/write/patch 全走） |
-| Shell注入    | 正则黑名单     | 已评估并否决（base64+`eval` 对以 shell 语义执行的 `terminal` 无增益，且置于 `_check_dangerous`/`_check_sensitive_file_access` 之前会让明文绕过防线；真实读屏障是 OS 沙箱读遮蔽。见头部处置记录） |
-| 工具结果OOM  | 截断           | **需实施 P0-2**  |
-| ...          | ...            | ...              |
+| 威胁         | 现有防护                  | 差距                                                                                                                                                                                             |
+| ------------ | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 路径遍历     | 三道结构门禁 + O_NOFOLLOW | 已落地（`path_utils.py`）                                                                                                                                                                        |
+| 符号链接攻击 | `O_NOFOLLOW` + 循环检测   | 已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow` / `_raise_if_symlink_loop`，read/write/patch 全走）                                                                            |
+| Shell注入    | 正则黑名单                | 已评估并否决（base64+`eval` 对以 shell 语义执行的 `terminal` 无增益，且置于 `_check_dangerous`/`_check_sensitive_file_access` 之前会让明文绕过防线；真实读屏障是 OS 沙箱读遮蔽。见头部处置记录） |
+| 工具结果OOM  | 截断 (head+tail)          | 压缩时截断已落地（`target_truncation.py`等）；**工具执行时驱逐待实施 P0-2**（`wrap_tool_call` 主动写文件+预览，见头部处置记录）                                                                  |
+| ...          | ...                       | ...                                                                                                                                                                                              |
 ```
 
 ---
@@ -813,15 +867,52 @@ Sherry 的 HITL 审批是会话级的，重启后丢失。无操作员场景缺�
 
 ### 问题
 
-read_file 工具的结果被截断后，完整内容丢失。DeepAgents 对 read_file 特殊处理：因为文件已在后端，只切片不卸载。
+read_file 工具的结果被驱逐时，不应写文件——文件本身已在后端磁盘上。DeepAgents 对 read_file 特殊处理：只切片不卸载。
 
 ### DeepAgents 做法
 
-`_slice_read_file_tm()` 将 read_file 的 ToolMessage 切片为 head+tail，不写入文件（因为文件本身就在后端）。
+`_slice_read_file_tm()`（`_overflow_clip.py:76-93`）将 read_file 的 ToolMessage 切片为 ~4k head 字符 + 路径指针，不写入文件。模型可用 `read_file(file_path=..., offset=N, limit=K)` 恢复。
 
 ### 具体实现方案
 
-在 P0-2 的 `MessageEvictionMiddleware` 中，对 `name == "read_file"` 的 ToolMessage 走切片路径而非卸载路径。
+在 P0-2 的 `ToolResultEvictionMiddleware._maybe_evict()` 中，对 `name == "read_file"` 的 ToolMessage 走切片路径而非卸载路径：
+
+```python
+# tool_result_eviction/core.py _maybe_evict 修改:
+
+def _maybe_evict(self, result: ToolMessage, request: ToolCallRequest) -> ToolMessage:
+    if not self._enabled:
+        return result
+    session_id = self._get_session_id(request)
+    if not session_id:
+        return result
+
+    # read_file 特殊处理：文件已在磁盘，切片不写文件
+    if getattr(result, "name", "") == "read_file":
+        return _slice_read_file_result(result)
+
+    evicted = evict_tool_result(result, session_id)
+    return evicted if evicted is not None else result
+```
+
+`_slice_read_file_result` 纯函数（`pub/func/message/eviction.py`）：
+
+```python
+_READ_FILE_SLICE_CHARS = 4_000
+
+def slice_read_file_result(msg: ToolMessage) -> ToolMessage:
+    """切片 read_file 结果，不写文件（文件已在磁盘）。"""
+    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+    if len(content) <= _READ_FILE_SLICE_CHARS:
+        return msg
+    notice = (
+        f"\n\n[Output was truncated due to eviction threshold. "
+        f"Use read_file with offset and limit to retrieve specific portions.]"
+    )
+    return msg.model_copy(update={"content": content[:_READ_FILE_SLICE_CHARS] + notice})
+```
+
+> `target_truncation.py` 的 `_truncate_read_file_content` 覆盖压缩时的 read_file 切片，本方案覆盖工具执行时的切片，两者互补。
 
 ---
 
@@ -829,7 +920,7 @@ read_file 工具的结果被截断后，完整内容丢失。DeepAgents 对 read
 
 ```
 Phase 1 (P0, 安全关键):
-  P0-2 工具结果消息驱逐 ──────→ 独立实施
+  P0-2 工具结果消息驱逐 ──────→ 独立实施（wrap_tool_call 主动驱逐）
 
 Phase 2 (P1, 增强体验):
   P1-1 参数截断 ─────────────→ 依赖现有Summarization
