@@ -58,18 +58,6 @@ class AgentPromptDataProvider:
 
         return memory_store.format_for_system_prompt(target)
 
-    def get_facts_listing(self) -> str:
-        """Summarise the non-empty tiered-facts files."""
-        from agent.tools.memory_tiered import get_tiered_store
-
-        return get_tiered_store().get_facts_listing()
-
-    def add_fact(self, category: str, fact: str) -> dict:
-        """Append one extracted fact to the tiered store."""
-        from agent.tools.memory_tiered import get_tiered_store
-
-        return get_tiered_store().add_fact(category, fact)
-
     def build_todolist_knowledge_block(self, session_id: str) -> str:
         """Render the current plan's knowledge summary."""
         from agent.tools.todolist.knowledge.prompt_block import build_knowledge_block

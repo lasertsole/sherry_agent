@@ -1,9 +1,9 @@
 """Process-level prompt data provider registry for dependency inversion (leaf module).
 
 The system prompt is assembled by ``workspace`` from data owned by ``agent``
-(todos, taskflow registry rows, memory files, tiered facts, the todolist
+(todos, taskflow registry rows, memory files, the todolist
 knowledge block) and by ``context_engine`` (cross-session continuity).
-``context_engine`` needs the same taskflow rows and tiered-facts store, and the
+``context_engine`` needs the same taskflow rows, and the
 curator needs the workspace system-prompt builder. Importing across those
 boundaries is the ``agent <-> context_engine`` / ``agent <-> workspace`` /
 ``context_engine <-> workspace`` cycle this registry exists to break.
@@ -61,11 +61,9 @@ class PromptDataProvider(Protocol):
         :meth:`step_status` / :meth:`steps_summary` are the taskflow step
         state helpers used to render progress.
 
-    Memory / facts (``agent.tools.memory`` + ``agent.tools.memory_tiered``)
+    Memory (``agent.tools.memory``)
         :meth:`format_memory_for_system_prompt` returns the frozen memory
-        snapshot block for ``"memory"`` / ``"user"`` (``None`` when empty);
-        :meth:`get_facts_listing` returns the one-line non-empty facts
-        listing; :meth:`add_fact` appends one extracted fact.
+        snapshot block for ``"memory"`` / ``"user"`` (``None`` when empty).
 
     Prompt blocks
         :meth:`build_todolist_knowledge_block` renders the plan knowledge
@@ -96,14 +94,6 @@ class PromptDataProvider(Protocol):
 
     def format_memory_for_system_prompt(self, target: str) -> str | None:
         """Return the frozen memory block for ``memory`` / ``user``, else ``None``."""
-        ...
-
-    def get_facts_listing(self) -> str:
-        """Summarise non-empty tiered-facts files (``""`` when none)."""
-        ...
-
-    def add_fact(self, category: str, fact: str) -> dict:
-        """Append one fact to the tiered store; returns the store's result dict."""
         ...
 
     def build_todolist_knowledge_block(self, session_id: str) -> str:

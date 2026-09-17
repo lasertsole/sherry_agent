@@ -40,7 +40,6 @@ KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
 # plan-summary.json. Kept separate from KNOWLEDGE_INDEX_DIR (graph index).
 PLAN_KNOWLEDGE_DIR = KNOWLEDGE_DIR / "plans"
 MEMORY_DIR = WORKSPACE_DIR / "memory"
-FACTS_DIR = MEMORY_DIR / "facts"
 HEARTBEAT_PATH = WORKSPACE_DIR / "HEARTBEAT.md"
 # The HEARTBEAT template is language-independent; it lives directly under the
 # template dir (English text), NOT inside the locale subdirectories.

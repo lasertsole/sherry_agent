@@ -193,7 +193,6 @@ Use the skill_manage tool to update or create skills as described above.
 Act on Part 2 only if there is real signal from the plan execution. If
 genuinely nothing stands out, skip Part 2 and say 'No skill updates needed.'
 
-{facts_section}
 ## Important
 
 The knowledge you write via the knowledge tool (action='write') is stored
@@ -209,32 +208,6 @@ _PLAN_REF_STATE_KEY = "plan_ref"
 # Subagent result text is truncated before it enters the extraction prompt so a
 # verbose child transcript cannot blow up the nudge context.
 _MAX_SUBAGENT_RESULT_CHARS = 24 * 1024
-
-# Part 3 is rendered only when a pending facts range exists. Placeholders are
-# substituted with ``str.replace`` (conversation text may itself contain braces,
-# so ``str.format`` is unsafe here).
-_FACTS_SECTION_TEMPLATE = """## Part 3: Persistent Fact Extraction
-
-The pending conversation turns {start}..{end} below have not been fact-extracted yet.
-The per-turn facts pipeline is skipped on this plan-extraction turn, so THIS single
-pass must cover them: extract durable facts and write each one with the memory tool.
-
-Extraction rules:
-1. User preferences and habits -> user_prefs
-2. Project conventions and environment facts -> project / environment
-3. Key technical decisions and their reasons -> decisions
-4. Tool usage experience -> tool_lessons
-5. Never extract temporary task progress, status updates, or one-off narrative.
-
-Write each fact as:
-  memory(action="fact_add", target="<category>", content="<one concise fact>")
-Valid categories: environment, project, decisions, user_prefs, tool_lessons.
-Deduplicate against facts already stored; if nothing durable stands out, say
-'No facts to save.' and continue.
-
-<conversation turns="{start}-{end}">
-{conversation}
-</conversation>"""
 
 # Post-compression todo reconciliation. The Summarization middleware fires this
 # fire-and-forget after a compaction that actually discarded messages and only
@@ -518,82 +491,19 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
         state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
 
 
-def _render_facts_section(pending: dict[str, Any]) -> str:
-    """Render the Part 3 block for the fetched pending range, or '' when none."""
-    if not pending:
-        return ""
-    return (
-        _FACTS_SECTION_TEMPLATE.replace("{start}", str(pending["start"]))
-        .replace("{end}", str(pending["end"]))
-        .replace("{conversation}", pending["conversation"])
-    )
-
-
-def _fetch_pending_facts(session_id: str) -> dict[str, Any]:
-    """Fetch the not-yet-consumed facts interval and format it for the prompt.
-
-    Returns ``{"start": int, "end": int, "conversation": str}`` or ``{}`` when
-    nothing is pending, the range has no persisted conversation rows, or any
-    read fails. Callers may advance the consumed watermark only when this
-    returns a range — the facts must have been handed to the extraction pass.
-    """
-    try:
-        from context_engine.facts.cursor import get_pending
-        from context_engine.facts.queue import _format_range
-        from context_engine.store.core import get_turns_by_turn_num_scope
-
-        start, end = get_pending(session_id)
-        if end <= 0 or end < start:
-            return {}
-        middle = (start + end) // 2
-        half_scope = max(1, end - start + 1)
-        rows = get_turns_by_turn_num_scope(
-            session_id, target_turn_num=middle, half_scope=half_scope, only_eligible=False
-        )
-        rows = [row for row in rows if start <= row.get("turn_num", 0) <= end]
-        conversation = _format_range(rows)
-        if not conversation.strip():
-            return {}
-        return {"start": start, "end": end, "conversation": conversation}
-    except Exception:
-        logger.exception("plan extraction: failed to read pending facts for {}", session_id)
-        return {}
-
-
-def _advance_facts_consumed(session_id: str, end: int) -> None:
-    """Advance the facts consumed watermark after the injected range was processed.
-
-    Only called after a successful extraction pass whose prompt carried the
-    pending conversation; a failure leaves the watermark untouched so the range
-    replays later (at-least-once, mirroring ``facts.queue.process_pending``).
-    """
-    try:
-        from context_engine.facts import cursor as facts_cursor
-
-        facts_cursor.advance_consumed(session_id, end)
-    except Exception:
-        logger.exception("plan extraction: failed to advance facts cursor for {}", session_id)
-
-
 async def _nudge_plan_extraction(
     session_id: str, system_prompt: str, messages: list[BaseMessage]
 ) -> None:
-    """Plan-aware knowledge extraction + skill library update + facts absorption.
+    """Plan-aware knowledge extraction + skill library update.
 
     Triggered when all todos are complete. Builds plan context (plan file +
     todos + ledger + subagent runs) and launches a nudge agent with the
     rendered ``_PLAN_EXTRACTION_PROMPT`` (Part 1: JSON knowledge extraction via
-    knowledge(action="write"); Part 2: skill library update via skill_manage;
-    Part 3: persistent facts via memory(action="fact_add"), rendered only when a
-    pending facts range exists). All three tools carry ``nudge: True`` metadata
-    and pass ``_NudgeLimitTool``.
+    knowledge(action="write"); Part 2: skill library update via skill_manage).
+    Both tools carry ``nudge: True`` metadata and pass ``_NudgeLimitTool``.
 
-    Decision #2: this single LLM pass covers the pending facts interval that the
-    per-turn pipeline would otherwise have processed. The consumed watermark
-    advances ONLY after a successful ``ainvoke`` AND only when the pending range
-    was actually injected — so a skip, an empty range, or any failure leaves the
-    range pending for replay. Fail-open: errors are logged and swallowed, never
-    propagated into the turn's ``after_agent`` hook.
+    Fail-open: errors are logged and swallowed, never propagated into the
+    turn's ``after_agent`` hook.
     """
     state_register_mem.set_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, True)
     try:
@@ -602,10 +512,8 @@ async def _nudge_plan_extraction(
             logger.debug("plan extraction: no plan context for session {}", session_id)
             return
 
-        pending = _fetch_pending_facts(session_id)
         context_str = json.dumps(context, ensure_ascii=False, indent=2)
         prompt = _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
-        prompt = prompt.replace("{facts_section}", _render_facts_section(pending))
 
         async with lane_slot(LaneType.NUDGE):
             _agent = await _create_nudge_agent(system_prompt)
@@ -616,8 +524,6 @@ async def _nudge_plan_extraction(
                 }
             )
         logger.debug("plan extraction res is {}", res["messages"][-1])
-        if pending:
-            _advance_facts_consumed(session_id, pending["end"])
     except Exception:
         logger.exception("plan extraction failed (fail-open) for {}", session_id)
     finally:

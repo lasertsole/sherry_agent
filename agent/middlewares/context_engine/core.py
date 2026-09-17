@@ -4,7 +4,6 @@ from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
 from typing import override
 from context_engine import add_messages
-from context_engine.store.core import get_max_turn_num
 from typing import Any, cast
 from collections.abc import Callable, Awaitable
 from workspace.prompt_builder import build_system_prompt
@@ -137,25 +136,6 @@ def _detect_todo_all_complete(session_id: str) -> bool:
 
     state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, True)
     return True
-
-
-_BACKGROUND_TASKS: set[asyncio.Task] = set()
-
-
-async def _run_facts_pipeline(session_id: str, turn_num: int) -> None:
-    """SESSION plan P2-3: dual-watermark facts extraction (fail-open).
-
-    Skipped on plan-extraction turns: ``_nudge_plan_extraction`` absorbs the
-    pending range with its own single LLM pass (the session-memory facts /
-    plan-extraction merge decision), so the same turn never runs two extractors.
-    """
-    try:
-        from context_engine.facts.queue import enqueue_turn, process_pending
-
-        await enqueue_turn(session_id, turn_num)
-        await process_pending(session_id)
-    except Exception:
-        logger.exception("facts pipeline failed (fail-open) for {}", session_id)
 
 
 class ContextEngineHook(AgentMiddleware):
@@ -351,21 +331,5 @@ class ContextEngineHook(AgentMiddleware):
                 await _nudge_plan_extraction(session_id, system_prompt, nudge_messages)
 
         await asyncio.gather(_persist(), _nudge())
-
-        # SESSION plan P2-3: enqueue the persisted turn for facts extraction
-        # and consume pending ranges. Fire-and-forget — extraction never
-        # blocks or breaks the turn (fail-open like every background hook).
-        #
-        # Facts yield (confirmed decision #2): on a plan-extraction turn the
-        # dedicated pipeline is NOT started — _nudge_plan_extraction absorbs the
-        # pending range with its single LLM pass and advances the consumed
-        # watermark. Turns not yet enqueued are replayed by the next
-        # non-plan-extraction turn (the dual watermark is crash-safe), so no
-        # interval is lost and no turn ever runs two extractors.
-        turn_num = get_max_turn_num(session_id)
-        if turn_num > 0 and not need_plan_extraction:
-            facts_task = asyncio.create_task(_run_facts_pipeline(session_id, turn_num))
-            _BACKGROUND_TASKS.add(facts_task)
-            facts_task.add_done_callback(_BACKGROUND_TASKS.discard)
 
         return None

@@ -298,22 +298,6 @@ def build_system_prompt(
                 if content
             )
 
-    # --- Facts listing (LT-1) -----------------------------------------
-    # One-liner listing non-empty facts files so the agent knows what's
-    # available to read via the memory tool's fact_read/fact_search actions.
-    # ~100-150 chars, far cheaper than embedding full facts content.
-    if selected_file_names is None:
-        try:
-            provider = _resolve_provider("get_facts_listing")
-            facts_listing = provider.get_facts_listing() if provider is not None else ""
-            if facts_listing:
-                file_paths.append(
-                    "FACTS (on-demand, use memory tool with fact_read/fact_search):\n  "
-                    + facts_listing
-                )
-        except Exception:  # noqa: S110 - non-critical: a facts-layer failure must not break the prompt
-            pass
-
     # --- Todo + boulder + taskflow + continuity blocks ----------------
     # Rebuilt from live state on every call, so they survive context
     # compression; skipped entirely when there is no session to scope them to.
