@@ -15,6 +15,10 @@ from .tool_guardrails import (
     ToolGuardrailsConfig as ToolGuardrailsConfig,
     TOOL_GUARDRAILS as TOOL_GUARDRAILS,
 )
+from .tool_result_eviction import (
+    ToolResultEvictionConfig as ToolResultEvictionConfig,
+    TOOL_RESULT_EVICTION as TOOL_RESULT_EVICTION,
+)
 from .iteration_budget import (
     IterationBudgetConfig as IterationBudgetConfig,
     ITERATION_BUDGET as ITERATION_BUDGET,

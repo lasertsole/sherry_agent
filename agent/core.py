@@ -23,6 +23,7 @@ from .middlewares import (
     MultimodalProcessor,
     system_prompt_injection,
     ToolGuardrails,
+    ToolResultEvictionMiddleware,
     IterationBudget,
     HeartbeatStaleness,
     OutputRepetitionGuard,
@@ -186,6 +187,15 @@ async def built_agent(
                 MultimodalProcessor(),
                 IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
                 ToolGuardrails(),
+                # Registered directly after ToolGuardrails, i.e. OUTER relative
+                # to PathGuard / HITL / MessagePersistenceMiddleware in the wrap
+                # chain (first registered = outermost). MessagePersistence
+                # stays innermost and persists the RAW tool result the moment
+                # the handler returns; this layer then swaps in the preview on
+                # the way out, so graph state only ever holds the preview while
+                # MesMemory keeps the full text (P0-2). read_file results are
+                # sliced instead of offloaded (P2-4).
+                ToolResultEvictionMiddleware(),
                 ToolCallNormalize(),
                 PathGuard(),
                 SubagentCompletionDrainMiddleware(),
