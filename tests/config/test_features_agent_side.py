@@ -29,6 +29,7 @@ from config.features.agent_side import (
     TOOLS_TIMEOUTS,
     TOKEN_ESTIMATION,
     TOOL_GUARDRAILS,
+    TOOL_RESULT_EVICTION,
     ContextGuardConfig,
     HeartbeatStalenessConfig,
     HitlDefaultsConfig,
@@ -48,6 +49,7 @@ from config.features.agent_side import (
     ToolsTimeoutsConfig,
     TokenEstimationConfig,
     ToolGuardrailsConfig,
+    ToolResultEvictionConfig,
 )
 from config.features.agent_side.max_tokens_boost import _build_max_tokens_boost
 from config.features.agent_side.model_backend import _build_model_backend
@@ -75,6 +77,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (LLM_CLIENT_DEFAULTS, LlmClientDefaultsConfig),
     (REASONING_BUDGET, ReasoningBudgetConfig),
     (MODEL_BACKEND, ModelBackendConfig),
+    (TOOL_RESULT_EVICTION, ToolResultEvictionConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -164,6 +167,27 @@ SPOT_DEFAULTS = [
     (LLM_CLIENT_DEFAULTS, "local_n_gpu_layers", -1),
     (LLM_CLIENT_DEFAULTS, "ittt_remote_temperature", 0.8),
     (REASONING_BUDGET, "anthropic_default_thinking_budget", 2000),
+    (TOOL_RESULT_EVICTION, "enabled", True),
+    (TOOL_RESULT_EVICTION, "evict_threshold_chars", 20_000),
+    (TOOL_RESULT_EVICTION, "preview_head_lines", 5),
+    (TOOL_RESULT_EVICTION, "preview_tail_lines", 5),
+    (TOOL_RESULT_EVICTION, "eviction_subdir", "evicted"),
+    (
+        TOOL_RESULT_EVICTION,
+        "excluded_tools",
+        frozenset(
+            {
+                "read_file",
+                "write_file",
+                "patch_file",
+                "search_files",
+                "list_files",
+                "memory",
+                "skill_view",
+                "skill_list",
+            }
+        ),
+    ),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]
@@ -217,6 +241,7 @@ def test_model_backend_builder_falls_back_to_remote_default():
 def test_frozenset_field_type():
     assert isinstance(SUMMARIZATION["protected_tools"], frozenset)
     assert SUMMARIZATION["protected_tools"] == frozenset({"memory", "skill_view", "skill_list"})
+    assert isinstance(TOOL_RESULT_EVICTION["excluded_tools"], frozenset)
 
 
 def test_list_field_types():

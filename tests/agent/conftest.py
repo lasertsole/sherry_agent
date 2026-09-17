@@ -70,6 +70,7 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
         "MultimodalProcessor",
         "system_prompt_injection",
         "ToolGuardrails",
+        "ToolResultEvictionMiddleware",
         "IterationBudget",
         "HeartbeatStaleness",
         "OutputRepetitionGuard",
