@@ -1,4 +1,4 @@
-"""P1-2 tests: file tools render model-visible paths without leaking ROOT_DIR.
+"""Virtual-path tests: file tools render model-visible paths without leaking ROOT_DIR.
 
 Covers:
 - read_file errors use virtual paths / safe error details

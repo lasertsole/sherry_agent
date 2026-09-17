@@ -262,7 +262,7 @@ state_register_db = StateRegisterDB()
 
 
 class ContextEpoch:
-    """System-context snapshot lifecycle (SESSION plan P2-2, from opencode-dev).
+    """System-context snapshot lifecycle (from opencode-dev).
 
     initialize → first baseline; prepare → reconcile/replace decision;
     replace → compaction rebuild; advance → snapshot-only update.

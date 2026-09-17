@@ -1,7 +1,7 @@
 """Event projector: maps events onto read-model updates (progressive).
 
 The initial handler set covers checkpoint events — the read-model side of
-P1-1 — so a replayed event stream can rebuild compaction state.
+compaction checkpoints — so a replayed event stream can rebuild compaction state.
 """
 
 from __future__ import annotations
@@ -31,7 +31,7 @@ class EventProjector:
 
 
 def make_default_projector() -> EventProjector:
-    """Projector with the checkpoint handlers wired (P1-1 read model)."""
+    """Projector with the checkpoint handlers wired (checkpoint read model)."""
     from context_engine.store.core import (
         create_compaction_checkpoint,
         mark_messages_compacted,

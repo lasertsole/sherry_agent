@@ -8,20 +8,20 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 
 ## 已实现能力
 
-| 项 | 能力 | 位置 |
-|---|---|---|
-| P0-1 | 预压缩 Memory Flush | `agent/middlewares/summarization/memory_flush.py` |
-| P0-2 | 压缩冷却跨重启持久化 | `agent/middlewares/summarization/core.py` 的 `_COOLDOWN_PERSIST_KEYS` |
-| P0-3 | SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`，迁移 v10 |
-| P0-4 | 工具输出一行摘要 | `pub/func/message/tool_output_prune.py` |
-| P1-1 | 压缩检查点 + 回溯 | 迁移 v15，`restore_compaction_checkpoint` |
-| P1-2 | 消息幂等持久化 | 迁移 v11（`idempotency_key` + 部分唯一索引） |
-| P1-3 | `context_eligible` 历史投影 | 迁移 v12；检索默认过滤不合格行 |
-| P1-5 | 消息树 + 零拷贝 fork | 迁移 v14（`parent_message_id`、`session_leafs`） |
-| P2-1 | 只增事件日志 + 投影器 | 迁移 v16，`context_engine/events/` |
-| P2-2 | Context Epoch 快照 | 迁移 v17（`context_epoch` 表），`ContextEpoch` |
-| P2-4（部分） | steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| P2-5 | 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
+| 能力 | 位置 |
+|---|---|
+| 预压缩 Memory Flush | `agent/middlewares/summarization/memory_flush.py` |
+| 压缩冷却跨重启持久化 | `agent/middlewares/summarization/core.py` 的 `_COOLDOWN_PERSIST_KEYS` |
+| SQLite 压缩锁（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`，迁移 v10 |
+| 工具输出一行摘要 | `pub/func/message/tool_output_prune.py` |
+| 压缩检查点 + 回溯 | 迁移 v15，`restore_compaction_checkpoint` |
+| 消息幂等持久化 | 迁移 v11（`idempotency_key` + 部分唯一索引） |
+| `context_eligible` 历史投影 | 迁移 v12；检索默认过滤不合格行 |
+| 消息树 + 零拷贝 fork | 迁移 v14（`parent_message_id`、`session_leafs`） |
+| 只增事件日志 + 投影器 | 迁移 v16，`context_engine/events/` |
+| Context Epoch 快照 | 迁移 v17（`context_epoch` 表），`ContextEpoch` |
+| steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
+| 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
 | TaskFlow 编排 | `docs/long-running-tasks/` |
 
 ## MesMemory 迁移（v10–v17）
@@ -39,7 +39,7 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 
 ## 关键组件
 
-- **`context_engine/events/`** —— 只增事件日志（会话内无间隙序列：`types.py`、`store.py`），`EventProjector` 将检查点事件映射到 P1-1 读模型。
+- **`context_engine/events/`** —— 只增事件日志（会话内无间隙序列：`types.py`、`store.py`），`EventProjector` 将检查点事件映射到检查点读模型。
 - **`context_engine/embeddings/`** —— 向量语义搜索：惰性嵌入后端（项目嵌入模型，可覆盖）、幂等 LEFT-JOIN 索引器、余弦排序；由 `message_search` 工具暴露（`semantic: true`）。
 - **`agent/tools/message_search.py`** —— 两段式检索：先在已持久化的 `messages` 表上做 FTS5 搜索；无命中时降级到会话的最新 checkpoint（`SRC_DIR/checkpoints/sqlite.db` 的 `state["messages"]`），由新到旧对尚未持久化的轮次做关键词匹配（受 `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` 限制）；兜底命中标记 `source="checkpoint"`。由于持久化现在发生在每个模型边界，这条兜底仅在"检查点领先于落库"的极端窗口内起作用 —— 即当轮尚未到下一落库边界的在途工具结果（与 HITL 拒绝）。
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 压缩锁（TTL 自愈、同步 + 异步获取、超时 fail-open），包裹 `_apply_compression` 与 `_aapply_compression` 两条路径。

@@ -1,4 +1,4 @@
-"""P0-2: the ``@dynamic_prompt`` middleware reuses an identical system message.
+"""The ``@dynamic_prompt`` middleware reuses an identical system message.
 
 The middleware used to be an ``AgentMiddleware`` subclass that returned the
 original *request* object when ``request.system_message`` already carried the

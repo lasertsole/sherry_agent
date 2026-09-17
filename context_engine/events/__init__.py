@@ -1,4 +1,4 @@
-"""Append-only event log (SESSION plan P2-1).
+"""Append-only event log.
 
 Key state changes (compactions, checkpoints) are recorded as durable events.
 Replaying a session's events reconstructs the sequence of state changes; the

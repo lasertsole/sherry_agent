@@ -210,7 +210,7 @@ class ToolMessageRowBuilder(MessageRowBuilder):
         }
 
 
-# SESSION plan P1-2: crash-retry idempotency for message persistence. Messages
+# Crash-retry idempotency for message persistence. Messages
 # already flushed in this process carry "_db_persisted" in additional_kwargs
 # and are skipped on retry; the per-row idempotency key deduplicates at the
 # storage level (partial unique index) for cross-process replay safety.
@@ -224,7 +224,7 @@ _BUILDERS: dict[str, MessageRowBuilder] = {
 
 
 def get_session_leaf(session_id: str) -> int | None:
-    """Current tree leaf of a session (SESSION plan P1-5); None = no tree yet."""
+    """Current tree leaf of a session; None = no tree yet."""
     row = _db.execute(
         "SELECT leaf_message_id FROM session_leafs WHERE session_id = ?", (session_id,)
     ).fetchone()
@@ -270,7 +270,7 @@ def fork_from_message(source_session_id: str, target_message_id: int, new_sessio
 
 
 def _idempotency_key(session_id: str, turn_num: int, ts_ms: int, index: int, m: BaseMessage) -> str:
-    """Stable per-row key for INSERT OR IGNORE dedup (SESSION plan P1-2)."""
+    """Stable per-row key for INSERT OR IGNORE dedup."""
     payload = json.dumps(
         {
             "role": m.type,
@@ -329,13 +329,13 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
             row["idempotency_key"] = _idempotency_key(
                 session_id, current_turn, turn_ms, index, message
             )
-            # SESSION plan P1-3: emitters mark ineligible messages via
+            # Emitters mark ineligible messages via
             # additional_kwargs["context_eligible"] = False (default eligible).
             row["context_eligible"] = (
                 0 if message.additional_kwargs.get("context_eligible") is False else 1
             )
 
-        # SESSION plan P1-5: chain the batch into the message tree. The first
+        # Chain the batch into the message tree. The first
         # row parents to the session's current leaf (or NULL when forking from
         # nothing); each following row chains to the previous one. Inserted
         # row-by-row (turn-sized batches) so every lastrowid is available.
@@ -404,7 +404,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
         if parent_id is not None:
             set_session_leaf(session_id, parent_id)
 
-    # SESSION plan P1-2: mark the batch as flushed so an in-process retry of
+    # Mark the batch as flushed so an in-process retry of
     # the same message list is skipped instead of double-written.
     for message in pending:
         message.additional_kwargs[_DB_PERSISTED_KEY] = True
@@ -460,7 +460,7 @@ def is_message_persisted(message: BaseMessage) -> bool:
 def _filter_pending(messages: list[BaseMessage] | None) -> list[BaseMessage]:
     """Return the messages a persistence call would actually write.
 
-    Early exit when there is nothing to persist. SESSION plan P1-2: skip
+    Early exit when there is nothing to persist. Skip
     messages this process already flushed (crash-retry dedup). Unknown roles
     are skipped before the dedup probe: message-like objects without a
     registered builder (EC-01 add_messages bounds) are not required to carry
@@ -541,7 +541,7 @@ def create_compaction_checkpoint(
     post_compaction_turn: int,
     summary_text: str = "",
 ) -> int:
-    """Record a checkpoint after a successful compaction (SESSION plan P1-1)."""
+    """Record a checkpoint after a successful compaction."""
     seq_row = _db.execute(
         "SELECT COALESCE(MAX(checkpoint_seq), -1) + 1 FROM compaction_checkpoints "
         "WHERE session_id = ?",

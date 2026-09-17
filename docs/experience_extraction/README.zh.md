@@ -55,7 +55,7 @@
 
 后续读取由同一工具提供（`knowledge(action="read")`），精简后的 plan 摘要则由 `build_knowledge_block`（`knowledge/prompt_block.py`）自动注入系统提示。
 
-### 3. 压缩前 memory flush（session-memory P0-1）
+### 3. 压缩前 memory flush
 
 两条压缩路径（`agent/middlewares/summarization/core.py` 中的 `_apply_compression_under_lock` 与 `_aapply_compression_under_lock`）在 cut 丢弃消息时、生成摘要之前运行 flush：
 
@@ -158,7 +158,7 @@ uv run python evals/evals.py nudge_extraction
 
 ## 相关文档
 
-- [会话级内存架构](../session_memory/README.md)：SESSION 计划中的 P0-1（memory flush）。
+- [会话级内存架构](../session_memory/README.md)：压缩前 memory flush。
 - [摘要压缩](../summarization/README.md)：压缩触发，以及门控 flush 与 todo fork 的冷却。
 - [长程任务](../long-running-tasks/README.md)：TaskFlow，以及被 plan extraction 读取的 todo 规划层。
 - [中间件 README](../../agent/middlewares/README.md)：`@dynamic_prompt` 系统提示词注入与 Summarization 参考。

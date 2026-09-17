@@ -130,7 +130,7 @@ def test_seatbelt_json_escaping_for_quote_containing_path(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# Read-deny rules (P0-1)
+# Read-deny rules
 # --------------------------------------------------------------------------
 
 

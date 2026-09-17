@@ -1,4 +1,4 @@
-"""P2-5: vector semantic search over MesMemory (stubbed embedding backend).
+"""Vector semantic search over MesMemory (stubbed embedding backend).
 
 The embed function is replaced with a deterministic stub so the tests pin the
 index/retrieve/rank contract without loading the real embed model.

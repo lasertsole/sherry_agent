@@ -1,4 +1,4 @@
-"""P0-4: one-line tool-output summaries replace the prune marker.
+"""One-line tool-output summaries replace the prune marker.
 
 Covers `_summarize_tool_result` dispatch (bash/read/grep/glob/default,
 200-char cap, exception fallback) and the summarised replacement performed

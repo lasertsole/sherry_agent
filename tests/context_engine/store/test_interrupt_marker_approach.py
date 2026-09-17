@@ -270,11 +270,11 @@ def _index_of(messages: list[BaseMessage], message_id: str) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Hermetic durable-state isolation (P0-2 anti-thrash cooldown)
+# Hermetic durable-state isolation (anti-thrash cooldown)
 # ---------------------------------------------------------------------------
 
 # Session ids this module drives through the REAL Summarization middleware.
-# P0-2 (e8fc684) mirrored the anti-thrash cooldown into the SQLite-backed
+# The anti-thrash cooldown (e8fc684) was mirrored into the SQLite-backed
 # ``state_register_db`` and rehydrates it on first access in a new process.
 # This spike reuses fixed session ids, so the cooldown armed by the compaction
 # it itself performs was restored on the NEXT run and suppressed the
@@ -298,7 +298,7 @@ class _InMemoryStateRegisterDB:
 
 @pytest.fixture(autouse=True)
 def _isolate_summarization_durable_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """Keep the P0-2 persisted cooldown out of this hermetic spike.
+    """Keep the persisted cooldown out of this hermetic spike.
 
     The real ``state_register_db`` outlives the test process, so an armed
     cooldown from an earlier run would suppress the proactive trigger. Isolate

@@ -1,4 +1,4 @@
-"""P0-3: SQLite compaction lock prevents concurrent session compaction.
+"""SQLite compaction lock prevents concurrent session compaction.
 
 The lock serializes per-session compactions at the storage level; a failed
 acquire must fail open (compression skipped, request returned untouched).

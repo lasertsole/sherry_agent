@@ -1,4 +1,4 @@
-"""P0-3 hardening tests: symlink refusal + TOCTOU closure in the file tools.
+"""Path-hardening tests: symlink refusal + TOCTOU closure in the file tools.
 
 Covers:
 - symlink final component pointing outside ROOT_DIR is refused by read/write/patch

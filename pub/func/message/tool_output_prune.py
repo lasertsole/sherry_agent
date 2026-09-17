@@ -1,4 +1,4 @@
-"""Tool-output pruning with one-line summaries (P0-4).
+"""Tool-output pruning with one-line summaries.
 
 When `prune_tool_outputs` clears an oversized historical tool result it
 replaces the content with a tool-specific one-line summary instead of the
@@ -25,7 +25,7 @@ _SUMMARY_LC_SOURCE = "summarization"
 _SUMMARY_MAX_CHARS = 200
 
 
-# === Tool-output summary templates (P0-4) ===
+# === Tool-output summary templates ===
 
 
 def _extract_exit_code(result_text: str) -> str:

@@ -37,7 +37,7 @@ def _shared_db() -> sqlite3.Connection:
 def retrieve_history_by_last_n_prompt(
     session_id: str, n: int = 5, only_eligible: bool = True
 ) -> str:
-    """Format the last n turns; eligible-only by default (SESSION plan P1-3)."""
+    """Format the last n turns; eligible-only by default."""
     result: list[dict] = get_messages_by_lastest_n_turns(session_id, n, only_eligible=only_eligible)
 
     order_dict = {}

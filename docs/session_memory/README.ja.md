@@ -8,20 +8,20 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 
 ## 実装済み機能
 
-| 項目 | 機能 | 場所 |
-|---|---|---|
-| P0-1 | 圧縮前メモリフラッシュ | `agent/middlewares/summarization/memory_flush.py` |
-| P0-2 | 圧縮クールダウンの再起動間永続化 | `agent/middlewares/summarization/core.py` の `_COOLDOWN_PERSIST_KEYS` |
-| P0-3 | SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`、移行 v10 |
-| P0-4 | ツール出力の一行要約 | `pub/func/message/tool_output_prune.py` |
-| P1-1 | 圧縮チェックポイント + 復元 | 移行 v15、`restore_compaction_checkpoint` |
-| P1-2 | メッセージ冪等永続化 | 移行 v11（`idempotency_key` + 部分一意インデックス） |
-| P1-3 | `context_eligible` 履歴投影 | 移行 v12、取得時に非対象行を除外 |
-| P1-5 | メッセージツリー + ゼロコピー fork | 移行 v14（`parent_message_id`、`session_leafs`） |
-| P2-1 | 追記型イベントログ + プロジェクタ | 移行 v16、`context_engine/events/` |
-| P2-2 | Context Epoch スナップショット | 移行 v17（`context_epoch` テーブル）、`ContextEpoch` |
-| P2-4（一部） | steer/queue デュアル配信 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| P2-5 | ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
+| 機能 | 場所 |
+|---|---|
+| 圧縮前メモリフラッシュ | `agent/middlewares/summarization/memory_flush.py` |
+| 圧縮クールダウンの再起動間永続化 | `agent/middlewares/summarization/core.py` の `_COOLDOWN_PERSIST_KEYS` |
+| SQLite 圧縮ロック（TTL、fail-open） | `agent/middlewares/summarization/compaction_lock.py`、移行 v10 |
+| ツール出力の一行要約 | `pub/func/message/tool_output_prune.py` |
+| 圧縮チェックポイント + 復元 | 移行 v15、`restore_compaction_checkpoint` |
+| メッセージ冪等永続化 | 移行 v11（`idempotency_key` + 部分一意インデックス） |
+| `context_eligible` 履歴投影 | 移行 v12、取得時に非対象行を除外 |
+| メッセージツリー + ゼロコピー fork | 移行 v14（`parent_message_id`、`session_leafs`） |
+| 追記型イベントログ + プロジェクタ | 移行 v16、`context_engine/events/` |
+| Context Epoch スナップショット | 移行 v17（`context_epoch` テーブル）、`ContextEpoch` |
+| steer/queue デュアル配信 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
+| ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
 | TaskFlow 編成 | `docs/long-running-tasks/` |
 
 ## MesMemory マイグレーション（v10–v17）
@@ -39,7 +39,7 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 
 ## 主要コンポーネント
 
-- **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントを P1-1 読みモデルへ写像する `EventProjector`。
+- **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントをチェックポイント読みモデルへ写像する `EventProjector`。
 - **`context_engine/embeddings/`** —— ベクトル意味検索：遅延 embed バックエンド（上書き可能）、冪等 LEFT-JOIN インデクサ、コサイン順位付け。`message_search` ツール（`semantic: true`）で公開。
 - **`agent/tools/message_search.py`** —— 二段階検索：永続化済み `messages` テーブルの FTS5 を先に検索し、ヒットがない場合はセッションの最新チェックポイント（`SRC_DIR/checkpoints/sqlite.db` の `state["messages"]`）へ降格して、未永続化ターンを新しい順にキーワード一致（`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` で上限）。フォールバックのヒットには `source="checkpoint"` を付与。永続化が各モデル境界で走るようになったため、このフォールバックが効くのは「チェックポイントがストアより先行している」狭い窓のみです —— 次の境界で永続化される前の、当該ターンで進行中のツール結果（および HITL 拒否）。
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。

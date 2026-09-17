@@ -55,7 +55,7 @@
 
 後続の読み取りは同じツール（`knowledge(action="read")`）が提供し、圧縮された plan 要約は `build_knowledge_block`（`knowledge/prompt_block.py`）がシステムプロンプトへ自動注入する。
 
-### 3. 圧縮前 memory flush（session-memory P0-1）
+### 3. 圧縮前 memory flush
 
 両方の圧縮経路（`agent/middlewares/summarization/core.py` の `_apply_compression_under_lock` と `_aapply_compression_under_lock`）は、cut がメッセージを破棄するとき、要約生成の前に flush を走らせる：
 
@@ -158,7 +158,7 @@ uv run python evals/evals.py nudge_extraction
 
 ## 関連ドキュメント
 
-- [セッションメモリ設計](../session_memory/README.md)：SESSION プランの P0-1（memory flush）。
+- [セッションメモリ設計](../session_memory/README.md)：圧縮前 memory flush。
 - [要約圧縮](../summarization/README.md)：圧縮トリガと、flush および todo fork をゲートするクールダウン。
 - [長時間タスク](../long-running-tasks/README.md)：TaskFlow と、plan extraction が読み取る todo 計画層。
 - [ミドルウェア README](../../agent/middlewares/README.md)：`@dynamic_prompt` システムプロンプト注入と Summarization のリファレンス。

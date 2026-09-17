@@ -66,7 +66,7 @@ bwrap
 
 `--clearenv` がすべての `--setenv` より先に来ることと組み合わせて、洗浄済みディクショナリが本当の環境変数ホワイトリストになります。ルートファイルシステムは読み取り専用で、書き込みはプロジェクトルートと一時ディレクトリにしか落ちません。
 
-**リードシールド (P0-1)。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで両バックエンドは既定の機密パスリスト `DEFAULT_DENY_READ_PATHS` — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、呼び出しごとに `_sensitive_read_paths()` が解決し、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開、空項目はスキップ、順序は保持、重複は除去)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
+**リードシールド。** `--ro-bind / /` は読み取りを「どこでも可能」にするだけで、無害にはしません。マスクがなければモデルは `cat ~/.ssh/id_rsa` を実行できます。そこで両バックエンドは既定の機密パスリスト `DEFAULT_DENY_READ_PATHS` — `~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker` — をマスクし、呼び出しごとに `_sensitive_read_paths()` が解決し、環境変数 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 区切り、`~` 展開、空項目はスキップ、順序は保持、重複は除去)で拡張できます。bwrap のシールドは存在する各ディレクトリの上に空ディレクトリをマウントし(機密ファイルには `--ro-bind /dev/null`)、存在しないパスはスキップします(読むものが無く、bwrap は読み取り専用ルートバインドの下にマウントポイントを作れません)。`/var/empty` が無いホストではディレクトリは `--tmpfs <パス>` にフォールバックします。シールドは書き込み可能バインドの**後**に置かれ、書き込み可能なプロジェクトルートがマスク済みパスを再露出させることはありません。
 
 **macOS: Seatbelt(`sandbox-exec`)**。コマンドは `sandbox-exec -p <profile> -- <cmd...>` として実行され、profile は次のとおりです:
 
@@ -105,7 +105,7 @@ bwrap
 
 **連結後**の文字列をマッチすることに意味があります: 旧来の要素単位の完全一致ブラックリストは、各要素を単独で見れば無害に見える `["echo ok", "rm -rf /"]` を見逃していました。マッチすると `ToolException("Blocked: unsafe command.")` を送出し、`handle_tool_error=True` を経由してエラーのツール結果として表面化します。このゲートは `sandbox` の値にかかわらず常に動きます。`python_repl` には対応する正規表現がなく、代わりにラッパースクリプトがビルトインを制限します。
 
-**機密ファイルゲート (P0-2、`_SENSITIVE_FILE_PATTERNS`)。** `_run` と `_arun` の両方で、`_check_sensitive_file_access(cmd_str)` は `_check_dangerous` の**後**、**どの生成よりも前**に実行されます: 6つのコンパイル済みパターンのいずれかが連結後のコマンド文字列にマッチすると `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)を送出し — 子プロセスは決して生成されません — モデルを `read_file`(外部パスは人間の承認を通る)へ誘導します:
+**機密ファイルゲート (`_SENSITIVE_FILE_PATTERNS`)。** `_run` と `_arun` の両方で、`_check_sensitive_file_access(cmd_str)` は `_check_dangerous` の**後**、**どの生成よりも前**に実行されます: 6つのコンパイル済みパターンのいずれかが連結後のコマンド文字列にマッチすると `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)を送出し — 子プロセスは決して生成されません — モデルを `read_file`(外部パスは人間の承認を通る)へ誘導します:
 
 | パターン | 対象 |
 | :------- | :--- |
@@ -158,7 +158,7 @@ bwrap
 
 **検索コンテインメント(`_stays_within_root`)。** `os.walk` はディレクトリのシンボリックリンクを辿りませんが、ファイルのシンボリックリンクは一覧に現れます。両検索モードはすべてのヒットを `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`、`ValueError` / `OSError` / `RuntimeError` でスキップ)でフィルタするため、検索ツリーの外に解決されるシンボリックリンクは決して返りません — `/etc/passwd` へのファイルシンボリックリンクはスキップされます。検索ルートは常に解決済みです(プロジェクト内検索はさらに `ROOT_DIR` で制限されます)ので、allowlist 済みの外部ディレクトリ検索はそのまま機能します。
 
-**スキャン境界(P0-4)。** 両モードは `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)でスキャン自体も制限します: `file_tools_search_time_budget_s`(既定 5.0 秒)の期限切れで走査を停止し、`file_tools_search_max_matches`(既定 10,000)が収集ヒット数を上限化し、`file_tools_search_prune_dirs`(既定 `proc`、`sys`、`dev`)は `dirnames[:]` から除外されるため疑似ファイルシステムには決して降りません。打ち切られたスキャンは決して黙りません — JSON 結果に `scan_truncated: true`、`scan_stop_reason`(`time_budget` / `max_matches`)とヒントが付き、プルーニングが発生した場合は `pruned_dir_count` も付きます。ファイル名パターンは `fnmatch` を通り(ブレース展開なし)、展開数上限は不要です。
+**スキャン境界。** 両モードは `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)でスキャン自体も制限します: `file_tools_search_time_budget_s`(既定 5.0 秒)の期限切れで走査を停止し、`file_tools_search_max_matches`(既定 10,000)が収集ヒット数を上限化し、`file_tools_search_prune_dirs`(既定 `proc`、`sys`、`dev`)は `dirnames[:]` から除外されるため疑似ファイルシステムには決して降りません。打ち切られたスキャンは決して黙りません — JSON 結果に `scan_truncated: true`、`scan_stop_reason`(`time_budget` / `max_matches`)とヒントが付き、プルーニングが発生した場合は `pruned_dir_count` も付きます。ファイル名パターンは `fnmatch` を通り(ブレース展開なし)、展開数上限は不要です。
 
 **deepagents 参考実装との設計差。** 参考実装はすべてのパスを仮想名前空間(`virtual_mode`)に固定することで、トラバーサルを設計上不可能にします。Sherry は代わりに実ファイルシステムパスを保持し(`prompt_builder`、スキルツール、terminal の cwd がすべて依存)、解決**後**にコンテインメント(上記の3ゲート)を適用し、`O_NOFOLLOW` で TOCTOU を閉じます。`BackendProtocol`、`CompositeBackend`、`StateBackend`、完全な仮想パス名前空間は意図的に採用していません。それはアーキテクチャの書き換えであり、Sherry にマルチバックエンドの用途がないためです。
 

@@ -112,7 +112,7 @@ _TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
 # overflow error, same state_register_mem pattern as the keys above.
 _OVERFLOW_RETRIES_KEY = "summarization_overflow_retries"
 
-# P0-2: anti-thrash keys that must survive a process restart. The
+# Anti-thrash keys that must survive a process restart. The
 # CompressionEffectivenessTracker mutates these in ``state_register_mem``
 # only; this module mirrors the current values into the SQLite-backed
 # ``state_register_db`` and rehydrates them on first access after a restart.
@@ -883,7 +883,7 @@ class Summarization(AgentMiddleware):
         state_register_mem.set_state(session_id, _COOLDOWN_ROUNDS_KEY, COMPACTION_COOLDOWN_ROUNDS)
         attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0) + 1
         state_register_mem.set_state(session_id, _TURN_ATTEMPTS_KEY, attempts)
-        # P0-2: the armed cooldown must survive a restart, or a fresh process
+        # The armed cooldown must survive a restart, or a fresh process
         # immediately re-attempts the compression that just happened. Persist
         # ONLY the rounds key here — the effectiveness-count keys keep their
         # original "persisted on the degraded path only" semantics, while a
@@ -1798,7 +1798,7 @@ class Summarization(AgentMiddleware):
         request: ModelRequest[ContextT],
         session_id: str,
     ) -> ModelRequest[ContextT]:
-        """Serialize per-session compactions (SESSION plan P0-3); fail-open."""
+        """Serialize per-session compactions; fail-open."""
         try:
             with self._compaction_lock.acquire_sync(session_id):
                 return self._apply_compression_under_lock(request, session_id)
@@ -1833,7 +1833,7 @@ class Summarization(AgentMiddleware):
 
                 _schedule_compression_todo_update(session_id, messages_to_summarize)
 
-                # P0-1: persist cross-session facts before these messages are discarded.
+                # Persist cross-session facts before these messages are discarded.
                 if self._memory_store and self._llm_factory:
                     from .memory_flush import run_memory_flush_sync
 
@@ -1938,7 +1938,7 @@ class Summarization(AgentMiddleware):
 
                 _schedule_compression_todo_update(session_id, messages_to_summarize)
 
-                # P0-1: persist cross-session facts before these messages are discarded.
+                # Persist cross-session facts before these messages are discarded.
                 if self._memory_store and self._llm_factory:
                     from .memory_flush import run_memory_flush
 

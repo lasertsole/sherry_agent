@@ -1,4 +1,4 @@
-"""Unit + integration tests for P0-1 pre-compression Memory Flush.
+"""Unit + integration tests for pre-compression Memory Flush.
 
 Plan: ``TODO/P0-1_MEMORY_FLUSH_PLAN.md`` §6.1 (13 tests).
 

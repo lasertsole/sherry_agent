@@ -323,7 +323,7 @@ class MemoryStore:
         }
 
     def append_entries(self, new_entries: str) -> dict[str, Any]:
-        """Append multiple §-delimited entries, routed by category (Memory Flush, P0-1).
+        """Append multiple §-delimited entries, routed by category (Memory Flush).
 
         ``User:``-prefixed entries go to USER.md; all others go to MEMORY.md.
         Unlike ``add()`` (one entry, reject on overflow), this batch method skips

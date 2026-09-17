@@ -1,4 +1,4 @@
-"""P0-2: compression-failure cooldown must survive a process restart.
+"""Compression-failure cooldown must survive a process restart.
 
 The anti-thrash counters live in ``state_register_mem`` (volatile). These
 tests pin the persistence layer that mirrors them into ``state_register_db``

@@ -1,4 +1,4 @@
-"""P1-5: message tree, leaf pointers and forking over MesMemory.
+"""Message tree, leaf pointers and forking over MesMemory.
 
 Messages chain via parent_message_id; a session's current leaf is recorded in
 session_leafs; forking points a NEW session at any node without copying rows.

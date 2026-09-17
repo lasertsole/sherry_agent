@@ -1,4 +1,4 @@
-"""P0-4 tests: scan-level bounds on search_files (time budget, cap, prune).
+"""Search-bounds tests: scan-level bounds on search_files (time budget, cap, prune).
 
 Covers:
 - an exhausted time budget stops the walk and the result says why it was cut

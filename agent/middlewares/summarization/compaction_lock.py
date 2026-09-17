@@ -1,4 +1,4 @@
-"""SQLite-backed compaction lock (SESSION plan P0-3, from hermes-agent).
+"""SQLite-backed compaction lock (from hermes-agent).
 
 Prevents two concurrent compactions of the same session from splitting the
 session state (multi-instance deployments, concurrent API requests). The

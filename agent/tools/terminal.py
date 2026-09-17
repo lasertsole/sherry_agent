@@ -88,7 +88,7 @@ DANGEROUS_COMMAND_REGEX = re.compile(
     re.IGNORECASE,
 )
 
-# Sensitive-file regex list (P0-2), matched case-insensitively against the
+# Sensitive-file regex list, matched case-insensitively against the
 # joined command string after DANGEROUS_COMMAND_REGEX and before any spawn.
 # This is a MITIGATION, not a barrier: renaming the reader (`dd`, `sed`,
 # `python -c "open(...)"`, `$(< file)`), a variable, a shell glob, or a

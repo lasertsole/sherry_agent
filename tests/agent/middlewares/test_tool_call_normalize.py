@@ -1,4 +1,4 @@
-"""P0-1: ToolCallNormalize must not rewrite a healthy transcript.
+"""ToolCallNormalize must not rewrite a healthy transcript.
 
 The hook previously emitted ``RemoveMessage(REMOVE_ALL_MESSAGES)`` + a full
 message rebuild on EVERY ``before_model`` call, even when

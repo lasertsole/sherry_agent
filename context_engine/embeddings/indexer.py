@@ -1,4 +1,4 @@
-"""Lazy embedding generation for MesMemory messages (SESSION plan P2-5)."""
+"""Lazy embedding generation for MesMemory messages."""
 
 from __future__ import annotations
 

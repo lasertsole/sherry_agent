@@ -1,4 +1,4 @@
-"""Pre-compression Memory Flush configuration (P0-1).
+"""Pre-compression Memory Flush configuration.
 
 Controls the optional fact-extraction pass that runs before the summarization
 middleware discards messages: a cheap model scans the about-to-be-dropped

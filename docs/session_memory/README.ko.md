@@ -8,20 +8,20 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 
 ## 구현된 기능
 
-| 항목 | 기능 | 위치 |
-|---|---|---|
-| P0-1 | 압축 전 메모리 플러시 | `agent/middlewares/summarization/memory_flush.py` |
-| P0-2 | 압축 쿨다운 재시작 간 유지 | `agent/middlewares/summarization/core.py`의 `_COOLDOWN_PERSIST_KEYS` |
-| P0-3 | SQLite 압축 락(TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, 마이그레이션 v10 |
-| P0-4 | 도구 출력 한 줄 요약 | `pub/func/message/tool_output_prune.py` |
-| P1-1 | 압축 체크포인트 + 복원 | 마이그레이션 v15, `restore_compaction_checkpoint` |
-| P1-2 | 메시지 멱등 영속화 | 마이그레이션 v11(`idempotency_key` + 부분 유니크 인덱스) |
-| P1-3 | `context_eligible` 히스토리 프로젝션 | 마이그레이션 v12, 조회 시 기본 필터 |
-| P1-5 | 메시지 트리 + 제로카피 fork | 마이그레이션 v14(`parent_message_id`, `session_leafs`) |
-| P2-1 | 추가 전용 이벤트 로그 + 프로젝터 | 마이그레이션 v16, `context_engine/events/` |
-| P2-2 | Context Epoch 스냅샷 | 마이그레이션 v17(`context_epoch` 테이블), `ContextEpoch` |
-| P2-4(부분) | steer/queue 이중 전달 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| P2-5 | 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
+| 기능 | 위치 |
+|---|---|
+| 압축 전 메모리 플러시 | `agent/middlewares/summarization/memory_flush.py` |
+| 압축 쿨다운 재시작 간 유지 | `agent/middlewares/summarization/core.py`의 `_COOLDOWN_PERSIST_KEYS` |
+| SQLite 압축 락(TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, 마이그레이션 v10 |
+| 도구 출력 한 줄 요약 | `pub/func/message/tool_output_prune.py` |
+| 압축 체크포인트 + 복원 | 마이그레이션 v15, `restore_compaction_checkpoint` |
+| 메시지 멱등 영속화 | 마이그레이션 v11(`idempotency_key` + 부분 유니크 인덱스) |
+| `context_eligible` 히스토리 프로젝션 | 마이그레이션 v12, 조회 시 기본 필터 |
+| 메시지 트리 + 제로카피 fork | 마이그레이션 v14(`parent_message_id`, `session_leafs`) |
+| 추가 전용 이벤트 로그 + 프로젝터 | 마이그레이션 v16, `context_engine/events/` |
+| Context Epoch 스냅샷 | 마이그레이션 v17(`context_epoch` 테이블), `ContextEpoch` |
+| steer/queue 이중 전달 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
+| 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow 편성 | `docs/long-running-tasks/` |
 
 ## MesMemory 마이그레이션(v10–v17)
@@ -39,7 +39,7 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 
 ## 주요 컴포넌트
 
-- **`context_engine/events/`** —— 추가 전용 이벤트 로그(세션별 무결 시퀀스: `types.py`, `store.py`), 체크포인트 이벤트를 P1-1 읽기 모델에 매핑하는 `EventProjector`.
+- **`context_engine/events/`** —— 추가 전용 이벤트 로그(세션별 무결 시퀀스: `types.py`, `store.py`), 체크포인트 이벤트를 체크포인트 읽기 모델에 매핑하는 `EventProjector`.
 - **`context_engine/embeddings/`** —— 벡터 의미 검색: 지연 embed 백엔드(프로젝트 임베드 모델, 테스트에서 대체 가능), 멱등 LEFT-JOIN 인덱서, 코사인 순위付け. `message_search` 도구(`semantic: true`)로 노출.
 - **`agent/tools/message_search.py`** —— 2단계 조회: 영속화된 `messages` 테이블에서 FTS5를 먼저 검색하고, 일치 항목이 없으면 세션의 최신 체크포인트(`SRC_DIR/checkpoints/sqlite.db`의 `state["messages"]`)로 폴백하여 아직 영속화되지 않은 턴을 최신순으로 키워드 매칭합니다(`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars`로 상한). 폴백 히트에는 `source="checkpoint"`가 붙습니다. 영속화가 이제 각 모델 경계에서 실행되므로, 이 폴백은 "체크포인트가 저장소보다 앞서 있는" 좁은 창에서만 작동합니다 — 다음 경계에서 영속화되기 전의, 현재 턴 진행 중인 도구 결과(및 HITL 거부).
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 압축 락(TTL 자가 복구, 동기 + 비동기 획득, 타임아웃 시 fail-open).

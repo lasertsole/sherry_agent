@@ -9,8 +9,8 @@ E. Subagent authorization inheritance helpers (E1-E5)
 F. HITL interrupt behavior (F1-F5)
 G. YOLO deny list: always enforced, beats YOLO / allowlist / subagent (G1-G5)
 H. Directory-level allowlist + approve_dir decision (H1-H4)
-P0-3. Three-gate resolution: traversal strings, symlink loops, O_NOFOLLOW
-P1-2. Model-visible path rendering: to_virtual_path / display_path / safe_error_detail
+Three-gate resolution: traversal strings, symlink loops, O_NOFOLLOW
+Model-visible path rendering: to_virtual_path / display_path / safe_error_detail
 """
 
 import errno
@@ -124,7 +124,7 @@ class TestResolveProjectPath:
         assert resolved == (ROOT_DIR / "src/main.py").resolve()
 
 
-# ── P0-3 gates: traversal strings, symlink loops, O_NOFOLLOW ────────────
+# ── Traversal, symlink-loop and O_NOFOLLOW gates ───────────────────────
 
 
 class TestResolveGates:
@@ -234,7 +234,7 @@ class TestOpenNoFollow:
         os.close(fd)
 
 
-# ── P1-2 model-visible path rendering ───────────────────────────────────
+# ── Model-visible path rendering ────────────────────────────────────────
 
 
 class TestPathRendering:

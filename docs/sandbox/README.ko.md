@@ -66,7 +66,7 @@ bwrap
 
 `--clearenv`가 모든 `--setenv`보다 앞에 오는 것과 결합해야 세척된 딕셔너리가 진짜 환경 변수 화이트리스트가 됩니다. 루트 파일시스템은 읽기 전용이고, 쓰기는 프로젝트 루트와 임시 디렉터리에만 가능합니다.
 
-**리드 실드 (P0-1).** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 두 백엔드 모두 기본 민감 경로 목록 `DEFAULT_DENY_READ_PATHS` — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 호출마다 `_sensitive_read_paths()`가 해석하며, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장, 빈 항목 건너뜀, 순서 유지, 중복 제거)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
+**리드 실드.** `--ro-bind / /`는 읽기를 "어디서나 가능"하게 만들 뿐 무해하게 만들지는 않습니다. 마스킹이 없으면 모델은 `cat ~/.ssh/id_rsa`를 실행할 수 있습니다. 그래서 두 백엔드 모두 기본 민감 경로 목록 `DEFAULT_DENY_READ_PATHS` — `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh`, `~/.docker` — 을 마스킹하고, 호출마다 `_sensitive_read_paths()`가 해석하며, 환경 변수 `SHERRY_DENY_READ_PATHS`(`os.pathsep` 구분, `~` 확장, 빈 항목 건너뜀, 순서 유지, 중복 제거)로 확장할 수 있습니다. bwrap 실드는 존재하는 각 디렉터리 위에 빈 디렉터리를 마운트하고(민감 파일에는 `--ro-bind /dev/null`), 존재하지 않는 경로는 건너뜁니다(읽을 것이 없고, bwrap은 읽기 전용 루트 바인드 아래에 마운트 지점을 만들 수 없습니다). `/var/empty`가 없는 호스트에서는 디렉터리가 `--tmpfs <경로>`로 폴백합니다. 실드는 쓰기 가능 바인드 **이후**에 놓여, 쓰기 가능한 프로젝트 루트가 마스킹된 경로를 다시 노출할 수 없습니다.
 
 **macOS: Seatbelt(`sandbox-exec`)**. 명령은 `sandbox-exec -p <profile> -- <cmd...>`로 실행되며 profile은 다음과 같습니다:
 
@@ -105,7 +105,7 @@ bwrap
 
 **연결된** 문자열을 매칭하는 것이 중요합니다: 이전의 요소 단위 정확 매칭 블랙리스트는 각 요소가 따로 보면 무해해 보이는 `["echo ok", "rm -rf /"]`를 놓쳤습니다. 걸리면 `ToolException("Blocked: unsafe command.")`을 던지고, `handle_tool_error=True`를 통해 오류 도구 결과로 표면화됩니다. 이 게이트는 `sandbox` 값과 무관하게 항상 작동합니다. `python_repl`에는 대응하는 정규식이 없고, 대신 래퍼 스크립트가 빌트인을 제한합니다.
 
-**민감 파일 게이트 (P0-2, `_SENSITIVE_FILE_PATTERNS`).** `_run`과 `_arun` 두 경로 모두에서 `_check_sensitive_file_access(cmd_str)`가 `_check_dangerous` **이후**, **어떤 생성보다도 이전**에 실행됩니다: 컴파일된 6개 패턴 중 하나라도 연결된 명령 문자열에 매칭되면 `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)을 던지고 — 자식 프로세스는 결코 생성되지 않습니다 — 모델을 `read_file`(외부 경로는 사람 승인을 거침)로 안내합니다:
+**민감 파일 게이트 (`_SENSITIVE_FILE_PATTERNS`).** `_run`과 `_arun` 두 경로 모두에서 `_check_sensitive_file_access(cmd_str)`가 `_check_dangerous` **이후**, **어떤 생성보다도 이전**에 실행됩니다: 컴파일된 6개 패턴 중 하나라도 연결된 명령 문자열에 매칭되면 `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)을 던지고 — 자식 프로세스는 결코 생성되지 않습니다 — 모델을 `read_file`(외부 경로는 사람 승인을 거침)로 안내합니다:
 
 | 패턴 | 대상 |
 | :--- | :--- |
@@ -158,7 +158,7 @@ bwrap
 
 **검색 컨테인먼트(`_stays_within_root`).** `os.walk`는 디렉터리 심볼릭 링크를 내려가지 않지만, 파일 심볼릭 링크는 목록에 나타납니다. 두 검색 모드 모두 모든 히트를 `_stays_within_root(candidate, root)`(`candidate.resolve().relative_to(root.resolve())`, `ValueError` / `OSError` / `RuntimeError` 시 건너뜀)로 필터링하므로 검색 트리 밖으로 해석되는 심볼릭 링크는 결코 반환되지 않습니다 — `/etc/passwd`를 가리키는 파일 심볼릭 링크는 건너뜁니다. 검색 루트는 항상 이미 해석된 상태이며(프로젝트 내 검색은 추가로 `ROOT_DIR`에 묶임), allowlist에 등록된 외부 디렉터리 검색은 계속 동작합니다.
 
-**스캔 경계(P0-4).** 두 모드 모두 `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)로 스캔 자체를 제한합니다: `file_tools_search_time_budget_s`(기본 5.0초)가 만료되면 순회를 멈추고, `file_tools_search_max_matches`(기본 10,000)가 수집 히트 수를 제한하며, `file_tools_search_prune_dirs`(기본 `proc`, `sys`, `dev`)는 `dirnames[:]`에서 걸러져 의사 파일 시스템으로는 결코 내려가지 않습니다. 잘린 스캔은 결코 조용하지 않습니다 — JSON 결과에 `scan_truncated: true`, `scan_stop_reason`(`time_budget` / `max_matches`)과 힌트가 추가되고, 정리가 발생하면 `pruned_dir_count`도 붙습니다. 파일명 패턴은 `fnmatch`를 거치며(중괄호 확장 없음), 확장 수 상한이 필요하지 않습니다.
+**스캔 경계.** 두 모드 모두 `TOOLS_TIMEOUTS`(`config/features/agent_side/tools_timeouts.py`)로 스캔 자체를 제한합니다: `file_tools_search_time_budget_s`(기본 5.0초)가 만료되면 순회를 멈추고, `file_tools_search_max_matches`(기본 10,000)가 수집 히트 수를 제한하며, `file_tools_search_prune_dirs`(기본 `proc`, `sys`, `dev`)는 `dirnames[:]`에서 걸러져 의사 파일 시스템으로는 결코 내려가지 않습니다. 잘린 스캔은 결코 조용하지 않습니다 — JSON 결과에 `scan_truncated: true`, `scan_stop_reason`(`time_budget` / `max_matches`)과 힌트가 추가되고, 정리가 발생하면 `pruned_dir_count`도 붙습니다. 파일명 패턴은 `fnmatch`를 거치며(중괄호 확장 없음), 확장 수 상한이 필요하지 않습니다.
 
 **deepagents 참조 구현과의 설계 차이.** 참조 구현은 모든 경로를 가상 네임스페이스(`virtual_mode`)에 고정해 트래버설을 설계상 불가능하게 만듭니다. Sherry는 대신 실제 파일 시스템 경로를 유지하고(`prompt_builder`, 스킬 도구, terminal cwd가 모두 여기에 의존), 해석 **이후**에 컨테인먼트(위의 세 게이트)를 적용하며 `O_NOFOLLOW`로 TOCTOU를 닫습니다. `BackendProtocol`, `CompositeBackend`, `StateBackend`, 전체 가상 경로 네임스페이스는 의도적으로 채택하지 않았습니다. 그것은 아키텍처 재작성이며, Sherry에는 멀티 백엔드 사용 사례가 없습니다.
 

@@ -623,7 +623,7 @@ class TestTodolistFullPipeline:
         await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
         assert spy_auto_turn == []
 
-        # P0-1 memory flush: fake extraction LLM, real MEMORY.md write.
+        # Memory flush: fake extraction LLM, real MEMORY.md write.
         mem = memory_module.memory_store
         flushed = await memory_flush.run_memory_flush(
             [HumanMessage(content="discarded turn")],
@@ -643,7 +643,7 @@ class TestTodolistFullPipeline:
         print("[EVIDENCE] todo completion = 100% (3/3)")
         print("[EVIDENCE] prompt todo block (all done):")
         print(todo_block)
-        print("[EVIDENCE] memory block after P0-1 flush:")
+        print("[EVIDENCE] memory block after memory flush:")
         print(_block_text(prompt_after_flush, "MEMORY (your personal notes)"))
 
 

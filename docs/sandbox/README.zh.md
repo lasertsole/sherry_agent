@@ -66,7 +66,7 @@ bwrap
 
 `--clearenv` 出现在所有 `--setenv` 之前，两者结合才把清洗后的字典变成真正的环境变量白名单。根文件系统只读；写入只能落在项目根目录和临时目录。
 
-**读遮蔽（P0-1）。** `--ro-bind / /` 只是让"读"处处可行，并不无害：没有掩蔽时模型可以 `cat ~/.ssh/id_rsa`。因此两个后端都会掩蔽一份默认敏感路径清单 `DEFAULT_DENY_READ_PATHS`——`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker`——每次调用由 `_sensitive_read_paths()` 解析，并可用环境变量 `SHERRY_DENY_READ_PATHS` 扩展（以 `os.pathsep` 分隔，展开 `~`；空项跳过、顺序保留、去重）。bwrap 的读遮蔽会在每个存在的目录上挂载空目录（对敏感文件则 `--ro-bind /dev/null`）；不存在的路径直接跳过（本来就没有东西可读，而且 bwrap 无法在只读根绑定之下创建挂载点）；主机没有 `/var/empty` 时目录回退为 `--tmpfs <路径>`。遮蔽挂载位于可写绑定**之后**，因此可写的项目根目录永远无法重新暴露被掩蔽的路径。
+**读遮蔽。** `--ro-bind / /` 只是让"读"处处可行，并不无害：没有掩蔽时模型可以 `cat ~/.ssh/id_rsa`。因此两个后端都会掩蔽一份默认敏感路径清单 `DEFAULT_DENY_READ_PATHS`——`~/.ssh`、`~/.aws`、`~/.gnupg`、`~/.config/gh`、`~/.docker`——每次调用由 `_sensitive_read_paths()` 解析，并可用环境变量 `SHERRY_DENY_READ_PATHS` 扩展（以 `os.pathsep` 分隔，展开 `~`；空项跳过、顺序保留、去重）。bwrap 的读遮蔽会在每个存在的目录上挂载空目录（对敏感文件则 `--ro-bind /dev/null`）；不存在的路径直接跳过（本来就没有东西可读，而且 bwrap 无法在只读根绑定之下创建挂载点）；主机没有 `/var/empty` 时目录回退为 `--tmpfs <路径>`。遮蔽挂载位于可写绑定**之后**，因此可写的项目根目录永远无法重新暴露被掩蔽的路径。
 
 **macOS：Seatbelt（`sandbox-exec`）**。命令以 `sandbox-exec -p <profile> -- <cmd...>` 运行，profile 如下：
 
@@ -105,7 +105,7 @@ bwrap
 
 匹配**拼接后**的完整串很关键：旧的按元素精确匹配的黑名单放过过 `["echo ok", "rm -rf /"]`，因为每个元素单独看都无害。命中即抛出 `ToolException("Blocked: unsafe command.")`，经 `handle_tool_error=True` 变成错误工具结果。该拦截与 `sandbox` 取值无关，始终执行。`python_repl` 没有对应的正则；它的包装脚本改用受限内建。
 
-**敏感文件门禁（P0-2，`_SENSITIVE_FILE_PATTERNS`）。** 在 `_run` 与 `_arun` 两条路径中，`_check_sensitive_file_access(cmd_str)` 都在 `_check_dangerous` **之后**、**任何子进程创建之前**执行：六条编译后的模式任意一条命中拼接后的命令串，就抛出 `ToolException("Blocked: sensitive file access. …")`（`_SENSITIVE_FILE_MESSAGE`）——绝不创建子进程——并提示模型改用 `read_file`（其外部路径会走人工审批）：
+**敏感文件门禁（`_SENSITIVE_FILE_PATTERNS`）。** 在 `_run` 与 `_arun` 两条路径中，`_check_sensitive_file_access(cmd_str)` 都在 `_check_dangerous` **之后**、**任何子进程创建之前**执行：六条编译后的模式任意一条命中拼接后的命令串，就抛出 `ToolException("Blocked: sensitive file access. …")`（`_SENSITIVE_FILE_MESSAGE`）——绝不创建子进程——并提示模型改用 `read_file`（其外部路径会走人工审批）：
 
 | 模式 | 拦截对象 |
 | :--- | :------- |
@@ -158,7 +158,7 @@ bwrap
 
 **搜索 containment（`_stays_within_root`）。** `os.walk` 不会进入目录符号链接，但文件符号链接仍会出现在列表里。两种搜索模式都用 `_stays_within_root(candidate, root)`（`candidate.resolve().relative_to(root.resolve())`，遇 `ValueError` / `OSError` / `RuntimeError` 即跳过）过滤每个命中，因此经符号链接解析到搜索树之外的文件绝不会返回——指向 `/etc/passwd` 的文件符号链接会被跳过。搜索根本身始终是已解析路径（项目内搜索还额外受 `ROOT_DIR` 约束），所以已获批准的外部目录搜索仍可正常工作。
 
-**扫描边界（P0-4）。** 两种模式还通过 `TOOLS_TIMEOUTS`（`config/features/agent_side/tools_timeouts.py`）限制扫描本身：`file_tools_search_time_budget_s`（默认 5.0 秒）到期即停止遍历，`file_tools_search_max_matches`（默认 10,000）限制收集到的命中数，`file_tools_search_prune_dirs`（默认 `proc`、`sys`、`dev`）在 `dirnames[:]` 中被过滤，伪文件系统绝不会被进入。被截断的扫描绝不静默：JSON 结果会带上 `scan_truncated: true`、`scan_stop_reason`（`time_budget` / `max_matches`）与提示；剪枝发生时另有 `pruned_dir_count`。文件名匹配走 `fnmatch`（不支持花括号展开），因此无需展开数上限。
+**扫描边界。** 两种模式还通过 `TOOLS_TIMEOUTS`（`config/features/agent_side/tools_timeouts.py`）限制扫描本身：`file_tools_search_time_budget_s`（默认 5.0 秒）到期即停止遍历，`file_tools_search_max_matches`（默认 10,000）限制收集到的命中数，`file_tools_search_prune_dirs`（默认 `proc`、`sys`、`dev`）在 `dirnames[:]` 中被过滤，伪文件系统绝不会被进入。被截断的扫描绝不静默：JSON 结果会带上 `scan_truncated: true`、`scan_stop_reason`（`time_budget` / `max_matches`）与提示；剪枝发生时另有 `pruned_dir_count`。文件名匹配走 `fnmatch`（不支持花括号展开），因此无需展开数上限。
 
 **与 deepagents 参考实现的设计差异。** 参考实现把每个路径锚定到虚拟命名空间（`virtual_mode`），使穿越在设计上不可能；Sherry 则保留真实文件系统路径——`prompt_builder`、技能工具与 terminal 的 cwd 都依赖它们——改在解析**之后**做 containment（上文三道门），并用 `O_NOFOLLOW` 关闭 TOCTOU。其 `BackendProtocol`、`CompositeBackend`、`StateBackend` 与完整的虚拟路径命名空间被刻意弃用：那是架构重写，而 Sherry 没有多后端场景。
 

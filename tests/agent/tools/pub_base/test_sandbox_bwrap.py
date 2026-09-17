@@ -118,7 +118,7 @@ def test_wrap_return_type_is_tuple_of_list_and_dict():
 
 
 # --------------------------------------------------------------------------
-# Read shield (P0-1): sensitive paths masked from reads
+# Read shield: sensitive paths masked from reads
 # --------------------------------------------------------------------------
 
 

@@ -1,4 +1,4 @@
-"""Pre-compression Memory Flush (P0-1).
+"""Pre-compression Memory Flush.
 
 Before the summarization middleware calls the main LLM to compact history, a
 cheap extraction model scans the messages that are about to be discarded and

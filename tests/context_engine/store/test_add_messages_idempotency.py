@@ -1,4 +1,4 @@
-"""P1-2: crash-retry idempotency for MesMemory message persistence.
+"""Crash-retry idempotency for MesMemory message persistence.
 
 A retried add_messages call (same message objects, e.g. after a mid-write
 crash) must not double-write: already-flushed messages are skipped via the

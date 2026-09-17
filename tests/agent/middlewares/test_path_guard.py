@@ -1,4 +1,4 @@
-"""Unit tests for the PathGuard middleware (P1-1).
+"""Unit tests for the PathGuard middleware.
 
 The fake handler stands in for a tool that does NOT call
 ``resolve_project_path()`` itself — proving the middleware rejects traversal

@@ -407,7 +407,7 @@ class TestDangerousCommandRegex:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4b. Sensitive-file access gate (P0-2): regex mitigation, checked after the
+# 4b. Sensitive-file access gate: regex mitigation, checked after the
 #     dangerous-command regex and before any spawn
 # ─────────────────────────────────────────────────────────────────────────────
 _SENSITIVE_COMMANDS = [

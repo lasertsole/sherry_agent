@@ -2,8 +2,8 @@
 
 Reference: oh-my-openagent session binding + opencode-dev Context Epoch.
 
-Difference from P1-4 Recall:
-- P1-4 Recall: fuzzy keyword search over historical conversations.
+Difference from recall:
+- Recall: fuzzy keyword search over historical conversations.
 - Continuity: exact injection of the previous session's tail summary.
 
 End state is persisted by ``server.DAO.messages.clear_session`` right BEFORE it

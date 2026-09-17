@@ -41,7 +41,7 @@ class MessageSearchSchema(BaseModel):
     semantic: bool = Field(
         default=False,
         description="Semantic mode: rank past messages by embedding similarity to the "
-        "query instead of FTS keyword matching (SESSION plan P2-5).",
+        "query instead of FTS keyword matching.",
     )
 
 
@@ -671,7 +671,7 @@ def session_search(
 
 
 def _run_semantic_search(query: str, session_id: str | None, limit: int) -> str:
-    """SESSION plan P2-5: embedding-similarity ranking over MesMemory messages."""
+    """Embedding-similarity ranking over MesMemory messages."""
     import asyncio
 
     from context_engine.embeddings import semantic_search

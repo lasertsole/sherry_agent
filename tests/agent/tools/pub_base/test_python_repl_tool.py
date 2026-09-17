@@ -363,7 +363,7 @@ def test_run_with_timeout_absorbs_unexpected_kwargs():
 
 
 # ---------------------------------------------------------------------------
-# P0-2 assessment: no deny-read regex is added for python_repl because the
+# Sensitive-file assessment: no deny-read regex is added for python_repl because the
 # restricted builtins already exclude `open` / `__import__` — lock that barrier
 # so a future builtins-dict broadening cannot silently open the read path.
 # ---------------------------------------------------------------------------

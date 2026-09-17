@@ -1,4 +1,4 @@
-"""Vector semantic search over MesMemory (SESSION plan P2-5).
+"""Vector semantic search over MesMemory.
 
 Embeddings are generated lazily for messages that do not have one yet, stored
 in the ``message_embeddings`` table, and searched by cosine similarity. The

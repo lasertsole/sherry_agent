@@ -55,7 +55,7 @@ The prompt produces two outputs:
 
 Reads are served later by the same tool (`knowledge(action="read")`), and a condensed plan summary is auto-injected into the system prompt by `build_knowledge_block` (`knowledge/prompt_block.py`).
 
-### 3. Pre-compression memory flush (session-memory P0-1)
+### 3. Pre-compression memory flush
 
 Both compression paths (`_apply_compression_under_lock` and `_aapply_compression_under_lock` in `agent/middlewares/summarization/core.py`) run the flush when a cutoff discards messages, before the summary is generated:
 
@@ -158,7 +158,7 @@ The suite checks `knowledge_written`, `skills_created`, `ai_judge_skill_quality`
 
 ## Related Documentation
 
-- [Session Memory Architecture](../session_memory/README.md): P0-1 (memory flush) in the SESSION plan.
+- [Session Memory Architecture](../session_memory/README.md): the pre-compression memory flush.
 - [Summarization](../summarization/README.md): compression triggers and the cooldown that gates the flush and todo fork.
 - [Long-Running Tasks](../long-running-tasks/README.md): TaskFlow and the todo planning layer that plan extraction reads from.
 - [Middlewares README](../../agent/middlewares/README.md): `@dynamic_prompt` system-prompt injection and Summarization reference.

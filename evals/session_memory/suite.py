@@ -1,13 +1,13 @@
-"""Eval suite for the session-memory subsystem (SESSION plan capabilities).
+"""Eval suite for the session-memory subsystem.
 
 Scores the session-memory stack end to end under the eval sandbox:
 
-- P0-2  cooldown survives a simulated restart and suppresses re-compaction
-- P0-3  compaction lock: mutual exclusion, release, re-acquire
-- P1-1  checkpoint restore recovers the exact pre-compaction context
-- P1-2  crash-retry replay writes once; fresh content never deduped
-- P1-3  ineligible messages leave the history projection
-- P2-5  semantic search ranking (real local embed model)
+- Cooldown survives a simulated restart and suppresses re-compaction
+- Compaction lock: mutual exclusion, release, re-acquire
+- Checkpoint restore recovers the exact pre-compaction context
+- Crash-retry replay writes once; fresh content never deduped
+- Ineligible messages leave the history projection
+- Semantic search ranking (real local embed model)
 
 Deterministic checks assert correctness; LLM/embedding-backed checks assert
 grounded behaviour. Usage: uv run python evals/evals.py session_memory
@@ -72,7 +72,7 @@ def _make_summarization():
 
 
 async def check_cooldown_restart_survival(sid: str) -> dict[str, Any]:
-    """P0-2: an armed cooldown survives a simulated restart and re-arms off."""
+    """An armed cooldown survives a simulated restart and re-arms off."""
     import agent.middlewares.summarization.core as summarization_module
     from runtime import state_register_mem
 
@@ -100,7 +100,7 @@ async def check_cooldown_restart_survival(sid: str) -> dict[str, Any]:
 
 
 async def check_compaction_lock_mutual_exclusion(sid: str) -> dict[str, Any]:
-    """P0-3: a held lock excludes a second holder; release re-enables it."""
+    """A held lock excludes a second holder; release re-enables it."""
     from agent.middlewares.summarization.compaction_lock import CompactionLock, CompactionLockError
 
     lock = CompactionLock()
@@ -117,7 +117,7 @@ async def check_compaction_lock_mutual_exclusion(sid: str) -> dict[str, Any]:
 
 
 async def check_checkpoint_restore_roundtrip(sid: str) -> dict[str, Any]:
-    """P1-1: restore recovers the exact pre-compaction context, no data loss."""
+    """Restore recovers the exact pre-compaction context, no data loss."""
     from context_engine.store import add_messages
     from context_engine.store.core import (
         create_compaction_checkpoint,
@@ -144,7 +144,7 @@ async def check_checkpoint_restore_roundtrip(sid: str) -> dict[str, Any]:
 
 
 async def check_idempotent_replay(sid: str) -> dict[str, Any]:
-    """P1-2: replaying flushed messages writes once; fresh content is kept."""
+    """Replaying flushed messages writes once; fresh content is kept."""
     from context_engine.store import add_messages
     from context_engine.store.core import get_max_turn_num
 
@@ -169,7 +169,7 @@ async def check_idempotent_replay(sid: str) -> dict[str, Any]:
 
 
 async def check_context_eligible_filter(sid: str) -> dict[str, Any]:
-    """P1-3: ineligible messages leave the projection but stay on disk."""
+    """Ineligible messages leave the projection but stay on disk."""
     from context_engine.store import add_messages
     from context_engine.store.core import get_history_by_turn_page
 
@@ -191,7 +191,7 @@ async def check_context_eligible_filter(sid: str) -> dict[str, Any]:
 
 
 async def check_semantic_search_ranking(sid: str) -> dict[str, Any]:
-    """P2-5: the real embed model ranks the topical message first."""
+    """The real embed model ranks the topical message first."""
     from context_engine.embeddings import semantic_search
     from context_engine.store import add_messages
 

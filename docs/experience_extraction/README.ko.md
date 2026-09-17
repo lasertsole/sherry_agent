@@ -55,7 +55,7 @@
 
 이후 읽기는 같은 도구(`knowledge(action="read")`)가 제공하고, 압축된 plan 요약은 `build_knowledge_block`(`knowledge/prompt_block.py`)이 시스템 프롬프트에 자동 주입합니다.
 
-### 3. 압축 전 memory flush(session-memory P0-1)
+### 3. 압축 전 memory flush
 
 두 압축 경로(`agent/middlewares/summarization/core.py`의 `_apply_compression_under_lock`과 `_aapply_compression_under_lock`)는 cut이 메시지를 버릴 때, 요약 생성 전에 flush를 실행합니다:
 
@@ -158,7 +158,7 @@ uv run python evals/evals.py nudge_extraction
 
 ## 관련 문서
 
-- [세션 메모리 아키텍처](../session_memory/README.md): SESSION 플랜의 P0-1(memory flush).
+- [세션 메모리 아키텍처](../session_memory/README.md): 압축 전 memory flush.
 - [요약 압축](../summarization/README.md): 압축 트리거와 flush 및 todo fork를 게이트하는 쿨다운.
 - [장기 작업](../long-running-tasks/README.md): TaskFlow와 plan extraction이 읽는 todo 계획 계층.
 - [미들웨어 README](../../agent/middlewares/README.md): `@dynamic_prompt` 시스템 프롬프트 주입과 Summarization 참고.

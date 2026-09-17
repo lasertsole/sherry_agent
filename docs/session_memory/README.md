@@ -8,20 +8,20 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 ## Implemented Capabilities
 
-| Item | Capability | Where |
-|---|---|---|
-| P0-1 | Pre-compression memory flush | `agent/middlewares/summarization/memory_flush.py` |
-| P0-2 | Compression cooldown persisted across restarts | `_COOLDOWN_PERSIST_KEYS` in `agent/middlewares/summarization/core.py` |
-| P0-3 | SQLite compaction lock (TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, migration v10 |
-| P0-4 | One-line tool-output summaries | `pub/func/message/tool_output_prune.py` |
-| P1-1 | Compaction checkpoints + restore | migration v15, `restore_compaction_checkpoint` |
-| P1-2 | Idempotent message persistence | migration v11 (`idempotency_key` + partial unique index) |
-| P1-3 | `context_eligible` history projection | migration v12; retrieval filters ineligible rows by default |
-| P1-5 | Message tree + zero-copy forking | migration v14 (`parent_message_id`, `session_leafs`) |
-| P2-1 | Append-only event log + projector | migration v16, `context_engine/events/` |
-| P2-2 | Context epoch snapshots | migration v17 (`context_epoch` table), `ContextEpoch` |
-| P2-4 (partial) | steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
-| P2-5 | Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
+| Capability | Where |
+|---|---|
+| Pre-compression memory flush | `agent/middlewares/summarization/memory_flush.py` |
+| Compression cooldown persisted across restarts | `_COOLDOWN_PERSIST_KEYS` in `agent/middlewares/summarization/core.py` |
+| SQLite compaction lock (TTL, fail-open) | `agent/middlewares/summarization/compaction_lock.py`, migration v10 |
+| One-line tool-output summaries | `pub/func/message/tool_output_prune.py` |
+| Compaction checkpoints + restore | migration v15, `restore_compaction_checkpoint` |
+| Idempotent message persistence | migration v11 (`idempotency_key` + partial unique index) |
+| `context_eligible` history projection | migration v12; retrieval filters ineligible rows by default |
+| Message tree + zero-copy forking | migration v14 (`parent_message_id`, `session_leafs`) |
+| Append-only event log + projector | migration v16, `context_engine/events/` |
+| Context epoch snapshots | migration v17 (`context_epoch` table), `ContextEpoch` |
+| steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
+| Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow orchestration | `docs/long-running-tasks/` |
 
 ## MesMemory Migrations (v10–v17)
@@ -39,7 +39,7 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 
 ## Key Components
 
-- **`context_engine/events/`** — append-only event log with gapless per-session sequences (`types.py`, `store.py`), and an `EventProjector` mapping checkpoint events onto the P1-1 read model.
+- **`context_engine/events/`** — append-only event log with gapless per-session sequences (`types.py`, `store.py`), and an `EventProjector` mapping checkpoint events onto the checkpoint read model.
 - **`context_engine/embeddings/`** — vector semantic search: lazy embed backend (project embed model, overridable), idempotent LEFT-JOIN-driven indexer, cosine ranking; exposed by the `message_search` tool (`semantic: true`).
 - **`agent/tools/message_search.py`** — two-stage recall: FTS5 over the persisted `messages` table first; when there is no hit it falls back to the session's newest checkpoint (`SRC_DIR/checkpoints/sqlite.db`, `state["messages"]`), keyword-matching not-yet-persisted turns newest-first (bounded by `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars`); fallback hits are tagged `source="checkpoint"`. Since persistence now runs at every model boundary, this fallback only matters in the narrow window where the checkpoint runs ahead of the store — the current turn's in-flight tool results (and HITL denials) before the next boundary persists them.
 - **`agent/middlewares/summarization/compaction_lock.py`** — SQLite compaction lock (TTL self-healing, sync + async acquire, fail-open on timeout), wrapping both `_apply_compression` and `_aapply_compression`.

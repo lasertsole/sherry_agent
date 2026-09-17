@@ -1,4 +1,4 @@
-"""P2-1: event log append/read/replay + projector (SESSION plan)."""
+"""Event log append/read/replay + projector."""
 
 import pytest
 from langchain_core.messages import HumanMessage

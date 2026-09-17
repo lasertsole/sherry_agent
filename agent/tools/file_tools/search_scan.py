@@ -1,4 +1,4 @@
-"""Bounded scan primitives shared by both ``search_files`` modes (P0-4).
+"""Bounded scan primitives shared by both ``search_files`` modes.
 
 Content search and file-name search walk the same tree with the same
 hazards: a huge root, a pseudo-filesystem mount, or a pattern with too many

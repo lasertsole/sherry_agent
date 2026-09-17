@@ -1,4 +1,4 @@
-"""P1-1: compaction checkpoints + soft-deleted message restore.
+"""Compaction checkpoints + soft-deleted message restore.
 
 Compacted messages stay on disk but leave the context; restoring a checkpoint
 unmarks everything up to it and compacts everything after it.

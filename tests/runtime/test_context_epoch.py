@@ -1,4 +1,4 @@
-"""P2-2: context epoch lifecycle (initialize / prepare / replace / advance)."""
+"""Context epoch lifecycle (initialize / prepare / replace / advance)."""
 
 import pytest
 

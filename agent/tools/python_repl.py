@@ -43,7 +43,7 @@ from agent.tools.pub_base.schema_utils import class_or_instance_schema
 # Bound to the feature registry (single source of truth); name preserved.
 PYTHON_REPL_TIMEOUT = TOOLS_TIMEOUTS["python_repl_timeout_seconds"]
 
-# P0-2 (path hardening) assessment — deliberately NO deny-read scan here:
+# Path-hardening assessment — deliberately NO deny-read scan here:
 # the wrapper's restricted builtins already omit `open` / `__import__`, so a
 # literal `open("/etc/passwd")` fails with NameError before any file is
 # touched (locked by tests/agent/tools/pub_base/test_python_repl_tool.py).
