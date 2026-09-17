@@ -523,7 +523,7 @@ Use taskflow_summary to inspect a flow and continue execution.
 | :--- | :--- | :--- | :--- |
 | `MAIN` | 主 Agent turn（`server/service/input_queue_service.py::_run_executor`） | `min(16, max(8, CPU))`，向上钳制到不低于 `SUBAGENT + NUDGE` → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 子 Agent 执行（`spawn/core.py`、`control/steer.py`） | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | 记忆 nudge / 计划抽取 / 压缩后 todo 更新（`agent/middlewares/context_engine/nudge.py` 三处） | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NUDGE` | 记忆 nudge / 计划抽取 / 压缩后 todo 更新（`agent/middlewares/summarization/nudges.py` 三处） | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
 | `NESTED` | `sessions_send` 回复 turn（串行） | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 配置与校验
@@ -599,7 +599,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `server/service/lane_lifecycle.py` | 启动校验、drain 门注册、有界退出 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT lane 包装器 + PENDING → RUNNING 提升 |
-| `agent/middlewares/context_engine/nudge.py` | 3 处 NUDGE lane 调用点 |
+| `agent/middlewares/summarization/nudges.py` | 3 处 NUDGE lane 调用点 |
 | `agent/tools/subagent/tools/sessions_send.py` | 回复 turn 外层的 NESTED lane |
 | `server/service/input_queue_service.py` | `_run_executor` 外层的 MAIN lane |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤儿的 `pending_orphaned` 终结 |
@@ -625,7 +625,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **38 个 feature 对象**——Agent 侧 19 + 基础设施侧 19——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **39 个 feature 对象**——Agent 侧 20 + 基础设施侧 19——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -803,7 +803,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 38。** 配置注册表包含 38 个 feature 对象（Agent 侧 19 + 基础设施侧 19）；基础设施侧契约测试覆盖其中 18 个（GATEWAY 加 17 个数据驱动用例），遗漏了 `MODEL_PRICING`。
+- **注册表规模是 39。** 配置注册表包含 39 个 feature 对象（Agent 侧 20 + 基础设施侧 19）；基础设施侧契约测试覆盖其中 18 个（GATEWAY 加 17 个数据驱动用例），遗漏了 `MODEL_PRICING`。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **LT-7 的 TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。

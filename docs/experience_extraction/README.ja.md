@@ -26,9 +26,9 @@
 
 ### 1. 圧縮時の memory review
 
-`schedule_compression_nudges`（`agent/middlewares/context_engine/nudge.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮ごとに `state_register_db` の `nudge_review_memory_count` を 1 回増やす。カウンタが `nudge_memory_threshold`（既定 10）に達すると 0 に戻し、`_nudge_memory(session_id, system_prompt, messages)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。いずれかの nudge ロックが保持されている間、圧縮はカウンタを増やすが派遣はしない。このトリガーは以前 `ContextEngineHook.after_agent` にあり毎ターン実行されていた; そのフックはもう存在しないため、周期は圧縮回数単位になった。
+`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮ごとに `state_register_db` の `nudge_review_memory_count` を 1 回増やす。カウンタが `nudge_memory_threshold`（既定 10）に達すると 0 に戻し、`_nudge_memory(session_id, system_prompt, messages)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。いずれかの nudge ロックが保持されている間、圧縮はカウンタを増やすが派遣はしない。このトリガーは以前 `ContextEngineHook.after_agent` にあり毎ターン実行されていた; そのフックはもう存在しないため、周期は圧縮回数単位になった。
 
-`_nudge_memory`（`agent/middlewares/context_engine/nudge.py`）は `_create_nudge_agent` で nudge agent を構築し、会話に `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として追加して呼び出す。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `memory` ツールで保存するよう求め、保存対象がなければ "Nothing to save." と答えて停止させる。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_nudge_agent` で nudge agent を構築し、会話に `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として追加して呼び出す。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `memory` ツールで保存するよう求め、保存対象がなければ "Nothing to save." と答えて停止させる。
 
 - nudge agent はメイン LLM 上の独立した `create_agent` で、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`、checkpointer なし。
 - `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` がこのマークを持つため、nudge agent は memory を書けるが任意のメインツールは呼べない。
@@ -36,7 +36,7 @@
 
 ### 2. 圧縮時の plan extraction（todo 完了）
 
-`_detect_todo_all_complete(session_id)`（`nudge.py`）は圧縮ごとに評価され、完了サイクルごとに 1 回発火する：
+`_detect_todo_all_complete(session_id)`（`summarization/nudges.py`）は圧縮ごとに評価され、完了サイクルごとに 1 回発火する：
 
 - todo が存在し、すべて `completed` または `cancelled` である；
 - `nudge_plan_extraction_fired`（`state_register_db`）が未設定である。
@@ -70,7 +70,7 @@ flush はクロスセッション facts だけを抽出する。一時的なタ�
 
 ### 4. 圧縮後 todo fork
 
-同じ圧縮点で、`_schedule_compression_todo_update`（`summarization/core.py` -> `nudge.schedule_compression_todo_update`）が `update_todos_from_compaction` を fire-and-forget の `asyncio.create_task` としてスケジュールする。スケジューラのゲートは**すべて**を満たす必要がある：
+同じ圧縮点で、`_schedule_compression_todo_update`（`summarization/core.py` -> `nudges.schedule_compression_todo_update`）が `update_todos_from_compaction` を fire-and-forget の `asyncio.create_task` としてスケジュールする。スケジューラのゲートは**すべて**を満たす必要がある：
 
 - `compression_todo_update_enabled`（`SUMMARIZATION`、既定 `True`）；
 - cut が実際にメッセージを破棄した；
@@ -116,8 +116,8 @@ fork の結果メッセージはログのみ。メイングラフやその check
 | `output_max_tokens` | `MEMORY_FLUSH` | `2048` | flush 呼び出しの出力上限 |
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | flush 呼び出しのタイムアウト |
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 圧縮後 todo fork を有効化 |
-| `plan_extraction_enabled` | `CONTEXT_ENGINE_HOOK`（`config/features/agent_side/context_engine_hook.py`） | `True` | todo 完了時の plan extraction を有効化 |
-| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | memory review の間隔となる圧縮回数 |
+| `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | todo 完了時の plan extraction を有効化 |
+| `nudge_memory_threshold` | `NUDGE` | `10` | memory review の間隔となる圧縮回数 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 実際の圧縮後の能動的圧縮クールダウン |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md の上限 |
 
@@ -131,7 +131,7 @@ uv run pytest \
     tests/agent/middlewares/test_compaction_persistence.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
-    tests/agent/middlewares/context_engine/test_plan_extraction.py \
+    tests/agent/middlewares/system_prompt/test_plan_extraction.py \
     tests/agent/tools/test_memory_store.py -q
 ```
 

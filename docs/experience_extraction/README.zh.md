@@ -26,9 +26,9 @@
 
 ### 1. 压缩时 memory review
 
-`schedule_compression_nudges`（`agent/middlewares/context_engine/nudge.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每压缩一次就在 `state_register_db` 中递增 `nudge_review_memory_count`。计数达到 `nudge_memory_threshold`（默认 10）时，计数重置为 0，并以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。任一 nudge 锁被持有时，压缩仍递增计数但不派发。该触发器此前位于 `ContextEngineHook.after_agent` 并每回合运行；该钩子已不存在，因此节奏改为按压缩次数。
+`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每压缩一次就在 `state_register_db` 中递增 `nudge_review_memory_count`。计数达到 `nudge_memory_threshold`（默认 10）时，计数重置为 0，并以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。任一 nudge 锁被持有时，压缩仍递增计数但不派发。该触发器此前位于 `ContextEngineHook.after_agent` 并每回合运行；该钩子已不存在，因此节奏改为按压缩次数。
 
-`_nudge_memory`（`agent/middlewares/context_engine/nudge.py`）通过 `_create_nudge_agent` 构建 nudge agent，并把 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到对话后调用。该提示要求 agent 用 `memory` 工具保存持久的用户特征（persona、偏好、个人细节）与行为期望；若无内容可存，则回复 "Nothing to save." 并停止。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_nudge_agent` 构建 nudge agent，并把 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到对话后调用。该提示要求 agent 用 `memory` 工具保存持久的用户特征（persona、偏好、个人细节）与行为期望；若无内容可存，则回复 "Nothing to save." 并停止。
 
 - nudge agent 是主 LLM 上独立的 `create_agent`，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，无 checkpointer。
 - `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` 都带该标记，因此 nudge agent 能写 memory，但无法调用任意主工具。
@@ -36,7 +36,7 @@
 
 ### 2. 压缩时 plan extraction（todo 完成）
 
-`_detect_todo_all_complete(session_id)`（`nudge.py`）在每次压缩时评估，每个完成周期只触发一次：
+`_detect_todo_all_complete(session_id)`（`summarization/nudges.py`）在每次压缩时评估，每个完成周期只触发一次：
 
 - todo 存在，且每项都是 `completed` 或 `cancelled`；
 - `nudge_plan_extraction_fired`（`state_register_db`）尚未置位。
@@ -70,7 +70,7 @@ flush 只提取跨会话事实。临时任务进度有意留给摘要。任何�
 
 ### 4. 压缩后 todo fork
 
-在同一压缩点，`_schedule_compression_todo_update`（`summarization/core.py` -> `nudge.schedule_compression_todo_update`）把 `update_todos_from_compaction` 作为 fire-and-forget `asyncio.create_task` 调度。调度器需**全部**满足：
+在同一压缩点，`_schedule_compression_todo_update`（`summarization/core.py` -> `nudges.schedule_compression_todo_update`）把 `update_todos_from_compaction` 作为 fire-and-forget `asyncio.create_task` 调度。调度器需**全部**满足：
 
 - `compression_todo_update_enabled`（`SUMMARIZATION`，默认 `True`）；
 - cut 确实丢弃了消息；
@@ -116,8 +116,8 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 | `output_max_tokens` | `MEMORY_FLUSH` | `2048` | flush 调用输出上限 |
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | flush 调用超时 |
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 启用压缩后 todo fork |
-| `plan_extraction_enabled` | `CONTEXT_ENGINE_HOOK`（`config/features/agent_side/context_engine_hook.py`） | `True` | 启用 todo 完成时的 plan extraction |
-| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | memory review 间隔的压缩次数 |
+| `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | 启用 todo 完成时的 plan extraction |
+| `nudge_memory_threshold` | `NUDGE` | `10` | memory review 间隔的压缩次数 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 实际压缩后的主动压缩冷却 |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md 上限 |
 
@@ -131,7 +131,7 @@ uv run pytest \
     tests/agent/middlewares/test_compaction_persistence.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
-    tests/agent/middlewares/context_engine/test_plan_extraction.py \
+    tests/agent/middlewares/system_prompt/test_plan_extraction.py \
     tests/agent/tools/test_memory_store.py -q
 ```
 

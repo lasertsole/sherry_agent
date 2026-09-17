@@ -523,7 +523,7 @@ Use taskflow_summary to inspect a flow and continue execution.
 | :--- | :--- | :--- | :--- |
 | `MAIN` | メインエージェントのターン（`server/service/input_queue_service.py::_run_executor`） | `min(16, max(8, CPU))`、`SUBAGENT + NUDGE` 以上へ切り上げ → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 子エージェントの実行（`spawn/core.py`、`control/steer.py`） | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | メモリ nudge / 計画抽出 / 圧縮後 todo 更新（`agent/middlewares/context_engine/nudge.py` の 3 箇所） | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NUDGE` | メモリ nudge / 計画抽出 / 圧縮後 todo 更新（`agent/middlewares/summarization/nudges.py` の 3 箇所） | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
 | `NESTED` | `sessions_send` の返信ターン（直列） | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 設定と検証
@@ -599,7 +599,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `server/service/lane_lifecycle.py` | 起動時検証、drain ゲート登録、有界終了 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT レーンラッパー + PENDING → RUNNING 昇格 |
-| `agent/middlewares/context_engine/nudge.py` | NUDGE レーンの 3 呼び出し箇所 |
+| `agent/middlewares/summarization/nudges.py` | NUDGE レーンの 3 呼び出し箇所 |
 | `agent/tools/subagent/tools/sessions_send.py` | 返信ターンを包む NESTED レーン |
 | `server/service/input_queue_service.py` | `_run_executor` を包む MAIN レーン |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤児の `pending_orphaned` 確定 |
@@ -625,7 +625,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **38 個の feature オブジェクト**を保持します——エージェント側 19 + インフラ側 19——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **39 個の feature オブジェクト**を保持します——エージェント側 20 + インフラ側 19——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -803,7 +803,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 38。** 設定レジストリは 38 個の feature オブジェクト（エージェント側 19 + インフラ側 19）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING` を省いています。
+- **レジストリ規模は 39。** 設定レジストリは 39 個の feature オブジェクト（エージェント側 20 + インフラ側 19）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING` を省いています。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **LT-7 の TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。

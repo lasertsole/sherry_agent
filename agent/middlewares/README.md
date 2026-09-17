@@ -16,7 +16,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
 - [Architecture Overview](#architecture-overview)
 - [Middleware Chain](#middleware-chain)
 - [Middleware Reference](#middleware-reference)
-  - [@dynamic_prompt](#dynamic_prompt)
+  - [system_prompt_injection](#system_prompt_injection)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -79,7 +79,7 @@ Details in [Shared State System](#shared-state-system).
 
 ```python
 middleware = [
-    context_engine_prompt,  # @dynamic_prompt: system prompt injection
+    system_prompt_injection,  # @dynamic_prompt: system prompt injection
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
@@ -137,7 +137,7 @@ Differences vs the main agent:
 
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
-- No `context_engine_prompt` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop).
+- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop).
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
@@ -148,7 +148,7 @@ Differences vs the main agent:
 | Phase | Order |
 |---|---|
 | `before_agent` (list order) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
-| `wrap_model_call` (outermost → innermost) | context_engine_prompt → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
+| `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
 | `after_agent` (reverse order) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 Only middlewares that implement a given hook participate in that phase; the table shows where each would run if it did.
@@ -157,9 +157,9 @@ Only middlewares that implement a given hook participate in that phase; the tabl
 
 ## Middleware Reference
 
-### @dynamic_prompt
+### system_prompt_injection
 
-**Module:** `agent/middlewares/context_engine/core.py` · **Middleware:** `context_engine_prompt` (an `AgentMiddleware` instance created by LangChain's `@dynamic_prompt`)
+**Module:** `agent/middlewares/system_prompt/core.py` · **Middleware:** `system_prompt_injection` (an `AgentMiddleware` instance created by LangChain's `@dynamic_prompt`)
 **Hooks:** `wrap_model_call` / `awrap_model_call`
 
 Second in the list, right after `TodoContinuationEnforcer` (which implements no model-call wrap), therefore the outermost **wrap** layer. The decorator's generated class registers both `wrap_model_call` and `awrap_model_call` (the decorated function is sync and is also called from the async wrapper).
@@ -173,12 +173,7 @@ Second in the list, right after `TodoContinuationEnforcer` (which implements no 
 
 > The `system_prompt` mem key is a contract with the compression pipeline: `Summarization` reads it for token estimation (`_estimate_system_prompt_tokens`) and rewrites it (mem + db) after a compression — which is why a cache miss always dual-writes.
 
-**Turn finalization lives in the compression pipeline.** Persisting messages to MesMemory and the memory-review / plan-extraction nudges are owned by `Summarization`: it flushes the original discarded prefix before replacing it and schedules both nudges from the same seam (see the Summarization section). `context_engine_prompt` overrides none of the lifecycle hooks (`before_agent` / `after_agent` / `before_model` / `after_model`); its only job is the system-prompt wrap.
-
-**Nudge sub-agents** (`context_engine/nudge.py`), dispatched by the compression pipeline: separate `create_agent` instances built on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool` rejects any tool whose metadata lacks `nudge: true`, so a nudge agent can only touch tools whitelisted for the nudge phase. Two prompts exist:
-
-- `_MEMORY_REVIEW_PROMPT` (memory review): a periodic pass that saves durable user preferences and expectations via the memory tool.
-- `_PLAN_EXTRACTION_PROMPT` (plan extraction): a single pass fired when every todo is complete, producing two outputs. **Part 1** writes structured JSON knowledge via the `knowledge` tool (`action="write"`) under `workspace/knowledge/plans/<plan-name>/`, with `failure_set` / `success_path` / `method` at the task, wave, and plan layers. **Part 2** updates the skill library via `skill_manage` (the former standalone skill-review guidance is merged here). Its context comes from `_build_plan_context`: the plan file, the todo list, the start-work ledger (`.omo/start-work/ledger.jsonl`), and this session's subagent runs (`result_text` / `outcome` / task only).
+**Turn finalization lives in the compression pipeline.** Persisting messages to MesMemory and the memory-review / plan-extraction nudges are owned by `Summarization`: it flushes the original discarded prefix before replacing it and schedules both nudges from the same seam (see the Summarization section). `system_prompt_injection` overrides none of the lifecycle hooks (`before_agent` / `after_agent` / `before_model` / `after_model`); its only job is the system-prompt wrap.
 
 > The previous version of this document claimed knowledge-graph maintenance (`after_turn`) and a `MemoryCache`. **Neither exists in the current code.** System prompts come from the state registers and `build_system_prompt()`; there is no knowledge-graph call anywhere in the middleware layer.
 
@@ -371,7 +366,12 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 - **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.
 - `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`. Both delivery paths (directly after compaction, and the anti-thrash gate path) skip the injection when the request already carries a `SystemMessage` with identical content — no `override`, no new `SystemMessage` — keeping the model-visible prefix byte-identical.
 - **Pre-replacement persistence:** when a compact actually discards messages, the original discarded prefix (`request.state["messages"]`, never the post-`_run_non_llm_strategies` copies) is flushed to MesMemory before `_build_new_messages` / `request.override` replace it (`agent/middlewares/summarization/compaction_persistence.py`). The flush skips messages already carrying the in-process `_db_persisted` marker and messages recorded in the persistent `persisted_message_ids` watermark (`mes_memory.db`), so a T2 flush followed by a T1 flush — or a replay after a restart — writes each message exactly once. Fail-open.
-- **Compression-time nudges:** `schedule_compression_nudges` (`context_engine/nudge.py`) increments `nudge_review_memory_count` once per compression and dispatches the memory review at `nudge_memory_threshold` (default 10); plan extraction is evaluated with `_detect_todo_all_complete` at the same point. Both run as fire-and-forget tasks under the NUDGE lane. The after-agent hook no longer dispatches these.
+- **Compression-time nudges:** `schedule_compression_nudges` (`summarization/nudges.py`) increments `nudge_review_memory_count` once per compression and dispatches the memory review at `nudge_memory_threshold` (default 10); plan extraction is evaluated with `_detect_todo_all_complete` at the same point. Both run as fire-and-forget tasks under the NUDGE lane. The after-agent hook no longer dispatches these.
+
+**Nudge sub-agents** (`summarization/nudges.py`), dispatched by the compression pipeline: separate `create_agent` instances built on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool` rejects any tool whose metadata lacks `nudge: true`, so a nudge agent can only touch tools whitelisted for the nudge phase. Two prompts exist:
+
+- `_MEMORY_REVIEW_PROMPT` (memory review): a periodic pass that saves durable user preferences and expectations via the memory tool.
+- `_PLAN_EXTRACTION_PROMPT` (plan extraction): a single pass fired when every todo is complete, producing two outputs. **Part 1** writes structured JSON knowledge via the `knowledge` tool (`action="write"`) under `workspace/knowledge/plans/<plan-name>/`, with `failure_set` / `success_path` / `method` at the task, wave, and plan layers. **Part 2** updates the skill library via `skill_manage` (the former standalone skill-review guidance is merged here). Its context comes from `_build_plan_context`: the plan file, the todo list, the start-work ledger (`.omo/start-work/ledger.jsonl`), and this session's subagent runs (`result_text` / `outcome` / task only).
 - **Post-compression todo update:** when `compression_todo_update_enabled` (default on) is set and a compaction actually discards messages, the async path fire-and-forgets a dedicated nudge agent (`_COMPRESSION_TODO_PROMPT`) whose graph runs under a derived session key (`<id>::compression-todo`, so `IterationBudget` / `ToolGuardrails` state can never touch the main session) and whose tool set is exactly one metadata-marked `todowrite` shim (`todo_update: True`, admitted by `_NudgeLimitTool(allowed_metadata_key="todo_update")`) bound to the main session. It reconciles the session todo list with the discarded slice — marking actually-finished items `completed` / `cancelled`, adding evidenced new work as `pending`, writing the COMPLETE list back via `todowrite`. It never blocks or fails compression; a per-session `compression_todo_update_lock` prevents overlapping runs and the sync path only schedules when an event loop is already running.
 
 ▶️ Full details: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
@@ -475,10 +475,10 @@ Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`
 
 | Key(s) | Owner | Register |
 |---|---|---|
-| `system_prompt` | context_engine_prompt / Summarization | mem + db |
-| `nudge_review_memory_count` | compression-time nudge scheduler (Summarization → `nudge.py`) | db |
-| `nudge_plan_extraction_fired` | compression-time nudge scheduler (Summarization → `nudge.py`) | db |
-| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | compression-time nudge scheduler (Summarization → `nudge.py`) | mem |
+| `system_prompt` | system_prompt_injection / Summarization | mem + db |
+| `nudge_review_memory_count` | compression-time nudge scheduler (Summarization → `summarization/nudges.py`) | db |
+| `nudge_plan_extraction_fired` | compression-time nudge scheduler (Summarization → `summarization/nudges.py`) | db |
+| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | compression-time nudge scheduler (Summarization → `summarization/nudges.py`) | mem |
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` keys (compression counters, ineffective streak, last tokens/strategy, skip-LLM flag, recovery state, last user question) | Summarization | mem |
@@ -509,7 +509,7 @@ Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    context_engine_prompt,
+    system_prompt_injection,
     MultimodalProcessor,
     IterationBudget,
     ToolGuardrails,
@@ -524,7 +524,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        context_engine_prompt,  # @dynamic_prompt: system prompt injection
+        system_prompt_injection,  # @dynamic_prompt: system prompt injection
         MultimodalProcessor(),  # multimodal input normalization
         IterationBudget(90),  # per-turn call budget
         ToolGuardrails(),  # failure-pathology detection
@@ -583,7 +583,7 @@ user turn arrives
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage rewrite
 │   ├─ wrap_model_call (outermost → innermost)
-│   │   · context_engine_prompt  inject system prompt (decorator calls request.override)
+│   │   · system_prompt_injection  inject system prompt (decorator calls request.override)
 │   │   · IterationBudget  consume 1; terminal AIMessage when exhausted
 │   │   · HeartbeatStaleness  raise HeartbeatTimeoutError if killed; else heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  breaker check; classified retry w/ backoff; fallback /
@@ -606,7 +606,7 @@ user turn arrives
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  stop heartbeat timer
     · MultimodalProcessor  clean mutil_temp (> 7 days / non-numeric stems)
-    · (context_engine_prompt overrides no lifecycle hooks; the discarded-prefix
+    · (system_prompt_injection overrides no lifecycle hooks; the discarded-prefix
        flush and the memory-review / plan-extraction nudges fire inside
        Summarization's compact path instead.)
 ```
@@ -651,10 +651,9 @@ Async variants follow the `a` prefix convention: `abefore_agent`, `aafter_agent`
 agent/middlewares/
 ├── __init__.py                  # public exports
 ├── base.py                      # require_session_id / args_hash helpers
-├── context_engine/              # @dynamic_prompt system-prompt middleware + nudge sub-agents
-│   ├── __init__.py              # exports context_engine_prompt only
-│   ├── core.py                  # context_engine_prompt + _get_and_reload_system_prompt
-│   └── nudge.py                 # nudge prompts + sub-agent builders
+├── system_prompt/               # @dynamic_prompt system-prompt injection
+│   ├── __init__.py              # exports system_prompt_injection only
+│   └── core.py                  # system_prompt_injection + _get_and_reload_system_prompt
 ├── heartbeat_staleness/         # HeartbeatStaleness
 │   ├── __init__.py              # exports HeartbeatStaleness
 │   └── core.py                  # HeartbeatStaleness
@@ -698,7 +697,8 @@ agent/middlewares/
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
 │   ├── compaction_persistence.py # pre-replacement flush of the discarded prefix
-│   └── memory_flush.py          # pre-compression memory flush
+│   ├── memory_flush.py          # pre-compression memory flush
+│   └── nudges.py                # compression-time nudge scheduling + prompts
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # exports TaskIntentMiddleware
 │   └── core.py                  # TaskIntentMiddleware
@@ -730,7 +730,7 @@ from agent.middlewares import (
     MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
-    context_engine_prompt,
+    system_prompt_injection,
     ToolCallNormalize,
     PathGuard,
     HeartbeatStaleness,

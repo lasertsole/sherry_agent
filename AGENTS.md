@@ -30,7 +30,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper) | `agent/tools/subagent/spawn/core.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (38 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (39 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -51,7 +51,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
-  │    context_engine_prompt (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
+  │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
   │    → MaxTokensBoost → HeartbeatStaleness → HITL → LLMRetry → Summarization
   │    → TodoContinuationEnforcer(E3)
@@ -78,7 +78,7 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 |---|---|---|---|
 | `MAIN` | main-agent turn (`_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | child-agent executions (spawn + steer) | 8 | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | nudge/persistence calls (`nudge.py`, 3 sites) | 4 | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NUDGE` | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4 | `LANE_SYSTEM["nudge_max_concurrent"]` |
 | `NESTED` | `sessions_send` reply turns (serial) | 1 | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 - Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
@@ -91,9 +91,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 19 per-object TypedDicts (summarization, guardrails, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, ...) |
+| `config/features/agent_side/` | 20 per-object TypedDicts (summarization, guardrails, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, ...) |
 | `config/features/infra_side/` | 19 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 38 TypedDicts + instances re-exported |
+| `config/features/__init__.py` | Aggregator — all 39 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |

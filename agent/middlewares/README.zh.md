@@ -16,7 +16,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 - [架构总览](#架构总览)
 - [中间件链](#中间件链)
 - [中间件参考](#中间件参考)
-  - [@dynamic_prompt](#dynamic_prompt)
+  - [system_prompt_injection](#system_prompt_injection)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -79,7 +79,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 
 ```python
 middleware = [
-    context_engine_prompt,  # @dynamic_prompt：系统提示词注入
+    system_prompt_injection,  # @dynamic_prompt：系统提示词注入
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
@@ -137,7 +137,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
-- 没有 `context_engine_prompt`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
+- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
@@ -146,7 +146,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 阶段 | 顺序 |
 |---|---|
 | `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
-| `wrap_model_call`（最外层 → 最内层） | context_engine_prompt → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
+| `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
@@ -155,9 +155,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ## 中间件参考
 
-### @dynamic_prompt
+### system_prompt_injection
 
-**模块：** `agent/middlewares/context_engine/core.py` · **中间件：** `context_engine_prompt`（由 LangChain `@dynamic_prompt` 创建的 `AgentMiddleware` 实例）
+**模块：** `agent/middlewares/system_prompt/core.py` · **中间件：** `system_prompt_injection`（由 LangChain `@dynamic_prompt` 创建的 `AgentMiddleware` 实例）
 **钩子：** `wrap_model_call` / `awrap_model_call`
 
 列表中的第二个，紧跟 `TodoContinuationEnforcer`（后者不实现任何模型调用包装），因此是最外层的 **wrap** 层。装饰器生成的类同时注册 `wrap_model_call` 与 `awrap_model_call`（被装饰函数是同步的，异步包装器同样调用它）。
@@ -171,12 +171,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` 这个 mem 键是与压缩管线的契约：`Summarization` 读取它做 token 估算（`_estimate_system_prompt_tokens`），并在压缩后重写（mem + db）——因此缓存未命中时必须双写。
 
-**回合收尾已移入压缩管线。** 把消息持久化到 MesMemory、以及记忆复盘 / 计划提取两个 nudge，现由 `Summarization` 负责：它在替换前先落库被丢弃的原始前缀，并从同一接缝调度两个 nudge（见下文 Summarization 小节）。`context_engine_prompt` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
-
-**Nudge 子 Agent**（`context_engine/nudge.py`，由压缩管线调度）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
-
-- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：周期性运行，通过记忆工具保存用户的持久偏好与期望。
-- `_PLAN_EXTRACTION_PROMPT`（计划提取）：在所有 todo 完成时触发一次的运行，产出两项内容。**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`。**Part 2** 通过 `skill_manage` 更新技能库（原先独立的技能复盘指引并入此处）。其上下文来自 `_build_plan_context`：计划文件、todo 列表、start-work 台账（`.omo/start-work/ledger.jsonl`）以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
+**回合收尾已移入压缩管线。** 把消息持久化到 MesMemory、以及记忆复盘 / 计划提取两个 nudge，现由 `Summarization` 负责：它在替换前先落库被丢弃的原始前缀，并从同一接缝调度两个 nudge（见下文 Summarization 小节）。`system_prompt_injection` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
 
@@ -369,7 +364,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
 - **替换前持久化：** 当一次 compact 确实丢弃了消息时，被丢弃的原始前缀（`request.state["messages"]`，绝不是 `_run_non_llm_strategies` 之后的副本）会在 `_build_new_messages` / `request.override` 替换它之前先落库到 MesMemory（`agent/middlewares/summarization/compaction_persistence.py`）。落库会跳过已带进程内 `_db_persisted` 标记、以及已登记在持久水位 `persisted_message_ids`（`mes_memory.db`）里的消息，因此 T2 落库后再 T1 落库——或重启后的重放——每条消息都只写一次。fail-open。
-- **压缩时 nudge：** `schedule_compression_nudges`（`context_engine/nudge.py`）每压缩一次递增 `nudge_review_memory_count`，达到 `nudge_memory_threshold`（默认 10）时派发记忆复盘；计划提取在同一时点用 `_detect_todo_all_complete` 评估。两者都以 fire-and-forget 任务在 NUDGE 车道上运行。after-agent 钩子不再派发它们。
+- **压缩时 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）每压缩一次递增 `nudge_review_memory_count`，达到 `nudge_memory_threshold`（默认 10）时派发记忆复盘；计划提取在同一时点用 `_detect_todo_all_complete` 评估。两者都以 fire-and-forget 任务在 NUDGE 车道上运行。after-agent 钩子不再派发它们。
+
+**Nudge 子 Agent**（`summarization/nudges.py`，由压缩管线调度）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
+
+- `_MEMORY_REVIEW_PROMPT`（记忆复盘）：周期性运行，通过记忆工具保存用户的持久偏好与期望。
+- `_PLAN_EXTRACTION_PROMPT`（计划提取）：在所有 todo 完成时触发一次的运行，产出两项内容。**Part 1** 通过 `knowledge` 工具（`action="write"`）把结构化 JSON 知识写入 `workspace/knowledge/plans/<plan-name>/`，在 task、wave、plan 三个层级分别记录 `failure_set` / `success_path` / `method`。**Part 2** 通过 `skill_manage` 更新技能库（原先独立的技能复盘指引并入此处）。其上下文来自 `_build_plan_context`：计划文件、todo 列表、start-work 台账（`.omo/start-work/ledger.jsonl`）以及本会话的 subagent runs（仅 `result_text` / `outcome` / 任务）。
 - **压缩后待办更新：** 当 `compression_todo_update_enabled`（默认开启）且本次压缩确实丢弃了消息时，异步路径会 fire-and-forget 一个专用 nudge agent（`_COMPRESSION_TODO_PROMPT`）：其图运行在派生会话键（`<id>::compression-todo`，因此 `IterationBudget` / `ToolGuardrails` 状态绝不会碰到主会话）下，工具集只有一个带 metadata 标记的 `todowrite` 垫片（`todo_update: True`，经 `_NudgeLimitTool(allowed_metadata_key="todo_update")` 放行）且绑定主会话。它根据被丢弃的对话片段核对会话待办列表——把实际完成的条目标为 `completed` / `cancelled`，把有据可查的新工作加为 `pending`，并用 `todowrite` 写回**完整**列表。它绝不阻塞或影响压缩；每会话 `compression_todo_update_lock` 防重入，同步路径仅在已有事件循环时调度。
 
 ▶️ 完整文档：[docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
@@ -466,10 +466,10 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 键 | 归属 | 寄存器 |
 |---|---|---|
-| `system_prompt` | context_engine_prompt / Summarization | mem + db |
-| `nudge_review_memory_count` | 压缩时 nudge 调度器（Summarization → `nudge.py`） | db |
-| `nudge_plan_extraction_fired` | 压缩时 nudge 调度器（Summarization → `nudge.py`） | db |
-| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 压缩时 nudge 调度器（Summarization → `nudge.py`） | mem |
+| `system_prompt` | system_prompt_injection / Summarization | mem + db |
+| `nudge_review_memory_count` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | db |
+| `nudge_plan_extraction_fired` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | db |
+| `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` 键（压缩计数器、无效连击、上次 token/策略、跳过 LLM 标志、恢复状态、上次用户提问） | Summarization | mem |
@@ -500,7 +500,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    context_engine_prompt,
+    system_prompt_injection,
     MultimodalProcessor,
     IterationBudget,
     ToolGuardrails,
@@ -516,7 +516,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        context_engine_prompt,  # @dynamic_prompt：系统提示词注入
+        system_prompt_injection,  # @dynamic_prompt：系统提示词注入
         MultimodalProcessor(),  # 多模态输入规范化
         IterationBudget(90),  # 回合级调用预算
         ToolGuardrails(),  # 失败病理检测
@@ -575,7 +575,7 @@ agent = create_agent(
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 重写
 │   ├─ wrap_model_call（最外层 → 最内层）
-│   │   · context_engine_prompt  注入系统提示词（装饰器调用 request.override）
+│   │   · system_prompt_injection  注入系统提示词（装饰器调用 request.override）
 │   │   · IterationBudget  消耗 1；耗尽时返回终止 AIMessage
 │   │   · HeartbeatStaleness  已杀死则抛 HeartbeatTimeoutError；否则 heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  熔断器检查；分类重试 + 退避；回退 /
@@ -598,7 +598,7 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  停止心跳定时器
     · MultimodalProcessor  清理 mutil_temp（> 7 天 / 非数字文件名）
-    · （context_engine_prompt 不实现任何生命周期钩子；被丢弃前缀的落库与
+    · （system_prompt_injection 不实现任何生命周期钩子；被丢弃前缀的落库与
        记忆复盘 / 计划提取 nudge 改在 Summarization 的压缩路径内触发。）
 ```
 
@@ -642,10 +642,9 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 公开导出
 ├── base.py                      # require_session_id / args_hash 辅助
-├── context_engine/              # @dynamic_prompt 系统提示词中间件 + nudge 子 Agent
-│   ├── __init__.py              # 仅导出 context_engine_prompt
-│   ├── core.py                  # context_engine_prompt + _get_and_reload_system_prompt
-│   └── nudge.py                 # nudge 提示词 + 子 Agent 构建器
+├── system_prompt/               # @dynamic_prompt 系统提示词注入
+│   ├── __init__.py              # 仅导出 system_prompt_injection
+│   └── core.py                  # system_prompt_injection + _get_and_reload_system_prompt
 ├── heartbeat_staleness/         # HeartbeatStaleness
 │   ├── __init__.py              # 导出 HeartbeatStaleness
 │   └── core.py                  # HeartbeatStaleness
@@ -689,7 +688,8 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
 │   ├── compaction_persistence.py # 替换前落库被丢弃前缀
-│   └── memory_flush.py          # 压缩前记忆落盘
+│   ├── memory_flush.py          # 压缩前记忆落盘
+│   └── nudges.py                # 压缩时 nudge 调度 + 提示词
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # 导出 TaskIntentMiddleware
 │   └── core.py                  # TaskIntentMiddleware
@@ -721,7 +721,7 @@ from agent.middlewares import (
     MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
-    context_engine_prompt,
+    system_prompt_injection,
     ToolCallNormalize,
     PathGuard,
     HeartbeatStaleness,

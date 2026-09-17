@@ -523,7 +523,7 @@ Use taskflow_summary to inspect a flow and continue execution.
 | :--- | :--- | :--- | :--- |
 | `MAIN` | 메인 에이전트 턴(`server/service/input_queue_service.py::_run_executor`) | `min(16, max(8, CPU))`, `SUBAGENT + NUDGE` 이상으로 상향 클램프 → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | 자식 에이전트 실행(`spawn/core.py`, `control/steer.py`) | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | 메모리 nudge / 계획 추출 / 압축 후 todo 갱신(`agent/middlewares/context_engine/nudge.py` 3곳) | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NUDGE` | 메모리 nudge / 계획 추출 / 압축 후 todo 갱신(`agent/middlewares/summarization/nudges.py` 3곳) | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
 | `NESTED` | `sessions_send` 응답 턴(직렬) | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### 설정과 검증
@@ -599,7 +599,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `server/service/lane_lifecycle.py` | 시작 검증, drain 게이트 등록, 유계 종료 drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT 레인 래퍼 + PENDING → RUNNING 승격 |
-| `agent/middlewares/context_engine/nudge.py` | NUDGE 레인 3개 호출 지점 |
+| `agent/middlewares/summarization/nudges.py` | NUDGE 레인 3개 호출 지점 |
 | `agent/tools/subagent/tools/sessions_send.py` | 응답 턴을 감싸는 NESTED 레인 |
 | `server/service/input_queue_service.py` | `_run_executor`를 감싸는 MAIN 레인 |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 고아의 `pending_orphaned` 확정 |
@@ -625,7 +625,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 
 각 모듈은 `class XxxConfig(TypedDict)`와 모듈 수준 상수 `XXX: XxxConfig = {…}`를 정의합니다. 환경 인식 모듈은 빌더 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`를 정의하고 `env or os.environ`을 읽어 임포트 시 상수를 구체화합니다. 환경 헬퍼는 `_env_int(name, default, env)`(`config/features/_env.py:9`)이며, `1/true/yes/on`과 `0/false/no/off/""`를 받아들이고 예외를 던지지 않습니다.
 
-레지스트리는 현재 **38개 feature 객체**를 보유합니다 — 에이전트 측 19 + 인프라 측 19 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
+레지스트리는 현재 **39개 feature 객체**를 보유합니다 — 에이전트 측 20 + 인프라 측 19 — 각 패키지 `__init__.py`를 통해 재수출되고 `config/features/__init__.py`가 집계하므로, 소비자는 절반 또는 전체 레지스트리를 한 곳에서 임포트할 수 있습니다. 소비 코드는 상수를 임포트해 직접 인덱싱합니다(예: `ITERATION_BUDGET["default_max_iterations"]`). `get_feature`/`load_feature` 접근자는 없습니다. `config/__init__.py:38-39`는 `GATEWAY`에서 `API_HOST`/`API_PORT`를 파생합니다.
 
 이 문서와 가장 관련 있는 상수:
 
@@ -803,7 +803,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **압축 전 메모리 플러시는 잠재 상태입니다.** `Summarization`의 프로덕션 인스턴스(메인/서브)는 `memory_store` / `llm_factory`를 전달하지 않아, 호출 지점이 배선할 때까지 플러시가 실행되지 않습니다. 코드는 구현·테스트되었지만 현재 비활성입니다.
 - **연속성은 채널 의존입니다.** `build_continuity_prompt`는 channel id와 chat id를 모두 요구하므로, 채널 바인딩이 없는 세션은 연속성 블록을 받지 못합니다. 저장소는 디스크의 키별 JSON이며 데이터베이스가 아닙니다.
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.
-- **레지스트리 규모는 38입니다.** 설정 레지스트리는 38개 feature 객체(에이전트 측 19 + 인프라 측 19)를 보유합니다. 인프라 측 계약 테스트는 그중 18개(GATEWAY + 17개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`을 빠뜨립니다.
+- **레지스트리 규모는 39입니다.** 설정 레지스트리는 39개 feature 객체(에이전트 측 20 + 인프라 측 19)를 보유합니다. 인프라 측 계약 테스트는 그중 18개(GATEWAY + 17개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`을 빠뜨립니다.
 - **패키지 재수출 누락.** `agent/tools/taskflow/__init__.py`는 11개 이름만 재수출합니다. `taskflow_dispatch`와 `taskflow_wait_all`은 `build_taskflow_tools()`로 도달할 수 있지만 패키지 `__all__`에서 빠져 있습니다.
 - **LT-7 TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_resume`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.

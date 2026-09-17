@@ -523,7 +523,7 @@ Long-running work does not fan out unbounded: every detached child agent, every 
 | :--- | :--- | :--- | :--- |
 | `MAIN` | main-agent turn (`server/service/input_queue_service.py::_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
 | `SUBAGENT` | child-agent execution (`spawn/core.py`, `control/steer.py`) | `8` | `LANE_SYSTEM["subagent_max_concurrent"]` |
-| `NUDGE` | memory nudge / plan extraction / compaction todo update (`agent/middlewares/context_engine/nudge.py`, 3 sites) | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NUDGE` | memory nudge / plan extraction / compaction todo update (`agent/middlewares/summarization/nudges.py`, 3 sites) | `4` | `LANE_SYSTEM["nudge_max_concurrent"]` |
 | `NESTED` | `sessions_send` reply turns (serialized) | `1` | `LANE_SYSTEM["nested_max_concurrent"]` |
 
 ### Configuration & validation
@@ -599,7 +599,7 @@ At exit, the same seam flips drain mode (`set_draining(True)`) and runs a **boun
 | `server/service/lane_lifecycle.py` | Startup validation, drain-gate registration, bounded exit drain |
 | `server/trigger/http/lane.py` | `GET /lane-status` |
 | `agent/tools/subagent/spawn/core.py` · `control/steer.py` | SUBAGENT lane wrappers + PENDING → RUNNING promotion |
-| `agent/middlewares/context_engine/nudge.py` | 3 NUDGE lane call sites |
+| `agent/middlewares/summarization/nudges.py` | 3 NUDGE lane call sites |
 | `agent/tools/subagent/tools/sessions_send.py` | NESTED lane around the reply turn |
 | `server/service/input_queue_service.py` | MAIN lane around `_run_executor` |
 | `agent/tools/subagent/orphan/recovery.py` | `pending_orphaned` finalize for PENDING orphans |
@@ -625,7 +625,7 @@ All tunables live under `config/features/`, which is a **per-object `TypedDict` 
 
 Each module defines `class XxxConfig(TypedDict)` plus a module-level constant `XXX: XxxConfig = {…}`. Env-aware modules define a builder `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` that reads `env or os.environ` and materialises the constant at import time. The env helper is `_env_int(name, default, env)` (`config/features/_env.py:9`), which accepts `1/true/yes/on` and `0/false/no/off/""` and never raises.
 
-The registry currently holds **38 feature objects** — 19 agent-side + 19 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
+The registry currently holds **39 feature objects** — 20 agent-side + 19 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
 
 The constants most relevant to this document:
 
@@ -803,7 +803,7 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **The pre-compression memory flush is latent.** Production instantiations of `Summarization` (main agent and subagent) do not pass `memory_store` / `llm_factory`, so the flush does not run until a call site wires them; the code is implemented and tested but currently inert.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
-- **Registry size is 38.** The config registry holds 38 feature objects (19 agent-side + 19 infra-side); the infra-side contract test covers 18 of them (GATEWAY plus 17 data-driven cases) and omits `MODEL_PRICING`.
+- **Registry size is 39.** The config registry holds 39 feature objects (20 agent-side + 19 infra-side); the infra-side contract test covers 18 of them (GATEWAY plus 17 data-driven cases) and omits `MODEL_PRICING`.
 - **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_dispatch` and `taskflow_wait_all` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The LT-7 TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.

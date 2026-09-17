@@ -26,9 +26,9 @@ This document maps **when** the agent extracts experience, **by which mechanism*
 
 ### 1. Compression-time memory review
 
-`schedule_compression_nudges` (`agent/middlewares/context_engine/nudge.py`, called by the Summarization middleware whenever a compact discards messages) increments `nudge_review_memory_count` in `state_register_db` once per compression. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task that runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression still increments the counter but no dispatch happens. The trigger previously lived in `ContextEngineHook.after_agent` and ran on every turn; that hook no longer exists, so the cadence is now per compression.
+`schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) increments `nudge_review_memory_count` in `state_register_db` once per compression. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task that runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression still increments the counter but no dispatch happens. The trigger previously lived in `ContextEngineHook.after_agent` and ran on every turn; that hook no longer exists, so the cadence is now per compression.
 
-`_nudge_memory` (`agent/middlewares/context_engine/nudge.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations, using the `memory` tool; otherwise it answers "Nothing to save." and stops.
+`_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations, using the `memory` tool; otherwise it answers "Nothing to save." and stops.
 
 - The nudge agent is a separate `create_agent` on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]` and no checkpointer.
 - `_NudgeLimitTool` (no `allowed_metadata_key`) admits only tools whose metadata carries `nudge: True`. `memory`, `skill_list`, `skill_view`, `skill_manage` and `knowledge` carry that marker, so the nudge agent can write memory but cannot call arbitrary main tools.
@@ -36,7 +36,7 @@ This document maps **when** the agent extracts experience, **by which mechanism*
 
 ### 2. Compression-time plan extraction (todo-complete)
 
-`_detect_todo_all_complete(session_id)` (`nudge.py`) is evaluated at every compression and fires once per completion cycle:
+`_detect_todo_all_complete(session_id)` (`summarization/nudges.py`) is evaluated at every compression and fires once per completion cycle:
 
 - todos exist and every todo is `completed` or `cancelled`;
 - `nudge_plan_extraction_fired` (`state_register_db`) is not already set.
@@ -70,7 +70,7 @@ The flush only extracts cross-session facts. Temporary task progress is delibera
 
 ### 4. Post-compression todo fork
 
-At the same compression point, `_schedule_compression_todo_update` (`summarization/core.py` -> `nudge.schedule_compression_todo_update`) schedules `update_todos_from_compaction` as a fire-and-forget `asyncio.create_task`. The scheduler gates on ALL of:
+At the same compression point, `_schedule_compression_todo_update` (`summarization/core.py` -> `nudges.schedule_compression_todo_update`) schedules `update_todos_from_compaction` as a fire-and-forget `asyncio.create_task`. The scheduler gates on ALL of:
 
 - `compression_todo_update_enabled` (`SUMMARIZATION`, default `True`);
 - the cut actually discarded messages;
@@ -116,8 +116,8 @@ The fork result messages are logged only. Nothing reaches the main graph or its 
 | `output_max_tokens` | `MEMORY_FLUSH` | `2048` | Flush call output cap |
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | Flush call timeout |
 | `compression_todo_update_enabled` | `SUMMARIZATION` (`config/features/agent_side/summarization.py`) | `True` | Enables the post-compression todo fork |
-| `plan_extraction_enabled` | `CONTEXT_ENGINE_HOOK` (`config/features/agent_side/context_engine_hook.py`) | `True` | Enables todo-complete plan extraction |
-| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | Compressions between memory reviews |
+| `plan_extraction_enabled` | `NUDGE` (`config/features/agent_side/nudge.py`) | `True` | Enables todo-complete plan extraction |
+| `nudge_memory_threshold` | `NUDGE` | `10` | Compressions between memory reviews |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | Proactive-compression cooldown after an actual compression |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md caps |
 
@@ -131,7 +131,7 @@ uv run pytest \
     tests/agent/middlewares/test_compaction_persistence.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
-    tests/agent/middlewares/context_engine/test_plan_extraction.py \
+    tests/agent/middlewares/system_prompt/test_plan_extraction.py \
     tests/agent/tools/test_memory_store.py -q
 ```
 

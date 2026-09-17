@@ -16,7 +16,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 - [아키텍처 개요](#아키텍처-개요)
 - [미들웨어 체인](#미들웨어-체인)
 - [미들웨어 레퍼런스](#미들웨어-레퍼런스)
-  - [@dynamic_prompt](#dynamic_prompt)
+  - [system_prompt_injection](#system_prompt_injection)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -79,7 +79,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 
 ```python
 middleware = [
-    context_engine_prompt,  # @dynamic_prompt: 시스템 프롬프트 주입
+    system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
@@ -137,7 +137,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 요약 트리거가 토큰 전용이 아니라 메시지 수(40) **또는** 토큰 수(컨텍스트 윈도우의 80%).
 - 더 타이트한 반복 예산(90 대신 60).
-- `context_engine_prompt`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음).
+- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음).
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
@@ -146,7 +146,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 페이즈 | 순서 |
 |---|---|
 | `before_agent` (리스트 순서) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
-| `wrap_model_call` (최외곽 → 최내곽) | context_engine_prompt → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
+| `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
 | `after_agent` (역순) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 해당 후크를 구현한 미들웨어만 그 페이즈에 참여합니다. 표는 "구현했다면 실행될 위치"를 보여줍니다.
@@ -155,9 +155,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ## 미들웨어 레퍼런스
 
-### @dynamic_prompt
+### system_prompt_injection
 
-**모듈:** `agent/middlewares/context_engine/core.py` · **미들웨어:** `context_engine_prompt` (LangChain `@dynamic_prompt`가 생성하는 `AgentMiddleware` 인스턴스)
+**모듈:** `agent/middlewares/system_prompt/core.py` · **미들웨어:** `system_prompt_injection` (LangChain `@dynamic_prompt`가 생성하는 `AgentMiddleware` 인스턴스)
 **후크:** `wrap_model_call` / `awrap_model_call`
 
 리스트의 두 번째, `TodoContinuationEnforcer`(모델 호출 래핑을 구현하지 않음) 바로 뒤에 위치하여 최외곽 **래핑** 계층입니다. 데코레이터가 생성하는 클래스는 `wrap_model_call`과 `awrap_model_call`을 모두 등록합니다(피장식 함수는 동기이며 비동기 래퍼에서도 호출됩니다).
@@ -171,12 +171,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` mem 키는 압축 파이프라인과의 계약입니다: `Summarization`이 토큰 추정(`_estimate_system_prompt_tokens`)에 읽고 압축 후 (mem + db에) 다시 씁니다 —— 그래서 캐시 미스 시 항상 이중 기록합니다.
 
-**턴 마무리는 압축 파이프라인으로 이동했습니다.** MesMemory 영속화와 메모리 리뷰 / 플랜 추출 nudge는 `Summarization`이 소유합니다: 교체 전에 버려질 원본 프리픽스를 플러시하고 같은 접점에서 두 nudge를 스케줄합니다(아래 Summarization 섹션 참고). `context_engine_prompt`는 어떤 라이프사이클 후크(`before_agent` / `after_agent` / `before_model` / `after_model`)도 오버라이드하지 않습니다; 역할은 시스템 프롬프트 래핑뿐입니다.
-
-**Nudge 서브에이전트** (`context_engine/nudge.py`, 압축 파이프라인이 디스패치): 메인 LLM 기반의 독립적인 `create_agent` 인스턴스로, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 모든 도구를 거부하므로, nudge 에이전트는 nudge 단계 화이트리스트에 있는 도구만 사용할 수 있습니다. 프롬프트는 두 개입니다:
-
-- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 사용자의 지속적 선호와 기대를 메모리 도구로 저장하는 주기적 패스.
-- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): 모든 todo가 완료될 때 한 번 발화하는 패스로, 두 가지 산출물을 생성합니다. **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다. **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(기존의 독립 스킬 리뷰 지침은 여기에 병합됨).  그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, start-work 원장(`.omo/start-work/ledger.jsonl`), 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
+**턴 마무리는 압축 파이프라인으로 이동했습니다.** MesMemory 영속화와 메모리 리뷰 / 플랜 추출 nudge는 `Summarization`이 소유합니다: 교체 전에 버려질 원본 프리픽스를 플러시하고 같은 접점에서 두 nudge를 스케줄합니다(아래 Summarization 섹션 참고). `system_prompt_injection`는 어떤 라이프사이클 후크(`before_agent` / `after_agent` / `before_model` / `after_model`)도 오버라이드하지 않습니다; 역할은 시스템 프롬프트 래핑뿐입니다.
 
 > 이 문서의 이전 버전은 지식 그래프 유지관리(`after_turn`)와 `MemoryCache`를 언급했습니다. **현재 코드에는 둘 다 존재하지 않습니다.** 시스템 프롬프트는 상태 레지스터와 `build_system_prompt()`에서 공급되며, 미들웨어 계층 어디에도 지식 그래프 호출은 없습니다.
 
@@ -369,7 +364,12 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **출력:** 교체 메시지는 `HumanMessage` / `AIMessage` **쌍**입니다 — 중립적인 `"What did we do so far?"` 뒤에 `additional_kwargs={"lc_source": "summarization"}`을 담은 `AIMessage`가 이어집니다 — 모델이 연속된 같은 역할 메시지를 보는 일이 없어 사후 페어링 복구도 필요 없습니다.
 - `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다. 두 전달 경로(압축 직후, 안티-스래싱 게이트 경로)는 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 주입을 건너뛰고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다.
 - **교체 전 영속화:** compact가 실제로 메시지를 버릴 때, 버려질 원본 프리픽스(`request.state["messages"]`, `_run_non_llm_strategies` 이후 복사본은 절대 사용하지 않음)가 `_build_new_messages` / `request.override`의 교체 전에 MesMemory로 플러시됩니다(`agent/middlewares/summarization/compaction_persistence.py`). 플러시는 프로세스 내 `_db_persisted` 마커가 있는 메시지와 영속 워터마크 `persisted_message_ids`(`mes_memory.db`)에 기록된 메시지를 건너뛰므로, T2 플러시에 이은 T1 플러시, 또는 재시작 후 리플레이에서도 각 메시지는 한 번만 기록됩니다. fail-open.
-- **압축 시점 nudge:** `schedule_compression_nudges`(`context_engine/nudge.py`)가 압축마다 `nudge_review_memory_count`를 증가시키고 `nudge_memory_threshold`(기본 10)에서 메모리 리뷰를 디스패치합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`로 평가됩니다. 둘 다 NUDGE 레인의 fire-and-forget 작업으로 실행됩니다. after-agent 훅은 이를 디스패치하지 않습니다.
+- **압축 시점 nudge:** `schedule_compression_nudges`(`summarization/nudges.py`)가 압축마다 `nudge_review_memory_count`를 증가시키고 `nudge_memory_threshold`(기본 10)에서 메모리 리뷰를 디스패치합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`로 평가됩니다. 둘 다 NUDGE 레인의 fire-and-forget 작업으로 실행됩니다. after-agent 훅은 이를 디스패치하지 않습니다.
+
+**Nudge 서브에이전트** (`summarization/nudges.py`, 압축 파이프라인이 디스패치): 메인 LLM 기반의 독립적인 `create_agent` 인스턴스로, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 모든 도구를 거부하므로, nudge 에이전트는 nudge 단계 화이트리스트에 있는 도구만 사용할 수 있습니다. 프롬프트는 두 개입니다:
+
+- `_MEMORY_REVIEW_PROMPT`(메모리 리뷰): 사용자의 지속적 선호와 기대를 메모리 도구로 저장하는 주기적 패스.
+- `_PLAN_EXTRACTION_PROMPT`(플랜 추출): 모든 todo가 완료될 때 한 번 발화하는 패스로, 두 가지 산출물을 생성합니다. **Part 1**은 `knowledge` 도구(`action="write"`)로 구조화 JSON 지식을 `workspace/knowledge/plans/<plan-name>/`에 기록하며, task·wave·plan 세 계층에서 `failure_set` / `success_path` / `method`를 가집니다. **Part 2**는 `skill_manage`로 스킬 라이브러리를 갱신합니다(기존의 독립 스킬 리뷰 지침은 여기에 병합됨).  그 컨텍스트는 `_build_plan_context`에서 옵니다: 플랜 파일, todo 목록, start-work 원장(`.omo/start-work/ledger.jsonl`), 그리고 이 세션의 subagent runs(`result_text` / `outcome` / 작업만).
 - **압축 후 TODO 업데이트:** `compression_todo_update_enabled`(기본 활성)가 켜져 있고 이번 압축이 실제로 메시지를 버린 경우, 비동기 경로는 전용 nudge 에이전트를 fire-and-forget으로 실행합니다(`_COMPRESSION_TODO_PROMPT`). 그 그래프는 파생 세션 키(`<id>::compression-todo` — `IterationBudget` / `ToolGuardrails` 상태가 메인 세션에 닿을 수 없음)로 동작하고, 도구 집합은 메타데이터가 붙은 `todowrite` 셤 하나뿐이며(`todo_update: True`, `_NudgeLimitTool(allowed_metadata_key="todo_update")`가 허용) 메인 세션에 바인딩됩니다. 버려진 대화 슬라이스를 근거로 세션 TODO 목록을 대조해 실제로 끝난 항목은 `completed` / `cancelled`로, 근거가 있는 새 작업은 `pending`으로 추가하고 `todowrite`로 **전체** 목록을 되씁니다. 압축을 차단하거나 실패시키지 않으며, 세션별 `compression_todo_update_lock`이 중복 실행을 막고 동기 경로는 이벤트 루프가 있을 때만 스케줄합니다.
 
 ▶️ 전체 문서: [docs/summarization/README.md](../../docs/summarization/README.md) · [中文](../../docs/summarization/README.zh.md) · [한국어](../../docs/summarization/README.ko.md) · [日本語](../../docs/summarization/README.ja.md)
@@ -472,10 +472,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 키 | 소유자 | 레지스터 |
 |---|---|---|
-| `system_prompt` | context_engine_prompt / Summarization | mem + db |
-| `nudge_review_memory_count` | 압축 시점 nudge 스케줄러 (Summarization → `nudge.py`) | db |
-| `nudge_plan_extraction_fired` | 압축 시점 nudge 스케줄러 (Summarization → `nudge.py`) | db |
-| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | 압축 시점 nudge 스케줄러 (Summarization → `nudge.py`) | mem |
+| `system_prompt` | system_prompt_injection / Summarization | mem + db |
+| `nudge_review_memory_count` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | db |
+| `nudge_plan_extraction_fired` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | db |
+| `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | mem |
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
 | `tool_guardrail_state` | ToolGuardrails | mem |
 | `summarization_*` 키(압축 카운터, 무효 연속, 마지막 토큰/전략, 스킵 LLM 플래그, 복구 상태, 마지막 사용자 질문) | Summarization | mem |
@@ -506,7 +506,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    context_engine_prompt,
+    system_prompt_injection,
     MultimodalProcessor,
     IterationBudget,
     ToolGuardrails,
@@ -522,7 +522,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        context_engine_prompt,  # @dynamic_prompt: 시스템 프롬프트 주입
+        system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
         MultimodalProcessor(),  # 멀티모달 입력 정규화
         IterationBudget(90),  # 턴 단위 호출 예산
         ToolGuardrails(),  # 실패 병리 감지
@@ -581,7 +581,7 @@ agent = create_agent(
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 재작성
 │   ├─ wrap_model_call (최외곽 → 최내곽)
-│   │   · context_engine_prompt  시스템 프롬프트 주입(데코레이터가 request.override 호출)
+│   │   · system_prompt_injection  시스템 프롬프트 주입(데코레이터가 request.override 호출)
 │   │   · IterationBudget  1 소모. 소진 시 종단 AIMessage
 │   │   · HeartbeatStaleness  kill됐으면 HeartbeatTimeoutError, 아니면 heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  서킷 브레이커 점검. 분류 기반 재시도 + 백오프. 폴백 /
@@ -604,7 +604,7 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  하트비트 타이머 중지
     · MultimodalProcessor  mutil_temp 청소(7일 초과 / 숫자 아닌 파일명)
-    · (context_engine_prompt는 라이프사이클 후크를 구현하지 않습니다; 버려진
+    · (system_prompt_injection는 라이프사이클 후크를 구현하지 않습니다; 버려진
        프리픽스 플러시와 메모리 리뷰 / 플랜 추출 nudge는 대신 Summarization의
        압축 경로 안에서 발화합니다.)
 ```
@@ -649,10 +649,9 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 공개 익스포트
 ├── base.py                      # require_session_id / args_hash 헬퍼
-├── context_engine/              # @dynamic_prompt 시스템 프롬프트 미들웨어 + nudge 서브에이전트
-│   ├── __init__.py              # context_engine_prompt만 익스포트
-│   ├── core.py                  # context_engine_prompt + _get_and_reload_system_prompt
-│   └── nudge.py                 # nudge 프롬프트 + 서브에이전트 빌더
+├── system_prompt/               # @dynamic_prompt 시스템 프롬프트 주입
+│   ├── __init__.py              # system_prompt_injection만 익스포트
+│   └── core.py                  # system_prompt_injection + _get_and_reload_system_prompt
 ├── heartbeat_staleness/         # HeartbeatStaleness
 │   ├── __init__.py              # HeartbeatStaleness 익스포트
 │   └── core.py                  # HeartbeatStaleness
@@ -696,7 +695,8 @@ agent/middlewares/
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── compaction_persistence.py # 교체 전 버려진 프리픽스 플러시
-│   └── memory_flush.py          # 압축 전 메모리 플러시
+│   ├── memory_flush.py          # 압축 전 메모리 플러시
+│   └── nudges.py                # 압축 시점 nudge 스케줄링 + 프롬프트
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # TaskIntentMiddleware 익스포트
 │   └── core.py                  # TaskIntentMiddleware
@@ -728,7 +728,7 @@ from agent.middlewares import (
     MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
-    context_engine_prompt,
+    system_prompt_injection,
     ToolCallNormalize,
     PathGuard,
     HeartbeatStaleness,
