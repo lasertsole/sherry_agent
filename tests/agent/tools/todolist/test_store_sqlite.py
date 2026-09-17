@@ -117,6 +117,16 @@ async def test_status_priority_category_delegation_stored_as_given(isolated_db: 
 
 
 @pytest.mark.asyncio
+async def test_session_scoped_plan_ref_roundtrips_verbatim(isolated_db: Path):
+    ref = "workspace/sessions/sess-new/plans/auth.md"
+
+    await store_sqlite.replace_all("sess-new", [_todo("scoped", position=0, plan_ref=ref)])
+    row = (await store_sqlite.get_todos("sess-new"))[0]
+
+    assert row["plan_ref"] == ref
+
+
+@pytest.mark.asyncio
 async def test_omitted_fields_get_defaults(isolated_db: Path):
     await store_sqlite.replace_all("sess-1", [{"content": "bare", "position": 0}])
 

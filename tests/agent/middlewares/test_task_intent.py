@@ -22,6 +22,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import agent.middlewares.task_intent.core as ti
+from config import path as config_path
 
 pytestmark = [pytest.mark.unit]
 
@@ -157,6 +158,78 @@ class TestPlanActiveBoulder:
         assert "<sherry-ulw-execute>" not in out["messages"][0].content
 
 
+def _point_roots_at(monkeypatch, tmp_path) -> None:
+    """Repoint the resolver's roots so tests never read the real repo tree."""
+    monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
+    monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
+
+
+def _write_boulder(path, *, plan: str, status: str = "active") -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "active_work_id": "w1",
+                "works": {"w1": {"status": status, "active_plan": plan}},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _write_plan(path, content: str = "# Plan\n- [ ] step\n") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+class TestPlanPathResolution:
+    """E7b must see checkbox-bearing plans in both location generations."""
+
+    def test_legacy_relative_plan_is_resolved(self, tmp_path, monkeypatch):
+        _point_roots_at(monkeypatch, tmp_path)
+        _write_plan(tmp_path / ".omo" / "plans" / "legacy.md")
+        boulder = tmp_path / "boulder.json"
+        _write_boulder(boulder, plan=".omo/plans/legacy.md")
+        monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
+
+        assert ti._has_active_boulder("sess-x") is True
+
+    def test_session_scoped_bare_filename_is_resolved(self, tmp_path, monkeypatch):
+        _point_roots_at(monkeypatch, tmp_path)
+        _write_plan(tmp_path / "workspace" / "sessions" / "sess-x" / "plans" / "scoped.md")
+        boulder = tmp_path / "boulder.json"
+        _write_boulder(boulder, plan="scoped.md")
+        monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
+
+        assert ti._has_active_boulder("sess-x") is True
+        assert ti._has_active_boulder("other-sess") is False
+
+    def test_migrated_plan_found_behind_legacy_ref(self, tmp_path, monkeypatch):
+        _point_roots_at(monkeypatch, tmp_path)
+        _write_plan(tmp_path / "workspace" / "sessions" / "sess-x" / "plans" / "moved.md")
+        boulder = tmp_path / "boulder.json"
+        _write_boulder(boulder, plan=".omo/plans/moved.md")
+        monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
+
+        assert ti._has_active_boulder("sess-x") is True
+
+    def test_new_explicit_relative_plan_is_resolved(self, tmp_path, monkeypatch):
+        _point_roots_at(monkeypatch, tmp_path)
+        _write_plan(tmp_path / "workspace" / "sessions" / "sess-x" / "plans" / "explicit.md")
+        boulder = tmp_path / "boulder.json"
+        _write_boulder(boulder, plan="workspace/sessions/sess-x/plans/explicit.md")
+        monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
+
+        assert ti._has_active_boulder("sess-x") is True
+
+    def test_missing_plan_is_not_active(self, tmp_path, monkeypatch):
+        _point_roots_at(monkeypatch, tmp_path)
+        boulder = tmp_path / "boulder.json"
+        _write_boulder(boulder, plan=".omo/plans/ghost.md")
+        monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
+
+        assert ti._has_active_boulder("sess-x") is False
+
+
 # ============================================================================
 # (d) Question / chat messages are not task intent
 # ============================================================================
@@ -226,7 +299,7 @@ class TestFailOpen:
     async def test_internal_exception_returns_none(self, monkeypatch):
         mw = ti.TaskIntentMiddleware()
 
-        def _boom():
+        def _boom(*_args, **_kwargs):
             raise RuntimeError("boulder read blew up")
 
         monkeypatch.setattr(ti, "_has_active_boulder", _boom, raising=True)

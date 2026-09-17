@@ -58,6 +58,8 @@ def prompt_env(tmp_path, monkeypatch):
 
     boulder_path = tmp_path / "boulder.json"
     monkeypatch.setattr("workspace.prompt_builder._BOULDER_PATH", boulder_path)
+    monkeypatch.setattr("config.path.ROOT_DIR", tmp_path)
+    monkeypatch.setattr("config.path.SESSIONS_DIR", tmp_path / "workspace" / "sessions")
 
     state: dict[str, object] = {"todos": [], "raise": None, "calls": 0}
 
@@ -226,6 +228,37 @@ class TestBoulderBlock:
         prompt = build_system_prompt(session_id="sess-done")
 
         assert "## Active Work" not in prompt
+
+
+class TestBoulderPlanResolution:
+    """The rendered plan path resolves to the real file (session-scoped first)."""
+
+    def test_session_scoped_plan_renders_resolved_path(self, prompt_env):
+        from workspace.prompt_builder import build_system_prompt
+
+        plan = prompt_env["dir"] / "workspace" / "sessions" / "sess-boulder" / "plans" / "new.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("# Plan\n", encoding="utf-8")
+        _write_boulder(prompt_env, plan="workspace/sessions/sess-boulder/plans/new.md")
+        _seed_todos(prompt_env, [_todo("one", status="pending")])
+
+        prompt = build_system_prompt(session_id="sess-boulder")
+
+        assert "## Active Work" in prompt
+        assert str(plan) in prompt
+
+    def test_migrated_file_found_behind_legacy_ref(self, prompt_env):
+        from workspace.prompt_builder import build_system_prompt
+
+        plan = prompt_env["dir"] / "workspace" / "sessions" / "sess-boulder" / "plans" / "moved.md"
+        plan.parent.mkdir(parents=True)
+        plan.write_text("# Plan\n", encoding="utf-8")
+        _write_boulder(prompt_env, plan=".omo/plans/moved.md")
+        _seed_todos(prompt_env, [_todo("one", status="pending")])
+
+        prompt = build_system_prompt(session_id="sess-boulder")
+
+        assert str(plan) in prompt
 
 
 class TestFailOpen:

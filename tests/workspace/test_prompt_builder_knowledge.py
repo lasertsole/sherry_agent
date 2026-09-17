@@ -233,3 +233,31 @@ class TestKnowledgeInSystemPrompt:
 
         assert "Knowledge Summary" not in prompt
         assert "AGENTS-PERSONA" in prompt
+
+
+class TestKnowledgePlanRefPathForms:
+    """Only the plan's stem matters, so both path generations resolve."""
+
+    def test_session_scoped_plan_ref(self, prompt_env):
+        from workspace.prompt_builder import _build_knowledge_block
+
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/scoped-plan.md"
+        )
+        _write_summary(prompt_env["knowledge_dir"], "scoped-plan", method="scoped-method")
+
+        block = _build_knowledge_block("sess-main")
+
+        assert "Knowledge Summary: scoped-plan" in block
+        assert "scoped-method" in block
+
+    def test_bare_filename_plan_ref(self, prompt_env):
+        from workspace.prompt_builder import _build_knowledge_block
+
+        prompt_env["state"].set_state("sess-main", "plan_ref", "scoped-plan.md")
+        _write_summary(prompt_env["knowledge_dir"], "scoped-plan", method="scoped-method")
+
+        block = _build_knowledge_block("sess-main")
+
+        assert "Knowledge Summary: scoped-plan" in block
+        assert "scoped-method" in block

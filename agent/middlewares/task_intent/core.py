@@ -41,6 +41,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
+from config.path import resolve_boulder_path, resolve_plan_path
+
 __all__ = ["TaskIntentMiddleware", "rearm_after_compact"]
 
 
@@ -145,7 +147,8 @@ This message appears to be a work request. Before responding, assess the scope:
    full instructions.
 
 2. You are an ORCHESTRATOR, not an implementer:
-   - Create a plan (in .omo/plans/ if applicable) or use todowrite to register tasks
+   - Create a session plan file under workspace/sessions/<session_id>/plans/
+     (legacy .omo/plans/ accepted) or use todowrite to register tasks
    - Set proper category, delegation, flow_id/step_id fields
    - For dependencies, register TaskFlow steps with depends_on and let TaskFlow
      block/unlock/parallel-dispatch — do NOT build a second DAG
@@ -179,8 +182,10 @@ _TASK_STEERING_REMINDER = (
 _PLAN_ACTIVE_REMINDER = (
     "\n\n<sherry-ulw-execute>\n"
     "An active ulw-execute plan is present in this working directory.\n"
-    "Before continuing, read `.omo/boulder.json` and the active plan file to "
-    "determine what remains; use the ledger and plan as the source of truth.\n"
+    "Before continuing, read `.omo/boulder.json` and the plan file its active_plan\n"
+    "points to (session-scoped `workspace/sessions/<session_id>/plans/`, or legacy\n"
+    "`.omo/plans/`), then determine what remains; use the ledger and plan as the\n"
+    "source of truth.\n"
     "Continue the current work with evidence-bound execution; do not start "
     "unrelated work until every top-level checkbox is `- [x]`.\n"
     "</sherry-ulw-execute>"
@@ -191,8 +196,8 @@ _PLAN_ACTIVE_REMINDER = (
 
 _armed_sessions: set[str] = set()
 
-# Injectable for hermetic tests; production resolves relative to cwd.
-_BOULDER_PATH: Path = Path(".omo/boulder.json")
+# Absolute repo-root path (was cwd-relative); kept as a module attribute so tests can repoint it.
+_BOULDER_PATH: Path = resolve_boulder_path()
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────
@@ -224,12 +229,16 @@ def _is_internal_completion(msg: Any) -> bool:
     return bool(meta.get("internal")) and meta.get("provenance") == "subagent_completion"
 
 
-def _has_active_boulder() -> bool:
+def _has_active_boulder(session_id: str | None = None) -> bool:
     """True when ``.omo/boulder.json`` holds continuable work.
 
     Mirrors omo ``findContinuableBoulderWork``: the active work's status is
     ``active`` or ``paused`` AND its plan file exists and contains at least one
-    checkbox (``- [ ]`` or ``- [x]``). Any read/parse failure → False.
+    checkbox (``- [ ]`` or ``- [x]``). The plan reference resolves through
+    ``config.path.resolve_plan_path`` — session-scoped
+    ``workspace/sessions/<session_id>/plans/`` first, legacy ``.omo/plans/`` as
+    fallback — so an unmigrated boulder entry never goes silently dark. Any
+    read/parse failure → False.
     """
     try:
         boulder_path = _BOULDER_PATH
@@ -241,11 +250,11 @@ def _has_active_boulder() -> bool:
         work = (boulder.get("works") or {}).get(active_id, {})
         if work.get("status") not in ("active", "paused"):
             return False
-        plan_path = work.get("active_plan", "")
-        if not plan_path:
+        plan_ref = work.get("active_plan", "")
+        if not plan_ref:
             return False
-        plan_file = Path(plan_path)
-        if not plan_file.exists():
+        plan_file = resolve_plan_path(plan_ref, session_id)
+        if plan_file is None:
             return False
         plan_content = plan_file.read_text(encoding="utf-8")
         return "- [ ]" in plan_content or "- [x]" in plan_content
@@ -300,7 +309,7 @@ class TaskIntentMiddleware(AgentMiddleware):
             session_id = str(state.get("session_id") or "")
 
             # ── E7b: plan-active steering (priority over E7a) ──────────────
-            if _has_active_boulder():
+            if _has_active_boulder(session_id):
                 logger.info(
                     "TaskIntentMiddleware E7b: plan-active reminder for session {}", session_id
                 )

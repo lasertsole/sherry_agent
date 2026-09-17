@@ -72,6 +72,20 @@ class TestTodoServicePlanRef:
         assert fake_state.get_state("sess-1", "plan_ref") == ".omo/plans/auth.md"
 
     @pytest.mark.asyncio
+    async def test_update_todos_writes_session_scoped_plan_ref(
+        self,
+        isolated_db: Path,
+        fake_state: FakeStateDB,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
+        ref = "workspace/sessions/sess-new/plans/auth.md"
+
+        await TodoService.update_todos("sess-new", [{"content": "a", "position": 0}], plan_ref=ref)
+
+        assert fake_state.get_state("sess-new", "plan_ref") == ref
+
+    @pytest.mark.asyncio
     async def test_update_todos_without_plan_ref_keeps_existing_value(
         self,
         isolated_db: Path,

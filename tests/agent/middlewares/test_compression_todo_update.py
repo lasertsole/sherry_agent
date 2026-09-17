@@ -538,6 +538,33 @@ class TestUpdateTodosFromCompaction:
         assert fork_tools[0].metadata.get("scope") == "main_only"
 
     @pytest.mark.asyncio
+    async def test_session_scoped_plan_ref_passes_through(
+        self, monkeypatch: pytest.MonkeyPatch, fake_nudge_state: _FakeStateRegister
+    ) -> None:
+        captured_system: list[str] = []
+        agent = _CapturingAgent()
+
+        async def _create(
+            system_prompt: str,
+            allowed_metadata_key: str | None = None,
+            tools: list | None = None,
+        ) -> Any:
+            captured_system.append(system_prompt)
+            return agent
+
+        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create)
+        ref = "workspace/sessions/sess-prompt/plans/scoped.md"
+        _patch_todos(
+            monkeypatch,
+            [{"content": "ship feature", "status": "pending", "plan_ref": ref}],
+        )
+
+        await update_todos_from_compaction("sess-prompt", [HumanMessage("done")])
+
+        combined = f"{captured_system[0]}\n{agent.inputs[0]['messages'][-1].content}"
+        assert ref in combined
+
+    @pytest.mark.asyncio
     async def test_agent_error_is_swallowed_and_lock_released(
         self, monkeypatch: pytest.MonkeyPatch, fake_nudge_state: _FakeStateRegister
     ) -> None:

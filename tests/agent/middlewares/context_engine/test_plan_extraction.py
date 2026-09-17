@@ -227,21 +227,28 @@ class TestBuildPlanContext:
             '{"plan": "my-plan", "step": 1}\n{"plan": "other", "step": 2}\nnot-json\n',
             encoding="utf-8",
         )
-        monkeypatch.setattr(nudge_mod, "ROOT_DIR", tmp_path)
+        from config import path as config_path
+
+        monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
+        monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
         _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": ".omo/plans/my-plan.md"}])
         monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
 
         context = nudge_mod._build_plan_context("sess-ctx")
 
         assert context["plan_name"] == "my-plan"
-        assert context["plan_path"] == ".omo/plans/my-plan.md"
+        # Legacy .omo/plans reference is resolved to the real (absolute) file.
+        assert context["plan_path"] == str(plan_file)
         assert context["plan_content"] == "# My Plan\n"
         assert context["ledger_entries"] == [{"plan": "my-plan", "step": 1}]
 
     def test_session_state_plan_ref_wins_and_missing_file_falls_back(
         self, monkeypatch, tmp_path, fake_state_db
     ):
-        monkeypatch.setattr(nudge_mod, "ROOT_DIR", tmp_path)
+        from config import path as config_path
+
+        monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
+        monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
         fake_state_db.set_state("abcdefgh-session", "plan_ref", ".omo/plans/missing.md")
         _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": ".omo/plans/other.md"}])
         monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
@@ -251,6 +258,62 @@ class TestBuildPlanContext:
         assert context["plan_path"] == ".omo/plans/missing.md"
         assert context["plan_name"] == "session-abcdefgh"
         assert context["plan_content"] == ""
+
+    def test_resolves_session_scoped_plan_ref(self, monkeypatch, tmp_path, fake_state_db):
+        plan_file = tmp_path / "workspace" / "sessions" / "sess-ctx" / "plans" / "new-plan.md"
+        plan_file.parent.mkdir(parents=True)
+        plan_file.write_text("# New Plan\n", encoding="utf-8")
+        from config import path as config_path
+
+        monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
+        monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
+        plan_ref = "workspace/sessions/sess-ctx/plans/new-plan.md"
+        _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": plan_ref}])
+        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+
+        context = nudge_mod._build_plan_context("sess-ctx")
+
+        assert context["plan_name"] == "new-plan"
+        assert context["plan_path"] == str(plan_file)
+        assert context["plan_content"] == "# New Plan\n"
+
+    def test_migrated_plan_found_behind_legacy_ref(self, monkeypatch, tmp_path, fake_state_db):
+        plan_file = tmp_path / "workspace" / "sessions" / "sess-ctx" / "plans" / "moved.md"
+        plan_file.parent.mkdir(parents=True)
+        plan_file.write_text("# Moved\n", encoding="utf-8")
+        from config import path as config_path
+
+        monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
+        monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
+        _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": ".omo/plans/moved.md"}])
+        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+
+        context = nudge_mod._build_plan_context("sess-ctx")
+
+        assert context["plan_name"] == "moved"
+        assert context["plan_path"] == str(plan_file)
+        assert context["plan_content"] == "# Moved\n"
+
+    def test_ledger_matches_legacy_path_key_for_new_form_ref(
+        self, monkeypatch, tmp_path, fake_state_db
+    ):
+        plan_file = tmp_path / "workspace" / "sessions" / "sess-ctx" / "plans" / "legacy-key.md"
+        plan_file.parent.mkdir(parents=True)
+        plan_file.write_text("# Plan\n", encoding="utf-8")
+        ledger = tmp_path / ".omo" / "start-work" / "ledger.jsonl"
+        ledger.parent.mkdir(parents=True)
+        ledger.write_text('{"plan": ".omo/plans/legacy-key.md", "step": 3}\n', encoding="utf-8")
+        from config import path as config_path
+
+        monkeypatch.setattr(config_path, "ROOT_DIR", tmp_path)
+        monkeypatch.setattr(config_path, "SESSIONS_DIR", tmp_path / "workspace" / "sessions")
+        plan_ref = "workspace/sessions/sess-ctx/plans/legacy-key.md"
+        _patch_todos(monkeypatch, [{"status": "completed", "plan_ref": plan_ref}])
+        monkeypatch.setattr(nudge_mod, "_read_subagent_runs", lambda session_id: [])
+
+        context = nudge_mod._build_plan_context("sess-ctx")
+
+        assert context["ledger_entries"] == [{"plan": ".omo/plans/legacy-key.md", "step": 3}]
 
 
 # ---------------------------------------------------------------------------

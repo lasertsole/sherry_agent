@@ -33,6 +33,7 @@ def _write_plan(
     """Write a minimal plan file with one labelled checkbox + indented criteria."""
     box = "x" if checked else " "
     path = tmp_path / "plan.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         "# Plan\n\n## Todos\n\n"
         f"- [{box}] {label}\n"
@@ -133,6 +134,34 @@ def test_verify_fails_when_plan_missing(tmp_path: Path):
     assert passed is False
     assert evidence["reason"]
     assert EvidenceLedger.read_all() == []
+
+
+def test_verify_resolves_legacy_relative_plan_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "repo"
+    _write_plan(root / ".omo" / "plans")
+    monkeypatch.setattr("config.path.ROOT_DIR", root)
+    monkeypatch.setattr("config.path.SESSIONS_DIR", root / "workspace" / "sessions")
+
+    passed, _evidence = asyncio.run(
+        SisyphusVerifier.verify("sess-rel", {}, ".omo/plans/plan.md", LABEL)
+    )
+
+    assert passed is True
+
+
+def test_verify_resolves_session_scoped_plan_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    root = tmp_path / "repo"
+    _write_plan(root / "workspace" / "sessions" / "sess-scoped" / "plans")
+    monkeypatch.setattr("config.path.ROOT_DIR", root)
+    monkeypatch.setattr("config.path.SESSIONS_DIR", root / "workspace" / "sessions")
+
+    passed, _evidence = asyncio.run(
+        SisyphusVerifier.verify(
+            "sess-scoped", {}, "workspace/sessions/sess-scoped/plans/plan.md", LABEL
+        )
+    )
+
+    assert passed is True
 
 
 def test_verify_fails_when_linked_step_not_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, cast
 from loguru import logger
 from skills.loader import get_skills_text
 from config import WORKSPACE_DIR
+from config.path import resolve_boulder_path, resolve_plan_path
 from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
 
@@ -17,8 +18,8 @@ if TYPE_CHECKING:
 
 MAX_FILE_CHARS: int = 20_000
 
-# Active-work pointer written by the ulw-execute orchestration flow.
-_BOULDER_PATH = Path(".omo/boulder.json")
+# Absolute repo-root path (was cwd-relative); kept as a module attribute so tests can repoint it.
+_BOULDER_PATH = resolve_boulder_path()
 _ACTIVE_WORK_STATUSES = frozenset({"active", "paused"})
 
 _TODO_ICONS: dict[str, str] = {
@@ -121,6 +122,9 @@ def _build_boulder_block(session_id: str) -> str:
             )
         if not isinstance(active, dict):
             return ""
+        plan_ref = active.get("active_plan") or ""
+        resolved_plan = resolve_plan_path(plan_ref, session_id)
+        plan_display = str(resolved_plan) if resolved_plan is not None else (plan_ref or "?")
         remaining = sum(
             1
             for todo in _read_todos_sync(session_id)
@@ -129,7 +133,7 @@ def _build_boulder_block(session_id: str) -> str:
         return "\n".join(
             [
                 "## Active Work",
-                f"- Plan: {active.get('active_plan') or '?'}",
+                f"- Plan: {plan_display}",
                 f"- Status: {active.get('status')}",
                 f"- Remaining: {remaining} unchecked checkboxes",
             ]

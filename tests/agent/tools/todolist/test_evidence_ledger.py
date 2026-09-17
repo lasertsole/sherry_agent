@@ -6,12 +6,17 @@ The ledger is a class-level file API, so tests redirect ``LEDGER_PATH`` into
 
 import json
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
 from agent.tools.todolist.evidence_ledger import EvidenceLedger
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_default_ledger_path_is_repo_absolute():
+    assert Path(EvidenceLedger.LEDGER_PATH).is_absolute()
 
 
 def test_append_read_all_roundtrip_and_appends_not_overwrites(

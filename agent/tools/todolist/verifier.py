@@ -16,11 +16,13 @@ human-readable ``reason``.
 
 from __future__ import annotations
 
-import os
 import re
 from datetime import UTC, datetime
+from pathlib import Path
 
 from loguru import logger
+
+from config.path import resolve_plan_path
 
 from .evidence_ledger import EvidenceLedger
 
@@ -35,12 +37,20 @@ _CHECKBOX_RE = re.compile(r"^\s*-\s*\[[ xX]\]")
 
 
 def _read_plan(plan_path: str) -> str:
-    """Read the plan file; a missing/unreadable file is an empty string."""
+    """Read the plan file; a missing/unreadable file is an empty string.
+
+    The reference resolves through ``config.path.resolve_plan_path`` (session
+    scoped location first, legacy ``.omo/plans/`` fallback); an unresolvable
+    reference falls back to the raw path so the OSError path still reports the
+    caller's value.
+    """
+    resolved = resolve_plan_path(plan_path)
+    target = resolved if resolved is not None else Path(plan_path)
     try:
-        with open(plan_path, encoding="utf-8") as f:
+        with open(target, encoding="utf-8") as f:
             return f.read()
     except OSError as e:
-        logger.warning("sisyphus verifier: cannot read plan {}: {}", plan_path, e)
+        logger.warning("sisyphus verifier: cannot read plan {}: {}", target, e)
         return ""
 
 
@@ -150,9 +160,10 @@ async def _run_gates(
     (manual QA) are the orchestrator's job — this function only records.
     """
     # Gate 1: Plan reread — locate the checkbox and its acceptance criteria.
-    if not plan_path or not os.path.exists(plan_path):
+    resolved = resolve_plan_path(plan_path, str(evidence.get("session_id") or ""))
+    if resolved is None:
         return _fail(evidence, f"plan not found: {plan_path!r}")
-    acceptance = _extract_acceptance_criteria(_read_plan(plan_path), checkbox_label)
+    acceptance = _extract_acceptance_criteria(_read_plan(str(resolved)), checkbox_label)
     if acceptance is None:
         return _fail(
             evidence,
