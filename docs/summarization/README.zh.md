@@ -203,7 +203,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 ### 💾 压缩时 nudge
 
-消息持久化已移出压缩路径：每个模型调用边界都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）把新产生的 human/ai/tool 消息增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。压缩期落库模块（`compaction_persistence.py`）及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点已删除 —— 一次 compact 现在只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
+消息持久化已移出压缩路径：human/AI 消息在每个模型调用边界、工具结果在返回时，都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。压缩期落库模块（`compaction_persistence.py`）及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点已删除 —— 一次 compact 现在只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
 
 **压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。这两个触发器此前由 `ContextEngineHook` 中间件的 after-agent 钩子每回合运行；系统提示词注入迁移到 `@dynamic_prompt` 中间件（`system_prompt_injection`）后，该类与钩子均已移除。单发 `nudge_plan_extraction_fired` 标记语义不变 —— 每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
@@ -358,7 +358,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
-| `tests/agent/middlewares/message_persistence/` | 16 | 模型边界增量落库：每条消息恰好一次、跨边界不重复、重启重放靠持久水位不增行、同步 + 异步钩子、缺 session_id 跳过、HITL 拒绝配对重挂、过滤语义；另有 T1/T2/T3 压缩路径零写库证明 |
+| `tests/agent/middlewares/message_persistence/` | 16 | 边界 + 工具返回增量落库：每条消息恰好一次、跨边界不重复、重启重放靠持久水位不增行、同步 + 异步钩子、缺 session_id 跳过、HITL 拒绝配对重挂、过滤语义；另有 T1/T2/T3 压缩路径零写库证明 |
 | `tests/agent/middlewares/test_compression_nudges.py` | 2 | 压缩时 nudge 派发：memory review + plan extraction 从 compact 路径触发；无切点压缩不派发 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |

@@ -41,7 +41,7 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 
 - **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントをチェックポイント読みモデルへ写像する `EventProjector`。
 - **`context_engine/embeddings/`** —— ベクトル意味検索：遅延 embed バックエンド（上書き可能）、冪等 LEFT-JOIN インデクサ、コサイン順位付け。`message_search` ツール（`semantic: true`）で公開。
-- **`agent/tools/message_search.py`** —— 二段階検索：永続化済み `messages` テーブルの FTS5 を先に検索し、ヒットがない場合はセッションの最新チェックポイント（`SRC_DIR/checkpoints/sqlite.db` の `state["messages"]`）へ降格して、未永続化ターンを新しい順にキーワード一致（`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` で上限）。フォールバックのヒットには `source="checkpoint"` を付与。永続化が各モデル境界で走るようになったため、このフォールバックが効くのは「チェックポイントがストアより先行している」狭い窓のみです —— 次の境界で永続化される前の、当該ターンで進行中のツール結果（および HITL 拒否）。
+- **`agent/tools/message_search.py`** —— 二段階検索：永続化済み `messages` テーブルの FTS5 を先に検索し、ヒットがない場合はセッションの最新チェックポイント（`SRC_DIR/checkpoints/sqlite.db` の `state["messages"]`）へ降格して、未永続化ターンを新しい順にキーワード一致（`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` で上限）。フォールバックのヒットには `source="checkpoint"` を付与。永続化が各モデル境界と各ツール返却時に走るようになったため、このフォールバックが効くのは「チェックポイントがストアより先行している」狭い窓のみです —— 次のモデル境界で永続化されるのを待つ HITL 拒否（ツール結果は返却時にすでに書き込み済み）。
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。
 - **`runtime/session/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
 

@@ -207,7 +207,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 
 ### 💾 圧縮時 nudge
 
-メッセージ永続化は圧縮パスから出ました: モデル呼び出しの各境界で `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/ai/tool メッセージを MesMemory へ増分フラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。圧縮時フラッシュモジュール（`compaction_persistence.py`）とその `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました —— compact は圧縮と下記 nudge のスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
+メッセージ永続化は圧縮パスから出ました: `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/AI メッセージをモデル呼び出しの各境界で、ツール結果を返却時に MesMemory へフラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。圧縮時フラッシュモジュール（`compaction_persistence.py`）とその `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました —— compact は圧縮と下記 nudge のスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
 
 **圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）: メモリレビューカウンタ（`nudge_review_memory_count`、`state_register_db`）が圧縮ごとに 1 回増え、`nudge_memory_threshold`（既定 10）到達で `_nudge_memory` を発火します; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。これら 2 つのトリガーは以前 `ContextEngineHook` ミドルウェアの after-agent フックにより毎ターン実行されていました; システムプロンプト注入が `@dynamic_prompt` ミドルウェア（`system_prompt_injection`）へ移行した際に、クラスとフックの両方が削除されました。単発の `nudge_plan_extraction_fired` フラグの意味は不変 —— 完了サイクルごとに 1 回の抽出 —— なので、一度も圧縮しないセッションはプラン抽出を発火しません。
 
@@ -362,7 +362,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 登録契約（テスト固定ウィンドウ）: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
-| `tests/agent/middlewares/message_persistence/` | 16 | モデル境界ごとの増分フラッシュ: 各メッセージちょうど 1 回、境界をまたいで重複なし、永続ウォーターマークによる再起動リプレイで行数不増、同期 + 非同期フック、session_id 欠落スキップ、HITL 拒否ペアの再装着、フィルタ意味論; さらに T1/T2/T3 圧縮経路のゼロ書き込み証明 |
+| `tests/agent/middlewares/message_persistence/` | 16 | 境界 + ツール返却の増分フラッシュ: 各メッセージちょうど 1 回、境界をまたいで重複なし、永続ウォーターマークによる再起動リプレイで行数不増、同期 + 非同期フック、session_id 欠落スキップ、HITL 拒否ペアの再装着、フィルタ意味論; さらに T1/T2/T3 圧縮経路のゼロ書き込み証明 |
 | `tests/agent/middlewares/test_compression_nudges.py` | 2 | 圧縮時 nudge ディスパッチ: memory review + plan extraction が compact 経路から発火、カットなし圧縮は何もディスパッチしない |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
