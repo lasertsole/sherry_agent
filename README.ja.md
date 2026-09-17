@@ -144,7 +144,7 @@ EMA_AI_agent/
 │
 ├── docs/                   # サブシステム設計ドキュメント（言語別 README）
 │   ├── experience_extraction/ # 4 つの経験抽出ライフサイクル経路
-│   ├── session_memory/     # SESSION 計画のケイパビリティ（P0–P2）
+│   ├── session_memory/     # セッションメモリのケイパビリティ
 │   ├── summarization/      # 圧縮トリガーとクールダウン
 │   ├── loop-prevention/    # 暴走ループ防止ハーネス
 │   ├── sandbox/            # 評価サンドボックスとツール分離

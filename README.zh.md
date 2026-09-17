@@ -144,7 +144,7 @@ EMA_AI_agent/
 │
 ├── docs/                   # 子系统设计文档（各语言 README）
 │   ├── experience_extraction/ # 四条经验抽取生命周期路径
-│   ├── session_memory/     # SESSION 计划能力（P0–P2）
+│   ├── session_memory/     # 会话记忆能力
 │   ├── summarization/      # 压缩触发条件与冷却
 │   ├── loop-prevention/    # 防失控循环防护
 │   ├── sandbox/            # 评估沙箱与工具隔离

@@ -144,7 +144,7 @@ EMA_AI_agent/
 │
 ├── docs/                   # Subsystem design docs (per-language READMEs)
 │   ├── experience_extraction/ # Four experience-extraction lifecycle paths
-│   ├── session_memory/     # SESSION plan capabilities (P0–P2)
+│   ├── session_memory/     # Session-memory capabilities
 │   ├── summarization/      # Compression triggers & cooldown
 │   ├── loop-prevention/    # Runaway-loop prevention harness
 │   ├── sandbox/            # Eval sandbox & tool isolation

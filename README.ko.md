@@ -144,7 +144,7 @@ EMA_AI_agent/
 │
 ├── docs/                   # 서브시스템 설계 문서(언어별 README)
 │   ├── experience_extraction/ # 네 개 경험 추출 라이프사이클 경로
-│   ├── session_memory/     # SESSION 계획 역량(P0–P2)
+│   ├── session_memory/     # 세션 메모리 역량
 │   ├── summarization/      # 압축 트리거 및 쿨다운
 │   ├── loop-prevention/    # 폭주 루프 방지 하네스
 │   ├── sandbox/            # 평가 샌드박스 및 도구 격리
