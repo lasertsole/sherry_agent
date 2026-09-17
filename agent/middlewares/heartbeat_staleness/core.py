@@ -263,8 +263,8 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
 
         tool_name = request.tool_call.get("name", "unknown")
 
-        # Same request.tool.metadata access pattern as ToolGuardrails._is_idempotent
-        # and ContextEngineHook._wrap_tool_call_impl. Interrupt-based tools (e.g. the
+        # Same request.tool.metadata access pattern as ToolGuardrails._is_idempotent.
+        # Interrupt-based tools (e.g. the
         # question tool) suspend the graph inside the tool, so the after-tool hook
         # never runs until resume — track that via the skip key instead of the
         # current-tool key.

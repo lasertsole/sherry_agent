@@ -1,87 +1,77 @@
+"""System-prompt injection for every model call, built with ``@dynamic_prompt``.
+
+``context_engine_prompt`` is the middleware instance produced by LangChain's
+``@dynamic_prompt`` decorator. It owns the **outermost** ``wrap_model_call``
+layer of the main agent (first in the middleware list that implements the
+hook), so the session system prompt is resolved before any other model-call
+wrapper runs.
+
+Two properties are load-bearing:
+
+1. **Three-tier prompt cache** — ``state_register_mem`` → ``state_register_db``
+   → ``workspace.prompt_builder.build_system_prompt``. A full miss writes both
+   registers. The ``system_prompt`` mem key is a contract with the
+   compression pipeline: ``Summarization`` reads it for token estimation and
+   rewrites it after a compression.
+2. **Same-content skip** — the decorator's generated wrapper *unconditionally*
+   calls ``request.override(system_message=...)``. Returning the request's
+   existing ``SystemMessage`` object when the content is unchanged keeps the
+   serialized model-visible prefix byte-identical (provider prefix cache),
+   while a changed prompt — or a first call, where ``request.system_message``
+   is ``None`` — returns a fresh ``SystemMessage``. The previous
+   ``AgentMiddleware`` subclass could return the request itself; the decorator
+   cannot skip the override, so object identity of the *message* (not the
+   request) carries the byte-identity guarantee. This is the intentional
+   semantic change of the migration.
+"""
+
 from loguru import logger
 from langgraph.typing import ContextT
-from typing import override
-from typing import Any
-from collections.abc import Callable, Awaitable
+from langchain.agents.middleware import ModelRequest, dynamic_prompt
+from langchain_core.messages import SystemMessage
 from workspace.prompt_builder import build_system_prompt
 from runtime import state_register_db, state_register_mem
-from langchain.agents.middleware import AgentMiddleware, ModelResponse, ModelRequest
-from langchain_core.messages import AIMessage, SystemMessage
-from langchain.agents.middleware.types import ResponseT, ExtendedModelResponse
 from agent.middlewares.base import require_session_id
 
+__all__ = ["context_engine_prompt"]
 
-class ContextEngineHook(AgentMiddleware):
-    """Injects the session system prompt into every model call.
 
-    Turn finalization — persisting messages to MesMemory and scheduling the
-    memory-review / plan-extraction nudges — is owned by the compression
-    pipeline (``Summarization`` + ``context_engine.nudge``), which flushes the
-    original discarded prefix before replacing it.
+def _get_and_reload_system_prompt(session_id: str) -> str:
+    """Resolve the session system prompt through the three-tier cache.
+
+    Tier 1: a ``state_register_mem`` hit returns immediately. Tier 2: a
+    ``state_register_db`` hit is promoted back into mem. A full miss rebuilds
+    via ``build_system_prompt`` and dual-writes db + mem.
     """
+    system_prompt = state_register_mem.get_state(session_id, "system_prompt", None)
 
-    def __init__(self):
-        super().__init__()
-
-    @staticmethod
-    def _get_and_reload_system_prompt(session_id) -> str:
-        system_prompt = state_register_mem.get_state(session_id, "system_prompt", None)
+    if system_prompt is None:
+        system_prompt = state_register_db.get_state(session_id, "system_prompt", None)
 
         if system_prompt is None:
-            system_prompt = state_register_db.get_state(session_id, "system_prompt", None)
+            system_prompt = build_system_prompt(session_id=session_id)
+            state_register_db.set_state(session_id, "system_prompt", system_prompt)
 
-            if system_prompt is None:
-                system_prompt = build_system_prompt(session_id=session_id)
-                state_register_db.set_state(session_id, "system_prompt", system_prompt)
+        state_register_mem.set_state(session_id, "system_prompt", system_prompt)
 
-            state_register_mem.set_state(session_id, "system_prompt", system_prompt)
+    return system_prompt
 
-        return system_prompt
 
-    # ------------------------------------------------------------------
-    # Shared: session validation
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _get_session_id_or_raise(state: Any) -> str:
-        return require_session_id(state, "Not pass session_id")
+@dynamic_prompt
+def context_engine_prompt(request: ModelRequest[ContextT]) -> SystemMessage:
+    """Inject the session system prompt, reusing an identical existing message.
 
-    # ------------------------------------------------------------------
-    # Shared: system prompt injection (called by both sync and async)
-    # ------------------------------------------------------------------
-    def _wrap_model_call_impl(
-        self,
-        request: ModelRequest[ContextT],
-    ) -> ModelRequest[ContextT]:
-        """Inject system prompt into the request.
+    Returns ``request.system_message`` itself (same object) when it already
+    carries the resolved prompt, so the decorator's unconditional override
+    re-applies identical bytes. Otherwise returns a fresh ``SystemMessage``.
+    """
+    session_id = require_session_id(request.state, "Not pass session_id")
+    prompt_str = _get_and_reload_system_prompt(session_id)
 
-        Returns the (possibly overridden) request. When the request already
-        carries a SystemMessage with identical content, the request is returned
-        untouched: no new SystemMessage object and no override are created, so
-        the model-visible prefix stays byte-identical.
-        """
-        session_id = self._get_session_id_or_raise(request.state)
-        prompt_str = self._get_and_reload_system_prompt(session_id)
-        existing = request.system_message
-        if isinstance(existing, SystemMessage) and existing.content == prompt_str:
-            return request
-        return request.override(system_message=SystemMessage(content=prompt_str))
+    existing = request.system_message
+    if isinstance(existing, SystemMessage) and existing.content == prompt_str:
+        logger.debug("context_engine_prompt reuses cached system prompt for {}", session_id)
+        return existing
 
-    @override
-    def wrap_model_call(
-        self,
-        request: ModelRequest[ContextT],
-        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
-    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
-        request = self._wrap_model_call_impl(request)
-        return handler(request)
-
-    @override
-    async def awrap_model_call(
-        self,
-        request: ModelRequest[ContextT],
-        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
-    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
-        request = self._wrap_model_call_impl(request)
-        return await handler(request)
+    logger.debug("context_engine_prompt injects system prompt for {}", session_id)
+    return SystemMessage(content=prompt_str)

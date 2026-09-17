@@ -273,11 +273,11 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 # ---------------------------------------------------------------------------
 # Compression-time nudge scheduling (memory review + plan extraction)
 #
-# Both triggers originally lived in ContextEngineHook.aafter_agent and ran on
-# every turn (memory review every N turns; plan extraction whenever the todo
-# list became all-complete). They are now unified with the compression
-# pipeline: the Summarization middleware calls ``schedule_compression_nudges``
-# on every compression that actually discards messages, so the nudge cadence is
+# Both triggers originally ran on every turn from the middleware's
+# after-agent hook (removed with the @dynamic_prompt migration). They are now
+# unified with the compression pipeline: the Summarization middleware calls
+# ``schedule_compression_nudges`` on every compression that actually discards
+# messages, so the nudge cadence is
 # "per N compressions" and plan extraction is evaluated at compression time.
 # The single-fire flag semantics are unchanged: ``nudge_plan_extraction_fired``
 # still guarantees one extraction per completion cycle and resets whenever the
@@ -353,9 +353,9 @@ async def _run_compression_nudges(
 ) -> None:
     """Run the scheduled nudges sequentially under the NUDGE lane (fail-open)."""
     try:
-        from .core import ContextEngineHook
+        from .core import _get_and_reload_system_prompt
 
-        system_prompt = ContextEngineHook._get_and_reload_system_prompt(session_id)
+        system_prompt = _get_and_reload_system_prompt(session_id)
         sanitized = sanitize_tool_use_result_pairing(list(messages))
         if need_memory:
             await _nudge_memory(session_id, system_prompt, sanitized)
@@ -614,8 +614,8 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
 
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
     # NUDGE lane is event-loop-bound: acquire only on the main loop. The sync
-    # after_agent path no longer dispatches nudges (ContextEngineHook.after_agent),
-    # so no run_async() worker loop ever touches this semaphore.
+    # after_agent path no longer dispatches nudges (that per-turn hook was
+    # removed), so no run_async() worker loop ever touches this semaphore.
     state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
     try:
         async with lane_slot(LaneType.NUDGE):

@@ -635,7 +635,8 @@ def _schedule_compression_todo_update(session_id: str, discarded_messages: Seque
 def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> None:
     """Fire-and-forget the compression-time nudge decision (never blocks/raises).
 
-    Memory review and plan extraction moved here from ``ContextEngineHook``:
+    Memory review and plan extraction moved here from the middleware's
+    after-agent hook:
     the scheduler advances the memory counter, evaluates the plan-extraction
     single-fire flag, and dispatches under the NUDGE lane when no nudge is
     already in flight. Call-time import avoids the summarization ↔
@@ -2180,8 +2181,8 @@ class Summarization(AgentMiddleware):
             if self._compaction_just_happened:
                 # T1 compacted earlier this turn: a second compression is
                 # exactly the thrash the cooldown prevents, but the rebuilt
-                # system prompt must still reach the model (chains without
-                # ContextEngineHook rely on this middleware delivering it),
+                # system prompt must still reach the model (chains without the
+                # @dynamic_prompt middleware rely on this one delivering it),
                 # and the response still needs degradation monitoring — the
                 # flag is left for _monitor_degradation to consume. Identical
                 # content is left untouched (no override, no new SystemMessage).
@@ -2261,8 +2262,8 @@ class Summarization(AgentMiddleware):
             if self._compaction_just_happened:
                 # T1 compacted earlier this turn: a second compression is
                 # exactly the thrash the cooldown prevents, but the rebuilt
-                # system prompt must still reach the model (chains without
-                # ContextEngineHook rely on this middleware delivering it),
+                # system prompt must still reach the model (chains without the
+                # @dynamic_prompt middleware rely on this one delivering it),
                 # and the response still needs degradation monitoring — the
                 # flag is left for _monitor_degradation to consume. Identical
                 # content is left untouched (no override, no new SystemMessage).

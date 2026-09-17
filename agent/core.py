@@ -21,7 +21,7 @@ from .middlewares import (
     ToolCallNormalize,
     PathGuard,
     MultimodalProcessor,
-    ContextEngineHook,
+    context_engine_prompt,
     ToolGuardrails,
     IterationBudget,
     HeartbeatStaleness,
@@ -179,7 +179,9 @@ async def built_agent(
                 # registered middleware sits closest to END (README "Hook
                 # Ordering Semantics"). It must observe the truly finished turn.
                 TodoContinuationEnforcer(),
-                ContextEngineHook(),
+                # @dynamic_prompt middleware INSTANCE (not a constructor):
+                # the outermost wrap_model_call layer in this list.
+                context_engine_prompt,
                 MultimodalProcessor(),
                 IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
                 ToolGuardrails(),
