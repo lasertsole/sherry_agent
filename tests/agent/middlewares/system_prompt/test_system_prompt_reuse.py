@@ -15,8 +15,8 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-import agent.middlewares.context_engine.core as ce_core
-from agent.middlewares.context_engine.core import context_engine_prompt
+import agent.middlewares.system_prompt.core as ce_core
+from agent.middlewares.system_prompt.core import system_prompt_injection
 from runtime import state_register_mem
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -53,7 +53,7 @@ def _run_sync(request: ModelRequest) -> tuple[ModelRequest, int]:
         captured["request"] = inner_request
         return AIMessage(content="ok")
 
-    context_engine_prompt.wrap_model_call(request, handler)
+    system_prompt_injection.wrap_model_call(request, handler)
     return captured["request"], calls
 
 
@@ -67,7 +67,7 @@ async def _run_async(request: ModelRequest) -> tuple[ModelRequest, int]:
         captured["request"] = inner_request
         return AIMessage(content="ok")
 
-    await context_engine_prompt.awrap_model_call(request, handler)
+    await system_prompt_injection.awrap_model_call(request, handler)
     return captured["request"], calls
 
 
@@ -121,7 +121,7 @@ class TestSystemPromptReuse:
             return AIMessage(content="ok")
 
         with pytest.raises(RuntimeError, match="Not pass session_id"):
-            context_engine_prompt.wrap_model_call(request, handler)
+            system_prompt_injection.wrap_model_call(request, handler)
 
     @pytest.mark.asyncio
     async def test_async_path_injects_once_and_reuses(self, sid):
@@ -146,7 +146,7 @@ class TestSystemPromptReuse:
             return AIMessage(content="ok")
 
         with pytest.raises(RuntimeError, match="Not pass session_id"):
-            await context_engine_prompt.awrap_model_call(request, handler)
+            await system_prompt_injection.awrap_model_call(request, handler)
 
 
 class TestSystemPromptReloadSemantics:

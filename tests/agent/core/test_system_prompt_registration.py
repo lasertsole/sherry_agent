@@ -1,6 +1,6 @@
 """Registration lock for the ``@dynamic_prompt`` system-prompt middleware.
 
-``built_agent()`` must register ``context_engine_prompt`` exactly once, at
+``built_agent()`` must register ``system_prompt_injection`` exactly once, at
 position 1 — right after ``TodoContinuationEnforcer`` (which implements no
 model-call wrap) — making it the outermost ``wrap_model_call`` layer.
 """
@@ -11,7 +11,7 @@ import pytest
 from langchain.agents.middleware import AgentMiddleware
 
 from agent import core as agent_core
-from agent.middlewares.context_engine.core import context_engine_prompt
+from agent.middlewares.system_prompt.core import system_prompt_injection
 from agent.middlewares.todo_continuation import TodoContinuationEnforcer
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
@@ -48,7 +48,7 @@ class _MainLLM:
 
 
 @pytest.mark.asyncio
-async def test_context_engine_prompt_is_outermost_wrap_layer(
+async def test_system_prompt_injection_is_outermost_wrap_layer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -80,9 +80,9 @@ async def test_context_engine_prompt_is_outermost_wrap_layer(
     await agent_core.built_agent()
 
     middleware = captured["middleware"]
-    assert sum(item is context_engine_prompt for item in middleware) == 1
-    assert middleware[1] is context_engine_prompt
-    assert isinstance(context_engine_prompt, AgentMiddleware)
-    assert context_engine_prompt.name == "context_engine_prompt"
+    assert sum(item is system_prompt_injection for item in middleware) == 1
+    assert middleware[1] is system_prompt_injection
+    assert isinstance(system_prompt_injection, AgentMiddleware)
+    assert system_prompt_injection.name == "system_prompt_injection"
     assert TodoContinuationEnforcer.wrap_model_call is AgentMiddleware.wrap_model_call
     assert TodoContinuationEnforcer.awrap_model_call is AgentMiddleware.awrap_model_call

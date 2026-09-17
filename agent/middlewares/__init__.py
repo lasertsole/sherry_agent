@@ -14,7 +14,7 @@ from .output_repetition_guard import OutputRepetitionGuard as OutputRepetitionGu
 from .max_tokens_boost import MaxTokensBoostMiddleware as MaxTokensBoostMiddleware
 from .tool_guardrails import ToolGuardrails as ToolGuardrails
 from .iteration_budget import IterationBudget as IterationBudget
-from .context_engine import context_engine_prompt as context_engine_prompt
+from .system_prompt import system_prompt_injection as system_prompt_injection
 from .tool_call_normalize import ToolCallNormalize as ToolCallNormalize
 from .path_guard import PathGuard as PathGuard
 from .heartbeat_staleness import HeartbeatStaleness as HeartbeatStaleness

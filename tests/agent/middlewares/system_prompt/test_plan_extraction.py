@@ -5,7 +5,7 @@ Covers:
   first all-complete fire / already-fired / not-all-complete reset).
 - ``schedule_compression_nudges`` — compression-time counter and lock
   semantics, memory-review threshold reset, and plan-extraction dispatch.
-- ``context_engine_prompt`` — the ``@dynamic_prompt`` middleware does not
+- ``system_prompt_injection`` — the ``@dynamic_prompt`` middleware does not
   override the after-agent hooks (nudge dispatch moved to the compression
   pipeline).
 - ``_build_plan_context`` — plan_ref resolution (state first, todo fallback,
@@ -20,9 +20,9 @@ import pytest
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
-from agent.middlewares.context_engine import core as ce_core
-from agent.middlewares.context_engine import nudge as nudge_mod
-from agent.middlewares.context_engine.nudge import (
+from agent.middlewares.system_prompt import core as ce_core
+from agent.middlewares.system_prompt import nudge as nudge_mod
+from agent.middlewares.system_prompt.nudge import (
     _PLAN_EXTRACTION_FIRED_KEY,
     _detect_todo_all_complete,
     schedule_compression_nudges,
@@ -197,14 +197,14 @@ class TestScheduleCompressionNudges:
 
 
 # ---------------------------------------------------------------------------
-# context_engine_prompt: after-agent hooks absent
+# system_prompt_injection: after-agent hooks absent
 # ---------------------------------------------------------------------------
 
 
 class TestAfterAgentHooksRemoved:
     def test_middleware_does_not_override_after_agent(self):
-        assert type(ce_core.context_engine_prompt).after_agent is AgentMiddleware.after_agent
-        assert type(ce_core.context_engine_prompt).aafter_agent is AgentMiddleware.aafter_agent
+        assert type(ce_core.system_prompt_injection).after_agent is AgentMiddleware.after_agent
+        assert type(ce_core.system_prompt_injection).aafter_agent is AgentMiddleware.aafter_agent
 
 
 # ---------------------------------------------------------------------------

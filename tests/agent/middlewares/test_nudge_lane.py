@@ -5,7 +5,7 @@ Covers plan Step 9's lane landing:
 1. ``_nudge_memory`` concurrency is capped by the NUDGE lane (queue, never reject)
 2. the plan-extraction nudge shares the same lane
 3. the compression-time scheduler never dispatches without a running event
-   loop, and the ``context_engine_prompt`` middleware does not override the
+   loop, and the ``system_prompt_injection`` middleware does not override the
    after-agent hooks — so no ``run_async()`` worker loop can ever acquire the
    loop-bound semaphore
 4. acquiring the NUDGE lane across two loops does not raise (Wave 1 rebind)
@@ -21,8 +21,8 @@ import pytest
 
 import runtime.lane.core as lane_core
 from runtime.lane.core import LaneManager, LaneType, lane_slot
-from agent.middlewares.context_engine import core as ce_core
-from agent.middlewares.context_engine import nudge
+from agent.middlewares.system_prompt import core as ce_core
+from agent.middlewares.system_prompt import nudge
 
 pytestmark = [pytest.mark.unit]
 
@@ -130,8 +130,8 @@ class TestNudgeLaneCap:
     ):
         from langchain.agents.middleware import AgentMiddleware
 
-        assert type(ce_core.context_engine_prompt).after_agent is AgentMiddleware.after_agent
-        assert type(ce_core.context_engine_prompt).aafter_agent is AgentMiddleware.aafter_agent
+        assert type(ce_core.system_prompt_injection).after_agent is AgentMiddleware.after_agent
+        assert type(ce_core.system_prompt_injection).aafter_agent is AgentMiddleware.aafter_agent
 
         calls: list[str] = []
 

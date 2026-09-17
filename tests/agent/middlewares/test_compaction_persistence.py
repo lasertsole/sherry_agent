@@ -29,9 +29,9 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-import agent.middlewares.context_engine.nudge as nudge_mod
+import agent.middlewares.system_prompt.nudge as nudge_mod
 import agent.middlewares.summarization.compaction_persistence as cp_mod
-from agent.middlewares.context_engine import core as ce_core
+from agent.middlewares.system_prompt import core as ce_core
 from agent.middlewares.summarization import Summarization
 from context_engine.store import core as store_core
 from context_engine.store import db as store_db

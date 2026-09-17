@@ -17,8 +17,8 @@ import pytest
 from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-import agent.middlewares.context_engine.core as ce_core
-from agent.middlewares.context_engine.core import context_engine_prompt
+import agent.middlewares.system_prompt.core as ce_core
+from agent.middlewares.system_prompt.core import system_prompt_injection
 from runtime import state_register_db, state_register_mem
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -67,7 +67,7 @@ def _inject(request: ModelRequest) -> ModelRequest:
         captured["request"] = inner_request
         return AIMessage(content="ok")
 
-    context_engine_prompt.wrap_model_call(request, handler)
+    system_prompt_injection.wrap_model_call(request, handler)
     return captured["request"]
 
 
@@ -79,7 +79,7 @@ async def _ainject(request: ModelRequest) -> ModelRequest:
         captured["request"] = inner_request
         return AIMessage(content="ok")
 
-    await context_engine_prompt.awrap_model_call(request, handler)
+    await system_prompt_injection.awrap_model_call(request, handler)
     return captured["request"]
 
 
@@ -195,7 +195,7 @@ class TestRegisterIsolation:
 class TestNoMutableSessionState:
     def test_decorated_function_closes_over_no_state(self):
         # Given the decorator-generated sync wrapper
-        wrapper = type(context_engine_prompt).__dict__["wrap_model_call"]
+        wrapper = type(system_prompt_injection).__dict__["wrap_model_call"]
         closure = inspect.getclosurevars(wrapper)
 
         # Then it captures only the decorated function, and that function

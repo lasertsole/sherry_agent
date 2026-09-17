@@ -1,6 +1,6 @@
 """System-prompt injection for every model call, built with ``@dynamic_prompt``.
 
-``context_engine_prompt`` is the middleware instance produced by LangChain's
+``system_prompt_injection`` is the middleware instance produced by LangChain's
 ``@dynamic_prompt`` decorator. It owns the **outermost** ``wrap_model_call``
 layer of the main agent (first in the middleware list that implements the
 hook), so the session system prompt is resolved before any other model-call
@@ -33,7 +33,7 @@ from workspace.prompt_builder import build_system_prompt
 from runtime import state_register_db, state_register_mem
 from agent.middlewares.base import require_session_id
 
-__all__ = ["context_engine_prompt"]
+__all__ = ["system_prompt_injection"]
 
 
 def _get_and_reload_system_prompt(session_id: str) -> str:
@@ -58,7 +58,7 @@ def _get_and_reload_system_prompt(session_id: str) -> str:
 
 
 @dynamic_prompt
-def context_engine_prompt(request: ModelRequest[ContextT]) -> SystemMessage:
+def system_prompt_injection(request: ModelRequest[ContextT]) -> SystemMessage:
     """Inject the session system prompt, reusing an identical existing message.
 
     Returns ``request.system_message`` itself (same object) when it already
@@ -70,8 +70,8 @@ def context_engine_prompt(request: ModelRequest[ContextT]) -> SystemMessage:
 
     existing = request.system_message
     if isinstance(existing, SystemMessage) and existing.content == prompt_str:
-        logger.debug("context_engine_prompt reuses cached system prompt for {}", session_id)
+        logger.debug("system_prompt_injection reuses cached system prompt for {}", session_id)
         return existing
 
-    logger.debug("context_engine_prompt injects system prompt for {}", session_id)
+    logger.debug("system_prompt_injection injects system prompt for {}", session_id)
     return SystemMessage(content=prompt_str)

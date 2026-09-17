@@ -21,7 +21,7 @@ from .middlewares import (
     ToolCallNormalize,
     PathGuard,
     MultimodalProcessor,
-    context_engine_prompt,
+    system_prompt_injection,
     ToolGuardrails,
     IterationBudget,
     HeartbeatStaleness,
@@ -181,7 +181,7 @@ async def built_agent(
                 TodoContinuationEnforcer(),
                 # @dynamic_prompt middleware INSTANCE (not a constructor):
                 # the outermost wrap_model_call layer in this list.
-                context_engine_prompt,
+                system_prompt_injection,
                 MultimodalProcessor(),
                 IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
                 ToolGuardrails(),

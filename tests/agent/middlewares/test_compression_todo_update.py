@@ -33,8 +33,8 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel
 
-import agent.middlewares.context_engine.nudge as nudge_mod
-from agent.middlewares.context_engine.nudge import (
+import agent.middlewares.system_prompt.nudge as nudge_mod
+from agent.middlewares.system_prompt.nudge import (
     _COMPRESSION_TODO_LOCK_KEY,
     _COMPRESSION_TODO_METADATA_KEY,
     _COMPRESSION_TODO_SESSION_SUFFIX,
