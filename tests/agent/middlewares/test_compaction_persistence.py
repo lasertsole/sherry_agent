@@ -31,7 +31,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 import agent.middlewares.context_engine.nudge as nudge_mod
 import agent.middlewares.summarization.compaction_persistence as cp_mod
-from agent.middlewares.context_engine.core import ContextEngineHook
+from agent.middlewares.context_engine import core as ce_core
 from agent.middlewares.summarization import Summarization
 from context_engine.store import core as store_core
 from context_engine.store import db as store_db
@@ -426,9 +426,9 @@ class TestCompressionNudgeDispatch:
         monkeypatch.setattr(nudge_mod, "_nudge_plan_extraction", _plan)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
         monkeypatch.setattr(
-            ContextEngineHook,
+            ce_core,
             "_get_and_reload_system_prompt",
-            staticmethod(lambda session_id: "sys-prompt"),
+            lambda session_id: "sys-prompt",
         )
         fake_db = _FakeStateRegister()
         fake_db.set_state(

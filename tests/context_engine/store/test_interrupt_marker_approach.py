@@ -36,7 +36,7 @@ so no network / no API keys / no real provider is involved):
   a different ID appends.
 
 Middleware subset note: the production stack in ``agent/core.py:120-136`` also
-registers ContextEngineHook / MultimodalProcessor / IterationBudget /
+registers context_engine_prompt / MultimodalProcessor / IterationBudget /
 ToolGuardrails / SubagentCompletionDrain / HeartbeatStaleness / HumanInTheLoop /
 RepetitionGuardWrapper. Those are excluded here because they bind to real
 disk stores (MesMemory SQLite, media files, steering-queue SQLite) or start

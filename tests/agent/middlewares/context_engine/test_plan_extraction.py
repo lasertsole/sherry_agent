@@ -5,8 +5,9 @@ Covers:
   first all-complete fire / already-fired / not-all-complete reset).
 - ``schedule_compression_nudges`` — compression-time counter and lock
   semantics, memory-review threshold reset, and plan-extraction dispatch.
-- ``ContextEngineHook`` — the class no longer overrides the after-agent hooks
-  (nudge dispatch moved to the compression pipeline).
+- ``context_engine_prompt`` — the ``@dynamic_prompt`` middleware does not
+  override the after-agent hooks (nudge dispatch moved to the compression
+  pipeline).
 - ``_build_plan_context`` — plan_ref resolution (state first, todo fallback,
   session-<id> fallback) and the ``.omo/start-work/ledger.jsonl`` read.
 """
@@ -19,8 +20,8 @@ import pytest
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
+from agent.middlewares.context_engine import core as ce_core
 from agent.middlewares.context_engine import nudge as nudge_mod
-from agent.middlewares.context_engine.core import ContextEngineHook
 from agent.middlewares.context_engine.nudge import (
     _PLAN_EXTRACTION_FIRED_KEY,
     _detect_todo_all_complete,
@@ -59,11 +60,7 @@ def fake_state_mem(monkeypatch):
 
 @pytest.fixture
 def prompt_stub(monkeypatch):
-    monkeypatch.setattr(
-        ContextEngineHook,
-        "_get_and_reload_system_prompt",
-        staticmethod(lambda session_id: "sys-prompt"),
-    )
+    monkeypatch.setattr(ce_core, "_get_and_reload_system_prompt", lambda session_id: "sys-prompt")
 
 
 def _patch_todos(monkeypatch, todos: list[dict]) -> None:
@@ -200,14 +197,14 @@ class TestScheduleCompressionNudges:
 
 
 # ---------------------------------------------------------------------------
-# ContextEngineHook: after-agent hooks removed
+# context_engine_prompt: after-agent hooks absent
 # ---------------------------------------------------------------------------
 
 
 class TestAfterAgentHooksRemoved:
-    def test_hook_no_longer_overrides_after_agent(self):
-        assert ContextEngineHook.after_agent is AgentMiddleware.after_agent
-        assert ContextEngineHook.aafter_agent is AgentMiddleware.aafter_agent
+    def test_middleware_does_not_override_after_agent(self):
+        assert type(ce_core.context_engine_prompt).after_agent is AgentMiddleware.after_agent
+        assert type(ce_core.context_engine_prompt).aafter_agent is AgentMiddleware.aafter_agent
 
 
 # ---------------------------------------------------------------------------

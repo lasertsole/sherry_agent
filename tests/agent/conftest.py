@@ -68,7 +68,7 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
         "Summarization",
         "ToolCallNormalize",
         "MultimodalProcessor",
-        "ContextEngineHook",
+        "context_engine_prompt",
         "ToolGuardrails",
         "IterationBudget",
         "HeartbeatStaleness",

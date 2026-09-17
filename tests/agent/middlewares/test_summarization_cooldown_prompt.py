@@ -1,7 +1,8 @@
 """P1-b: the Summarization cooldown path must not re-inject an unchanged prompt.
 
 The cooldown branch delivers the rebuilt system prompt for chains without
-``ContextEngineHook`` (subagent / nudge pipelines). It now skips the
+the ``@dynamic_prompt`` system-prompt middleware (subagent / nudge
+pipelines). It now skips the
 ``request.override`` when the request already carries a ``SystemMessage`` with
 identical content, and still overrides on a real change.
 """

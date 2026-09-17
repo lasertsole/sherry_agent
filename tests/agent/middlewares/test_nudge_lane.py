@@ -5,8 +5,9 @@ Covers plan Step 9's lane landing:
 1. ``_nudge_memory`` concurrency is capped by the NUDGE lane (queue, never reject)
 2. the plan-extraction nudge shares the same lane
 3. the compression-time scheduler never dispatches without a running event
-   loop, and ``ContextEngineHook`` no longer overrides the after-agent hooks —
-   so no ``run_async()`` worker loop can ever acquire the loop-bound semaphore
+   loop, and the ``context_engine_prompt`` middleware does not override the
+   after-agent hooks — so no ``run_async()`` worker loop can ever acquire the
+   loop-bound semaphore
 4. acquiring the NUDGE lane across two loops does not raise (Wave 1 rebind)
 
 Hermetic: the nudge agent builder is replaced with a gated fake (no LLM), and
@@ -129,8 +130,8 @@ class TestNudgeLaneCap:
     ):
         from langchain.agents.middleware import AgentMiddleware
 
-        assert ce_core.ContextEngineHook.after_agent is AgentMiddleware.after_agent
-        assert ce_core.ContextEngineHook.aafter_agent is AgentMiddleware.aafter_agent
+        assert type(ce_core.context_engine_prompt).after_agent is AgentMiddleware.after_agent
+        assert type(ce_core.context_engine_prompt).aafter_agent is AgentMiddleware.aafter_agent
 
         calls: list[str] = []
 

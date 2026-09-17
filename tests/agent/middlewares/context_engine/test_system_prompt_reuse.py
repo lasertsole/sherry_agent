@@ -1,9 +1,12 @@
-"""P0-2: ContextEngineHook reuses the request when the system prompt matches.
+"""P0-2: the ``@dynamic_prompt`` middleware reuses an identical system message.
 
-The hook used to call ``request.override(system_message=SystemMessage(...))`` on
-every ``wrap_model_call``, even when the content was identical. It now returns
-the original request object when ``request.system_message`` already carries the
-same content, and only overrides on a real change (or a missing system message).
+The middleware used to be an ``AgentMiddleware`` subclass that returned the
+original *request* object when ``request.system_message`` already carried the
+same content. ``@dynamic_prompt``'s generated wrapper always calls
+``request.override(system_message=...)``, so the byte-identity guarantee now
+rides on returning the existing ``SystemMessage`` object itself: the override
+re-applies the same message object, keeping the serialized model-visible
+prefix identical. Changed (or missing) content still injects a fresh message.
 """
 
 import uuid
@@ -13,7 +16,7 @@ from langchain.agents.middleware import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 import agent.middlewares.context_engine.core as ce_core
-from agent.middlewares.context_engine.core import ContextEngineHook
+from agent.middlewares.context_engine.core import context_engine_prompt
 from runtime import state_register_mem
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -40,27 +43,60 @@ def _request(session_id: str, system_message: SystemMessage | None) -> ModelRequ
     )
 
 
+def _run_sync(request: ModelRequest) -> tuple[ModelRequest, int]:
+    captured: dict[str, ModelRequest] = {}
+    calls = 0
+
+    def handler(inner_request: ModelRequest) -> AIMessage:
+        nonlocal calls
+        calls += 1
+        captured["request"] = inner_request
+        return AIMessage(content="ok")
+
+    context_engine_prompt.wrap_model_call(request, handler)
+    return captured["request"], calls
+
+
+async def _run_async(request: ModelRequest) -> tuple[ModelRequest, int]:
+    captured: dict[str, ModelRequest] = {}
+    calls = 0
+
+    async def handler(inner_request: ModelRequest) -> AIMessage:
+        nonlocal calls
+        calls += 1
+        captured["request"] = inner_request
+        return AIMessage(content="ok")
+
+    await context_engine_prompt.awrap_model_call(request, handler)
+    return captured["request"], calls
+
+
 class TestSystemPromptReuse:
-    def test_identical_content_returns_same_request(self, sid):
+    def test_identical_content_reuses_same_system_message(self, sid):
         # Given a request whose system message already matches the register
         state_register_mem.set_state(sid, "system_prompt", "PROMPT-A")
-        request = _request(sid, SystemMessage(content="PROMPT-A"))
+        original = SystemMessage(content="PROMPT-A")
+        request = _request(sid, original)
 
-        # When the injection helper runs
-        result = ContextEngineHook()._wrap_model_call_impl(request)
+        # When the middleware wraps the model call
+        inner, calls = _run_sync(request)
 
-        # Then no override (same object) is produced
-        assert result is request
+        # Then the override carries the same message object (byte-identical
+        # serialization); only the request wrapper is new.
+        assert calls == 1
+        assert inner is not request
+        assert inner.system_message is original
+        assert request.system_message is original
 
     def test_changed_content_overrides_with_new_message(self, sid):
         state_register_mem.set_state(sid, "system_prompt", "PROMPT-B")
         request = _request(sid, SystemMessage(content="PROMPT-A"))
 
-        result = ContextEngineHook()._wrap_model_call_impl(request)
+        inner, _ = _run_sync(request)
 
-        assert result is not request
-        assert result.system_message is not None
-        assert result.system_message.content == "PROMPT-B"
+        assert inner is not request
+        assert inner.system_message is not None
+        assert inner.system_message.content == "PROMPT-B"
         assert request.system_message is not None
         assert request.system_message.content == "PROMPT-A"
 
@@ -68,11 +104,11 @@ class TestSystemPromptReuse:
         state_register_mem.set_state(sid, "system_prompt", "PROMPT-A")
         request = _request(sid, None)
 
-        result = ContextEngineHook()._wrap_model_call_impl(request)
+        inner, _ = _run_sync(request)
 
-        assert result is not request
-        assert result.system_message is not None
-        assert result.system_message.content == "PROMPT-A"
+        assert inner is not request
+        assert inner.system_message is not None
+        assert inner.system_message.content == "PROMPT-A"
 
     def test_missing_session_id_still_raises(self):
         request = ModelRequest(
@@ -81,35 +117,36 @@ class TestSystemPromptReuse:
             state={"messages": [HumanMessage(content="q")]},
         )
 
-        with pytest.raises(RuntimeError, match="Not pass session_id"):
-            ContextEngineHook()._wrap_model_call_impl(request)
-
-    def test_wrap_model_call_hands_identical_request_to_handler(self, sid):
-        state_register_mem.set_state(sid, "system_prompt", "PROMPT-A")
-        request = _request(sid, SystemMessage(content="PROMPT-A"))
-        captured: dict[str, object] = {}
-
         def handler(inner_request: ModelRequest) -> AIMessage:
-            captured["request"] = inner_request
             return AIMessage(content="ok")
 
-        ContextEngineHook().wrap_model_call(request, handler)
-
-        assert captured["request"] is request
+        with pytest.raises(RuntimeError, match="Not pass session_id"):
+            context_engine_prompt.wrap_model_call(request, handler)
 
     @pytest.mark.asyncio
-    async def test_awrap_model_call_hands_identical_request_to_handler(self, sid):
+    async def test_async_path_injects_once_and_reuses(self, sid):
         state_register_mem.set_state(sid, "system_prompt", "PROMPT-A")
-        request = _request(sid, SystemMessage(content="PROMPT-A"))
-        captured: dict[str, object] = {}
+        original = SystemMessage(content="PROMPT-A")
+        request = _request(sid, original)
+
+        inner, calls = await _run_async(request)
+
+        assert calls == 1
+        assert inner.system_message is original
+
+    @pytest.mark.asyncio
+    async def test_async_path_missing_session_id_still_raises(self):
+        request = ModelRequest(
+            model=_StubModel(),
+            messages=[HumanMessage(content="q")],
+            state={"messages": [HumanMessage(content="q")]},
+        )
 
         async def handler(inner_request: ModelRequest) -> AIMessage:
-            captured["request"] = inner_request
             return AIMessage(content="ok")
 
-        await ContextEngineHook().awrap_model_call(request, handler)
-
-        assert captured["request"] is request
+        with pytest.raises(RuntimeError, match="Not pass session_id"):
+            await context_engine_prompt.awrap_model_call(request, handler)
 
 
 class TestSystemPromptReloadSemantics:
@@ -125,10 +162,9 @@ class TestSystemPromptReloadSemantics:
                 return True
 
         monkeypatch.setattr(ce_core, "state_register_db", _FakeDB())
-        hook = ContextEngineHook()
 
-        first = hook._get_and_reload_system_prompt(sid)
-        second = hook._get_and_reload_system_prompt(sid)
+        first = ce_core._get_and_reload_system_prompt(sid)
+        second = ce_core._get_and_reload_system_prompt(sid)
 
         assert first == "FROM-DB"
         assert second == "FROM-DB"
@@ -149,8 +185,34 @@ class TestSystemPromptReloadSemantics:
         monkeypatch.setattr(ce_core, "state_register_db", _FakeDB())
         monkeypatch.setattr(ce_core, "build_system_prompt", lambda session_id="": "BUILT")
 
-        prompt = ContextEngineHook()._get_and_reload_system_prompt(sid)
+        prompt = ce_core._get_and_reload_system_prompt(sid)
 
         assert prompt == "BUILT"
+        assert state_register_mem.get_state(sid, "system_prompt") == "BUILT"
+        assert (sid, "system_prompt", "BUILT") in written
+
+
+class TestInjectionWritesSystemPromptCache:
+    """Regression lock: injection populates the ``system_prompt`` mem key that
+    ``Summarization`` reads for token estimation and rewrites after a compact."""
+
+    def test_first_injection_dual_writes_mem_and_db(self, sid, monkeypatch):
+        written: list[tuple] = []
+
+        class _FakeDB:
+            def get_state(self, session_id, key, default=None):
+                return default
+
+            def set_state(self, session_id, key, value):
+                written.append((session_id, key, value))
+                return True
+
+        monkeypatch.setattr(ce_core, "state_register_db", _FakeDB())
+        monkeypatch.setattr(ce_core, "build_system_prompt", lambda session_id="": "BUILT")
+
+        inner, _ = _run_sync(_request(sid, None))
+
+        assert inner.system_message is not None
+        assert inner.system_message.content == "BUILT"
         assert state_register_mem.get_state(sid, "system_prompt") == "BUILT"
         assert (sid, "system_prompt", "BUILT") in written
