@@ -1,16 +1,16 @@
-"""E7: task-intent detection and steering — a ``before_model`` middleware.
+"""Task-intent detection and steering — a ``before_model`` middleware.
 
 Two independent components of the original design are fused here:
 
-- **E7a — arming** (mirrors omo ``ultrawork``): when a user message looks like a
+- **Arming** (mirrors omo ``ultrawork``): when a user message looks like a
   work request and no plan is active, inject the full orchestrator steering
   prompt on the first qualifying turn, then a short reminder on later turns
   (module-level ``_armed_sessions`` ledger). ``rearm_after_compact`` clears the
   entry after context compression so the full prompt is injected again.
-- **E7b — plan-active steering** (mirrors omo ``ulw-execute-continuation``
+- **Plan-active steering** (mirrors omo ``ulw-execute-continuation``
   input hook): when ``.omo/boulder.json`` holds an active/paused work whose plan
   file exists and contains a checkbox, append the plan-active reminder instead
-  and skip E7a entirely (E7b has priority).
+  and skip arming entirely (plan-active steering has priority).
 
 Anti-loop guarantees (design intent; see this module + skills/builtin/core/ulw-execute/SKILL.md):
 
@@ -23,8 +23,8 @@ Anti-loop guarantees (design intent; see this module + skills/builtin/core/ulw-e
   see ``subagent_completion_drain.py``) never triggers steering — the drained
   carrier drives that turn.
 - **System-directive filtering**: ``[SYSTEM DIRECTIVE`` / ``<sherry-ulw-execute>``
-  / ``metadata.internal`` messages are never mistaken for user input, so E3/E7
-  injections cannot re-trigger E7.
+  / ``metadata.internal`` messages are never mistaken for user input, so
+  injected directives cannot re-trigger steering.
 - **Fail-open**: any internal exception is logged and swallowed (return ``None``)
   — steering must never break a turn.
 """
@@ -206,7 +206,7 @@ _BOULDER_PATH: Path = resolve_boulder_path()
 def _is_system_directive(msg: Any) -> bool:
     """True when ``msg`` is a system-injected directive, not user input.
 
-    Filters E3 continuation prompts and E7 steering so they can never be
+    Filters continuation prompts and steering directives so they can never be
     mistaken for a fresh user request (anti-loop).
     """
     content = getattr(msg, "content", None)

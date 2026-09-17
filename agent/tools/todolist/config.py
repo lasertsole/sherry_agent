@@ -30,7 +30,7 @@ class TodoPriority(StrEnum):
 
 
 class TodoCategory(StrEnum):
-    """Routing category used by the delegation layer (E6)."""
+    """Routing category used by the delegation layer."""
 
     QUICK = "quick"
     DEEP = "deep"

@@ -1,4 +1,4 @@
-"""Unit tests for the E3 stagnation tracker (pure, deterministic).
+"""Unit tests for the stagnation tracker (pure, deterministic).
 
 The tracker keeps per-session module state and a monotonic clock seam (``_now``)
 so every test drives time explicitly — no real sleeps, no flakiness.

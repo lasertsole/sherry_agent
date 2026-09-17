@@ -2,9 +2,9 @@
 
 Owns two behaviors the store does not:
 
-* **E6 default-downgrade** — an unknown ``category`` collapses to ``quick`` and
+* **Default-downgrade** — an unknown ``category`` collapses to ``quick`` and
   an unknown ``delegation`` collapses to ``self`` before persistence.
-* **E4 transition barrier** — a todo may only be marked ``completed`` once the
+* **Transition barrier** — a todo may only be marked ``completed`` once the
   work it points at is actually finished: a linked subagent run must no longer
   be live, and a linked TaskFlow step must be ``done``. Plain todos (no links)
   are never blocked.
@@ -45,7 +45,7 @@ _PLAN_REF_STATE_KEY = "plan_ref"
 
 
 class TodoStoreError(Exception):
-    """Raised when a todo mutation is rejected (E4 transition barrier)."""
+    """Raised when a todo mutation is rejected (transition barrier)."""
 
 
 def _get_run_by_child_session_key(child_session_key: str):
@@ -77,7 +77,7 @@ def _step_status(step: dict) -> str:
 
 
 def _validate_todos(todos: list[dict]) -> list[dict]:
-    """Return shallow copies with the E6 vocabularies default-downgraded.
+    """Return shallow copies with the category/delegation vocabularies default-downgraded.
 
     Status and priority are left exactly as given. Copies (not in-place edits)
     keep the caller's dicts untouched.
@@ -125,7 +125,7 @@ async def _read_taskflow_step_status(flow_id: str, step_id: str) -> tuple[str | 
 async def _assert_transition_allowed(todo: dict) -> None:
     """Raise :class:`TodoStoreError` unless a ``completed`` todo may complete.
 
-    Two independent sources gate the transition (E4):
+    Two independent sources gate the transition:
 
     1. a linked subagent run that is still live;
     2. a linked TaskFlow step whose status is not ``done`` (or that cannot be
@@ -186,7 +186,8 @@ class TodoService:
         todos: list[dict],
         plan_ref: str | None = None,
     ) -> list[dict]:
-        """Full-replace a session's todos, enforcing E6 then the E4 barrier.
+        """Full-replace a session's todos, enforcing the default-downgrade
+        and the transition barrier.
 
         A non-empty ``plan_ref`` is remembered once per session under the
         ``plan_ref`` state key; the prompt builder reads it to locate the

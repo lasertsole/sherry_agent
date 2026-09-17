@@ -1,4 +1,4 @@
-"""Unit tests for TodoService: E6 validation, E4 transition barrier, WS push.
+"""Unit tests for TodoService: validation, transition barrier, WS push.
 
 The service reaches three external seams (subagent registry liveness, TaskFlow
 step status, WS push) plus the store. Tests substitute the seams through the
@@ -62,7 +62,7 @@ def _load_flow_returning(flow_id: str, step_id: str, status: str):
     return _load
 
 
-# --- E6 validation ---------------------------------------------------------
+# --- Category/delegation validation ---------------------------------------
 
 
 def test_validate_todos_downgrades_invalid_category_and_delegation():
@@ -134,7 +134,7 @@ async def test_get_todos_reads_persisted_rows(
     assert await TodoService.get_todos("sess-missing") == []
 
 
-# --- E4 barrier: subagent liveness -----------------------------------------
+# --- Transition barrier: subagent liveness ---------------------------------
 
 
 @pytest.mark.asyncio
@@ -191,7 +191,7 @@ async def test_completed_todo_with_unknown_subagent_record_persists(
     assert result[0]["status"] == "completed"
 
 
-# --- E4 barrier: TaskFlow step status --------------------------------------
+# --- Transition barrier: TaskFlow step status ------------------------------
 
 
 @pytest.mark.asyncio
@@ -293,7 +293,7 @@ async def test_completed_todo_with_missing_step_is_blocked(
     assert "step-1" in str(excinfo.value)
 
 
-# --- E4 barrier: plain todos ------------------------------------------------
+# --- Transition barrier: plain todos ---------------------------------------
 
 
 @pytest.mark.asyncio

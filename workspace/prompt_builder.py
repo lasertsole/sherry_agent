@@ -83,8 +83,8 @@ def _build_todo_block(session_id: str) -> str:
             content = todo.get("content", "")
             priority = todo.get("priority") or "medium"
             lines.append(f"- [{icon}] {tag} {content} ({priority})")
-        # Deterrence notices: E3 continuation and the E4 transition barrier are enforced in code
-        # (agent/core.py + service.update_todos); E5 verification is recorded via SisyphusVerifier/EvidenceLedger.
+        # Deterrence notices: the continuation and transition barriers are enforced in code
+        # (agent/core.py + service.update_todos); completion verification is recorded via SisyphusVerifier/EvidenceLedger.
         lines.append(
             "Your todo list is tracked by the continuation system. "
             "Incomplete todos will trigger automatic continuation."

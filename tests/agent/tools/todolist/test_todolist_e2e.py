@@ -1,9 +1,9 @@
 """Full-stack E2E tests for the todolist planning layer.
 
 This suite drives the REAL todowrite/todoread tools through the REAL
-``TodoService`` (E4 transition barrier + E6 default-downgrade), the REAL SQLite
+``TodoService`` (transition barrier + default-downgrade), the REAL SQLite
 store, the REAL ``build_system_prompt`` dynamic blocks (todo / boulder /
-taskflow / continuity), the REAL E7 task-intent middleware, the REAL E3
+taskflow / continuity), the REAL task-intent middleware, the REAL continuation
 continuation enforcer, and the REAL TaskFlow tools. Fakes exist only at true
 external boundaries:
 
@@ -13,11 +13,11 @@ external boundaries:
 * the TaskFlow child dispatch seam (``_dispatch.dispatch_child``) — the real
   spawn pipeline is never called,
 * the memory-flush extraction LLM (a canned response; zero network),
-* the E3 fire-and-forget auto-turn sink (a spy).
+* the continuation fire-and-forget auto-turn sink (a spy).
 
 All persistence is redirected to ``tmp_path`` (todos.db, taskflow_registry.db,
 memory/, session_continuity/) and every module-level ledger (todowrite
-reminder, E7 arming, E3 stagnation) is reset per test, so the tests are
+reminder, intent arming, continuation stagnation) is reset per test, so the tests are
 order-independent and touch no real repo state.
 """
 
@@ -198,11 +198,11 @@ def _reset_module_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     # todowrite's once-per-session fan-out reminder.
     monkeypatch.setattr(_TODOWRITE_MODULE, "_reminded_sessions", set())
 
-    # E7 arming ledger + a never-existing boulder (the repo has a real one!).
+    # Intent arming ledger + a never-existing boulder (the repo has a real one!).
     monkeypatch.setattr(task_intent, "_armed_sessions", set())
     monkeypatch.setattr(task_intent, "_BOULDER_PATH", tmp_path / "no-boulder.json")
 
-    # E3 stagnation state (deterministic, no real sleeps).
+    # Continuation stagnation state (deterministic, no real sleeps).
     monkeypatch.setattr(st, "_stagnation_count", {})
     monkeypatch.setattr(st, "_last_snapshot", {})
     monkeypatch.setattr(st, "_last_inject_time", {})
@@ -255,7 +255,7 @@ def prompt_env(
 
 @pytest.fixture()
 def spy_auto_turn() -> Iterator[list[tuple[str, HumanMessage]]]:
-    """Capture ``maybe_trigger_auto_turn`` injections through the runtime hook (E3 seam)."""
+    """Capture ``maybe_trigger_auto_turn`` injections through the runtime hook (continuation seam)."""
     calls: list[tuple[str, HumanMessage]] = []
 
     async def _spy(session_key: str, injection: HumanMessage) -> object:
@@ -416,7 +416,7 @@ class TestTodolistFullPipeline:
 
     @pytest.mark.asyncio
     async def test_e2e_e7_steering_injection(self, prompt_env: dict) -> None:
-        """Given a task-looking user message on a fresh session, When E7 runs,
+        """Given a task-looking user message on a fresh session, When steering runs,
         Then the full steering prompt is injected first and the short reminder
         on the next qualifying turn."""
         import agent.middlewares.task_intent.core as task_intent
@@ -452,7 +452,7 @@ class TestTodolistFullPipeline:
 
     @pytest.mark.asyncio
     async def test_e2e_e3_continuation_fires(self, prompt_env: dict, spy_auto_turn: list) -> None:
-        """Given incomplete todos, When the turn ends, Then the E3 enforcer hands
+        """Given incomplete todos, When the turn ends, Then the continuation enforcer hands
         a HumanMessage carrying the continuation directive to auto_turn."""
         tools = _tools()
         sid = "e2e-e3"
@@ -545,8 +545,8 @@ class TestTodolistFullPipeline:
         self, prompt_env: dict, spy_auto_turn: list, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Given a plan mixing plain, TaskFlow-linked and invalid-category todos,
-        When completed one by one (E4/E6 enforced each time), Then the prompt
-        shows 100% done, E3 stops firing and the P0-1 memory flush persists a fact."""
+        When completed one by one (barriers enforced each time), Then the prompt
+        shows 100% done, continuation stops firing and the memory flush persists a fact."""
         import agent.middlewares.summarization.memory_flush as memory_flush
         import agent.tools.memory as memory_module
         import agent.tools.taskflow.tools._dispatch as dispatch_mod
@@ -583,14 +583,14 @@ class TestTodolistFullPipeline:
         ]
         await _write_todos(tools, sid, plan)
         rows = await todo_store.get_todos(sid)
-        # E6: the bogus category was default-downgraded before persistence.
+        # The bogus category was default-downgraded before persistence.
         assert rows[2]["category"] == "quick"
 
         # Complete A (plain todo).
         plan[0]["status"] = "completed"
         await _write_todos(tools, sid, plan)
 
-        # B is blocked while its TaskFlow step is still dispatched (E4).
+        # B is blocked while its TaskFlow step is still dispatched (transition barrier).
         plan[1]["status"] = "completed"
         with pytest.raises(TodoStoreError):
             await _write_todos(tools, sid, plan)
@@ -619,7 +619,7 @@ class TestTodolistFullPipeline:
             _build_status_block(todos) == "[Status: 3/3 completed, 0 remaining]\nRemaining tasks:"
         )
 
-        # All done -> E3 no longer fires.
+        # All done -> continuation no longer fires.
         await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
         assert spy_auto_turn == []
 
@@ -655,7 +655,7 @@ class TestTodolistFullPipeline:
 class TestTodolistMiddlewareIntegration:
     @pytest.mark.asyncio
     async def test_e7_per_turn_dedup_in_chain(self, prompt_env: dict) -> None:
-        """Given E7 in a middleware chain, When the chain runs at turn start and
+        """Given the intent middleware in a chain, When the chain runs at turn start and
         again after the model replied, Then steering is injected exactly once."""
         import agent.middlewares.task_intent.core as task_intent
 
@@ -712,14 +712,14 @@ class TestTodolistMiddlewareIntegration:
     async def test_e4_e6_e7_in_one_turn(
         self, prompt_env: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Given one turn, When E6 downgrades a bad category, E4 blocks a live
-        subagent completion and E7 injects steering, Then all three hold."""
+        """Given one turn, When the downgrade fixes a bad category, the barrier blocks a live
+        subagent completion and steering is injected, Then all three hold."""
         import agent.middlewares.task_intent.core as task_intent
 
         tools = _tools()
         sid = "e2e-combined"
 
-        # E6: invalid category/delegation default-downgrade on write.
+        # Invalid category/delegation default-downgrade on write.
         await _write_todos(
             tools,
             sid,
@@ -729,7 +729,7 @@ class TestTodolistMiddlewareIntegration:
         assert rows[0]["category"] == "quick"
         assert rows[0]["delegation"] == "self"
 
-        # E4: a completion pointing at a live subagent run is rejected.
+        # A completion pointing at a live subagent run is rejected.
         monkeypatch.setattr(todo_service, "_get_run_by_child_session_key", lambda key: object())
         monkeypatch.setattr(todo_service, "_is_live_unended_run", lambda run: True)
         with pytest.raises(TodoStoreError):
@@ -746,7 +746,7 @@ class TestTodolistMiddlewareIntegration:
             )
         assert [t["content"] for t in await todo_store.get_todos(sid)] == ["bad cat"]
 
-        # E7: steering injected for the turn's task message.
+        # Steering injected for the turn's task message.
         e7 = task_intent.TaskIntentMiddleware()
         out = await e7.abefore_model(
             {"messages": [HumanMessage(content="implement the dashboard")], "session_id": sid}
@@ -754,11 +754,11 @@ class TestTodolistMiddlewareIntegration:
         assert out is not None
         assert task_intent._TASK_STEERING_PROMPT in out["messages"][0].content
 
-        print("\n[EVIDENCE test_e4_e6_e7_in_one_turn] E6 row after downgrade:")
+        print("\n[EVIDENCE test_e4_e6_e7_in_one_turn] row after downgrade:")
         print(json.dumps(rows[0], ensure_ascii=False))
-        print("[EVIDENCE] E4 blocked; persisted rows unchanged:")
+        print("[EVIDENCE] blocked; persisted rows unchanged:")
         print(json.dumps(await todo_store.get_todos(sid), ensure_ascii=False))
-        print("[EVIDENCE] E7 injected steering (head):")
+        print("[EVIDENCE] injected steering (head):")
         print(out["messages"][0].content[:120])
 
 

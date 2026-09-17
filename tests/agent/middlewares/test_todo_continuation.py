@@ -1,4 +1,4 @@
-"""Unit tests for the E3 todo-continuation enforcer middleware.
+"""Unit tests for the todo-continuation enforcer middleware.
 
 Uses the installed langchain 1.3.9 hook contract: ``aafter_agent(state, runtime)``
 returning ``None`` (the continuation prompt is delivered through the

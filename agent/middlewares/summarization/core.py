@@ -152,7 +152,7 @@ def _rearm_task_intent_after_compact(session_id: str) -> None:
 
         rearm_after_compact(session_id)
     except Exception:
-        logger.debug("E7 re-arm after compact failed for session {}", session_id)
+        logger.debug("Task-intent re-arm after compact failed for session {}", session_id)
 
 
 # ======================================================================

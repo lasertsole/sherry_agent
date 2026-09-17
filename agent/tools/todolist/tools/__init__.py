@@ -3,7 +3,7 @@
 ``build_todolist_tools`` mirrors ``build_taskflow_tools``: it tags every tool
 with ``handle_tool_error=True`` (business errors become readable text) and
 ``metadata={"scope": "main_only"}`` (the subagent tool-policy drops the family,
-which matches the todolist skill's scope). It additionally injects the E2
+which matches the todolist skill's scope). It additionally injects the
 ``_TODOWRITE_FORMAT_RULES`` block into the ``todowrite`` description — the
 description is part of the prompt, so the format/granularity/delegation rules
 reach the model on every turn without a separate system-prompt edit.

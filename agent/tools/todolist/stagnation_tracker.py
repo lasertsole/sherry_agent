@@ -1,4 +1,4 @@
-"""E3 stagnation tracker: stagnation detection, backoff cooldown, abort
+"""Continuation stagnation tracker: stagnation detection, backoff cooldown, abort
 detection, and recovery-mode accounting for the todo-continuation enforcer.
 
 Modeled on omo ``todo-continuation-enforcer``:

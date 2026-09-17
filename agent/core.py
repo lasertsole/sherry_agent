@@ -175,7 +175,7 @@ async def built_agent(
             checkpointer=checkpointer,
             tools=get_agent_tools(),
             middleware=[
-                # E3: registered FIRST so its after_agent hook runs LAST —
+                # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
                 # after_agent hooks execute in REVERSE list order, so the first
                 # registered middleware sits closest to END (README "Hook
                 # Ordering Semantics"). It must observe the truly finished turn.

@@ -6,7 +6,7 @@ Covers acceptance checks:
 2. every todolist tool carries ``handle_tool_error=True`` and
    ``metadata={"scope": "main_only"}``.
 3. todoread returns the JSON list, or ``"No todos found."`` when empty.
-4. the builder appends the E2 ``_TODOWRITE_FORMAT_RULES`` block to the todowrite
+4. the builder appends the ``_TODOWRITE_FORMAT_RULES`` block to the todowrite
    description, exactly once (idempotent across repeated builds).
 
 ``build_main_tools_real`` is the stub-tolerant loader from conftest: the real
@@ -75,7 +75,7 @@ def test_metadata_declares_idempotency_and_preserves_todo_update():
 
 
 def test_todowrite_description_includes_e2_rules_exactly_once():
-    """The E2 format block is appended once, even across repeated builds."""
+    """The format block is appended once, even across repeated builds."""
     built = {t.name: t for t in build_todolist_tools()}
     description = built["todowrite"].description
 

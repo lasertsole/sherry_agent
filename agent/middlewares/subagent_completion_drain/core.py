@@ -37,7 +37,7 @@ from loguru import logger
 
 __all__ = ["SubagentCompletionDrainMiddleware"]
 
-# E5: appended to every drained subagent-completion carrier so the parent turn
+# Sisyphus verification: appended to every drained subagent-completion carrier so the parent turn
 # is reminded that a completion message is a DoneClaim, not a verified result.
 _VERIFICATION_REMINDER = (
     "\n\n[SYSTEM REMINDER] Subagent completed. "
@@ -125,7 +125,7 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
                 len(items),
                 key,
             )
-            # E5: completion carriers are DoneClaims, not verified results —
+            # Completion carriers are DoneClaims, not verified results —
             # append the Sisyphus reminder without mutating the shared message.
             messages = []
             for item in items:

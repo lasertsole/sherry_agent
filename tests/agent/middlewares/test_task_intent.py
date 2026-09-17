@@ -1,4 +1,4 @@
-"""Unit tests for the E7 task-intent middleware (`agent/middlewares/task_intent/core.py`).
+"""Unit tests for the task-intent middleware (`agent/middlewares/task_intent/core.py`).
 
 Covers the mandatory design corrections over the original sketch:
 

@@ -1,4 +1,4 @@
-"""Unit tests for the Sisyphus verifier (E5, plan todo 8).
+"""Unit tests for the Sisyphus verifier.
 
 The verifier implements the evidence-recording half of the 5-gate completion
 contract. Every external read (plan file, TaskFlow flow, subagent run, ledger)

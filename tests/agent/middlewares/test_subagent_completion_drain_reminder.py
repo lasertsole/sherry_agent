@@ -1,4 +1,4 @@
-"""E5 drain coverage: completion carriers get the Sisyphus verification reminder.
+"""Drain coverage: completion carriers get the Sisyphus verification reminder.
 
 Extends ``tests/agent/tools/subagent/test_completion_drain.py`` without
 depending on the subagent test stubs: the middleware's ``drain``/``rehydrate``

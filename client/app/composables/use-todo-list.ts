@@ -27,7 +27,7 @@ export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 /** Todo priority vocabulary (mirrors the backend store). */
 export type TodoPriority = 'high' | 'medium' | 'low';
 
-/** Optional routing/quality category (E6). */
+/** Optional routing/quality category. */
 export type TodoCategory = 'quick' | 'deep' | 'ultrabrain' | 'visual' | 'git' | 'writing';
 
 /** Whether the work is done inline or delegated to a subagent. */

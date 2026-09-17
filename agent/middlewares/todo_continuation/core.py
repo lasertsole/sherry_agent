@@ -1,4 +1,4 @@
-"""E3 todo-continuation enforcer — a turn-end ``after_agent`` middleware.
+"""Todo-continuation enforcer — a turn-end ``after_agent`` middleware.
 
 When a turn ends with incomplete todos, the enforcer injects a continuation
 directive that pulls the model back to work. Delivery reuses the existing
@@ -39,7 +39,7 @@ from runtime import hooks
 
 __all__ = ["TodoContinuationEnforcer"]
 
-# Continuation directive (E3 design; behavior contract of this module).
+# Continuation directive (behavior contract of this module).
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: TODO CONTINUATION]
 
 Incomplete tasks remain in your todo list. Continue working on the next pending task.
@@ -52,7 +52,7 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 
 {todo_status}"""
 
-# Recovery directive (E3 design; behavior contract of this module).
+# Recovery directive (behavior contract of this module).
 _RECOVERY_PROMPT = """[SYSTEM DIRECTIVE: RECOVERY MODE]
 
 Stagnation detected — the todo list has not changed across multiple continuation attempts.
