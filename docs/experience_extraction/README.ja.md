@@ -128,7 +128,7 @@ fork の結果メッセージはログのみ。メイングラフやその check
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
-    tests/agent/middlewares/test_compaction_persistence.py \
+    tests/agent/middlewares/test_compression_nudges.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/system_prompt/test_plan_extraction.py \
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：トリガゲート、fire-and-forget スケジュール、再入ロック、fail-open 解放、プロンプト内容、`todo_update` metadata ゲート、および完全 fork 隔離（派生キー、メインセッション `todowrite` シム、checkpointer / メッセージ漏洩なし）。
-- `test_compaction_persistence.py`：破棄プレフィックスのフラッシュ write-once（T2→T1 と再起動リプレイを正確な行数で）、元の内容の保証、置換前フラッシュの順序、圧縮時 nudge 派遣。
+- `test_compression_nudges.py`：圧縮時 nudge ディスパッチ（memory review + plan extraction が compact 接縫から発火；カットなし圧縮は何もディスパッチしない）。旧永続化アサーションは `tests/agent/middlewares/message_persistence/` へ移動しました —— 永続化は圧縮パスから出ました。
 - `test_compression_cooldown_persist.py`：クールダウンの再起動間生存。
 - `test_memory_flush.py`：flush ゲート、振り分け、非阻塞失敗。
 - `test_plan_extraction.py`：`_detect_todo_all_complete` の 4 分岐、`schedule_compression_nudges` の圧縮時カウンタ / ロック意味論、派遣、`_build_plan_context`。

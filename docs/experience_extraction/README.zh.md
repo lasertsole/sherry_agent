@@ -128,7 +128,7 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
-    tests/agent/middlewares/test_compaction_persistence.py \
+    tests/agent/middlewares/test_compression_nudges.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/system_prompt/test_plan_extraction.py \
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：触发门槛、fire-and-forget 调度、防重入锁、fail-open 释放、提示内容、`todo_update` metadata 门禁，以及完整 fork 隔离（派生键、主会话 `todowrite` 垫片、无 checkpointer / 消息泄漏）。
-- `test_compaction_persistence.py`：被丢弃前缀落库写一次（T2→T1 与重启重放的精确行数）、原始内容保证、落库先于替换的顺序，以及压缩时 nudge 派发。
+- `test_compression_nudges.py`：压缩时 nudge 派发（memory review + plan extraction 从 compact 接缝触发；无切点压缩不派发）。原持久化断言已迁往 `tests/agent/middlewares/message_persistence/` —— 持久化已移出压缩路径。
 - `test_compression_cooldown_persist.py`：冷却跨重启存活。
 - `test_memory_flush.py`：flush 门槛、路由与非阻塞失败。
 - `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`schedule_compression_nudges` 的压缩时计数/锁语义、派发，以及 `_build_plan_context`。

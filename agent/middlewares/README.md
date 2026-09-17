@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
+The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, per-boundary message persistence (`MessagePersistenceMiddleware`), context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > Every claim in this document was verified against the source code (installed `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, and the modules under `agent/middlewares/`). Class names, file names, defaults, and state keys below all exist in code.
 
@@ -25,6 +25,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
+  - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -57,6 +58,7 @@ Verified against the installed `langchain 1.3.9` source (`agents/middleware/fact
 
 - `before_agent` hooks run in **list order** — the first registered middleware runs first.
 - `after_agent` hooks run in **reverse list order** — the last registered middleware's `after_agent` runs first (it is the exit-node chain in the compiled graph).
+- `after_model` hooks are compiled into one graph node per middleware and chain in **reverse list order** — `model` → `after_model[last]` → … → `after_model[first]`. The last registered middleware that implements the hook is therefore the first to run after the model.
 - `wrap_model_call` / `wrap_tool_call` compose with the **first middleware in the list as the outermost layer** and the last one as the innermost (closest to the LLM / tool).
 
 > ⚠️ Older middleware frameworks used `awrap_before_agent`-style hooks; LangChain 1.3 does not. The async forms are direct prefixes: `abefore_agent`, `abefore_model`, `aafter_model`, `aafter_agent`, `awrap_model_call`, `awrap_tool_call`.
@@ -90,6 +92,10 @@ middleware = [
     MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
+    # after_model nodes run in reverse registration order: registered right
+    # after HITL, this becomes the FIRST hook to run after `model`, so the AI
+    # message is persisted before HITL strips denied calls / interrupts.
+    MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
     Summarization(
         need_update_system_prompt=True,
@@ -138,6 +144,7 @@ Differences vs the main agent:
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
 - No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop).
+- No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
 - `OutputRepetitionGuard` runs as a real middleware here.
 - `MaxTokensBoostMiddleware` takes its non-streaming path: children run via
   `ainvoke`, so the `is_stream_turn` flag is never set for a child session id.
@@ -149,6 +156,7 @@ Differences vs the main agent:
 |---|---|
 | `before_agent` (list order) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
+| `after_model` (reverse order) | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush) |
 | `after_agent` (reverse order) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 Only middlewares that implement a given hook participate in that phase; the table shows where each would run if it did.
@@ -173,7 +181,7 @@ Second in the list, right after `TodoContinuationEnforcer` (which implements no 
 
 > The `system_prompt` mem key is a contract with the compression pipeline: `Summarization` reads it for token estimation (`_estimate_system_prompt_tokens`) and rewrites it (mem + db) after a compression — which is why a cache miss always dual-writes.
 
-**Turn finalization lives in the compression pipeline.** Persisting messages to MesMemory and the memory-review / plan-extraction nudges are owned by `Summarization`: it flushes the original discarded prefix before replacing it and schedules both nudges from the same seam (see the Summarization section). `system_prompt_injection` overrides none of the lifecycle hooks (`before_agent` / `after_agent` / `before_model` / `after_model`); its only job is the system-prompt wrap.
+**Persistence is no longer part of the compression pipeline.** `MessagePersistenceMiddleware` flushes every new message to MesMemory at each model boundary (see its section below); the memory-review / plan-extraction nudges are still scheduled by `Summarization` from the compact seam. `system_prompt_injection` overrides none of the lifecycle hooks (`before_agent` / `after_agent` / `before_model` / `after_model`); its only job is the system-prompt wrap.
 
 > The previous version of this document claimed knowledge-graph maintenance (`after_turn`) and a `MemoryCache`. **Neither exists in the current code.** System prompts come from the state registers and `build_system_prompt()`; there is no knowledge-graph call anywhere in the middleware layer.
 
@@ -270,7 +278,7 @@ Registered in the main agent after `ToolCallNormalize`, so the messages it injec
 
 - Each drained queue item is marked `CONSUMED` in the queue's SQLite store, so a carrier is injected exactly once (checkpoint persistence keeps HITL-resume replays safe).
 - Fail-open: a blank/missing `session_id`, an empty queue, or any error is swallowed (log + no-op) — the drain never breaks the parent turn, and the queue survives for retry.
-- The injected carrier is written to MesMemory with `origin='subagent_completion'` when a later compression flushes the turn that contains it (persistence is compression-time now); until then it lives only in the checkpoint and is not visible in the messages table.
+- The injected carrier is written to MesMemory with `origin='subagent_completion'` at the `after_model` boundary of the very model call it was injected into (`MessagePersistenceMiddleware`); before that boundary it lives only in the checkpoint and is not visible in the messages table.
 
 ### HeartbeatStaleness
 
@@ -323,6 +331,26 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 
 ▶️ Full details: [humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
 
+### MessagePersistenceMiddleware
+
+**Module:** `agent/middlewares/message_persistence/core.py` · **Class:** `MessagePersistenceMiddleware(AgentMiddleware)`
+**Hooks:** `after_model` / `aafter_model` only
+
+Registered in the main agent **right after `HumanInTheLoop`**; because `after_model` nodes chain in reverse registration order, it is the FIRST hook to execute after `model` — the AI message is persisted before HITL strips denied tool calls or raises `GraphInterrupt`, and no other hook exception can skip the flush. (The worker pipeline does not register it.)
+
+Every invocation flushes the messages produced since the previous boundary — human at the turn's first boundary, AI right after the model produced it, tool results (and HITL denial ToolMessages) at the next boundary — into the `messages` table:
+
+1. Resolve `session_id` with `require_session_id`; a missing/blank id skips silently (child / nudge graphs), never raises.
+2. Collect candidates: `_is_persistable` keeps `human` / `ai` / `tool` only, skips messages carrying the in-process `_db_persisted` marker and `lc_source == "summarization"` artifacts.
+3. Filter the persistent watermark: `filter_persisted_message_ids` removes every id already tombstoned in `persisted_message_ids`; the watermark key is the LangGraph message `id` (stable across checkpoint serialization), falling back to a `sha1:` content fingerprint when a message has no id.
+4. Prepare the batch: `_reconcile_denials_for_persistence` re-attaches HITL-denied tool calls onto the preceding `AIMessage` (the denial stays paired), `_dedup_tool_results` drops empty and duplicate-id tool results.
+5. `await add_messages(...)` (async path) / `add_messages_sync(...)` (sync path) writes the batch; then `mark_message_ids_persisted` tombstones every candidate handed to the writer (including deduplicated copies, so they cannot resurface).
+6. Debug log with the written count (`message persistence: wrote N messages at model boundary for <session>`).
+
+Write-once: graph state accumulates, so the same messages are visible at every later boundary; the id filter keeps each message a single row. After a process restart the in-process markers are gone, but the ids survive checkpoint serialization and the persistent watermark filters the replay — the "each message exactly once" guarantee is cross-restart. A writer error is logged and NOT tombstoned, so the batch is retried at the next boundary (fail-open — persistence never breaks the turn).
+
+> The compression path no longer persists anything: its `compaction_persistence.py` module and the `_persist_discarded_messages_sync` / `_apersist_discarded_messages` call sites were removed. A compact only compacts and schedules the compression-time nudges (see the Summarization section).
+
 ### LLMRetryMiddleware
 
 **Module:** `agent/middlewares/llm_retry/core.py` · **Class:** `LLMRetryMiddleware(AgentMiddleware)` (plus `LLMRetryConfig`, `FallbackCandidate`, `ContentFilterError`)
@@ -365,7 +393,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 - **Truncation:** existing summary messages (identified by `additional_kwargs["lc_source"] == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS = 16 000` characters are re-truncated, keeping head 30 % / tail 30 % (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
 - **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.
 - `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`. Both delivery paths (directly after compaction, and the anti-thrash gate path) skip the injection when the request already carries a `SystemMessage` with identical content — no `override`, no new `SystemMessage` — keeping the model-visible prefix byte-identical.
-- **Pre-replacement persistence:** when a compact actually discards messages, the original discarded prefix (`request.state["messages"]`, never the post-`_run_non_llm_strategies` copies) is flushed to MesMemory before `_build_new_messages` / `request.override` replace it (`agent/middlewares/summarization/compaction_persistence.py`). The flush skips messages already carrying the in-process `_db_persisted` marker and messages recorded in the persistent `persisted_message_ids` watermark (`mes_memory.db`), so a T2 flush followed by a T1 flush — or a replay after a restart — writes each message exactly once. Fail-open.
+- **No persistence anymore:** the compression path writes nothing to MesMemory. Message persistence runs at every model boundary in `MessagePersistenceMiddleware`; the former `compaction_persistence.py` flush of the discarded prefix and its `_persist_discarded_messages_sync` / `_apersist_discarded_messages` call sites were removed.
 - **Compression-time nudges:** `schedule_compression_nudges` (`summarization/nudges.py`) increments `nudge_review_memory_count` once per compression and dispatches the memory review at `nudge_memory_threshold` (default 10); plan extraction is evaluated with `_detect_todo_all_complete` at the same point. Both run as fire-and-forget tasks under the NUDGE lane. The after-agent hook no longer dispatches these.
 
 **Nudge sub-agents** (`summarization/nudges.py`), dispatched by the compression pipeline: separate `create_agent` instances built on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool` rejects any tool whose metadata lacks `nudge: true`, so a nudge agent can only touch tools whitelisted for the nudge phase. Two prompts exist:
@@ -590,7 +618,8 @@ user turn arrives
 │   │                        content-filter / partial-stream-stub flag consumption
 │   │   · Summarization  maybe compact history (non-LLM strategies + auxiliary LLM), anti-thrash counters
 │   ├─ LLM responds
-│   └─ after_model
+│   └─ after_model (reverse list order; persistence runs first)
+│       · MessagePersistenceMiddleware  flush new human/ai/tool messages to MesMemory (watermark write-once)
 │       · HumanInTheLoop  policy checks; interrupt() where required; block → error ToolMessage
 │
 ├─ loop: tool calls (per call)
@@ -606,9 +635,9 @@ user turn arrives
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  stop heartbeat timer
     · MultimodalProcessor  clean mutil_temp (> 7 days / non-numeric stems)
-    · (system_prompt_injection overrides no lifecycle hooks; the discarded-prefix
-       flush and the memory-review / plan-extraction nudges fire inside
-       Summarization's compact path instead.)
+    · (system_prompt_injection overrides no lifecycle hooks; message persistence
+       runs in its own after_model hook and the memory-review / plan-extraction
+       nudges fire inside Summarization's compact path instead.)
 ```
 
 ---
@@ -680,6 +709,10 @@ agent/middlewares/
 │   ├── core.py                  # MultimodalProcessor
 │   ├── media_handlers.py        # per-media-type strategies for MultimodalProcessor
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (shared)
+├── message_persistence/         # MessagePersistenceMiddleware
+│   ├── __init__.py              # exports MessagePersistenceMiddleware
+│   ├── core.py                  # MessagePersistenceMiddleware (after_model / aafter_model)
+│   └── prepare.py               # persistence batch filters + HITL denial re-pairing
 ├── output_repetition_guard/     # OutputRepetitionGuard
 │   ├── __init__.py              # exports OutputRepetitionGuard
 │   ├── core.py                  # OutputRepetitionGuard (re-exported by __init__.py)
@@ -696,7 +729,6 @@ agent/middlewares/
 │   ├── core.py                  # Summarization
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
-│   ├── compaction_persistence.py # pre-replacement flush of the discarded prefix
 │   ├── memory_flush.py          # pre-compression memory flush
 │   └── nudges.py                # compression-time nudge scheduling + prompts
 ├── task_intent/                 # TaskIntentMiddleware
@@ -737,6 +769,7 @@ from agent.middlewares import (
     MultimodalProcessor,
     HumanInTheLoop,
     HITLConfig,
+    MessagePersistenceMiddleware,
 )
 # Shared helpers are exported as well: BeforeAgentHooksMixin,
 # AfterAgentHooksMixin, require_session_id, args_hash.

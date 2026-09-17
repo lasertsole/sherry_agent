@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
+EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批、模型边界增量落库（`MessagePersistenceMiddleware`）、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本文档中的每一项陈述都已对照源代码核实（已安装的 `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py` 以及 `agent/middlewares/` 下的各模块）。下文出现的类名、文件名、默认值与状态键均真实存在于代码中。
 
@@ -25,6 +25,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
+  - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -57,6 +58,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 
 - `before_agent` 钩子按**列表顺序**执行——先注册的先运行。
 - `after_agent` 钩子按**列表逆序**执行——最后注册的中间件的 `after_agent` 最先运行（它是编译图中出口节点的调用链）。
+- `after_model` 钩子每个中间件编译成一个图节点，并按**列表逆序**串联——`model` → `after_model[last]` → … → `after_model[first]`。因此，列表里最后一个实现该钩子的中间件，就是模型产出后第一个运行的钩子。
 - `wrap_model_call` / `wrap_tool_call` 的组合方式是：**列表中第一个中间件为最外层**，最后一个为最内层（最贴近 LLM / 工具）。
 
 > ⚠️ 旧版中间件框架使用 `awrap_before_agent` 风格的钩子；LangChain 1.3 没有。异步形式是直接加 `a` 前缀：`abefore_agent`、`abefore_model`、`aafter_model`、`aafter_agent`、`awrap_model_call`、`awrap_tool_call`。
@@ -90,6 +92,9 @@ middleware = [
     MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
+    # after_model 节点按注册逆序执行：紧跟 HITL 注册，即为模型产出后
+    # 第一个运行的钩子，AI 消息先落库，之后 HITL 才会剥离被拒调用 / 中断。
+    MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
     Summarization(
         need_update_system_prompt=True,
@@ -138,6 +143,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
 - 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
+- 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
@@ -147,6 +153,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 |---|---|
 | `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
+| `after_model`（逆序） | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库） |
 | `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
@@ -171,7 +178,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` 这个 mem 键是与压缩管线的契约：`Summarization` 读取它做 token 估算（`_estimate_system_prompt_tokens`），并在压缩后重写（mem + db）——因此缓存未命中时必须双写。
 
-**回合收尾已移入压缩管线。** 把消息持久化到 MesMemory、以及记忆复盘 / 计划提取两个 nudge，现由 `Summarization` 负责：它在替换前先落库被丢弃的原始前缀，并从同一接缝调度两个 nudge（见下文 Summarization 小节）。`system_prompt_injection` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
+**持久化已不再属于压缩管线。** `MessagePersistenceMiddleware` 在每个模型边界把新消息落库到 MesMemory（见下文小节）；记忆复盘 / 计划提取两个 nudge 仍由 `Summarization` 从 compact 接缝调度。`system_prompt_injection` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
 
@@ -268,7 +275,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 每个被取出的队列条目都会在队列的 SQLite 存储中标记为 `CONSUMED`，因此载体只会被注入一次（检查点持久化保证 HITL 恢复重放安全）。
 - Fail-open：`session_id` 缺失/为空、队列为空或任何异常都会被吞掉（记日志 + 无操作）——drain 绝不会破坏父回合，队列保留以供重试。
-- 注入的载体在后续压缩落库包含它的回合时，以 `origin='subagent_completion'` 写入 MesMemory（落库现为压缩时）；在此之前它只存在于检查点中，messages 表内不可见。
+- 注入的载体在它被注入的那次模型调用的 `after_model` 边界，以 `origin='subagent_completion'` 写入 MesMemory（`MessagePersistenceMiddleware`）；在该边界之前它只存在于检查点中，messages 表内不可见。
 
 ### HeartbeatStaleness
 
@@ -321,6 +328,26 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ▶️ 完整文档：[humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
 
+### MessagePersistenceMiddleware
+
+**模块：** `agent/middlewares/message_persistence/core.py` · **类：** `MessagePersistenceMiddleware(AgentMiddleware)`
+**钩子：** 仅 `after_model` / `aafter_model`
+
+在主 Agent 中**紧跟 `HumanInTheLoop` 注册**；由于 `after_model` 节点按注册逆序串联，它是 `model` 之后**第一个执行**的钩子——AI 消息先落库，HITL 之后才会剥离被拒工具调用或抛 `GraphInterrupt`，任何其它钩子的异常也无法跳过落库。（worker 流水线不注册它。）
+
+每次执行都把自上一个边界以来产生的消息——human 在当轮首个边界、AI 在模型产出后、工具结果（含 HITL 拒绝产生的 ToolMessage）在下一边界——写入 `messages` 表：
+
+1. 用 `require_session_id` 解析 `session_id`；缺失/空白时静默跳过（子 Agent / nudge 图），绝不抛出。
+2. 收集候选：`_is_persistable` 只保留 `human` / `ai` / `tool`，跳过带进程内 `_db_persisted` 标记的消息与 `lc_source == "summarization"` 的压缩产物。
+3. 过滤持久水位：`filter_persisted_message_ids` 剔除所有已登记在 `persisted_message_ids` 的 id；水位键为 LangGraph 消息 `id`（跨检查点序列化稳定），消息无 id 时回退 `sha1:` 内容指纹。
+4. 补全批次：`_reconcile_denials_for_persistence` 把 HITL 拒绝的工具调用重挂到前一条 `AIMessage`（拒绝保持配对），`_dedup_tool_results` 丢弃空与重复 id 的工具结果。
+5. `await add_messages(...)`（异步路径）/ `add_messages_sync(...)`（同步路径）写入；随后 `mark_message_ids_persisted` 把交给写入器的每个候选（含被去重的副本，防止再次浮现）登记为墓碑。
+6. debug 日志记录写入条数（`message persistence: wrote N messages at model boundary for <session>`）。
+
+写一次：图状态会累积，同一批消息在后续每个边界都会被再次看到，id 过滤保证每条消息只有一行。进程重启后进程内标记消失，但 id 能跨检查点序列化存活、持久水位会过滤重放——"每条消息恰好一次"跨重启成立。写入失败只记日志、**不**登记墓碑，下一边界会重试该批次（fail-open——落库绝不弄坏回合）。
+
+> 压缩路径不再做任何持久化：`compaction_persistence.py` 模块与 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。一次 compact 只做压缩并调度压缩时 nudge（见 Summarization 小节）。
+
 ### LLMRetryMiddleware
 
 **模块：** `agent/middlewares/llm_retry/core.py` · **类：** `LLMRetryMiddleware(AgentMiddleware)`（另有 `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
@@ -363,7 +390,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **截断：** 已有的摘要消息（以 `additional_kwargs["lc_source"] == "summarization"` 识别）超过 `SUMMARY_TOTAL_MAX_CHARS = 16 000` 字符时被重新截断，保留头部 30 % / 尾部 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`），并加入省略标记。
 - **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
-- **替换前持久化：** 当一次 compact 确实丢弃了消息时，被丢弃的原始前缀（`request.state["messages"]`，绝不是 `_run_non_llm_strategies` 之后的副本）会在 `_build_new_messages` / `request.override` 替换它之前先落库到 MesMemory（`agent/middlewares/summarization/compaction_persistence.py`）。落库会跳过已带进程内 `_db_persisted` 标记、以及已登记在持久水位 `persisted_message_ids`（`mes_memory.db`）里的消息，因此 T2 落库后再 T1 落库——或重启后的重放——每条消息都只写一次。fail-open。
+- **不再持久化：** 压缩路径不向 MesMemory 写任何内容。消息持久化在每个模型边界由 `MessagePersistenceMiddleware` 完成；原先 `compaction_persistence.py` 的被丢弃前缀落库及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。
 - **压缩时 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）每压缩一次递增 `nudge_review_memory_count`，达到 `nudge_memory_threshold`（默认 10）时派发记忆复盘；计划提取在同一时点用 `_detect_todo_all_complete` 评估。两者都以 fire-and-forget 任务在 NUDGE 车道上运行。after-agent 钩子不再派发它们。
 
 **Nudge 子 Agent**（`summarization/nudges.py`，由压缩管线调度）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
@@ -582,7 +609,8 @@ agent = create_agent(
 │   │                        内容过滤 / 部分流桩标志消费
 │   │   · Summarization  视情况压缩历史（非 LLM 策略 + 辅助 LLM），防抖计数
 │   ├─ LLM 响应
-│   └─ after_model
+│   └─ after_model（逆序；落库先跑）
+│       · MessagePersistenceMiddleware  把新 human/ai/tool 消息增量落库到 MesMemory（水位写一次）
 │       · HumanInTheLoop  策略检查；必要时 interrupt()；阻止 → 错误 ToolMessage
 │
 ├─ 循环：工具调用（每次调用）
@@ -598,8 +626,9 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  停止心跳定时器
     · MultimodalProcessor  清理 mutil_temp（> 7 天 / 非数字文件名）
-    · （system_prompt_injection 不实现任何生命周期钩子；被丢弃前缀的落库与
-       记忆复盘 / 计划提取 nudge 改在 Summarization 的压缩路径内触发。）
+    · （system_prompt_injection 不实现任何生命周期钩子；消息持久化在自己的
+       after_model 钩子中运行，记忆复盘 / 计划提取 nudge 改在 Summarization
+       的压缩路径内触发。）
 ```
 
 ---
@@ -671,6 +700,10 @@ agent/middlewares/
 │   ├── core.py                  # MultimodalProcessor
 │   ├── media_handlers.py        # MultimodalProcessor 的分媒体类型处理策略
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin（共享）
+├── message_persistence/         # MessagePersistenceMiddleware
+│   ├── __init__.py              # 导出 MessagePersistenceMiddleware
+│   ├── core.py                  # MessagePersistenceMiddleware（after_model / aafter_model）
+│   └── prepare.py               # 落库批次过滤 + HITL 拒绝重挂
 ├── output_repetition_guard/     # OutputRepetitionGuard
 │   ├── __init__.py              # 导出 OutputRepetitionGuard
 │   ├── core.py                  # OutputRepetitionGuard（由 __init__.py 再导出）
@@ -687,7 +720,6 @@ agent/middlewares/
 │   ├── core.py                  # Summarization
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
-│   ├── compaction_persistence.py # 替换前落库被丢弃前缀
 │   ├── memory_flush.py          # 压缩前记忆落盘
 │   └── nudges.py                # 压缩时 nudge 调度 + 提示词
 ├── task_intent/                 # TaskIntentMiddleware
@@ -728,7 +760,8 @@ from agent.middlewares import (
     MultimodalProcessor,
     HumanInTheLoop,
     HITLConfig,
+    MessagePersistenceMiddleware,
 )
-# 同时导出共享辅助：BeforeAgentHooksMixin、
+# 共享辅助函数同样导出：BeforeAgentHooksMixin、
 # AfterAgentHooksMixin、require_session_id、args_hash。
 ```

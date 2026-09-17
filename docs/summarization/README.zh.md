@@ -201,14 +201,11 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 6. **恢复注入**（`_inject_recovery_context`，:1595）：捕获的文件操作棘轮被改写进摘要的 `## Relevant Files` 段，检查点始终携带最新的读/改文件地图。
 7. **记账**（`_record_compression`，:1277，最后 `request.override(messages=..., system_message=...)`。
 
-### 💾 替换前持久化与压缩时 nudge
+### 💾 压缩时 nudge
 
-当一次 compact 真的丢弃了前缀（`cutoff > 0`）时，两个压缩侧的副作用会在替换消息构建**之前**运行：
+消息持久化已移出压缩路径：每个模型调用边界都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）把新产生的 human/ai/tool 消息增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。压缩期落库模块（`compaction_persistence.py`）及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点已删除 —— 一次 compact 现在只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
 
-1. **被丢弃前缀落库**（`agent/middlewares/summarization/compaction_persistence.py`，经 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用）：被移除的消息在 `_build_new_messages` / `request.override` 换上摘要对之前先写入 MesMemory。落库取 `request.state["messages"]` 里的**原始**消息对象 —— 绝不是 `_run_non_llm_strategies` 之后的副本（其工具输出可能已被去重或裁剪）。被丢弃片段按对象身份定位（用 `id()` 在原始列表中找到 `preserved[0]`）；当某个策略替换了该对象时，回退为保留所有 `id()` 不在 `preserved` 中的原始消息。HITL 拒绝的 ToolMessage 会先重新配对到其 AI 消息；重复与空的工具结果会被丢弃。任何存储错误只记日志、压缩继续 —— 落库是 fail-open 的。
-2. **压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。这两个触发器此前由 `ContextEngineHook` 中间件的 after-agent 钩子每回合运行；系统提示词注入迁移到 `@dynamic_prompt` 中间件（`system_prompt_injection`）后，该类与钩子均已移除。单发 `nudge_plan_extraction_fired` 标记语义不变 —— 每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
-
-写一次保证：带进程内 `_db_persisted` 标记的消息、以及已登记在持久水位 `persisted_message_ids`（`mes_memory.db` 中的 `(session_id, message_id)` 墓碑表）里的消息都会被跳过。图状态里的消息 id 能跨检查点序列化存活，所以 T2 落库（仅请求覆盖；state 仍持有该片段）之后再 T1 落库、或进程重启后的检查点重放，都不会插入重复行。
+**压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。这两个触发器此前由 `ContextEngineHook` 中间件的 after-agent 钩子每回合运行；系统提示词注入迁移到 `@dynamic_prompt` 中间件（`system_prompt_injection`）后，该类与钩子均已移除。单发 `nudge_plan_extraction_fired` 标记语义不变 —— 每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
 **切点选择**（`_determine_cutoff`，:1310）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，:565）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（:1340）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 :1968/:2054 调用），切点绝不越过最后一条 `HumanMessage`。
 
@@ -361,7 +358,8 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
-| `tests/agent/middlewares/test_compaction_persistence.py` | 9 | 被丢弃前缀落库：T2→T1 与重启重放写一次的精确行数、原始工具内容 vs 非 LLM 改写、落库先于替换的顺序、压缩时 nudge 派发、同步 + 异步路径 |
+| `tests/agent/middlewares/message_persistence/` | 16 | 模型边界增量落库：每条消息恰好一次、跨边界不重复、重启重放靠持久水位不增行、同步 + 异步钩子、缺 session_id 跳过、HITL 拒绝配对重挂、过滤语义；另有 T1/T2/T3 压缩路径零写库证明 |
+| `tests/agent/middlewares/test_compression_nudges.py` | 2 | 压缩时 nudge 派发：memory review + plan extraction 从 compact 路径触发；无切点压缩不派发 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 

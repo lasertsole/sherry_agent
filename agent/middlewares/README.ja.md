@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び出しのすべてに関わる `AgentMiddleware` コンポーネント — コンテキストエンジニアリング、マルチモーダル入力処理、反復予算、ツールガードレール、トランスクリプト修復、ハートビートスタイルネス検知、ヒューマンインザループ承認、コンテキスト要約、モデルフォールバック付きの分類済み LLM エラーリトライ（`LLMRetryMiddleware`）— に加え、出力繰り返しガードとストリームレベルのグラフラッパー（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
+EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び出しのすべてに関わる `AgentMiddleware` コンポーネント — コンテキストエンジニアリング、マルチモーダル入力処理、反復予算、ツールガードレール、トランスクリプト修復、ハートビートスタイルネス検知、ヒューマンインザループ承認、モデル境界ごとのメッセージ永続化（`MessagePersistenceMiddleware`）、コンテキスト要約、モデルフォールバック付きの分類済み LLM エラーリトライ（`LLMRetryMiddleware`）— に加え、出力繰り返しガードとストリームレベルのグラフラッパー（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本ドキュメントの記述はすべてソースコードに対して検証済みです（インストール済み `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、および `agent/middlewares/` 配下の各モジュール）。以下に登場するクラス名・ファイル名・デフォルト値・状態キーはすべて実在します。
 
@@ -25,6 +25,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
+  - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -57,6 +58,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 
 - `before_agent` フックは**リスト順**に実行されます — 最初に登録されたミドルウェアが先に走ります。
 - `after_agent` フックは**リスト逆順**に実行されます — 最後に登録されたミドルウェアの `after_agent` が最初に走ります（コンパイル済みグラフの出口ノードチェーンです）。
+- `after_model` フックはミドルウェアごとに 1 つのグラフノードへコンパイルされ、**リスト逆順**に連結されます — `model` → `after_model[last]` → … → `after_model[first]`。したがって、このフックを実装する最後のミドルウェアが、モデル応答後に最初に走るフックになります。
 - `wrap_model_call` / `wrap_tool_call` は**リストの先頭が最外層**、末尾が最内層（LLM / ツールに最も近い）として合成されます。
 
 > ⚠️ 旧ミドルウェアフレームワークには `awrap_before_agent` 形式のフックがありましたが、LangChain 1.3 には存在しません。非同期形式は先頭に `a` を付けるだけです：`abefore_agent`、`abefore_model`、`aafter_model`、`aafter_agent`、`awrap_model_call`、`awrap_tool_call`。
@@ -90,6 +92,10 @@ middleware = [
     MaxTokensBoostMiddleware(),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
+    # after_model ノードは登録逆順に走る: HITL の直後に登録することで、
+    # モデル応答後に最初に実行されるフックとなり、HITL が拒否呼び出しを
+    # 剥がす / interrupt する前に AI メッセージが永続化される。
+    MessagePersistenceMiddleware(),
     LLMRetryMiddleware(fallback_chain=fallback_chain),
     Summarization(
         need_update_system_prompt=True,
@@ -138,6 +144,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 要約トリガーはトークンのみではなく、メッセージ数（40）**または**トークン数（コンテキストウィンドウの 80 %）。
 - より厳しい反復予算（90 ではなく 60）。
 - `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。
+- `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
 - 子セッション終了時、spawn コードは `finally` ブロックで `state_register_mem` から `OutputRepetitionGuard` の 6 つの状態キー（`SESSION_STATE_KEYS`）を削除します。
 
@@ -147,6 +154,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 |---|---|
 | `before_agent`（リスト順） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
+| `after_model`（逆順） | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない） |
 | `after_agent`（逆順） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 あるフックを実装しているミドルウェアだけがそのフェーズに参加します。表は「実装していた場合に走る位置」を示しています。
@@ -171,7 +179,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > `system_prompt` の mem キーは圧縮パイプラインとの契約です：`Summarization` がトークン見積もり（`_estimate_system_prompt_tokens`）に読み、圧縮後に（mem + db へ）書き戻します —— そのためキャッシュミス時は必ず二重書き込みします。
 
-**ターンの仕上げは圧縮パイプラインへ移動しました。** MesMemory へのメッセージ永続化と、メモリレビュー / プラン抽出の nudge は `Summarization` が所有します：置換前に破棄される元のプレフィックスをフラッシュし、同じ接縫から両方の nudge をスケジュールします（下の Summarization セクション参照）。`system_prompt_injection` はどのライフサイクルフック（`before_agent` / `after_agent` / `before_model` / `after_model`）もオーバーライドしません；役割はシステムプロンプトのラップだけです。
+**永続化は圧縮パイプラインから出ました。** `MessagePersistenceMiddleware` が各モデル境界で新規メッセージを MesMemory へフラッシュします（下のセクション参照）；メモリレビュー / プラン抽出の nudge は引き続き `Summarization` が compact 接縫からスケジュールします。`system_prompt_injection` はどのライフサイクルフック（`before_agent` / `after_agent` / `before_model` / `after_model`）もオーバーライドしません；役割はシステムプロンプトのラップだけです。
 
 > 本ドキュメントの旧版はナレッジグラフ保守（`after_turn`）と `MemoryCache` を主張していました。**現在のコードにはどちらも存在しません。** システムプロンプトは状態レジスタと `build_system_prompt()` から供給され、ミドルウェア層のどこにもナレッジグラフ呼び出しはありません。
 
@@ -268,7 +276,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 排出された各キューエントリはキューの SQLite ストアで `CONSUMED` とマークされるため、キャリアは正確に 1 回だけ注入されます（チェックポイント永続化により HITL 再開リプレイも安全）。
 - Fail-open：`session_id` の欠落/空、空のキュー、あらゆる例外は握りつぶされます（ログ + no-op）— drain が親ターンを壊すことはなく、キューは再試行のために保持されます。
-- 注入されたキャリアは、それを含むターンが後の圧縮でフラッシュされるときに `origin='subagent_completion'` として MesMemory に書き込まれます（永続化は圧縮時になりました）; それまではチェックポイントにのみ存在し、messages テーブルからは見えません。
+- 注入されたキャリアは、それが注入されたまさにそのモデル呼び出しの `after_model` 境界で `origin='subagent_completion'` として MesMemory に書き込まれます（`MessagePersistenceMiddleware`）; その境界まではチェックポイントにのみ存在し、messages テーブルからは見えません。
 
 ### HeartbeatStaleness
 
@@ -321,6 +329,26 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ▶️ 詳細：[humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
 
+### MessagePersistenceMiddleware
+
+**モジュール：** `agent/middlewares/message_persistence/core.py` · **クラス：** `MessagePersistenceMiddleware(AgentMiddleware)`
+**フック：** `after_model` / `aafter_model` のみ
+
+メインエージェントでは **`HumanInTheLoop` の直後**に登録されます。`after_model` ノードは登録逆順に連結されるため、これは `model` の後に**最初に実行される**フックです — AI メッセージは、HITL が拒否されたツール呼び出しを剥がしたり `GraphInterrupt` を起こす前に永続化され、他のフックの例外もこのフラッシュを飛ばせません。（ワーカーパイプラインには登録されません。）
+
+呼び出しごとに、前の境界以降に生成されたメッセージ — human はそのターン最初の境界、AI はモデル生成直後、ツール結果（HITL 拒否の ToolMessage を含む）は次の境界 — を `messages` テーブルへフラッシュします：
+
+1. `require_session_id` で `session_id` を解決。欠落/空白は静かにスキップし（子 / nudge グラフ）、決して送出しません。
+2. 候補の収集：`_is_persistable` が `human` / `ai` / `tool` のみを残し、プロセス内 `_db_persisted` マーカー付きメッセージと `lc_source == "summarization"` の圧縮成果物をスキップします。
+3. 永続ウォーターマークでのフィルタ：`filter_persisted_message_ids` が `persisted_message_ids` に登録済みの id を除外します。ウォーターマークキーは LangGraph メッセージ `id`（チェックポイント直列化をまたいで安定）、id が無い場合は `sha1:` 内容フィンガープリントです。
+4. バッチの補完：`_reconcile_denials_for_persistence` が HITL 拒否のツール呼び出しを直前の `AIMessage` に再装着し（拒否はペアのまま）、`_dedup_tool_results` が空・重複 id のツール結果を捨てます。
+5. `await add_messages(...)`（非同期経路）/ `add_messages_sync(...)`（同期経路）で書き込み、その後 `mark_message_ids_persisted` が書き込み器へ渡した全候補（重複排除されたコピーを含む — 再浮上防止）をトゥームストーン化します。
+6. 書き込み件数を debug ログに記録（`message persistence: wrote N messages at model boundary for <session>`）。
+
+write-once：グラフ状態は蓄積するため同じメッセージが後続の各境界で再び見えますが、id フィルタが 1 行に保ちます。プロセス再起動後はプロセス内マーカーが消えますが、id はチェックポイント直列化を生き延び、永続ウォーターマークがリプレイを除外します — 「各メッセージちょうど 1 回」は再起動をまたいで成立します。書き込みエラーはログのみで**トゥームストーンされず**、次の境界で再試行されます（fail-open — 永続化がターンを壊すことはありません）。
+
+> 圧縮パスはもう何も永続化しません：`compaction_persistence.py` モジュールと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。compact は圧縮と圧縮時 nudge のスケジュールだけを行います（Summarization セクション参照）。
+
 ### LLMRetryMiddleware
 
 **モジュール：** `agent/middlewares/llm_retry/core.py` · **クラス：** `LLMRetryMiddleware(AgentMiddleware)`（他に `LLMRetryConfig`、`FallbackCandidate`、`ContentFilterError`）
@@ -363,7 +391,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **切り詰め：** 既存の要約メッセージ（`additional_kwargs["lc_source"] == "summarization"` で識別）が `SUMMARY_TOTAL_MAX_CHARS = 16 000` 文字を超えると再切り詰めされ、先頭 30 % / 末尾 30 %（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）を保持し省略マーカーが入ります。
 - **出力：** 置換後のメッセージは `HumanMessage` / `AIMessage` の**ペア**です — 中立的な `"What did we do so far?"` に続き、`additional_kwargs={"lc_source": "summarization"}` を持つ `AIMessage` が続きます — モデルが連続した同役割メッセージを見ることはなく、事後のペア修復も不要です。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
-- **置換前の永続化：** compact が実際にメッセージを破棄したとき、破棄される元のプレフィックス（`request.state["messages"]`。`_run_non_llm_strategies` 後のコピーは決して使わない）が、`_build_new_messages` / `request.override` による置換の前に MesMemory へフラッシュされます（`agent/middlewares/summarization/compaction_persistence.py`）。フラッシュはプロセス内 `_db_persisted` マーカーを持つメッセージと、永続ウォーターマーク `persisted_message_ids`（`mes_memory.db`）に記録済みのメッセージをスキップするため、T2 フラッシュに続く T1 フラッシュ、または再起動後のリプレイでも各メッセージは 1 回だけ書かれます。fail-open。
+- **永続化は行いません：** 圧縮パスは MesMemory へ何も書き込みません。メッセージ永続化は各モデル境界で `MessagePersistenceMiddleware` が実行します；旧 `compaction_persistence.py` の破棄プレフィックスフラッシュと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。
 - **圧縮時 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）が圧縮ごとに `nudge_review_memory_count` を増やし、`nudge_memory_threshold`（既定 10）でメモリレビューを派遣します；プラン抽出は同じ時点で `_detect_todo_all_complete` により評価されます。どちらも NUDGE レーン上の fire-and-forget タスクとして走ります。after-agent フックはこれらを派遣しません。
 
 **Nudge サブエージェント**（`summarization/nudges.py`、圧縮パイプラインが派遣）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
@@ -588,7 +616,8 @@ agent = create_agent(
 │   │                        コンテンツフィルタ / 部分ストリームスタブフラグの消費
 │   │   · Summarization  必要なら履歴を圧縮（非 LLM 戦略 + 補助 LLM）、アンチスラッシングカウンター
 │   ├─ LLM が応答
-│   └─ after_model
+│   └─ after_model（逆順；永続化が先）
+│       · MessagePersistenceMiddleware  新しい human/ai/tool メッセージを MesMemory へ増分フラッシュ（ウォーターマークで write-once）
 │       · HumanInTheLoop  ポリシーチェック。必要なら interrupt()。ブロック → エラー ToolMessage
 │
 ├─ ループ：ツール呼び出し（呼び出しごと）
@@ -604,9 +633,9 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  ハートビートタイマーを停止
     · MultimodalProcessor  mutil_temp を清掃（7 日超 / 非数値ファイル名）
-    · （system_prompt_injection はライフサイクルフックを実装しません；破棄プレフィックスの
-       フラッシュとメモリレビュー / プラン抽出 nudge は代わりに Summarization の
-       圧縮パス内で発火します。）
+    · （system_prompt_injection はライフサイクルフックを実装しません；メッセージ永続化は
+       専用の after_model フックで走り、メモリレビュー / プラン抽出 nudge は代わりに
+       Summarization の圧縮パス内で発火します。）
 ```
 
 ---
@@ -678,6 +707,10 @@ agent/middlewares/
 │   ├── core.py                  # MultimodalProcessor
 │   ├── media_handlers.py        # MultimodalProcessor のメディアタイプ別戦略
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin（共有）
+├── message_persistence/         # MessagePersistenceMiddleware
+│   ├── __init__.py              # MessagePersistenceMiddleware をエクスポート
+│   ├── core.py                  # MessagePersistenceMiddleware（after_model / aafter_model）
+│   └── prepare.py               # 永続化バッチのフィルタ + HITL 拒否の再ペアリング
 ├── output_repetition_guard/     # OutputRepetitionGuard
 │   ├── __init__.py              # OutputRepetitionGuard をエクスポート
 │   ├── core.py                  # OutputRepetitionGuard（__init__.py が再エクスポート）
@@ -694,7 +727,6 @@ agent/middlewares/
 │   ├── core.py                  # Summarization
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
-│   ├── compaction_persistence.py # 破棄プレフィックスの置換前フラッシュ
 │   ├── memory_flush.py          # 圧縮前メモリフラッシュ
 │   └── nudges.py                # 圧縮時 nudge のスケジューリング + プロンプト
 ├── task_intent/                 # TaskIntentMiddleware
@@ -735,6 +767,7 @@ from agent.middlewares import (
     MultimodalProcessor,
     HumanInTheLoop,
     HITLConfig,
+    MessagePersistenceMiddleware,
 )
 # 共有ヘルパーもエクスポートされています：BeforeAgentHooksMixin、
 # AfterAgentHooksMixin、require_session_id、args_hash。

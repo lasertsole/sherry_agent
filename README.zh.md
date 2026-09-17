@@ -19,7 +19,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ## 🚀 核心特性
 
 ### 1. 🧠 分层记忆系统（Context Engine）
-- **短期会话记忆**（[MesMemory](context_engine/README.md)）：对话历史持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表；压缩管线在压缩时落库每个被丢弃的前缀（最新的未压缩回合只存在于检查点中）
+- **短期会话记忆**（[MesMemory](context_engine/README.md)）：对话历史持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表；每个模型调用边界都会增量落库新产生的 human/ai/tool 消息（`MessagePersistenceMiddleware`，靠 `persisted_message_ids` 水位写一次），原始存储不再依赖压缩是否发生
 - **历史检索**：支持最近 N 轮、分页历史、指定轮次范围查询，并格式化为提示词上下文
 - **会话检查点**：线程安全的异步 SQLite checkpointer（`langgraph-checkpoint-sqlite`）跨重启持久化 Agent 状态，过期检查点自动清理
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史

@@ -128,7 +128,7 @@ Focused tests:
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
-    tests/agent/middlewares/test_compaction_persistence.py \
+    tests/agent/middlewares/test_compression_nudges.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/system_prompt/test_plan_extraction.py \
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: trigger gating, fire-and-forget scheduling, re-entrancy lock, fail-open release, prompt content, the `todo_update` metadata gate, and full-fork isolation (derived key, main-session `todowrite` shim, no checkpointer / message leakage).
-- `test_compaction_persistence.py`: discarded-prefix flush write-once (T2→T1 and restart replay with exact row counts), original-content guarantee, flush-before-replacement ordering, and compression-time nudge dispatch.
+- `test_compression_nudges.py`: compression-time nudge dispatch (memory review + plan extraction fire from the compact seam; a no-cut compaction dispatches nothing). The former persistence assertions moved to `tests/agent/middlewares/message_persistence/` — persistence left the compression path.
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.
 - `test_memory_flush.py`: flush gating, routing, and non-blocking failure.
 - `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the compression-time counter/lock semantics of `schedule_compression_nudges`, dispatch, and `_build_plan_context`.

@@ -204,14 +204,11 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 6. **복구 주입**(`_inject_recovery_context`, :1595): 캡처한 파일 작업 래칫이 요약의 `## Relevant Files` 섹션으로 재작성되어, 체크포인트가 항상 최신 읽기/수정 파일 맵을 품도록 합니다.
 7. **장부 기록**(`_record_compression`, :1277), 마지막으로 `request.override(messages=..., system_message=...)`.
 
-### 💾 교체 전 영속화와 압축 시점 nudge
+### 💾 압축 시점 nudge
 
-compact가 실제로 프리픽스를 버릴 때(`cutoff > 0`), 두 가지 압축 측 부수 효과가 교체 메시지 구성 **전에** 실행됩니다:
+메시지 영속화는 압축 경로에서 빠졌습니다: 각 모델 호출 경계마다 `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/ai/tool 메시지를 MesMemory로 증분 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. 압축 시점 플러시 모듈(`compaction_persistence.py`)과 그 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점은 삭제되었습니다 — compact는 이제 압축과 아래 nudge 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
 
-1. **버려진 프리픽스 플러시**(`agent/middlewares/summarization/compaction_persistence.py`, `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 경유): 제거되는 메시지는 `_build_new_messages` / `request.override`가 요약 쌍을 끼워 넣기 전에 MesMemory로 플러시됩니다. 플러시는 `request.state["messages"]`의 **원본** 메시지 객체를 사용합니다 — `_run_non_llm_strategies` 이후의 복사본(도구 출력이 이미 중복 제거·절단되었을 수 있음)은 절대 사용하지 않습니다. 버려진 슬라이스는 객체 동일성으로 찾습니다(`id()`로 `preserved[0]`을 원본 목록에서 검색); 전략이 그 객체를 교체했다면 `id()`가 `preserved`에 없는 원본을 모두 유지하는 폴백을 씁니다. HITL 거부 ToolMessage는 먼저 AI 메시지에 재페어링되고, 중복·빈 도구 결과는 버려집니다. 저장소 오류는 로그만 남기고 압축은 계속됩니다 — fail-open입니다.
-2. **압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰 카운터(`nudge_review_memory_count`, `state_register_db`)가 압축마다 1회 증가하고 `nudge_memory_threshold`(기본 10) 도달 시 `_nudge_memory`를 발화합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. 이 두 트리거는 이전에 `ContextEngineHook` 미들웨어의 after-agent 훅이 매 턴 실행했지만, 시스템 프롬프트 주입이 `@dynamic_prompt` 미들웨어(`system_prompt_injection`)로 옮겨가면서 클래스와 훅 모두 제거되었습니다. 단발 `nudge_plan_extraction_fired` 플래그 의미는 그대로 — 완료 사이클당 1회 추출 — 이므로 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
-
-write-once 보장: 프로세스 내 `_db_persisted` 마커가 있는 메시지와 영속 워터마크 `persisted_message_ids`(`mes_memory.db`의 `(session_id, message_id)` 무덤 테이블)에 기록된 메시지는 건너뜁니다. 그래프 상태의 메시지 id는 체크포인트 직렬화를 견디므로, T2 플러시(요청만 오버라이드; state는 슬라이스를 계속 보유) 뒤의 T1 플러시, 또는 프로세스 재시작 후 체크포인트 재생에서도 중복 행이 삽입되지 않습니다.
+**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰 카운터(`nudge_review_memory_count`, `state_register_db`)가 압축마다 1회 증가하고 `nudge_memory_threshold`(기본 10) 도달 시 `_nudge_memory`를 발화합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. 이 두 트리거는 이전에 `ContextEngineHook` 미들웨어의 after-agent 훅이 매 턴 실행했지만, 시스템 프롬프트 주입이 `@dynamic_prompt` 미들웨어(`system_prompt_injection`)로 옮겨가면서 클래스와 훅 모두 제거되었습니다. 단발 `nudge_plan_extraction_fired` 플래그 의미는 그대로 — 완료 사이클당 1회 추출 — 이므로 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
 
 **절단점 선택**(`_determine_cutoff`, :1310): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, :565)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(:1340)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입 :1968/:2054에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 
@@ -364,7 +361,8 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 등록 계약(테스트 고정 윈도우): `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
-| `tests/agent/middlewares/test_compaction_persistence.py` | 9 | 버려진 프리픽스 플러시: T2→T1 및 재시작 리플레이 write-once를 정확한 행 수로, 원본 도구 내용 vs 비-LLM 재작성, 교체 전 플러시 순서, 압축 시점 nudge 디스패치, 동기 + 비동기 경로 |
+| `tests/agent/middlewares/message_persistence/` | 16 | 모델 경계별 증분 플러시: 각 메시지 정확히 1회, 경계 넘어 중복 없음, 영속 워터마크로 재시작 리플레이 시 행 수 불변, 동기 + 비동기 훅, session_id 부재 시 건너뜀, HITL 거부 페어 재장착, 필터 의미론; 추가로 T1/T2/T3 압축 경로의 제로 쓰기 증명 |
+| `tests/agent/middlewares/test_compression_nudges.py` | 2 | 압축 시점 nudge 디스패치: memory review + plan extraction이 compact 경로에서 발화, 컷 없는 압축은 아무것도 디스패치하지 않음 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 

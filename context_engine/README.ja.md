@@ -245,7 +245,7 @@ for r in results:
 
 | エントリポイント | インポート | 用途 |
 |------------------|-----------|------|
-| `agent/middlewares/summarization/compaction_persistence.py`（`Summarization` が駆動） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | 圧縮パイプラインは要約ペアに置き換える前に、破棄される元のプレフィックスを MesMemory へフラッシュします; 永続ウォーターマーク `persisted_message_ids` により、このフラッシュは T2→T1 リプレイとプロセス再起動をまたいでも write-once です。`system_prompt_injection`（`@dynamic_prompt` ミドルウェア）はシステムプロンプトの注入（`wrap_model_call`/`awrap_model_call`）のみを行い、メモリレビュー / プラン抽出 nudge は `summarization/nudges.py` が圧縮時にスケジュールします。詳細は `agent/middlewares/README.md` を参照。 |
+| `agent/middlewares/message_persistence/`（`MessagePersistenceMiddleware`） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | モデル境界ごとに新しい human/ai/tool メッセージを MesMemory へ増分フラッシュします（human はターン最初の境界、AI は生成直後、ツール結果は次の境界）; 永続ウォーターマーク `persisted_message_ids` が、状態蓄積とプロセス再起動をまたいで write-once を保ちます。圧縮パスはもう何も永続化しません —— `compaction_persistence.py` は削除されました。`system_prompt_injection`（`@dynamic_prompt` ミドルウェア）はシステムプロンプトの注入（`wrap_model_call`/`awrap_model_call`）のみを行い、メモリレビュー / プラン抽出 nudge は引き続き `summarization/nudges.py` が圧縮時にスケジュールします。詳細は `agent/middlewares/README.md` を参照。 |
 | `agent/tools/message_search.py` → `message_search` ツール | `get_db`、`search_messages`、`get_turns_by_turn_num_scope` | セッション横断の想起ツール：FTS5 検索（limit 50）→ 一致ごとにターン範囲取得 → LLM によるセッション要約。query がない場合は直近セッションのメタデータを返す |
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`、および（`context_engine.curator` からの）`reset_idle_for_seconds` | クライアント向けセッション一覧（トップレベルセッション + 派生タイトル）、ページング履歴、ユーザーターンごとの curator アイドルタイマーリセット |
 | `server/DAO/messages.py` | `delete_messages_by_session` | 「セッションをクリア」操作 |
@@ -323,7 +323,7 @@ LangChain メッセージのバッチを新しい 1 ターンとして永続化�
 
 #### ウォーターマークヘルパー（ストア層）
 
-- `add_messages_sync(session_id, messages)` —— 同期圧縮経路向けの `add_messages` の同期版。
+- `add_messages_sync(session_id, messages)` —— 同期（非本番）モデル境界パス向けの `add_messages` の同期版。
 - `filter_persisted_message_ids(session_id, message_ids) -> set[str]` —— `persisted_message_ids` テーブル（再起動をまたぐ write-once ウォーターマーク）に記録済みの id を返す。
 - `mark_message_ids_persisted(session_id, message_ids) -> int` —— フラッシュ成功後に id をトゥームストーン化; 主キーにより冪等。
 - `is_message_persisted(message) -> bool` —— プロセス内 `_db_persisted` マーカーを調べる。

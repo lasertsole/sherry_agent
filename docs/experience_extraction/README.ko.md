@@ -128,7 +128,7 @@ fork의 결과 메시지는 로그만 남깁니다. 메인 그래프나 그 chec
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
-    tests/agent/middlewares/test_compaction_persistence.py \
+    tests/agent/middlewares/test_compression_nudges.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/system_prompt/test_plan_extraction.py \
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: 트리거 게이트, fire-and-forget 예약, 재진입 락, fail-open 해제, 프롬프트 내용, `todo_update` metadata 게이트, 그리고 완전한 fork 격리(파생 키, 메인 세션 `todowrite` 심, checkpointer / 메시지 누출 없음).
-- `test_compaction_persistence.py`: 버려진 프리픽스 플러시 write-once(T2→T1 및 재시작 리플레이의 정확한 행 수), 원본 내용 보장, 교체 전 플러시 순서, 압축 시점 nudge 디스패치.
+- `test_compression_nudges.py`: 압축 시점 nudge 디스패치(memory review + plan extraction이 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). 기존 영속화 단언은 `tests/agent/middlewares/message_persistence/`로 이동했습니다 — 영속화가 압축 경로에서 빠졌습니다.
 - `test_compression_cooldown_persist.py`: 쿨다운의 재시작 간 생존.
 - `test_memory_flush.py`: flush 게이트, 라우팅, 비블로킹 실패.
 - `test_plan_extraction.py`: `_detect_todo_all_complete` 네 분기, `schedule_compression_nudges`의 압축 시점 카운터/락 의미론, 디스패치, `_build_plan_context`.

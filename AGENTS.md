@@ -23,7 +23,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | Directory | Purpose | Key entry point |
 |---|---|---|
 | `agent/` | Agent core: middleware chain, tools, subagent system, checkpointer | `agent/core.py::built_agent()` |
-| `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush) | `agent/middlewares/__init__.py` |
+| `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence) | `agent/middlewares/__init__.py` |
 | `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
 | `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board) | `agent/tools/taskflow/config.py` |
 | `agent/tools/todolist/` | Session-scoped todo planning layer | `agent/tools/todolist/service.py` |
@@ -53,8 +53,11 @@ User message → Robyn WS → agent.core.built_agent() graph
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
-  │    → MaxTokensBoost → HeartbeatStaleness → HITL → LLMRetry → Summarization
+  │    → MaxTokensBoost → HeartbeatStaleness → HITL → MessagePersistence → LLMRetry → Summarization
   │    → TodoContinuationEnforcer(E3)
+  │    (after_model nodes chain in reverse registration order: MessagePersistence is
+  │     the first after_model hook to run — new human/ai/tool messages are flushed
+  │     to MesMemory before HITL rewrites denials or interrupts)
   │
   ├─ tools: build_main_tools() → taskflow(13) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...
