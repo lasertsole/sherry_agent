@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 단계에 개입하는 `AgentMiddleware` 컴포넌트 — 컨텍스트 엔지니어링, 멀티모달 입력 처리, 반복 예산, 도구 가드레일, 트랜스크립트 복구, 하트비트 스테일니스 감지, 휴먼인더루프 승인, 모델 경계별 메시지 영속화(`MessagePersistenceMiddleware`), 컨텍스트 요약, 모델 폴백이 있는 분류 기반 LLM 오류 재시도(`LLMRetryMiddleware`) — 그리고 출력 반복 가드와 스트림 수준 그래프 래퍼(`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
+EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 단계에 개입하는 `AgentMiddleware` 컴포넌트 — 컨텍스트 엔지니어링, 멀티모달 입력 처리, 반복 예산, 도구 가드레일, 트랜스크립트 복구, 하트비트 스테일니스 감지, 휴먼인더루프 승인, 모델 경계와 도구 반환 두 시점의 메시지 영속화(`MessagePersistenceMiddleware`), 컨텍스트 요약, 모델 폴백이 있는 분류 기반 LLM 오류 재시도(`LLMRetryMiddleware`) — 그리고 출력 반복 가드와 스트림 수준 그래프 래퍼(`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > 이 문서의 모든 서술은 소스 코드를 기준으로 검증되었습니다(설치된 `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, 그리고 `agent/middlewares/` 하위 모듈). 아래에 등장하는 클래스명·파일명·기본값·상태 키는 모두 실제 코드에 존재합니다.
 
@@ -155,6 +155,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_agent` (리스트 순서) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
 | `after_model` (역순) | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음) |
+| `wrap_tool_call` (최외곽 → 최내곽) | IterationBudget → ToolGuardrails → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨) |
 | `after_agent` (역순) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 해당 후크를 구현한 미들웨어만 그 페이즈에 참여합니다. 표는 "구현했다면 실행될 위치"를 보여줍니다.
@@ -332,20 +333,31 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### MessagePersistenceMiddleware
 
 **모듈:** `agent/middlewares/message_persistence/core.py` · **클래스:** `MessagePersistenceMiddleware(AgentMiddleware)`
-**후크:** `after_model` / `aafter_model` 전용
+**후크:** `after_model` / `aafter_model`, `wrap_tool_call` / `awrap_tool_call`
 
-메인 에이전트에서 **`HumanInTheLoop` 바로 뒤에** 등록됩니다. `after_model` 노드는 등록 역순으로 연결되므로, 이것이 `model` 이후 **가장 먼저 실행되는** 후크입니다 — AI 메시지는 HITL이 거부된 도구 호출을 벗겨내거나 `GraphInterrupt`를 일으키기 전에 영속화되며, 다른 후크의 예외도 이 플러시를 건너뛸 수 없습니다. (워커 파이프라인에는 등록되지 않습니다.)
+메인 에이전트에서 **`HumanInTheLoop` 바로 뒤에** 등록됩니다. `after_model` 노드는 등록 역순으로 연결되므로, 이것이 `model` 이후 **가장 먼저 실행되는** 후크입니다 — AI 메시지는 HITL이 거부된 도구 호출을 벗겨내거나 `GraphInterrupt`를 일으키기 전에 영속화되며, 다른 후크의 예외도 이 플러시를 건너뛸 수 없습니다. 도구 호출 랩 체인(리스트 첫 번째가 최외곽)에서는 **최내곽**에 위치해 실제 도구 결과를 보며, HITL의 단락은 이를 우회합니다. (워커 파이프라인에는 등록되지 않습니다.)
 
-호출마다 이전 경계 이후 생성된 메시지 — human은 그 턴의 첫 경계, AI는 모델 생성 직후, 도구 결과(HITL 거부 ToolMessage 포함)는 다음 경계 — 를 `messages` 테이블로 플러시합니다:
+**지연 — 메시지 종류별 `messages` 테이블 도달 시점:**
 
-1. `require_session_id`로 `session_id` 해석. 누락/공백이면 조용히 건너뜁니다(자식 / nudge 그래프) — 절대 예외를 던지지 않습니다.
+| 메시지 | 영속화 시점 |
+|---|---|
+| human | 그 턴의 첫 모델 경계 |
+| AI(`tool_calls` 포함) | 모델이 생성된 직후의 모델 경계 |
+| 도구 결과 | **도구 handler가 반환된 즉시**(`wrap_tool_call` / `awrap_tool_call`). 더 이상 다음 모델 호출을 기다리지 않음 |
+| HITL 거부(`HumanInTheLoop` 단락의 `status="error"` ToolMessage) | 다음 모델 경계 — HITL이 이 미들웨어를 바깥에서 감싸므로 단락은 내부 계층을 호출하지 않음 |
+
+**도구 반환 시 플러시:** wrap 후크는 먼저 `handler(request)`를 실행하고, 응답에서 `ToolMessage`를 추출합니다 — 응답은 단일 `ToolMessage`, `ToolMessage` / `Command`가 섞인 리스트, `Command.update["messages"]`에 메시지를 담은 `Command` 중 하나일 수 있습니다(`_iter_tool_messages`가 모두 순회). 같은 배치 파이프라인으로 영속화한 뒤 응답을 **그대로** 반환합니다. `ToolMessage`가 없는 응답(순수 내비게이션 `Command`)은 아무것도 쓰지 않습니다.
+
+공유 배치 파이프라인(두 후크 동일):
+
+1. `require_session_id`로 `session_id` 해석. 누락/공백(또는 dict가 아닌 도구 호출 state)이면 조용히 건너뜁니다 — 절대 예외를 던지지 않습니다.
 2. 후보 수집: `_is_persistable`이 `human` / `ai` / `tool`만 남기고, 프로세스 내 `_db_persisted` 마커가 있는 메시지와 `lc_source == "summarization"` 압축 산출물을 건너뜁니다.
-3. 영속 워터마크 필터: `filter_persisted_message_ids`가 `persisted_message_ids`에 이미 등록된 id를 제거합니다. 워터마크 키는 LangGraph 메시지 `id`(체크포인트 직렬화를 넘어 안정)이며, id가 없으면 `sha1:` 내용 지문으로 폴백합니다.
+3. 영속 워터마크 필터: `filter_persisted_message_ids`가 조회 키가 `persisted_message_ids`에 이미 등록된 후보를 제거합니다. 조회는 **LangGraph 메시지 `id`**(체크포인트 직렬화를 넘어 안정)와 `sha1:` 내용 지문을 **둘 다** 확인합니다 — 도구 결과는 반환 시점에 아직 id가 없고(그래프 reducer가 나중에 부여) 이후 경계나 재시작 리플레이가 지문으로 매칭되어 다시 영속화하지 않습니다.
 4. 배치 보정: `_reconcile_denials_for_persistence`가 HITL 거부 도구 호출을 직전 `AIMessage`에 재장착하고(거부가 페어로 유지), `_dedup_tool_results`가 비었거나 중복 id인 도구 결과를 버립니다.
 5. `await add_messages(...)`(비동기 경로) / `add_messages_sync(...)`(동기 경로)로 기록한 뒤, `mark_message_ids_persisted`가 기록기에 넘긴 모든 후보(중복 제거된 복사본 포함 — 재부상 방지)를 무덤 처리합니다.
-6. 기록 건수를 debug 로그로 남깁니다(`message persistence: wrote N messages at model boundary for <session>`).
+6. 기록 건수와 출처를 debug 로그로 남깁니다(`message persistence: wrote N messages at model boundary|tool return for <session>`).
 
-write-once: 그래프 상태는 누적되므로 같은 메시지가 이후 모든 경계에서 다시 보이지만, id 필터가 메시지당 한 행을 보장합니다. 프로세스 재시작 후에는 프로세스 내 마커가 사라지지만, id는 체크포인트 직렬화를 견디고 영속 워터마크가 리플레이를 걸러냅니다 — "각 메시지 정확히 1회"는 재시작을 넘어 성립합니다. 기록 실패는 로그만 남기고 **무덤 처리하지 않으므로** 다음 경계에서 재시도됩니다(fail-open — 영속화가 턴을 깨뜨리지 않습니다).
+**두 경로가 하나의 워터마크를 공유하며 쓰기는 멱등입니다.** 반환 시 기록된 도구 결과는 이후 모든 경계에서 다시 보이고, 경계에서 기록된 AI 메시지는 다음 경계에서 다시 보입니다. 그래프 상태는 누적되지만 워터마크가 메시지당 한 행을 보장합니다 — 프로세스 재시작을 넘어서도 성립합니다(메시지 id와 내용 지문 모두 체크포인트 직렬화를 견딤). 기록 실패는 로그만 남기고 **무덤 처리하지 않으므로** 다음 경계에서 같은 배치가 재시도됩니다(fail-open — 영속화가 턴이나 도구 결과를 깨뜨리지 않습니다).
 
 > 압축 경로는 이제 아무것도 영속화하지 않습니다: `compaction_persistence.py` 모듈과 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점이 삭제되었습니다. compact는 압축과 압축 시점 nudge 스케줄만 담당합니다(Summarization 섹션 참고).
 
@@ -627,6 +639,8 @@ agent = create_agent(
 │       · PathGuard  도구 실행 전에 트래버설 / 하드 거부 경로 인자 거부
 │       · HeartbeatStaleness  kill됐으면 발생. heartbeat_tool 설정 후 반환 시 클리어
 │       · HumanInTheLoop  승인 거부/타임아웃된 호출 거부
+│       · MessagePersistenceMiddleware  반환된 ToolMessage를 즉시 영속화
+│         (최내곽 wrap. HITL 거부는 우회하며 다음 경계에서 영속화)
 │
 └─ after_agent (역순)
     Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize

@@ -55,9 +55,11 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
   │    → MaxTokensBoost → HeartbeatStaleness → HITL → MessagePersistence → LLMRetry → Summarization
   │    → TodoContinuationEnforcer(E3)
-  │    (after_model nodes chain in reverse registration order: MessagePersistence is
-  │     the first after_model hook to run — new human/ai/tool messages are flushed
-  │     to MesMemory before HITL rewrites denials or interrupts)
+  │    (MessagePersistence flushes tool results the moment they return via
+  │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
+  │     is also the first after_model hook — new human/ai/tool messages reach
+  │     MesMemory before HITL rewrites denials or interrupts. HITL denials are the
+  │     exception: its short-circuit bypasses the wrap layer and lands next boundary)
   │
   ├─ tools: build_main_tools() → taskflow(13) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...

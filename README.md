@@ -19,7 +19,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 ## 🚀 Key Features
 
 ### 1. 🧠 Layered Memory System (Context Engine)
-- **Short-term Session Memory** ([MesMemory](context_engine/README.md)): conversation history persisted to SQLite (WAL mode) with automatic FTS5 indexing — including a trigram tokenizer table for Chinese full-text search; every model-call boundary incrementally flushes the new human/ai/tool messages (`MessagePersistenceMiddleware`, write-once via the `persisted_message_ids` watermark), so the raw store no longer depends on a compression ever firing
+- **Short-term Session Memory** ([MesMemory](context_engine/README.md)): conversation history persisted to SQLite (WAL mode) with automatic FTS5 indexing — including a trigram tokenizer table for Chinese full-text search; persistence runs at two timings (`MessagePersistenceMiddleware`): tool results are flushed the moment they return, and every model-call boundary incrementally flushes the remaining new human/ai/tool messages — write-once via the `persisted_message_ids` watermark — so the raw store no longer depends on a compression ever firing
 - **History Retrieval**: last-N-turns, paginated history, or turn-range queries formatted as prompt context
 - **Session Checkpointing**: thread-safe async SQLite checkpointer (`langgraph-checkpoint-sqlite`) persists agent state across restarts; stale checkpoints are cleaned automatically
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware

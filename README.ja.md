@@ -19,7 +19,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 ## 🚀 主な機能
 
 ### 1. 🧠 階層型メモリシステム（Context Engine）
-- **短期セッションメモリ**（[MesMemory](context_engine/README.md)）：会話履歴を SQLite（WAL モード）に永続化し、FTS5 インデックスを自動作成——中国語全文検索用の trigram トークナイザーテーブルも含みます; モデル呼び出しの各境界で新しい human/ai/tool メッセージを増分フラッシュします（`MessagePersistenceMiddleware`、`persisted_message_ids` ウォーターマークで write-once）。生ストアはもはや圧縮の発生に依存しません
+- **短期セッションメモリ**（[MesMemory](context_engine/README.md)）：会話履歴を SQLite（WAL モード）に永続化し、FTS5 インデックスを自動作成——中国語全文検索用の trigram トークナイザーテーブルも含みます; 永続化は二段タイミングです（`MessagePersistenceMiddleware`）: ツール結果は返った瞬間にフラッシュされ、残りの新しい human/ai/tool メッセージはモデル呼び出しの各境界で増分フラッシュされます（`persisted_message_ids` ウォーターマークで write-once）。生ストアはもはや圧縮の発生に依存しません
 - **履歴取得**：直近 N ターン、ページング履歴、ターン範囲指定のクエリをプロンプトコンテキストとして整形
 - **セッションチェックポイント**：スレッドセーフな非同期 SQLite チェックポインター（`langgraph-checkpoint-sqlite`）がエージェント状態を再起動をまたいで永続化し、古いチェックポイントは自動クリーンアップ
 - **会話要約**：Summarization ミドルウェアが auxiliary LLM で長い履歴を会話中に圧縮

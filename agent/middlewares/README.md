@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, per-boundary message persistence (`MessagePersistenceMiddleware`), context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
+The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, message persistence at every model boundary and tool return (`MessagePersistenceMiddleware`), context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > Every claim in this document was verified against the source code (installed `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, and the modules under `agent/middlewares/`). Class names, file names, defaults, and state keys below all exist in code.
 
@@ -157,6 +157,7 @@ Differences vs the main agent:
 | `before_agent` (list order) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
 | `after_model` (reverse order) | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush) |
+| `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary) |
 | `after_agent` (reverse order) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 Only middlewares that implement a given hook participate in that phase; the table shows where each would run if it did.
@@ -334,20 +335,31 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 ### MessagePersistenceMiddleware
 
 **Module:** `agent/middlewares/message_persistence/core.py` · **Class:** `MessagePersistenceMiddleware(AgentMiddleware)`
-**Hooks:** `after_model` / `aafter_model` only
+**Hooks:** `after_model` / `aafter_model`, `wrap_tool_call` / `awrap_tool_call`
 
-Registered in the main agent **right after `HumanInTheLoop`**; because `after_model` nodes chain in reverse registration order, it is the FIRST hook to execute after `model` — the AI message is persisted before HITL strips denied tool calls or raises `GraphInterrupt`, and no other hook exception can skip the flush. (The worker pipeline does not register it.)
+Registered in the main agent **right after `HumanInTheLoop`**; because `after_model` nodes chain in reverse registration order, it is the FIRST hook to execute after `model` — the AI message is persisted before HITL strips denied tool calls or raises `GraphInterrupt`, and no other hook exception can skip the flush. In the tool-call wrap chain (first registered = outermost) it sits **innermost**, so it sees the real tool result while HITL short-circuits bypass it. (The worker pipeline does not register it.)
 
-Every invocation flushes the messages produced since the previous boundary — human at the turn's first boundary, AI right after the model produced it, tool results (and HITL denial ToolMessages) at the next boundary — into the `messages` table:
+**Latency — when each message type reaches the `messages` table:**
 
-1. Resolve `session_id` with `require_session_id`; a missing/blank id skips silently (child / nudge graphs), never raises.
+| Message | Persisted at |
+|---|---|
+| Human | the turn's first model boundary |
+| AI (including its `tool_calls`) | the model boundary right after the model produced it |
+| Tool result | **the moment the tool handler returns** (`wrap_tool_call` / `awrap_tool_call`), no longer waiting for the next model call |
+| HITL denial (`status="error"` ToolMessage from the `HumanInTheLoop` short-circuit) | the next model boundary — HITL wraps this middleware from the outside, so its short-circuit never calls the inner layer |
+
+**Tool-return flush:** the wrap hook runs `handler(request)` first, then extracts the response's `ToolMessage`s — the handler may hand back a bare `ToolMessage`, a list mixing `ToolMessage` / `Command`, or a `Command` carrying messages in `update["messages"]` (`_iter_tool_messages` walks all of them) — and persists them before returning the response **untouched**. A response without a `ToolMessage` (pure navigation `Command`) writes nothing.
+
+The shared batch pipeline (both hooks):
+
+1. Resolve `session_id` with `require_session_id`; a missing/blank id (or a non-dict tool-call state) skips silently, never raises.
 2. Collect candidates: `_is_persistable` keeps `human` / `ai` / `tool` only, skips messages carrying the in-process `_db_persisted` marker and `lc_source == "summarization"` artifacts.
-3. Filter the persistent watermark: `filter_persisted_message_ids` removes every id already tombstoned in `persisted_message_ids`; the watermark key is the LangGraph message `id` (stable across checkpoint serialization), falling back to a `sha1:` content fingerprint when a message has no id.
+3. Filter the persistent watermark: `filter_persisted_message_ids` drops candidates whose lookup keys are already tombstoned in `persisted_message_ids`. The lookup checks **both** the LangGraph message `id` (stable across checkpoint serialization) and the `sha1:` content fingerprint — a tool result persisted on return has no id yet (the graph reducer assigns it afterwards), so a later boundary or a post-restart replay matches it on the fingerprint instead of re-persisting it.
 4. Prepare the batch: `_reconcile_denials_for_persistence` re-attaches HITL-denied tool calls onto the preceding `AIMessage` (the denial stays paired), `_dedup_tool_results` drops empty and duplicate-id tool results.
 5. `await add_messages(...)` (async path) / `add_messages_sync(...)` (sync path) writes the batch; then `mark_message_ids_persisted` tombstones every candidate handed to the writer (including deduplicated copies, so they cannot resurface).
-6. Debug log with the written count (`message persistence: wrote N messages at model boundary for <session>`).
+6. Debug log with the written count and the source (`message persistence: wrote N messages at model boundary|tool return for <session>`).
 
-Write-once: graph state accumulates, so the same messages are visible at every later boundary; the id filter keeps each message a single row. After a process restart the in-process markers are gone, but the ids survive checkpoint serialization and the persistent watermark filters the replay — the "each message exactly once" guarantee is cross-restart. A writer error is logged and NOT tombstoned, so the batch is retried at the next boundary (fail-open — persistence never breaks the turn).
+**Idempotent through one shared watermark.** A tool result written on return is seen again at every later boundary, and an AI message written at a boundary is seen again at the next one; graph state accumulates, but the watermark keeps each message to a single row — across process restarts too (message ids and content fingerprints survive checkpoint serialization). A writer error is logged and NOT tombstoned, so the same batch is retried at the next boundary (fail-open — persistence never breaks the turn or the tool result).
 
 > The compression path no longer persists anything: its `compaction_persistence.py` module and the `_persist_discarded_messages_sync` / `_apersist_discarded_messages` call sites were removed. A compact only compacts and schedules the compression-time nudges (see the Summarization section).
 
@@ -629,6 +641,8 @@ user turn arrives
 │       · PathGuard  reject traversal / hard-denied path args before the tool runs
 │       · HeartbeatStaleness  raise if killed; set heartbeat_tool, clear after return
 │       · HumanInTheLoop  reject calls with denied/timed-out approval
+│       · MessagePersistenceMiddleware  flush the returned ToolMessage(s) to MesMemory
+│         (innermost wrap layer; HITL denials bypass it and persist at the next boundary)
 │
 └─ after_agent (reverse order)
     Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize

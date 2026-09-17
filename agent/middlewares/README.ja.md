@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び出しのすべてに関わる `AgentMiddleware` コンポーネント — コンテキストエンジニアリング、マルチモーダル入力処理、反復予算、ツールガードレール、トランスクリプト修復、ハートビートスタイルネス検知、ヒューマンインザループ承認、モデル境界ごとのメッセージ永続化（`MessagePersistenceMiddleware`）、コンテキスト要約、モデルフォールバック付きの分類済み LLM エラーリトライ（`LLMRetryMiddleware`）— に加え、出力繰り返しガードとストリームレベルのグラフラッパー（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
+EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び出しのすべてに関わる `AgentMiddleware` コンポーネント — コンテキストエンジニアリング、マルチモーダル入力処理、反復予算、ツールガードレール、トランスクリプト修復、ハートビートスタイルネス検知、ヒューマンインザループ承認、モデル境界とツール復帰の二段タイミングでのメッセージ永続化（`MessagePersistenceMiddleware`）、コンテキスト要約、モデルフォールバック付きの分類済み LLM エラーリトライ（`LLMRetryMiddleware`）— に加え、出力繰り返しガードとストリームレベルのグラフラッパー（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本ドキュメントの記述はすべてソースコードに対して検証済みです（インストール済み `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、および `agent/middlewares/` 配下の各モジュール）。以下に登場するクラス名・ファイル名・デフォルト値・状態キーはすべて実在します。
 
@@ -155,6 +155,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_agent`（リスト順） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
 | `after_model`（逆順） | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない） |
+| `wrap_tool_call`（最外層 → 最内層） | IterationBudget → ToolGuardrails → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される） |
 | `after_agent`（逆順） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 あるフックを実装しているミドルウェアだけがそのフェーズに参加します。表は「実装していた場合に走る位置」を示しています。
@@ -332,20 +333,31 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### MessagePersistenceMiddleware
 
 **モジュール：** `agent/middlewares/message_persistence/core.py` · **クラス：** `MessagePersistenceMiddleware(AgentMiddleware)`
-**フック：** `after_model` / `aafter_model` のみ
+**フック：** `after_model` / `aafter_model`、`wrap_tool_call` / `awrap_tool_call`
 
-メインエージェントでは **`HumanInTheLoop` の直後**に登録されます。`after_model` ノードは登録逆順に連結されるため、これは `model` の後に**最初に実行される**フックです — AI メッセージは、HITL が拒否されたツール呼び出しを剥がしたり `GraphInterrupt` を起こす前に永続化され、他のフックの例外もこのフラッシュを飛ばせません。（ワーカーパイプラインには登録されません。）
+メインエージェントでは **`HumanInTheLoop` の直後**に登録されます。`after_model` ノードは登録逆順に連結されるため、これは `model` の後に**最初に実行される**フックです — AI メッセージは、HITL が拒否されたツール呼び出しを剥がしたり `GraphInterrupt` を起こす前に永続化され、他のフックの例外もこのフラッシュを飛ばせません。ツール呼び出しラップチェーン（リスト先頭が最外層）では**最内層**に位置し、実際のツール結果を見られます（HITL の短絡はこれを迂回します）。（ワーカーパイプラインには登録されません。）
 
-呼び出しごとに、前の境界以降に生成されたメッセージ — human はそのターン最初の境界、AI はモデル生成直後、ツール結果（HITL 拒否の ToolMessage を含む）は次の境界 — を `messages` テーブルへフラッシュします：
+**レイテンシ — メッセージ種別ごとの `messages` テーブル到達時点：**
 
-1. `require_session_id` で `session_id` を解決。欠落/空白は静かにスキップし（子 / nudge グラフ）、決して送出しません。
+| メッセージ | 永続化のタイミング |
+|---|---|
+| human | そのターン最初のモデル境界 |
+| AI（`tool_calls` を含む） | モデルが生成した直後のモデル境界 |
+| ツール結果 | **ツール handler が返った瞬間**（`wrap_tool_call` / `awrap_tool_call`）。次のモデル呼び出しを待ちません |
+| HITL 拒否（`HumanInTheLoop` 短絡による `status="error"` ToolMessage） | 次のモデル境界 — HITL はこのミドルウェアを外側から包むため、短絡は内層を呼びません |
+
+**ツール復帰時のフラッシュ：** wrap フックはまず `handler(request)` を実行し、応答から `ToolMessage` を取り出します — 応答は裸の `ToolMessage`、`ToolMessage` / `Command` が混在するリスト、`Command.update["messages"]` にメッセージを載せた `Command` のいずれか（`_iter_tool_messages` がすべて走査）— を同一バッチパイプラインで永続化し、応答を**そのまま**返します。`ToolMessage` を含まない応答（純粋なナビゲーション `Command`）は何も書き込みません。
+
+共有バッチパイプライン（両フック共通）：
+
+1. `require_session_id` で `session_id` を解決。欠落/空白（または非 dict のツール呼び出し state）は静かにスキップし、決して送出しません。
 2. 候補の収集：`_is_persistable` が `human` / `ai` / `tool` のみを残し、プロセス内 `_db_persisted` マーカー付きメッセージと `lc_source == "summarization"` の圧縮成果物をスキップします。
-3. 永続ウォーターマークでのフィルタ：`filter_persisted_message_ids` が `persisted_message_ids` に登録済みの id を除外します。ウォーターマークキーは LangGraph メッセージ `id`（チェックポイント直列化をまたいで安定）、id が無い場合は `sha1:` 内容フィンガープリントです。
+3. 永続ウォーターマークでのフィルタ：`filter_persisted_message_ids` が参照キーが `persisted_message_ids` に登録済みの候補を除外します。参照は **LangGraph メッセージ `id`**（チェックポイント直列化をまたいで安定）と `sha1:` 内容フィンガープリントの**両方**を確認します — ツール結果は復帰時にまだ id を持たない（グラフ reducer が後で付与する）ため、後続の境界や再起動リプレイはフィンガープリントで一致し、再永続化しません。
 4. バッチの補完：`_reconcile_denials_for_persistence` が HITL 拒否のツール呼び出しを直前の `AIMessage` に再装着し（拒否はペアのまま）、`_dedup_tool_results` が空・重複 id のツール結果を捨てます。
 5. `await add_messages(...)`（非同期経路）/ `add_messages_sync(...)`（同期経路）で書き込み、その後 `mark_message_ids_persisted` が書き込み器へ渡した全候補（重複排除されたコピーを含む — 再浮上防止）をトゥームストーン化します。
-6. 書き込み件数を debug ログに記録（`message persistence: wrote N messages at model boundary for <session>`）。
+6. 書き込み件数とソースを debug ログに記録（`message persistence: wrote N messages at model boundary|tool return for <session>`）。
 
-write-once：グラフ状態は蓄積するため同じメッセージが後続の各境界で再び見えますが、id フィルタが 1 行に保ちます。プロセス再起動後はプロセス内マーカーが消えますが、id はチェックポイント直列化を生き延び、永続ウォーターマークがリプレイを除外します — 「各メッセージちょうど 1 回」は再起動をまたいで成立します。書き込みエラーはログのみで**トゥームストーンされず**、次の境界で再試行されます（fail-open — 永続化がターンを壊すことはありません）。
+**2 経路は 1 つのウォーターマークを共有し、書き込みは冪等です。** 復帰時に書かれたツール結果は後続の各境界で再び見え、境界で書かれた AI メッセージは次の境界で再び見えます。グラフ状態は蓄積しますが、ウォーターマークが各メッセージを 1 行に保ちます — プロセス再起動をまたいでも成立します（メッセージ id と内容フィンガープリントはチェックポイント直列化を生き延びます）。書き込みエラーはログのみで**トゥームストーンされず**、次の境界で同じバッチが再試行されます（fail-open — 永続化がターンやツール結果を壊すことはありません）。
 
 > 圧縮パスはもう何も永続化しません：`compaction_persistence.py` モジュールと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。compact は圧縮と圧縮時 nudge のスケジュールだけを行います（Summarization セクション参照）。
 
@@ -627,6 +639,8 @@ agent = create_agent(
 │       · PathGuard  ツール実行前にトラバーサル / ハード拒否のパス引数を拒否
 │       · HeartbeatStaleness  kill 済みなら送出。heartbeat_tool を設定し、返却後にクリア
 │       · HumanInTheLoop  承認が拒否/タイムアウトした呼び出しを拒否
+│       · MessagePersistenceMiddleware  返された ToolMessage を即永続化
+│         （最内層 wrap。HITL 拒否は迂回し、次の境界で永続化）
 │
 └─ after_agent（逆順）
     Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize

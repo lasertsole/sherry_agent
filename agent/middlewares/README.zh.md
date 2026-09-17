@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批、模型边界增量落库（`MessagePersistenceMiddleware`）、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
+EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批、模型边界与工具返回双时机落库（`MessagePersistenceMiddleware`）、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本文档中的每一项陈述都已对照源代码核实（已安装的 `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py` 以及 `agent/middlewares/` 下的各模块）。下文出现的类名、文件名、默认值与状态键均真实存在于代码中。
 
@@ -154,6 +154,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序） | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库） |
+| `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库） |
 | `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
@@ -331,20 +332,31 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### MessagePersistenceMiddleware
 
 **模块：** `agent/middlewares/message_persistence/core.py` · **类：** `MessagePersistenceMiddleware(AgentMiddleware)`
-**钩子：** 仅 `after_model` / `aafter_model`
+**钩子：** `after_model` / `aafter_model`、`wrap_tool_call` / `awrap_tool_call`
 
-在主 Agent 中**紧跟 `HumanInTheLoop` 注册**；由于 `after_model` 节点按注册逆序串联，它是 `model` 之后**第一个执行**的钩子——AI 消息先落库，HITL 之后才会剥离被拒工具调用或抛 `GraphInterrupt`，任何其它钩子的异常也无法跳过落库。（worker 流水线不注册它。）
+在主 Agent 中**紧跟 `HumanInTheLoop` 注册**；由于 `after_model` 节点按注册逆序串联，它是 `model` 之后**第一个执行**的钩子——AI 消息先落库，HITL 之后才会剥离被拒工具调用或抛 `GraphInterrupt`，任何其它钩子的异常也无法跳过落库。在工具调用包装链（列表第一个为最外层）中它位于**最内层**，因此能看到真实的工具结果，而 HITL 的短路会绕过它。（worker 流水线不注册它。）
 
-每次执行都把自上一个边界以来产生的消息——human 在当轮首个边界、AI 在模型产出后、工具结果（含 HITL 拒绝产生的 ToolMessage）在下一边界——写入 `messages` 表：
+**延迟——各类消息何时进入 `messages` 表：**
 
-1. 用 `require_session_id` 解析 `session_id`；缺失/空白时静默跳过（子 Agent / nudge 图），绝不抛出。
+| 消息 | 落库时机 |
+|---|---|
+| human | 当轮首个模型边界 |
+| AI（含其 `tool_calls`） | 模型产出后的那个模型边界 |
+| 工具结果 | **工具 handler 返回的瞬间**（`wrap_tool_call` / `awrap_tool_call`），不再等下一次模型调用 |
+| HITL 拒绝（`HumanInTheLoop` 短路产生的 `status="error"` ToolMessage） | 下一个模型边界——HITL 从外层包住本中间件，其短路不会调用内层 |
+
+**工具返回落库：** wrap 钩子先执行 `handler(request)`，再从响应中取出 `ToolMessage`——响应可能是裸 `ToolMessage`、混合 `ToolMessage` / `Command` 的列表、或 `Command.update["messages"]` 携带消息（`_iter_tool_messages` 全部覆盖）——走同一批次管线落库后**原样**返回响应。不含 `ToolMessage` 的响应（纯导航 `Command`）不写任何行。
+
+共享批次管线（两个钩子相同）：
+
+1. 用 `require_session_id` 解析 `session_id`；缺失/空白（或非 dict 的工具调用 state）时静默跳过，绝不抛出。
 2. 收集候选：`_is_persistable` 只保留 `human` / `ai` / `tool`，跳过带进程内 `_db_persisted` 标记的消息与 `lc_source == "summarization"` 的压缩产物。
-3. 过滤持久水位：`filter_persisted_message_ids` 剔除所有已登记在 `persisted_message_ids` 的 id；水位键为 LangGraph 消息 `id`（跨检查点序列化稳定），消息无 id 时回退 `sha1:` 内容指纹。
+3. 过滤持久水位：`filter_persisted_message_ids` 剔除查询键已登记在 `persisted_message_ids` 的候选。查询同时检查 **LangGraph 消息 `id`**（跨检查点序列化稳定）与 `sha1:` 内容指纹——工具结果在返回时落库还没有 id（图 reducer 之后才分配），因此后续边界或重启重放靠指纹命中，不会重复落库。
 4. 补全批次：`_reconcile_denials_for_persistence` 把 HITL 拒绝的工具调用重挂到前一条 `AIMessage`（拒绝保持配对），`_dedup_tool_results` 丢弃空与重复 id 的工具结果。
 5. `await add_messages(...)`（异步路径）/ `add_messages_sync(...)`（同步路径）写入；随后 `mark_message_ids_persisted` 把交给写入器的每个候选（含被去重的副本，防止再次浮现）登记为墓碑。
-6. debug 日志记录写入条数（`message persistence: wrote N messages at model boundary for <session>`）。
+6. debug 日志记录写入条数与来源（`message persistence: wrote N messages at model boundary|tool return for <session>`）。
 
-写一次：图状态会累积，同一批消息在后续每个边界都会被再次看到，id 过滤保证每条消息只有一行。进程重启后进程内标记消失，但 id 能跨检查点序列化存活、持久水位会过滤重放——"每条消息恰好一次"跨重启成立。写入失败只记日志、**不**登记墓碑，下一边界会重试该批次（fail-open——落库绝不弄坏回合）。
+**两条路径共用同一水位，写入幂等。** 工具返回时写入的结果在后续每个边界都会被再次扫到，边界写入的 AI 消息在下一边界也会被再次扫到；图状态会累积，但水位保证每条消息只有一行——跨进程重启同样成立（消息 id 与内容指纹都能跨检查点序列化存活）。写入失败只记日志、**不**登记墓碑，下一边界会重试该批次（fail-open——落库绝不弄坏回合或工具结果）。
 
 > 压缩路径不再做任何持久化：`compaction_persistence.py` 模块与 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。一次 compact 只做压缩并调度压缩时 nudge（见 Summarization 小节）。
 
@@ -620,6 +632,8 @@ agent = create_agent(
 │       · PathGuard  在工具执行前拒绝穿越 / 硬拒绝的路径参数
 │       · HeartbeatStaleness  已杀死则抛出；设置 heartbeat_tool，返回后清除
 │       · HumanInTheLoop  拒绝审批被拒/超时的调用
+│       · MessagePersistenceMiddleware  工具返回的 ToolMessage 立即落库
+│         （最内层 wrap；HITL 拒绝会绕过它，改在下一边界落库）
 │
 └─ after_agent（逆序）
     Summarization → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize
