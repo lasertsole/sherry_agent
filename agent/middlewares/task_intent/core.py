@@ -135,7 +135,7 @@ def _detect_task_intent(content: str) -> bool:
 
 # ── Steering prompts ───────────────────────────────────────────────────────
 
-# E7a: full steering (first arming, when no active plan).
+# Full steering (first arming, when no active plan).
 _TASK_STEERING_PROMPT = """[SYSTEM DIRECTIVE: TASK INTENT DETECTED]
 
 This message appears to be a work request. Before responding, assess the scope:
@@ -170,7 +170,7 @@ Respond directly — ignore this directive.
 
 Decision: Is this a multi-step task? If yes, create todos FIRST."""
 
-# E7a light: short reminder once the session is already armed.
+# Light steering: short reminder once the session is already armed.
 _TASK_STEERING_REMINDER = (
     "[SYSTEM DIRECTIVE: ORCHESTRATOR MODE ARMED]\n"
     "Orchestrator mode is already active for this session. "
@@ -178,7 +178,7 @@ _TASK_STEERING_REMINDER = (
     "Create todos FIRST for any multi-step work."
 )
 
-# E7b: plan-active steering reminder (appended when a boulder work is active).
+# Plan-active reminder (appended when a boulder work is active).
 _PLAN_ACTIVE_REMINDER = (
     "\n\n<sherry-ulw-execute>\n"
     "An active ulw-execute plan is present in this working directory.\n"
@@ -266,7 +266,7 @@ def _has_active_boulder(session_id: str | None = None) -> bool:
 
 
 class TaskIntentMiddleware(AgentMiddleware):
-    """``before_model``: E7a arming + E7b plan-active steering.
+    """``before_model``: arming + plan-active steering.
 
     Registered in ``agent/core.py`` immediately AFTER
     ``SubagentCompletionDrainMiddleware`` so its injected message bypasses the
@@ -308,30 +308,24 @@ class TaskIntentMiddleware(AgentMiddleware):
 
             session_id = str(state.get("session_id") or "")
 
-            # ── E7b: plan-active steering (priority over E7a) ──────────────
+            # ── Plan-active steering (priority over arming) ────────────────
             if _has_active_boulder(session_id):
-                logger.info(
-                    "TaskIntentMiddleware E7b: plan-active reminder for session {}", session_id
-                )
+                logger.info("TaskIntentMiddleware: plan-active reminder for session {}", session_id)
                 return {"messages": [HumanMessage(content=_PLAN_ACTIVE_REMINDER.strip())]}
 
-            # ── E7a: first arming / short reminder ─────────────────────────
+            # ── First arming / short reminder ──────────────────────────────
             if not _detect_task_intent(content):
                 return None
 
             is_armed = bool(session_id) and session_id in _armed_sessions
             if is_armed:
                 steering = HumanMessage(content=_TASK_STEERING_REMINDER)
-                logger.info(
-                    "TaskIntentMiddleware E7a: re-arming reminder for session {}", session_id
-                )
+                logger.info("TaskIntentMiddleware: re-arming reminder for session {}", session_id)
             else:
                 if session_id:
                     _armed_sessions.add(session_id)
                 steering = HumanMessage(content=_TASK_STEERING_PROMPT)
-                logger.info(
-                    "TaskIntentMiddleware E7a: first-arm steering for session {}", session_id
-                )
+                logger.info("TaskIntentMiddleware: first-arm steering for session {}", session_id)
 
             return {"messages": [steering]}
         except Exception:
@@ -353,7 +347,7 @@ class TaskIntentMiddleware(AgentMiddleware):
 
 
 def rearm_after_compact(session_id: str) -> None:
-    """Discard a session's armed flag so E7a re-injects the full prompt.
+    """Discard a session's armed flag so the full prompt is injected again.
 
     Called by the Summarization call site (wired in a later todo) after a
     successful compression; mirrors omo's ``session_compact`` → re-arm.

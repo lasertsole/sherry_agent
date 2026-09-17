@@ -1,4 +1,4 @@
-"""Behavior tests for the todowrite tool: E6a fan-out reminder + JSON result.
+"""Behavior tests for the todowrite tool: fan-out reminder + JSON result.
 
 The tool is exercised through ``build_todolist_tools()`` so the assertions run
 against the same objects the agent is wired with. ``TodoService.update_todos``

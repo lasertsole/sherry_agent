@@ -1,6 +1,6 @@
 """todowrite: full-replacement writer for the session todo list.
 
-One behavior beyond the plain store echo lives here — the E6a fan-out reminder.
+One behavior beyond the plain store echo lives here — the fan-out reminder.
 The FIRST ``todowrite`` call of each session appends ``_FANOUT_REMINDER`` to the
 returned JSON so the model is forced to make an explicit delegation decision
 (self vs subagent, and which category) instead of silently doing everything

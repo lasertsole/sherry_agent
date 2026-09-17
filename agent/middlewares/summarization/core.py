@@ -142,7 +142,7 @@ _RETRY_KEY_BY_ERROR_CLASS: dict[str, str] = {
 
 
 def _rearm_task_intent_after_compact(session_id: str) -> None:
-    """Re-arm E7a steering after a successful system-prompt rebuild (fail-open).
+    """Re-arm the task-intent steering after a successful system-prompt rebuild (fail-open).
 
     Compression drops the already-injected steering context, so the next turn
     must receive the full directive rather than the short reminder.

@@ -5,8 +5,8 @@ Covers the mandatory design corrections over the original sketch:
 - per-turn dedup (inject only when the last non-directive ``HumanMessage`` is
   the FINAL message in the state);
 - internal subagent-completion carriers never arm/steer;
-- E7b (active boulder) takes priority over E7a (task-intent arming);
-- E7a arms once per session (full prompt) then short reminder;
+- Plan-active steering (active boulder) takes priority over task-intent arming;
+- Arming happens once per session (full prompt) then a short reminder;
 - fail-open on any internal exception;
 - ``rearm_after_compact`` clears the arming ledger.
 
@@ -49,7 +49,7 @@ def _state(*messages, session_id: str = "s-e7") -> dict:
 
 
 # ============================================================================
-# (a) E7a arming: full prompt first turn, short reminder on a later turn
+# (a) Arming: full prompt first turn, short reminder on a later turn
 # ============================================================================
 
 
@@ -100,7 +100,7 @@ class TestPerTurnDedup:
 
 
 # ============================================================================
-# (c) E7b: active boulder → plan-active reminder, E7a suppressed
+# (c) Active boulder → plan-active reminder, arming suppressed
 # ============================================================================
 
 
@@ -154,7 +154,7 @@ class TestPlanActiveBoulder:
 
         out = await ti.TaskIntentMiddleware().abefore_model(_state(HumanMessage(content=_TASK)))
         assert out is not None
-        # Falls through to E7a (full prompt), not the E7b reminder.
+        # Falls through to arming (full prompt), not the plan-active reminder.
         assert "<sherry-ulw-execute>" not in out["messages"][0].content
 
 
@@ -182,7 +182,7 @@ def _write_plan(path, content: str = "# Plan\n- [ ] step\n") -> None:
 
 
 class TestPlanPathResolution:
-    """E7b must see checkbox-bearing plans in both location generations."""
+    """Plan-active steering must see checkbox-bearing plans in both location generations."""
 
     def test_legacy_relative_plan_is_resolved(self, tmp_path, monkeypatch):
         _point_roots_at(monkeypatch, tmp_path)
