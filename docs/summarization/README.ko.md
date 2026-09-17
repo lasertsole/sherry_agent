@@ -179,6 +179,8 @@ tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
 
 미들웨어가 실제로 소비하는 것: `truncate_tool_args`(1단계, 인자)와 **`truncate_to_budget`**(2단계, 도구 결과) — 라우터의 후보 목록으로 구동되며, `_run_budget_truncation`(:659)이 예산(`usable × TRUNCATE_BUDGET_RATIO`)에 맞을 때까지 후보를 자릅니다. 1단계는 변경하지 않고 새 `AIMessage`를 반환하므로, 이 함수는 최종 목록을 반환하고 모든 호출자는 그 목록을 `request.override`에 **반드시** 넣어야 합니다.
 
+**read_file 결과는 복구 가능하게 유지됩니다**: `pub/func/message/target_truncation.py`의 머리+꼬리 클립(비 LLM 전략 `_run_non_llm_strategies`가 실행)은 각 `ToolMessage`를 `tool_call_id`로 AIMessage 도구 호출에 되짚습니다; 도구가 `read_file`이고 `args.file_path`가 있으면 잘린 중간은 익명 마커 대신 복구 안내로 대체됩니다. 안내는 같은 머리 30% / 꼬리 30% 비율을 유지하고 원본 `file_path`를 명시하며 `Use offset=<N> to continue reading: read_file(file_path='<path>', offset=<N>, limit=500)`를 제시합니다. `N`은 **머리에 완전히 남지 않은 첫 행의 절대(1-based) 파일 행 번호** — 따라서 `offset=100`으로 읽은 페이지는 머리가 실제로 멈춘 지점부터 이어지고, 중간에 잘린 행은 다시 읽히며 절대 건너뛰지 않습니다. offset을 도출할 수 없으면(페이로드가 read_file JSON 결과가 아니면) 안내는 `offset=1`부터 다시 읽기를 요청합니다 — 추측 offset은 내지 않습니다. 다른 모든 도구는 익명 `...[truncated N chars]...` 마커를 바이트 단위로 유지합니다.
+
 TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_expired`, `PRUNE_TTL_SECONDS = 300`, `TTL_REGISTRY_MAX_ENTRIES = 512`, `tool_call_id` 키, 재시작 시 휘발)는 오늘날 **테스트 스위트만 사용**합니다 — 미들웨어에는 나이 기반 만료 로직이 연결되어 있지 않습니다("정직함과 한계" 참조).
 
 ## 🔁 컴팩트 트랙: `_apply_compression` 내부
@@ -346,6 +348,7 @@ Summarization(
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | 제자리 트렁케이션, 페어링 불변식, 비어 있지 않은 플레이스홀더, 레지스트리 한계, 예산 트렁케이션 |
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 상태, 텍스트 힌트, 7개 오버플로 패턴, cause 체인 깊이, 읽기 전용 보장 |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 중복 제거 / 프루닝 / 타깃 트렁케이트 / 턴 유틸리티에 도구 인자 트렁케이트 추가: 머리+꼬리 형식, 작은 인자 스킵, 확보량 클램프, 보호 도구, 최근 스킵, 페어링 및 무변경 |
+| `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file 복구 가능 슬라이스: 원본 경로 + 1-based 이어읽기 offset 안내, 행 스킵 없음, 절대 페이지 번호, 일반 마커 바이트 동일, 보호 / 예산 내 / 폴백 경로 |
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |

@@ -176,6 +176,8 @@ tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
 
 中间件实际消费的部分：`truncate_tool_args`（第 1 步，参数）与 **`truncate_to_budget`**（第 2 步，工具输出），由路由的候选列表驱动 —— `_run_budget_truncation`（:659）按预算（`usable × TRUNCATE_BUDGET_RATIO`）截断候选，直到达标。因为第 1 步返回的是新的 `AIMessage` 而非原地修改，该函数返回最终列表，每个调用方**必须**把该列表喂给 `request.override`。
 
+**read_file 结果保持可找回**：`pub/func/message/target_truncation.py` 中的头+尾截断（由非 LLM 策略 `_run_non_llm_strategies` 执行）会按 `tool_call_id` 把每条 `ToolMessage` 反查回 AIMessage 的工具调用；当工具是 `read_file` 且 `args.file_path` 存在时，被切掉的中段会替换为找回通知而非匿名标记。该通知沿用同样的头部 30% / 尾部 30% 比例，写出原始 `file_path`，并给出 `Use offset=<N> to continue reading: read_file(file_path='<path>', offset=<N>, limit=500)`。`N` 是**头段未完整保留的第一行的绝对（1-based）文件行号** —— 因此以 `offset=100` 读取的页会从头部真正停止的位置继续，被切在半途的行会被重读、绝不会跳过。无法推算 offset 时（载荷不是 read_file 的 JSON 结果），通知要求从 `offset=1` 重新分段读取，绝不猜测 offset。其余工具逐字节保留匿名 `...[truncated N chars]...` 标记。
+
 TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired`、`PRUNE_TTL_SECONDS = 300`、`TTL_REGISTRY_MAX_ENTRIES = 512`、以 `tool_call_id` 为键、重启即失）如今**只有测试套件在用** —— 中间件没有接入任何按龄过期的逻辑（见"诚实与局限"）。
 
 ## 🔁 压缩轨道：`_apply_compression` 内部
@@ -343,6 +345,7 @@ Summarization(
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | 原地截断、配对不变量、非空占位符、注册表上限、预算截断 |
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 状态码、文本提示、7 种溢出模式、cause 链深度、只读保证 |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
+| `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file 可找回切片：原路径 + 1-based 续读 offset 通知、不跳行、页码绝对定位、通用标记逐字节一致、受保护 / 未超预算 / 回退路径 |
 | `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |

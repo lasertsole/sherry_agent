@@ -180,6 +180,8 @@ tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
 
 ミドルウェアが実際に消費するもの: `truncate_tool_args`（ステップ 1、引数）と **`truncate_to_budget`**（ステップ 2、ツール結果）。ルーターの候補リストに駆動され、`_run_budget_truncation`（:659）が予算（`usable × TRUNCATE_BUDGET_RATIO`）を満たすまで候補を切り詰めます。ステップ 1 はミューテートせず新しい `AIMessage` を返すため、この関数は最終リストを返し、すべての呼び出し元はそのリストを `request.override` に**必ず**渡さなければなりません。
 
+**read_file の結果は復元可能なまま**: `pub/func/message/target_truncation.py` の先頭+末尾クリップ（非 LLM 戦略 `_run_non_llm_strategies` が実行）は、各 `ToolMessage` を `tool_call_id` で AIMessage のツール呼び出しに引き戻します; ツールが `read_file` で `args.file_path` がある場合、切り落とされた中間は匿名マーカーではなく復元通知に置き換わります。通知は同じ先頭 30% / 末尾 30% の比率を保ち、元の `file_path` を明記し、`Use offset=<N> to continue reading: read_file(file_path='<path>', offset=<N>, limit=500)` を示します。`N` は**先頭に完全には残っていない最初の行の絶対（1-based）ファイル行番号** —— したがって `offset=100` で読んだページは先頭が実際に止まった位置から再開し、途中で切れた行は再読され、決してスキップされません。offset を導出できない場合（ペイロードが read_file の JSON 結果でない場合）、通知は `offset=1` からの再読を求めます —— 推測した offset は決して出しません。その他のツールは匿名の `...[truncated N chars]...` マーカーをバイト単位で保ちます。
+
 TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_expired`、`PRUNE_TTL_SECONDS = 300`、`TTL_REGISTRY_MAX_ENTRIES = 512`、`tool_call_id` キー、再起動で揮発）は、現在**テストスイートだけが使用**しています —— ミドルウェアには年齢ベースの有効期限ロジックは接続されていません（「正直な限界」参照）。
 
 ## 🔁 圧縮トラック：`_apply_compression` の内部
@@ -347,6 +349,7 @@ Summarization(
 | `tests/pub/func/message/test_tool_result_ttl.py` | 28 | その場での切り詰め、ペアリング不変量、空でないプレースホルダ、レジストリ上限、予算切り詰め |
 | `tests/pub/func/message/test_llm_error_classifier.py` | 56 | 413 ステータス、テキストヒント、7 つのオーバーフローパターン、cause チェーン深さ、読み取り専用保証 |
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 重複排除 / プルーン / ターゲット切り詰め / ターンユーティリティ、さらにツール引数切り詰め: 先頭+末尾形式、小さい引数のスキップ、解放量のクランプ、保護対象ツール、直近スキップ、ペアリングと無ミューテーション |
+| `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file の復元可能スライス: 元パス + 1-based 継続 offset 通知、行スキップなし、ページ番号の絶対性、汎用マーカーのバイト一致、保護 / 予算内 / フォールバック経路 |
 | `tests/config/test_num_contract.py` | 46 | 定数契約（ウォッチドッグ `CONTRACT_NAMES` が文書化済みの全ノブをカバー） |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
