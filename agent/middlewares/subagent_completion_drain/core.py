@@ -67,7 +67,7 @@ def _backflow_shared_memory() -> None:
     """Reconcile the shared memory files around a subagent completion.
 
     Parent and children share one process-wide ``MemoryStore`` and the same
-    ``facts/`` directory, so a child's writes are already file-visible. What can
+    ``memory/`` directory, so a child's writes are already file-visible. What can
     drift is the parent's in-memory view (live entries + frozen snapshot) when a
     writer outside this process updated ``MEMORY.md``/``USER.md``. Reloading
     first is load-bearing: persisting a stale in-memory list would clobber a

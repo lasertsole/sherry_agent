@@ -4,7 +4,7 @@
 (terminal / python_repl spawn points). It is a pure function: no IO, no
 logging, no third-party imports (only ``os`` / ``re``).
 
-Filtering rules (source of truth: ``.omo/plans/sandbox-hardening.md``):
+Filtering rules (source of truth: ``docs/sandbox/README.md``):
 
 - Substring block (case-insensitive match on the variable NAME): vars whose
   name contains a secret-ish substring (KEY, TOKEN, ...) are dropped.

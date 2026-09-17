@@ -1,7 +1,6 @@
 """Terminal tool with sandbox, blacklist, timeout, and env scrubbing.
 
-Sandbox-hardening additions (see .omo/plans/sandbox-hardening.md
-lines 554-568):
+Sandbox-hardening additions (see docs/sandbox/README.md):
 
 - ``SafeShellInput`` subclass: the ``sandbox`` flag is exposed to the LLM via
   an explicit ``args_schema`` override (ShellTool declares args_schema
