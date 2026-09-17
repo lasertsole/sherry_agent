@@ -55,9 +55,13 @@ from .hitl_defaults import (
     HitlDefaultsConfig as HitlDefaultsConfig,
     HITL_DEFAULTS as HITL_DEFAULTS,
 )
-from .context_engine_hook import (
-    ContextEngineHookConfig as ContextEngineHookConfig,
-    CONTEXT_ENGINE_HOOK as CONTEXT_ENGINE_HOOK,
+from .nudge import (
+    NudgeConfig as NudgeConfig,
+    NUDGE as NUDGE,
+)
+from .media_pipeline import (
+    MediaPipelineConfig as MediaPipelineConfig,
+    MEDIA_PIPELINE as MEDIA_PIPELINE,
 )
 from .context_guard import (
     ContextGuardConfig as ContextGuardConfig,

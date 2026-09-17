@@ -11,7 +11,7 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 from loguru import logger
 
-from config.features import CONTEXT_ENGINE_HOOK, SUMMARIZATION
+from config.features import NUDGE, SUMMARIZATION
 from config.path import resolve_plan_path, resolve_start_work_ledger_path
 from pub.func import sanitize_tool_use_result_pairing
 from runtime import state_register_db, state_register_mem
@@ -290,9 +290,9 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 
 _NUDGE_MEMORY_COUNT_KEY = "nudge_review_memory_count"
 _NUDGE_MEMORY_LOCK_KEY = "nudge_review_memory_lock"
-_NUDGE_MEMORY_THRESHOLD = CONTEXT_ENGINE_HOOK["nudge_memory_threshold"]
+_NUDGE_MEMORY_THRESHOLD = NUDGE["nudge_memory_threshold"]
 _PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
-_PLAN_EXTRACTION_ENABLED = CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]
+_PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 
 # Keeps scheduled nudge coroutines referenced until they complete (asyncio
 # holds only weak references to tasks).
