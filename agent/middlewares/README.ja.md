@@ -270,7 +270,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 排出された各キューエントリはキューの SQLite ストアで `CONSUMED` とマークされるため、キャリアは正確に 1 回だけ注入されます（チェックポイント永続化により HITL 再開リプレイも安全）。
 - Fail-open：`session_id` の欠落/空、空のキュー、あらゆる例外は握りつぶされます（ログ + no-op）— drain が親ターンを壊すことはなく、キューは再試行のために保持されます。
-- 注入されたキャリアは `origin='subagent_completion'` として MesMemory に永続化されます。
+- 注入されたキャリアは、それを含むターンが後の圧縮でフラッシュされるときに `origin='subagent_completion'` として MesMemory に書き込まれます（永続化は圧縮時になりました）; それまではチェックポイントにのみ存在し、messages テーブルからは見えません。
 
 ### HeartbeatStaleness
 

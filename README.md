@@ -19,12 +19,12 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 ## 🚀 Key Features
 
 ### 1. 🧠 Layered Memory System (Context Engine)
-- **Short-term Session Memory** ([MesMemory](context_engine/README.md)): every human/ai/tool message persisted to SQLite (WAL mode) with automatic FTS5 indexing — including a trigram tokenizer table for Chinese full-text search
+- **Short-term Session Memory** ([MesMemory](context_engine/README.md)): conversation history persisted to SQLite (WAL mode) with automatic FTS5 indexing — including a trigram tokenizer table for Chinese full-text search; the compression pipeline flushes each discarded prefix (the newest uncompressed turns live in the checkpointer)
 - **History Retrieval**: last-N-turns, paginated history, or turn-range queries formatted as prompt context
 - **Session Checkpointing**: thread-safe async SQLite checkpointer (`langgraph-checkpoint-sqlite`) persists agent state across restarts; stale checkpoints are cleaned automatically
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
-- **Experience Extraction**: four lifecycle paths turn conversation history into durable experience: a 10-turn memory nudge, plan extraction when the todo list completes, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
+- **Experience Extraction**: four lifecycle paths turn conversation history into durable experience: the compression-time memory review (every `nudge_memory_threshold` compressions), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
 - ▶️ _See the [Experience Extraction README](docs/experience_extraction/README.md) for the trigger × mechanism × destination map_
 
@@ -143,7 +143,7 @@ EMA_AI_agent/
 │   └── curator/            # Auto-skill curation
 │
 ├── docs/                   # Subsystem design docs (per-language READMEs)
-│   ├── experience_extraction/ # Five experience-extraction lifecycle paths
+│   ├── experience_extraction/ # Four experience-extraction lifecycle paths
 │   ├── session_memory/     # SESSION plan capabilities (P0–P2)
 │   ├── summarization/      # Compression triggers & cooldown
 │   ├── loop-prevention/    # Runaway-loop prevention harness
@@ -261,7 +261,7 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **Experience Extraction** | Five lifecycle paths turning conversation history into durable experience | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **Experience Extraction** | Four lifecycle paths turning conversation history into durable experience | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
 | **Session Memory** | SESSION-plan capabilities: memory flush, compression cooldown, compaction lock, event log, semantic search | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |

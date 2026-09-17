@@ -19,12 +19,12 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 ## 🚀 주요 기능
 
 ### 1. 🧠 계층형 메모리 시스템 (Context Engine)
-- **단기 세션 메모리**([MesMemory](context_engine/README.md)): 모든 human/ai/tool 메시지를 SQLite(WAL 모드)에 영구 저장하고 FTS5 인덱스를 자동 생성 — 중국어 전문 검색용 trigram 토크나이저 테이블 포함
+- **단기 세션 메모리**([MesMemory](context_engine/README.md)): 대화 이력을 SQLite(WAL 모드)에 영구 저장하고 FTS5 인덱스를 자동 생성 — 중국어 전문 검색용 trigram 토크나이저 테이블 포함; 압축 파이프라인이 버려진 프리픽스마다 플러시합니다(최신 미압축 턴은 체크포인트에만 존재)
 - **히스토리 조회**: 최근 N턴, 페이지네이션 히스토리, 턴 범위 지정 쿼리를 프롬프트 컨텍스트로 포맷
 - **세션 체크포인팅**: 스레드 세이프 비동기 SQLite 체크포인터(`langgraph-checkpoint-sqlite`)가 재시작 후에도 에이전트 상태를 유지하며, 오래된 체크포인트는 자동 정리
 - **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
 - **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
-- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 10턴마다의 memory nudge, todo가 모두 완료될 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
+- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(`nudge_memory_threshold`회 압축마다), 압축 시 todo가 전부 완료일 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
 - ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
 - ▶️ _트리거 × 메커니즘 × 기록 위치의 전체 매핑은 [Experience Extraction README](docs/experience_extraction/README.ko.md) 참조_
 
@@ -143,7 +143,7 @@ EMA_AI_agent/
 │   └── curator/            # 자동 스킬 큐레이션
 │
 ├── docs/                   # 서브시스템 설계 문서(언어별 README)
-│   ├── experience_extraction/ # 다섯 개 경험 추출 라이프사이클 경로
+│   ├── experience_extraction/ # 네 개 경험 추출 라이프사이클 경로
 │   ├── session_memory/     # SESSION 계획 역량(P0–P2)
 │   ├── summarization/      # 압축 트리거 및 쿨다운
 │   ├── loop-prevention/    # 폭주 루프 방지 하네스
@@ -261,7 +261,7 @@ EMA_AI_agent/
 | 서브모듈 | 설명 | 문서 |
 |-----------|-------------|---------------|
 | **Context Engine** | 단기 세션 메시지 메모리(MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **경험 추출** | 대화 이력을 재사용 가능한 경험으로 축적하는 다섯 개 라이프사이클 경로 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **경험 추출** | 대화 이력을 재사용 가능한 경험으로 축적하는 네 개 라이프사이클 경로 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
 | **세션 메모리** | SESSION 계획 역량: memory flush, 압축 쿨다운, compaction lock, 이벤트 로그, 시맨틱 검색 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **미들웨어** | 에이전트 라이프사이클 미들웨어 파이프라인 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |

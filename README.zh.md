@@ -19,12 +19,12 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ## 🚀 核心特性
 
 ### 1. 🧠 分层记忆系统（Context Engine）
-- **短期会话记忆**（[MesMemory](context_engine/README.md)）：每条 human/ai/tool 消息持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表
+- **短期会话记忆**（[MesMemory](context_engine/README.md)）：对话历史持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表；压缩管线在压缩时落库每个被丢弃的前缀（最新的未压缩回合只存在于检查点中）
 - **历史检索**：支持最近 N 轮、分页历史、指定轮次范围查询，并格式化为提示词上下文
 - **会话检查点**：线程安全的异步 SQLite checkpointer（`langgraph-checkpoint-sqlite`）跨重启持久化 Agent 状态，过期检查点自动清理
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
-- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：每 10 回合的 memory nudge、todo 全部完成时的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每 `nudge_memory_threshold` 次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
 - ▶️ _详见 [Experience Extraction README](docs/experience_extraction/README.zh.md) 了解触发条件 × 机制 × 落库位置的完整映射_
 
@@ -143,7 +143,7 @@ EMA_AI_agent/
 │   └── curator/            # 自动技能维护
 │
 ├── docs/                   # 子系统设计文档（各语言 README）
-│   ├── experience_extraction/ # 五条经验抽取生命周期路径
+│   ├── experience_extraction/ # 四条经验抽取生命周期路径
 │   ├── session_memory/     # SESSION 计划能力（P0–P2）
 │   ├── summarization/      # 压缩触发条件与冷却
 │   ├── loop-prevention/    # 防失控循环防护
@@ -261,7 +261,7 @@ EMA_AI_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **经验抽取** | 将对话历史沉淀为可复用经验的五条生命周期路径 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **经验抽取** | 将对话历史沉淀为可复用经验的四条生命周期路径 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
 | **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |

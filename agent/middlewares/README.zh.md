@@ -270,7 +270,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 每个被取出的队列条目都会在队列的 SQLite 存储中标记为 `CONSUMED`，因此载体只会被注入一次（检查点持久化保证 HITL 恢复重放安全）。
 - Fail-open：`session_id` 缺失/为空、队列为空或任何异常都会被吞掉（记日志 + 无操作）——drain 绝不会破坏父回合，队列保留以供重试。
-- 注入的载体以 `origin='subagent_completion'` 持久化到 MesMemory。
+- 注入的载体在后续压缩落库包含它的回合时，以 `origin='subagent_completion'` 写入 MesMemory（落库现为压缩时）；在此之前它只存在于检查点中，messages 表内不可见。
 
 ### HeartbeatStaleness
 

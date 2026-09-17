@@ -270,7 +270,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 배출된 각 큐 항목은 큐의 SQLite 저장소에서 `CONSUMED`로 마킹되므로 캐리어는 정확히 한 번만 주입됩니다(체크포인트 영속화가 HITL 재개 리플레이의 안전성을 보장).
 - Fail-open: `session_id` 누락/빈 값, 빈 큐, 그리고 모든 오류는 삼켜집니다(로그 + no-op) — drain이 부모 턴을 깨뜨리지 않으며, 큐는 재시도를 위해 보존됩니다.
-- 주입된 캐리어는 `origin='subagent_completion'`으로 MesMemory에 영속화됩니다.
+- 주입된 캐리어는 이후 압축이 그 턴을 플러시할 때 `origin='subagent_completion'`으로 MesMemory에 기록됩니다(영속화는 이제 압축 시점); 그 전까지는 체크포인트에만 존재하며 messages 테이블에서 보이지 않습니다.
 
 ### HeartbeatStaleness
 
