@@ -14,6 +14,7 @@ class ToolsTimeoutsConfig(TypedDict):
     python_repl_timeout_seconds: int
     sandbox_bwrap_probe_timeout_seconds: int
     message_search_max_session_chars: int
+    message_search_checkpoint_fallback_enabled: bool
     skill_view_max_name_length: int
     skill_view_max_description_length: int
     skill_manage_max_name_length: int
@@ -43,6 +44,7 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "python_repl_timeout_seconds": 30,
     "sandbox_bwrap_probe_timeout_seconds": 3,
     "message_search_max_session_chars": 100_000,
+    "message_search_checkpoint_fallback_enabled": True,
     "skill_view_max_name_length": 64,
     "skill_view_max_description_length": 1024,
     "skill_manage_max_name_length": 64,
