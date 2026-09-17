@@ -4,7 +4,7 @@
 
 > 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 13개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 단계 수용 기준을 오케스트레이터가 검증할 수 있도록 에코하며, 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 전역 세션 간 flow 보드를 제공하고, 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
-사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py`(LT-7 블록), `agent/middlewares/subagent_completion_drain/core.py`(LT-5 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -19,7 +19,7 @@
 - [세션 간 보드](#-세션-간-보드)
 - [압축 전 메모리 플러시](#-압축-전-메모리-플러시)
 - [요약 ↔ TaskFlow 조정](#-요약--taskflow-조정)
-- [서브에이전트 메모리 역류(LT-5)](#-서브에이전트-메모리-역류lt-5)
+- [서브에이전트 메모리 역류](#-서브에이전트-메모리-역류)
 - [도구 출력 요약](#-도구-출력-요약)
 - [세션 연속성](#-세션-연속성)
 - [TaskFlow 자동 재개](#-taskflow-자동-재개)
@@ -435,7 +435,7 @@ if taskflow_ctx:
 
 이 블록은 `## Current TaskFlow State (authoritative)`를 제목으로 하며(`summarization/core.py:286`), 세션이 소유한 최대 3개 flow(`requester_session_key(session_id)`로 매칭)에 대해 flow id/상태, 설명, `done/total` 진행과 상태 내역, 마지막 두 완료 단계, 처음 두 대기 단계, 대기 이유를 나열합니다. DAG 헬퍼 `step_status`와 `steps_summary`를 재사용하며 완전히 페일오픈입니다(`except Exception → ""`). 결정론적 폴백 요약(`_build_static_fallback_summary`)은 이 블록을 **포함하지 않습니다** — LLM 프롬프트 전용 추가입니다.
 
-## 🧠 서브에이전트 메모리 역류(LT-5)
+## 🧠 서브에이전트 메모리 역류
 
 `SubagentCompletionDrainMiddleware`(`agent/middlewares/subagent_completion_drain/core.py`)는 큐에 쌓인 서브에이전트 완료 메시지의 부모 턴 수용 지점입니다: `before_model`에서 세션의 `SteeringQueue`를 재수화하고 배출한 뒤, 재구성된 완료 캐리어 메시지를 주입합니다. **배출이 비어 있지 않으면** 공유 메모리를 부모의 인메모리 뷰와 조정합니다:
 
@@ -500,7 +500,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 | 판독기 | 위치 | 목적 |
 | :--- | :--- | :--- |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 시스템 프롬프트의 `## Pending TaskFlows` |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 압축 요약 프롬프트의 TaskFlow 블록(LT-7) |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 압축 요약 프롬프트의 TaskFlow 블록 |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | 영속 연속성 상태의 `taskflow_ids` |
 
 `creator_session_key`는 flow 생성 시 `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"`로 찍힙니다(`taskflow_create.py:38`, `_shared.py:21`). `get_active_flows_sync()`(`store_sqlite.py:538`)는 `running`과 `waiting` flow만 리비전 순으로 반환하며, 이벤트 루프가 필요 없는 stdlib `sqlite3` 경로를 사용합니다. 실패 시 `[]`를 반환합니다.
@@ -686,7 +686,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 │ sessions          │                         │ (+ token_usage budget) │           │
 └───────────────────┘                         └───────────┬────────────┘           │
          │                                                │                        │
-         │ drain (LT-5)                                   │                        │
+         │ drain                                          │                        │
          ▼                                                │                        │
 ┌──────────────────────────────┐                          │                        │
 │ SubagentCompletionDrain      │                          │                        │
@@ -697,7 +697,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
 │ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+LT-7 TaskFlow)  │   │
+│ _scan_stale_waiting_taskflows│                   │ summary (+TaskFlow)       │   │
 └──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
@@ -707,7 +707,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
                                                    └───────────────────────────┘
 ```
 
-컴파일된 그래프는 더 이상 `agent.core.py`에서 인라인으로 래핑되지 않습니다: **`agent/wrapper/`** 패키지가 가드를 소유합니다. `agent.wrapper.registry`는 프로세스 전역의, 순서가 있고 플러그 가능한 체인(`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`)을 노출하며, `GraphWrapperFactory` 항목은 **최내곽 우선**으로 적용됩니다. 기본값은 역사적 하드코딩 체인을 재현합니다 — 먼저 `RepetitionGuardWrapper(phantom_stream_guard=True)`, 다음 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. 스트림 반복 가드는 `agent/wrapper/repetition_guard.py`, 컨텍스트 윈도 가드는 `agent/wrapper/context_limit.py`에 있습니다. **LT-5** 역류는 `agent/middlewares/subagent_completion_drain/core.py`의 `SubagentCompletionDrainMiddleware`가 수행합니다.
+컴파일된 그래프는 더 이상 `agent.core.py`에서 인라인으로 래핑되지 않습니다: **`agent/wrapper/`** 패키지가 가드를 소유합니다. `agent.wrapper.registry`는 프로세스 전역의, 순서가 있고 플러그 가능한 체인(`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`)을 노출하며, `GraphWrapperFactory` 항목은 **최내곽 우선**으로 적용됩니다. 기본값은 역사적 하드코딩 체인을 재현합니다 — 먼저 `RepetitionGuardWrapper(phantom_stream_guard=True)`, 다음 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. 스트림 반복 가드는 `agent/wrapper/repetition_guard.py`, 컨텍스트 윈도 가드는 `agent/wrapper/context_limit.py`에 있습니다. **메모리 역류**는 `agent/middlewares/subagent_completion_drain/core.py`의 `SubagentCompletionDrainMiddleware`가 수행합니다.
 
 ## 📚 API 레퍼런스
 
@@ -747,7 +747,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 생성된 자식을 잃지 않는 영속화 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 데드라인 집행 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | 유휴 감지 마커 |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | LT-7 요약 조정 |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 요약 조정 |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 자동 재개 프롬프트 블록 |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | 도구 출력 한 줄 요약 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 연속성 저장 훅 |
@@ -756,7 +756,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 세션 간 보드 읽기 |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 실패 분류 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 재시도 계획/영속화 |
-| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 메모리 역류 조정 |
+| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | 메모리 역류 조정 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 플러그 가능한 그래프 래퍼 체인 |
 
 ## 🧪 테스트
@@ -783,7 +783,7 @@ TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(17개 `unit`
 | `test_validation.py` | 기준 저장, 재개 에코, 덮어쓰기 |
 | `test_taskflow_list.py` | 보드 렌더링, 상태 필터, 마지막 활동 타임스탬프 |
 
-교차 스위트: `tests/agent/middlewares/test_memory_flush.py`(플러시 임계값과 `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 LT-5 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 리마인더), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 flow 프롬프트 주입).
+교차 스위트: `tests/agent/middlewares/test_memory_flush.py`(플러시 임계값과 `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 리마인더), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 flow 프롬프트 주입).
 
 표준 uv/pytest 도구로 이 영역만 실행:
 
@@ -805,7 +805,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **활성 flow 스캔이 3중 중복입니다.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, `session_continuity._get_active_taskflow_ids_sync`가 같은 쿼리를 독립적으로 구현합니다. 동기화를 유지해야 합니다.
 - **레지스트리 규모는 39입니다.** 설정 레지스트리는 39개 feature 객체(에이전트 측 20 + 인프라 측 19)를 보유합니다. 인프라 측 계약 테스트는 그중 18개(GATEWAY + 17개 데이터 기반 케이스)를 커버하고 `MODEL_PRICING`을 빠뜨립니다.
 - **패키지 재수출 누락.** `agent/tools/taskflow/__init__.py`는 11개 이름만 재수출합니다. `taskflow_dispatch`와 `taskflow_wait_all`은 `build_taskflow_tools()`로 도달할 수 있지만 패키지 `__all__`에서 빠져 있습니다.
-- **LT-7 TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
+- **TaskFlow 블록은 LLM 프롬프트 전용입니다.** LLM 실패 시 사용하는 결정론적 폴백 요약에는 `## Current TaskFlow State`가 없습니다.
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_resume`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.
 - **결과 검증은 권고용입니다.** `validation_criteria`는 저장되고 결과와 함께 에코되지만 도구가 강제하지 않습니다. 합격/불합격은 오케스트레이터가 스스로 판단해야 합니다. 기준 미충족으로 단계를 실패시킬 수 있는 자동 게이트는 없습니다.
 - **재시도 분류는 텍스트 기반입니다.** `classify_failure`는 결과 텍스트에 대한 부분 문자열 휴리스틱입니다: 패턴 표 밖의 표현으로 된 실패(또는 부정 표현에 가려진 실제 실패)는 재시도를 유발하지 않으며, 빈 `retry_on`은 분류된 모든 실패를 재시도합니다. `taskflow_wait_all`은 결과 텍스트가 없는 죽은 자식을 분류할 수 없으므로, 예산이 남아 있는 한 항상 재시도 예산을 소비합니다.

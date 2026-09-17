@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）に加え、LT-1…LT-8 の長時間タスク編成も実装済み。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
+SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / hermes-agent / openclaw から借用）に加え、長時間タスク編成も実装済み。設計ルール：すべての機能は既存インフラ（セッション連続性、ステートレジスタ、MesMemory マイグレーション）の拡張であり、並列ストアは作らない。
 
 > 状態（2026-09-13）：プラン退役。本 README が参照先。
 
@@ -22,7 +22,7 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 | P2-2 | Context Epoch スナップショット | 移行 v17（`context_epoch` テーブル）、`ContextEpoch` |
 | P2-4（一部） | steer/queue デュアル配信 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
-| LT-1…8 | TaskFlow 編成 | `docs/long-running-tasks/` |
+| TaskFlow 編成 | `docs/long-running-tasks/` |
 
 ## MesMemory マイグレーション（v10–v17）
 

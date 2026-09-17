@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)이 구현되었으며 LT-1…LT-8 장기 작업 편성도 포함됩니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
+SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent / hermes-agent / openclaw 참조)이 구현되었으며 장기 작업 편성도 포함됩니다. 설계 규칙: 모든 기능은 기존 인프라(세션 연속성, 상태 레지스터, MesMemory 마이그레이션)의 확장이며 병렬 스토어는 만들지 않습니다.
 
 > 상태(2026-09-13): 플랜 폐기. 이 README가 참조 기준입니다.
 
@@ -22,7 +22,7 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 | P2-2 | Context Epoch 스냅샷 | 마이그레이션 v17(`context_epoch` 테이블), `ContextEpoch` |
 | P2-4(부분) | steer/queue 이중 전달 | `steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
-| LT-1…8 | TaskFlow 편성 | `docs/long-running-tasks/` |
+| TaskFlow 편성 | `docs/long-running-tasks/` |
 
 ## MesMemory 마이그레이션(v10–v17)
 

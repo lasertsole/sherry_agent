@@ -41,7 +41,7 @@ def default_state(
 
     ``steps`` and ``results`` are always lists (run_task / resume append to
     them); ``description`` and any caller keys are preserved.
-    ``creator_session_key`` (LT-2) associates the flow with the parent session
+    ``creator_session_key`` associates the flow with the parent session
     for cross-session auto-resume injection.
     """
     state = dict(initial_state or {})

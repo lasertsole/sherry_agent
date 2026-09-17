@@ -17,7 +17,7 @@ Design guarantees:
 - every failure is swallowed (log + return None) — the drain must never
   break the parent turn.
 
-LT-5 memory backflow: a non-empty drain also reconciles the shared
+Memory backflow: a non-empty drain also reconciles the shared
 ``MEMORY.md``/``USER.md`` files with the process-wide ``MemoryStore`` (reload
 from disk, then persist) so anything a child session wrote is visible to the
 parent turn. Like the drain itself, the reconcile is fail-open.
@@ -64,7 +64,7 @@ def _is_internal_completion(msg: Any) -> bool:
 
 
 def _backflow_shared_memory() -> None:
-    """LT-5: reconcile the shared memory files around a subagent completion.
+    """Reconcile the shared memory files around a subagent completion.
 
     Parent and children share one process-wide ``MemoryStore`` and the same
     ``facts/`` directory, so a child's writes are already file-visible. What can

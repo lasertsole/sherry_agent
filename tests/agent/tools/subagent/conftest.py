@@ -315,9 +315,9 @@ def _real_dependencies_for_llm_e2e(request: pytest.FixtureRequest):
 def _stub_lt5_memory_backflow(monkeypatch):
     """Keep this suite off the real workspace memory files.
 
-    A non-empty completion drain reconciles ``MEMORY.md``/``USER.md`` on disk
-    (LT-5). The queue/drain tests here exercise carrier plumbing, not memory
-    I/O, and must not rewrite the tracked ``workspace/memory/`` files; LT-5's
+    A non-empty completion drain reconciles ``MEMORY.md``/``USER.md`` on disk.
+    The queue/drain tests here exercise carrier plumbing, not memory
+    I/O, and must not rewrite the tracked ``workspace/memory/`` files; the backflow's
     own reconcile coverage lives in
     ``tests/agent/middlewares/test_lt5_memory_backflow.py``.
     """

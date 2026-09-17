@@ -222,7 +222,7 @@ def test_get_flow_sync_without_event_loop(isolated_db: Path):
 
 
 # ---------------------------------------------------------------------------
-# get_active_flows_sync (LT-2): non-terminal flows for prompt auto-resume
+# get_active_flows_sync: non-terminal flows for prompt auto-resume
 # ---------------------------------------------------------------------------
 
 

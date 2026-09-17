@@ -4,7 +4,7 @@
 
 > Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 13 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，回显步骤验收标准供编排者校验，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供全局跨会话 flow 面板，并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
-事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（LT-7 区块）、`agent/middlewares/subagent_completion_drain/core.py`（LT-5 回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
+事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow 上下文区块）、`agent/middlewares/subagent_completion_drain/core.py`（记忆回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -19,7 +19,7 @@
 - [跨会话面板](#-跨会话面板)
 - [压缩前的记忆落盘](#-压缩前的记忆落盘)
 - [摘要 ↔ TaskFlow 协调](#-摘要--taskflow-协调)
-- [子 Agent 记忆回流（LT-5）](#-子-agent-记忆回流lt-5)
+- [子 Agent 记忆回流](#-子-agent-记忆回流)
 - [工具输出摘要](#-工具输出摘要)
 - [会话连续性](#-会话连续性)
 - [TaskFlow 自动恢复](#-taskflow-自动恢复)
@@ -435,7 +435,7 @@ if taskflow_ctx:
 
 该区块以 `## Current TaskFlow State (authoritative)` 为标题（`summarization/core.py:286`），对于本会话拥有的至多三个 flow（通过 `requester_session_key(session_id)` 匹配），列出 flow id/状态、描述、`done/total` 进度与状态分解、最后两个已完成的步骤、前两个待处理步骤，以及任何等待原因。它复用了 DAG 辅助函数 `step_status` 与 `steps_summary`，并且完全失败开放（`except Exception → ""`）。确定性回退摘要（`_build_static_fallback_summary`）**不**包含该区块；它只是 LLM 提示词的补充。
 
-## 🧠 子 Agent 记忆回流（LT-5）
+## 🧠 子 Agent 记忆回流
 
 `SubagentCompletionDrainMiddleware`（`agent/middlewares/subagent_completion_drain/core.py`）是排队的子 Agent 完成消息在父回合的摄入点：在 `before_model` 时，它会重新水合并排空会话的 `SteeringQueue`，注入重建好的完成载体消息。**当排空非空时**，它还会把共享记忆与父 Agent 的内存视图做一次对账：
 
@@ -500,7 +500,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 | 读取者 | 位置 | 用途 |
 | :--- | :--- | :--- |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 系统提示词中的 `## Pending TaskFlows` |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 压缩摘要提示词中的 TaskFlow 区块（LT-7） |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 压缩摘要提示词中的 TaskFlow 区块 |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | 持久化连续性状态中的 `taskflow_ids` |
 
 `creator_session_key` 在创建 flow 时被写入（`taskflow_create.py:38`），值为 `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"`（`_shared.py:21`）。`get_active_flows_sync()`（`store_sqlite.py:538`）仅返回 `running` 与 `waiting` 的 flow，按版本排序，使用无需事件循环的 stdlib `sqlite3` 路径；失败时返回 `[]`。
@@ -686,7 +686,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 │ sessions          │                         │ (+ token_usage budget) │           │
 └───────────────────┘                         └───────────┬────────────┘           │
          │                                                │                        │
-         │ drain (LT-5)                                   │                        │
+         │ drain                                          │                        │
          ▼                                                │                        │
 ┌──────────────────────────────┐                          │                        │
 │ SubagentCompletionDrain      │                          │                        │
@@ -697,7 +697,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 ┌──────────────────────────────┐    every sweep    ┌───────────────────────────┐   │
 │ SUBAGENT SWEEPER             │◀─────────────────▶│ Summarization middleware  │   │
 │ _expire_overdue_taskflows    │                   │ prune → memory_flush →    │   │
-│ _scan_stale_waiting_taskflows│                   │ summary (+LT-7 TaskFlow)  │   │
+│ _scan_stale_waiting_taskflows│                   │ summary (+TaskFlow)       │   │
 └──────────────────────────────┘                   │                           │   │
                                                    └───────────┬───────────────┘   │
                                                                │ clear_session      │
@@ -707,7 +707,7 @@ LANE_SYSTEM: LaneSystemConfig = {
                                                    └───────────────────────────┘
 ```
 
-编译后的图不再在 `agent.core.py` 中内联包装：**`agent/wrapper/`** 包现在拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项复现了历史上的硬编码链——先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。**LT-5** 回流由 `agent/middlewares/subagent_completion_drain/core.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
+编译后的图不再在 `agent.core.py` 中内联包装：**`agent/wrapper/`** 包现在拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项复现了历史上的硬编码链——先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。**记忆回流**由 `agent/middlewares/subagent_completion_drain/core.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
 
 ## 📚 API 参考
 
@@ -747,7 +747,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 绝不丢失已派子 Agent 的持久化 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 截止时间执行 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | 空闲检测标记 |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | LT-7 摘要协调 |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 摘要协调 |
 | `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 自动恢复提示词区块 |
 | `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | 工具输出单行摘要 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 连续性保存钩子 |
@@ -756,7 +756,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 跨会话面板读取 |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失败分类 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 重试规划/持久化 |
-| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | LT-5 记忆回流对账 |
+| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | 记忆回流对账 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 可插拔图包装链 |
 
 ## 🧪 测试
@@ -783,7 +783,7 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（十七个 `unit` 测试文
 | `test_validation.py` | 标准存储、恢复回显、覆盖 |
 | `test_taskflow_list.py` | 面板渲染、状态过滤、最后活动时间戳 |
 
-跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的 LT-5 记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
+跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
 
 用标准的 uv/pytest 工具只跑这一区块：
 
@@ -805,7 +805,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
 - **注册表规模是 39。** 配置注册表包含 39 个 feature 对象（Agent 侧 20 + 基础设施侧 19）；基础设施侧契约测试覆盖其中 18 个（GATEWAY 加 17 个数据驱动用例），遗漏了 `MODEL_PRICING`。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
-- **LT-7 的 TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
+- **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。
 - **结果校验是提示性的。** `validation_criteria` 会被存储并随结果一起回显，但工具从不强制执行；编排者必须自行判断通过/失败。不存在能因未满足标准而让步骤失败的自动闸门。
 - **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_wait_all` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。

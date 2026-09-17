@@ -1,4 +1,4 @@
-"""Unit tests for the LT-2 pending-TaskFlow injection in workspace/prompt_builder.py.
+"""Unit tests for the pending-TaskFlow injection in workspace/prompt_builder.py.
 
 On session start the prompt builder scans the taskflow registry for
 non-terminal flows whose ``state['creator_session_key']`` matches the current

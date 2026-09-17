@@ -1,7 +1,7 @@
-"""LT-5: subagent completion drain reconciles the shared memory files.
+"""Subagent completion drain reconciles the shared memory files.
 
 The drain middleware is the parent-turn ingestion point for completion
-carriers. On a non-empty drain it also performs the LT-5 memory backflow:
+carriers. On a non-empty drain it also performs the memory backflow:
 reload the process-wide ``MemoryStore`` from ``MEMORY.md`` / ``USER.md`` (so a
 child session's persisted writes become visible to the parent), then persist
 the reconciled state.

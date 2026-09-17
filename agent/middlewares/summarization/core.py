@@ -280,9 +280,9 @@ _SUMMARY_PROMPT_UPDATE = (
 
 
 def _get_taskflow_context_sync(session_id: str) -> str:
-    """Render this session's active TaskFlow state for the summary prompt (LT-7).
+    """Render this session's active TaskFlow state for the summary prompt.
 
-    Reuses LT-2's sync registry read, scoped by ``creator_session_key``. Returns
+    Reuses the sync registry read, scoped by ``creator_session_key``. Returns
     "" — never raises — so an unavailable TaskFlow store cannot block compression.
     """
     try:
@@ -339,7 +339,7 @@ def _get_taskflow_context_sync(session_id: str) -> str:
 
         return "\n".join(lines)
     except Exception:
-        logger.debug("LT-7: taskflow context unavailable for session {}", session_id)
+        logger.debug("taskflow context unavailable for session {}", session_id)
         return ""
 
 

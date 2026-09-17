@@ -1,4 +1,4 @@
-"""Unit tests for LT-8 cross-session intent continuity.
+"""Unit tests for cross-session intent continuity.
 
 On session end ``clear_session()`` persists the last AI reply plus the
 session's active TaskFlow ids into

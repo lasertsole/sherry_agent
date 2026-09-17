@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）均已实现，并包含 LT-1…LT-8 长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
+SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-openagent / hermes-agent / openclaw）均已实现，并包含长程任务编排。设计规则：所有能力都扩展既有基础设施——会话连续性、状态寄存器、MesMemory 迁移——绝不另建平行存储。
 
 > 状态（2026-09-13）：计划已退役，本 README 即权威参考。
 
@@ -22,7 +22,7 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 | P2-2 | Context Epoch 快照 | 迁移 v17（`context_epoch` 表），`ContextEpoch` |
 | P2-4（部分） | steer/queue 双投递 | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
-| LT-1…8 | TaskFlow 编排 | `docs/long-running-tasks/` |
+| TaskFlow 编排 | `docs/long-running-tasks/` |
 
 ## MesMemory 迁移（v10–v17）
 

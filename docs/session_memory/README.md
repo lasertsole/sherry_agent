@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) are implemented, plus the LT-1…LT-8 long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory migrations — never a parallel store.
+All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-my-openagent, hermes-agent and openclaw) are implemented, plus the long-running-task orchestrations. Design rule: every capability extends the existing infrastructure — session continuity, state registers, MesMemory migrations — never a parallel store.
 
 > Status (2026-09-13): plan retired. This README is the reference.
 
@@ -22,7 +22,7 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 | P2-2 | Context epoch snapshots | migration v17 (`context_epoch` table), `ContextEpoch` |
 | P2-4 (partial) | steer/queue dual delivery | `announce/steering_queue.py` + `SubagentCompletionDrainMiddleware` + `auto_turn` |
 | P2-5 | Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
-| LT-1…8 | TaskFlow orchestration | `docs/long-running-tasks/` |
+| TaskFlow orchestration | `docs/long-running-tasks/` |
 
 ## MesMemory Migrations (v10–v17)
 

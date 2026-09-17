@@ -4,7 +4,7 @@ Reference: oh-my-openagent session binding + opencode-dev Context Epoch.
 
 Difference from P1-4 Recall:
 - P1-4 Recall: fuzzy keyword search over historical conversations.
-- LT-8 continuity: exact injection of the previous session's tail summary.
+- Continuity: exact injection of the previous session's tail summary.
 
 End state is persisted by ``server.DAO.messages.clear_session`` right BEFORE it
 deletes the session, and read back by
@@ -178,7 +178,7 @@ async def auto_save_on_session_end(session_id: str) -> None:
             last_ai = content[:_MAX_SUMMARY_CHARS] if content else None
             break
 
-        # Related active TaskFlows (LT-2 registry).
+        # Related active TaskFlows (registry lookup).
         taskflow_ids = _get_active_taskflow_ids_sync(session_id)
 
         save_session_end_state(
@@ -213,7 +213,7 @@ def _get_channel_chat_for_session(session_id: str) -> tuple[str, str]:
 
 
 def _get_active_taskflow_ids_sync(session_id: str) -> list[str]:
-    """Collect the ids of active TaskFlows created by this session (LT-2).
+    """Collect the ids of active TaskFlows created by this session.
 
     Reads the taskflow registry through the prompt data provider (the agent
     layer owns it) and filters by ``creator_session_key``. Returns ``[]`` when

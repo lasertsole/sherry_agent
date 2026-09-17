@@ -14,7 +14,7 @@ async def clear_session(session_id: str) -> None:
     """Purge every trace of a session across all stores.
 
     Deletes, in order:
-      0. Save the session end state for cross-session continuity (LT-8) —
+      0. Save the session end state for cross-session continuity —
          BEFORE any deletion, so the tail messages still exist.
       1. The session's rows from the context engine SQLite store
          (``mes_memory.db`` messages table).
@@ -24,7 +24,7 @@ async def clear_session(session_id: str) -> None:
       4. The in-memory session state via ``clear_all_register_sessions``.
       5. The session's variables from the ``state_register_db`` SQLite store.
     """
-    # (0) Session continuity (LT-8): persist the tail state before deletion.
+    # (0) Session continuity: persist the tail state before deletion.
     try:
         from context_engine.session_continuity import auto_save_on_session_end
 

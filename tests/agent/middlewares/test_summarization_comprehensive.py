@@ -1900,7 +1900,7 @@ class TestSummarizationAsync:
 
 
 # ======================================================================
-# LT-7: TaskFlow state injection into the compression summary prompt
+# TaskFlow state injection into the compression summary prompt
 # ======================================================================
 
 _LT7_STORE_PATCH_TARGET = "agent.tools.taskflow.registry.store_sqlite.get_active_flows_sync"
@@ -1941,7 +1941,7 @@ def _lt7_steps():
 
 
 class TestTaskFlowContextInjection:
-    """LT-7: the summary prompt carries the authoritative TaskFlow state."""
+    """The summary prompt carries the authoritative TaskFlow state."""
 
     def test_summary_prompt_includes_taskflow(self, sid, monkeypatch):
         # Given: one active flow owned by this session, one owned by another.
