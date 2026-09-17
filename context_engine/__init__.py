@@ -1,6 +1,10 @@
 from .store import (
     get_db as get_db,
     add_messages as add_messages,
+    add_messages_sync as add_messages_sync,
+    filter_persisted_message_ids as filter_persisted_message_ids,
+    mark_message_ids_persisted as mark_message_ids_persisted,
+    is_message_persisted as is_message_persisted,
     get_messages_by_lastest_n_turns as get_messages_by_lastest_n_turns,
     get_turns_by_turn_num_scope as get_turns_by_turn_num_scope,
     get_history_by_turn_page as get_history_by_turn_page,

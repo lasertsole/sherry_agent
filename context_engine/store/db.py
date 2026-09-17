@@ -106,7 +106,7 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     compaction_checkpoint_id), all named indexes, both FTS5 tables with their
     six sync triggers, and the auxiliary tables (message_embeddings,
     compression_locks, events, context_epoch, session_leafs,
-    compaction_checkpoints).
+    compaction_checkpoints, persisted_message_ids).
     """
     db.executescript("""
     CREATE TABLE IF NOT EXISTS messages (
@@ -257,6 +257,13 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
     
     CREATE INDEX IF NOT EXISTS idx_compaction_session
         ON compaction_checkpoints(session_id, checkpoint_seq);
+    
+    CREATE TABLE IF NOT EXISTS persisted_message_ids (
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, message_id)
+    );
     """)
     db.commit()
 
@@ -380,6 +387,14 @@ _HEAL_AUX_TABLE_DDL: tuple[str, ...] = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_compaction_session "
     "ON compaction_checkpoints(session_id, checkpoint_seq);",
+    """
+    CREATE TABLE IF NOT EXISTS persisted_message_ids (
+        session_id TEXT NOT NULL,
+        message_id TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (session_id, message_id)
+    );
+    """,
 )
 
 

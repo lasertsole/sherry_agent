@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from .db import get_db
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from typing import Annotated, Any
 from datetime import datetime, timedelta
 from pydantic import Field, validate_call
@@ -426,21 +427,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
         session_id: The session these messages belong to.
         messages: The LangChain BaseMessage list (human / ai / tool roles).
     """
-    # Early exit when there is nothing to persist.
-    if messages is None or len(messages) == 0:
-        return
-
-    # SESSION plan P1-2: skip messages this process already flushed (crash-retry dedup).
-    # Unknown roles are skipped before the dedup probe: message-like objects
-    # without a registered builder (EC-01 add_messages bounds) are not
-    # required to carry ``additional_kwargs`` at all.
-    pending: list[BaseMessage] = []
-    for m in messages:
-        if getattr(m, "type", None) not in _BUILDERS:
-            continue
-        if m.additional_kwargs.get(_DB_PERSISTED_KEY):
-            continue
-        pending.append(m)
+    pending = _filter_pending(messages)
     if not pending:
         return
 
@@ -449,6 +436,103 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     # The module locks make the offload safe, and the awaited call keeps
     # exception propagation identical to the previous on-loop implementation.
     await asyncio.to_thread(_persist_batch, session_id, pending)
+
+
+def add_messages_sync(session_id: str, messages: list[BaseMessage]) -> None:
+    """Synchronous twin of :func:`add_messages` (sync compression path).
+
+    Identical filtering and persistence core, called directly on the current
+    thread instead of through ``asyncio.to_thread``. Kept as a separate entry
+    point so the sync compaction path (which has no event loop to await on)
+    can flush the discarded prefix without spawning a loop.
+    """
+    pending = _filter_pending(messages)
+    if not pending:
+        return
+    _persist_batch(session_id, pending)
+
+
+def is_message_persisted(message: BaseMessage) -> bool:
+    """True when this process already flushed the message (in-process marker)."""
+    return bool(getattr(message, "additional_kwargs", {}).get(_DB_PERSISTED_KEY))
+
+
+def _filter_pending(messages: list[BaseMessage] | None) -> list[BaseMessage]:
+    """Return the messages a persistence call would actually write.
+
+    Early exit when there is nothing to persist. SESSION plan P1-2: skip
+    messages this process already flushed (crash-retry dedup). Unknown roles
+    are skipped before the dedup probe: message-like objects without a
+    registered builder (EC-01 add_messages bounds) are not required to carry
+    ``additional_kwargs`` at all.
+    """
+    if messages is None or len(messages) == 0:
+        return []
+    pending: list[BaseMessage] = []
+    for m in messages:
+        if getattr(m, "type", None) not in _BUILDERS:
+            continue
+        if is_message_persisted(m):
+            continue
+        pending.append(m)
+    return pending
+
+
+# ---------------------------------------------------------------------------
+# Persistent watermark: message ids already flushed to the messages table.
+#
+# ``turn_num``/``ts_ms`` are regenerated on every ``add_messages`` call, so the
+# per-row idempotency key cannot dedup a re-flush of the same message objects
+# across process restarts (the in-process ``_db_persisted`` marker is lost when
+# the graph state is deserialized from the checkpointer). This table is the
+# cross-restart watermark: a (session_id, message_id) tombstone written after a
+# successful flush. Message ids are assigned by the LangGraph ``add_messages``
+# reducer and serialized in every checkpoint, so the same message restored
+# after a restart carries the same id and is filtered out before the second
+# write. ``INSERT OR IGNORE`` under the primary key makes the mark idempotent;
+# lookups are served by the primary-key index.
+# ---------------------------------------------------------------------------
+
+# SQLite's default SQLITE_MAX_VARIABLE_NUMBER is 999; stay well below it so a
+# batched IN-query never trips the limit.
+_WATERMARK_QUERY_CHUNK = 400
+
+
+def filter_persisted_message_ids(session_id: str, message_ids: Sequence[str]) -> set[str]:
+    """Return the subset of ``message_ids`` already tombstoned for the session."""
+    unique = list(dict.fromkeys(mid for mid in message_ids if mid))
+    if not unique:
+        return set()
+    found: set[str] = set()
+    for start in range(0, len(unique), _WATERMARK_QUERY_CHUNK):
+        batch = unique[start : start + _WATERMARK_QUERY_CHUNK]
+        placeholders = ",".join("?" for _ in batch)
+        rows = _db.execute(
+            f"SELECT message_id FROM persisted_message_ids "
+            f"WHERE session_id = ? AND message_id IN ({placeholders})",
+            [session_id, *batch],
+        ).fetchall()
+        found.update(str(row[0]) for row in rows)
+    return found
+
+
+def mark_message_ids_persisted(session_id: str, message_ids: Sequence[str]) -> int:
+    """Tombstone the given message ids; returns the number of newly inserted rows.
+
+    Idempotent by primary key: re-marking an already-persisted id inserts
+    nothing and reports 0.
+    """
+    unique = list(dict.fromkeys(mid for mid in message_ids if mid))
+    if not unique:
+        return 0
+    created = datetime.now().strftime("%Y%m%d%H%M%S")
+    cursor = _db.executemany(
+        "INSERT OR IGNORE INTO persisted_message_ids (session_id, message_id, created_at) "
+        "VALUES (?, ?, ?)",
+        [(session_id, mid, created) for mid in unique],
+    )
+    _db.commit()
+    return cursor.rowcount
 
 
 def create_compaction_checkpoint(
@@ -689,6 +773,9 @@ def delete_messages_by_session(session_id: str) -> int:
     """
     with _db:
         cur = _db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        # The watermark belongs to the session's messages: drop it with them so
+        # a reused session id starts with no stale tombstones.
+        _db.execute("DELETE FROM persisted_message_ids WHERE session_id = ?", (session_id,))
     return cur.rowcount
 
 
