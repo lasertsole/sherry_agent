@@ -108,3 +108,110 @@ def is_allowed_skill_path(skill_file: Path, skills_dir: Path | None = None) -> b
     except ValueError:
         return False
     return bool(rel.parts) and rel.parts[0] in SKILL_DISCOVERY_ROOTS
+
+
+# ── Plan / boulder path resolution (single source of truth) ────────────────
+# Plans were migrated from repo-level ``.omo/plans/`` into each session tree
+# (``workspace/sessions/<session_id>/plans/``). Legacy ``.omo`` references stay
+# resolvable, and migrated files are found behind a legacy reference.
+# ``ROOT_DIR`` / ``SESSIONS_DIR`` are read at call time so tests can repoint them.
+
+
+def _omo_dir() -> Path:
+    """Return the repo-root ``.omo`` orchestration directory (absolute)."""
+    return ROOT_DIR / ".omo"
+
+
+def is_safe_session_segment(session_id: str) -> bool:
+    """Return True when *session_id* is a safe single path segment.
+
+    Rejects empty, ``.`` / ``..``, and any value containing a path separator.
+    Unlike :func:`pub.func.validator.session_id.is_safe_session_id`, this rule
+    is path-root agnostic: plan directories anchor to ``SESSIONS_DIR``, not
+    ``SRC_DIR``, so the containment check there does not apply.
+    """
+    if not session_id or session_id in (".", ".."):
+        return False
+    return "/" not in session_id and "\\" not in session_id
+
+
+def session_plans_dir(session_id: str) -> Path | None:
+    """Return the session's plan directory, or ``None`` for an unsafe id.
+
+    The directory is ``SESSIONS_DIR/<session_id>/plans``. Unsafe session ids
+    (empty / ``.`` / ``..`` / containing a path separator) yield ``None`` so
+    callers fail open instead of escaping the sessions root.
+
+    Note: ``clear_session`` removes ``SESSIONS_DIR/<session_id>/`` wholesale,
+    so deleting a session also deletes its plans.
+    """
+    if not is_safe_session_segment(session_id):
+        return None
+    return SESSIONS_DIR / session_id / "plans"
+
+
+def resolve_plan_path(plan_ref: str | Path | None, session_id: str | None = None) -> Path | None:
+    """Resolve a plan reference to an existing file, or ``None``.
+
+    Accepted forms, in priority order:
+
+    1. **Session-scoped** — a bare filename (``x.md``) or any reference whose
+       basename exists under ``SESSIONS_DIR/<session_id>/plans/``. This wins
+       over the legacy copy when both exist, and also finds the migrated file
+       behind a legacy ``.omo/plans/x.md`` reference.
+    2. **Repo-relative** — ``ROOT_DIR / ref`` when that file exists; covers
+       explicit new-form paths (``workspace/sessions/<id>/plans/x.md``) and the
+       legacy ``.omo/plans/x.md`` layout.
+    3. **Legacy basename** — ``ROOT_DIR/.omo/plans/<basename>`` (absolute
+       references are accepted only when the file exists).
+
+    The reference is never guessed: a missing file returns ``None``.
+    """
+    if plan_ref is None:
+        return None
+    ref = str(plan_ref).strip()
+    if not ref:
+        return None
+
+    candidate = Path(ref)
+    if candidate.is_absolute():
+        return candidate if candidate.is_file() else None
+
+    if session_id:
+        plans_dir = session_plans_dir(session_id)
+        if plans_dir is not None:
+            scoped = plans_dir / candidate.name
+            if scoped.is_file():
+                return scoped
+
+    rooted = ROOT_DIR / candidate
+    if rooted.is_file():
+        return rooted
+
+    legacy = _omo_dir() / "plans" / candidate.name
+    if legacy.is_file():
+        return legacy
+    return None
+
+
+def resolve_boulder_path() -> Path:
+    """Return the absolute active-work pointer path (``ROOT_DIR/.omo/boulder.json``).
+
+    ``boulder.json`` is written by the external orchestration layer, not by
+    this repo; the repo only reads it.
+    """
+    return _omo_dir() / "boulder.json"
+
+
+def resolve_evidence_ledger_path() -> Path:
+    """Return the absolute evidence-ledger path (``ROOT_DIR/.omo/ledger.jsonl``).
+
+    The ledger deliberately stays repo-scoped (not session-scoped): it is the
+    append-only audit trail shared across sessions that verify the same plan.
+    """
+    return _omo_dir() / "ledger.jsonl"
+
+
+def resolve_start_work_ledger_path() -> Path:
+    """Return the absolute start-work ledger path (``ROOT_DIR/.omo/start-work/ledger.jsonl``)."""
+    return _omo_dir() / "start-work" / "ledger.jsonl"
