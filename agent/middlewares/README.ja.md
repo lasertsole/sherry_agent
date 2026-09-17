@@ -823,6 +823,7 @@ from agent.middlewares import (
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
     ToolGuardrails,
+    ToolResultEvictionMiddleware,
     IterationBudget,
     system_prompt_injection,
     ToolCallNormalize,
