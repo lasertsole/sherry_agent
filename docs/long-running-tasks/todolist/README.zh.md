@@ -44,7 +44,7 @@
 | todo 是否完成                | `todos.db`            | 只有 `todowrite` 能改 todo 状态                        |
 | step 是否完成 / 依赖是否满足 | TaskFlow `state_json` | 只有 `taskflow_resume` 能把 step 标 `done` 并解锁后继  |
 | 子会话是否还在跑             | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run` |
-| 计划文件进度（checkbox）     | `.omo/plans/*.md`     | orchestrator 编辑 `- [ ]` → `- [x]`                    |
+| 计划文件进度（checkbox）     | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator 编辑 `- [ ]` → `- [x]`                    |
 | 执行证据                     | `.omo/ledger.jsonl`   | `EvidenceLedger` 追加                                  |
 | 活跃工作状态                 | `.omo/boulder.json`   | 计划激活/恢复                                          |
 
@@ -64,7 +64,7 @@ todo 可携带两个可选字段指向 TaskFlow：
 全面采用 HTN（分层任务网络）体系：计划文件 → checkbox → 原子 sub-task → 委派 subagent workers → 对抗性验证。
 
 ```
-Plan (.omo/plans/*.md)
+Plan (workspace/sessions/<session_id>/plans/*.md)
   └─ Wave 0: [Checkbox A] [Checkbox B]          ← 并行，无依赖
   └─ Wave 1: [Checkbox C] (depends on A, B)      ← 等 Wave 0 完成
   └─ Wave 2: [Final Verification Wave]            ← 全局收尾
@@ -113,7 +113,9 @@ E7       │ 意图识别器 ★★     │ before_model: arming(无计划+任�
 
 ## 数据层
 
-### 计划文件 (.omo/plans/*.md)
+### 计划文件 (workspace/sessions/<session_id>/plans/*.md)
+
+计划文件是会话作用域的：**清除会话会删除该会话的 plans**（整个 `workspace/sessions/<session_id>/` 树被删除）。legacy `.omo/plans/*.md` 路径仍可通过 `config.path.resolve_plan_path` 解析。
 
 Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 
@@ -161,7 +163,7 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
   "works": {
     "<work-id>": {
       "work_id": "<work-id>",
-      "active_plan": ".omo/plans/<plan-name>.md",
+      "active_plan": "workspace/sessions/<session_id>/plans/<plan-name>.md",
       "plan_name": "<plan-name>",
       "session_ids": ["sherry:<session_id>"],
       "status": "active",
@@ -287,7 +289,7 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 ### 5 Phase 流程
 
 ```
-Phase 1: Select the plan → 读 .omo/boulder.json，列 .omo/plans/*.md，匹配或恢复
+Phase 1: Select the plan → 读 .omo/boulder.json，列 workspace/sessions/<session_id>/plans/*.md（legacy .omo/plans/*.md 仍接受），匹配或恢复
 Phase 2: Create or update Boulder state → 写 boulder.json，注册所有 Phase 和 Task 为 todos
 Phase 3: Execute next checkbox（调度全部交给 TaskFlow）
   → 读计划，找到第一个未勾选的 checkbox
@@ -352,7 +354,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | -------------------------- | ----------------- | ---------- | ------------------------------------------------ |
 | `_build_todo_block()`      | todos.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5 行      | 活跃工作状态                                     |
-| `_build_knowledge_block()` | .omo/knowledge/   | ~20 行     | key_failures + key_successes + reusable_patterns |
+| `_build_knowledge_block()` | workspace/knowledge/plans/   | ~20 行     | key_failures + key_successes + reusable_patterns |
 
 ### 为什么比 omo 的 5 层防御更轻量
 

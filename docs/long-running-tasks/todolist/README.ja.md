@@ -44,7 +44,7 @@
 | todo が完了したか                      | `todos.db`            | `todowrite` のみが todo ステータスを変更可能                   |
 | step が完了したか / 依存が充足したか   | TaskFlow `state_json` | `taskflow_resume` のみが step を `done` にして後続をアンロック |
 | 子セッションが実行中か                 | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`         |
-| 計画ファイルの進捗（チェックボックス） | `.omo/plans/*.md`     | orchestrator が `- [ ]` → `- [x]` に編集                       |
+| 計画ファイルの進捗（チェックボックス） | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator が `- [ ]` → `- [x]` に編集                       |
 | 実行エビデンス                         | `.omo/ledger.jsonl`   | `EvidenceLedger` が追記                                        |
 | アクティブワーク状態                   | `.omo/boulder.json`   | 計画のアクティベーション/復元                                  |
 
@@ -64,7 +64,7 @@ todo は TaskFlow を指す2つのオプションフィールドを保持でき�
 HTN（階層型タスクネットワーク）パラダイムを採用：計画ファイル → チェックボックス → 原子サブタスク → subagent worker への委譲 → 対抗的検証。
 
 ```
-Plan (.omo/plans/*.md)
+Plan (workspace/sessions/<session_id>/plans/*.md)
   └─ Wave 0: [Checkbox A] [Checkbox B]          ← 並行、依存なし
   └─ Wave 1: [Checkbox C] (depends on A, B)      ← Wave 0 完了待ち
   └─ Wave 2: [Final Verification Wave]            ← グローバル完了処理
@@ -117,7 +117,9 @@ E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タ
 
 ## データレイヤー
 
-### 計画ファイル (.omo/plans/*.md)
+### 計画ファイル (workspace/sessions/<session_id>/plans/*.md)
+
+計画ファイルはセッションスコープです：**セッションを削除するとそのセッションの plans も削除されます**（`workspace/sessions/<session_id>/` ツリー全体が削除）。legacy `.omo/plans/*.md` も `config.path.resolve_plan_path` で解決できます。
 
 チェックボックス形式の Markdown で、完全な HTN 分解を定義します：
 
@@ -165,7 +167,7 @@ E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タ
   "works": {
     "<work-id>": {
       "work_id": "<work-id>",
-      "active_plan": ".omo/plans/<plan-name>.md",
+      "active_plan": "workspace/sessions/<session_id>/plans/<plan-name>.md",
       "session_ids": ["sherry:<session_id>"],
       "status": "active"
     }
@@ -283,7 +285,7 @@ todolist をいつ使うか（3+ ステップの複雑な作業）、利用可�
 ### 5フェーズフロー
 
 ```
-Phase 1: 計画の選択 → .omo/boulder.json を読取、.omo/plans/*.md をリスト、マッチまたは復元
+Phase 1: 計画の選択 → .omo/boulder.json を読取、workspace/sessions/<session_id>/plans/*.md をリスト（legacy .omo/plans/*.md も可）、マッチまたは復元
 Phase 2: Boulder 状態の作成/更新 → boulder.json に書き込み、フェーズ/タスクを todos として登録
 Phase 3: 次のチェックボックスを実行（スケジューリングはすべて TaskFlow に委譲）
   → 最初の未チェックの checkbox を見つける
@@ -348,7 +350,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | -------------------------- | ----------------- | ------------------ | --------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5行               | アクティブワーク状態                                      |
-| `_build_knowledge_block()` | .omo/knowledge/   | ~20行              | key_failures + key_successes + reusable_patterns          |
+| `_build_knowledge_block()` | workspace/knowledge/plans/   | ~20行              | key_failures + key_successes + reusable_patterns          |
 
 ### omo の5層防御より軽量な理由
 

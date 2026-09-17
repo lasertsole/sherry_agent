@@ -51,7 +51,10 @@ export interface Todo {
   step_id?: string | null;
   /** TaskFlow step status read-back (never computed here). */
   taskflow_status?: 'blocked' | 'ready' | 'dispatched' | 'done' | null;
-  /** Plan file reference (`.omo/plans/*.md`). */
+  /**
+   * Plan file reference: session-scoped `workspace/sessions/<session_id>/plans/*.md`
+   * (legacy `.omo/plans/*.md` is still accepted). Clearing a session deletes its plans.
+   */
   plan_ref?: string | null;
 }
 

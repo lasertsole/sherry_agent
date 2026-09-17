@@ -28,7 +28,7 @@ The session-scoped lightweight planning/checklist layer. It is responsible for "
 - `category` (optional): `quick | deep | ultrabrain | visual | git | writing`, the delegation routing decision.
 - `delegation` (optional): `self | subagent`, whether to do it yourself or delegate it to a subagent.
 - `subagent_id` (optional): filled with the subagent's `child_session_key` after it is spawned.
-- `plan_ref` (optional): the associated `.omo/plans/*.md` path.
+- `plan_ref` (optional): the associated plan file path — session-scoped `workspace/sessions/<session_id>/plans/*.md` (legacy `.omo/plans/*.md` is still accepted).
 - `flow_id` (optional): the associated TaskFlow flow id.
 - `step_id` (optional): the associated TaskFlow step id (e.g. `step-2`).
 

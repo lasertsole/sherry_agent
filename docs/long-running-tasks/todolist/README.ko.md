@@ -44,7 +44,7 @@
 | todo 완료 여부                    | `todos.db`            | `todowrite`만 todo 상태 변경 가능                        |
 | step 완료 여부 / 의존성 충족 여부 | TaskFlow `state_json` | `taskflow_resume`만 step을 `done`으로 표시하고 후속 언록 |
 | 자식 세션 실행 중 여부            | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`   |
-| 계획 파일 진행 (체크박스)         | `.omo/plans/*.md`     | orchestrator가 `- [ ]` → `- [x]` 편집                    |
+| 계획 파일 진행 (체크박스)         | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator가 `- [ ]` → `- [x]` 편집                    |
 | 실행 증거                         | `.omo/ledger.jsonl`   | `EvidenceLedger` 추가                                    |
 | 활성 작업 상태                    | `.omo/boulder.json`   | 계획 활성화/복원                                         |
 
@@ -64,7 +64,7 @@ todo는 TaskFlow를 가리키는 두 개의 선택적 필드를 가질 수 있�
 HTN(계층적 태스크 네트워크) 패러다임 채택: 계획 파일 → 체크박스 → 원자 서브태스크 → subagent worker 위임 → 대항적 검증.
 
 ```
-Plan (.omo/plans/*.md)
+Plan (workspace/sessions/<session_id>/plans/*.md)
   └─ Wave 0: [Checkbox A] [Checkbox B]          ← 병렬, 의존성 없음
   └─ Wave 1: [Checkbox C] (depends on A, B)      ← Wave 0 완료 대기
   └─ Wave 2: [Final Verification Wave]            ← 전역 마무리
@@ -117,7 +117,9 @@ E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태�
 
 ## 데이터 레이어
 
-### 계획 파일 (.omo/plans/*.md)
+### 계획 파일 (workspace/sessions/<session_id>/plans/*.md)
+
+계획 파일은 세션 스코프입니다: **세션을 삭제하면 해당 세션의 plans도 삭제됩니다** (`workspace/sessions/<session_id>/` 트리 전체 삭제). legacy `.omo/plans/*.md` 경로도 `config.path.resolve_plan_path`로 해석됩니다.
 
 체크박스 형식의 Markdown으로, 완전한 HTN 분해를 정의합니다:
 
@@ -165,7 +167,7 @@ E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태�
   "works": {
     "<work-id>": {
       "work_id": "<work-id>",
-      "active_plan": ".omo/plans/<plan-name>.md",
+      "active_plan": "workspace/sessions/<session_id>/plans/<plan-name>.md",
       "session_ids": ["sherry:<session_id>"],
       "status": "active"
     }
@@ -278,7 +280,7 @@ todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구,
 ### 5단계 흐름
 
 ```
-Phase 1: 계획 선택 → .omo/boulder.json 읽기, .omo/plans/*.md 리스트, 매치 또는 복원
+Phase 1: 계획 선택 → .omo/boulder.json 읽기, workspace/sessions/<session_id>/plans/*.md 리스트 (legacy .omo/plans/*.md 허용), 매치 또는 복원
 Phase 2: Boulder 상태 생성/업데이트 → boulder.json 작성, 단계/태스크를 todos로 등록
 Phase 3: 다음 체크박스 실행 (스케줄링은 모두 TaskFlow에 위임)
   → 첫 번째 미체크 체크박스 찾기
@@ -343,7 +345,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | -------------------------- | ----------------- | ------------- | ------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10행         | 현재 todo 리스트 + 상태 + TaskFlow flow/step 연결 |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5행          | 활성 작업 상태                                    |
-| `_build_knowledge_block()` | .omo/knowledge/   | ~20행         | key_failures + key_successes + reusable_patterns  |
+| `_build_knowledge_block()` | workspace/knowledge/plans/   | ~20행         | key_failures + key_successes + reusable_patterns  |
 
 ### omo의 5층 방어보다 경량인 이유
 

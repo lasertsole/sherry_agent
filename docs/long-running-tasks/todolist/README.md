@@ -44,7 +44,7 @@ One-liner: **the planning & discipline layer is responsible for "think clearly, 
 | Whether a todo is complete                  | `todos.db`            | Only `todowrite` can change todo status                             |
 | Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_resume` can mark a step `done` and unlock successors |
 | Whether a child session is still running    | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`              |
-| Plan file progress (checkboxes)             | `.omo/plans/*.md`     | Orchestrator edits `- [ ]` → `- [x]`                                |
+| Plan file progress (checkboxes)             | `workspace/sessions/<id>/plans/*.md` | Orchestrator edits `- [ ]` → `- [x]`                                |
 | Execution evidence                          | `.omo/ledger.jsonl`   | `EvidenceLedger` appends                                            |
 | Active work state                           | `.omo/boulder.json`   | Plan activation/recovery                                            |
 
@@ -68,7 +68,7 @@ The **no-mirroring** principle:
 Adopts the HTN (Hierarchical Task Network) paradigm: plan file → checkbox → atomic sub-task → delegate to subagent workers → adversarial verification.
 
 ```
-Plan (.omo/plans/*.md)
+Plan (workspace/sessions/<id>/plans/*.md)
   └─ Wave 0: [Checkbox A] [Checkbox B]          ← parallel, no dependencies
   └─ Wave 1: [Checkbox C] (depends on A, B)      ← wait for Wave 0
   └─ Wave 2: [Final Verification Wave]            ← global wrap-up
@@ -143,9 +143,12 @@ E7       │ Intent Recognizer│ before_model: arming (no plan + task intent) +
 
 ## Data Layer
 
-### Plan Files (.omo/plans/*.md)
+### Plan Files (workspace/sessions/<session_id>/plans/*.md)
 
-Checkbox-format Markdown defining the complete HTN decomposition:
+Checkbox-format Markdown defining the complete HTN decomposition. Plans are
+session-scoped: **clearing a session deletes that session's plans** (the whole
+`workspace/sessions/<session_id>/` tree is removed). Legacy `.omo/plans/*.md`
+paths still resolve through `config.path.resolve_plan_path`.
 
 ```markdown
 # <Plan Name>
@@ -191,7 +194,7 @@ Persistent work state:
   "works": {
     "<work-id>": {
       "work_id": "<work-id>",
-      "active_plan": ".omo/plans/<plan-name>.md",
+      "active_plan": "workspace/sessions/<session_id>/plans/<plan-name>.md",
       "plan_name": "<plan-name>",
       "session_ids": ["sherry:<session_id>"],
       "status": "active",
@@ -233,7 +236,7 @@ CREATE TABLE IF NOT EXISTS todos (
 
 | Field      | Description                                                        |
 | ---------- | ------------------------------------------------------------------ |
-| `plan_ref` | Linked `.omo/plans/*.md` file path                                 |
+| `plan_ref` | Linked plan file path — session-scoped `workspace/sessions/<session_id>/plans/*.md` (legacy `.omo/plans/*.md` accepted) |
 | `flow_id`  | Linked TaskFlow flow id (DAG owned by TaskFlow)                    |
 | `step_id`  | Linked TaskFlow step id (e.g. `step-2`), for re-reading DAG status |
 
@@ -380,7 +383,7 @@ The skill file defines when to use todolist (3+ step work), available tools, sta
 ### 5-Phase Flow
 
 ```
-Phase 1: Select the plan → read .omo/boulder.json, list .omo/plans/*.md, match or restore
+Phase 1: Select the plan → read .omo/boulder.json, list workspace/sessions/<session_id>/plans/*.md (legacy .omo/plans/*.md accepted), match or restore
 Phase 2: Create/update Boulder state → write boulder.json, register phases/tasks as todos
 Phase 3: Execute next checkbox (scheduling delegated to TaskFlow)
   → Find first unchecked checkbox
@@ -449,7 +452,7 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 | -------------------------- | ----------------- | ------------ | ----------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5 lines     | Active work state                                           |
-| `_build_knowledge_block()` | .omo/knowledge/   | ~20 lines    | key_failures + key_successes + reusable_patterns            |
+| `_build_knowledge_block()` | workspace/knowledge/plans/ | ~20 lines | key_failures + key_successes + reusable_patterns            |
 
 ### Implementation
 

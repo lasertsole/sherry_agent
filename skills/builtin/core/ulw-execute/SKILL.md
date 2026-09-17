@@ -6,7 +6,7 @@ scope: main_only
 
 # ulw-execute: Orchestrated Execution
 
-The execution side of the planning and discipline layer. It drives a plan file (.omo/plans/*.md) from start to completion: select the plan, write boulder state, execute the next checkbox, verify and record evidence, mark progress. It does not implement DAG scheduling — that part belongs to TaskFlow.
+The execution side of the planning and discipline layer. It drives a plan file (session-scoped `workspace/sessions/<session_id>/plans/*.md`; legacy `.omo/plans/*.md` is still accepted) from start to completion: select the plan, write boulder state, execute the next checkbox, verify and record evidence, mark progress. It does not implement DAG scheduling — that part belongs to TaskFlow.
 
 ## Doctrine (MANDATORY)
 
@@ -21,7 +21,8 @@ The main session is responsible for: building the plan, splitting tasks, delegat
 ```
 Phase 1: Select the plan
   -> Read .omo/boulder.json
-  -> List .omo/plans/*.md
+  -> List the session plan dir workspace/sessions/<session_id>/plans/*.md
+     (legacy .omo/plans/*.md is still accepted; deleting a session deletes its plans)
   -> Match by plan-name, or resume the active work with status="active"
 
 Phase 2: Create or update Boulder state
