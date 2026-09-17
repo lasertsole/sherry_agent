@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-本書は、Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれるかを整理する。ライフサイクルには 4 本の抽出経路が組み込まれている：10 ターンごとの memory nudge、todo 全完了時の plan extraction、圧縮前の memory flush、圧縮後の todo fork。
+本書は、Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれるかを整理する。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（`nudge_memory_threshold` 回の圧縮ごと）、圧縮時に todo 全完了だった場合の plan extraction、圧縮前の memory flush、圧縮後の todo fork。
 
 > 以下の主張はすべてソースと照合済み。シンボル名、設定キー、既定値、パスはいずれも `agent/middlewares/`、`agent/tools/`、`config/features/` のコードに実在する。
 
@@ -10,23 +10,23 @@
 
 1. **すべての抽出は既存ストアを拡張する。** 産出は MEMORY.md / USER.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db` のいずれかへ入る。並列ストアを作る抽出経路は一つもない。
 2. **全面 fail-open。** どのトリガも自身の失敗をログに記録して握り潰す。todo ストアの破損、plan ファイルの読み取り不能、LLM 呼び出しの失敗、カーソルの破損が、メインの対話ターンを阻塞したり中断したりしない。
-3. **ターン経路はゼロ阻塞。** 圧縮後 todo fork は fire-and-forget のバックグラウンドタスク。memory nudge と plan extraction は独立した子 Agent として走る（非同期経路では `asyncio.gather` で永続化と並行）。
+3. **ターン経路はゼロ阻塞。** 圧縮後 todo fork と圧縮時 nudge はどちらも fire-and-forget のバックグラウンドタスク; memory review と plan extraction は NUDGE レーン上で独立した子 Agent として走り、モデル呼び出しを決してブロックしない。
 4. **機構は必要に応じて使い分ける。** ツール使用を要する作業だけが完全な `create_agent` fork を使う（memory nudge、plan extraction、todo fork）。純粋な抽出（memory flush）は補助 LLM 呼び出し 1 回で済ませる。
 
 ## トリガ × 機構 × 書込先
 
 | トリガ | 機構（fork agent か / 呼び出し形態） | 書込先 |
 |---|---|---|
-| 10 ターンごと（`nudge_memory_threshold`） | memory nudge（`_nudge_memory`）：`create_agent` の nudge agent を fork し、`_MEMORY_REVIEW_PROMPT` を使う | `memory` ツール経由で MEMORY.md / USER.md |
-| todo リストが全完了（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：nudge agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使う | ① 知識 JSON ② `skills/auto/` |
+| `nudge_memory_threshold` 回の圧縮ごと（既定 10） | memory nudge（`_nudge_memory`）：`create_agent` の nudge agent を fork し、`_MEMORY_REVIEW_PROMPT` を使う | `memory` ツール経由で MEMORY.md / USER.md |
+| 圧縮時に todo リストが全完了（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：nudge agent を fork し、`_PLAN_EXTRACTION_PROMPT` を使う | ① 知識 JSON ② `skills/auto/` |
 | 圧縮前（cut が実際にメッセージを破棄） | memory flush（`run_memory_flush[_sync]`）：安価な LLM 呼び出し 1 回。agent ではない | `MemoryStore.append_entries` 経由で MEMORY.md と USER.md |
 | 圧縮後（cut が実際にメッセージを破棄） | todo fork（`update_todos_from_compaction`）：fire-and-forget の nudge agent、`_COMPRESSION_TODO_PROMPT` | メインセッション束縛の `todowrite` シム経由で `todos.db` |
 
 ## トリガ詳細
 
-### 1. 10 ターンごとの memory nudge
+### 1. 圧縮時の memory review
 
-`ContextEngineHook._after_agent_impl` は毎ターン `state_register_db` の `nudge_review_memory_count` を増やす。カウンタが `nudge_memory_threshold`（既定 10）に達すると 0 に戻し、`nudge_review_memory_lock`（`state_register_mem`）の下で `_nudge_memory(session_id, system_prompt, messages)` を走らせる。いずれかの nudge ロックが保持されている間、`after_agent` は nudge 判断をスキップする（カウンタは増え続ける）。
+`schedule_compression_nudges`（`agent/middlewares/context_engine/nudge.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮ごとに `state_register_db` の `nudge_review_memory_count` を 1 回増やす。カウンタが `nudge_memory_threshold`（既定 10）に達すると 0 に戻し、`_nudge_memory(session_id, system_prompt, messages)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。いずれかの nudge ロックが保持されている間、圧縮はカウンタを増やすが派遣はしない。このトリガーは以前 `ContextEngineHook.after_agent` にあり毎ターン実行されていた; そのフックはもう存在しないため、周期は圧縮回数単位になった。
 
 `_nudge_memory`（`agent/middlewares/context_engine/nudge.py`）は `_create_nudge_agent` で nudge agent を構築し、会話に `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として追加して呼び出す。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `memory` ツールで保存するよう求め、保存対象がなければ "Nothing to save." と答えて停止させる。
 
@@ -34,16 +34,16 @@
 - `_NudgeLimitTool`（`allowed_metadata_key` 未指定）は metadata に `nudge: True` を持つツールだけを通す。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` がこのマークを持つため、nudge agent は memory を書けるが任意のメインツールは呼べない。
 - fork のメッセージはログのみ。`res["messages"]` の内容はメイングラフへ一切入らない。
 
-### 2. todo 全完了時の plan extraction
+### 2. 圧縮時の plan extraction（todo 完了）
 
-`_detect_todo_all_complete(session_id)`（`core.py`）は完了サイクルごとに 1 回発火する：
+`_detect_todo_all_complete(session_id)`（`nudge.py`）は圧縮ごとに評価され、完了サイクルごとに 1 回発火する：
 
 - todo が存在し、すべて `completed` または `cancelled` である；
 - `nudge_plan_extraction_fired`（`state_register_db`）が未設定である。
 
-遷移時にフラグを立て、リストが（もはや）全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。
+遷移時にフラグを立て、リストが（もはや）全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。検出は圧縮時にのみ走るため、一度も圧縮しないセッションは plan extraction を発火しない。
 
-`plan_extraction_enabled` が有効で検出が発火すると、`_nudge_plan_extraction` が `nudge_plan_extraction_lock` の下で走る：
+`plan_extraction_enabled` が有効で検出が発火すると、`_nudge_plan_extraction` が同じ接縫から fire-and-forget で派遣され、`nudge_plan_extraction_lock` の下で走る：
 
 1. `_build_plan_context` が plan ファイル（`plan_ref` 状態を優先、次に `plan_ref` を持つ最初の todo）、todo リスト、start-work ledger（`.omo/start-work/ledger.jsonl`）、本セッションの子 Agent 実行記録（`result_text` は 24 KB に切り詰め、`outcome`、task）を集める。todo リストがなければ `{}` を返し、呼び出し側はそれを見てスキップする。
 2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、会話とともに nudge agent（同じビルダー、同じ `nudge: True` ゲート）へ送る。
@@ -91,7 +91,7 @@ fork の結果メッセージはログのみ。メイングラフやその check
 | 派生セッションキー `<id>::compression-todo` | 圧縮 fork の `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 状態キーがメインセッションと衝突しない。fork 実行中、メインセッションは `awrap_model_call` の最中だからである。`compression_todo_update_lock` だけが意図的にメインセッションへ書かれ、クロスパス再入コーディネータとして働く。 |
 | メインセッション束縛の `todowrite` シム | fork グラフは派生キーで走るため、状態注入された実 `todowrite` は誤ったセッションを解決してしまう。シムは実ツールの `args_schema` と `description` を逐語的に再利用し（スキーマドリフトゼロ）、注入 `session_id` を捨て、構築時に捕捉したメインセッション id を束縛する。 |
 | 読み取り専用 fork、checkpointer なし | 各 nudge / 抽出 fork の結果メッセージはログのみで破棄される。fork に checkpointer はなく、メイングラフ状態を書けない。 |
-| セッション単位の再入ロック | `nudge_review_memory_lock`、`nudge_plan_extraction_lock`、`compression_todo_update_lock` が同一抽出経路の重複実行を防ぐ。nudge ロック保持中、`after_agent` は nudge 判断をスキップする。 |
+| セッション単位の再入ロック | `nudge_review_memory_lock`、`nudge_plan_extraction_lock`、`compression_todo_update_lock` が同一抽出経路の重複実行を防ぐ。nudge ロック保持中、圧縮スケジューラはその圧縮を数えるが派遣はしない。 |
 | fail-open 境界 | 各経路は `try/except` で作業を包み、ログして返す。抽出失敗がターン、圧縮、他の抽出へ伝播しない。 |
 | バックグラウンドタスクの参照保持 | `_COMPRESSION_TODO_TASKS` 集合が強参照を保持し、asyncio が実行中タスクを GC しないようにする。 |
 
@@ -117,7 +117,7 @@ fork の結果メッセージはログのみ。メイングラフやその check
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | flush 呼び出しのタイムアウト |
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 圧縮後 todo fork を有効化 |
 | `plan_extraction_enabled` | `CONTEXT_ENGINE_HOOK`（`config/features/agent_side/context_engine_hook.py`） | `True` | todo 完了時の plan extraction を有効化 |
-| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | memory nudge の間隔ターン数 |
+| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | memory review の間隔となる圧縮回数 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 実際の圧縮後の能動的圧縮クールダウン |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md の上限 |
 
@@ -128,6 +128,7 @@ fork の結果メッセージはログのみ。メイングラフやその check
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
+    tests/agent/middlewares/test_compaction_persistence.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/context_engine/test_plan_extraction.py \
@@ -135,9 +136,10 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：トリガゲート、fire-and-forget スケジュール、再入ロック、fail-open 解放、プロンプト内容、`todo_update` metadata ゲート、および完全 fork 隔離（派生キー、メインセッション `todowrite` シム、checkpointer / メッセージ漏洩なし）。
+- `test_compaction_persistence.py`：破棄プレフィックスのフラッシュ write-once（T2→T1 と再起動リプレイを正確な行数で）、元の内容の保証、置換前フラッシュの順序、圧縮時 nudge 派遣。
 - `test_compression_cooldown_persist.py`：クールダウンの再起動間生存。
 - `test_memory_flush.py`：flush ゲート、振り分け、非阻塞失敗。
-- `test_plan_extraction.py`：`_detect_todo_all_complete` の 4 分岐、`after_agent` 5 要素契約、nudge 派遣、`_build_plan_context`。
+- `test_plan_extraction.py`：`_detect_todo_all_complete` の 4 分岐、`schedule_compression_nudges` の圧縮時カウンタ / ロック意味論、派遣、`_build_plan_context`。
 - `test_memory_store.py`：MEMORY.md / USER.md ストアの意味論。
 
 AI 判定評価：`evals/nudge_extraction/suite.py` が完了済み plan の実行（plan ファイル、完了 todos、合成子 Agent 実行記録）を用意し、実 `_nudge_plan_extraction` を呼び、続いて補助 LLM judge に、生成されたスキルが今回の実行に真に根ざし、再利用可能で、汎用的でないかを判定させる。すべての書込はサンドボックスへリダイレクトされ、実 `skills/auto/` と `workspace/` は一切触れられない。

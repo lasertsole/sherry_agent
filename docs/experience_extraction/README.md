@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-This document maps **when** the agent extracts experience, **by which mechanism**, and **where** that experience is written. Four extraction paths are wired into the agent lifecycle: the 10-turn memory nudge, plan extraction on todo completion, the pre-compression memory flush, and the post-compression todo fork.
+This document maps **when** the agent extracts experience, **by which mechanism**, and **where** that experience is written. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (every `nudge_memory_threshold` compressions), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork.
 
 > Every claim below was verified against the source. Symbol names, config keys, defaults and paths all exist in code in `agent/middlewares/`, `agent/tools/`, and `config/features/`.
 
@@ -10,23 +10,23 @@ This document maps **when** the agent extracts experience, **by which mechanism*
 
 1. **Every extraction extends an existing store.** Activity lands in MEMORY.md / USER.md, the plan knowledge directory, `skills/auto/`, or `todos.db`. No extraction path creates a parallel store.
 2. **Fail-open everywhere.** Every trigger logs its failure and swallows it. A broken todo store, an unreadable plan file, or a failed LLM call never blocks or breaks the main conversation turn.
-3. **Zero blocking on the turn path.** The post-compression todo fork is a fire-and-forget background task. The memory nudge and plan extraction run as detached sub-agents (in the async path they run concurrently with persistence via `asyncio.gather`).
+3. **Zero blocking on the turn path.** The post-compression todo fork and the compression-time nudges are fire-and-forget background tasks; the memory review and plan extraction run as detached sub-agents under the NUDGE lane and never block the model call.
 4. **Right-sized mechanism.** Full `create_agent` forks are reserved for work that needs tool use (memory nudge, plan extraction, todo fork). Pure extraction (memory flush) uses a single auxiliary-LLM call.
 
 ## Trigger × Mechanism × Destination
 
 | Trigger | Mechanism (fork agent? call shape?) | Destination |
 |---|---|---|
-| Every 10 turns (`nudge_memory_threshold`) | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md via the `memory` tool |
-| Todo list becomes all-complete (`completed` / `cancelled`) | Plan extraction (`_nudge_plan_extraction`): forks a nudge agent with `_PLAN_EXTRACTION_PROMPT` | ① knowledge JSON, ② `skills/auto/` |
+| Every `nudge_memory_threshold` compressions (default 10) | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md via the `memory` tool |
+| Todo list all-complete at a compression (`completed` / `cancelled`) | Plan extraction (`_nudge_plan_extraction`): forks a nudge agent with `_PLAN_EXTRACTION_PROMPT` | ① knowledge JSON, ② `skills/auto/` |
 | Pre-compression (a cut actually discards messages) | Memory flush (`run_memory_flush[_sync]`): one cheap LLM call, not an agent | MEMORY.md and USER.md via `MemoryStore.append_entries` |
 | Post-compression (a cut actually discards messages) | Todo fork (`update_todos_from_compaction`): fire-and-forget nudge agent with `_COMPRESSION_TODO_PROMPT` | `todos.db` via a main-session-bound `todowrite` shim |
 
 ## Trigger Details
 
-### 1. Every-10-turn memory nudge
+### 1. Compression-time memory review
 
-`ContextEngineHook._after_agent_impl` increments `nudge_review_memory_count` in `state_register_db` on every turn. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and `_nudge_memory(session_id, system_prompt, messages)` runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, `after_agent` skips the nudge decision (the counter still increments).
+`schedule_compression_nudges` (`agent/middlewares/context_engine/nudge.py`, called by the Summarization middleware whenever a compact discards messages) increments `nudge_review_memory_count` in `state_register_db` once per compression. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task that runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression still increments the counter but no dispatch happens. The trigger previously lived in `ContextEngineHook.after_agent` and ran on every turn; that hook no longer exists, so the cadence is now per compression.
 
 `_nudge_memory` (`agent/middlewares/context_engine/nudge.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations, using the `memory` tool; otherwise it answers "Nothing to save." and stops.
 
@@ -34,16 +34,16 @@ This document maps **when** the agent extracts experience, **by which mechanism*
 - `_NudgeLimitTool` (no `allowed_metadata_key`) admits only tools whose metadata carries `nudge: True`. `memory`, `skill_list`, `skill_view`, `skill_manage` and `knowledge` carry that marker, so the nudge agent can write memory but cannot call arbitrary main tools.
 - The fork's messages are logged only. Nothing from `res["messages"]` reaches the main graph.
 
-### 2. Todo-complete plan extraction
+### 2. Compression-time plan extraction (todo-complete)
 
-`_detect_todo_all_complete(session_id)` (`core.py`) fires once per completion cycle:
+`_detect_todo_all_complete(session_id)` (`nudge.py`) is evaluated at every compression and fires once per completion cycle:
 
 - todos exist and every todo is `completed` or `cancelled`;
 - `nudge_plan_extraction_fired` (`state_register_db`) is not already set.
 
-It sets the fired flag on the transition and resets it to `False` whenever the list is not (or no longer) all-complete, so a later all-complete cycle fires again. Reads are fail-open.
+It sets the fired flag on the transition and resets it to `False` whenever the list is not (or no longer) all-complete, so a later all-complete cycle fires again. Reads are fail-open. Because detection now runs only at compression time, a session that never compresses never fires plan extraction.
 
-When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extraction` runs under `nudge_plan_extraction_lock`:
+When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extraction` is dispatched fire-and-forget from the same seam and runs under `nudge_plan_extraction_lock`:
 
 1. `_build_plan_context` gathers the plan file (`plan_ref` state first, else the first todo carrying one), the todo list, the start-work ledger (`.omo/start-work/ledger.jsonl`), and this session's subagent runs (`result_text` truncated to 24 KB, `outcome`, task). It returns `{}` when there is no todo list, which makes the caller skip the pass.
 2. The prompt `_PLAN_EXTRACTION_PROMPT` is rendered with the plan context, then sent to a nudge agent (same builder, same `nudge: True` gate) with the conversation.
@@ -91,7 +91,7 @@ The fork result messages are logged only. Nothing reaches the main graph or its 
 | Derived session key `<id>::compression-todo` | The compression fork's `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` state keys cannot collide with the main session, which is mid `awrap_model_call` while the fork runs. Only `compression_todo_update_lock` is deliberately written on the main session, as the cross-path re-entrancy coordinator. |
 | Main-session-bound `todowrite` shim | The fork graph runs under the derived key, so the state-injected real `todowrite` would resolve the wrong session. The shim reuses the real tool's `args_schema` and `description` verbatim (zero schema drift), drops the injected `session_id`, and binds the main session id captured at build time. |
 | Read-only forks, no checkpointer | Every nudge / extraction fork's result messages are logged and discarded. The forks have no checkpointer, so they cannot write the main graph's state. |
-| Per-session re-entrancy locks | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` and `compression_todo_update_lock` prevent overlapping runs of the same extraction path. While a nudge lock is held, `after_agent` skips the nudge decision. |
+| Per-session re-entrancy locks | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` and `compression_todo_update_lock` prevent overlapping runs of the same extraction path. While a nudge lock is held, the compression scheduler counts the compression but skips dispatch. |
 | Fail-open boundaries | Every path wraps its work in `try/except`, logs, and returns. No extraction failure propagates into a turn, a compression, or another extraction. |
 | Background-task reference retention | The `_COMPRESSION_TODO_TASKS` set holds strong refs so asyncio cannot garbage-collect an in-flight task. |
 
@@ -117,7 +117,7 @@ The fork result messages are logged only. Nothing reaches the main graph or its 
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | Flush call timeout |
 | `compression_todo_update_enabled` | `SUMMARIZATION` (`config/features/agent_side/summarization.py`) | `True` | Enables the post-compression todo fork |
 | `plan_extraction_enabled` | `CONTEXT_ENGINE_HOOK` (`config/features/agent_side/context_engine_hook.py`) | `True` | Enables todo-complete plan extraction |
-| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | Turns between memory nudges |
+| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | Compressions between memory reviews |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | Proactive-compression cooldown after an actual compression |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md caps |
 
@@ -128,6 +128,7 @@ Focused tests:
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
+    tests/agent/middlewares/test_compaction_persistence.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/context_engine/test_plan_extraction.py \
@@ -135,9 +136,10 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: trigger gating, fire-and-forget scheduling, re-entrancy lock, fail-open release, prompt content, the `todo_update` metadata gate, and full-fork isolation (derived key, main-session `todowrite` shim, no checkpointer / message leakage).
+- `test_compaction_persistence.py`: discarded-prefix flush write-once (T2→T1 and restart replay with exact row counts), original-content guarantee, flush-before-replacement ordering, and compression-time nudge dispatch.
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.
 - `test_memory_flush.py`: flush gating, routing, and non-blocking failure.
-- `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the `after_agent` 5-tuple contract, nudge dispatch, and `_build_plan_context`.
+- `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the compression-time counter/lock semantics of `schedule_compression_nudges`, dispatch, and `_build_plan_context`.
 - `test_memory_store.py`: MEMORY.md / USER.md store semantics.
 
 AI-judged evaluation: `evals/nudge_extraction/suite.py` seeds a completed-plan run (plan file, completed todos, synthetic subagent runs), invokes the real `_nudge_plan_extraction`, then asks an auxiliary LLM judge whether the produced skill is genuinely grounded in that run, reusable, and non-generic. Every write is redirected into the sandbox, so the real `skills/auto/` and `workspace/` are never touched.

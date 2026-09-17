@@ -2,7 +2,7 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理 Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、以及经验**写到哪里**。生命周期中共接入四条抽取路径：每 10 回合 memory nudge、todo 全部完成时的 plan extraction、压缩前 memory flush、压缩后 todo fork。
+本文梳理 Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、以及经验**写到哪里**。生命周期中共接入四条抽取路径：压缩时 memory review（每 `nudge_memory_threshold` 次压缩）、压缩时 todo 全部完成的 plan extraction、压缩前 memory flush、压缩后 todo fork。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
@@ -10,23 +10,23 @@
 
 1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md、plan 知识目录、`skills/auto/`、或 `todos.db`。没有任何抽取路径另建平行存储。
 2. **全部 fail-open。** 每个触发点都记录并吞掉自身失败。todo 存储损坏、plan 文件不可读、LLM 调用失败，都不会阻塞或打断主对话回合。
-3. **回合路径零阻塞。** 压缩后 todo fork 是 fire-and-forget 后台任务。memory nudge 与 plan extraction 作为独立子 agent 运行（异步路径中通过 `asyncio.gather` 与持久化并发）。
+3. **回合路径零阻塞。** 压缩后 todo fork 与压缩时 nudge 都是 fire-and-forget 后台任务；memory review 与 plan extraction 作为独立子 agent 在 NUDGE 车道上运行，绝不阻塞模型调用。
 4. **机制按需匹配。** 需要工具调用的工作才用完整 `create_agent` fork（memory nudge、plan extraction、todo fork）。纯抽取（memory flush）只用一次辅助 LLM 调用。
 
 ## 触发 × 机制 × 落点
 
 | 触发 | 机制（是否 fork agent / 调用形态） | 写入目标 |
 |---|---|---|
-| 每 10 回合（`nudge_memory_threshold`） | memory nudge（`_nudge_memory`）：fork 一个 `create_agent` nudge agent，使用 `_MEMORY_REVIEW_PROMPT` | 经 `memory` 工具写入 MEMORY.md / USER.md |
-| todo 列表变为全部完成（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：fork 一个 nudge agent，使用 `_PLAN_EXTRACTION_PROMPT` | ① 知识 JSON ② `skills/auto/` |
+| 每 `nudge_memory_threshold` 次压缩（默认 10） | memory nudge（`_nudge_memory`）：fork 一个 `create_agent` nudge agent，使用 `_MEMORY_REVIEW_PROMPT` | 经 `memory` 工具写入 MEMORY.md / USER.md |
+| 压缩时 todo 列表全部完成（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：fork 一个 nudge agent，使用 `_PLAN_EXTRACTION_PROMPT` | ① 知识 JSON ② `skills/auto/` |
 | 压缩前（cut 确实丢弃了消息） | memory flush（`run_memory_flush[_sync]`）：一次廉价 LLM 调用，非 agent | 经 `MemoryStore.append_entries` 写入 MEMORY.md 与 USER.md |
 | 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget nudge agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
 
 ## 触发详情
 
-### 1. 每 10 回合 memory nudge
+### 1. 压缩时 memory review
 
-`ContextEngineHook._after_agent_impl` 每回合在 `state_register_db` 中递增 `nudge_review_memory_count`。计数达到 `nudge_memory_threshold`（默认 10）时，计数重置为 0，并在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行 `_nudge_memory(session_id, system_prompt, messages)`。任一 nudge 锁被持有时，`after_agent` 跳过 nudge 决策（计数照常递增）。
+`schedule_compression_nudges`（`agent/middlewares/context_engine/nudge.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每压缩一次就在 `state_register_db` 中递增 `nudge_review_memory_count`。计数达到 `nudge_memory_threshold`（默认 10）时，计数重置为 0，并以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。任一 nudge 锁被持有时，压缩仍递增计数但不派发。该触发器此前位于 `ContextEngineHook.after_agent` 并每回合运行；该钩子已不存在，因此节奏改为按压缩次数。
 
 `_nudge_memory`（`agent/middlewares/context_engine/nudge.py`）通过 `_create_nudge_agent` 构建 nudge agent，并把 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到对话后调用。该提示要求 agent 用 `memory` 工具保存持久的用户特征（persona、偏好、个人细节）与行为期望；若无内容可存，则回复 "Nothing to save." 并停止。
 
@@ -34,16 +34,16 @@
 - `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` 都带该标记，因此 nudge agent 能写 memory，但无法调用任意主工具。
 - fork 的消息只记录日志。`res["messages"]` 中的任何内容都不会进入主图。
 
-### 2. todo 全部完成时的 plan extraction
+### 2. 压缩时 plan extraction（todo 完成）
 
-`_detect_todo_all_complete(session_id)`（`core.py`）每个完成周期只触发一次：
+`_detect_todo_all_complete(session_id)`（`nudge.py`）在每次压缩时评估，每个完成周期只触发一次：
 
 - todo 存在，且每项都是 `completed` 或 `cancelled`；
 - `nudge_plan_extraction_fired`（`state_register_db`）尚未置位。
 
-它在状态跃迁时置位，并在列表并非（或不再是）全部完成时重置为 `False`，因此后续新的完成周期会再次触发。读取 fail-open。
+它在状态跃迁时置位，并在列表并非（或不再是）全部完成时重置为 `False`，因此后续新的完成周期会再次触发。读取 fail-open。由于检测现只在压缩时运行，从不压缩的会话永远不会触发 plan extraction。
 
-当 `plan_extraction_enabled` 开启且检测触发时，`_nudge_plan_extraction` 在 `nudge_plan_extraction_lock` 保护下运行：
+当 `plan_extraction_enabled` 开启且检测触发时，`_nudge_plan_extraction` 从同一接缝 fire-and-forget 派发，并在 `nudge_plan_extraction_lock` 保护下运行：
 
 1. `_build_plan_context` 收集 plan 文件（优先 `plan_ref` 状态，其次第一个带 `plan_ref` 的 todo）、todo 列表、start-work ledger（`.omo/start-work/ledger.jsonl`）以及本会话的子 agent 运行记录（`result_text` 截断到 24 KB、`outcome`、task）。无 todo 列表时返回 `{}`，调用方据此跳过。
 2. 用 plan 上下文渲染 `_PLAN_EXTRACTION_PROMPT`，连同对话一起发给 nudge agent（同一构建器、同一 `nudge: True` 门禁）。
@@ -91,7 +91,7 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 | 派生会话键 `<id>::compression-todo` | 压缩 fork 的 `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 状态键不会与主会话冲突，因为 fork 运行期间主会话正处在 `awrap_model_call` 中。只有 `compression_todo_update_lock` 有意写在主会话上，作为跨路径防重入协调器。 |
 | 绑定主会话的 `todowrite` 垫片 | fork 图运行在派生键下，因此由状态注入的真实 `todowrite` 会解析到错误会话。垫片逐字复用真实工具的 `args_schema` 与 `description`（零 schema 漂移），丢弃注入的 `session_id`，并绑定构建时捕获的主会话 id。 |
 | 只读 fork、无 checkpointer | 每个 nudge / 抽取 fork 的结果消息都只记录并丢弃。fork 无 checkpointer，无法写主图状态。 |
-| 每会话防重入锁 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock`、`compression_todo_update_lock` 阻止同一抽取路径重叠运行。任一 nudge 锁被持有时，`after_agent` 跳过 nudge 决策。 |
+| 每会话防重入锁 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock`、`compression_todo_update_lock` 阻止同一抽取路径重叠运行。任一 nudge 锁被持有时，压缩调度器仍计数该次压缩但不派发。 |
 | fail-open 边界 | 每条路径都用 `try/except` 包裹工作、记录日志并返回。任何抽取失败都不会传播进回合、压缩或其它抽取。 |
 | 后台任务引用保留 | `_COMPRESSION_TODO_TASKS` 集合持有强引用，防止 asyncio 回收在途任务。 |
 
@@ -117,7 +117,7 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | flush 调用超时 |
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 启用压缩后 todo fork |
 | `plan_extraction_enabled` | `CONTEXT_ENGINE_HOOK`（`config/features/agent_side/context_engine_hook.py`） | `True` | 启用 todo 完成时的 plan extraction |
-| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | memory nudge 间隔回合数 |
+| `nudge_memory_threshold` | `CONTEXT_ENGINE_HOOK` | `10` | memory review 间隔的压缩次数 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 实际压缩后的主动压缩冷却 |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md 上限 |
 
@@ -128,6 +128,7 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 ```bash
 uv run pytest \
     tests/agent/middlewares/test_compression_todo_update.py \
+    tests/agent/middlewares/test_compaction_persistence.py \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/context_engine/test_plan_extraction.py \
@@ -135,9 +136,10 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：触发门槛、fire-and-forget 调度、防重入锁、fail-open 释放、提示内容、`todo_update` metadata 门禁，以及完整 fork 隔离（派生键、主会话 `todowrite` 垫片、无 checkpointer / 消息泄漏）。
+- `test_compaction_persistence.py`：被丢弃前缀落库写一次（T2→T1 与重启重放的精确行数）、原始内容保证、落库先于替换的顺序，以及压缩时 nudge 派发。
 - `test_compression_cooldown_persist.py`：冷却跨重启存活。
 - `test_memory_flush.py`：flush 门槛、路由与非阻塞失败。
-- `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`after_agent` 五元组契约、nudge 派发，以及 `_build_plan_context`。
+- `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`schedule_compression_nudges` 的压缩时计数/锁语义、派发，以及 `_build_plan_context`。
 - `test_memory_store.py`：MEMORY.md / USER.md 存储语义。
 
 AI 评判评估：`evals/nudge_extraction/suite.py` 构造一次已完成 plan 的运行（plan 文件、已完成 todos、合成的子 agent 运行记录），调用真实的 `_nudge_plan_extraction`，再让辅助 LLM judge 判断产出的技能是否真正扎根于本次运行、可复用且非泛泛而谈。所有写入都重定向进沙箱，真实 `skills/auto/` 与 `workspace/` 绝不被触碰。
