@@ -4,7 +4,8 @@ Covers plan Step 9's lane landing:
 
 1. ``_nudge_memory`` concurrency is capped by the NUDGE lane (queue, never reject)
 2. the plan-extraction nudge shares the same lane
-3. the sync ``ContextEngineHook.after_agent`` path never dispatches a nudge —
+3. the compression-time scheduler never dispatches without a running event
+   loop, and ``ContextEngineHook`` no longer overrides the after-agent hooks —
    so no ``run_async()`` worker loop can ever acquire the loop-bound semaphore
 4. acquiring the NUDGE lane across two loops does not raise (Wave 1 rebind)
 
@@ -123,20 +124,30 @@ class TestNudgeLaneCap:
         assert tracker.max_active == 1
         assert lane.active_count == 0
 
-    def test_sync_after_agent_never_dispatches_or_acquires(
+    def test_sync_path_never_dispatches_or_acquires(
         self, _isolated_lanes: LaneManager, monkeypatch: pytest.MonkeyPatch
     ):
-        hook = ce_core.ContextEngineHook()
-        monkeypatch.setattr(
-            hook, "_after_agent_impl", lambda state: ("sess-sync", "sys", [], True, True)
-        )
+        from langchain.agents.middleware import AgentMiddleware
+
+        assert ce_core.ContextEngineHook.after_agent is AgentMiddleware.after_agent
+        assert ce_core.ContextEngineHook.aafter_agent is AgentMiddleware.aafter_agent
+
         calls: list[str] = []
-        monkeypatch.setattr(ce_core, "_nudge_memory", lambda *args: calls.append("memory"))
-        monkeypatch.setattr(ce_core, "_nudge_plan_extraction", lambda *args: calls.append("plan"))
 
-        hook.after_agent({"session_id": "sess-sync", "messages": []}, None)
+        async def _memory(*args):
+            calls.append("memory")
 
-        assert calls == [], "sync after_agent must not dispatch nudge agents"
+        async def _plan(*args):
+            calls.append("plan")
+
+        monkeypatch.setattr(nudge, "_nudge_memory", _memory)
+        monkeypatch.setattr(nudge, "_nudge_plan_extraction", _plan)
+        monkeypatch.setattr(nudge, "_detect_todo_all_complete", lambda session_id: True)
+
+        scheduled = nudge.schedule_compression_nudges("sess-sync", [])
+
+        assert scheduled is False, "no running loop: the scheduler must not dispatch"
+        assert calls == [], "the sync path must not dispatch nudge agents"
         lane = _isolated_lanes.get_lane(LaneType.NUDGE)
         assert lane.active_count == 0
         assert lane.queued_count == 0

@@ -12,8 +12,9 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 from loguru import logger
 
-from config.features import SUMMARIZATION
+from config.features import CONTEXT_ENGINE_HOOK, SUMMARIZATION
 from config.path import ROOT_DIR
+from pub.func import sanitize_tool_use_result_pairing
 from runtime import state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
 
@@ -268,6 +269,145 @@ replacement list."""
 # asyncio only keeps weak references to tasks; this module-level set keeps the
 # fire-and-forget compression-todo task alive until it completes.
 _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
+
+# ---------------------------------------------------------------------------
+# Compression-time nudge scheduling (memory review + plan extraction)
+#
+# Both triggers originally lived in ContextEngineHook.aafter_agent and ran on
+# every turn (memory review every N turns; plan extraction whenever the todo
+# list became all-complete). They are now unified with the compression
+# pipeline: the Summarization middleware calls ``schedule_compression_nudges``
+# on every compression that actually discards messages, so the nudge cadence is
+# "per N compressions" and plan extraction is evaluated at compression time.
+# The single-fire flag semantics are unchanged: ``nudge_plan_extraction_fired``
+# still guarantees one extraction per completion cycle and resets whenever the
+# list is not all-complete.
+#
+# The memory counter lives in ``state_register_db`` (survives restarts), the
+# in-flight locks in ``state_register_mem`` (same as before). Dispatch is
+# fire-and-forget: compression runs inside ``wrap_model_call`` and must never
+# block on a nudge agent's LLM call.
+# ---------------------------------------------------------------------------
+
+_NUDGE_MEMORY_COUNT_KEY = "nudge_review_memory_count"
+_NUDGE_MEMORY_LOCK_KEY = "nudge_review_memory_lock"
+_NUDGE_MEMORY_THRESHOLD = CONTEXT_ENGINE_HOOK["nudge_memory_threshold"]
+_PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
+_PLAN_EXTRACTION_ENABLED = CONTEXT_ENGINE_HOOK["plan_extraction_enabled"]
+
+# Keeps scheduled nudge coroutines referenced until they complete (asyncio
+# holds only weak references to tasks).
+_COMPRESSION_NUDGE_TASKS: set[asyncio.Task[None]] = set()
+
+
+def _detect_todo_all_complete(session_id: str) -> bool:
+    """Detect when the todo list just became all-complete (fire once).
+
+    Conditions:
+    1. todos exist (non-empty)
+    2. every todo is ``completed`` or ``cancelled``
+    3. plan extraction has not already fired for this completion cycle
+
+    Returns True after setting ``_PLAN_EXTRACTION_FIRED_KEY`` so a later
+    compression cannot fire the same completion again; the flag is reset to
+    False whenever the todo list is not (or no longer) all-complete. Reads fail
+    open — a broken todo store must never break the compression.
+    """
+    try:
+        from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+
+        todos = get_todos_sync(session_id)
+    except Exception:
+        logger.exception("todo-complete detection failed (fail-open) for {}", session_id)
+        return False
+
+    if not todos:
+        return False
+
+    all_done = all(t.get("status") in ("completed", "cancelled") for t in todos)
+    if not all_done:
+        state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
+        return False
+
+    already_fired = state_register_db.get_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, False)
+    if already_fired:
+        return False
+
+    state_register_db.set_state(session_id, _PLAN_EXTRACTION_FIRED_KEY, True)
+    return True
+
+
+def _nudges_locked(session_id: str) -> bool:
+    """True while a memory-review or plan-extraction nudge is in flight."""
+    return bool(
+        state_register_mem.get_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
+        or state_register_mem.get_state(session_id, _PLAN_EXTRACTION_LOCK_KEY, False)
+    )
+
+
+async def _run_compression_nudges(
+    session_id: str,
+    need_memory: bool,
+    need_plan: bool,
+    messages: list[BaseMessage],
+) -> None:
+    """Run the scheduled nudges sequentially under the NUDGE lane (fail-open)."""
+    try:
+        from .core import ContextEngineHook
+
+        system_prompt = ContextEngineHook._get_and_reload_system_prompt(session_id)
+        sanitized = sanitize_tool_use_result_pairing(list(messages))
+        if need_memory:
+            await _nudge_memory(session_id, system_prompt, sanitized)
+        if need_plan:
+            await _nudge_plan_extraction(session_id, system_prompt, sanitized)
+    except Exception:
+        logger.exception("compression nudge dispatch failed (fail-open) for {}", session_id)
+
+
+def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]) -> bool:
+    """Advance the compression-scoped nudge state and dispatch as needed.
+
+    Called by the Summarization middleware once per compression that actually
+    discards messages. Returns True when a nudge task was created.
+
+    Counter/lock semantics mirror the former per-turn implementation: the
+    memory counter increments on every compression; while a nudge is in flight
+    the compression is counted but no dispatch happens; reaching the threshold
+    resets the counter. With no running event loop (the sync compression path
+    outside an async caller) scheduling is skipped entirely.
+    """
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        logger.debug(
+            "compression nudges: no running event loop, skipping for session {}",
+            session_id,
+        )
+        return False
+
+    count = int(state_register_db.get_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0) or 0) + 1
+    if _nudges_locked(session_id):
+        state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, count)
+        return False
+
+    need_memory = count >= _NUDGE_MEMORY_THRESHOLD
+    need_plan = _PLAN_EXTRACTION_ENABLED and _detect_todo_all_complete(session_id)
+
+    state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0 if need_memory else count)
+    if not (need_memory or need_plan):
+        return False
+
+    coro = _run_compression_nudges(session_id, need_memory, need_plan, list(messages))
+    try:
+        task = asyncio.create_task(coro)
+    except RuntimeError:  # pragma: no cover - the loop vanished after the check
+        coro.close()
+        return False
+    _COMPRESSION_NUDGE_TASKS.add(task)
+    task.add_done_callback(_COMPRESSION_NUDGE_TASKS.discard)
+    logger.debug("compression nudges scheduled for session {}", session_id)
+    return True
 
 
 class _NudgeLimitTool(AgentMiddleware):

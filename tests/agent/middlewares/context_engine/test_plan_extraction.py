@@ -1,27 +1,30 @@
-"""Unit tests for the Phase-B todo-complete plan-extraction trigger.
+"""Unit tests for the compression-time plan-extraction / memory-review trigger.
 
 Covers:
 - ``_detect_todo_all_complete`` — the four decision branches (no todos /
   first all-complete fire / already-fired / not-all-complete reset).
-- ``_after_agent_impl`` — the 5-tuple return contract, memory-counter reset,
-  and the lock short-circuit.
-- ``after_agent`` / ``aafter_agent`` — nudge dispatch through the
-  monkeypatched ``_nudge_plan_extraction`` stand-in.
+- ``schedule_compression_nudges`` — compression-time counter and lock
+  semantics, memory-review threshold reset, and plan-extraction dispatch.
+- ``ContextEngineHook`` — the class no longer overrides the after-agent hooks
+  (nudge dispatch moved to the compression pipeline).
 - ``_build_plan_context`` — plan_ref resolution (state first, todo fallback,
   session-<id> fallback) and the ``.omo/start-work/ledger.jsonl`` read.
 """
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
+from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 
-from agent.middlewares.context_engine import core as ce_core
 from agent.middlewares.context_engine import nudge as nudge_mod
-from agent.middlewares.context_engine.core import (
-    ContextEngineHook,
+from agent.middlewares.context_engine.core import ContextEngineHook
+from agent.middlewares.context_engine.nudge import (
     _PLAN_EXTRACTION_FIRED_KEY,
     _detect_todo_all_complete,
+    schedule_compression_nudges,
 )
 
 pytestmark = pytest.mark.unit
@@ -43,19 +46,24 @@ class _FakeStateRegister:
 @pytest.fixture
 def fake_state_db(monkeypatch):
     fake = _FakeStateRegister()
-    monkeypatch.setattr(ce_core, "state_register_db", fake)
     monkeypatch.setattr(nudge_mod, "state_register_db", fake)
     return fake
 
 
 @pytest.fixture
-def hook(monkeypatch):
+def fake_state_mem(monkeypatch):
+    fake = _FakeStateRegister()
+    monkeypatch.setattr(nudge_mod, "state_register_mem", fake)
+    return fake
+
+
+@pytest.fixture
+def prompt_stub(monkeypatch):
     monkeypatch.setattr(
         ContextEngineHook,
         "_get_and_reload_system_prompt",
         staticmethod(lambda session_id: "sys-prompt"),
     )
-    return ContextEngineHook()
 
 
 def _patch_todos(monkeypatch, todos: list[dict]) -> None:
@@ -63,6 +71,25 @@ def _patch_todos(monkeypatch, todos: list[dict]) -> None:
         "agent.tools.todolist.registry.store_sqlite.get_todos_sync",
         lambda session_id: todos,
     )
+
+
+def _nudge_spies(monkeypatch) -> list[tuple]:
+    calls: list[tuple] = []
+
+    async def _memory(session_id, system_prompt, messages):
+        calls.append(("memory", session_id, system_prompt))
+
+    async def _plan(session_id, system_prompt, messages):
+        calls.append(("plan", session_id, system_prompt))
+
+    monkeypatch.setattr(nudge_mod, "_nudge_memory", _memory)
+    monkeypatch.setattr(nudge_mod, "_nudge_plan_extraction", _plan)
+    return calls
+
+
+async def _settle() -> None:
+    for _ in range(10):
+        await asyncio.sleep(0)
 
 
 # ---------------------------------------------------------------------------
@@ -94,106 +121,93 @@ class TestDetectTodoAllComplete:
 
 
 # ---------------------------------------------------------------------------
-# _after_agent_impl
+# schedule_compression_nudges (compression-time trigger)
 # ---------------------------------------------------------------------------
 
 
-class TestAfterAgentImpl:
-    def test_returns_plan_bit_and_resets_memory_counter(self, hook, fake_state_db, monkeypatch):
-        fake_state_db.set_state(
-            "sess-bits",
-            ce_core._NUDGE_MEMORY_COUNT_KEY,
-            ce_core._NUDGE_MEMORY_THRESHOLD - 1,
-        )
-        monkeypatch.setattr(ContextEngineHook, "_is_lock", staticmethod(lambda session_id: False))
-        monkeypatch.setattr(ce_core, "_detect_todo_all_complete", lambda session_id: True)
-
-        result = hook._after_agent_impl(
-            {"session_id": "sess-bits", "messages": [HumanMessage("hi")]}
-        )
-
-        assert result is not None
-        session_id, system_prompt, _messages, need_memory, need_plan = result
-        assert session_id == "sess-bits"
-        assert system_prompt == "sys-prompt"
-        assert need_memory is True
-        assert need_plan is True
-        assert fake_state_db.get_state("sess-bits", ce_core._NUDGE_MEMORY_COUNT_KEY, 0) == 0
-
-    def test_lock_short_circuits_before_todo_detection(self, hook, fake_state_db, monkeypatch):
-        monkeypatch.setattr(ContextEngineHook, "_is_lock", staticmethod(lambda session_id: True))
-        detected: list[str] = []
-        monkeypatch.setattr(
-            ce_core,
-            "_detect_todo_all_complete",
-            lambda session_id: detected.append(session_id) or True,
-        )
-
-        result = hook._after_agent_impl({"session_id": "sess-lock", "messages": []})
-
-        assert result is None
-        assert detected == []
-        assert fake_state_db.get_state("sess-lock", ce_core._NUDGE_MEMORY_COUNT_KEY, 0) == 1
-
-    def test_missing_session_id_raises(self, hook):
-        with pytest.raises(RuntimeError):
-            hook._after_agent_impl({"session_id": "   ", "messages": []})
-
-
-# ---------------------------------------------------------------------------
-# after_agent / aafter_agent dispatch
-# ---------------------------------------------------------------------------
-
-
-class TestNudgeDispatch:
+class TestScheduleCompressionNudges:
     @pytest.mark.asyncio
-    async def test_aafter_agent_dispatches_plan_extraction(self, monkeypatch):
-        hook = ContextEngineHook()
-        monkeypatch.setattr(
-            hook,
-            "_after_agent_impl",
-            lambda state: ("sess-dispatch", "sys", [HumanMessage("hi")], True, True),
-        )
-        calls: list[str] = []
+    async def test_below_threshold_counts_without_dispatch(
+        self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
+    ):
+        calls = _nudge_spies(monkeypatch)
+        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
 
-        async def _persist(session_id, messages):
-            calls.append("persist")
+        scheduled = schedule_compression_nudges("sess-count", [HumanMessage("hi")])
+        await _settle()
 
-        async def _memory(session_id, system_prompt, messages):
-            calls.append("memory")
-
-        async def _plan(session_id, system_prompt, messages):
-            calls.append("plan")
-
-        monkeypatch.setattr(ce_core, "add_messages", _persist)
-        monkeypatch.setattr(ce_core, "_nudge_memory", _memory)
-        monkeypatch.setattr(ce_core, "_nudge_plan_extraction", _plan)
-
-        await hook.aafter_agent(
-            {"session_id": "sess-dispatch", "messages": [HumanMessage("hi")]}, None
-        )
-
-        assert sorted(calls) == ["memory", "persist", "plan"]
-
-    def test_after_agent_never_dispatches_nudge(self, monkeypatch):
-        """Sync after_agent is protocol-only: nudge dispatch belongs to aafter_agent.
-
-        The old sync path bridged through run_async() (a fresh thread + loop),
-        which cannot acquire the loop-bound NUDGE lane semaphore.
-        """
-        hook = ContextEngineHook()
-        monkeypatch.setattr(
-            hook,
-            "_after_agent_impl",
-            lambda state: ("sess-sync", "sys", [], True, True),
-        )
-        calls: list[str] = []
-        monkeypatch.setattr(ce_core, "_nudge_memory", lambda *args: calls.append("memory"))
-        monkeypatch.setattr(ce_core, "_nudge_plan_extraction", lambda *args: calls.append("plan"))
-
-        hook.after_agent({"session_id": "sess-sync", "messages": []}, None)
-
+        assert scheduled is False
         assert calls == []
+        assert fake_state_db.get_state("sess-count", nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 1
+
+    @pytest.mark.asyncio
+    async def test_threshold_resets_counter_and_dispatches_memory(
+        self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
+    ):
+        calls = _nudge_spies(monkeypatch)
+        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
+        fake_state_db.set_state(
+            "sess-threshold",
+            nudge_mod._NUDGE_MEMORY_COUNT_KEY,
+            nudge_mod._NUDGE_MEMORY_THRESHOLD - 1,
+        )
+
+        scheduled = schedule_compression_nudges("sess-threshold", [HumanMessage("hi")])
+        await _settle()
+
+        assert scheduled is True
+        assert calls == [("memory", "sess-threshold", "sys-prompt")]
+        assert fake_state_db.get_state("sess-threshold", nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 0
+
+    @pytest.mark.asyncio
+    async def test_plan_extraction_dispatches_when_todos_complete(
+        self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
+    ):
+        calls = _nudge_spies(monkeypatch)
+        monkeypatch.setattr(nudge_mod, "_PLAN_EXTRACTION_ENABLED", True)
+        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
+
+        scheduled = schedule_compression_nudges("sess-plan", [HumanMessage("hi")])
+        await _settle()
+
+        assert scheduled is True
+        assert calls == [("plan", "sess-plan", "sys-prompt")]
+
+    @pytest.mark.asyncio
+    async def test_lock_increments_counter_but_skips_dispatch(
+        self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
+    ):
+        calls = _nudge_spies(monkeypatch)
+        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
+        fake_state_mem.set_state("sess-locked", nudge_mod._NUDGE_MEMORY_LOCK_KEY, True)
+
+        scheduled = schedule_compression_nudges("sess-locked", [HumanMessage("hi")])
+        await _settle()
+
+        assert scheduled is False
+        assert calls == []
+        assert fake_state_db.get_state("sess-locked", nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 1
+
+    def test_no_running_loop_skips_without_touching_counter(
+        self, monkeypatch, fake_state_db, fake_state_mem
+    ):
+        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
+
+        scheduled = schedule_compression_nudges("sess-sync", [HumanMessage("hi")])
+
+        assert scheduled is False
+        assert fake_state_db.get_state("sess-sync", nudge_mod._NUDGE_MEMORY_COUNT_KEY, None) is None
+
+
+# ---------------------------------------------------------------------------
+# ContextEngineHook: after-agent hooks removed
+# ---------------------------------------------------------------------------
+
+
+class TestAfterAgentHooksRemoved:
+    def test_hook_no_longer_overrides_after_agent(self):
+        assert ContextEngineHook.after_agent is AgentMiddleware.after_agent
+        assert ContextEngineHook.aafter_agent is AgentMiddleware.aafter_agent
 
 
 # ---------------------------------------------------------------------------

@@ -632,6 +632,51 @@ def _schedule_compression_todo_update(session_id: str, discarded_messages: Seque
         logger.exception("compression todo update scheduling failed (fail-open)")
 
 
+def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> None:
+    """Fire-and-forget the compression-time nudge decision (never blocks/raises).
+
+    Memory review and plan extraction moved here from ``ContextEngineHook``:
+    the scheduler advances the memory counter, evaluates the plan-extraction
+    single-fire flag, and dispatches under the NUDGE lane when no nudge is
+    already in flight. Call-time import avoids the summarization ↔
+    context_engine import cycle.
+    """
+    try:
+        from agent.middlewares.context_engine.nudge import schedule_compression_nudges
+
+        schedule_compression_nudges(session_id, messages)
+    except Exception:
+        logger.exception("compression nudge scheduling failed (fail-open)")
+
+
+def _persist_discarded_messages_sync(
+    session_id: str,
+    original_messages: Sequence[Any],
+    preserved: Sequence[Any],
+) -> None:
+    """Flush the discarded prefix before replacement (sync path, fail-open)."""
+    try:
+        from .compaction_persistence import persist_discarded_messages_sync
+
+        persist_discarded_messages_sync(session_id, original_messages, preserved)
+    except Exception:
+        logger.exception("compaction persistence failed (fail-open)")
+
+
+async def _apersist_discarded_messages(
+    session_id: str,
+    original_messages: Sequence[Any],
+    preserved: Sequence[Any],
+) -> None:
+    """Async twin of :func:`_persist_discarded_messages_sync` (fail-open)."""
+    try:
+        from .compaction_persistence import persist_discarded_messages
+
+        await persist_discarded_messages(session_id, original_messages, preserved)
+    except Exception:
+        logger.exception("compaction persistence failed (fail-open)")
+
+
 # ======================================================================
 # Main Middleware Class
 # ======================================================================
@@ -1805,6 +1850,12 @@ class Summarization(AgentMiddleware):
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
 
+                # Flush the ORIGINAL discarded prefix before the summary pair
+                # replaces it; persisted_message_ids makes the flush write-once
+                # across T2->T1 re-compression and process restarts.
+                _persist_discarded_messages_sync(session_id, original_messages, preserved)
+                _schedule_compression_nudges(session_id, original_messages)
+
                 _schedule_compression_todo_update(session_id, messages_to_summarize)
 
                 # P0-1: persist cross-session facts before these messages are discarded.
@@ -1907,6 +1958,12 @@ class Summarization(AgentMiddleware):
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+
+                # Flush the ORIGINAL discarded prefix before the summary pair
+                # replaces it; persisted_message_ids makes the flush write-once
+                # across T2->T1 re-compression and process restarts.
+                await _apersist_discarded_messages(session_id, original_messages, preserved)
+                _schedule_compression_nudges(session_id, original_messages)
 
                 _schedule_compression_todo_update(session_id, messages_to_summarize)
 
