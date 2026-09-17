@@ -43,6 +43,7 @@ SESSION メモリプランの全 14 機能（opencode-dev / oh-my-openagent / he
 - **`context_engine/facts/`** —— 双ウォーターマークカーソル（`cursor.py`、`state_register.db` に永続化）、補助 LLM 抽出器（`extractor.py`、json_repair 解析 + カテゴリフォールバック）、キュー編成（`queue.py`）。`ContextEngineHook.aafter_agent` に fire-and-forget で接続され、facts は既存の `TieredMemoryStore.add_fact`（facts/*.md）経由で書き込まれる。
 - **`context_engine/events/`** —— 追記型イベントログ（セッション単位の無欠番シーケンス：`types.py`、`store.py`）、チェックポイントイベントを P1-1 読みモデルへ写像する `EventProjector`。
 - **`context_engine/embeddings/`** —— ベクトル意味検索：遅延 embed バックエンド（上書き可能）、冪等 LEFT-JOIN インデクサ、コサイン順位付け。`message_search` ツール（`semantic: true`）で公開。
+- **`agent/tools/message_search.py`** —— 二段階検索：永続化済み `messages` テーブルの FTS5 を先に検索し、ヒットがない場合はセッションの最新チェックポイント（`SRC_DIR/checkpoints/sqlite.db` の `state["messages"]`）へ降格して、未永続化ターンを新しい順にキーワード一致（`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` で上限）。フォールバックのヒットには `source="checkpoint"` を付与。
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。
 - **`runtime/session/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
 
@@ -57,7 +58,8 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
     tests/context_engine/facts/test_facts_extraction.py \
-    tests/context_engine/embeddings/test_semantic_search.py -q
+    tests/context_engine/embeddings/test_semantic_search.py \
+    tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
 
 ## 評価

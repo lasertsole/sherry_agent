@@ -43,6 +43,7 @@ SESSION 内存计划的全部 14 项能力（借鉴自 opencode-dev / oh-my-open
 - **`context_engine/facts/`** —— 双水位游标（`cursor.py`，持久化于 `state_register.db`）、辅助 LLM 提取器（`extractor.py`，json_repair 解析 + 类别回退）、队列编排（`queue.py`）。经 `ContextEngineHook.aafter_agent` 以 fire-and-forget 后台任务接入；事实写入既有 `TieredMemoryStore.add_fact`（facts/*.md）。
 - **`context_engine/events/`** —— 只增事件日志（会话内无间隙序列：`types.py`、`store.py`），`EventProjector` 将检查点事件映射到 P1-1 读模型。
 - **`context_engine/embeddings/`** —— 向量语义搜索：惰性嵌入后端（项目嵌入模型，可覆盖）、幂等 LEFT-JOIN 索引器、余弦排序；由 `message_search` 工具暴露（`semantic: true`）。
+- **`agent/tools/message_search.py`** —— 两段式检索：先在已持久化的 `messages` 表上做 FTS5 搜索；无命中时降级到会话的最新 checkpoint（`SRC_DIR/checkpoints/sqlite.db` 的 `state["messages"]`），由新到旧对尚未持久化的轮次做关键词匹配（受 `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` 限制）；兜底命中标记 `source="checkpoint"`。
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 压缩锁（TTL 自愈、同步 + 异步获取、超时 fail-open），包裹 `_apply_compression` 与 `_aapply_compression` 两条路径。
 - **`runtime/session/state_register.py`** —— `ContextEpoch` 生命周期（initialize / prepare / replace / advance），基于 `context_epoch` 表。
 
@@ -57,7 +58,8 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
     tests/context_engine/facts/test_facts_extraction.py \
-    tests/context_engine/embeddings/test_semantic_search.py -q
+    tests/context_engine/embeddings/test_semantic_search.py \
+    tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
 
 ## 评估

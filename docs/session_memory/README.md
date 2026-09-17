@@ -43,6 +43,7 @@ All 14 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 - **`context_engine/facts/`** — dual-watermark cursor (`cursor.py`, durable on `state_register.db`), auxiliary-LLM extractor (`extractor.py`, json_repair parsing + category fallback), queue orchestration (`queue.py`). Wired into `ContextEngineHook.aafter_agent` as a fire-and-forget background task; facts are written through the existing `TieredMemoryStore.add_fact` (facts/*.md).
 - **`context_engine/events/`** — append-only event log with gapless per-session sequences (`types.py`, `store.py`), and an `EventProjector` mapping checkpoint events onto the P1-1 read model.
 - **`context_engine/embeddings/`** — vector semantic search: lazy embed backend (project embed model, overridable), idempotent LEFT-JOIN-driven indexer, cosine ranking; exposed by the `message_search` tool (`semantic: true`).
+- **`agent/tools/message_search.py`** — two-stage recall: FTS5 over the persisted `messages` table first; when there is no hit it falls back to the session's newest checkpoint (`SRC_DIR/checkpoints/sqlite.db`, `state["messages"]`), keyword-matching not-yet-persisted turns newest-first (bounded by `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars`); fallback hits are tagged `source="checkpoint"`.
 - **`agent/middlewares/summarization/compaction_lock.py`** — SQLite compaction lock (TTL self-healing, sync + async acquire, fail-open on timeout), wrapping both `_apply_compression` and `_aapply_compression`.
 - **`runtime/session/state_register.py`** — `ContextEpoch` lifecycle (initialize / prepare / replace / advance) over the `context_epoch` table.
 
@@ -57,7 +58,8 @@ uv run pytest tests/agent/middlewares/test_compaction_lock.py \
     tests/context_engine/events/test_events.py \
     tests/runtime/test_context_epoch.py \
     tests/context_engine/facts/test_facts_extraction.py \
-    tests/context_engine/embeddings/test_semantic_search.py -q
+    tests/context_engine/embeddings/test_semantic_search.py \
+    tests/agent/tools/test_message_search_checkpoint_fallback.py -q
 ```
 
 ## Eval
