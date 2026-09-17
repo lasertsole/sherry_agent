@@ -161,4 +161,4 @@ uv run python evals/evals.py nudge_extraction
 - [세션 메모리 아키텍처](../session_memory/README.md): SESSION 플랜의 P0-1(memory flush).
 - [요약 압축](../summarization/README.md): 압축 트리거와 flush 및 todo fork를 게이트하는 쿨다운.
 - [장기 작업](../long-running-tasks/README.md): TaskFlow와 plan extraction이 읽는 todo 계획 계층.
-- [미들웨어 README](../../agent/middlewares/README.md): ContextEngineHook과 Summarization 참고.
+- [미들웨어 README](../../agent/middlewares/README.md): `@dynamic_prompt` 시스템 프롬프트 주입과 Summarization 참고.

@@ -210,7 +210,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 compact が実際にプレフィックスを破棄したとき（`cutoff > 0`）、2 つの圧縮側副作用が置換メッセージ構築の**前に**実行されます:
 
 1. **破棄プレフィックスのフラッシュ**（`agent/middlewares/summarization/compaction_persistence.py`、`_persist_discarded_messages_sync` / `_apersist_discarded_messages` 経由）: 除去されるメッセージは、`_build_new_messages` / `request.override` が要約ペアを差し込む前に MesMemory へ書き込まれます。フラッシュは `request.state["messages"]` の**元の**メッセージオブジェクトを使います —— `_run_non_llm_strategies` 後のコピー（ツール出力が既に重複排除・切り詰められている可能性がある）は決して使いません。破棄スライスはオブジェクト同一性で特定します（`id()` で `preserved[0]` を元リストから探す）; 戦略がそのオブジェクトを置換した場合は、`id()` が `preserved` に無い元メッセージをすべて保持するフォールバックになります。HITL 拒否の ToolMessage はまず AI メッセージに再ペアリングされ、重複・空のツール結果は破棄されます。ストアエラーはログのみで圧縮は続行 —— fail-open です。
-2. **圧縮時 nudge**（`agent/middlewares/context_engine/nudge.py::schedule_compression_nudges`）: メモリレビューカウンタ（`nudge_review_memory_count`、`state_register_db`）が圧縮ごとに 1 回増え、`nudge_memory_threshold`（既定 10）到達で `_nudge_memory` を発火します; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。これら 2 つのトリガーは以前 `ContextEngineHook.after_agent` により毎ターン実行されていました; そのフックはもう存在しません。単発の `nudge_plan_extraction_fired` フラグの意味は不変 —— 完了サイクルごとに 1 回の抽出 —— なので、一度も圧縮しないセッションはプラン抽出を発火しません。
+2. **圧縮時 nudge**（`agent/middlewares/context_engine/nudge.py::schedule_compression_nudges`）: メモリレビューカウンタ（`nudge_review_memory_count`、`state_register_db`）が圧縮ごとに 1 回増え、`nudge_memory_threshold`（既定 10）到達で `_nudge_memory` を発火します; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。これら 2 つのトリガーは以前 `ContextEngineHook` ミドルウェアの after-agent フックにより毎ターン実行されていました; システムプロンプト注入が `@dynamic_prompt` ミドルウェア（`context_engine_prompt`）へ移行した際に、クラスとフックの両方が削除されました。単発の `nudge_plan_extraction_fired` フラグの意味は不変 —— 完了サイクルごとに 1 回の抽出 —— なので、一度も圧縮しないセッションはプラン抽出を発火しません。
 
 write-once 保証: プロセス内 `_db_persisted` マーカーを持つメッセージと、永続ウォーターマーク `persisted_message_ids`（`mes_memory.db` の `(session_id, message_id)` トゥームストーン表）に記録済みのメッセージはスキップされます。グラフ状態のメッセージ id はチェックポイント直列化を生き延びるため、T2 フラッシュ（リクエストのみ上書き; state はスライスを保持）に続く T1 フラッシュ、またはプロセス再起動後のチェックポイント再生でも、重複行は挿入されません。
 
@@ -277,7 +277,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 システムプロンプト更新
 
-メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（:1993–2005）。`ContextEngineHook` を持たないチェーンはこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
+メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（:1993–2005）。`@dynamic_prompt` システムプロンプトミドルウェアを持たないチェーン（サブエージェント / nudge パイプライン）はこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
 
 ## 📌 登録箇所
 

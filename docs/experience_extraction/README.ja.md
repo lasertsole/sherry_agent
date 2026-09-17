@@ -161,4 +161,4 @@ uv run python evals/evals.py nudge_extraction
 - [セッションメモリ設計](../session_memory/README.md)：SESSION プランの P0-1（memory flush）。
 - [要約圧縮](../summarization/README.md)：圧縮トリガと、flush および todo fork をゲートするクールダウン。
 - [長時間タスク](../long-running-tasks/README.md)：TaskFlow と、plan extraction が読み取る todo 計画層。
-- [ミドルウェア README](../../agent/middlewares/README.md)：ContextEngineHook と Summarization のリファレンス。
+- [ミドルウェア README](../../agent/middlewares/README.md)：`@dynamic_prompt` システムプロンプト注入と Summarization のリファレンス。

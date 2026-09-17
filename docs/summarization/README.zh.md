@@ -206,7 +206,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 当一次 compact 真的丢弃了前缀（`cutoff > 0`）时，两个压缩侧的副作用会在替换消息构建**之前**运行：
 
 1. **被丢弃前缀落库**（`agent/middlewares/summarization/compaction_persistence.py`，经 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用）：被移除的消息在 `_build_new_messages` / `request.override` 换上摘要对之前先写入 MesMemory。落库取 `request.state["messages"]` 里的**原始**消息对象 —— 绝不是 `_run_non_llm_strategies` 之后的副本（其工具输出可能已被去重或裁剪）。被丢弃片段按对象身份定位（用 `id()` 在原始列表中找到 `preserved[0]`）；当某个策略替换了该对象时，回退为保留所有 `id()` 不在 `preserved` 中的原始消息。HITL 拒绝的 ToolMessage 会先重新配对到其 AI 消息；重复与空的工具结果会被丢弃。任何存储错误只记日志、压缩继续 —— 落库是 fail-open 的。
-2. **压缩时 nudge**（`agent/middlewares/context_engine/nudge.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。这两个触发器此前由 `ContextEngineHook.after_agent` 每回合运行；该钩子已不存在。单发 `nudge_plan_extraction_fired` 标记语义不变 —— 每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
+2. **压缩时 nudge**（`agent/middlewares/context_engine/nudge.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。这两个触发器此前由 `ContextEngineHook` 中间件的 after-agent 钩子每回合运行；系统提示词注入迁移到 `@dynamic_prompt` 中间件（`context_engine_prompt`）后，该类与钩子均已移除。单发 `nudge_plan_extraction_fired` 标记语义不变 —— 每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
 写一次保证：带进程内 `_db_persisted` 标记的消息、以及已登记在持久水位 `persisted_message_ids`（`mes_memory.db` 中的 `(session_id, message_id)` 墓碑表）里的消息都会被跳过。图状态里的消息 id 能跨检查点序列化存活，所以 T2 落库（仅请求覆盖；state 仍持有该片段）之后再 T1 落库、或进程重启后的检查点重放，都不会插入重复行。
 
@@ -273,7 +273,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🔄 系统提示词刷新
 
-仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（:1993–2005），因为不带 `ContextEngineHook` 的链路依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
+仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（:1993–2005），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / nudge 管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
 
 ## 📌 注册点
 

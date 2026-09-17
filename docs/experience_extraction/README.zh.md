@@ -161,4 +161,4 @@ uv run python evals/evals.py nudge_extraction
 - [会话级内存架构](../session_memory/README.md)：SESSION 计划中的 P0-1（memory flush）。
 - [摘要压缩](../summarization/README.md)：压缩触发，以及门控 flush 与 todo fork 的冷却。
 - [长程任务](../long-running-tasks/README.md)：TaskFlow，以及被 plan extraction 读取的 todo 规划层。
-- [中间件 README](../../agent/middlewares/README.md)：ContextEngineHook 与 Summarization 参考。
+- [中间件 README](../../agent/middlewares/README.md)：`@dynamic_prompt` 系统提示词注入与 Summarization 参考。

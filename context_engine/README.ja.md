@@ -245,7 +245,7 @@ for r in results:
 
 | エントリポイント | インポート | 用途 |
 |------------------|-----------|------|
-| `agent/middlewares/summarization/compaction_persistence.py`（`Summarization` が駆動） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | 圧縮パイプラインは要約ペアに置き換える前に、破棄される元のプレフィックスを MesMemory へフラッシュします; 永続ウォーターマーク `persisted_message_ids` により、このフラッシュは T2→T1 リプレイとプロセス再起動をまたいでも write-once です。`ContextEngineHook` はシステムプロンプトの注入（`wrap_model_call`/`awrap_model_call`）のみを行い、メモリレビュー / プラン抽出 nudge は `context_engine/nudge.py` が圧縮時にスケジュールします。詳細は `agent/middlewares/README.md` を参照。 |
+| `agent/middlewares/summarization/compaction_persistence.py`（`Summarization` が駆動） | `add_messages`、`add_messages_sync`、`filter_persisted_message_ids`、`mark_message_ids_persisted`、`is_message_persisted` | 圧縮パイプラインは要約ペアに置き換える前に、破棄される元のプレフィックスを MesMemory へフラッシュします; 永続ウォーターマーク `persisted_message_ids` により、このフラッシュは T2→T1 リプレイとプロセス再起動をまたいでも write-once です。`context_engine_prompt`（`@dynamic_prompt` ミドルウェア）はシステムプロンプトの注入（`wrap_model_call`/`awrap_model_call`）のみを行い、メモリレビュー / プラン抽出 nudge は `context_engine/nudge.py` が圧縮時にスケジュールします。詳細は `agent/middlewares/README.md` を参照。 |
 | `agent/tools/message_search.py` → `message_search` ツール | `get_db`、`search_messages`、`get_turns_by_turn_num_scope` | セッション横断の想起ツール：FTS5 検索（limit 50）→ 一致ごとにターン範囲取得 → LLM によるセッション要約。query がない場合は直近セッションのメタデータを返す |
 | `server/service/messages.py` | `get_session_ids`、`get_history_by_turn_page`、および（`context_engine.curator` からの）`reset_idle_for_seconds` | クライアント向けセッション一覧（トップレベルセッション + 派生タイトル）、ページング履歴、ユーザーターンごとの curator アイドルタイマーリセット |
 | `server/DAO/messages.py` | `delete_messages_by_session` | 「セッションをクリア」操作 |

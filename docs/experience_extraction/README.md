@@ -161,4 +161,4 @@ The suite checks `knowledge_written`, `skills_created`, `ai_judge_skill_quality`
 - [Session Memory Architecture](../session_memory/README.md): P0-1 (memory flush) in the SESSION plan.
 - [Summarization](../summarization/README.md): compression triggers and the cooldown that gates the flush and todo fork.
 - [Long-Running Tasks](../long-running-tasks/README.md): TaskFlow and the todo planning layer that plan extraction reads from.
-- [Middlewares README](../../agent/middlewares/README.md): ContextEngineHook and Summarization reference.
+- [Middlewares README](../../agent/middlewares/README.md): `@dynamic_prompt` system-prompt injection and Summarization reference.
