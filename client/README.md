@@ -99,16 +99,14 @@ client/
 │   │   ├── ws.ts                  # WebSocket singletons: /sessions/ws + /subagents/ws (5s auto-reconnect)
 │   │   ├── db.ts                  # Dexie (IndexedDB) cache: messages, character profiles, background, runs
 │   │   ├── messages.ts            # History API (cache-first /get_history_by_turn_page) + stream abort event
-│   │   ├── connection.ts          # Backend health polling (5s) + online/offline toasts
 │   │   ├── toast.ts               # Global toast layer (PrimeVue Toast registration)
 │   │   ├── clientLog.ts           # Client-side console.* capture persisted to Dexie (all/log/error)
 │   │   ├── env.ts                 # Read/write backend .env (GET/PUT /env)
 │   │   ├── workspace.ts           # System prompt handlers (/system_prompt GET/POST/PATCH)
 │   │   ├── defaultCharacter.ts    # Built-in default character (names + /avatar/*.jpg)
 │   │   ├── sessionFilter.ts       # Client-side session list filter (keyword + date range)
-│   │   ├── useChatBackground.ts   # Global chat background image (Dexie-persisted singleton)
 │   │   ├── useImagePreview.ts     # Image preview overlay state
-│   │   ├── useSubagentTasks.ts    # Background-task state singleton (fetch + WS + Dexie)
+│   │   ├── useSubagentTasks.ts    # Background-task facade (Pinia store + fetch/WS/Dexie sync)
 │   │   ├── utils.ts               # max/min + date/time utilities
 │   │   ├── mitt.ts                # mitt event bus instance
 │   │   └── system.ts              # (empty placeholder)
@@ -146,7 +144,12 @@ client/
 │   │           ├── SubagentRunDetail.vue  # Single subagent run detail
 │   │           ├── SubagentFlowGraph.vue  # Subagent run tree graph (@antv/g6)
 │   │           └── AvatarCropDialog.vue   # Avatar upload + crop (cropperjs)
-│   ├── stores/ui.ts               # Pinia UI store (sidebarCollapsed persisted to localStorage)
+│   ├── stores/                    # Pinia stores
+│   │   ├── ui.ts                  # UI state (sidebarCollapsed / todoDockCollapsed persisted to localStorage)
+│   │   ├── subagent.ts            # Background-task state (runs / tree / selection) + derived views
+│   │   ├── todo.ts                # Session plan (todo) list + dock visibility
+│   │   ├── connection.ts          # Backend connectivity (isOnline / backendStatus) + deduped toasts
+│   │   └── chat-background.ts     # Global chat background image (Dexie-persisted)
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API response type definitions
@@ -179,7 +182,7 @@ client/
 | **Cross-platform shell**     | [Tauri 2](https://v2.tauri.app/) (`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4)   | Native desktop packaging + config/capabilities/icons                            |
 | **Frontend framework**       | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                                | SPA mode (`ssr: false`), Composition API + `<script setup lang="ts">`           |
 | **UI components**            | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0 (`@primevue/nuxt-module`)                  | Dialog, Button, Select, ToggleSwitch, Toast, etc.                               |
-| **State management**         | [Pinia](https://pinia.vuejs.org/) ^4.0.3 (`@pinia/nuxt`) + `pinia-plugin-persistedstate` (localStorage) | Global UI state (sidebar, theme entry)                                          |
+| **State management**         | [Pinia](https://pinia.vuejs.org/) ^4.0.3 (`@pinia/nuxt`) + `pinia-plugin-persistedstate` (localStorage) | Global state (UI, background tasks, todo plan, connectivity, chat background)   |
 | **Styling**                  | [Tailwind CSS](https://tailwindcss.com/) v4 via `@tailwindcss/vite` + SCSS (`sass`)                     | Utility-first CSS + `@theme` tokens + SCSS mixin library                        |
 | **Color mode**               | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                    | Dark/Light theme switching (`.dark` class)                                      |
 | **Internationalization**     | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                         | zh / en / ja / ko, `no_prefix` strategy                                         |
@@ -309,14 +312,14 @@ A 300+ line SCSS mixin library providing utilities for layout, shapes, scrollbar
 - `CachedMessage` — mirrors the backend message table rows (turn_num, images/audios/videos, tool fields, token counts); history requests are cache-first and only fetch turns newer than the cached max
 - `CachedCharacter` — per-session avatar/name snapshots (base64 data URL or `/avatar/*.jpg` from `public/avatar/`)
 - Subagent run records cached from `/subagents/ws` pushes and REST fetches
-- Chat background image config (global, module-level singleton via `useChatBackground`)
+- Chat background image config (global Pinia store `stores/chat-background.ts`)
 - `clientLog.ts` persists captured browser `console.*` output into an `all` / `log` / `error` bucket structure
 
 ### State & Events
 
-- **Pinia** (`stores/ui.ts`): sidebar collapse (persisted), settings-menu flag, theme write entry
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
-- **connection.ts**: polls `checkHealth()` every 5 s; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
+- **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 
 ### Type Generation (app/types/backend/)
 

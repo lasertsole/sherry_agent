@@ -100,16 +100,14 @@ client/
 │   │   ├── ws.ts                  # WebSocket 单例：/sessions/ws + /subagents/ws（5 秒自动重连）
 │   │   ├── db.ts                  # Dexie（IndexedDB）缓存：消息、角色档案、背景图、运行记录
 │   │   ├── messages.ts            # 历史接口（缓存优先的 /get_history_by_turn_page）+ 流中断事件
-│   │   ├── connection.ts          # 后端健康轮询（5 秒）+ 上下线 Toast
 │   │   ├── toast.ts               # 全局 Toast 层（PrimeVue Toast 注册）
 │   │   ├── clientLog.ts           # 客户端 console.* 捕获并持久化到 Dexie（all/log/error）
 │   │   ├── env.ts                 # 读写后端 .env（GET/PUT /env）
 │   │   ├── workspace.ts           # 系统提示词处理器（/system_prompt GET/POST/PATCH）
 │   │   ├── defaultCharacter.ts    # 内置默认角色（名称 + /avatar/*.jpg）
 │   │   ├── sessionFilter.ts       # 客户端会话列表过滤（关键词 + 日期范围）
-│   │   ├── useChatBackground.ts   # 全局聊天背景图片（Dexie 持久化的单例）
 │   │   ├── useImagePreview.ts     # 图片预览浮层状态
-│   │   ├── useSubagentTasks.ts    # 后台任务状态单例（fetch + WS + Dexie）
+│   │   ├── useSubagentTasks.ts    # 后台任务薄封装（Pinia store + fetch/WS/Dexie 同步）
 │   │   ├── utils.ts               # max/min + 日期时间工具
 │   │   ├── mitt.ts                # mitt 事件总线实例
 │   │   └── system.ts              #（空占位文件）
@@ -147,7 +145,12 @@ client/
 │   │           ├── SubagentRunDetail.vue  # 单个子智能体运行详情
 │   │           ├── SubagentFlowGraph.vue  # 子智能体运行树图（@antv/g6）
 │   │           └── AvatarCropDialog.vue   # 头像上传 + 裁剪（cropperjs）
-│   ├── stores/ui.ts               # Pinia UI store（sidebarCollapsed 持久化到 localStorage）
+│   ├── stores/                    # Pinia stores
+│   │   ├── ui.ts                  # UI 状态（sidebarCollapsed / todoDockCollapsed 持久化到 localStorage）
+│   │   ├── subagent.ts            # 后台任务状态（运行 / 树 / 选择）+ 派生视图
+│   │   ├── todo.ts                # 会话计划（todo）列表 + 停靠可见性
+│   │   ├── connection.ts          # 后端连通性（isOnline / backendStatus）+ 去重 Toast
+│   │   └── chat-background.ts     # 全局聊天背景图片（Dexie 持久化）
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、……
 │       ├── response.d.ts          # API 响应类型定义
@@ -179,7 +182,7 @@ client/
 | **跨平台外壳**      | [Tauri 2](https://v2.tauri.app/)（`2.0.0-rc.17`、`@tauri-apps/api` ^2.11.1、`@tauri-apps/cli` 2.11.4）   | 原生桌面打包 + 配置/能力/图标                                          |
 | **前端框架**        | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                                 | SPA 模式（`ssr: false`）、Composition API + `<script setup lang="ts">` |
 | **UI 组件**         | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0（`@primevue/nuxt-module`）                  | Dialog、Button、Select、ToggleSwitch、Toast 等                         |
-| **状态管理**        | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | 全局 UI 状态（侧边栏、主题入口）                                       |
+| **状态管理**        | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | 全局状态（UI、后台任务、计划、连通性、聊天背景）                       |
 | **样式**            | [Tailwind CSS](https://tailwindcss.com/) v4（经 `@tailwindcss/vite`）+ SCSS（`sass`）                    | 原子化 CSS + `@theme` 设计令牌 + SCSS mixin 库                         |
 | **颜色模式**        | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                     | 深色/浅色主题切换（`.dark` 类）                                        |
 | **国际化**          | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                          | zh / en / ja / ko，`no_prefix` 策略                                    |
@@ -290,7 +293,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | Curator 审查与设置                 |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | 通道开关与配置                     |
 | `/env`                                                                                           | GET / PUT                | 后端 `.env` 读取/更新              |
-| `/model-config`                                                                                  | GET                      | 模型配置与有效性                     |
+| `/model-config`                                                                                  | GET                      | 模型配置与有效性                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | 日志文件列表与尾部读取             |
 | `/logs/ws`                                                                                       | WS                       | 实时日志流                         |
 | `/images/upload`、`/audio/upload`、`/video/upload`                                               | POST                     | Base64 媒体上传 → URL              |
@@ -309,14 +312,14 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 - `CachedMessage` —— 镜像后端消息表行（turn_num、images/audios/videos、tool 字段、token 计数）；历史请求缓存优先，只拉取比缓存最大轮次更新的部分
 - `CachedCharacter` —— 按会话缓存的头像/名称快照（base64 data URL 或来自 `public/avatar/` 的 `/avatar/*.jpg`）
 - 从 `/subagents/ws` 推送与 REST 拉取缓存的子智能体运行记录
-- 聊天背景图片配置（全局，经 `useChatBackground` 的模块级单例）
+- 聊天背景图片配置（全局 Pinia store `stores/chat-background.ts`）
 - `clientLog.ts` 将捕获的浏览器 `console.*` 输出持久化到 `all` / `log` / `error` 分桶结构
 
 ### 状态与事件
 
-- **Pinia**（`stores/ui.ts`）：侧边栏折叠（持久化）、设置菜单标志、主题写入入口
+- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）
 - **mitt 事件总线**：WS 事件、流重连事件、会话流中断（`session:abort-stream`）、跨组件通知
-- **connection.ts**：每 5 秒轮询 `checkHealth()`；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
+- **connection store**（`stores/connection.ts`）：监听 `/sessions/ws` 心跳与浏览器 online/offline 事件；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
 
 ### 类型生成（app/types/backend/）
 

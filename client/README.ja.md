@@ -100,16 +100,14 @@ client/
 │   │   ├── ws.ts                  # WebSocket シングルトン: /sessions/ws + /subagents/ws（5 秒自動再接続）
 │   │   ├── db.ts                  # Dexie（IndexedDB）キャッシュ: メッセージ、キャラクタープロファイル、背景、実行レコード
 │   │   ├── messages.ts            # 履歴 API（キャッシュ優先の /get_history_by_turn_page）+ ストリーム中断イベント
-│   │   ├── connection.ts          # バックエンド健全性ポーリング（5 秒）+ オンライン/オフライン Toast
 │   │   ├── toast.ts               # グローバル Toast レイヤー（PrimeVue Toast 登録）
 │   │   ├── clientLog.ts           # クライアント側 console.* 取得を Dexie に永続化（all/log/error）
 │   │   ├── env.ts                 # バックエンド .env の読み書き（GET/PUT /env）
 │   │   ├── workspace.ts           # システムプロンプトハンドラ（/system_prompt GET/POST/PATCH）
 │   │   ├── defaultCharacter.ts    # 内蔵デフォルトキャラクター（名前 + /avatar/*.jpg）
 │   │   ├── sessionFilter.ts       # クライアント側セッションリストフィルタ（キーワード + 日付範囲）
-│   │   ├── useChatBackground.ts   # グローバルチャット背景画像（Dexie 永続化シングルトン）
 │   │   ├── useImagePreview.ts     # 画像プレビューオーバーレイ状態
-│   │   ├── useSubagentTasks.ts    # バックグラウンドタスク状態シングルトン（fetch + WS + Dexie）
+│   │   ├── useSubagentTasks.ts    # バックグラウンドタスク薄いファサード（Pinia ストア + fetch/WS/Dexie 同期）
 │   │   ├── utils.ts               # max/min + 日時ユーティリティ
 │   │   ├── mitt.ts                # mitt イベントバスインスタンス
 │   │   └── system.ts              # （空のプレースホルダー）
@@ -147,7 +145,12 @@ client/
 │   │           ├── SubagentRunDetail.vue  # 単一サブエージェント実行の詳細
 │   │           ├── SubagentFlowGraph.vue  # サブエージェント実行ツリーグラフ（@antv/g6）
 │   │           └── AvatarCropDialog.vue   # アバターアップロード + 切り抜き（cropperjs）
-│   ├── stores/ui.ts               # Pinia UI ストア（sidebarCollapsed を localStorage に永続化）
+│   ├── stores/                    # Pinia ストア
+│   │   ├── ui.ts                  # UI 状態（sidebarCollapsed / todoDockCollapsed を localStorage に永続化）
+│   │   ├── subagent.ts            # バックグラウンドタスク状態（実行 / ツリー / 選択）+ 派生ビュー
+│   │   ├── todo.ts                # セッション計画（todo）リスト + ドック表示可否
+│   │   ├── connection.ts          # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast
+│   │   └── chat-background.ts     # グローバルチャット背景画像（Dexie 永続化）
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、...
 │       ├── response.d.ts          # API レスポンス型定義
@@ -179,7 +182,7 @@ client/
 | **クロスプラットフォームシェル** | [Tauri 2](https://v2.tauri.app/)（`2.0.0-rc.17`、`@tauri-apps/api` ^2.11.1、`@tauri-apps/cli` 2.11.4）   | ネイティブデスクトップパッケージング + 設定/ケイパビリティ/アイコン                        |
 | **フロントエンドフレームワーク** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                                 | SPA モード（`ssr: false`）、Composition API + `<script setup lang="ts">`                   |
 | **UI コンポーネント**            | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0（`@primevue/nuxt-module`）                  | Dialog、Button、Select、ToggleSwitch、Toast など                                           |
-| **状態管理**                     | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | グローバル UI 状態（サイドバー、テーマエントリ）                                           |
+| **状態管理**                     | [Pinia](https://pinia.vuejs.org/) ^4.0.3（`@pinia/nuxt`）+ `pinia-plugin-persistedstate`（localStorage） | グローバル状態（UI、バックグラウンドタスク、計画、接続性、チャット背景）                   |
 | **スタイリング**                 | [Tailwind CSS](https://tailwindcss.com/) v4（`@tailwindcss/vite` 経由）+ SCSS（`sass`）                  | ユーティリティファースト CSS + `@theme` トークン + SCSS ミックスインライブラリ             |
 | **カラーモード**                 | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                     | ダーク/ライトテーマ切替（`.dark` クラス）                                                  |
 | **国際化**                       | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                          | zh / en / ja / ko、`no_prefix` ストラテジー                                                |
@@ -290,7 +293,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | curator レビューと設定                               |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | チャネル切替と設定                                   |
 | `/env`                                                                                           | GET / PUT                | バックエンド `.env` の読み取り/更新                  |
-| `/model-config`                                                                                  | GET                      | モデル設定と有効性                               |
+| `/model-config`                                                                                  | GET                      | モデル設定と有効性                                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | ログファイル一覧と末尾読み取り                       |
 | `/logs/ws`                                                                                       | WS                       | ライブログストリーム                                 |
 | `/images/upload`、`/audio/upload`、`/video/upload`                                               | POST                     | Base64 メディアアップロード → URL                    |
@@ -309,14 +312,14 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 - `CachedMessage` — バックエンドのメッセージテーブル行をミラー（turn_num、images/audios/videos、tool フィールド、トークン数）；履歴リクエストはキャッシュ優先で、キャッシュ済み最大ターンより新しいターンのみ取得
 - `CachedCharacter` — セッションごとのアバター/名前スナップショット（base64 data URL または `public/avatar/` からの `/avatar/*.jpg`）
 - `/subagents/ws` の push と REST 取得からキャッシュされたサブエージェント実行レコード
-- チャット背景画像設定（グローバル、`useChatBackground` によるモジュールレベル シングルトン）
+- チャット背景画像設定（グローバル Pinia ストア `stores/chat-background.ts`）
 - `clientLog.ts` が取得したブラウザ `console.*` 出力を `all` / `log` / `error` のバケット構造に永続化
 
 ### 状態とイベント
 
-- **Pinia**（`stores/ui.ts`）：サイドバー折りたたみ（永続化）、設定メニューフラグ、テーマ書き込みエントリ
+- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）
 - **mitt イベントバス**：WS イベント、ストリーム再接続イベント、セッションストリーム中断（`session:abort-stream`）、コンポーネント間通知
-- **connection.ts**：5 秒ごとに `checkHealth()` をポーリング；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
+- **connection ストア**（`stores/connection.ts`）：`/sessions/ws` ハートビートとブラウザの online/offline イベントを監視；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
 
 ### 型生成（app/types/backend/）
 

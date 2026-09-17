@@ -100,16 +100,14 @@ client/
 │   │   ├── ws.ts                  # WebSocket 싱글턴: /sessions/ws + /subagents/ws(5초 자동 재연결)
 │   │   ├── db.ts                  # Dexie(IndexedDB) 캐시: 메시지, 캐릭터 프로필, 배경, 실행 기록
 │   │   ├── messages.ts            # 히스토리 API(캐시 우선 /get_history_by_turn_page) + 스트림 중단 이벤트
-│   │   ├── connection.ts          # 백엔드 헬스 폴링(5초) + 온라인/오프라인 Toast
 │   │   ├── toast.ts               # 전역 Toast 레이어(PrimeVue Toast 등록)
 │   │   ├── clientLog.ts           # 클라이언트 console.* 캡처를 Dexie에 영속화(all/log/error)
 │   │   ├── env.ts                 # 백엔드 .env 읽기/쓰기(GET/PUT /env)
 │   │   ├── workspace.ts           # 시스템 프롬프트 핸들러(/system_prompt GET/POST/PATCH)
 │   │   ├── defaultCharacter.ts    # 내장 기본 캐릭터(이름 + /avatar/*.jpg)
 │   │   ├── sessionFilter.ts       # 클라이언트 측 세션 목록 필터(키워드 + 날짜 범위)
-│   │   ├── useChatBackground.ts   # 전역 채팅 배경 이미지(Dexie 영속화 싱글턴)
 │   │   ├── useImagePreview.ts     # 이미지 미리보기 오버레이 상태
-│   │   ├── useSubagentTasks.ts    # 백그라운드 작업 상태 싱글턴(fetch + WS + Dexie)
+│   │   ├── useSubagentTasks.ts    # 백그라운드 작업 파사드(Pinia 스토어 + fetch/WS/Dexie 동기화)
 │   │   ├── utils.ts               # max/min + 날짜/시간 유틸리티
 │   │   ├── mitt.ts                # mitt 이벤트 버스 인스턴스
 │   │   └── system.ts              # (빈 플레이스홀더)
@@ -147,7 +145,12 @@ client/
 │   │           ├── SubagentRunDetail.vue  # 단일 서브에이전트 실행 상세
 │   │           ├── SubagentFlowGraph.vue  # 서브에이전트 실행 트리 그래프(@antv/g6)
 │   │           └── AvatarCropDialog.vue   # 아바타 업로드 + 크롭(cropperjs)
-│   ├── stores/ui.ts               # Pinia UI 스토어(sidebarCollapsed를 localStorage에 영속화)
+│   ├── stores/                    # Pinia 스토어
+│   │   ├── ui.ts                  # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)
+│   │   ├── subagent.ts            # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
+│   │   ├── todo.ts                # 세션 계획(todo) 목록 + 독 표시 여부
+│   │   ├── connection.ts          # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast
+│   │   └── chat-background.ts     # 전역 채팅 배경 이미지(Dexie 영속화)
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API 응답 타입 정의
@@ -179,7 +182,7 @@ client/
 | **크로스 플랫폼 셸**      | [Tauri 2](https://v2.tauri.app/)(`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4)  | 네이티브 데스크톱 패키징 + 설정/케이퍼빌리티/아이콘                      |
 | **프런트엔드 프레임워크** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                              | SPA 모드(`ssr: false`), Composition API + `<script setup lang="ts">`     |
 | **UI 컴포넌트**           | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0(`@primevue/nuxt-module`)                 | Dialog, Button, Select, ToggleSwitch, Toast 등                           |
-| **상태 관리**             | [Pinia](https://pinia.vuejs.org/) ^4.0.3(`@pinia/nuxt`) + `pinia-plugin-persistedstate`(localStorage) | 전역 UI 상태(사이드바, 테마 엔트리)                                      |
+| **상태 관리**             | [Pinia](https://pinia.vuejs.org/) ^4.0.3(`@pinia/nuxt`) + `pinia-plugin-persistedstate`(localStorage) | 전역 상태(UI, 백그라운드 작업, 계획, 연결성, 채팅 배경)                  |
 | **스타일링**              | [Tailwind CSS](https://tailwindcss.com/) v4(`@tailwindcss/vite` 경유) + SCSS(`sass`)                  | 유틸리티 퍼스트 CSS + `@theme` 토큰 + SCSS 믹스인 라이브러리             |
 | **컬러 모드**             | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                  | 다크/라이트 테마 전환(`.dark` 클래스)                                    |
 | **국제화**                | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                       | zh / en / ja / ko, `no_prefix` 전략                                      |
@@ -290,7 +293,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 | `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | curator 리뷰 및 설정                       |
 | `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | 채널 토글 및 설정                          |
 | `/env`                                                                                           | GET / PUT                | 백엔드 `.env` 읽기/업데이트                |
-| `/model-config`                                                                                  | GET                      | 모델 설정 및 유효성                       |
+| `/model-config`                                                                                  | GET                      | 모델 설정 및 유효성                        |
 | `/logs/files`, `/logs`                                                                           | GET                      | 로그 파일 목록 및 꼬리 읽기                |
 | `/logs/ws`                                                                                       | WS                       | 실시간 로그 스트림                         |
 | `/images/upload`, `/audio/upload`, `/video/upload`                                               | POST                     | Base64 미디어 업로드 → URL                 |
@@ -309,14 +312,14 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 - `CachedMessage` — 백엔드 메시지 테이블 행을 미러링(turn_num, images/audios/videos, tool 필드, 토큰 수); 히스토리 요청은 캐시 우선이며 캐시된 최대 턴보다 새로운 턴만 가져옴
 - `CachedCharacter` — 세션별 아바타/이름 스냅샷(base64 data URL 또는 `public/avatar/`의 `/avatar/*.jpg`)
 - `/subagents/ws` 푸시와 REST 조회에서 캐시된 서브에이전트 실행 기록
-- 채팅 배경 이미지 설정(전역, `useChatBackground`의 모듈 수준 싱글턴)
+- 채팅 배경 이미지 설정(전역 Pinia 스토어 `stores/chat-background.ts`)
 - `clientLog.ts`가 캡처한 브라우저 `console.*` 출력을 `all` / `log` / `error` 버킷 구조로 영속화
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/ui.ts`): 사이드바 접기(영속화), 설정 메뉴 플래그, 테마 쓰기 엔트리
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
-- **connection.ts**: 5초마다 `checkHealth()` 폴링; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
+- **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 
 ### 타입 생성(app/types/backend/)
 
