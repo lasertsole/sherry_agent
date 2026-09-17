@@ -36,7 +36,6 @@ from loguru import logger
 
 from server.queue.user_input_queue import (
     UserInputQueue,
-    UserInputQueueStatus,
 )
 from server.service import input_queue_service as iqs
 

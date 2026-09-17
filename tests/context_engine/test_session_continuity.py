@@ -52,13 +52,6 @@ class FakeMemoryStore:
         return "MEMORY-LIVE" if target == "memory" else None
 
 
-class FakeTieredStore:
-    """Stand-in for TieredMemoryStore (empty listing -> no FACTS block)."""
-
-    def get_facts_listing(self) -> str:
-        return ""
-
-
 @pytest.fixture
 def prompt_env(tmp_path, monkeypatch):
     """Isolate persona files, memory, todos, boulder, taskflow and continuity."""
@@ -70,7 +63,6 @@ def prompt_env(tmp_path, monkeypatch):
     monkeypatch.setattr("workspace.prompt_builder.get_skills_text", lambda *a, **k: "SKILLS-BLOCK")
     monkeypatch.setattr("runtime.state_register_db", FakeStateDB())
     monkeypatch.setattr("agent.tools.memory.memory_store", FakeMemoryStore())
-    monkeypatch.setattr("agent.tools.memory_tiered.get_tiered_store", lambda: FakeTieredStore())
     monkeypatch.setattr("workspace.prompt_builder._BOULDER_PATH", tmp_path / "boulder.json")
     monkeypatch.setattr(
         "agent.tools.todolist.registry.store_sqlite.get_todos_sync", lambda session_id: []

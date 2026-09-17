@@ -109,7 +109,6 @@ class TestNudgeLaneCap:
         tracker = NudgeTracker()
         monkeypatch.setattr(nudge, "_create_nudge_agent", _fake_builder(tracker))
         monkeypatch.setattr(nudge, "_build_plan_context", lambda session_id: {"plan": "x"})
-        monkeypatch.setattr(nudge, "_fetch_pending_facts", lambda session_id: {})
 
         memory_task = asyncio.create_task(nudge._nudge_memory("s1", "sys", []))
         await _wait_until(lambda: lane.active_count == 1)

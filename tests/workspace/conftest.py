@@ -1,6 +1,6 @@
 """Shared fixtures for tests/workspace/*.
 
-``workspace.prompt_builder`` reads todos, taskflow rows, memory, facts,
+``workspace.prompt_builder`` reads todos, taskflow rows, memory,
 knowledge and continuity through the runtime prompt data provider
 (``agent.core.init()`` registers it at server boot). Registering the real
 agent-side provider for the whole directory keeps every existing monkeypatch of

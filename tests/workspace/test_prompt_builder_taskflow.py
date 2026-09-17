@@ -36,13 +36,6 @@ class FakeMemoryStore:
         return "MEMORY-LIVE" if target == "memory" else None
 
 
-class FakeTieredStore:
-    """Stand-in for TieredMemoryStore (empty listing -> no FACTS block)."""
-
-    def get_facts_listing(self) -> str:
-        return ""
-
-
 class FakeFlowStore:
     """Stand-in for taskflow.registry.store_sqlite with a controllable result."""
 
@@ -63,7 +56,7 @@ pytestmark = [pytest.mark.unit]
 
 @pytest.fixture
 def prompt_env(tmp_path, monkeypatch):
-    """Isolate persona files, memory, todos, boulder, facts and the flow store."""
+    """Isolate persona files, memory, todos, boulder and the flow store."""
     file_names = ["AGENTS.md", "SOUL.md"]
     (tmp_path / "AGENTS.md").write_text("AGENTS-PERSONA", encoding="utf-8")
     (tmp_path / "SOUL.md").write_text("SOUL-PERSONA", encoding="utf-8")
@@ -73,7 +66,6 @@ def prompt_env(tmp_path, monkeypatch):
     monkeypatch.setattr("workspace.prompt_builder.get_skills_text", lambda *a, **k: "SKILLS-BLOCK")
     monkeypatch.setattr("runtime.state_register_db", FakeStateDB())
     monkeypatch.setattr("agent.tools.memory.memory_store", FakeMemoryStore())
-    monkeypatch.setattr("agent.tools.memory_tiered.get_tiered_store", lambda: FakeTieredStore())
 
     # No boulder file and no todos -> those blocks stay empty.
     monkeypatch.setattr("workspace.prompt_builder._BOULDER_PATH", tmp_path / "boulder.json")

@@ -7,15 +7,11 @@ Covers:
   and the lock short-circuit.
 - ``after_agent`` / ``aafter_agent`` — nudge dispatch through the
   monkeypatched ``_nudge_plan_extraction`` stand-in.
-- Facts yield — the per-turn facts pipeline is not scheduled when plan
-  extraction fired, and still runs otherwise.
 - ``_build_plan_context`` — plan_ref resolution (state first, todo fallback,
   session-<id> fallback) and the ``.omo/start-work/ledger.jsonl`` read.
 """
 
 from __future__ import annotations
-
-import asyncio
 
 import pytest
 from langchain_core.messages import HumanMessage
@@ -172,7 +168,6 @@ class TestNudgeDispatch:
         monkeypatch.setattr(ce_core, "add_messages", _persist)
         monkeypatch.setattr(ce_core, "_nudge_memory", _memory)
         monkeypatch.setattr(ce_core, "_nudge_plan_extraction", _plan)
-        monkeypatch.setattr(ce_core, "get_max_turn_num", lambda session_id: 0)
 
         await hook.aafter_agent(
             {"session_id": "sess-dispatch", "messages": [HumanMessage("hi")]}, None
@@ -199,67 +194,6 @@ class TestNudgeDispatch:
         hook.after_agent({"session_id": "sess-sync", "messages": []}, None)
 
         assert calls == []
-
-
-# ---------------------------------------------------------------------------
-# Facts yield (confirmed decision #2)
-# ---------------------------------------------------------------------------
-
-
-class TestFactsYield:
-    @pytest.mark.asyncio
-    async def test_facts_pipeline_skipped_when_plan_extraction_fires(self, monkeypatch):
-        hook = ContextEngineHook()
-        monkeypatch.setattr(
-            hook,
-            "_after_agent_impl",
-            lambda state: ("sess-facts", "sys", [], False, True),
-        )
-        facts_calls: list[tuple[str, int]] = []
-
-        async def _facts(session_id, turn_num):
-            facts_calls.append((session_id, turn_num))
-
-        async def _persist(session_id, messages):
-            return None
-
-        async def _plan(session_id, system_prompt, messages):
-            return None
-
-        monkeypatch.setattr(ce_core, "add_messages", _persist)
-        monkeypatch.setattr(ce_core, "_nudge_plan_extraction", _plan)
-        monkeypatch.setattr(ce_core, "_run_facts_pipeline", _facts)
-        monkeypatch.setattr(ce_core, "get_max_turn_num", lambda session_id: 7)
-
-        await hook.aafter_agent({"session_id": "sess-facts", "messages": []}, None)
-        await asyncio.sleep(0)
-
-        assert facts_calls == []
-
-    @pytest.mark.asyncio
-    async def test_facts_pipeline_runs_without_plan_extraction(self, monkeypatch):
-        hook = ContextEngineHook()
-        monkeypatch.setattr(
-            hook,
-            "_after_agent_impl",
-            lambda state: ("sess-facts", "sys", [], False, False),
-        )
-        facts_calls: list[tuple[str, int]] = []
-
-        async def _facts(session_id, turn_num):
-            facts_calls.append((session_id, turn_num))
-
-        async def _persist(session_id, messages):
-            return None
-
-        monkeypatch.setattr(ce_core, "add_messages", _persist)
-        monkeypatch.setattr(ce_core, "_run_facts_pipeline", _facts)
-        monkeypatch.setattr(ce_core, "get_max_turn_num", lambda session_id: 7)
-
-        await hook.aafter_agent({"session_id": "sess-facts", "messages": []}, None)
-        await asyncio.sleep(0)
-
-        assert facts_calls == [("sess-facts", 7)]
 
 
 # ---------------------------------------------------------------------------
@@ -309,60 +243,7 @@ class TestBuildPlanContext:
 
 
 # ---------------------------------------------------------------------------
-# _render_facts_section / _fetch_pending_facts (pending-range injection)
-# ---------------------------------------------------------------------------
-
-
-class TestPendingFactsInterval:
-    def test_render_empty_pending_returns_blank(self):
-        assert nudge_mod._render_facts_section({}) == ""
-
-    def test_render_contains_range_conversation_and_write_channel(self):
-        section = nudge_mod._render_facts_section(
-            {"start": 2, "end": 4, "conversation": "user: pref"}
-        )
-        assert "turns 2..4" in section
-        assert 'memory(action="fact_add"' in section
-        assert section.endswith("user: pref\n</conversation>")
-
-    def test_fetch_formats_only_pending_rows(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
-        from context_engine.store import core as store_core
-
-        monkeypatch.setattr(cursor_mod, "get_pending", lambda session_id: (2, 3))
-        rows = [
-            {"turn_num": 1, "role": "human", "content": "old"},
-            {"turn_num": 2, "role": "human", "content": "pref"},
-            {"turn_num": 3, "role": "ai", "content": "ok"},
-            {"turn_num": 4, "role": "ai", "content": "future"},
-        ]
-        monkeypatch.setattr(store_core, "get_turns_by_turn_num_scope", lambda *args, **kwargs: rows)
-
-        pending = nudge_mod._fetch_pending_facts("sess-fetch")
-
-        assert pending == {"start": 2, "end": 3, "conversation": "user: pref\nagent: ok"}
-
-    def test_fetch_empty_when_nothing_pending(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
-
-        monkeypatch.setattr(cursor_mod, "get_pending", lambda session_id: (0, 0))
-        assert nudge_mod._fetch_pending_facts("sess-none") == {}
-
-    def test_fetch_fail_open_on_store_error(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
-        from context_engine.store import core as store_core
-
-        monkeypatch.setattr(cursor_mod, "get_pending", lambda session_id: (1, 2))
-
-        def _boom(*args, **kwargs):
-            raise RuntimeError("db gone")
-
-        monkeypatch.setattr(store_core, "get_turns_by_turn_num_scope", _boom)
-        assert nudge_mod._fetch_pending_facts("sess-boom") == {}
-
-
-# ---------------------------------------------------------------------------
-# _nudge_plan_extraction (Part 3 injection + fail-open cursor timing)
+# _nudge_plan_extraction (plan-context injection + fail-open)
 # ---------------------------------------------------------------------------
 
 
@@ -382,106 +263,51 @@ class _FailingAgent:
 
 class TestNudgePlanExtraction:
     @pytest.mark.asyncio
-    async def test_injects_pending_range_and_advances_cursor(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
-
+    async def test_injects_plan_context_and_renders_both_parts(self, monkeypatch):
         prompts: list[str] = []
-        advanced: list[tuple[str, int]] = []
 
         async def _create_nudge_agent(system_prompt):
             return _CapturingAgent(prompts)
 
         monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(
-            nudge_mod,
-            "_fetch_pending_facts",
-            lambda session_id: {"start": 3, "end": 5, "conversation": "user: use uv"},
-        )
         monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
         monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(
-            cursor_mod,
-            "advance_consumed",
-            lambda session_id, end: advanced.append((session_id, end)),
-        )
 
-        await nudge_mod._nudge_plan_extraction("sess-cursor", "sys", [HumanMessage("hi")])
+        await nudge_mod._nudge_plan_extraction("sess-prompt", "sys", [HumanMessage("hi")])
 
-        assert advanced == [("sess-cursor", 5)]
+        assert len(prompts) == 1
         prompt = prompts[0]
-        assert "## Part 3: Persistent Fact Extraction" in prompt
-        assert "turns 3..5" in prompt
-        assert "user: use uv" in prompt
-        assert 'memory(action="fact_add"' in prompt
-
-    @pytest.mark.asyncio
-    async def test_agent_failure_does_not_advance_cursor(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
-
-        advanced: list[tuple[str, int]] = []
-
-        async def _create_nudge_agent(system_prompt):
-            return _FailingAgent()
-
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(
-            nudge_mod,
-            "_fetch_pending_facts",
-            lambda session_id: {"start": 3, "end": 5, "conversation": "user: use uv"},
-        )
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
-        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(
-            cursor_mod,
-            "advance_consumed",
-            lambda session_id, end: advanced.append((session_id, end)),
-        )
-
-        await nudge_mod._nudge_plan_extraction("sess-fail", "sys", [])
-
-        assert advanced == []
-
-    @pytest.mark.asyncio
-    async def test_empty_pending_skips_part3_and_does_not_advance(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
-
-        prompts: list[str] = []
-        advanced: list[tuple[str, int]] = []
-
-        async def _create_nudge_agent(system_prompt):
-            return _CapturingAgent(prompts)
-
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
-        monkeypatch.setattr(nudge_mod, "_fetch_pending_facts", lambda session_id: {})
-        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
-        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(
-            cursor_mod,
-            "advance_consumed",
-            lambda session_id, end: advanced.append((session_id, end)),
-        )
-
-        await nudge_mod._nudge_plan_extraction("sess-empty", "sys", [])
-
-        assert advanced == []
-        prompt = prompts[0]
-        assert "## Part 3" not in prompt
+        assert '"plan_name": "p"' in prompt
         assert "## Part 1: Structured Knowledge Extraction" in prompt
         assert "## Part 2: Skill Library Update" in prompt
 
     @pytest.mark.asyncio
-    async def test_no_plan_context_does_not_advance_cursor(self, monkeypatch):
-        from context_engine.facts import cursor as cursor_mod
+    async def test_agent_failure_is_swallowed_and_lock_released(self, monkeypatch):
+        async def _create_nudge_agent(system_prompt):
+            return _FailingAgent()
 
-        advanced: list[tuple[str, int]] = []
-        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {})
-        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
-        monkeypatch.setattr(
-            cursor_mod,
-            "advance_consumed",
-            lambda session_id, end: advanced.append((session_id, end)),
+        fake_state = _FakeStateRegister()
+        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {"plan_name": "p"})
+        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
+        monkeypatch.setattr(nudge_mod, "state_register_mem", fake_state)
+
+        await nudge_mod._nudge_plan_extraction("sess-fail", "sys", [])
+
+        assert (
+            fake_state.get_state("sess-fail", nudge_mod._PLAN_EXTRACTION_LOCK_KEY, False) is False
         )
+
+    @pytest.mark.asyncio
+    async def test_no_plan_context_skips_the_agent(self, monkeypatch):
+        prompts: list[str] = []
+
+        async def _create_nudge_agent(system_prompt):
+            return _CapturingAgent(prompts)
+
+        monkeypatch.setattr(nudge_mod, "_build_plan_context", lambda session_id: {})
+        monkeypatch.setattr(nudge_mod, "_create_nudge_agent", _create_nudge_agent)
+        monkeypatch.setattr(nudge_mod, "state_register_mem", _FakeStateRegister())
 
         await nudge_mod._nudge_plan_extraction("sess-nocontext", "sys", [])
 
-        assert advanced == []
+        assert prompts == []

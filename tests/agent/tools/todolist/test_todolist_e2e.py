@@ -2,10 +2,10 @@
 
 This suite drives the REAL todowrite/todoread tools through the REAL
 ``TodoService`` (E4 transition barrier + E6 default-downgrade), the REAL SQLite
-store, the REAL ``build_system_prompt`` dynamic blocks (todo / boulder / facts /
+store, the REAL ``build_system_prompt`` dynamic blocks (todo / boulder /
 taskflow / continuity), the REAL E7 task-intent middleware, the REAL E3
-continuation enforcer, the REAL LT-1 tiered facts layer and the REAL TaskFlow
-tools. Fakes exist only at true external boundaries:
+continuation enforcer, and the REAL TaskFlow tools. Fakes exist only at true
+external boundaries:
 
 * the websocket registry (``service.relation_register`` -> no socket, fail-open),
 * the subagent registry liveness seams (``_get_run_by_child_session_key`` /
@@ -16,9 +16,9 @@ tools. Fakes exist only at true external boundaries:
 * the E3 fire-and-forget auto-turn sink (a spy).
 
 All persistence is redirected to ``tmp_path`` (todos.db, taskflow_registry.db,
-facts/, memory/, session_continuity/) and every module-level ledger (todowrite
-reminder, E7 arming, E3 stagnation, tiered store) is reset per test, so the
-tests are order-independent and touch no real repo state.
+memory/, session_continuity/) and every module-level ledger (todowrite
+reminder, E7 arming, E3 stagnation) is reset per test, so the tests are
+order-independent and touch no real repo state.
 """
 
 from __future__ import annotations
@@ -35,7 +35,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.middlewares.todo_continuation.core import TodoContinuationEnforcer, _build_status_block
-from agent.tools.memory import MemoryStore, memory_tool
+from agent.tools.memory import MemoryStore
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite as flow_store
 from agent.tools.todolist import service as todo_service
@@ -51,11 +51,10 @@ pytestmark = [pytest.mark.integration]
 # tool object under the name ``todowrite``).
 _TODOWRITE_MODULE = sys.modules["agent.tools.todolist.tools.todowrite"]
 
-# The five dynamic prompt block headers this suite verifies end-to-end.
+# The four dynamic prompt block headers this suite verifies end-to-end.
 _BLOCK_HEADERS = (
     "## Current Todo List",
     "## Active Work",
-    "FACTS (on-demand",
     "## Pending TaskFlows",
     "## Last Session (continuity)",
 )
@@ -191,10 +190,9 @@ def isolated_stores(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 @pytest.fixture(autouse=True)
 def _reset_module_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Reset every process-global ledger + redirect memory/facts to tmp."""
+    """Reset every process-global ledger + redirect memory to tmp."""
     import agent.middlewares.task_intent.core as task_intent
     import agent.tools.memory as memory_module
-    import agent.tools.memory_tiered as memory_tiered
     from agent.tools.todolist import stagnation_tracker as st
 
     # todowrite's once-per-session fan-out reminder.
@@ -210,10 +208,6 @@ def _reset_module_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(st, "_last_inject_time", {})
     monkeypatch.setattr(st, "_last_failure_time", {})
     monkeypatch.setattr(st, "_recovery_attempts", {})
-
-    # LT-1 tiered facts -> tmp facts dir, fresh cached store.
-    monkeypatch.setattr(memory_tiered, "FACTS_DIR", tmp_path / "facts")
-    monkeypatch.setattr(memory_tiered, "tiered_store", None)
 
     # Real MemoryStore, file-backed by a tmp memory dir.
     mem = MemoryStore()
@@ -480,32 +474,6 @@ class TestTodolistFullPipeline:
         print(injection.content)
 
     @pytest.mark.asyncio
-    async def test_e2e_facts_listing_in_prompt(self, prompt_env: dict) -> None:
-        """Given a fact written via the memory tool, When the prompt builds,
-        Then the LT-1 FACTS listing is present and the fact reads back."""
-        sid = "e2e-facts"
-        fact = "Sherry stores categorized facts under workspace/memory/facts"
-
-        out = memory_tool("fact_add", target="project", content=fact)
-        payload = json.loads(out)
-        assert payload["success"] is True
-        assert payload["category"] == "project"
-
-        prompt = _build_prompt(sid)
-        assert "FACTS (on-demand" in prompt
-        assert "project (1 entries)" in prompt
-        assert "fact_read/fact_search" in prompt
-
-        # Round-trip: the real facts layer holds the fact text.
-        read_out = memory_tool("fact_read", target="project")
-        assert fact in read_out
-
-        print("\n[EVIDENCE test_e2e_facts_listing_in_prompt] fact_add result:")
-        print(out)
-        print("[EVIDENCE] prompt facts block:")
-        print(_block_text(prompt, "FACTS (on-demand"))
-
-    @pytest.mark.asyncio
     async def test_e2e_taskflow_block_in_prompt(
         self, prompt_env: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -578,8 +546,7 @@ class TestTodolistFullPipeline:
     ) -> None:
         """Given a plan mixing plain, TaskFlow-linked and invalid-category todos,
         When completed one by one (E4/E6 enforced each time), Then the prompt
-        shows 100% done, E3 stops firing, the P0-1 memory flush persists a fact
-        and the LT-1 FACTS listing updates."""
+        shows 100% done, E3 stops firing and the P0-1 memory flush persists a fact."""
         import agent.middlewares.summarization.memory_flush as memory_flush
         import agent.tools.memory as memory_module
         import agent.tools.taskflow.tools._dispatch as dispatch_mod
@@ -671,12 +638,6 @@ class TestTodolistFullPipeline:
         prompt_after_flush = _build_prompt(sid)
         assert "lifecycle uses uv" in prompt_after_flush
 
-        # LT-1 facts listing updates after a fact is added.
-        memory_tool("fact_add", target="project", content="Lifecycle fact: svc uses uv")
-        prompt_after_facts = _build_prompt(sid)
-        assert "FACTS (on-demand" in prompt_after_facts
-        assert "project (1 entries)" in prompt_after_facts
-
         print("\n[EVIDENCE test_e2e_full_lifecycle] final DB rows:")
         print(json.dumps(todos, ensure_ascii=False, indent=2))
         print("[EVIDENCE] todo completion = 100% (3/3)")
@@ -684,8 +645,6 @@ class TestTodolistFullPipeline:
         print(todo_block)
         print("[EVIDENCE] memory block after P0-1 flush:")
         print(_block_text(prompt_after_flush, "MEMORY (your personal notes)"))
-        print("[EVIDENCE] facts block after fact_add:")
-        print(_block_text(prompt_after_facts, "FACTS (on-demand"))
 
 
 # ===========================================================================
@@ -813,8 +772,8 @@ class TestTodolistPromptBlocks:
     async def test_all_blocks_in_prompt(
         self, prompt_env: dict, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Given todos + boulder + facts + taskflow + continuity state, When the
-        prompt builds, Then all five dynamic block headers are present."""
+        """Given todos + boulder + taskflow + continuity state, When the
+        prompt builds, Then all four dynamic block headers are present."""
         import agent.tools.taskflow.tools._dispatch as dispatch_mod
         from context_engine.session_continuity import save_session_end_state
         from runtime.session.relation_register import relation_register
@@ -854,16 +813,14 @@ class TestTodolistPromptBlocks:
             ),
             encoding="utf-8",
         )
-        # 3. facts
-        memory_tool("fact_add", target="environment", content="All-blocks fact")
-        # 4. taskflow
+        # 3. taskflow
         await flow_tools["taskflow_create"].coroutine(
             flow_id="e2e-all-flow", description="all blocks flow", session_id=sid
         )
         await flow_tools["taskflow_run_task"].coroutine(
             flow_id="e2e-all-flow", task="flow step", session_id=sid
         )
-        # 5. continuity (previous session bound to the same channel)
+        # 4. continuity (previous session bound to the same channel)
         relation_register.register_channel_chat(sid, "ch-all", "chat-all")
         try:
             save_session_end_state(
@@ -880,7 +837,7 @@ class TestTodolistPromptBlocks:
         for header in _BLOCK_HEADERS:
             assert header in prompt, f"missing block header: {header}"
 
-        print("\n[EVIDENCE test_all_blocks_in_prompt] all 5 block headers present:")
+        print("\n[EVIDENCE test_all_blocks_in_prompt] all 4 block headers present:")
         for header in _BLOCK_HEADERS:
             print(f"  OK {header}")
         print("[EVIDENCE] prompt todo block:")
@@ -891,7 +848,7 @@ class TestTodolistPromptBlocks:
     @pytest.mark.asyncio
     async def test_prompt_clean_when_no_state(self, prompt_env: dict) -> None:
         """Given a fresh session with no state, When the prompt builds, Then none
-        of the five dynamic block headers appear."""
+        of the four dynamic block headers appear."""
         prompt = _build_prompt("e2e-clean")
 
         for header in _BLOCK_HEADERS:

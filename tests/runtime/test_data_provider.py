@@ -20,8 +20,6 @@ _PROVIDER_METHODS = (
     "step_status",
     "steps_summary",
     "format_memory_for_system_prompt",
-    "get_facts_listing",
-    "add_fact",
     "build_todolist_knowledge_block",
     "build_continuity_prompt",
     "build_system_prompt",
