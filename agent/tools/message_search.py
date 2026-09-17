@@ -5,8 +5,9 @@ import asyncio
 import sqlite3
 from loguru import logger
 import concurrent.futures
+from config import SRC_DIR
 from config.features import TOOLS_TIMEOUTS
-from pub.func import run_async
+from pub.func import extract_text_from_content, rand_str_to_int, run_async
 from typing import Any, Annotated
 
 from agent.tools.pub_base.tool_utils import tool_error as _tool_error
@@ -18,6 +19,13 @@ from context_engine import get_db, search_messages, get_turns_by_turn_num_scope
 
 # Bound to the feature registry (single source of truth); name preserved.
 MAX_SESSION_CHARS = TOOLS_TIMEOUTS["message_search_max_session_chars"]
+
+# Checkpoint fallback bounds (two-stage query): the newest checkpoint is
+# scanned newest-first, capped by message count and by MAX_SESSION_CHARS
+# accumulated characters; the hit cap aligns with the FTS path's 50 matches.
+_FTS_MATCH_LIMIT = 50
+_CHECKPOINT_SCAN_MAX_MESSAGES = 200
+_CHECKPOINT_SNIPPET_CHARS = 600
 
 
 class MessageSearchSchema(BaseModel):
@@ -175,7 +183,7 @@ class SessionSearcher:
             query=query,
             session_id=session_id,
             role_filter=role_list,
-            limit=50,  # Get more matches to find unique sessions
+            limit=_FTS_MATCH_LIMIT,  # Get more matches to find unique sessions
             offset=0,
         )
 
@@ -403,6 +411,160 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
         return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
 
 
+# ── Checkpoint fallback (two-stage query) ────────────────────────────────
+# A turn is written to the messages table only when it ends, so the running
+# turn is invisible to FTS. When the messages table has no match, fall back to
+# the session's newest checkpoint and keyword-match state["messages"].
+
+_FTS_OPERATORS = frozenset({"AND", "OR", "NOT"})
+_CHECKPOINT_ROLE_TYPES: dict[str, str] = {
+    "human": "human",
+    "user": "human",
+    "ai": "ai",
+    "assistant": "ai",
+    "tool": "tool",
+}
+
+
+def _checkpoint_db_available() -> bool:
+    """True when the checkpoint SQLite file exists."""
+    return (SRC_DIR / "checkpoints" / "sqlite.db").exists()
+
+
+def _checkpoint_thread_has_state(session_id: str) -> bool:
+    """True when the checkpoint DB holds at least one checkpoint for *session_id*.
+
+    Read-only probe: a thread that never checkpointed cannot yield fallback
+    hits, and skipping it avoids building the agent for nothing.
+    """
+    db_file = SRC_DIR / "checkpoints" / "sqlite.db"
+    try:
+        conn = sqlite3.connect(f"file:{db_file}?mode=ro", uri=True, timeout=1.0)
+        try:
+            row = conn.execute(
+                "SELECT 1 FROM checkpoints WHERE thread_id = ? LIMIT 1",
+                (rand_str_to_int(session_id),),
+            ).fetchone()
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+    return row is not None
+
+
+def _checkpoint_message_types(role_filter: str | None) -> set[str] | None:
+    """Map an FTS-style role_filter onto LangChain message types.
+
+    ``None``/blank means no filtering. Unknown role names match nothing,
+    mirroring the FTS path's ``role IN (...)`` semantics.
+    """
+    if not role_filter or not role_filter.strip():
+        return None
+    return {
+        _CHECKPOINT_ROLE_TYPES[role.strip().lower()]
+        for role in role_filter.split(",")
+        if role.strip() and role.strip().lower() in _CHECKPOINT_ROLE_TYPES
+    }
+
+
+def _text_matches_query(text: str, query: str) -> bool:
+    """Case-insensitive phrase match first, then any non-operator term."""
+    if not text:
+        return False
+    haystack = text.lower()
+    needle = query.lower().strip()
+    if not needle:
+        return False
+    if needle in haystack:
+        return True
+    return any(
+        term.strip('"*') in haystack
+        for term in needle.split()
+        if term.upper() not in _FTS_OPERATORS and term.strip('"*')
+    )
+
+
+def _search_latest_checkpoint_messages(
+    query: str, session_id: str, role_filter: str | None, limit: int
+) -> list[dict[str, Any]]:
+    """Fallback search over the newest checkpoint state of *session_id*.
+
+    ``aclean_old_checkpoints()`` keeps only the newest checkpoint per thread,
+    so ``aget_state()`` yields the full accumulated transcript without
+    replaying writes. Messages are scanned newest-first; hit dicts carry the
+    same fields as FTS matches and are tagged ``source="checkpoint"`` so the
+    model knows they may include not-yet-persisted turns. Scanning stops at
+    `_CHECKPOINT_SCAN_MAX_MESSAGES` messages or `MAX_SESSION_CHARS`
+    accumulated characters, whichever comes first.
+    """
+    if not TOOLS_TIMEOUTS["message_search_checkpoint_fallback_enabled"]:
+        return []
+    if not _checkpoint_db_available() or not _checkpoint_thread_has_state(session_id):
+        return []
+
+    allowed_types = _checkpoint_message_types(role_filter)
+    if allowed_types is not None and not allowed_types:
+        return []
+
+    async def _load_checkpoint_state() -> Any:
+        from agent import built_agent
+        from pub.func import build_agent_config
+
+        agent = await built_agent()
+        return await agent.aget_state(config=build_agent_config(session_id))
+
+    state = run_async(_load_checkpoint_state())
+    values = getattr(state, "values", None) or {}
+    messages = list(values.get("messages", [])) if isinstance(values, dict) else []
+
+    hits: list[dict[str, Any]] = []
+    scanned_chars = 0
+    total = len(messages)
+    for offset, msg in enumerate(reversed(messages)):
+        if offset >= _CHECKPOINT_SCAN_MAX_MESSAGES or scanned_chars >= MAX_SESSION_CHARS:
+            break
+        if len(hits) >= limit:
+            break
+
+        msg_type = str(getattr(msg, "type", "") or "")
+        if allowed_types is not None and msg_type not in allowed_types:
+            continue
+
+        content = getattr(msg, "content", "")
+        text = extract_text_from_content(content) or (str(content) if content is not None else "")
+        scanned_chars += len(text)
+        if not _text_matches_query(text, query):
+            continue
+
+        tool_name = getattr(msg, "name", None) if msg_type == "tool" else None
+        formatted = _format_conversation(
+            [
+                {
+                    "role": msg_type,
+                    "content": text,
+                    "tool_name": tool_name,
+                    "tool_calls": getattr(msg, "tool_calls", None),
+                }
+            ]
+        )
+        hits.append(
+            {
+                "id": None,
+                "session_id": session_id,
+                "turn_num": total - offset,
+                "role": msg_type,
+                "snippet": _truncate_around_matches(
+                    formatted, query, max_chars=_CHECKPOINT_SNIPPET_CHARS
+                ),
+                "timestamp": None,
+                "tool_name": tool_name,
+                "context": [],
+                "source": "checkpoint",
+            }
+        )
+    return hits
+
+
 def session_search(
     query: str | None, session_id: str, role_filter: str = None, limit: int = 3
 ) -> str:
@@ -437,6 +599,36 @@ def session_search(
         raw_results = searcher.search(query, session_id, role_filter)
 
         if not raw_results or len(raw_results) == 0:
+            try:
+                checkpoint_results = _search_latest_checkpoint_messages(
+                    query, session_id, role_filter, _FTS_MATCH_LIMIT
+                )
+            except Exception as e:
+                logger.warning(
+                    "Checkpoint fallback search failed for session %s: %s",
+                    session_id,
+                    e,
+                    exc_info=True,
+                )
+                checkpoint_results = []
+
+            if checkpoint_results:
+                return json.dumps(
+                    {
+                        "success": True,
+                        "query": query,
+                        "source": "checkpoint",
+                        "mode": "checkpoint_fallback",
+                        "results": checkpoint_results,
+                        "count": len(checkpoint_results),
+                        "message": (
+                            "No matches in persisted sessions; results come from the newest "
+                            "session checkpoint and may include not-yet-persisted turns."
+                        ),
+                    },
+                    ensure_ascii=False,
+                )
+
             return json.dumps(
                 {
                     "success": True,
@@ -539,6 +731,8 @@ def _message_search_tool(
     IMPORTANT: Use OR between keywords for best results — FTS5 defaults to AND which misses
     sessions that only mention some terms. If a broad OR query returns nothing, try individual
     keyword searches in parallel. Returns summaries of the top matching sessions.
+    When the messages table has no match, the search falls back to the session's newest
+    checkpoint state (turns not yet persisted); such results carry source=checkpoint.
     """
     if semantic:
         if not query:
