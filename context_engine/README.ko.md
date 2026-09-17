@@ -28,10 +28,12 @@ MesMemory는 **세션 단위의 단기 메시지 저장소**이며, 의도적으
 
 | | MesMemory |
 |---|-----------|
-| 범위 | 각 세션의 원시 `human` / `ai` / `tool` 메시지 |
+| 범위 | 각 최상위 세션의 원시 `human` / `ai` / `tool` 메시지 |
 | 저장소 | 공유 단일 SQLite 데이터베이스(`src/store/mes_memory/mes_memory.db`) |
 | 조회 | 최근 N 턴, 턴 범위 쿼리, 페이지네이션 히스토리, FTS5 전문 검색 |
 | 쓰기 | `await add_messages(...)` — 호출 1회당 1턴 영속화 |
+
+서브에이전트(subagent) 세션은 **이 저장소에 기록되지 않습니다**. 해당 대화는 각자의 checkpointer(`agent:{agent_id}:subagent:{uuid}`)에 저장되고, run 레코드는 `subagent_registry.db`에 저장됩니다([`agent/tools/subagent/README.ko.md`](../agent/tools/subagent/README.ko.md) 참조). MesMemory에 들어오는 서브에이전트 관련 행은 **부모** 세션으로 다시 쓰이는 완료 캐리어(`origin='subagent_completion'`)뿐입니다.
 
 에이전트가 생성한 스킬의 장기 유지보수(라이프사이클 전이, 통합, 정리)는 `context_engine/` 내부의 별도 [Curator](#curator스킬-유지보수-서브패키지) 서브패키지가 담당합니다 — 메시지 데이터에는 **전혀 접근하지 않습니다**.
 

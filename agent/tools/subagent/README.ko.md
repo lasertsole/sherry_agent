@@ -320,6 +320,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 `announce/completion_message.py`가 구축하는 완료 캐리어 `HumanMessage`는 `origin='subagent_completion'`으로 MesMemory에 영속화됩니다. 웹 클라이언트는 origin 태그가 붙은 메시지를 일반 사용자 말풍선 대신 가운데 정렬된 흐린 시스템 카드(i18n 키 `chat.backgroundMessage`)로 렌더링합니다.
 
+서브에이전트 대화 자체는 MesMemory에 **기록되지 않습니다** — 위의 완료 캐리어만 예외입니다. 각 자식 에이전트는 `agent:{agent_id}:subagent:{uuid}`를 키로 하는 자체 checkpointer를 가지며, run 레코드는 `subagent_registry.db`에 저장됩니다([컨텍스트 엔진 README](../../../context_engine/README.ko.md) 참조).
+
 ### 5.1 Swarm/Collect 모드
 
 Swarm 시스템은 FIFO 스케줄링과 동시성 제어를 갖춘 하위 작업의 일괄 병렬 실행을 지원합니다.

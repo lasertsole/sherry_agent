@@ -28,10 +28,12 @@ MesMemory is a **short-term, per-session message store**. It is deliberately sim
 
 | | MesMemory |
 |---|-----------|
-| Scope | Raw `human` / `ai` / `tool` messages of each session |
+| Scope | Raw `human` / `ai` / `tool` messages of each top-level session |
 | Storage | One shared SQLite database (`src/store/mes_memory/mes_memory.db`) |
 | Retrieval | Last-N turns, turn-range queries, paginated history, FTS5 full-text search |
 | Writes | `await add_messages(...)` — one call persists one turn |
+
+Subagent sessions are **not written to this store**: their conversations live in their own checkpointers (`agent:{agent_id}:subagent:{uuid}`) and their run records live in `subagent_registry.db` (see [`agent/tools/subagent/README.md`](../agent/tools/subagent/README.md)). The only subagent-related rows that reach MesMemory are the completion carriers written back to the **parent** session (`origin='subagent_completion'`).
 
 Long-term maintenance of agent-created skills (lifecycle transitions, consolidation, pruning) is handled by the separate [Curator](#curator-skill-maintenance-subpackage) subpackage inside `context_engine/` — it does **not** touch message data.
 

@@ -322,6 +322,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 `announce/completion_message.py` が構築する完了キャリア `HumanMessage` は `origin='subagent_completion'` として MesMemory に永続化されます。Web クライアントは origin タグ付きのメッセージを、通常のユーザー吹き出しではなく中央寄せの控えめなシステムカード（i18n キー `chat.backgroundMessage`）として表示します。
 
+サブエージェントの会話そのものは MesMemory には**書き込まれません** — 上記の完了キャリアのみが例外です。各子エージェントは `agent:{agent_id}:subagent:{uuid}` をキーとする独自の checkpointer を持ち、run レコードは `subagent_registry.db` に保存されます（[コンテキストエンジン README](../../../context_engine/README.ja.md) を参照）。
+
 ### 5.1 Swarm/Collect モード
 
 Swarm システムは、FIFO スケジューリングと同時実行制御を備えたサブタスクの一括並列実行を可能にします。

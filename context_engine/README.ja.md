@@ -28,10 +28,12 @@ MesMemory は**セッション単位の短期メッセージストア**であり
 
 | | MesMemory |
 |---|-----------|
-| 対象 | 各セッションの生の `human` / `ai` / `tool` メッセージ |
+| 対象 | 各トップレベルセッションの生の `human` / `ai` / `tool` メッセージ |
 | ストレージ | 共有の単一 SQLite データベース（`src/store/mes_memory/mes_memory.db`） |
 | 取得 | 直近 N ターン、ターン範囲クエリ、ページング履歴、FTS5 全文検索 |
 | 書き込み | `await add_messages(...)` — 1 回の呼び出しで 1 ターンを永続化 |
+
+サブエージェント（subagent）セッションは**本ストアには書き込まれません**。それらの会話は各自の checkpointer（`agent:{agent_id}:subagent:{uuid}`）に保存され、run レコードは `subagent_registry.db` に保存されます（[`agent/tools/subagent/README.ja.md`](../agent/tools/subagent/README.ja.md) を参照）。MesMemory に入るサブエージェント関連の行は、**親**セッションへ書き戻される完了キャリア（`origin='subagent_completion'`）だけです。
 
 Agent が生成したスキルの長期保守（ライフサイクル遷移・統合・整理）は、`context_engine/` 内の独立した [Curator](#curatorスキル保守サブパッケージ) サブパッケージが担当します。Curator はメッセージデータには**一切触れません**。
 

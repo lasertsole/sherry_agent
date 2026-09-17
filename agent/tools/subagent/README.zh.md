@@ -317,6 +317,8 @@ Please review the sub-agent execution results above. Provide further instruction
 
 由 `announce/completion_message.py` 构建的完成载体 `HumanMessage` 会以 `origin='subagent_completion'` 持久化到 MesMemory；Web 客户端将这类带 origin 标记的消息渲染为居中的弱化系统卡片（i18n 键 `chat.backgroundMessage`），而非普通用户气泡。
 
+子会话对话本身**不会**写入 MesMemory —— 只有上面的完成载体例外：每个子代理使用各自的 checkpointer（按 `agent:{agent_id}:subagent:{uuid}` 隔离），其 run 记录保存在 `subagent_registry.db`（参见[上下文引擎 README](../../../context_engine/README.zh.md)）。
+
 ### 5.1 Swarm/Collect 模式
 
 Swarm 系统支持子任务并发批量执行，带 FIFO 调度与并发控制：

@@ -318,6 +318,8 @@ Delivered as `InboundMessage(channel="system", sender_id="subagent", metadata.in
 
 The completion carrier `HumanMessage` built by `announce/completion_message.py` is persisted to MesMemory with `origin='subagent_completion'`; the web client renders such origin-tagged rows as a centered muted system card (i18n key `chat.backgroundMessage`) instead of a normal user bubble.
 
+Subagent conversations themselves are **not** written to MesMemory — only the completion carrier above is: each child keeps its own checkpointer keyed by `agent:{agent_id}:subagent:{uuid}`, and its run records live in `subagent_registry.db` (see the [Context Engine README](../../../context_engine/README.md)).
+
 ### 5.1 Swarm/Collect Mode
 
 The Swarm system enables concurrent batch execution of sub-tasks with FIFO scheduling and concurrency control:

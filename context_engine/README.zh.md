@@ -28,10 +28,12 @@ MesMemory 是一个**面向单会话的短期消息存储**，设计刻意保持
 
 | | MesMemory |
 |---|-----------|
-| 范围 | 每个会话的原始 `human` / `ai` / `tool` 消息 |
+| 范围 | 每个顶层会话的原始 `human` / `ai` / `tool` 消息 |
 | 存储 | 共享的单一 SQLite 数据库（`src/store/mes_memory/mes_memory.db`） |
 | 检索 | 最近 N 轮、轮次范围查询、分页历史、FTS5 全文搜索 |
 | 写入 | `await add_messages(...)` —— 一次调用持久化一轮 |
+
+子代理（subagent）会话**不写入本存储**：它们的对话保存在各自的 checkpointer（`agent:{agent_id}:subagent:{uuid}`），run 记录保存在 `subagent_registry.db`（参见 [`agent/tools/subagent/README.zh.md`](../agent/tools/subagent/README.zh.md)）。进入 MesMemory 的子代理相关行只有写回**父会话**的完成载体（`origin='subagent_completion'`）。
 
 对 Agent 自建技能的长期维护（生命周期流转、合并、清理）由 `context_engine/` 内独立的 [Curator](#curator技能维护子包) 子包负责 —— 它**不会**触碰消息数据。
 
