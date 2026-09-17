@@ -16,7 +16,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 - [アーキテクチャ概観](#アーキテクチャ概観)
 - [ミドルウェアチェーン](#ミドルウェアチェーン)
 - [ミドルウェアリファレンス](#ミドルウェアリファレンス)
-  - [ContextEngineHook](#contextenginehook)
+  - [@dynamic_prompt](#dynamic_prompt)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -79,7 +79,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 
 ```python
 middleware = [
-    ContextEngineHook(),
+    context_engine_prompt,  # @dynamic_prompt：システムプロンプト注入
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
@@ -137,7 +137,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 要約トリガーはトークンのみではなく、メッセージ数（40）**または**トークン数（コンテキストウィンドウの 80 %）。
 - より厳しい反復予算（90 ではなく 60）。
-- `ContextEngineHook`、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。
+- `context_engine_prompt`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
 - 子セッション終了時、spawn コードは `finally` ブロックで `state_register_mem` から `OutputRepetitionGuard` の 6 つの状態キー（`SESSION_STATE_KEYS`）を削除します。
 
@@ -145,8 +145,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | フェーズ | 順序 |
 |---|---|
-| `before_agent`（リスト順） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
-| `wrap_model_call`（最外層 → 最内層） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
+| `before_agent`（リスト順） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `wrap_model_call`（最外層 → 最内層） | context_engine_prompt → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
 | `after_agent`（逆順） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 あるフックを実装しているミドルウェアだけがそのフェーズに参加します。表は「実装していた場合に走る位置」を示しています。
@@ -155,20 +155,23 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ## ミドルウェアリファレンス
 
-### ContextEngineHook
+### @dynamic_prompt
 
-**モジュール：** `agent/middlewares/context_engine/core.py` · **クラス：** `ContextEngineHook(AgentMiddleware)`
+**モジュール：** `agent/middlewares/context_engine/core.py` · **ミドルウェア：** `context_engine_prompt`（LangChain `@dynamic_prompt` が生成する `AgentMiddleware` インスタンス）
 **フック：** `wrap_model_call` / `awrap_model_call`
 
-リストの先頭、したがって最外層のラップ層です。
+リストの 2 番目、`TodoContinuationEnforcer`（モデル呼び出しラップを実装しない）の直後に位置し、したがって最外層の **ラップ** 層です。デコレータが生成するクラスは `wrap_model_call` と `awrap_model_call` の両方を登録します（被装飾関数は同期で、非同期ラッパーからも呼ばれます）。
 
-**`wrap_model_call` — システムプロンプト注入**
+**システムプロンプト注入**
 
-1. `state_register_mem` の `system_prompt` を参照します。
-2. なければ `state_register_db` にフォールバックし、それでも無ければ `workspace.prompt_builder.build_system_prompt(session_id)` で再構築します。
-3. リクエストが既に同一内容の `SystemMessage` を持つ場合はそのまま再利用し —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。内容が実際に変わったときだけ `request.override(system_message=...)` で注入します。いずれの場合もプロンプトは `state_register_mem` にキャッシュバックします。
+1. `require_session_id` で `session_id` を解決します —— 欠落/空白は `RuntimeError("Not pass session_id")`。
+2. `state_register_mem` の `system_prompt` を参照します。
+3. なければ `state_register_db` にフォールバックし、それでも無ければ `workspace.prompt_builder.build_system_prompt(session_id)` で再構築し、**db + mem に二重書き込み**します。
+4. same-content skip：`@dynamic_prompt` のラッパーは*無条件に* `request.override(system_message=...)` を呼びます。リクエストが既に同一内容の `SystemMessage` を持つ場合、被装飾関数は**その同じ message オブジェクト**を返すため、override は同一バイトを再適用します —— モデル可視プレフィックスはバイト単位で同一に保たれ（プロバイダープレフィックスキャッシュに有効）、実際に変化したとき（または初回で `request.system_message is None` のとき）だけ新しい `SystemMessage` を返します。
 
-**ターンの仕上げは圧縮パイプラインへ移動しました。** MesMemory へのメッセージ永続化と、メモリレビュー / プラン抽出の nudge は `Summarization` が所有します：置換前に破棄される元のプレフィックスをフラッシュし、同じ接縫から両方の nudge をスケジュールします（下の Summarization セクション参照）。`ContextEngineHook` は `after_agent` / `aafter_agent` をオーバーライドしません；クラス自体はシステムプロンプトのラップのために残ります。
+> `system_prompt` の mem キーは圧縮パイプラインとの契約です：`Summarization` がトークン見積もり（`_estimate_system_prompt_tokens`）に読み、圧縮後に（mem + db へ）書き戻します —— そのためキャッシュミス時は必ず二重書き込みします。
+
+**ターンの仕上げは圧縮パイプラインへ移動しました。** MesMemory へのメッセージ永続化と、メモリレビュー / プラン抽出の nudge は `Summarization` が所有します：置換前に破棄される元のプレフィックスをフラッシュし、同じ接縫から両方の nudge をスケジュールします（下の Summarization セクション参照）。`context_engine_prompt` はどのライフサイクルフック（`before_agent` / `after_agent` / `before_model` / `after_model`）もオーバーライドしません；役割はシステムプロンプトのラップだけです。
 
 **Nudge サブエージェント**（`context_engine/nudge.py`、圧縮パイプラインが派遣）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
 
@@ -469,7 +472,7 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 
 | キー | 所有者 | レジスタ |
 |---|---|---|
-| `system_prompt` | ContextEngineHook / Summarization | mem + db |
+| `system_prompt` | context_engine_prompt / Summarization | mem + db |
 | `nudge_review_memory_count` | 圧縮時 nudge スケジューラ（Summarization → `nudge.py`） | db |
 | `nudge_plan_extraction_fired` | 圧縮時 nudge スケジューラ（Summarization → `nudge.py`） | db |
 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 圧縮時 nudge スケジューラ（Summarization → `nudge.py`） | mem |
@@ -503,7 +506,7 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook,
+    context_engine_prompt,
     MultimodalProcessor,
     IterationBudget,
     ToolGuardrails,
@@ -519,7 +522,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),  # システムプロンプト注入
+        context_engine_prompt,  # @dynamic_prompt：システムプロンプト注入
         MultimodalProcessor(),  # マルチモーダル入力の正規化
         IterationBudget(90),  # ターン単位の呼び出し予算
         ToolGuardrails(),  # 失敗病理の検知
@@ -565,9 +568,8 @@ agent = create_agent(
 ユーザーターン到着
 │
 ├─ before_agent（リスト順）
-│   ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails
+│   MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · ContextEngineHook   ここでは何もしない（システムプロンプト注入は wrap_model_call で実施）
 │   · MultimodalProcessor  最後の HumanMessage を正規化、古い image_url ブロックを剥離
 │   · IterationBudget  予算カウンターをリセット
 │   · ToolGuardrails  ターン単位のガード状態をリセット
@@ -579,7 +581,7 @@ agent = create_agent(
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 書き換え
 │   ├─ wrap_model_call（最外層 → 最内層）
-│   │   · ContextEngineHook  システムプロンプトを注入（request.override）
+│   │   · context_engine_prompt  システムプロンプトを注入（デコレータが request.override を呼ぶ）
 │   │   · IterationBudget  1 消費。尽きたら終端 AIMessage
 │   │   · HeartbeatStaleness  kill 済みなら HeartbeatTimeoutError、さもなくば heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  ブレーカー確認。分類済みリトライ + バックオフ。フォールバック /
@@ -602,7 +604,7 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  ハートビートタイマーを停止
     · MultimodalProcessor  mutil_temp を清掃（7 日超 / 非数値ファイル名）
-    · （ContextEngineHook は after_agent を実装しなくなりました；破棄プレフィックスの
+    · （context_engine_prompt はライフサイクルフックを実装しません；破棄プレフィックスの
        フラッシュとメモリレビュー / プラン抽出 nudge は代わりに Summarization の
        圧縮パス内で発火します。）
 ```
@@ -647,9 +649,9 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 公開エクスポート
 ├── base.py                      # require_session_id / args_hash ヘルパー
-├── context_engine/              # ContextEngineHook + nudge サブエージェント
-│   ├── __init__.py              # ContextEngineHook のみエクスポート
-│   ├── core.py                  # ContextEngineHook
+├── context_engine/              # @dynamic_prompt システムプロンプトミドルウェア + nudge サブエージェント
+│   ├── __init__.py              # context_engine_prompt のみエクスポート
+│   ├── core.py                  # context_engine_prompt + _get_and_reload_system_prompt
 │   └── nudge.py                 # nudge プロンプト + サブエージェントビルダー
 ├── heartbeat_staleness/         # HeartbeatStaleness
 │   ├── __init__.py              # HeartbeatStaleness をエクスポート
@@ -726,7 +728,7 @@ from agent.middlewares import (
     MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
-    ContextEngineHook,
+    context_engine_prompt,
     ToolCallNormalize,
     PathGuard,
     HeartbeatStaleness,

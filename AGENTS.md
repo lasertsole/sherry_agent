@@ -51,7 +51,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
-  │    ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails
+  │    context_engine_prompt (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
   │    → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7) → OutputRepetitionGuard
   │    → MaxTokensBoost → HeartbeatStaleness → HITL → LLMRetry → Summarization
   │    → TodoContinuationEnforcer(E3)

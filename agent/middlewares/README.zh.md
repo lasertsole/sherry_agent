@@ -16,7 +16,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 - [架构总览](#架构总览)
 - [中间件链](#中间件链)
 - [中间件参考](#中间件参考)
-  - [ContextEngineHook](#contextenginehook)
+  - [@dynamic_prompt](#dynamic_prompt)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -79,7 +79,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 
 ```python
 middleware = [
-    ContextEngineHook(),
+    context_engine_prompt,  # @dynamic_prompt：系统提示词注入
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
@@ -137,7 +137,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
-- 没有 `ContextEngineHook`、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
+- 没有 `context_engine_prompt`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
@@ -145,8 +145,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 阶段 | 顺序 |
 |---|---|
-| `before_agent`（列表顺序） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
-| `wrap_model_call`（最外层 → 最内层） | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
+| `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `wrap_model_call`（最外层 → 最内层） | context_engine_prompt → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
@@ -155,20 +155,23 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ## 中间件参考
 
-### ContextEngineHook
+### @dynamic_prompt
 
-**模块：** `agent/middlewares/context_engine/core.py` · **类：** `ContextEngineHook(AgentMiddleware)`
+**模块：** `agent/middlewares/context_engine/core.py` · **中间件：** `context_engine_prompt`（由 LangChain `@dynamic_prompt` 创建的 `AgentMiddleware` 实例）
 **钩子：** `wrap_model_call` / `awrap_model_call`
 
-列表中的第一个，因此是最外层的包装层。
+列表中的第二个，紧跟 `TodoContinuationEnforcer`（后者不实现任何模型调用包装），因此是最外层的 **wrap** 层。装饰器生成的类同时注册 `wrap_model_call` 与 `awrap_model_call`（被装饰函数是同步的，异步包装器同样调用它）。
 
-**`wrap_model_call` —— 系统提示词注入**
+**系统提示词注入**
 
-1. 先查 `state_register_mem` 中的 `system_prompt`。
-2. 回退到 `state_register_db`；若仍缺失，则通过 `workspace.prompt_builder.build_system_prompt(session_id)` 重建。
-3. 若请求上已有的 `SystemMessage` 内容相同则原样复用——不 override、不新建 `SystemMessage`——使模型可见前缀保持逐字节一致；仅在实际变化时才通过 `request.override(system_message=...)` 注入。两种情况都会把提示词缓存回 `state_register_mem`。
+1. 用 `require_session_id` 解析 `session_id`——缺失/空白会抛 `RuntimeError("Not pass session_id")`。
+2. 先查 `state_register_mem` 中的 `system_prompt`。
+3. 回退到 `state_register_db`；若仍缺失，则通过 `workspace.prompt_builder.build_system_prompt(session_id)` 重建，并**双写 db + mem**。
+4. same-content skip：`@dynamic_prompt` 生成的包装器*无条件*调用 `request.override(system_message=...)`。当请求上已有的 `SystemMessage` 内容相同时，被装饰函数返回**同一个 message 对象**，override 重新施加的字节完全一致——模型可见前缀保持逐字节一致（前缀缓存友好）；仅当内容真正变化（或首轮 `request.system_message is None`）才返回新的 `SystemMessage`。
 
-**回合收尾已移入压缩管线。** 把消息持久化到 MesMemory、以及记忆复盘 / 计划提取两个 nudge，现由 `Summarization` 负责：它在替换前先落库被丢弃的原始前缀，并从同一接缝调度两个 nudge（见下文 Summarization 小节）。`ContextEngineHook` 不再重写 `after_agent` / `aafter_agent`；类本身保留，仅用于系统提示词包装。
+> `system_prompt` 这个 mem 键是与压缩管线的契约：`Summarization` 读取它做 token 估算（`_estimate_system_prompt_tokens`），并在压缩后重写（mem + db）——因此缓存未命中时必须双写。
+
+**回合收尾已移入压缩管线。** 把消息持久化到 MesMemory、以及记忆复盘 / 计划提取两个 nudge，现由 `Summarization` 负责：它在替换前先落库被丢弃的原始前缀，并从同一接缝调度两个 nudge（见下文 Summarization 小节）。`context_engine_prompt` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
 
 **Nudge 子 Agent**（`context_engine/nudge.py`，由压缩管线调度）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
 
@@ -463,7 +466,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 
 | 键 | 归属 | 寄存器 |
 |---|---|---|
-| `system_prompt` | ContextEngineHook / Summarization | mem + db |
+| `system_prompt` | context_engine_prompt / Summarization | mem + db |
 | `nudge_review_memory_count` | 压缩时 nudge 调度器（Summarization → `nudge.py`） | db |
 | `nudge_plan_extraction_fired` | 压缩时 nudge 调度器（Summarization → `nudge.py`） | db |
 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 压缩时 nudge 调度器（Summarization → `nudge.py`） | mem |
@@ -497,7 +500,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook,
+    context_engine_prompt,
     MultimodalProcessor,
     IterationBudget,
     ToolGuardrails,
@@ -513,7 +516,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),  # 系统提示词注入
+        context_engine_prompt,  # @dynamic_prompt：系统提示词注入
         MultimodalProcessor(),  # 多模态输入规范化
         IterationBudget(90),  # 回合级调用预算
         ToolGuardrails(),  # 失败病理检测
@@ -559,9 +562,8 @@ agent = create_agent(
 用户回合到达
 │
 ├─ before_agent（列表顺序）
-│   ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails
+│   MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · ContextEngineHook   此处无操作（系统提示词注入在 wrap_model_call 进行）
 │   · MultimodalProcessor  规范化最后一条 HumanMessage，剥离旧 image_url 块
 │   · IterationBudget  重置预算计数器
 │   · ToolGuardrails  重置回合级护栏状态
@@ -573,7 +575,7 @@ agent = create_agent(
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 重写
 │   ├─ wrap_model_call（最外层 → 最内层）
-│   │   · ContextEngineHook  注入系统提示词（request.override）
+│   │   · context_engine_prompt  注入系统提示词（装饰器调用 request.override）
 │   │   · IterationBudget  消耗 1；耗尽时返回终止 AIMessage
 │   │   · HeartbeatStaleness  已杀死则抛 HeartbeatTimeoutError；否则 heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  熔断器检查；分类重试 + 退避；回退 /
@@ -596,7 +598,7 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  停止心跳定时器
     · MultimodalProcessor  清理 mutil_temp（> 7 天 / 非数字文件名）
-    · （ContextEngineHook 不再实现 after_agent；被丢弃前缀的落库与
+    · （context_engine_prompt 不实现任何生命周期钩子；被丢弃前缀的落库与
        记忆复盘 / 计划提取 nudge 改在 Summarization 的压缩路径内触发。）
 ```
 
@@ -640,9 +642,9 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 公开导出
 ├── base.py                      # require_session_id / args_hash 辅助
-├── context_engine/              # ContextEngineHook + nudge 子 Agent
-│   ├── __init__.py              # 仅导出 ContextEngineHook
-│   ├── core.py                  # ContextEngineHook
+├── context_engine/              # @dynamic_prompt 系统提示词中间件 + nudge 子 Agent
+│   ├── __init__.py              # 仅导出 context_engine_prompt
+│   ├── core.py                  # context_engine_prompt + _get_and_reload_system_prompt
 │   └── nudge.py                 # nudge 提示词 + 子 Agent 构建器
 ├── heartbeat_staleness/         # HeartbeatStaleness
 │   ├── __init__.py              # 导出 HeartbeatStaleness
@@ -719,7 +721,7 @@ from agent.middlewares import (
     MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
-    ContextEngineHook,
+    context_engine_prompt,
     ToolCallNormalize,
     PathGuard,
     HeartbeatStaleness,

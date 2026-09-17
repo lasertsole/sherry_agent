@@ -16,7 +16,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 - [아키텍처 개요](#아키텍처-개요)
 - [미들웨어 체인](#미들웨어-체인)
 - [미들웨어 레퍼런스](#미들웨어-레퍼런스)
-  - [ContextEngineHook](#contextenginehook)
+  - [@dynamic_prompt](#dynamic_prompt)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -79,7 +79,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 
 ```python
 middleware = [
-    ContextEngineHook(),
+    context_engine_prompt,  # @dynamic_prompt: 시스템 프롬프트 주입
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
@@ -137,7 +137,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 요약 트리거가 토큰 전용이 아니라 메시지 수(40) **또는** 토큰 수(컨텍스트 윈도우의 80%).
 - 더 타이트한 반복 예산(90 대신 60).
-- `ContextEngineHook`, `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음).
+- `context_engine_prompt`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음).
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
@@ -145,8 +145,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 페이즈 | 순서 |
 |---|---|
-| `before_agent` (리스트 순서) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
-| `wrap_model_call` (최외곽 → 최내곽) | ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
+| `before_agent` (리스트 순서) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `wrap_model_call` (최외곽 → 최내곽) | context_engine_prompt → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
 | `after_agent` (역순) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 해당 후크를 구현한 미들웨어만 그 페이즈에 참여합니다. 표는 "구현했다면 실행될 위치"를 보여줍니다.
@@ -155,20 +155,23 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ## 미들웨어 레퍼런스
 
-### ContextEngineHook
+### @dynamic_prompt
 
-**모듈:** `agent/middlewares/context_engine/core.py` · **클래스:** `ContextEngineHook(AgentMiddleware)`
+**모듈:** `agent/middlewares/context_engine/core.py` · **미들웨어:** `context_engine_prompt` (LangChain `@dynamic_prompt`가 생성하는 `AgentMiddleware` 인스턴스)
 **후크:** `wrap_model_call` / `awrap_model_call`
 
-리스트의 첫 번째, 즉 최외곽 래핑 계층입니다.
+리스트의 두 번째, `TodoContinuationEnforcer`(모델 호출 래핑을 구현하지 않음) 바로 뒤에 위치하여 최외곽 **래핑** 계층입니다. 데코레이터가 생성하는 클래스는 `wrap_model_call`과 `awrap_model_call`을 모두 등록합니다(피장식 함수는 동기이며 비동기 래퍼에서도 호출됩니다).
 
-**`wrap_model_call` — 시스템 프롬프트 주입**
+**시스템 프롬프트 주입**
 
-1. `state_register_mem`의 `system_prompt`를 조회합니다.
-2. 없으면 `state_register_db`로 폴백하고, 그래도 없으면 `workspace.prompt_builder.build_system_prompt(session_id)`로 재구축합니다.
-3. 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 그대로 재사용하고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다. 내용이 실제로 바뀐 경우에만 `request.override(system_message=...)`로 주입합니다. 어느 경우든 프롬프트는 `state_register_mem`에 캐시백합니다.
+1. `require_session_id`로 `session_id`를 해석합니다 —— 누락/공백이면 `RuntimeError("Not pass session_id")`.
+2. `state_register_mem`의 `system_prompt`를 조회합니다.
+3. 없으면 `state_register_db`로 폴백하고, 그래도 없으면 `workspace.prompt_builder.build_system_prompt(session_id)`로 재구축한 뒤 **db + mem에 이중 기록**합니다.
+4. same-content skip: `@dynamic_prompt`가 생성한 래퍼는 *무조건* `request.override(system_message=...)`를 호출합니다. 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 피장식 함수는 **그 동일한 message 객체**를 반환하므로 override가 같은 바이트를 다시 적용합니다 —— 모델이 보는 프리픽스는 바이트 단위로 동일하게 유지되어(프로바이더 프리픽스 캐시에 유리) 내용이 실제로 바뀌거나(또는 첫 호출이라 `request.system_message is None`)일 때만 새 `SystemMessage`를 반환합니다.
 
-**턴 마무리는 압축 파이프라인으로 이동했습니다.** MesMemory 영속화와 메모리 리뷰 / 플랜 추출 nudge는 `Summarization`이 소유합니다: 교체 전에 버려질 원본 프리픽스를 플러시하고 같은 접점에서 두 nudge를 스케줄합니다(아래 Summarization 섹션 참고). `ContextEngineHook`은 더 이상 `after_agent` / `aafter_agent`를 오버라이드하지 않습니다; 클래스 자체는 시스템 프롬프트 래핑을 위해 남아 있습니다.
+> `system_prompt` mem 키는 압축 파이프라인과의 계약입니다: `Summarization`이 토큰 추정(`_estimate_system_prompt_tokens`)에 읽고 압축 후 (mem + db에) 다시 씁니다 —— 그래서 캐시 미스 시 항상 이중 기록합니다.
+
+**턴 마무리는 압축 파이프라인으로 이동했습니다.** MesMemory 영속화와 메모리 리뷰 / 플랜 추출 nudge는 `Summarization`이 소유합니다: 교체 전에 버려질 원본 프리픽스를 플러시하고 같은 접점에서 두 nudge를 스케줄합니다(아래 Summarization 섹션 참고). `context_engine_prompt`는 어떤 라이프사이클 후크(`before_agent` / `after_agent` / `before_model` / `after_model`)도 오버라이드하지 않습니다; 역할은 시스템 프롬프트 래핑뿐입니다.
 
 **Nudge 서브에이전트** (`context_engine/nudge.py`, 압축 파이프라인이 디스패치): 메인 LLM 기반의 독립적인 `create_agent` 인스턴스로, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 모든 도구를 거부하므로, nudge 에이전트는 nudge 단계 화이트리스트에 있는 도구만 사용할 수 있습니다. 프롬프트는 두 개입니다:
 
@@ -469,7 +472,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 키 | 소유자 | 레지스터 |
 |---|---|---|
-| `system_prompt` | ContextEngineHook / Summarization | mem + db |
+| `system_prompt` | context_engine_prompt / Summarization | mem + db |
 | `nudge_review_memory_count` | 압축 시점 nudge 스케줄러 (Summarization → `nudge.py`) | db |
 | `nudge_plan_extraction_fired` | 압축 시점 nudge 스케줄러 (Summarization → `nudge.py`) | db |
 | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | 압축 시점 nudge 스케줄러 (Summarization → `nudge.py`) | mem |
@@ -503,7 +506,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ```python
 from langchain.agents import create_agent
 from agent.middlewares import (
-    ContextEngineHook,
+    context_engine_prompt,
     MultimodalProcessor,
     IterationBudget,
     ToolGuardrails,
@@ -519,7 +522,7 @@ agent = create_agent(
     model=main_llm,
     tools=tools,
     middleware=[
-        ContextEngineHook(),  # 시스템 프롬프트 주입
+        context_engine_prompt,  # @dynamic_prompt: 시스템 프롬프트 주입
         MultimodalProcessor(),  # 멀티모달 입력 정규화
         IterationBudget(90),  # 턴 단위 호출 예산
         ToolGuardrails(),  # 실패 병리 감지
@@ -565,9 +568,8 @@ agent = create_agent(
 사용자 턴 도착
 │
 ├─ before_agent (리스트 순서)
-│   ContextEngineHook → MultimodalProcessor → IterationBudget → ToolGuardrails
+│   MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · ContextEngineHook   여기서는 아무것도 안 함(시스템 프롬프트 주입은 wrap_model_call에서)
 │   · MultimodalProcessor  마지막 HumanMessage 정규화, 오래된 image_url 블록 제거
 │   · IterationBudget  예산 카운터 리셋
 │   · ToolGuardrails  턴 단위 가드 상태 리셋
@@ -579,7 +581,7 @@ agent = create_agent(
 │   ├─ before_model
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 재작성
 │   ├─ wrap_model_call (최외곽 → 최내곽)
-│   │   · ContextEngineHook  시스템 프롬프트 주입(request.override)
+│   │   · context_engine_prompt  시스템 프롬프트 주입(데코레이터가 request.override 호출)
 │   │   · IterationBudget  1 소모. 소진 시 종단 AIMessage
 │   │   · HeartbeatStaleness  kill됐으면 HeartbeatTimeoutError, 아니면 heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  서킷 브레이커 점검. 분류 기반 재시도 + 백오프. 폴백 /
@@ -602,7 +604,7 @@ agent = create_agent(
     → ToolGuardrails → IterationBudget → MultimodalProcessor
     · HeartbeatStaleness  하트비트 타이머 중지
     · MultimodalProcessor  mutil_temp 청소(7일 초과 / 숫자 아닌 파일명)
-    · (ContextEngineHook은 더 이상 after_agent를 구현하지 않습니다; 버려진
+    · (context_engine_prompt는 라이프사이클 후크를 구현하지 않습니다; 버려진
        프리픽스 플러시와 메모리 리뷰 / 플랜 추출 nudge는 대신 Summarization의
        압축 경로 안에서 발화합니다.)
 ```
@@ -647,9 +649,9 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 공개 익스포트
 ├── base.py                      # require_session_id / args_hash 헬퍼
-├── context_engine/              # ContextEngineHook + nudge 서브에이전트
-│   ├── __init__.py              # ContextEngineHook만 익스포트
-│   ├── core.py                  # ContextEngineHook
+├── context_engine/              # @dynamic_prompt 시스템 프롬프트 미들웨어 + nudge 서브에이전트
+│   ├── __init__.py              # context_engine_prompt만 익스포트
+│   ├── core.py                  # context_engine_prompt + _get_and_reload_system_prompt
 │   └── nudge.py                 # nudge 프롬프트 + 서브에이전트 빌더
 ├── heartbeat_staleness/         # HeartbeatStaleness
 │   ├── __init__.py              # HeartbeatStaleness 익스포트
@@ -726,7 +728,7 @@ from agent.middlewares import (
     MaxTokensBoostMiddleware,
     ToolGuardrails,
     IterationBudget,
-    ContextEngineHook,
+    context_engine_prompt,
     ToolCallNormalize,
     PathGuard,
     HeartbeatStaleness,
