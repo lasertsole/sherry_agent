@@ -21,35 +21,15 @@ Coverage:
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from agent.middlewares.message_persistence import core as mp_core
 from agent.middlewares.message_persistence import MessagePersistenceMiddleware
 from context_engine.store import core as store_core
-from context_engine.store import db as store_db
 from context_engine.store.core import get_history_by_turn_page
-from runtime import state_register_mem
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
-
-
-@pytest.fixture
-def isolated_db(tmp_path, monkeypatch):
-    db_path = tmp_path / "mes_memory.db"
-    monkeypatch.setattr(store_db, "_db_path", db_path)
-    monkeypatch.setattr(store_db, "_db", None)
-    monkeypatch.setattr(store_core, "_db", store_db.get_db())
-    return db_path
-
-
-@pytest.fixture
-def sid(request: pytest.FixtureRequest) -> str:
-    value = "msg-persist-" + request.node.name[:32] + "-" + uuid.uuid4().hex[:6]
-    yield value
-    state_register_mem.clear_session(value)
 
 
 def _state(session_id: str, messages: list) -> dict:

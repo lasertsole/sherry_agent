@@ -122,12 +122,8 @@ def _is_persistable(message: Any) -> bool:
     return additional_kwargs.get("lc_source") != _SUMMARY_LC_SOURCE
 
 
-def _watermark_key(message: BaseMessage) -> str:
-    message_id = getattr(message, "id", None)
-    if isinstance(message_id, str) and message_id:
-        return message_id
-    # Defensive fallback for messages with no LangGraph-assigned id: the same
-    # content triple is treated as the same message.
+def _fingerprint_key(message: BaseMessage) -> str:
+    """Content-triple fingerprint: id-less messages with equal payload match."""
     payload = json.dumps(
         {
             "role": message.type,
@@ -139,6 +135,31 @@ def _watermark_key(message: BaseMessage) -> str:
         default=str,
     )
     return "sha1:" + hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _watermark_key(message: BaseMessage) -> str:
+    """Primary watermark key: the LangGraph message id, or the fingerprint."""
+    message_id = getattr(message, "id", None)
+    if isinstance(message_id, str) and message_id:
+        return message_id
+    return _fingerprint_key(message)
+
+
+def _watermark_lookup_keys(message: BaseMessage) -> list[str]:
+    """Keys a persisted watermark may hold for ``message``, primary first.
+
+    The wrap hook persists a tool result the moment it returns — BEFORE the
+    graph reducer assigns the message an id — so the tombstone it writes is
+    the content fingerprint. The next boundary sees the same object WITH an
+    id, and after a restart only the id survives: looking up just the id
+    would re-persist the row. Checking both keys closes that hole while
+    marking still records the primary one.
+    """
+    primary = _watermark_key(message)
+    fingerprint = _fingerprint_key(message)
+    if primary == fingerprint:
+        return [primary]
+    return [primary, fingerprint]
 
 
 def _dedup_tool_results(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -166,7 +187,9 @@ def _dedup_tool_results(messages: list[BaseMessage]) -> list[BaseMessage]:
 
 __all__ = [
     "_dedup_tool_results",
+    "_fingerprint_key",
     "_is_persistable",
     "_reconcile_denials_for_persistence",
     "_watermark_key",
+    "_watermark_lookup_keys",
 ]
