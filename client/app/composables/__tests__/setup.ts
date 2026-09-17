@@ -7,9 +7,16 @@
  */
 import { vi } from 'vitest';
 import * as Vue from 'vue';
+import { createPinia, setActivePinia } from 'pinia';
 import { config } from '@vue/test-utils';
 import { vDebounce } from '~/directives/debounce';
 import { vSafeHtml } from '~/directives/safeHtml';
+
+// Pinia: the real stores (chat-background / todo / subagent / connection) are
+// consumed by components; Nuxt installs Pinia as a plugin, while bare Vitest
+// mounts need an active instance. Suites that want per-test isolation replace
+// this with `setActivePinia(createTestingPinia(...))` in their own beforeEach.
+setActivePinia(createPinia());
 
 // The Nuxt plugin `app/plugins/directives.ts` registers v-debounce / v-safe-html
 // on the app instance; bare Vitest never boots Nuxt plugins, so mirror that
@@ -119,44 +126,6 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   openPreview: vi.fn(),
   closePreview: vi.fn()
 }));
-
-// Nuxt auto-import used by `home/index.vue` / `ConfigDialog.vue` for the global
-// chat background image (composables/useChatBackground.ts, Dexie-persisted
-// module singleton). Mocked for the same reason as useImagePreview: the real
-// module holds module-scope refs and pulls in db.ts (Dexie/IndexedDB). The
-// shape is faithful to the real composable: empty background plus computed
-// styles derived from the useColorMode singleton above.
-(globalThis as any).useChatBackground = vi.fn(() => {
-  const backgroundUrl = Vue.ref('');
-  const backgroundOpacity = Vue.ref(0);
-  const backgroundLoaded = Vue.ref(false);
-  return {
-    backgroundUrl,
-    backgroundOpacity,
-    backgroundLoaded,
-    loadBackground: vi.fn(async () => {
-      backgroundLoaded.value = true;
-    }),
-    setBackground: vi.fn(async () => {}),
-    setBackgroundOpacity: vi.fn(async () => {}),
-    chatBackgroundStyle: Vue.computed(() => {
-      if (!backgroundUrl.value) return undefined;
-      return {
-        backgroundImage: `url("${backgroundUrl.value}")`,
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        backgroundRepeat: 'no-repeat'
-      };
-    }),
-    chatBackgroundOverlayStyle: Vue.computed(() => {
-      const colorMode = (globalThis as any).useColorMode?.() ?? { value: 'light' };
-      return {
-        backgroundColor: colorMode.value === 'light' ? '#ffffff' : '#000000',
-        opacity: backgroundOpacity.value / 100
-      };
-    })
-  };
-});
 
 // Nuxt auto-imports consumed at setup top-level by `home/index.vue` (:246-247)
 // and `SessionSidebar.vue` (:290-292). No vue-router is installed in bare

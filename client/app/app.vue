@@ -31,6 +31,9 @@
 </template>
 
 <script lang="ts" setup>
+import { storeToRefs } from 'pinia';
+import { useConnectionStore } from '~/stores/connection';
+
 // Client-side initialization restores the selected locale (paired with detectBrowserLanguage: false in nuxt.config.ts).
 // Background: Nuxt i18n's browser-language auto detection under prefix_except_default would auto-redirect
 // /home/:id to /en/home/:id (the prefixed route does not exist), breaking i18n, so it has been fully
@@ -81,7 +84,9 @@ onBeforeUnmount(() => {
 useErrorCaptured();
 
 // Network / backend connectivity monitoring (isOnline, backendStatus, startConnectionWatch, etc.).
-const { isOnline, backendStatus, startConnectionWatch } = useConnection();
+const connectionStore = useConnectionStore();
+const { isOnline, backendStatus } = storeToRefs(connectionStore);
+const startConnectionWatch = connectionStore.startConnectionWatch;
 
 // Connection status banner: shown only when the browser is offline or the backend is unreachable.
 const showConnectionBanner = computed(() => {

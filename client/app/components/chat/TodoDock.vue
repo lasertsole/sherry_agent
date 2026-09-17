@@ -46,9 +46,22 @@
 </template>
 
 <script lang="ts" setup>
+import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
+import { useTodoStore } from '~/stores/todo';
+import { useUiStore } from '~/stores/ui';
 import TodoItem from './TodoItem.vue';
 
 const { t } = useI18n();
-const { todos, groups, dockVisible, doneCount, collapsed, toggleCollapsed } = useTodoList();
+
+/** Session plan store (singleton): register the WS listeners once during setup so pushed frames are not missed */
+const todoStore = useTodoStore();
+todoStore.subscribe();
+const { todos, groups, dockVisible, doneCount } = storeToRefs(todoStore);
+
+/** Plan-dock collapse flag lives in the persisted UI store */
+const uiStore = useUiStore();
+const collapsed = computed(() => uiStore.todoDockCollapsed);
+const toggleCollapsed = () => uiStore.toggleTodoDock();
 </script>

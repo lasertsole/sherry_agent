@@ -1,17 +1,13 @@
 import { describe, it, expect, vi, beforeEach, beforeAll } from 'vitest';
+import { setActivePinia } from 'pinia';
+import { createTestingPinia } from '@pinia/testing';
 
-// `useSubagentTasks.ts` is a module-level singleton: its refs (taskRuns,
-// allTaskRuns, selectedRunIds, focusedRunId, ...) and the module-private
-// `subscribed` guard / `lastLoadedSessionId` live outside the exported fn.
-//
-// Vitest v4 does NOT apply `vi.mock` factories after `vi.resetModules()` +
-// per-test dynamic re-import, so we follow the same pattern as the passing
-// suites (`useChatBackground.test.ts`, `db.test.ts`): a SINGLE static import
-// in `beforeAll` (mocks are applied at module load), then we reset the
-// *observable* refs through the API in `beforeEach`. The un-exposed
-// `subscribed` / `lastLoadedSessionId` persist across tests, so we design the
-// suite to be order-independent w.r.t. those (use distinct sids + rely on the
-// first `initTasks` to register WS handlers, which we capture once).
+// `useSubagentTasks.ts` is now a thin facade over `stores/subagent.ts`; the
+// store itself is the singleton. The suite keeps ONE testing pinia + store
+// instance for the whole file because the WS handlers captured below are bound
+// to the store instance created on the first `initTasks` call (the sync
+// module's `subscribed` guard is module-level). Observable state is reset
+// through the facade's store-backed refs in `beforeEach`.
 
 const bridgeMocks = vi.hoisted(() => ({
   fetchSubagentRuns: vi.fn(async () => []),
@@ -44,7 +40,7 @@ const wsMocks = vi.hoisted(() => ({
 // `@/composables/*` resolves to (alias `@` → `./app`), and — unlike `./bridge`
 // (which would resolve to `app/composables/__tests__/bridge`) — `@/composables/*`
 // points at the real module the source imports, so the mock is applied. This
-// mirrors the proven `useChatBackground.test.ts` (`vi.mock('@/composables/db')`).
+// mirrors the proven `stores/__tests__/chat-background.test.ts` (`vi.mock('@/composables/db')`).
 vi.mock('@/composables/mitt', () => mittMocks);
 vi.mock('@/composables/bridge', () => bridgeMocks);
 vi.mock('@/composables/db', () => dbMocks);
@@ -57,11 +53,16 @@ type Api = ReturnType<typeof import('../useSubagentTasks').useSubagentTasks>;
 let useSubagentTasks: () => Api;
 
 beforeAll(async () => {
+  // One real store instance for the whole file (see the header note).
+  setActivePinia(createTestingPinia({ stubActions: false }));
   const mod = await import('../useSubagentTasks');
   useSubagentTasks = mod.useSubagentTasks as () => Api;
 });
 
-/** Build a minimal SubagentRun fixture. */
+/**
+ * Build a minimal SubagentRun fixture.
+ * @param overrides
+ */
 function makeRun(overrides: Partial<Omit<SubagentRun, 'run_id'>> & { run_id: string }): SubagentRun {
   return {
     task_run_id: null,

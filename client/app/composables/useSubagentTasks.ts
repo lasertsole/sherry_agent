@@ -1,27 +1,47 @@
 /**
- * Shared "background tasks" state composable (module-level singleton)
+ * Shared "background tasks" composable — thin facade over `stores/subagent.ts`.
  *
- * Facade over the per-concern slices: `subagentState` (reactive lists +
- * computed views), `subagentTree` (expand/focus/flow-graph state),
- * `subagentSelection` (multi-select + batch delete), `subagentSync`
- * (fetch/cache rebuild/WS subscription) and `subagentRepository`
- * (bridge/db data access + schema mapping).
+ * Reactive state, derived views and flow/selection actions live in the Pinia
+ * store; this facade keeps the established consumer shape (refs + actions) and
+ * owns the i18n-bound presentation helpers (`badgeClass` / `statusLabel` / …),
+ * which need the calling component's translator and therefore stay per call.
  *
- * Responsibility: centrally manages all state plus the loading/WS/Dexie caching
- * logic for subagent run records (taskRuns), so that the left sidebar (SessionSidebar.vue)
- * and the right full task list view (SubagentTasksView.vue) share the same reactive
- * data and stay consistent in real time without duplicate subscriptions.
+ * The fetch/cache/WS logic itself lives in `subagent-sync.ts` and resolves the
+ * store internally.
  */
 import { computed } from 'vue';
+import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
+import { useSubagentStore } from '~/stores/subagent';
 import type { SubagentRun } from './bridge';
 
 /**
- * Create the background-tasks API. Every consumer gets the same module-level
- * singleton state; only the i18n-bound label helpers are per-call.
+ * Create the background-tasks API. Every consumer gets the same store-backed
+ * state; only the i18n-bound label helpers are per-call.
  */
 export function useSubagentTasks() {
   const { t } = useI18n();
+  const store = useSubagentStore();
+  const {
+    taskRuns,
+    allTaskRuns,
+    taskLoading,
+    lastTasksFetchedAt,
+    subagentWsReady,
+    expandedRunId,
+    selectedRunId,
+    focusedRunId,
+    selectedRunIds,
+    deletingRunIds,
+    subagentValidSessionIds,
+    runningTaskCount,
+    allRunningTaskCount,
+    rootTaskRuns,
+    groupedRootTaskRuns,
+    focusedSubtreeRuns,
+    allSelected,
+    someSelected
+  } = storeToRefs(store);
 
   /**
    * Status badge styling for a run record (colored by ExecutionStatus / RunOutcomeStatus)
@@ -109,11 +129,11 @@ export function useSubagentTasks() {
     expandedRunId,
     selectedRunId,
     focusedRunId,
-    toggleExpandRun,
-    focusRun,
-    resetFlowState,
+    toggleExpandRun: store.toggleExpandRun,
+    focusRun: store.focusRun,
+    resetFlowState: store.resetFlowState,
     // Behavior methods
-    isRunning,
+    isRunning: store.isRunning,
     badgeClass,
     statusLabel,
     roleLabel,
@@ -122,17 +142,17 @@ export function useSubagentTasks() {
     initTasks,
     refresh,
     refreshFocusedSubtree,
-    setTasksTabActive,
+    setTasksTabActive: store.setTasksTabActive,
     // Background tasks tab multi-select / select-all / batch delete
     selectedRunIds,
     deletingRunIds,
     allSelected,
     someSelected,
-    toggleTaskSelection,
-    toggleSelectAllTasks,
-    clearTaskSelection,
-    deleteSubagentSubtree,
-    deleteSelectedTasks,
+    toggleTaskSelection: store.toggleTaskSelection,
+    toggleSelectAllTasks: store.toggleSelectAllTasks,
+    clearTaskSelection: store.clearTaskSelection,
+    deleteSubagentSubtree: store.deleteSubagentSubtree,
+    deleteSelectedTasks: store.deleteSelectedTasks,
     // Lower-level reuse (for SubagentTasksView etc. to do their own internal handling)
     loadTaskRuns,
     refreshFromCache,

@@ -29,7 +29,7 @@
 <script lang="ts" setup>
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { Todo } from '~/composables/use-todo-list';
+import type { Todo } from '~/stores/todo';
 
 const props = defineProps<{ todo: Todo }>();
 const { t } = useI18n();

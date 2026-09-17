@@ -222,6 +222,8 @@ import AsyncChunkFallback from '@/components/AsyncChunkFallback.vue';
 // function
 import { computed, defineAsyncComponent, onMounted, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
+import { useChatBackgroundStore } from '~/stores/chat-background';
 import { headerTools } from './config';
 
 /**
@@ -250,7 +252,8 @@ const NotificationDialog = lazyDialog(() => import('./components/NotificationDia
 const { t, locale, setLocale } = useI18n();
 
 /** Global chat area background image: bound to the root container (fills the entire window, including the left session list) */
-const { backgroundOpacity, chatBackgroundStyle, chatBackgroundOverlayStyle, loadBackground } = useChatBackground();
+const chatBackgroundStore = useChatBackgroundStore();
+const { backgroundOpacity, chatBackgroundStyle, chatBackgroundOverlayStyle } = storeToRefs(chatBackgroundStore);
 
 /** Language switcher options: reuses the language names from System Config (each locale maps to its own language name) */
 const languageOptions = computed(() => [
@@ -451,6 +454,6 @@ const toggleSidebar = () => {
 // Load the global chat area background image after mount (session list fetching is already
 // done inside the SessionSidebar component)
 onMounted(() => {
-  loadBackground();
+  chatBackgroundStore.loadBackground();
 });
 </script>

@@ -2,10 +2,13 @@
  * Background-task sync slice: server fetch + local cache rebuild + the
  * `/subagents/ws` realtime subscription (singleton), plus the session-existence
  * validation data.
+ *
+ * Reactive state lives in `stores/subagent.ts`; this module keeps the
+ * transport/sync behavior and resolves the store per call.
  */
-import { ref } from 'vue';
 import type { SubagentRun } from './bridge';
 import type { CachedSubagentRun } from './db';
+import { useSubagentStore } from '~/stores/subagent';
 import { logUtil } from '~/utils/log';
 
 /** Last initialized session (used to refresh the list when switching sessions) */
@@ -13,11 +16,6 @@ let lastLoadedSessionId: string | undefined;
 
 /** Whether the WS subscription has been established (singleton guard, avoids duplicate on() subscriptions) */
 let subscribed = false;
-
-/** Set of bare UUIDs of sessions that "still exist".
- *  Data source: the authoritative server `/sessions` list + local Dexie session placeholders; populated by loadSubagentValidSessions().
- *  Purpose: lets SubagentTasksView verify that a run's "back to session" target really exists — if not, that button is hidden. */
-export const subagentValidSessionIds = ref<Set<string>>(new Set());
 
 /** Whether it has already been loaded (avoids re-fetching the session list on every session switch). */
 let subagentSessionsLoaded = false;
@@ -52,7 +50,7 @@ export async function loadSubagentValidSessions(): Promise<void> {
   if (subagentSessionsLoaded) return;
   try {
     const set = await getExistingSessionIds();
-    subagentValidSessionIds.value = set;
+    useSubagentStore().subagentValidSessionIds = set;
     subagentSessionsLoaded = true;
   } catch (error) {
     // A fetch failure must not block the UI: it is equivalent to "unable to confirm the target session", so the button is simply hidden as if there were no valid target.
@@ -90,13 +88,14 @@ export function filterBySession(runs: CachedSubagentRun[], sid: string | undefin
  * @param sid
  */
 export async function refreshFromCache(sid?: string): Promise<void> {
+  const store = useSubagentStore();
   try {
     const cached = await readCachedRuns();
     // The global cache is cumulative data across "all sessions" (the Dexie table is global); map it directly into the global task view data
-    allTaskRuns.value = cached.map(toSubagentRun);
+    store.allTaskRuns = cached.map(toSubagentRun);
     // Session-filtered view: used by the chat page jump bar / sidebar red dot to detect this session's tasks
     const target = resolveSid(sid);
-    taskRuns.value = target ? filterBySession(cached, target) : [];
+    store.taskRuns = target ? filterBySession(cached, target) : [];
   } catch {
     // Ignore cache read failures; the next loadTaskRuns acts as the fallback
   }
@@ -107,15 +106,16 @@ export async function refreshFromCache(sid?: string): Promise<void> {
  * @param sid
  */
 export async function loadTaskRuns(sid?: string): Promise<void> {
+  const store = useSubagentStore();
   const target = resolveSid(sid);
-  taskLoading.value = true;
+  store.taskLoading = true;
   // 1) Local cache first: read IndexedDB and render immediately, so refreshes / first paint never show an empty window
   try {
     const cached = await readCachedRuns();
-    if (target) taskRuns.value = filterBySession(cached, target);
-    else taskRuns.value = [];
+    if (target) store.taskRuns = filterBySession(cached, target);
+    else store.taskRuns = [];
     // Global view sync: regardless of whether there is a target, the global task list always comes from the full cache
-    allTaskRuns.value = cached.map(toSubagentRun);
+    store.allTaskRuns = cached.map(toSubagentRun);
   } catch (e) {
     logUtil.w('[useSubagentTasks] Failed to read local subtask cache, falling back to server:', e);
   }
@@ -125,16 +125,16 @@ export async function loadTaskRuns(sid?: string): Promise<void> {
       const runs = await fetchSessionRuns(target);
       await cacheRuns(runs);
       const cached = await readCachedRuns();
-      taskRuns.value = filterBySession(cached, target);
+      store.taskRuns = filterBySession(cached, target);
       // After the fetch the full cache is up to date, so refresh the global task list too
-      allTaskRuns.value = cached.map(toSubagentRun);
-      lastTasksFetchedAt.value = Date.now();
+      store.allTaskRuns = cached.map(toSubagentRun);
+      store.lastTasksFetchedAt = Date.now();
     } catch (e) {
       // Network failure: keep the Dexie cache as fallback instead of clearing the list, avoiding first-paint flicker
       logUtil.e('[useSubagentTasks] Failed to fetch subagent run records (falling back to local cache)', e);
     }
   }
-  taskLoading.value = false;
+  store.taskLoading = false;
 }
 
 /**
@@ -150,7 +150,7 @@ export function setupSubagentWs(): void {
   useSubagentWs({
     onReconnect: () => {
       // After a successful reconnect the server re-sends ready; trigger another full gap-fill fetch at that point
-      subagentWsReady.value = false;
+      useSubagentStore().subagentWsReady = false;
     }
   });
 
@@ -169,9 +169,10 @@ export function setupSubagentWs(): void {
 
   // ready: the server is ready; trigger one full gap-fill (recovers events missed before the connection was established)
   on('ws:subagents:ready', () => {
-    subagentWsReady.value = true;
+    const store = useSubagentStore();
+    store.subagentWsReady = true;
     // Only trigger the full gap-fill while the "background tasks" view is being shown (fetch on actual viewing, avoids pointless requests)
-    if (tasksTabActive.value) void loadTaskRuns();
+    if (store.tasksTabActive) void loadTaskRuns();
   });
 }
 
@@ -182,6 +183,7 @@ export function setupSubagentWs(): void {
  * @param sid
  */
 export function initTasks(sid?: string): void {
+  const store = useSubagentStore();
   setupSubagentWs();
   // Fetch the set of "still existing" sessions to get orphaned-run filtering ready (idempotent)
   void loadSubagentValidSessions();
@@ -189,11 +191,11 @@ export function initTasks(sid?: string): void {
   if (target && lastLoadedSessionId !== target) {
     lastLoadedSessionId = target;
     void loadTaskRuns(target);
-  } else if (target && taskRuns.value.length === 0) {
+  } else if (target && store.taskRuns.length === 0) {
     void loadTaskRuns(target);
   } else if (!target) {
     // No sid (root path): clear the list
-    taskRuns.value = [];
+    store.taskRuns = [];
   }
 }
 
@@ -220,19 +222,20 @@ export function refresh(sid?: string): void {
  *    current session.
  */
 export async function refreshFocusedSubtree(): Promise<void> {
-  const rootId = focusedRunId.value;
+  const store = useSubagentStore();
+  const rootId = store.focusedRunId;
   // When not focused, fall back to a session-level full refresh
   if (!rootId) {
     refresh(resolveSid());
     return;
   }
-  taskLoading.value = true;
+  store.taskLoading = true;
   try {
     const runs = await fetchRunSubtree(rootId);
     if (!runs.length) {
       // The run no longer exists (cleaned up / deleted / expired): exit focus and fall back to the session-level full view, avoiding getting stuck on an empty graph
-      focusedRunId.value = undefined;
-      selectedRunId.value = undefined;
+      store.focusedRunId = undefined;
+      store.selectedRunId = undefined;
       refresh(resolveSid());
       return;
     }
@@ -240,14 +243,14 @@ export async function refreshFocusedSubtree(): Promise<void> {
     await cacheRuns(runs);
     // Rebuild the lists (read the full cache → sync allTaskRuns; focusedSubtreeRuns recomputes from it)
     await refreshFromCache();
-    lastTasksFetchedAt.value = Date.now();
+    store.lastTasksFetchedAt = Date.now();
   } catch (e) {
     logUtil.e('[useSubagentTasks] Failed to refresh focused task box subtree:', e);
     // Backend failure (including run-not-found / network-layer failures): likewise exit focus and fall back to the full view, avoiding the UI getting stuck on a dead run
-    focusedRunId.value = undefined;
-    selectedRunId.value = undefined;
+    store.focusedRunId = undefined;
+    store.selectedRunId = undefined;
     refresh(resolveSid());
   } finally {
-    taskLoading.value = false;
+    store.taskLoading = false;
   }
 }

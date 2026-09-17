@@ -7,6 +7,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
+import { setActivePinia } from 'pinia';
+import { createTestingPinia } from '@pinia/testing';
 import type { EnvConfigPayload, EnvGroup } from '@/composables/env';
 import ConfigDialog from '@/pages/home/components/ConfigDialog.vue';
 
@@ -34,16 +36,6 @@ vi.mock('@/composables/env', () => ({
 vi.mock('@/composables/model-config', () => ({
   invalidateModelConfigCache: invalidateModelConfigCacheMock
 }));
-
-vi.mock('@/composables/useChatBackground', async () => {
-  const { ref } = await import('vue');
-  return {
-    useChatBackground: () => ({
-      backgroundOpacity: ref(0),
-      setBackground: vi.fn(async () => {})
-    })
-  };
-});
 
 vi.mock('@/pages/home/components/AvatarCropDialog.vue', () => ({
   default: { name: 'AvatarCropDialog', template: '<div class="acd-stub"></div>' }
@@ -106,6 +98,9 @@ beforeEach(() => {
   readEnvConfigMock.mockClear();
   writeEnvConfigMock.mockClear();
   invalidateModelConfigCacheMock.mockClear();
+  // Real stores (chat background) are consumed by ConfigDialog; actions are
+  // stubbed so saving never touches Dexie.
+  setActivePinia(createTestingPinia());
 });
 
 describe('ConfigDialog MAX_TOKEN guard', () => {

@@ -19,7 +19,7 @@ export type PersonaPresetCreateResult = { ok: true; id: number } | { ok: false; 
  * deleting takes effect immediately in every open view", the preset list must be a **true
  * module-level singleton** — `presets`/`loading` are declared at the module top level
  * (outside the function); every call to `usePersonaPresets()` returns a reference to the
- * **same** refs, not separate copies (same pattern as `useChatBackground`).
+ * **same** refs, not separate copies (same true-singleton pattern as the Pinia stores in `stores/`).
  *
  * - The first call automatically triggers one `refresh()` to fill the singleton state
  *   (fire-and-forget; later calls reuse the already-loaded list).
@@ -118,7 +118,7 @@ const remove = async (id: number): Promise<boolean> => {
 
 /**
  * Shared composable for the AI persona preset feature (module-level singleton, same
- * pattern as `useChatBackground`): every call returns references to the same
+ * true-singleton pattern as the Pinia stores in `stores/`): every call returns references to the same
  * shared refs, plus the module-level actions.
  */
 export function usePersonaPresets() {

@@ -348,6 +348,7 @@ import type { MessageItem } from '../type.ts';
 import { tools } from '../config';
 import type { ChatController } from '@/composables/messages';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
+import { useTodoStore } from '~/stores/todo';
 
 // Image preview
 const { openPreview } = useImagePreview();
@@ -382,7 +383,7 @@ const viewMode = ref<'chat' | 'tasks'>('chat');
 const targetRunId = ref<string | undefined>(undefined);
 
 const { taskRuns, initTasks, setTasksTabActive } = useSubagentTasks();
-const { init: initTodoList } = useTodoList();
+const todoStore = useTodoStore();
 
 /**
  * Receive 'show background tasks' event: switch to task list page and record the run_id to locate (if any).
@@ -419,7 +420,7 @@ onActivated(() => {
   // Used by "View Background Tasks" jump bar to determine whether to show (don't show if no tasks).
   if (mySid) initTasks(mySid);
   // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
-  if (mySid) initTodoList(mySid);
+  if (mySid) todoStore.init(mySid);
 });
 onDeactivated(() => {
   isActive.value = false;

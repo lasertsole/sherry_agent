@@ -1,5 +1,6 @@
 import type { ToastMessageOptions } from 'primevue/toast';
 import type { ToastServiceMethods } from 'primevue/toastservice';
+import { isClient } from '~/utils/client';
 
 /**
  * Global toast notification layer.
@@ -13,32 +14,12 @@ import type { ToastServiceMethods } from 'primevue/toastservice';
  *    `import.meta.client === false`; toast logic must never break the request chain.
  *  - The i18n `t` function safely falls back to returning the key as-is in non-Nuxt
  *    contexts (including unit tests), without throwing.
+ *  - The shared client-flag guard (and its `_setClientFlag` test override) lives in
+ *    `~/utils/client`; it is re-exported here so existing toast tests keep importing it
+ *    from this module.
  */
 
-/**
- * For tests only: explicitly override the client-semantics flag (do not call in
- * production code).
- * Background: Vitest's `import.meta` lacks Nuxt's client/server semantics
- * (undefined → falsy), so tests must inject this explicitly.
- * Key implementation constraint: production runtime must use the **literal**
- * `import.meta.client` — Nuxt/Vite's build-time static replacement only applies to
- * that literal expression. If accessed through an alias like `const meta = import.meta`
- * and then `meta.client`, the aliased property does not exist at runtime
- * (undefined → always falsy), and every client guard silently fails
- * (pitfall confirmed by 2026-08 E2E testing: toast registration/display was a
- * complete no-op in the browser).
- */
-let clientFlagOverride: boolean | null = null;
-
-export function _setClientFlag(client: boolean): void {
-  clientFlagOverride = client;
-}
-
-/** Whether we are currently in a browser client environment (production uses build-time static replacement; tests use explicit override). */
-function isClient(): boolean {
-  if (clientFlagOverride !== null) return clientFlagOverride;
-  return import.meta.client === true;
-}
+export { _setClientFlag } from '~/utils/client';
 
 /** The ToastServiceMethods returned by useToast(); we only care about .add(...). */
 type ToastApi = Pick<ToastServiceMethods, 'add'>;

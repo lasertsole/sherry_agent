@@ -304,13 +304,17 @@
 <script lang="ts" setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { EnvGroup } from '@/composables/env';
 import type { SherryEntry } from '@/composables/sherryConfig';
+import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
 
 /** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
-const { backgroundOpacity, setBackground } = useChatBackground();
+const chatBackgroundStore = useChatBackgroundStore();
+const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
+const setBackground = chatBackgroundStore.setBackground;
 
 const { t } = useI18n({ useScope: 'local' });
 
@@ -736,7 +740,7 @@ const handleSave = async () => {
     }
 
     // Background image: only when changed, write to the local Dexie global row (empty string means clearing the background).
-    // setBackground/setBackgroundOpacity synchronously update the shared singleton's reactive state, so the root container's background + overlay take effect immediately without a refresh.
+    // setBackground synchronously updates the shared singleton's reactive state, so the root container's background + overlay take effect immediately without a refresh.
     const bgUrlChanged = backgroundUrl.value !== originalBackgroundUrl.value;
     const bgOpacityChanged = backgroundOpacityValue.value !== backgroundOpacity.value;
     if (bgUrlChanged || bgOpacityChanged) {
