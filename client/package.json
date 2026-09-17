@@ -45,6 +45,7 @@
     "@eslint/json": "^2.0.1",
     "@eslint/markdown": "^8.0.3",
     "@nuxtjs/color-mode": "^4.0.1",
+    "@pinia/testing": "^2.0.1",
     "@playwright/test": "^1.62.1",
     "@primevue/nuxt-module": "^4.5.0",
     "@tailwindcss/vite": "^4.3.3",
