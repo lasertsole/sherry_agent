@@ -24,6 +24,7 @@ pytestmark = [pytest.mark.unit]
 
 _STATUS_INDEX = "idx_taskflow_status"
 _DEADLINE_INDEX = "idx_taskflow_deadline"
+_SESSION_INDEX = "idx_taskflow_session_status"
 
 
 def _reset_init_state(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -100,7 +101,7 @@ async def test_old_db_gains_indexes_and_keeps_rows_via_async_ensure_db(isolated_
     indexes = _index_rows(isolated_db)
     assert indexes[_STATUS_INDEX] == 0
     assert indexes[_DEADLINE_INDEX] == 1, "idx_taskflow_deadline must stay partial"
-    flow = await store_sqlite.get_flow("flow-legacy")
+    flow = await store_sqlite.get_flow("flow-legacy", "")
     assert flow is not None
     assert flow["status"] == TaskFlowStatus.RUNNING.value
 
@@ -112,7 +113,7 @@ def test_old_db_gains_indexes_via_sync_path(isolated_db: Path):
     assert _STATUS_INDEX not in pre_audit
     assert _DEADLINE_INDEX not in pre_audit
 
-    flow = store_sqlite.get_flow_sync("flow-legacy")
+    flow = store_sqlite.get_flow_sync("flow-legacy", "")
 
     assert flow is not None
     indexes = _index_rows(isolated_db)
@@ -148,10 +149,10 @@ async def test_query_plans_use_new_indexes(isolated_db: Path):
     active_plan = _plan(
         isolated_db,
         store_sqlite._SELECT_COLUMNS_SQL
-        + " WHERE status IN (?, ?) ORDER BY expected_revision DESC",
-        (TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
+        + " WHERE session_id = ? AND status IN (?, ?) ORDER BY expected_revision DESC",
+        ("", TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
     )
-    assert _STATUS_INDEX in active_plan, active_plan
+    assert _SESSION_INDEX in active_plan, active_plan
 
     overdue_plan = _plan(
         isolated_db,

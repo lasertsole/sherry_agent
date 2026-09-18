@@ -66,13 +66,14 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
     total_tokens INTEGER DEFAULT 0,
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
-    deadline_ts REAL
+    deadline_ts REAL,
+    session_id TEXT NOT NULL DEFAULT ''
 );
 """
 
 _SELECT_COLUMNS_SQL = (
     f"SELECT flow_id, state_json, wait_json, expected_revision, status, child_session_key, "
-    f"total_tokens, total_cost, token_budget, deadline_ts "
+    f"total_tokens, total_cost, token_budget, deadline_ts, session_id "
     f"FROM {TABLE_NAME}"
 )
 
@@ -129,15 +130,43 @@ def _ensure_deadline_column_sync(conn: sqlite3.Connection) -> None:
         pass
 
 
+# Additive migration DDL for databases created before session isolation. Rows
+# written by pre-isolation code keep ``session_id = ''`` and are therefore
+# invisible to every session-scoped read; the system-level sweeps
+# (get_overdue_flows / get_waiting_flows) still see and finish them.
+_SESSION_ID_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
+
+
+async def _ensure_session_id_column(db: aiosqlite.Connection) -> None:
+    """Additive migration: add the session_id column when absent."""
+    try:
+        await db.execute(_SESSION_ID_COLUMN_DDL)
+    except aiosqlite.OperationalError:
+        # Column already exists - nothing to do.
+        pass
+
+
+def _ensure_session_id_column_sync(conn: sqlite3.Connection) -> None:
+    """Additive session-id-column migration for the stdlib sqlite3 paths."""
+    try:
+        conn.execute(_SESSION_ID_COLUMN_DDL)
+    except sqlite3.OperationalError:
+        # Column already exists - nothing to do.
+        pass
+
+
 # Query-coverage indexes (2026-09 SQLite index audit). Both are created with
 # ``IF NOT EXISTS`` on every schema init -- async and sync alike -- so a
 # database that predates them converges on its next open, not just a fresh one.
 # ``idx_taskflow_deadline`` is partial: get_overdue_flows only ever scans
 # non-NULL deadlines, so NULL rows stay out of the index entirely.
+# ``idx_taskflow_session_status`` covers the session-scoped reads
+# (get_active_flows_sync / get_all_flows_sync filter on session_id and status).
 _INDEX_DDL: tuple[str, ...] = (
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_status ON {TABLE_NAME}(status)",
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_deadline ON {TABLE_NAME}(deadline_ts) "
     "WHERE deadline_ts IS NOT NULL",
+    f"CREATE INDEX IF NOT EXISTS idx_taskflow_session_status ON {TABLE_NAME}(session_id, status)",
 )
 
 
@@ -240,6 +269,7 @@ def _row_to_flow(row: tuple) -> dict:
         total_cost,
         token_budget,
         deadline_ts,
+        session_id,
     ) = row
     return {
         "flow_id": flow_id,
@@ -252,6 +282,7 @@ def _row_to_flow(row: tuple) -> dict:
         "total_cost": float(total_cost or 0.0),
         "token_budget": int(token_budget or 0),
         "deadline_ts": float(deadline_ts) if deadline_ts is not None else None,
+        "session_id": session_id or "",
     }
 
 
@@ -303,6 +334,7 @@ async def _init_db() -> None:
         await db.execute(_CREATE_TABLE_SQL)
         await _ensure_token_columns(db)
         await _ensure_deadline_column(db)
+        await _ensure_session_id_column(db)
         await _ensure_indexes(db)
         await db.commit()
 
@@ -359,6 +391,7 @@ def _ensure_tables_sync() -> None:
             conn.execute(_CREATE_TABLE_SQL)
             _ensure_token_columns_sync(conn)
             _ensure_deadline_column_sync(conn)
+            _ensure_session_id_column_sync(conn)
             _ensure_indexes_sync(conn)
             conn.commit()
         finally:
@@ -370,14 +403,22 @@ async def create_flow(
     flow_id: str,
     state: dict,
     *,
+    session_id: str,
     status: str = TaskFlowStatus.RUNNING.value,
     child_session_key: str | None = None,
     deadline_ts: float | None = None,
 ) -> dict:
-    """Insert a new flow at INITIAL_REVISION; FlowExistsError on duplicate id."""
+    """Insert a new flow at INITIAL_REVISION; FlowExistsError on duplicate id.
+
+    ``session_id`` is required: every row is owned by exactly one session and
+    every session-scoped read filters on it.
+    """
     flow_id = (flow_id or "").strip()
     if not flow_id:
         raise ValueError("flow_id must be a non-empty string")
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("session_id must be a non-empty string")
     await ensure_db()
     columns = [
         "flow_id",
@@ -386,14 +427,16 @@ async def create_flow(
         "expected_revision",
         "status",
         "child_session_key",
+        "session_id",
     ]
-    placeholders = ["?", "?", "NULL", "?", "?", "?"]
+    placeholders = ["?", "?", "NULL", "?", "?", "?", "?"]
     params: list[object] = [
         flow_id,
         _dump_json(state),
         INITIAL_REVISION,
         status,
         child_session_key,
+        session_id,
     ]
     if deadline_ts is not None:
         columns.append("deadline_ts")
@@ -409,16 +452,19 @@ async def create_flow(
             await db.commit()
     except aiosqlite.IntegrityError as e:
         raise FlowExistsError(flow_id) from e
-    flow = await get_flow(flow_id)
+    flow = await get_flow(flow_id, session_id)
     assert flow is not None  # we just inserted it
     return flow
 
 
-async def get_flow(flow_id: str) -> dict | None:
-    """Read one flow with parsed JSON columns; None when absent."""
+async def get_flow(flow_id: str, session_id: str) -> dict | None:
+    """Read one session-owned flow with parsed JSON columns; None when absent."""
     await ensure_db()
     async with _connect() as db:
-        async with db.execute(_SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)) as cursor:
+        async with db.execute(
+            _SELECT_COLUMNS_SQL + " WHERE flow_id = ? AND session_id = ?",
+            (flow_id, session_id),
+        ) as cursor:
             row = await cursor.fetchone()
     if row is None:
         return None
@@ -429,6 +475,7 @@ async def update_flow(
     flow_id: str,
     expected_revision: int,
     *,
+    session_id: str,
     state: dict | None = None,
     wait: dict | None | _Unset = UNSET,
     status: str | None = None,
@@ -438,7 +485,7 @@ async def update_flow(
     token_budget: int | None = None,
     deadline_ts: float | None | _Unset = UNSET,
 ) -> dict:
-    """Optimistic-locking mutation of one flow row.
+    """Optimistic-locking mutation of one flow row owned by ``session_id``.
 
     Every call bumps ``expected_revision`` by exactly 1 and requires the row
     to still be at ``expected_revision``:
@@ -450,9 +497,10 @@ async def update_flow(
     * ``total_tokens``/``total_cost``/``token_budget``: replace when not None.
     * ``deadline_ts``: replace when not UNSET and not None.
 
-    Returns the updated flow dict. Raises FlowNotFoundError when the flow does
-    not exist, FlowConflictError (carrying the latest revision) when another
-    writer won the race.
+    Returns the updated flow dict. Raises FlowNotFoundError when no flow with
+    that id exists FOR THIS SESSION (a flow owned by another session is
+    indistinguishable from a missing one), FlowConflictError (carrying the
+    latest revision) when another writer won the race.
     """
     assignments: list[str] = []
     params: list[object] = []
@@ -486,20 +534,20 @@ async def update_flow(
     new_revision = int(expected_revision) + 1
     assignments.append("expected_revision = ?")
     params.append(new_revision)
-    params.extend([flow_id, int(expected_revision)])
+    params.extend([flow_id, int(expected_revision), session_id])
 
     await ensure_db()
     async with _connect() as db:
         cursor = await db.execute(
             f"UPDATE {TABLE_NAME} SET {', '.join(assignments)} "
-            "WHERE flow_id = ? AND expected_revision = ?",
+            "WHERE flow_id = ? AND expected_revision = ? AND session_id = ?",
             params,
         )
         if cursor.rowcount == 0:
             await db.rollback()
             async with db.execute(
-                f"SELECT expected_revision FROM {TABLE_NAME} WHERE flow_id = ?",
-                (flow_id,),
+                f"SELECT expected_revision FROM {TABLE_NAME} WHERE flow_id = ? AND session_id = ?",
+                (flow_id, session_id),
             ) as cursor:
                 row = await cursor.fetchone()
             if row is None:
@@ -507,7 +555,7 @@ async def update_flow(
             raise FlowConflictError(flow_id, int(expected_revision), int(row[0]))
         await db.commit()
 
-    flow = await get_flow(flow_id)
+    flow = await get_flow(flow_id, session_id)
     assert flow is not None  # the UPDATE just matched this row
     return flow
 
@@ -540,8 +588,8 @@ async def get_waiting_flows() -> list[dict]:
     return [_row_to_flow(row) for row in rows]
 
 
-def get_flow_sync(flow_id: str) -> dict | None:
-    """Synchronously read one flow (stdlib sqlite3, no event loop required).
+def get_flow_sync(flow_id: str, session_id: str) -> dict | None:
+    """Synchronously read one session-owned flow (stdlib sqlite3, no event loop).
 
     Mirrors the subagent blueprint's sync paths: threading.Lock-guarded
     one-time table creation, connect-level busy timeout, failures logged and
@@ -551,7 +599,10 @@ def get_flow_sync(flow_id: str) -> dict | None:
         _ensure_tables_sync()
         conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
         try:
-            row = conn.execute(_SELECT_COLUMNS_SQL + " WHERE flow_id = ?", (flow_id,)).fetchone()
+            row = conn.execute(
+                _SELECT_COLUMNS_SQL + " WHERE flow_id = ? AND session_id = ?",
+                (flow_id, session_id),
+            ).fetchone()
         finally:
             conn.close()
         if row is not None:
@@ -561,14 +612,14 @@ def get_flow_sync(flow_id: str) -> dict | None:
     return None
 
 
-def get_active_flows_sync() -> list[dict]:
-    """Synchronously read all non-terminal flows (stdlib sqlite3).
+def get_active_flows_sync(session_id: str) -> list[dict]:
+    """Synchronously read one session's non-terminal flows (stdlib sqlite3).
 
-    Returns flows with status 'running' or 'waiting'. Caller filters by
-    ``state['creator_session_key']`` to scope to the current session.
-    Mirrors the sync read pattern of get_flow_sync(): threading.Lock-guarded
-    table creation, connect-level busy timeout, failures logged and swallowed
-    with an empty list return.
+    Returns flows with status 'running' or 'waiting' owned by ``session_id``.
+    The SQL filter is the isolation boundary; callers no longer post-filter by
+    ``state['creator_session_key']``. Mirrors the sync read pattern of
+    get_flow_sync(): threading.Lock-guarded table creation, connect-level busy
+    timeout, failures logged and swallowed with an empty list return.
     """
     try:
         _ensure_tables_sync()
@@ -576,9 +627,9 @@ def get_active_flows_sync() -> list[dict]:
         try:
             cursor = conn.execute(
                 _SELECT_COLUMNS_SQL
-                + " WHERE status IN (?, ?)"
+                + " WHERE session_id = ? AND status IN (?, ?)"
                 + " ORDER BY expected_revision DESC",
-                (TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
+                (session_id, TaskFlowStatus.RUNNING.value, TaskFlowStatus.WAITING.value),
             )
             rows = cursor.fetchall()
         finally:
@@ -589,34 +640,42 @@ def get_active_flows_sync() -> list[dict]:
         return []
 
 
-def get_all_flows_sync(status_filter: str = "active") -> list[dict]:
-    """Synchronously read flows for the cross-session board (stdlib sqlite3).
+def get_all_flows_sync(session_id: str, status_filter: str = "active") -> list[dict]:
+    """Synchronously read one session's flows for the session board (stdlib sqlite3).
 
-    Unlike :func:`get_active_flows_sync`, this never scopes by session: it is
-    the global view behind the ``taskflow_list`` tool.
+    Scoped to ``session_id`` — the global cross-session view no longer exists;
+    the sweeper's system-level scans use :func:`get_overdue_flows` /
+    :func:`get_waiting_flows` instead.
 
     ``status_filter`` selects the rows:
 
     * ``"active"`` (default): running + waiting (delegates to
       :func:`get_active_flows_sync`).
-    * ``"all"``: every flow, terminal statuses included.
+    * ``"all"``: every flow of the session, terminal statuses included.
     * any other value: exact status match (``status = ?``), e.g. ``"done"``.
 
     Rows are ordered by ``expected_revision DESC`` (most recently active first).
     Fail-open: init/read failures are logged and swallowed, returning ``[]``.
     """
     if status_filter == "active":
-        return get_active_flows_sync()
+        return get_active_flows_sync(session_id)
     try:
         _ensure_tables_sync()
         conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
         try:
             if status_filter == "all":
-                cursor = conn.execute(_SELECT_COLUMNS_SQL + " ORDER BY expected_revision DESC")
+                cursor = conn.execute(
+                    _SELECT_COLUMNS_SQL
+                    + " WHERE session_id = ?"
+                    + " ORDER BY expected_revision DESC",
+                    (session_id,),
+                )
             else:
                 cursor = conn.execute(
-                    _SELECT_COLUMNS_SQL + " WHERE status = ?" + " ORDER BY expected_revision DESC",
-                    (status_filter,),
+                    _SELECT_COLUMNS_SQL
+                    + " WHERE session_id = ? AND status = ?"
+                    + " ORDER BY expected_revision DESC",
+                    (session_id, status_filter),
                 )
             rows = cursor.fetchall()
         finally:
@@ -625,3 +684,20 @@ def get_all_flows_sync(status_filter: str = "active") -> list[dict]:
     except Exception as e:
         logger.warning("Failed to sync-read taskflows (filter={!r}): {}", status_filter, e)
         return []
+
+
+async def delete_flows_by_session(session_id: str) -> int:
+    """Delete every flow owned by ``session_id``; returns the row count.
+
+    Session purge path (``server.DAO.messages.clear_session``): a cleared
+    session leaves no TaskFlow debris behind. Rows with ``session_id = ''``
+    (pre-isolation legacy rows) are never matched.
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("session_id must be a non-empty string")
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(f"DELETE FROM {TABLE_NAME} WHERE session_id = ?", (session_id,))
+        await db.commit()
+        return int(cursor.rowcount or 0)
