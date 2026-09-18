@@ -14,6 +14,8 @@ import pytest
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools.taskflow_progress import taskflow_progress
 
+_SESSION = "session-test"
+
 pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
@@ -37,9 +39,11 @@ def _step(
 
 
 async def test_progress_empty_flow(isolated_db):
-    await store_sqlite.create_flow("flow-empty", {"description": "nothing yet", "steps": []})
+    await store_sqlite.create_flow(
+        "flow-empty", {"description": "nothing yet", "steps": []}, session_id=_SESSION
+    )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-empty")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-empty")
 
     assert "No steps registered yet" in out
     assert "flow-empty" in out
@@ -56,9 +60,10 @@ async def test_progress_all_done(isolated_db):
                 _step("step-3", "third", "done", dispatched_at=3000),
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-done")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-done")
 
     assert "Completion: 3/3 steps (100%)" in out
     assert "Next steps:" not in out
@@ -77,9 +82,10 @@ async def test_progress_partial(isolated_db):
                 _step("step-5", "fifth", "ready"),
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-partial")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-partial")
 
     assert "Completion: 2/5 steps (40%)" in out
     assert "Next steps:" in out
@@ -96,9 +102,10 @@ async def test_progress_with_blocked(isolated_db):
                 _step("step-2", "second", "blocked", depends_on=["step-1"]),
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-blocked")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-blocked")
 
     assert "blocked=1" in out
     assert "⊘ [step-2] second" in out
@@ -117,9 +124,10 @@ async def test_progress_next_steps_max_three(isolated_db):
                 _step("step-5", "e", "ready"),
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-many")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-many")
 
     assert "[step-1]" in out
     assert "[step-2]" in out
@@ -140,9 +148,10 @@ async def test_progress_est_remaining(isolated_db):
                 _step("step-4", "fourth", "ready"),
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-est")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-est")
 
     assert "Est. remaining" in out
 
@@ -158,9 +167,10 @@ async def test_progress_no_est_when_one_done(isolated_db):
                 _step("step-3", "third", "ready"),
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-one-done")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-one-done")
 
     assert "Est. remaining" not in out
 
@@ -172,16 +182,19 @@ async def test_progress_waiting_flow(isolated_db):
             "description": "waiting probe",
             "steps": [_step("step-1", "first", "dispatched")],
         },
+        session_id=_SESSION,
     )
-    await store_sqlite.update_flow("flow-waiting", 1, wait={"reason": "awaiting child result"})
+    await store_sqlite.update_flow(
+        "flow-waiting", 1, session_id=_SESSION, wait={"reason": "awaiting child result"}
+    )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-waiting")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-waiting")
 
     assert "Waiting on: awaiting child result" in out
 
 
 async def test_progress_not_found(isolated_db):
-    out = await taskflow_progress.coroutine(flow_id="ghost")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="ghost")
 
     assert out == "Error: TaskFlow 'ghost' not found"
 
@@ -200,8 +213,9 @@ async def test_progress_results_count(isolated_db):
                 {"child_session_key": "child-2", "result": "R2"},
             ],
         },
+        session_id=_SESSION,
     )
 
-    out = await taskflow_progress.coroutine(flow_id="flow-results")
+    out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-results")
 
     assert "Results injected: 2" in out

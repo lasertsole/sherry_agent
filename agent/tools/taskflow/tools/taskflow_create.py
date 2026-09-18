@@ -6,7 +6,6 @@ from typing import Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 
-from ..config import INITIAL_REVISION
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowExistsError
 from ._shared import default_state, requester_session_key
@@ -34,8 +33,11 @@ async def taskflow_create(
     flow_id = (flow_id or "").strip()
     if not flow_id:
         return "Error: flow_id is required"
+    session_id = (session_id or "").strip()
+    if not session_id:
+        return "Error: session_id is required"
 
-    creator_key = requester_session_key(session_id) if session_id else ""
+    creator_key = requester_session_key(session_id)
     state = default_state(description, initial_state, creator_session_key=creator_key)
 
     deadline_ts = None
@@ -43,10 +45,14 @@ async def taskflow_create(
         deadline_ts = time.time() + (deadline_hours * 3600)
 
     try:
-        flow = await store_sqlite.create_flow(flow_id, state, deadline_ts=deadline_ts)
+        flow = await store_sqlite.create_flow(
+            flow_id, state, session_id=session_id, deadline_ts=deadline_ts
+        )
     except FlowExistsError:
-        existing = await store_sqlite.get_flow(flow_id)
-        revision = existing["expected_revision"] if existing else INITIAL_REVISION
+        existing = await store_sqlite.get_flow(flow_id, session_id)
+        if existing is None:
+            return f"Error: TaskFlow '{flow_id}' already exists; choose a different flow_id."
+        revision = existing["expected_revision"]
         return (
             f"Error: TaskFlow '{flow_id}' already exists (revision={revision}). "
             "Re-read it with taskflow_summary."

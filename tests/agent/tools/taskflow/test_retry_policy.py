@@ -130,7 +130,7 @@ async def _create(
 
 
 async def _flow(flow_id: str) -> dict:
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, _SESSION)
     assert flow is not None
     return flow
 
@@ -141,7 +141,7 @@ def _step_of(flow: dict, step_id: str) -> dict:
 
 async def _wait_all(flow_id: str) -> str:
     return await wait_mod.taskflow_wait_all.coroutine(
-        flow_id, timeout_seconds=1.0, poll_interval_seconds=0.01
+        flow_id, timeout_seconds=1.0, poll_interval_seconds=0.01, session_id=_SESSION
     )
 
 
@@ -312,7 +312,7 @@ async def test_wait_all_skips_child_with_injected_result(
     step = _step("step-1", child="child-done", retry_policy=_POLICY, retry_count=0)
     await _create(tools, "flow-1", [step])
     await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="child-done", result="all good"
+        session_id=_SESSION, flow_id="flow-1", child_session_key="child-done", result="all good"
     )
 
     # When wait_all polls the now-done step
@@ -349,6 +349,7 @@ async def test_retry_on_filters_error_types(isolated_db: Path, monkeypatch: pyte
 
     # When a rate-limit failure is injected
     out_rate = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-rate",
         child_session_key="child-orig",
         result="ERROR: rate limit exceeded (429)",
@@ -361,6 +362,7 @@ async def test_retry_on_filters_error_types(isolated_db: Path, monkeypatch: pyte
 
     # When a timeout failure is injected into the other flow
     out_timeout = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-timeout",
         child_session_key="child-orig",
         result="child aborted: operation timed out after 300s",
@@ -387,7 +389,10 @@ async def test_resume_success_result_marks_done_without_redispatch(
 
     # When a clean result is injected
     out = await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="child-1", result="report written, all checks PASS"
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="child-1",
+        result="report written, all checks PASS",
     )
 
     # Then the step is done and nothing is re-dispatched
@@ -413,11 +418,13 @@ async def test_resume_misleading_success_output_does_not_retry(
     await _create(tools, "flow-2", [_step("step-1", child="child-2", retry_policy=_POLICY)])
 
     out_brag = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="child-1",
         result="SUCCESS! Everything is fine, trust me.",
     )
     out_clean = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-2",
         child_session_key="child-2",
         result="All checks passed: no errors detected, error-free run.",
@@ -447,7 +454,10 @@ async def test_resume_retry_then_wait_all_exhausts_budget(
 
     # When the first failure is injected, resume re-dispatches (retry_count 0 -> 1)
     out = await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="child-1", result="ERROR: upstream failed"
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="child-1",
+        result="ERROR: upstream failed",
     )
     assert "re-dispatched" in out, out
     step = _step_of(await _flow("flow-1"), "step-1")

@@ -1,10 +1,15 @@
 """taskflow_budget: set and query the token/cost budget for a task flow."""
 
+from typing import Annotated
+
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 @tool("taskflow_budget")
@@ -13,6 +18,7 @@ async def taskflow_budget(
     action: str = "query",
     token_budget: int | None = None,
     expected_revision: int | None = None,
+    session_id: SessionId = "",
 ) -> str:
     """Set or query the token/cost budget for a task flow.
 
@@ -26,7 +32,7 @@ async def taskflow_budget(
     if not flow_id:
         return "Error: flow_id is required"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
 
@@ -72,7 +78,7 @@ async def taskflow_budget(
 
         try:
             updated = await store_sqlite.update_flow(
-                flow_id, revision, token_budget=int(token_budget)
+                flow_id, revision, session_id=session_id, token_budget=int(token_budget)
             )
         except FlowConflictError as exc:
             return conflict_error(exc)

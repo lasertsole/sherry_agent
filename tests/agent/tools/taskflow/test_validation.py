@@ -21,6 +21,8 @@ from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools._shared import step_status
 
+_SESSION = "sess-1"
+
 pytestmark = [pytest.mark.unit]
 
 taskflow_dispatch_module = sys.modules["agent.tools.taskflow.tools._dispatch"]
@@ -52,17 +54,19 @@ async def test_run_task_stores_validation_criteria_on_dispatched_step(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="validation probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="validation probe"
+    )
 
     out = await tools["taskflow_run_task"].coroutine(
         flow_id="flow-1",
         task="write report",
         validation_criteria=_CRITERIA,
-        session_id="sess-1",
+        session_id=_SESSION,
     )
     assert "child-1" in out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     step = flow["state"]["steps"][0]
     assert step["validation_criteria"] == _CRITERIA
@@ -76,9 +80,11 @@ async def test_run_task_stores_validation_criteria_on_blocked_step(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="blocked probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="blocked probe"
+    )
     await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="step one", session_id="sess-1"
+        flow_id="flow-1", task="step one", session_id=_SESSION
     )
 
     out = await tools["taskflow_run_task"].coroutine(
@@ -86,11 +92,11 @@ async def test_run_task_stores_validation_criteria_on_blocked_step(
         task="step two",
         depends_on=["step-1"],
         validation_criteria=_CRITERIA,
-        session_id="sess-1",
+        session_id=_SESSION,
     )
     assert "blocked" in out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     blocked = flow["state"]["steps"][1]
     assert step_status(blocked) == StepStatus.BLOCKED
@@ -110,12 +116,14 @@ async def test_resume_echoes_criteria_and_warning_after_marking_done(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="resume probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="resume probe"
+    )
     await tools["taskflow_run_task"].coroutine(
         flow_id="flow-1",
         task="write report",
         validation_criteria=_CRITERIA,
-        session_id="sess-1",
+        session_id=_SESSION,
     )
 
     # Adversarial (misleading_success_output): the child claims "SUCCESS!" but
@@ -123,6 +131,7 @@ async def test_resume_echoes_criteria_and_warning_after_marking_done(
     # it: it still marks the step done (the orchestrator owns the verdict) but
     # the response carries the criteria + explicit warning.
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="SUCCESS! Everything is fine, trust me.",
@@ -131,7 +140,7 @@ async def test_resume_echoes_criteria_and_warning_after_marking_done(
     assert f"\n  validation_criteria: {_CRITERIA}" in out
     assert "\n  ⚠ Result needs validation against criteria" in out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert step_status(flow["state"]["steps"][0]) == StepStatus.DONE
 
@@ -144,13 +153,16 @@ async def test_resume_accepts_criteria_param_for_dispatch_without_criteria(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="late criteria probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="late criteria probe"
+    )
     await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="write report", session_id="sess-1"
+        flow_id="flow-1", task="write report", session_id=_SESSION
     )
 
     criteria = "must be valid JSON"
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result='{"ok": true}',
@@ -159,7 +171,7 @@ async def test_resume_accepts_criteria_param_for_dispatch_without_criteria(
     assert f"\n  validation_criteria: {criteria}" in out
     assert "\n  ⚠ Result needs validation against criteria" in out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["state"]["steps"][0]["validation_criteria"] == criteria
 
@@ -177,14 +189,16 @@ async def test_run_task_without_criteria_stores_no_key(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="compat probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="compat probe"
+    )
 
     out = await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="plain step", session_id="sess-1"
+        flow_id="flow-1", task="plain step", session_id=_SESSION
     )
     assert "child-1" in out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert "validation_criteria" not in flow["state"]["steps"][0]
 
@@ -197,12 +211,15 @@ async def test_resume_without_criteria_returns_legacy_response(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="compat probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="compat probe"
+    )
     await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="plain step", session_id="sess-1"
+        flow_id="flow-1", task="plain step", session_id=_SESSION
     )
 
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="plain result",
@@ -223,15 +240,17 @@ async def test_summary_shows_validation_criteria(isolated_db, monkeypatch: pytes
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
     tools = _tools()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="summary probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="summary probe"
+    )
     await tools["taskflow_run_task"].coroutine(
         flow_id="flow-1",
         task="write report",
         validation_criteria=_CRITERIA,
-        session_id="sess-1",
+        session_id=_SESSION,
     )
 
-    out = await tools["taskflow_summary"].coroutine(flow_id="flow-1")
+    out = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id="flow-1")
     assert f"validation_criteria={_CRITERIA}" in out
 
 
@@ -252,8 +271,9 @@ async def test_summary_omits_validation_criteria_when_absent(isolated_db):
             ],
             "results": [],
         },
+        session_id=_SESSION,
     )
 
     tools = _tools()
-    out = await tools["taskflow_summary"].coroutine(flow_id="flow-legacy")
+    out = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id="flow-legacy")
     assert "validation_criteria" not in out

@@ -11,6 +11,8 @@ import pytest
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
 
+_SESSION = "sess-summary"
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -42,9 +44,10 @@ async def test_summary_renders_blocked_and_done_statuses_with_counts(isolated_db
             ],
             "results": [],
         },
+        session_id=_SESSION,
     )
 
-    out = await _summary_coroutine()(flow_id="flow-dag")
+    out = await _summary_coroutine()(flow_id="flow-dag", session_id=_SESSION)
     lines = out.splitlines()
 
     assert "  - [step-1] blocked wait for dep -> None depends_on=[step-2]" in lines
@@ -68,9 +71,10 @@ async def test_summary_derives_status_for_legacy_step(isolated_db):
             ],
             "results": [],
         },
+        session_id=_SESSION,
     )
 
-    out = await _summary_coroutine()(flow_id="flow-legacy")
+    out = await _summary_coroutine()(flow_id="flow-legacy", session_id=_SESSION)
     lines = out.splitlines()
 
     assert "Error" not in out

@@ -24,6 +24,8 @@ from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools._shared import new_step, step_status
 
+_SESSION = "sess-1"
+
 pytestmark = [pytest.mark.unit]
 
 taskflow_dispatch_module = sys.modules["agent.tools.taskflow.tools._dispatch"]
@@ -51,18 +53,22 @@ async def _seed_step(
     depends_on: list[str] | None = None,
 ) -> None:
     """Append a step directly to the persisted state (sibling-todo-free seed)."""
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, _SESSION)
     assert flow is not None
     state = dict(flow["state"])
     steps = list(state.get("steps") or [])
     steps.append(new_step(step_id, task, depends_on=depends_on, status=status))
     state["steps"] = steps
-    await store_sqlite.update_flow(flow_id, flow["expected_revision"], state=state)
+    await store_sqlite.update_flow(
+        flow_id, flow["expected_revision"], session_id=_SESSION, state=state
+    )
 
 
 async def _create_dispatched(tools: dict, flow_id: str, step_key: str, task: str) -> None:
-    await tools["taskflow_create"].coroutine(flow_id=flow_id, description="dag probe")
-    await tools["taskflow_run_task"].coroutine(flow_id=flow_id, task=task, session_id="sess-1")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id=flow_id, description="dag probe"
+    )
+    await tools["taskflow_run_task"].coroutine(flow_id=flow_id, task=task, session_id=_SESSION)
 
 
 # ---------------------------------------------------------------------------
@@ -79,13 +85,14 @@ async def test_resume_marks_dispatched_step_done(isolated_db, monkeypatch: pytes
     await _create_dispatched(tools, "flow-1", "agent:main:subagent:child-1", "step one")
 
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="R1",
     )
     assert "TaskFlow resumed" in out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert step_status(flow["state"]["steps"][0]) == StepStatus.DONE
     assert "done=1" in out
@@ -117,13 +124,14 @@ async def test_resume_unlocks_dependent_and_reports_id(
     )
 
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="R1",
     )
     assert "unlocked=[step-2]" in out, out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert step_status(flow["state"]["steps"][0]) == StepStatus.DONE
     assert step_status(flow["state"]["steps"][1]) == StepStatus.READY
@@ -147,7 +155,7 @@ async def test_dependent_with_incomplete_dep_stays_blocked(
     tools = _tools()
     await _create_dispatched(tools, "flow-1", "agent:main:subagent:child-1", "step one")
     await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="step two", session_id="sess-1"
+        flow_id="flow-1", task="step two", session_id=_SESSION
     )
     await _seed_step(
         "flow-1",
@@ -158,13 +166,14 @@ async def test_dependent_with_incomplete_dep_stays_blocked(
     )
 
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="R1",
     )
     assert "unlocked=[]" in out, out
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert step_status(flow["state"]["steps"][2]) == StepStatus.BLOCKED
     assert "blocked=1" in out
@@ -188,16 +197,17 @@ async def test_partial_completion_leaves_sibling_dispatched(
     tools = _tools()
     await _create_dispatched(tools, "flow-1", "agent:main:subagent:child-1", "step one")
     await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="step two", session_id="sess-1"
+        flow_id="flow-1", task="step two", session_id=_SESSION
     )
 
     out = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="R1",
     )
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     steps = flow["state"]["steps"]
     assert step_status(steps[0]) == StepStatus.DONE
@@ -230,23 +240,25 @@ async def test_duplicate_resume_is_byte_identical_noop(
     )
 
     first = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="R1",
     )
     assert "TaskFlow resumed" in first
-    flow_after_first = await store_sqlite.get_flow("flow-1")
+    flow_after_first = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow_after_first is not None
     assert flow_after_first["expected_revision"] == 4  # create + run + seed + resume
 
     second = await tools["taskflow_resume"].coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
         result="R1",
     )
     assert "already resumed" in second
 
-    flow_after_second = await store_sqlite.get_flow("flow-1")
+    flow_after_second = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow_after_second is not None
     assert flow_after_second["expected_revision"] == flow_after_first["expected_revision"]
     assert flow_after_second["state"]["steps"] == flow_after_first["state"]["steps"]

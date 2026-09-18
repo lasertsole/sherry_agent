@@ -6,24 +6,30 @@ instructs the caller to retry with the revision reported here.
 
 import json
 import time
+from typing import Annotated
 
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from config.features import TASKFLOW_INFRA
 from ..registry import store_sqlite
 from ._shared import is_terminal, not_found_error, step_status, steps_summary
 
+SessionId = Annotated[str, InjectedState("session_id")]
+
 
 @tool("taskflow_summary")
-async def taskflow_summary(flow_id: str) -> str:
-    """Read back a task flow: status, expected_revision, child_session_key,
-    steps, injected results and wait payload. Read-only; also the re-read
-    step to run after a revision conflict before retrying a mutation."""
+async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
+    """Read back a task flow owned by the current session: status,
+    expected_revision, child_session_key, steps, injected results and wait
+    payload. Read-only; also the re-read step to run after a revision conflict
+    before retrying a mutation. A flow belonging to another session reads as
+    not found."""
     flow_id = (flow_id or "").strip()
     if not flow_id:
         return "Error: flow_id is required"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
 

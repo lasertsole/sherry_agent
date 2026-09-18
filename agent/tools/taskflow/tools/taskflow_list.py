@@ -1,18 +1,21 @@
-"""taskflow_list: cross-session board of every task flow.
+"""taskflow_list: the current session's task-flow board.
 
-Unlike taskflow_summary (one flow) and the session-scoped auto-resume query,
-this tool deliberately ignores creator/session scoping: it is the global board
-over the registry, so a flow started in one channel/chat is visible from any
-other. Read-only.
+Like taskflow_summary, this is session-scoped: only flows owned by the calling
+session are listed. The registry is shared across sessions, but every read
+filters on the session id at the SQL level, so a flow started in another
+channel/chat is never visible here. Read-only.
 """
 
 import time
+from typing import Annotated
 
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ._shared import steps_summary
 
+SessionId = Annotated[str, InjectedState("session_id")]
 _DESCRIPTION_WIDTH = 40
 _CREATOR_WIDTH = 16
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -83,11 +86,11 @@ def _render_table(rows: list[list[str]]) -> str:
 
 
 @tool("taskflow_list")
-async def taskflow_list(status_filter: str = "active") -> str:
-    """List ALL task flows across sessions (cross-session board).
+async def taskflow_list(status_filter: str = "active", session_id: SessionId = "") -> str:
+    """List the current session's task flows.
 
-    The global view: every flow in the registry, whichever channel/chat
-    created it. Read-only, so it needs no expected_revision.
+    Only flows owned by this session are shown; other sessions' flows are never
+    listed. Read-only, so it needs no expected_revision.
 
     Args:
         status_filter: "active" (running + waiting, default), "all" (terminal
@@ -95,7 +98,7 @@ async def taskflow_list(status_filter: str = "active") -> str:
             "done", "failed", "cancelled").
     """
     normalized = (status_filter or "active").strip().lower()
-    flows = store_sqlite.get_all_flows_sync(normalized)
+    flows = store_sqlite.get_all_flows_sync(session_id, normalized)
     if not flows:
         return "No task flows found"
     rows = [_board_row(flow) for flow in flows]

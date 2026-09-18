@@ -205,6 +205,7 @@ async def update_flow_with_conflict_retry(
     build_state: Callable[[dict, int], dict],
     *,
     child_keys: list[str],
+    session_id: str,
     flow_child_session_key: object = UNSET,
     max_attempts: int = PERSIST_MAX_ATTEMPTS,
     update_kwargs: dict[str, Any] | None = None,
@@ -216,6 +217,8 @@ async def update_flow_with_conflict_retry(
     the race ``build_state(fresh_flow, attempt)`` is invoked again against the
     freshly-read flow and retried up to ``max_attempts``. A vanished or terminal
     flow is terminal for the retry (the child keys are still named).
+    ``session_id`` scopes both the write and the re-read, so a flow owned by
+    another session counts as vanished.
 
     ``update_kwargs`` forwards extra ``store_sqlite.update_flow`` keyword
     arguments (wait/status/token aggregation) unchanged on every attempt.
@@ -232,6 +235,7 @@ async def update_flow_with_conflict_retry(
             updated = await store_sqlite.update_flow(
                 flow_id,
                 revision,
+                session_id=session_id,
                 state=state,
                 child_session_key=flow_child_session_key,
                 **extra_kwargs,
@@ -240,7 +244,7 @@ async def update_flow_with_conflict_retry(
         except FlowConflictError:
             if attempt == max_attempts:
                 break
-            fresh = await store_sqlite.get_flow(flow_id)
+            fresh = await store_sqlite.get_flow(flow_id, session_id)
             if fresh is None or is_terminal(fresh["status"]):
                 return None, record_unpersisted_children_error(flow_id, child_keys, attempt)
             current_flow = fresh

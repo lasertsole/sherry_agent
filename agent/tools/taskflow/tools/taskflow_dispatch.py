@@ -59,7 +59,7 @@ async def taskflow_dispatch(
     if not flow_id:
         return "Error: flow_id is required"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
     if is_terminal(flow["status"]):
@@ -151,6 +151,7 @@ async def taskflow_dispatch(
         flow,
         build_state,
         child_keys=[str(record.get("child_session_key") or "") for record in records],
+        session_id=session_id,
     )
     if updated is None:
         return error

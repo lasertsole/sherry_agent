@@ -6,10 +6,15 @@ next actionable steps, and estimated remaining time based on completed step
 durations.
 """
 
+from typing import Annotated
+
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ._shared import not_found_error, step_status, steps_summary
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 _STEP_ICONS = {
     "done": "✓",
@@ -20,7 +25,7 @@ _STEP_ICONS = {
 
 
 @tool("taskflow_progress")
-async def taskflow_progress(flow_id: str) -> str:
+async def taskflow_progress(flow_id: str, session_id: SessionId = "") -> str:
     """Get a structured progress report for a task flow.
 
     Returns completion percentage, step status breakdown, next actionable
@@ -31,7 +36,7 @@ async def taskflow_progress(flow_id: str) -> str:
     if not flow_id:
         return "Error: flow_id is required"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
 

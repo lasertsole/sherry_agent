@@ -65,20 +65,22 @@ def _fake_dispatch(*keys: str, fail_at: int | None = None):
 
 async def _bump_revision(flow_id: str, real_update) -> None:
     """Concurrent writer: bump the revision without touching the step list."""
-    current = await store_sqlite.get_flow(flow_id)
+    current = await store_sqlite.get_flow(flow_id, _SESSION)
     assert current is not None
-    await real_update(flow_id, current["expected_revision"], wait={"reason": "concurrent"})
+    await real_update(
+        flow_id, current["expected_revision"], session_id=_SESSION, wait={"reason": "concurrent"}
+    )
 
 
 async def _append_concurrent_step(flow_id: str, real_update) -> None:
     """Concurrent writer: append a step-1 so the retry MUST recompute its id."""
-    current = await store_sqlite.get_flow(flow_id)
+    current = await store_sqlite.get_flow(flow_id, _SESSION)
     assert current is not None
     state = dict(current["state"])
     steps = list(state.get("steps") or [])
     steps.append({"step_id": "step-1", "task": "concurrent", "depends_on": [], "status": "ready"})
     state["steps"] = steps
-    await real_update(flow_id, current["expected_revision"], state=state)
+    await real_update(flow_id, current["expected_revision"], session_id=_SESSION, state=state)
 
 
 def _patch_conflict_once(monkeypatch: pytest.MonkeyPatch, concurrent_write) -> dict:
@@ -97,7 +99,7 @@ def _patch_conflict_once(monkeypatch: pytest.MonkeyPatch, concurrent_write) -> d
         if not fired["done"]:
             fired["done"] = True
             await concurrent_write(flow_id, real_update)
-            fresh = await store_sqlite.get_flow(flow_id)
+            fresh = await store_sqlite.get_flow(flow_id, _SESSION)
             assert fresh is not None
             raise FlowConflictError(flow_id, expected_revision, fresh["expected_revision"])
         return await real_update(flow_id, expected_revision, **kwargs)
@@ -115,7 +117,10 @@ def _always_conflict(monkeypatch: pytest.MonkeyPatch) -> None:
 
 async def _seed(flow_id: str, steps: list[dict]) -> None:
     out = await taskflow_create.coroutine(
-        flow_id=flow_id, description="conflict probe", initial_state={"steps": steps}
+        session_id=_SESSION,
+        flow_id=flow_id,
+        description="conflict probe",
+        initial_state={"steps": steps},
     )
     assert "Error" not in out, out
 
@@ -125,7 +130,7 @@ def _step(step_id: str, status: str) -> dict:
 
 
 async def _flow(flow_id: str) -> dict:
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, _SESSION)
     assert flow is not None
     return flow
 
@@ -143,7 +148,9 @@ async def test_run_task_records_spawned_child_after_conflict(
     # revision exactly once between the pre-spawn read and the persist
     monkeypatch.setattr(_dispatch, "dispatch_child", _fake_dispatch(_CHILD_1))
     _patch_conflict_once(monkeypatch, _bump_revision)
-    await taskflow_create.coroutine(flow_id="flow-1", description="run conflict")
+    await taskflow_create.coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="run conflict"
+    )
 
     # When the dispatched step is persisted
     out = await taskflow_run_task.coroutine(flow_id="flow-1", task="collect", session_id=_SESSION)
@@ -166,7 +173,9 @@ async def test_run_task_recomputes_step_id_from_fresh_steps_after_conflict(
     # Given a concurrent writer that appends step-1 during the spawn window
     monkeypatch.setattr(_dispatch, "dispatch_child", _fake_dispatch(_CHILD_1))
     _patch_conflict_once(monkeypatch, _append_concurrent_step)
-    await taskflow_create.coroutine(flow_id="flow-1", description="id collision")
+    await taskflow_create.coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="id collision"
+    )
 
     # When the dispatched step is persisted after the retry
     out = await taskflow_run_task.coroutine(flow_id="flow-1", task="collect", session_id=_SESSION)
@@ -188,7 +197,7 @@ async def test_run_task_retries_exhausted_names_spawned_child(
     # Given every persist attempt conflicts
     monkeypatch.setattr(_dispatch, "dispatch_child", _fake_dispatch(_CHILD_1))
     _always_conflict(monkeypatch)
-    await taskflow_create.coroutine(flow_id="flow-1", description="exhaust")
+    await taskflow_create.coroutine(session_id=_SESSION, flow_id="flow-1", description="exhaust")
 
     # When the retry budget is exhausted
     out = await taskflow_run_task.coroutine(flow_id="flow-1", task="collect", session_id=_SESSION)
@@ -300,11 +309,12 @@ async def test_wait_all_registry_exception_returns_error(
     await store_sqlite.create_flow(
         "flow-wait",
         {"description": "wait probe", "steps": [_step("step-1", "dispatched")], "results": []},
+        session_id=_SESSION,
     )
 
     # When wait_all polls
     out = await wait_mod.taskflow_wait_all.coroutine(
-        "flow-wait", timeout_seconds=0.05, poll_interval_seconds=0.01
+        "flow-wait", timeout_seconds=0.05, poll_interval_seconds=0.01, session_id=_SESSION
     )
 
     # Then the exception becomes an Error string, never a raise

@@ -255,6 +255,8 @@ async def persist_retry_actions(
     flow_id: str,
     flow: dict,
     executed: dict,
+    *,
+    session_id: str,
 ) -> tuple[dict | None, str | None]:
     """Persist the executed wait_all retry plan with optimistic-lock retries.
 
@@ -297,4 +299,5 @@ async def persist_retry_actions(
         flow,
         build_state,
         child_keys=new_keys,
+        session_id=session_id,
     )

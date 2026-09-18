@@ -32,6 +32,7 @@ def _wiring(monkeypatch):
     def _fake_create_agent(**kwargs):
         captured["middleware"] = kwargs.get("middleware", [])
         captured["model"] = kwargs.get("model")
+        captured["tools"] = kwargs.get("tools", [])
         return SimpleNamespace(name="child-graph")
 
     async def _fake_checkpointer(*args, **kwargs):
@@ -90,3 +91,33 @@ def test_child_boost_middleware_defaults_to_non_stream_path(_wiring):
     boost = next(mw for mw in _wiring["middleware"] if isinstance(mw, MaxTokensBoostMiddleware))
     req = SimpleNamespace(state={"session_id": "agent:main:subagent:unknown-child"})
     assert boost._is_stream_turn(req) is False
+
+
+class _StubTool:
+    """Minimal tool double carrying the metadata the policy gate reads."""
+
+    def __init__(self, name: str, metadata: dict | None = None) -> None:
+        self.name = name
+        self.metadata = metadata or {}
+
+
+def test_child_agent_drops_main_only_planning_tools(_wiring):
+    """taskflow / todolist / knowledge can never reach a child agent."""
+    candidates = [
+        _StubTool("taskflow_create", {"scope": "main_only"}),
+        _StubTool("todowrite", {"scope": "main_only"}),
+        _StubTool("knowledge", {"scope": "main_only"}),
+        _StubTool("read_file"),
+    ]
+
+    asyncio.run(
+        _build_child_agent(
+            system_prompt="child",
+            tools=candidates,
+            tool_allow=None,
+            tool_deny=None,
+            role=SubagentSessionRole.LEAF,
+        )
+    )
+
+    assert [t.name for t in _wiring["tools"]] == ["read_file"]

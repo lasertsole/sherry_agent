@@ -28,6 +28,8 @@ from agent.tools.taskflow.config import TaskFlowStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
 
+_SESSION = "session-test"
+
 pytestmark = [pytest.mark.unit]
 
 _STALE_HOURS = 25.0
@@ -48,11 +50,13 @@ async def _create_waiting(
     flow = await store_sqlite.create_flow(
         flow_id,
         _make_state(flow_id),
+        session_id=_SESSION,
         child_session_key=child_session_key,
     )
     return await store_sqlite.update_flow(
         flow_id,
         flow["expected_revision"],
+        session_id=_SESSION,
         wait={"reason": "awaiting child result", "set_at": time.time() - hours_ago * 3600},
         status=TaskFlowStatus.WAITING.value,
     )
@@ -76,7 +80,7 @@ async def test_summary_shows_active_waiting(isolated_db: Path):
     """A WAITING flow inside the timeout renders an active wait_status line."""
     await _create_waiting("flow-1", hours_ago=_RECENT_HOURS)
 
-    out = await taskflow_summary.coroutine(flow_id="flow-1")
+    out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 
     assert "wait_status: active" in out
     assert "to timeout" in out
@@ -88,7 +92,7 @@ async def test_summary_shows_stale(isolated_db: Path):
     """A WAITING flow past the timeout renders the STALE wait_status line."""
     await _create_waiting("flow-1", hours_ago=_STALE_HOURS)
 
-    out = await taskflow_summary.coroutine(flow_id="flow-1")
+    out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 
     assert "wait_status: STALE" in out
     assert "timeout=24h" in out
@@ -98,9 +102,9 @@ async def test_summary_shows_stale(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_summary_no_wait_payload(isolated_db: Path):
     """A flow without a wait payload renders no wait_status line at all."""
-    await store_sqlite.create_flow("flow-1", _make_state("plain"))
+    await store_sqlite.create_flow("flow-1", _make_state("plain"), session_id=_SESSION)
 
-    out = await taskflow_summary.coroutine(flow_id="flow-1")
+    out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 
     assert "wait: (none)" in out
     assert "wait_status" not in out
@@ -135,7 +139,7 @@ async def test_sweeper_skips_active_child(isolated_db: Path, monkeypatch: pytest
     stale = await sweeper._scan_stale_waiting_taskflows()
 
     assert stale == 0
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert "stale_detected_at" not in flow["wait"]
 
@@ -150,7 +154,7 @@ async def test_sweeper_marks_dead_child(isolated_db: Path, monkeypatch: pytest.M
     stale = await sweeper._scan_stale_waiting_taskflows()
 
     assert stale == 1
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["wait"]["stale_detected_at"] is not None
     assert flow["wait"]["stale_child_session_key"] == child_key
@@ -168,7 +172,7 @@ async def test_sweeper_skips_recent_waiting(isolated_db: Path, monkeypatch: pyte
     stale = await sweeper._scan_stale_waiting_taskflows()
 
     assert stale == 0
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert "stale_detected_at" not in flow["wait"]
 
@@ -176,7 +180,7 @@ async def test_sweeper_skips_recent_waiting(isolated_db: Path, monkeypatch: pyte
 @pytest.mark.asyncio
 async def test_sweeper_no_waiting_flows(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
     """A registry with no WAITING flows yields a zero stale count."""
-    await store_sqlite.create_flow("flow-1", _make_state("running"))
+    await store_sqlite.create_flow("flow-1", _make_state("running"), session_id=_SESSION)
     _patch_child_liveness(monkeypatch, run=None, live=False)
 
     stale = await sweeper._scan_stale_waiting_taskflows()
@@ -193,7 +197,7 @@ async def test_stale_marker_in_wait_payload(isolated_db: Path, monkeypatch: pyte
 
     await sweeper._scan_stale_waiting_taskflows()
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     marker = flow["wait"]["stale_detected_at"]
     assert before <= marker <= time.time()

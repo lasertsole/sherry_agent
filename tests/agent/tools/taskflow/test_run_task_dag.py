@@ -24,6 +24,8 @@ from agent.tools.taskflow.tools import _dispatch
 from agent.tools.taskflow.tools.taskflow_create import taskflow_create
 from agent.tools.taskflow.tools.taskflow_run_task import taskflow_run_task
 
+_SESSION = "sess-1"
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -49,11 +51,13 @@ async def test_unmet_dependency_registers_blocked_with_zero_spawns(
     # Given a flow with one already-dispatched step ("step-1")
     calls: list = []
     monkeypatch.setattr(_dispatch, "dispatch_child", _recording_dispatch("child-1", calls))
-    await taskflow_create.coroutine(flow_id="flow-1", description="blocked probe")
-    await taskflow_run_task.coroutine(flow_id="flow-1", task="first", session_id="sess-1")
+    await taskflow_create.coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="blocked probe"
+    )
+    await taskflow_run_task.coroutine(flow_id="flow-1", task="first", session_id=_SESSION)
     assert len(calls) == 1  # step-1 dispatched
 
-    before = await store_sqlite.get_flow("flow-1")
+    before = await store_sqlite.get_flow("flow-1", _SESSION)
     assert before is not None
     revision_before = before["expected_revision"]
 
@@ -62,7 +66,7 @@ async def test_unmet_dependency_registers_blocked_with_zero_spawns(
         flow_id="flow-1",
         task="second",
         depends_on=["step-1"],
-        session_id="sess-1",
+        session_id=_SESSION,
     )
 
     # Then the step is stored blocked, nothing is spawned, revision bumps by 1
@@ -70,7 +74,7 @@ async def test_unmet_dependency_registers_blocked_with_zero_spawns(
     assert "pending=[step-1]" in out
     assert len(calls) == 1, "a blocked step must not spawn a child"
 
-    after = await store_sqlite.get_flow("flow-1")
+    after = await store_sqlite.get_flow("flow-1", _SESSION)
     assert after is not None
     assert after["expected_revision"] == revision_before + 1
 
@@ -94,6 +98,7 @@ async def test_satisfied_dependency_dispatches_once_and_records_step(
     calls: list = []
     monkeypatch.setattr(_dispatch, "dispatch_child", _recording_dispatch("child-2", calls))
     await taskflow_create.coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         description="satisfied probe",
         initial_state={
@@ -114,7 +119,7 @@ async def test_satisfied_dependency_dispatches_once_and_records_step(
         task="second",
         depends_on=["step-1"],
         label="lbl",
-        session_id="sess-1",
+        session_id=_SESSION,
     )
 
     # Then it dispatches exactly once and records the returned child key
@@ -123,7 +128,7 @@ async def test_satisfied_dependency_dispatches_once_and_records_step(
     assert len(calls) == 1
     assert calls[0] == ("second", "agent:main:session:sess-1", "lbl")
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     steps = flow["state"]["steps"]
     dependent = next(s for s in steps if s["step_id"] == "step-2")
@@ -145,8 +150,10 @@ async def test_unknown_dependency_errors_without_state_change(
     # Given a flow with no steps
     calls: list = []
     monkeypatch.setattr(_dispatch, "dispatch_child", _recording_dispatch("child-x", calls))
-    await taskflow_create.coroutine(flow_id="flow-1", description="ghost probe")
-    before = await store_sqlite.get_flow("flow-1")
+    await taskflow_create.coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="ghost probe"
+    )
+    before = await store_sqlite.get_flow("flow-1", _SESSION)
     assert before is not None
     revision_before = before["expected_revision"]
 
@@ -155,7 +162,7 @@ async def test_unknown_dependency_errors_without_state_change(
         flow_id="flow-1",
         task="second",
         depends_on=["ghost"],
-        session_id="sess-1",
+        session_id=_SESSION,
     )
 
     # Then it is rejected with the unknown-id error and nothing changes
@@ -163,7 +170,7 @@ async def test_unknown_dependency_errors_without_state_change(
     assert "ghost" in out
     assert calls == []
 
-    after = await store_sqlite.get_flow("flow-1")
+    after = await store_sqlite.get_flow("flow-1", _SESSION)
     assert after is not None
     assert after["expected_revision"] == revision_before
     assert after["state"]["steps"] == []
@@ -181,6 +188,7 @@ async def test_dispatched_path_sets_flow_level_child_session_key(
     # Given a flow and a satisfying dependency
     monkeypatch.setattr(_dispatch, "dispatch_child", _recording_dispatch("child-9", []))
     await taskflow_create.coroutine(
+        session_id=_SESSION,
         flow_id="flow-1",
         description="flow key probe",
         initial_state={
@@ -190,12 +198,12 @@ async def test_dispatched_path_sets_flow_level_child_session_key(
 
     # When a dependent step dispatches
     out = await taskflow_run_task.coroutine(
-        flow_id="flow-1", task="second", depends_on=["step-1"], session_id="sess-1"
+        flow_id="flow-1", task="second", depends_on=["step-1"], session_id=_SESSION
     )
     assert "child-9" in out
 
     # Then the flow-level child key is set (existing contract preserved)
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["child_session_key"] == "child-9"
     assert flow["state"]["steps"][1]["child_session_key"] == "child-9"

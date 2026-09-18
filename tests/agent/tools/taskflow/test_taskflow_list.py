@@ -24,6 +24,8 @@ from agent.tools.taskflow.config import TaskFlowStatus
 from agent.tools.taskflow.registry import store_sqlite
 from agent.tools.taskflow.tools.taskflow_list import taskflow_list
 
+_SESSION = "session-test"
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -63,7 +65,9 @@ def _step(step_id: str, status: str, *, dispatched_at: float | None = None) -> d
 
 @pytest.mark.asyncio
 async def test_list_empty_registry(isolated_db: Path):
-    out = await taskflow_list.coroutine()
+    out = await taskflow_list.coroutine(
+        session_id=_SESSION,
+    )
 
     assert out == "No task flows found"
 
@@ -80,23 +84,28 @@ async def test_list_active_flows_renders_one_row_each(isolated_db: Path):
                 _step("step-2", "done", dispatched_at=2000.0),
             ],
         ),
+        session_id=_SESSION,
     )
     await store_sqlite.create_flow(
         "flow-b",
         _state(
             "run the test suite", creator="session-bbbbbbbbbbbb", steps=[_step("step-1", "done")]
         ),
+        session_id=_SESSION,
     )
-    await store_sqlite.update_flow("flow-b", 1, wait={"reason": "bump"})
+    await store_sqlite.update_flow("flow-b", 1, session_id=_SESSION, wait={"reason": "bump"})
     await store_sqlite.create_flow(
         "flow-c",
         _state("summarise findings"),
+        session_id=_SESSION,
         status=TaskFlowStatus.WAITING.value,
     )
-    await store_sqlite.update_flow("flow-c", 1, wait={"reason": "bump"})
-    await store_sqlite.update_flow("flow-c", 2, wait={"reason": "bump again"})
+    await store_sqlite.update_flow("flow-c", 1, session_id=_SESSION, wait={"reason": "bump"})
+    await store_sqlite.update_flow("flow-c", 2, session_id=_SESSION, wait={"reason": "bump again"})
 
-    out = await taskflow_list.coroutine()
+    out = await taskflow_list.coroutine(
+        session_id=_SESSION,
+    )
 
     rows = [line for line in out.splitlines() if line.startswith("flow-")]
     assert len(rows) == 3
@@ -113,12 +122,14 @@ async def test_list_active_flows_renders_one_row_each(isolated_db: Path):
 
 @pytest.mark.asyncio
 async def test_list_default_excludes_terminal(isolated_db: Path):
-    await store_sqlite.create_flow("flow-live", _state("still open"))
+    await store_sqlite.create_flow("flow-live", _state("still open"), session_id=_SESSION)
     await store_sqlite.create_flow(
-        "flow-done", _state("finished"), status=TaskFlowStatus.DONE.value
+        "flow-done", _state("finished"), session_id=_SESSION, status=TaskFlowStatus.DONE.value
     )
 
-    out = await taskflow_list.coroutine()
+    out = await taskflow_list.coroutine(
+        session_id=_SESSION,
+    )
 
     assert "flow-live" in out
     assert "flow-done" not in out
@@ -126,12 +137,12 @@ async def test_list_default_excludes_terminal(isolated_db: Path):
 
 @pytest.mark.asyncio
 async def test_list_all_includes_terminal(isolated_db: Path):
-    await store_sqlite.create_flow("flow-live", _state("still open"))
+    await store_sqlite.create_flow("flow-live", _state("still open"), session_id=_SESSION)
     await store_sqlite.create_flow(
-        "flow-done", _state("finished"), status=TaskFlowStatus.DONE.value
+        "flow-done", _state("finished"), session_id=_SESSION, status=TaskFlowStatus.DONE.value
     )
 
-    out = await taskflow_list.coroutine(status_filter="all")
+    out = await taskflow_list.coroutine(session_id=_SESSION, status_filter="all")
 
     assert "flow-live" in out
     assert "flow-done" in out
@@ -141,11 +152,11 @@ async def test_list_all_includes_terminal(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_list_specific_status_filter(isolated_db: Path):
     await store_sqlite.create_flow(
-        "flow-w", _state("waiting one"), status=TaskFlowStatus.WAITING.value
+        "flow-w", _state("waiting one"), session_id=_SESSION, status=TaskFlowStatus.WAITING.value
     )
-    await store_sqlite.create_flow("flow-r", _state("running one"))
+    await store_sqlite.create_flow("flow-r", _state("running one"), session_id=_SESSION)
 
-    out = await taskflow_list.coroutine(status_filter="waiting")
+    out = await taskflow_list.coroutine(session_id=_SESSION, status_filter="waiting")
 
     assert "flow-w" in out
     assert "flow-r" not in out
@@ -155,9 +166,13 @@ async def test_list_specific_status_filter(isolated_db: Path):
 async def test_list_truncates_description_and_creator(isolated_db: Path):
     long_description = "d" * 60
     long_creator = "agent:main:session:1234567890"
-    await store_sqlite.create_flow("flow-long", _state(long_description, creator=long_creator))
+    await store_sqlite.create_flow(
+        "flow-long", _state(long_description, creator=long_creator), session_id=_SESSION
+    )
 
-    out = await taskflow_list.coroutine()
+    out = await taskflow_list.coroutine(
+        session_id=_SESSION,
+    )
 
     assert long_description not in out
     assert "d" * 40 in out
@@ -174,10 +189,13 @@ async def test_list_renders_updated_at_and_dash_when_absent(isolated_db: Path):
             steps=[_step("step-1", "done", dispatched_at=1000.0)],
             results=[{"child_session_key": "child-1", "result": "R1", "injected_at": 2000.0}],
         ),
+        session_id=_SESSION,
     )
-    await store_sqlite.create_flow("flow-bare", _state("no timestamps"))
+    await store_sqlite.create_flow("flow-bare", _state("no timestamps"), session_id=_SESSION)
 
-    out = await taskflow_list.coroutine()
+    out = await taskflow_list.coroutine(
+        session_id=_SESSION,
+    )
 
     stamped_row = next(line for line in out.splitlines() if line.startswith("flow-stamped"))
     bare_row = next(line for line in out.splitlines() if line.startswith("flow-bare"))
@@ -195,7 +213,9 @@ async def test_list_fail_open_on_db_error(isolated_db: Path, monkeypatch: pytest
 
     monkeypatch.setattr(store_sqlite, "_ensure_tables_sync", _boom)
 
-    out = await taskflow_list.coroutine()
+    out = await taskflow_list.coroutine(
+        session_id=_SESSION,
+    )
 
     assert out == "No task flows found"
 
@@ -207,13 +227,13 @@ async def test_list_fail_open_on_db_error(isolated_db: Path, monkeypatch: pytest
 
 def test_get_all_flows_sync_orders_by_revision_desc(isolated_db: Path):
     async def _setup() -> None:
-        await store_sqlite.create_flow("flow-low", _state("low"))
-        await store_sqlite.create_flow("flow-high", _state("high"))
-        await store_sqlite.update_flow("flow-high", 1, wait={"reason": "bump"})
+        await store_sqlite.create_flow("flow-low", _state("low"), session_id=_SESSION)
+        await store_sqlite.create_flow("flow-high", _state("high"), session_id=_SESSION)
+        await store_sqlite.update_flow("flow-high", 1, session_id=_SESSION, wait={"reason": "bump"})
 
     asyncio.run(_setup())
 
-    flows = store_sqlite.get_all_flows_sync()
+    flows = store_sqlite.get_all_flows_sync(_SESSION)
 
     assert [flow["flow_id"] for flow in flows] == ["flow-high", "flow-low"]
     assert [flow["expected_revision"] for flow in flows] == [2, 1]
@@ -221,29 +241,33 @@ def test_get_all_flows_sync_orders_by_revision_desc(isolated_db: Path):
 
 def test_get_all_flows_sync_active_all_and_specific_filters(isolated_db: Path):
     async def _setup() -> None:
-        await store_sqlite.create_flow("flow-run", _state("running"))
+        await store_sqlite.create_flow("flow-run", _state("running"), session_id=_SESSION)
         await store_sqlite.create_flow(
-            "flow-wait", _state("waiting"), status=TaskFlowStatus.WAITING.value
+            "flow-wait", _state("waiting"), session_id=_SESSION, status=TaskFlowStatus.WAITING.value
         )
-        await store_sqlite.update_flow("flow-wait", 1, wait={"reason": "bump"})
+        await store_sqlite.update_flow("flow-wait", 1, session_id=_SESSION, wait={"reason": "bump"})
         await store_sqlite.create_flow(
-            "flow-done", _state("done"), status=TaskFlowStatus.DONE.value
+            "flow-done", _state("done"), session_id=_SESSION, status=TaskFlowStatus.DONE.value
         )
-        await store_sqlite.update_flow("flow-done", 1, wait={"reason": "bump"})
-        await store_sqlite.update_flow("flow-done", 2, wait={"reason": "bump again"})
+        await store_sqlite.update_flow("flow-done", 1, session_id=_SESSION, wait={"reason": "bump"})
+        await store_sqlite.update_flow(
+            "flow-done", 2, session_id=_SESSION, wait={"reason": "bump again"}
+        )
 
     asyncio.run(_setup())
 
-    assert [flow["flow_id"] for flow in store_sqlite.get_all_flows_sync("active")] == [
+    assert [flow["flow_id"] for flow in store_sqlite.get_all_flows_sync(_SESSION, "active")] == [
         "flow-wait",
         "flow-run",
     ]
-    assert [flow["flow_id"] for flow in store_sqlite.get_all_flows_sync("all")] == [
+    assert [flow["flow_id"] for flow in store_sqlite.get_all_flows_sync(_SESSION, "all")] == [
         "flow-done",
         "flow-wait",
         "flow-run",
     ]
-    assert [flow["flow_id"] for flow in store_sqlite.get_all_flows_sync("done")] == ["flow-done"]
+    assert [flow["flow_id"] for flow in store_sqlite.get_all_flows_sync(_SESSION, "done")] == [
+        "flow-done"
+    ]
 
 
 def test_get_all_flows_sync_fail_open(isolated_db: Path, monkeypatch: pytest.MonkeyPatch):
@@ -252,5 +276,5 @@ def test_get_all_flows_sync_fail_open(isolated_db: Path, monkeypatch: pytest.Mon
 
     monkeypatch.setattr(store_sqlite, "_ensure_tables_sync", _boom)
 
-    assert store_sqlite.get_all_flows_sync() == []
-    assert store_sqlite.get_all_flows_sync("all") == []
+    assert store_sqlite.get_all_flows_sync(_SESSION) == []
+    assert store_sqlite.get_all_flows_sync(_SESSION, "all") == []

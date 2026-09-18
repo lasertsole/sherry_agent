@@ -1,11 +1,16 @@
 """taskflow_finish: mark the flow done (openclaw finish)."""
 
+from typing import Annotated
+
 from langchain_core.tools import tool
+from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import TaskFlowStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
+
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 @tool("taskflow_finish")
@@ -13,6 +18,7 @@ async def taskflow_finish(
     flow_id: str,
     summary: str = "",
     expected_revision: int | None = None,
+    session_id: SessionId = "",
 ) -> str:
     """Mark the flow as done; terminal, no further mutations are accepted.
 
@@ -23,7 +29,7 @@ async def taskflow_finish(
     if not flow_id:
         return "Error: flow_id is required"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
     if is_terminal(flow["status"]):
@@ -41,6 +47,7 @@ async def taskflow_finish(
         updated = await store_sqlite.update_flow(
             flow_id,
             revision,
+            session_id=session_id,
             state=state,
             wait=None,
             status=TaskFlowStatus.DONE.value,

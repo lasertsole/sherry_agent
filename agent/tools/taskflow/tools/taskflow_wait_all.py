@@ -127,7 +127,7 @@ async def _retry_settled_steps(
     spawned and recorded, and the orchestrator calls wait_all again to wait for
     it. No background retry loop lives in this tool.
     """
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return ""
     state = flow.get("state") or {}
@@ -171,7 +171,10 @@ async def _retry_settled_steps(
 
     if redispatches or exhausted:
         updated, error = await persist_retry_actions(
-            flow_id, flow, {"redispatches": redispatches, "exhausted": exhausted}
+            flow_id,
+            flow,
+            {"redispatches": redispatches, "exhausted": exhausted},
+            session_id=session_id,
         )
         if updated is None:
             # Spawned replacements are already alive and named by the error.
@@ -215,7 +218,7 @@ async def taskflow_wait_all(
     if not _ensure_registry():
         return f"Error: subagent registry unavailable: {_REGISTRY_ERROR}"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
 

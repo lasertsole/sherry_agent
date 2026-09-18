@@ -26,6 +26,8 @@ from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.config import INITIAL_REVISION
 from agent.tools.taskflow.registry import store_sqlite
 
+_SESSION = "sess-1"
+
 # The real module, NOT the tool object: the family package re-exports the tool
 # under the same name, so package-attribute traversal (from-imports, pytest
 # string targets) resolves to the StructuredTool. sys.modules keys are exact
@@ -172,24 +174,29 @@ def test_full_chain_create_run_resume_finish_across_restart(
     tools = _tool_map()
 
     async def phase1() -> None:
-        out = await tools["taskflow_create"].coroutine(flow_id="flow-1", description="demo chain")
+        out = await tools["taskflow_create"].coroutine(
+            session_id=_SESSION, flow_id="flow-1", description="demo chain"
+        )
         assert "flow-1" in out
         assert "revision=1" in out
 
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id="flow-1", task="collect data", session_id="sess-1"
+            flow_id="flow-1", task="collect data", session_id=_SESSION
         )
         assert "child-1" in out
         assert "step" in out
 
         out = await tools["taskflow_resume"].coroutine(
+            session_id=_SESSION,
             flow_id="flow-1",
             child_session_key="agent:main:subagent:child-1",
             result="all data collected",
         )
         assert "TaskFlow resumed" in out
 
-        out = await tools["taskflow_finish"].coroutine(flow_id="flow-1", summary="chain done")
+        out = await tools["taskflow_finish"].coroutine(
+            session_id=_SESSION, flow_id="flow-1", summary="chain done"
+        )
         assert "status=done" in out
 
     asyncio.run(phase1())  # event loop 1 (first "process")
@@ -201,7 +208,7 @@ def test_full_chain_create_run_resume_finish_across_restart(
     monkeypatch.setattr(store_sqlite, "_sync_tables_ready", False)
 
     async def phase2() -> None:
-        flow = await store_sqlite.get_flow("flow-1")
+        flow = await store_sqlite.get_flow("flow-1", _SESSION)
         assert flow is not None
         assert flow["status"] == "done"
         assert flow["child_session_key"] == "agent:main:subagent:child-1"
@@ -209,7 +216,7 @@ def test_full_chain_create_run_resume_finish_across_restart(
         assert flow["state"]["results"][0]["result"] == "all data collected"
         assert flow["state"]["steps"][0]["child_session_key"] == "agent:main:subagent:child-1"
 
-        summary = await tools["taskflow_summary"].coroutine(flow_id="flow-1")
+        summary = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id="flow-1")
         assert "flow-1" in summary
         assert "done" in summary
         assert "child-1" in summary
@@ -227,14 +234,22 @@ def test_full_chain_create_run_resume_finish_across_restart(
 @pytest.mark.asyncio
 async def test_concurrent_conflict_exactly_one_wins_with_latest_revision(isolated_db: Path):
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="conflict probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="conflict probe"
+    )
 
     results = await asyncio.gather(
         tools["taskflow_set_waiting"].coroutine(
-            flow_id="flow-1", wait_reason="writer A", expected_revision=INITIAL_REVISION
+            session_id=_SESSION,
+            flow_id="flow-1",
+            wait_reason="writer A",
+            expected_revision=INITIAL_REVISION,
         ),
         tools["taskflow_set_waiting"].coroutine(
-            flow_id="flow-1", wait_reason="writer B", expected_revision=INITIAL_REVISION
+            session_id=_SESSION,
+            flow_id="flow-1",
+            wait_reason="writer B",
+            expected_revision=INITIAL_REVISION,
         ),
         return_exceptions=True,
     )
@@ -250,7 +265,7 @@ async def test_concurrent_conflict_exactly_one_wins_with_latest_revision(isolate
     assert "latest revision=2" in conflicts[0]
     assert "expected_revision=1" in conflicts[0]
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["status"] == "waiting"
     assert flow["expected_revision"] == 2
@@ -290,36 +305,47 @@ async def test_resume_idempotent_no_double_injection(
     )
     tools = _tool_map()
 
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="resume probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="resume probe"
+    )
     await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="step one", session_id="sess-1"
+        flow_id="flow-1", task="step one", session_id=_SESSION
     )
 
     first = await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="agent:main:subagent:child-1", result="R1"
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="agent:main:subagent:child-1",
+        result="R1",
     )
     assert "TaskFlow resumed" in first
-    flow_after_first = await store_sqlite.get_flow("flow-1")
+    flow_after_first = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow_after_first is not None
     assert flow_after_first["expected_revision"] == 3  # create + run_task + resume
     assert len(flow_after_first["state"]["results"]) == 1
 
     # Same (child_session_key, result) again: no second injection, no revision bump.
     second = await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="agent:main:subagent:child-1", result="R1"
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="agent:main:subagent:child-1",
+        result="R1",
     )
     assert "already resumed" in second
-    flow_after_second = await store_sqlite.get_flow("flow-1")
+    flow_after_second = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow_after_second is not None
     assert flow_after_second["expected_revision"] == 3
     assert len(flow_after_second["state"]["results"]) == 1
 
     # A DIFFERENT result is a new injection.
     third = await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="agent:main:subagent:child-1", result="R2"
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="agent:main:subagent:child-1",
+        result="R2",
     )
     assert "TaskFlow resumed" in third
-    flow_after_third = await store_sqlite.get_flow("flow-1")
+    flow_after_third = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow_after_third is not None
     assert len(flow_after_third["state"]["results"]) == 2
 
@@ -348,8 +374,12 @@ def test_family_loads_without_p0_1_wiring():
 @pytest.mark.asyncio
 async def test_create_rejects_duplicate(isolated_db: Path):
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="first")
-    out = await tools["taskflow_create"].coroutine(flow_id="flow-1", description="second")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="first"
+    )
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="second"
+    )
     assert "already exists" in out
 
 
@@ -357,22 +387,22 @@ async def test_create_rejects_duplicate(isolated_db: Path):
 async def test_create_stores_creator_session_key(isolated_db: Path):
     tools = _tool_map()
     out = await tools["taskflow_create"].coroutine(
-        flow_id="flow-1", description="session probe", session_id="abc"
+        flow_id="flow-1", description="session probe", session_id=_SESSION
     )
     assert "revision=1" in out
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
-    assert flow["state"]["creator_session_key"] == "agent:main:session:abc"
+    assert flow["state"]["creator_session_key"] == "agent:main:session:sess-1"
 
 
 @pytest.mark.asyncio
-async def test_create_without_session_id(isolated_db: Path):
+async def test_create_without_session_id_is_rejected(isolated_db: Path):
+    """A flow with no owning session would be unreachable by any session."""
     tools = _tool_map()
     out = await tools["taskflow_create"].coroutine(flow_id="flow-1", description="legacy probe")
-    assert "revision=1" in out
-    flow = await store_sqlite.get_flow("flow-1")
-    assert flow is not None
-    assert "creator_session_key" not in flow["state"]
+    assert "Error" in out and "session_id" in out
+    assert await store_sqlite.get_flow("flow-1", _SESSION) is None
+    assert await store_sqlite.get_flow("flow-1", "") is None
 
 
 @pytest.mark.asyncio
@@ -381,13 +411,13 @@ async def test_set_waiting_then_resume_cycle(isolated_db: Path, monkeypatch: pyt
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-2")
     )
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1")
+    await tools["taskflow_create"].coroutine(session_id=_SESSION, flow_id="flow-1")
 
     out = await tools["taskflow_set_waiting"].coroutine(
-        flow_id="flow-1", wait_reason="awaiting child result"
+        session_id=_SESSION, flow_id="flow-1", wait_reason="awaiting child result"
     )
     assert "status=waiting" in out
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["status"] == "waiting"
     assert flow["wait"] is not None
@@ -395,10 +425,13 @@ async def test_set_waiting_then_resume_cycle(isolated_db: Path, monkeypatch: pyt
     assert flow["expected_revision"] == 2
 
     out = await tools["taskflow_resume"].coroutine(
-        flow_id="flow-1", child_session_key="agent:main:subagent:child-2", result="done"
+        session_id=_SESSION,
+        flow_id="flow-1",
+        child_session_key="agent:main:subagent:child-2",
+        result="done",
     )
     assert "status=running" in out
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["status"] == "running"
     assert flow["wait"] is None  # wait payload cleared on resume
@@ -417,15 +450,17 @@ async def test_run_task_registers_step_and_dispatch_args(
 
     monkeypatch.setattr(taskflow_dispatch_module, "dispatch_child", fake_dispatch)
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1", description="dispatch probe")
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="dispatch probe"
+    )
 
     out = await tools["taskflow_run_task"].coroutine(
-        flow_id="flow-1", task="write report", label="report", session_id="sess-9"
+        flow_id="flow-1", task="write report", label="report", session_id=_SESSION
     )
     assert "child-7" in out
-    assert dispatched == [("write report", "agent:main:session:sess-9", "report")]
+    assert dispatched == [("write report", "agent:main:session:sess-1", "report")]
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["child_session_key"] == "agent:main:subagent:child-7"
     assert flow["state"]["steps"][0]["task"] == "write report"
@@ -436,12 +471,16 @@ async def test_run_task_registers_step_and_dispatch_args(
 @pytest.mark.asyncio
 async def test_run_task_rejects_terminal_flow(isolated_db: Path):
     tools = _tool_map()
-    await tools["taskflow_create"].coroutine(flow_id="flow-1")
-    await tools["taskflow_cancel"].coroutine(flow_id="flow-1", reason="obsolete")
+    await tools["taskflow_create"].coroutine(session_id=_SESSION, flow_id="flow-1")
+    await tools["taskflow_cancel"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", reason="obsolete"
+    )
 
-    out = await tools["taskflow_run_task"].coroutine(flow_id="flow-1", task="zombie step")
+    out = await tools["taskflow_run_task"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", task="zombie step"
+    )
     assert "terminal" in out
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["expected_revision"] == 2  # unchanged by the rejected call
 
@@ -450,32 +489,114 @@ async def test_run_task_rejects_terminal_flow(isolated_db: Path):
 async def test_finish_fail_cancel_transitions(isolated_db: Path):
     tools = _tool_map()
     for fid in ("flow-done", "flow-fail", "flow-cancel"):
-        await tools["taskflow_create"].coroutine(flow_id=fid)
+        await tools["taskflow_create"].coroutine(session_id=_SESSION, flow_id=fid)
 
-    out = await tools["taskflow_finish"].coroutine(flow_id="flow-done", summary="ok")
+    out = await tools["taskflow_finish"].coroutine(
+        session_id=_SESSION, flow_id="flow-done", summary="ok"
+    )
     assert "status=done" in out
-    out = await tools["taskflow_fail"].coroutine(flow_id="flow-fail", reason="bad input")
+    out = await tools["taskflow_fail"].coroutine(
+        session_id=_SESSION, flow_id="flow-fail", reason="bad input"
+    )
     assert "status=failed" in out
-    out = await tools["taskflow_cancel"].coroutine(flow_id="flow-cancel", reason="user aborted")
+    out = await tools["taskflow_cancel"].coroutine(
+        session_id=_SESSION, flow_id="flow-cancel", reason="user aborted"
+    )
     assert "status=cancelled" in out
 
-    done = await store_sqlite.get_flow("flow-done")
-    failed = await store_sqlite.get_flow("flow-fail")
-    cancelled = await store_sqlite.get_flow("flow-cancel")
+    done = await store_sqlite.get_flow("flow-done", _SESSION)
+    failed = await store_sqlite.get_flow("flow-fail", _SESSION)
+    cancelled = await store_sqlite.get_flow("flow-cancel", _SESSION)
     assert done is not None and done["state"]["summary"] == "ok"
     assert failed is not None and failed["state"]["failure_reason"] == "bad input"
     assert cancelled is not None and cancelled["state"]["cancel_reason"] == "user aborted"
 
     # Terminal flows are immutable.
     for fid in ("flow-done", "flow-fail", "flow-cancel"):
-        out = await tools["taskflow_set_waiting"].coroutine(flow_id=fid, wait_reason="x")
+        out = await tools["taskflow_set_waiting"].coroutine(
+            session_id=_SESSION, flow_id=fid, wait_reason="x"
+        )
         assert "terminal" in out
 
 
 @pytest.mark.asyncio
 async def test_unknown_flow_errors(isolated_db: Path):
     tools = _tool_map()
-    out = await tools["taskflow_summary"].coroutine(flow_id="ghost")
+    out = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id="ghost")
     assert "not found" in out
-    out = await tools["taskflow_resume"].coroutine(flow_id="ghost", result="x")
+    out = await tools["taskflow_resume"].coroutine(session_id=_SESSION, flow_id="ghost", result="x")
     assert "not found" in out
+
+
+# ---------------------------------------------------------------------------
+# Session isolation at the tool boundary + subagent tool policy
+# ---------------------------------------------------------------------------
+
+_OTHER_SESSION = "sess-other"
+
+
+def test_subagent_policy_drops_main_only_planning_families(build_main_tools_real):
+    """The real main toolset carries taskflow/todolist/knowledge; a subagent
+    policy pass drops every one of them."""
+    from agent.tools.subagent.spawn.inherited_tool_policy import apply_tool_policy
+
+    tools = build_main_tools_real()
+    main_names = {t.name for t in tools}
+    assert {"taskflow_create", "todowrite", "todoread", "knowledge"} <= main_names
+
+    kept = {t.name for t in apply_tool_policy(tools, None, None)}
+
+    assert not any(name.startswith("taskflow_") for name in kept), sorted(kept)
+    assert "todowrite" not in kept and "todoread" not in kept
+    assert "knowledge" not in kept
+
+
+@pytest.mark.asyncio
+async def test_tools_cannot_touch_another_sessions_flow(isolated_db: Path):
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_OTHER_SESSION, flow_id="flow-other", description="other"
+    )
+
+    summary = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id="flow-other")
+    finish = await tools["taskflow_finish"].coroutine(session_id=_SESSION, flow_id="flow-other")
+    assert "not found" in summary and "not found" in finish
+
+    untouched = await store_sqlite.get_flow("flow-other", _OTHER_SESSION)
+    assert untouched is not None
+    assert untouched["status"] == "running"
+
+    own = await tools["taskflow_summary"].coroutine(session_id=_OTHER_SESSION, flow_id="flow-other")
+    assert "flow-other" in own
+
+
+@pytest.mark.asyncio
+async def test_list_shows_only_own_sessions_flows(isolated_db: Path):
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-mine", description="mine"
+    )
+    await tools["taskflow_create"].coroutine(
+        session_id=_OTHER_SESSION, flow_id="flow-theirs", description="theirs"
+    )
+
+    out = await tools["taskflow_list"].coroutine(session_id=_SESSION)
+
+    assert "flow-mine" in out
+    assert "flow-theirs" not in out
+
+
+@pytest.mark.asyncio
+async def test_create_duplicate_cross_session_hides_revision(isolated_db: Path):
+    """A foreign flow_id collision reports existence without leaking its revision."""
+    tools = _tool_map()
+    await tools["taskflow_create"].coroutine(
+        session_id=_OTHER_SESSION, flow_id="flow-1", description="first"
+    )
+
+    out = await tools["taskflow_create"].coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="second"
+    )
+
+    assert "already exists" in out
+    assert "revision=" not in out

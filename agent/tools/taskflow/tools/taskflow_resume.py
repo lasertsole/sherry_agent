@@ -82,7 +82,7 @@ async def taskflow_resume(
     if not child_session_key and not result:
         return "Error: taskflow_resume requires child_session_key or result"
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
     if is_terminal(flow["status"]):
@@ -211,6 +211,7 @@ async def taskflow_resume(
             flow,
             build_state,
             child_keys=[replacement_key],
+            session_id=session_id,
             update_kwargs={
                 "wait": None,
                 "status": new_status,
@@ -225,6 +226,7 @@ async def taskflow_resume(
             updated = await store_sqlite.update_flow(
                 flow_id,
                 revision,
+                session_id=session_id,
                 state=state,
                 wait=None,
                 status=new_status,

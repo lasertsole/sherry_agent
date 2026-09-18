@@ -82,7 +82,7 @@ async def taskflow_run_task(
     if policy_error:
         return policy_error
 
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, session_id)
     if flow is None:
         return not_found_error(flow_id)
     if is_terminal(flow["status"]):
@@ -114,7 +114,9 @@ async def taskflow_run_task(
         state["steps"] = steps
 
         try:
-            blocked = await store_sqlite.update_flow(flow_id, revision, state=state)
+            blocked = await store_sqlite.update_flow(
+                flow_id, revision, session_id=session_id, state=state
+            )
         except FlowConflictError as exc:
             return conflict_error(exc)
         except FlowNotFoundError:
@@ -154,6 +156,7 @@ async def taskflow_run_task(
         flow,
         build_state,
         child_keys=[child_session_key],
+        session_id=session_id,
         flow_child_session_key=child_session_key,
     )
     if updated is None:

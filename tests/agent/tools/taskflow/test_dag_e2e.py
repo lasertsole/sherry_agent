@@ -27,7 +27,7 @@ Flow exercised:
 The same file also carries one E2E test per feature added after the original
 DAG flow: budget tracking, deadlines, the progress report,
 validation criteria, retry policy and the
-cross-session board. They share the same two fake seams, plus a frozen
+session-scoped board. They share the same two fake seams, plus a frozen
 clock for the deadline math, so no test depends on wall-clock time.
 """
 
@@ -41,6 +41,8 @@ import pytest
 
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.registry import store_sqlite
+
+_SESSION = "sess-1"
 
 # Package-attribute traversal is shadowed by the re-exported tool objects
 # (the family package binds the tool under the module's name); sys.modules
@@ -187,18 +189,20 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
     async def phase1() -> dict[str, str]:
         # Given a fresh flow
-        out = await tools["taskflow_create"].coroutine(flow_id=FLOW, description="dag e2e")
+        out = await tools["taskflow_create"].coroutine(
+            session_id=_SESSION, flow_id=FLOW, description="dag e2e"
+        )
         assert "revision=1" in out
 
         # When A is dispatched
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id=FLOW, task=TASK_A, session_id="sess-1"
+            flow_id=FLOW, task=TASK_A, session_id=_SESSION
         )
         assert "step-1" in out and "dispatched" in out
 
         # And B is registered while its dependency (step-1) is not done
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id=FLOW, task=TASK_B, depends_on=["step-1"], session_id="sess-1"
+            flow_id=FLOW, task=TASK_B, depends_on=["step-1"], session_id=_SESSION
         )
         # Then B is blocked and NOT spawned (only A's single spawn so far)
         assert "blocked" in out, out
@@ -207,12 +211,12 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
         # And an independent C is dispatched (parallel work)
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id=FLOW, task=TASK_C, session_id="sess-1"
+            flow_id=FLOW, task=TASK_C, session_id=_SESSION
         )
         assert "step-3" in out and "dispatched" in out
         assert len(dispatched) == 2
 
-        flow = await store_sqlite.get_flow(FLOW)
+        flow = await store_sqlite.get_flow(FLOW, _SESSION)
         assert flow is not None
         assert _capture_statuses(flow) == {
             "step-1": "dispatched",
@@ -222,7 +226,7 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
         # When A's result is injected
         out = await tools["taskflow_resume"].coroutine(
-            flow_id=FLOW, child_session_key=CHILD_A, result="data collected"
+            session_id=_SESSION, flow_id=FLOW, child_session_key=CHILD_A, result="data collected"
         )
         # Then step-1 is done, step-2 is reported ready, and B was NOT spawned
         assert "TaskFlow resumed" in out, out
@@ -230,7 +234,7 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
         assert "unlocked=[step-2]" in out, out
         assert len(dispatched) == 2, "resume must not auto-spawn the unlocked step"
 
-        flow = await store_sqlite.get_flow(FLOW)
+        flow = await store_sqlite.get_flow(FLOW, _SESSION)
         assert flow is not None
         assert _capture_statuses(flow) == {
             "step-1": "done",
@@ -240,13 +244,13 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
         # When the unlocked step is dispatched explicitly
         out = await tools["taskflow_dispatch"].coroutine(
-            flow_id=FLOW, step_ids=["step-2"], session_id="sess-1"
+            flow_id=FLOW, step_ids=["step-2"], session_id=_SESSION
         )
         # Then it spawns (count -> 3) and becomes dispatched
         assert "step-2" in out and "dispatched" in out, out
         assert len(dispatched) == 3
 
-        flow = await store_sqlite.get_flow(FLOW)
+        flow = await store_sqlite.get_flow(FLOW, _SESSION)
         assert flow is not None
         pre_restart = _capture_statuses(flow)
         assert pre_restart == {
@@ -267,13 +271,13 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
     async def phase2() -> None:
         # Then the DAG survives the restart unchanged (stale-state guard)
-        flow = await store_sqlite.get_flow(FLOW)
+        flow = await store_sqlite.get_flow(FLOW, _SESSION)
         assert flow is not None
         assert _capture_statuses(flow) == pre_restart, "DAG state must survive a restart"
 
         # When wait_all runs with the fake liveness flipping live -> settled
         out = await tools["taskflow_wait_all"].coroutine(
-            flow_id=FLOW, timeout_seconds=5.0, poll_interval_seconds=0.01
+            session_id=_SESSION, flow_id=FLOW, timeout_seconds=5.0, poll_interval_seconds=0.01
         )
         # Then both dispatched steps are reported settled after at least one poll
         assert "Error" not in out, out
@@ -284,14 +288,14 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
         # When both remaining child results are injected
         for child_key, result in ((CHILD_B, "aggregated"), (CHILD_C, "report written")):
             out = await tools["taskflow_resume"].coroutine(
-                flow_id=FLOW, child_session_key=child_key, result=result
+                session_id=_SESSION, flow_id=FLOW, child_session_key=child_key, result=result
             )
             assert "TaskFlow resumed" in out, out
         # Then no resume spawned anything
         assert len(dispatched) == 3, "resume must never spawn"
 
         # And every step is done with three injected results
-        flow = await store_sqlite.get_flow(FLOW)
+        flow = await store_sqlite.get_flow(FLOW, _SESSION)
         assert flow is not None
         assert _capture_statuses(flow) == {
             "step-1": "done",
@@ -301,11 +305,13 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
         assert len(flow["state"]["results"]) == 3
 
         # When the flow is finished
-        out = await tools["taskflow_finish"].coroutine(flow_id=FLOW, summary="dag complete")
+        out = await tools["taskflow_finish"].coroutine(
+            session_id=_SESSION, flow_id=FLOW, summary="dag complete"
+        )
         assert "status=done" in out
 
         # Then the summary shows the step-status counts line
-        summary = await tools["taskflow_summary"].coroutine(flow_id=FLOW)
+        summary = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id=FLOW)
         assert "step statuses: blocked=0 ready=0 dispatched=0 done=3" in summary, summary
         assert "results: 3" in summary, summary
 
@@ -326,22 +332,23 @@ def test_dag_e2e_budget_set_resume_and_query(isolated_db: Path, monkeypatch: pyt
     async def scenario() -> None:
         # Given a fresh flow with a 50k token budget
         out = await tools["taskflow_create"].coroutine(
-            flow_id=FLOW_BUDGET, description="budget e2e"
+            session_id=_SESSION, flow_id=FLOW_BUDGET, description="budget e2e"
         )
         assert "revision=1" in out, out
         out = await tools["taskflow_budget"].coroutine(
-            flow_id=FLOW_BUDGET, action="set", token_budget=50000
+            session_id=_SESSION, flow_id=FLOW_BUDGET, action="set", token_budget=50000
         )
         assert "Budget set: flow_id=flow-dag-budget, token_budget=50,000, revision=2" in out, out
 
         # And one dispatched step
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id=FLOW_BUDGET, task="estimate cost", session_id="sess-budget"
+            flow_id=FLOW_BUDGET, task="estimate cost", session_id=_SESSION
         )
         assert "step-1" in out and "dispatched" in out, out
 
         # When the child result is injected WITH its token usage
         out = await tools["taskflow_resume"].coroutine(
+            session_id=_SESSION,
             flow_id=FLOW_BUDGET,
             child_session_key="agent:main:subagent:budget-a",
             result="cost estimated",
@@ -350,14 +357,16 @@ def test_dag_e2e_budget_set_resume_and_query(isolated_db: Path, monkeypatch: pyt
         assert "TaskFlow resumed" in out, out
 
         # Then the flow accumulated tokens and cost
-        flow = await store_sqlite.get_flow(FLOW_BUDGET)
+        flow = await store_sqlite.get_flow(FLOW_BUDGET, _SESSION)
         assert flow is not None
         assert flow["total_tokens"] == 7000
         assert flow["total_cost"] == pytest.approx(0.0055)
         assert flow["token_budget"] == 50000
 
         # And the budget query renders tokens, cost, remaining and status exactly
-        out = await tools["taskflow_budget"].coroutine(flow_id=FLOW_BUDGET, action="query")
+        out = await tools["taskflow_budget"].coroutine(
+            session_id=_SESSION, flow_id=FLOW_BUDGET, action="query"
+        )
         assert "  tokens: 7,000 / 50,000 (14.0%)" in out, out
         assert "  cost: $0.0055" in out, out
         assert "  remaining: 43,000 tokens" in out, out
@@ -379,16 +388,21 @@ def test_dag_e2e_deadline_not_overdue(isolated_db: Path, monkeypatch: pytest.Mon
     async def scenario() -> None:
         # When a flow is created with a 24h deadline
         out = await tools["taskflow_create"].coroutine(
-            flow_id=FLOW_DEADLINE, description="deadline e2e", deadline_hours=24.0
+            session_id=_SESSION,
+            flow_id=FLOW_DEADLINE,
+            description="deadline e2e",
+            deadline_hours=24.0,
         )
         # Then the create response and the row carry the deadline
         assert "deadline=" in out, out
-        flow = await store_sqlite.get_flow(FLOW_DEADLINE)
+        flow = await store_sqlite.get_flow(FLOW_DEADLINE, _SESSION)
         assert flow is not None
         assert flow["deadline_ts"] == frozen_now + 24 * 3600
 
         # And the summary renders the remaining hours
-        summary = await tools["taskflow_summary"].coroutine(flow_id=FLOW_DEADLINE)
+        summary = await tools["taskflow_summary"].coroutine(
+            session_id=_SESSION, flow_id=FLOW_DEADLINE
+        )
         assert "deadline:" in summary, summary
         assert "(24.0h remaining)" in summary, summary
 
@@ -412,29 +426,32 @@ def test_dag_e2e_progress_report_tracks_unlock(isolated_db: Path, monkeypatch: p
     async def scenario() -> None:
         # Given step-1 dispatched and step-2 blocked on it
         out = await tools["taskflow_create"].coroutine(
-            flow_id=FLOW_PROGRESS, description="progress e2e"
+            session_id=_SESSION, flow_id=FLOW_PROGRESS, description="progress e2e"
         )
         assert "revision=1" in out, out
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id=FLOW_PROGRESS, task=TASK_A, session_id="sess-progress"
+            flow_id=FLOW_PROGRESS, task=TASK_A, session_id=_SESSION
         )
         assert "dispatched" in out, out
         out = await tools["taskflow_run_task"].coroutine(
             flow_id=FLOW_PROGRESS,
             task=TASK_B,
             depends_on=["step-1"],
-            session_id="sess-progress",
+            session_id=_SESSION,
         )
         assert "blocked" in out, out
 
         # When step-1's result is injected and step-2 unlocks
         out = await tools["taskflow_resume"].coroutine(
-            flow_id=FLOW_PROGRESS, child_session_key=CHILD_A, result="data collected"
+            session_id=_SESSION,
+            flow_id=FLOW_PROGRESS,
+            child_session_key=CHILD_A,
+            result="data collected",
         )
         assert "unlocked=[step-2]" in out, out
 
         # Then the progress report renders completion, breakdown, next steps
-        out = await tools["taskflow_progress"].coroutine(flow_id=FLOW_PROGRESS)
+        out = await tools["taskflow_progress"].coroutine(session_id=_SESSION, flow_id=FLOW_PROGRESS)
         assert f"Progress Report: {FLOW_PROGRESS}" in out, out
         assert "  Status: running" in out, out
         assert "  Completion: 1/2 steps (50%)" in out, out
@@ -462,24 +479,25 @@ def test_dag_e2e_validation_criteria_echo_and_summary(
     async def scenario() -> None:
         # Given a step dispatched with validation criteria
         out = await tools["taskflow_create"].coroutine(
-            flow_id=FLOW_VALIDATION, description="validation e2e"
+            session_id=_SESSION, flow_id=FLOW_VALIDATION, description="validation e2e"
         )
         assert "revision=1" in out, out
         out = await tools["taskflow_run_task"].coroutine(
             flow_id=FLOW_VALIDATION,
             task="write report",
             validation_criteria=criteria,
-            session_id="sess-validation",
+            session_id=_SESSION,
         )
         assert "dispatched" in out, out
 
         # Then the criteria are persisted on the step
-        flow = await store_sqlite.get_flow(FLOW_VALIDATION)
+        flow = await store_sqlite.get_flow(FLOW_VALIDATION, _SESSION)
         assert flow is not None
         assert flow["state"]["steps"][0]["validation_criteria"] == criteria
 
         # When a misleading "SUCCESS" result is injected
         out = await tools["taskflow_resume"].coroutine(
+            session_id=_SESSION,
             flow_id=FLOW_VALIDATION,
             child_session_key=CHILD_A,
             result="SUCCESS! Everything is fine, trust me.",
@@ -490,9 +508,11 @@ def test_dag_e2e_validation_criteria_echo_and_summary(
         assert "\n  ⚠ Result needs validation against criteria" in out, out
 
         # And the summary surfaces the criteria for the orchestrator's verdict
-        summary = await tools["taskflow_summary"].coroutine(flow_id=FLOW_VALIDATION)
+        summary = await tools["taskflow_summary"].coroutine(
+            session_id=_SESSION, flow_id=FLOW_VALIDATION
+        )
         assert f"validation_criteria={criteria}" in summary, summary
-        flow = await store_sqlite.get_flow(FLOW_VALIDATION)
+        flow = await store_sqlite.get_flow(FLOW_VALIDATION, _SESSION)
         assert flow is not None
         assert flow["state"]["steps"][0]["status"] == "done"
 
@@ -513,17 +533,17 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
     async def scenario() -> None:
         # Given a dispatched step carrying the retry policy
         out = await tools["taskflow_create"].coroutine(
-            flow_id=FLOW_RETRY, description="retry e2e", session_id="sess-retry"
+            flow_id=FLOW_RETRY, description="retry e2e", session_id=_SESSION
         )
         assert "revision=1" in out, out
         out = await tools["taskflow_run_task"].coroutine(
-            flow_id=FLOW_RETRY, task=task, retry_policy=policy, session_id="sess-retry"
+            flow_id=FLOW_RETRY, task=task, retry_policy=policy, session_id=_SESSION
         )
         assert "child_session_key=agent:main:subagent:retry-1" in out, out
 
         # When wait_all sees the first child settle dead
         out = await tools["taskflow_wait_all"].coroutine(
-            flow_id=FLOW_RETRY, timeout_seconds=5.0, poll_interval_seconds=0.01
+            session_id=_SESSION, flow_id=FLOW_RETRY, timeout_seconds=5.0, poll_interval_seconds=0.01
         )
         # Then one replacement is spawned and the counter increments to the cap
         assert "settled=True" in out, out
@@ -534,8 +554,8 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
         ), out
         assert len(fake.calls) == 2, fake.calls
         assert [call[0] for call in fake.calls] == [task, task]
-        assert fake.calls[1][1] == "agent:main:session:sess-retry", fake.calls[1]
-        flow = await store_sqlite.get_flow(FLOW_RETRY)
+        assert fake.calls[1][1] == "agent:main:session:sess-1", fake.calls[1]
+        flow = await store_sqlite.get_flow(FLOW_RETRY, _SESSION)
         assert flow is not None
         step = flow["state"]["steps"][0]
         assert step["retry_count"] == 1
@@ -544,7 +564,7 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
 
         # When the replacement child also settles dead
         out = await tools["taskflow_wait_all"].coroutine(
-            flow_id=FLOW_RETRY, timeout_seconds=5.0, poll_interval_seconds=0.01
+            session_id=_SESSION, flow_id=FLOW_RETRY, timeout_seconds=5.0, poll_interval_seconds=0.01
         )
         # Then the budget is exhausted: no third spawn, step done, failure note
         assert (
@@ -552,7 +572,7 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
             "marked done with a failure note" in out
         ), out
         assert len(fake.calls) == 2, fake.calls
-        flow = await store_sqlite.get_flow(FLOW_RETRY)
+        flow = await store_sqlite.get_flow(FLOW_RETRY, _SESSION)
         assert flow is not None
         step = flow["state"]["steps"][0]
         assert step["status"] == "done"
@@ -565,56 +585,59 @@ def test_dag_e2e_retry_policy_redispatch_and_exhaustion(
     asyncio.run(scenario())
 
 
-def test_dag_e2e_cross_session_board_and_status_filter(isolated_db: Path):
-    """The board lists flows from different sessions and filters status."""
+def test_dag_e2e_session_board_and_status_filter(isolated_db: Path):
+    """The board is session-scoped: each session sees only its own flows."""
     tools = {t.name: t for t in build_taskflow_tools()}
+    other = "sess-board-b"
 
     async def scenario() -> None:
-        # Given active flows created by two DIFFERENT sessions plus a finished one
-        for flow_id, session_id, description in (
-            (FLOW_BOARD_A, "sess-board-a", "first board flow"),
-            (FLOW_BOARD_B, "sess-board-b", "second board flow"),
-        ):
-            out = await tools["taskflow_create"].coroutine(
-                flow_id=flow_id, description=description, session_id=session_id
-            )
-            assert "revision=1" in out, out
+        # Given an active flow for this session and one for ANOTHER session
         out = await tools["taskflow_create"].coroutine(
-            flow_id=FLOW_BOARD_DONE, description="finished board flow", session_id="sess-board-c"
+            flow_id=FLOW_BOARD_A, description="first board flow", session_id=_SESSION
+        )
+        assert "revision=1" in out, out
+        out = await tools["taskflow_create"].coroutine(
+            flow_id=FLOW_BOARD_B, description="second board flow", session_id=other
+        )
+        assert "revision=1" in out, out
+        # And a finished flow owned by this session
+        out = await tools["taskflow_create"].coroutine(
+            flow_id=FLOW_BOARD_DONE, description="finished board flow", session_id=_SESSION
         )
         assert "revision=1" in out, out
         out = await tools["taskflow_finish"].coroutine(
-            flow_id=FLOW_BOARD_DONE, summary="board done"
+            flow_id=FLOW_BOARD_DONE, summary="board done", session_id=_SESSION
         )
         assert "status=done" in out, out
 
-        # Then the default active board lists both sessions' flows, no terminal one
-        out = await tools["taskflow_list"].coroutine()
-        assert "TaskFlow board (active): 2 flow(s)" in out, out
-        assert FLOW_BOARD_A in out and FLOW_BOARD_B in out, out
-        assert FLOW_BOARD_DONE not in out, out
-        assert "first board flow" in out and "second board flow" in out, out
+        # Then the default active board lists only this session's active flow
+        out = await tools["taskflow_list"].coroutine(session_id=_SESSION)
+        assert "TaskFlow board (active): 1 flow(s)" in out, out
+        assert FLOW_BOARD_A in out, out
+        assert FLOW_BOARD_B not in out and FLOW_BOARD_DONE not in out, out
 
-        # And status_filter="done" narrows to the finished flow only
-        out = await tools["taskflow_list"].coroutine(status_filter="done")
+        # And status_filter="done" narrows to this session's finished flow only
+        out = await tools["taskflow_list"].coroutine(status_filter="done", session_id=_SESSION)
         assert "TaskFlow board (done): 1 flow(s)" in out, out
         assert FLOW_BOARD_DONE in out, out
-        assert FLOW_BOARD_A not in out and FLOW_BOARD_B not in out, out
+        assert FLOW_BOARD_A not in out, out
 
-        # And status_filter="all" includes active and terminal flows
-        out = await tools["taskflow_list"].coroutine(status_filter="all")
-        assert "TaskFlow board (all): 3 flow(s)" in out, out
-        for flow_id in (FLOW_BOARD_A, FLOW_BOARD_B, FLOW_BOARD_DONE):
-            assert flow_id in out, out
+        # And status_filter="all" includes this session's active + terminal flows
+        out = await tools["taskflow_list"].coroutine(status_filter="all", session_id=_SESSION)
+        assert "TaskFlow board (all): 2 flow(s)" in out, out
+        assert FLOW_BOARD_A in out and FLOW_BOARD_DONE in out, out
+        assert FLOW_BOARD_B not in out, out
 
-        # And the store proves the two active flows came from different sessions
-        flow_a = await store_sqlite.get_flow(FLOW_BOARD_A)
-        flow_b = await store_sqlite.get_flow(FLOW_BOARD_B)
+        # And the other session's board never shows this session's flows
+        out = await tools["taskflow_list"].coroutine(status_filter="all", session_id=other)
+        assert "TaskFlow board (all): 1 flow(s)" in out, out
+        assert FLOW_BOARD_B in out, out
+        assert FLOW_BOARD_A not in out and FLOW_BOARD_DONE not in out, out
+
+        # And the store rows carry their owning session
+        flow_a = await store_sqlite.get_flow(FLOW_BOARD_A, _SESSION)
         assert flow_a is not None
-        assert flow_b is not None
-        creator_a = flow_a["state"]["creator_session_key"]
-        creator_b = flow_b["state"]["creator_session_key"]
-        assert creator_a == "agent:main:session:sess-board-a"
-        assert creator_b == "agent:main:session:sess-board-b"
+        assert flow_a["session_id"] == _SESSION
+        assert flow_a["state"]["creator_session_key"] == "agent:main:session:sess-1"
 
     asyncio.run(scenario())

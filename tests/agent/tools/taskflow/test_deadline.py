@@ -27,6 +27,8 @@ from agent.tools.taskflow.tools.taskflow_create import taskflow_create
 from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
 from agent.tools.subagent.registry import sweeper
 
+_SESSION = "session-test"
+
 pytestmark = [pytest.mark.unit]
 
 
@@ -38,6 +40,7 @@ async def _create_overdue(flow_id: str, *, seconds_ago: float = 60.0) -> dict:
     return await store_sqlite.create_flow(
         flow_id,
         _make_state(flow_id),
+        session_id=_SESSION,
         deadline_ts=time.time() - seconds_ago,
     )
 
@@ -52,11 +55,11 @@ async def test_create_with_deadline(isolated_db: Path):
     """deadline_hours=24 persists deadline_ts within the [before, after]+24h window."""
     before = time.time()
     out = await taskflow_create.coroutine(
-        flow_id="flow-1", description="urgent", deadline_hours=24.0
+        session_id=_SESSION, flow_id="flow-1", description="urgent", deadline_hours=24.0
     )
     after = time.time()
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     deadline_ts = flow["deadline_ts"]
     assert deadline_ts is not None
@@ -67,9 +70,11 @@ async def test_create_with_deadline(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_create_without_deadline(isolated_db: Path):
     """deadline_hours=None leaves deadline_ts NULL and appends no deadline text."""
-    out = await taskflow_create.coroutine(flow_id="flow-1", description="no deadline")
+    out = await taskflow_create.coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="no deadline"
+    )
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["deadline_ts"] is None
     assert "deadline=" not in out
@@ -83,9 +88,11 @@ async def test_create_without_deadline(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_summary_shows_deadline(isolated_db: Path):
     """A live deadline renders a 'deadline:' line with the remaining hours."""
-    await taskflow_create.coroutine(flow_id="flow-1", description="live", deadline_hours=5.0)
+    await taskflow_create.coroutine(
+        session_id=_SESSION, flow_id="flow-1", description="live", deadline_hours=5.0
+    )
 
-    out = await taskflow_summary.coroutine(flow_id="flow-1")
+    out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 
     assert "deadline:" in out
     assert "h remaining" in out
@@ -96,7 +103,7 @@ async def test_summary_shows_exceeded(isolated_db: Path):
     """A passed deadline on a non-terminal flow renders EXCEEDED."""
     await _create_overdue("flow-1")
 
-    out = await taskflow_summary.coroutine(flow_id="flow-1")
+    out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 
     assert "EXCEEDED" in out
 
@@ -104,9 +111,9 @@ async def test_summary_shows_exceeded(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_summary_no_deadline(isolated_db: Path):
     """No deadline set -> the summary contains no deadline line at all."""
-    await taskflow_create.coroutine(flow_id="flow-1", description="plain")
+    await taskflow_create.coroutine(session_id=_SESSION, flow_id="flow-1", description="plain")
 
-    out = await taskflow_summary.coroutine(flow_id="flow-1")
+    out = await taskflow_summary.coroutine(session_id=_SESSION, flow_id="flow-1")
 
     assert "deadline:" not in out
 
@@ -124,7 +131,7 @@ async def test_sweeper_expires_overdue(isolated_db: Path):
     expired = await sweeper._expire_overdue_taskflows()
 
     assert expired == 1
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["status"] == TaskFlowStatus.FAILED.value
 
@@ -133,12 +140,14 @@ async def test_sweeper_expires_overdue(isolated_db: Path):
 async def test_sweeper_skips_terminal(isolated_db: Path):
     """A terminal flow is not reprocessed even with a passed deadline."""
     await _create_overdue("flow-1")
-    await store_sqlite.update_flow("flow-1", INITIAL_REVISION, status=TaskFlowStatus.DONE.value)
+    await store_sqlite.update_flow(
+        "flow-1", INITIAL_REVISION, session_id=_SESSION, status=TaskFlowStatus.DONE.value
+    )
 
     expired = await sweeper._expire_overdue_taskflows()
 
     assert expired == 0
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["status"] == TaskFlowStatus.DONE.value
     assert flow["expected_revision"] == INITIAL_REVISION + 1
@@ -148,12 +157,12 @@ async def test_sweeper_skips_terminal(isolated_db: Path):
 @pytest.mark.asyncio
 async def test_sweeper_skips_no_deadline(isolated_db: Path):
     """A flow without a deadline is never touched by the sweeper scan."""
-    await store_sqlite.create_flow("flow-1", _make_state("no deadline"))
+    await store_sqlite.create_flow("flow-1", _make_state("no deadline"), session_id=_SESSION)
 
     expired = await sweeper._expire_overdue_taskflows()
 
     assert expired == 0
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["status"] == TaskFlowStatus.RUNNING.value
     assert flow["expected_revision"] == INITIAL_REVISION
@@ -166,6 +175,6 @@ async def test_expired_flow_has_failure_reason(isolated_db: Path):
 
     await sweeper._expire_overdue_taskflows()
 
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert "Deadline exceeded" in flow["state"]["failure_reason"]

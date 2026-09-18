@@ -23,6 +23,8 @@ import pytest
 from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
 
+_SESSION = "session-test"
+
 # The family package re-exports the tool under the same name, which shadows the
 # submodule for package-attribute traversal. importlib resolves the real module
 # from sys.modules, so monkeypatching the registry seam still works.
@@ -76,13 +78,15 @@ def _patch_registry(
 
 async def _seed(steps: list[dict]) -> None:
     await store_sqlite.create_flow(
-        FLOW, {"description": "wait probe", "steps": steps, "results": []}
+        FLOW,
+        {"description": "wait probe", "steps": steps, "results": []},
+        session_id=_SESSION,
     )
 
 
 async def _wait(timeout_seconds: float = 5.0) -> str:
     return await wait_mod.taskflow_wait_all.coroutine(
-        FLOW, timeout_seconds=timeout_seconds, poll_interval_seconds=0.01
+        FLOW, timeout_seconds=timeout_seconds, poll_interval_seconds=0.01, session_id=_SESSION
     )
 
 
@@ -254,7 +258,7 @@ async def test_unknown_flow_returns_error(isolated_db: Path, monkeypatch: pytest
 
     # When wait_all is called on a missing id
     out = await wait_mod.taskflow_wait_all.coroutine(
-        "ghost-flow", timeout_seconds=0.01, poll_interval_seconds=0.01
+        "ghost-flow", timeout_seconds=0.01, poll_interval_seconds=0.01, session_id=_SESSION
     )
 
     # Then it returns an Error string

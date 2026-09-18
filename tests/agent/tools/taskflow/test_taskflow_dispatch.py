@@ -53,7 +53,10 @@ def _step(
 
 async def _seed(flow_id: str, steps: list[dict]) -> None:
     out = await taskflow_create.coroutine(
-        flow_id=flow_id, description="dispatch probe", initial_state={"steps": steps}
+        session_id=_SESSION,
+        flow_id=flow_id,
+        description="dispatch probe",
+        initial_state={"steps": steps},
     )
     assert "Error" not in out
 
@@ -72,7 +75,7 @@ def _recording_dispatch(calls: list, keys: list[str], fail_at: int | None = None
 
 
 async def _steps_map(flow_id: str) -> dict[str, dict]:
-    flow = await store_sqlite.get_flow(flow_id)
+    flow = await store_sqlite.get_flow(flow_id, _SESSION)
     assert flow is not None
     return {s["step_id"]: s for s in flow["state"]["steps"]}
 
@@ -138,7 +141,7 @@ async def test_still_blocked_id_rejected_with_zero_spawns(isolated_db: Path, mon
     assert calls == []
     steps = await _steps_map("flow-1")
     assert steps["step-3"]["status"] == StepStatus.READY
-    flow = await store_sqlite.get_flow("flow-1")
+    flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert flow["expected_revision"] == 1  # no state change
 
@@ -237,7 +240,7 @@ async def test_flow_level_child_session_key_unchanged(isolated_db: Path, monkeyp
         _recording_dispatch(calls, ["agent:main:subagent:child-1"]),
     )
     await _seed("flow-1", [_step("step-1", StepStatus.READY)])
-    before = await store_sqlite.get_flow("flow-1")
+    before = await store_sqlite.get_flow("flow-1", _SESSION)
     assert before is not None
     assert before["child_session_key"] is None
 
@@ -246,7 +249,7 @@ async def test_flow_level_child_session_key_unchanged(isolated_db: Path, monkeyp
     )
 
     assert "Error" not in out, out
-    after = await store_sqlite.get_flow("flow-1")
+    after = await store_sqlite.get_flow("flow-1", _SESSION)
     assert after is not None
     assert after["child_session_key"] is None  # per-step keys are authoritative
 
@@ -329,7 +332,7 @@ async def test_terminal_flow_errors(isolated_db: Path, monkeypatch):
     calls: list = []
     monkeypatch.setattr(_dispatch, "dispatch_child", _recording_dispatch(calls, ["unused"]))
     await _seed("flow-1", [_step("step-1", StepStatus.READY)])
-    await taskflow_cancel.coroutine(flow_id="flow-1", reason="done")
+    await taskflow_cancel.coroutine(session_id=_SESSION, flow_id="flow-1", reason="done")
 
     out = await taskflow_dispatch.coroutine(
         flow_id="flow-1", step_ids=["step-1"], session_id=_SESSION
