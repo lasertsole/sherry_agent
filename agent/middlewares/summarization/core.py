@@ -383,6 +383,26 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
     return "\n\n".join(lines)
 
 
+def _filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
+    """Filter out previous summary messages to avoid chain summary redundancy.
+
+    Removes messages tagged with ``lc_source='summarization'`` — the
+    HumanMessage ("What did we do so far?") + AIMessage (summary content)
+    pair produced by ``_build_new_messages``. The previous summary text is
+    already extracted via ``_extract_previous_summary`` and injected into
+    ``<prior-summary>`` separately; keeping it in the serialized
+    ``<conversation>`` causes token waste and summarizer confusion.
+
+    Mirrors opencode-dev's ``hidden`` set filtering and deepagents'
+    ``_filter_summary_messages``.
+    """
+    return [
+        m
+        for m in messages
+        if getattr(m, "additional_kwargs", {}).get("lc_source") != _SUMMARY_LC_SOURCE
+    ]
+
+
 # ======================================================================
 # Deterministic Fallback (inspired by hermes-agent)
 # ======================================================================
@@ -1658,7 +1678,8 @@ class Summarization(AgentMiddleware):
             return "No previous conversation history."
 
         previous_summary = self._extract_previous_summary(messages_to_summarize)
-        serialized = _serialize_for_summary(messages_to_summarize)
+        filtered = _filter_summary_messages(messages_to_summarize)
+        serialized = _serialize_for_summary(filtered)
         if not serialized.strip():
             return "No previous conversation history."
 
@@ -1672,11 +1693,11 @@ class Summarization(AgentMiddleware):
             summary = response.text.strip()
             if not summary or len(summary) < 50:
                 logger.warning("Summary too short, using fallback")
-                return _build_static_fallback_summary(messages_to_summarize)
+                return _build_static_fallback_summary(filtered)
             return summary
         except Exception as e:
             logger.error("LLM summary failed: {}, using fallback", e)
-            return _build_static_fallback_summary(messages_to_summarize)
+            return _build_static_fallback_summary(filtered)
 
     async def _acreate_summary(
         self, messages_to_summarize: list[AnyMessage], session_id: str = ""
@@ -1685,7 +1706,8 @@ class Summarization(AgentMiddleware):
             return "No previous conversation history."
 
         previous_summary = self._extract_previous_summary(messages_to_summarize)
-        serialized = _serialize_for_summary(messages_to_summarize)
+        filtered = _filter_summary_messages(messages_to_summarize)
+        serialized = _serialize_for_summary(filtered)
         if not serialized.strip():
             return "No previous conversation history."
 
@@ -1699,11 +1721,11 @@ class Summarization(AgentMiddleware):
             summary = response.text.strip()
             if not summary or len(summary) < 50:
                 logger.warning("Summary too short, using fallback")
-                return _build_static_fallback_summary(messages_to_summarize)
+                return _build_static_fallback_summary(filtered)
             return summary
         except Exception as e:
             logger.error("LLM summary failed: {}, using fallback", e)
-            return _build_static_fallback_summary(messages_to_summarize)
+            return _build_static_fallback_summary(filtered)
 
     # ------------------------------------------------------------------
     # Build new messages (HumanMessage + AIMessage pair)
@@ -1727,7 +1749,10 @@ class Summarization(AgentMiddleware):
         )
 
         return [
-            HumanMessage(content="What did we do so far?"),
+            HumanMessage(
+                content="What did we do so far?",
+                additional_kwargs={"lc_source": _SUMMARY_LC_SOURCE},
+            ),
             AIMessage(
                 content=full_content,
                 additional_kwargs={"lc_source": _SUMMARY_LC_SOURCE},
@@ -1946,7 +1971,8 @@ class Summarization(AgentMiddleware):
                     )
 
                 if skip_llm:
-                    summary_text = _build_static_fallback_summary(messages_to_summarize)
+                    filtered = _filter_summary_messages(messages_to_summarize)
+                    summary_text = _build_static_fallback_summary(filtered)
                     strategy_used = "fallback"
                 else:
                     summary_text = self._create_summary(
@@ -2051,7 +2077,8 @@ class Summarization(AgentMiddleware):
                     )
 
                 if skip_llm:
-                    summary_text = _build_static_fallback_summary(messages_to_summarize)
+                    filtered = _filter_summary_messages(messages_to_summarize)
+                    summary_text = _build_static_fallback_summary(filtered)
                     strategy_used = "fallback"
                 else:
                     summary_text = await self._acreate_summary(
