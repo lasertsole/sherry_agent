@@ -176,6 +176,10 @@ SPOT_DEFAULTS = [
     (TOOL_RESULT_EVICTION, "preview_head_lines", 5),
     (TOOL_RESULT_EVICTION, "preview_tail_lines", 5),
     (TOOL_RESULT_EVICTION, "eviction_subdir", "evicted"),
+    (TOOL_RESULT_EVICTION, "human_evict_enabled", True),
+    (TOOL_RESULT_EVICTION, "human_evict_threshold_chars", 200_000),
+    (TOOL_RESULT_EVICTION, "human_preview_head_lines", 5),
+    (TOOL_RESULT_EVICTION, "human_preview_tail_lines", 5),
     (
         TOOL_RESULT_EVICTION,
         "excluded_tools",
