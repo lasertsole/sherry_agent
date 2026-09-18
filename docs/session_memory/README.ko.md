@@ -42,6 +42,8 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 - **`context_engine/events/`** —— 추가 전용 이벤트 로그(세션별 무결 시퀀스: `types.py`, `store.py`), 체크포인트 이벤트를 체크포인트 읽기 모델에 매핑하는 `EventProjector`.
 - **`context_engine/embeddings/`** —— 벡터 의미 검색: 지연 embed 백엔드(프로젝트 임베드 모델, 테스트에서 대체 가능), 멱등 LEFT-JOIN 인덱서, 코사인 순위付け. `message_search` 도구(`semantic: true`)로 노출.
 - **`agent/tools/message_search.py`** —— 2단계 조회: 영속화된 `messages` 테이블에서 FTS5를 먼저 검색하고, 일치 항목이 없으면 세션의 최신 체크포인트(`SRC_DIR/checkpoints/sqlite.db`의 `state["messages"]`)로 폴백하여 아직 영속화되지 않은 턴을 최신순으로 키워드 매칭합니다(`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars`로 상한). 폴백 히트에는 `source="checkpoint"`가 붙습니다. 영속화가 이제 각 모델 경계와 각 도구 반환 시 실행되므로, 이 폴백은 "체크포인트가 저장소보다 앞서 있는" 좁은 창에서만 작동합니다 — 다음 모델 경계에서 영속화되기를 기다리는 HITL 거부(도구 결과는 반환 시 이미 기록됨).
+- **`agent/middlewares/message_persistence/`** —— write-once 세션 영속화, 두 시점: human/AI 메시지는 각 모델 호출 경계에서, 도구 결과는 반환되는 순간. `persisted_message_ids` 워터마크가 각 메시지를 정확히 한 번 착지시켜, 영속화가 더 이상 압축 발화에 의존하지 않습니다.
+- **도구 결과 크기 거버넌스** —— `ToolResultEvictionMiddleware`가 과대한 결과(> 20 000자)를 state에 들어가기 전에 `SESSIONS_DIR/<session_id>/evicted/`로 오프로드합니다(state에는 head+tail 프리뷰만 남음); `clear_session()`은 세션 디렉터리를 통째로 삭제하므로 축출 파일도 함께 사라집니다. P1-2 오버플로 테일 클립은 꼬리 `ToolMessage` 내용을 `model_copy`로 스텁 처리할 뿐(정체성과 페어링 불변) — 데이터는 잃지 않습니다. 모든 결과는 이미 MesMemory에 영속화되었고 오프로드된 본문도 디스크에 남기 때문입니다: `message_search`가 텍스트를 불러오고, `read_file`이 축출 파일을 다시 읽습니다.
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 압축 락(TTL 자가 복구, 동기 + 비동기 획득, 타임아웃 시 fail-open).
 - **`runtime/session/state_register.py`** —— `context_epoch` 테이블 기반의 `ContextEpoch` 라이프사이클(initialize / prepare / replace / advance).
 
