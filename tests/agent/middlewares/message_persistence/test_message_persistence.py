@@ -243,3 +243,23 @@ class TestFilterSemantics:
         await _run_boundary(MessagePersistenceMiddleware(), _state(sid, messages), sync=sync)
 
         assert _contents(sid) == ["keep ai", "keep human"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sync", [False, True], ids=["async", "sync"])
+    async def test_summary_pair_from_build_new_messages_is_skipped(self, isolated_db, sid, sync):
+        """The real summary pair is an internal artifact: both halves carry
+        ``lc_source`` after ``_build_new_messages``, so neither is written to
+        MesMemory (before the tagging fix the human half leaked into the
+        raw store)."""
+        from agent.middlewares.summarization.core import Summarization
+
+        summarization = Summarization(model=object())
+        pair = summarization._build_new_messages("PAIR-PERSISTENCE-BODY-77c1")
+        assert all(
+            getattr(m, "additional_kwargs", {}).get("lc_source") == "summarization" for m in pair
+        )
+
+        await _run_boundary(MessagePersistenceMiddleware(), _state(sid, pair), sync=sync)
+
+        assert _contents(sid) == []
+        assert _row_count(sid) == 0

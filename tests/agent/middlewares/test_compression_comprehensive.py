@@ -1525,5 +1525,85 @@ class TestSyncAsyncFullBranchParity:
                     pass
 
 
+# ======================================================================
+# Chained-summary filtering (plan TODO/SUMMARY_MESSAGE_FILTERING_PLAN.md):
+# the prior summary pair stays OUT of the re-summarization <conversation>
+# input and is chained only through <prior-summary>.
+# ======================================================================
+
+
+def _conversation_block(prompt: str) -> str:
+    start = prompt.index("<conversation>")
+    end = prompt.index("</conversation>") + len("</conversation>")
+    return prompt[start:end]
+
+
+class TestSummaryMessageFiltering:
+    def test_chained_summary_no_redundancy(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        prior_pair = mw._build_new_messages("PRIOR-CHAIN-MARKER-4a1c")
+        messages = [
+            *prior_pair,
+            HumanMessage(content="new question about the task"),
+            AIMessage(content="new answer"),
+        ]
+        # Sanity: without filtering the raw serialization WOULD leak the prior
+        # summary body into <conversation> (non-vacuous regression guard).
+        serialize = mget("_serialize_for_summary")
+        assert "PRIOR-CHAIN-MARKER-4a1c" in serialize(messages)
+
+        mw._create_summary(messages, session_id=sid)
+
+        prompt = stub.calls[0]
+        conversation = _conversation_block(prompt)
+        assert "PRIOR-CHAIN-MARKER-4a1c" not in conversation
+        assert "What did we do so far?" not in conversation
+        assert "new question about the task" in conversation
+
+    def test_chained_summary_prior_summary_present(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        prior_pair = mw._build_new_messages("PRIOR-CHAIN-MARKER-4a1c")
+        messages = [
+            *prior_pair,
+            HumanMessage(content="new question about the task"),
+            AIMessage(content="new answer"),
+        ]
+
+        mw._create_summary(messages, session_id=sid)
+
+        prompt = stub.calls[0]
+        assert "<prior-summary>" in prompt
+        assert "PRIOR-CHAIN-MARKER-4a1c" in prompt
+        assert "updating a context checkpoint" in prompt
+
+    def test_skip_llm_path_filters_summary(self, sid):
+        stub = StubModel()
+        mw = make_middleware(model=stub)
+        state_register_mem.set_state(sid, mget("_SKIP_LLM_KEY"), True)
+        prior_pair = mw._build_new_messages("PRIOR-SKIP-BODY-9d2b")
+        messages = [*prior_pair, *compact_then_truncate_messages()]
+        # Sanity: without filtering the static fallback WOULD use the prior
+        # summary question as its Goal section (non-vacuous leak guard).
+        fallback = mget("_build_static_fallback_summary")
+        assert "What did we do so far?" in fallback(messages)
+
+        req = make_request(messages, session_id=sid, model=stub)
+        out = mw._apply_compression_under_lock(req, sid)
+
+        final = list(out.messages)
+        assert final[0].content == "What did we do so far?"
+        assert isinstance(final[1], AIMessage)
+        assert "What did we do so far?" not in final[1].content
+        assert stub.calls == []  # skip_llm never invokes the auxiliary LLM
+
+    def test_build_new_messages_marks_human(self):
+        mw = make_middleware()
+        pair = mw._build_new_messages("MARK-HUMAN-BODY")
+        assert pair[0].additional_kwargs.get("lc_source") == "summarization"
+        assert pair[1].additional_kwargs.get("lc_source") == "summarization"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

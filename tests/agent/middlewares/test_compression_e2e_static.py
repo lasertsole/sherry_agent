@@ -457,15 +457,18 @@ def test_e2e_b_hard_overflow_compact_llm_summary(order, sid):
     # --- compacted model view: summary pair present, under usable budget ---
     assert len(main_model.calls) == 1
     compacted = main_model.calls[0]
-    summary_ais = [
+    summary_marked = [
         m
         for m in compacted
         if getattr(m, "additional_kwargs", {}).get("lc_source") == "summarization"
     ]
-    # _build_new_messages stamps lc_source on the AI part only; the paired
-    # Human question sits directly in front of it.
-    assert len(summary_ais) == 1, "summary AIMessage (lc_source) missing"
-    pair_idx = compacted.index(summary_ais[0])
+    # _build_new_messages stamps lc_source on BOTH halves of the pair; the
+    # paired Human question sits directly in front of the summary AIMessage.
+    assert len(summary_marked) == 2, "summary pair (lc_source) missing"
+    assert isinstance(summary_marked[0], HumanMessage)
+    assert summary_marked[0].content == "What did we do so far?"
+    assert isinstance(summary_marked[1], AIMessage)
+    pair_idx = compacted.index(summary_marked[1])
     assert pair_idx >= 1 and isinstance(compacted[pair_idx - 1], HumanMessage)
     assert compacted[pair_idx - 1].content == "What did we do so far?"
     assert _est(compacted) < USABLE_BUDGET
