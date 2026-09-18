@@ -15,9 +15,11 @@
 >
 > **P1-2 落地记录（2026-09-18）**：**已落地** —— `pub/func/message/overflow_clip.py`（`clip_overflow_tail`）+ `agent/middlewares/summarization/core.py` 在 **route 与 forced recovery 前置**快速尾部裁剪；`SUMMARIZATION` 新增 `overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep` 三键（46→49）。**修正了原方案的孤儿 ToolMessage 做法**：不再删除尾部批次、不再注入 `_overflow_clip` 消息，改为经 `ToolMessage.model_copy` 保住消息身份（`id` / `tool_call_id` / `name` / `additional_kwargs`）的**内容 stub**，从而保留 P0-2 驱逐指针与 P2-4 切片提示，维持配对净化与持久水位。够用即短路（不调 LLM、不进任何 route，仅接受单独达标者）；不够则整份丢弃，原列表照走既有压缩路径。提交 `aa327fa`（中间件集成）/ `dcf8ece`（纯函数）/ `f83fe20`（配置）。
 >
-> **未执行项清单（随文档退休，2026-09-18）**：以下条目**未执行**；本文档已从 `TODO/` 退役（`git rm`），清单同时写入删除提交的提交信息，方案细节可由 git 历史恢复：
+> **P1-1 落地记录（2026-09-18）：能力已存在，原方案不采用。** 工具调用参数截断早已落地于 `pub/func/message/tool_args_truncate.py::truncate_tool_args`（head+tail + `...[args truncated, omitted N chars]...`，与 `target_truncation.py` 风格一致）；配置键 `SUMMARIZATION["max_tool_args_chars"] / ["min_args_chars_to_truncate"]`（后者 500）；接入 `agent/middlewares/summarization/core.py` 两处（预算截断 `:848`、非 LLM 策略链 `:1778`），另有 `summarization/summarization_components.py` 的 aggressive 兜底；"多少轮之后才截断"由 `find_truncatable_tool_results` 的 `skip_recent`（`TRUNCATABLE_RECENT_SKIP`）与 `protected_tools` 精确表达，测试见 `tests/pub/func/message/test_pub_func_message_tools.py`。计划书的 `ToolArgsTruncator` 类未采用，且其样例代码有两处缺陷：①`str(v)[:max] + marker` 会把 `args` 的值降级为字符串，破坏 LangChain `ToolCall.args` 为 dict 的契约（部分 provider 适配器会失败）——现状写入 `{"_truncated_args": "head…omitted…tail"}`，保持 dict 且可 JSON 序列化；②重建 `AIMessage(content=…, tool_calls=…)` 会丢 `id`/`metadata`/`additional_kwargs`（会连带破坏持久水位与 tool-call 配对）——现状用 `msg.model_copy(update={"tool_calls": …})` 保留消息身份。
 >
-> - P1-1 参数截断（`TruncateArgsSettings`）
+> **未执行项清单（2026-09-18）**：以下条目**仍由本文件跟踪、尚未执行**（本文件曾于 `257879c` 被误删，已由 `a750fdf` 恢复并**保持活跃**，不再退休）：
+>
+> - P1-1 参数截断 —— **已落地**（能力已存在，见上方 P1-1 落地记录），无需另做
 > - P1-3 模型感知摘要默认值（`compute_summarization_defaults`）
 > - P1-4 增量检查点优化（`DeltaChannel`）
 > - P1-5 消息增量缩减器（去重 + 墓碑）
