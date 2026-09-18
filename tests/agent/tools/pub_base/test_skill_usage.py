@@ -14,6 +14,7 @@ from agent.tools.pub_base.skill_usage import (
     set_state,
     set_pinned,
     forget,
+    archive_skill,
     STATE_ACTIVE,
     STATE_STALE,
     STATE_ARCHIVED,
@@ -211,6 +212,17 @@ class TestSetPinned:
             set_pinned("test_skill", True)
             saved_data = mock_save.call_args[0][0]
             assert saved_data["test_skill"]["pinned"] is True
+
+
+class TestArchiveDelegation:
+    def test_archive_skill_forwards_to_the_curator_implementation(self):
+        """The agent layer keeps the (ok, msg) contract but owns no archive logic."""
+        with patch(
+            "context_engine.curator.usage.archive_skill", return_value=(True, "Archived x")
+        ) as mock_archive:
+            result = archive_skill("test_skill")
+        mock_archive.assert_called_once_with("test_skill")
+        assert result == (True, "Archived x")
 
 
 class TestForget:
