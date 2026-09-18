@@ -106,3 +106,8 @@ async def test_context_eviction_registration_position(
 
     assert ContextEvictionMiddleware.wrap_tool_call is not AgentMiddleware.wrap_tool_call
     assert ContextEvictionMiddleware.awrap_tool_call is not AgentMiddleware.awrap_tool_call
+    # P1-9 hooks share the same middleware: tagging + model-view truncation.
+    assert ContextEvictionMiddleware.before_model is not AgentMiddleware.before_model
+    assert ContextEvictionMiddleware.abefore_model is not AgentMiddleware.abefore_model
+    assert ContextEvictionMiddleware.wrap_model_call is not AgentMiddleware.wrap_model_call
+    assert ContextEvictionMiddleware.awrap_model_call is not AgentMiddleware.awrap_model_call

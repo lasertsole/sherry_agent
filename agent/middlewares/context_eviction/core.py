@@ -49,17 +49,30 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
+from pathlib import Path
 from typing import Any, override
 
-from langchain.agents.middleware import AgentMiddleware
-from langchain_core.messages import ToolMessage
+from langchain.agents.middleware import AgentMiddleware, AgentState
+from langchain.agents.middleware.types import ModelRequest, ModelResponse, ExtendedModelResponse
+from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
+from langgraph.runtime import Runtime
 from langgraph.types import Command
 from loguru import logger
 
 from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
 from context_engine import is_message_persisted, mark_message_ids_persisted
-from pub.func.message.eviction import evict_tool_result, slice_read_file_result
+from pub.func.message.eviction import (
+    EVICTED_TO_KEY,
+    _build_evicted_content,
+    _extract_text,
+    build_human_preview,
+    evict_human_message,
+    evict_tool_result,
+    get_eviction_dir,
+    load_evicted,
+    slice_read_file_result,
+)
 from agent.middlewares.base import require_session_id
 from agent.middlewares.message_persistence.prepare import _watermark_key
 
@@ -98,11 +111,50 @@ def _rewrite_tool_messages(value: Any, rewrite: Callable[[ToolMessage], ToolMess
     return value
 
 
+def _heal_eviction_file(eviction_path: str, text: str, session_id: str | None) -> None:
+    """Rewrite a missing eviction file from the state text, in-session only.
+
+    The state keeps the full human text, so a lost file (session dir pruned,
+    disk issue) is recoverable at the next model call. The target must be the
+    session's own ``evicted/`` directory — a foreign path in the tag is never
+    written to.
+    """
+    if session_id is None:
+        return
+    eviction_dir = get_eviction_dir(session_id)
+    if eviction_dir is None:
+        return
+    target = Path(eviction_path)
+    if target.parent != eviction_dir:
+        logger.warning("human eviction: refusing to self-heal outside {}", eviction_dir)
+        return
+    try:
+        target.write_text(text, encoding="utf-8")
+        logger.info("human eviction: self-healed {}", target)
+    except OSError:
+        logger.exception("human eviction: self-heal failed (fail-open)")
+
+
+def _build_model_view(message: HumanMessage, session_id: str | None) -> HumanMessage:
+    """Build the preview-only copy of an evicted human message for the model."""
+    text = _extract_text(message.content)
+    if not text:
+        return message
+    eviction_path = message.additional_kwargs.get(EVICTED_TO_KEY)
+    if not isinstance(eviction_path, str) or not eviction_path:
+        return message
+    if load_evicted(eviction_path) is None:
+        _heal_eviction_file(eviction_path, text, session_id)
+    preview = build_human_preview(text, Path(eviction_path))
+    return message.model_copy(update={"content": _build_evicted_content(message.content, preview)})
+
+
 class ContextEvictionMiddleware(AgentMiddleware):
-    """Offload oversized tool results (P0-2) and human messages (P1-9)."""
+    """Offload oversized tool results (P0-2/P2-4) and human messages (P1-9)."""
 
     def __init__(self) -> None:
         self._enabled = TOOL_RESULT_EVICTION["enabled"]
+        self._human_enabled = TOOL_RESULT_EVICTION["human_evict_enabled"]
 
     @override
     def wrap_tool_call(
@@ -131,6 +183,86 @@ class ContextEvictionMiddleware(AgentMiddleware):
         return _rewrite_tool_messages(
             response, lambda message: self._maybe_evict(message, session_id)
         )
+
+    # ── Human messages (P1-9) ─────────────────────────────────────────────
+
+    @override
+    def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        """Tag the trailing oversized ``HumanMessage`` and offload its text."""
+        return self._tag_last_human(state)
+
+    @override
+    async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
+        """Async twin of :meth:`before_model` (same sync file work)."""
+        return self._tag_last_human(state)
+
+    def _tag_last_human(self, state: Any) -> dict[str, Any] | None:
+        """Return the in-place state update for the tagged message, or ``None``.
+
+        Only the LAST message is considered (a past user turn is never
+        re-examined), matching the gate in the P1-9 plan. The update carries a
+        ``model_copy`` with the same id and content, so the ``add_messages``
+        reducer replaces the message in place — the full text stays in state.
+        """
+        if not self._human_enabled or not isinstance(state, dict):
+            return None
+        messages = state.get("messages")
+        if not isinstance(messages, list) or not messages:
+            return None
+        last = messages[-1]
+        if not isinstance(last, HumanMessage):
+            return None
+        session_id = self._resolve_session_id(state)
+        if session_id is None:
+            return None
+        try:
+            tagged = evict_human_message(last, session_id)
+        except Exception:
+            logger.exception("human message eviction failed (fail-open)")
+            return None
+        if tagged is None:
+            return None
+        return {"messages": [tagged]}
+
+    @override
+    def wrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], ModelResponse],
+    ) -> ModelResponse | AIMessage | ExtendedModelResponse:
+        """Truncate the model view of every evicted human message."""
+        if not self._human_enabled:
+            return handler(request)
+        return handler(self._override_human_views(request))
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
+    ) -> ModelResponse | AIMessage | ExtendedModelResponse:
+        """Async twin of :meth:`wrap_model_call`."""
+        if not self._human_enabled:
+            return await handler(request)
+        return await handler(self._override_human_views(request))
+
+    def _override_human_views(self, request: ModelRequest) -> ModelRequest:
+        """Apply the preview replacement to the request's message list."""
+        session_id = self._resolve_session_id(request.state)
+        changed = False
+        processed: list[AnyMessage] = []
+        for message in request.messages:
+            view: AnyMessage = message
+            if isinstance(message, HumanMessage) and message.additional_kwargs.get(EVICTED_TO_KEY):
+                try:
+                    view = _build_model_view(message, session_id)
+                except Exception:
+                    logger.exception("human message view truncation failed (fail-open)")
+            changed = changed or view is not message
+            processed.append(view)
+        if not changed:
+            return request
+        return request.override(messages=processed)
 
     def _maybe_evict(self, result: ToolMessage, session_id: str) -> ToolMessage:
         """Return the replacement message, or *result* when eviction is skipped."""
