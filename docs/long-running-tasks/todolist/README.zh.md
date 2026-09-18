@@ -282,6 +282,10 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 定义何时使用 todolist（3+ 步复杂工作）、可用工具、状态/优先级/委派字段、DAG 字段（委派给 TaskFlow）以及规则。
 
+### knowledge — 按计划归属隔离
+
+`knowledge` 工具（`agent/tools/todolist/knowledge/`）以计划名为键，因此按**计划归属**隔离，而不是按会话列隔离：会话只能 `write` / `read` / `list` 与自己关联的计划。`ownership.is_plan_associated()` 从三个来源判定归属——本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤），以及 `.omo/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`list` 只返回本会话关联的计划；访问他会话的计划会被拒绝并给出可诊断的错误（绝不静默返回空）。**多会话协同不受影响**：同一计划若出现在多个会话的 boulder `session_ids` 中，每个会话都仍可读写。boulder 文件缺失/损坏、`session_id` 为空或计划未知时一律安全拒绝——不抛异常，也不发生跨会话读取。
+
 ---
 
 ## 编排执行层

@@ -278,6 +278,10 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 todolist をいつ使うか（3+ ステップの複雑な作業）、利用可能ツール、ステータス/優先度/委譲フィールド、DAG フィールド（TaskFlow に委譲）、ルールを定義します。
 
+### knowledge — 計画オーナーシップ分離
+
+`knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名をキーとするため、セッション列ではなく**計画オーナーシップ**で分離します：セッションは自分が関連付けられた計画のみ `write` / `read` / `list` できます。`ownership.is_plan_associated()` は 3 つのソースから関連を判定します——セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、そして `.omo/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`list` は関連付けられた計画のみを返し、他セッションの計画へのアクセスは診断可能なエラーで拒否されます（沈黙の空結果にはしません）。**複数セッションの協業は維持されます**：同じ計画が複数セッションの boulder `session_ids` に列挙されていれば、そのすべてが読み書きできます。boulder ファイルの欠落/破損、空の `session_id`、未知の計画はいずれも安全に拒否されます——例外もクロスセッション読み取りもありません。
+
 ---
 
 ## オーケストレーション実行レイヤー

@@ -376,6 +376,10 @@ def build_todolist_tools() -> list[BaseTool]:
 
 The skill file defines when to use todolist (3+ step work), available tools, status/priority/delegation fields, DAG fields (delegated to TaskFlow), and rules (full replacement each call, one in_progress at a time, no marking completed before subagent returns).
 
+### knowledge — Plan-Ownership Isolation
+
+The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by plan name, so it is isolated **per plan ownership** instead of by a session column: a session may only `write` / `read` / `list` plans it is associated with. `ownership.is_plan_associated()` resolves association from three sources — the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `.omo/boulder.json` work whose `plan_name` matches and whose `session_ids` list contains the session. `list` returns only the session's associated plans, and a foreign plan is refused with a diagnosable error (never a silent empty result). **Multi-session collaboration stays intact**: a plan listed in several sessions' boulder `session_ids` remains readable and writable by every one of them. A missing/corrupt boulder file, an empty `session_id`, or an unknown plan all deny safely — no exception, no cross-session read.
+
 ---
 
 ## Orchestration Execution Layer

@@ -398,7 +398,7 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 | :--- | :--- | :--- |
 | **TaskFlow** | `task_flows.session_id` 列（本次变更） | `agent/tools/taskflow/registry/store_sqlite.py` |
 | **TodoList** | `session_id` 本身就是表的主键前缀——该工具族从一开始就是会话作用域 | `agent/tools/todolist/registry/store_sqlite.py` |
-| **Knowledge** | 间接通过会话的计划关联：`plan_ref`（每个会话写入的状态键）解析到 `workspace/sessions/<id>/plans/*.md`，知识存放在 `workspace/knowledge/plans/<plan-name>/`。`knowledge` 工具接收计划名而非会话 id；`build_knowledge_block(session_id)` 会先解析该会话自己的 `plan_ref`。没有会话列，也没有新增。 | `agent/tools/todolist/knowledge/knowledge_store.py` |
+| **Knowledge** | 按计划归属隔离，在工具层强制：`ownership.is_plan_associated()` 取三来源并集——本会话 `plan_ref` 状态键、本会话 todo 的 `plan_ref`（SQL 按 `session_id` 过滤）、`.omo/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。对他会话计划的 `read` / `write` 会给出可诊断错误并拒绝，`list` 只返回关联计划；被多个会话共享的计划对所有会话仍可用。`build_knowledge_block(session_id)` 为提示块解析本会话自己的 `plan_ref`。 | `agent/tools/todolist/knowledge/ownership.py` |
 
 **子 Agent 边界。** 三个工具族都由各自的构建器打上 `metadata["scope"] = "main_only"` 标签（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）会**最先且无条件**丢弃 `main_only` 工具——先于任何 allow/deny 列表，且 ORCHESTRATOR 解禁也无法覆盖——因此派生出的子 Agent 永远不会拿到 `taskflow_*`、`todowrite`/`todoread` 或 `knowledge` 工具。同样的标签模式此前已覆盖 `memory`、`skill_manage`、`sessions_kill`、`sessions_steer`。真实工具集断言由 `tests/agent/tools/taskflow/test_taskflow_tools.py` 锁定，`_build_child_agent` 边界由 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` 锁定。
 
@@ -824,4 +824,4 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **结果校验是提示性的。** `validation_criteria` 会被存储并随结果一起回显，但工具从不强制执行；编排者必须自行判断通过/失败。不存在能因未满足标准而让步骤失败的自动闸门。
 - **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_wait_all` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。
 - **`taskflow_list` 是会话作用域的。** 不存在全局跨会话面板：所有读取都在 SQL 层按所属 `session_id` 过滤，因此一个会话无法枚举另一个会话的 flow。隔离前写入的行（`session_id = ''`）对会话读取不可见，但 sweeper 的跨会话截止/空闲扫描仍能看到它们。
-- **Knowledge 以计划名为键，而非会话。** `knowledge` 工具接收计划名，因此采用同名计划的两个会话会共享该计划的知识目录；正常路径的隔离来自按会话解析的 `plan_ref`。子 Agent 边界则是绝对的——`knowledge` 是 `main_only`。
+- **Knowledge 按计划归属隔离，而非按名称占有。** `knowledge` 工具接收计划名，访问由 `ownership.is_plan_associated()` 把关：本会话的 `plan_ref`、todo 的 `plan_ref`，或 `session_ids` 含本会话的 boulder work。仅仅采用同名计划的两个会话不再共享该计划的知识目录——但通过 boulder `session_ids` 显式共享的计划（多会话协同）对列出的每个会话仍可读写。子 Agent 边界依旧是绝对的——`knowledge` 是 `main_only`。

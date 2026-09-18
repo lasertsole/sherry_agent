@@ -273,6 +273,10 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구, 상태/우선순위/위임 필드, DAG 필드 (TaskFlow에 위임), 규칙을 정의합니다.
 
+### knowledge — 계획 소유권 격리
+
+`knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름을 키로 사용하므로, 세션 컬럼이 아니라 **계획 소유권**으로 격리됩니다: 세션은 자신이 연결된 계획만 `write` / `read` / `list` 할 수 있습니다. `ownership.is_plan_associated()`는 세 가지 소스에서 연결을 판정합니다 — 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), 그리고 `.omo/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `list`는 연결된 계획만 반환하며, 다른 세션의 계획 접근은 진단 가능한 오류로 거부됩니다(조용한 빈 결과가 아님). **다중 세션 협업은 그대로 유지됩니다**: 같은 계획이 여러 세션의 boulder `session_ids`에 등록되어 있으면 모든 세션이 읽고 쓸 수 있습니다. boulder 파일 누락/손상, 빈 `session_id`, 알 수 없는 계획은 모두 안전하게 거부됩니다 — 예외도, 교차 세션 읽기도 없습니다.
+
 ---
 
 ## 오케스트레이션 실행 레이어
