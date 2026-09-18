@@ -1,10 +1,16 @@
-"""Tool-result message eviction: offload oversized results, keep a preview.
+"""Context eviction: offload oversized payloads, keep a recoverable preview.
 
 P0-2 (execution-time eviction): the full text of an oversized ``ToolMessage``
 is written under ``SESSIONS_DIR/{session_id}/evicted/`` and the content is
 replaced by a head/tail preview carrying the file path — the big payload never
 reaches graph state. The model recovers the rest with
 ``read_file(file_path=..., offset=..., limit=...)``.
+
+P1-9 (human-message eviction): an oversized plain-text ``HumanMessage`` is
+written to the same directory and tagged in ``additional_kwargs`` with
+``lc_evicted_to``; its content and id stay untouched, so graph state and
+MesMemory keep the full text and only the model view is truncated (see
+``agent/middlewares/context_eviction/core.py``).
 
 P2-4 (execution-time read_file slicing): ``read_file`` results are NOT
 offloaded — the file already lives on disk — so they are sliced to a fixed
@@ -27,23 +33,32 @@ an unsafe id (empty, ``.`` / ``..``, or containing a separator) skips eviction.
 from __future__ import annotations
 
 import hashlib
+import re
 import time
 from pathlib import Path
 from typing import Any
 
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 
 from config import SESSIONS_DIR
 from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
 from config.path import is_safe_session_segment
 
 __all__ = [
+    "EVICTED_TO_KEY",
+    "build_human_preview",
     "build_preview",
+    "evict_human_message",
     "evict_tool_result",
     "get_eviction_dir",
+    "human_eviction_notice",
     "load_evicted",
     "slice_read_file_result",
 ]
+
+# additional_kwargs marker shared by both eviction paths: its value is the
+# path of the file holding the full text.
+EVICTED_TO_KEY = "lc_evicted_to"
 
 # First line of every preview; also the idempotency marker (a second pass over
 # an already-evicted message must be a no-op). EVICTION_PREFIX is the public
@@ -62,6 +77,17 @@ _PREVIEW_TEMPLATE = """\
 [full content: {total_chars} chars, evicted at {ts}]
 
 Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.]"""
+
+_HUMAN_PREVIEW_TEMPLATE = """\
+[evicted to: {path}]
+--- head ({head_n} lines) ---
+{head}
+{midline}
+--- tail ({tail_n} lines) ---
+{tail}
+[full content: {total_chars} chars, evicted at {ts}]
+
+{notice}"""
 
 # Execution-time read_file slice size (P2-4). The compression-time pass uses
 # SUMMARIZATION["max_tool_output_chars"] instead; see the module docstring.
@@ -131,24 +157,105 @@ def _build_evicted_content(content: str | list[Any], preview: str) -> str | list
     return [{"type": "text", "text": preview}, *non_text]
 
 
-def build_preview(content: str, file_path: Path) -> str:
-    """Render the head/tail preview that replaces an evicted result."""
+def _render_head_tail(content: str, head_n: int, tail_n: int) -> tuple[str, str, str, int]:
     lines = content.splitlines()
-    head_n = TOOL_RESULT_EVICTION["preview_head_lines"]
-    tail_n = TOOL_RESULT_EVICTION["preview_tail_lines"]
     head = "\n".join(lines[:head_n])
     tail = "\n".join(lines[-tail_n:])
     midline = "..." if len(lines) > head_n + tail_n else ""
+    return head, midline, tail, len(lines)
+
+
+def build_preview(content: str, file_path: Path) -> str:
+    """Render the head/tail preview that replaces an evicted result."""
+    head_n = TOOL_RESULT_EVICTION["preview_head_lines"]
+    tail_n = TOOL_RESULT_EVICTION["preview_tail_lines"]
+    head, midline, tail, line_count = _render_head_tail(content, head_n, tail_n)
     return _PREVIEW_TEMPLATE.format(
         path=str(file_path),
-        head_n=min(head_n, len(lines)),
-        tail_n=min(tail_n, len(lines)),
+        head_n=min(head_n, line_count),
+        tail_n=min(tail_n, line_count),
         head=head,
         midline=midline,
         tail=tail,
         total_chars=len(content),
         ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )
+
+
+def human_eviction_notice(file_path: str | Path) -> str:
+    """Model-facing recovery notice for an evicted human message."""
+    return (
+        f"This user message exceeded the eviction threshold; its full text is at "
+        f"'{file_path}'. Use read_file(file_path='{file_path}', offset=0, limit=100) "
+        f"to read the full content in chunks."
+    )
+
+
+def build_human_preview(content: str, file_path: Path) -> str:
+    """Render the head/tail preview that replaces an evicted human message."""
+    head_n = TOOL_RESULT_EVICTION["human_preview_head_lines"]
+    tail_n = TOOL_RESULT_EVICTION["human_preview_tail_lines"]
+    head, midline, tail, line_count = _render_head_tail(content, head_n, tail_n)
+    return _HUMAN_PREVIEW_TEMPLATE.format(
+        path=str(file_path),
+        head_n=min(head_n, line_count),
+        tail_n=min(tail_n, line_count),
+        head=head,
+        midline=midline,
+        tail=tail,
+        total_chars=len(content),
+        ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
+        notice=human_eviction_notice(file_path),
+    )
+
+
+def _human_file_name(msg: HumanMessage) -> str:
+    msg_id = getattr(msg, "id", None)
+    if isinstance(msg_id, str) and msg_id:
+        safe = re.sub(r"[^A-Za-z0-9._-]+", "_", msg_id).strip("._-")[:64]
+        if safe:
+            return f"human-{safe}.md"
+    return f"human-{time.time_ns()}.md"
+
+
+def evict_human_message(msg: HumanMessage, session_id: str) -> HumanMessage | None:
+    """Offload an oversized human message; return the tagged copy or ``None``.
+
+    ``None`` means "keep the original": human eviction is disabled, the text is
+    at or under ``human_evict_threshold_chars``, the message already carries
+    ``lc_evicted_to``, the rendered preview would not be smaller than the
+    original (a single giant line, where head and tail both contain the whole
+    payload), the session id is unsafe, or the file write failed.
+
+    The returned copy keeps the **content and id unchanged** and only adds
+    ``additional_kwargs["lc_evicted_to"]``. The graph's ``add_messages``
+    reducer therefore updates the message in place (no ``REMOVE_ALL_MESSAGES``
+    rewrite), and graph state / checkpoint / MesMemory all keep the full text —
+    only the model view is truncated later, by ``wrap_model_call``. The file is
+    written before the tag is produced, so a failed write never yields a tag
+    pointing at a missing file.
+    """
+    if not TOOL_RESULT_EVICTION["human_evict_enabled"]:
+        return None
+    if msg.additional_kwargs.get(EVICTED_TO_KEY):
+        return None
+    text = _extract_text(msg.content)
+    if len(text) <= TOOL_RESULT_EVICTION["human_evict_threshold_chars"]:
+        return None
+    eviction_dir = _eviction_dir_path(session_id)
+    if eviction_dir is None:
+        return None
+    file_path = eviction_dir / _human_file_name(msg)
+    preview = build_human_preview(text, file_path)
+    if len(preview) >= len(text):
+        return None
+    eviction_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        file_path.write_text(text, encoding="utf-8")
+    except OSError:
+        return None
+    additional_kwargs = {**msg.additional_kwargs, EVICTED_TO_KEY: str(file_path)}
+    return msg.model_copy(update={"additional_kwargs": additional_kwargs})
 
 
 def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
