@@ -39,6 +39,12 @@ export type TodoDelegation = 'self' | 'subagent';
  * association (TaskFlow owns scheduling).
  */
 export interface Todo {
+  /**
+   * Owning session id, echoed by the backend row. The backend already scopes
+   * the push to the current session (SQL-level isolation); this field is the
+   * client-side defense-in-depth marker.
+   */
+  session_id?: string;
   content: string;
   status: TodoStatus;
   priority: TodoPriority;
