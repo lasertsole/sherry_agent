@@ -43,6 +43,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression) | `tests/run_tests_split.py` |
 | `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
 | `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |
+| `docs/context-governance/` | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering) | `docs/context-governance/README.md` |
 | `scripts/` | Dev tooling (git hooks, maintenance scripts) | `scripts/hooks/` |
 
 ## Architecture
