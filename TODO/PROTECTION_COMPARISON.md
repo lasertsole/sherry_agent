@@ -11,12 +11,16 @@
 > 5. **§3 同步**：§3.2 移出「O_NOFOLLOW 符号链接防护」「符号链接循环检测」（Sherry 已补齐）；§3.1 新增 PathGuard、外部路径审批网关、OS 沙箱读遮蔽、128K 四闸门四项。
 > 6. **第二批变更（2026-09-17，随 P0 项处置；基准 `main` @ `4db42e0`）**：P0-1 符号链接防护复核确认已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow`/`_raise_if_symlink_loop`，read/write/patch 全走）；**P0-3（base64 参数编码）经评估后否决**——`terminal` 本就以 shell 语义执行（`["/bin/sh","-c",cmd]` / `shell=True`），base64+`eval` 不减少风险，且置于 `_check_dangerous`/`_check_sensitive_file_access` 之前会让明文绕过现有防线，真实读屏障是 OS 沙箱读遮蔽；P0-4 搜索资源限制已落地（`file_tools_search_max_matches`=10000 / `file_tools_search_time_budget_s`=5.0 / `file_tools_search_prune_dirs`=`proc`/`sys`/`dev` + `agent/tools/file_tools/search_scan.py` 的 `bounded_walk`，提交 `6073f7c`/`c77846e`/`4db42e0`）。详见 `DEEPAGENTS_BORROWING_PLAN.md` 头部 P0 处置记录。
 > 7. **第三批变更（2026-09-18，基准 `main` @ `2b9569b`，覆盖 `4db42e0` 之后的 77 个提交）：**
->    - **矩阵结论翻转（Sherry 侧）**：「消息驱逐」由 **DeepAgents** 改为**各有千秋**——P0-2 工具结果驱逐落地：超 `evict_threshold_chars`(20 000) 的结果写入 `SESSIONS_DIR/<session_id>/evicted/`，state 中只保留 head/tail 各 5 行预览（`agent/middlewares/tool_result_eviction/core.py` / `pub/func/message/eviction.py`；提交 `4a260c7`/`565fc13`/`466c7d3`/`06f8d77`）；P2-4 `read_file` 执行期切片同批落地（文件已在盘上，只切片不写新文件）。工具结果是三态：state=预览 / MesMemory=全文（工具返回即落库）/ 磁盘可取回。DeepAgents 仍在内联媒体卸载与人类消息驱逐两项上有独到设计。**新增矩阵行「消息持久化」→ 各有千秋**：Sherry 逐模型边界 + 工具返回即时落库（`persisted_message_ids` 水位、写一次、跨重启去重；摘要对 `lc_source="summarization"` 不落库；提交 `1ab6800`/`127af14`/`ffe438b`/`54e5844`），DeepAgents 为摘要前把丢弃历史卸载到后端。
+>    - **矩阵结论翻转（Sherry 侧）**：「消息驱逐」由 **DeepAgents** 改为**各有千秋**——P0-2 工具结果驱逐落地：超 `evict_threshold_chars`(20 000) 的结果写入 `SESSIONS_DIR/<session_id>/evicted/`，state 中只保留 head/tail 各 5 行预览（`agent/middlewares/context_eviction/core.py` / `pub/func/message/eviction.py`；提交 `4a260c7`/`565fc13`/`466c7d3`/`06f8d77`；中间件后于 P1-9 更名 `context_eviction`，见第四批记录）；P2-4 `read_file` 执行期切片同批落地（文件已在盘上，只切片不写新文件）。工具结果是三态：state=预览 / MesMemory=全文（工具返回即落库）/ 磁盘可取回。DeepAgents 仍在内联媒体卸载与人类消息驱逐两项上有独到设计。**新增矩阵行「消息持久化」→ 各有千秋**：Sherry 逐模型边界 + 工具返回即时落库（`persisted_message_ids` 水位、写一次、跨重启去重；摘要对 `lc_source="summarization"` 不落库；提交 `1ab6800`/`127af14`/`ffe438b`/`54e5844`），DeepAgents 为摘要前把丢弃历史卸载到后端。
 >    - **「上下文压缩」行补充**：Sherry 新增 **P1-2 非 LLM 溢出尾部裁剪**（`pub/func/message/overflow_clip.py`，在溢出路由执行与 forced recovery 压缩 **之前**执行：够用即直接返回、不调 LLM；不够才降级到既有 T1-T5 路由；`model_copy` 保消息身份，配对/水位不破；三键 `overflow_clip_enabled`=True / `overflow_clip_max_remove`=10 / `overflow_clip_min_keep`=5；提交 `aa327fa`/`dcf8ece`/`f83fe20`）。§2.4「溢出尾部裁剪」由 ❌ 改为 ✅。
 >    - **§2.10 五项更新**：「对话历史卸载」「工具结果卸载」「内容预览」「read_file 切片」「摘要消息过滤」由 ❌ 改为 ✅/改写。摘要链过滤：`_filter_summary_messages` 在重摘要输入前去掉上一对 `lc_source="summarization"` 消息（Human+AI 两半都带该标记），旧摘要文本改经 `<prior-summary>` 单独注入（提交 `3cfafc8`/`1e45ef5`/`f85e9e2`）。
 >    - **其余更正**：§2.4「参数截断」由 ❌ 改为 ⚠️（预算截断路径本就有 `truncate_tool_args`，`pub/func/message/tool_args_truncate.py`；缺的是摘要期模型感知等价物）；§2.13 悬挂投递 TTL 已定位（`agent/tools/subagent/registry/sweeper.py:239` 的 `_REQUESTER_TYPE_EXPIRY_MS`：cron 2h / subagent 6h / interactive 24h）。
 >    - **§3 同步**：§3.2 移出「工具结果→文件系统驱逐+head/tail预览」「read_file结果切片(非卸载)」两项，「参数截断」改写为「摘要期模型感知参数截断」；§3.1 新增「逐消息持久化+水位」「工具结果驱逐+read_file切片」「非LLM溢出尾部裁剪」「摘要消息过滤（链式摘要去重）」四项。
 >    - **结构与命名核对**：文档引用的模块路径已按现行包结构核对——`agent/middlewares/system_prompt/core.py`（`system_prompt_injection`，原 `context_engine/`）、`agent/middlewares/summarization/nudges.py`（原 `nudge.py`）、配置 `NUDGE`/`MEDIA_PIPELINE`（原 `CONTEXT_ENGINE_HOOK` 拆分）、计划路径 `workspace/sessions/<session_id>/plans/`（`config/path.py::session_plans_dir`/`resolve_plan_path`，legacy `.omo/plans/` 仅作回退）。
+>
+> 8. **第四批变更（2026-09-18，基准 `main` @ `a19525e`）：**
+>    - **P1-9 人类消息驱逐落地**（来源：第三批复核 §2.4「人类消息驱逐」❌；计划 `DEEPAGENTS_BORROWING_PLAN.md` §P1-9）：`tool_result_eviction/` 更名 `context_eviction/`（`ContextEvictionMiddleware`，提交 `033aabb`），配置新增 `human_evict_enabled` / `human_evict_threshold_chars`(200 000) / `human_preview_head_lines` / `human_preview_tail_lines` 四键（`10e1d22`），纯函数 `evict_human_message` / `build_human_preview` / `human_eviction_notice`（`4868d37`），中间件 `before_model` 打标落盘 + `wrap_model_call` 仅截模型视图 + 文件缺失自愈（`9778898`）。**人类消息三态与工具侧刻意相反：state = 全文 + `lc_evicted_to` 标记 / MesMemory = 全文 / 磁盘 = 逐字节原文**（工具侧 state = 预览）——原因与逐项交互矩阵见计划 §P1-9「设计决策」。
+>    - **矩阵更新**：§2.4「人类消息驱逐」由 ❌ 改为 ✅；§1「消息驱逐」行 Sherry 侧补"人类消息全文留存 + 仅模型视图截断(P1-9)"；§2.4 / §2.10 结论中"DeepAgents 在人类消息驱逐领先"改为"已对齐"。
 >
 > 模块路径已按**包结构**核对：`agent/middlewares/<name>/core.py`（如 `path_guard/core.py`、`tool_guardrails/core.py`、`summarization/core.py`）；DeepAgents 路径按检出实际前缀 `libs/...` 标注。
 
@@ -60,7 +64,7 @@
 | 子代理安全       |                 ✅ 深度+CWD+工具继承+最小权限                  |                  ✅ 类型验证+递归拒绝+权限继承                       |  **各有千秋**  |
 | 并发控制         |                    ✅ 4车道Semaphore+排空                       |                              ❌ 无                                   |   **Sherry**   |
 | LLM重试          |                   ✅ 8步分类+回退链+断路器                      |                       ❌ 仅上下文溢出重试                            |   **Sherry**   |
-| 消息驱逐         |      ✅ 工具结果→SESSIONS_DIR/evicted+head/tail预览+read_file切片        |           ✅ 工具结果→文件系统+head/tail预览+内联媒体/人类消息驱逐            | **各有千秋**   |
+| 消息驱逐         |      ✅ 工具结果→SESSIONS_DIR/evicted+head/tail预览+read_file切片 + 人类消息全文留存+仅模型视图截断(P1-9)        |           ✅ 工具结果→文件系统+head/tail预览+内联媒体/人类消息驱逐            | **各有千秋**   |
 | 消息持久化       |       ✅ 逐模型边界+工具返回即时落库+水位去重(摘要对不落库)       |                ✅ 摘要前持久化到后端(丢弃历史)                      | **各有千秋**   |
 | 符号链接防护     |           ✅ 三闸 + O_NOFOLLOW + 环检测 + 搜索containment       |                  ✅ O_NOFOLLOW+符号链接环检测                        | **各有千秋**   |
 | Shell注入防护    |            ✅ 危险命令正则黑名单 + 终端敏感文件闸门(缓解)；base64 参数编码方案已评估并否决(对 terminal 无增益，见 DEEPAGENTS_BORROWING_PLAN 处置记录)       | ✅ sandbox参数base64编码+花括号展开限制(LocalShell直传shell=True无校验) | **DeepAgents** |
@@ -159,12 +163,12 @@
 | 参数截断       | ⚠️ 预算截断路径会截断超大工具调用参数（`pub/func/message/tool_args_truncate.py`，head+tail+中段省略）；无摘要期模型感知等价物 | ✅ `TruncateArgsSettings` 摘要前截断旧工具参数          |
 | 模型感知默认值 | ❌ 手动配置                                                                    | ✅ `compute_summarization_defaults()` 从模型profile计算 |
 | 增量检查点优化 | ❌ 无                                                                          | ✅ `DeltaChannel(snapshot_frequency=50)` O(N²)→O(N)     |
-| 人类消息驱逐   | ❌ 无                                                                          | ✅ `human_message_token_limit_before_evict`             |
-| **结论**       | **Sherry 在触发精度、防抖动与非LLM溢出裁剪方面领先；DeepAgents 在增量检查点优化、模型感知默认值与人类消息驱逐方面领先；工具结果驱逐/预览/read_file 切片已对齐** |
+| 人类消息驱逐   | ✅ P1-9：超大 HumanMessage 全文落 `SESSIONS_DIR/<sid>/evicted/human-<id>.md`，state 与 MesMemory 保留全文，`before_model` 只打 `lc_evicted_to` 标记、`wrap_model_call` 仅把模型视图换成 路径+head/tail+`read_file` 提示（提交 `033aabb`/`10e1d22`/`4868d37`/`9778898`） | ✅ `human_message_token_limit_before_evict`             |
+| **结论**       | **Sherry 在触发精度、防抖动与非LLM溢出裁剪方面领先；DeepAgents 在增量检查点优化与模型感知默认值方面领先；工具结果驱逐/预览/read_file 切片与人类消息驱逐（P1-9）已对齐** |
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/summarization/core.py`（`_fast_tail_clip`:880；调用点 1033/1076/1289/1334）+ `agent/wrapper/context_limit.py` + `config/features/agent_side/summarization.py`（`overflow_clip_*` 三键:55-57,110-112）+ `config/features/agent_side/token_guard.py` + `pub/func/message/overflow_clip.py` + `agent/middlewares/tool_result_eviction/core.py` + `config/features/agent_side/tool_result_eviction.py`
+- Sherry: `agent/middlewares/summarization/core.py`（`_fast_tail_clip`:880；调用点 1033/1076/1289/1334）+ `agent/wrapper/context_limit.py` + `config/features/agent_side/summarization.py`（`overflow_clip_*` 三键:55-57,110-112）+ `config/features/agent_side/token_guard.py` + `pub/func/message/overflow_clip.py` + `pub/func/message/eviction.py`（`evict_tool_result`/`slice_read_file_result`/`evict_human_message`/`build_human_preview`）+ `agent/middlewares/context_eviction/core.py` + `config/features/agent_side/tool_result_eviction.py`
 - DeepAgents: `libs/deepagents/deepagents/middleware/summarization.py`（0.85 触发:34 / `TruncateArgsSettings`:168 / `compute_summarization_defaults`:262）+ `libs/deepagents/deepagents/middleware/_overflow_clip.py` + `libs/deepagents/deepagents/middleware/_message_eviction.py` + `libs/deepagents/deepagents/_messages_reducer.py` + `libs/deepagents/deepagents/middleware/filesystem.py`（人类消息驱逐:1755）
 
 ---
@@ -315,7 +319,7 @@
 | 摘要提示安全   | ✅ NEVER include API keys指令                                                    | ❌ 无                        |
 | FIFO限制       | ✅ Completed最多5条                                                              | ❌ 无                        |
 | 文件操作棘轮   | ✅ 压缩后保留read_files/modified_files                                           | ❌ 无                        |
-| **结论**       | **Sherry 在压缩安全、记忆冲洗、逐消息持久化与摘要消息过滤方面领先；工具结果驱逐/预览/read_file 切片已与 DeepAgents 对齐（DeepAgents 另有内联媒体卸载与人类消息驱逐）** |
+| **结论**       | **Sherry 在压缩安全、记忆冲洗、逐消息持久化与摘要消息过滤方面领先；工具结果驱逐/预览/read_file 切片与人类消息驱逐已与 DeepAgents 对齐（DeepAgents 另有内联媒体卸载）** |
 
 **关键文件**：
 

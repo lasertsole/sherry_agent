@@ -43,7 +43,7 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 - **`context_engine/embeddings/`** —— 向量语义搜索：惰性嵌入后端（项目嵌入模型，可覆盖）、幂等 LEFT-JOIN 索引器、余弦排序；由 `message_search` 工具暴露（`semantic: true`）。
 - **`agent/tools/message_search.py`** —— 两段式检索：先在已持久化的 `messages` 表上做 FTS5 搜索；无命中时降级到会话的最新 checkpoint（`SRC_DIR/checkpoints/sqlite.db` 的 `state["messages"]`），由新到旧对尚未持久化的轮次做关键词匹配（受 `_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` 限制）；兜底命中标记 `source="checkpoint"`。由于持久化现在发生在每个模型边界与每次工具返回，这条兜底仅在"检查点领先于落库"的极端窗口内起作用 —— 即等待下一个模型边界落库的 HITL 拒绝消息（工具结果在返回时即已写入）。
 - **`agent/middlewares/message_persistence/`** —— 写一次的会话持久化，两个时机：human/AI 消息在每个模型调用边界，工具结果在返回瞬间；`persisted_message_ids` 水位保证每条消息恰好落库一次，持久化不再依赖压缩触发。
-- **工具结果体积治理** —— `ToolResultEvictionMiddleware` 在超大结果（> 20 000 字符）进入 state 之前将其卸载到 `SESSIONS_DIR/<session_id>/evicted/`（state 中只留 head+tail 预览）；`clear_session()` 删除整个会话目录，驱逐文件一并清除。P1-2 溢出尾部裁剪只经 `model_copy` 把尾部 `ToolMessage` 内容替换为 stub（身份与配对不变）—— 不丢数据，因为每条结果都已落库、被卸载的原文也留在磁盘上：`message_search` 可取回文本，`read_file` 可重读驱逐文件。
+- **上下文体积治理** —— `ContextEvictionMiddleware` 在超大工具结果（> 20 000 字符）进入 state 之前将其卸载到 `SESSIONS_DIR/<session_id>/evicted/`（state 中只留 head+tail 预览）；超长人类消息（> 200 000 字符）写入同一目录并打上 `lc_evicted_to` 标记，但只截断模型视图——state 与 MesMemory 保留全文。`clear_session()` 删除整个会话目录，驱逐文件一并清除。P1-2 溢出尾部裁剪只经 `model_copy` 把尾部 `ToolMessage` 内容替换为 stub（身份与配对不变）—— 不丢数据，因为每条结果都已落库、被卸载的原文也留在磁盘上：`message_search` 可取回文本，`read_file` 可重读驱逐文件。
 - **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 压缩锁（TTL 自愈、同步 + 异步获取、超时 fail-open），包裹 `_apply_compression` 与 `_aapply_compression` 两条路径。
 - **`runtime/session/state_register.py`** —— `ContextEpoch` 生命周期（initialize / prepare / replace / advance），基于 `context_epoch` 表。
 

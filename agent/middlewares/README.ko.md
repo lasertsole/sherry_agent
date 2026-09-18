@@ -26,7 +26,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
-  - [ToolResultEvictionMiddleware](#toolresultevictionmiddleware)
+  - [ContextEvictionMiddleware](#contextevictionmiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -86,7 +86,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
-    ToolResultEvictionMiddleware(),
+    ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
@@ -147,7 +147,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 더 타이트한 반복 예산(90 대신 60).
 - `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음).
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
-- `ToolResultEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지합니다(퇴거 파일도 read_file 슬라이스도 없음).
+- `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
@@ -156,9 +156,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 페이즈 | 순서 |
 |---|---|
 | `before_agent` (리스트 순서) | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `before_model`(목록 순서) | ContextEvictionMiddleware(P1-9: 마지막 거대 HumanMessage 태깅. `before_agent` 체인이 먼저 실행되어 미디어 힌트가 이미 텍스트에 병합됨) → ToolCallNormalize → SubagentCompletionDrainMiddleware |
 | `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
 | `after_model` (역순) | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음) |
-| `wrap_tool_call` (최외곽 → 최내곽) | IterationBudget → ToolGuardrails → ToolResultEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
+| `wrap_tool_call` (최외곽 → 최내곽) | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
 | `after_agent` (역순) | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 해당 후크를 구현한 미들웨어만 그 페이즈에 참여합니다. 표는 "구현했다면 실행될 위치"를 보여줍니다.
@@ -364,14 +365,16 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 압축 경로는 이제 아무것도 영속화하지 않습니다: `compaction_persistence.py` 모듈과 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점이 삭제되었습니다. compact는 압축과 압축 시점 nudge 스케줄만 담당합니다(Summarization 섹션 참고).
 
-### ToolResultEvictionMiddleware
+### ContextEvictionMiddleware
 
-**모듈:** `agent/middlewares/tool_result_eviction/core.py` · **클래스:** `ToolResultEvictionMiddleware(AgentMiddleware)`
-**후크:** `wrap_tool_call` / `awrap_tool_call` 전용
+**모듈:** `agent/middlewares/context_eviction/core.py` · **클래스:** `ContextEvictionMiddleware(AgentMiddleware)`
+**후크:** `wrap_tool_call` / `awrap_tool_call`(P0-2/P2-4) 및 `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`(P1-9)
 
-메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에는 등록되지 않습니다(자식 트랜스크립트는 완전한 도구 결과를 유지).
+메인 에이전트에서 **`ToolGuardrails` 직후**에 등록되므로 wrap 체인에서 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware`의 **바깥**에 위치합니다(먼저 등록된 것이 최외곽). `MessagePersistenceMiddleware`는 최내곽에 남아 있으므로, 도구 결과의 경우 안쪽 계층이 도구 반환 순간 **원문**을 MesMemory에 플러시하고, 그다음 이 계층이 미리보기로 교체합니다. state(따라서 체크포인터와 다음 모델 호출)에 들어가는 것은 항상 미리보기뿐이며, 큰 내용은 프리픽스에 절대 들어가지 않습니다. 워커 파이프라인에는 등록되지 않습니다(자식 트랜스크립트는 완전한 도구 결과를 유지).
 
-**두 가지 축소 경로**
+같은 미들웨어가 **인간 메시지** 경로(P1-9)도 담당하며, 그 삼상태 분할은 도구 쪽과 반대입니다. 아래를 참조: [인간 메시지 퇴거](#인간-메시지-퇴거p1-9).
+
+**도구 결과의 두 가지 축소 경로**
 
 | 결과 | 처리 |
 |---|---|
@@ -409,7 +412,28 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **압축 시점 read_file 슬라이스와의 상보성**(`pub/func/message/target_truncation.py::_truncate_read_file_content`): 이 미들웨어는 도구 실행 시점을, 압축 경로는 컨텍스트 압박 시점을 담당합니다(head 30 % + tail 30 %, `max_tool_output_chars = 2 000`, 파서가 계산한 1-based 연속 offset 포함). 슬라이스된 페이로드를 압축이 다시 클립해도 잘린 JSON은 파싱할 수 없으므로 결정론적으로 "처음부터 다시 읽기" 안내로 폴백합니다. 실행 시점 슬라이스 자체도 멱등입니다. 두 안내는 충돌하지 않으며, 같은 메시지의 단계적 축소입니다.
 
-**설정**(`config/features/agent_side/tool_result_eviction.py`): `enabled=True`, `evict_threshold_chars=20_000`, `preview_head_lines=5`, `preview_tail_lines=5`, `eviction_subdir="evicted"`, `excluded_tools`(위 8개).
+#### 인간 메시지 퇴거(P1-9)
+
+사용자가 거대한 일반 텍스트(로그, 문서, 대화 내보내기, 코드)를 붙여넣을 수 있지만 `MultimodalProcessor`는 미디어 첨부만 다루고 이런 텍스트는 통제하지 않습니다. DeepAgents의 `FilesystemMiddleware`에는 전용 메커니즘(`human_message_token_limit_before_evict`)이 있으며, 이 미들웨어는 Sherry 특유의 삼상태 분할로 이를 이식합니다.
+
+**트리거(`before_model` / `abefore_model`).** 게이트: `human_evict_enabled`이고 **마지막** 메시지가 `HumanMessage`이며 `lc_evicted_to`가 없고, 추출 텍스트 길이가 `human_evict_threshold_chars`(200 000자 ≒ DeepAgents 기본 50 000 토큰 × 4자/토큰)보다 **큼**. 마지막 한 건만 검사하므로 과거 사용자 발화는 다시 검사하지 않습니다. `before_agent` 체인(MultimodalProcessor)은 항상 모델 루프보다 먼저 실행되므로 태깅 시점의 텍스트에는 미디어 힌트가 이미 병합되어 있습니다. 이 미들웨어의 `before_model` 노드는 목록 순서로 `ToolCallNormalize` / `SubagentCompletionDrainMiddleware`보다 먼저 실행됩니다.
+
+**태깅 + 오프로드.** 전체 텍스트를 `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|타임스탬프>.md`에 쓰고(`evict_human_message`, `pub/func/message/eviction.py`), 후크는 부분 상태 업데이트 `{"messages": [tagged]}`를 반환합니다. `tagged = msg.model_copy(update={"additional_kwargs": {..., "lc_evicted_to": str(path)}})`로 **content와 id는 불변**이며, 표준 `add_messages` reducer가 id로 제자리 교체합니다. `REMOVE_ALL_MESSAGES` 센티널도, 전체 목록 재작성도 필요 없고 state 쪽에서 프리픽스 캐시를 깨지 않습니다. `session_id`가 안전하지 않으면(빈 값 / `.` / `..` / 구분자 포함) 디스크를 건드리지 않고 건너뜁니다. 쓰기는 태깅보다 먼저 일어나므로 실패해도 dangling 포인터가 남지 않습니다. 한 줄이 거대해 미리보기가 원문보다 작지 않은 경우도 건너뜁니다(도구 쪽과 같은 가드).
+
+**모델 뷰(`wrap_model_call` / `awrap_model_call`).** `lc_evicted_to`가 있는 `HumanMessage`는 **해당 요청에서만** state 원문으로 만든 미리보기(`build_human_preview`)로 교체됩니다: 퇴거 경로 + head/tail 각 5줄 + `read_file(file_path=..., offset=0, limit=100)` 이어읽기 힌트. `_build_evicted_content`는 비텍스트 블록(이미지 / 오디오 / 비디오)을 그대로 유지하고 텍스트 블록만 교체합니다. 요청은 `request.override(messages=...)`로 재구성되며(Summarization과 같은 idiom) state는 절대 변경되지 않습니다. 파일이 없으면(세션 디렉터리 정리, 디스크 문제) state 원문으로 **자가 치유**하되, 대상이 해당 세션 자신의 `evicted/` 디렉터리가 아니면 쓰기를 거부합니다.
+
+**세 저장소 — 도구 결과와 반대되는 분할**
+
+| 위치 | 도구 결과(P0-2) | 인간 메시지(P1-9) |
+|---|---|---|
+| graph state / checkpointer | 미리보기만 | **전체 원문** + `lc_evicted_to` 태그 |
+| MesMemory(`messages` 테이블) | 전체 원문 | **전체 원문**(태그는 영속화를 필터링하지 않음) |
+| 다음 모델 호출(요청 뷰) | 미리보기 | 미리보기(경로 + `read_file` 힌트) |
+| `SESSIONS_DIR/<session_id>/evicted/` | 바이트 단위 동일 사본 | 바이트 단위 동일 사본 |
+
+차이의 이유: 인간 메시지는 턴의 첫 `after_model` 경계에서 영속화되므로 state가 전체 원문을 유지해야 MesMemory가 전문을 아카이브할 수 있습니다(그렇지 않으면 `message_search`와 압축은 미리보기만 보게 됨). 도구 결과는 안쪽 영속화 계층이 도구 반환 시 이미 플러시했으므로 state는 미리보기로 충분합니다. 인간 메시지 id는 변하지 않으므로 영속화 워터마크는 영향받지 않고 두 번째 행도 기록되지 않습니다. HITL과 도구 페어링은 `HumanMessage`와 상호작용하지 않고, P1-2 오버플로 테일 클립은 `ToolMessage`만 스텁화하며, `_filter_summary_messages`는 `lc_source='summarization'` 산출물만 제거합니다 — 어느 것도 태그나 포인터를 파괴하지 않습니다.
+
+**설정**(`config/features/agent_side/tool_result_eviction.py`): `enabled=True`, `evict_threshold_chars=20_000`, `preview_head_lines=5`, `preview_tail_lines=5`, `eviction_subdir="evicted"`, `excluded_tools`(위 8개), `human_evict_enabled=True`, `human_evict_threshold_chars=200_000`, `human_preview_head_lines=5`, `human_preview_tail_lines=5`.
 
 ### LLMRetryMiddleware
 
@@ -669,10 +693,12 @@ agent = create_agent(
 │
 ├─ 루프: 모델 호출
 │   ├─ before_model
+│   │   · ContextEvictionMiddleware  마지막 거대 HumanMessage 태깅(P1-9)
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 재작성
 │   ├─ wrap_model_call (최외곽 → 최내곽)
 │   │   · system_prompt_injection  시스템 프롬프트 주입(데코레이터가 request.override 호출)
 │   │   · IterationBudget  1 소모. 소진 시 종단 AIMessage
+│   │   · ContextEvictionMiddleware  퇴거된 인간 메시지를 미리보기로 교체(P1-9)
 │   │   · HeartbeatStaleness  kill됐으면 HeartbeatTimeoutError, 아니면 heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  서킷 브레이커 점검. 분류 기반 재시도 + 백오프. 폴백 /
 │   │                        콘텐츠 필터 / 부분 스트림 스텁 플래그 소비
@@ -823,7 +849,7 @@ from agent.middlewares import (
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
     ToolGuardrails,
-    ToolResultEvictionMiddleware,
+    ContextEvictionMiddleware,
     IterationBudget,
     system_prompt_injection,
     ToolCallNormalize,

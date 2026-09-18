@@ -9,7 +9,7 @@
 >
 > **P2-4 处置记录（2026-09-17）**：依赖 P0-2。在 `wrap_tool_call` 中对 `name == "read_file"` 的结果走切片路径（不写文件，文件已在磁盘），与 `target_truncation.py` 的压缩时切片互补。
 >
-> **P0-2 落地记录（2026-09-18）**：**已落地** —— `agent/middlewares/tool_result_eviction/`（`wrap_tool_call` / `awrap_tool_call` 拦截）+ `pub/func/message/eviction.py`（`evict_tool_result` 等纯函数）+ `config/features/agent_side/tool_result_eviction.py`（TypedDict + 实例）。参数：阈值 `evict_threshold_chars=20_000`、预览 head+tail 各 5 行、`eviction_subdir="evicted"`（`SESSIONS_DIR/{session_id}/evicted/`）、`excluded_tools` 8 项（`read_file` / `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list`）。提交 `4a260c7`（实现）/ `565fc13`（测试）/ `466c7d3`（中间件文档）/ `06f8d77`（导出清单）。
+> **P0-2 落地记录（2026-09-18）**：**已落地** —— `agent/middlewares/context_eviction/`（`wrap_tool_call` / `awrap_tool_call` 拦截）+ `pub/func/message/eviction.py`（`evict_tool_result` 等纯函数）+ `config/features/agent_side/tool_result_eviction.py`（TypedDict + 实例）。参数：阈值 `evict_threshold_chars=20_000`、预览 head+tail 各 5 行、`eviction_subdir="evicted"`（`SESSIONS_DIR/{session_id}/evicted/`）、`excluded_tools` 8 项（`read_file` / `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list`）。提交 `4a260c7`（实现）/ `565fc13`（测试）/ `466c7d3`（中间件文档）/ `06f8d77`（导出清单）。
 >
 > **P2-4 落地记录（2026-09-18）**：**已落地** —— `read_file` 在 `wrap_tool_call` 中走**切片**路径（`model_copy` 换内容，不写新文件——文件已在磁盘），与压缩期 `target_truncation.py` 的可找回切片**互补**；同批提交 `4a260c7` / `565fc13` / `466c7d3` / `06f8d77`。
 >
@@ -20,7 +20,7 @@
 > **未执行项清单（2026-09-18）**：以下条目**仍由本文件跟踪、尚未执行**（本文件曾于 `257879c` 被误删，已由 `a750fdf` 恢复并**保持活跃**，不再退休）：
 >
 > - P1-1 参数截断 —— **已落地**（能力已存在，见上方 P1-1 落地记录），无需另做
-> - P1-9 人类消息驱逐（超大 HumanMessage 的上下文治理）—— **未执行**，详细实现规划见 `## P1-9`（2026-09-18 新增，来源：对比报告第三批复核）
+> - P1-9 人类消息驱逐（超大 HumanMessage 的上下文治理）—— **已落地**（2026-09-18）：`agent/middlewares/context_eviction/`（`before_model` 打标落盘 + `wrap_model_call` 视图截断 + 自愈）+ `pub/func/message/eviction.py` 三纯函数 + 配置四键；「state=全文+标记 / MesMemory=全文 / 磁盘=原文」三态与工具侧相反（详见 `## P1-9` 落地记录；提交 `033aabb`/`10e1d22`/`4868d37`/`9778898`）
 > - P1-3 模型感知摘要默认值（`compute_summarization_defaults`）
 > - P1-4 增量检查点优化（`DeltaChannel`）
 > - P1-5 消息增量缩减器（去重 + 墓碑）
@@ -80,13 +80,13 @@ Sherry 的工具结果**完整进入 state**，超大输出（如 terminal 50K �
 
 | 文件                                                 | 修改类型 | 说明                                                                        |
 | ---------------------------------------------------- | -------- | --------------------------------------------------------------------------- |
-| `agent/middlewares/tool_result_eviction/__init__.py` | 新建     | 导出中间件                                                                  |
-| `agent/middlewares/tool_result_eviction/core.py`     | 新建     | `wrap_tool_call` / `awrap_tool_call` 实现                                   |
+| `agent/middlewares/context_eviction/__init__.py` | 新建     | 导出中间件                                                                  |
+| `agent/middlewares/context_eviction/core.py`     | 新建     | `wrap_tool_call` / `awrap_tool_call` 实现                                   |
 | `pub/func/message/eviction.py`                       | 新建     | 纯函数：`evict_tool_result` / `load_evicted` / `build_preview`              |
 | `config/features/agent_side/tool_result_eviction.py` | 新建     | 配置 TypedDict + 实例                                                       |
 | `config/features/agent_side/__init__.py`             | 修改     | 导出新配置                                                                  |
 | `config/features/__init__.py`                        | 修改     | 导出新配置                                                                  |
-| `agent/core.py`                                      | 修改     | 中间件列表中插入 `ToolResultEvictionMiddleware`（在 `ToolGuardrails` 之后） |
+| `agent/core.py`                                      | 修改     | 中间件列表中插入 `ContextEvictionMiddleware`（在 `ToolGuardrails` 之后） |
 | `agent/middlewares/__init__.py`                      | 修改     | 导出新中间件                                                                |
 
 #### 配置设计
@@ -220,7 +220,7 @@ def _build_preview(content: str, file_path: Path) -> str:
 
 #### 中间件实现
 
-**`agent/middlewares/tool_result_eviction/core.py`**:
+**`agent/middlewares/context_eviction/core.py`**:
 
 ```python
 """工具结果驱逐中间件。
@@ -245,7 +245,7 @@ from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
 from pub.func.message.eviction import evict_tool_result
 
 
-class ToolResultEvictionMiddleware(AgentMiddleware):
+class ContextEvictionMiddleware(AgentMiddleware):
     """驱逐超大工具结果到文件系统。"""
 
     def __init__(self) -> None:
@@ -286,7 +286,7 @@ class ToolResultEvictionMiddleware(AgentMiddleware):
 
 #### 中间件注册
 
-在 `agent/core.py` 的中间件列表中，将 `ToolResultEvictionMiddleware` 插入到 `ToolGuardrails` **之后**：
+在 `agent/core.py` 的中间件列表中，将 `ContextEvictionMiddleware` 插入到 `ToolGuardrails` **之后**：
 
 ```python
 middlewares = [
@@ -295,7 +295,7 @@ middlewares = [
     MultimodalProcessor(),
     IterationBudget(),
     ToolGuardrails(),
-    ToolResultEvictionMiddleware(),       # ← 新增
+    ContextEvictionMiddleware(),       # ← 新增
     ToolCallNormalize(),
     # ...
     Summarization(),                     # LAST
@@ -840,7 +840,7 @@ Sherry 缺少威胁模型文档，安全评审缺少系统性参考。
 
 ## P1-9：人类消息驱逐（超大 HumanMessage 的上下文治理）
 
-> **状态（2026-09-18）：未执行，本节为详细实现规划。** 来源：对比报告第三批复核（`TODO/PROTECTION_COMPARISON.md` §2.4「人类消息驱逐」行，Sherry ❌）。**借用计划此前未覆盖此项**，本节补全。
+> **状态（2026-09-18）：已落地。** 实现位置：`agent/middlewares/context_eviction/core.py`（`before_model`/`abefore_model` 打标+落盘、`wrap_model_call`/`awrap_model_call` 视图截断+自愈）、`pub/func/message/eviction.py`（`evict_human_message`/`build_human_preview`/`human_eviction_notice`）、`config/features/agent_side/tool_result_eviction.py`（四键）、`tests/agent/middlewares/context_eviction/`。提交 `033aabb`（更名）/`10e1d22`（配置）/`4868d37`（纯函数）/`9778898`（中间件+测试）。本节下文为当时的详细规划；实现遵循「方案 A」——`tool_result_eviction/` 更名 `context_eviction/`，同一中间件持两组钩子。与规划的两点差异：①增加"单行超长、预览不小于原文则跳过"守卫（与工具侧同一守卫）；②自愈仅允许写入本会话自己的 `evicted/` 目录（拒绝 tag 中的外部路径）。钩子顺序实测结论（langchain 1.3.9）：`before_model` 节点按**列表顺序**链式执行且全部晚于 `before_agent` 链，因此打标天然发生在 `MultimodalProcessor` 处理之后，无需改用 `wrap_model_call` 打标；`wrap_model_call` 经 `ExtendedModelResponse(command=...)` 也可做状态更新，但本实现未使用。来源：对比报告第三批复核（`TODO/PROTECTION_COMPARISON.md` §2.4「人类消息驱逐」行，Sherry ❌；第四批复核已改为 ✅）。
 
 ### 问题
 
@@ -1007,10 +1007,10 @@ read_file 工具的结果被驱逐时，不应写文件——文件本身已在�
 
 ### 具体实现方案
 
-在 P0-2 的 `ToolResultEvictionMiddleware._maybe_evict()` 中，对 `name == "read_file"` 的 ToolMessage 走切片路径而非卸载路径：
+在 P0-2 的 `ContextEvictionMiddleware._maybe_evict()` 中，对 `name == "read_file"` 的 ToolMessage 走切片路径而非卸载路径：
 
 ```python
-# tool_result_eviction/core.py _maybe_evict 修改:
+# context_eviction/core.py _maybe_evict 修改:
 
 def _maybe_evict(self, result: ToolMessage, request: ToolCallRequest) -> ToolMessage:
     if not self._enabled:

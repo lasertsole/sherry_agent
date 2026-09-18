@@ -26,7 +26,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
-  - [ToolResultEvictionMiddleware](#toolresultevictionmiddleware)
+  - [ContextEvictionMiddleware](#contextevictionmiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -86,7 +86,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
-    ToolResultEvictionMiddleware(),
+    ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
@@ -146,7 +146,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 更紧的迭代预算（60 而非 90）。
 - 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
-- 没有 `ToolResultEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片）。
+- 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
@@ -155,9 +155,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | 阶段 | 顺序 |
 |---|---|
 | `before_agent`（列表顺序） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `before_model`（列表顺序） | ContextEvictionMiddleware（P1-9：给末条超长 HumanMessage 打标；`before_agent` 链已先运行，媒体提示已并入文本） → ToolCallNormalize → SubagentCompletionDrainMiddleware |
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序） | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库） |
-| `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → ToolResultEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state） |
+| `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state） |
 | `after_agent`（逆序） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 只有实现了某个钩子的中间件才会参与该阶段；表中展示的是如果实现的话各自所处的位置。
@@ -363,14 +364,16 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 压缩路径不再做任何持久化：`compaction_persistence.py` 模块与 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。一次 compact 只做压缩并调度压缩时 nudge（见 Summarization 小节）。
 
-### ToolResultEvictionMiddleware
+### ContextEvictionMiddleware
 
-**模块：** `agent/middlewares/tool_result_eviction/core.py` · **类：** `ToolResultEvictionMiddleware(AgentMiddleware)`
-**钩子：** 仅 `wrap_tool_call` / `awrap_tool_call`
+**模块：** `agent/middlewares/context_eviction/core.py` · **类：** `ContextEvictionMiddleware(AgentMiddleware)`
+**钩子：** `wrap_tool_call` / `awrap_tool_call`（P0-2/P2-4）与 `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`（P1-9）
 
-在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线不注册本中间件：子会话保留完整工具结果。
+在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成工具结果的关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线不注册本中间件：子会话保留完整工具结果。
 
-**两条缩减路径**
+同一中间件还持有**人类消息**路径（P1-9），其三是三态切分与工具侧相反；见下文[人类消息驱逐](#人类消息驱逐p1-9)。
+
+**工具结果的两条缩减路径**
 
 | 结果 | 处理 |
 |---|---|
@@ -408,7 +411,28 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **与压缩期 read_file 切片的互补关系**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：本中间件覆盖工具执行时，压缩路径覆盖上下文压力时（head 30 % + tail 30 %，`max_tool_output_chars = 2 000`，并给出解析得出的 1-based 续读 offset）。压缩再次切分已切片载荷时无法解析被截断的 JSON，会确定性地回退到"从头重读"提示；执行期切片本身也是幂等的。两条提示不会冲突，是同一消息的分阶段缩减。
 
-**配置**（`config/features/agent_side/tool_result_eviction.py`）：`enabled=True`、`evict_threshold_chars=20_000`、`preview_head_lines=5`、`preview_tail_lines=5`、`eviction_subdir="evicted"`、`excluded_tools`（上述 8 个）。
+#### 人类消息驱逐（P1-9）
+
+用户可能粘贴超大纯文本（日志、文档、长对话导出、代码），而 `MultimodalProcessor` 只治理媒体附件、不治理这类文本。DeepAgents 的 `FilesystemMiddleware` 对此有专门机制（`human_message_token_limit_before_evict`）；本中间件移植该机制并采用 Sherry 特有的三态切分。
+
+**触发（`before_model` / `abefore_model`）。** 门控：`human_evict_enabled` 且**最后一条**消息是 `HumanMessage`、未携带 `lc_evicted_to`、且提取文本长度**大于** `human_evict_threshold_chars`（200 000 字符 ≈ DeepAgents 默认 50 000 token × 4 字符/token）。只检查最后一条，历史用户消息永不复查。由于 `before_agent` 链（MultimodalProcessor）总在模型循环之前运行，打标时看到的已是并入媒体提示后的最终文本；本中间件的 `before_model` 节点按列表顺序先于 `ToolCallNormalize` / `SubagentCompletionDrainMiddleware`。
+
+**打标 + 落盘。** 全文写入 `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|时间戳>.md`（`evict_human_message`，`pub/func/message/eviction.py`），随后钩子返回部分状态更新 `{"messages": [tagged]}`，其中 `tagged = msg.model_copy(update={"additional_kwargs": {..., "lc_evicted_to": str(path)}})` —— **content 与 id 都不变**，标准 `add_messages` reducer 按 id 原地替换。不用 `REMOVE_ALL_MESSAGES` 哨兵、不重写全列表、state 侧不破坏前缀缓存。`session_id` 不安全（空 / `.` / `..` / 含分隔符）时直接跳过且不落盘。先写文件后打标，写失败不会留下悬空指针；单行超长导致预览不小于原文时同样跳过（与工具侧同一守卫）。
+
+**模型视图（`wrap_model_call` / `awrap_model_call`）。** 凡带 `lc_evicted_to` 的 `HumanMessage` 都**只在本次请求中**被替换为基于 state 原文构建的预览（`build_human_preview`）：驱逐路径 + head/tail 各 5 行 + `read_file(file_path=..., offset=0, limit=100)` 续读提示；`_build_evicted_content` 保留非文本块（图片 / 音频 / 视频）原样，只替换文本块。请求经 `request.override(messages=...)` 重建——与 Summarization 同一 idiom——state 永不被改写。文件缺失（会话目录被清、磁盘问题）时，中间件用 state 原文**自愈**重写；目标不是本会话自己的 `evicted/` 目录时拒绝写入。
+
+**三处存储——与工具结果相反的切分**
+
+| 位置 | 工具结果（P0-2） | 人类消息（P1-9） |
+|---|---|---|
+| graph state / checkpointer | 仅预览 | **完整原文** + `lc_evicted_to` 标记 |
+| MesMemory（`messages` 表） | 完整原文 | **完整原文**（标记不会过滤落库） |
+| 下一次模型调用（请求视图） | 预览 | 预览（路径 + `read_file` 提示） |
+| `SESSIONS_DIR/<session_id>/evicted/` | 逐字节副本 | 逐字节副本 |
+
+差异原因：人类消息在回合的首个 `after_model` 边界才落库，state 必须保留全文，MesMemory 才能归档全文（否则 `message_search` 与压缩只能看到预览）；工具结果则由内层持久化在工具返回时即时落库，state 可以只留预览。人类消息 id 不变，持久化水位不受影响、不会写第二行。HITL 与工具配对不与 `HumanMessage` 交互；P1-2 溢出尾部裁剪只 stub `ToolMessage`，`_filter_summary_messages` 只丢弃 `lc_source='summarization'` 产物——两者都不会销毁标记或指针。
+
+**配置**（`config/features/agent_side/tool_result_eviction.py`）：`enabled=True`、`evict_threshold_chars=20_000`、`preview_head_lines=5`、`preview_tail_lines=5`、`eviction_subdir="evicted"`、`excluded_tools`（上述 8 个）、`human_evict_enabled=True`、`human_evict_threshold_chars=200_000`、`human_preview_head_lines=5`、`human_preview_tail_lines=5`。
 
 ### LLMRetryMiddleware
 
@@ -662,10 +686,12 @@ agent = create_agent(
 │
 ├─ 循环：模型调用
 │   ├─ before_model
+│   │   · ContextEvictionMiddleware  给末条超长 HumanMessage 打标（P1-9）
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 重写
 │   ├─ wrap_model_call（最外层 → 最内层）
 │   │   · system_prompt_injection  注入系统提示词（装饰器调用 request.override）
 │   │   · IterationBudget  消耗 1；耗尽时返回终止 AIMessage
+│   │   · ContextEvictionMiddleware  把被驱逐的人类消息换成预览（P1-9）
 │   │   · HeartbeatStaleness  已杀死则抛 HeartbeatTimeoutError；否则 heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  熔断器检查；分类重试 + 退避；回退 /
 │   │                        内容过滤 / 部分流桩标志消费
@@ -816,7 +842,7 @@ from agent.middlewares import (
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
     ToolGuardrails,
-    ToolResultEvictionMiddleware,
+    ContextEvictionMiddleware,
     IterationBudget,
     system_prompt_injection,
     ToolCallNormalize,

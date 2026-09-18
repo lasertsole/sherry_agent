@@ -26,7 +26,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
-  - [ToolResultEvictionMiddleware](#toolresultevictionmiddleware)
+  - [ContextEvictionMiddleware](#contextevictionmiddleware)
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
@@ -86,7 +86,7 @@ middleware = [
     MultimodalProcessor(),
     IterationBudget(90),
     ToolGuardrails(),
-    ToolResultEvictionMiddleware(),
+    ContextEvictionMiddleware(),
     ToolCallNormalize(),
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
@@ -147,7 +147,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - より厳しい反復予算（90 ではなく 60）。
 - `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
-- `ToolResultEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持します（退避ファイルも read_file スライスもなし）。
+- `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
 - 子セッション終了時、spawn コードは `finally` ブロックで `state_register_mem` から `OutputRepetitionGuard` の 6 つの状態キー（`SESSION_STATE_KEYS`）を削除します。
 
@@ -156,9 +156,10 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | フェーズ | 順序 |
 |---|---|
 | `before_agent`（リスト順） | MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization |
+| `before_model`（リスト順） | ContextEvictionMiddleware（P1-9：末尾の巨大な HumanMessage にタグ付け。`before_agent` チェーンが先に走るため、メディアヒントは既にテキストへ統合済み） → ToolCallNormalize → SubagentCompletionDrainMiddleware |
 | `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ToolGuardrails → ToolCallNormalize → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → HumanInTheLoop → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
 | `after_model`（逆順） | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない） |
-| `wrap_tool_call`（最外層 → 最内層） | IterationBudget → ToolGuardrails → ToolResultEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
+| `wrap_tool_call`（最外層 → 最内層） | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
 | `after_agent`（逆順） | Summarization → LLMRetryMiddleware → HumanInTheLoop → HeartbeatStaleness → ToolCallNormalize → ToolGuardrails → IterationBudget → MultimodalProcessor |
 
 あるフックを実装しているミドルウェアだけがそのフェーズに参加します。表は「実装していた場合に走る位置」を示しています。
@@ -364,14 +365,16 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 圧縮パスはもう何も永続化しません：`compaction_persistence.py` モジュールと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。compact は圧縮と圧縮時 nudge のスケジュールだけを行います（Summarization セクション参照）。
 
-### ToolResultEvictionMiddleware
+### ContextEvictionMiddleware
 
-**モジュール：** `agent/middlewares/tool_result_eviction/core.py` · **クラス：** `ToolResultEvictionMiddleware(AgentMiddleware)`
-**フック：** `wrap_tool_call` / `awrap_tool_call` のみ
+**モジュール：** `agent/middlewares/context_eviction/core.py` · **クラス：** `ContextEvictionMiddleware(AgentMiddleware)`
+**フック：** `wrap_tool_call` / `awrap_tool_call`（P0-2/P2-4）と `before_model` / `abefore_model` + `wrap_model_call` / `awrap_model_call`（P1-9）
 
-メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインには登録されません（子トランスクリプトは完全なツール結果を保持）。
+メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、ツール結果については内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインには登録されません（子トランスクリプトは完全なツール結果を保持）。
 
-**2 つの縮小パス**
+同じミドルウェアが**人間メッセージ**経路（P1-9）も持ち、その三状態分割はツール側とは逆です。以下を参照：[人間メッセージの退避](#人間メッセージの退避p1-9)。
+
+**ツール結果の 2 つの縮小パス**
 
 | 結果 | 処理 |
 |---|---|
@@ -409,7 +412,28 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **圧縮時の read_file スライスとの相補性**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：このミドルウェアはツール実行時を、圧縮経路はコンテキスト逼迫時を担当します（head 30 % + tail 30 %、`max_tool_output_chars = 2 000`、パーサー由来の 1-based 継続 offset 付き）。スライス済みペイロードを圧縮が再度クリップしても、切り詰められた JSON はパースできないため、決定論的に「先頭から読み直し」通知へフォールバックします。実行時スライス自体も冪等です。2 つの通知は衝突せず、同一メッセージの段階的縮小です。
 
-**設定**（`config/features/agent_side/tool_result_eviction.py`）：`enabled=True`、`evict_threshold_chars=20_000`、`preview_head_lines=5`、`preview_tail_lines=5`、`eviction_subdir="evicted"`、`excluded_tools`（上記 8 個）。
+#### 人間メッセージの退避（P1-9）
+
+ユーザーが巨大なプレーンテキスト（ログ、文書、会話エクスポート、コード）を貼り付けることがありますが、`MultimodalProcessor` はメディア添付のみを扱い、この種のテキストは統治しません。DeepAgents の `FilesystemMiddleware` には専用機構（`human_message_token_limit_before_evict`）があり、本ミドルウェアはそれを Sherry 固有の三状態分割で移植します。
+
+**トリガー（`before_model` / `abefore_model`）。** ゲート：`human_evict_enabled` かつ**最後の**メッセージが `HumanMessage`、`lc_evicted_to` を持たない、抽出テキスト長が `human_evict_threshold_chars`（200 000 文字 ≒ DeepAgents 既定 50 000 トークン × 4 文字/トークン）を**超える**。最後の 1 件のみを検査し、過去のユーザー発言は再検査しません。`before_agent` チェーン（MultimodalProcessor）は常にモデルループより先に走るため、タグ付け時のテキストにはメディアヒントが統合済みです。本ミドルウェアの `before_model` ノードはリスト順で `ToolCallNormalize` / `SubagentCompletionDrainMiddleware` より先に実行されます。
+
+**タグ付け + 退避。** 全文を `SESSIONS_DIR/<session_id>/evicted/human-<msg_id|タイムスタンプ>.md` に書き込み（`evict_human_message`、`pub/func/message/eviction.py`）、フックは部分状態更新 `{"messages": [tagged]}` を返します。`tagged = msg.model_copy(update={"additional_kwargs": {..., "lc_evicted_to": str(path)}})` で **content と id は不変**。標準の `add_messages` reducer が id でその場置換します。`REMOVE_ALL_MESSAGES` センチネルもリスト全面書き換えも不要で、state 側でプレフィックスキャッシュを壊しません。`session_id` が安全でない場合（空 / `.` / `..` / 区切り文字入り）はディスクに触れずスキップします。書き込みはタグ付けより先なので、失敗しても宙に浮いたポインタは残りません。1 行が巨大でプレビューが元より小さくならない場合もスキップします（ツール側と同じガード）。
+
+**モデルビュー（`wrap_model_call` / `awrap_model_call`）。** `lc_evicted_to` を持つ `HumanMessage` は、**そのリクエスト内でのみ** state の原文から作ったプレビュー（`build_human_preview`）に置換されます：退避パス + head/tail 各 5 行 + `read_file(file_path=..., offset=0, limit=100)` の続読ヒント。`_build_evicted_content` は非テキストブロック（画像 / 音声 / 動画）をそのまま保持し、テキストブロックだけを置換します。リクエストは `request.override(messages=...)` で再構築され（Summarization と同じイディオム）、state は決して書き換えられません。ファイルが欠落している場合（セッションディレクトリ削除、ディスク障害）は state の原文から**自己修復**しますが、書き込み先がそのセッション自身の `evicted/` ディレクトリでなければ拒否します。
+
+**3 つのストア——ツール結果とは逆の分割**
+
+| 場所 | ツール結果（P0-2） | 人間メッセージ（P1-9） |
+|---|---|---|
+| graph state / checkpointer | プレビューのみ | **全文** + `lc_evicted_to` タグ |
+| MesMemory（`messages` テーブル） | 全文 | **全文**（タグは永続化をフィルタしない） |
+| 次回のモデル呼び出し（リクエストビュー） | プレビュー | プレビュー（パス + `read_file` ヒント） |
+| `SESSIONS_DIR/<session_id>/evicted/` | バイト単位で同一のコピー | バイト単位で同一のコピー |
+
+違いの理由：人間メッセージはターン最初の `after_model` 境界で永続化されるため、state が全文を保持しないと MesMemory は全文をアーカイブできません（そうでなければ `message_search` と圧縮はプレビューしか見られません）。ツール結果は内側の永続化層がツール復帰時にフラッシュ済みなので、state はプレビューで済みます。人間メッセージの id は変わらないため永続化ウォーターマークは影響を受けず、2 行目は書かれません。HITL とツールペアリングは `HumanMessage` と相互作用せず、P1-2 のオーバーフロー・テールクリップは `ToolMessage` のみをスタブ化し、`_filter_summary_messages` は `lc_source='summarization'` の成果物のみを除外します——どちらもタグやポインタを破壊しません。
+
+**設定**（`config/features/agent_side/tool_result_eviction.py`）：`enabled=True`、`evict_threshold_chars=20_000`、`preview_head_lines=5`、`preview_tail_lines=5`、`eviction_subdir="evicted"`、`excluded_tools`（上記 8 個）、`human_evict_enabled=True`、`human_evict_threshold_chars=200_000`、`human_preview_head_lines=5`、`human_preview_tail_lines=5`。
 
 ### LLMRetryMiddleware
 
@@ -669,10 +693,12 @@ agent = create_agent(
 │
 ├─ ループ：モデル呼び出し
 │   ├─ before_model
+│   │   · ContextEvictionMiddleware  末尾の巨大な HumanMessage にタグ付け（P1-9）
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 書き換え
 │   ├─ wrap_model_call（最外層 → 最内層）
 │   │   · system_prompt_injection  システムプロンプトを注入（デコレータが request.override を呼ぶ）
 │   │   · IterationBudget  1 消費。尽きたら終端 AIMessage
+│   │   · ContextEvictionMiddleware  退避済み人間メッセージをプレビューへ置換（P1-9）
 │   │   · HeartbeatStaleness  kill 済みなら HeartbeatTimeoutError、さもなくば heartbeat_iter += 1
 │   │   · LLMRetryMiddleware  ブレーカー確認。分類済みリトライ + バックオフ。フォールバック /
 │   │                        コンテンツフィルタ / 部分ストリームスタブフラグの消費
@@ -823,7 +849,7 @@ from agent.middlewares import (
     OutputRepetitionGuard,
     MaxTokensBoostMiddleware,
     ToolGuardrails,
-    ToolResultEvictionMiddleware,
+    ContextEvictionMiddleware,
     IterationBudget,
     system_prompt_injection,
     ToolCallNormalize,

@@ -62,7 +62,9 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     exception: its short-circuit bypasses the wrap layer and lands next boundary.
   │     ContextEviction wraps outside MessagePersistence: the raw result is
   │     persisted first, then replaced by an evicted-head/tail preview before it
-  │     reaches state; read_file results are sliced, never offloaded)
+  │     reaches state; read_file results are sliced, never offloaded. Its
+  │     before_model tags an oversized trailing HumanMessage (full text stays in
+  │     state/MesMemory) and wrap_model_call truncates only the model view)
   │
   ├─ tools: build_main_tools() → taskflow(13) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...
