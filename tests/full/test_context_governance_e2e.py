@@ -34,6 +34,9 @@ Coverage (features that previously had no e2e coverage):
 5. Chained-summary filtering — ``_create_summary`` with a real auxiliary model:
    the previous summary pair leaves ``<conversation>`` and appears in
    ``<prior-summary>`` instead.
+6. P1-9 + P0-2 in ONE session — a ~210K-char human message whose tail asks for
+   a python_repl burst: both eviction paths fire, both markers/files coexist,
+   MesMemory keeps both full texts, and the model sees only previews.
 
 Every test purges the session it created (MesMemory rows, checkpoints, session
 folder, registers) and removes any file it wrote, so the module is independently
@@ -610,3 +613,92 @@ def test_chained_summary_filtering_moves_old_summary_to_prior_block(monkeypatch)
         assert old_summary in prior
     finally:
         clear_all_register_sessions(session_id=sid, clear_persistent_states=True)
+
+
+# ---------------------------------------------------------------------------
+# 6. P1-9 + P0-2 evictions coexisting in one session
+# ---------------------------------------------------------------------------
+
+_COMBINED_REPL_CODE = 'for i in range(420):\n    print("burst-%04d " % i + "Y" * 55)'
+_COMBINED_FOOTER = (
+    "Now call the python_repl tool exactly once with this exact code, unchanged:\n"
+    f"{_COMBINED_REPL_CODE}\n"
+    "Do not call any other tool. After the tool result comes back, reply with exactly: DONE"
+)
+
+
+def _combined_payload(total_chars: int = 210_000) -> str:
+    footer = "\n" + _COMBINED_FOOTER
+    body: list[str] = []
+    size = 0
+    index = 0
+    while size < total_chars - len(footer):
+        text = (
+            f"2026-09-19T00:{index % 60:02d} INFO worker-{index % 5} "
+            f"step {index}: processed item {index}\n"
+        )
+        body.append(text)
+        size += len(text)
+        index += 1
+    return "".join(body) + footer
+
+
+def _combined_success(_sid: str, messages: list[ToolMessage]) -> bool:
+    return str(messages[-1].content).startswith("[evicted to: ")
+
+
+@pytest.mark.asyncio
+async def test_p1_9_and_p0_2_evictions_coexist_in_one_session() -> None:
+    """One 210K human turn + a ~27K python_repl burst: both paths fire together."""
+    content = _combined_payload()
+    graph = await _real_graph()
+    sid, out = await _run_until_tool(
+        graph,
+        prompt=content,
+        tool_name="python_repl",
+        tag="p19-p02",
+        is_success=_combined_success,
+    )
+    try:
+        evicted_dir = Path(SESSIONS_DIR) / sid / "evicted"
+        human_files = sorted(evicted_dir.glob("human-*.md"))
+        assert len(human_files) == 1, f"expected one human eviction file, got {human_files}"
+        assert human_files[0].read_text(encoding="utf-8") == content
+
+        evicted_message = next(
+            m
+            for m in reversed(out["messages"])
+            if isinstance(m, ToolMessage) and str(m.content).startswith("[evicted to: ")
+        )
+        tool_path = _evicted_path(str(evicted_message.content))
+        full_tool = tool_path.read_text(encoding="utf-8")
+        assert full_tool.count("burst-") == 420
+
+        human_rows = _rows_with_role(sid, "human")
+        assert any(row["content"] == content for row in human_rows)
+        tool_rows = _rows_with_role(sid, "tool")
+        assert any(row["content"] == full_tool for row in tool_rows)
+
+        tagged = [
+            m
+            for m in out["messages"]
+            if isinstance(m, HumanMessage) and m.additional_kwargs.get(EVICTED_TO_KEY)
+        ]
+        assert len(tagged) == 1
+        assert tagged[0].content == content
+
+        input_tokens = _last_input_tokens(out["messages"])
+        full_text_tokens = len(content) // 4
+        logger.info(
+            "P1-9+P0-2 input_tokens={} full_estimate={} tool_chars={}",
+            input_tokens,
+            full_text_tokens,
+            len(full_tool),
+        )
+        if input_tokens is not None:
+            assert input_tokens < full_text_tokens, (
+                f"reported input_tokens={input_tokens} suggests the full "
+                f"{len(content)}-char human payload reached the model"
+            )
+    finally:
+        await _purge_session(sid)
