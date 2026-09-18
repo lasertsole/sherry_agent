@@ -33,13 +33,13 @@
 
 Curator는 **비활성 트리거** 기반 백그라운드 작업입니다. 에이전트가 유휴 상태이고 마지막 Curator 실행이 `interval_hours` 이전이라면, `maybe_run_curator()`가 백그라운드 검토를 시작합니다.
 
-에이전트가 생성한 스킬(`skills/auto/` 아래)에만 작동하며, **내장 스킬**(`skills/builtin/`)은 절대 건드리지 않습니다. 오래되고 사용되지 않는 스킬은 **삭제**(디스크에서 제거)되며, 선택적으로 LLM 통합을 통해 겹치는 스킬을 우산 스킬로 병합한 후 정리할 수 있습니다.
+에이전트가 생성한 스킬(`skills/auto/` 아래)에만 작동하며, **내장 스킬**(`skills/builtin/`)은 절대 건드리지 않습니다. 오래되고 사용되지 않는 스킬은 `skills/.archive/`로 **아카이브**되며(`curator restore <name>`으로 복구 가능), 선택적으로 LLM 통합을 통해 겹치는 스킬을 우산 스킬로 병합한 후 정리할 수 있습니다.
 
 ---
 
 ## 핵심 책임
 
-1. **자동 수명 주기 전환** — 스킬 활동 타임스탬프를 기준으로 `active → stale`로 전환; 보관 기준을 초과한 스킬 삭제
+1. **자동 수명 주기 전환** — 스킬 활동 타임스탬프를 기준으로 `active → stale`로 전환; 보관 기준을 초과한 스킬 아카이브
 2. **통합**(선택적 LLM 패스) — 겹치는 좁은 스킬을 클래스 수준의 우산 스킬로 병합, 자동 콘텐츠 생성 및 파일 마이그레이션
 3. **영구 상태** — `.curator_state` 파일에 실행 기록 저장
 
@@ -111,18 +111,19 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
       └─────────────────────────────────────────────────┘
       │                                                 │
       │         (archive_after_days no activity)         │
-      └──────────────────► deleted ◄─────────────────────┘
+      └──────────────────► archived ◄────────────────────┘
 ```
 
 | 상태 | 의미 |
 |-------|---------|
 | `active` | 스킬이 정상적으로 사용 가능한 상태 |
 | `stale` | `stale_after_days` 동안 활동이 없어 오래된 것으로 표시 |
+| `archived` | `archive_after_days` 경과 후 `skills/.archive/`로 이동, 복구 가능 |
 
-스킬이 `archive_after_days`의 무활동 기간을 초과하면 **삭제**됩니다(디렉터리와 사용 기록이 디스크에서 제거됨). 중간 `archived` 상태는 없으며 삭제는 되돌릴 수 없습니다.
+스킬이 `archive_after_days`의 무활동 기간을 초과하면 **아카이브**됩니다: 디렉터리는 `skills/.archive/<skill>/`로 이동하고 사용 기록은 `state="archived"`로 유지됩니다(복구 시 이력 보존). `curator restore <name>`이 `skills/auto/`로 되돌립니다. 자동 수명 주기는 절대 삭제하지 않습니다.
 
 **핵심 제약 조건**:
-- 고정(pinned)된 스킬은 **절대** 자동 전환되거나 삭제되지 않습니다
+- 고정(pinned)된 스킬은 **절대** 자동 전환, 아카이브, 삭제되지 않습니다
 - 오래된 기준 이후 생성된 `use_count == 0` 스킬은 현재 stale 상태라면 **재활성화**됩니다
 
 ---
@@ -198,7 +199,7 @@ For each agent-created skill:
   │     └── if currently stale → reactivate to active
   │
   ├── anchor <= archive_cutoff and not archived?
-  │     └── _remove_skill() → delete from disk
+  │     └── archive_skill() → move to skills/.archive/ (restorable)
   │
   ├── anchor <= stale_cutoff and currently active?
   │     └── mark as stale
@@ -396,7 +397,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 
 - **이중 판정**: 사용 기록의 `pinned=True` **또는** 스킬 디렉터리에 `.pinned` 마커 파일 존재
 - **보호 효과**: 모든 자동 전환(오래됨/삭제가 절대 트리거되지 않음)을 우회; `_pinned_guard()`는 모든 삭제 또는 상태 변경을 차단
-- **가드 동작**: `set_state()`, `delete_skill()`, `_remove_skill()` 모두 진행 전에 `_pinned_guard()`를 확인 — 고정된 경우 경고와 함께 작업이 거부됨
+- **가드 동작**: `set_state()`, `delete_skill()`, `archive_skill()` 모두 진행 전에 `_pinned_guard()`를 확인 — 고정된 경우 경고와 함께 작업이 거부됨
 
 현재 구현에는 공개 `pin_skill()` / `unpin_skill()` 함수가 없습니다. 고정은 외부에서 관리됩니다(사용 기록의 `pinned` 필드 설정 또는 `.pinned` 마커 파일 생성).
 
@@ -422,7 +423,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - 복구 참고 사항
 
 **복구**:
-> **참고**: 스킬이 삭제(아카이브 아님)되므로 복구는 버전 관리 또는 백업을 통해서만 가능합니다. 현재 구현에는 `restore_skill()` 함수가 없습니다.
+> 90일 자동 전환은 스킬을 아카이브합니다 — `curator restore <name>`(백엔드는 에이전트 측 `restore_skill()`)이 `skills/.archive/`에서 `skills/auto/`로 되돌립니다. LLM 통합 패스는 예외로, 병합되거나 정리된 스킬은 우산 스킬에 내용이 통합된 후 제거됩니다.
 
 ---
 
@@ -436,7 +437,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 | `interval_hours` | `168` (7일) | 실행 간격 |
 | `min_idle_hours` | `2` | 최소 유휴 시간 |
 | `stale_after_days` | `30` | 오래된 것으로 표시하기 전 일수 |
-| `archive_after_days` | `90` | 삭제 전 일수 |
+| `archive_after_days` | `90` | 아카이브 전 일수 |
 | `consolidate` | `true` | LLM 통합 활성화 여부 |
 | `prune_builtins` | `true` | 내장 스킬 사용 기록 정리 여부 |
 
@@ -479,7 +480,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 Curator는 절대 위반해서는 안 되는 다음의 엄격한 불변 조건을 준수합니다:
 
 1. **에이전트 생성 스킬만 처리**(`skills/auto/`), 내장(`skills/builtin/`)은 절대 아님
-2. **고정된 스킬은 모든 자동 전환을 우회** — 오래된 것으로 표시되거나 삭제되지 않음
+2. **고정된 스킬은 모든 자동 전환을 우회** — 오래된 것으로 표시되거나 아카이브되지 않음
 3. **`_pinned_guard()`는 집행 계층** — 모든 파괴적인 작업이 이를 확인
 
 ---
@@ -504,9 +505,11 @@ curator/
 ```
 skills/
 ├── .curator_state              # Curator run state
+├── .archive/                   # Archived skills (restore with `curator restore`)
+│   └── {skill-name}/           # Skill directory moved off skills/auto/
 └── auto/
     └── .usage/
-        └── {skill-name}.json   # Skill usage record
+        └── {skill-name}.json   # Skill usage record (kept while archived)
 
 logs/curator/
 └── {timestamp}/

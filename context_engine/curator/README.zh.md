@@ -33,13 +33,13 @@
 
 Curator 是一个**空闲触发**的后台任务。当 Agent 处于空闲状态，且距离上次 Curator 运行已超过 `interval_hours` 时，`maybe_run_curator()` 会启动一次后台审查。
 
-它只操作 Agent 创建的技能（`skills/auto/` 下的技能），**绝不触碰内置技能**（`skills/builtin/`）。陈旧和未使用的技能会被**删除**（从磁盘移除），LLM 合并整合可在清理前将重叠技能合并为伞形技能。
+它只操作 Agent 创建的技能（`skills/auto/` 下的技能），**绝不触碰内置技能**（`skills/builtin/`）。陈旧和未使用的技能会被**归档**到 `skills/.archive/`（可用 `curator restore <name>` 恢复），LLM 合并整合可在清理前将重叠技能合并为伞形技能。
 
 ---
 
 ## 核心职责
 
-1. **生命周期自动转换** — 基于技能活跃时间戳自动推进 `active → stale`；删除超过归档截止时间的技能
+1. **生命周期自动转换** — 基于技能活跃时间戳自动推进 `active → stale`；归档超过归档截止时间的技能
 2. **合并整合**（可选 LLM Pass） — 将重叠的窄技能合并为类级别伞形技能，自动生成内容并迁移文件
 3. **持久化状态** — 在 `.curator_state` 文件中保存运行历史
 
@@ -111,18 +111,19 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
       └──────────────────────────────────────────────┘
       │                                              │
       │         (archive_after_days 无活动)           │
-      └──────────────────► deleted ◄──────────────────┘
+      └──────────────────► archived ◄──────────────────┘
 ```
 
 | 状态 | 含义 |
 |------|------|
 | `active` | 技能正常可用 |
 | `stale` | 超过 `stale_after_days` 无活动，标记为陈旧 |
+| `archived` | 超过 `archive_after_days` 后移入 `skills/.archive/`，可恢复 |
 
-当技能超过 `archive_after_days` 无活动时，会被**删除**（目录和使用记录从磁盘移除）。没有中间的 `archived` 状态——删除是不可逆的。
+当技能超过 `archive_after_days` 无活动时，会被**归档**：目录移动到 `skills/.archive/<skill>/`，usage record 保留并标记 `state="archived"`（恢复时保留技能历史）。`curator restore <name>` 会将其移回 `skills/auto/`。自动生命周期永不删除。
 
 **关键约束**：
-- Pinned 技能**永不**被自动转换或删除
+- Pinned 技能**永不**被自动转换、归档或删除
 - 创建时间在 stale_cutoff 之后且从未使用（`use_count==0`）的技能，如果当前为 stale，会被**重新激活**
 
 ---
@@ -198,7 +199,7 @@ LLM 可能调用 `skill_manage` 工具来创建/修改/删除技能，这些 too
   │     └── 如果当前 stale → 重新激活为 active
   │
   ├── anchor <= archive_cutoff 且非 archived?
-  │     └── _remove_skill() → 从磁盘删除
+  │     └── archive_skill() → 移动到 skills/.archive/（可恢复）
   │
   ├── anchor <= stale_cutoff 且当前 active?
   │     └── 标记为 stale
@@ -395,7 +396,7 @@ Pinned 技能享有最高保护级别：
 
 - **双重判定**：usage record 中 `pinned=True` **或** 技能目录下存在 `.pinned` 标记文件
 - **保护效果**：跳过所有自动转换（stale/删除均不触发）；`_pinned_guard()` 阻止任何删除或状态变更操作
-- **守卫行为**：`set_state()`、`delete_skill()` 和 `_remove_skill()` 在执行前都会检查 `_pinned_guard()` —— 如果是 pinned，操作会被拒绝并记录警告
+- **守卫行为**：`set_state()`、`delete_skill()` 和 `archive_skill()` 在执行前都会检查 `_pinned_guard()` —— 如果是 pinned，操作会被拒绝并记录警告
 
 当前实现中没有公开的 `pin_skill()` / `unpin_skill()` 函数。固定操作通过外部管理（设置 usage record 中的 `pinned` 字段或创建 `.pinned` 标记文件）。
 
@@ -421,7 +422,7 @@ Pinned 技能享有最高保护级别：
 - 恢复说明
 
 **恢复方式**：
-> **注意**：由于技能是删除而非归档，恢复只能通过版本控制或备份实现。当前实现中没有 `restore_skill()` 函数。
+> 90 天自动转换会把技能归档——`curator restore <name>`（后端为 agent 侧 `restore_skill()`）可将技能从 `skills/.archive/` 移回 `skills/auto/`。LLM 合并整合是例外：被合并或清理的技能在内容并入伞形技能后会被移除。
 
 ---
 
@@ -435,7 +436,7 @@ Pinned 技能享有最高保护级别：
 | `interval_hours` | `168`（7 天） | 运行间隔 |
 | `min_idle_hours` | `2` | 最小空闲时间 |
 | `stale_after_days` | `30` | 标记为 stale 的天数 |
-| `archive_after_days` | `90` | 删除的天数 |
+| `archive_after_days` | `90` | 归档的天数 |
 | `consolidate` | `true` | 是否启用 LLM 合并整合 |
 | `prune_builtins` | `true` | 是否清理内置技能的使用记录 |
 
@@ -478,7 +479,7 @@ Pinned 技能享有最高保护级别：
 Curator 遵循以下严格不变量，任何情况下不可违反：
 
 1. **只触碰 Agent 创建的技能**（`skills/auto/`），绝不触碰内置技能（`skills/builtin/`）
-2. **Pinned 技能绕过所有自动转换** — 永不标记为 stale 或删除
+2. **Pinned 技能绕过所有自动转换** — 永不标记为 stale 或归档
 3. **`_pinned_guard()` 是执行层** — 每个破坏性操作都会检查它
 
 ---
@@ -503,9 +504,11 @@ curator/
 ```
 skills/
 ├── .curator_state              # Curator 运行状态
+├── .archive/                   # 已归档技能（用 `curator restore` 恢复）
+│   └── {skill-name}/           # 从 skills/auto/ 移出的技能目录
 └── auto/
     └── .usage/
-        └── {skill-name}.json   # 技能使用记录
+        └── {skill-name}.json   # 技能使用记录（归档期间保留）
 
 logs/curator/
 └── {timestamp}/

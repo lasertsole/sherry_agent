@@ -33,13 +33,13 @@
 
 Curator is an **inactivity-triggered** background task. When the Agent is idle and the last Curator run was more than `interval_hours` ago, `maybe_run_curator()` spawns a background review.
 
-It only operates on agent-created skills (under `skills/auto/`), **never touching built-in skills** (`skills/builtin/`). Stale and unused skills are **deleted** (removed from disk), with LLM consolidation optionally merging overlapping skills into umbrella skills before pruning.
+It only operates on agent-created skills (under `skills/auto/`), **never touching built-in skills** (`skills/builtin/`). Stale and unused skills are **archived** into `skills/.archive/` (recoverable with `curator restore <name>`), with LLM consolidation optionally merging overlapping skills into umbrella skills before pruning.
 
 ---
 
 ## Core Responsibilities
 
-1. **Automatic Lifecycle Transitions** — advance `active → stale` based on skill activity timestamps; delete skills that exceed the archive cutoff
+1. **Automatic Lifecycle Transitions** — advance `active → stale` based on skill activity timestamps; archive skills that exceed the archive cutoff
 2. **Consolidation** (optional LLM pass) — merge overlapping narrow skills into class-level umbrella skills with automated content generation and file migration
 3. **Persistent State** — save run history in the `.curator_state` file
 
@@ -111,18 +111,19 @@ If `last_run_at` has never been set, the first call to `should_run_now()` return
       └─────────────────────────────────────────────────┘
       │                                                 │
       │         (archive_after_days no activity)         │
-      └──────────────────► deleted ◄─────────────────────┘
+      └──────────────────► archived ────────────────────┘
 ```
 
 | State | Meaning |
 |-------|---------|
 | `active` | Skill is normally available |
 | `stale` | No activity for `stale_after_days`, marked as stale |
+| `archived` | Moved to `skills/.archive/` after `archive_after_days`; restorable |
 
-When a skill exceeds `archive_after_days` of inactivity, it is **deleted** (directory and usage record removed from disk). There is no intermediate `archived` state — deletion is irreversible.
+When a skill exceeds `archive_after_days` of inactivity, it is **archived**: the directory is moved to `skills/.archive/<skill>/` and its usage record is kept with `state="archived"` (so a restore keeps the skill's history). `curator restore <name>` moves it back to `skills/auto/`. The automatic lifecycle never deletes.
 
 **Key constraints**:
-- Pinned skills are **never** auto-transitioned or deleted
+- Pinned skills are **never** auto-transitioned, archived, or deleted
 - Skills with `use_count == 0` created after the stale cutoff are **reactivated** if currently stale
 
 ---
@@ -197,8 +198,8 @@ For each agent-created skill:
   ├── never used (use_count==0) and anchor > stale_cutoff?
   │     └── if currently stale → reactivate to active
   │
-  ├── anchor <= archive_cutoff and not archived?
-  │     └── _remove_skill() → delete from disk
+  ├── anchor <= archive_cutoff and state != archived?
+  │     └── archive_skill() → move to skills/.archive/ (restorable)
   │
   ├── anchor <= stale_cutoff and currently active?
   │     └── mark as stale
@@ -399,7 +400,7 @@ Pinned skills enjoy the highest level of protection:
 
 - **Dual determination**: `pinned=True` in usage record **OR** a `.pinned` marker file exists in the skill directory
 - **Protection effect**: bypass all automatic transitions (stale/deletion are never triggered); `_pinned_guard()` blocks any delete or state change
-- **Guard behavior**: `set_state()`, `delete_skill()`, and `_remove_skill()` all check `_pinned_guard()` before proceeding — if pinned, the operation is rejected with a warning
+- **Guard behavior**: `set_state()`, `delete_skill()`, and `archive_skill()` all check `_pinned_guard()` before proceeding — if pinned, the operation is rejected with a warning
 
 Public API:
 
@@ -430,7 +431,7 @@ Each run generates a detailed report saved under `logs/curator/{timestamp}/`:
 - Recovery notes
 
 **Recovery**:
-> **Note**: Since skills are deleted (not archived), recovery is only possible via version control or backup. There is no `restore_skill()` function in the current implementation.
+> Automatic 90-day transitions archive skills — `curator restore <name>` (backed by the agent-side `restore_skill()`) moves one from `skills/.archive/` back to `skills/auto/`. The LLM consolidation pass is the exception: skills it merges or prunes are removed after their content is folded into the umbrella.
 
 ---
 
@@ -444,7 +445,7 @@ Config lives in `sherry.jsonc` (project root) under the `"curator"` object.
 | `interval_hours` | `168` (7 days) | Run interval |
 | `min_idle_hours` | `2` | Minimum idle time |
 | `stale_after_days` | `30` | Days before marking as stale |
-| `archive_after_days` | `90` | Days before deleting |
+| `archive_after_days` | `90` | Days before archiving |
 | `consolidate` | `true` | Whether to enable LLM consolidation |
 | `prune_builtins` | `true` | Whether to clean up usage records for built-in skills |
 
@@ -487,7 +488,7 @@ State is loaded via `load_state()` (merges with `_default_state()`, preserving u
 Curator adheres to the following strict invariants that must never be violated:
 
 1. **Only touch agent-created skills** (`skills/auto/`), never built-ins (`skills/builtin/`)
-2. **Pinned skills bypass all automatic transitions** — they are never marked stale or deleted
+2. **Pinned skills bypass all automatic transitions** — they are never marked stale or archived
 3. **`_pinned_guard()` is the enforcement layer** — every destructive operation checks it
 
 ---
@@ -512,9 +513,11 @@ curator/
 ```
 skills/
 ├── .curator_state              # Curator run state
+├── .archive/                   # Archived skills (restore with `curator restore`)
+│   └── {skill-name}/           # Skill directory moved off skills/auto/
 └── auto/
     └── .usage/
-        └── {skill-name}.json   # Skill usage record
+        └── {skill-name}.json   # Skill usage record (kept while archived)
 
 logs/curator/
 └── {timestamp}/

@@ -95,7 +95,7 @@ Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命�
 
 UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程中调用 `run_curator_review()`（`server/trigger/http/curator.py:107-125`）。
 
-**生命周期规则。** `apply_automatic_transitions()`（`context_engine/curator/transitions.py:41-100`）遍历每个 `skills/auto/**/SKILL.md`（`context_engine/curator/usage.py:158-179`），对每个技能：跳过 pinned 技能；无活动达到 `stale_after_days`（默认 30 天）标记为 `stale`；超过 `archive_after_days`（默认 90 天）从磁盘移除（不可逆——没有中间 archived 状态）；重新出现活动、或处于 stale 窗口内但从未使用的技能会被重新激活。默认值位于 `config/sherry_settings.py:42-48`。
+**生命周期规则。** `apply_automatic_transitions()`（`context_engine/curator/transitions.py:41-100`）遍历每个 `skills/auto/**/SKILL.md`（`context_engine/curator/usage.py:158-179`），对每个技能：跳过 pinned 技能；无活动达到 `stale_after_days`（默认 30 天）标记为 `stale`；超过 `archive_after_days`（默认 90 天）则**归档**到 `skills/.archive/` 并标记为 `archived`——可用 `curator restore <name>` 恢复（此自动路径不会删除任何内容）；重新出现活动、或处于 stale 窗口内但从未使用的技能会被重新激活。默认值位于 `config/sherry_settings.py:42-48`。
 
 **LLM 合并。** 当 `curator.consolidate` 开启（默认开）时，`run_curator_review()` 渲染非 pinned 技能候选列表（`context_engine/curator/orchestrator.py:65-81`），让主 LLM 以 temperature 0.3 把重叠的窄技能合并为类级 umbrella 技能（`CURATOR_REVIEW_PROMPT`，`context_engine/curator/orchestrator.py:18-45`）。新 umbrella 及其支持文件生成后写入 `skills/auto/`（`_generate_umbrella_skill`，`context_engine/curator/orchestrator.py:412`；`_apply_consolidation`，`context_engine/curator/orchestrator.py:755`）。合并是该流程唯一的 LLM 步骤；失败会被捕获，运行继续。
 

@@ -33,13 +33,13 @@
 
 Curator は**非アクティブトリガー**のバックグラウンドタスクです。エージェントがアイドル状態で、最後の Curator 実行から `interval_hours` 以上経過すると、`maybe_run_curator()` がバックグラウンドレビューを開始します。
 
-エージェントが作成したスキル（`skills/auto/` 配下）のみを操作し、**組み込みスキル**（`skills/builtin/`）には決して触れません。古くて未使用のスキルは**削除**（ディスクから削除）され、必要に応じて LLM 統合により重複スキルをアンブレラスキルへマージしてから整理します。
+エージェントが作成したスキル（`skills/auto/` 配下）のみを操作し、**組み込みスキル**（`skills/builtin/`）には決して触れません。古くて未使用のスキルは `skills/.archive/` へ**アーカイブ**され（`curator restore <name>` で復元可能）、必要に応じて LLM 統合により重複スキルをアンブレラスキルへマージしてから整理します。
 
 ---
 
 ## 主要な役割
 
-1. **自動ライフサイクル遷移** — スキル活動タイムスタンプに基づいて `active → stale` へ遷移; アーカイブ基準を超えたスキルを削除
+1. **自動ライフサイクル遷移** — スキル活動タイムスタンプに基づいて `active → stale` へ遷移; アーカイブ基準を超えたスキルをアーカイブ
 2. **統合**（オプションの LLM パス）— 重複する狭いスキルをクラスレベルのアンブレラスキルにマージし、コンテンツ生成とファイル移行を自動化
 3. **永続状態** — `.curator_state` ファイルに実行履歴を保存
 
@@ -111,18 +111,19 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
       └─────────────────────────────────────────────────┘
       │                                                 │
       │         (archive_after_days no activity)         │
-      └──────────────────► deleted ◄─────────────────────┘
+      └──────────────────► archived ◄────────────────────┘
 ```
 
 | 状態 | 意味 |
 |-------|---------|
 | `active` | スキルが通常利用可能 |
 | `stale` | `stale_after_days` 間アクティビティがなく、古いとマークされた |
+| `archived` | `archive_after_days` 経過後に `skills/.archive/` へ移動、復元可能 |
 
-スキルが `archive_after_days` の非アクティブ期間を超えると**削除**されます（ディレクトリと使用記録がディスクから削除）。中間の `archived` 状態はなく、削除は不可逆です。
+スキルが `archive_after_days` の非アクティブ期間を超えると**アーカイブ**されます: ディレクトリは `skills/.archive/<skill>/` へ移動し、使用記録は `state="archived"` のまま保持されます（復元時に履歴が残ります）。`curator restore <name>` が `skills/auto/` へ戻します。自動ライフサイクルは決して削除しません。
 
 **主要な制約**:
-- ピン留めされたスキルは**決して**自動遷移または削除されません
+- ピン留めされたスキルは**決して**自動遷移・アーカイブ・削除されません
 - stale 基準より後に作成された `use_count == 0` のスキルは、現在 stale 状態であれば**再アクティブ化**されます
 
 ---
@@ -198,7 +199,7 @@ For each agent-created skill:
   │     └── if currently stale → reactivate to active
   │
   ├── anchor <= archive_cutoff and not archived?
-  │     └── _remove_skill() → delete from disk
+  │     └── archive_skill() → move to skills/.archive/ (restorable)
   │
   ├── anchor <= stale_cutoff and currently active?
   │     └── mark as stale
@@ -398,7 +399,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 
 - **二重判定**: 使用レコードの `pinned=True` **または** スキルディレクトリに `.pinned` マーカーファイルが存在
 - **保護効果**: すべての自動遷移をバイパス（古い/削除が決してトリガーされない）; `_pinned_guard()` は任意の削除または状態変更をブロック
-- **ガード動作**: `set_state()`、`delete_skill()`、`_remove_skill()` はすべて進行前に `_pinned_guard()` をチェック — ピン留めされている場合は警告とともに操作が拒否されます
+- **ガード動作**: `set_state()`、`delete_skill()`、`archive_skill()` はすべて進行前に `_pinned_guard()` をチェック — ピン留めされている場合は警告とともに操作が拒否されます
 
 現在の実装には公開の `pin_skill()` / `unpin_skill()` 関数はありません。ピン留めは外部で管理されます（使用レコードの `pinned` フィールドを設定するか、`.pinned` マーカーファイルを作成する）。
 
@@ -424,7 +425,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - リカバリーノート
 
 **リカバリー**:
-> **注記**: スキルは削除（アーカイブではない）されるため、リカバリーはバージョン管理またはバックアップによってのみ可能です。現在の実装には `restore_skill()` 関数はありません。
+> 90 日の自動遷移はスキルをアーカイブします — `curator restore <name>`（バックエンドはエージェント側 `restore_skill()`）が `skills/.archive/` から `skills/auto/` へ戻します。LLM 統合パスは例外で、マージまたは整理されたスキルはアンブレラへ内容を統合した後に削除されます。
 
 ---
 
@@ -438,7 +439,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 | `interval_hours` | `168`（7日） | 実行間隔 |
 | `min_idle_hours` | `2` | 最小アイドル時間 |
 | `stale_after_days` | `30` | 古いとマークするまでの日数 |
-| `archive_after_days` | `90` | 削除までの日数 |
+| `archive_after_days` | `90` | アーカイブまでの日数 |
 | `consolidate` | `true` | LLM 統合を有効にするかどうか |
 | `prune_builtins` | `true` | 内蔵スキルの使用記録をクリーンアップするかどうか |
 
@@ -481,7 +482,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 Curator は、決して違反されてはならない以下の厳格な不変条件に従います:
 
 1. **エージェント作成スキルのみを操作**（`skills/auto/`）、組み込み（`skills/builtin/`）は決して不可
-2. **ピン留めされたスキルはすべての自動遷移をバイパス** — 古いとマークされたり削除されることはない
+2. **ピン留めされたスキルはすべての自動遷移をバイパス** — 古いとマークされたりアーカイブされることはない
 3. **`_pinned_guard()` は強制レイヤー** — すべての破壊的操作がそれをチェック
 
 ---
@@ -506,9 +507,11 @@ curator/
 ```
 skills/
 ├── .curator_state              # Curator run state
+├── .archive/                   # Archived skills (restore with `curator restore`)
+│   └── {skill-name}/           # Skill directory moved off skills/auto/
 └── auto/
     └── .usage/
-        └── {skill-name}.json   # Skill usage record
+        └── {skill-name}.json   # Skill usage record (kept while archived)
 
 logs/curator/
 └── {timestamp}/
