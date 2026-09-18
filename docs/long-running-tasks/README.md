@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns were added by additive migrations (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`). The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`store_sqlite.py:234-271`).
+The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns come from additive DDL (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`). The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`store_sqlite.py:234-271`).
 
 ### Step status machine
 
@@ -174,7 +174,7 @@ A step may carry a declarative `retry_policy` so a failed child is re-dispatched
 | `retry_delay_seconds` | non-negative number | `60.0` (`DEFAULT_RETRY_DELAY_SECONDS`) | Backoff slept before each re-dispatch |
 | `retry_on` | `list[str]` | `[]` | Failure types that trigger a retry; empty = every classified failure |
 
-`validate_policy()` (`_retry.py:120`) rejects a malformed policy at `taskflow_run_task` time — a non-dict policy, a negative/non-int `max_retries`, a negative/non-numeric `retry_delay_seconds`, or a `retry_on` that is not a list of strings — with an `Error:` string before any spawn or write. At resume time a missing/malformed stored policy degrades to `None` (`normalize_policy`), which restores the legacy no-retry behavior rather than failing the call.
+`validate_policy()` (`_retry.py:120`) rejects a malformed policy at `taskflow_run_task` time — a non-dict policy, a negative/non-int `max_retries`, a negative/non-numeric `retry_delay_seconds`, or a `retry_on` that is not a list of strings — with an `Error:` string before any spawn or write. At resume time a missing/malformed stored policy degrades to `None` (`normalize_policy`), which falls back to no-retry behavior rather than failing the call.
 
 `retry_count` (stored on the step, default `0`) counts **re-dispatches**, never the original dispatch: `0` while the first child runs, `1` once the first replacement is spawned. A retry is allowed while `retry_count < max_retries` (`retries_remaining`, `_retry.py:95`). `apply_redispatch()` (`_retry.py:170`) mutates the step in place — new `child_session_key`, `dispatched_at`, `status = dispatched`, bumped `retry_count`.
 
@@ -545,7 +545,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 ### Queueing semantics: `PENDING`
 
-Global concurrency is no longer a rejection counter. `spawn_subagent_direct` still enforces per-parent admission (`validate_spawn_depth`, `validate_concurrent_children`), but a spawn that exceeds the global limit is **accepted** and registered as `ExecutionStatus.PENDING`: `started_at` stays `None` and the run holds no lane slot. The SUBAGENT lane wrapper (`_execute_subagent_with_lane`, `agent/tools/subagent/spawn/core.py`) waits for a slot, then promotes `PENDING → RUNNING` via `mark_run_running()`, stamping `started_at` only at that moment — queue wait is never counted as run time. `validate_global_concurrent()` and `SubagentConfig.max_concurrent` remain for backward compatibility and are no longer called by the spawn pipeline.
+Global concurrency is not a rejection counter. `spawn_subagent_direct` still enforces per-parent admission (`validate_spawn_depth`, `validate_concurrent_children`), but a spawn that exceeds the global limit is **accepted** and registered as `ExecutionStatus.PENDING`: `started_at` stays `None` and the run holds no lane slot. The SUBAGENT lane wrapper (`_execute_subagent_with_lane`, `agent/tools/subagent/spawn/core.py`) waits for a slot, then promotes `PENDING → RUNNING` via `mark_run_running()`, stamping `started_at` only at that moment — queue wait is never counted as run time. `validate_global_concurrent()` and `SubagentConfig.max_concurrent` are retained for backward compatibility and are not called by the spawn pipeline.
 
 Because a queued child still occupies an admission slot, the registry counting functions count `RUNNING + PENDING` as active (`count_active_runs_for_session`, `count_active_descendant_runs`, `count_all_active_runs`), and `is_live_unended_run()` includes `PENDING`.
 
@@ -707,7 +707,7 @@ The constants most relevant to this document:
                                                    └───────────────────────────┘
 ```
 
-The compiled graph is no longer wrapped inline in `agent.core.py`: the **`agent/wrapper/`** package now owns the guards. `agent.wrapper.registry` exposes a process-global, ordered, pluggable chain (`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`) with `GraphWrapperFactory` entries applied **innermost-first**; the defaults reproduce the historical chain — `RepetitionGuardWrapper(phantom_stream_guard=True)` then `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. The stream repetition guard lives in `agent/wrapper/repetition_guard.py` and the context-window guard in `agent/wrapper/context_limit.py`. The **memory backflow** is performed by `SubagentCompletionDrainMiddleware` in `agent/middlewares/subagent_completion_drain/core.py`.
+The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns the guards. `agent.wrapper.registry` exposes a process-global, ordered, pluggable chain (`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`) with `GraphWrapperFactory` entries applied **innermost-first**; the default entries are `RepetitionGuardWrapper(phantom_stream_guard=True)` then `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. The stream repetition guard lives in `agent/wrapper/repetition_guard.py` and the context-window guard in `agent/wrapper/context_limit.py`. The **memory backflow** is performed by `SubagentCompletionDrainMiddleware` in `agent/middlewares/subagent_completion_drain/core.py`.
 
 ## 📚 API Reference
 

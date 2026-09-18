@@ -26,7 +26,7 @@
 
 ### 1. 압축 시점 memory review
 
-`schedule_compression_nudges`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `state_register_db`의 `nudge_review_memory_count`를 1회 증가시킵니다. 카운터가 `nudge_memory_threshold`(기본 10)에 도달하면 카운터를 0으로 되돌리고 `_nudge_memory(session_id, system_prompt, messages)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 카운터를 늘리지만 디스패치는 하지 않습니다. 이 트리거는 이전에 `ContextEngineHook.after_agent`에 있었고 매 턴 실행되었습니다; 그 훅은 더 이상 존재하지 않으므로 주기는 이제 압축 횟수 단위입니다.
+`schedule_compression_nudges`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `state_register_db`의 `nudge_review_memory_count`를 1회 증가시킵니다. 카운터가 `nudge_memory_threshold`(기본 10)에 도달하면 카운터를 0으로 되돌리고 `_nudge_memory(session_id, system_prompt, messages)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 카운터를 늘리지만 디스패치는 하지 않습니다.
 
 `_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_nudge_agent`로 nudge agent를 만들고, 대화에 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 덧붙여 호출합니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `memory` 도구로 저장하라고 요구하며, 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
 
@@ -41,7 +41,7 @@
 - todo가 존재하고, 모든 todo가 `completed` 또는 `cancelled`입니다.
 - `nudge_plan_extraction_fired`(`state_register_db`)가 아직 설정되지 않았습니다.
 
-전이 시 플래그를 세우고, 목록이 (더 이상) 전부 완료가 아니면 `False`로 되돌리므로 다음 완료 사이클에서 다시 발화합니다. 읽기는 fail-open. 감지가 이제 압축 시점에만 실행되므로, 한 번도 압축하지 않는 세션은 plan extraction을 발화하지 않습니다.
+전이 시 플래그를 세우고, 목록이 전부 완료가 아니면 `False`로 되돌리므로 다음 완료 사이클에서 다시 발화합니다. 읽기는 fail-open. 감지가 압축 시점에만 실행되므로, 한 번도 압축하지 않는 세션은 plan extraction을 발화하지 않습니다.
 
 `plan_extraction_enabled`가 켜져 있고 감지가 발화하면 `_nudge_plan_extraction`이 같은 접점에서 fire-and-forget으로 디스패치되어 `nudge_plan_extraction_lock` 아래에서 실행됩니다:
 
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: 트리거 게이트, fire-and-forget 예약, 재진입 락, fail-open 해제, 프롬프트 내용, `todo_update` metadata 게이트, 그리고 완전한 fork 격리(파생 키, 메인 세션 `todowrite` 심, checkpointer / 메시지 누출 없음).
-- `test_compression_nudges.py`: 압축 시점 nudge 디스패치(memory review + plan extraction이 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). 기존 영속화 단언은 `tests/agent/middlewares/message_persistence/`로 이동했습니다 — 영속화가 압축 경로에서 빠졌습니다.
+- `test_compression_nudges.py`: 압축 시점 nudge 디스패치(memory review + plan extraction이 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). 영속화 단언은 `tests/agent/middlewares/message_persistence/`에 있습니다.
 - `test_compression_cooldown_persist.py`: 쿨다운의 재시작 간 생존.
 - `test_memory_flush.py`: flush 게이트, 라우팅, 비블로킹 실패.
 - `test_plan_extraction.py`: `_detect_todo_all_complete` 네 분기, `schedule_compression_nudges`의 압축 시점 카운터/락 의미론, 디스패치, `_build_plan_context`.

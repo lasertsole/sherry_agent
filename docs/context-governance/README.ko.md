@@ -144,7 +144,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | T4/T5 프로바이더 오류, 첫 복구 시도 | 먼저 클립; 충분하면 스텁 리스트로 프로바이더 호출 재시도 | **0** |
 | T4/T5 프로바이더 오류, 클립 불충분 | 강제 압축 + 예산 트렁케이션 후 재시도 | compact 단계마다 보조 LLM 1회(≤ `MAX_OVERFLOW_RETRIES = 3`) |
 
-수용 조건은 엄격하다: 클립 **단독**이 순수 로컬 추정치를 경계선 아래로 내릴 때만 적용된다(`estimate_messages_tokens(messages, reported_tokens=0)` — 오래된 `usage_metadata`가 복구를 주도하는 일은 결코 없다). 불충분한 클립은 폐기되어 기존 라우트가 P1-2 이전과 정확히 같은 원본 리스트에서 동작한다.
+수용 조건은 엄격하다: 클립 **단독**이 순수 로컬 추정치를 경계선 아래로 내릴 때만 적용된다(`estimate_messages_tokens(messages, reported_tokens=0)` — 오래된 `usage_metadata`가 복구를 주도하는 일은 결코 없다). 불충분한 클립은 폐기되어 기존 라우트가 원본 리스트에서 동작한다.
 
 ## 🧵 체인 요약 필터링
 

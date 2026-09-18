@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 自体（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）は完全に `state_json` の中にあります——DAG フィールドの追加にスキーマ移行は不要です。トークン/コスト/締め切りの列は追加的マイグレーションで導入されました（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`store_sqlite.py:83-129`）。WAL プラグマはプロセスごとに一度だけ切り替えられ、すべてのステートメントの前に `PRAGMA busy_timeout = 5000` が実行されます（`store_sqlite.py:234-271`）。
+DAG 自体（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）は完全に `state_json` の中にあります——DAG フィールドの追加にスキーマ移行は不要です。トークン/コスト/締め切りの列は追加的 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`store_sqlite.py:83-129`）で定義されます。WAL プラグマはプロセスごとに一度だけ切り替えられ、すべてのステートメントの前に `PRAGMA busy_timeout = 5000` が実行されます（`store_sqlite.py:234-271`）。
 
 ### ステップ状態機械
 
@@ -174,7 +174,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 非負数値 | `60.0`（`DEFAULT_RETRY_DELAY_SECONDS`） | 各再ディスパッチ前にスリープするバックオフ |
 | `retry_on` | `list[str]` | `[]` | 再試行を引き起こす失敗タイプ；空なら分類されたすべての失敗 |
 
-`validate_policy()`（`_retry.py:120`）は不正なポリシーを `taskflow_run_task` の時点で拒否します——dict でないポリシー、負/非整数の `max_retries`、負/非数値の `retry_delay_seconds`、文字列リストでない `retry_on`——いずれもディスパッチや書き込みの前に `Error:` 文字列を返します。再開時、欠落/不正な保存済みポリシーは `None`（`normalize_policy`）へ退化し、呼び出しを失敗させる代わりに 旧来の再試行なし動作へ戻します。
+`validate_policy()`（`_retry.py:120`）は不正なポリシーを `taskflow_run_task` の時点で拒否します——dict でないポリシー、負/非整数の `max_retries`、負/非数値の `retry_delay_seconds`、文字列リストでない `retry_on`——いずれもディスパッチや書き込みの前に `Error:` 文字列を返します。再開時、欠落/不正な保存済みポリシーは `None`（`normalize_policy`）へ退化し、呼び出しを失敗させる代わりに再試行なし動作へフォールバックします。
 
 `retry_count`（ステップに保存、既定 `0`）は**再ディスパッチ**の回数を数え、最初のディスパッチは数えません：最初の子が動いている間は `0`、最初の置換子が生成されると `1`。`retry_count < max_retries` の間は再試行が許可されます（`retries_remaining`、`_retry.py:95`）。`apply_redispatch()`（`_retry.py:170`）はステップをその場で変更します——新しい `child_session_key`、`dispatched_at`、`status = dispatched`、そして増分された `retry_count`。
 
@@ -545,7 +545,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 ### キューイング意味論：`PENDING`
 
-グローバル並行性はもはや拒否カウンタではありません。`spawn_subagent_direct` は親単位のアドミッション（`validate_spawn_depth`、`validate_concurrent_children`）を引き続き適用しますが、グローバル上限を超える spawn は**受理**され `ExecutionStatus.PENDING` として登録されます：`started_at` は `None` のままで、その run はレーンスロットを保持しません。SUBAGENT レーンのラッパー（`_execute_subagent_with_lane`、`agent/tools/subagent/spawn/core.py`）がスロットを待ち、`mark_run_running()` で `PENDING → RUNNING` へ昇格し、その瞬間に `started_at` を刻みます——キュー待ち時間が実行時間として数えられることはありません。`validate_global_concurrent()` と `SubagentConfig.max_concurrent` は後方互換のためだけに残り、spawn パイプラインからは呼ばれません。
+グローバル並行性は拒否カウンタではありません。`spawn_subagent_direct` は親単位のアドミッション（`validate_spawn_depth`、`validate_concurrent_children`）を引き続き適用しますが、グローバル上限を超える spawn は**受理**され `ExecutionStatus.PENDING` として登録されます：`started_at` は `None` のままで、その run はレーンスロットを保持しません。SUBAGENT レーンのラッパー（`_execute_subagent_with_lane`、`agent/tools/subagent/spawn/core.py`）がスロットを待ち、`mark_run_running()` で `PENDING → RUNNING` へ昇格し、その瞬間に `started_at` を刻みます——キュー待ち時間が実行時間として数えられることはありません。`validate_global_concurrent()` と `SubagentConfig.max_concurrent` は後方互換のためだけに残り、spawn パイプラインからは呼ばれません。
 
 キュー内の子は依然としてアドミッションスロットを占有するため、レジストリの計数関数は `RUNNING + PENDING` をアクティブとして数え（`count_active_runs_for_session`、`count_active_descendant_runs`、`count_all_active_runs`）、`is_live_unended_run()` は `PENDING` を含みます。
 
@@ -707,7 +707,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
                                                    └───────────────────────────┘
 ```
 
-コンパイル済みグラフはもはや `agent.core.py` 内でインラインにラップされません：**`agent/wrapper/`** パッケージがガードを所有します。`agent.wrapper.registry` はプロセス全体の、順序付きでプラグ可能なチェーン（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`）を公開し、`GraphWrapperFactory` エントリは**最内優先**で適用されます；既定値は歴史的なハードコードチェーンを再現します——まず `RepetitionGuardWrapper(phantom_stream_guard=True)`、次に `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。ストリーム重複ガードは `agent/wrapper/repetition_guard.py`、コンテキストウィンドウガードは `agent/wrapper/context_limit.py` にあります。**メモリ還流**は `agent/middlewares/subagent_completion_drain/core.py` の `SubagentCompletionDrainMiddleware` が実行します。
+コンパイル済みグラフは **`agent/wrapper/`** パッケージがラップし、同パッケージがガードを所有します。`agent.wrapper.registry` はプロセス全体の、順序付きでプラグ可能なチェーン（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`）を公開し、`GraphWrapperFactory` エントリは**最内優先**で適用されます；既定エントリは `RepetitionGuardWrapper(phantom_stream_guard=True)`、次に `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)` です。ストリーム重複ガードは `agent/wrapper/repetition_guard.py`、コンテキストウィンドウガードは `agent/wrapper/context_limit.py` にあります。**メモリ還流**は `agent/middlewares/subagent_completion_drain/core.py` の `SubagentCompletionDrainMiddleware` が実行します。
 
 ## 📚 API リファレンス
 

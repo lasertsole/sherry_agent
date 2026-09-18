@@ -103,7 +103,7 @@ bwrap
 | 5 | `reboot` | 重启 |
 | 6 | `|`、`&&` 或 `;` 后跟 `rm` / `shutdown` / `reboot` / `mkfs` | 链式变体，如 `echo ok && rm -rf /` |
 
-匹配**拼接后**的完整串很关键：旧的按元素精确匹配的黑名单放过过 `["echo ok", "rm -rf /"]`，因为每个元素单独看都无害。命中即抛出 `ToolException("Blocked: unsafe command.")`，经 `handle_tool_error=True` 变成错误工具结果。该拦截与 `sandbox` 取值无关，始终执行。`python_repl` 没有对应的正则；它的包装脚本改用受限内建。
+匹配**拼接后**的完整串很关键：按元素精确匹配的黑名单会放过 `["echo ok", "rm -rf /"]`，因为每个元素单独看都无害。命中即抛出 `ToolException("Blocked: unsafe command.")`，经 `handle_tool_error=True` 变成错误工具结果。该拦截与 `sandbox` 取值无关，始终执行。`python_repl` 没有对应的正则；它的包装脚本改用受限内建。
 
 **敏感文件门禁（`_SENSITIVE_FILE_PATTERNS`）。** 在 `_run` 与 `_arun` 两条路径中，`_check_sensitive_file_access(cmd_str)` 都在 `_check_dangerous` **之后**、**任何子进程创建之前**执行：六条编译后的模式任意一条命中拼接后的命令串，就抛出 `ToolException("Blocked: sensitive file access. …")`（`_SENSITIVE_FILE_MESSAGE`）——绝不创建子进程——并提示模型改用 `read_file`（其外部路径会走人工审批）：
 
@@ -217,7 +217,7 @@ bwrap
 `SafeShellTool`（名称 `terminal`）与 `TimedPythonREPLTool`（名称 `python_repl`）都在 LLM 可见的工具调用 schema 中暴露 `sandbox: bool = True` 参数，由模型逐次调用时选择。
 
 - **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env)`（语义上等价于 POSIX `shell=True`），python_repl 走 `backend.wrap([sys.executable, "-c", script], env)`。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。
-- **回退路径（Windows / 无后端）**：保持与原来逐字节一致的构造，只新增 `env=`。terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。
+- **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。
 - **所有路径都无条件执行**：`env=scrub_env()` 与 `cwd=str(ROOT_DIR)`（cwd 钳制）。两个工具都强制 30 秒超时（`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`），超时即杀死子进程。
 - **错误呈现**：`REQUIRED` 且无后端时，terminal 把 `RuntimeError` 包成 `ToolException`（经 `handle_tool_error=True` 原样呈现）；python_repl 直接抛出原始 `RuntimeError`。
 - **降级警告**：当这次调用想要沙箱、但后端不存在且策略不是 `off` 时，工具层记录恰好一条 loguru 警告，然后无沙箱执行：
@@ -297,7 +297,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **bwrap 与 Seatbelt 的构造逻辑只做了单元测试，未在真实 Linux/macOS 机器上验证。** 后端源码的 docstring 明确写了这一点（"仅验证构造逻辑，未在 Linux/macOS 实机验证"）；所有后端测试都 mock 了 subprocess，读遮蔽另有 1 条可选的真实 bwrap 冒烟测试（探测失败即跳过）。可以信任包装出的 argv，但还不构成真实的隔离保证。
 - **Windows 没有操作系统沙箱后端。** 那里的防护是环境变量清洗 + cwd 钳制 + 危险命令正则 + 敏感文件正则 + HITL 审批门。没有任何机制阻止写到项目根目录之外，而且**读保护不可用**：没有操作系统后端就没有读遮蔽，应用层正则只是唯一的读取门禁。
 - **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
-- **`python_repl` 没有对应的敏感文件正则。** 上面的 terminal 专属门禁不覆盖它；它的包装脚本改为限制内建（安全子集省略了 `open` / `__import__`）——这是一道不同且更窄的控制。
+- **`python_repl` 没有对应的敏感文件正则。** 上面的 terminal 专属门禁不覆盖它；它的包装脚本则限制内建（安全子集省略了 `open` / `__import__`）——这是一道不同且更窄的控制。
 - **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行。这是"可用性优先于严格性"的有意取舍；需要相反语义请选 `SANDBOX_POLICY=required`。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。
 - **不宣称、也未配置任何网络隔离、seccomp 或 AppArmor profile。** 隔离能力就是上文展示的 bwrap / Seatbelt 构造，仅此而已。

@@ -26,7 +26,7 @@ This document maps **when** the agent extracts experience, **by which mechanism*
 
 ### 1. Compression-time memory review
 
-`schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) increments `nudge_review_memory_count` in `state_register_db` once per compression. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task that runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression still increments the counter but no dispatch happens. The trigger previously lived in `ContextEngineHook.after_agent` and ran on every turn; that hook no longer exists, so the cadence is now per compression.
+`schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) increments `nudge_review_memory_count` in `state_register_db` once per compression. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task that runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression still increments the counter but no dispatch happens.
 
 `_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations, using the `memory` tool; otherwise it answers "Nothing to save." and stops.
 
@@ -41,7 +41,7 @@ This document maps **when** the agent extracts experience, **by which mechanism*
 - todos exist and every todo is `completed` or `cancelled`;
 - `nudge_plan_extraction_fired` (`state_register_db`) is not already set.
 
-It sets the fired flag on the transition and resets it to `False` whenever the list is not (or no longer) all-complete, so a later all-complete cycle fires again. Reads are fail-open. Because detection now runs only at compression time, a session that never compresses never fires plan extraction.
+It sets the fired flag on the transition and resets it to `False` whenever the list is not all-complete, so a later all-complete cycle fires again. Reads are fail-open. Because detection runs only at compression time, a session that never compresses never fires plan extraction.
 
 When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extraction` is dispatched fire-and-forget from the same seam and runs under `nudge_plan_extraction_lock`:
 
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`: trigger gating, fire-and-forget scheduling, re-entrancy lock, fail-open release, prompt content, the `todo_update` metadata gate, and full-fork isolation (derived key, main-session `todowrite` shim, no checkpointer / message leakage).
-- `test_compression_nudges.py`: compression-time nudge dispatch (memory review + plan extraction fire from the compact seam; a no-cut compaction dispatches nothing). The former persistence assertions moved to `tests/agent/middlewares/message_persistence/` — persistence left the compression path.
+- `test_compression_nudges.py`: compression-time nudge dispatch (memory review + plan extraction fire from the compact seam; a no-cut compaction dispatches nothing). Persistence assertions live in `tests/agent/middlewares/message_persistence/`.
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.
 - `test_memory_flush.py`: flush gating, routing, and non-blocking failure.
 - `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the compression-time counter/lock semantics of `schedule_compression_nudges`, dispatch, and `_build_plan_context`.

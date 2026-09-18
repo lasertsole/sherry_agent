@@ -144,7 +144,7 @@ The newest tool outputs are usually the largest context consumers and the most e
 | T4/T5 provider error, first recovery attempt | clip first; if sufficient, retry the provider call with the stubbed list | **0** |
 | T4/T5 provider error, clip insufficient | forced compact + budget truncation, then retry | 1 auxiliary-LLM call per compact step (≤ `MAX_OVERFLOW_RETRIES = 3`) |
 
-Acceptance is strict: the clip is applied **only** when it alone brings the pure-local estimate under the line (`estimate_messages_tokens(messages, reported_tokens=0)` — a stale `usage_metadata` never drives recovery). An insufficient clip is discarded so the existing route operates on the original list, exactly as before P1-2.
+Acceptance is strict: the clip is applied **only** when it alone brings the pure-local estimate under the line (`estimate_messages_tokens(messages, reported_tokens=0)` — a stale `usage_metadata` never drives recovery). An insufficient clip is discarded so the existing route operates on the original list.
 
 ## 🧵 Chain-Summary Filtering
 

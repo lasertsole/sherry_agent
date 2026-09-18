@@ -56,7 +56,7 @@ AIMessage(<summary>, lc_source="summarization")
 ターン開始
 │
 ├─ T1  before_agent 事前点検  (_t1_preflight :1886 / _at1_preflight :1917)
-│      ├─ _reset_turn_state (:1849) が 10 個のターン単位カウンタをリセット
+│      ├─ _reset_turn_state (:1849) が 11 個のターン単位カウンタをリセット
 │      ├─ _decide_overflow_route (:632) → None / "fits" → 通過
 │      ├─ クールダウン > 0 なら COMPACT ルートを封鎖; 切り詰めトラックは
 │      │  それでも実行（それ自体が最安の復帰メカニズム）
@@ -215,9 +215,9 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 
 ### 💾 圧縮時 nudge
 
-メッセージ永続化は圧縮パスから出ました: `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/AI メッセージをモデル呼び出しの各境界で、ツール結果を返却時に MesMemory へフラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。圧縮時フラッシュモジュール（`compaction_persistence.py`）とその `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました —— compact は圧縮と下記 nudge のスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
+メッセージ永続化は圧縮パスとは別に動作します: `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/AI メッセージをモデル呼び出しの各境界で、ツール結果を返却時に MesMemory へフラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。compact は圧縮と下記 nudge のスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
 
-**圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）: メモリレビューカウンタ（`nudge_review_memory_count`、`state_register_db`）が圧縮ごとに 1 回増え、`nudge_memory_threshold`（既定 10）到達で `_nudge_memory` を発火します; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。これら 2 つのトリガーは以前 `ContextEngineHook` ミドルウェアの after-agent フックにより毎ターン実行されていました; システムプロンプト注入が `@dynamic_prompt` ミドルウェア（`system_prompt_injection`）へ移行した際に、クラスとフックの両方が削除されました。単発の `nudge_plan_extraction_fired` フラグの意味は不変 —— 完了サイクルごとに 1 回の抽出 —— なので、一度も圧縮しないセッションはプラン抽出を発火しません。
+**圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）: メモリレビューカウンタ（`nudge_review_memory_count`、`state_register_db`）が圧縮ごとに 1 回増え、`nudge_memory_threshold`（既定 10）到達で `_nudge_memory` を発火します; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。単発の `nudge_plan_extraction_fired` フラグは完了サイクルごとに 1 回の抽出を保証します —— そのため、一度も圧縮しないセッションはプラン抽出を発火しません。
 
 **カットポイント選択**（`_determine_cutoff`、:1310）: 履歴をターンに分割し、**最新から逆方向**に歩きながら保持予算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`、:565）に照らして累積します; 丸ごと入らないターンはターン途中で割られることがあります。`_adjust_for_orphan_pairs`（:1340）がカットポイントを逆に歩き、`ToolMessage` が `AIMessage` のツール呼び出しから分離する状態がなくなるまで調整します。最終ターン比率ゲートが発火しない限り（最後のユーザーターン ≥ 全トークンの `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`、wrap 入口 :1968/:2054 で呼び出し）、カットポイントが最後の `HumanMessage` を超えることはありません。
 
@@ -319,7 +319,7 @@ Summarization(
 | 定数 | 値 | 消費箇所 |
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | `decide_route` のハードオーバーフローバンド; T3 圧力ゲート; 両トリガー節の構築 |
-| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route` のソフトオーバーフローバンド（旧 `_preemptive_check` の 2 バンドゲートは引退） |
+| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route` のソフトオーバーフローバンド |
 | `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`（:615）: ウィンドウ − 予備量 |
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 切り詰めトラック予算 = usable × 0.60（:680） |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results` の候補下限 |
@@ -384,15 +384,15 @@ Summarization(
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
-プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **4221 passed / 0 failed** で合格（GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P）。
+プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **4268 passed / 12 skipped / 0 failed** で合格（GROUP A 3282P/1S + GROUP B 913P/11S + GROUP C 73P）。
 
 ## ⚠️ 正直な限界
 
 - **`keep=("messages", 10)` は受け取られるが使用されません。** コンストラクタは API 互換のために保存するだけ; 末尾保持は予算ベース（`PRESERVE_RATIO` × ウィンドウ、[2 000, 15 000] にクランプ）にルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。`keep` を変えても効果はありません。
 - **飾りインポート。** `summarization/core.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。
 - **TTL レジストリは本番に接続されていません。** `record_first_seen` / `select_expired` / `truncate_expired`（および `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）を消費するのはテストだけです; ミドルウェアはもっぱら `truncate_to_budget` を使います。`agent/` 全域の grep でも TTL トリオの本番呼び出し箇所は見つかりません。レジストリは揮発性でもあります（インメモリ、`tool_call_id` キー、再起動で喪失）。
-- **残存するが不活性なコード。** `_preemptive_check`（:589）と `_preemptive_truncate`（:1159）にはもう呼び出し箇所がありません —— これらが実装していた 2 バンドの先取りは 4 ルート判定に置き換えられました。参考のため保持されています。
-- **推定器はトークナイザではなく、3 段階のトークナイザフリー・ヒューリスティックです。** API 報告使用量があれば T1 がそれを返し、T2 が CJK 対応ヒューリスティック（CJK 文字は `CHARS_PER_TOKEN_CJK = 2`、それ以外は `CHARS_PER_TOKEN = 4`）、T3 のレガシー `len // 4` は T2 の純 ASCII 退化ケースとしてのみ残ります。意図的に決定論的（再現可能なテスト、安定した予算）です; 旧来の純 `// 4` は CJK 多めのコンテンツを過少計数していました（中国語は 4 ではなく 1–2 字/トークンに近い）— T2 はまさにそこを修正します。
+- **残存するが不活性なコード。** `_preemptive_check`（:589）と `_preemptive_truncate`（:1159）は参照専用です: これらが実装する 2 バンドの先取りに到達する本番呼び出し箇所はありません。
+- **推定器はトークナイザではなく、3 段階のトークナイザフリー・ヒューリスティックです。** API 報告使用量があれば T1 がそれを返し、T2 が CJK 対応ヒューリスティック（CJK 文字は `CHARS_PER_TOKEN_CJK = 2`、それ以外は `CHARS_PER_TOKEN = 4`）、T3 のレガシー `len // 4` は T2 の純 ASCII 退化ケースです。意図的に決定論的（再現可能なテスト、安定した予算）です; `CHARS_PER_TOKEN_CJK = 2` は中国語が 4 ではなく 1–2 字/トークンに近いことを反映しています。
 - **報告値が勝つ場所。** T3 だけが報告使用量駆動のトリガーです（`compute_pressure` は max を取る）。T1/T2 のルート判定は推定駆動です（推定値 + システムプロンプトのオーバーヘッドのみ）; レガシーの `_check_trigger` 節フォールバックは `max(ローカル推定値, 報告値)` を使います。
 - **T3 は返される応答を決して変えません。** T3 ディスパッチの永続効果はツール結果のその場での切り詰め（メッセージオブジェクトはグラフ状態と共有）とアンチスラッシングの帳簿記録だけです; T3 の compact ルートの `request.override` はローカルであり、元の応答が常に返ります。T3 本体全体が fail-open です。
 - **T4/T5 は設計上アンチスラッシングマトリクスを迂回します** —— それが「強制」の要点です。`MAX_OVERFLOW_RETRIES (3)`（T4/T5 共有の単一カウンタ、ターンごとにリセット）を超えるか、強制圧縮ステップ自体が失敗すると、元のプロバイダ例外が伝播します（決して飲み込まれず、圧縮エラーで置き換えられることもありません）。

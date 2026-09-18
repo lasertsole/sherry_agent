@@ -102,7 +102,7 @@ blocked → ready → dispatched → done
 
 ### 기존 단계 호환성
 
-DAG 이전의 단계(`status` 필드 없음)는 `step_status()`로 처리: `child_session_key`를 가진 단계는 `dispatched`, 그렇지 않으면 `ready`로 취급. DAG 기능 도입 전에 생성된 플로우와의 하위 호환성을 보장.
+`status` 필드가 없는 단계는 `step_status()`로 처리: `child_session_key`를 가진 단계는 `dispatched`, 그렇지 않으면 `ready`로 취급. 해당 필드가 없는 플로우와의 하위 호환성을 보장합니다.
 
 ---
 

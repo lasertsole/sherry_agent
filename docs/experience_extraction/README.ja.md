@@ -26,7 +26,7 @@
 
 ### 1. 圧縮時の memory review
 
-`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮ごとに `state_register_db` の `nudge_review_memory_count` を 1 回増やす。カウンタが `nudge_memory_threshold`（既定 10）に達すると 0 に戻し、`_nudge_memory(session_id, system_prompt, messages)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。いずれかの nudge ロックが保持されている間、圧縮はカウンタを増やすが派遣はしない。このトリガーは以前 `ContextEngineHook.after_agent` にあり毎ターン実行されていた; そのフックはもう存在しないため、周期は圧縮回数単位になった。
+`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`、Summarization ミドルウェアがメッセージを実際に破棄する compact ごとに呼び出す）は、圧縮ごとに `state_register_db` の `nudge_review_memory_count` を 1 回増やす。カウンタが `nudge_memory_threshold`（既定 10）に達すると 0 に戻し、`_nudge_memory(session_id, system_prompt, messages)` を fire-and-forget タスクとして派遣し、`nudge_review_memory_lock`（`state_register_mem`）の下で走らせる。いずれかの nudge ロックが保持されている間、圧縮はカウンタを増やすが派遣はしない。
 
 `_nudge_memory`（`agent/middlewares/summarization/nudges.py`）は `_create_nudge_agent` で nudge agent を構築し、会話に `_MEMORY_REVIEW_PROMPT` を `HumanMessage` として追加して呼び出す。プロンプトは、持続的なユーザー特性（ペルソナ、好み、個人的詳細）と振る舞いへの期待を `memory` ツールで保存するよう求め、保存対象がなければ "Nothing to save." と答えて停止させる。
 
@@ -41,7 +41,7 @@
 - todo が存在し、すべて `completed` または `cancelled` である；
 - `nudge_plan_extraction_fired`（`state_register_db`）が未設定である。
 
-遷移時にフラグを立て、リストが（もはや）全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。検出は圧縮時にのみ走るため、一度も圧縮しないセッションは plan extraction を発火しない。
+遷移時にフラグを立て、リストが全完了でなければ `False` に戻すため、次の全完了サイクルで再び発火する。読み取りは fail-open。検出は圧縮時にのみ走るため、一度も圧縮しないセッションは plan extraction を発火しない。
 
 `plan_extraction_enabled` が有効で検出が発火すると、`_nudge_plan_extraction` が同じ接縫から fire-and-forget で派遣され、`nudge_plan_extraction_lock` の下で走る：
 
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：トリガゲート、fire-and-forget スケジュール、再入ロック、fail-open 解放、プロンプト内容、`todo_update` metadata ゲート、および完全 fork 隔離（派生キー、メインセッション `todowrite` シム、checkpointer / メッセージ漏洩なし）。
-- `test_compression_nudges.py`：圧縮時 nudge ディスパッチ（memory review + plan extraction が compact 接縫から発火；カットなし圧縮は何もディスパッチしない）。旧永続化アサーションは `tests/agent/middlewares/message_persistence/` へ移動しました —— 永続化は圧縮パスから出ました。
+- `test_compression_nudges.py`：圧縮時 nudge ディスパッチ（memory review + plan extraction が compact 接縫から発火；カットなし圧縮は何もディスパッチしない）。永続化アサーションは `tests/agent/middlewares/message_persistence/` にあります。
 - `test_compression_cooldown_persist.py`：クールダウンの再起動間生存。
 - `test_memory_flush.py`：flush ゲート、振り分け、非阻塞失敗。
 - `test_plan_extraction.py`：`_detect_todo_all_complete` の 4 分岐、`schedule_compression_nudges` の圧縮時カウンタ / ロック意味論、派遣、`_build_plan_context`。

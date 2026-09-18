@@ -144,7 +144,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | T4/T5 プロバイダエラー、最初の回復試行 | まずクリップ；十分ならスタブ済みリストでプロバイダ呼び出しを再試行 | **0** |
 | T4/T5 プロバイダエラー、クリップ不足 | 強制圧縮 + 予算切り詰め、その後再試行 | compact ステップごとに補助 LLM 1 回（≤ `MAX_OVERFLOW_RETRIES = 3`） |
 
-受け入れは厳格：クリップ**単独**が純ローカル推定値を線の下に下げるときのみ適用される（`estimate_messages_tokens(messages, reported_tokens=0)` —— 古い `usage_metadata` が回復を駆動することは決してない）。不足クリップは破棄され、既存ルートが P1-2 以前とまったく同じく元のリストで動く。
+受け入れは厳格：クリップ**単独**が純ローカル推定値を線の下に下げるときのみ適用される（`estimate_messages_tokens(messages, reported_tokens=0)` —— 古い `usage_metadata` が回復を駆動することは決してない）。不足クリップは破棄され、既存ルートは元のリストのまま動きます。
 
 ## 🧵 チェーン要約のフィルタリング
 

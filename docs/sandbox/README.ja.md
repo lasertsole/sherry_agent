@@ -103,7 +103,7 @@ bwrap
 | 5 | `reboot` | システム再起動 |
 | 6 | `|`、`&&`、`;` の後に `rm` / `shutdown` / `reboot` / `mkfs` | `echo ok && rm -rf /` のような連鎖バリアント |
 
-**連結後**の文字列をマッチすることに意味があります: 旧来の要素単位の完全一致ブラックリストは、各要素を単独で見れば無害に見える `["echo ok", "rm -rf /"]` を見逃していました。マッチすると `ToolException("Blocked: unsafe command.")` を送出し、`handle_tool_error=True` を経由してエラーのツール結果として表面化します。このゲートは `sandbox` の値にかかわらず常に動きます。`python_repl` には対応する正規表現がなく、代わりにラッパースクリプトがビルトインを制限します。
+**連結後**の文字列をマッチすることに意味があります: 要素単位の完全一致ブラックリストでは、各要素を単独で見れば無害に見える `["echo ok", "rm -rf /"]` を見逃します。マッチすると `ToolException("Blocked: unsafe command.")` を送出し、`handle_tool_error=True` を経由してエラーのツール結果として表面化します。このゲートは `sandbox` の値にかかわらず常に動きます。`python_repl` には対応する正規表現がなく、代わりにラッパースクリプトがビルトインを制限します。
 
 **機密ファイルゲート (`_SENSITIVE_FILE_PATTERNS`)。** `_run` と `_arun` の両方で、`_check_sensitive_file_access(cmd_str)` は `_check_dangerous` の**後**、**どの生成よりも前**に実行されます: 6つのコンパイル済みパターンのいずれかが連結後のコマンド文字列にマッチすると `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)を送出し — 子プロセスは決して生成されません — モデルを `read_file`(外部パスは人間の承認を通る)へ誘導します:
 
@@ -217,7 +217,7 @@ bwrap
 `SafeShellTool`(名前 `terminal`)と `TimedPythonREPLTool`(名前 `python_repl`)はどちらも LLM から見えるツール呼び出しスキーマに `sandbox: bool = True` パラメータを露出しており、モデルが呼び出しごとに選択します。
 
 - **サンドボックス経路**: terminal は `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True` と意味的に同一)、python_repl は `backend.wrap([sys.executable, "-c", script], env)` を使います。包まれた argv は list として exec され、シェル kwargs は一切ありません。
-- **フォールバック経路(Windows / バックエンドなし)**: 元の構築方法をバイト単位でそのまま保ち、`env=` だけを追加します。terminal はコマンドを `" && "` で連結して `shell=True` で起動し、python_repl は `[sys.executable, "-c", script]` を list として起動します。Windows には OS サンドボックスバックエンドが**ありません**。
+- **フォールバック経路(Windows / バックエンドなし)**: terminal はコマンドを `" && "` で連結して `shell=True` で起動し、python_repl は `[sys.executable, "-c", script]` を list として起動します。Windows には OS サンドボックスバックエンドが**ありません**。
 - **すべての経路で無条件**: `env=scrub_env()` と `cwd=str(ROOT_DIR)`(cwd 固定)。両ツールとも30秒のタイムアウト(`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`)を強制し、期限切れで子を kill します。
 - **エラーの表面化**: `REQUIRED` でバックエンドがない場合、terminal は `RuntimeError` を `ToolException` に包み(`handle_tool_error=True` がそのまま表面化)、python_repl は生の `RuntimeError` をそのまま投げます。
 - **降格警告**: この呼び出しがサンドボックスを望んでいたのにバックエンドがなく、ポリシーが `off` でない場合、ツール層はちょうど1件の loguru 警告を記録してからサンドボックスなしで実行します:

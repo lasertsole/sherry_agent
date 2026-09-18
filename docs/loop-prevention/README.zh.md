@@ -52,7 +52,7 @@
 
 值得注意的细节：
 
-- **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，*precheck* 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT。实际效果：一个受管的重试窗口，而不是一堵立即竖起的墙。想要旧的严格行为就设 `recovery_mode_enabled=False`，或者设 `hard_stop_enabled=True` 把每个 BLOCK 阈值都变成 HALT（见上表）。
+- **恢复模式**（`recovery_mode_enabled=True` 默认开启）：第一次 BLOCK 不会把回合打入死牢。回合进入恢复状态，*precheck* 路径会放行被拦的工具，让重试得到全新评估。此后每次 BLOCK 都会递增违规计数器；一旦计数超过 `recovery_max_violations`（默认 1），动作升级为 HALT。实际效果：一个受管的重试窗口，而不是一堵立即竖起的墙。想要严格的无恢复行为就设 `recovery_mode_enabled=False`，或者设 `hard_stop_enabled=True` 把每个 BLOCK 阈值都变成 HALT（见上表）。
 - **无进展即停滞（stagnation，`is_stagnant`）**：一次成功的幂等调用只有在**同一工具**本回合中已产出过完全相同的 `result_hash` 时才算无进展；结果发生变化即为进展。**乒乓配对**对相邻两次调用的工具名做哈希，且只在*连续两次*调用都无进展时才累加。任何错误、结果发生变化（非无进展），或任何一次成功的非幂等（有副作用）调用，都会把所有已累计的配对连击清零。幂等工具返回变化结果同样不再计入参数翻新；非幂等工具的成功则会完全清空参数翻新状态。
 - 护栏状态严格**回合作用域**：`before_agent` 会重置它，新回合从干净状态开始。
 

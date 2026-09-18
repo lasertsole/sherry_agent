@@ -56,7 +56,7 @@ Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKE
 turn starts
 │
 ├─ T1  before_agent preflight  (_t1_preflight :1886 / _at1_preflight :1917)
-│      ├─ _reset_turn_state (:1849) resets the 10 per-turn counters
+│      ├─ _reset_turn_state (:1849) resets the 11 per-turn counters
 │      ├─ _decide_overflow_route (:632) → None / "fits" → no-op
 │      ├─ cooldown > 0 blocks the COMPACT routes; the truncate track
 │      │  still runs (it is the cheap recovery mechanism itself)
@@ -217,9 +217,9 @@ The TTL registry itself (`record_first_seen` / `select_expired` / `truncate_expi
 
 ### 💾 Compression-time nudges
 
-Message persistence has left the compression path: human/AI messages are flushed to MesMemory at every model boundary and tool results the moment they return, through `MessagePersistenceMiddleware` (`agent/middlewares/message_persistence/`), write-once via the persistent `persisted_message_ids` watermark. The compression-time flush module (`compaction_persistence.py`) and its `_persist_discarded_messages_sync` / `_apersist_discarded_messages` call sites were removed — a compact now only compacts and schedules the nudge dispatch below. See `agent/middlewares/README.md` for the middleware's trigger semantics.
+Message persistence runs outside the compression path: human/AI messages are flushed to MesMemory at every model boundary and tool results the moment they return, through `MessagePersistenceMiddleware` (`agent/middlewares/message_persistence/`), write-once via the persistent `persisted_message_ids` watermark. A compact only compacts and schedules the nudge dispatch below. See `agent/middlewares/README.md` for the middleware's trigger semantics.
 
-**Compression-time nudges** (`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): the memory-review counter (`nudge_review_memory_count`, `state_register_db`) increments once per compression and fires `_nudge_memory` at `nudge_memory_threshold` (default 10); plan extraction evaluates `_detect_todo_all_complete` at the same point. Both dispatch fire-and-forget under the NUDGE lane, so they can never block the model call. The two triggers previously ran from the `ContextEngineHook` middleware's after-agent hook on every turn; both the class and the hook were removed when system-prompt injection moved to the `@dynamic_prompt` middleware (`system_prompt_injection`). The single-fire `nudge_plan_extraction_fired` flag is unchanged — one extraction per completion cycle — so a session that never compresses never fires plan extraction.
+**Compression-time nudges** (`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): the memory-review counter (`nudge_review_memory_count`, `state_register_db`) increments once per compression and fires `_nudge_memory` at `nudge_memory_threshold` (default 10); plan extraction evaluates `_detect_todo_all_complete` at the same point. Both dispatch fire-and-forget under the NUDGE lane, so they can never block the model call. The single-fire `nudge_plan_extraction_fired` flag allows one extraction per completion cycle, so a session that never compresses never fires plan extraction.
 
 **Cutoff selection** (`_determine_cutoff`, :1310): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, :565); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (:1340) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry :1968/:2054), the cutoff never crosses the last `HumanMessage`.
 
@@ -321,7 +321,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | Constant | Value | Consumed where |
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | hard-overflow band in `decide_route`; T3 pressure gate; builds both trigger clauses |
-| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | soft-overflow band in `decide_route` (the old `_preemptive_check` two-band gate is retired) |
+| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | soft-overflow band in `decide_route` |
 | `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget` (:605): window − reserve |
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | truncate-track budget = usable × 0.60 (:660) |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | candidate floor in `find_truncatable_tool_results` |
@@ -376,7 +376,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 pure clip: trailing-batch detection, max_remove/min_keep/enabled gates, token target, marker preservation (P0-2 pointer, P2-4 notice), no-op idempotency, pairing invariant |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 middleware integration: T1/T2 clip without LLM, insufficient-clip degradation, kill switch, T4/T5 clip-then-retry and clip→compression degradation, sync/async parity, sanitizer-unchanged |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity, chained-summary filtering |
-| `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | Chained-summary filtering: prior pair removed from the serialized conversation, normal/empty/multi-pair inputs, unmarked legacy human preserved, async `_acreate_summary` mirror |
+| `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | Chained-summary filtering: prior pair stripped from the serialized conversation, normal/empty/multi-pair inputs, unmarked legacy human preserved, async `_acreate_summary` mirror |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Registration contract (test-pinned window): `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
@@ -386,15 +386,15 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | Persistent watermark store: idempotent marking, session scoping, cleanup on session deletion, empty-input no-ops |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
-The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **4221 passed / 0 failed** (GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P).
+The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **4268 passed / 12 skipped / 0 failed** (GROUP A 3282P/1S + GROUP B 913P/11S + GROUP C 73P).
 
 ## ⚠️ Honesty & Limitations
 
 - **`keep=("messages", 10)` is accepted but unused.** The constructor stores it for API compatibility; tail retention is budget-based (`PRESERVE_RATIO` × window clamped to [2 000, 15 000]) plus the router's `TRUNCATABLE_RECENT_SKIP` margin. Changing `keep` has no effect.
 - **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).
-- **Retained-but-inert code.** `_preemptive_check` (:589) and `_preemptive_truncate` (:1159) have no call sites anymore — the two-band preemption they implemented was replaced by the 4-route decision. They are kept for reference.
-- **The estimator is a three-tier tokenizer-free heuristic, not a tokenizer.** T1 returns provider-reported usage when available; T2 is the CJK-aware heuristic (CJK characters at `CHARS_PER_TOKEN_CJK = 2`, everything else at `CHARS_PER_TOKEN = 4`); T3 is the legacy `len // 4`, which survives only as the pure-ASCII degenerate case of T2. It is intentionally deterministic (reproducible tests, stable budgets); the old pure `// 4` version under-counted CJK-heavy content (Chinese averages closer to 1–2 chars/token than 4) — T2 corrects exactly that.
+- **Retained-but-inert code.** `_preemptive_check` (:589) and `_preemptive_truncate` (:1159) are reference-only: no production call site reaches the two-band preemption they implement.
+- **The estimator is a three-tier tokenizer-free heuristic, not a tokenizer.** T1 returns provider-reported usage when available; T2 is the CJK-aware heuristic (CJK characters at `CHARS_PER_TOKEN_CJK = 2`, everything else at `CHARS_PER_TOKEN = 4`); T3 is the legacy `len // 4`, the pure-ASCII degenerate case of T2. It is intentionally deterministic (reproducible tests, stable budgets); `CHARS_PER_TOKEN_CJK = 2` reflects Chinese averaging closer to 1–2 chars/token than 4.
 - **Where reported usage wins.** T3 is the only reported-usage-driven trigger (`compute_pressure` takes the max). The T1/T2 route decision is estimate-driven (estimate + system-prompt overhead only); the legacy `_check_trigger` clause fallback uses `max(local estimate, reported)`.
 - **T3 never alters the returned response.** A T3 dispatch's durable effects are the in-place truncation of tool results (message objects are shared with the graph state) and the anti-thrash bookkeeping; the compact route's `request.override` at T3 is local and the original response is always returned. The whole T3 body is fail-open.
 - **T4/T5 bypass the anti-thrash matrix by design** — that is the point of "forced". After `MAX_OVERFLOW_RETRIES (3)` (shared T4/T5 counter, reset each turn), or if the forced-compression step itself fails, the ORIGINAL provider exception propagates (never swallowed, never replaced by the compression error).

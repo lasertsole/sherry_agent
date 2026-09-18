@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 마이그레이션으로 도입되었습니다(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`). WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`store_sqlite.py:234-271`).
+DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 DDL(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`)로 정의됩니다. WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`store_sqlite.py:234-271`).
 
 ### 단계 상태 기계
 
@@ -174,7 +174,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 음이 아닌 수 | `60.0`(`DEFAULT_RETRY_DELAY_SECONDS`) | 각 재디스패치 전에 대기하는 백오프 |
 | `retry_on` | `list[str]` | `[]` | 재시도를 유발하는 실패 유형; 비어 있으면 분류된 모든 실패 |
 
-`validate_policy()`(`_retry.py:120`)는 형식이 잘못된 정책을 `taskflow_run_task` 시점에 거부합니다 — dict가 아닌 정책, 음수/비정수 `max_retries`, 음수/비수치 `retry_delay_seconds`, 문자열 리스트가 아닌 `retry_on` — 어느 것이든 생성이나 쓰기 전에 `Error:` 문자열을 반환합니다. 재개 시점에 누락/잘못된 저장 정책은 `None`(`normalize_policy`)으로 퇴화하여, 호출을 실패시키는 대신 기존의 무재시도 동작으로 되돌립니다.
+`validate_policy()`(`_retry.py:120`)는 형식이 잘못된 정책을 `taskflow_run_task` 시점에 거부합니다 — dict가 아닌 정책, 음수/비정수 `max_retries`, 음수/비수치 `retry_delay_seconds`, 문자열 리스트가 아닌 `retry_on` — 어느 것이든 생성이나 쓰기 전에 `Error:` 문자열을 반환합니다. 재개 시점에 누락/잘못된 저장 정책은 `None`(`normalize_policy`)으로 퇴화하여, 호출을 실패시키는 대신 무재시도 동작으로 폴백합니다.
 
 `retry_count`(단계에 저장, 기본 `0`)는 **재디스패치** 횟수를 세며 최초 디스패치는 세지 않습니다: 첫 자식이 도는 동안 `0`, 첫 대체 자식이 생성되면 `1`. `retry_count < max_retries`인 동안 재시도가 허용됩니다(`retries_remaining`, `_retry.py:95`). `apply_redispatch()`(`_retry.py:170`)는 단계를 제자리에서 변경합니다 — 새 `child_session_key`, `dispatched_at`, `status = dispatched`, 증가된 `retry_count`.
 
@@ -545,7 +545,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 ### 대기 의미론: `PENDING`
 
-전역 동시성은 더 이상 거부 카운터가 아닙니다. `spawn_subagent_direct`는 부모별 어드미션(`validate_spawn_depth`, `validate_concurrent_children`)을 그대로 적용하지만, 전역 한도를 초과한 spawn은 **수락**되어 `ExecutionStatus.PENDING`으로 등록됩니다: `started_at`은 `None`으로 남고 해당 run은 레인 슬롯을 보유하지 않습니다. SUBAGENT 레인 래퍼(`_execute_subagent_with_lane`, `agent/tools/subagent/spawn/core.py`)가 슬롯을 기다린 뒤 `mark_run_running()`으로 `PENDING → RUNNING` 승격하며, 그 시점에만 `started_at`을 찍습니다——대기 시간은 실행 시간으로 계산되지 않습니다. `validate_global_concurrent()`와 `SubagentConfig.max_concurrent`는 하위 호환용으로만 남고 spawn 파이프라인은 더 이상 호출하지 않습니다.
+전역 동시성은 거부 카운터가 아닙니다. `spawn_subagent_direct`는 부모별 어드미션(`validate_spawn_depth`, `validate_concurrent_children`)을 그대로 적용하지만, 전역 한도를 초과한 spawn은 **수락**되어 `ExecutionStatus.PENDING`으로 등록됩니다: `started_at`은 `None`으로 남고 해당 run은 레인 슬롯을 보유하지 않습니다. SUBAGENT 레인 래퍼(`_execute_subagent_with_lane`, `agent/tools/subagent/spawn/core.py`)가 슬롯을 기다린 뒤 `mark_run_running()`으로 `PENDING → RUNNING` 승격하며, 그 시점에만 `started_at`을 찍습니다——대기 시간은 실행 시간으로 계산되지 않습니다. `validate_global_concurrent()`와 `SubagentConfig.max_concurrent`는 하위 호환용으로만 남고 spawn 파이프라인은 호출하지 않습니다.
 
 대기 중인 자식도 어드미션 슬롯을 차지하므로, registry 계수 함수는 `RUNNING + PENDING`을 활성으로 세고(`count_active_runs_for_session`, `count_active_descendant_runs`, `count_all_active_runs`), `is_live_unended_run()`은 `PENDING`을 포함합니다.
 
@@ -707,7 +707,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
                                                    └───────────────────────────┘
 ```
 
-컴파일된 그래프는 더 이상 `agent.core.py`에서 인라인으로 래핑되지 않습니다: **`agent/wrapper/`** 패키지가 가드를 소유합니다. `agent.wrapper.registry`는 프로세스 전역의, 순서가 있고 플러그 가능한 체인(`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`)을 노출하며, `GraphWrapperFactory` 항목은 **최내곽 우선**으로 적용됩니다. 기본값은 역사적 하드코딩 체인을 재현합니다 — 먼저 `RepetitionGuardWrapper(phantom_stream_guard=True)`, 다음 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`. 스트림 반복 가드는 `agent/wrapper/repetition_guard.py`, 컨텍스트 윈도 가드는 `agent/wrapper/context_limit.py`에 있습니다. **메모리 역류**는 `agent/middlewares/subagent_completion_drain/core.py`의 `SubagentCompletionDrainMiddleware`가 수행합니다.
+컴파일된 그래프는 **`agent/wrapper/`** 패키지가 래핑하며, 이 패키지가 가드를 소유합니다. `agent.wrapper.registry`는 프로세스 전역의, 순서가 있고 플러그 가능한 체인(`register_graph_wrapper`, `unregister_graph_wrapper`, `apply_graph_wrappers`, `reset_graph_wrappers`)을 노출하며, `GraphWrapperFactory` 항목은 **최내곽 우선**으로 적용됩니다. 기본 항목은 `RepetitionGuardWrapper(phantom_stream_guard=True)`, 다음 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`입니다. 스트림 반복 가드는 `agent/wrapper/repetition_guard.py`, 컨텍스트 윈도 가드는 `agent/wrapper/context_limit.py`에 있습니다. **메모리 역류**는 `agent/middlewares/subagent_completion_drain/core.py`의 `SubagentCompletionDrainMiddleware`가 수행합니다.
 
 ## 📚 API 레퍼런스
 

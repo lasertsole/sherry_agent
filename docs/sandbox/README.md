@@ -103,7 +103,7 @@ Order is the spec: `(deny file-write*)` under `(allow default)` means "everythin
 | 5 | `reboot` | system reboot |
 | 6 | `|`, `&&`, or `;` followed by `rm` / `shutdown` / `reboot` / `mkfs` | chained variants such as `echo ok && rm -rf /` |
 
-Matching the **joined** string matters: the older element-exact blacklist let `["echo ok", "rm -rf /"]` slip through because each element looked harmless alone. On a match the tool raises `ToolException("Blocked: unsafe command.")`, surfaced as an error tool result via `handle_tool_error=True`. The gate runs regardless of the `sandbox` flag. `python_repl` has no equivalent regex; its wrapper script restricts builtins instead.
+Matching the **joined** string matters: an element-exact blacklist would let `["echo ok", "rm -rf /"]` slip through because each element looks harmless alone. On a match the tool raises `ToolException("Blocked: unsafe command.")`, surfaced as an error tool result via `handle_tool_error=True`. The gate runs regardless of the `sandbox` flag. `python_repl` has no equivalent regex; its wrapper script restricts builtins instead.
 
 **Sensitive-file gate (`_SENSITIVE_FILE_PATTERNS`).** In both `_run` and `_arun`, `_check_sensitive_file_access(cmd_str)` runs **after** `_check_dangerous` and **before any spawn**: when any of the six compiled patterns matches the joined command string it raises `ToolException("Blocked: sensitive file access. …")` (`_SENSITIVE_FILE_MESSAGE`) — no child process is ever created — and the message routes the model to `read_file`, whose external paths go through human approval:
 
@@ -217,7 +217,7 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
 `SafeShellTool` (name `terminal`) and `TimedPythonREPLTool` (name `python_repl`) both expose a `sandbox: bool = True` parameter in their LLM-visible tool-call schema, so the model chooses per call.
 
 - **Sandboxed path**: `backend.wrap(["/bin/sh", "-c", cmd_str], env)` for terminal (semantically identical to POSIX `shell=True`) and `backend.wrap([sys.executable, "-c", script], env)` for python_repl. The wrapped argv is exec'd as a list, with no shell kwarg at all.
-- **Fallback path (Windows / no backend)**: the original construction is kept byte-identical and only `env=` is added. Terminal joins commands with `" && "` and spawns with `shell=True`; python_repl spawns `[sys.executable, "-c", script]` as a list. Windows has **no** OS-sandbox backend.
+- **Fallback path (Windows / no backend)**: terminal joins commands with `" && "` and spawns with `shell=True`; python_repl spawns `[sys.executable, "-c", script]` as a list. Windows has **no** OS-sandbox backend.
 - **Unconditional on every path**: `env=scrub_env()` and `cwd=str(ROOT_DIR)` (cwd clamp). Both tools enforce a 30-second timeout (`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`) and kill the child on expiry.
 - **Error surfacing**: with `REQUIRED` and no backend, terminal wraps the `RuntimeError` into a `ToolException` (surfaced verbatim by `handle_tool_error=True`); python_repl surfaces the raw `RuntimeError`.
 - **Degrade warning**: when a sandboxed execution was wanted but no backend exists and the policy is not `off`, the tool layer logs exactly one loguru warning, then executes unsandboxed:

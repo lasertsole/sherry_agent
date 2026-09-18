@@ -102,7 +102,7 @@ blocked → ready → dispatched → done
 
 ### Legacy Step Compatibility
 
-Pre-DAG steps (no `status` field) are handled by `step_status()`: a step with a `child_session_key` is treated as `dispatched`; otherwise `ready`. This ensures backward compatibility with flows created before the DAG feature.
+Steps without a `status` field are handled by `step_status()`: a step with a `child_session_key` is treated as `dispatched`; otherwise `ready`. This keeps flows without the field backward-compatible.
 
 ---
 

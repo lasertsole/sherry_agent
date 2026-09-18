@@ -102,7 +102,7 @@ blocked → ready → dispatched → done
 
 ### 旧步骤兼容
 
-DAG 之前的步骤（无 `status` 字段）由 `step_status()` 处理：有 `child_session_key` 的步骤视为 `dispatched`，否则视为 `ready`。这确保了 DAG 功能上线前创建的流的向后兼容。
+无 `status` 字段的步骤由 `step_status()` 处理：有 `child_session_key` 的步骤视为 `dispatched`，否则视为 `ready`。这保证无该字段的流保持向后兼容。
 
 ---
 

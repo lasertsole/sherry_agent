@@ -56,7 +56,7 @@ AIMessage(<summary>, lc_source="summarization")
 턴 시작
 │
 ├─ T1  before_agent 사전 점검  (_t1_preflight :1886 / _at1_preflight :1917)
-│      ├─ _reset_turn_state (:1849)가 10개의 턴 단위 카운터를 리셋
+│      ├─ _reset_turn_state (:1849)가 11개의 턴 단위 카운터를 리셋
 │      ├─ _decide_overflow_route (:632) → None / "fits" → 통과
 │      ├─ 쿨다운 > 0이면 COMPACT 라우트 차단; 트렁케이트 트랙은 여전히
 │      │  실행 (그 자체가 가장 저렴한 복구 메커니즘)
@@ -214,9 +214,9 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 
 ### 💾 압축 시점 nudge
 
-메시지 영속화는 압축 경로에서 빠졌습니다: `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/AI 메시지를 각 모델 호출 경계에서, 도구 결과를 반환 시 MesMemory로 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. 압축 시점 플러시 모듈(`compaction_persistence.py`)과 그 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점은 삭제되었습니다 — compact는 이제 압축과 아래 nudge 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
+메시지 영속화는 압축 경로 밖에서 동작합니다: `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/AI 메시지를 각 모델 호출 경계에서, 도구 결과를 반환 시 MesMemory로 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. compact는 압축과 아래 nudge 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
 
-**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰 카운터(`nudge_review_memory_count`, `state_register_db`)가 압축마다 1회 증가하고 `nudge_memory_threshold`(기본 10) 도달 시 `_nudge_memory`를 발화합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. 이 두 트리거는 이전에 `ContextEngineHook` 미들웨어의 after-agent 훅이 매 턴 실행했지만, 시스템 프롬프트 주입이 `@dynamic_prompt` 미들웨어(`system_prompt_injection`)로 옮겨가면서 클래스와 훅 모두 제거되었습니다. 단발 `nudge_plan_extraction_fired` 플래그 의미는 그대로 — 완료 사이클당 1회 추출 — 이므로 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
+**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰 카운터(`nudge_review_memory_count`, `state_register_db`)가 압축마다 1회 증가하고 `nudge_memory_threshold`(기본 10) 도달 시 `_nudge_memory`를 발화합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. 단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장하며, 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
 
 **절단점 선택**(`_determine_cutoff`, :1310): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, :565)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(:1340)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입 :1968/:2054에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 
@@ -318,7 +318,7 @@ Summarization(
 | 상수 | 값 | 소비 위치 |
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | `decide_route`의 하드 오버플로 밴드; T3 압력 게이트; 두 트리거 절을 구성 |
-| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route`의 소프트 오버플로 밴드 (구 `_preemptive_check` 2-밴드 게이트는 은퇴) |
+| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route`의 소프트 오버플로 밴드 |
 | `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`(:615): 윈도우 − 예비량 |
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 트렁케이트 트랙 예산 = usable × 0.60 (:680) |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results`의 후보 하한 |
@@ -383,15 +383,15 @@ Summarization(
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
-전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **4221 passed / 0 failed** (GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P).
+전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **4268 passed / 12 skipped / 0 failed** (GROUP A 3282P/1S + GROUP B 913P/11S + GROUP C 73P).
 
 ## ⚠️ 정직함과 한계
 
 - **`keep=("messages", 10)`은 받아들여지지만 사용되지 않습니다.** 생성자는 API 호환성을 위해 저장할 뿐; 꼬리 보존은 예산 기반(`PRESERVE_RATIO` × 윈도우, [2 000, 15 000] 클램프)에 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. `keep`을 바꿔도 효과가 없습니다.
 - **문서 장식용 임포트.** `summarization/core.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).
-- **남아 있지만 비활성인 코드.** `_preemptive_check`(:589)와 `_preemptive_truncate`(:1159)는 더 이상 호출 지점이 없습니다 — 이들이 구현한 2-밴드 선점은 4-경로 결정으로 대체되었습니다. 참조용으로만 유지됩니다.
-- **추정기는 토크나이저가 아니라 3단계 토크나이저프리 휴리스틱입니다.** API 보고 사용량이 있으면 T1이 반환하고, T2는 CJK 인식 휴리스틱(CJK 문자 `CHARS_PER_TOKEN_CJK = 2`, 나머지 `CHARS_PER_TOKEN = 4`), T3의 레거시 `len // 4`는 T2의 순수 ASCII 퇴화 케이스로만 남습니다. 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)입니다; 예전 순수 `// 4`는 CJK 중심 콘텐츠를 과소 계수했지만(중국어는 4가 아닌 1–2자/토큰에 가까움), T2가 바로 그 지점을 수정합니다.
+- **남아 있지만 비활성인 코드.** `_preemptive_check`(:589)와 `_preemptive_truncate`(:1159)는 참조 전용입니다: 이들이 구현하는 2-밴드 선점에 도달하는 프로덕션 호출 지점은 없습니다.
+- **추정기는 토크나이저가 아니라 3단계 토크나이저프리 휴리스틱입니다.** API 보고 사용량이 있으면 T1이 반환하고, T2는 CJK 인식 휴리스틱(CJK 문자 `CHARS_PER_TOKEN_CJK = 2`, 나머지 `CHARS_PER_TOKEN = 4`), T3의 레거시 `len // 4`는 T2의 순수 ASCII 퇴화 케이스입니다. 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)입니다; `CHARS_PER_TOKEN_CJK = 2`는 중국어가 4가 아닌 1–2자/토큰에 가까움을 반영합니다.
 - **보고된 사용량이 이기는 곳.** T3만이 보고된 사용량 기반 트리거입니다(`compute_pressure`는 max를 취함). T1/T2 라우트 결정은 추정 기반입니다(추정치 + 시스템 프롬프트 오버헤드만); 레거시 `_check_trigger` 절 폴백은 `max(로컬 추정치, 보고값)`을 사용합니다.
 - **T3는 반환되는 응답을 절대 바꾸지 않습니다.** T3 디스패치의 지속 효과는 도구 결과의 제자리 트렁케이션(메시지 객체는 그래프 상태와 공유됨)과 안티-스래싱 장부 기록뿐입니다; T3 compact 라우트의 `request.override`는 로컬이며 원본 응답이 항상 반환됩니다. T3 본문 전체가 fail-open입니다.
 - **T4/T5는 설계상 안티-스래싱 매트릭스를 우회합니다** — 그것이 "강제"의 요점입니다. `MAX_OVERFLOW_RETRIES (3)`(T4/T5 단일 공유 카운터, 턴마다 리셋) 초과, 또는 강제 압축 단계 자체의 실패 시, 원본 프로바이더 예외가 전파됩니다(절대 삼켜지지 않고, 절대 압축 에러로 대체되지 않음).

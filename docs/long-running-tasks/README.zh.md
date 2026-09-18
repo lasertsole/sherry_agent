@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 本身（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）完全存放在 `state_json` 中——新增 DAG 字段无需迁移表结构。token/成本/截止时间列由增量迁移加入（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`，`store_sqlite.py:83-129`）。WAL 模式每个进程只切换一次，且每条语句之前都会执行 `PRAGMA busy_timeout = 5000`（`store_sqlite.py:234-271`）。
+DAG 本身（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）完全存放在 `state_json` 中——新增 DAG 字段无需迁移表结构。token/成本/截止时间列来自增量 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`，`store_sqlite.py:83-129`）。WAL 模式每个进程只切换一次，且每条语句之前都会执行 `PRAGMA busy_timeout = 5000`（`store_sqlite.py:234-271`）。
 
 ### 步骤状态机
 
@@ -174,7 +174,7 @@ async def taskflow_run_task(
 | `retry_delay_seconds` | 非负数值 | `60.0`（`DEFAULT_RETRY_DELAY_SECONDS`） | 每次重新派发前休眠的退避时长 |
 | `retry_on` | `list[str]` | `[]` | 触发重试的失败类型；为空表示所有可分类失败 |
 
-`validate_policy()`（`_retry.py:120`）会在 `taskflow_run_task` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而恢复旧版的无重试行为，而不是让该次调用失败。
+`validate_policy()`（`_retry.py:120`）会在 `taskflow_run_task` 阶段拒绝格式非法的策略——非 dict 策略、负数/非整数 `max_retries`、负数/非数值 `retry_delay_seconds`，或不是字符串列表的 `retry_on`——在任何派发或写入之前返回 `Error:` 字符串。在恢复时，缺失/非法的已存策略会退化为 `None`（`normalize_policy`），从而回退为无重试行为，而不是让该次调用失败。
 
 `retry_count`（存放在步骤上，默认 `0`）统计的是**重新派发**次数，从不统计最初那次派发：第一个子 Agent 运行时为 `0`，生成第一个替换子 Agent 后为 `1`。只要 `retry_count < max_retries` 就允许重试（`retries_remaining`，`_retry.py:95`）。`apply_redispatch()`（`_retry.py:170`）就地改动步骤——写入新的 `child_session_key`、`dispatched_at`、`status = dispatched`，并递增 `retry_count`。
 
@@ -545,7 +545,7 @@ LANE_SYSTEM: LaneSystemConfig = {
 
 ### 排队语义：`PENDING`
 
-全局并发不再是拒绝计数器。`spawn_subagent_direct` 仍执行 per-parent 准入（`validate_spawn_depth`、`validate_concurrent_children`），但超过全局上限的 spawn 会被**接受**并注册为 `ExecutionStatus.PENDING`：`started_at` 保持 `None`，该 run 不持有 lane slot。SUBAGENT lane 包装器（`_execute_subagent_with_lane`，`agent/tools/subagent/spawn/core.py`）等待 slot，然后经 `mark_run_running()` 把 `PENDING → RUNNING`，此时才写入 `started_at`——排队等待永远不计入运行时长。`validate_global_concurrent()` 与 `SubagentConfig.max_concurrent` 仅为向后兼容保留，spawn 流水线不再调用。
+全局并发不是拒绝计数器。`spawn_subagent_direct` 仍执行 per-parent 准入（`validate_spawn_depth`、`validate_concurrent_children`），但超过全局上限的 spawn 会被**接受**并注册为 `ExecutionStatus.PENDING`：`started_at` 保持 `None`，该 run 不持有 lane slot。SUBAGENT lane 包装器（`_execute_subagent_with_lane`，`agent/tools/subagent/spawn/core.py`）等待 slot，然后经 `mark_run_running()` 把 `PENDING → RUNNING`，此时才写入 `started_at`——排队等待永远不计入运行时长。`validate_global_concurrent()` 与 `SubagentConfig.max_concurrent` 仅为向后兼容保留，spawn 流水线不调用。
 
 由于排队中的 child 仍占用一个准入 slot，registry 计数函数把 `RUNNING + PENDING` 都计为活跃（`count_active_runs_for_session`、`count_active_descendant_runs`、`count_all_active_runs`），且 `is_live_unended_run()` 包含 `PENDING`。
 
@@ -707,7 +707,7 @@ LANE_SYSTEM: LaneSystemConfig = {
                                                    └───────────────────────────┘
 ```
 
-编译后的图不再在 `agent.core.py` 中内联包装：**`agent/wrapper/`** 包现在拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项复现了历史上的硬编码链——先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。**记忆回流**由 `agent/middlewares/subagent_completion_drain/core.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
+编译后的图由 **`agent/wrapper/`** 包包装，该包拥有这些守卫。`agent.wrapper.registry` 暴露一条进程级、有序、可插拔的链（`register_graph_wrapper`、`unregister_graph_wrapper`、`apply_graph_wrappers`、`reset_graph_wrappers`），其 `GraphWrapperFactory` 条目按**最内层优先**应用；默认项先是 `RepetitionGuardWrapper(phantom_stream_guard=True)`，再是 `ContextLimitGuardWrapper(context_window=main_llm_max_tokens)`。流式重复守卫位于 `agent/wrapper/repetition_guard.py`，上下文窗口守卫位于 `agent/wrapper/context_limit.py`。**记忆回流**由 `agent/middlewares/subagent_completion_drain/core.py` 中的 `SubagentCompletionDrainMiddleware` 执行。
 
 ## 📚 API 参考
 

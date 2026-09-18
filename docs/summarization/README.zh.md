@@ -56,7 +56,7 @@ AIMessage(<summary>, lc_source="summarization")
 回合开始
 │
 ├─ T1  before_agent 预检  (_t1_preflight :1886 / _at1_preflight :1917)
-│      ├─ _reset_turn_state (:1849) 重置 10 个每回合计数器
+│      ├─ _reset_turn_state (:1849) 重置 11 个每回合计数器
 │      ├─ _decide_overflow_route (:632) → None / "fits" → 直接放行
 │      ├─ 冷却期 > 0 时封锁 COMPACT 路由；截断轨道仍然运行
 │      │  （它本身就是最廉价的恢复机制）
@@ -210,9 +210,9 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 ### 💾 压缩时 nudge
 
-消息持久化已移出压缩路径：human/AI 消息在每个模型调用边界、工具结果在返回时，都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。压缩期落库模块（`compaction_persistence.py`）及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点已删除 —— 一次 compact 现在只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
+消息持久化在压缩路径之外运行：human/AI 消息在每个模型调用边界、工具结果在返回时，都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。一次 compact 只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
 
-**压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。这两个触发器此前由 `ContextEngineHook` 中间件的 after-agent 钩子每回合运行；系统提示词注入迁移到 `@dynamic_prompt` 中间件（`system_prompt_injection`）后，该类与钩子均已移除。单发 `nudge_plan_extraction_fired` 标记语义不变 —— 每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
+**压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。单发 `nudge_plan_extraction_fired` 标记保证每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
 **切点选择**（`_determine_cutoff`，:1310）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，:565）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（:1340）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 :1968/:2054 调用），切点绝不越过最后一条 `HumanMessage`。
 
@@ -314,7 +314,7 @@ Summarization(
 | 常量 | 值 | 消费位置 |
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | `decide_route` 的硬溢出档；T3 压力闸门；构造两处触发子句 |
-| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route` 的软溢出档（旧的 `_preemptive_check` 两档闸门已退役） |
+| `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route` 的软溢出档 |
 | `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`（:615）：窗口 − 保留量 |
 | `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 截断轨道预算 = usable × 0.60（:680） |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results` 的候选门槛 |
@@ -379,15 +379,15 @@ Summarization(
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
-全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**4221 passed / 0 failed**（GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P）。
+全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**4268 passed / 12 skipped / 0 failed**（GROUP A 3282P/1S + GROUP B 913P/11S + GROUP C 73P）。
 
 ## ⚠️ 诚实与局限
 
 - **`keep=("messages", 10)` 被接受但从未使用。** 构造函数仅为 API 兼容而存储它；尾部保留由预算决定（`PRESERVE_RATIO` × 窗口，夹在 [2 000, 15 000]），加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距。改 `keep` 没有任何效果。
 - **纯装饰性导入。** `summarization/core.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
 - **TTL 注册表没有接入生产。** `record_first_seen` / `select_expired` / `truncate_expired`（以及 `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）只有测试在用；中间件只使用 `truncate_to_budget`。对 `agent/` 的 grep 找不到 TTL 三件套的任何生产调用点。注册表同样是易失的（内存态、以 `tool_call_id` 为键、重启即失）。
-- **保留但失效的代码。** `_preemptive_check`（:589）与 `_preemptive_truncate`（:1159）已无调用点 —— 它们实现的二档抢先机制已被四路决策取代，仅为参考保留。
-- **估算器是三层、不依赖分词器的启发式，而不是分词器。** 有 API 上报用量时 T1 直接返回；T2 是 CJK 感知启发式（CJK 字符按 `CHARS_PER_TOKEN_CJK = 2`、其余按 `CHARS_PER_TOKEN = 4`）；T3 是遗留的 `len // 4`，仅作为 T2 的纯 ASCII 退化情形保留。它刻意保持确定性（测试可复现、预算稳定）；旧版纯 `// 4` 会低估 CJK 密集内容（中文平均更接近 1–2 字符/token 而非 4）——T2 正是修正这一点。
+- **保留但失效的代码。** `_preemptive_check`（:589）与 `_preemptive_truncate`（:1159）仅供参照：没有任何生产调用点会走到它们实现的二档抢先机制。
+- **估算器是三层、不依赖分词器的启发式，而不是分词器。** 有 API 上报用量时 T1 直接返回；T2 是 CJK 感知启发式（CJK 字符按 `CHARS_PER_TOKEN_CJK = 2`、其余按 `CHARS_PER_TOKEN = 4`）；T3 是遗留的 `len // 4`，即 T2 的纯 ASCII 退化情形。它刻意保持确定性（测试可复现、预算稳定）；`CHARS_PER_TOKEN_CJK = 2` 对应中文平均更接近 1–2 字符/token 而非 4 的事实。
 - **上报值何时胜出。** T3 是唯一由上报用量驱动的触发点（`compute_pressure` 取 max）。T1/T2 的路由决策由估算驱动（仅估算 + 系统提示词开销）；遗留的 `_check_trigger` 子句兜底使用 `max(本地估算, 上报值)`。
 - **T3 绝不改写返回的响应。** T3 派发的持久效果是工具输出的原地截断（消息对象与图状态共享）和防抖记账；T3 的 compact 路由 `request.override` 只在本地生效，原始响应始终返回。整个 T3 函数体 fail-open。
 - **T4/T5 设计上绕过防抖矩阵** —— 这正是"强制"的意义所在。超过 `MAX_OVERFLOW_RETRIES (3)`（T4/T5 共用的单一计数器，每回合重置）、或强制压缩步骤自身失败时，原始 provider 异常向上传播（绝不吞掉、绝不被压缩错误顶替）。

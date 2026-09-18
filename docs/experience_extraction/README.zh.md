@@ -26,7 +26,7 @@
 
 ### 1. 压缩时 memory review
 
-`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每压缩一次就在 `state_register_db` 中递增 `nudge_review_memory_count`。计数达到 `nudge_memory_threshold`（默认 10）时，计数重置为 0，并以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。任一 nudge 锁被持有时，压缩仍递增计数但不派发。该触发器此前位于 `ContextEngineHook.after_agent` 并每回合运行；该钩子已不存在，因此节奏改为按压缩次数。
+`schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每压缩一次就在 `state_register_db` 中递增 `nudge_review_memory_count`。计数达到 `nudge_memory_threshold`（默认 10）时，计数重置为 0，并以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。任一 nudge 锁被持有时，压缩仍递增计数但不派发。
 
 `_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_nudge_agent` 构建 nudge agent，并把 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到对话后调用。该提示要求 agent 用 `memory` 工具保存持久的用户特征（persona、偏好、个人细节）与行为期望；若无内容可存，则回复 "Nothing to save." 并停止。
 
@@ -41,7 +41,7 @@
 - todo 存在，且每项都是 `completed` 或 `cancelled`；
 - `nudge_plan_extraction_fired`（`state_register_db`）尚未置位。
 
-它在状态跃迁时置位，并在列表并非（或不再是）全部完成时重置为 `False`，因此后续新的完成周期会再次触发。读取 fail-open。由于检测现只在压缩时运行，从不压缩的会话永远不会触发 plan extraction。
+它在状态跃迁时置位，并在列表并非全部完成时重置为 `False`，因此后续新的完成周期会再次触发。读取 fail-open。由于检测只在压缩时运行，从不压缩的会话永远不会触发 plan extraction。
 
 当 `plan_extraction_enabled` 开启且检测触发时，`_nudge_plan_extraction` 从同一接缝 fire-and-forget 派发，并在 `nudge_plan_extraction_lock` 保护下运行：
 
@@ -136,7 +136,7 @@ uv run pytest \
 ```
 
 - `test_compression_todo_update.py`：触发门槛、fire-and-forget 调度、防重入锁、fail-open 释放、提示内容、`todo_update` metadata 门禁，以及完整 fork 隔离（派生键、主会话 `todowrite` 垫片、无 checkpointer / 消息泄漏）。
-- `test_compression_nudges.py`：压缩时 nudge 派发（memory review + plan extraction 从 compact 接缝触发；无切点压缩不派发）。原持久化断言已迁往 `tests/agent/middlewares/message_persistence/` —— 持久化已移出压缩路径。
+- `test_compression_nudges.py`：压缩时 nudge 派发（memory review + plan extraction 从 compact 接缝触发；无切点压缩不派发）。持久化断言位于 `tests/agent/middlewares/message_persistence/`。
 - `test_compression_cooldown_persist.py`：冷却跨重启存活。
 - `test_memory_flush.py`：flush 门槛、路由与非阻塞失败。
 - `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`schedule_compression_nudges` 的压缩时计数/锁语义、派发，以及 `_build_plan_context`。

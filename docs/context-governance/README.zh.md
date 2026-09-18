@@ -99,7 +99,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## ✂️ `read_file` 切片（P2-4）
 
-`read_file` 的结果**不**卸载 —— 文件本来就在磁盘上，再写一份纯属重复。`slice_read_file_result`（`pub/func/message/eviction.py`）改为把内容替换为**前 `_READ_FILE_SLICE_CHARS`（4 000）个字符**加一条恢复提示（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）。不写驱逐文件，且该辅助函数幂等：已切片的（含提示的）结果原样返回。
+`read_file` 的结果**不**卸载 —— 文件本来就在磁盘上，再写一份纯属重复。`slice_read_file_result`（`pub/func/message/eviction.py`）则把内容替换为**前 `_READ_FILE_SLICE_CHARS`（4 000）个字符**加一条恢复提示（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）。不写驱逐文件，且该辅助函数幂等：已切片的（含提示的）结果原样返回。
 
 这是两级压缩中的**执行期**一半。**压缩期**一半位于 `pub/func/message/target_truncation.py::_truncate_read_file_content`：压缩裁切上下文时，它按 `tool_call_id` 把每条 `ToolMessage` 解析回其 `read_file` 调用，保留 `max_tool_output_chars`（2 000）的 head 30% + tail 30%，中间替换为携带**解析器推导的 1-based 续读偏移**的恢复提示（`Use offset=<N> to continue reading…`；载荷无法解析时退化为"从头重读"）。
 
@@ -144,7 +144,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | T4/T5 提供商错误，首次恢复尝试 | 先裁剪；足够则带着 stub 列表重试提供商调用 | **0** |
 | T4/T5 提供商错误，裁剪不足 | 强制压缩 + 预算截断，然后重试 | 每个 compact 步骤 1 次辅助 LLM 调用（≤ `MAX_OVERFLOW_RETRIES = 3`） |
 
-接受条件很严格：仅当裁剪**单独**把纯本地估算压到线下时才采用（`estimate_messages_tokens(messages, reported_tokens=0)` —— 陈旧的 `usage_metadata` 永远不会驱动恢复）。不足的裁剪整份丢弃，既有路由在原样列表上运行，与 P1-2 之前完全一致。
+接受条件很严格：仅当裁剪**单独**把纯本地估算压到线下时才采用（`estimate_messages_tokens(messages, reported_tokens=0)` —— 陈旧的 `usage_metadata` 永远不会驱动恢复）。不足的裁剪整份丢弃，既有路由在原样列表上运行。
 
 ## 🧵 链式摘要过滤
 

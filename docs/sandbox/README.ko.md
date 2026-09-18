@@ -103,7 +103,7 @@ bwrap
 | 5 | `reboot` | 시스템 재부팅 |
 | 6 | `|`, `&&`, `;` 뒤에 `rm` / `shutdown` / `reboot` / `mkfs` | `echo ok && rm -rf /` 같은 연쇄 변형 |
 
-**연결된** 문자열을 매칭하는 것이 중요합니다: 이전의 요소 단위 정확 매칭 블랙리스트는 각 요소가 따로 보면 무해해 보이는 `["echo ok", "rm -rf /"]`를 놓쳤습니다. 걸리면 `ToolException("Blocked: unsafe command.")`을 던지고, `handle_tool_error=True`를 통해 오류 도구 결과로 표면화됩니다. 이 게이트는 `sandbox` 값과 무관하게 항상 작동합니다. `python_repl`에는 대응하는 정규식이 없고, 대신 래퍼 스크립트가 빌트인을 제한합니다.
+**연결된** 문자열을 매칭하는 것이 중요합니다: 요소 단위 정확 매칭 블랙리스트는 각 요소가 따로 보면 무해해 보이는 `["echo ok", "rm -rf /"]`를 놓칩니다. 걸리면 `ToolException("Blocked: unsafe command.")`을 던지고, `handle_tool_error=True`를 통해 오류 도구 결과로 표면화됩니다. 이 게이트는 `sandbox` 값과 무관하게 항상 작동합니다. `python_repl`에는 대응하는 정규식이 없고, 대신 래퍼 스크립트가 빌트인을 제한합니다.
 
 **민감 파일 게이트 (`_SENSITIVE_FILE_PATTERNS`).** `_run`과 `_arun` 두 경로 모두에서 `_check_sensitive_file_access(cmd_str)`가 `_check_dangerous` **이후**, **어떤 생성보다도 이전**에 실행됩니다: 컴파일된 6개 패턴 중 하나라도 연결된 명령 문자열에 매칭되면 `ToolException("Blocked: sensitive file access. …")`(`_SENSITIVE_FILE_MESSAGE`)을 던지고 — 자식 프로세스는 결코 생성되지 않습니다 — 모델을 `read_file`(외부 경로는 사람 승인을 거침)로 안내합니다:
 
@@ -217,7 +217,7 @@ bwrap
 `SafeShellTool`(이름 `terminal`)과 `TimedPythonREPLTool`(이름 `python_repl`)은 모두 LLM이 보는 도구 호출 스키마에 `sandbox: bool = True` 파라미터를 노출하므로, 모델이 호출마다 선택합니다.
 
 - **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True`와 의미적으로 동일), python_repl은 `backend.wrap([sys.executable, "-c", script], env)`를 씁니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다.
-- **폴백 경로(Windows / 백엔드 없음)**: 원래 생성 방식을 바이트 단위로 그대로 유지하고 `env=`만 추가합니다. terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**.
+- **폴백 경로(Windows / 백엔드 없음)**: terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**.
 - **모든 경로에서 무조건**: `env=scrub_env()`와 `cwd=str(ROOT_DIR)`(cwd 고정). 두 도구 모두 30초 타임아웃(`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`)을 강제하고 만료 시 자식을 죽입니다.
 - **오류 표면화**: `REQUIRED`인데 백엔드가 없으면 terminal은 `RuntimeError`를 `ToolException`으로 감싸고(`handle_tool_error=True`가 그대로 표면화), python_repl은 원시 `RuntimeError`를 그대로 던집니다.
 - **강등 경고**: 이번 호출이 샌드박스를 원했는데 백엔드가 없고 정책이 `off`가 아니면, 도구 계층이 정확히 한 줄의 loguru 경고를 남긴 뒤 샌드박스 없이 실행합니다:

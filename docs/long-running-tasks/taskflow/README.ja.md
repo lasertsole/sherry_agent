@@ -102,7 +102,7 @@ blocked → ready → dispatched → done
 
 ### 従来ステップの互換性
 
-DAG 以前のステップ（`status` フィールドなし）は `step_status()` で処理：`child_session_key` を持つステップは `dispatched`、それ以外は `ready` として扱われます。DAG 機能導入前に作成されたフローとの後方互換性を確保します。
+`status` フィールドを持たないステップは `step_status()` で処理：`child_session_key` を持つステップは `dispatched`、それ以外は `ready` として扱われます。フィールドを持たないフローとの後方互換性を保ちます。
 
 ---
 
