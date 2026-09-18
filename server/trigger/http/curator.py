@@ -1,10 +1,12 @@
 import asyncio
 
-from config.features import CURATOR_DEFAULTS
+from config.features import CURATOR_DEFAULTS, TOOLS_TIMEOUTS
 from server.trigger.core import app
+from server.trigger.http.helpers import bad_request, ok, read_body
 from loguru import logger
 from context_engine.curator import reset_idle_for_seconds
 from context_engine.curator.orchestrator import run_curator_review
+from context_engine.curator.usage import list_archived, restore_skill
 from context_engine.curator.config import (
     get_interval_override_days,
     set_interval_override_days,
@@ -16,6 +18,26 @@ from context_engine.curator.state import load_state
 # Valid range for the auto-maintenance interval override (days).
 _INTERVAL_MIN_DAYS = CURATOR_DEFAULTS["http_interval_min_days"]
 _INTERVAL_MAX_DAYS = CURATOR_DEFAULTS["http_interval_max_days"]
+
+# Mirrors the canonical skill-name limit so the route stays agent-free.
+_MAX_SKILL_NAME_LENGTH = TOOLS_TIMEOUTS["skill_manage_max_name_length"]
+
+_SEPARATOR_CHARS = ("/", "\\", "\x00", "\n", "\r")
+
+
+def _validate_restore_name(name: str) -> str | None:
+    """Reject names that cannot be a directory name under the archive root.
+
+    Defense in depth only: ``restore_skill`` matches names against directory
+    entries inside ``skills/.archive/`` and re-checks the bundled/hub guard,
+    so a separator could never resolve a path. Mirrors the shape rules of the
+    canonical validator without importing the agent layer.
+    """
+    if len(name) > _MAX_SKILL_NAME_LENGTH:
+        return f"Skill name exceeds {_MAX_SKILL_NAME_LENGTH} characters."
+    if name.startswith(".") or any(char in name for char in _SEPARATOR_CHARS):
+        return f"Invalid skill name '{name}'."
+    return None
 
 
 @app.get("/curator/settings")
@@ -136,3 +158,49 @@ async def run_curator_handler(request):
         return {"success": False, "error": str(e)}, {}, 500
     finally:
         reset_idle_for_seconds()
+
+
+@app.post("/curator/restore")
+async def restore_archived_skill_handler(request):
+    """
+    Restore an archived skill back into ``skills/auto/``.
+
+    Accepts a JSON body ``{"name": "<skill>"}``. The restore itself runs in
+    the curator layer (``context_engine.curator.usage.restore_skill``), which
+    moves the directory out of ``skills/.archive/`` and flips the curator-side
+    usage record back to ``active`` so the skill re-enters lifecycle
+    management. Failures (unknown name, bundled/hub shadow, occupied
+    destination) return 400 with the curator's message.
+    """
+    body = read_body(request)
+    if body is None:
+        return bad_request("Invalid JSON body")
+
+    name = body.get("name")
+    if not isinstance(name, str) or not name.strip():
+        return bad_request("Missing or invalid 'name'")
+    name = name.strip()
+
+    err = _validate_restore_name(name)
+    if err:
+        return bad_request(err)
+
+    restored, msg = restore_skill(name)
+    logger.info(f"Curator restore: name={name}, ok={restored} msg={msg}")
+    if not restored:
+        return bad_request(msg)
+
+    return ok({"success": True, "message": msg, "name": name})
+
+
+@app.get("/curator/archived")
+async def list_archived_skills_handler(request):
+    """
+    List the skill directory names currently under ``skills/.archive/``.
+
+    Directory names are reported verbatim (timestamped collision entries keep
+    their ``<name>-<timestamp>`` suffix) and can be passed back to
+    ``POST /curator/restore``.
+    """
+    names = list_archived()
+    return ok({"success": True, "archived": names, "count": len(names)})
