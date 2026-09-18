@@ -18,11 +18,15 @@ async def clear_session(session_id: str) -> None:
          BEFORE any deletion, so the tail messages still exist.
       1. The session's rows from the context engine SQLite store
          (``mes_memory.db`` messages table).
-      2. The session's records from the sqlite checkpointer
+      2. The session's todo rows (``todos.db``) and task-flow rows
+         (``taskflow_registry.db``) — best-effort: an auxiliary-store failure
+         is logged and never blocks the rest of the purge. Pre-isolation
+         task-flow rows (``session_id = ''``) are never matched.
+      3. The session's records from the sqlite checkpointer
          (``src/checkpoints/sqlite.db`` — checkpoints + writes).
-      3. The session's folder under the ``sessions`` directory.
-      4. The in-memory session state via ``clear_all_register_sessions``.
-      5. The session's variables from the ``state_register_db`` SQLite store.
+      4. The session's folder under the ``sessions`` directory.
+      5. The in-memory session state via ``clear_all_register_sessions``.
+      6. The session's variables from the ``state_register_db`` SQLite store.
     """
     # (0) Session continuity: persist the tail state before deletion.
     try:
@@ -38,13 +42,27 @@ async def clear_session(session_id: str) -> None:
     deleted = delete_messages_by_session(session_id=session_id)
     logger.debug(f"Cleared {deleted} mes_memory message row(s) for session_id={session_id}")
 
-    # (2) sqlite checkpointer — checkpoints + writes for this thread.
+    # (2) Session-scoped planning stores — todos + task flows.
+    try:
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+        from agent.tools.todolist.registry import store_sqlite as todo_store
+
+        cleared_todos = await todo_store.delete_todos_by_session(session_id)
+        cleared_flows = await taskflow_store.delete_flows_by_session(session_id)
+        logger.debug(
+            f"Cleared {cleared_todos} todo row(s) and {cleared_flows} taskflow row(s) "
+            f"for session_id={session_id}"
+        )
+    except Exception as e:
+        logger.warning(f"Failed to clear planning stores for session_id={session_id}: {e}")
+
+    # (3) sqlite checkpointer — checkpoints + writes for this thread.
     await delete_thread_history(session_id=session_id)
 
-    # (3) Session folder under the sessions directory.
+    # (4) Session folder under the sessions directory.
     path = Path(_session_folder(session_id))
     if path.exists() and path.is_dir():
         shutil.rmtree(path)
 
-    # (4) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
+    # (5) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)

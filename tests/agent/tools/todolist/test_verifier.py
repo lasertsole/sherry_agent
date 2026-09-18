@@ -167,7 +167,7 @@ def test_verify_resolves_session_scoped_plan_ref(tmp_path: Path, monkeypatch: py
 def test_verify_fails_when_linked_step_not_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     plan = _write_plan(tmp_path)
 
-    async def _flow(flow_id: str) -> dict:
+    async def _flow(flow_id: str, session_id: str) -> dict:
         return {"state": {"steps": [{"step_id": "step-2", "status": "dispatched"}]}}
 
     monkeypatch.setattr(verifier, "_load_flow", _flow)
@@ -186,7 +186,7 @@ def test_verify_fails_when_linked_step_not_done(tmp_path: Path, monkeypatch: pyt
 def test_verify_passes_when_linked_step_done(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     plan = _write_plan(tmp_path)
 
-    async def _flow(flow_id: str) -> dict:
+    async def _flow(flow_id: str, session_id: str) -> dict:
         return {"state": {"steps": [{"step_id": "step-2", "status": "done"}]}}
 
     monkeypatch.setattr(verifier, "_load_flow", _flow)
@@ -204,7 +204,7 @@ def test_verify_passes_when_linked_step_done(tmp_path: Path, monkeypatch: pytest
 def test_verify_never_raises_when_flow_missing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     plan = _write_plan(tmp_path)
 
-    async def _missing(flow_id: str) -> None:
+    async def _missing(flow_id: str, session_id: str) -> None:
         return None
 
     monkeypatch.setattr(verifier, "_load_flow", _missing)
@@ -246,3 +246,26 @@ def test_verify_passes_when_subagent_run_ended(tmp_path: Path, monkeypatch: pyte
     )
 
     assert passed is True
+
+
+def test_verify_reads_linked_step_with_the_evidence_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The verifier's TaskFlow read carries the verified session id."""
+    plan = _write_plan(tmp_path)
+    seen: list[tuple[str, str]] = []
+
+    async def _flow(flow_id: str, session_id: str) -> dict:
+        seen.append((flow_id, session_id))
+        return {"state": {"steps": [{"step_id": "step-2", "status": "done"}]}}
+
+    monkeypatch.setattr(verifier, "_load_flow", _flow)
+
+    passed, _evidence = asyncio.run(
+        SisyphusVerifier.verify(
+            "sess-verified", {"flow_id": "flow-1", "step_id": "step-2"}, str(plan), LABEL
+        )
+    )
+
+    assert passed is True
+    assert seen == [("flow-1", "sess-verified")]

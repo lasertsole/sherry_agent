@@ -53,7 +53,7 @@ class _FakeRelationRegister:
 def _load_flow_returning(flow_id: str, step_id: str, status: str):
     """Build an async ``_load_flow`` seam returning one step with ``status``."""
 
-    async def _load(requested_flow_id: str) -> dict:
+    async def _load(requested_flow_id: str, session_id: str) -> dict:
         return {
             "flow_id": flow_id,
             "state": {"steps": [{"step_id": step_id, "status": status}]},
@@ -243,7 +243,7 @@ async def test_completed_todo_with_taskflow_step_done_persists(
 async def test_completed_todo_with_missing_flow_is_blocked(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _load_missing(flow_id: str) -> None:
+    async def _load_missing(flow_id: str, session_id: str) -> None:
         return None
 
     monkeypatch.setattr(service, "_load_flow", _load_missing)
@@ -269,7 +269,7 @@ async def test_completed_todo_with_missing_flow_is_blocked(
 async def test_completed_todo_with_missing_step_is_blocked(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    async def _load_other_step(flow_id: str) -> dict:
+    async def _load_other_step(flow_id: str, session_id: str) -> dict:
         return {
             "flow_id": flow_id,
             "state": {"steps": [{"step_id": "step-9", "status": "done"}]},
@@ -338,3 +338,35 @@ async def test_ws_send_error_is_swallowed(isolated_db: Path, monkeypatch: pytest
 
     assert result[0]["content"] == "a"
     assert sent == []
+
+
+# --- Transition barrier: session-scoped TaskFlow read ------------------------
+
+
+@pytest.mark.asyncio
+async def test_barrier_taskflow_read_receives_the_todo_session(
+    isolated_db: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The barrier's flow lookup is scoped to the todo's session."""
+    seen: list[tuple[str, str]] = []
+
+    async def _record(flow_id: str, session_id: str) -> dict | None:
+        seen.append((flow_id, session_id))
+        return None
+
+    monkeypatch.setattr(service, "_load_flow", _record)
+
+    with pytest.raises(TodoStoreError):
+        await TodoService.update_todos(
+            "sess-barrier",
+            [
+                {
+                    "content": "linked",
+                    "status": "completed",
+                    "flow_id": "flow-1",
+                    "step_id": "step-1",
+                }
+            ],
+        )
+
+    assert seen == [("flow-1", "sess-barrier")]

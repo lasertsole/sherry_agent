@@ -97,11 +97,14 @@ def _extract_verification_commands(acceptance: str) -> list[str]:
     return commands
 
 
-async def _load_flow(flow_id: str) -> dict | None:
-    """Injectable seam: read-only TaskFlow flow lookup (never schedules)."""
+async def _load_flow(flow_id: str, session_id: str) -> dict | None:
+    """Injectable seam: read-only TaskFlow flow lookup (never schedules).
+
+    Reads are session-scoped: a flow owned by another session reads as missing.
+    """
     from agent.tools.taskflow.registry import get_flow
 
-    return await get_flow(flow_id)
+    return await get_flow(flow_id, session_id)
 
 
 def _step_status(step: dict) -> str:
@@ -125,14 +128,17 @@ def _is_live_unended_run(run) -> bool:
     return is_live_unended_run(run)
 
 
-async def _read_step_status(flow_id: str, step_id: str) -> tuple[str | None, str | None]:
+async def _read_step_status(
+    flow_id: str, step_id: str, session_id: str
+) -> tuple[str | None, str | None]:
     """Read a linked TaskFlow step's status, or the reason it is unresolvable.
 
     Returns ``(status, problem)`` with exactly one meaningful value. ``problem``
-    is a human-readable reason when the flow is absent or the step is not in it;
-    both are treated as "not done" by the barrier.
+    is a human-readable reason when the flow is absent (or owned by another
+    session) or the step is not in it; both are treated as "not done" by the
+    barrier.
     """
-    flow = await _load_flow(flow_id)
+    flow = await _load_flow(flow_id, session_id)
     if flow is None:
         return None, f"TaskFlow flow '{flow_id}' not found"
     steps = (flow.get("state") or {}).get("steps") or []
@@ -178,7 +184,9 @@ async def _run_gates(
     flow_id = todo.get("flow_id")
     step_id = todo.get("step_id")
     if flow_id and step_id:
-        status, problem = await _read_step_status(str(flow_id), str(step_id))
+        status, problem = await _read_step_status(
+            str(flow_id), str(step_id), str(evidence.get("session_id") or "")
+        )
         if problem is not None:
             return _fail(evidence, problem)
         if status != _STEP_DONE:

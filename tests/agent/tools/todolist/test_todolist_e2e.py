@@ -382,6 +382,7 @@ class TestTodolistFullPipeline:
                 "results": [],
                 "creator_session_key": f"agent:main:session:{sid}",
             },
+            session_id=sid,
         )
 
         linked = [
@@ -398,7 +399,7 @@ class TestTodolistFullPipeline:
         assert await todo_store.get_todos(sid) == []
 
         resumed = await flow_tools["taskflow_resume"].coroutine(
-            flow_id=flow_id, child_session_key=child, result="gate passed"
+            flow_id=flow_id, child_session_key=child, result="gate passed", session_id=sid
         )
         assert "TaskFlow resumed" in resumed
 
@@ -500,7 +501,10 @@ class TestTodolistFullPipeline:
             flow_id=flow_id, task="second", session_id=sid
         )
         await flow_tools["taskflow_resume"].coroutine(
-            flow_id=flow_id, child_session_key="agent:main:subagent:first", result="first done"
+            flow_id=flow_id,
+            child_session_key="agent:main:subagent:first",
+            result="first done",
+            session_id=sid,
         )
 
         prompt = _build_prompt(sid)
@@ -598,7 +602,7 @@ class TestTodolistFullPipeline:
 
         # Mark the step done via the real resume tool -> B completes.
         await flow_tools["taskflow_resume"].coroutine(
-            flow_id=flow_id, child_session_key=child, result="lifecycle step done"
+            flow_id=flow_id, child_session_key=child, result="lifecycle step done", session_id=sid
         )
         await _write_todos(tools, sid, plan)
 

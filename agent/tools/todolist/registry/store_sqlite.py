@@ -320,6 +320,22 @@ async def get_todos(session_id: str) -> list[dict]:
     return [_row_to_todo(row) for row in rows]
 
 
+async def delete_todos_by_session(session_id: str) -> int:
+    """Delete every todo row of a session; returns the row count.
+
+    Session purge path (``server.DAO.messages.clear_session``): a cleared
+    session leaves no todo debris behind.
+    """
+    session_id = (session_id or "").strip()
+    if not session_id:
+        raise ValueError("session_id must be a non-empty string")
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(f"DELETE FROM {TABLE_NAME} WHERE session_id = ?", (session_id,))
+        await db.commit()
+        return int(cursor.rowcount or 0)
+
+
 async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
     """Read the session's todos linked to one TaskFlow flow, ordered by position."""
     await ensure_db()
@@ -356,6 +372,7 @@ def get_todos_sync(session_id: str) -> list[dict]:
 
 
 __all__ = [
+    "delete_todos_by_session",
     "ensure_db",
     "get_todos",
     "get_todos_by_flow",

@@ -62,11 +62,14 @@ def _is_live_unended_run(run) -> bool:
     return is_live_unended_run(run)
 
 
-async def _load_flow(flow_id: str) -> dict | None:
-    """Injectable seam: read-only TaskFlow flow lookup (never schedules)."""
+async def _load_flow(flow_id: str, session_id: str) -> dict | None:
+    """Injectable seam: read-only TaskFlow flow lookup (never schedules).
+
+    Reads are session-scoped: a flow owned by another session reads as missing.
+    """
     from agent.tools.taskflow.registry import get_flow
 
-    return await get_flow(flow_id)
+    return await get_flow(flow_id, session_id)
 
 
 def _step_status(step: dict) -> str:
@@ -105,14 +108,17 @@ def _is_subagent_running(child_session_key: str) -> bool:
     return _is_live_unended_run(run)
 
 
-async def _read_taskflow_step_status(flow_id: str, step_id: str) -> tuple[str | None, str | None]:
+async def _read_taskflow_step_status(
+    flow_id: str, step_id: str, session_id: str
+) -> tuple[str | None, str | None]:
     """Read a linked TaskFlow step's status, or the reason it is unresolvable.
 
     Returns ``(status, problem)`` with exactly one meaningful value. ``problem``
-    is a human-readable reason when the flow is absent or the step is not in it;
-    both are treated as "not done" by the barrier.
+    is a human-readable reason when the flow is absent (or owned by another
+    session) or the step is not in it; both are treated as "not done" by the
+    barrier.
     """
-    flow = await _load_flow(flow_id)
+    flow = await _load_flow(flow_id, session_id)
     if flow is None:
         return None, f"TaskFlow flow '{flow_id}' not found"
     steps = (flow.get("state") or {}).get("steps") or []
@@ -122,14 +128,15 @@ async def _read_taskflow_step_status(flow_id: str, step_id: str) -> tuple[str | 
     return None, f"TaskFlow step '{step_id}' not found in flow '{flow_id}'"
 
 
-async def _assert_transition_allowed(todo: dict) -> None:
+async def _assert_transition_allowed(todo: dict, session_id: str) -> None:
     """Raise :class:`TodoStoreError` unless a ``completed`` todo may complete.
 
     Two independent sources gate the transition:
 
     1. a linked subagent run that is still live;
     2. a linked TaskFlow step whose status is not ``done`` (or that cannot be
-       resolved at all: missing flow / missing step).
+       resolved at all: missing flow / missing step). The flow read is scoped
+       to ``session_id``, so another session's flow never satisfies the gate.
 
     Plain todos carry neither link and are therefore never blocked.
     """
@@ -143,7 +150,7 @@ async def _assert_transition_allowed(todo: dict) -> None:
     flow_id = todo.get("flow_id")
     step_id = todo.get("step_id")
     if flow_id and step_id:
-        status, problem = await _read_taskflow_step_status(str(flow_id), str(step_id))
+        status, problem = await _read_taskflow_step_status(str(flow_id), str(step_id), session_id)
         if problem is not None:
             raise TodoStoreError(
                 f"Cannot mark todo completed: {problem}. Call taskflow_wait_all then "
@@ -198,7 +205,7 @@ class TodoService:
         validated = _validate_todos(todos)
         for todo in validated:
             if todo.get("status") == "completed":
-                await _assert_transition_allowed(todo)
+                await _assert_transition_allowed(todo, session_id)
         await store.replace_all(session_id, validated)
         if plan_ref:
             from runtime import state_register_db
