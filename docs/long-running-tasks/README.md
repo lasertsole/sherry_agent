@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 13 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a global cross-session flow board, and carries context forward through a two-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
+> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 13 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
 
 Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py` (TaskFlow-context block), `agent/middlewares/subagent_completion_drain/core.py` (memory backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
 
@@ -16,7 +16,7 @@ Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/midd
 - [Result Validation](#-result-validation)
 - [Progress Report](#-progress-report)
 - [Idle Detection](#-idle-detection)
-- [Cross-Session Board](#-cross-session-board)
+- [Session-Scoped Board & Isolation](#-session-scoped-board--isolation)
 - [Pre-Compression Memory Flush](#-pre-compression-memory-flush)
 - [Summary ↔ TaskFlow Coordination](#-summary--taskflow-coordination)
 - [Subagent Memory Backflow](#-subagent-memory-backflow)
@@ -82,11 +82,12 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_tokens INTEGER DEFAULT 0,
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
-    deadline_ts REAL
+    deadline_ts REAL,
+    session_id TEXT NOT NULL DEFAULT ''
 );
 ```
 
-The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns come from additive DDL (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`). The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`store_sqlite.py:234-271`).
+The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns come from additive DDL (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`). `session_id` is the isolation column (additive `_SESSION_ID_COLUMN_DDL`, indexed by `idx_taskflow_session_status`): it is stamped at creation and every read/mutation filters on it (`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). Legacy rows created before the column carry `session_id = ''`, are invisible to every session-scoped read, and stay reachable only through the system-level sweeper queries. The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`store_sqlite.py:234-271`).
 
 ### Step status machine
 
@@ -122,7 +123,7 @@ All tools are `async`, decorated `@tool("taskflow_…")`, tagged `metadata={"sco
 | `taskflow_summary` | Read-only re-read (also the post-conflict re-read) |
 | `taskflow_progress` | Human-readable progress/completion report |
 | `taskflow_budget` | Query or set the token/cost budget |
-| `taskflow_list` | Cross-session board of every flow (`active` / `all` / status name) |
+| `taskflow_list` | This session's board (`active` / `all` / status name) |
 | `taskflow_finish` / `taskflow_fail` / `taskflow_cancel` | Terminal transitions |
 
 ```python
@@ -361,23 +362,23 @@ A flow parked with `taskflow_set_waiting` may have its child crash without ever 
 
 The flow is **never auto-failed** by idle detection — the marker is advisory and refreshed each cycle. Independently, `taskflow_summary` renders the wait status and prints `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch` when the wait exceeds `TASKFLOW_INFRA["waiting_timeout_hours"]` (`taskflow_summary.py:67-90`).
 
-## 📋 Cross-Session Board
+## 📋 Session-Scoped Board & Isolation
 
-`taskflow_summary` reads one flow and the auto-resume readers are session-scoped; `taskflow_list` is the deliberate opposite — a **global board** over the whole registry, so a flow started in one channel/chat is visible from any other:
+Every session sees only its own data. `taskflow_summary`, the auto-resume readers **and** `taskflow_list` are all scoped by `session_id`, which the store filters in SQL — a flow owned by another session is indistinguishable from a missing one (`FlowNotFoundError` on mutation, `None` on read):
 
 ```python
 # agent/tools/taskflow/tools/taskflow_list.py:85
 @tool("taskflow_list")
-async def taskflow_list(status_filter: str = "active") -> str
+async def taskflow_list(status_filter: str = "active", session_id: SessionId = "") -> str
 ```
 
 | `status_filter` | Rows |
 | :--- | :--- |
-| `"active"` (default) | `running` + `waiting` only |
-| `"all"` | every flow, terminal statuses included |
+| `"active"` (default) | this session's `running` + `waiting` flows |
+| `"all"` | this session's flows, terminal statuses included |
 | any other value | exact status match (`running`, `waiting`, `done`, `failed`, `cancelled`) |
 
-It is read-only (no `expected_revision`) and backed by `store_sqlite.get_all_flows_sync(status_filter)` (`store_sqlite.py:566`). The sync reader uses the stdlib `sqlite3` path that works without an event loop, orders rows by `expected_revision DESC` (most recently active first), and is fail-open — an init/read failure returns `[]`. `"active"` delegates to `get_active_flows_sync()`.
+It is read-only (no `expected_revision`) and backed by `store_sqlite.get_all_flows_sync(session_id, status_filter)`. The sync reader uses the stdlib `sqlite3` path that works without an event loop, orders rows by `expected_revision DESC` (most recently active first), and is fail-open — an init/read failure returns `[]`. `"active"` delegates to `get_active_flows_sync(session_id)`.
 
 The rendered board is a padded text table with fixed columns, capped at 40 chars for the description and 16 for the creator key:
 
@@ -390,6 +391,18 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 ```
 
 The schema has **no `updated_at` column** (migration-free). `_last_activity_ts()` (`taskflow_list.py:28`) therefore derives "last updated" as the maximum of the activity stamps persisted anywhere on the flow — `wait.set_at`, every `step.dispatched_at`, and every `result.injected_at` — rendered as a UTC timestamp (`-` when the flow has no stamp at all). An empty registry returns `No task flows found`.
+
+### The three session-owned planning families
+
+| Family | Session linkage | Store |
+| :--- | :--- | :--- |
+| **TaskFlow** | `task_flows.session_id` column (this plan) | `agent/tools/taskflow/registry/store_sqlite.py` |
+| **TodoList** | `session_id` is the table's primary-key prefix — the family was already session-scoped | `agent/tools/todolist/registry/store_sqlite.py` |
+| **Knowledge** | indirectly, through the session's plan: `plan_ref` (a state-register key set per session) resolves to `workspace/sessions/<id>/plans/*.md`, and knowledge lives under `workspace/knowledge/plans/<plan-name>/`. The `knowledge` tool takes a plan name, not a session id; `build_knowledge_block(session_id)` resolves the session's own `plan_ref` first. There is no session column and none was added. | `agent/tools/todolist/knowledge/knowledge_store.py` |
+
+**Subagent boundary.** All three families are tagged `metadata["scope"] = "main_only"` by their builders (`build_taskflow_tools`, `build_todolist_tools`, `build_knowledge_tools`). `apply_tool_policy` (`agent/tools/subagent/spawn/inherited_tool_policy.py`) drops `main_only` tools **first and unconditionally** — before any allow/deny list and non-overridably by ORCHESTRATOR unblocking — so a spawned child never receives a `taskflow_*`, `todowrite`/`todoread`, or `knowledge` tool. The same tag pattern already covered `memory`, `skill_manage`, `sessions_kill` and `sessions_steer`. `tests/agent/tools/taskflow/test_taskflow_tools.py` locks the real-toolset assertion, and `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` locks it at the `_build_child_agent` boundary.
+
+**Cross-session refusal.** A foreign `flow_id` collision on `taskflow_create` reports existence without leaking the revision, and a mutation attempt against another session's flow returns the same "not found" text as an unknown id. `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py` and `tests/server/DAO/test_clear_session.py` cover the read/list/update/purge paths.
 
 ## 🧠 Layered Memory
 
@@ -433,7 +446,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-The block is headed `## Current TaskFlow State (authoritative)` (`summarization/core.py:286`) and, for up to three flows owned by the session (matched through `requester_session_key(session_id)`), lists the flow id/status, description, `done/total` progress with the status breakdown, the last two completed steps, the first two pending steps, and any wait reason. It reuses the DAG helpers `step_status` and `steps_summary`, and is fully fail-open (`except Exception → ""`). The deterministic fallback summary (`_build_static_fallback_summary`) does **not** include this block; it is an LLM-prompt-only addition.
+The block is headed `## Current TaskFlow State (authoritative)` (`summarization/core.py:286`) and, for up to three flows owned by the session (the store read is scoped by `session_id` in SQL — no post-filtering), lists the flow id/status, description, `done/total` progress with the status breakdown, the last two completed steps, the first two pending steps, and any wait reason. It reuses the DAG helpers `step_status` and `steps_summary`, and is fully fail-open (`except Exception → ""`). The deterministic fallback summary (`_build_static_fallback_summary`) does **not** include this block; it is an LLM-prompt-only addition.
 
 ## 🧠 Subagent Memory Backflow
 
@@ -482,6 +495,8 @@ When a session is cleared, `context_engine/session_continuity.py` persists an en
 3. Collects active flow ids for the session.
 4. Writes `save_session_end_state(...)` to a JSON file at `src/data/session_continuity/{safe-key}.json` (`session_continuity.py:25`), with fields `last_session_id`, `ended_at`, `ended_ts`, `summary`, `taskflow_ids`.
 
+After the message-store deletion, `clear_session` also purges the session's **planning stores** — `agent.tools.todolist.registry.store_sqlite.delete_todos_by_session(session_id)` and `agent.tools.taskflow.registry.store_sqlite.delete_flows_by_session(session_id)` — so a cleared session leaves no todo or task-flow debris. The deletions are best-effort (a failure is logged and never blocks the rest of the purge), only rows whose `session_id` matches are deleted, and pre-isolation task-flow rows (`session_id = ''`) are never matched.
+
 The next session reads it via `build_continuity_prompt(session_id)` (`session_continuity.py:80`), called by `_build_continuity_block` in `workspace/prompt_builder.py:169` and injected when the full prompt is built (`prompt_builder.py:289-295`):
 
 ```
@@ -495,7 +510,7 @@ A session never receives its own state (`last_session_id == session_id → ""`).
 
 ## ♻️ TaskFlow Auto-Resume
 
-Active flows are re-surfaced into the system prompt so a fresh session can pick up unfinished work. Three independent readers use the same recipe — `requester_session_key(session_id)` + `get_active_flows_sync()` + a `state["creator_session_key"]` filter:
+Active flows are re-surfaced into the system prompt so a fresh session can pick up unfinished work. Three independent readers use the same recipe — the session-scoped `get_active_flows_sync(session_id)` reached through `PromptDataProvider.get_active_flows(session_id)`:
 
 | Reader | Location | Purpose |
 | :--- | :--- | :--- |
@@ -503,7 +518,7 @@ Active flows are re-surfaced into the system prompt so a fresh session can pick 
 | `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | TaskFlow block in the compression summary prompt |
 | `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | `taskflow_ids` in the persisted continuity state |
 
-`creator_session_key` is stamped on the flow at creation (`taskflow_create.py:38`) as `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` (`_shared.py:21`). `get_active_flows_sync()` (`store_sqlite.py:538`) returns only `running` and `waiting` flows ordered by revision, using the stdlib `sqlite3` path that works without an event loop; failures return `[]`.
+`creator_session_key` is still stamped on the flow at creation (`taskflow_create.py:38`) as `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` (`_shared.py:21`) because child dispatch builds the requester key from it; it is no longer the isolation mechanism. `get_active_flows_sync(session_id)` returns only this session's `running` and `waiting` flows ordered by revision, using the stdlib `sqlite3` path that works without an event loop; failures return `[]`.
 
 The system-prompt block (`prompt_builder.py:140`) looks like:
 
@@ -720,14 +735,14 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | dispatched step ids + revision |
 | `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | per-step settled report (complete or partial; auto-retries policy steps) |
 | `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | resumed status, unlocked steps, step-status counts, criteria echo, retry note |
-| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None)` | waiting status + revision |
-| `taskflow_summary` | `(flow_id)` | full flow state incl. wait/deadline status |
-| `taskflow_progress` | `(flow_id)` | completion %, breakdown, next steps, est. remaining |
-| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None)` | budget report, or set confirmation |
-| `taskflow_list` | `(status_filter="active")` | global cross-session board (`active` / `all` / status name) |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None)` | terminal `done` |
-| `taskflow_fail` | `(flow_id, reason="", expected_revision=None)` | terminal `failed` |
-| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None)` | terminal `cancelled` |
+| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting status + revision |
+| `taskflow_summary` | `(flow_id, session_id)` | full flow state incl. wait/deadline status |
+| `taskflow_progress` | `(flow_id, session_id)` | completion %, breakdown, next steps, est. remaining |
+| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | budget report, or set confirmation |
+| `taskflow_list` | `(status_filter="active", session_id)` | this session's board (`active` / `all` / status name) |
+| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, session_id)` | terminal `done` |
+| `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `failed` |
+| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `cancelled` |
 
 ### Memory tool actions
 
@@ -740,9 +755,9 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | Symbol | Location | Role |
 | :--- | :--- | :--- |
 | `TaskFlowStatus` / `StepStatus` | `agent/tools/taskflow/config.py:11,21` | Lifecycle / DAG enums |
-| `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py:402` | Optimistic-locked mutation |
-| `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:538` | Cross-session active-flow read |
-| `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py:489,505` | Sweeper queries |
+| `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py` | Optimistic-locked session-scoped mutation |
+| `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | Session-scoped active-flow read (SQL `session_id` filter) |
+| `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py` | Sweeper queries (deliberately cross-session) |
 | `deps_satisfied` / `unlock_dependents` | `agent/tools/taskflow/tools/_shared.py:99,137` | DAG transitions |
 | `update_flow_with_conflict_retry` | `_shared.py:191` | Never-lose-a-spawned-child persist |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | Deadline enforcement |
@@ -753,7 +768,7 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | Continuity save hook |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | Pre-compression flush |
 | `append_entries` | `agent/tools/memory.py:281` | Batch MEMORY.md append |
-| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | Cross-session board read |
+| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | Session board read (SQL `session_id` filter) |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | failure classification |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all retry planning/persist |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | memory backflow reconcile |
@@ -765,7 +780,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (seventeen `unit` t
 
 | Test file | Covers |
 | :--- | :--- |
-| `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters |
+| `test_store_sqlite.py` | CRUD, revision bumping, optimistic-concurrency conflict, WAL, sync accessors, active/waiting/terminal filters, session isolation (`session_id` scoping, cross-session update refusal), additive `session_id` migration, session purge |
 | `test_step_graph.py` | `deps_satisfied`, `mark_step_done`, `unlock_dependents`, legacy status derivation, self-dependency guard |
 | `test_summary_dag.py` | `taskflow_summary` DAG rendering |
 | `test_resume_dag.py` | Resume marks done, unlocks dependents, partial completion, idempotent no-op |
@@ -781,7 +796,7 @@ The TaskFlow suite lives under `tests/agent/tools/taskflow/` (seventeen `unit` t
 | `test_idle_detection.py` | Active/stale wait status, sweeper marker, live-child skip |
 | `test_retry_policy.py` | policy validation, failure classification, re-dispatch, exhaustion |
 | `test_validation.py` | criteria storage, resume echo, override |
-| `test_taskflow_list.py` | board rendering, status filters, last-activity timestamp |
+| `test_taskflow_list.py` | session board rendering, status filters, last-activity timestamp |
 
 Cross-cutting suites: `tests/agent/middlewares/test_memory_flush.py` (flush thresholds and `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py` (memory reconcile on completion drain), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py` (completion-carrier verification reminder), `tests/context_engine/test_session_continuity.py` (continuity save/prompt), `tests/agent/middlewares/test_todo_continuation.py` (turn-end continuation), `tests/pub/func/message/test_tool_output_prune.py` (one-line summaries), and `tests/workspace/test_prompt_builder_taskflow.py` (pending-flow prompt injection).
 
@@ -797,6 +812,7 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 
 ## ⚠️ Known Limitations
 
+- **`taskflow_list` is session-scoped.** Every read filters the owning `session_id` in SQL, so a session can no longer enumerate another session's flows; there is no global board. Pre-isolation rows (`session_id = ''`) are invisible to session reads but still resolved by the sweeper's cross-session deadline/idle scans.
 - **`done` is not success.** A step's `done` means "a result was injected"; there are no `failed`/`skipped` step statuses. `taskflow_resume` marks the step `done` and unlocks successors even when the child reported an error. Failure-aware step transitions are intentionally deferred.
 - **`taskflow_wait_all` is flow-scoped by design.** It waits only on children recorded on the given flow's dispatched steps, and unknown/already-cleaned runs count as settled. There is no global "wait for every active flow" primitive.
 - **Idle detection is advisory.** The sweeper stamps `stale_detected_at` / `stale_child_session_key` into `wait_json` but never auto-fails a stale `waiting` flow; a human or the model must act on the marker.
@@ -809,4 +825,5 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.
 - **Result validation is advisory.** `validation_criteria` are stored and echoed with the result but never enforced by the tool; the orchestrator must judge pass/fail itself. There is no automatic gate that can fail a step for not meeting its criteria.
 - **Retry classification is text-based.** `classify_failure` is a substring heuristic over the result text: a failure phrased outside the pattern table (or a genuine failure hidden by a negated phrase) will not trigger a retry, while an empty `retry_on` retries every classified failure. `taskflow_wait_all` cannot classify a dead child with no result text, so it always consumes retry budget while one remains.
-- **`taskflow_list` is deliberately global.** The cross-session board ignores `creator_session_key` scoping, so any main-agent session can enumerate every flow in the registry (read-only, no `expected_revision`). It is not intended as a per-session view.
+- **`taskflow_list` is session-scoped.** There is no global cross-session board: every read filters the owning `session_id` in SQL, so a session cannot enumerate another session's flows. Pre-isolation rows (`session_id = ''`) are invisible to session reads but still resolved by the sweeper's cross-session deadline/idle scans.
+- **Knowledge stays plan-named, not session-keyed.** The `knowledge` tool takes a plan name, so two sessions that adopt the same plan name share that plan's knowledge directory; isolation in the normal path comes from `plan_ref`, which is resolved per session before `build_knowledge_block`. The subagent boundary, by contrast, is absolute — `knowledge` is `main_only`.

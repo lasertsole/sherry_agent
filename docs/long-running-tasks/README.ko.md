@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 13개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 단계 수용 기준을 오케스트레이터가 검증할 수 있도록 에코하며, 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 전역 세션 간 flow 보드를 제공하고, 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
+> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 13개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 단계 수용 기준을 오케스트레이터가 검증할 수 있도록 에코하며, 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
 사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
 
@@ -16,7 +16,7 @@
 - [결과 검증](#-결과-검증)
 - [진행 보고서](#-진행-보고서)
 - [유휴 감지](#-유휴-감지)
-- [세션 간 보드](#-세션-간-보드)
+- [세션 보드와 격리](#-세션-보드와-격리)
 - [압축 전 메모리 플러시](#-압축-전-메모리-플러시)
 - [요약 ↔ TaskFlow 조정](#-요약--taskflow-조정)
 - [서브에이전트 메모리 역류](#-서브에이전트-메모리-역류)
@@ -82,11 +82,12 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_tokens INTEGER DEFAULT 0,
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
-    deadline_ts REAL
+    deadline_ts REAL,
+    session_id TEXT NOT NULL DEFAULT ''
 );
 ```
 
-DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 DDL(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`)로 정의됩니다. WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`store_sqlite.py:234-271`).
+DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 DDL(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `_SESSION_ID_COLUMN_DDL`, `store_sqlite.py:83-129`)로 정의됩니다. `session_id`는 격리 컬럼입니다(`idx_taskflow_session_status` 인덱스): 생성 시 기록되며 이후 모든 읽기/변경이 이를 필터링합니다(`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`store_sqlite.py:234-271`).
 
 ### 단계 상태 기계
 
@@ -122,7 +123,7 @@ blocked ──(의존 충족)──▶ ready ──(디스패치)──▶ dispa
 | `taskflow_summary` | 읽기 전용 재조회(충돌 후 재조회에도 사용) |
 | `taskflow_progress` | 사람이 읽을 수 있는 진행/완료 보고서 |
 | `taskflow_budget` | 토큰/비용 예산 조회 또는 설정 |
-| `taskflow_list` | 모든 flow의 세션 간 보드(`active` / `all` / 상태 이름) |
+| `taskflow_list` | 이 세션의 보드(`active` / `all` / 상태 이름) |
 | `taskflow_finish` / `taskflow_fail` / `taskflow_cancel` | 종단 전환 |
 
 ```python
@@ -361,23 +362,23 @@ Progress Report: <flow_id>
 
 유휴 감지는 flow를 **절대 자동 실패시키지 않습니다** — 마커는 권고용이며 주기마다 갱신됩니다. 이와 별개로 `taskflow_summary`는 대기 상태를 렌더링하고, 대기가 `TASKFLOW_INFRA["waiting_timeout_hours"]`(24시간)를 넘으면 `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch`를 출력합니다(`taskflow_summary.py:67-90`).
 
-## 📋 세션 간 보드
+## 📋 세션 보드와 격리
 
-`taskflow_summary`는 flow 하나를 읽고 자동 재개 판독기는 세션 범위입니다. `taskflow_list`는 의도적으로 그 반대 — 레지스트리 전체를 아우르는 **전역 보드**이므로, 한 채널/채팅에서 시작한 flow가 다른 어디에서나 보입니다:
+각 세션은 자신의 데이터만 봅니다. `taskflow_summary`, 자동 재개 판독기, 그리고 `taskflow_list`까지 모두 `session_id`로 범위가 정해지며 저장소가 SQL 계층에서 필터링합니다 — 다른 세션의 flow는 존재하지 않는 flow와 구분할 수 없습니다(변경 시 `FlowNotFoundError`, 읽기 시 `None`):
 
 ```python
 # agent/tools/taskflow/tools/taskflow_list.py:85
 @tool("taskflow_list")
-async def taskflow_list(status_filter: str = "active") -> str
+async def taskflow_list(status_filter: str = "active", session_id: SessionId = "") -> str
 ```
 
 | `status_filter` | 행 |
 | :--- | :--- |
-| `"active"`(기본) | `running` + `waiting`만 |
-| `"all"` | 종단 상태를 포함한 모든 flow |
+| `"active"`(기본) | 이 세션의 `running` + `waiting` |
+| `"all"` | 이 세션의 flow(종단 포함) |
 | 그 밖의 값 | 상태 정확 일치(`running`, `waiting`, `done`, `failed`, `cancelled`) |
 
-읽기 전용(`expected_revision` 불필요)이며 `store_sqlite.get_all_flows_sync(status_filter)`(`store_sqlite.py:566`)가 뒷받침합니다. 동기 판독기는 이벤트 루프가 필요 없는 stdlib `sqlite3` 경로를 사용하고, 행을 `expected_revision DESC`(가장 최근 활성 순)로 정렬하며 페일오픈입니다 — 초기화/읽기 실패는 `[]`를 반환합니다. `"active"`는 `get_active_flows_sync()`에 위임합니다.
+읽기 전용(`expected_revision` 불필요)이며 `store_sqlite.get_all_flows_sync(session_id, status_filter)`가 뒷받침합니다. 동기 판독기는 이벤트 루프가 필요 없는 stdlib `sqlite3` 경로를 사용하고, 행을 `expected_revision DESC`(가장 최근 활성 순)로 정렬하며 페일오픈입니다 — 초기화/읽기 실패는 `[]`를 반환합니다. `"active"`는 `get_active_flows_sync(session_id)`에 위임합니다.
 
 렌더링되는 보드는 고정 열의 패딩된 텍스트 표이며, 설명은 40자, creator key는 16자로 제한됩니다:
 
@@ -390,6 +391,19 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 ```
 
 스키마에는 **`updated_at` 컬럼이 없습니다**(마이그레이션 없음). 따라서 `_last_activity_ts()`(`taskflow_list.py:28`)는 "마지막 업데이트"를 flow 어딘가에 영속된 활동 스탬프의 최댓값으로 도출합니다 — `wait.set_at`, 모든 `step.dispatched_at`, 모든 `result.injected_at` — 이를 UTC 타임스탬프로 렌더링합니다(스탬프가 전혀 없는 flow는 `-`). 빈 레지스트리는 `No task flows found`를 반환합니다.
+
+### 세션 소유의 세 가지 계획 도구 패밀리
+
+| 패밀리 | 세션 연결 | 저장소 |
+| :--- | :--- | :--- |
+| **TaskFlow** | `task_flows.session_id` 컬럼(이번 변경) | `agent/tools/taskflow/registry/store_sqlite.py` |
+| **TodoList** | `session_id`가 테이블의 기본키 접두사 — 처음부터 세션 범위 | `agent/tools/todolist/registry/store_sqlite.py` |
+| **Knowledge** | 세션의 계획을 통해 간접적으로: `plan_ref`(세션별 상태 키)가 `workspace/sessions/<id>/plans/*.md`로 해석되고, 지식은 `workspace/knowledge/plans/<plan-name>/`에 있습니다. `knowledge` 도구는 계획 이름을 받고 세션 id는 받지 않습니다; `build_knowledge_block(session_id)`가 먼저 해당 세션의 `plan_ref`를 해석합니다. 세션 컬럼은 없으며 추가하지도 않았습니다. | `agent/tools/todolist/knowledge/knowledge_store.py` |
+
+**서브에이전트 경계.** 세 패밀리 모두 빌더(`build_taskflow_tools`, `build_todolist_tools`, `build_knowledge_tools`)가 `metadata["scope"] = "main_only"`를 부여합니다. `apply_tool_policy`(`agent/tools/subagent/spawn/inherited_tool_policy.py`)는 `main_only` 도구를 **가장 먼저 무조건** 제거합니다 — allow/deny 목록보다 앞서며 ORCHESTRATOR 해제로도 덮어쓸 수 없습니다 — 따라서 스폰된 자식 에이전트는 `taskflow_*`, `todowrite`/`todoread`, `knowledge` 도구를 절대 받지 않습니다. 같은 태그 패턴은 이미 `memory`, `skill_manage`, `sessions_kill`, `sessions_steer`를 포괄했습니다. 실제 도구 세트 단언은 `tests/agent/tools/taskflow/test_taskflow_tools.py`, `_build_child_agent` 경계는 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py`가 고정합니다.
+
+**세션 간 거부.** `taskflow_create`에서 다른 세션이 사용 중인 `flow_id`와 충돌하면 존재만 알리고 리비전은 누출하지 않습니다; 다른 세션의 flow에 대한 변경은 알 수 없는 id와 같은 "not found" 텍스트를 반환합니다. 읽기/목록/업데이트/퍼지 경로는 `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py`, `tests/server/DAO/test_clear_session.py`가 포괄합니다.
+
 
 ## 🧠 계층형 메모리
 
@@ -433,7 +447,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-이 블록은 `## Current TaskFlow State (authoritative)`를 제목으로 하며(`summarization/core.py:286`), 세션이 소유한 최대 3개 flow(`requester_session_key(session_id)`로 매칭)에 대해 flow id/상태, 설명, `done/total` 진행과 상태 내역, 마지막 두 완료 단계, 처음 두 대기 단계, 대기 이유를 나열합니다. DAG 헬퍼 `step_status`와 `steps_summary`를 재사용하며 완전히 페일오픈입니다(`except Exception → ""`). 결정론적 폴백 요약(`_build_static_fallback_summary`)은 이 블록을 **포함하지 않습니다** — LLM 프롬프트 전용 추가입니다.
+이 블록은 `## Current TaskFlow State (authoritative)`를 제목으로 하며(`summarization/core.py:286`), 세션이 소유한 최대 3개 flow(저장소 읽기가 SQL 계층에서 `session_id`로 범위가 정해지며 Python 재필터가 없습니다)에 대해 flow id/상태, 설명, `done/total` 진행과 상태 내역, 마지막 두 완료 단계, 처음 두 대기 단계, 대기 이유를 나열합니다. DAG 헬퍼 `step_status`와 `steps_summary`를 재사용하며 완전히 페일오픈입니다(`except Exception → ""`). 결정론적 폴백 요약(`_build_static_fallback_summary`)은 이 블록을 **포함하지 않습니다** — LLM 프롬프트 전용 추가입니다.
 
 ## 🧠 서브에이전트 메모리 역류
 
@@ -720,14 +734,14 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | 디스패치된 step id + 리비전 |
 | `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 단계별 정착 보고서(완전 또는 부분; 정책 단계 자동 재시도) |
 | `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | 재개 상태, 언락된 단계, 단계 상태 카운트, 기준 에코, 재시도 노트 |
-| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None)` | waiting 상태 + 리비전 |
-| `taskflow_summary` | `(flow_id)` | 대기/데드라인 상태를 포함한 전체 flow 상태 |
-| `taskflow_progress` | `(flow_id)` | 완료율, 내역, 다음 단계, 예상 남은 시간 |
-| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None)` | 예산 보고서, 또는 설정 확인 |
-| `taskflow_list` | `(status_filter="active")` | 전역 세션 간 보드(`active` / `all` / 상태 이름) |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None)` | 종단 `done` |
-| `taskflow_fail` | `(flow_id, reason="", expected_revision=None)` | 종단 `failed` |
-| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None)` | 종단 `cancelled` |
+| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting 상태 + 리비전 |
+| `taskflow_summary` | `(flow_id, session_id)` | 대기/데드라인 상태를 포함한 전체 flow 상태 |
+| `taskflow_progress` | `(flow_id, session_id)` | 완료율, 내역, 다음 단계, 예상 남은 시간 |
+| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 예산 보고서, 또는 설정 확인 |
+| `taskflow_list` | `(status_filter="active", session_id)` | 이 세션의 보드(`active` / `all` / 상태 이름) |
+| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, session_id)` | 종단 `done` |
+| `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | 종단 `failed` |
+| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | 종단 `cancelled` |
 
 ### memory 도구 액션
 
@@ -740,9 +754,9 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | 심볼 | 위치 | 역할 |
 | :--- | :--- | :--- |
 | `TaskFlowStatus` / `StepStatus` | `agent/tools/taskflow/config.py:11,21` | 라이프사이클 / DAG 열거형 |
-| `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py:402` | 낙관적 잠금 변경 |
-| `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:538` | 세션 간 활성 flow 읽기 |
-| `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py:489,505` | sweeper 쿼리 |
+| `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py` | 낙관적 잠금 세션 범위 변경 |
+| `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | 세션 범위 활성 flow 읽기(SQL `session_id` 필터) |
+| `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py` | sweeper 쿼리(의도적으로 세션 간) |
 | `deps_satisfied` / `unlock_dependents` | `agent/tools/taskflow/tools/_shared.py:99,137` | DAG 전환 |
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 생성된 자식을 잃지 않는 영속화 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 데드라인 집행 |
@@ -753,7 +767,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 연속성 저장 훅 |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 압축 전 플러시 |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md 일괄 추가 |
-| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | 세션 간 보드 읽기 |
+| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | 세션 보드 읽기(SQL `session_id` 필터) |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 실패 분류 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 재시도 계획/영속화 |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | 메모리 역류 조정 |
@@ -781,7 +795,7 @@ TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(17개 `unit`
 | `test_idle_detection.py` | active/stale 대기 상태, sweeper 마커, 살아있는 자식 건너뛰기 |
 | `test_retry_policy.py` | 정책 검증, 실패 분류, 재디스패치, 소진 |
 | `test_validation.py` | 기준 저장, 재개 에코, 덮어쓰기 |
-| `test_taskflow_list.py` | 보드 렌더링, 상태 필터, 마지막 활동 타임스탬프 |
+| `test_taskflow_list.py` | 세션 보드 렌더링, 상태 필터, 마지막 활동 타임스탬프 |
 
 교차 스위트: `tests/agent/middlewares/test_memory_flush.py`(플러시 임계값과 `append_entries`), `tests/agent/middlewares/test_lt5_memory_backflow.py`(완료 배출 시 메모리 조정), `tests/agent/middlewares/test_subagent_completion_drain_reminder.py`(완료 캐리어 검증 리마인더), `tests/context_engine/test_session_continuity.py`(연속성 저장/프롬프트), `tests/agent/middlewares/test_todo_continuation.py`(턴 종료 연속), `tests/pub/func/message/test_tool_output_prune.py`(한 줄 요약), `tests/workspace/test_prompt_builder_taskflow.py`(보류 flow 프롬프트 주입).
 
@@ -809,4 +823,5 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **토큰 회계는 호출자 제공입니다.** 비용은 `taskflow_resume`가 `token_usage` 딕셔너리를 받을 때만 계산됩니다. 없이 주입된 단계는 토큰 0, 비용 0에 기여합니다.
 - **결과 검증은 권고용입니다.** `validation_criteria`는 저장되고 결과와 함께 에코되지만 도구가 강제하지 않습니다. 합격/불합격은 오케스트레이터가 스스로 판단해야 합니다. 기준 미충족으로 단계를 실패시킬 수 있는 자동 게이트는 없습니다.
 - **재시도 분류는 텍스트 기반입니다.** `classify_failure`는 결과 텍스트에 대한 부분 문자열 휴리스틱입니다: 패턴 표 밖의 표현으로 된 실패(또는 부정 표현에 가려진 실제 실패)는 재시도를 유발하지 않으며, 빈 `retry_on`은 분류된 모든 실패를 재시도합니다. `taskflow_wait_all`은 결과 텍스트가 없는 죽은 자식을 분류할 수 없으므로, 예산이 남아 있는 한 항상 재시도 예산을 소비합니다.
-- **`taskflow_list`는 의도적으로 전역입니다.** 세션 간 보드는 `creator_session_key` 범위를 무시하므로, 어떤 메인 에이전트 세션이든 레지스트리의 모든 flow를 열거할 수 있습니다(읽기 전용, `expected_revision` 없음). 세션별 뷰가 아닙니다.
+- **`taskflow_list`는 세션 범위입니다.** 전역 세션 간 보드는 없습니다: 모든 읽기가 소유 `session_id`로 SQL 필터링되므로 한 세션이 다른 세션의 flow를 열거할 수 없습니다. 격리 전 행(`session_id = ''`)은 세션 읽기에서 보이지 않지만 sweeper의 세션 간 데드라인/유휴 스캔은 해석합니다.
+- **Knowledge는 계획 이름 키이며 세션 키가 아닙니다.** `knowledge` 도구는 계획 이름을 받으므로 같은 계획 이름을 채택한 두 세션은 해당 계획의 지식 디렉터리를 공유합니다; 정상 경로의 격리는 세션별로 해석되는 `plan_ref`에서 나옵니다. 반면 서브에이전트 경계는 절대적입니다 — `knowledge`는 `main_only`입니다.

@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、13 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、グローバルなセッション横断 flow ボードを公開し、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、13 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
@@ -16,7 +16,7 @@
 - [結果検証](#-結果検証)
 - [進捗レポート](#-進捗レポート)
 - [アイドル検出](#-アイドル検出)
-- [セッション横断ボード](#-セッション横断ボード)
+- [セッションボードと分離](#-セッションボードと分離)
 - [圧縮前メモリフラッシュ](#-圧縮前メモリフラッシュ)
 - [要約 ↔ TaskFlow 連携](#-要約--taskflow-連携)
 - [サブエージェントメモリ還流](#-サブエージェントメモリ還流)
@@ -82,11 +82,12 @@ CREATE TABLE IF NOT EXISTS task_flows (
     total_tokens INTEGER DEFAULT 0,
     total_cost REAL DEFAULT 0.0,
     token_budget INTEGER DEFAULT 0,
-    deadline_ts REAL
+    deadline_ts REAL,
+    session_id TEXT NOT NULL DEFAULT ''
 );
 ```
 
-DAG 自体（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）は完全に `state_json` の中にあります——DAG フィールドの追加にスキーマ移行は不要です。トークン/コスト/締め切りの列は追加的 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`store_sqlite.py:83-129`）で定義されます。WAL プラグマはプロセスごとに一度だけ切り替えられ、すべてのステートメントの前に `PRAGMA busy_timeout = 5000` が実行されます（`store_sqlite.py:234-271`）。
+DAG 自体（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）は完全に `state_json` の中にあります——DAG フィールドの追加にスキーマ移行は不要です。トークン/コスト/締め切りの列は追加的 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`_SESSION_ID_COLUMN_DDL`、`store_sqlite.py:83-129`）で定義されます。`session_id` は分離列です（`idx_taskflow_session_status` が索引）：作成時に刻まれ、以後のすべての読み取り/変更がそれをフィルタします（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL プラグマはプロセスごとに一度だけ切り替えられ、すべてのステートメントの前に `PRAGMA busy_timeout = 5000` が実行されます（`store_sqlite.py:234-271`）。
 
 ### ステップ状態機械
 
@@ -122,7 +123,7 @@ blocked ──(依存満足)──▶ ready ──(ディスパッチ)──▶ 
 | `taskflow_summary` | 読み取り専用の再読込（競合後の再読込にも使う） |
 | `taskflow_progress` | 人間可読な進捗/完了レポート |
 | `taskflow_budget` | トークン/コスト予算の照会または設定 |
-| `taskflow_list` | すべての flow のセッション横断ボード（`active` / `all` / ステータス名） |
+| `taskflow_list` | このセッションのボード（`active` / `all` / ステータス名） |
 | `taskflow_finish` / `taskflow_fail` / `taskflow_cancel` | 終端遷移 |
 
 ```python
@@ -361,23 +362,23 @@ Progress Report: <flow_id>
 
 アイドル検出が flow を**自動的に失敗させることは決してありません**——マーカーは助言的で、サイクルごとに更新されます。これとは独立に、`taskflow_summary` は待機ステータスを描画し、待機が `TASKFLOW_INFRA["waiting_timeout_hours"]`（24 時間）を超えると `wait_status: STALE (waiting X.Xh, timeout=24h) — child session may have crashed; consider taskflow_resume with a failure result or re-dispatch` を出力します（`taskflow_summary.py:67-90`）。
 
-## 📋 セッション横断ボード
+## 📋 セッションボードと分離
 
-`taskflow_summary` は 1 つの flow を読み、自動再開の読み取りはセッションスコープです；`taskflow_list` は意図的にその逆——レジストリ全体を覆う**グローバルボード**であり、あるチャネル/チャットで開始した flow が他のどこからでも見えます：
+各セッションは自分のデータだけを見ます。`taskflow_summary`、自動再開の読み取り、そして `taskflow_list` もすべて `session_id` でスコープされ、ストアが SQL 層でフィルタします——他のセッションの flow は存在しない flow と区別できません（変更時は `FlowNotFoundError`、読み取り時は `None`）：
 
 ```python
 # agent/tools/taskflow/tools/taskflow_list.py:85
 @tool("taskflow_list")
-async def taskflow_list(status_filter: str = "active") -> str
+async def taskflow_list(status_filter: str = "active", session_id: SessionId = "") -> str
 ```
 
 | `status_filter` | 行 |
 | :--- | :--- |
-| `"active"`（既定） | `running` + `waiting` のみ |
-| `"all"` | 終端ステータスを含むすべての flow |
+| `"active"`（既定） | このセッションの `running` + `waiting` |
+| `"all"` | このセッションの flow（終端を含む） |
 | その他の任意の値 | ステータスの完全一致（`running`、`waiting`、`done`、`failed`、`cancelled`） |
 
-読み取り専用（`expected_revision` 不要）で、`store_sqlite.get_all_flows_sync(status_filter)`（`store_sqlite.py:566`）に支えられています。同期リーダーはイベントループを必要としない stdlib `sqlite3` パスを使い、行を `expected_revision DESC`（最近アクティブな順）で並べ、フェイルオープンです——初期化/読み取り失敗は `[]` を返します。`"active"` は `get_active_flows_sync()` へ委譲します。
+読み取り専用（`expected_revision` 不要）で、`store_sqlite.get_all_flows_sync(session_id, status_filter)` に支えられています。同期リーダーはイベントループを必要としない stdlib `sqlite3` パスを使い、行を `expected_revision DESC`（最近アクティブな順）で並べ、フェイルオープンです——初期化/読み取り失敗は `[]` を返します。`"active"` は `get_active_flows_sync(session_id)` へ委譲します。
 
 描画されるボードは固定列のパディング済みテキスト表で、description は 40 文字、creator key は 16 文字に制限されます：
 
@@ -390,6 +391,19 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 ```
 
 スキーマに **`updated_at` 列はありません**（移行不要）。そのため `_last_activity_ts()`（`taskflow_list.py:28`）は「最終更新」を、flow 上のどこかに永続化された活動スタンプの最大値として導出します——`wait.set_at`、各 `step.dispatched_at`、各 `result.injected_at`——これを UTC タイムスタンプとして描画します（スタンプが全く無い flow は `-`）。空のレジストリは `No task flows found` を返します。
+
+### セッション所有の 3 つの計画ツールファミリ
+
+| ファミリ | セッション紐付け | ストア |
+| :--- | :--- | :--- |
+| **TaskFlow** | `task_flows.session_id` 列（今回の変更） | `agent/tools/taskflow/registry/store_sqlite.py` |
+| **TodoList** | `session_id` がテーブルの主キー接頭辞——元からセッションスコープ | `agent/tools/todolist/registry/store_sqlite.py` |
+| **Knowledge** | セッションの計画経由で間接的に：`plan_ref`（セッションごとの状態キー）が `workspace/sessions/<id>/plans/*.md` に解決され、知識は `workspace/knowledge/plans/<plan-name>/` に置かれます。`knowledge` ツールは計画名を取り、セッション id は取りません；`build_knowledge_block(session_id)` がまずそのセッション自身の `plan_ref` を解決します。セッション列は無く、追加もしていません。 | `agent/tools/todolist/knowledge/knowledge_store.py` |
+
+**サブエージェント境界。** 3 ファミリはいずれもビルダー（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）が `metadata["scope"] = "main_only"` を付与します。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）は `main_only` ツールを**最初に無条件で**落とします——allow/deny リストより先で、ORCHESTRATOR の解除でも上書きできません——したがって spawn された子エージェントが `taskflow_*`、`todowrite`/`todoread`、`knowledge` を受け取ることは決してありません。同じタグパターンは既に `memory`、`skill_manage`、`sessions_kill`、`sessions_steer` を覆っています。実ツールセットの表明は `tests/agent/tools/taskflow/test_taskflow_tools.py`、`_build_child_agent` 境界は `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` が固定します。
+
+**セッション間拒否。** `taskflow_create` で他セッションが使用中の `flow_id` に衝突した場合、存在だけを報告しリビジョンは漏らしません；他セッションの flow への変更は未知 id と同じ "not found" テキストを返します。読み取り/一覧/更新/パージ経路は `tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py`、`tests/server/DAO/test_clear_session.py` がカバーします。
+
 
 ## 🧠 階層メモリ
 
@@ -433,7 +447,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-このブロックは `## Current TaskFlow State (authoritative)` を見出しとし（`summarization/core.py:286`）、セッションが所有する最大 3 つの flow（`requester_session_key(session_id)` で照合）について、flow id/ステータス、説明、`done/total` 進捗とステータス内訳、最後の 2 つの完了ステップ、最初の 2 つの保留ステップ、待機理由を列挙します。DAG ヘルパー `step_status` と `steps_summary` を再利用し、完全にフェイルオープンです（`except Exception → ""`）。決定論的フォールバック要約（`_build_static_fallback_summary`）はこのブロックを**含みません**；これは LLM プロンプト専用の追加です。
+このブロックは `## Current TaskFlow State (authoritative)` を見出しとし（`summarization/core.py:286`）、セッションが所有する最大 3 つの flow（ストア読み取りは SQL 層で `session_id` にスコープされ、Python 側の再フィルタはありません）について、flow id/ステータス、説明、`done/total` 進捗とステータス内訳、最後の 2 つの完了ステップ、最初の 2 つの保留ステップ、待機理由を列挙します。DAG ヘルパー `step_status` と `steps_summary` を再利用し、完全にフェイルオープンです（`except Exception → ""`）。決定論的フォールバック要約（`_build_static_fallback_summary`）はこのブロックを**含みません**；これは LLM プロンプト専用の追加です。
 
 ## 🧠 サブエージェントメモリ還流
 
@@ -720,14 +734,14 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | ディスパッチ済み step id + リビジョン |
 | `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | ステップごとの確定レポート（完全または部分；ポリシー付きステップを自動再試行） |
 | `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | 再開後ステータス、アンロック済みステップ、ステップ状態カウント、基準エコー、再試行ノート |
-| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None)` | waiting ステータス + リビジョン |
-| `taskflow_summary` | `(flow_id)` | 待機/締め切り状態を含む完全な flow 状態 |
-| `taskflow_progress` | `(flow_id)` | 完了率、内訳、次のステップ、残り推定 |
-| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None)` | 予算レポート、または設定確認 |
-| `taskflow_list` | `(status_filter="active")` | グローバルなセッション横断ボード（`active` / `all` / ステータス名） |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None)` | 終端 `done` |
-| `taskflow_fail` | `(flow_id, reason="", expected_revision=None)` | 終端 `failed` |
-| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None)` | 終端 `cancelled` |
+| `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting ステータス + リビジョン |
+| `taskflow_summary` | `(flow_id, session_id)` | 待機/締め切り状態を含む完全な flow 状態 |
+| `taskflow_progress` | `(flow_id, session_id)` | 完了率、内訳、次のステップ、残り推定 |
+| `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 予算レポート、または設定確認 |
+| `taskflow_list` | `(status_filter="active", session_id)` | このセッションのボード（`active` / `all` / ステータス名） |
+| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, session_id)` | 終端 `done` |
+| `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `failed` |
+| `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `cancelled` |
 
 ### memory ツールのアクション
 
@@ -740,9 +754,9 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | シンボル | 場所 | 役割 |
 | :--- | :--- | :--- |
 | `TaskFlowStatus` / `StepStatus` | `agent/tools/taskflow/config.py:11,21` | ライフサイクル / DAG 列挙 |
-| `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py:402` | 楽観的ロック付き変更 |
-| `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:538` | セッション横断のアクティブ flow 読み取り |
-| `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py:489,505` | sweeper クエリ |
+| `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py` | 楽観的ロック付きセッションスコープ変更 |
+| `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | セッションスコープのアクティブ flow 読み取り（SQL `session_id` フィルタ） |
+| `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py` | sweeper クエリ（意図的にセッション横断） |
 | `deps_satisfied` / `unlock_dependents` | `agent/tools/taskflow/tools/_shared.py:99,137` | DAG 遷移 |
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 生成済みの子を失わない永続化 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 締め切りの執行 |
@@ -753,7 +767,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 継続性保存フック |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 圧縮前フラッシュ |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md への一括追記 |
-| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py:566` | セッション横断ボード読み取り |
+| `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | セッションボード読み取り（SQL `session_id` フィルタ） |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失敗分類 |
 | `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 再試行の計画/永続化 |
 | `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | メモリ還流の照合 |
@@ -781,7 +795,7 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（17 個�
 | `test_idle_detection.py` | active/stale 待機状態、sweeper マーカー、生存子スキップ |
 | `test_retry_policy.py` | ポリシー検証、失敗分類、再ディスパッチ、枯渇 |
 | `test_validation.py` | 基準の保存、再開エコー、上書き |
-| `test_taskflow_list.py` | ボード描画、ステータスフィルタ、最終活動タイムスタンプ |
+| `test_taskflow_list.py` | セッションボード描画、ステータスフィルタ、最終活動タイムスタンプ |
 
 横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証リマインダー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留 flow のプロンプト注入）。
 
@@ -809,4 +823,5 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。
 - **結果検証は助言的。** `validation_criteria` は保存され結果と共にエコーされますが、ツールが強制することはありません；合否はオーケストレータ自身が判断する必要があります。基準未達でステップを失敗させられる自動ゲートはありません。
 - **再試行分類はテキストベース。** `classify_failure` は結果テキストに対する部分文字列ヒューリスティックです：パターン表の外の言い回しの失敗（または否定フレーズに隠れた真の失敗）は再試行を引き起こさず、空の `retry_on` は分類されたすべての失敗を再試行します。`taskflow_wait_all` は結果テキストの無い死亡した子を分類できないため、予算が残る限り常に再試行予算を消費します。
-- **`taskflow_list` は意図的にグローバル。** セッション横断ボードは `creator_session_key` スコープを無視するため、任意のメインエージェントセッションがレジストリ内のすべての flow を列挙できます（読み取り専用、`expected_revision` なし）。セッション単位のビューではありません。
+- **`taskflow_list` はセッションスコープ。** グローバルなセッション横断ボードは存在しません：すべての読み取りが所有 `session_id` で SQL フィルタされるため、あるセッションが別のセッションの flow を列挙することはできません。分離前の行（`session_id = ''`）はセッション読み取りからは見えませんが、sweeper のセッション横断締め切り/アイドルスキャンは解決します。
+- **Knowledge は計画名キーで、セッションキーではありません。** `knowledge` ツールは計画名を取るため、同じ計画名を採用した 2 つのセッションはその計画の知識ディレクトリを共有します；通常パスの分離はセッションごとに解決される `plan_ref` から得られます。一方サブエージェント境界は絶対的です——`knowledge` は `main_only` です。

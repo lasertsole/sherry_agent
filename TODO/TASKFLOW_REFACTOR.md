@@ -1,5 +1,20 @@
 # TaskFlow Session 隔离方案
 
+> **执行状态（2026-09-19）**：Phase 1–6 已全部落地并通过门禁（`tests/run_tests_split.py` → PASS、`basedpyright agent/ server/` 0 errors、`ruff check`、`lint-imports` → 7 kept / 0 broken）。
+>
+> **计划断言 vs 实测（偏差逐条记录，以现状为准）**：
+> 1. **Phase 3 无需拆分 builders**：`apply_tool_policy` 早已实现 `metadata["scope"] == "main_only"` 机制，且 `build_taskflow_tools` / `build_todolist_tools` / `build_knowledge_tools` **已经**为三个工具族打上该标签——子 agent 本来就拿不到这三类工具（`_build_child_agent` 必经 `apply_tool_policy` 无条件剔除）。按任务要求优先复用既有标签机制，**未**新建 `build_subagent_tools`（避免两套白名单）；改为补两组工具列表断言测试（真实工具集 + `_build_child_agent` 边界）。
+> 2. **TodoList 无需加列**：`todos` 表早已以 `session_id` 作为主键前缀，全部 store 函数按会话过滤（`get_todos(session_id)` / `replace_all(session_id, …)`），未重复造。
+> 3. **Knowledge 未加列**：按计划采用 `plan_ref → 计划名` 间接隔离——`knowledge` 工具以计划名为键，`build_knowledge_block(session_id)` 先解析该会话自己的 `plan_ref`；已在四语文档写明该语义与子 agent 绝对边界（`knowledge` 为 `main_only`），未加会话列。
+> 4. **Phase 4 额外改了 2 个消费者**（计划未列出）：`workspace/prompt_builder.py::_build_taskflow_block` 与 `context_engine/session_continuity.py::_get_active_taskflow_ids_sync` 也调用 `provider.get_active_flows()`，同步改为传 `session_id` 并删除 Python 层 creator 过滤。
+> 5. **store 签名为必填**：`create_flow(..., session_id=)`（空值 `ValueError`）、`get_flow(flow_id, session_id)`、`get_flow_sync(flow_id, session_id)`、`update_flow(..., session_id=)` 均无默认值；`taskflow_create` 在缺会话时返回 `Error: session_id is required`（原 `test_create_without_session_id` 的旧断言按新契约改写为"拒绝且不落库"）。
+> 6. **索引取复合**：实现为 `idx_taskflow_session_status(session_id, status)`（计划写的是单列 `idx_taskflows_session`），按 `session_id + status IN (…)` 查询形态取复合索引；`idx_taskflow_status` 保留给 sweeper 的无会话状态扫描。
+> 7. **`clear_session` 语义选择**：照 `server/DAO/messages.py` 的 "purge every trace" 语义，清会话时**同时删除**该会话的 todo 行与 task_flow 行（best-effort：失败只告警、不阻塞其余清理；`session_id=''` 的隔离前行永不被匹配）。计划未提，此处定案并写入四语文档。
+> 8. **Phase 7 未执行**：本次任务范围明确为 6 个 Phase（会话隔离 + 子 agent 边界）；Phase 7（TaskFlow DAG 动态改动 / `taskflow_update_steps`）是独立特性，保持原样未动。
+> 9. **计划中的单进程组合门禁命令不具备可行性**：`pytest tests/agent/tools/taskflow tests/agent/tools/todolist tests/agent/middlewares tests/agent/tools/subagent tests/server -q -k "not llm_e2e"` 在**基线 commit `336cfce`（未含本次任何改动）上同样失败**——40 failed + 1 error，失败集合与改动后逐条一致（已实测对比）。这是仓库已知的 `tests/agent/tools/subagent/conftest.py` `sys.modules` stub 污染（README §Testing 明确说明该场景必须分进程）。权威门禁为 `tests/run_tests_split.py`（3 进程分组），已通过。
+
+---
+
 ## 目标
 
 每个 session 只能看到自己的 TaskFlow / TodoList / Knowledge 数据，绝不串。子 agent 不能操作这三类工具。
@@ -17,6 +32,8 @@
 ---
 
 ## Phase 1: DB Schema + Store 层
+
+> ✅ 已完成：`task_flows` 增量加 `session_id TEXT NOT NULL DEFAULT ''`（`_SESSION_ID_COLUMN_DDL`，旧库自动补列）+ 复合索引；`create_flow` / `get_flow` / `update_flow` / `get_flow_sync` / `get_active_flows_sync` / `get_all_flows_sync` 全部按会话过滤，`update_flow` 的冲突探测也只在本会话内查 revision（跨会话 flow 视同不存在）；`get_overdue_flows` / `get_waiting_flows` 保留跨会话（sweeper 系统扫描）；新增 `delete_flows_by_session`。
 
 **文件**: `agent/tools/taskflow/registry/store_sqlite.py`
 
@@ -70,6 +87,8 @@ _SESSION_ID_INDEX_DDL: list[str] = [
 
 ## Phase 2: 工具层
 
+> ✅ 已完成：`taskflow_summary` / `taskflow_list` / `taskflow_budget` / `taskflow_cancel` / `taskflow_fail` / `taskflow_finish` / `taskflow_progress` / `taskflow_set_waiting` 补齐 `SessionId` 注入；`taskflow_create` / `dispatch` / `resume` / `run_task` / `wait_all` 透传 `session_id` 到 store 与冲突重试助手；`taskflow_list` docstring 由 cross-session board 改为 current session only。
+
 所有 taskflow 工具已有 `SessionId = Annotated[str, InjectedState("session_id")]` 模式，只需加注入 + 透传。
 
 ### 需要加 `SessionId` 注入的工具（目前没有）
@@ -106,6 +125,8 @@ _SESSION_ID_INDEX_DDL: list[str] = [
 ---
 
 ## Phase 3: 子 agent 访问控制
+
+> ✅ 由现状满足（标签机制，未拆 builders）：核实确认三个构建器均已打 `scope=main_only`，`apply_tool_policy` 无条件剔除；新增 `test_subagent_policy_drops_main_only_planning_families`（真实工具集）与 `test_child_agent_drops_main_only_planning_tools`（`_build_child_agent` 边界）锁定。
 
 **文件**: `agent/tools/__init__.py`
 
@@ -155,6 +176,8 @@ def build_subagent_tools() -> list[BaseTool]:
 
 ## Phase 4: 中间件 + Data Provider
 
+> ✅ 已完成：`_get_taskflow_context_sync` 改为 SQL 过滤（删除 Python creator 过滤）；`PromptDataProvider.get_active_flows(session_id)` 协议 + `AgentPromptDataProvider` 实现同步；`workspace/prompt_builder.py` 与 `context_engine/session_continuity.py` 两个消费者同步（计划外补充）；`clear_session` 增补 todos/taskflows 清理。
+
 ### `summarization/core.py` (line ~296-302)
 
 ```python
@@ -199,6 +222,8 @@ def get_active_flows(self, session_id: str) -> list[dict]:
 
 ## Phase 5: 前端
 
+> ✅ 已完成：计划所指文件已迁移为 Pinia store——改动落在 `client/app/stores/todo.ts` 的 `Todo` 类型（`session_id?: string`）；`pnpm test:unit`（356 passed）/ `typecheck` / `dpdm` 全绿。
+
 前端不直接查 taskflow API — 数据通过 session-scoped WS 推送获得。改动最小：
 
 | 文件                                      | 改动                                                         |
@@ -212,6 +237,8 @@ def get_active_flows(self, session_id: str) -> list[dict]:
 ---
 
 ## Phase 6: 测试
+
+> ✅ 已完成：既有 store/工具/E2E/中间件/前端测试按新签名更新（无弱化）；新增跨会话读取拒绝、跨会话变更拒绝、列表隔离、重复 id 不泄露 revision、子 agent 工具列表断言、`clear_session` 规划存储清理、E4 屏障按会话读取、Knowledge 边界等测试。
 
 | 测试文件                                              | 改动                                                                                  |
 | ----------------------------------------------------- | ------------------------------------------------------------------------------------- |
@@ -267,6 +294,8 @@ async def test_session_isolation():
 ---
 
 ## Phase 7: TaskFlow DAG 动态改动
+
+> ⏸ 本次未执行（任务范围明确为 6 个 Phase；该特性独立于会话隔离）。
 
 ### 问题
 
