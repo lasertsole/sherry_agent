@@ -500,56 +500,21 @@ def archive_skill(skill_name: str) -> tuple[bool, str]:
 
 
 def restore_skill(skill_name: str) -> tuple[bool, str]:
-    """Move an archived skill back to ``skills/auto/`` (flat layout; original
-    category nesting is NOT reconstructed).
+    """Move an archived skill back to ``skills/auto/``.
 
-    Refuses to restore under a name that now collides with a bundled or
-    hub-installed skill — that would shadow the upstream version.
+    Thin forwarder onto ``context_engine.curator.usage.restore_skill`` — the
+    curator owns ``skills/.archive/`` and therefore owns the restore
+    primitive, which also flips the curator-side record back to ``active`` so
+    the skill re-enters lifecycle management. The agent-side telemetry record
+    is synced here after a successful restore; failures leave it untouched.
+    Returns ``(ok, message)``.
     """
-    # If a bundled or hub skill has since been installed under the same
-    # name, refuse to restore rather than shadow it.
-    if not is_agent_created(skill_name):
-        return False, (
-            f"skill '{skill_name}' is now bundled or hub-installed; "
-            "restore would shadow the upstream version"
-        )
-    archive_root = _archive_dir()
-    if not archive_root.exists():
-        return False, "no archive directory"
+    from context_engine.curator.usage import restore_skill as _curator_restore_skill
 
-    # Try exact name match first, then any prefix match (for timestamped dupes).
-    # Recursive walk handles nested archive layouts (e.g. .archive/<category>/<skill>/)
-    # left behind by older archive paths or external imports.
-    candidates = [p for p in archive_root.rglob("*") if p.is_dir() and p.name == skill_name]
-    if not candidates:
-        candidates = sorted(
-            [
-                p
-                for p in archive_root.rglob("*")
-                if p.is_dir() and p.name.startswith(f"{skill_name}-")
-            ],
-            reverse=True,
-        )
-    if not candidates:
-        return False, f"skill '{skill_name}' not found in archive"
-
-    src = candidates[0]
-    dest = AUTO_SKILLS_DIR / skill_name
-    if dest.exists():
-        return False, f"destination already exists: {dest}"
-
-    try:
-        src.rename(dest)
-    except OSError:
-        import shutil
-
-        try:
-            shutil.move(str(src), str(dest))
-        except Exception as e:
-            return False, f"failed to restore: {e}"
-
-    set_state(skill_name, STATE_ACTIVE)
-    return True, f"restored to {dest}"
+    ok, msg = _curator_restore_skill(skill_name)
+    if ok:
+        set_state(skill_name, STATE_ACTIVE)
+    return ok, msg
 
 
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ import json
 import shutil
 from typing import Any
 from pathlib import Path
-from datetime import datetime, UTC
+from datetime import datetime, timedelta, UTC
 from loguru import logger
 
 from context_engine.curator.constants import (
@@ -280,11 +280,21 @@ def archive_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
         return False, f"Failed to create archive dir: {e}"
 
     # Flatten category nesting into ".archive/<skill>/" so restores are simple.
-    # A collision gets a timestamp suffix, which the agent-side restore finds
-    # via its "<skill>-" prefix search.
+    # A collision gets a timestamp suffix, which restore finds via its
+    # "<skill>-" prefix search. The probe starts at "now" and walks one second
+    # forward per occupied slot, so two archives landing in the same second
+    # still get distinct flat siblings — a single non-probing suffix would
+    # collide and shutil.move would nest the source inside the existing entry.
     dest = archive_root / sd.name
     if dest.exists():
-        dest = archive_root / f"{sd.name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+        base_ts = datetime.now(UTC)
+        offset = 0
+        while True:
+            ts = (base_ts + timedelta(seconds=offset)).strftime("%Y%m%d%H%M%S")
+            dest = archive_root / f"{sd.name}-{ts}"
+            if not dest.exists():
+                break
+            offset += 1
 
     try:
         sd.rename(dest)
@@ -307,3 +317,84 @@ def archive_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     logger.info(f"Curator archived skill: {name} -> {dest}")
     suffix = f" (absorbed into {absorbed_into})" if absorbed_into else ""
     return True, f"Archived {name} to {dest}{suffix}"
+
+
+def list_archived() -> list[str]:
+    """List archived skill directory names under the flat archive root.
+
+    Mirrors the agent-side ``list_archived_skill_names`` semantics: the
+    directory name is the archived skill name, and timestamped collision
+    entries (``<name>-<ts>``) are reported verbatim so callers can pass any
+    of them to ``restore_skill``. A missing archive root yields ``[]``.
+    """
+    archive_root = _archive_dir()
+    if not archive_root.exists():
+        return []
+    try:
+        return sorted({p.name for p in archive_root.iterdir() if p.is_dir()})
+    except OSError:
+        return []
+
+
+def restore_skill(name: str) -> tuple[bool, str]:
+    """Move an archived skill back to ``skills/auto/`` (flat layout; original
+    category nesting is NOT reconstructed).
+
+    Refuses to restore under a name that now collides with a bundled or
+    hub-installed skill — that would shadow the upstream version. On success
+    the curator-side usage record is set back to ``state="active"`` in the
+    same step, so the restored skill immediately re-enters
+    ``apply_automatic_transitions`` instead of staying stuck as ``archived``
+    (a live directory whose record still says archived hits none of the four
+    transition branches and falls out of lifecycle management forever).
+    Returns ``(ok, message)``.
+    """
+    from context_engine.curator.constants import AUTO_SKILLS_DIR
+
+    # If a bundled or hub skill has since been installed under the same
+    # name, refuse to restore rather than shadow it.
+    if not is_agent_created(name):
+        return False, (
+            f"skill '{name}' is now bundled or hub-installed; "
+            "restore would shadow the upstream version"
+        )
+    archive_root = _archive_dir()
+    if not archive_root.exists():
+        return False, "no archive directory"
+
+    # Try exact name match first, then any prefix match (for timestamped dupes).
+    # Recursive walk handles nested archive layouts (e.g. .archive/<category>/<skill>/)
+    # left behind by older archive paths or external imports.
+    candidates = [p for p in archive_root.rglob("*") if p.is_dir() and p.name == name]
+    if not candidates:
+        candidates = sorted(
+            [p for p in archive_root.rglob("*") if p.is_dir() and p.name.startswith(f"{name}-")],
+            reverse=True,
+        )
+    if not candidates:
+        return False, f"skill '{name}' not found in archive"
+
+    src = candidates[0]
+    dest = AUTO_SKILLS_DIR / name
+    if dest.exists():
+        return False, f"destination already exists: {dest}"
+
+    try:
+        src.rename(dest)
+    except OSError:
+        # Cross-device — fall back to shutil.move
+        try:
+            shutil.move(str(src), str(dest))
+        except Exception as e:
+            return False, f"failed to restore: {e}"
+
+    # Direct activation instead of set_state(): set_state() runs the pinned
+    # guard, and a record can still carry a stale pinned flag from before the
+    # archive (pinned skills are never archived, but out-of-band edits exist).
+    # The directory already moved back, so the record must follow it to active.
+    rec = load_record(name)
+    rec["state"] = STATE_ACTIVE
+    rec["_persisted"] = True
+    save_record(name, rec)
+    logger.info(f"Curator restored skill: {name} -> {dest}")
+    return True, f"restored to {dest}"

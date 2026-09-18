@@ -55,6 +55,8 @@ from context_engine.curator.usage import (
     pin_skill,
     unpin_skill,
     archive_skill,
+    restore_skill,
+    list_archived,
     delete_skill,
     agent_created_report,
 )
@@ -107,6 +109,8 @@ __all__ = [
     "pin_skill",
     "unpin_skill",
     "archive_skill",
+    "restore_skill",
+    "list_archived",
     "delete_skill",
     "agent_created_report",
     "load_state",
