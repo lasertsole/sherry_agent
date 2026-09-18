@@ -1,7 +1,7 @@
 # 防护能力全面对比报告：Sherry Agent vs DeepAgents
 
-> 生成日期：2026-09-16 ｜ **全量复核：2026-09-17**
-> 复核基准：Sherry = 本仓 `main` @ `2768ec0`；DeepAgents = 本地检出 `/home/honor/Desktop/project/deepagents` 的 `libs/deepagents`（v0.7.14 @ `7f9e8ed3a`）+ `libs/partners/` + `libs/talon/` + `libs/code/`。原报告对比的是 Windows 上的 `D:\selfProj\deepagents-main`，与本次检出**未必同版本**；DeepAgents 的正向声明均已在本地检出定位到 `文件:行`，无法核实的会显式标注。DeepAgents 标 ❌ 的负向条目是本地检出**检索未见**对应实现，不能排除上游其他版本存在。
+> 生成日期：2026-09-16 ｜ **全量复核：2026-09-17** ｜ **第三批复核：2026-09-18（基准 `main` @ `2b9569b`）**
+> 复核基准：Sherry = 本仓 `main` @ `2b9569b`（第三批；第一批 `2768ec0`、第二批 `4db42e0`）；DeepAgents = 本地检出 `/home/honor/Desktop/project/deepagents` 的 `libs/deepagents`（v0.7.14 @ `7f9e8ed3a`）+ `libs/partners/` + `libs/talon/` + `libs/code/`。原报告对比的是 Windows 上的 `D:\selfProj\deepagents-main`，与本次检出**未必同版本**；DeepAgents 的正向声明均已在本地检出定位到 `文件:行`，无法核实的会显式标注。DeepAgents 标 ❌ 的负向条目是本地检出**检索未见**对应实现，不能排除上游其他版本存在。
 >
 > **复核记录（2026-09-17，本轮改了哪些结论）：**
 > 1. **矩阵结论翻转（Sherry 侧）**：「输入路径验证」「符号链接防护」由"Sherry 缺失 / DeepAgents 优势"改为**各有千秋**——Sherry 现已具备三道结构门禁（分量判定 `..`/`~`、resolve + `relative_to`、符号链接**环**检测）+ `_open_no_follow`（`O_NOFOLLOW` 闭合 TOCTOU，read/write/patch 全走）+ 虚拟路径回显 + 搜索 containment + `PathGuard` 中间件 + 外部路径六检查审批网关（`approve` / `approve_dir` / `yolo` / `reject`）。
@@ -10,6 +10,13 @@
 > 4. **其余更正**：URL scheme 白名单 12 → **13**（§2.2）；Sherry 整数参数约束由"无"改为"Pydantic 约束 + clamp"（§2.2）；DeepAgents `O_NOFOLLOW` 覆盖澄清为 read/write/edit/download（非无差别全覆盖，§2.2）；Sherry 子代理类型校验补注 `agent_id` 正则 + allow-list（§2.7）；Sherry `python_repl` 更正为**无内存上限**（§2.8）；视频帧限制 5 → **6 项**（§2.11）；ripgrep 看门狗更正为 `SIGKILL` 双重有界等待（§2.13）；§2.14 新增 `PathGuard` 与前缀缓存稳定两行。
 > 5. **§3 同步**：§3.2 移出「O_NOFOLLOW 符号链接防护」「符号链接循环检测」（Sherry 已补齐）；§3.1 新增 PathGuard、外部路径审批网关、OS 沙箱读遮蔽、128K 四闸门四项。
 > 6. **第二批变更（2026-09-17，随 P0 项处置；基准 `main` @ `4db42e0`）**：P0-1 符号链接防护复核确认已落地（`agent/tools/pub_base/path_utils.py` 的 `_open_no_follow`/`_raise_if_symlink_loop`，read/write/patch 全走）；**P0-3（base64 参数编码）经评估后否决**——`terminal` 本就以 shell 语义执行（`["/bin/sh","-c",cmd]` / `shell=True`），base64+`eval` 不减少风险，且置于 `_check_dangerous`/`_check_sensitive_file_access` 之前会让明文绕过现有防线，真实读屏障是 OS 沙箱读遮蔽；P0-4 搜索资源限制已落地（`file_tools_search_max_matches`=10000 / `file_tools_search_time_budget_s`=5.0 / `file_tools_search_prune_dirs`=`proc`/`sys`/`dev` + `agent/tools/file_tools/search_scan.py` 的 `bounded_walk`，提交 `6073f7c`/`c77846e`/`4db42e0`）。详见 `DEEPAGENTS_BORROWING_PLAN.md` 头部 P0 处置记录。
+> 7. **第三批变更（2026-09-18，基准 `main` @ `2b9569b`，覆盖 `4db42e0` 之后的 77 个提交）：**
+>    - **矩阵结论翻转（Sherry 侧）**：「消息驱逐」由 **DeepAgents** 改为**各有千秋**——P0-2 工具结果驱逐落地：超 `evict_threshold_chars`(20 000) 的结果写入 `SESSIONS_DIR/<session_id>/evicted/`，state 中只保留 head/tail 各 5 行预览（`agent/middlewares/tool_result_eviction/core.py` / `pub/func/message/eviction.py`；提交 `4a260c7`/`565fc13`/`466c7d3`/`06f8d77`）；P2-4 `read_file` 执行期切片同批落地（文件已在盘上，只切片不写新文件）。工具结果是三态：state=预览 / MesMemory=全文（工具返回即落库）/ 磁盘可取回。DeepAgents 仍在内联媒体卸载与人类消息驱逐两项上有独到设计。**新增矩阵行「消息持久化」→ 各有千秋**：Sherry 逐模型边界 + 工具返回即时落库（`persisted_message_ids` 水位、写一次、跨重启去重；摘要对 `lc_source="summarization"` 不落库；提交 `1ab6800`/`127af14`/`ffe438b`/`54e5844`），DeepAgents 为摘要前把丢弃历史卸载到后端。
+>    - **「上下文压缩」行补充**：Sherry 新增 **P1-2 非 LLM 溢出尾部裁剪**（`pub/func/message/overflow_clip.py`，在溢出路由执行与 forced recovery 压缩 **之前**执行：够用即直接返回、不调 LLM；不够才降级到既有 T1-T5 路由；`model_copy` 保消息身份，配对/水位不破；三键 `overflow_clip_enabled`=True / `overflow_clip_max_remove`=10 / `overflow_clip_min_keep`=5；提交 `aa327fa`/`dcf8ece`/`f83fe20`）。§2.4「溢出尾部裁剪」由 ❌ 改为 ✅。
+>    - **§2.10 五项更新**：「对话历史卸载」「工具结果卸载」「内容预览」「read_file 切片」「摘要消息过滤」由 ❌ 改为 ✅/改写。摘要链过滤：`_filter_summary_messages` 在重摘要输入前去掉上一对 `lc_source="summarization"` 消息（Human+AI 两半都带该标记），旧摘要文本改经 `<prior-summary>` 单独注入（提交 `3cfafc8`/`1e45ef5`/`f85e9e2`）。
+>    - **其余更正**：§2.4「参数截断」由 ❌ 改为 ⚠️（预算截断路径本就有 `truncate_tool_args`，`pub/func/message/tool_args_truncate.py`；缺的是摘要期模型感知等价物）；§2.13 悬挂投递 TTL 已定位（`agent/tools/subagent/registry/sweeper.py:239` 的 `_REQUESTER_TYPE_EXPIRY_MS`：cron 2h / subagent 6h / interactive 24h）。
+>    - **§3 同步**：§3.2 移出「工具结果→文件系统驱逐+head/tail预览」「read_file结果切片(非卸载)」两项，「参数截断」改写为「摘要期模型感知参数截断」；§3.1 新增「逐消息持久化+水位」「工具结果驱逐+read_file切片」「非LLM溢出尾部裁剪」「摘要消息过滤（链式摘要去重）」四项。
+>    - **结构与命名核对**：文档引用的模块路径已按现行包结构核对——`agent/middlewares/system_prompt/core.py`（`system_prompt_injection`，原 `context_engine/`）、`agent/middlewares/summarization/nudges.py`（原 `nudge.py`）、配置 `NUDGE`/`MEDIA_PIPELINE`（原 `CONTEXT_ENGINE_HOOK` 拆分）、计划路径 `workspace/sessions/<session_id>/plans/`（`config/path.py::session_plans_dir`/`resolve_plan_path`，legacy `.omo/plans/` 仅作回退）。
 >
 > 模块路径已按**包结构**核对：`agent/middlewares/<name>/core.py`（如 `path_guard/core.py`、`tool_guardrails/core.py`、`summarization/core.py`）；DeepAgents 路径按检出实际前缀 `libs/...` 标注。
 
@@ -47,13 +54,14 @@
 | 工具调用病理检测 |                     ✅ 5种病理+4级升级链                        |                        ❌ 仅悬空调用修补                             |   **Sherry**   |
 | 输入路径验证     | ✅ 会话ID+URL+三闸+O_NOFOLLOW+PathGuard+外部路径六检查审批      | ✅ virtual_mode+validate_path+O_NOFOLLOW(读/写/改/下载)+符号链接环   | **各有千秋**   |
 | 输出重复防护     |                    ✅ 3层(中间件+包装器+流)                     |                        ❌ 无显式机制                                 |   **Sherry**   |
-| 上下文压缩       |                  ✅ T1-T5触发+防抖动+压缩锁                     |                  ✅ 自动摘要+溢出裁剪+消息驱逐                       |  **各有千秋**  |
+| 上下文压缩       |        ✅ T1-T5触发+防抖动+压缩锁+非LLM溢出尾部裁剪             |                  ✅ 自动摘要+溢出裁剪+消息驱逐                       |  **各有千秋**  |
 | 迭代限制         |                        ✅ 角色50/90/60                          |                      ✅ 图递归9999+Rubric3                           |  **各有千秋**  |
 | HITL审批         |                 ✅ 14层门控+47+危险模式+外部路径审批            |                  ✅ 权限→HITL桥接+路径感知谓词                       |  **各有千秋**  |
 | 子代理安全       |                 ✅ 深度+CWD+工具继承+最小权限                  |                  ✅ 类型验证+递归拒绝+权限继承                       |  **各有千秋**  |
 | 并发控制         |                    ✅ 4车道Semaphore+排空                       |                              ❌ 无                                   |   **Sherry**   |
 | LLM重试          |                   ✅ 8步分类+回退链+断路器                      |                       ❌ 仅上下文溢出重试                            |   **Sherry**   |
-| 消息驱逐         |                            ❌ 仅截断                            |                   ✅ 工具结果→文件系统+head/tail预览                 | **DeepAgents** |
+| 消息驱逐         |      ✅ 工具结果→SESSIONS_DIR/evicted+head/tail预览+read_file切片        |           ✅ 工具结果→文件系统+head/tail预览+内联媒体/人类消息驱逐            | **各有千秋**   |
+| 消息持久化       |       ✅ 逐模型边界+工具返回即时落库+水位去重(摘要对不落库)       |                ✅ 摘要前持久化到后端(丢弃历史)                      | **各有千秋**   |
 | 符号链接防护     |           ✅ 三闸 + O_NOFOLLOW + 环检测 + 搜索containment       |                  ✅ O_NOFOLLOW+符号链接环检测                        | **各有千秋**   |
 | Shell注入防护    |            ✅ 危险命令正则黑名单 + 终端敏感文件闸门(缓解)；base64 参数编码方案已评估并否决(对 terminal 无增益，见 DEEPAGENTS_BORROWING_PLAN 处置记录)       | ✅ sandbox参数base64编码+花括号展开限制(LocalShell直传shell=True无校验) | **DeepAgents** |
 | 崩溃回路断路     |                        ✅ 5min窗口3次                           |                              ❌ 无                                   |   **Sherry**   |
@@ -146,17 +154,17 @@
 | 输出预算截断   | ✅ 累积输出>20%窗口→截断客户端视图                                             | ❌ 无                                                   |
 | Token启动门控  | ✅ 强制≥128K（四道闸门：boot/build/spawn/env 写入）                            | ❌ 无                                                   |
 | 截断恢复       | ✅ `MaxTokensBoost` 指数级max_tokens提升                                       | ❌ 无                                                   |
-| 溢出尾部裁剪   | ❌ 仅截断                                                                      | ✅ `_clip_overflow_tail()` 尾部ToolMessage批量卸载      |
-| 消息驱逐       | ❌ 仅截断工具结果                                                              | ✅ 工具结果→文件系统 + head/tail预览 + 内联媒体卸载     |
-| 参数截断       | ❌ 无                                                                          | ✅ `TruncateArgsSettings` 摘要前截断旧工具参数          |
+| 溢出尾部裁剪   | ✅ P1-2 非LLM尾部裁剪（够用即直接返回、不调LLM；不够才降级路由；`pub/func/message/overflow_clip.py`） | ✅ `_clip_overflow_tail()` 尾部ToolMessage批量卸载      |
+| 消息驱逐       | ✅ 工具结果→`SESSIONS_DIR/<sid>/evicted/` + head/tail预览(各5行) + `read_file`执行期切片 | ✅ 工具结果→文件系统 + head/tail预览 + 内联媒体卸载     |
+| 参数截断       | ⚠️ 预算截断路径会截断超大工具调用参数（`pub/func/message/tool_args_truncate.py`，head+tail+中段省略）；无摘要期模型感知等价物 | ✅ `TruncateArgsSettings` 摘要前截断旧工具参数          |
 | 模型感知默认值 | ❌ 手动配置                                                                    | ✅ `compute_summarization_defaults()` 从模型profile计算 |
 | 增量检查点优化 | ❌ 无                                                                          | ✅ `DeltaChannel(snapshot_frequency=50)` O(N²)→O(N)     |
 | 人类消息驱逐   | ❌ 无                                                                          | ✅ `human_message_token_limit_before_evict`             |
-| **结论**       | **Sherry 在触发精度和防抖动方面领先；DeepAgents 在消息驱逐和增量优化方面领先** |
+| **结论**       | **Sherry 在触发精度、防抖动与非LLM溢出裁剪方面领先；DeepAgents 在增量检查点优化、模型感知默认值与人类消息驱逐方面领先；工具结果驱逐/预览/read_file 切片已对齐** |
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/summarization/core.py` + `agent/wrapper/context_limit.py` + `config/features/agent_side/summarization.py` + `config/features/agent_side/token_guard.py`
+- Sherry: `agent/middlewares/summarization/core.py`（`_fast_tail_clip`:880；调用点 1033/1076/1289/1334）+ `agent/wrapper/context_limit.py` + `config/features/agent_side/summarization.py`（`overflow_clip_*` 三键:55-57,110-112）+ `config/features/agent_side/token_guard.py` + `pub/func/message/overflow_clip.py` + `agent/middlewares/tool_result_eviction/core.py` + `config/features/agent_side/tool_result_eviction.py`
 - DeepAgents: `libs/deepagents/deepagents/middleware/summarization.py`（0.85 触发:34 / `TruncateArgsSettings`:168 / `compute_summarization_defaults`:262）+ `libs/deepagents/deepagents/middleware/_overflow_clip.py` + `libs/deepagents/deepagents/middleware/_message_eviction.py` + `libs/deepagents/deepagents/_messages_reducer.py` + `libs/deepagents/deepagents/middleware/filesystem.py`（人类消息驱逐:1755）
 
 ---
@@ -298,20 +306,20 @@
 | 压缩锁         | ✅ SQLite原子锁(TTL 300s)                                                        | ❌ 无(单进程)                |
 | 压缩前记忆冲洗 | ✅ 廉价模型提取事实→MEMORY.md(永不阻塞)                                          | ❌ 无                        |
 | 压缩有效性追踪 | ✅ 连续2次无效→标记                                                              | ❌ 无                        |
-| 对话历史卸载   | ❌ 仅截断                                                                        | ✅ 摘要前持久化到后端        |
-| 内联媒体卸载   | ❌ 无                                                                            | ✅ base64媒体→文件+路径引用  |
-| 摘要消息过滤   | ❌ 无                                                                            | ✅ 避免链式摘要冗余          |
-| 工具结果卸载   | ❌ 仅截断                                                                        | ✅ 大型工具结果→文件系统     |
-| 内容预览       | ❌ 无                                                                            | ✅ head+tail预览(各5行)      |
-| read_file切片  | ❌ 无                                                                            | ✅ read_file结果切片而非卸载 |
+| 对话历史卸载   | ✅ 逐消息持久化：每个模型边界 + 工具返回即时写入 MesMemory（`persisted_message_ids` 水位写一次，跨重启按 id/指纹去重；摘要对不落库） | ✅ 摘要前持久化到后端        |
+| 内联媒体卸载   | ❌ 无（多模态中间件把上传媒体落盘并从历史消息剥离旧 image_url 块，但不做 base64→文件+路径引用的摘要期卸载） | ✅ base64媒体→文件+路径引用  |
+| 摘要消息过滤   | ✅ `_filter_summary_messages` 在重摘要输入前过滤上一对 `lc_source="summarization"` 消息（Human+AI 两半都带标记）；旧摘要经 `<prior-summary>` 注入 | ✅ 避免链式摘要冗余          |
+| 工具结果卸载   | ✅ 超 20 000 字符→`SESSIONS_DIR/<sid>/evicted/`（全文落盘，state 只留预览；8 项 `excluded_tools`） | ✅ 大型工具结果→文件系统     |
+| 内容预览       | ✅ head/tail 各 5 行 + `read_file` 取回提示（`pub/func/message/eviction.py::build_preview`） | ✅ head+tail预览(各5行)      |
+| read_file切片  | ✅ 执行期切片（`pub/func/message/eviction.py::slice_read_file_result`，≤4000字符+提示、不写新文件）与压缩期可找回切片（`pub/func/message/target_truncation.py::_truncate_read_file_content`）互补 | ✅ read_file结果切片而非卸载 |
 | 摘要提示安全   | ✅ NEVER include API keys指令                                                    | ❌ 无                        |
 | FIFO限制       | ✅ Completed最多5条                                                              | ❌ 无                        |
 | 文件操作棘轮   | ✅ 压缩后保留read_files/modified_files                                           | ❌ 无                        |
-| **结论**       | **Sherry 在压缩安全和记忆冲洗方面领先；DeepAgents 在消息驱逐和内容预览方面领先** |
+| **结论**       | **Sherry 在压缩安全、记忆冲洗、逐消息持久化与摘要消息过滤方面领先；工具结果驱逐/预览/read_file 切片已与 DeepAgents 对齐（DeepAgents 另有内联媒体卸载与人类消息驱逐）** |
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/summarization/compaction_lock.py`（TTL 300s:29 / 获取超时 10s:31）+ `agent/middlewares/summarization/memory_flush.py` + `agent/middlewares/summarization/summarization_components.py`
+- Sherry: `agent/middlewares/summarization/compaction_lock.py`（TTL 300s:29 / 获取超时 10s:31）+ `agent/middlewares/summarization/memory_flush.py` + `agent/middlewares/summarization/summarization_components.py` + `agent/middlewares/message_persistence/core.py`（`after_model`:194 / `awrap_tool_call`:223）+ `context_engine/store/core.py`（`is_message_persisted`:455 / `filter_persisted_message_ids`:501 / `mark_message_ids_persisted`:519）+ `pub/func/message/eviction.py` + `pub/func/message/overflow_clip.py`
 - DeepAgents: `libs/deepagents/deepagents/middleware/summarization.py`（内联媒体卸载 / 摘要消息过滤:742）+ `libs/deepagents/deepagents/middleware/_message_eviction.py`（head+tail 预览:38 / 卸载:120）+ `libs/deepagents/deepagents/middleware/_overflow_clip.py`（read_file 切片:76）
 
 ---
@@ -374,7 +382,7 @@
 | 车道排空      | 30s                                                                                                  | ❌ 无                     |
 | 子代理yield   | 300s                                                                                                 | ❌ 无                     |
 | sessions_send | 30s                                                                                                  | ❌ 无                     |
-| 悬挂投递TTL   | cron=2h/subagent=6h/interactive=24h（⚠️ 本轮未定位到对应常量，可能已重构/移除）                      | ❌ 无                     |
+| 悬挂投递TTL   | cron=2h/subagent=6h/interactive=24h（`agent/tools/subagent/registry/sweeper.py:239` 的 `_REQUESTER_TYPE_EXPIRY_MS`） | ❌ 无                     |
 | 输入队列      | 5s忙超时/24h过期                                                                                     | ❌ 无                     |
 | WS流          | 4次续接/2次纯推理                                                                                    | ❌ 不适用                 |
 | HTTP上传      | 图片25MB/音频100MB/视频500MB                                                                         | ❌ 不适用                 |
@@ -433,6 +441,10 @@
 | 压缩有效性追踪                    | ⭐⭐⭐⭐   | 中         |
 | 压缩前记忆冲洗(never-blocking)    | ⭐⭐⭐     | 中         |
 | SQLite原子压缩锁(TTL 300s)        | ⭐⭐⭐     | 低         |
+| 逐消息持久化+SQLite水位(工具返回即写、摘要对不落库) | ⭐⭐⭐⭐ | 中       |
+| 工具结果驱逐(P0-2)+read_file切片(P2-4)三态存储 | ⭐⭐⭐⭐ | 中     |
+| 非LLM溢出尾部裁剪(够用不调LLM)    | ⭐⭐⭐⭐   | 中         |
+| 摘要消息过滤(链式摘要去重)        | ⭐⭐⭐     | 低         |
 | HITL 14层门控+47+危险模式         | ⭐⭐⭐⭐⭐ | 高         |
 | 任务意图检测与引导注入            | ⭐⭐⭐     | 中         |
 | MaxTokensBoost指数级截断恢复      | ⭐⭐⭐     | 中         |
@@ -448,13 +460,14 @@
 
 > 复核注（2026-09-17）：原表「O_NOFOLLOW 符号链接防护」「符号链接循环检测」两项经复核确认 Sherry 已补齐（`agent/tools/pub_base/path_utils.py:55,71`），移出本表。
 >
-> 第二批（2026-09-17）：P0-4 落地后，「Glob时间预算+匹配上限」「伪文件系统修剪」两项移出本表（`agent/tools/file_tools/search_scan.py`，提交 `6073f7c`/`c77846e`/`4db42e0`）；「base64参数编码防Shell注入」经评估后**否决**，不再列为待借鉴项（见头部第 6 条）；「花括号展开限制」对 Sherry 不适用（搜索走 `fnmatch`，无花括号展开）。下列为复核后仍为 DeepAgents 独有的能力。
+> 第二批（2026-09-17）：P0-4 落地后，「Glob时间预算+匹配上限」「伪文件系统修剪」两项移出本表（`agent/tools/file_tools/search_scan.py`，提交 `6073f7c`/`c77846e`/`4db42e0`）；「base64参数编码防Shell注入」经评估后**否决**，不再列为待借鉴项（见头部第 6 条）；「花括号展开限制」对 Sherry 不适用（搜索走 `fnmatch`，无花括号展开）。
+>
+> 第三批（2026-09-18，基准 `main` @ `2b9569b`）：P0-2 工具结果驱逐（提交 `4a260c7`/`565fc13`/`466c7d3`/`06f8d77`）与 P2-4 `read_file` 执行期切片落地后，「工具结果→文件系统驱逐+head/tail预览」「read_file结果切片(非卸载)」两项移出本表；「参数截断」改写为「摘要期模型感知参数截断」（Sherry 的 `truncate_tool_args` 仅在预算截断路径生效，摘要期无模型感知设置）。下列为复核后仍为 DeepAgents 独有的能力。
 
 | 能力                                   | 价值评估   | 实现复杂度 |
 | -------------------------------------- | ---------- | ---------- |
-| 工具结果→文件系统驱逐+head/tail预览    | ⭐⭐⭐⭐⭐ | 中         |
 | 内联base64媒体卸载                     | ⭐⭐⭐⭐   | 中         |
-| 参数截断(TruncateArgsSettings)         | ⭐⭐⭐⭐   | 中         |
+| 摘要期模型感知参数截断(TruncateArgsSettings) | ⭐⭐⭐⭐ | 中       |
 | 模型感知摘要默认值                     | ⭐⭐⭐⭐   | 低         |
 | DeltaChannel增量检查点(O(N²)→O(N))     | ⭐⭐⭐⭐⭐ | 高         |
 | 消息增量缩减器(去重+墓碑+重置)         | ⭐⭐⭐⭐   | 高         |
@@ -466,7 +479,6 @@
 | 持久化工具审批策略(字节修订CAS)        | ⭐⭐⭐     | 中         |
 | ripgrep双重超时看门狗(SIGKILL双重有界等待) | ⭐⭐⭐⭐ | 中        |
 | 威胁模型文档(THREAT_MODEL.md)          | ⭐⭐⭐     | 低         |
-| read_file结果切片(非卸载)              | ⭐⭐⭐     | 低         |
 | 输出截断原因标记                       | ⭐⭐⭐     | 低         |
 
 ---
@@ -479,9 +491,9 @@
 | **防护层级**   | 5层+路径闸门：车道→包装器→中间件(含PathGuard)→工具闸门→后台守护 | 3层：后端→中间件→图配置                          |
 | **失败模式**   | Fail-open：所有安全中间件异常被吞掉(log+return)    | 渐进降级：超时→部分结果(truncated=True)→最终错误 |
 | **配置驱动**   | TypedDict + config/features/ 38个配置模块          | 构造函数参数 + 硬编码常量                        |
-| **状态管理**   | session_id键 + state_register_mem + SQLite持久化   | 图状态 + DeltaChannel + 后端持久化               |
+| **状态管理**   | session_id键 + state_register_mem + SQLite持久化 + persisted_message_ids水位 | 图状态 + DeltaChannel + 后端持久化               |
 | **并发模型**   | 4车道asyncio.Semaphore + FIFO排队                  | 无显式并发控制                                   |
-| **记忆策略**   | 压缩前冲洗→截断→压缩                               | 卸载到后端→摘要→截断                             |
+| **记忆策略**   | 逐边界/工具返回持久化→溢出裁剪→记忆冲洗→截断→压缩   | 卸载到后端→摘要→截断                             |
 | **子代理模型** | 深度限制+CWD隔离+工具继承策略+后台回收             | 类型验证+递归拒绝+权限继承+状态键过滤            |
 | **错误处理**   | 8步分类→回退链→断路器                              | 结构化JSON错误→裁剪重试→终止                     |
 | **安全文档**   | docs/sandbox/README*(威胁模型章节+局限清单) + docs/token-guard/ | THREAT_MODEL.md完整威胁模型(2026-03-28生成，可能滞后于代码) |
@@ -492,6 +504,6 @@
 
 - **Sherry Agent** 在**运行时行为安全**与**文件工具路径纵深防御**方面更强：工具调用病理检测、输出重复防护、LLM错误处理、并发控制、崩溃回路、心跳检测、TODO停滞追踪、`PathGuard` 参数级筛查、外部路径六检查审批、OS 沙箱读遮蔽等，形成了深度防御体系。适合**长时运行、多子代理、复杂工具编排**的场景。
 
-- **DeepAgents** 在**记忆/上下文工程与框架安全**方面更强：`virtual_mode` 虚拟命名空间路径模型、消息驱逐、增量检查点、多模态内容清理、中间件脚手架保护、威胁模型文档等（base64 参数化 Shell 经评估后否决；伪文件系统修剪与文件搜索上限已补齐，见 §2.8 / §3.2）。适合**文件操作密集、多模型供应商**的场景。
+- **DeepAgents** 在**记忆/上下文工程与框架安全**方面更强：`virtual_mode` 虚拟命名空间路径模型、增量检查点、模型感知摘要默认值、多模态内容清理、中间件脚手架保护、威胁模型文档等（base64 参数化 Shell 经评估后否决；伪文件系统修剪与文件搜索上限已补齐，见 §2.8 / §3.2；消息驱逐/溢出裁剪/read_file 切片已对齐，见 §2.4 / §2.10 / §3.1）。适合**文件操作密集、多模型供应商**的场景。
 
-两者互补性极强：Sherry 可从 DeepAgents 借鉴消息驱逐、增量检查点、参数截断、多模态内容清理和威胁模型文档；DeepAgents 可从 Sherry 借鉴工具病理检测、输出重复防护、LLM错误处理、并发控制、OS级沙箱和外部路径人审网关。
+两者互补性极强：Sherry 可从 DeepAgents 借鉴增量检查点优化、摘要期模型感知参数截断、模型感知摘要默认值、多模态内容清理和威胁模型文档（消息驱逐/溢出裁剪/read_file 切片已于第三批落地，见 §2.4 / §2.10 / §3.1）；DeepAgents 可从 Sherry 借鉴工具病理检测、输出重复防护、LLM错误处理、并发控制、OS级沙箱和外部路径人审网关。
