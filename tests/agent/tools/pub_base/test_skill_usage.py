@@ -15,6 +15,7 @@ from agent.tools.pub_base.skill_usage import (
     set_pinned,
     forget,
     archive_skill,
+    restore_skill,
     STATE_ACTIVE,
     STATE_STALE,
     STATE_ARCHIVED,
@@ -223,6 +224,35 @@ class TestArchiveDelegation:
             result = archive_skill("test_skill")
         mock_archive.assert_called_once_with("test_skill")
         assert result == (True, "Archived x")
+
+
+class TestRestoreDelegation:
+    def test_restore_skill_forwards_and_syncs_the_agent_record(self):
+        """The curator owns restore; the agent side only mirrors success active."""
+        with (
+            patch(
+                "context_engine.curator.usage.restore_skill",
+                return_value=(True, "restored to /x"),
+            ) as mock_restore,
+            patch("agent.tools.pub_base.skill_usage.set_state") as mock_set_state,
+        ):
+            result = restore_skill("test_skill")
+        mock_restore.assert_called_once_with("test_skill")
+        mock_set_state.assert_called_once_with("test_skill", STATE_ACTIVE)
+        assert result == (True, "restored to /x")
+
+    def test_failed_restore_leaves_the_agent_record_untouched(self):
+        with (
+            patch(
+                "context_engine.curator.usage.restore_skill",
+                return_value=(False, "skill 'x' not found in archive"),
+            ) as mock_restore,
+            patch("agent.tools.pub_base.skill_usage.set_state") as mock_set_state,
+        ):
+            result = restore_skill("test_skill")
+        mock_restore.assert_called_once_with("test_skill")
+        mock_set_state.assert_not_called()
+        assert result == (False, "skill 'x' not found in archive")
 
 
 class TestForget:
