@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta, UTC
 
 
-from context_engine.curator.constants import STATE_ACTIVE, STATE_STALE
+from context_engine.curator.constants import STATE_ACTIVE, STATE_STALE, STATE_ARCHIVED
 from context_engine.curator.helpers import _parse_iso
 from context_engine.curator.config import (
     get_stale_after_days,
@@ -14,7 +14,7 @@ from context_engine.curator.usage import (
     agent_created_report,
     seed_record_if_missing,
     set_state,
-    _remove_skill,
+    archive_skill,
 )
 
 
@@ -77,8 +77,8 @@ def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
                 counts["reactivated"] += 1
             continue
 
-        if anchor <= archive_cutoff and current != "archived":
-            ok, _msg = _remove_skill(name)
+        if anchor <= archive_cutoff and current != STATE_ARCHIVED:
+            ok, _msg = archive_skill(name)
             if ok:
                 counts["archived"] += 1
         elif anchor <= stale_cutoff and current == STATE_ACTIVE:

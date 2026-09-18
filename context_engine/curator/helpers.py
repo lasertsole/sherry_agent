@@ -2,6 +2,7 @@ import json
 from typing import Any
 from pathlib import Path
 from datetime import datetime
+from loguru import logger
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
@@ -83,3 +84,89 @@ def _skill_dir(name: str) -> Path | None:
         if skill_md.parent.name == name:
             return skill_md.parent
     return None
+
+
+def _read_skill_name(skill_md: Path, fallback: str) -> str:
+    """Parse the ``name:`` field from a SKILL.md YAML frontmatter."""
+    try:
+        text = skill_md.read_text(encoding="utf-8", errors="replace")[:4000]
+    except OSError:
+        return fallback
+    in_frontmatter = False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped == "---":
+            if in_frontmatter:
+                break
+            in_frontmatter = True
+            continue
+        if in_frontmatter and stripped.startswith("name:"):
+            value = stripped.split(":", 1)[1].strip().strip("\"'")
+            if value:
+                return value
+    return fallback
+
+
+def _bundled_or_hub_names() -> set[str]:
+    """Names maintained upstream (bundled seed manifest / skills-hub lock).
+
+    Mirrors ``agent.tools.pub_base.skill_usage`` so the curator can refuse
+    non-agent-created skills without importing the agent layer.
+    """
+    from context_engine.curator.constants import AUTO_SKILLS_DIR
+
+    names: set[str] = set()
+
+    manifest = AUTO_SKILLS_DIR / ".bundled_manifest"
+    if manifest.exists():
+        try:
+            for line in manifest.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                name = line.split(":", 1)[0].strip()
+                if name:
+                    names.add(name)
+        except OSError as e:
+            logger.debug("Curator failed to read bundled manifest: {}", e)
+
+    lock = AUTO_SKILLS_DIR / ".hub" / "lock.json"
+    if lock.exists():
+        data: Any = None
+        try:
+            data = json.loads(lock.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as e:
+            logger.debug("Curator failed to read hub lock file: {}", e)
+        installed = data.get("installed") if isinstance(data, dict) else None
+        if isinstance(installed, dict):
+            names.update(str(k) for k in installed)
+            for entry in installed.values():
+                if not isinstance(entry, dict):
+                    continue
+                install_path = entry.get("install_path")
+                if not isinstance(install_path, str) or not install_path.strip():
+                    continue
+                skill_dir = Path(install_path)
+                if not skill_dir.is_absolute():
+                    skill_dir = AUTO_SKILLS_DIR / skill_dir
+                skill_md = skill_dir / "SKILL.md"
+                if skill_md.exists():
+                    names.add(_read_skill_name(skill_md, skill_md.parent.name))
+
+    return names
+
+
+def is_agent_created(name: str, skill_dir: Path | None = None) -> bool:
+    """Whether *name* (or the skill at *skill_dir*) is curator-eligible.
+
+    Only agent-authored skills are eligible; bundled seed skills and
+    hub-installed skills are maintained by their upstream sources.
+    """
+    off_limits = _bundled_or_hub_names()
+    if name in off_limits:
+        return False
+    if skill_dir is not None:
+        frontmatter_name = _read_skill_name(skill_dir / "SKILL.md", skill_dir.name)
+        if frontmatter_name in off_limits:
+            return False
+    return True

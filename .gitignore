@@ -21,6 +21,7 @@ src/
 /temp/
 cron_jobs.json
 skills/.curator_state
+skills/.archive
 
 # Logs
 logs/output

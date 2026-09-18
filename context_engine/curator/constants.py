@@ -4,9 +4,14 @@ CURATOR_STATE_FILE = SKILLS_DIR / ".curator_state"
 CURATOR_LOGS_DIR = ROOT_DIR / "logs" / "curator"
 USAGE_DIR = AUTO_SKILLS_DIR / ".usage"
 PINNED_FILE = ".pinned"
+# Recoverable archive root — the 90-day transition moves skills here instead of
+# deleting them. Shared with the agent-side archive/restore path
+# (``agent.tools.pub_base.skill_usage._archive_dir``), which reads the same path.
+ARCHIVE_DIR = SKILLS_DIR / ".archive"
 
 STATE_ACTIVE = "active"
 STATE_STALE = "stale"
+STATE_ARCHIVED = "archived"
 
 DEFAULT_INTERVAL_HOURS = 24 * 5
 DEFAULT_MIN_IDLE_HOURS = 2

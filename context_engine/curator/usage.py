@@ -9,8 +9,14 @@ from context_engine.curator.constants import (
     USAGE_DIR,
     PINNED_FILE,
     STATE_ACTIVE,
+    STATE_ARCHIVED,
 )
-from context_engine.curator.helpers import _ensure_dir, _read_skill_description, _skill_dir
+from context_engine.curator.helpers import (
+    _ensure_dir,
+    _read_skill_description,
+    _skill_dir,
+    is_agent_created,
+)
 
 
 def _skill_record_path(name: str) -> Path:
@@ -131,10 +137,6 @@ def unpin_skill(name: str) -> tuple[bool, str]:
     return True, f"Unpinned {name}"
 
 
-def _remove_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
-    return delete_skill(name, absorbed_into=absorbed_into)
-
-
 def delete_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     err = _pinned_guard(name)
     if err:
@@ -231,9 +233,66 @@ def _cleanup_orphan_records(live_names: set[str]) -> None:
     for f in USAGE_DIR.iterdir():
         if f.suffix != ".json":
             continue
-        if f.stem not in live_names:
-            try:
-                f.unlink()
-                logger.debug("Curator removed orphan usage record: {}", f.name)
-            except Exception as e:
-                logger.debug("Curator failed to remove orphan usage record {}: {}", f.name, e)
+        if f.stem in live_names:
+            continue
+        # Archived skills have no live directory by design — their record is
+        # kept so restore can replay the skill's history. Not an orphan.
+        if load_record(f.stem).get("state") == STATE_ARCHIVED:
+            continue
+        try:
+            f.unlink()
+            logger.debug("Curator removed orphan usage record: {}", f.name)
+        except Exception as e:
+            logger.debug("Curator failed to remove orphan usage record {}: {}", f.name, e)
+
+
+def _archive_dir() -> Path:
+    from context_engine.curator.constants import ARCHIVE_DIR
+
+    return ARCHIVE_DIR
+
+
+def archive_skill(name: str) -> tuple[bool, str]:
+    """Move an agent-created skill directory into ``skills/.archive/``.
+
+    The recoverable counterpart of ``delete_skill``: the directory is moved
+    (never removed), and the usage record is kept with ``state="archived"`` so
+    restore replays the same history. Pinned and bundled/hub skills are
+    refused. Returns ``(ok, message)``.
+    """
+    err = _pinned_guard(name)
+    if err:
+        return False, err
+    sd = _skill_dir(name)
+    if sd is None:
+        return False, f"Skill directory not found: {name}"
+    if not is_agent_created(name, sd):
+        return False, f"Skill '{name}' is bundled or hub-installed; never archive"
+
+    archive_root = _archive_dir()
+    try:
+        archive_root.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        return False, f"Failed to create archive dir: {e}"
+
+    # Flatten category nesting into ".archive/<skill>/" so restores are simple.
+    # A collision gets a timestamp suffix, which the agent-side restore finds
+    # via its "<skill>-" prefix search.
+    dest = archive_root / sd.name
+    if dest.exists():
+        dest = archive_root / f"{sd.name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
+
+    try:
+        sd.rename(dest)
+    except OSError:
+        # Cross-device — fall back to shutil.move
+        try:
+            shutil.move(str(sd), str(dest))
+        except Exception as e:
+            return False, f"Failed to archive skill: {e}"
+
+    # Rename first, state second: a failed move never leaves a record claiming
+    # "archived".
+    set_state(name, STATE_ARCHIVED)
+    logger.info(f"Curator archived skill: {name} -> {dest}")
+    return True, f"Archived {name} to {dest}"

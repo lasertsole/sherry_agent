@@ -92,7 +92,9 @@ def _usage_file_lock():
 
 
 def _archive_dir() -> Path:
-    return AUTO_SKILLS_DIR / ".archive"
+    from context_engine.curator.constants import ARCHIVE_DIR
+
+    return ARCHIVE_DIR
 
 
 def _now_iso() -> str:
@@ -247,7 +249,7 @@ def list_agent_created_skill_names() -> list[str]:
 
 
 def list_archived_skill_names() -> list[str]:
-    """Enumerate skills in ``~/.hermes/skills/.archive/``.
+    """Enumerate skills in ``skills/.archive/``.
 
     Archive layout is flat (``.archive/<skill>/``) as set by ``archive_skill``,
     so the directory name is the skill name. Used by ``hermes curator
@@ -485,48 +487,21 @@ def forget(skill_name: str) -> None:
 
 
 def archive_skill(skill_name: str) -> tuple[bool, str]:
-    """Move an agent-created skill directory to ~/.hermes/skills/.archive/.
+    """Move an agent-created skill directory into the recoverable archive.
 
-    Returns (ok, message). Never archives bundled or hub skills — callers are
-    responsible for checking provenance, but we double-check here as a safety net.
+    Thin forwarder onto ``context_engine.curator.usage.archive_skill`` — the
+    curator owns ``skills/auto/`` and therefore owns the archive primitive; a
+    second implementation here would drift. Pinned and bundled/hub skills are
+    refused by the curator implementation. Returns ``(ok, message)``.
     """
-    if not is_agent_created(skill_name):
-        return False, f"skill '{skill_name}' is bundled or hub-installed; never archive"
+    from context_engine.curator.usage import archive_skill as _curator_archive_skill
 
-    skill_dir = _find_skill_dir(skill_name)
-    if skill_dir is None:
-        return False, f"skill '{skill_name}' not found"
-
-    archive_root = _archive_dir()
-    try:
-        archive_root.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        return False, f"failed to create archive dir: {e}"
-
-    # Flatten any category nesting into a single ".archive/<skill>/" so restores
-    # are simple. If a collision exists, append a timestamp.
-    dest = archive_root / skill_dir.name
-    if dest.exists():
-        dest = archive_root / f"{skill_dir.name}-{datetime.now(UTC).strftime('%Y%m%d%H%M%S')}"
-
-    try:
-        skill_dir.rename(dest)
-    except OSError:
-        # Cross-device — fall back to shutil.move
-        import shutil
-
-        try:
-            shutil.move(str(skill_dir), str(dest))
-        except Exception as e2:
-            return False, f"failed to archive: {e2}"
-
-    set_state(skill_name, STATE_ARCHIVED)
-    return True, f"archived to {dest}"
+    return _curator_archive_skill(skill_name)
 
 
 def restore_skill(skill_name: str) -> tuple[bool, str]:
-    """Move an archived skill back to ~/.hermes/skills/. Restores to the flat
-    top-level layout; original category nesting is NOT reconstructed.
+    """Move an archived skill back to ``skills/auto/`` (flat layout; original
+    category nesting is NOT reconstructed).
 
     Refuses to restore under a name that now collides with a bundled or
     hub-installed skill — that would shadow the upstream version.
@@ -575,27 +550,6 @@ def restore_skill(skill_name: str) -> tuple[bool, str]:
 
     set_state(skill_name, STATE_ACTIVE)
     return True, f"restored to {dest}"
-
-
-def _find_skill_dir(skill_name: str) -> Path | None:
-    """Locate the directory for a skill by its frontmatter `name:` field.
-
-    Handles both flat (~/.hermes/skills/<skill>/SKILL.md) and category-nested
-    (~/.hermes/skills/<category>/<skill>/SKILL.md) layouts.
-    """
-    base = AUTO_SKILLS_DIR
-    if not base.exists():
-        return None
-    for skill_md in base.rglob("SKILL.md"):
-        try:
-            rel = skill_md.relative_to(base)
-        except ValueError:
-            continue
-        if rel.parts and rel.parts[0].startswith("."):
-            continue
-        if _read_skill_name(skill_md, fallback=skill_md.parent.name) == skill_name:
-            return skill_md.parent
-    return None
 
 
 # ---------------------------------------------------------------------------
