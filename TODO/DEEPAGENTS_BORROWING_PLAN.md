@@ -8,6 +8,25 @@
 > **P0-2 处置记录（2026-09-17）**：经对比 opencode-dev、oh-my-openagent、openclaw、hermes-agent 四个项目，全部都在工具执行时将大结果驱逐到文件。方案采用 DeepAgents 的 `wrap_tool_call` 拦截策略——大内容从不进入 state，在工具返回后立即写文件并替换为 head+tail 预览。
 >
 > **P2-4 处置记录（2026-09-17）**：依赖 P0-2。在 `wrap_tool_call` 中对 `name == "read_file"` 的结果走切片路径（不写文件，文件已在磁盘），与 `target_truncation.py` 的压缩时切片互补。
+>
+> **P0-2 落地记录（2026-09-18）**：**已落地** —— `agent/middlewares/tool_result_eviction/`（`wrap_tool_call` / `awrap_tool_call` 拦截）+ `pub/func/message/eviction.py`（`evict_tool_result` 等纯函数）+ `config/features/agent_side/tool_result_eviction.py`（TypedDict + 实例）。参数：阈值 `evict_threshold_chars=20_000`、预览 head+tail 各 5 行、`eviction_subdir="evicted"`（`SESSIONS_DIR/{session_id}/evicted/`）、`excluded_tools` 8 项（`read_file` / `write_file` / `patch_file` / `search_files` / `list_files` / `memory` / `skill_view` / `skill_list`）。提交 `4a260c7`（实现）/ `565fc13`（测试）/ `466c7d3`（中间件文档）/ `06f8d77`（导出清单）。
+>
+> **P2-4 落地记录（2026-09-18）**：**已落地** —— `read_file` 在 `wrap_tool_call` 中走**切片**路径（`model_copy` 换内容，不写新文件——文件已在磁盘），与压缩期 `target_truncation.py` 的可找回切片**互补**；同批提交 `4a260c7` / `565fc13` / `466c7d3` / `06f8d77`。
+>
+> **P1-2 落地记录（2026-09-18）**：**已落地** —— `pub/func/message/overflow_clip.py`（`clip_overflow_tail`）+ `agent/middlewares/summarization/core.py` 在 **route 与 forced recovery 前置**快速尾部裁剪；`SUMMARIZATION` 新增 `overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep` 三键（46→49）。**修正了原方案的孤儿 ToolMessage 做法**：不再删除尾部批次、不再注入 `_overflow_clip` 消息，改为经 `ToolMessage.model_copy` 保住消息身份（`id` / `tool_call_id` / `name` / `additional_kwargs`）的**内容 stub**，从而保留 P0-2 驱逐指针与 P2-4 切片提示，维持配对净化与持久水位。够用即短路（不调 LLM、不进任何 route，仅接受单独达标者）；不够则整份丢弃，原列表照走既有压缩路径。提交 `aa327fa`（中间件集成）/ `dcf8ece`（纯函数）/ `f83fe20`（配置）。
+>
+> **未执行项清单（随文档退休，2026-09-18）**：以下条目**未执行**；本文档已从 `TODO/` 退役（`git rm`），清单同时写入删除提交的提交信息，方案细节可由 git 历史恢复：
+>
+> - P1-1 参数截断（`TruncateArgsSettings`）
+> - P1-3 模型感知摘要默认值（`compute_summarization_defaults`）
+> - P1-4 增量检查点优化（`DeltaChannel`）
+> - P1-5 消息增量缩减器（去重 + 墓碑）
+> - P1-6 中间件脚手架保护（`_REQUIRED_MIDDLEWARE`）
+> - P1-7 多模态内容清理（`_scrub_unsupported_multimodal_content`）
+> - P1-8 威胁模型文档（`docs/THREAT_MODEL.md`）
+> - P2-1 ripgrep 双重超时看门狗（`_reap_ripgrep`）
+> - P2-2 持久化工具审批策略（字节修订 CAS）
+> - P2-3 伪文件系统修剪 —— **已由 P0-4 覆盖**（配置键 `file_tools_search_prune_dirs` + `search_scan.py::bounded_walk`），无需另做
 
 ---
 
