@@ -270,6 +270,8 @@ for r in results:
 
 ▶️ 전체 문서: [curator/README.md](curator/README.md) · [中文](curator/README.zh.md) · [한국어](curator/README.ko.md) · [日本語](curator/README.ja.md)
 
+▶️ Curator는 경험 체계 문서에도 기록되어 있습니다: [Experience README](../docs/experience/README.ko.md)
+
 ---
 
 ## API 레퍼런스

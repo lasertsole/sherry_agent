@@ -82,6 +82,27 @@ flush 只提取跨会话事实。临时任务进度有意留给摘要。任何�
 
 fork 的结果消息只记录日志。任何内容都不会进入主图或其 checkpointer，派生会话的中间件状态在 `finally` 中清理。
 
+## Curator（技能策展）
+
+Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md、plan 知识目录与 `todos.db` 都不在其范围内。
+
+**是什么。** 它是空闲触发的编排器，而非定时 cron。服务入口通过 `context_engine.curator.init()` 启动守护线程（`curator-timer`）（`server/__main__.py:140`；HTTP-only 模式下跳过，`server/__main__.py:66-73`）。线程每 3600 秒唤醒一次并调用 `maybe_run_curator(idle_for_seconds=...)`（`context_engine/curator/__init__.py:122-140`）。导入该包无副作用——只有 `init()` 会启动线程（`context_engine/curator/__init__.py:151-165`）。
+
+**何时运行。** 只有两道门都通过才会执行：
+
+- `should_run_now()`——已启用、未暂停，且 `last_run_at` 已超过生效间隔（`context_engine/curator/transitions.py:21-39`）。生效间隔取自 `curator.interval_hours`，默认 168 小时 / 7 天（`config/sherry_settings.py:43`），客户端可通过 `.curator_state` 中的 `auto_interval_days` 覆盖为 1–5 天（`context_engine/curator/config.py:97-107`）；
+- Agent 空闲时长达到 `curator.min_idle_hours`，默认 2 小时（`context_engine/curator/orchestrator.py:320-336`）。每次用户回合都会重置该空闲计时器（`server/service/messages.py:190`）。
+
+UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程中调用 `run_curator_review()`（`server/trigger/http/curator.py:107-125`）。
+
+**生命周期规则。** `apply_automatic_transitions()`（`context_engine/curator/transitions.py:41-100`）遍历每个 `skills/auto/**/SKILL.md`（`context_engine/curator/usage.py:158-179`），对每个技能：跳过 pinned 技能；无活动达到 `stale_after_days`（默认 30 天）标记为 `stale`；超过 `archive_after_days`（默认 90 天）从磁盘移除（不可逆——没有中间 archived 状态）；重新出现活动、或处于 stale 窗口内但从未使用的技能会被重新激活。默认值位于 `config/sherry_settings.py:42-48`。
+
+**LLM 合并。** 当 `curator.consolidate` 开启（默认开）时，`run_curator_review()` 渲染非 pinned 技能候选列表（`context_engine/curator/orchestrator.py:65-81`），让主 LLM 以 temperature 0.3 把重叠的窄技能合并为类级 umbrella 技能（`CURATOR_REVIEW_PROMPT`，`context_engine/curator/orchestrator.py:18-45`）。新 umbrella 及其支持文件生成后写入 `skills/auto/`（`_generate_umbrella_skill`，`context_engine/curator/orchestrator.py:412`；`_apply_consolidation`，`context_engine/curator/orchestrator.py:755`）。合并是该流程唯一的 LLM 步骤；失败会被捕获，运行继续。
+
+**与四条抽取路径的关系。** 路径 2（压缩时 plan extraction）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 plan extraction 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md、plan 知识目录、`todos.db`），因此与 Curator 没有交集。
+
+**状态与边界。** 运行状态存于 `skills/.curator_state`（`context_engine/curator/constants.py:3`，由 `context_engine/curator/state.py` 读写）；每次运行在 `logs/curator/{timestamp}/` 下写出 `run.json` + `REPORT.md`（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。范围仅限 `skills/auto/`——绝不触碰内置技能，pinned 技能跳过所有破坏性流转，整个流程在后台线程运行，不占对话回合路径。完整细节：[curator/README.md](../../context_engine/curator/README.zh.md)。
+
 ## 隔离与安全
 
 | 防护 | 保护内容 |
@@ -162,3 +183,4 @@ uv run python evals/evals.py nudge_extraction
 - [摘要压缩](../summarization/README.md)：压缩触发，以及门控 flush 与 todo fork 的冷却。
 - [长程任务](../long-running-tasks/README.md)：TaskFlow，以及被 plan extraction 读取的 todo 规划层。
 - [中间件 README](../../agent/middlewares/README.md)：`@dynamic_prompt` 系统提示词注入与 Summarization 参考。
+- [Curator README](../../context_engine/curator/README.zh.md)：上文所述的后台技能维护编排器。

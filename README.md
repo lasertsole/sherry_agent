@@ -34,7 +34,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Built-in Skills** ([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub` (GitHub skill installer), `skill_creator` (generates new skills), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `code_wiki`, `llm_wiki`
 - **Skill Management Tools**: the agent can list, view, and manage skills at runtime; third-party uploads (`skills/plugins/`) stay inactive until explicitly enabled
 - **SkillSpector Security Scanning** ([server/service/skill_scanner.py](server/service/skill_scanner.py)): third-party skills are scanned by NVIDIA SkillSpector (static YARA/rule analysis + optional LLM semantic analysis via the auxiliary LLM) before activation; flagged skills are blocked from installation
-- **Skill Curator**: the context-engine curator thread maintains auto-learned skills under `skills/auto/`
+- **Skill Curator**: the context-engine curator thread maintains auto-learned skills under `skills/auto/` — see the [Experience README](docs/experience/README.md)
 - **Tool Timeouts**: tool calls are bounded by `TOOL_CALL_TIMEOUT_MINUTES` (default 5) to prevent deadlocks
 - ▶️ _See the [Middlewares README](agent/middlewares/README.md) for the middleware pipeline (guardrails, iteration budget, HITL, normalization, summarization, multimodal processing)_
 

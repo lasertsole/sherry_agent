@@ -82,6 +82,27 @@ flush는 교차 세션 facts만 추출합니다. 임시 작업 진행은 의도�
 
 fork의 결과 메시지는 로그만 남깁니다. 메인 그래프나 그 checkpointer에 아무것도 도달하지 않으며, 파생 세션의 미들웨어 상태는 `finally`에서 정리됩니다.
 
+## Curator(스킬 큐레이션)
+
+Curator(`context_engine/curator/`)는 `skills/auto/` 스킬 라이브러리의 라이프사이클을 담당하는 백그라운드 패스이며, 바로 위의 추출 경로 2가 기록하는 대상입니다. 스킬만 읽고 씁니다. MEMORY.md / USER.md, plan 지식 디렉터리, `todos.db`는 범위 밖입니다.
+
+**무엇인가.** 정기 cron이 아니라 유휴 트리거 오케스트레이터입니다. 서비스 엔트리포인트가 `context_engine.curator.init()`으로 데몬 스레드(`curator-timer`)를 시작합니다(`server/__main__.py:140`; HTTP-only 모드에서는 건너뜀, `server/__main__.py:66-73`). 스레드는 3600초마다 깨어나 `maybe_run_curator(idle_for_seconds=...)`를 호출합니다(`context_engine/curator/__init__.py:122-140`). 패키지 임포트는 부수 효과가 없으며 스레드를 시작하는 것은 `init()`뿐입니다(`context_engine/curator/__init__.py:151-165`).
+
+**언제 실행되는가.** 두 게이트를 모두 통과할 때만 리뷰가 실행됩니다:
+
+- `should_run_now()`——활성화됨, 일시정지 아님, `last_run_at`이 유효 간격을 초과(`context_engine/curator/transitions.py:21-39`). 유효 간격은 `curator.interval_hours`(기본 168시간 / 7일, `config/sherry_settings.py:43`)이며, 클라이언트에서 `.curator_state`의 `auto_interval_days`로 1~5일로 덮어쓸 수 있습니다(`context_engine/curator/config.py:97-107`);
+- Agent 유휴 시간이 `curator.min_idle_hours`(기본 2) 이상(`context_engine/curator/orchestrator.py:320-336`). 모든 사용자 턴마다 이 유휴 타이머가 리셋됩니다(`server/service/messages.py:190`).
+
+UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스레드에서 `run_curator_review()`를 호출합니다(`server/trigger/http/curator.py:107-125`).
+
+**라이프사이클 규칙.** `apply_automatic_transitions()`(`context_engine/curator/transitions.py:41-100`)는 모든 `skills/auto/**/SKILL.md`를 순회하며(`context_engine/curator/usage.py:158-179`) 각 스킬에 대해: pinned는 건너뜀; `stale_after_days`(기본 30일) 동안 활동이 없으면 `stale`로 표시; `archive_after_days`(기본 90일)를 넘기면 디스크에서 제거(되돌릴 수 없음——중간 archived 상태 없음); 다시 활동이 있거나 stale 창 안에서 한 번도 사용되지 않은 스킬은 재활성화합니다. 기본값은 `config/sherry_settings.py:42-48`.
+
+**LLM 통합.** `curator.consolidate`가 켜져 있으면(기본 켜짐), `run_curator_review()`가 비-pinned 스킬 후보 목록을 렌더링하고(`context_engine/curator/orchestrator.py:65-81`) 메인 LLM(temperature 0.3)에게 겹치는 좁은 스킬들을 클래스 레벨 umbrella 스킬로 병합하도록 요청합니다(`CURATOR_REVIEW_PROMPT`, `context_engine/curator/orchestrator.py:18-45`). 새 umbrella와 지원 파일은 `skills/auto/` 아래에 생성·영속화됩니다(`_generate_umbrella_skill`, `context_engine/curator/orchestrator.py:412`; `_apply_consolidation`, `context_engine/curator/orchestrator.py:755`). 통합은 이 패스의 유일한 LLM 단계이며, 실패는 잡히고 실행은 계속됩니다.
+
+**네 개 추출 경로와의 관계.** 경로 2(압축 시점 plan extraction)가 생산자입니다: `skill_manage`를 통해 `skills/auto/`를 생성·패치합니다. Curator는 바로 그 산출물의 하류 유지보수자로, plan extraction이 만든 스킬을 전이·통합·정리합니다. 나머지 세 경로는 `skills/auto/`를 전혀 건드리지 않으므로(각각 MEMORY.md / USER.md, plan 지식 디렉터리, `todos.db`에 씀) Curator와 교차하지 않습니다.
+
+**상태와 경계.** 실행 상태는 `skills/.curator_state`(`context_engine/curator/constants.py:3`, `context_engine/curator/state.py`가 읽고 씀); 각 실행은 `logs/curator/{timestamp}/` 아래에 `run.json` + `REPORT.md`를 씁니다(`context_engine/curator/constants.py:4`; `context_engine/curator/report.py:196-205`). 범위는 `skills/auto/`뿐——내장 스킬은 절대 건드리지 않고, pinned 스킬은 모든 파괴적 전이를 우회하며, 패스 전체가 백그라운드 스레드에서 실행되어 대화 턴 경로를 차지하지 않습니다. 전체 세부사항: [curator/README.md](../../context_engine/curator/README.ko.md).
+
 ## 격리와 안전
 
 | 가드 | 보호 대상 |
@@ -162,3 +183,4 @@ uv run python evals/evals.py nudge_extraction
 - [요약 압축](../summarization/README.md): 압축 트리거와 flush 및 todo fork를 게이트하는 쿨다운.
 - [장기 작업](../long-running-tasks/README.md): TaskFlow와 plan extraction이 읽는 todo 계획 계층.
 - [미들웨어 README](../../agent/middlewares/README.md): `@dynamic_prompt` 시스템 프롬프트 주입과 Summarization 참고.
+- [Curator README](../../context_engine/curator/README.ko.md): 위에서 설명한 백그라운드 스킬 유지보수 오케스트레이터.

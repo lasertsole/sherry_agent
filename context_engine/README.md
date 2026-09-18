@@ -273,6 +273,8 @@ Public API includes `run_curator_review(on_summary=None, dry_run=False, consolid
 
 ▶️ Full details: [curator/README.md](curator/README.md) · [中文](curator/README.zh.md) · [한국어](curator/README.ko.md) · [日本語](curator/README.ja.md)
 
+▶️ The Curator is also documented within the experience system: [Experience README](../docs/experience/README.md)
+
 ---
 
 ## API Reference

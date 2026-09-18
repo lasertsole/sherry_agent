@@ -270,6 +270,8 @@ for r in results:
 
 ▶️ 完整文档：[curator/README.md](curator/README.md) · [中文](curator/README.zh.md) · [한국어](curator/README.ko.md) · [日本語](curator/README.ja.md)
 
+▶️ Curator 同样记录在经验体系中：详见 [Experience README](../docs/experience/README.zh.md)
+
 ---
 
 ## API 参考

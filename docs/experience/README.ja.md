@@ -82,6 +82,27 @@ flush はクロスセッション facts だけを抽出する。一時的なタ�
 
 fork の結果メッセージはログのみ。メイングラフやその checkpointer には何も届かず、派生セッションのミドルウェア状態は `finally` でクリアされる。
 
+## Curator（スキルキュレーション）
+
+Curator（`context_engine/curator/`）は `skills/auto/` スキルライブラリのライフサイクルを担うバックグラウンドパスであり、まさに上記の抽出経路 2 の書込先である。読み書きするのはスキルだけ——MEMORY.md / USER.md、plan 知識ディレクトリ、`todos.db` は対象外である。
+
+**何か。** 定時 cron ではなくアイドルトリガーのオーケストレーター。サービスエントリポイントが `context_engine.curator.init()` でデーモンスレッド（`curator-timer`）を起動する（`server/__main__.py:140`；HTTP-only モードではスキップ、`server/__main__.py:66-73`）。スレッドは 3600 秒ごとに起床し `maybe_run_curator(idle_for_seconds=...)` を呼ぶ（`context_engine/curator/__init__.py:122-140`）。パッケージのインポートは副作用なし——スレッドを起動するのは `init()` だけ（`context_engine/curator/__init__.py:151-165`）。
+
+**いつ実行されるか。** 2 つのゲートを両方通過したときだけレビューが実行される：
+
+- `should_run_now()`——有効、一時停止でない、`last_run_at` が有効間隔を超過（`context_engine/curator/transitions.py:21-39`）。有効間隔は `curator.interval_hours`（既定 168 時間 / 7 日、`config/sherry_settings.py:43`）で、クライアントから `.curator_state` の `auto_interval_days` により 1〜5 日に上書きできる（`context_engine/curator/config.py:97-107`）；
+- Agent のアイドル時間が `curator.min_idle_hours`（既定 2）以上（`context_engine/curator/orchestrator.py:320-336`）。ユーザーターンごとにこのアイドルタイマーはリセットされる（`server/service/messages.py:190`）。
+
+UI からは `POST /curator/run` で強制実行でき、ワーカースレッドで `run_curator_review()` を呼ぶ（`server/trigger/http/curator.py:107-125`）。
+
+**ライフサイクル規則。** `apply_automatic_transitions()`（`context_engine/curator/transitions.py:41-100`）は `skills/auto/**/SKILL.md` を走査し（`context_engine/curator/usage.py:158-179`）、各スキルについて：pinned はスキップ；`stale_after_days`（既定 30 日）活動なしで `stale` に；`archive_after_days`（既定 90 日）超過でディスクから削除（不可逆——中間 archived 状態はない）；再び活動したスキル、および stale 窓内で未使用のスキルは再活性化する。既定値は `config/sherry_settings.py:42-48`。
+
+**LLM 統合。** `curator.consolidate` が有効（既定で有効）なとき、`run_curator_review()` は非 pinned スキルの候補リストを描画し（`context_engine/curator/orchestrator.py:65-81`）、メイン LLM（temperature 0.3）に重複する狭いスキルをクラスレベルの umbrella スキルへ統合させる（`CURATOR_REVIEW_PROMPT`、`context_engine/curator/orchestrator.py:18-45`）。新しい umbrella とそのサポートファイルは `skills/auto/` 配下へ生成・永続化される（`_generate_umbrella_skill`、`context_engine/curator/orchestrator.py:412`；`_apply_consolidation`、`context_engine/curator/orchestrator.py:755`）。統合はこのパス唯一の LLM ステップで、失敗は捕捉され実行は継続する。
+
+**4 本の抽出経路との関係。** 経路 2（圧縮時 plan extraction）が生産者である：`skill_manage` を通じて `skills/auto/` を作成・修正する。Curator はその同じ産出の下流メンテナであり、plan extraction が作ったスキルを遷移・統合・剪定する。残り 3 経路は `skills/auto/` に一切触れない（それぞれ MEMORY.md / USER.md、plan 知識ディレクトリ、`todos.db` に書く）ため、Curator と交差しない。
+
+**状態と境界。** 実行状態は `skills/.curator_state`（`context_engine/curator/constants.py:3`、`context_engine/curator/state.py` が読み書き）；各実行は `logs/curator/{timestamp}/` 配下に `run.json` + `REPORT.md` を書く（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。範囲は `skills/auto/` のみ——内蔵スキルには決して触れず、pinned スキルはすべての破壊的遷移を迂回し、パス全体はバックグラウンドスレッドで走り会話ターン経路を占めない。詳細：[curator/README.md](../../context_engine/curator/README.ja.md)。
+
 ## 隔離と安全
 
 | ガード | 保護対象 |
@@ -162,3 +183,4 @@ uv run python evals/evals.py nudge_extraction
 - [要約圧縮](../summarization/README.md)：圧縮トリガと、flush および todo fork をゲートするクールダウン。
 - [長時間タスク](../long-running-tasks/README.md)：TaskFlow と、plan extraction が読み取る todo 計画層。
 - [ミドルウェア README](../../agent/middlewares/README.md)：`@dynamic_prompt` システムプロンプト注入と Summarization のリファレンス。
+- [Curator README](../../context_engine/curator/README.ja.md)：上記のバックグラウンドスキル保守オーケストレーター。

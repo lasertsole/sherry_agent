@@ -270,6 +270,8 @@ for r in results:
 
 ▶️ 詳細：[curator/README.md](curator/README.md) · [中文](curator/README.zh.md) · [한국어](curator/README.ko.md) · [日本語](curator/README.ja.md)
 
+▶️ Curator は経験システムの一部としても記載されています：[Experience README](../docs/experience/README.ja.md)
+
 ---
 
 ## API リファレンス

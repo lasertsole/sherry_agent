@@ -34,7 +34,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`code_wiki`、`llm_wiki`
 - **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
 - **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
-- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理
+- **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](docs/experience/README.ja.md)
 - **ツールタイムアウト**：ツール呼び出しは `TOOL_CALL_TIMEOUT_MINUTES`（デフォルト 5）で制限され、デッドロックを防止
 - ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
 

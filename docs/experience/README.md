@@ -82,6 +82,27 @@ At the same compression point, `_schedule_compression_todo_update` (`summarizati
 
 The fork result messages are logged only. Nothing reaches the main graph or its checkpointer, and the derived session's middleware state is cleared in `finally`.
 
+## Curator (Skill Curation)
+
+The Curator (`context_engine/curator/`) is the background maintenance pass that owns the lifecycle of the skill library under `skills/auto/` — exactly the store extraction path 2 above writes into. It only reads and writes skills; MEMORY.md / USER.md, the plan knowledge directory and `todos.db` are outside its scope.
+
+**What it is.** An inactivity-triggered orchestrator, not a scheduled cron. The service entry point starts a daemon thread (`curator-timer`) through `context_engine.curator.init()` (`server/__main__.py:140`; skipped in HTTP-only mode, `server/__main__.py:66-73`). The thread wakes every 3600 s and calls `maybe_run_curator(idle_for_seconds=...)` (`context_engine/curator/__init__.py:122-140`). Importing the package is side-effect-free — only `init()` starts the thread (`context_engine/curator/__init__.py:151-165`).
+
+**When it runs.** A review executes only when both gates pass:
+
+- `should_run_now()` — enabled, not paused, and `last_run_at` older than the effective interval (`context_engine/curator/transitions.py:21-39`). The effective interval is `curator.interval_hours`, default 168 h / 7 days (`config/sherry_settings.py:43`), overridable from the client to 1–5 days via `auto_interval_days` in `.curator_state` (`context_engine/curator/config.py:97-107`);
+- the agent has been idle for at least `curator.min_idle_hours`, default 2 (`context_engine/curator/orchestrator.py:320-336`). Every user turn resets that idle timer (`server/service/messages.py:190`).
+
+The UI can force a run through `POST /curator/run`, which calls `run_curator_review()` in a worker thread (`server/trigger/http/curator.py:107-125`).
+
+**Lifecycle rules.** `apply_automatic_transitions()` (`context_engine/curator/transitions.py:41-100`) walks every `skills/auto/**/SKILL.md` (`context_engine/curator/usage.py:158-179`) and, for each skill: skips pinned skills; marks it `stale` after `stale_after_days` without activity (default 30); removes it from disk past `archive_after_days` (default 90, irreversible — there is no intermediate archived state); reactivates skills that show activity again, and never-used skills still inside the stale window. Defaults live in `config/sherry_settings.py:42-48`.
+
+**LLM consolidation.** When `curator.consolidate` is on (default true), `run_curator_review()` renders the candidate list of non-pinned skills (`context_engine/curator/orchestrator.py:65-81`) and asks the main LLM at temperature 0.3 to merge overlapping narrow skills into class-level umbrella skills (`CURATOR_REVIEW_PROMPT`, `context_engine/curator/orchestrator.py:18-45`). New umbrellas and their support files are generated and persisted under `skills/auto/` (`_generate_umbrella_skill`, `context_engine/curator/orchestrator.py:412`; `_apply_consolidation`, `context_engine/curator/orchestrator.py:755`). Consolidation is the only LLM step of the pass; failures are caught and the run continues.
+
+**Relation to the four extraction paths.** Path 2 (compression-time plan extraction) is the producer: it creates or patches `skills/auto/` through `skill_manage`. The Curator is the downstream maintainer of that same output — it transitions, consolidates and prunes what plan extraction created. The other three paths never touch `skills/auto/` (they write MEMORY.md / USER.md, the plan knowledge directory, and `todos.db`), so they never intersect the Curator.
+
+**State and boundaries.** Run state lives in `skills/.curator_state` (`context_engine/curator/constants.py:3`, loaded/saved by `context_engine/curator/state.py`); each run writes `run.json` + `REPORT.md` under `logs/curator/{timestamp}/` (`context_engine/curator/constants.py:4`; `context_engine/curator/report.py:196-205`). Scope is `skills/auto/` only — built-in skills are never touched, pinned skills bypass every destructive transition, and the whole pass runs in a background thread, off the conversation turn path. Full detail: [curator/README.md](../../context_engine/curator/README.md).
+
 ## Isolation & Safety
 
 | Guard | What it protects |
@@ -162,3 +183,4 @@ The suite checks `knowledge_written`, `skills_created`, `ai_judge_skill_quality`
 - [Summarization](../summarization/README.md): compression triggers and the cooldown that gates the flush and todo fork.
 - [Long-Running Tasks](../long-running-tasks/README.md): TaskFlow and the todo planning layer that plan extraction reads from.
 - [Middlewares README](../../agent/middlewares/README.md): `@dynamic_prompt` system-prompt injection and Summarization reference.
+- [Curator README](../../context_engine/curator/README.md): the background skill-maintenance orchestrator documented above.

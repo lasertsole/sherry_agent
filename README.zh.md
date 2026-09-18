@@ -34,7 +34,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`code_wiki`、`llm_wiki`
 - **技能管理工具**：Agent 可在运行时列出、查看、管理技能；第三方上传的技能（`skills/plugins/`）默认停用，需显式启用
 - **SkillSpector 安全扫描**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：第三方技能在启用前由 NVIDIA SkillSpector 扫描（静态 YARA/规则分析 + 可选的 LLM 语义分析，使用 auxiliary LLM）；被标记的技能将被禁止安装
-- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能
+- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](docs/experience/README.zh.md)
 - **工具超时**：工具调用受 `TOOL_CALL_TIMEOUT_MINUTES`（默认 5）限制，防止死锁
 - ▶️ _详见 [Middlewares README](agent/middlewares/README.md) 了解中间件流水线（护栏、迭代预算、HITL、规范化、摘要、多模态处理）_
 
