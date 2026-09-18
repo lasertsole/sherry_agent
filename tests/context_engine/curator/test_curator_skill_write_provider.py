@@ -3,7 +3,7 @@
 The curator's consolidation write path (create umbrella / write supporting
 files / migrate source files) must resolve
 ``runtime.data_provider.get_skill_write_provider()`` and must abort safely when
-nothing is registered: no partial merge, and crucially no deletion of source
+nothing is registered: no partial merge, and crucially no archiving of source
 skills while their umbrella cannot be written. A registered writer's result
 dicts flow through unchanged.
 """
@@ -60,8 +60,8 @@ def _record_phases(monkeypatch) -> list[str]:
     called: list[str] = []
     for name in (
         "_merge_umbrella_skills",
-        "_delete_consolidated_sources",
-        "_delete_pruned_skills",
+        "_archive_consolidated_sources",
+        "_archive_pruned_skills",
         "_schedule_system_prompt_refresh",
     ):
         monkeypatch.setattr(
@@ -116,8 +116,8 @@ class TestRegisteredWriterForwarding:
 
         assert called == [
             "_merge_umbrella_skills",
-            "_delete_consolidated_sources",
-            "_delete_pruned_skills",
+            "_archive_consolidated_sources",
+            "_archive_pruned_skills",
             "_schedule_system_prompt_refresh",
         ]
 
