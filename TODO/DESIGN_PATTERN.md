@@ -72,7 +72,6 @@
 | **P3** | 42  | 前端 `ChatBox.vue` 883 行                                   | 渲染+复制+滚动+载体+媒体解析                                        | 拆分为多个 composable             |
 | **P3** | 43  | 前端 `agent-socket.ts` 540 行                               | WS+消息+重连+上传+队列                                              | 拆分为 ConnectionManager/Router   |
 | **P3** | 44  | 前端 `resolveSid`/`isClient`/`safeT` 重复                   | 2-3 处各自重复                                                      | 提取共享工具                      |
-| **P3** | 45  | 前端 Pinia 严重欠用                                         | 仅 1 个状态在 Pinia，大量在模块级 ref                               | 迁移到 Pinia store                |
 
 ---
 
@@ -471,26 +470,19 @@ class SessionState:
 
 ### 4.3 模块级可变全局状态
 
-**约 45 个模块级可变全局状态，分布在 18 个文件中**：
+**前端共享状态已迁移至 Pinia**（`stores/ui`、`stores/subagent`、`stores/connection`、`stores/todo`、`stores/chat-background`）。
 
-| 文件                    | 变量                                                                                                                                                         | 数量 |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---- |
-| `ws.ts`                 | wsInstance, everConnected, heartbeatTimer, pongTimeoutTimer, pendingPong, missedPongs, subagentWsInstance, subagentReady                                     | 8    |
-| `agent-socket.ts`       | sockets Map                                                                                                                                                  | 1    |
-| `mitt.ts`               | emitter (const 但本质可变单例)                                                                                                                               | 1    |
-| `clientLog.ts`          | activeStore, logBuffer, clientLogSubscribers, captureInstalled, origConsole, logDb                                                                           | 5    |
-| `db.ts`                 | db (Dexie singleton)                                                                                                                                         | 1    |
-| `subagent-state.ts`     | taskRuns, allTaskRuns, taskLoading, lastTasksFetchedAt, subagentWsReady, tasksTabActive                                                                      | 6    |
-| `subagent-tree.ts`      | expandedRunId, selectedRunId, focusedRunId                                                                                                                   | 3    |
-| `subagent-selection.ts` | selectedRunIds, deletingRunIds                                                                                                                               | 2    |
-| `subagent-sync.ts`      | lastLoadedSessionId, subscribed, subagentSessionsLoaded, subagentValidSessionIds                                                                             | 4    |
-| `connection.ts`         | clientFlagOverride, isOnline, backendStatus, lastReachable                                                                                                   | 4    |
-| `toast.ts`              | clientFlagOverride, toastApi                                                                                                                                 | 2    |
-| `use-todo-list.ts`      | todos, currentSid, subscribed                                                                                                                                | 3    |
-| `useChatBackground.ts`  | backgroundUrl, backgroundOpacity, backgroundLoaded                                                                                                           | 3    |
-| 组件内 let              | GChart.vue(9), ChatBox.vue(1), LogsDialog.vue(4), HeartbeatDialog.vue(1), AvatarCropDialog.vue(1), inputBox.vue(1), ImagePreviewOverlay.vue(1), [sid].vue(1) | 19   |
+仍保留在模块级的**基础设施单例**（非响应式状态，按迁移边界不迁）：
 
-- **模式**: 迁移到 Pinia store 或 composable 工厂函数
+| 文件           | 变量                                                                       |
+| -------------- | -------------------------------------------------------------------------- |
+| `ws.ts`        | wsInstance, everConnected, heartbeatTimer, pongTimeoutTimer, pendingPong, missedPongs, subagentWsInstance, subagentReady |
+| `agent-socket.ts` | sockets Map                                                            |
+| `mitt.ts`      | emitter (const 但本质可变单例)                                             |
+| `clientLog.ts` | activeStore, logBuffer, clientLogSubscribers, captureInstalled, origConsole, logDb |
+| `db.ts`        | db (Dexie singleton)                                                       |
+
+组件内 `let`（局部 UI 状态）不迁移。
 
 ---
 
@@ -534,15 +526,13 @@ class SessionState:
 
 #### 4.5.2 [CONFIRMED] 状态管理位置不一致
 
-| 存储         | 位置                                    | 用途                                           |
-| ------------ | --------------------------------------- | ---------------------------------------------- |
-| Pinia        | `stores/ui.ts`（仅 1 个）               | sidebarCollapsed                               |
-| Dexie        | `db.ts`（8 表）, `clientLog.ts`（1 表） | 消息/角色/会话/草稿/背景/子代理/标题/预设/日志 |
-| 模块级 ref   | 5 个 composable 文件                    | subagent 运行时/背景/todo/连接                 |
-| localStorage | `requestApi.ts`                         | 仅 token                                       |
-| 组件 ref     | 各组件                                  | 局部 UI                                        |
-
-**Pinia 严重欠用** — 大量应共享的状态放在模块级 ref 中。
+| 存储         | 位置                                                              | 用途                                           |
+| ------------ | ----------------------------------------------------------------- | ---------------------------------------------- |
+| Pinia        | `stores/`（5 个：ui、subagent、connection、todo、chat-background） | UI 偏好、子代理运行时、连接状态、todo、聊天背景 |
+| Dexie        | `db.ts`（8 表）, `clientLog.ts`（1 表）                           | 消息/角色/会话/草稿/背景/子代理/标题/预设/日志 |
+| 模块级单例   | `ws.ts`、`agent-socket.ts`、`mitt.ts`、`clientLog.ts`（基础设施） | 连接/事件/日志（非响应式状态，不迁移）         |
+| localStorage | `requestApi.ts`                                                   | 仅 token                                       |
+| 组件 ref     | 各组件                                                            | 局部 UI                                        |
 
 #### 4.5.3 [CONFIRMED] 错误处理 4 种策略不一致
 
@@ -675,9 +665,9 @@ class SessionState:
 | 工具列表缓存     | `_tools`                                                              | `core.py:52`                         |
 | 进度钩子         | 4 个 list                                                             | `hooks/progress.py:6-9`              |
 
-### 前端模块级可变全局（~45 处，18 个文件）
+### 前端模块级可变全局（基础设施单例，18 → 6 文件）
 
-见 [4.3 节](#43-模块级可变全局状态)。
+共享 UI 状态已迁移至 Pinia（`stores/` 5 个，见 4.5.2 节）。仍保留在模块级的是**基础设施单例**（`ws.ts`、`agent-socket.ts`、`mitt.ts`、`clientLog.ts`、`db.ts`，见 4.3 节）与组件内局部 `let`。
 
 ---
 
@@ -753,7 +743,6 @@ class SessionState:
 | 3.5  | `curator/orchestrator.py` 拆分    | 分层架构       | 2 天        |
 | 3.6  | `ChatBox.vue` 拆分为多 composable | Separation     | 2 天        |
 | 3.7  | `agent-socket.ts` 拆分            | Separation     | 2 天        |
-| 3.8  | 前端 subagent 状态迁移到 Pinia    | State Pattern  | 2 天        |
 | 3.9  | 前端错误处理统一                  | Result/规范    | 1 天        |
 | 3.10 | 前端 upload.ts/health.ts 统一 API | Adapter        | 0.5 天      |
 | 3.11 | if-else 链 → Strategy（6 处）     | Strategy       | 2 天        |
