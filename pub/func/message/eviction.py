@@ -46,8 +46,11 @@ __all__ = [
 ]
 
 # First line of every preview; also the idempotency marker (a second pass over
-# an already-evicted message must be a no-op).
+# an already-evicted message must be a no-op). EVICTION_PREFIX is the public
+# alias shared with the P1-2 overflow tail clip, which must carry this pointer
+# into its stub instead of destroying it.
 _EVICTION_PREFIX = "[evicted to: "
+EVICTION_PREFIX = _EVICTION_PREFIX
 
 _PREVIEW_TEMPLATE = """\
 [evicted to: {path}]
@@ -68,6 +71,9 @@ _READ_FILE_SLICE_NOTICE = (
     "\n\n[Output was truncated due to eviction threshold. "
     "Use read_file with offset and limit to retrieve specific portions.]"
 )
+# Public alias: the P1-2 overflow tail clip re-emits this marker verbatim so a
+# later slice pass still recognises an already-sliced read_file result.
+READ_FILE_SLICE_NOTICE = _READ_FILE_SLICE_NOTICE
 
 
 def _eviction_dir_path(session_id: str) -> Path | None:
