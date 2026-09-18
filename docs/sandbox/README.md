@@ -181,6 +181,10 @@ On a rejection `PathGuard` logs a warning and returns a structured error `ToolMe
 
 **Second line of defense.** The four file tools keep their own `resolve_project_path()` / `resolve_external_path()` calls, marked in code with `# redundant: path_guard middleware handles this — kept as the second line of defense` (`read_file`, `write_file`, `patch_file`, `search_files`). The middleware is the outer screen for a tool that might forget its own check; per-tool gates stay authoritative, and external paths still go through the human approval flow. Middleware-side details: [Middlewares README §PathGuard](../../agent/middlewares/README.md#pathguard).
 
+### 8. Tool-result & human-message volume governance
+
+The sandbox bounds what a child process can *do*; a companion layer bounds how much a tool result may *carry*. `ContextEvictionMiddleware` (main-agent pipeline) offloads a generic tool result over 20 000 chars to `SESSIONS_DIR/<session_id>/evicted/` and leaves a head/tail preview plus a `read_file` pointer in graph state, slices `read_file` output to a 4 000-char head, and offloads an oversized trailing human message (> 200 000 chars) to the same directory — keeping its full text in state and truncating only the model view. The P1-2 overflow tail clip then stubs trailing tool results without calling an LLM, and every payload stays recoverable from MesMemory or the eviction file. Full detail: [Context Governance](../context-governance/README.md).
+
 ## ⚙️ Implementation & Architecture
 
 ### Policy: `SandboxPolicy`

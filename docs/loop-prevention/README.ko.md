@@ -11,7 +11,7 @@
 1. **성능을 낮추되, 절대 크래시하지 않는다.** 보호 기능은 프로세스를 죽이지 않습니다: 백그라운드 서비스는 *정지*하고, 턴은 *우아하게 끝나며*, 부팅 게이트는 프로세스를 HTTP 전용 모드로 *축소*합니다.
 2. **항상 탈출구를 남긴다.** 모든 브레이커에는 문서화된 수동 리셋(REST 엔드포인트, 상태 파일 삭제, 프로세스 재시작)이 있습니다.
 
-**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**사실상의 기준(source of truth):** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
 
 ## 🎯 개요와 위협 모델
 
@@ -21,6 +21,7 @@
 | **도구 병리 루프** (턴 1회) | 같은 실패 도구 호출, 핑퐁 쌍, 인자 갱신 | `ToolGuardrails`: 5가지 병리 → WARN → BLOCK → HALT, 복구 모드 포함 |
 | **무한 턴** | 모델/도구 호출이 끝나지 않음 | `IterationBudget` (메인 90 / 워커 60, 합산 호출) |
 | **잘림 재시도 나선** | `max_tokens`로 잘린 도구 호출이 쓰레기 인수로 실행 → 오류 → 모델이 재발행하며 반복을 태움 | `MaxTokensBoostMiddleware`: 미들웨어 내 유한 재호출(3회 재시도, 부스트 상한, 예산 +0) |
+| **오버플로 재시도 나선** | 과대한 컨텍스트가 거부됨 → 압축 실행 → 압축된 컨텍스트도 여전히 오버플로 → 프로바이더가 다시 오류 | `Summarization`: LLM 없는 오버플로 테일 클립을 먼저, 그다음 기존 라우트, 마지막으로 강제 복구 |
 | **멈춘 턴** | 수 분간 진행 없음 (도구 행, 끼인 루프) | `HeartbeatStaleness` 와치독 → `HeartbeatTimeoutError` |
 | **백그라운드 서비스 루프** | 하트비트 / 스위퍼 / cron 틱이 영원히 실패 | `PeriodicBackoff` (소진 = 서비스 정지) / cron 강등 → 자동 비활성 |
 | **완료 통지 유실 또는 중복** | 서브에이전트는 끝났는데 부모가 통지를 못 받거나 두 번 받음 | 완료 drain (1회만 주입) + announce 재시도 사다리 + 멱등 키 |
@@ -82,6 +83,20 @@
   플래그를 가지지 않으므로 항상 비스트리밍 경로를 통과합니다.
 - 텍스트 전용 잘림(도구 호출 없음)은 여기서 다루는 루프 문제가 아닙니다. 서비스 계층이
   유한한 continuation 재스트리밍(최대 4회)으로 담당합니다.
+
+### 턴 수준: 오버플로 복구 체인, 테일 클립 → 기존 라우트 → 강제 압축
+
+컨텍스트 오버플로는 그 자체가 하나의 루프입니다: 프로바이더가 과대한 요청을 거부 → 압축 실행 → 압축된 컨텍스트도 여전히 오버플로 → 프로바이더가 다시 오류. `Summarization`은 세 단계로 이것을 가둡니다 — 그리고 첫 단계는 LLM을 전혀 호출하지 않습니다:
+
+| 단계 | 메커니즘 | LLM 비용 | 실행 시점 |
+|---|---|---|---|
+| **1. 오버플로 테일 클립 (P1-2)** | `clip_overflow_tail`(`pub/func/message/overflow_clip.py`)이 꼬리에 연속된 `ToolMessage` 배치를 스텁화 | 없음 | 모든 비-`fits` 라우트(T1/T2/T3) 전, 그리고 각 T4/T5 복구 단계 전 |
+| **2. 기존 라우트** | `truncate_tool_results_only` / `compact_only` / `compact_then_truncate` | compact 계열 라우트는 보조 LLM 1회 | 클립 단독으로 추정치를 경계선 아래로 되돌리지 못할 때만 |
+| **3. 강제 복구 (T4/T5)** | 먼저 클립, 그다음 압축 + 예산 트렁케이션, `MAX_OVERFLOW_RETRIES`(3)까지 재시도 | compact 단계마다 1회 | 프로바이더의 payload-too-large / context-overflow 오류 이후 |
+
+클립은 메시지를 삭제·재정렬·주입하지 않습니다: `ToolMessage.model_copy`로 내용만 바꾸므로 `id` / `tool_call_id` / `name` / `additional_kwargs`가 모두 살아남고 도구 페어링과 영속 워터마크가 그대로 유지됩니다. 불충분한 클립은 폐기되고 기존 라우트가 원본 리스트 그대로에서 실행됩니다.
+
+▶️ 전체 상세: [컨텍스트 거버넌스](../context-governance/README.ko.md)
 
 ### 턴 수준: 텍스트 데스 루프, `OutputRepetitionGuard` + `RepetitionGuardWrapper`
 

@@ -11,7 +11,7 @@
 1. **劣化はするが、クラッシュはしない。** 保護機能がプロセスを落とすことはありません: バックグラウンドサービスは*停止*し、ターンは*安全に終了し*、起動ゲートはプロセスを HTTP 専用モードへ*縮小*します。
 2. **必ずハッチを残す。** すべてのブレーカーには文書化された手動リセット(REST エンドポイント、状態ファイルの削除、プロセスの再起動)があります。
 
-**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**一次情報:** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 概要と脅威モデル
 
@@ -21,6 +21,7 @@
 | **ツール病理ループ** (ターン 1 回) | 同じ失敗するツール呼び出し、ピンポンペア、引数の改変 | `ToolGuardrails`: 5 種類の病理 → WARN → BLOCK → HALT、リカバリモード付き |
 | **無限ターン** | モデル/ツール呼び出しが止まらない | `IterationBudget` (メイン 90 / ワーカー 60、合算呼び出し) |
 | **切断リトライスパイラル** | `max_tokens` で切断されたツール呼び出しがゴミ引数のまま実行 → エラー → モデルが再発行し、反復回数を無駄に焼く | `MaxTokensBoostMiddleware`: ミドルウェア内の有界再呼び出し(3 リトライ、ブースト上限、予算 +0) |
+| **オーバーフロー再試行スパイラル** | 過大なコンテキストが拒否される → 圧縮が走る → 圧縮後のコンテキストもまだオーバーフローする → プロバイダが再びエラーを返す | `Summarization`: LLM なしのオーバーフロー・テールクリップを最初に、次に既存ルート、最後に強制リカバリ |
 | **スタックしたターン** | 数分間まったく進まない (ハングしたツール、挟まったループ) | `HeartbeatStaleness` ウォッチドッグ → `HeartbeatTimeoutError` |
 | **バックグラウンドサービスループ** | ハートビート / スイーパー / cron ティックが永遠に失敗 | `PeriodicBackoff` (枯渇 = サービス停止) / cron 降格 → 自動無効化 |
 | **完了通知の消失または重複** | サブエージェントは終わったのに親が通知を受け取れない、または二度受け取る | 完了ドレイン (1 回だけ注入) + announce 再試行ラダー + 冪等キー |
@@ -83,6 +84,20 @@
   常に非ストリーミング経路を通ります。
 - テキストのみの切断(ツール呼び出しなし)はここで扱うループ問題ではありません。
   サービス層が有界な継続再ストリーム(最大 4 回)で担当します。
+
+### ターンレベル: オーバーフロー復旧チェーン、テールクリップ → 既存ルート → 強制圧縮
+
+コンテキスト・オーバーフローはそれ自体が一つのループです：プロバイダが過大なリクエストを拒否 → 圧縮が走る → 圧縮後のコンテキストもまだオーバーフローする → プロバイダが再びエラー。`Summarization` は三つの段でこれを囲い込み —— 最初の段は LLM を一切呼びません：
+
+| 段階 | 機構 | LLM コスト | 実行されるタイミング |
+|---|---|---|---|
+| **1. オーバーフロー・テールクリップ（P1-2）** | `clip_overflow_tail`（`pub/func/message/overflow_clip.py`）が末尾の連続する `ToolMessage` バッチをスタブ化 | なし | すべての非 `fits` ルート（T1/T2/T3）の前、および各 T4/T5 回復ステップの前 |
+| **2. 既存ルート** | `truncate_tool_results_only` / `compact_only` / `compact_then_truncate` | compact 系ルートで補助 LLM 1 回 | クリップ単独では推定値を線の下に戻せないときだけ |
+| **3. 強制リカバリ（T4/T5）** | まずクリップ、次に圧縮 + 予算切り詰め、`MAX_OVERFLOW_RETRIES`（3）まで再試行 | compact ステップごとに 1 回 | プロバイダの payload-too-large / context-overflow エラーの後 |
+
+クリップはメッセージを削除・並べ替え・注入しません：`ToolMessage.model_copy` で内容を置き換えるため、`id` / `tool_call_id` / `name` / `additional_kwargs` がすべて生存し、ツールペアリングと永続ウォーターマークは無傷のままです。不十分なクリップは破棄され、既存ルートが元のリストそのままで実行されます。
+
+▶️ 詳細: [コンテキスト統治](../context-governance/README.ja.md)
 
 ### ターンレベル: テキストデスループ、`OutputRepetitionGuard` + `RepetitionGuardWrapper`
 

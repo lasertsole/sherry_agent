@@ -11,7 +11,7 @@ Two design rules run through every guard below:
 1. **Degrade, never crash.** Protection never takes the process down: background services *stop*, turns *end gracefully*, and the boot gate *narrows the footprint* to HTTP-only mode.
 2. **Always leave a hatch.** Every breaker has a documented manual reset (REST endpoint, state-file delete, or process restart).
 
-**Source of truth:** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`.
+**Source of truth:** `agent/middlewares/tool_guardrails/core.py`, `agent/middlewares/iteration_budget/core.py`, `agent/middlewares/max_tokens_boost/core.py`, `agent/middlewares/output_repetition_guard/core.py`, `agent/stream_repetition_guard_wrapper.py`, `agent/middlewares/heartbeat_staleness/core.py`, `agent/middlewares/subagent_completion_drain/core.py`, `agent/tools/subagent/announce/delivery.py`, `agent/tools/subagent/announce/idempotency.py`, `runtime/process/periodic_backoff.py`, `runtime/process/crash_loop_breaker.py`, `skills/builtin/core/cron/scripts/base.py`, `skills/builtin/core/heartbeat/scripts/base.py`, `agent/tools/subagent/registry/sweeper.py`, `server/__main__.py`, `server/trigger/http/cron.py`, `server/trigger/__init__.py`, `server/trigger/channels/core.py`, `pub/func/message/overflow_clip.py`.
 
 ## 🎯 Overview & Threat Model
 
@@ -21,6 +21,7 @@ Two design rules run through every guard below:
 | **Tool pathology loop** (one turn) | Same failing tool call, ping-pong pairs, argument churn | `ToolGuardrails`: 5 pathologies → WARN → BLOCK → HALT, with recovery mode |
 | **Unbounded turn** | Model/tool calls never stop | `IterationBudget` (90 main / 60 worker combined calls) |
 | **Truncation retry spiral** | A `max_tokens`-truncated tool call executes as garbage → error → the model re-issues it, burning iterations | `MaxTokensBoostMiddleware`: bounded in-middleware re-call (3 retries, capped boost, +0 budget) |
+| **Overflow retry spiral** | An oversized context is rejected → compression fires → the compacted context still overflows → the provider errors again | `Summarization`: no-LLM overflow tail clip first, then the existing overflow route, then forced recovery |
 | **Stuck turn** | No progress for minutes (hung tool, wedged loop) | `HeartbeatStaleness` watchdog → `HeartbeatTimeoutError` |
 | **Background service loop** | Heartbeat / sweeper / cron tick failing forever | `PeriodicBackoff` (exhaustion = service stops) / cron degrade → auto-disable |
 | **Lost or duplicated completion** | Subagent finished, but the parent never hears about it, or hears twice | Completion drain (inject-once) + announce retry ladder + idempotency keys |
@@ -85,6 +86,20 @@ middleware layer:
   and always take the non-streaming path.
 - Text-only truncation (no tool calls) is not a loop concern handled here; the
   service layer owns it via a bounded continuation re-stream (max 4).
+
+### Turn level: overflow recovery chain, tail clip → route → forced compression
+
+Context overflow is a loop of its own: the provider rejects an oversized request, compression fires, the compacted context still overflows, and the provider errors again. `Summarization` bounds it in three stages — and the first one does not call an LLM at all:
+
+| Stage | Mechanism | LLM cost | When it runs |
+|---|---|---|---|
+| **1. Overflow tail clip (P1-2)** | `clip_overflow_tail` (`pub/func/message/overflow_clip.py`) stubs the trailing contiguous `ToolMessage` batch | none | before every non-`fits` route (T1/T2/T3) and before each T4/T5 recovery step |
+| **2. Existing route** | `truncate_tool_results_only` / `compact_only` / `compact_then_truncate` | auxiliary-LLM call on compact routes | only when the clip alone does not bring the estimate back under the line |
+| **3. Forced recovery (T4/T5)** | clip first, then compact + budget truncation, retried up to `MAX_OVERFLOW_RETRIES` (3) | 1 call per compact step | after a provider payload-too-large / context-overflow error |
+
+The clip never removes, reorders, or injects a message: it replaces content through `ToolMessage.model_copy`, so `id` / `tool_call_id` / `name` / `additional_kwargs` survive and tool pairing plus the persistence watermark stay intact. An insufficient clip is discarded and the existing route runs on the exact original list.
+
+▶️ Full detail: [Context Governance](../context-governance/README.md)
 
 ### Turn level: text death loops, `OutputRepetitionGuard` + `RepetitionGuardWrapper`
 

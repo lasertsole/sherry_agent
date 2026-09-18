@@ -181,6 +181,10 @@ bwrap
 
 **第二の防衛線。** 4つのファイルツールは自前の `resolve_project_path()` / `resolve_external_path()` 呼び出しを保持しており、コード上で `# redundant: path_guard middleware handles this — kept as the second line of defense` と注記されています(`read_file`、`write_file`、`patch_file`、`search_files`)。ミドルウェアは自前のチェックを忘れたツールを拾う外側のスクリーンであり、ツールごとのゲートが引き続き権威で、外部パスは従来どおり人間の承認フローを通ります。ミドルウェア側の詳細: [Middlewares README §PathGuard](../../agent/middlewares/README.ja.md#pathguard)。
 
+### 8. ツール結果と人間メッセージの量の統治
+
+サンドボックスは子プロセスが**何をできるか**を縛ります；併走する層がツール結果が**どれだけ運べるか**を縛ります。`ContextEvictionMiddleware`（メインエージェント・パイプライン）は 20 000 文字を超える汎用ツール結果を `SESSIONS_DIR/<session_id>/evicted/` へ退避し、グラフ state には head/tail プレビューと `read_file` ポインタだけを残し、`read_file` 出力を先頭 4 000 文字にスライスし、過大な（> 200 000 文字）末尾の人間メッセージも同じディレクトリへ退避します —— state は全文を保ち、切り詰めるのはモデルビューだけです。続いて P1-2 のオーバーフロー・テールクリップが LLM を呼ばずに末尾のツール結果をスタブ化し、あらゆるペイロードは MesMemory か退避ファイルから回収できます。詳細: [コンテキスト統治](../context-governance/README.ja.md)。
+
 ## ⚙️ 実装とアーキテクチャ
 
 ### ポリシー: `SandboxPolicy`

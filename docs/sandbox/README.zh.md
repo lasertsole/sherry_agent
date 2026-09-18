@@ -181,6 +181,10 @@ bwrap
 
 **第二道防线。** 四个文件工具都保留自己的 `resolve_project_path()` / `resolve_external_path()` 调用，代码中标记为 `# redundant: path_guard middleware handles this — kept as the second line of defense`（`read_file`、`write_file`、`patch_file`、`search_files`）。中间件是外层筛选器，用于兜住可能忘记自检的工具；每工具门禁仍是权威，外部路径依旧走人工审批流程。中间件侧的细节见 [Middlewares README §PathGuard](../../agent/middlewares/README.zh.md#pathguard)。
 
+### 8. 工具结果与人类消息的体积治理
+
+沙箱约束子进程**能做什么**；一个配套层约束工具结果**能携带多少**。`ContextEvictionMiddleware`（主 Agent 管线）把超过 20 000 字符的通用工具结果卸载到 `SESSIONS_DIR/<session_id>/evicted/`，在 graph state 中只留 head/tail 预览与 `read_file` 指针；把 `read_file` 输出切片为前 4 000 字符；并把超长（> 200 000 字符）的尾部人类消息卸载到同一目录 —— state 保留全文，只截断模型视图。P1-2 溢出尾部裁剪随后在不调 LLM 的情况下把尾部工具结果替换为 stub，而每份载荷都能从 MesMemory 或驱逐文件恢复。完整细节：[上下文治理](../context-governance/README.zh.md)。
+
 ## ⚙️ 实现与架构
 
 ### 策略：`SandboxPolicy`

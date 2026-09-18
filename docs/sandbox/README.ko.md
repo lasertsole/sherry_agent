@@ -181,6 +181,10 @@ bwrap
 
 **2차 방어선.** 네 개의 파일 도구는 자체 `resolve_project_path()` / `resolve_external_path()` 호출을 유지하며, 코드에 `# redundant: path_guard middleware handles this — kept as the second line of defense`로 표시되어 있습니다(`read_file`, `write_file`, `patch_file`, `search_files`). 미들웨어는 자체 검사를 잊은 도구를 걸러내는 바깥 스크린이고, 도구별 게이트가 계속 권위이며, 외부 경로는 여전히 사람 승인 흐름을 거칩니다. 미들웨어 측 세부 사항: [Middlewares README §PathGuard](../../agent/middlewares/README.ko.md#pathguard).
 
+### 8. 도구 결과와 인간 메시지의 볼륨 거버넌스
+
+샌드박스는 자식 프로세스가 **무엇을 할 수 있는지**를 묶고, 동반 계층은 도구 결과가 **얼마나 실을 수 있는지**를 묶습니다. `ContextEvictionMiddleware`(메인 에이전트 파이프라인)는 20 000자를 넘는 일반 도구 결과를 `SESSIONS_DIR/<session_id>/evicted/`로 오프로드해 그래프 state에는 head/tail 프리뷰와 `read_file` 포인터만 남기고, `read_file` 출력을 앞 4 000자로 슬라이스하며, 과대한(> 200 000자) 꼬리 인간 메시지도 같은 디렉터리로 오프로드합니다 — state는 전문을 유지하고 모델 뷰만 절단합니다. 이어서 P1-2 오버플로 테일 클립이 LLM 호출 없이 꼬리 도구 결과를 스텁화하고, 모든 페이로드는 MesMemory나 축출 파일에서 복구할 수 있습니다. 전체 상세: [컨텍스트 거버넌스](../context-governance/README.ko.md).
+
 ## ⚙️ 구현과 아키텍처
 
 ### 정책: `SandboxPolicy`

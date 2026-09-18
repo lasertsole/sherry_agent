@@ -11,7 +11,7 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`。
+**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 总览与威胁模型
 
@@ -21,6 +21,7 @@
 | **工具病理循环**（单回合） | 同一个失败的工具调用、乒乓配对、参数翻新 | `ToolGuardrails`：5 种病理 → WARN → BLOCK → HALT，带恢复模式 |
 | **无界回合** | 模型 / 工具调用永不停止 | `IterationBudget`（主 Agent 90 次 / worker 60 次，合并计数） |
 | **截断重试螺旋** | 被 `max_tokens` 截断的工具调用以垃圾参数执行 → 报错 → 模型重发，白白烧迭代 | `MaxTokensBoostMiddleware`：middleware 内有界重呼（3 次重试、提升封顶、预算 +0） |
+| **溢出重试螺旋** | 超长上下文被拒绝 → 压缩触发 → 压缩后的上下文仍然溢出 → 提供商再次报错 | `Summarization`：先做不调 LLM 的溢出尾部裁剪，再走既有溢出路由，最后强制恢复 |
 | **卡死回合** | 连续数分钟毫无进展（工具挂起、循环楔死） | `HeartbeatStaleness` 看门狗 → `HeartbeatTimeoutError` |
 | **后台服务循环** | 心跳 / 清扫器 / cron tick 永远失败 | `PeriodicBackoff`（耗尽 = 服务停止）/ cron 退化 → 自动停用 |
 | **完成通知丢失或重复** | 子 Agent 已完成，但父 Agent 永远收不到通知，或者收到两次 | 完成通知 drain（只注入一次）+ announce 重试阶梯 + 幂等键 |
@@ -79,6 +80,20 @@
   `is_stream_turn` 标志——子代理（ainvoke）永远不带该标志，始终走非流式路径。
 - 纯文本截断（无工具调用）不是这里处理的循环问题；服务层通过有界续写重流
   （最多 4 次）负责。
+
+### 回合级：溢出恢复链，尾部裁剪 → 既有 route → 强制压缩
+
+上下文溢出本身就是一种循环：提供商拒绝超长请求 → 压缩触发 → 压缩后的上下文仍然溢出 → 提供商再次报错。`Summarization` 用三段机制把它围住 —— 而第一段根本不调 LLM：
+
+| 阶段 | 机制 | LLM 成本 | 何时运行 |
+|---|---|---|---|
+| **1. 溢出尾部裁剪（P1-2）** | `clip_overflow_tail`（`pub/func/message/overflow_clip.py`）把尾部连续的 `ToolMessage` 批次替换为 stub | 无 | 每个非 `fits` 路由（T1/T2/T3）之前，以及每个 T4/T5 恢复步骤之前 |
+| **2. 既有路由** | `truncate_tool_results_only` / `compact_only` / `compact_then_truncate` | compact 类路由调一次辅助 LLM | 仅当裁剪单独无法把估算拉回线下时 |
+| **3. 强制恢复（T4/T5）** | 先裁剪，再压缩 + 预算截断，最多重试 `MAX_OVERFLOW_RETRIES`（3）次 | 每个 compact 步骤 1 次调用 | 提供商抛出 payload-too-large / context-overflow 错误之后 |
+
+裁剪绝不删除、重排或注入消息：它只经 `ToolMessage.model_copy` 替换内容，因此 `id` / `tool_call_id` / `name` / `additional_kwargs` 全部存活，工具配对与持久化水位保持不变。裁剪不够时整份结果被丢弃，既有路由在原始列表上照常运行。
+
+▶️ 完整细节：[上下文治理](../context-governance/README.zh.md)
 
 ### 回合级：文字死亡循环，`OutputRepetitionGuard` + `RepetitionGuardWrapper`
 
