@@ -227,6 +227,8 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 3. **调用**辅助模型，带 `config={"metadata": {"lc_source": "summarization"}}`，让下游工具链能识别摘要调用。
 4. **护栏：**响应为空或过短时回退到确定性摘要；任何异常同样回退。失败时 LLM 永远没有最终话语权。
 
+**链式摘要过滤**（`_filter_summary_messages`）：存在旧检查点时，其 Human/AI 消息对会从序列化的 `<conversation>` 输入中剔除 —— 提取出的旧摘要仅经 `<prior-summary>` 注入，同一段旧摘要文本在提示词中只出现一次。该消息对**两条**都带 `additional_kwargs={"lc_source": "summarization"}`，这同时让两条都不落入 MesMemory（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）：摘要是压缩的内部产物，不是对话历史。过滤发生在 `_extract_previous_summary` **之后**（链式仍能看到旧摘要），过滤后的列表用于序列化、提示词构建，以及两条静态回退分支（LLM 失败/响应过短）—— 也包括 `_apply_compression_under_lock` / `_aapply_compression_under_lock` 的 `skip_llm` 路径。与 opencode-dev 的 `hidden` 集合、deepagents 的 `_filter_summary_messages` 对齐。
+
 提示词模板（`_SUMMARY_TEMPLATE`，:190）固定了 Markdown 骨架 —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 要求"即使为空也保留每一节"并带保密规则（"NEVER include API keys, tokens, passwords, secrets"）。`_enforce_fifo_limits`（:381）对返回文本确定性地重新施加条目上限，追加 `"(N earlier items omitted for brevity)"`。
 
 ## 🧱 静态回退（无 LLM 摘要）
@@ -255,8 +257,9 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 --- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---
 ```
 
-- **HumanMessage** `"What did we do so far?"` —— 一个中性问题，维持角色交替。
-- **AIMessage**，带 `additional_kwargs={"lc_source": "summarization"}` —— 这个标记被后续回合用于：(a) 找到并链起之前的检查点，(b) 让修剪停在检查点处，(c) 让测试断言被取代后的摘要可以从模型视图整体吞下。
+- **HumanMessage** `"What did we do so far?"` —— 一个中性问题，维持角色交替；与 AI 半边携带相同的 `lc_source` 标记。
+- **AIMessage**，带 `additional_kwargs={"lc_source": "summarization"}` —— 这个标记被后续回合用于：(a) 找到并链起之前的检查点，(b) 在链式再摘要输入中剔除该消息对、并让修剪停在检查点处，(c) 让测试断言被取代后的摘要可以从模型视图整体吞下。
+- 该消息对永不进入 MesMemory：`MessagePersistenceMiddleware._is_persistable` 跳过两条 `lc_source="summarization"` 的消息（human 行构造器有同样的闸门）。
 - 总内容以 `SUMMARY_TOTAL_MAX_CHARS (16 000)` 封顶，头部/尾部 30/30 保留。
 
 ## 🛡️ 防抖护栏矩阵与退化恢复
@@ -365,17 +368,18 @@ Summarization(
 | `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 纯裁剪：尾部批次检测、max_remove/min_keep/enabled 闸门、token 目标、标记保留（P0-2 指针、P2-4 通知）、no-op 幂等、配对不变量 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 中间件集成：T1/T2 不调 LLM 裁剪、裁剪不足降级、总开关、T4/T5 先裁后重试与裁→压缩降级、同步/异步奇偶、sanitizer 不移位 |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶、链式摘要过滤 |
+| `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 链式摘要过滤：旧消息对从序列化对话中移除、普通/空/多对输入、无标记的旧会话 human 保留、async `_acreate_summary` 镜像 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 全图封闭式 e2e：真实 `create_agent` 链（主模型为捕获桩、辅助模型为失败桩）驱动静态回退摘要路径；零网络，窗口 32 000（按比例缩小），缺少 MAIN_LLM 配置时跳过 |
-| `tests/agent/middlewares/message_persistence/` | 16 | 边界 + 工具返回增量落库：每条消息恰好一次、跨边界不重复、重启重放靠持久水位不增行、同步 + 异步钩子、缺 session_id 跳过、HITL 拒绝配对重挂、过滤语义；另有 T1/T2/T3 压缩路径零写库证明 |
+| `tests/agent/middlewares/message_persistence/` | 31 | 边界 + 工具返回增量落库：每条消息恰好一次、跨边界不重复、重启重放靠持久水位不增行、同步 + 异步钩子、缺 session_id 跳过、HITL 拒绝配对重挂、过滤语义；另有 T1/T2/T3 压缩路径零写库证明，以及摘要对（两条）零写库证明 |
 | `tests/agent/middlewares/test_compression_nudges.py` | 2 | 压缩时 nudge 派发：memory review + plan extraction 从 compact 路径触发；无切点压缩不派发 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
-全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**2653 passed / 0 failed**（GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P）。
+全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**4221 passed / 0 failed**（GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P）。
 
 ## ⚠️ 诚实与局限
 

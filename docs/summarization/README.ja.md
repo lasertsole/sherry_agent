@@ -232,6 +232,8 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 3. **呼び出し**は補助モデルに対し `config={"metadata": {"lc_source": "summarization"}}` 付きで行われ、下流のツールチェーンが要約呼び出しを識別できるようにします。
 4. **ガードレール:** 空または極端に短い応答は決定論的要約へフォールバックし、例外も同様です。失敗時に LLM が最後の言葉を持つことはありません。
 
+**チェイニング要約のフィルタリング**（`_filter_summary_messages`）: 前のチェックポイントが存在する場合、その Human/AI ペアは直列化された `<conversation>` 入力から除去されます —— 抽出済みの前回要約は `<prior-summary>` 経由でのみ注入され、古い要約テキストはプロンプト内にちょうど 1 回だけ現れます。ペアは**両方**が `additional_kwargs={"lc_source": "summarization"}` を持ち、これにより両方とも MesMemory に入りません（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）: このペアは圧縮の内部成果物であり、会話履歴ではありません。フィルタは `_extract_previous_summary` の**後**に走り（チェイニングは旧要約を引き続き参照できます）、フィルタ後のリストが直列化・プロンプト構築・2 つの静的フォールバック分岐（LLM 失敗/短すぎる応答）に使われます —— `_apply_compression_under_lock` / `_aapply_compression_under_lock` の `skip_llm` パスも同様です。opencode-dev の `hidden` セットと deepagents の `_filter_summary_messages` に整合します。
+
 プロンプトテンプレート（`_SUMMARY_TEMPLATE`、:190）は Markdown 骨格を固定します —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 「空でもすべてのセクションを保持する」ことと秘密保持ルール（"NEVER include API keys, tokens, passwords, secrets"）を要求します。`_enforce_fifo_limits`（:381）が返されたテキストに項目上限を決定論的に再適用し、`"(N earlier items omitted for brevity)"` を追記します。
 
 ## 🧱 静的フォールバック（LLMを使わない要約）
@@ -260,8 +262,9 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 --- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---
 ```
 
-- **HumanMessage** `"What did we do so far?"` —— 役割交代を維持する中立的な質問。
-- **AIMessage**、`additional_kwargs={"lc_source": "summarization"}` 付き —— このマーカーを後続のターンは (a) 前のチェックポイントを発見してチェーンし、(b) プルーンがチェックポイントで停止するようにし、(c) テストが置き換え後の要約がモデル視点から丸ごと呑み込めることを検証するために使います。
+- **HumanMessage** `"What did we do so far?"` —— 役割交代を維持する中立的な質問; AI 半分と同じ `lc_source` マーカーを持ちます。
+- **AIMessage**、`additional_kwargs={"lc_source": "summarization"}` 付き —— このマーカーを後続のターンは (a) 前のチェックポイントを発見してチェーンし、(b) チェイニング再要約の入力からペアを除去し、プルーンがチェックポイントで停止するようにし、(c) テストが置き換え後の要約がモデル視点から丸ごと呑み込めることを検証するために使います。
+- このペアが MesMemory に入ることはありません: `MessagePersistenceMiddleware._is_persistable` が `lc_source="summarization"` の両半分をスキップします（human 行ビルダーも同じゲートを持ちます）。
 - 合計コンテンツは `SUMMARY_TOTAL_MAX_CHARS (16 000)` で封印され、先頭/末尾 30/30 保持。
 
 ## 🛡️ スラッシング防止マトリクスと劣化リカバリ
@@ -370,17 +373,18 @@ Summarization(
 | `tests/config/test_num_contract.py` | 46 | 定数契約（ウォッチドッグ `CONTRACT_NAMES` が文書化済みの全ノブをカバー） |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 純クリップ: 末尾バッチ検出、max_remove/min_keep/enabled ゲート、トークン目標、マーカー保持（P0-2 ポインタ、P2-4 通知）、no-op 冪等性、ペアリング不変量 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 ミドルウェア統合: T1/T2 の LLM なしクリップ、不十分クリップの劣化、キルスイッチ、T4/T5 のクリップ→再試行とクリップ→圧縮劣化、同期/非同期パリティ、サニタイザ不変 |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ、チェイニング要約フィルタリング |
+| `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | チェイニング要約フィルタリング: 旧ペアを直列化会話から除去、通常/空/複数ペア入力、未マークの旧セッション human を保持、async `_acreate_summary` ミラー |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 登録契約（テスト固定ウィンドウ）: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | フルグラフ密閉 e2e: 実 `create_agent` チェーン（主モデルはキャプチャスタブ、補助モデルは失敗スタブ）が静的フォールバック経路を駆動; ゼロネットワーク、ウィンドウ 32 000（縮小）、MAIN_LLM 設定欠落時はスキップ |
-| `tests/agent/middlewares/message_persistence/` | 16 | 境界 + ツール返却の増分フラッシュ: 各メッセージちょうど 1 回、境界をまたいで重複なし、永続ウォーターマークによる再起動リプレイで行数不増、同期 + 非同期フック、session_id 欠落スキップ、HITL 拒否ペアの再装着、フィルタ意味論; さらに T1/T2/T3 圧縮経路のゼロ書き込み証明 |
+| `tests/agent/middlewares/message_persistence/` | 31 | 境界 + ツール返却の増分フラッシュ: 各メッセージちょうど 1 回、境界をまたいで重複なし、永続ウォーターマークによる再起動リプレイで行数不増、同期 + 非同期フック、session_id 欠落スキップ、HITL 拒否ペアの再装着、フィルタ意味論; さらに T1/T2/T3 圧縮経路のゼロ書き込み証明と、要約ペア（両半分）のゼロ書き込み証明 |
 | `tests/agent/middlewares/test_compression_nudges.py` | 2 | 圧縮時 nudge ディスパッチ: memory review + plan extraction が compact 経路から発火、カットなし圧縮は何もディスパッチしない |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
-プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **2653 passed / 0 failed** で合格（GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P）。
+プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **4221 passed / 0 failed** で合格（GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P）。
 
 ## ⚠️ 正直な限界
 

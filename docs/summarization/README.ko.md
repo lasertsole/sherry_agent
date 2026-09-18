@@ -231,6 +231,8 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 3. **호출**은 보조 모델에 `config={"metadata": {"lc_source": "summarization"}}`로 수행되어, 다운스트림 도구 체인이 요약 호출을 식별할 수 있게 합니다.
 4. **가드 레일:** 비어 있거나 지나치게 짧은 응답은 결정론적 요약으로 폴백하고, 예외도 마찬가지입니다. 실패 시 LLM이 최후의 발언권을 가지는 일은 없습니다.
 
+**체이닝 요약 필터링**(`_filter_summary_messages`): 이전 체크포인트가 있으면 그 Human/AI 쌍을 직렬화된 `<conversation>` 입력에서 제거합니다 — 추출된 이전 요약은 `<prior-summary>`로만 주입되므로, 오래된 요약 텍스트는 프롬프트에 정확히 한 번만 나타납니다. 이 쌍은 **양쪽 모두** `additional_kwargs={"lc_source": "summarization"}`을 가지며, 이는 양쪽 모두 MesMemory에 들어가지 않게 합니다(`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`): 이 쌍은 압축의 내부 산출물이지 대화 기록이 아닙니다. 필터는 `_extract_previous_summary` **이후**에 실행되어(체이닝은 여전히 이전 요약을 봅니다), 필터된 목록이 직렬화·프롬프트 구성·두 정적 폴백 분기(LLM 실패/너무 짧은 응답)에 쓰입니다 — `_apply_compression_under_lock` / `_aapply_compression_under_lock`의 `skip_llm` 경로도 마찬가지입니다. opencode-dev의 `hidden` 집합, deepagents의 `_filter_summary_messages`와 정렬됩니다.
+
 프롬프트 템플릿(`_SUMMARY_TEMPLATE`, :190)은 Markdown 골격을 고정합니다 — *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress(Completed ≤ 5 · In Progress · Blocked) / Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* — "비어 있어도 모든 섹션을 유지"와 기밀 규칙("NEVER include API keys, tokens, passwords, secrets")을 요구합니다. `_enforce_fifo_limits`(:381)가 반환 텍스트에 항목 상한을 결정론적으로 재적용하고, `"(N earlier items omitted for brevity)"`를 덧붙입니다.
 
 ## 🧱 정적 폴백 (LLM 없는 요약)
@@ -259,8 +261,9 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 --- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---
 ```
 
-- **HumanMessage** `"What did we do so far?"` — 역할 교대를 유지하는 중립적 질문.
-- **AIMessage**, `additional_kwargs={"lc_source": "summarization"}` 포함 — 이후 턴들이 (a) 이전 체크포인트를 찾아 체이닝하고, (b) 프루닝이 체크포인트에서 멈추게 하고, (c) 테스트가 대체된 후 요약이 모델 뷰에서 삼켜질 수 있음을 단증하는 마커.
+- **HumanMessage** `"What did we do so far?"` — 역할 교대를 유지하는 중립적 질문; AI 절반과 같은 `lc_source` 마커를 가집니다.
+- **AIMessage**, `additional_kwargs={"lc_source": "summarization"}` 포함 — 이후 턴들이 (a) 이전 체크포인트를 찾아 체이닝하고, (b) 체이닝 재요약 입력에서 이 쌍을 제거하고 프루닝이 체크포인트에서 멈추게 하며, (c) 테스트가 대체된 후 요약이 모델 뷰에서 삼켜질 수 있음을 단증하는 마커.
+- 이 쌍은 MesMemory에 절대 들어가지 않습니다: `MessagePersistenceMiddleware._is_persistable`이 `lc_source="summarization"` 양쪽 절반을 건너뜁니다(human 행 빌더도 같은 게이트를 가집니다).
 - 전체 콘텐츠는 `SUMMARY_TOTAL_MAX_CHARS (16 000)`으로 봉인되고, 머리/꼬리 30/30 보존.
 
 ## 🛡️ 안티-스래싱 가드 매트릭스와 성능 저하 복구
@@ -369,17 +372,18 @@ Summarization(
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 순수 클립: 꼬리 배치 감지, max_remove/min_keep/enabled 게이트, 토큰 목표, 마커 보존(P0-2 포인터, P2-4 안내), no-op 멱등성, 페어링 불변식 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 미들웨어 통합: T1/T2 LLM 없는 클립, 불충분 클립 퇴화, 킬 스위치, T4/T5 클립 후 재시도와 클립→압축 퇴화, 동기/비동기 패리티, 새니타이저 불변 |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티, 체이닝 요약 필터링 |
+| `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 체이닝 요약 필터링: 이전 쌍을 직렬화된 대화에서 제거, 일반/빈/다중 쌍 입력, 마커 없는 레거시 human 보존, async `_acreate_summary` 미러 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 등록 계약(테스트 고정 윈도우): `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | 전체 그래프 밀폐 e2e: 실제 `create_agent` 체인 (주 모델 캡처 스텁, 보조 모델 실패 스텁)이 정적 폴백 경로를 유도; 제로 네트워크, 윈도우 32 000 (축소), MAIN_LLM 설정 누락 시 스킵 |
-| `tests/agent/middlewares/message_persistence/` | 16 | 경계 + 도구 반환 증분 플러시: 각 메시지 정확히 1회, 경계 넘어 중복 없음, 영속 워터마크로 재시작 리플레이 시 행 수 불변, 동기 + 비동기 훅, session_id 부재 시 건너뜀, HITL 거부 페어 재장착, 필터 의미론; 추가로 T1/T2/T3 압축 경로의 제로 쓰기 증명 |
+| `tests/agent/middlewares/message_persistence/` | 31 | 경계 + 도구 반환 증분 플러시: 각 메시지 정확히 1회, 경계 넘어 중복 없음, 영속 워터마크로 재시작 리플레이 시 행 수 불변, 동기 + 비동기 훅, session_id 부재 시 건너뜀, HITL 거부 페어 재장착, 필터 의미론; 추가로 T1/T2/T3 압축 경로의 제로 쓰기 증명과 요약 쌍(양쪽 절반)의 제로 쓰기 증명 |
 | `tests/agent/middlewares/test_compression_nudges.py` | 2 | 압축 시점 nudge 디스패치: memory review + plan extraction이 compact 경로에서 발화, 컷 없는 압축은 아무것도 디스패치하지 않음 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
-전체 프로세스 겸리 스위트(`uv run python tests/run_tests_split.py`) 통과: **2653 passed / 0 failed** (GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P).
+전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **4221 passed / 0 failed** (GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P).
 
 ## ⚠️ 정직함과 한계
 

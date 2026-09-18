@@ -234,6 +234,8 @@ Every failure mode is fail-open: if `_apply_compression` raises, the exception i
 3. **Invoke** the auxiliary model with `config={"metadata": {"lc_source": "summarization"}}` so downstream tooling can identify summary calls.
 4. **Guard rails:** a response that is empty or trivially short falls back to the deterministic summary; any exception does the same. The LLM never gets the last word on failure.
 
+**Chained-summary filtering** (`_filter_summary_messages`): when a previous checkpoint exists, its Human/AI pair is stripped from the serialized `<conversation>` input — the extracted prior summary is injected only through `<prior-summary>`, so the old summary text appears exactly once in the prompt. Both halves of the pair carry `additional_kwargs={"lc_source": "summarization"}`, which also keeps both out of MesMemory (`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`): the pair is an internal compaction artifact, not conversation history. The filter runs after `_extract_previous_summary` (chaining still sees the old summary), and the filtered list feeds the serialization, the prompt, and both static-fallback branches (LLM failure / short response) — including the `skip_llm` path in `_apply_compression_under_lock` / `_aapply_compression_under_lock`. Aligns with opencode-dev's `hidden` set and deepagents' `_filter_summary_messages`.
+
 The prompt template (`_SUMMARY_TEMPLATE`, :190) fixes the Markdown skeleton — *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress (Completed ≤ 5 · In Progress · Blocked) / Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* — with "keep every section even when empty" and a secrecy rule ("NEVER include API keys, tokens, passwords, secrets"). `_enforce_fifo_limits` (:381) re-imposes the item caps deterministically on the returned text, appending `"(N earlier items omitted for brevity)"`.
 
 ## 🧱 The Static Fallback (LLM-Free Summary)
@@ -262,8 +264,9 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 --- END OF CONTEXT SUMMARY — respond to the message below, not the summary above ---
 ```
 
-- **HumanMessage** `"What did we do so far?"` — a neutral question that keeps role alternation intact.
-- **AIMessage** with `additional_kwargs={"lc_source": "summarization"}` — the marker that later turns use to (a) find and chain the prior checkpoint, (b) make pruning stop at the checkpoint, and (c) let tests assert the summary is swallable from the model view once superseded.
+- **HumanMessage** `"What did we do so far?"` — a neutral question that keeps role alternation intact; it carries the same `lc_source` marker as its AI half.
+- **AIMessage** with `additional_kwargs={"lc_source": "summarization"}` — the marker that later turns use to (a) find and chain the prior checkpoint, (b) strip the pair from a chained re-summarization input and make pruning stop at the checkpoint, and (c) let tests assert the summary is swallable from the model view once superseded.
+- The pair never enters MesMemory: `MessagePersistenceMiddleware._is_persistable` skips both `lc_source="summarization"` halves (the human row builder applies the same gate).
 - Total content is capped at `SUMMARY_TOTAL_MAX_CHARS (16 000)` with a head/tail 30/30 keep.
 
 ## 🛡️ Anti-Thrash Guard Matrix & Degradation Recovery
@@ -372,17 +375,18 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 pure clip: trailing-batch detection, max_remove/min_keep/enabled gates, token target, marker preservation (P0-2 pointer, P2-4 notice), no-op idempotency, pairing invariant |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 middleware integration: T1/T2 clip without LLM, insufficient-clip degradation, kill switch, T4/T5 clip-then-retry and clip→compression degradation, sync/async parity, sanitizer-unchanged |
-| `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
+| `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity, chained-summary filtering |
+| `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | Chained-summary filtering: prior pair removed from the serialized conversation, normal/empty/multi-pair inputs, unmarked legacy human preserved, async `_acreate_summary` mirror |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Registration contract (test-pinned window): `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | Legacy deep suite: cutoff/budget, FIFO caps, fallback, prune/dedup/target-truncate, degradation |
 | `tests/agent/middlewares/test_e2e_summarization.py` | 7 | Full-graph hermetic e2e: real `create_agent` chain (capturing stub main, failing stub auxiliary) drives the static-fallback path; zero network, scaled-down window 32 000, skips when MAIN_LLM config is missing |
-| `tests/agent/middlewares/message_persistence/` | 16 | Per-boundary flush (+ tool return): each message exactly once, no duplicate across boundaries, restart replay via the persistent watermark, sync + async hooks, missing-session_id skip, HITL denial re-pairing, filter semantics; plus T1/T2/T3 compactions proving zero store writes |
+| `tests/agent/middlewares/message_persistence/` | 31 | Per-boundary flush (+ tool return): each message exactly once, no duplicate across boundaries, restart replay via the persistent watermark, sync + async hooks, missing-session_id skip, HITL denial re-pairing, filter semantics; plus T1/T2/T3 compactions proving zero store writes and the summary pair (both halves) proving zero writes |
 | `tests/agent/middlewares/test_compression_nudges.py` | 2 | Compression-time nudge dispatch: memory review + plan extraction fire from the compact path; no-cut compactions dispatch nothing |
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | Persistent watermark store: idempotent marking, session scoping, cleanup on session deletion, empty-input no-ops |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
-The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **2653 passed / 0 failed** (GROUP A 1785P/1S + GROUP B 795P/5D + GROUP C 73P).
+The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **4221 passed / 0 failed** (GROUP A 3235P/1S + GROUP B 913P/11S + GROUP C 73P).
 
 ## ⚠️ Honesty & Limitations
 
