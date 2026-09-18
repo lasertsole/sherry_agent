@@ -1,8 +1,8 @@
-# 经验抽取架构
+# 经验体系架构
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理 Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、以及经验**写到哪里**。生命周期中共接入四条抽取路径：压缩时 memory review（每 `nudge_memory_threshold` 次压缩）、压缩时 todo 全部完成的 plan extraction、压缩前 memory flush、压缩后 todo fork。
+本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每 `nudge_memory_threshold` 次压缩）、压缩时 todo 全部完成的 plan extraction、压缩前 memory flush、压缩后 todo fork。产出分别落入四个存储——MEMORY.md / USER.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 

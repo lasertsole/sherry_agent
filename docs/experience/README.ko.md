@@ -1,8 +1,8 @@
-# 경험 추출 아키텍처
+# 경험 체계 아키텍처
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-이 문서는 Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(`nudge_memory_threshold`회 압축마다), 압축 시 todo 전부 완료일 때의 plan extraction, 압축 전 memory flush, 압축 후 todo fork.
+이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(`nudge_memory_threshold`회 압축마다), 압축 시 todo 전부 완료일 때의 plan extraction, 압축 전 memory flush, 압축 후 todo fork. 산출물은 네 개 저장소——MEMORY.md / USER.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
 > 아래 모든 주장은 소스와 대조해 검증했습니다. 심볼 이름, 설정 키, 기본값, 경로는 모두 `agent/middlewares/`, `agent/tools/`, `config/features/` 코드에 실제로 존재합니다.
 

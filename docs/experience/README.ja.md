@@ -1,8 +1,8 @@
-# 経験抽出アーキテクチャ
+# 経験システムアーキテクチャ
 
 [English](README.md) · [中文](README.zh.md) · 日本語 · [한국어](README.ko.md)
 
-本書は、Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれるかを整理する。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（`nudge_memory_threshold` 回の圧縮ごと）、圧縮時に todo 全完了だった場合の plan extraction、圧縮前の memory flush、圧縮後の todo fork。
+本書は経験システムを扱う：Agent が実行中に**いつ**経験を抽出し、**どの機構で**抽出し、経験が**どこへ**書き込まれ、そして生成されたスキルライブラリがどう維持されるか。ライフサイクルには 4 本の抽出経路が組み込まれている：圧縮時 memory review（`nudge_memory_threshold` 回の圧縮ごと）、圧縮時に todo 全完了だった場合の plan extraction、圧縮前の memory flush、圧縮後の todo fork。産出は 4 つのストア——MEMORY.md / USER.md、plan 知識ディレクトリ、`skills/auto/`、`todos.db`——へ入り、以下の **Curator** 節が plan extraction の書込先である `skills/auto/` を維持するバックグラウンドパスを記録する。
 
 > 以下の主張はすべてソースと照合済み。シンボル名、設定キー、既定値、パスはいずれも `agent/middlewares/`、`agent/tools/`、`config/features/` のコードに実在する。
 

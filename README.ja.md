@@ -27,7 +27,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **プライベートナレッジグラフ RAG**：`multimodal_rag` スキルがドキュメント/フォルダをエンティティ関係グラフにインデックス化（ベンダード LightRAG + RAG-Anything、`snkv` ベクトルストレージ）し、マルチホップグラフ検索で回答
 - **経験抽出（Experience Extraction）**：4 つのライフサイクル経路が会話履歴を再利用可能な経験として蓄積します。圧縮時の memory review（`nudge_memory_threshold` 回の圧縮ごと）、圧縮時に todo が全完了したときの plan 抽出、圧縮前の memory flush、圧縮後の todo fork です。それぞれ MEMORY.md / USER.md、plan ナレッジベース（`agent/tools/todolist/knowledge/`）、`skills/auto/`、`todos.db` に書き込みます
 - ▶️ _アーキテクチャ・データモデル・API の詳細は [Context Engine README](context_engine/README.md) を参照_
-- ▶️ _トリガー × メカニズム × 書き込み先の全体マップは [Experience Extraction README](docs/experience_extraction/README.ja.md) を参照_
+- ▶️ _4 本の抽出経路とスキルキュレーションは [Experience README](docs/experience/README.ja.md) を参照_
 
 ### 2. 🛠️ 動的スキルシステム
 - **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
@@ -144,7 +144,7 @@ EMA_AI_agent/
 │   └── curator/            # 自動スキルキュレーション
 │
 ├── docs/                   # サブシステム設計ドキュメント（言語別 README）
-│   ├── experience_extraction/ # 4 つの経験抽出ライフサイクル経路
+│   ├── experience/         # 経験抽出経路 + スキルキュレーション
 │   ├── session_memory/     # セッションメモリのケイパビリティ
 │   ├── summarization/      # 圧縮トリガーとクールダウン
 │   ├── loop-prevention/    # 暴走ループ防止ハーネス
@@ -264,7 +264,7 @@ EMA_AI_agent/
 | サブモジュール | 説明 | ドキュメント |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期セッションメッセージメモリ（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **経験抽出** | 会話履歴を再利用可能な経験として蓄積する 4 つのライフサイクル経路 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **経験体系** | 会話履歴を再利用可能な経験として蓄積する 4 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
 | **セッションメモリ** | SESSION 計画のケイパビリティ: memory flush、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |

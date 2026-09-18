@@ -27,7 +27,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
 - **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每 `nudge_memory_threshold` 次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
-- ▶️ _详见 [Experience Extraction README](docs/experience_extraction/README.zh.md) 了解触发条件 × 机制 × 落库位置的完整映射_
+- ▶️ _详见 [Experience README](docs/experience/README.zh.md) 了解四条抽取路径与技能策展_
 
 ### 2. 🛠️ 动态技能系统
 - **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
@@ -144,7 +144,7 @@ EMA_AI_agent/
 │   └── curator/            # 自动技能维护
 │
 ├── docs/                   # 子系统设计文档（各语言 README）
-│   ├── experience_extraction/ # 四条经验抽取生命周期路径
+│   ├── experience/         # 经验抽取路径 + 技能策展
 │   ├── session_memory/     # 会话记忆能力
 │   ├── summarization/      # 压缩触发条件与冷却
 │   ├── loop-prevention/    # 防失控循环防护
@@ -264,7 +264,7 @@ EMA_AI_agent/
 | 子模块 | 说明 | 文档 |
 |-----------|-------------|---------------|
 | **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **经验抽取** | 将对话历史沉淀为可复用经验的四条生命周期路径 | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **经验体系** | 将对话历史沉淀为可复用经验的四条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
 | **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |

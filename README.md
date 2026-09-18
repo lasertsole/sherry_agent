@@ -27,7 +27,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Private Knowledge Graph RAG**: the `multimodal_rag` skill indexes documents/folders into an entity–relationship graph (vendored LightRAG + RAG-Anything on `snkv` vector storage) and answers via multi-hop graph retrieval
 - **Experience Extraction**: four lifecycle paths turn conversation history into durable experience: the compression-time memory review (every `nudge_memory_threshold` compressions), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. They write to MEMORY.md / USER.md, the plan knowledge base (`agent/tools/todolist/knowledge/`), `skills/auto/`, and `todos.db`
 - ▶️ _See the [Context Engine README](context_engine/README.md) for architecture, data models, and API details_
-- ▶️ _See the [Experience Extraction README](docs/experience_extraction/README.md) for the trigger × mechanism × destination map_
+- ▶️ _See the [Experience README](docs/experience/README.md) for the extraction paths and the skill Curator_
 
 ### 2. 🛠️ Dynamic Skill System
 - **SKILL.md Standard**: skills are Markdown files with YAML frontmatter (`name`, `description`, optional `scope: all | main_only | subagent_only`) — the loader auto-discovers every `SKILL.md` under `skills/`
@@ -144,7 +144,7 @@ EMA_AI_agent/
 │   └── curator/            # Auto-skill curation
 │
 ├── docs/                   # Subsystem design docs (per-language READMEs)
-│   ├── experience_extraction/ # Four experience-extraction lifecycle paths
+│   ├── experience/         # Experience extraction paths + skill curation
 │   ├── session_memory/     # Session-memory capabilities
 │   ├── summarization/      # Compression triggers & cooldown
 │   ├── loop-prevention/    # Runaway-loop prevention harness
@@ -264,7 +264,7 @@ Each major subsystem has its own detailed README:
 | Submodule | Description | Documentation |
 |-----------|-------------|---------------|
 | **Context Engine** | Short-term session message memory (MesMemory) | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) |
-| **Experience Extraction** | Four lifecycle paths turning conversation history into durable experience | [EN](docs/experience_extraction/README.md) · [ZH](docs/experience_extraction/README.zh.md) · [JA](docs/experience_extraction/README.ja.md) · [KO](docs/experience_extraction/README.ko.md) |
+| **Experience** | Four extraction lifecycle paths plus the background Curator that maintains `skills/auto/` | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
 | **Session Memory** | SESSION-plan capabilities: memory flush, compression cooldown, compaction lock, event log, semantic search | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **Subagent System** | Multi-level subagent spawn, parallel execution & result delivery | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) |
 | **Middlewares** | Agent lifecycle middleware pipeline | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) |
