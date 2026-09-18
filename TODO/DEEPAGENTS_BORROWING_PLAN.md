@@ -20,6 +20,7 @@
 > **未执行项清单（2026-09-18）**：以下条目**仍由本文件跟踪、尚未执行**（本文件曾于 `257879c` 被误删，已由 `a750fdf` 恢复并**保持活跃**，不再退休）：
 >
 > - P1-1 参数截断 —— **已落地**（能力已存在，见上方 P1-1 落地记录），无需另做
+> - P1-9 人类消息驱逐（超大 HumanMessage 的上下文治理）—— **未执行**，详细实现规划见 `## P1-9`（2026-09-18 新增，来源：对比报告第三批复核）
 > - P1-3 模型感知摘要默认值（`compute_summarization_defaults`）
 > - P1-4 增量检查点优化（`DeltaChannel`）
 > - P1-5 消息增量缩减器（去重 + 墓碑）
@@ -43,11 +44,12 @@
 7. [P1-6：中间件脚手架保护](#p1-6中间件脚手架保护)
 8. [P1-7：多模态内容清理](#p1-7多模态内容清理)
 9. [P1-8：威胁模型文档](#p1-8威胁模型文档)
-10. [P2-1：ripgrep 双重超时看门狗](#p2-1ripgrep-双重超时看门狗)
-11. [P2-2：持久化工具审批策略 (字节修订 CAS)](#p2-2持久化工具审批策略)
-12. [P2-3：伪文件系统修剪](#p2-3伪文件系统修剪)
-13. [P2-4：read_file 结果切片](#p2-4read_file-结果切片)
-14. [实施优先级与依赖关系总览](#实施优先级与依赖关系总览)
+10. [P1-9：人类消息驱逐（超大 HumanMessage 的上下文治理）](#p1-9人类消息驱逐超大-humanmessage-的上下文治理)
+11. [P2-1：ripgrep 双重超时看门狗](#p2-1ripgrep-双重超时看门狗)
+12. [P2-2：持久化工具审批策略 (字节修订 CAS)](#p2-2持久化工具审批策略-字节修订-cas)
+13. [P2-3：伪文件系统修剪](#p2-3伪文件系统修剪)
+14. [P2-4：read_file 结果切片](#p2-4read_file-结果切片)
+15. [实施优先级与依赖关系总览](#实施优先级与依赖关系总览)
 
 ---
 
@@ -836,7 +838,116 @@ Sherry 缺少威胁模型文档，安全评审缺少系统性参考。
 
 ---
 
-## P2-1：ripgrep 双重超时看门狗
+## P1-9：人类消息驱逐（超大 HumanMessage 的上下文治理）
+
+> **状态（2026-09-18）：未执行，本节为详细实现规划。** 来源：对比报告第三批复核（`TODO/PROTECTION_COMPARISON.md` §2.4「人类消息驱逐」行，Sherry ❌）。**借用计划此前未覆盖此项**，本节补全。
+
+### 问题
+
+用户单条消息可能携带超大纯文本（粘贴的日志/文档/代码/长对话导出）。`MultimodalProcessor` 只治理**媒体附件**，超长纯文本会**永久占据 state 与每次模型调用**：压缩触发前它一直全量在上下文里；即使触发压缩，`_determine_cutoff` 的保留策略也倾向于保留最近的用户消息。DeepAgents 的 `FilesystemMiddleware` 对此有专门机制（对比报告判 Sherry ❌、DeepAgents ✅ `human_message_token_limit_before_evict`）。
+
+### DeepAgents 做法（本地检出核实，`libs/deepagents/deepagents/middleware/filesystem.py`）
+
+| 环节 | 机制 | 位置 |
+|---|---|---|
+| 配置 | `human_message_token_limit_before_evict = 50000`（token），经 `NUM_CHARS_PER_TOKEN` 折算字符阈值 | `:1755`、`:3373` |
+| 触发 | **仅检查最后一条消息**：必须是 `HumanMessage`、未带 `lc_evicted_to`、文本超阈值；`None` 则整条路径关闭 | `_check_eviction_needed` `:3364-3385` |
+| 落盘 | 全文写入 **backend 文件系统**（与 `write_file` 同一后端） | `_evict_and_truncate_messages` `:3432` |
+| state 打标 | `model_copy` **保 id**、写 `additional_kwargs["lc_evicted_to"]=file_path`，经 `Command(update={"messages":[tagged]})` **按 id 原地替换**；**依赖 `ensure_message_ids` + `DeltaChannel` reducer 的 id 去重**，刻意不用 `REMOVE_ALL_MESSAGES` 哨兵（会连带清掉同轮模型写入的 AIMessage） | `_apply_eviction_and_truncate` `:3394-3425` |
+| 模型视图 | 每次模型调用前，凡带标记的 HumanMessage 换成 `TOO_LARGE_HUMAN_MSG`（文件路径 + `_create_content_preview` head/tail 预览），`model_copy` **保 id** | `_build_truncated_human_message` `:1657` |
+| 多模态 | 只把**文本块**换成通知文本，媒体块原样保留 | `_build_evicted_human_content` `:1632` |
+
+**关键取舍**：**全文仍留在 state/checkpoint**，只截"模型视图"——与它自己的工具结果驱逐（"大内容从不进 state"）是**两套相反策略**。
+
+### 具体实现方案（Sherry 口径）
+
+#### 设计决策（为何不照抄，也不复用工具侧三态）
+
+1. **采用"state 全文 + 模型视图截断"（DeepAgents 取舍），而非 Sherry 工具侧的"state=预览"三态**。理由：
+   - 人类消息的持久化发生在**首个 `after_model` 边界**（`MessagePersistenceMiddleware`）。若在 state 里换成预览，MesMemory 只能拿到预览 → **有损归档**（`message_search` 搜不到原文）；保持 state 全文 ⇒ MesMemory 全文 ✓、压缩管线与 `_determine_cutoff` 看到全文 ✓、`read_file` 可取回 ✓。
+   - **不需要 `DeltaChannel`（即不依赖 P1-4）**：打标用「同 `id` 的 `model_copy` 经 `add_messages` reducer 原地更新」——LangGraph 标准 reducer 本就按 id 去重，无需 `REMOVE_ALL_MESSAGES` 哨兵（哨兵会连带清掉同轮的 AIMessage，且会重写全列表、破坏前缀缓存）。
+2. **与工具驱逐共用同一套目录与原语**：`SESSIONS_DIR/<session_id>/evicted/`、`eviction.py` 的 `get_eviction_dir` / `_extract_text` / `_build_evicted_content`（多模态保留）/ `build_preview` / `load_evicted`；模型经 `read_file(file_path=…)` 取回。
+3. **自愈（优于 DeepAgents）**：state 保留全文 ⇒ 若重启后发现"有标记、文件丢失"，`wrap_model_call` 时从 state 内容**重写文件**。DeepAgents 做不到（它的全文不在 state）。
+
+#### 命名（二选一，建议 A）
+
+- **A（推荐）**：`tool_result_eviction/` **改名 `context_eviction/`**（类名 `ContextEvictionMiddleware`），同一中间件持两组钩子（`wrap_tool_call` 工具结果 + `before_model` 打标 / `wrap_model_call` 视图截断）——与 DeepAgents 的 `FilesystemMiddleware` 同构，命名准确。改动面：注册、门面、测试、README×4。
+- **B**：保留现名，另建 `human_message_eviction/` 包。改动面更小，但"体积治理"职责拆在两处。
+（下文按 A 书写；选 B 仅替换文件名。）
+
+#### 文件清单
+
+| 文件 | 修改类型 | 说明 |
+| --- | --- | --- |
+| `agent/middlewares/context_eviction/core.py` | 修改（原 tool_result_eviction） | 新增 `before_model`/`abefore_model`（打标+落盘）与 `wrap_model_call`/`awrap_model_call`（视图截断） |
+| `pub/func/message/eviction.py` | 修改 | 新增 `evict_human_message(msg, session_id)` / `build_human_preview(...)` / `human_eviction_notice(...)`（复用 `_extract_text`/`_build_evicted_content`/`build_preview`） |
+| `config/features/agent_side/tool_result_eviction.py` | 修改 | `ToolResultEvictionConfig` 增加 `human_evict_enabled` / `human_evict_threshold_chars` / `human_preview_head_lines` / `human_preview_tail_lines` |
+| `agent/core.py`、`agent/middlewares/__init__.py` | 修改 | 改名后的注册与门面导出 |
+| `tests/agent/middlewares/context_eviction/` | 修改+新建 | 既有工具用例迁移 + 人类消息新用例 |
+| `docs/middlewares`（`agent/middlewares/README{,.zh,.ja,.ko}.md`）、`docs/session_memory/README{4}`、`TODO/PROTECTION_COMPARISON.md` | 修改 | 机制、路径、行为与矩阵行更新 |
+
+#### 配置新增（`ToolResultEvictionConfig`）
+
+```python
+human_evict_enabled: bool = True
+# 字符阈值；对齐 DeepAgents 默认 50_000 tokens ≈ 200_000 chars（NUM_CHARS_PER_TOKEN=4）
+human_evict_threshold_chars: int = 200_000
+human_preview_head_lines: int = 5
+human_preview_tail_lines: int = 5
+```
+
+> 为什么用字符而不用 token：与工具侧 `evict_threshold_chars` 同一口径、避免在热路径再做一次 token 估算；文档注明与 DeepAgents 默认值的换算关系。
+
+#### 实现要点
+
+1. **打标 + 落盘（`before_model` / `abefore_model`，钩子顺序待实测见下）**
+   - 门控：`enabled` 且列表非空且**最后一条**是 `HumanMessage`、`additional_kwargs` 无 `lc_evicted_to`、`len(_extract_text(content)) > human_evict_threshold_chars`
+   - 动作：`get_eviction_dir(session_id)` 建目录 → 全文写 `human-<msg_id 或 ts>.md` → 返回**部分状态更新** `{"messages": [msg.model_copy(update={"additional_kwargs": {**msg.additional_kwargs, "lc_evicted_to": str(path)}})]}`（**内容不变、id 不变** → reducer 按 id 原地更新）
+   - `session_id` 走 `require_session_id`；`is_safe_session_segment` 校验（非法→跳过不写盘）
+2. **模型视图截断（`wrap_model_call` / `awrap_model_call`）**
+   - 遍历 `request.messages`：凡 `HumanMessage` 且带 `lc_evicted_to` → `model_copy(update={"content": _build_evicted_content(原文, build_preview(...))})`（**预览模板含原路径 + `read_file` 续读提示**，媒体块保留）
+   - `request.override(messages=processed)` —— 与 Summarization 既有 idiom 一致
+   - **自愈**：文件缺失时从 state 里的原文重写（见设计决策 3）
+   - ⚠ **实现前必须验证**：LangChain 1.3.9 的 `wrap_model_call` 能否返回 `Command(update=...)`（DeepAgents 靠它打标）；**若不支持，打标改在 `before_model` 状态更新里做**（如上），`wrap_model_call` 只做视图截断 —— 两个钩子分工与本节一致，无阻塞风险
+3. **钩子顺序（实现前实测）**：`before_model` 的执行顺序（列表序 or 逆序）需按 `factory.py` 现行装配确认；目标语义是**打标/落盘必须发生在 `MultimodalProcessor` 对最后一条 HumanMessage 处理之后**（媒体提示已并入文本块），且**早于**任何 `wrap_model_call`。若顺序不符，把"打标+落盘"并入本中间件的 `wrap_model_call` 首段（写文件 + 视图截断一次完成），状态打标经 `Command(update=...)` 或挪到 `after_model`（消息仍是"最后一条"的轮次内）。
+4. **幂等与防御**：已有 `lc_evicted_to` → 跳过；`enabled=False` → 全跳过；非文本为主的消息（媒体块占主导）不驱逐；`min_keep` 不适用（人类消息不参与 tool 配对，`_reconcile_denials`/`sanitize_tool_use_result_pairing` 与 HumanMessage 无交互）
+
+#### 与既有机制的交互（全部须有测试锁定）
+
+| 机制 | 影响 | 结论 |
+| --- | --- | --- |
+| `MessagePersistenceMiddleware` | 打标**不改 content** ⇒ MesMemory 仍落**全文**；`_is_persistable` 只滤 `lc_source=="summarization"`，不滤 `lc_evicted_to` | 全文归档 ✓（测试锁定） |
+| 持久化水位 `persisted_message_ids` | 消息 id 不变 ⇒ 水位不受影响 | 不重复落库 ✓ |
+| 压缩/`_determine_cutoff`/P1-2 尾部裁剪 | 看到的是 state 全文；若裁剪到被驱逐的 HumanMessage，**stub 化不销毁标记与指针**（同 P1-2 对 P0-2 指针的既有约定） | 可裁、可恢复 ✓ |
+| P0-2 工具驱逐 / P2-4 read_file 切片 | 不消费 `lc_evicted_to`；目录共用 | 互不干扰 ✓ |
+| 摘要过滤 `_filter_summary_messages` | 只滤 `lc_source=="summarization"` | 不受影响 ✓ |
+| `message_search` | MesMemory 有全文 | 可检索 ✓ |
+| HITL | HumanMessage 不参与工具配对 | 无交互 ✓ |
+| 前缀缓存 | state content 未变（只加 kwargs）；视图截断只影响本次请求 ⇒ 与 Summarization 的 override 同性质 | 可接受，文档注明 |
+
+#### 测试（新建 + 迁移）
+
+- 阈值边界（=阈值不驱逐 / +1 驱逐）、`human_evict_enabled=False`、**非最后一条的 HumanMessage 不触发**、已带标记不重复驱逐
+- 打标状态更新：**content 不变、id 不变、kwargs 增加标记**；经 reducer 原地更新（无 `REMOVE_ALL_MESSAGES`）
+- 视图截断：预览含路径 + `read_file` 提示；**媒体块保留**；`override` 后模型看到的是预览
+- **三态断言（人类版）**：state=全文+标记 / MesMemory=全文 / 磁盘文件 = 原文（`load_evicted` 逐字节一致）
+- 自愈：删文件后 `wrap_model_call` 重写
+- 幂等（二次不驱逐/不重写——除非文件缺失）
+- 非法 session_id 不写盘；`async` 双路径（`abefore_model`/`awrap_model_call`）
+- 既有 `tool_result_eviction` 用例在改名后全部迁移并保持绿
+
+#### 执行顺序
+
+1. `eviction.py` 三个纯函数 + 单测
+2. 配置四键 + 契约测试（`tests/config`）
+3. 中间件改名 + 新钩子（先写"钩子顺序实测"的验证脚本/测试）
+4. 迁移既有工具用例 + 新增人类消息用例
+5. 门禁：`pytest tests/agent/middlewares tests/pub/func/message tests/config -q` → split runner → basedpyright/ruff/lint-imports
+6. 文档：`agent/middlewares/README{4}`、`docs/session_memory/README{4}`、对比报告矩阵行（❌→✅）
+
+---
+
+
 
 ### 问题
 
