@@ -43,6 +43,7 @@ from pub.func.message.overflow_router import (
     find_truncatable_tool_results,
 )
 from pub.func.message.tool_result_ttl import truncate_to_budget
+from pub.func.message.overflow_clip import ROUTE_TAIL_CLIP, clip_overflow_tail
 from pub.func.message.llm_error_classifier import (
     CONTEXT_OVERFLOW,
     PAYLOAD_TOO_LARGE,
@@ -856,6 +857,49 @@ class Summarization(AgentMiddleware):
         )
         return messages, args_freed + result_freed
 
+    def _fast_tail_clip(
+        self,
+        messages: list[AnyMessage],
+        *,
+        usable: int,
+        threshold_ratio: float,
+        trigger: str,
+    ) -> list[AnyMessage] | None:
+        """P1-2 no-LLM tail clip: the first move on every overflow path.
+
+        Budget derivation (conservative, reusing the T1–T5 estimators):
+        ``est = estimate_messages_tokens(messages, reported_tokens=0)`` is the
+        pure local estimate the route decision itself uses (a stale
+        ``usage_metadata`` must not drive recovery), and
+        ``target = max(est − usable × threshold_ratio, 0)`` is the token
+        amount that must be freed. ``target == 0`` means the estimate already
+        sits on the line, so the clip takes the maximum eligible tail batch.
+
+        The clip is accepted only when it ALONE drops the estimate below
+        ``usable × threshold_ratio``: the caller then returns the stubbed
+        request and the existing route never executes — no budget truncation,
+        no auxiliary-LLM compaction. An insufficient clip is discarded so the
+        existing route keeps operating on the exact original list.
+        """
+        est = estimate_messages_tokens(list(messages), reported_tokens=0)
+        target = est - int(usable * threshold_ratio)
+        clipped = clip_overflow_tail(cast("list[BaseMessage]", list(messages)), max(target, 0))
+        if clipped is None:
+            return None
+        new_est = estimate_messages_tokens(list(clipped), reported_tokens=0)
+        if new_est >= usable * threshold_ratio:
+            logger.debug(
+                "Overflow tail clip insufficient: trigger={}, old_tokens={}, "
+                "new_tokens={}, target_tokens={} (degrading to the existing route)",
+                trigger,
+                est,
+                new_est,
+                target,
+            )
+            return None
+        self._log_route(trigger, ROUTE_TAIL_CLIP, est, new_est, usable)
+        return cast("list[AnyMessage]", clipped)
+
     def _log_route(
         self, trigger: str, route: str, old_tokens: int, new_tokens: int, usable: int
     ) -> None:
@@ -957,9 +1001,23 @@ class Summarization(AgentMiddleware):
         T1 (before_agent) and T2 (wrap/awrap_model_call) both call this —
         Tasks 6/7 (T3 post-response check, provider-error retry) must reuse
         it instead of copying a second dispatch.
+
+        P1-2: every non-``fits`` route first attempts the no-LLM tail clip.
+        When the clip alone recovers the budget the request is returned
+        immediately and the route below never executes.
         """
         usable = self._usable_budget()
         messages: list[AnyMessage] = request.state.get("messages", [])
+
+        if route != ROUTE_FITS:
+            clipped = self._fast_tail_clip(
+                messages,
+                usable=usable,
+                threshold_ratio=COMPRESSION_TRIGGER_RATIO,
+                trigger=trigger,
+            )
+            if clipped is not None:
+                return request.override(messages=clipped)
 
         if route == ROUTE_TRUNCATE_TOOL_RESULTS_ONLY:
             old_tokens = self._estimate_tokens(list(messages))
@@ -993,6 +1051,16 @@ class Summarization(AgentMiddleware):
         """Async twin of :meth:`_dispatch_overflow_route` (parity by shape)."""
         usable = self._usable_budget()
         messages: list[AnyMessage] = request.state.get("messages", [])
+
+        if route != ROUTE_FITS:
+            clipped = self._fast_tail_clip(
+                messages,
+                usable=usable,
+                threshold_ratio=COMPRESSION_TRIGGER_RATIO,
+                trigger=trigger,
+            )
+            if clipped is not None:
+                return request.override(messages=clipped)
 
         if route == ROUTE_TRUNCATE_TOOL_RESULTS_ONLY:
             old_tokens = self._estimate_tokens(list(messages))
@@ -1182,12 +1250,32 @@ class Summarization(AgentMiddleware):
         ``_record_compression`` inside ``_apply_compression`` so the
         session-level compression stats stay truthful. The per-class retry
         counter is incremented AFTER a successful compression step.
+
+        P1-2 fast path: before the compact step the trailing contiguous
+        ToolMessage batch is clipped without any LLM call. When the clip
+        alone drops the estimate below the usable budget the provider call is
+        retried with the stubbed list and compression never runs. It reads
+        ``request.messages`` — an already-stubbed request (earlier recovery
+        attempt) makes the clip a no-op, so the retry budget cannot be burned
+        on identical clips.
         """
         trigger = _TRIGGER_BY_ERROR_CLASS[error_class]
         retry_key = _RETRY_KEY_BY_ERROR_CLASS[error_class]
         retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
         attempt = retries + 1
         old_tokens = self._estimate_tokens(list(request.messages))
+
+        usable = self._usable_budget()
+        clipped = self._fast_tail_clip(
+            list(request.messages),
+            usable=usable,
+            threshold_ratio=1.0,
+            trigger=trigger,
+        )
+        if clipped is not None:
+            state_register_mem.set_state(session_id, retry_key, attempt)
+            return request.override(messages=cast("list[AnyMessage]", clipped))
+
         request = self._apply_compression(request, session_id)
         usable = self._usable_budget()
         final_messages = list(request.messages)
@@ -1221,6 +1309,18 @@ class Summarization(AgentMiddleware):
         retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
         attempt = retries + 1
         old_tokens = self._estimate_tokens(list(request.messages))
+
+        usable = self._usable_budget()
+        clipped = self._fast_tail_clip(
+            list(request.messages),
+            usable=usable,
+            threshold_ratio=1.0,
+            trigger=trigger,
+        )
+        if clipped is not None:
+            state_register_mem.set_state(session_id, retry_key, attempt)
+            return request.override(messages=cast("list[AnyMessage]", clipped))
+
         request = await self._aapply_compression(request, session_id)
         usable = self._usable_budget()
         final_messages = list(request.messages)
@@ -2183,10 +2283,11 @@ class Summarization(AgentMiddleware):
         if route is not None and route != ROUTE_FITS:
             request = self._dispatch_overflow_route(request, route, session_id, trigger="T2")
         elif self._check_trigger(request.state.get("messages", [])):
-            # legacy trigger-clause fallback (e.g. ("messages", N) triggers)
-            request = self._dispatch_overflow_route(
-                request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
-            )
+            # legacy trigger-clause fallback (e.g. ("messages", N) triggers).
+            # P1-2: the tail clip must NOT bypass an explicit trigger-clause
+            # compaction — that is a length/token mandate, not pressure
+            # recovery — so this path goes straight to the compact executor.
+            request = self._execute_compact(request, ROUTE_COMPACT_ONLY, session_id, trigger="T2")
 
         response = self._execute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)
@@ -2262,8 +2363,11 @@ class Summarization(AgentMiddleware):
         if route is not None and route != ROUTE_FITS:
             request = await self._adispatch_overflow_route(request, route, session_id, trigger="T2")
         elif self._check_trigger(request.state.get("messages", [])):
-            # legacy trigger-clause fallback (e.g. ("messages", N) triggers)
-            request = await self._adispatch_overflow_route(
+            # legacy trigger-clause fallback (e.g. ("messages", N) triggers).
+            # P1-2: the tail clip must NOT bypass an explicit trigger-clause
+            # compaction — that is a length/token mandate, not pressure
+            # recovery — so this path goes straight to the compact executor.
+            request = await self._aexecute_compact(
                 request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
             )
 

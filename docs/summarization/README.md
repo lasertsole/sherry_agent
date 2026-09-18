@@ -103,7 +103,12 @@ turn starts
        ├─ non-target / unknown class → ORIGINAL exception re-raises
        │  untouched (zero retries, zero state writes, never swallowed)
        ├─ retries < MAX_OVERFLOW_RETRIES (3) → _forced_recovery_request
-       │  (:985 / async :1030): compact + budget truncation that bypasses
+       │  (:985 / async :1030): the no-LLM tail clip runs FIRST — when it
+       │  alone drops the estimate under the usable budget the handler is
+       │  retried with stubbed tail results and no compact happens; an
+       │  already-stubbed request makes the clip a no-op, so the next
+       │  attempt degrades to the compact + budget truncation step, which
+       │  bypasses
        │  ALL anti-thrash gates by construction (cooldown, per-turn cap
        │  and _should_skip_compression are never consulted); it does NOT
        │  arm the cooldown or count a turn attempt, but it DOES go
@@ -147,6 +152,10 @@ The single executor `_dispatch_overflow_route` (:760 sync / :800 async) serves T
 
 - `truncate_tool_results_only` → `_run_budget_truncation` (:659) — step 1 truncates oversized tool-call args (returns new messages, see the truncate track below), step 2 truncates tool results in place — then a **recheck**: if the freed tokens were not enough (`new_tokens ≥ usable × 0.80`, estimated on the returned list), escalate to `compact_then_truncate`; otherwise pass through WITHOUT compression;
 - `compact_only` / `compact_then_truncate` → `_execute_compact` (:702 / async :731) → `_apply_compression` (exceptions logged, request unchanged) → `_record_compaction_bookkeeping` (:694: arm the cooldown, count the turn attempt) → for `compact_then_truncate`, budget truncation runs on the compacted result as backstop → route logged with old/new tokens and pressure ratio.
+
+**P1-2 fast path — the no-LLM tail clip.** Before any route executes, `_fast_tail_clip` runs `clip_overflow_tail` (`pub/func/message/overflow_clip.py`): the trailing contiguous `ToolMessage` batch is replaced by compact stubs through `ToolMessage.model_copy`, so no message is removed or injected — `id`, `tool_call_id`, `name` and `additional_kwargs` survive, keeping the pairing sanitizer and the persistence watermark satisfied. Budget: `target = max(estimate_messages_tokens(messages, reported_tokens=0) − usable × ratio, 0)`; a `0` target means "take the maximum eligible batch" (bounded by `overflow_clip_max_remove`, floored by `overflow_clip_min_keep`). `ratio` is `COMPRESSION_TRIGGER_RATIO (0.80)` on the route path and `1.0` (below the usable budget) on the T4/T5 forced step. Only a clip that ALONE drops the estimate under the line is accepted: the request is returned with the stubbed list and the route never executes (no budget truncation, no auxiliary-LLM compaction). An insufficient clip is discarded and the existing route runs on the exact original list. On T4/T5 the clip reads `request.messages`; an already-stubbed request makes it a no-op, so the retry budget cannot be burned on identical clips and the next attempt degrades to compression.
+
+**Why dropping tail content is safe:** every tool result was already flushed to MesMemory the moment it returned (`MessagePersistenceMiddleware`) and stays retrievable through the `message_search` tool. P0-2-evicted results keep their `[evicted to: …]` pointer inside the stub (so `read_file` still works), P2-4-sliced `read_file` results keep their slice notice verbatim, and a stubbed message ends the scannable batch — a second clip pass is a no-op and never destroys those markers. Config: `overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep`.
 
 Window math (test contracts): window `41 600` → usable `25 600`, lines `17 920` / `20 480`, truncate budget `15 360`. With the test-pinned `MAIN_LLM_MAX_TOKEN = 65536` (the runtime `.env` value must be >= 131072 / 128K) the registered T2 clause sits at `52 428`.
 
@@ -315,6 +324,9 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | candidate floor in `find_truncatable_tool_results` |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | newest messages never truncatable (pairing margin) |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 forced-recovery cap (shared counter) |
+| `OVERFLOW_CLIP_ENABLED` ◆ | `True` | P1-2 no-LLM tail clip master switch |
+| `OVERFLOW_CLIP_MAX_REMOVE` ◆ | `10` | max tail messages stubbed per clip pass |
+| `OVERFLOW_CLIP_MIN_KEEP` ◆ | `5` | transcript floor: ≤ this many messages → no clip |
 | `MAX_COMPRESS_ATTEMPTS_PER_TURN` ◆ | `3` | per-turn proactive compaction cap |
 | `COMPACTION_COOLDOWN_ROUNDS` ◆ | `3` | cooldown armed after every actual compact |
 | `MIN_PRESERVE_TOKENS` ◆ | `2_000` | preserve-budget floor; budget without a window |
@@ -358,6 +370,8 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | dedup / prune / target-truncate / turn-utils plus tool-args truncation: head+tail format, small-args skip, freed clamp, protected tools, skip-recent, pairing & no-mutation |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file recoverable slice: original path + 1-based offset notice, no line skip, absolute page numbering, byte-identical generic marker, protected / under-budget / fallback paths |
 | `tests/config/test_num_contract.py` | 46 | Constants contract (watchdog `CONTRACT_NAMES` covers all documented knobs) |
+| `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 pure clip: trailing-batch detection, max_remove/min_keep/enabled gates, token target, marker preservation (P0-2 pointer, P2-4 notice), no-op idempotency, pairing invariant |
+| `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 middleware integration: T1/T2 clip without LLM, insufficient-clip degradation, kill switch, T4/T5 clip-then-retry and clip→compression degradation, sync/async parity, sanitizer-unchanged |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 end-to-end scenarios + 3 overflow-counter regression tests × 2 registration orders, static-fallback compaction, zero network |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | Registration contract (test-pinned window): `MAIN_LLM_MAX_TOKEN = 65 536` → trigger threshold `52 428`; low-token pass-through |
