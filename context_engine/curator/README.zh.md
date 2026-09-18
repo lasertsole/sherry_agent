@@ -22,6 +22,7 @@
 - [孤立记录清理](#孤立记录清理)
 - [Pin 机制](#pin-机制)
 - [报告系统](#报告系统)
+- [恢复 API](#恢复-api)
 - [配置参考](#配置参考)
 - [Curator 状态文件](#curator-状态文件)
 - [不变量](#不变量)
@@ -120,7 +121,7 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
 | `stale` | 超过 `stale_after_days` 无活动，标记为陈旧 |
 | `archived` | 超过 `archive_after_days` 后移入 `skills/.archive/`，可恢复 |
 
-当技能超过 `archive_after_days` 无活动时，会被**归档**：目录移动到 `skills/.archive/<skill>/`，usage record 保留并标记 `state="archived"`（恢复时保留技能历史）。`curator restore <name>` 会将其移回 `skills/auto/`。Curator 的任何移除都不会删除——合并源（带 `ABSORBED_INTO` 标记）与被剪枝技能走同一归档路径。
+当技能超过 `archive_after_days` 无活动时，会被**归档**：目录移动到 `skills/.archive/<skill>/`，usage record 保留并标记 `state="archived"`（恢复时保留技能历史）。`curator restore <name>` 会将其移回 `skills/auto/`，并在同一步把 curator 侧记录翻回 `state="active"`（agent 侧转发器同时同步 agent 遥测记录），因此恢复后的技能会立即重新进入流转循环，而不是永久停留在 archived。归档目标冲突时追加时间戳后缀（`<skill>-<timestamp>`）；同一秒内反复冲突会逐秒探测，所有条目始终是平级目录，不会嵌套进已有条目。Curator 的任何移除都不会删除——合并源（带 `ABSORBED_INTO` 标记）与被剪枝技能走同一归档路径。
 
 **关键约束**：
 - Pinned 技能**永不**被自动转换、归档或删除
@@ -422,7 +423,19 @@ Pinned 技能享有最高保护级别：
 - 恢复说明
 
 **恢复方式**：
-> 三种移除全部可恢复：90 天流转、合并源技能（归档时写入 `ABSORBED_INTO` 标记注明 umbrella）、被剪枝的技能，统一进入 `skills/.archive/`，`curator restore <name>`（后端为 agent 侧 `restore_skill()`）可将任意一个移回 `skills/auto/`。归档目录不会自动清空——可用 `curator restore` 恢复或手动清理。
+> 三种移除全部可恢复：90 天流转、合并源技能（归档时写入 `ABSORBED_INTO` 标记注明 umbrella）、被剪枝的技能，统一进入 `skills/.archive/`，`curator restore <name>`（后端为 curator 层 `restore_skill()`）可将任意一个移回 `skills/auto/`。归档目录不会自动清空——可用 `curator restore` 恢复或手动清理。
+
+---
+
+## 恢复 API
+
+归档技能通过一个 curator 层原语和两个 HTTP 端点恢复：
+
+- `restore_skill(name) -> (bool, str)` — 将 `skills/.archive/<name>` 精确匹配条目移回 `skills/auto/`；只剩带时间戳的冲突条目时，选取最新的 `<name>-<timestamp>`（递归扫描，兼容旧的嵌套归档布局）。若名称如今已被 bundled/hub 安装（会遮蔽上游）或目标已存在则拒绝。成功后同一次调用内把 curator 使用记录写为 `state="active", _persisted=True`，恢复的技能立即重新进入 `apply_automatic_transitions`。恢复路径有意绕过 `_pinned_guard()`：记录可能残留旧的 pinned 标记而目录已在归档中，且目录已经移回——记录必须跟随。
+- `list_archived() -> list[str]` — 当前 `skills/.archive/` 下的目录名（排序）；带时间戳的冲突条目按原名返回，可直接传给 `restore_skill()`。
+- `POST /curator/restore` — JSON body `{"name": "<skill>"}`；成功返回 HTTP 200 + `{success, message, name}`，未知名称 / bundled/hub 遮蔽 / 目标已存在 / 非法名称返回 HTTP 400 + `{success: false, message}`。
+- `GET /curator/archived` — 返回 `{success, archived, count}`。
+- agent 侧 `agent.tools.pub_base.skill_usage.restore_skill()` 是 curator 原语的薄转发；恢复成功后同时把 `state="active"` 镜像到 agent 遥测记录（`skills/auto/.usage.json`），双记录保持一致。
 
 ---
 

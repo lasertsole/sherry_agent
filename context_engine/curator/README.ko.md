@@ -22,6 +22,7 @@
 - [고아 레코드 정리](#고아-레코드-정리)
 - [핀 메커니즘](#핀-메커니즘)
 - [보고 시스템](#보고-시스템)
+- [복구 API](#복구-api)
 - [구성 참조](#구성-참조)
 - [Curator 상태 파일](#curator-상태-파일)
 - [불변 조건](#불변-조건)
@@ -120,7 +121,7 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
 | `stale` | `stale_after_days` 동안 활동이 없어 오래된 것으로 표시 |
 | `archived` | `archive_after_days` 경과 후 `skills/.archive/`로 이동, 복구 가능 |
 
-스킬이 `archive_after_days`의 무활동 기간을 초과하면 **아카이브**됩니다: 디렉터리는 `skills/.archive/<skill>/`로 이동하고 사용 기록은 `state="archived"`로 유지됩니다(복구 시 이력 보존). `curator restore <name>`이 `skills/auto/`로 되돌립니다. Curator의 어떤 제거도 삭제가 아닙니다——통합 소스(`ABSORBED_INTO` 마커 포함)와 정리된 스킬도 같은 아카이브로 들어갑니다.
+스킬이 `archive_after_days`의 무활동 기간을 초과하면 **아카이브**됩니다: 디렉터리는 `skills/.archive/<skill>/`로 이동하고 사용 기록은 `state="archived"`로 유지됩니다(복구 시 이력 보존). `curator restore <name>`이 `skills/auto/`로 되돌리고 같은 단계에서 curator 측 레코드를 `state="active"`로 전환합니다(agent 측 포워더가 agent 텔레메트리 레코드도 동기화). 복구된 스킬은 즉시 전이 루프에 재진입하며 archived로 남아 방치되지 않습니다. 충돌 시 타임스탬프 접미사(`<skill>-<timestamp>`)가 붙고, 같은 초에 반복 충돌해도 1초씩 전진하며 탐색하므로 모든 항목이 평면 형제 디렉터리로 유지되고 기존 항목 안에 중첩되지 않습니다. Curator의 어떤 제거도 삭제가 아닙니다——통합 소스(`ABSORBED_INTO` 마커 포함)와 정리된 스킬도 같은 아카이브로 들어갑니다.
 
 **핵심 제약 조건**:
 - 고정(pinned)된 스킬은 **절대** 자동 전환, 아카이브, 삭제되지 않습니다
@@ -423,7 +424,19 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - 복구 참고 사항
 
 **복구**:
-> 세 가지 제거 모두 복구 가능: 90일 전이, 통합 소스(아카이브 시 umbrella 이름을 담은 `ABSORBED_INTO` 마커 기록), 정리된 스킬은 모두 `skills/.archive/`로 이동하며 `curator restore <name>`(백엔드는 에이전트 측 `restore_skill()`)으로 어느 것이든 `skills/auto/`로 되돌릴 수 있습니다. 아카이브는 자동으로 비워지지 않습니다——`curator restore`로 복원하거나 직접 정리하세요.
+> 세 가지 제거 모두 복구 가능: 90일 전이, 통합 소스(아카이브 시 umbrella 이름을 담은 `ABSORBED_INTO` 마커 기록), 정리된 스킬은 모두 `skills/.archive/`로 이동하며 `curator restore <name>`(백엔드는 curator 계층 `restore_skill()`)으로 어느 것이든 `skills/auto/`로 되돌릴 수 있습니다. 아카이브는 자동으로 비워지지 않습니다——`curator restore`로 복원하거나 직접 정리하세요.
+
+---
+
+## 복구 API
+
+아카이브된 스킬은 하나의 curator 계층 프리미티브와 두 개의 HTTP 엔드포인트로 복구합니다:
+
+- `restore_skill(name) -> (bool, str)` — `skills/.archive/<name>` 정확 일치 항목을 `skills/auto/`로 되돌립니다. 타임스탬프 충돌 항목만 남아 있으면 최신 `<name>-<timestamp>` 항목을 선택합니다(재귀 스캔이라 예전 중첩 아카이브 레이아웃도 해석합니다). 이름이 이제 bundled/hub 설치되어 있거나(업스트림을 가림) 이동 대상이 이미 존재하면 거부합니다. 성공 시 같은 호출 안에서 curator 사용 기록을 `state="active", _persisted=True`로 기록하므로 복구된 스킬은 즉시 `apply_automatic_transitions`에 재진입합니다. 복구 경로는 의도적으로 `_pinned_guard()`를 우회합니다: 디렉터리가 아카이브에 있는 동안 레코드가 오래된 pin을 유지할 수 있지만 디렉터리는 이미 되돌아왔으므로 레코드도 따라야 합니다.
+- `list_archived() -> list[str]` — 현재 `skills/.archive/` 아래의 디렉터리 이름(정렬). 타임스탬프 충돌 항목은 원래 이름 그대로 반환되며 `restore_skill()`에 바로 전달할 수 있습니다.
+- `POST /curator/restore` — JSON body `{"name": "<skill>"}`; 성공 시 HTTP 200 + `{success, message, name}`, 알 수 없는 이름 / bundled/hub 가림 / 대상 존재 / 잘못된 이름은 HTTP 400 + `{success: false, message}`.
+- `GET /curator/archived` — `{success, archived, count}` 반환.
+- agent 측 `agent.tools.pub_base.skill_usage.restore_skill()`은 curator 프리미티브로의 얇은 포워더입니다. 복구 성공 후 `state="active"`를 agent 텔레메트리 레코드(`skills/auto/.usage.json`)에도 반영해 두 레코드를 일치시킵니다.
 
 ---
 

@@ -22,6 +22,7 @@
 - [Orphan Record Cleanup](#orphan-record-cleanup)
 - [Pin Mechanism](#pin-mechanism)
 - [Report System](#report-system)
+- [Restore API](#restore-api)
 - [Configuration Reference](#configuration-reference)
 - [Curator State File](#curator-state-file)
 - [Invariants](#invariants)
@@ -120,7 +121,7 @@ If `last_run_at` has never been set, the first call to `should_run_now()` return
 | `stale` | No activity for `stale_after_days`, marked as stale |
 | `archived` | Moved to `skills/.archive/` after `archive_after_days`; restorable |
 
-When a skill exceeds `archive_after_days` of inactivity, it is **archived**: the directory is moved to `skills/.archive/<skill>/` and its usage record is kept with `state="archived"` (so a restore keeps the skill's history). `curator restore <name>` moves it back to `skills/auto/`. Nothing the curator removes is deleted — consolidation sources (archived with an `ABSORBED_INTO` marker) and pruned skills use the same archive.
+When a skill exceeds `archive_after_days` of inactivity, it is **archived**: the directory is moved to `skills/.archive/<skill>/` and its usage record is kept with `state="archived"` (so a restore keeps the skill's history). `curator restore <name>` moves it back to `skills/auto/` and, in the same step, flips the curator usage record to `state="active"` — the agent-side forwarder mirrors that into the agent telemetry record — so a restored skill re-enters the transition loop immediately instead of staying archived forever. Collisions get a timestamp suffix (`<skill>-<timestamp>`); repeated collisions in the same second keep probing one second forward, so every entry stays a flat sibling instead of nesting inside an existing one. Nothing the curator removes is deleted — consolidation sources (archived with an `ABSORBED_INTO` marker) and pruned skills use the same archive.
 
 **Key constraints**:
 - Pinned skills are **never** auto-transitioned, archived, or deleted
@@ -431,7 +432,19 @@ Each run generates a detailed report saved under `logs/curator/{timestamp}/`:
 - Recovery notes
 
 **Recovery**:
-> Every curator removal is recoverable — the 90-day transition, consolidation sources, and pruned skills all move into `skills/.archive/`, and `curator restore <name>` (backed by the agent-side `restore_skill()`) moves any of them back to `skills/auto/`. A consolidated source keeps an `ABSORBED_INTO` marker naming its umbrella; a pruned skill has no marker. The archive is not auto-purged — restore entries or clean it up manually.
+> Every curator removal is recoverable — the 90-day transition, consolidation sources, and pruned skills all move into `skills/.archive/`, and `curator restore <name>` (backed by the curator-layer `restore_skill()`) moves any of them back to `skills/auto/`. A consolidated source keeps an `ABSORBED_INTO` marker naming its umbrella; a pruned skill has no marker. The archive is not auto-purged — restore entries or clean it up manually.
+
+---
+
+## Restore API
+
+Archived skills come back through one curator-layer primitive plus two HTTP routes:
+
+- `restore_skill(name) -> (bool, str)` — moves the exact `skills/.archive/<name>` entry back to `skills/auto/`; when only timestamped collisions remain, the newest `<name>-<timestamp>` entry wins (the scan is recursive, so older nested archive layouts still resolve). Refuses a name that is now bundled/hub-installed (it would shadow upstream) and a destination that already exists. On success the curator usage record is written `state="active", _persisted=True` in the same call, so the restored skill re-enters `apply_automatic_transitions` immediately. The restore path deliberately bypasses `_pinned_guard()`: a record can carry a stale pin while its directory sits in the archive, and the directory has already moved back — the record must follow it.
+- `list_archived() -> list[str]` — sorted directory names currently under `skills/.archive/`; timestamped collision entries are reported verbatim and can be passed straight to `restore_skill()`.
+- `POST /curator/restore` — JSON body `{"name": "<skill>"}`; returns HTTP 200 with `{success, message, name}`, or HTTP 400 with `{success: false, message}` for an unknown name, a bundled/hub shadow, an occupied destination, or an invalid name.
+- `GET /curator/archived` — returns `{success, archived, count}`.
+- The agent-side `agent.tools.pub_base.skill_usage.restore_skill()` is a thin forwarder onto the curator primitive; after a successful restore it also mirrors `state="active"` into the agent telemetry record (`skills/auto/.usage.json`), keeping both records in step.
 
 ---
 

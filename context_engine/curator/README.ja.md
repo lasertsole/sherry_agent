@@ -22,6 +22,7 @@
 - [孤立レコードのクリーンアップ](#孤立レコードのクリーンアップ)
 - [ピンメカニズム](#ピンメカニズム)
 - [レポートシステム](#レポートシステム)
+- [復元 API](#復元-api)
 - [設定リファレンス](#設定リファレンス)
 - [Curator 状態ファイル](#curator-状態ファイル)
 - [不変条件](#不変条件)
@@ -120,7 +121,7 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
 | `stale` | `stale_after_days` 間アクティビティがなく、古いとマークされた |
 | `archived` | `archive_after_days` 経過後に `skills/.archive/` へ移動、復元可能 |
 
-スキルが `archive_after_days` の非アクティブ期間を超えると**アーカイブ**されます: ディレクトリは `skills/.archive/<skill>/` へ移動し、使用記録は `state="archived"` のまま保持されます（復元時に履歴が残ります）。`curator restore <name>` が `skills/auto/` へ戻します。Curator のどの除去も削除ではありません——統合元（`ABSORBED_INTO` マーカー付き）と剪定スキルも同じアーカイブに入ります。
+スキルが `archive_after_days` の非アクティブ期間を超えると**アーカイブ**されます: ディレクトリは `skills/.archive/<skill>/` へ移動し、使用記録は `state="archived"` のまま保持されます（復元時に履歴が残ります）。`curator restore <name>` が `skills/auto/` へ戻し、同じステップで curator 側レコードを `state="active"` に戻します（agent 側フォワーダーが agent テレメトリ記録も同期）。復元されたスキルは直ちに遷移ループへ再参加し、archived のまま取り残されることはありません。衝突時はタイムスタンプ接尾辞（`<skill>-<timestamp>`）が付き、同一秒内で繰り返し衝突しても 1 秒ずつ進めて探索するため、すべて平級の兄弟ディレクトリのままで既存エントリ内へ入れ子になりません。Curator のどの除去も削除ではありません——統合元（`ABSORBED_INTO` マーカー付き）と剪定スキルも同じアーカイブに入ります。
 
 **主要な制約**:
 - ピン留めされたスキルは**決して**自動遷移・アーカイブ・削除されません
@@ -425,7 +426,19 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - リカバリーノート
 
 **リカバリー**:
-> 3 つの除去はすべて復元可能：90 日遷移、統合元スキル（アーカイブ時に umbrella 名を記した `ABSORBED_INTO` マーカーを書き込み）、剪定されたスキルはすべて `skills/.archive/` に入り、`curator restore <name>`（バックエンドはエージェント側 `restore_skill()`）でいずれも `skills/auto/` へ戻せます。アーカイブは自動では空になりません——`curator restore` で復元するか手動で整理してください。
+> 3 つの除去はすべて復元可能：90 日遷移、統合元スキル（アーカイブ時に umbrella 名を記した `ABSORBED_INTO` マーカーを書き込み）、剪定されたスキルはすべて `skills/.archive/` に入り、`curator restore <name>`（バックエンドは curator 層 `restore_skill()`）でいずれも `skills/auto/` へ戻せます。アーカイブは自動では空になりません——`curator restore` で復元するか手動で整理してください。
+
+---
+
+## 復元 API
+
+アーカイブされたスキルは、1 つの curator 層プリミティブと 2 つの HTTP エンドポイントで戻します：
+
+- `restore_skill(name) -> (bool, str)` — `skills/.archive/<name>` の完全一致エントリを `skills/auto/` へ戻します。タイムスタンプ付きの衝突エントリしかない場合は最新の `<name>-<timestamp>` を選びます（再帰スキャンなので旧来のネストしたアーカイブ配置も解決できます）。現在 bundled/hub インストール済みの名前（上流を覆い隠す）や既存の移動先は拒否します。成功時は同じ呼び出し内で curator 使用記録を `state="active", _persisted=True` に書き換えるため、復元されたスキルは直ちに `apply_automatic_transitions` へ再参加します。復元経路は意図的に `_pinned_guard()` を迂回します：ディレクトリがアーカイブにある間に記録が古い pin を保持し得ますが、ディレクトリはすでに戻っているため、記録もそれに従う必要があります。
+- `list_archived() -> list[str]` — 現在 `skills/.archive/` 配下にあるディレクトリ名（ソート済み）。タイムスタンプ付き衝突エントリはそのまま返り、`restore_skill()` に直接渡せます。
+- `POST /curator/restore` — JSON body `{"name": "<skill>"}`；成功は HTTP 200 + `{success, message, name}`、未知の名前 / bundled/hub の遮蔽 / 移動先の既存 / 不正な名前は HTTP 400 + `{success: false, message}`。
+- `GET /curator/archived` — `{success, archived, count}` を返します。
+- agent 側 `agent.tools.pub_base.skill_usage.restore_skill()` は curator プリミティブへの薄いフォワーダーです。復元成功後は `state="active"` を agent テレメトリ記録（`skills/auto/.usage.json`）にも反映し、両記録を一致させます。
 
 ---
 
