@@ -100,11 +100,14 @@ AIMessage(<summary>, lc_source="summarization")
        ├─ 非目标类 / 未知类 → 原始异常原样重新抛出（零重试、
        │  零状态写入、绝不吞掉）
        ├─ 重试次数 < MAX_OVERFLOW_RETRIES (3) → _forced_recovery_request
-       │  （:985 / 异步 :1030）：强制压缩 + 预算截断，构造上绕过
-       │  全部防抖闸门（冷却期、每回合上限与 _should_skip_compression
-       │  均不被咨询）；它不武装冷却期、不计回合尝试，但会经过
-       │  _record_compression 保证会话统计真实；每类重试计数器在
-       │  成功之后才递增（:1021）
+       │  （:985 / 异步 :1030）：不调 LLM 的尾部裁剪先运行 —— 当它
+       │  单独就把估算压到可用预算以下时，处理器带着 stub 后的尾部
+       │  结果重试、完全不做 compact；已是 stub 的请求会让裁剪变成
+       │  no-op，于是下一次尝试退化为「compact + 预算截断」这一步，
+       │  它构造上绕过全部防抖闸门（冷却期、每回合上限与
+       │  _should_skip_compression 均不被咨询）；它不武装冷却期、
+       │  不计回合尝试，但会经过 _record_compression 保证会话统计
+       │  真实；每类重试计数器在成功之后才递增（:1021）
        ├─ 重试耗尽 → 原始异常重新抛出（错误帧经 messages.py →
        │  turn_runner.py 链路向上传播 —— 绝不返回空响应）
        └─ 强制压缩步骤自身失败 → 原始异常重新抛出
@@ -142,6 +145,10 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 - `truncate_tool_results_only` → `_run_budget_truncation`（:659）—— 第 1 步截断超大的工具调用参数（返回新消息，见下文截断轨道），第 2 步原地截断工具输出 —— 然后进行**复检**：如果释放的 token 不够（`new_tokens ≥ usable × 0.80`，按返回的列表估算），升级为 `compact_then_truncate`；否则直接放行、不做压缩；
 - `compact_only` / `compact_then_truncate` → `_execute_compact`（:702 / 异步 :731）→ `_apply_compression`（异常记日志、请求原样返回）→ `_record_compaction_bookkeeping`（:694：武装冷却期、计一次回合尝试）→ `compact_then_truncate` 还会对压缩结果再跑一次预算截断兜底 → 按新旧 token 与压力比记录路由日志。
+
+**P1-2 快速路径 —— 不调 LLM 的尾部裁剪。** 在任一上游路由执行之前，`_fast_tail_clip` 会先运行 `clip_overflow_tail`（`pub/func/message/overflow_clip.py`）：尾部连续的 `ToolMessage` 批次被替换为紧凑 stub，替换经 `ToolMessage.model_copy` 完成，因此没有任何消息被删除或注入 —— `id`、`tool_call_id`、`name` 与 `additional_kwargs` 全部保留，配对净化与持久水位因此依然满足。预算：`target = max(estimate_messages_tokens(messages, reported_tokens=0) − usable × ratio, 0)`；`target` 为 `0` 表示"取最大可裁剪批次"（上限 `overflow_clip_max_remove`，下限 `overflow_clip_min_keep`）。`ratio` 在上游路由路径为 `COMPRESSION_TRIGGER_RATIO (0.80)`，在 T4/T5 强制步骤为 `1.0`（低于 usable 预算）。只有**单独**把估算压到线下方的裁剪才会被接受：请求带着 stub 列表直接返回，上游路由根本不执行（不做预算截断、不调辅助 LLM 压缩）。裁剪不够时整份结果被丢弃，既有路由在原始列表上照常运行。在 T4/T5 上裁剪读取 `request.messages`；已 stub 的请求会让裁剪变成 no-op，因此重试预算不会被相同裁剪烧掉，下一次尝试退化为压缩。
+
+**为什么丢弃尾部内容是安全的：** 每条工具结果在返回的瞬间就已刷入 MesMemory（`MessagePersistenceMiddleware`），并可通过 `message_search` 工具继续取回。被 P0-2 驱逐的结果在 stub 中保留自己的 `[evicted to: …]` 指针（因此 `read_file` 依然可用），被 P2-4 切片的 `read_file` 结果原样保留切片通知；而一条已 stub 的消息会终止可扫描批次 —— 第二次裁剪是 no-op，绝不会破坏这些标记。配置：`overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep`。
 
 窗口算术（测试契约）：窗口 `41 600` → usable `25 600`，两条线 `17 920` / `20 480`，截断预算 `15 360`。当测试固定值 `MAIN_LLM_MAX_TOKEN = 65536` 时（运行时 `.env` 值必须 >= 131072 / 128K），注册的 T2 子句落在 `52 428`。
 
@@ -310,6 +317,9 @@ Summarization(
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results` 的候选门槛 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 最新若干条永不可截断（配对安全边距） |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 强制恢复上限（单一共用计数器） |
+| `OVERFLOW_CLIP_ENABLED` ◆ | `True` | P1-2 无 LLM 尾部裁剪总开关 |
+| `OVERFLOW_CLIP_MAX_REMOVE` ◆ | `10` | 单次裁剪最多 stub 的尾部消息数 |
+| `OVERFLOW_CLIP_MIN_KEEP` ◆ | `5` | 转录下限：≤ 该条数 → 不裁剪 |
 | `MAX_COMPRESS_ATTEMPTS_PER_TURN` ◆ | `3` | 每回合主动压缩上限 |
 | `COMPACTION_COOLDOWN_ROUNDS` ◆ | `3` | 每次实际 compact 后武装的冷却期 |
 | `MIN_PRESERVE_TOKENS` ◆ | `2_000` | 保留预算下限；无窗口时的预算 |
@@ -353,6 +363,8 @@ Summarization(
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 去重 / 修剪 / 定向截断 / 回合工具，外加工具参数截断：头+尾格式、小参数跳过、释放量钳制、受保护工具、跳过最近消息、配对与无变异 |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file 可找回切片：原路径 + 1-based 续读 offset 通知、不跳行、页码绝对定位、通用标记逐字节一致、受保护 / 未超预算 / 回退路径 |
 | `tests/config/test_num_contract.py` | 46 | 常量契约（看门狗 `CONTRACT_NAMES` 覆盖全部文档化旋钮） |
+| `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 纯裁剪：尾部批次检测、max_remove/min_keep/enabled 闸门、token 目标、标记保留（P0-2 指针、P2-4 通知）、no-op 幂等、配对不变量 |
+| `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 中间件集成：T1/T2 不调 LLM 裁剪、裁剪不足降级、总开关、T4/T5 先裁后重试与裁→压缩降级、同步/异步奇偶、sanitizer 不移位 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |

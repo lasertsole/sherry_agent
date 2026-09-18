@@ -102,7 +102,11 @@ AIMessage(<summary>, lc_source="summarization")
        ├─ 대상 외 / 미분류 → 원본 예외를 그대로 재던짐(재시도 0회,
        │  상태 기록 0건, 절대 삼키지 않음)
        ├─ 재시도 < MAX_OVERFLOW_RETRIES (3) → _forced_recovery_request
-       │  (:985 / 비동기 :1030): 강제 압축 + 예산 트렁케이션, 구조상
+       │  (:985 / 비동기 :1030): LLM을 부르지 않는 테일 클립이 먼저 실행됨 —
+       │  클립만으로 추정치가 사용 가능 예산 아래로 떨어지면 핸들러가
+       │  스텁된 테일 결과로 재시도되고 compact는 전혀 일어나지 않음;
+       │  이미 스텁된 요청에서는 클립이 no-op이 되므로 다음 시도는
+       │  "compact + 예산 트렁케이션" 단계로 퇴화함. 이 단계는 구조상
        │  모든 안티-스래싱 게이트를 우회(쿨다운, 턴당 상한,
        │  _should_skip_compression 모두 consult하지 않음); 쿨다운을
        │  무장하지 않고 턴 시도도 세지 않지만, 세션 통계의 진실성을 위해
@@ -145,6 +149,10 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 
 - `truncate_tool_results_only` → `_run_budget_truncation`(:659) — 1단계는 과도하게 큰 도구 호출 인자를 잘라내고(새 메시지 반환, 아래 트렁케이트 트랙 참조), 2단계는 도구 결과를 제자리에서 잘라냄 — 이후 **재확인**: 확보한 토큰이 부족하면(`new_tokens ≥ usable × 0.80`, 반환된 목록 기준으로 추정) `compact_then_truncate`로 승격; 아니면 압축 없이 통과;
 - `compact_only` / `compact_then_truncate` → `_execute_compact`(:702 / 비동기 :731) → `_apply_compression`(예외는 로그, 요청은 그대로) → `_record_compaction_bookkeeping`(:694: 쿨다운 무장, 턴 시도 1회 기록) → `compact_then_truncate`는 압축 결과에 예산 트렁케이션을 백스톱으로 한 번 더 실행 → 구/신 토큰과 압력 비율과 함께 라우트 로깅.
+
+**P1-2 빠른 경로 — LLM을 부르지 않는 테일 클립.** 어떤 라우트가 실행되기 전에 `_fast_tail_clip`이 `clip_overflow_tail`(`pub/func/message/overflow_clip.py`)을 실행합니다: 꼬리에 연속된 `ToolMessage` 배치가 압축 스텁으로 대체되며, 대체는 `ToolMessage.model_copy`를 거치므로 메시지가 삭제되거나 주입되지 않습니다 — `id`, `tool_call_id`, `name`, `additional_kwargs`가 모두 살아남아 페어링 새니타이즈와 영속 워터마크가 계속 충족됩니다. 예산: `target = max(estimate_messages_tokens(messages, reported_tokens=0) − usable × ratio, 0)`; `0` 타깃은 "최대 적격 배치를 취함"을 뜻합니다(`overflow_clip_max_remove`가 상한, `overflow_clip_min_keep`이 하한). `ratio`는 라우트 경로에서 `COMPRESSION_TRIGGER_RATIO (0.80)`, T4/T5 강제 단계에서 `1.0`(사용 가능 예산 아래)입니다. 클립 **단독**으로 추정치가 경계선 아래로 떨어질 때만 채택됩니다: 요청은 스텁된 리스트 그대로 반환되고 라우트는 전혀 실행되지 않습니다(예산 트렁케이션 없음, 보조 LLM 압축 없음). 불충분한 클립은 버려지고 기존 라우트가 원본 리스트 그대로에서 실행됩니다. T4/T5에서는 클립이 `request.messages`를 읽습니다; 이미 스텁된 요청에서는 no-op이 되므로 동일 클립으로 재시도 예산이 소모되지 않고 다음 시도는 압축으로 퇴화합니다.
+
+**꼬리 내용을 버려도 안전한 이유:** 모든 도구 결과는 반환되는 순간 MesMemory에 플러시되었고(`MessagePersistenceMiddleware`), `message_search` 도구로 계속 조회할 수 있습니다. P0-2로 축출된 결과는 스텁 안에 `[evicted to: …]` 포인터를 유지하며(`read_file`이 계속 동작), P2-4로 슬라이스된 `read_file` 결과는 슬라이스 안내를 그대로 유지합니다; 그리고 스텁된 메시지는 스캔 대상 배치를 종료시키므로 두 번째 클립은 no-op이며 이 마커들을 절대 파괴하지 않습니다. 설정: `overflow_clip_enabled` / `overflow_clip_max_remove` / `overflow_clip_min_keep`.
 
 윈도우 산술(테스트 계약): 윈도우 `41 600` → usable `25 600`, 두 경계선 `17 920` / `20 480`, 트렁케이트 예산 `15 360`. 테스트 고정값 `MAIN_LLM_MAX_TOKEN = 65536`일 때(런타임 `.env` 값은 131072 / 128K 이상 필요) 등록된 T2 절은 `52 428`에 놓입니다.
 
@@ -313,6 +321,9 @@ Summarization(
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results`의 후보 하한 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 최신 메시지는 절대 트렁케이트 불가 (페어링 마진) |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 강제 복구 상한 (단일 공유 카운터) |
+| `OVERFLOW_CLIP_ENABLED` ◆ | `True` | P1-2 LLM 없는 테일 클립 마스터 스위치 |
+| `OVERFLOW_CLIP_MAX_REMOVE` ◆ | `10` | 클립 1회당 스텁 처리하는 꼬리 메시지 상한 |
+| `OVERFLOW_CLIP_MIN_KEEP` ◆ | `5` | 트랜스크립트 하한: 이 수 이하면 클립하지 않음 |
 | `MAX_COMPRESS_ATTEMPTS_PER_TURN` ◆ | `3` | 턴당 선제 압축 상한 |
 | `COMPACTION_COOLDOWN_ROUNDS` ◆ | `3` | 실제 compact마다 무장되는 쿨다운 |
 | `MIN_PRESERVE_TOKENS` ◆ | `2_000` | 보존 예산 하한; 윈도우가 없을 때의 예산 |
@@ -356,6 +367,8 @@ Summarization(
 | `tests/pub/func/message/test_pub_func_message_tools.py` | 29 | 중복 제거 / 프루닝 / 타깃 트렁케이트 / 턴 유틸리티에 도구 인자 트렁케이트 추가: 머리+꼬리 형식, 작은 인자 스킵, 확보량 클램프, 보호 도구, 최근 스킵, 페어링 및 무변경 |
 | `tests/pub/func/message/test_read_file_slice.py` | 12 | read_file 복구 가능 슬라이스: 원본 경로 + 1-based 이어읽기 offset 안내, 행 스킵 없음, 절대 페이지 번호, 일반 마커 바이트 동일, 보호 / 예산 내 / 폴백 경로 |
 | `tests/config/test_num_contract.py` | 46 | 상수 계약 (워치독 `CONTRACT_NAMES`가 문서화된 모든 노브 커버) |
+| `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 순수 클립: 꼬리 배치 감지, max_remove/min_keep/enabled 게이트, 토큰 목표, 마커 보존(P0-2 포인터, P2-4 안내), no-op 멱등성, 페어링 불변식 |
+| `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 미들웨어 통합: T1/T2 LLM 없는 클립, 불충분 클립 퇴화, 킬 스위치, T4/T5 클립 후 재시도와 클립→압축 퇴화, 동기/비동기 패리티, 새니타이저 불변 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 48 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 등록 계약(테스트 고정 윈도우): `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
