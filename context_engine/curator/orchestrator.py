@@ -708,23 +708,26 @@ def _merge_umbrella_skills(consolidations: list) -> None:
         _migrate_source_files(umbrella, merged_skills, written)
 
 
-def _delete_consolidated_sources(consolidations: list) -> None:
-    from context_engine.curator.usage import delete_skill
+def _archive_consolidated_sources(consolidations: list) -> None:
+    from context_engine.curator.usage import archive_skill
 
     for entry in consolidations:
         name = entry.get("from", "").strip()
         into = entry.get("into", "").strip()
         if not name or not into:
             continue
-        ok, msg = delete_skill(name, absorbed_into=into)
+        if _resolve_skill_dir(into) is None:
+            logger.warning("Curator skipped archiving '{}': umbrella '{}' not found", name, into)
+            continue
+        ok, msg = archive_skill(name, absorbed_into=into)
         if ok:
-            logger.info("Curator deleted '{}': {}", name, msg)
+            logger.info("Curator archived '{}' into umbrella '{}': {}", name, into, msg)
         else:
-            logger.warning("Curator failed to delete '{}': {}", name, msg)
+            logger.warning("Curator failed to archive '{}' into umbrella '{}': {}", name, into, msg)
 
 
-def _delete_pruned_skills(prunings: list, consolidations: list) -> None:
-    from context_engine.curator.usage import delete_skill
+def _archive_pruned_skills(prunings: list, consolidations: list) -> None:
+    from context_engine.curator.usage import archive_skill
 
     for entry in prunings:
         name = entry.get("name", "").strip()
@@ -733,9 +736,9 @@ def _delete_pruned_skills(prunings: list, consolidations: list) -> None:
         in_consolidation = any(e.get("from", "").strip() == name for e in consolidations)
         if in_consolidation:
             continue
-        ok, msg = delete_skill(name)
+        ok, msg = archive_skill(name)
         if ok:
-            logger.info("Curator pruned '{}': {}", name, msg)
+            logger.info("Curator pruned '{}' (archived): {}", name, msg)
         else:
             logger.warning("Curator failed to prune '{}': {}", name, msg)
 
@@ -761,12 +764,12 @@ def _apply_consolidation(llm_final: str) -> None:
     if not consolidations and not prunings:
         return
     if _resolve_skill_writer("apply_consolidation") is None:
-        # Without a writer, merging would be a no-op while the deletion phases
-        # below still ran -> source skills deleted without their umbrella.
+        # Without a writer, merging would be a no-op while the archive phases
+        # below still ran -> source skills archived without their umbrella.
         # Abort the whole apply; the per-method gates keep direct callers safe.
         return
 
     _merge_umbrella_skills(consolidations)
-    _delete_consolidated_sources(consolidations)
-    _delete_pruned_skills(prunings, consolidations)
+    _archive_consolidated_sources(consolidations)
+    _archive_pruned_skills(prunings, consolidations)
     _schedule_system_prompt_refresh()

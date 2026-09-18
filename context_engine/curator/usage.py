@@ -10,6 +10,7 @@ from context_engine.curator.constants import (
     PINNED_FILE,
     STATE_ACTIVE,
     STATE_ARCHIVED,
+    ABSORBED_INTO_FILE,
 )
 from context_engine.curator.helpers import (
     _ensure_dir,
@@ -252,17 +253,20 @@ def _archive_dir() -> Path:
     return ARCHIVE_DIR
 
 
-def archive_skill(name: str) -> tuple[bool, str]:
+def archive_skill(name: str, absorbed_into: str = "") -> tuple[bool, str]:
     """Move an agent-created skill directory into ``skills/.archive/``.
 
     The recoverable counterpart of ``delete_skill``: the directory is moved
     (never removed), and the usage record is kept with ``state="archived"`` so
     restore replays the same history. Pinned and bundled/hub skills are
-    refused. Returns ``(ok, message)``.
+    refused. A non-empty ``absorbed_into`` records the umbrella that absorbed
+    this skill's content as an ``ABSORBED_INTO`` marker inside the archived
+    directory, so the relation survives a restore. Returns ``(ok, message)``.
     """
     err = _pinned_guard(name)
     if err:
         return False, err
+    absorbed_into = absorbed_into.strip()
     sd = _skill_dir(name)
     if sd is None:
         return False, f"Skill directory not found: {name}"
@@ -291,8 +295,15 @@ def archive_skill(name: str) -> tuple[bool, str]:
         except Exception as e:
             return False, f"Failed to archive skill: {e}"
 
+    if absorbed_into:
+        try:
+            (dest / ABSORBED_INTO_FILE).write_text(absorbed_into + "\n", encoding="utf-8")
+        except OSError as e:
+            logger.warning("Curator archived '{}' but failed to record absorbed_into: {}", name, e)
+
     # Rename first, state second: a failed move never leaves a record claiming
     # "archived".
     set_state(name, STATE_ARCHIVED)
     logger.info(f"Curator archived skill: {name} -> {dest}")
-    return True, f"Archived {name} to {dest}"
+    suffix = f" (absorbed into {absorbed_into})" if absorbed_into else ""
+    return True, f"Archived {name} to {dest}{suffix}"
