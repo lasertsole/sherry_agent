@@ -1,6 +1,6 @@
 """Skill usage telemetry + provenance tracking for the Curator feature.
 
-Tracks per-skill usage metadata in a sidecar JSON file (~/.hermes/skills/.usage.json)
+Tracks per-skill usage metadata in a sidecar JSON file (``skills/auto/.usage.json``)
 keyed by skill name. Counters are bumped by the existing skill tools (skill_view,
 skill_manage); the curator orchestrator reads the derived activity timestamp to
 decide lifecycle transitions.
@@ -153,7 +153,7 @@ def activity_count(record: dict[str, Any]) -> int:
 def _read_bundled_manifest_names() -> set[str]:
     """Return the set of skill names that were seeded from the bundled repo.
 
-    Reads ~/.hermes/skills/.bundled_manifest (format: "name:hash" per line).
+    Reads ``skills/auto/.bundled_manifest`` (format: "name:hash" per line).
     Returns empty set if the file is missing or unreadable.
     """
     manifest = AUTO_SKILLS_DIR / ".bundled_manifest"
@@ -176,7 +176,7 @@ def _read_bundled_manifest_names() -> set[str]:
 def _read_hub_installed_names() -> set[str]:
     """Return the set of skill names installed via the Skills Hub.
 
-    Reads ~/.hermes/skills/.hub/lock.json (see tools/skills_hub.py :: HubLockFile).
+    Reads ``skills/auto/.hub/lock.json`` (see tools/skills_hub.py :: HubLockFile).
     """
     lock_path = AUTO_SKILLS_DIR / ".hub" / "lock.json"
     if not lock_path.exists():
