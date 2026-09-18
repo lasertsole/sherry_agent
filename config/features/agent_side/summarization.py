@@ -52,6 +52,9 @@ class SummarizationConfig(TypedDict):
     ttl_registry_max_entries: int
     preemptive_truncate_max_chars: int
     compression_todo_update_enabled: bool
+    overflow_clip_enabled: bool
+    overflow_clip_max_remove: int
+    overflow_clip_min_keep: int
 
 
 SUMMARIZATION: SummarizationConfig = {
@@ -104,4 +107,7 @@ SUMMARIZATION: SummarizationConfig = {
     "ttl_registry_max_entries": 512,
     "preemptive_truncate_max_chars": 2000,
     "compression_todo_update_enabled": True,
+    "overflow_clip_enabled": True,
+    "overflow_clip_max_remove": 10,
+    "overflow_clip_min_keep": 5,
 }

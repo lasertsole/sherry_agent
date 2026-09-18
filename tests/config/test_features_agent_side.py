@@ -99,6 +99,10 @@ SPOT_DEFAULTS = [
     (SUMMARIZATION, "preemptive_truncate_max_chars", 2000),
     (SUMMARIZATION, "protected_tools", frozenset({"memory", "skill_view", "skill_list"})),
     (SUMMARIZATION, "compression_todo_update_enabled", True),
+    # P1-2 overflow tail clip (no-LLM fast recovery before the route dispatch).
+    (SUMMARIZATION, "overflow_clip_enabled", True),
+    (SUMMARIZATION, "overflow_clip_max_remove", 10),
+    (SUMMARIZATION, "overflow_clip_min_keep", 5),
     (
         SUMMARIZATION,
         "auto_continue_prompt",
