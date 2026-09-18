@@ -13,7 +13,7 @@ from .llm_retry.core import (
 from .output_repetition_guard import OutputRepetitionGuard as OutputRepetitionGuard
 from .max_tokens_boost import MaxTokensBoostMiddleware as MaxTokensBoostMiddleware
 from .tool_guardrails import ToolGuardrails as ToolGuardrails
-from .tool_result_eviction import ToolResultEvictionMiddleware as ToolResultEvictionMiddleware
+from .context_eviction import ContextEvictionMiddleware as ContextEvictionMiddleware
 from .iteration_budget import IterationBudget as IterationBudget
 from .system_prompt import system_prompt_injection as system_prompt_injection
 from .message_persistence import MessagePersistenceMiddleware as MessagePersistenceMiddleware

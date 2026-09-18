@@ -1,11 +1,13 @@
-"""Registration lock for ``ToolResultEvictionMiddleware`` (P0-2).
+"""Registration lock for ``ContextEvictionMiddleware`` (P0-2 / P1-9).
 
 ``built_agent()`` must register exactly one instance, listed after
 ``ToolGuardrails`` and before ``ToolCallNormalize``. In the wrap chain (first
 registered = outermost) that position makes the eviction layer OUTER relative
 to ``MessagePersistenceMiddleware``, which stays innermost: the tool result is
 persisted in full first, and only then replaced by the preview on its way to
-graph state.
+graph state. Its ``before_model`` hook therefore runs in list order before
+``ToolCallNormalize`` / ``SubagentCompletionDrainMiddleware``, and after every
+``before_agent`` hook (``MultimodalProcessor``) by graph topology.
 """
 
 from typing import Any
@@ -14,7 +16,7 @@ import pytest
 from langchain.agents.middleware import AgentMiddleware
 
 from agent import core as agent_core
-from agent.middlewares.tool_result_eviction import ToolResultEvictionMiddleware
+from agent.middlewares.context_eviction import ContextEvictionMiddleware
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -55,7 +57,7 @@ class _NamedMiddleware:
 
 
 @pytest.mark.asyncio
-async def test_tool_result_eviction_registration_position(
+async def test_context_eviction_registration_position(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     captured: dict[str, Any] = {}
@@ -93,14 +95,14 @@ async def test_tool_result_eviction_registration_position(
     middleware = captured["middleware"]
     names = [item.name for item in middleware]
 
-    assert sum(isinstance(item, ToolResultEvictionMiddleware) for item in middleware) == 1
-    assert names.count("ToolResultEvictionMiddleware") == 1
+    assert sum(isinstance(item, ContextEvictionMiddleware) for item in middleware) == 1
+    assert names.count("ContextEvictionMiddleware") == 1
 
-    eviction_index = names.index("ToolResultEvictionMiddleware")
+    eviction_index = names.index("ContextEvictionMiddleware")
     assert names.index("ToolGuardrails") < eviction_index
     assert eviction_index < names.index("ToolCallNormalize")
     # Outer relative to the persistence layer: persistence stays innermost.
     assert eviction_index < names.index("MessagePersistenceMiddleware")
 
-    assert ToolResultEvictionMiddleware.wrap_tool_call is not AgentMiddleware.wrap_tool_call
-    assert ToolResultEvictionMiddleware.awrap_tool_call is not AgentMiddleware.awrap_tool_call
+    assert ContextEvictionMiddleware.wrap_tool_call is not AgentMiddleware.wrap_tool_call
+    assert ContextEvictionMiddleware.awrap_tool_call is not AgentMiddleware.awrap_tool_call

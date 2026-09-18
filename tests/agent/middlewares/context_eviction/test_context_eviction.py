@@ -1,4 +1,4 @@
-"""Tool-result eviction middleware: chain order, three-state split, watermark.
+"""Context eviction middleware: chain order, three-state split, watermark.
 
 The chain under test mirrors ``agent/core.py``: the eviction middleware is
 OUTER and ``MessagePersistenceMiddleware`` is INNER. The inner layer therefore
@@ -28,7 +28,7 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
 from agent.middlewares.message_persistence import MessagePersistenceMiddleware
-from agent.middlewares.tool_result_eviction import ToolResultEvictionMiddleware
+from agent.middlewares.context_eviction import ContextEvictionMiddleware
 from config.features import TOOL_RESULT_EVICTION
 from context_engine.store import core as store_core
 from context_engine.store.core import get_history_by_turn_page
@@ -90,7 +90,7 @@ def _sync_handler(value: Any):
 
 
 async def _run_chain(
-    eviction: ToolResultEvictionMiddleware,
+    eviction: ContextEvictionMiddleware,
     persistence: MessagePersistenceMiddleware,
     request: ToolCallRequest,
     message: ToolMessage,
@@ -175,7 +175,7 @@ class TestThreeStateSplit:
     async def test_state_preview_mesmemory_full_disk_full(
         self, isolated_db, isolated_sessions, sid, sync
     ):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         persistence = MessagePersistenceMiddleware()
         original = _big_tool_message(msg_id="t1")
         full_text = original.content
@@ -200,7 +200,7 @@ class TestThreeStateSplit:
     async def test_boundary_after_eviction_writes_no_second_row(
         self, isolated_db, isolated_sessions, sid
     ):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         persistence = MessagePersistenceMiddleware()
         original = _big_tool_message(msg_id="t1")
         response = await _run_chain(eviction, persistence, _request(sid), original, sync=False)
@@ -217,7 +217,7 @@ class TestThreeStateSplit:
     async def test_restart_replay_without_marker_adds_no_row(
         self, isolated_db, isolated_sessions, sid, assign_id
     ):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         persistence = MessagePersistenceMiddleware()
         original = _big_tool_message(msg_id=None)
         response = await _run_chain(eviction, persistence, _request(sid), original, sync=False)
@@ -241,7 +241,7 @@ class TestEvictionSkips:
     def test_excluded_tool_passes_through_untouched(
         self, isolated_db, isolated_sessions, sid, tool_name
     ):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = _big_tool_message(name=tool_name)
 
         response = eviction.wrap_tool_call(_request(sid), _sync_handler(original))
@@ -250,7 +250,7 @@ class TestEvictionSkips:
         assert not (isolated_sessions / sid / "evicted").exists()
 
     def test_missing_session_id_passes_through(self, isolated_db, isolated_sessions):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = _big_tool_message()
         request = _request("")
 
@@ -258,7 +258,7 @@ class TestEvictionSkips:
 
     @pytest.mark.parametrize("bad", ["..", "a/b", "a\\b"])
     def test_unsafe_session_segment_never_writes(self, isolated_db, isolated_sessions, bad):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = _big_tool_message()
 
         response = eviction.wrap_tool_call(_request(bad), _sync_handler(original))
@@ -268,14 +268,14 @@ class TestEvictionSkips:
 
     def test_disabled_flag_is_passthrough(self, isolated_db, isolated_sessions, sid, monkeypatch):
         monkeypatch.setitem(TOOL_RESULT_EVICTION, "enabled", False)
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = _big_tool_message()
 
         assert eviction.wrap_tool_call(_request(sid), _sync_handler(original)) is original
         assert not (isolated_sessions / sid).exists()
 
     def test_second_pass_over_the_preview_is_a_no_op(self, isolated_db, isolated_sessions, sid):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = _big_tool_message(msg_id="t1")
         response = eviction.wrap_tool_call(_request(sid), _sync_handler(original))
         assert response.content.startswith("[evicted to: ")
@@ -285,7 +285,7 @@ class TestEvictionSkips:
 
 class TestMultimodalAndResponseShapes:
     def test_multimodal_blocks_survive_in_state(self, isolated_db, isolated_sessions, sid):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
         original = ToolMessage(
             content=[{"type": "text", "text": _big_content(5_000)}, image],
@@ -305,7 +305,7 @@ class TestMultimodalAndResponseShapes:
     def test_command_and_list_responses_rewrite_their_tool_messages(
         self, isolated_db, isolated_sessions, sid
     ):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         nested = _big_tool_message("c1", msg_id="t1")
         command = Command(update={"messages": [nested]})
 
@@ -329,7 +329,7 @@ class TestMultimodalAndResponseShapes:
 class TestReadFileSlice:
     @pytest.mark.asyncio
     async def test_read_file_is_sliced_not_offloaded(self, isolated_db, isolated_sessions, sid):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         persistence = MessagePersistenceMiddleware()
         original = ToolMessage(
             content=READ_FILE_CONTENT, name="read_file", tool_call_id="r1", id="t1"
@@ -348,13 +348,13 @@ class TestReadFileSlice:
     def test_read_file_within_the_slice_limit_is_untouched(
         self, isolated_db, isolated_sessions, sid
     ):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = ToolMessage(content="z" * 3_000, name="read_file", tool_call_id="r1", id="t1")
 
         assert eviction.wrap_tool_call(_request(sid, "r1"), _sync_handler(original)) is original
 
     def test_second_pass_over_the_slice_is_a_no_op(self, isolated_db, isolated_sessions, sid):
-        eviction = ToolResultEvictionMiddleware()
+        eviction = ContextEvictionMiddleware()
         original = ToolMessage(
             content=READ_FILE_CONTENT, name="read_file", tool_call_id="r1", id="t1"
         )

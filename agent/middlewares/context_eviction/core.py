@@ -1,7 +1,7 @@
-"""Tool-result eviction middleware (P0-2) + execution-time read_file slice (P2-4).
+"""Context eviction middleware (P0-2 / P1-9 / P2-4).
 
-At every tool return the response is intercepted before it reaches graph
-state:
+Tool results (P0-2/P2-4): at every tool return the response is intercepted
+before it reaches graph state:
 
 - generic tools: a result over ``evict_threshold_chars`` is written under
   ``SESSIONS_DIR/{session_id}/evicted/`` and replaced by a head/tail preview
@@ -9,6 +9,17 @@ state:
 - ``read_file`` (P2-4): the file is already on disk, so the result is sliced
   to a fixed head plus a recovery notice — no eviction file is written;
 - every other tool in ``excluded_tools`` passes through untouched.
+
+Human messages (P1-9): an oversized plain-text ``HumanMessage`` at the end of
+the transcript is offloaded at ``before_model`` (full text written under the
+same ``evicted/`` directory, ``additional_kwargs["lc_evicted_to"]`` added —
+**content and id unchanged**, so the graph reducer updates the message in
+place) and its model view is replaced by a head/tail preview at
+``wrap_model_call``. This is deliberately the opposite three-state split from
+the tool path: state keeps the **full** text (so MesMemory archives the full
+text and the compression pipeline still sees it), and only the model view is
+truncated. The eviction file is self-healed from the state text whenever it is
+missing.
 
 Chain position (``agent/core.py``): registered immediately after
 ``ToolGuardrails``, which makes it OUTER relative to ``PathGuard`` /
@@ -52,10 +63,10 @@ from pub.func.message.eviction import evict_tool_result, slice_read_file_result
 from agent.middlewares.base import require_session_id
 from agent.middlewares.message_persistence.prepare import _watermark_key
 
-__all__ = ["ToolResultEvictionMiddleware"]
+__all__ = ["ContextEvictionMiddleware"]
 
 _READ_FILE_TOOL = "read_file"
-_SESSION_ID_ERROR = "ToolResultEvictionMiddleware: session_id is required"
+_SESSION_ID_ERROR = "ContextEvictionMiddleware: session_id is required"
 
 
 def _rewrite_tool_messages(value: Any, rewrite: Callable[[ToolMessage], ToolMessage]) -> Any:
@@ -87,8 +98,8 @@ def _rewrite_tool_messages(value: Any, rewrite: Callable[[ToolMessage], ToolMess
     return value
 
 
-class ToolResultEvictionMiddleware(AgentMiddleware):
-    """Offload oversized tool results; slice ``read_file`` results (P2-4)."""
+class ContextEvictionMiddleware(AgentMiddleware):
+    """Offload oversized tool results (P0-2) and human messages (P1-9)."""
 
     def __init__(self) -> None:
         self._enabled = TOOL_RESULT_EVICTION["enabled"]
@@ -164,5 +175,5 @@ class ToolResultEvictionMiddleware(AgentMiddleware):
         try:
             return require_session_id(state, _SESSION_ID_ERROR)
         except RuntimeError:
-            logger.debug("tool result eviction: no session_id in state, skipping")
+            logger.debug("context eviction: no session_id in state, skipping")
             return None

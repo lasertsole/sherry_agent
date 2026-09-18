@@ -23,7 +23,7 @@ from .middlewares import (
     MultimodalProcessor,
     system_prompt_injection,
     ToolGuardrails,
-    ToolResultEvictionMiddleware,
+    ContextEvictionMiddleware,
     IterationBudget,
     HeartbeatStaleness,
     OutputRepetitionGuard,
@@ -194,8 +194,12 @@ async def built_agent(
                 # the handler returns; this layer then swaps in the preview on
                 # the way out, so graph state only ever holds the preview while
                 # MesMemory keeps the full text (P0-2). read_file results are
-                # sliced instead of offloaded (P2-4).
-                ToolResultEvictionMiddleware(),
+                # sliced instead of offloaded (P2-4). Its before_model hook
+                # tags an oversized trailing HumanMessage (P1-9) after
+                # MultimodalProcessor's before_agent ran (before_agent chain
+                # precedes the model loop), and wrap_model_call truncates only
+                # the model view — state keeps the full human text.
+                ContextEvictionMiddleware(),
                 ToolCallNormalize(),
                 PathGuard(),
                 SubagentCompletionDrainMiddleware(),

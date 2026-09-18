@@ -52,7 +52,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
-  │    → ToolResultEviction → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7)
+  │    → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7)
   │    → OutputRepetitionGuard → MaxTokensBoost → HeartbeatStaleness → HITL → MessagePersistence
   │    → LLMRetry → Summarization → TodoContinuationEnforcer(E3)
   │    (MessagePersistence flushes tool results the moment they return via
@@ -60,7 +60,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     is also the first after_model hook — new human/ai/tool messages reach
   │     MesMemory before HITL rewrites denials or interrupts. HITL denials are the
   │     exception: its short-circuit bypasses the wrap layer and lands next boundary.
-  │     ToolResultEviction wraps outside MessagePersistence: the raw result is
+  │     ContextEviction wraps outside MessagePersistence: the raw result is
   │     persisted first, then replaced by an evicted-head/tail preview before it
   │     reaches state; read_file results are sliced, never offloaded)
   │

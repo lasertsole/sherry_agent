@@ -1,4 +1,4 @@
-"""Isolation fixtures for the tool-result-eviction middleware tests.
+"""Isolation fixtures for the context-eviction middleware tests.
 
 ``isolated_db`` mirrors the message-persistence suite (tmp MesMemory +
 watermark tables); ``isolated_sessions`` redirects ``SESSIONS_DIR`` so eviction
