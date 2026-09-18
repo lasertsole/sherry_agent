@@ -283,24 +283,15 @@ _SUMMARY_PROMPT_UPDATE = (
 def _get_taskflow_context_sync(session_id: str) -> str:
     """Render this session's active TaskFlow state for the summary prompt.
 
-    Reuses the sync registry read, scoped by ``creator_session_key``. Returns
-    "" — never raises — so an unavailable TaskFlow store cannot block compression.
+    Reuses the sync registry read, already scoped to ``session_id`` by SQL.
+    Returns "" — never raises — so an unavailable TaskFlow store cannot block
+    compression.
     """
     try:
         from agent.tools.taskflow.registry import store_sqlite as taskflow_store
-        from agent.tools.taskflow.tools._shared import (
-            requester_session_key,
-            step_status,
-            steps_summary,
-        )
+        from agent.tools.taskflow.tools._shared import step_status, steps_summary
 
-        creator_key = requester_session_key(session_id)
-        active_flows = taskflow_store.get_active_flows_sync()
-        mine = [
-            flow
-            for flow in active_flows
-            if (flow.get("state") or {}).get("creator_session_key") == creator_key
-        ]
+        mine = taskflow_store.get_active_flows_sync(session_id)
         if not mine:
             return ""
 

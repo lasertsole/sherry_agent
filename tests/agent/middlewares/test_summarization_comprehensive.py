@@ -1915,10 +1915,11 @@ def _lt7_flow(
     steps=None,
     wait=None,
 ):
-    """Build one active-flow dict shaped exactly like get_active_flows_sync()."""
+    """Build one active-flow row shaped exactly like get_active_flows_sync()."""
     return {
         "flow_id": flow_id,
         "status": status,
+        "session_id": session_id,
         "state": {
             "creator_session_key": f"agent:main:session:{session_id}",
             "description": description,
@@ -1926,6 +1927,17 @@ def _lt7_flow(
         },
         "wait": wait,
     }
+
+
+def _lt7_store(flows, requested: list[str] | None = None):
+    """Fake store read mirroring the SQL session filter."""
+
+    def _read(session_id: str) -> list[dict]:
+        if requested is not None:
+            requested.append(session_id)
+        return [flow for flow in flows if flow.get("session_id") == session_id]
+
+    return _read
 
 
 def _lt7_steps():
@@ -1947,20 +1959,22 @@ class TestTaskFlowContextInjection:
         # Given: one active flow owned by this session, one owned by another.
         mine = _lt7_flow(sid, flow_id="lt7-mine", steps=_lt7_steps())
         other = _lt7_flow("someone-else", flow_id="lt7-other")
-        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [mine, other])
+        requested: list[str] = []
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, _lt7_store([mine, other], requested))
         mw = make_middleware()
 
         # When: the summary prompt is built for this session.
         prompt = mw._build_summary_prompt("T8CONV-TEXT", None, session_id=sid)
 
         # Then: the TaskFlow block is present and scoped to this session only.
+        assert requested == [sid]
         assert "Current TaskFlow State" in prompt
         assert "### lt7-mine (running)" in prompt
         assert "lt7-other" not in prompt
 
     def test_summary_prompt_no_taskflow(self, sid, monkeypatch):
         # Given: no active flow exists for the session.
-        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [])
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, _lt7_store([]))
         mw = make_middleware()
 
         # When: the summary prompt is built for this session.
@@ -1973,7 +1987,7 @@ class TestTaskFlowContextInjection:
     def test_summary_prompt_taskflow_step_progress(self, sid, monkeypatch):
         # Given: an active flow with 6 steps in 4 distinct statuses.
         flow = _lt7_flow(sid, steps=_lt7_steps())
-        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [flow])
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, _lt7_store([flow]))
         mw = make_middleware()
 
         # When: the summary prompt is built for this session.
@@ -1996,7 +2010,7 @@ class TestTaskFlowContextInjection:
 
     def test_summary_prompt_taskflow_failure_safe(self, sid, monkeypatch):
         # Given: the TaskFlow store raises on read.
-        def _boom():
+        def _boom(session_id: str):
             raise RuntimeError("taskflow store unavailable")
 
         monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, _boom)
@@ -2013,7 +2027,7 @@ class TestTaskFlowContextInjection:
     def test_summary_first_vs_update(self, sid, monkeypatch):
         # Given: an active flow for the session.
         flow = _lt7_flow(sid, steps=_lt7_steps())
-        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, lambda: [flow])
+        monkeypatch.setattr(_LT7_STORE_PATCH_TARGET, _lt7_store([flow]))
         mw = make_middleware()
 
         # When: both the first-run and the update prompts are built.

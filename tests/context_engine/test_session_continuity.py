@@ -68,7 +68,8 @@ def prompt_env(tmp_path, monkeypatch):
         "agent.tools.todolist.registry.store_sqlite.get_todos_sync", lambda session_id: []
     )
     monkeypatch.setattr(
-        "agent.tools.taskflow.registry.store_sqlite.get_active_flows_sync", lambda: []
+        "agent.tools.taskflow.registry.store_sqlite.get_active_flows_sync",
+        lambda session_id: [],
     )
 
     from agent.prompt_data_provider import AgentPromptDataProvider
@@ -210,6 +211,7 @@ class TestClearSessionSave:
         from server.DAO import messages as dao
 
         calls: list[str] = []
+        planning: list[str] = []
 
         def _fake_get_messages(session_id, last_n=5):
             calls.append("get")
@@ -225,6 +227,14 @@ class TestClearSessionSave:
         async def _noop_delete_thread_history(session_id):
             return None
 
+        async def _fake_delete_todos(session_id):
+            planning.append(f"todos:{session_id}")
+            return 3
+
+        async def _fake_delete_flows(session_id):
+            planning.append(f"flows:{session_id}")
+            return 2
+
         monkeypatch.setattr(
             "context_engine.store.core.get_messages_by_lastest_n_turns", _fake_get_messages
         )
@@ -235,11 +245,20 @@ class TestClearSessionSave:
         monkeypatch.setattr(
             session_continuity, "_get_active_taskflow_ids_sync", lambda session_id: ["flow-clear"]
         )
+        monkeypatch.setattr(
+            "agent.tools.todolist.registry.store_sqlite.delete_todos_by_session",
+            _fake_delete_todos,
+        )
+        monkeypatch.setattr(
+            "agent.tools.taskflow.registry.store_sqlite.delete_flows_by_session",
+            _fake_delete_flows,
+        )
 
         await dao.clear_session("sess-clear")
 
-        # Save ran BEFORE the message deletion.
+        # Save ran BEFORE the message deletion; the planning stores are purged too.
         assert calls == ["get", "delete"]
+        assert planning == ["todos:sess-clear", "flows:sess-clear"]
 
         # No channel/chat registered -> session_id fallback key.
         path = continuity_dir / "sess-clear.json"

@@ -147,7 +147,7 @@ async def _run_flow(session_id: str) -> list[dict[str, object]]:
             info["status"] = "dispatched"
             # taskflow_dispatch's return carries no child key — read it from
             # the flow state, where dispatch persisted it on the step.
-            flow = store_sqlite.get_flow_sync(_FLOW)
+            flow = store_sqlite.get_flow_sync(_FLOW, session_id)
             flow_steps = {
                 str(s["step_id"]): s for s in (flow or {}).get("state", {}).get("steps", [])
             }
@@ -223,7 +223,7 @@ async def _run_flow(session_id: str) -> list[dict[str, object]]:
 
     if len(resumed) != len(STEPS):
         raise RuntimeError(f"flow stalled: resumed={sorted(resumed)} of {len(STEPS)}")
-    progress = await tools["taskflow_progress"].coroutine(flow_id=_FLOW)
+    progress = await tools["taskflow_progress"].coroutine(flow_id=_FLOW, session_id=session_id)
     first_line = progress.splitlines()[0] if progress else "(empty)"
     print(f"  [progress] {first_line}", flush=True)
     return [samples[str(step["step_id"])] for step in STEPS]

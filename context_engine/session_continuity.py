@@ -215,23 +215,16 @@ def _get_channel_chat_for_session(session_id: str) -> tuple[str, str]:
 def _get_active_taskflow_ids_sync(session_id: str) -> list[str]:
     """Collect the ids of active TaskFlows created by this session.
 
-    Reads the taskflow registry through the prompt data provider (the agent
-    layer owns it) and filters by ``creator_session_key``. Returns ``[]`` when
-    no provider is registered or on any failure (fail-open).
+    Reads the session's taskflow rows through the prompt data provider (the
+    agent layer owns the store; the read is scoped by session id in SQL).
+    Returns ``[]`` when no provider is registered or on any failure (fail-open).
     """
     try:
         provider = _resolve_provider("get_active_flows")
         if provider is None:
             return []
 
-        creator_key = provider.requester_session_key(session_id)
-        active_flows = provider.get_active_flows()
-        mine = [
-            flow
-            for flow in active_flows
-            if (flow.get("state") or {}).get("creator_session_key") == creator_key
-        ]
-        return [str(flow["flow_id"]) for flow in mine]
+        return [str(flow["flow_id"]) for flow in provider.get_active_flows(session_id)]
     except Exception as e:
         logger.warning("Failed to collect active taskflows for session {}: {}", session_id, e)
         return []

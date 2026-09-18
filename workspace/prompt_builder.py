@@ -145,25 +145,17 @@ def _build_boulder_block(session_id: str) -> str:
 def _build_taskflow_block(session_id: str) -> str:
     """Render pending TaskFlows for this session. Returns "" on none or failure.
 
-    Scans the taskflow registry for non-terminal flows whose
-    ``state['creator_session_key']`` matches this session and injects a concise
-    summary (max 3 flows) so the agent can proactively continue unfinished work
-    on session start.
+    Reads the session's non-terminal flows from the taskflow registry (the
+    registry filters by session id in SQL) and injects a concise summary
+    (max 3 flows) so the agent can proactively continue unfinished work on
+    session start.
     """
     try:
         provider = _resolve_provider("get_active_flows")
         if provider is None:
             return ""
 
-        creator_key = provider.requester_session_key(session_id)
-        active_flows = provider.get_active_flows()
-
-        # Filter: only flows created by THIS session.
-        mine = [
-            flow
-            for flow in active_flows
-            if (flow.get("state") or {}).get("creator_session_key") == creator_key
-        ]
+        mine = provider.get_active_flows(session_id)
         if not mine:
             return ""
 

@@ -138,6 +138,7 @@ async def _expire_overdue_taskflows() -> int:
                 await taskflow_store.update_flow(
                     flow["flow_id"],
                     flow["expected_revision"],
+                    session_id=flow["session_id"],
                     state=state,
                     status=TaskFlowStatus.FAILED.value,
                 )
@@ -221,6 +222,7 @@ async def _scan_stale_waiting_taskflows() -> int:
                 await taskflow_store.update_flow(
                     flow["flow_id"],
                     flow["expected_revision"],
+                    session_id=flow["session_id"],
                     wait=wait,
                 )
             except Exception as e:

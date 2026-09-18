@@ -34,11 +34,11 @@ class AgentPromptDataProvider:
 
         return requester_session_key(session_id)
 
-    def get_active_flows(self) -> list[dict]:
-        """Return every non-terminal taskflow row."""
+    def get_active_flows(self, session_id: str) -> list[dict]:
+        """Return this session's non-terminal taskflow rows."""
         from agent.tools.taskflow.registry import store_sqlite
 
-        return store_sqlite.get_active_flows_sync()
+        return store_sqlite.get_active_flows_sync(session_id)
 
     def step_status(self, step: dict) -> str:
         """Return a taskflow step's status."""

@@ -1,10 +1,10 @@
 """Unit tests for the pending-TaskFlow injection in workspace/prompt_builder.py.
 
-On session start the prompt builder scans the taskflow registry for
-non-terminal flows whose ``state['creator_session_key']`` matches the current
-session and injects a concise summary (max 3 flows) so the agent can
-proactively continue unfinished work. The block must fail-open and is skipped
-when the caller filters to explicit files, matching the memory-block rule.
+On session start the prompt builder reads the session's non-terminal flows from
+the taskflow registry (the store filters by session id in SQL) and injects a
+concise summary (max 3 flows) so the agent can proactively continue unfinished
+work. The block must fail-open and is skipped when the caller filters to
+explicit files, matching the memory-block rule.
 """
 
 import pytest
@@ -37,18 +37,24 @@ class FakeMemoryStore:
 
 
 class FakeFlowStore:
-    """Stand-in for taskflow.registry.store_sqlite with a controllable result."""
+    """Stand-in for the session-scoped registry read.
+
+    Mirrors the real store's SQL contract: only rows whose ``session_id`` equals
+    the requested one are returned.
+    """
 
     def __init__(self):
         self.flows: list[dict] = []
         self.error: Exception | None = None
         self.calls = 0
+        self.requested_sessions: list[str] = []
 
-    def get_active_flows_sync(self) -> list[dict]:
+    def get_active_flows_sync(self, session_id: str) -> list[dict]:
         self.calls += 1
+        self.requested_sessions.append(session_id)
         if self.error is not None:
             raise self.error
-        return self.flows
+        return [flow for flow in self.flows if flow.get("session_id", "") == session_id]
 
 
 pytestmark = [pytest.mark.unit]
@@ -93,13 +99,15 @@ def _flow(
     session_id="sess-main",
     description="do work",
     steps=None,
-    creator_key=None,
 ):
-    """Build a registry flow row. ``creator_key=None`` + ``session_id`` -> match."""
+    """Build a registry flow row owned by ``session_id`` (None -> legacy row)."""
     state: dict = {"description": description, "steps": steps or []}
-    if session_id is not None:
-        state["creator_session_key"] = creator_key or f"agent:main:session:{session_id}"
-    return {"flow_id": flow_id, "status": status, "state": state}
+    return {
+        "flow_id": flow_id,
+        "status": status,
+        "state": state,
+        "session_id": session_id or "",
+    }
 
 
 def _steps_progress(*statuses):
@@ -139,14 +147,13 @@ class TestTaskflowBlockInjection:
     def test_taskflow_block_absent_when_session_mismatch(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        prompt_env["flow_store"].flows = [
-            _flow("other-flow", creator_key="agent:main:session:someone-else")
-        ]
+        prompt_env["flow_store"].flows = [_flow("other-flow", session_id="someone-else")]
 
         prompt = build_system_prompt(session_id="sess-main")
 
         assert "Pending TaskFlows" not in prompt
         assert prompt_env["flow_store"].calls == 1
+        assert prompt_env["flow_store"].requested_sessions == ["sess-main"]
 
     def test_taskflow_block_absent_when_no_session(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
@@ -214,7 +221,7 @@ class TestTaskflowGuards:
         assert prompt_env["flow_store"].calls == 0
         assert "AGENTS-PERSONA" in prompt
 
-    def test_old_flow_without_creator_key_not_injected(self, prompt_env):
+    def test_legacy_flow_without_session_not_injected(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
         prompt_env["flow_store"].flows = [_flow("legacy-flow", session_id=None)]

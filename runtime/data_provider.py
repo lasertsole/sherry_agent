@@ -56,8 +56,8 @@ class PromptDataProvider(Protocol):
     Todos / taskflow (``agent.tools.todolist`` + ``agent.tools.taskflow``)
         :meth:`get_todos` returns the session's todo rows;
         :meth:`requester_session_key` builds the canonical
-        ``agent:main:session:<id>`` key; :meth:`get_active_flows` returns all
-        non-terminal taskflow rows (callers filter by creator key);
+        ``agent:main:session:<id>`` key; :meth:`get_active_flows` returns the
+        session's non-terminal taskflow rows (SQL-scoped, no post-filtering);
         :meth:`step_status` / :meth:`steps_summary` are the taskflow step
         state helpers used to render progress.
 
@@ -80,8 +80,8 @@ class PromptDataProvider(Protocol):
         """Build the canonical requester session key for a raw session id."""
         ...
 
-    def get_active_flows(self) -> list[dict]:
-        """Return every non-terminal taskflow row (caller filters by session)."""
+    def get_active_flows(self, session_id: str) -> list[dict]:
+        """Return the session's non-terminal taskflow rows (``[]`` when none)."""
         ...
 
     def step_status(self, step: dict) -> str:
