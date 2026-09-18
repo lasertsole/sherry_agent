@@ -58,7 +58,7 @@ Curator 是一个**空闲触发**的后台任务。当 Agent 处于空闲状态�
 │                  ├── 1. 自动转换 (apply_automatic_transitions)  │
 │                  │     ├── 遍历 agent_created_report()          │
 │                  │     ├── 跳过 pinned                         │
-│                  │     └── 按 cutoff 时间标记 stale / 删除      │
+│                  │     └── 按 cutoff 时间标记 stale / 归档      │
 │                  │                                              │
 │                  ├── 2. LLM 合并整合 (可选)                     │
 │                  │     ├── _render_candidate_list()             │
@@ -120,7 +120,7 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
 | `stale` | 超过 `stale_after_days` 无活动，标记为陈旧 |
 | `archived` | 超过 `archive_after_days` 后移入 `skills/.archive/`，可恢复 |
 
-当技能超过 `archive_after_days` 无活动时，会被**归档**：目录移动到 `skills/.archive/<skill>/`，usage record 保留并标记 `state="archived"`（恢复时保留技能历史）。`curator restore <name>` 会将其移回 `skills/auto/`。自动生命周期永不删除。
+当技能超过 `archive_after_days` 无活动时，会被**归档**：目录移动到 `skills/.archive/<skill>/`，usage record 保留并标记 `state="archived"`（恢复时保留技能历史）。`curator restore <name>` 会将其移回 `skills/auto/`。Curator 的任何移除都不会删除——合并源（带 `ABSORBED_INTO` 标记）与被剪枝技能走同一归档路径。
 
 **关键约束**：
 - Pinned 技能**永不**被自动转换、归档或删除
@@ -139,7 +139,7 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │     ├── dry_run=True → 仅统计，不修改
   │     └── dry_run=False → apply_automatic_transitions()
   │           ├── 标记 stale
-  │           ├── 删除（从磁盘移除）
+  │           ├── 归档（移入 .archive/）
   │           └── 重新激活
   │
   ├── 2. 保存中间状态
@@ -155,8 +155,8 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │           │     ├── 解析结构化 YAML（consolidations + prunings）
   │           │     ├── 为每个伞形技能调用 _generate_umbrella_skill()
   │           │     ├── 迁移支持文件 (references/, templates/, scripts/, assets/)
-  │           │     ├── 删除合并源技能
-  │           │     └── 删除被清理的技能
+  │           │     ├── 归档合并源技能
+  │           │     └── 归档被清理的技能
   │           ├── 快照 after_report
   │           ├── _build_rename_summary() → 分类变更
   │           └── _write_run_report() → logs/curator/{timestamp}/
@@ -306,12 +306,12 @@ LLM 返回后，伞形 `SKILL.md` 主内容会经
   │     └── 将每个文件复制到伞形技能的对应子目录
   │         （跳过任何已从 supporting_files 写入的路径）
   │
-  └── 删除源技能 (delete_skill with absorbed_into=into)
+  └── 归档源技能 (archive_skill with absorbed_into=into；umbrella 缺失时跳过)
 ```
 
 ### 清理
 
-`prunings` 块中列出的、不属于任何合并条目的技能会被直接删除。
+`prunings` 块中列出的、不属于任何合并条目的技能会被归档（移入 `skills/.archive/`），绝不删除。
 
 ---
 
@@ -422,7 +422,7 @@ Pinned 技能享有最高保护级别：
 - 恢复说明
 
 **恢复方式**：
-> 90 天自动转换会把技能归档——`curator restore <name>`（后端为 agent 侧 `restore_skill()`）可将技能从 `skills/.archive/` 移回 `skills/auto/`。LLM 合并整合是例外：被合并或清理的技能在内容并入伞形技能后会被移除。
+> 三种移除全部可恢复：90 天流转、合并源技能（归档时写入 `ABSORBED_INTO` 标记注明 umbrella）、被剪枝的技能，统一进入 `skills/.archive/`，`curator restore <name>`（后端为 agent 侧 `restore_skill()`）可将任意一个移回 `skills/auto/`。归档目录不会自动清空——可用 `curator restore` 恢复或手动清理。
 
 ---
 

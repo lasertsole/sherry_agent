@@ -58,7 +58,7 @@ It only operates on agent-created skills (under `skills/auto/`), **never touchin
 │                  ├── 1. Auto-transitions (apply_automatic_...)  │
 │                  │     ├── Iterate agent_created_report()       │
 │                  │     ├── Skip pinned                          │
-│                  │     └── Mark stale / delete by cutoff times  │
+│                  │     └── Mark stale / archive by cutoff times │
 │                  │                                              │
 │                  ├── 2. LLM Consolidation (optional)            │
 │                  │     ├── _render_candidate_list()             │
@@ -120,7 +120,7 @@ If `last_run_at` has never been set, the first call to `should_run_now()` return
 | `stale` | No activity for `stale_after_days`, marked as stale |
 | `archived` | Moved to `skills/.archive/` after `archive_after_days`; restorable |
 
-When a skill exceeds `archive_after_days` of inactivity, it is **archived**: the directory is moved to `skills/.archive/<skill>/` and its usage record is kept with `state="archived"` (so a restore keeps the skill's history). `curator restore <name>` moves it back to `skills/auto/`. The automatic lifecycle never deletes.
+When a skill exceeds `archive_after_days` of inactivity, it is **archived**: the directory is moved to `skills/.archive/<skill>/` and its usage record is kept with `state="archived"` (so a restore keeps the skill's history). `curator restore <name>` moves it back to `skills/auto/`. Nothing the curator removes is deleted — consolidation sources (archived with an `ABSORBED_INTO` marker) and pruned skills use the same archive.
 
 **Key constraints**:
 - Pinned skills are **never** auto-transitioned, archived, or deleted
@@ -139,7 +139,7 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │     ├── dry_run=True → count only, no mutations
   │     └── dry_run=False → apply_automatic_transitions()
   │           ├── Mark stale
-  │           ├── Delete (remove from disk)
+  │           ├── Archive (move to .archive/)
   │           └── Reactivate
   │
   ├── 2. Save intermediate state
@@ -155,8 +155,8 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │           │     ├── Parse structured YAML (consolidations + prunings)
   │           │     ├── For each umbrella: _generate_umbrella_skill()
   │           │     ├── Migrate support files (references/, templates/, scripts/, assets/)
-  │           │     ├── Delete consolidated source skills
-  │           │     └── Delete pruned skills
+  │           │     ├── Archive consolidated source skills
+  │           │     └── Archive pruned skills
   │           ├── Snapshot after_report
   │           ├── _build_rename_summary() → classify changes
   │           └── _write_run_report() → logs/curator/{timestamp}/
@@ -310,18 +310,18 @@ For each consolidation entry (from → into umbrella):
   │     └── Copy each file into umbrella's corresponding subdirectory
   │         (skip any path already written from supporting_files)
   │
-  └── Delete source skill (delete_skill with absorbed_into=into)
+  └── Archive source skill (archive_skill with absorbed_into=into; skipped when the umbrella is missing)
 ```
 
 ### Pruning
 
-Skills listed in the `prunings` block that are not already part of a consolidation are simply deleted.
+Skills listed in the `prunings` block that are not already part of a consolidation are archived into `skills/.archive/`, never deleted.
 
 ---
 
 ## Classification & Reconciliation
 
-After the LLM pass executes, some skills may have been removed. `classify.py` determines whether each removed skill was **consolidated** (merged into an umbrella) or **pruned** (simply deleted):
+After the LLM pass executes, some skills may have been removed. `classify.py` determines whether each removed skill was **consolidated** (merged into an umbrella) or **pruned** (simply archived):
 
 ### Three-source Reconciliation
 
@@ -431,7 +431,7 @@ Each run generates a detailed report saved under `logs/curator/{timestamp}/`:
 - Recovery notes
 
 **Recovery**:
-> Automatic 90-day transitions archive skills — `curator restore <name>` (backed by the agent-side `restore_skill()`) moves one from `skills/.archive/` back to `skills/auto/`. The LLM consolidation pass is the exception: skills it merges or prunes are removed after their content is folded into the umbrella.
+> Every curator removal is recoverable — the 90-day transition, consolidation sources, and pruned skills all move into `skills/.archive/`, and `curator restore <name>` (backed by the agent-side `restore_skill()`) moves any of them back to `skills/auto/`. A consolidated source keeps an `ABSORBED_INTO` marker naming its umbrella; a pruned skill has no marker. The archive is not auto-purged — restore entries or clean it up manually.
 
 ---
 

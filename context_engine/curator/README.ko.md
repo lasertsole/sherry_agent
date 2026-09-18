@@ -58,7 +58,7 @@ Curator는 **비활성 트리거** 기반 백그라운드 작업입니다. 에�
 │                  ├── 1. Auto-transitions (apply_automatic_...)  │
 │                  │     ├── Iterate agent_created_report()       │
 │                  │     ├── Skip pinned                          │
-│                  │     └── Mark stale / delete by cutoff times  │
+│                  │     └── Mark stale / archive by cutoff times │
 │                  │                                              │
 │                  ├── 2. LLM Consolidation (optional)            │
 │                  │     ├── _render_candidate_list()             │
@@ -120,7 +120,7 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
 | `stale` | `stale_after_days` 동안 활동이 없어 오래된 것으로 표시 |
 | `archived` | `archive_after_days` 경과 후 `skills/.archive/`로 이동, 복구 가능 |
 
-스킬이 `archive_after_days`의 무활동 기간을 초과하면 **아카이브**됩니다: 디렉터리는 `skills/.archive/<skill>/`로 이동하고 사용 기록은 `state="archived"`로 유지됩니다(복구 시 이력 보존). `curator restore <name>`이 `skills/auto/`로 되돌립니다. 자동 수명 주기는 절대 삭제하지 않습니다.
+스킬이 `archive_after_days`의 무활동 기간을 초과하면 **아카이브**됩니다: 디렉터리는 `skills/.archive/<skill>/`로 이동하고 사용 기록은 `state="archived"`로 유지됩니다(복구 시 이력 보존). `curator restore <name>`이 `skills/auto/`로 되돌립니다. Curator의 어떤 제거도 삭제가 아닙니다——통합 소스(`ABSORBED_INTO` 마커 포함)와 정리된 스킬도 같은 아카이브로 들어갑니다.
 
 **핵심 제약 조건**:
 - 고정(pinned)된 스킬은 **절대** 자동 전환, 아카이브, 삭제되지 않습니다
@@ -139,7 +139,7 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │     ├── dry_run=True → count only, no mutations
   │     └── dry_run=False → apply_automatic_transitions()
   │           ├── Mark stale
-  │           ├── Delete (remove from disk)
+  │           ├── Archive (move to .archive/)
   │           └── Reactivate
   │
   ├── 2. Save intermediate state
@@ -155,8 +155,8 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │           │     ├── Parse structured YAML (consolidations + prunings)
   │           │     ├── For each umbrella: _generate_umbrella_skill()
   │           │     ├── Migrate support files (references/, templates/, scripts/, assets/)
-  │           │     ├── Delete consolidated source skills
-  │           │     └── Delete pruned skills
+  │           │     ├── Archive consolidated source skills
+  │           │     └── Archive pruned skills
   │           ├── Snapshot after_report
   │           ├── _build_rename_summary() → classify changes
   │           └── _write_run_report() → logs/curator/{timestamp}/
@@ -307,18 +307,18 @@ For each consolidation entry (from → into umbrella):
   │     └── Copy each file into umbrella's corresponding subdirectory
   │         (skip any path already written from supporting_files)
   │
-  └── Delete source skill (delete_skill with absorbed_into=into)
+  └── Archive source skill (archive_skill with absorbed_into=into; umbrella가 없으면 건너뜀)
 ```
 
 ### 정리
 
-`prunings` 블록에 나열된 스킬 중 이미 통합의 일부가 아닌 것은 단순히 삭제됩니다.
+`prunings` 블록에 나열된 스킬 중 이미 통합의 일부가 아닌 것은 `skills/.archive/`로 아카이브되며, 삭제되지 않습니다.
 
 ---
 
 ## 분류 및 조정
 
-LLM 패스가 실행된 후 일부 스킬이 제거될 수 있습니다. `classify.py`는 각 제거된 스킬이 **통합**(우산으로 병합)되었는지 **정리**(단순 삭제)되었는지 결정합니다:
+LLM 패스가 실행된 후 일부 스킬이 제거될 수 있습니다. `classify.py`는 각 제거된 스킬이 **통합**(우산으로 병합)되었는지 **정리**(단순 아카이브)되었는지 결정합니다:
 
 ### 3-소스 조정
 
@@ -423,7 +423,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - 복구 참고 사항
 
 **복구**:
-> 90일 자동 전환은 스킬을 아카이브합니다 — `curator restore <name>`(백엔드는 에이전트 측 `restore_skill()`)이 `skills/.archive/`에서 `skills/auto/`로 되돌립니다. LLM 통합 패스는 예외로, 병합되거나 정리된 스킬은 우산 스킬에 내용이 통합된 후 제거됩니다.
+> 세 가지 제거 모두 복구 가능: 90일 전이, 통합 소스(아카이브 시 umbrella 이름을 담은 `ABSORBED_INTO` 마커 기록), 정리된 스킬은 모두 `skills/.archive/`로 이동하며 `curator restore <name>`(백엔드는 에이전트 측 `restore_skill()`)으로 어느 것이든 `skills/auto/`로 되돌릴 수 있습니다. 아카이브는 자동으로 비워지지 않습니다——`curator restore`로 복원하거나 직접 정리하세요.
 
 ---
 

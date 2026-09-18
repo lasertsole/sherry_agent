@@ -262,11 +262,11 @@ for r in results:
 
 - **범위**: `skills/auto/` 아래의 에이전트 생성 스킬만 대상. 내장 스킬은 절대 건드리지 않음
 - **트리거**: 서비스 엔트리포인트가 `context_engine.curator.init()`을 호출하면 데몬 스레드(`curator-timer`)가 시작되어 3600초마다 `maybe_run_curator()`를 호출합니다. 실행은 `should_run_now()`가 참(활성화됨, 일시정지 아님, `interval_hours` 경과)이고 에이전트가 충분히 유휴 상태(`min_idle_hours`)일 때만 수행됩니다. 사용자 턴마다 `reset_idle_for_seconds()`가 호출됩니다 (`server/service/messages.py`)
-- **라이프사이클**: `active → stale` (`stale_after_days`, 기본 30일간 활동 없음). `archive_after_days`(기본 90일)를 초과한 스킬은 `skills/.archive/`로 아카이브되고 `archived`로 표시됩니다(`curator restore <name>`으로 복구 가능). stale 구간 내에서 한 번도 사용되지 않은 스킬은 재활성화됩니다. pinned 스킬은 모든 전이를 우회합니다
+- **라이프사이클**: `active → stale` (`stale_after_days`, 기본 30일간 활동 없음). `archive_after_days`(기본 90일)를 초과한 스킬은 `skills/.archive/`로 아카이브되고 `archived`로 표시됩니다(`curator restore <name>`으로 복구 가능). stale 구간 내에서 한 번도 사용되지 않은 스킬은 재활성화됩니다. pinned 스킬은 모든 전이를 우회합니다. 통합 소스(`ABSORBED_INTO` 마커 포함)와 정리된 스킬도 같은 아카이브를 사용하며, Curator의 어떤 제거도 하드 삭제가 아닙니다
 - **LLM 통합** (`sherry.jsonc`의 `curator.consolidate` 설정, 기본적으로 활성화): 겹치는 좁은 스킬들을 LLM이 생성한 umbrella 스킬로 병합합니다
 - **상태와 보고서**: 실행 상태는 `skills/.curator_state`에 저장. 보고서는 `logs/curator/{timestamp}/` 아래에 위치 (`run.json` + `REPORT.md`)
 
-공개 API에는 `run_curator_review(on_summary=None, dry_run=False, consolidate=None)`, `maybe_run_curator(*, idle_for_seconds=None, on_summary=None)`, `reset_idle_for_seconds()`, `pin_skill(name)`, `unpin_skill(name)`, `archive_skill(name)`, `delete_skill(name, absorbed_into="")`, `apply_automatic_transitions(now=None)`, `should_run_now(now=None)`이 포함됩니다.
+공개 API에는 `run_curator_review(on_summary=None, dry_run=False, consolidate=None)`, `maybe_run_curator(*, idle_for_seconds=None, on_summary=None)`, `reset_idle_for_seconds()`, `pin_skill(name)`, `unpin_skill(name)`, `archive_skill(name, absorbed_into="")`, `delete_skill(name, absorbed_into="")`, `apply_automatic_transitions(now=None)`, `should_run_now(now=None)`이 포함됩니다.
 
 ▶️ 전체 문서: [curator/README.md](curator/README.md) · [中文](curator/README.zh.md) · [한국어](curator/README.ko.md) · [日本語](curator/README.ja.md)
 

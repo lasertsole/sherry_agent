@@ -262,11 +262,11 @@ for r in results:
 
 - **対象**：`skills/auto/` 配下の Agent 生成スキルのみ。組み込みスキルには一切触れません
 - **トリガー**：サービスのエントリポイントが `context_engine.curator.init()` を呼び出すと、デーモンスレッド（`curator-timer`）が起動し、3600 秒ごとに `maybe_run_curator()` を呼び出します。実行は `should_run_now()` が真（有効・一時停止でない・`interval_hours` 経過）で、Agent が十分アイドル（`min_idle_hours`）の場合にのみ行われます。ユーザーターンごとに `reset_idle_for_seconds()` が呼ばれます（`server/service/messages.py`）
-- **ライフサイクル**：`active → stale`（`stale_after_days`、デフォルト 30 日間無活動）。`archive_after_days`（デフォルト 90 日）を超えたスキルは `skills/.archive/` へアーカイブされ `archived` に（`curator restore <name>` で復元可能）。stale ウィンドウ内で一度も使われていないスキルは再アクティブ化されます。pinned スキルはすべての遷移をバイパスします
+- **ライフサイクル**：`active → stale`（`stale_after_days`、デフォルト 30 日間無活動）。`archive_after_days`（デフォルト 90 日）を超えたスキルは `skills/.archive/` へアーカイブされ `archived` に（`curator restore <name>` で復元可能）。stale ウィンドウ内で一度も使われていないスキルは再アクティブ化されます。pinned スキルはすべての遷移をバイパスします。統合元（`ABSORBED_INTO` マーカー付き）と剪定スキルも同じアーカイブを使い、Curator の除去にハード削除はありません
 - **LLM 統合**（`sherry.jsonc` の `curator.consolidate` 設定、デフォルトで有効）：重複する狭いスキルを LLM が生成した umbrella スキルへ統合します
 - **状態とレポート**：実行状態は `skills/.curator_state` に保存。レポートは `logs/curator/{timestamp}/` 配下（`run.json` + `REPORT.md`）
 
-公開 API には `run_curator_review(on_summary=None, dry_run=False, consolidate=None)`、`maybe_run_curator(*, idle_for_seconds=None, on_summary=None)`、`reset_idle_for_seconds()`、`pin_skill(name)`、`unpin_skill(name)`、`archive_skill(name)`、`delete_skill(name, absorbed_into="")`、`apply_automatic_transitions(now=None)`、`should_run_now(now=None)` が含まれます。
+公開 API には `run_curator_review(on_summary=None, dry_run=False, consolidate=None)`、`maybe_run_curator(*, idle_for_seconds=None, on_summary=None)`、`reset_idle_for_seconds()`、`pin_skill(name)`、`unpin_skill(name)`、`archive_skill(name, absorbed_into="")`、`delete_skill(name, absorbed_into="")`、`apply_automatic_transitions(now=None)`、`should_run_now(now=None)` が含まれます。
 
 ▶️ 詳細：[curator/README.md](curator/README.md) · [中文](curator/README.zh.md) · [한국어](curator/README.ko.md) · [日本語](curator/README.ja.md)
 

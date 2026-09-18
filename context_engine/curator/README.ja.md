@@ -58,7 +58,7 @@ Curator は**非アクティブトリガー**のバックグラウンドタス�
 │                  ├── 1. Auto-transitions (apply_automatic_...)  │
 │                  │     ├── Iterate agent_created_report()       │
 │                  │     ├── Skip pinned                          │
-│                  │     └── Mark stale / delete by cutoff times  │
+│                  │     └── Mark stale / archive by cutoff times │
 │                  │                                              │
 │                  ├── 2. LLM Consolidation (optional)            │
 │                  │     ├── _render_candidate_list()             │
@@ -120,7 +120,7 @@ maybe_run_curator(idle_for_seconds=..., on_summary=...)
 | `stale` | `stale_after_days` 間アクティビティがなく、古いとマークされた |
 | `archived` | `archive_after_days` 経過後に `skills/.archive/` へ移動、復元可能 |
 
-スキルが `archive_after_days` の非アクティブ期間を超えると**アーカイブ**されます: ディレクトリは `skills/.archive/<skill>/` へ移動し、使用記録は `state="archived"` のまま保持されます（復元時に履歴が残ります）。`curator restore <name>` が `skills/auto/` へ戻します。自動ライフサイクルは決して削除しません。
+スキルが `archive_after_days` の非アクティブ期間を超えると**アーカイブ**されます: ディレクトリは `skills/.archive/<skill>/` へ移動し、使用記録は `state="archived"` のまま保持されます（復元時に履歴が残ります）。`curator restore <name>` が `skills/auto/` へ戻します。Curator のどの除去も削除ではありません——統合元（`ABSORBED_INTO` マーカー付き）と剪定スキルも同じアーカイブに入ります。
 
 **主要な制約**:
 - ピン留めされたスキルは**決して**自動遷移・アーカイブ・削除されません
@@ -139,7 +139,7 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │     ├── dry_run=True → count only, no mutations
   │     └── dry_run=False → apply_automatic_transitions()
   │           ├── Mark stale
-  │           ├── Delete (remove from disk)
+  │           ├── Archive (move to .archive/)
   │           └── Reactivate
   │
   ├── 2. Save intermediate state
@@ -155,8 +155,8 @@ run_curator_review(on_summary=None, synchronous=True, dry_run=False, consolidate
   │           │     ├── Parse structured YAML (consolidations + prunings)
   │           │     ├── For each umbrella: _generate_umbrella_skill()
   │           │     ├── Migrate support files (references/, templates/, scripts/, assets/)
-  │           │     ├── Delete consolidated source skills
-  │           │     └── Delete pruned skills
+  │           │     ├── Archive consolidated source skills
+  │           │     └── Archive pruned skills
   │           ├── Snapshot after_report
   │           ├── _build_rename_summary() → classify changes
   │           └── _write_run_report() → logs/curator/{timestamp}/
@@ -309,18 +309,18 @@ For each consolidation entry (from → into umbrella):
   │     └── Copy each file into umbrella's corresponding subdirectory
   │         (skip any path already written from supporting_files)
   │
-  └── Delete source skill (delete_skill with absorbed_into=into)
+  └── Archive source skill (archive_skill with absorbed_into=into; umbrella が無い場合はスキップ)
 ```
 
 ### プルーニング
 
-`prunings` ブロックにリストされていて統合の一部でないスキルは、単純に削除されます。
+`prunings` ブロックにリストされていて統合の一部でないスキルは `skills/.archive/` へアーカイブされ、削除されることはありません。
 
 ---
 
 ## 分類と調整
 
-LLM パスが実行された後、一部のスキルが削除されている可能性があります。`classify.py` は、各削除されたスキルが**統合**（アンブレラにマージ）されたのか**プルーニング**（単純に削除）されたのかを決定します:
+LLM パスが実行された後、一部のスキルが削除されている可能性があります。`classify.py` は、各削除されたスキルが**統合**（アンブレラにマージ）されたのか**プルーニング**（単純にアーカイブ）されたのかを決定します:
 
 ### 3 ソース調整
 
@@ -425,7 +425,7 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - リカバリーノート
 
 **リカバリー**:
-> 90 日の自動遷移はスキルをアーカイブします — `curator restore <name>`（バックエンドはエージェント側 `restore_skill()`）が `skills/.archive/` から `skills/auto/` へ戻します。LLM 統合パスは例外で、マージまたは整理されたスキルはアンブレラへ内容を統合した後に削除されます。
+> 3 つの除去はすべて復元可能：90 日遷移、統合元スキル（アーカイブ時に umbrella 名を記した `ABSORBED_INTO` マーカーを書き込み）、剪定されたスキルはすべて `skills/.archive/` に入り、`curator restore <name>`（バックエンドはエージェント側 `restore_skill()`）でいずれも `skills/auto/` へ戻せます。アーカイブは自動では空になりません——`curator restore` で復元するか手動で整理してください。
 
 ---
 
