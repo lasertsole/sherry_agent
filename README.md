@@ -19,7 +19,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 ## 🚀 Key Features
 
 ### 1. 🧠 Layered Memory System (Context Engine)
-- **Short-term Session Memory** ([MesMemory](context_engine/README.md)): conversation history persisted to SQLite (WAL mode) with automatic FTS5 indexing — including a trigram tokenizer table for Chinese full-text search; persistence runs at two timings (`MessagePersistenceMiddleware`): tool results are flushed the moment they return, and every model-call boundary incrementally flushes the remaining new human/ai/tool messages — write-once via the `persisted_message_ids` watermark — so the raw store no longer depends on a compression ever firing
+- **Short-term Session Memory** ([MesMemory](context_engine/README.md)): conversation history persisted to SQLite (WAL mode) with automatic FTS5 indexing — including a trigram tokenizer table for Chinese full-text search; persistence runs at two timings (`MessagePersistenceMiddleware`): tool results are flushed the moment they return, and every model-call boundary incrementally flushes the remaining new human/ai/tool messages — write-once via the `persisted_message_ids` watermark — so the raw store does not depend on a compression ever firing
 - **History Retrieval**: last-N-turns, paginated history, or turn-range queries formatted as prompt context
 - **Session Checkpointing**: thread-safe async SQLite checkpointer (`langgraph-checkpoint-sqlite`) persists agent state across restarts; stale checkpoints are cleaned automatically
 - **Conversation Summarization**: an auxiliary LLM compresses long histories mid-conversation via the Summarization middleware
@@ -98,7 +98,7 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 EMA_AI_agent/
 ├── agent/                  # Agent core logic
 │   ├── core.py             # Main agent loop (LangChain create_agent → LangGraph graph)
-│   ├── stream_repetition_guard_wrapper.py # Stream-level output repetition guard
+│   ├── wrapper/            # Graph-level wrappers (repetition guard, context limit)
 │   ├── checkpointer/       # Thread-safe async SQLite checkpointers
 │   ├── middlewares/        # Middleware pipeline (summarization, guardrails, HITL, ...)
 │   └── tools/              # Agent-accessible tools
@@ -149,6 +149,8 @@ EMA_AI_agent/
 │   ├── summarization/      # Compression triggers & cooldown
 │   ├── loop-prevention/    # Runaway-loop prevention harness
 │   ├── sandbox/            # Eval sandbox & tool isolation
+│   ├── token-guard/        # 128K context-window floor
+│   ├── context-governance/ # Persistence, eviction, tail clip, summary filtering
 │   └── long-running-tasks/ # TaskFlow orchestration
 │
 ├── evals/                  # Evaluation framework (dispatcher + 5 suites)
@@ -316,7 +318,7 @@ Models configured for **local GGUF** mode are downloaded automatically from Hugg
 > Network access to huggingface.co is required for first-run downloads (users in China may need a proxy or a mirror). Interrupted downloads are resumed on the next start; delete `models/<model>/model_weight/` to force a re-download.
 
 ### 4. Start the Backend
-`start.sh` activates the uv-managed `.venv` and launches the Robyn backend (it no longer starts Ollama or any frontend):
+`start.sh` activates the uv-managed `.venv` and launches the Robyn backend (it does not start Ollama or any frontend):
 
 ```bash
 chmod +x start.sh

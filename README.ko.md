@@ -19,7 +19,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 ## 🚀 주요 기능
 
 ### 1. 🧠 계층형 메모리 시스템 (Context Engine)
-- **단기 세션 메모리**([MesMemory](context_engine/README.md)): 대화 이력을 SQLite(WAL 모드)에 영구 저장하고 FTS5 인덱스를 자동 생성 — 중국어 전문 검색용 trigram 토크나이저 테이블 포함; 영속화는 두 시점으로 나뉩니다(`MessagePersistenceMiddleware`): 도구 결과는 반환되는 즉시 플러시되고, 나머지 새 human/ai/tool 메시지는 각 모델 호출 경계에서 증분 플러시됩니다(`persisted_message_ids` 워터마크로 write-once). 원본 저장소는 더 이상 압축 발생에 의존하지 않습니다
+- **단기 세션 메모리**([MesMemory](context_engine/README.md)): 대화 이력을 SQLite(WAL 모드)에 영구 저장하고 FTS5 인덱스를 자동 생성 — 중국어 전문 검색용 trigram 토크나이저 테이블 포함; 영속화는 두 시점으로 나뉩니다(`MessagePersistenceMiddleware`): 도구 결과는 반환되는 즉시 플러시되고, 나머지 새 human/ai/tool 메시지는 각 모델 호출 경계에서 증분 플러시됩니다(`persisted_message_ids` 워터마크로 write-once). 원본 저장소는 압축 발생에 의존하지 않습니다
 - **히스토리 조회**: 최근 N턴, 페이지네이션 히스토리, 턴 범위 지정 쿼리를 프롬프트 컨텍스트로 포맷
 - **세션 체크포인팅**: 스레드 세이프 비동기 SQLite 체크포인터(`langgraph-checkpoint-sqlite`)가 재시작 후에도 에이전트 상태를 유지하며, 오래된 체크포인트는 자동 정리
 - **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
@@ -98,7 +98,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 EMA_AI_agent/
 ├── agent/                  # 에이전트 코어 로직
 │   ├── core.py             # 메인 에이전트 루프(LangChain create_agent → LangGraph 그래프)
-│   ├── stream_repetition_guard_wrapper.py # 스트림 출력 반복 방지 가드
+│   ├── wrapper/            # 그래프 레벨 래퍼(반복 가드, 컨텍스트 한도)
 │   ├── checkpointer/       # 스레드 세이프 비동기 SQLite 체크포인터
 │   ├── middlewares/        # 미들웨어 파이프라인(요약, 가드레일, HITL 등)
 │   └── tools/              # 에이전트가 사용하는 도구
@@ -149,6 +149,8 @@ EMA_AI_agent/
 │   ├── summarization/      # 압축 트리거 및 쿨다운
 │   ├── loop-prevention/    # 폭주 루프 방지 하네스
 │   ├── sandbox/            # 평가 샌드박스 및 도구 격리
+│   ├── token-guard/        # 128K 컨텍스트 윈도우 하한
+│   ├── context-governance/ # 영속화, 축출, 테일 클립, 요약 필터링
 │   └── long-running-tasks/ # TaskFlow 오케스트레이션
 │
 ├── evals/                  # 평가 프레임워크(dispatcher + 5개 스위트)
@@ -316,7 +318,7 @@ cp .env.example .env
 > 첫 다운로드 시 huggingface.co 접근이 필요합니다(중국 본토 사용자는 프록시나 미러가 필요할 수 있습니다). 중단된 다운로드는 다음 시작 시 재개되며, `models/<model>/model_weight/`를 삭제하면 강제로 다시 다운로드합니다.
 
 ### 4. 백엔드 시작
-`start.sh`는 uv가 관리하는 `.venv`를 활성화하고 Robyn 백엔드를 실행합니다(Ollama나 프런트엔드는 더 이상 시작하지 않습니다):
+`start.sh`는 uv가 관리하는 `.venv`를 활성화하고 Robyn 백엔드를 실행합니다(Ollama나 프런트엔드를 시작하지 않습니다):
 
 ```bash
 chmod +x start.sh

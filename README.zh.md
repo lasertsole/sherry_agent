@@ -19,7 +19,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ## 🚀 核心特性
 
 ### 1. 🧠 分层记忆系统（Context Engine）
-- **短期会话记忆**（[MesMemory](context_engine/README.md)）：对话历史持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表；落库分为两个时机（`MessagePersistenceMiddleware`）：工具结果一返回即落库，其余新产生的 human/ai/tool 消息在每个模型调用边界增量落库——靠 `persisted_message_ids` 水位写一次——原始存储不再依赖压缩是否发生
+- **短期会话记忆**（[MesMemory](context_engine/README.md)）：对话历史持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表；落库分为两个时机（`MessagePersistenceMiddleware`）：工具结果一返回即落库，其余新产生的 human/ai/tool 消息在每个模型调用边界增量落库——靠 `persisted_message_ids` 水位写一次——原始存储不依赖压缩是否发生
 - **历史检索**：支持最近 N 轮、分页历史、指定轮次范围查询，并格式化为提示词上下文
 - **会话检查点**：线程安全的异步 SQLite checkpointer（`langgraph-checkpoint-sqlite`）跨重启持久化 Agent 状态，过期检查点自动清理
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
@@ -98,7 +98,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 EMA_AI_agent/
 ├── agent/                  # Agent 核心逻辑
 │   ├── core.py             # 主 Agent 循环（LangChain create_agent → LangGraph 图）
-│   ├── stream_repetition_guard_wrapper.py # 流式输出重复防护
+│   ├── wrapper/            # 图级包装器（重复防护、上下文上限）
 │   ├── checkpointer/       # 线程安全异步 SQLite checkpointer
 │   ├── middlewares/        # 中间件流水线（摘要、护栏、HITL 等）
 │   └── tools/              # Agent 可用工具
@@ -149,6 +149,8 @@ EMA_AI_agent/
 │   ├── summarization/      # 压缩触发条件与冷却
 │   ├── loop-prevention/    # 防失控循环防护
 │   ├── sandbox/            # 评估沙箱与工具隔离
+│   ├── token-guard/        # 128K 上下文窗口下限
+│   ├── context-governance/ # 持久化、驱逐、尾部裁剪与摘要过滤
 │   └── long-running-tasks/ # TaskFlow 编排
 │
 ├── evals/                  # 评估框架（dispatcher + 5 个套件）
@@ -316,7 +318,7 @@ cp .env.example .env
 > 首次下载需要访问 huggingface.co（中国大陆用户可能需要代理或镜像）。下载中断后下次启动会继续；删除 `models/<model>/model_weight/` 可强制重新下载。
 
 ### 4. 启动后端
-`start.sh` 会激活 uv 管理的 `.venv` 并启动 Robyn 后端（不再启动 Ollama 或任何前端）：
+`start.sh` 会激活 uv 管理的 `.venv` 并启动 Robyn 后端（不启动 Ollama 或任何前端）：
 
 ```bash
 chmod +x start.sh
