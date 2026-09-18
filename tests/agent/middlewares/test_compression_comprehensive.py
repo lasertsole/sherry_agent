@@ -1526,7 +1526,7 @@ class TestSyncAsyncFullBranchParity:
 
 
 # ======================================================================
-# Chained-summary filtering (plan TODO/SUMMARY_MESSAGE_FILTERING_PLAN.md):
+# Chained-summary filtering:
 # the prior summary pair stays OUT of the re-summarization <conversation>
 # input and is chained only through <prior-summary>.
 # ======================================================================

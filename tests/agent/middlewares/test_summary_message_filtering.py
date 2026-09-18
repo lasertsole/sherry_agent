@@ -1,5 +1,5 @@
 """Unit tests for ``_filter_summary_messages`` and the async chained-summary
-filtering (plan ``TODO/SUMMARY_MESSAGE_FILTERING_PLAN.md`` §3).
+filtering: the prior summary pair must not be re-fed to the summarizer.
 
 The summary pair produced by ``_build_new_messages`` — HumanMessage("What did
 we do so far?") + AIMessage(summary body) — is tagged with
