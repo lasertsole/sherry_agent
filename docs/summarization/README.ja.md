@@ -236,6 +236,8 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 
 プロンプトテンプレート（`_SUMMARY_TEMPLATE`、:190）は Markdown 骨格を固定します —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 「空でもすべてのセクションを保持する」ことと秘密保持ルール（"NEVER include API keys, tokens, passwords, secrets"）を要求します。`_enforce_fifo_limits`（:381）が返されたテキストに項目上限を決定論的に再適用し、`"(N earlier items omitted for brevity)"` を追記します。
 
+**ユーザー要求の送信元の正同定。** 永続化された各 `human` 行は `origin` を持ちます（トランスポート入口で刻印）: WS/チャネルのユーザー入力は `"user"`、オーケストレーターのステアリング注入は `"task_intent"`、完了キャリアは `"subagent_completion"`、Cron 配信ターンは `"cron"`（`ai`/`tool` 行は `NULL` のまま；origin タグ導入前の行はレガシー user メッセージとして読み取られます）。*Latest Unresolved User Request* の送信元はこの列で正同定されます: ユーザー送信元のみ（`origin = 'user'`、またはレガシー `NULL`）がユーザー要求であり、内部注入（`task_intent` / `subagent_completion` / `cron`）が要求として引用されることはありません。routing plan の複数形 `unresolved_user_requests[]` リストも同じ正フィルタを使います。
+
 ## 🧱 静的フォールバック（LLMを使わない要約）
 
 `_build_static_fallback_summary`（:296）はモデル呼び出しゼロで同じセクション骨格を生成します:

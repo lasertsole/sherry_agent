@@ -447,7 +447,7 @@ Worker 반환 → DoneClaim → AdversarialVerify (5 gates) → FullyDone / NOT 
 
 **의도 검출**: 경량 휴리스틱, LLM 호출 없음 (제로 지연, 제로 비용) — 질문 패턴 → 비태스크, 잡담 패턴 → 비태스크, 태스크 키워드 → 태스크, 장문 (>100자) 비질문 → 태스크 가능성.
 
-**루프 방지 설계**: E7b가 E7a보다 우선, E7a는 세션당 1회, E7b는 before_model에서만, `_is_system_directive()`로 시스템 주입 메시지 필터, E3는 백오프 냉각 있음, 압축 후 re-arm.
+**루프 방지 설계**: E7b가 E7a보다 우선, E7a는 세션당 1회, E7b는 before_model에서만, `_is_system_directive()`로 시스템 주입 메시지 필터(E7 주입은 `metadata={"origin":"task_intent","internal":true}`를 가지며, 저장소와 필터가 내부 메시지로 올바르게 식별하여 실제 사용자 요청으로 취급하지 않고 세션 제목이나 사용자 요청 추출에도 들어가지 않습니다), E3는 백오프 냉각 있음, 압축 후 re-arm.
 
 ---
 

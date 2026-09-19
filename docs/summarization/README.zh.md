@@ -231,6 +231,8 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 提示词模板（`_SUMMARY_TEMPLATE`，:190）固定了 Markdown 骨架 —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 要求"即使为空也保留每一节"并带保密规则（"NEVER include API keys, tokens, passwords, secrets"）。`_enforce_fifo_limits`（:381）对返回文本确定性地重新施加条目上限，追加 `"(N earlier items omitted for brevity)"`。
 
+**用户请求来源的正向识别。** 每个落库的 `human` 行都带 `origin`（在传输入口打标）：WS/渠道用户输入为 `"user"`，编排引导注入为 `"task_intent"`，完成载体为 `"subagent_completion"`，定时投递轮次为 `"cron"`（`ai`/`tool` 行保持 `NULL`；origin 标记上线前的存量行按 user 消息读取）。*Latest Unresolved User Request* 的来源由该列正向识别：只有用户来源消息（`origin = 'user'`，或存量 `NULL`）才算用户请求 —— 内部注入（`task_intent` / `subagent_completion` / `cron`）绝不会被当作请求引用。routing plan 的复数 `unresolved_user_requests[]` 清单使用同一正向过滤。
+
 ## 🧱 静态回退（无 LLM 摘要）
 
 `_build_static_fallback_summary`（:296）零模型调用产出同样的段落骨架：

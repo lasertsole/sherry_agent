@@ -235,6 +235,8 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 
 프롬프트 템플릿(`_SUMMARY_TEMPLATE`, :190)은 Markdown 골격을 고정합니다 — *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress(Completed ≤ 5 · In Progress · Blocked) / Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* — "비어 있어도 모든 섹션을 유지"와 기밀 규칙("NEVER include API keys, tokens, passwords, secrets")을 요구합니다. `_enforce_fifo_limits`(:381)가 반환 텍스트에 항목 상한을 결정론적으로 재적용하고, `"(N earlier items omitted for brevity)"`를 덧붙입니다.
 
+**사용자 요청 출처의 정식 식별.** 영속화된 각 `human` 행은 `origin`을 가집니다(전송 진입점에서 각인): WS/채널 사용자 입력은 `"user"`, 오케스트레이터 스티어링 주입은 `"task_intent"`, 완료 캐리어는 `"subagent_completion"`, Cron 전달 턴은 `"cron"`(`ai`/`tool` 행은 `NULL` 유지; origin 태깅 이전 행은 레거시 user 메시지로 읽음). *Latest Unresolved User Request*의 출처는 이 열로 정식 식별됩니다: 사용자 출처만(`origin = 'user'` 또는 레거시 `NULL`) 사용자 요청이며, 내부 주입(`task_intent` / `subagent_completion` / `cron`)은 요청으로 인용되지 않습니다. routing plan의 복수형 `unresolved_user_requests[]` 목록도 동일한 정식 필터를 사용합니다.
+
 ## 🧱 정적 폴백 (LLM 없는 요약)
 
 `_build_static_fallback_summary`(:296)는 모델 호출 0회로 같은 섹션 골격을 만듭니다:

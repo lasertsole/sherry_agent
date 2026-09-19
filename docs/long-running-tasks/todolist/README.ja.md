@@ -452,7 +452,7 @@ Worker 返却 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
 
 **意図検出**：軽量ヒューリスティック、LLM 呼び出しなし（ゼロ遅延、ゼロコスト）— 質問パターン → 非タスク、雑談パターン → 非タスク、タスクキーワード → タスク、長文（>100文字）非質問 → タスクの可能性。
 
-**ループ防止設計**：E7b が E7a より優先、E7a はセッション毎1回、E7b は before_model のみ、`_is_system_directive()` でシステム注入メッセージをフィルタ、E3 はバックオフ冷却あり、圧縮後に re-arm。
+**ループ防止設計**：E7b が E7a より優先、E7a はセッション毎1回、E7b は before_model のみ、`_is_system_directive()` でシステム注入メッセージをフィルタ（E7 注入は `metadata={"origin":"task_intent","internal":true}` を持ち、ストアとフィルタが内部メッセージとして正しく識別し、実ユーザー要求とは決して扱わず、セッションタイトルやユーザー要求抽出にも入りません）、E3 はバックオフ冷却あり、圧縮後に re-arm。
 
 ---
 

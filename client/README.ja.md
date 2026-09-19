@@ -253,7 +253,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 
 ブラウザモードのチャットストリーミング詳細：
 
-- `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws` に接続し `{ session_id, multi_modal_message }` を送信
+- `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws` に接続し `{ session_id, msg_id, origin: "user", multi_modal_message }` を送信（`origin` は実ユーザー入力であることを示し、バックエンドが検証して権威ある送信元を刻印します）
 - Base64 メディアは先に `POST /images/upload`、`/audio/upload`、`/video/upload` でアップロードされ、URL で参照される
 - サーバーフレーム：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；チャンクは `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）とツールメタデータを保持
 - ストリーム切断時は指数バックオフで再接続（1s/2s/4s、`WS_RECONNECT_MAX_ATTEMPTS` により最大 3 回）；ストリーム中の損失は `StreamInterruptedError` を投げ、mitt 経由で `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` を発行

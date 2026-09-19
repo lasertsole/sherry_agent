@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_name    TEXT,               -- AI 메시지: 응답을 생성한 모델
     input_tokens  INTEGER,            -- AI 메시지: usage_metadata 입력 토큰
     output_tokens INTEGER,            -- AI 메시지: usage_metadata 출력 토큰
-    origin        TEXT                -- 메시지 출처 태그 (완료 캐리어는 "subagent_completion", 그 외는 NULL)
+    origin        TEXT                -- human 메시지 출처: "user"(WS/채널 사용자 입력), "task_intent"(스티어링 주입), "subagent_completion"(완료 캐리어), "cron"(Cron 전달 턴), "heartbeat"(예약); NULL = 레거시 행(user로 읽음)
 );
 ```
 
@@ -156,7 +156,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` 메시지는 `tool_calls`(JSON), `additional_kwargs["reasoning_content"]`의 사고 연쇄(`reasoning` 컬럼에 저장), 응답/사용량 메타데이터의 `model_name` / `input_tokens` / `output_tokens`를 영속화합니다 (모두 선택적이며 없으면 `None`)
 - `human` 메시지는 `additional_kwargs`의 멀티모달 파일 참조를 `images` / `audios` / `videos` 컬럼에 영속화합니다 (JSON 목록, 비어 있으면 `None`)
 - `tool` 메시지는 `tool_call_id`, `tool_name`, `tool_status`(기본 `"success"`)를 영속화합니다
-- 메타데이터가 `internal: true`이고 `provenance: "subagent_completion"`인 `human` 메시지(스티어링 큐의 완료 캐리어)는 `origin = 'subagent_completion'`으로 영속화됩니다. 그 외 행의 `origin`은 모두 `NULL`입니다 (빈 문자열도, JSON도 아님)
+- `human` 메시지의 출처는 `metadata.origin`에서 영속화됩니다: 전송 진입점은 `"user"`(WS/채널 사용자 입력)를, TaskIntent는 `"task_intent"`를, cron 큐 행은 `"cron"` + `internal`을 각인합니다. 동결된 완료 캐리어(`internal: true` + `provenance: "subagent_completion"`)는 `origin = 'subagent_completion'`으로 태그됩니다. 그 외 human 행은 `"user"`로 기본 설정됩니다(빈 문자열도, JSON도 아님). `ai`/`tool` 행의 `origin`은 `NULL`로 유지됩니다 — origin은 human 요청 출처만 나타냅니다. NULL은 origin 태깅 이전에 기록된 레거시 행과의 호환 값이며 user 메시지로 읽습니다.
 
 ### 2. 히스토리 조회
 
@@ -390,7 +390,7 @@ LangChain 메시지 배치를 새 턴 하나로 영속화합니다.
 
 **반환:** `list[dict]` — 각 항목은 `{"session_id": str, "last_time": str, "title": str}`. `last_time`은 최신 `YYYYMMDDHHmmss` 타임스탬프이고, `title`은 최신 `human` 메시지에서 파생됨 (빈 문자열일 수 있음)
 
-제목 쿼리는 `origin IS NULL`인 행만 고려합니다. `human` 행이 모두 `subagent_completion` 캐리어인 세션의 제목은 빈 문자열이 되며, 클라이언트가 플레이스홀더를 렌더링합니다.
+제목 쿼리는 사용자 출처 `human` 행만 허용합니다(레거시 행은 `origin IS NULL`, 또는 `origin = 'user'`). `human` 행이 모두 내부 출처(완료 캐리어 / TaskIntent / cron)인 세션의 제목은 빈 문자열이 되며, 클라이언트가 플레이스홀더를 렌더링합니다.
 
 ---
 

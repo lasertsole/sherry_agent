@@ -114,7 +114,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_name    TEXT,               -- AI 消息：产生响应的模型
     input_tokens  INTEGER,            -- AI 消息：usage_metadata 输入 token
     output_tokens INTEGER,            -- AI 消息：usage_metadata 输出 token
-    origin        TEXT                -- 消息来源标记（完成载体为 "subagent_completion"，其余为 NULL）
+    origin        TEXT                -- human 消息来源："user"（WS/渠道用户输入）、"task_intent"（引导注入）、"subagent_completion"（完成载体）、"cron"（定时投递轮次）、"heartbeat"（预留）；NULL = 存量行（按 user 读取）
 );
 ```
 
@@ -156,7 +156,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` 消息持久化 `tool_calls`（JSON）、来自 `additional_kwargs["reasoning_content"]` 的思维链（存入 `reasoning` 列），以及响应与用量元数据中的 `model_name` / `input_tokens` / `output_tokens`（均可选，缺失时为 `None`）
 - `human` 消息将 `additional_kwargs` 中的多模态文件引用持久化到 `images` / `audios` / `videos` 列（JSON 列表，为空时是 `None`）
 - `tool` 消息持久化 `tool_call_id`、`tool_name` 与 `tool_status`（默认 `"success"`）
-- 元数据满足 `internal: true` 且 `provenance: "subagent_completion"` 的 `human` 消息（steering 队列的完成载体）以 `origin = 'subagent_completion'` 持久化；其余行的 `origin` 均为 `NULL`（不会是空字符串，也不会是 JSON）
+- `human` 消息的来源从其 `metadata.origin` 持久化：传输入口打 `"user"`（WS/渠道用户输入）、TaskIntent 打 `"task_intent"`、cron 队列行打 `"cron"` 并带 `internal`；冻结的完成载体（`internal: true` + `provenance: "subagent_completion"`）标记为 `origin = 'subagent_completion'`；其余 human 行默认为 `"user"`（不会是空字符串，也不会是 JSON）。`ai`/`tool` 行的 `origin` 保持 `NULL` —— origin 只描述 human 请求来源。NULL 是 origin 标记上线前存量行的兼容读取值，按 user 消息处理。
 
 ### 2. 历史检索
 
@@ -390,7 +390,7 @@ for r in results:
 
 **返回：** `list[dict]` — 每项为 `{"session_id": str, "last_time": str, "title": str}`，其中 `last_time` 是最新的 `YYYYMMDDHHmmss` 时间戳，`title` 从最近一条 `human` 消息派生（可能为 `""`）
 
-标题查询只统计 `origin IS NULL` 的行；如果某个会话的 `human` 行全部是 `subagent_completion` 载体，其标题为空字符串，由客户端渲染占位符。
+标题查询只接受用户来源的 `human` 行（存量行 `origin IS NULL`，或 `origin = 'user'`）；如果某个会话的 `human` 行全部是内部来源（完成载体 / TaskIntent / cron），其标题为空字符串，由客户端渲染占位符。
 
 ---
 

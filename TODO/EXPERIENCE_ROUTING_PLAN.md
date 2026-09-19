@@ -71,6 +71,7 @@
    - 放在 TaskFlow 注入块旁，同为 "authoritative" 标注
 3. **计划上下文的注入同样作用于首次摘要**（`_SUMMARY_PROMPT_FIRST` 路径）：计划注意事项在**第一次压缩**就该被收进 `active_plan_notes`，不等链式
 4. **`Unresolved User Requests` 清单（复数，原封不动）**：渲染节由单数改为**清单**——**每条未被模型解决的用户请求逐字呈现**（不许转述/截断），已驱逐的条目**附驱逐指针**；被模型解决的请求随压缩出列（转入 Completed 或移除）
+   - **来源过滤改为正向识别 `origin='user'`**：清单只收用户亲发的请求。`messages.origin` 已全量落库（见下表），存量 `origin IS NULL` 视同 user；`task_intent` / `subagent_completion` / `cron` 等内部来源**绝不进入清单**。prompt 指令（只引用用户消息、不引用系统注入）与代码（序列化/提取时按 `origin` 过滤）双保险
    - verbatim 来源：压缩时 `_serialize_for_summary` 从 **state** 序列化（P1-9 state=全文+标记，模型视图的截断不影响 state）⇒ aux 摘要器**看得到每条原文**，可逐条引用
    - **多消息场景**（用户连发多条）：每条都进清单——模型要"综合上面几条"时，逐条原文都在场
    - 该清单随 Doc 链逐字延续直到各条 resolved
@@ -78,6 +79,22 @@
 4. **`latest_user_request` 原封不动**：渲染的 `## Latest Unresolved User Request` 节**去掉 `max {LATEST_USER_REQUEST_MAX_CHARS}` 截断**——用户最后的问题**逐字**呈现（会话的锚点，不许转述/截断）
    - 被驱逐消息的 verbatim 来源：压缩时 `_serialize_for_summary` 从 **state** 序列化（P1-9 state=全文+标记，模型视图的截断不影响 state）⇒ aux 摘要器**看得到原文**，可逐字引用
    - 该消息已驱逐 → 节内**附驱逐指针**（`[evicted to: <path>]`）；该字段随 Doc 链逐字延续直到 resolved
+
+### origin 全量语义（过滤落地前置，已实现）
+
+`messages.origin` 从"仅标记完成载体"升级为**全量来源**。入口负责打标（判定落在入口，不在持久化层猜测）；`HumanMessageRowBuilder` 只读取并落库：显式 `metadata.origin` 优先，其次冻结载体契约，其余 human 行回退 `"user"`；`ai`/`tool` 行保持 `NULL`（origin 只描述 human 请求来源）。存量 `origin IS NULL` 读侧视同 user，**不做回填迁移**。
+
+| 来源 | origin 值 | 额外 metadata | 打标入口 |
+| --- | --- | --- | --- |
+| 前端 WS 用户消息 | `user` | — | `server/trigger/ws/messages.py`（校验客户端 `origin`，仅接受 `user`；入口定为 user） |
+| 渠道用户消息（QQ 等） | `user` | — | `server/trigger/channels/core.py`（`source="user"`）→ 队列行 source → 执行器转 `origin` |
+| TaskIntent 注入（3 种） | `task_intent` | `internal=True` | `agent/middlewares/task_intent/core.py`（`_task_intent_message`） |
+| 子代理完成载体 | `subagent_completion` | `internal=True` + `provenance="subagent_completion"`（冻结契约，不变） | `agent/tools/subagent/announce/completion_message.py` |
+| cron 投递轮次 | `cron` | `internal=True` | 渠道队列行 `source="cron"` → 执行器；**WS 主会话无此路径** |
+| 心跳触发的主会话轮次 | （预留 `heartbeat`） | — | **无此路径**：heartbeat 运行一次性 agent + 推 WS 事件，不构造主会话 `HumanMessage` |
+| 存量行 | `NULL` | — | 读侧兼容（消费方查询写 `origin IS NULL OR origin='user'`） |
+
+消费方：`get_session_ids` 标题查询只取用户来源行（`origin IS NULL OR origin='user'`）；`message_search._recent_sessions` 不按 origin 过滤，行为不变；未解决清单按上表正向识别。
 
 ### 文件清单
 
@@ -96,6 +113,7 @@
 - **驱逐 + 压缩**：超长人类消息被驱逐后触发压缩 → 摘要的 `Unresolved User Requests` 清单含**逐字原文**与驱逐指针（原文来源 = state 全文）
 - **多消息**：连发三条（两条超长 + 一条综合提问）→ 清单含**全部三条**逐字原文；超长的两条各带驱逐指针
 - **解决出列**：某请求被模型解决后（对话可见）→ 下一次压缩的清单中该条移出/标记
+- **正向过滤**：`origin='task_intent'` / `subagent_completion` / `cron` 的 human 行不进清单；只有 `origin='user'`（或存量 NULL）计入
 - 既有摘要测试全绿（模板加节不得破坏既有断言的结构性检查）
 
 ### 执行顺序（Part 1）

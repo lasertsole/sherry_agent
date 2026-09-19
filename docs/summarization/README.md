@@ -238,6 +238,8 @@ Every failure mode is fail-open: if `_apply_compression` raises, the exception i
 
 The prompt template (`_SUMMARY_TEMPLATE`, :190) fixes the Markdown skeleton — *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress (Completed ≤ 5 · In Progress · Blocked) / Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* — with "keep every section even when empty" and a secrecy rule ("NEVER include API keys, tokens, passwords, secrets"). `_enforce_fifo_limits` (:381) re-imposes the item caps deterministically on the returned text, appending `"(N earlier items omitted for brevity)"`.
 
+**User-request source identification.** Every persisted `human` row carries an `origin`, stamped at the transport entry: `"user"` for WS/channel user input, `"task_intent"` for orchestrator steering injections, `"subagent_completion"` for completion carriers, `"cron"` for cron-delivered turns (AI/tool rows keep `NULL`, and rows written before origin tagging read back as legacy user messages). The *Latest Unresolved User Request* source is positively identified by that column: only user-origin messages (`origin = 'user'`, or legacy `NULL`) are user requests — internal injections (`task_intent` / `subagent_completion` / `cron`) are never quoted as one. The plural `unresolved_user_requests[]` list of the routing plan uses the same positive filter.
+
 ## 🧱 The Static Fallback (LLM-Free Summary)
 
 `_build_static_fallback_summary` (:296) produces the same section skeleton with zero model calls:

@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_name    TEXT,               -- AI messages: model that produced the response
     input_tokens  INTEGER,            -- AI messages: usage_metadata input tokens
     output_tokens INTEGER,            -- AI messages: usage_metadata output tokens
-    origin        TEXT                -- Message origin tag ("subagent_completion" for completion carriers; NULL otherwise)
+    origin        TEXT                -- Human-message origin: "user" (WS/channel user input), "task_intent" (steering injection), "subagent_completion" (completion carrier), "cron" (cron-delivered turn), "heartbeat" (reserved); NULL = legacy (read as a user message)
 );
 ```
 
@@ -159,7 +159,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` messages persist `tool_calls` (JSON), chain-of-thought from `additional_kwargs["reasoning_content"]` (stored in the `reasoning` column), plus `model_name` / `input_tokens` / `output_tokens` from response & usage metadata (all optional, `None` when absent)
 - `human` messages persist multimodal file references from `additional_kwargs` into the `images` / `audios` / `videos` columns (JSON lists, `None` when empty)
 - `tool` messages persist `tool_call_id`, `tool_name`, and `tool_status` (defaults to `"success"`)
-- A `human` message whose metadata sets `internal: true` and `provenance: "subagent_completion"` (the steering-queue completion carrier) is persisted with `origin = 'subagent_completion'`; every other row keeps `origin = NULL` (never an empty string, never JSON)
+- A `human` message's origin is persisted from its `metadata.origin`: the transport entry stamps `"user"` (WS/channel user input), TaskIntent stamps `"task_intent"`, cron queue rows stamp `"cron"` plus `internal`; the frozen completion carrier (`internal: true` + `provenance: "subagent_completion"`) is tagged `origin = 'subagent_completion'`; every other human row defaults to `"user"` (never an empty string, never JSON). `ai`/`tool` rows keep `origin = NULL` — origin describes the human request source only. NULL is legacy compatibility for rows written before origin tagging and is read as a user message.
 
 ### 2. History Retrieval
 
@@ -393,7 +393,7 @@ Enumerate distinct top-level sessions (subagent sessions containing `:subagent:`
 
 **Returns:** `list[dict]` — Each item: `{"session_id": str, "last_time": str, "title": str}` where `last_time` is the newest `YYYYMMDDHHmmss` timestamp and `title` is derived from the latest `human` message (may be `""`)
 
-The title query only considers rows with `origin IS NULL`; a session whose `human` rows are all `subagent_completion` carriers therefore yields an empty title, and clients render a placeholder.
+The title query only accepts user-origin human rows (`origin IS NULL` for legacy rows, or `origin = 'user'`); a session whose `human` rows are all internal (completion carriers / TaskIntent / cron) therefore yields an empty title, and clients render a placeholder.
 
 ---
 

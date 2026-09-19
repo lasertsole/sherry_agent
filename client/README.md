@@ -253,7 +253,7 @@ app.vue (root: toast layer, connection banner, locale restore)
 
 Browser-mode chat streaming details:
 
-- Connects to `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws` and sends `{ session_id, multi_modal_message }`
+- Connects to `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws` and sends `{ session_id, msg_id, origin: "user", multi_modal_message }` (`origin` marks the frame as real user input; the backend validates it and stamps the authoritative source)
 - Base64 media is uploaded first via `POST /images/upload`, `/audio/upload`, `/video/upload` and referenced by URL
 - Server frames: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; chunks carry a `type` (`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`) and tool metadata
 - Interrupted streams reconnect with exponential backoff (1s/2s/4s, max 3 attempts via `WS_RECONNECT_MAX_ATTEMPTS`); a mid-stream loss raises `StreamInterruptedError` and emits `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` via mitt

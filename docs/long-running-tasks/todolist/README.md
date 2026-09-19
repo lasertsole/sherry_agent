@@ -692,7 +692,7 @@ Solves "model won't proactively call planning tools". Dual-mode design:
 1. E7b takes priority over E7a (active plan → E7b, not E7a).
 2. E7a once-per-session (`_armed_sessions` Set; already armed → short reminder only).
 3. E7b only runs in `before_model` (E3's `after_agent` continuation won't trigger E7b).
-4. `_is_system_directive()` filters E3/E7 injected messages (no false trigger).
+4. `_is_system_directive()` filters E3/E7 injected messages (no false trigger) — E7 injections carry `metadata={"origin": "task_intent", "internal": true}`, so the store and the filter positively identify them as internal (never a real user request; excluded from session titles and from user-request extraction).
 5. E3 has backoff cooldown (limits frequency even if mis-triggered).
 6. Post-compression re-arm (clears armed flag; E1 system prompt simultaneously rebuilt).
 

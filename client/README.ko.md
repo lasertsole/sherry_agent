@@ -253,7 +253,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 
 브라우저 모드 채팅 스트리밍 세부 사항:
 
-- `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws`에 연결하여 `{ session_id, multi_modal_message }` 전송
+- `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws`에 연결하여 `{ session_id, msg_id, origin: "user", multi_modal_message }` 전송 (`origin`은 실제 사용자 입력임을 표시하며, 백엔드가 검증하고 권위 있는 출처를 각인합니다)
 - Base64 미디어는 먼저 `POST /images/upload`, `/audio/upload`, `/video/upload`로 업로드되고 URL로 참조됨
 - 서버 프레임: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; 청크는 `type`(`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`)과 도구 메타데이터를 포함
 - 스트림 중단 시 지수 백오프로 재연결(1s/2s/4s, `WS_RECONNECT_MAX_ATTEMPTS`로 최대 3회); 스트림 중 손실은 `StreamInterruptedError`를 발생시키고 mitt를 통해 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` 이벤트를 발행

@@ -472,7 +472,7 @@ Worker 返回 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
 
 **意图检测**：轻量级启发式，不调用 LLM（零延迟、零成本）——问答模式 → 非任务；闲聊模式 → 非任务；任务关键词 → 任务；长消息非问答 → 可能是任务。
 
-**防循环设计**：E7b 优先于 E7a；E7a once-per-session；E7b 只在 before_model 运行；`_is_system_directive()` 过滤系统注入消息；E3 有退避冷却；压缩后 re-arm。
+**防循环设计**：E7b 优先于 E7a；E7a once-per-session；E7b 只在 before_model 运行；`_is_system_directive()` 过滤系统注入消息（E7 注入带 `metadata={"origin":"task_intent","internal":true}`，存储层与过滤器可正向识别为内部消息，绝不当作真实用户请求，也不会进入会话标题或用户请求提取）；E3 有退避冷却；压缩后 re-arm。
 
 **文件**：`agent/middlewares/task_intent/core.py`（~160 行）+ `agent/core.py`（~2 行注册）。
 

@@ -253,7 +253,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 
 浏览器模式聊天流细节：
 
-- 连接 `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws` 并发送 `{ session_id, multi_modal_message }`
+- 连接 `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws` 并发送 `{ session_id, msg_id, origin: "user", multi_modal_message }`（`origin` 标记该帧为真实用户输入；服务端会校验并以入口为准打标）
 - Base64 媒体先经 `POST /images/upload`、`/audio/upload`、`/video/upload` 上传并以 URL 引用
 - 服务端帧：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；chunk 携带 `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）与工具元数据
 - 流中断后按指数退避重连（1s/2s/4s，经 `WS_RECONNECT_MAX_ATTEMPTS` 最多 3 次）；流中丢失会抛出 `StreamInterruptedError`，并经 mitt 发出 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed`
