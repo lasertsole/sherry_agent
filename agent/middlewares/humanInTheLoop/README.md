@@ -21,6 +21,7 @@ A comprehensive human-in-the-loop middleware for the hermes-agent pipeline. Prov
 - [Middleware Hooks](#middleware-hooks)
 - [Configuration](#configuration)
 - [Approval Hook System](#approval-hook-system)
+- [Persistent Tool Approvals](#persistent-tool-approvals)
 - [File Layout](#file-layout)
 
 ---
@@ -247,12 +248,26 @@ Hooks receive the session ID and the full `ApprovalResult`. All hooks are wrappe
 
 ---
 
+## Persistent Tool Approvals
+
+Tool-approval decisions are persisted to a JSON file so they survive process restarts — the in-memory registers lose them. The store is operator-scoped and updated through an optimistic byte-revision CAS.
+
+- **Store & location** — `ToolApprovalStore` (`approval_store.py`) keeps `SRC_DIR/data/approvals.json` (Sherry-owned runtime state, the same tree as the boulder pointer and the evidence ledger; `SHERRY_APPROVAL_STORE_PATH` overrides it). A missing file means "no recorded decisions"; corrupt JSON reads as empty and is replaced by the next successful write. Writes are atomic (temp file + `os.replace`) and the file is created `0600`. Only the tool name, the args hash, the verdict (`allow`/`deny`), the reason and a timestamp are stored — never raw tool arguments or secrets.
+- **Byte-revision CAS** — every read captures a sha256 revision of the raw file bytes; a write only lands when the on-disk revision still matches. A losing writer re-reads and retries a bounded number of times (`max_cas_retries`, default 3) and otherwise reports failure. In-process mutations are serialized per path; cross-process writers reconcile through the CAS.
+- **Operator scope** — decisions are keyed by `(operator, session, tool, args-hash)`. `operator_scope()` / `set_operator()` set the current operator through a `ContextVar`; with no authenticated transport identity, the session identity is the operator-scope equivalent. An approval made by operator A is invisible to operator B.
+- **No operator → auto-deny** — when no operator is in scope (or the turn is a headless system injection: `metadata.internal` / `metadata.origin == "cron"` on the last human message), `ToolApprovalStore.evaluate()` returns an explicit auto-deny, and the gates that would otherwise `interrupt()` — configured `interrupted_tools`, dangerous terminal commands and sandbox bypasses — return an error `ToolMessage` instead of parking the graph for a human who can never answer.
+- **HITL integration** — `ApprovalPipeline.request_tool_approval` / `approve_tool_for_session` / `deny_tool_for_session` read and write the store (the legacy in-memory `hitl:tool_approved:*` cache is still honored and updated, so existing sessions keep working). Approving or rejecting a configured `interrupted_tools` call records the decision, so the same call in the same session needs no re-approval after a restart; `edit` and `yolo` decisions stay one-off / session-flag scoped.
+
+---
+
 ## File Layout
 
 ```
 agent/middlewares/HumanInTheLoop/
 ├── __init__.py        # Public exports
 ├── types.py           # Enums, dataclasses, config, stubs
+├── approval_scope.py  # Operator ContextVar + headless-turn resolution
+├── approval_store.py  # Persistent approval store (JSON + byte-revision CAS)
 ├── detection.py       # Hardline + dangerous pattern detection
 ├── approval.py        # Layered approval pipeline
 ├── gates.py           # Sub-gates (write, interrupt, MCP, kanban, pairing, slash)

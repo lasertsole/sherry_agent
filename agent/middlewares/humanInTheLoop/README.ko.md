@@ -21,6 +21,7 @@ hermes-agent 파이프라인을 위한 종합적인 인간-참여(human-in-the-l
 - [미들웨어 훅](#미들웨어-훅)
 - [설정](#설정)
 - [승인 훅 시스템](#승인-훅-시스템)
+- [도구 승인 영속성](#도구-승인-영속성)
 - [파일 구조](#파일-구조)
 
 ---
@@ -247,12 +248,26 @@ middleware.register_approval_hook(log_approval)
 
 ---
 
+## 도구 승인 영속성
+
+도구 호출 승인 결정은 JSON 파일에 영속화되어 프로세스 재시작 후에도 유지됩니다——인메모리 레지스터의 결정은 재시작 시 사라집니다. 저장소는 오퍼레이터 단위로 분리되며 낙관적 바이트 리비전 CAS로 갱신됩니다.
+
+- **저장소와 위치** — `ToolApprovalStore`(`approval_store.py`)가 `SRC_DIR/data/approvals.json`을 관리합니다(Sherry 소유 런타임 데이터로, boulder 포인터·증거 원장과 같은 디렉터리 트리이며 `SHERRY_APPROVAL_STORE_PATH`로 재정의 가능). 파일이 없으면 "기록된 결정 없음"을 의미하고, 손상된 JSON은 빈 상태로 읽혀 다음 성공적인 쓰기에서 교체됩니다. 쓰기는 원자적(임시 파일 + `os.replace`)이며 파일은 `0600`으로 생성됩니다. 저장되는 것은 도구 이름, 인자 해시, 판정(`allow`/`deny`), 사유, 타임스탬프뿐——원시 도구 인자나 시크릿은 저장하지 않습니다.
+- **바이트 리비전 CAS** — 읽을 때마다 원시 바이트의 sha256 리비전을 캡처하고, 디스크의 리비전이 일치할 때만 쓰기가 반영됩니다. 경합에서 진 작성자는 다시 읽어 제한된 횟수(`max_cas_retries`, 기본 3)만큼 재시도하고, 그래도 실패하면 실패를 보고합니다. 프로세스 내 변경은 경로 단위로 직렬화되고, 프로세스 간 작성자는 CAS로 수렴합니다.
+- **오퍼레이터 범위** — 결정은 `(오퍼레이터, 세션, 도구, 인자 해시)`를 키로 합니다. `operator_scope()` / `set_operator()`가 `ContextVar`로 현재 오퍼레이터를 설정하며, 인증된 전송 신원이 없을 때 세션 신원이 오퍼레이터 범위의 등가물입니다. 오퍼레이터 A의 승인은 B에게 보이지 않습니다.
+- **오퍼레이터 없음 → 자동 거부** — 범위에 오퍼레이터가 없거나(또는 헤드리스 시스템 주입 턴: 마지막 human 메시지의 `metadata.internal` / `metadata.origin == "cron"`) `ToolApprovalStore.evaluate()`가 명시적 자동 거부를 반환하면, 원래 `interrupt()`했을 게이트(설정된 `interrupted_tools`, 위험한 터미널 명령, 샌드박스 우회)는 응답할 수 없는 사람을 위해 그래프를 멈추는 대신 오류 `ToolMessage`를 반환합니다.
+- **HITL 통합** — `ApprovalPipeline.request_tool_approval` / `approve_tool_for_session` / `deny_tool_for_session`이 저장소를 읽고 씁니다(기존 인메모리 `hitl:tool_approved:*` 캐시도 계속 참조·갱신되므로 기존 세션은 그대로 동작합니다). 설정된 `interrupted_tools` 호출의 승인·거부는 결정으로 기록되어 재시작 후에도 같은 세션의 같은 호출에 재승인이 필요 없습니다. `edit`과 `yolo` 결정은 각각 일회성 / 세션 플래그 범위로 남습니다.
+
+---
+
 ## 파일 구조
 
 ```
 agent/middlewares/HumanInTheLoop/
 ├── __init__.py        # 공개 내보내기
 ├── types.py           # 열거형, 데이터클래스, 설정, 스텁
+├── approval_scope.py  # 오퍼레이터 ContextVar + 헤드리스 턴 판정
+├── approval_store.py  # 영속 승인 저장소 (JSON + 바이트 리비전 CAS)
 ├── detection.py       # 하드라인 + 위험 패턴 감지
 ├── approval.py        # 계층형 승인 파이프라인
 ├── gates.py           # 하위 게이트 (쓰기, 인터럽트, MCP, 칸반, 페어링, 슬래시)

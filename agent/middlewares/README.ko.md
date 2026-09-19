@@ -332,6 +332,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `interrupted_tools` | `{}` | 항상 `interrupt()`를 일으키는 도구 |
 | `description_prefix` | `"Action requires human approval"` | 승인 다이얼로그 제목 접두사 |
 
+도구 호출 승인 결정은 `ToolApprovalStore`(`approval_store.py`)를 통해 `SRC_DIR/data/approvals.json`에도 영속화됩니다: 오퍼레이터 단위로 분리된 JSON 저장소를 바이트 리비전 CAS로 갱신하므로, 승인된 `interrupted_tools` 호출은 재시작 후 다시 묻지 않습니다. 범위에 오퍼레이터가 없거나(또는 헤드리스 시스템 주입 턴) 승인이 필요한 게이트는 인터럽트 대신 자동 거부합니다.
+
 ▶️ 전체 문서: [humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
 
 ### MessagePersistenceMiddleware

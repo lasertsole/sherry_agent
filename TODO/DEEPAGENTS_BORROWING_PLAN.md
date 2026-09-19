@@ -314,6 +314,8 @@ DeepAgents 参考：`threading.Timer` 看门狗 → SIGTERM → 5s 等待 → SI
 
 ## P2-2：持久化工具审批策略
 
+> **状态：已落地（2026-09-19）** — 实现位置：`agent/middlewares/humanInTheLoop/approval_scope.py`（操作员 ContextVar + 无人轮次判定）、`agent/middlewares/humanInTheLoop/approval_store.py`（JSON 持久化 + 字节修订 CAS + 无操作员自动拒绝）、HITL 集成（`approval.py` / `strategies.py` / `core.py`）。存储位置：`SRC_DIR/data/approvals.json`（Sherry 自有运行时数据，非 `.omo`）。测试：`tests/agent/middlewares/humanInTheLoop/test_approval_store.py`、`test_approval_persistence.py`。提交：`a8b70c0e`（store）、`9144f8e7`（HITL 集成）、`688720da`（测试）。
+
 ### 问题
 
 Sherry 的 HITL 审批是会话级的，重启后丢失。无操作员场景缺少自动拒绝。

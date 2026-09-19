@@ -21,6 +21,7 @@ hermes-agent 管道的完整人机回环中间件。提供多层审批门控，�
 - [中间件钩子](#中间件钩子)
 - [配置](#配置)
 - [审批钩子系统](#审批钩子系统)
+- [工具审批持久化](#工具审批持久化)
 - [文件结构](#文件结构)
 
 ---
@@ -247,12 +248,26 @@ middleware.register_approval_hook(log_approval)
 
 ---
 
+## 工具审批持久化
+
+工具调用的审批决策会持久化到 JSON 文件，进程重启后不丢失——内存寄存器中的决策则会随重启丢失。该存储按操作员隔离，并通过乐观的字节修订 CAS 更新。
+
+- **存储与位置** — `ToolApprovalStore`（`approval_store.py`）维护 `SRC_DIR/data/approvals.json`（Sherry 自有运行时数据，与 boulder 指针、证据账本同一目录树；`SHERRY_APPROVAL_STORE_PATH` 可覆盖）。文件不存在表示"无已记录决策"；JSON 损坏时按空策略读取，并在下一次成功写入时替换。写入是原子的（临时文件 + `os.replace`），文件创建权限为 `0600`。只存工具名、参数哈希、判定（`allow`/`deny`）、原因与时间戳——绝不存原始工具参数或密钥。
+- **字节修订 CAS** — 每次读取都会计算原始字节的 sha256 修订；仅当磁盘上的修订仍然匹配时写入才会落盘。竞争失败的写者会重新读取并重试有限次（`max_cas_retries`，默认 3），否则报告失败。进程内按路径串行化，跨进程写者通过 CAS 收敛。
+- **操作员范围** — 决策以 `(操作员, 会话, 工具, 参数哈希)` 为键。`operator_scope()` / `set_operator()` 通过 `ContextVar` 设置当前操作员；未接入认证传输身份时，会话身份就是操作员范围的等价物。A 的审批对 B 不可见。
+- **无操作员自动拒绝** — 当范围内没有操作员（或该轮次是无人系统注入：最后一条 human 消息带 `metadata.internal` / `metadata.origin == "cron"`）时，`ToolApprovalStore.evaluate()` 返回明确的自动拒绝；原本会 `interrupt()` 的门控——配置的 `interrupted_tools`、危险终端命令、沙箱绕过——改为返回错误 `ToolMessage`，不再为无法响应的人类挂起图。
+- **HITL 集成** — `ApprovalPipeline.request_tool_approval` / `approve_tool_for_session` / `deny_tool_for_session` 读写该存储（旧的内存 `hitl:tool_approved:*` 缓存仍被读取并同步更新，存量会话不受影响）。批准或拒绝配置的 `interrupted_tools` 调用会记录决策，因此同一会话中的相同调用在重启后无需重新批准；`edit` 与 `yolo` 决策仍分别保持一次性 / 会话标志范围。
+
+---
+
 ## 文件结构
 
 ```
 agent/middlewares/HumanInTheLoop/
 ├── __init__.py        # 公开导出
 ├── types.py           # 枚举、数据类、配置、存根
+├── approval_scope.py  # 操作员 ContextVar + 无人轮次判定
+├── approval_store.py  # 持久化审批存储（JSON + 字节修订 CAS）
 ├── detection.py       # 硬线 + 危险模式检测
 ├── approval.py        # 分层审批管道
 ├── gates.py           # 子门控（写入、中断、MCP、看板、配对、斜杠）

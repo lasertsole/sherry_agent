@@ -331,6 +331,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `interrupted_tools` | `{}` | 总是触发 `interrupt()` 的工具 |
 | `description_prefix` | `"Action requires human approval"` | 审批对话框标题前缀 |
 
+工具调用的审批决策还会通过 `ToolApprovalStore`（`approval_store.py`）持久化到 `SRC_DIR/data/approvals.json`：按操作员隔离的 JSON 存储，以字节修订 CAS 更新，因此已批准的 `interrupted_tools` 调用在重启后不会再次询问。当范围内没有操作员（或该轮次为无人的系统注入）时，需要审批的门控会直接自动拒绝而不再中断。
+
 ▶️ 完整文档：[humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
 
 ### MessagePersistenceMiddleware

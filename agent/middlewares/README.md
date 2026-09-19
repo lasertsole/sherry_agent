@@ -334,6 +334,8 @@ Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`,
 | `interrupted_tools` | `{}` | Tools that always raise `interrupt()` |
 | `description_prefix` | `"Action requires human approval"` | Approval-dialog title prefix |
 
+Tool-approval decisions are also persisted through `ToolApprovalStore` (`approval_store.py`) into `SRC_DIR/data/approvals.json`: an operator-scoped JSON store updated with a byte-revision CAS, so an approved `interrupted_tools` call is not re-prompted after a restart. When no operator is in scope (or the turn is a headless system injection), approval-requiring gates auto-deny instead of interrupting.
+
 ▶️ Full details: [humanInTheLoop/README.md](humanInTheLoop/README.md) · [中文](humanInTheLoop/README.zh.md) · [한국어](humanInTheLoop/README.ko.md) · [日本語](humanInTheLoop/README.ja.md)
 
 ### MessagePersistenceMiddleware
