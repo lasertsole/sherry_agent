@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 13개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 단계 수용 기준을 오케스트레이터가 검증할 수 있도록 에코하며, 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
+> 에이전트가 단일 턴을 넘어 살아남는 작업을 어떻게 수행하는가: 영속 SQLite DAG 엔진(`taskflow_*`, 14개 도구)이 의존 관계가 있는 단계를 대화 턴에 걸쳐 추적하고, 각 단계를 분리된 자식 서브에이전트로 디스패치하며, 옵트인 정책에 따라 실패/사망 단계를 자동 재디스패치하고, 단계 수용 기준을 오케스트레이터가 검증할 수 있도록 에코하며, 예산 대비 토큰/비용 지출을 집계하고, 백그라운드 sweeper가 기한 초과 또는 유휴 flow를 만료시키며, 세션별로 격리된 flow 보드를 제공하고(모든 읽기가 SQL 계층에서 소유 세션을 필터링하며, 자식 에이전트는 taskflow/todolist/knowledge 도구를 받지 않습니다), 2계층 메모리 시스템, 압축 전 메모리 플러시, 요약↔TaskFlow 브리지, 도구 출력 한 줄 요약, 세션 간 연속성, 서브에이전트 완료 시 메모리 역류, 그리고 활성 flow를 시스템 프롬프트에 자동 재주입하는 것을 통해 컨텍스트를 앞으로 전달합니다.
 
 사실상의 기준(source of truth): `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py`(TaskFlow 컨텍스트 블록), `agent/middlewares/subagent_completion_drain/core.py`(메모리 역류), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. 아래의 모든 상수, 시그니처, 줄 번호는 해당 코드와 대조하여 검증했습니다.
 
@@ -108,15 +108,16 @@ blocked ──(의존 충족)──▶ ready ──(디스패치)──▶ dispa
 
 `deps_satisfied(step, steps)`(`_shared.py:99`)는 모든 `depends_on` id가 현재 단계 목록에 존재**하고** `done`일 때만 참입니다. `depends_on`이 없거나 비면 자명하게 충족됩니다. 알 수 없는 의존 id는 결코 충족되지 않으며, **자기 의존도 결코 충족되지 않습니다** — 따라서 자기 참조 단계는 언락 루프에 빠지지 않고 안전하게 블록된 상태로 남습니다. `unlock_dependents(steps)`(`_shared.py:137`)는 목록을 **단 한 번만 순회**하므로 의존 사이클이 루프를 도는 것을 구조적으로 막습니다. `taskflow_run_task`는 디스패치나 상태 변경 **전에** 알 수 없는 의존 id를 거부합니다.
 
-### 도구 패밀리(13개 도구)
+### 도구 패밀리(14개 도구)
 
-모든 도구는 `async`이며 `@tool("taskflow_…")`로 데코레이트되고, `build_taskflow_tools()`(`tools/__init__.py:46-58`)가 `metadata={"scope": "main_only"}`와 `handle_tool_error=True`를 부여합니다. 공유 flow 상태를 관리할 수 있는 것은 메인 에이전트뿐이며, 서브에이전트 도구 정책은 패밀리 전체를 무조건 제거합니다.
+모든 도구는 `async`이며 `@tool("taskflow_…")`로 데코레이트되고, `build_taskflow_tools()`(`tools/__init__.py:58-76`)가 `metadata={"scope": "main_only"}`와 `handle_tool_error=True`를 부여합니다. 공유 flow 상태를 관리할 수 있는 것은 메인 에이전트뿐이며, 서브에이전트 도구 정책은 패밀리 전체를 무조건 제거합니다.
 
 | 도구 | 목적 |
 | :--- | :--- |
 | `taskflow_create` | 리비전 1로 flow 생성; 선택적으로 `deadline_hours` 설정 |
 | `taskflow_run_task` | 단계를 등록(선택적 `validation_criteria` / `retry_policy`)하고 디스패치(또는 `blocked`로 기록) |
 | `taskflow_dispatch` | 여러 준비된 단계를 전부 아니면 전무로 일괄 디스패치 |
+| `taskflow_update_steps` | 단계 목록 전체 교체(추가/삭제/재정렬/task·depends_on 재작성; dispatched/done 안전 규칙; 고아 child 경고) |
 | `taskflow_wait_all` | flow 범위 유계 폴링으로 디스패치된 단계의 정착을 대기(정책 단계 자동 재시도) |
 | `taskflow_resume` | 자식 결과를 멱등하게 주입하고 후속 단계를 언락하며 토큰을 집계(실패 인식 재시도 + 기준 에코) |
 | `taskflow_set_waiting` | 이유와 함께 flow를 `waiting`으로 파킹 |
@@ -143,6 +144,10 @@ async def taskflow_run_task(
 ### 디스패치 — `taskflow_dispatch` 일괄 의미론
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`(`taskflow_dispatch.py:36`)는 무엇이든 생성되기 **전에** **모든** id를 검증합니다. 단계가 `ready`이거나, `blocked`이지만 의존이 이미 충족되었으면 디스패치 가능합니다. 알 수 없는 id, 중복 id, 이미 `dispatched`/`done`인 단계는 호출 전체를 거부하며 생성이 전혀 일어나지 않습니다. 성공하면 단계는 공유 `_dispatch.dispatch_child` 시임(`_dispatch.py:10`)을 통해 순차 생성되고 **한 번의** `update_flow` 호출로 영속화됩니다. 배치 중간에 생성이 실패하면 루프가 멈추고, 이미 생성된 자식이 영속화되어 자식이 조용히 유실되지 않습니다. 오류는 실패한 step id와 디스패치된 step id를 모두 나열합니다. flow 수준 `child_session_key`는 의도적으로 건드리지 않습니다 — 각 단계 자신의 child key가 권위입니다.
+
+### 업데이트 — `taskflow_update_steps` 전체 교체
+
+`taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`(`taskflow_update_steps.py:191`)는 flow의 단계 목록을 전체 교체합니다(TaskFlow의 `todowrite`에 해당): 저장되는 DAG는 전달한 목록 그대로이며, 단계 추가·삭제·재정렬·`task`/`depends_on` 재작성이 가능합니다. 안전 규칙: `step_id`는 고유해야 하고 모든 `depends_on`은 새 목록에 존재하는 id를 참조해야 합니다(자기 의존 금지). `dispatched` 단계는 `child_session_key`를 유지하며 `ready`/`blocked`로 강등할 수 없습니다. `done` 단계는 task/depends_on/status를 변경할 수 없습니다. 새 단계는 `ready`/`blocked`여야 합니다(디스패치는 `taskflow_dispatch` 경유). 종단 flow는 호출을 거부합니다. 실행 중인 `dispatched` 단계를 삭제하면 성공하지만 비차단 `Warning:`(child key 포함)을 반환합니다 — 먼저 child를 kill하거나 `taskflow_wait_all`/`taskflow_resume`으로 정착시키세요. 동시성은 동일한 낙관적 잠금을 사용하며, `expected_revision` 불일치는 최신 리비전과 함께 거부되어 재조회 후 재시도에 사용됩니다.
 
 ### 대기 — `taskflow_wait_all`의 flow 범위
 
@@ -683,7 +688,7 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
+│ (14, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼

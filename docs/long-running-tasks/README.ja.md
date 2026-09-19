@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、13 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
@@ -108,15 +108,16 @@ blocked ──(依存満足)──▶ ready ──(ディスパッチ)──▶ 
 
 `deps_satisfied(step, steps)`（`_shared.py:99`）は、すべての `depends_on` id が現在のステップ一覧に存在し**かつ** `done` である場合にのみ真です。`depends_on` が欠落/空なら自明に満たされます。未知の依存 id は決して満たされず、**自己依存も決して満たされません**——そのため自己参照ステップはアンロックループに陥らず安全にブロックされ続けます。`unlock_dependents(steps)`（`_shared.py:137`）はリストを**一度だけ走査**するため、依存サイクルがループすることを構造的に防ぎます。`taskflow_run_task` はディスパッチや状態変更の**前に**未知の依存 id を拒否します。
 
-### ツールファミリ（13 ツール）
+### ツールファミリ（14 ツール）
 
-すべてのツールは `async` で、`@tool("taskflow_…")` としてデコレートされ、`build_taskflow_tools()`（`tools/__init__.py:46-58`）が `metadata={"scope": "main_only"}` と `handle_tool_error=True` を付与します。共有 flow 状態を管理できるのはメインエージェントだけであり、サブエージェントのツールポリシーはファミリ全体を無条件に除外します。
+すべてのツールは `async` で、`@tool("taskflow_…")` としてデコレートされ、`build_taskflow_tools()`（`tools/__init__.py:58-76`）が `metadata={"scope": "main_only"}` と `handle_tool_error=True` を付与します。共有 flow 状態を管理できるのはメインエージェントだけであり、サブエージェントのツールポリシーはファミリ全体を無条件に除外します。
 
 | ツール | 目的 |
 | :--- | :--- |
 | `taskflow_create` | リビジョン 1 で flow を作成；任意で `deadline_hours` を設定 |
 | `taskflow_run_task` | ステップを登録（任意で `validation_criteria` / `retry_policy`）してディスパッチ（または `blocked` として記録） |
 | `taskflow_dispatch` | 複数の準備完了ステップをオール・オア・ナッシングで一括ディスパッチ |
+| `taskflow_update_steps` | steps リストを全置換（追加/削除/並べ替え/task・depends_on の書き換え；dispatched/done の安全規則；孤児 child 警告） |
 | `taskflow_wait_all` | flow スコープの有界ポーリングでディスパッチ済みステップの確定を待つ（ポリシー付き確定ステップを自動再試行） |
 | `taskflow_resume` | 子の結果を冪等に注入し、後続をアンロックし、トークンを集計（失敗認識の再試行 + 基準エコー） |
 | `taskflow_set_waiting` | 理由付きで flow を `waiting` に停める |
@@ -143,6 +144,10 @@ async def taskflow_run_task(
 ### ディスパッチ——`taskflow_dispatch` の一括意味論
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）は、何かを生成する**前に****すべての** id を検証します。ステップが `ready` であるか、`blocked` でも依存が満たされていればディスパッチ可能です。未知の id、重複 id、すでに `dispatched`/`done` のステップは、呼び出し全体を拒否し、生成を一切行いません。成功時、ステップは共有の `_dispatch.dispatch_child` シーム（`_dispatch.py:10`）を通じて順次生成され、**1 回**の `update_flow` 呼び出しで永続化されます。バッチ途中で生成が失敗するとループは停止し、すでに生成済みの子は永続化されるため、子が黙って失われることはありません。エラーは失敗した step id とディスパッチ済み step id の両方を示します。flow レベルの `child_session_key` は意図的に変更しません——各ステップ自身の child key が権威です。
+
+### 更新——`taskflow_update_steps` の全置換
+
+`taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`（`taskflow_update_steps.py:191`）は flow の steps リストを全置換します（TaskFlow にとっての `todowrite`）：保存される DAG は渡したリストそのものになり、ステップの追加・削除・並べ替え・`task`/`depends_on` の書き換えができます。安全規則：`step_id` は一意で、各 `depends_on` は新しいリスト内に存在する id を参照する必要があります（自己依存は禁止）。`dispatched` ステップは `child_session_key` を保持し、`ready`/`blocked` へ降格できません。`done` ステップは task/depends_on/status を変更できません。新規ステップは `ready`/`blocked` のみ（ディスパッチは `taskflow_dispatch` 経由）。終端 flow は呼び出しを拒否します。実行中の `dispatched` ステップを削除すると成功しますが、非ブロッキングの `Warning:`（child key 付き）を返します——先に child を kill するか、`taskflow_wait_all`/`taskflow_resume` で確定させてください。並行性は同じ楽観的ロックを用い、`expected_revision` の不一致は最新リビジョンとともに拒否され、再読込と再試行に使えます。
 
 ### 待機——`taskflow_wait_all` の flow スコープ
 
@@ -683,7 +688,7 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
+│ (14, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼

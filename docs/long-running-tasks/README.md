@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 13 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
+> How the agent runs work that outlives a single turn: a durable SQLite DAG engine (`taskflow_*`, 14 tools) tracks dependent steps across conversation turns, dispatches each step to a detached child subagent, retries failed or dead steps per an opt-in policy, echoes step acceptance criteria for the orchestrator to validate, aggregates token/cost spend against a budget, expires overdue or idle flows from a background sweeper, exposes a session-scoped flow board (every read filters the owning session in SQL; subagents never receive taskflow/todolist/knowledge tools), and carries context forward through a two-layer memory system, a pre-compression memory flush, a summary↔TaskFlow bridge, one-line tool-output summaries, cross-session continuity, subagent-completion memory backflow, and automatic re-injection of active flows into the system prompt.
 
 Source of truth: `agent/tools/taskflow/**`, `agent/tools/memory.py`, `agent/middlewares/summarization/memory_flush.py`, `agent/middlewares/summarization/core.py` (TaskFlow-context block), `agent/middlewares/subagent_completion_drain/core.py` (memory backflow), `agent/middlewares/task_intent/core.py`, `agent/middlewares/todo_continuation/core.py`, `context_engine/session_continuity.py`, `workspace/prompt_builder.py`, `pub/func/message/tool_output_prune.py`, `agent/tools/subagent/registry/sweeper.py`, `agent/wrapper/**`, `config/features/**`. Every constant, signature and line number below was verified against that code.
 
@@ -108,15 +108,16 @@ blocked ──(deps satisfied)──▶ ready ──(dispatch)──▶ dispatch
 
 `deps_satisfied(step, steps)` (`_shared.py:99`) is true iff every `depends_on` id exists in the current step list **and** is `done`. Missing/empty `depends_on` is trivially satisfied. An unknown dependency id is never satisfied, and a **self-dependency is never satisfied** — so a self-referential step stays safely blocked instead of entering an unlock loop. `unlock_dependents(steps)` (`_shared.py:137`) is a **single pass** over the list, which structurally prevents a dependency cycle from looping. `taskflow_run_task` rejects unknown dependency ids *before* any spawn or state change.
 
-### Tool family (13 tools)
+### Tool family (14 tools)
 
-All tools are `async`, decorated `@tool("taskflow_…")`, tagged `metadata={"scope": "main_only"}` and `handle_tool_error=True` by `build_taskflow_tools()` (`tools/__init__.py:46-58`). Only the main agent may manage shared flow state; the subagent tool policy drops the family unconditionally.
+All tools are `async`, decorated `@tool("taskflow_…")`, tagged `metadata={"scope": "main_only"}` and `handle_tool_error=True` by `build_taskflow_tools()` (`tools/__init__.py:58-76`). Only the main agent may manage shared flow state; the subagent tool policy drops the family unconditionally.
 
 | Tool | Purpose |
 | :--- | :--- |
 | `taskflow_create` | Create a flow at revision 1; optionally set `deadline_hours` |
 | `taskflow_run_task` | Register a step (optional `validation_criteria` / `retry_policy`) and dispatch it (or record it `blocked`) |
 | `taskflow_dispatch` | Batch-dispatch several ready steps all-or-nothing |
+| `taskflow_update_steps` | Full-replace the steps list (add/remove/reorder/rewrite task or depends_on; dispatched/done safety rules; orphan-child warning) |
 | `taskflow_wait_all` | Flow-scoped bounded poll for dispatched steps to settle (auto-retries settled steps with a policy) |
 | `taskflow_resume` | Idempotently inject a child result, unlock dependents, aggregate tokens (failure-aware retry + criteria echo) |
 | `taskflow_set_waiting` | Park the flow in `waiting` with a reason |
@@ -143,6 +144,10 @@ async def taskflow_run_task(
 ### Dispatch — `taskflow_dispatch` batch semantics
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")` (`taskflow_dispatch.py:36`) validates **every** id before anything spawns. An id is dispatchable when its status is `ready`, or `blocked` with dependencies already satisfied. An unknown id, a duplicate, or a step already `dispatched`/`done` rejects the whole call with zero spawns. On success the steps are spawned sequentially through the shared `_dispatch.dispatch_child` seam (`_dispatch.py:10`) and persisted in **one** `update_flow` call. If a spawn fails mid-batch the loop stops, already-spawned children are persisted so none is silently dropped, and the error names both the failed and dispatched step ids. The flow-level `child_session_key` is deliberately left untouched — per-step child keys are authoritative.
+
+### Update — `taskflow_update_steps` full replacement
+
+`taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")` (`taskflow_update_steps.py:191`) full-replaces the flow's steps list (like `todowrite` for TaskFlow): the stored DAG becomes exactly the list you pass, so steps can be added, removed, reordered, or have their `task`/`depends_on` rewritten. Safety rules: `step_id` must be unique and every `depends_on` must reference an id present in the new list (no self-dependency); a `dispatched` step keeps its `child_session_key` and cannot be downgraded to `ready`/`blocked`; a `done` step cannot change its task/depends_on/status; new steps must be `ready`/`blocked` (dispatch through `taskflow_dispatch`); terminal flows reject the call. Deleting a `dispatched` step whose child is still running succeeds but returns a non-blocking `Warning:` naming the child key — kill the child or settle it via `taskflow_wait_all`/`taskflow_resume`. Reconciliation uses the same optimistic lock: a mismatched `expected_revision` is rejected with the latest revision for a re-read + retry.
 
 ### Wait — `taskflow_wait_all` flow scope
 
@@ -684,7 +689,7 @@ The constants most relevant to this document:
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
+│ (14, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼

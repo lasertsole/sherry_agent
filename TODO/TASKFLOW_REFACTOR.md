@@ -295,7 +295,7 @@ async def test_session_isolation():
 
 ## Phase 7: TaskFlow DAG 动态改动
 
-> ⏸ 本次未执行（任务范围明确为 6 个 Phase；该特性独立于会话隔离）。
+> ✅ 已落地。实现：`agent/tools/taskflow/tools/taskflow_update_steps.py`（工具 + 六条安全规则），结构校验 `agent/tools/taskflow/tools/_shared.py::validate_steps_list()`，注册于 `agent/tools/taskflow/tools/__init__.py`（第 14 个工具，`scope=main_only`）；测试 `tests/agent/tools/taskflow/test_update_steps.py`（29 用例）。提交：`e2a07775`（实现）、`720bc2ce`（测试）、文档随本提交。
 
 ### 问题
 

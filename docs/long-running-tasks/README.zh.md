@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 13 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，回显步骤验收标准供编排者校验，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
+> Agent 如何执行跨越多个回合的长期工作：一个持久化的 SQLite DAG 引擎（`taskflow_*`，共 14 个工具）跨对话回合跟踪有依赖关系的步骤，将每个步骤派发给一个分离的子 Agent 执行，按可选策略自动重试失败或死亡步骤，回显步骤验收标准供编排者校验，按预算聚合 token/成本开销，由后台 sweeper 让超期或空闲的 flow 过期，提供按会话隔离的 flow 面板（所有读取都在 SQL 层按所属会话过滤；子 Agent 永远不会拿到 taskflow/todolist/knowledge 工具），并通过两层记忆系统、压缩前的记忆落盘、摘要与 TaskFlow 的桥接、工具输出单行摘要、跨会话连续性、子 Agent 完成时的记忆回流，以及把活动 flow 自动注入系统提示词，把上下文一路传递下去。
 
 事实来源：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow 上下文区块）、`agent/middlewares/subagent_completion_drain/core.py`（记忆回流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。下文中的每一处常量、签名与行号都已对照这些代码逐一核实。
 
@@ -108,15 +108,16 @@ blocked ──(依赖满足)──▶ ready ──(派发)──▶ dispatched �
 
 `deps_satisfied(step, steps)`（`_shared.py:99`）为真，当且仅当每个 `depends_on` id 都存在于当前步骤列表中**且**为 `done`。缺失/为空的 `depends_on` 视为自然满足。未知的依赖 id 永远不满足，而**自依赖永远不满足**——因此自引用步骤会安全地保持阻塞，而不会陷入解锁死循环。`unlock_dependents(steps)`（`_shared.py:137`）对列表只做**单遍扫描**，从结构上杜绝了依赖环导致死循环。`taskflow_run_task` 会在任何派发或状态变更**之前**拒绝未知的依赖 id。
 
-### 工具族（13 个工具）
+### 工具族（14 个工具）
 
-所有工具都是 `async`，装饰为 `@tool("taskflow_…")`，由 `build_taskflow_tools()`（`tools/__init__.py:46-58`）打上 `metadata={"scope": "main_only"}` 和 `handle_tool_error=True`。只有主 Agent 可以管理共享 flow 状态；子 Agent 工具策略会无条件丢弃整个工具族。
+所有工具都是 `async`，装饰为 `@tool("taskflow_…")`，由 `build_taskflow_tools()`（`tools/__init__.py:58-76`）打上 `metadata={"scope": "main_only"}` 和 `handle_tool_error=True`。只有主 Agent 可以管理共享 flow 状态；子 Agent 工具策略会无条件丢弃整个工具族。
 
 | 工具 | 用途 |
 | :--- | :--- |
 | `taskflow_create` | 在版本 1 创建 flow；可选设置 `deadline_hours` |
 | `taskflow_run_task` | 注册一个步骤（可选 `validation_criteria` / `retry_policy`）并派发（或记录为 `blocked`） |
 | `taskflow_dispatch` | 全有或全无地批量派发多个就绪步骤 |
+| `taskflow_update_steps` | 全量替换 steps 列表（增/删/重排/改 task 或 depends_on；dispatched/done 安全规则；孤儿 child 警告） |
 | `taskflow_wait_all` | 按 flow 范围有界轮询，等待已派发步骤落定（对带策略的落定步骤自动重试） |
 | `taskflow_resume` | 幂等地注入子结果、解锁后继步骤、聚合 token（感知失败重试 + 标准回显） |
 | `taskflow_set_waiting` | 带上原因把 flow 置为 `waiting` |
@@ -143,6 +144,10 @@ async def taskflow_run_task(
 ### 派发——`taskflow_dispatch` 批量语义
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）在生成任何子 Agent **之前**校验**每一个** id。当步骤状态为 `ready`，或 `blocked` 但依赖已满足时，它就是可派发的。未知 id、重复 id，或已经 `dispatched`/`done` 的步骤，都会整体拒绝该次调用且不产生任何派发。成功后，步骤通过共享的 `_dispatch.dispatch_child` 接缝（`_dispatch.py:10`）顺序派发，并在**一次** `update_flow` 调用中持久化。若批次中途派发失败，循环停止，已派发的子 Agent 会被持久化，确保没有子会话被静默丢弃，错误信息同时列出失败与已派发的 step id。flow 级别的 `child_session_key` 刻意不被改动——每个步骤自己的 child key 才是权威。
+
+### 更新——`taskflow_update_steps` 全量替换
+
+`taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`（`taskflow_update_steps.py:191`）全量替换 flow 的 steps 列表（对 TaskFlow 而言类似 `todowrite`）：存储的 DAG 就是你传入的列表，因此可以增、删、重排步骤，或重写其 `task`/`depends_on`。安全规则：`step_id` 必须唯一；每个 `depends_on` 必须引用新列表内存在的 id（禁止自依赖）；`dispatched` 步骤保留其 `child_session_key`，不可降级为 `ready`/`blocked`；`done` 步骤不可修改 task/depends_on/status；新增步骤必须为 `ready`/`blocked`（派发仍走 `taskflow_dispatch`）；终态 flow 拒绝该调用。删除仍在运行的 `dispatched` 步骤会成功，但返回非阻塞的 `Warning:`（含 child key）——请先 kill 该 child，或用 `taskflow_wait_all`/`taskflow_resume` 让它落定。并发沿用同一乐观锁：`expected_revision` 不匹配时返回最新 revision，供重读后重试。
 
 ### 等待——`taskflow_wait_all` 的 flow 范围
 
@@ -683,7 +688,7 @@ LANE_SYSTEM: LaneSystemConfig = {
         ▼                                 ▼                                         ▼
 ┌───────────────────┐          ┌──────────────────────┐                 ┌────────────────────────┐
 │ taskflow_* tools  │          │  memory tool         │                 │ prompt_builder         │
-│ (13, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
+│ (14, main_only)   │          │  add/replace/remove  │                 │ build_system_prompt    │
 └────────┬──────────┘          └──────────┬───────────┘                 └───────────┬────────────┘
          │                                │                                         │
          ▼                                ▼                                         ▼
