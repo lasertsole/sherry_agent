@@ -9,7 +9,7 @@ Covers:
   override the after-agent hooks (nudge dispatch moved to the compression
   pipeline).
 - ``_build_plan_context`` — plan_ref resolution (state first, todo fallback,
-  session-<id> fallback) and the ``.omo/start-work/ledger.jsonl`` read.
+  session-hash fallback) and the ``.omo/start-work/ledger.jsonl`` read.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from agent.middlewares.summarization.nudges import (
     _detect_todo_all_complete,
     schedule_compression_nudges,
 )
+from agent.tools.todolist.knowledge.identity import fallback_plan_name
 
 pytestmark = pytest.mark.unit
 
@@ -256,7 +257,7 @@ class TestBuildPlanContext:
         context = nudge_mod._build_plan_context("abcdefgh-session")
 
         assert context["plan_path"] == ".omo/plans/missing.md"
-        assert context["plan_name"] == "session-abcdefgh"
+        assert context["plan_name"] == fallback_plan_name("abcdefgh-session")
         assert context["plan_content"] == ""
 
     def test_resolves_session_scoped_plan_ref(self, monkeypatch, tmp_path, fake_state_db):

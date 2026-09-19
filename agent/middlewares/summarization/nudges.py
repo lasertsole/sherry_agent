@@ -610,7 +610,10 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
         except OSError:
             logger.exception("plan extraction: failed to read plan file {}", resolved)
     if not plan_name:
-        plan_name = f"session-{session_id[:8]}"
+        # Full-id hash: ids sharing an 8-char prefix must not share a fallback dir.
+        from agent.tools.todolist.knowledge.identity import fallback_plan_name
+
+        plan_name = fallback_plan_name(session_id)
     plan_path = str(resolved) if resolved is not None else plan_ref
 
     return {
