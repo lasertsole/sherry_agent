@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [日本語](README.ja.md) · 한국어
 
-이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(`nudge_memory_threshold`회 압축마다), 압축 시 todo 전부 완료일 때의 plan extraction, 압축 전 memory flush, 압축 후 todo fork. 산출물은 네 개 저장소——MEMORY.md / USER.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
+이 문서는 경험 체계를 다룹니다: Agent가 실행 중에 **언제** 경험을 추출하고, **어떤 메커니즘으로** 추출하며, 경험이 **어디에** 기록되고, 생성된 스킬 라이브러리가 어떻게 유지되는지를 정리합니다. 라이프사이클에는 네 개의 추출 경로가 연결됩니다: 압축 시 memory review(압축마다), 압축 시 todo 전부 완료일 때의 plan extraction, 압축 전 memory flush, 압축 후 todo fork. 산출물은 네 개 저장소——MEMORY.md / USER.md, plan 지식 디렉터리, `skills/auto/`, `todos.db`——로 들어가며, 아래 **Curator** 절이 plan extraction의 기록 대상인 `skills/auto/`를 관리하는 백그라운드 패스를 기록합니다.
 
 > 아래 모든 주장은 소스와 대조해 검증했습니다. 심볼 이름, 설정 키, 기본값, 경로는 모두 `agent/middlewares/`, `agent/tools/`, `config/features/` 코드에 실제로 존재합니다.
 
@@ -17,7 +17,7 @@
 
 | 트리거 | 메커니즘(fork agent 여부 / 호출 형태) | 기록 대상 |
 |---|---|---|
-| `nudge_memory_threshold`회 압축마다(기본 10) | memory nudge(`_nudge_memory`): `create_agent` nudge agent를 fork하고 `_MEMORY_REVIEW_PROMPT` 사용 | `memory` 도구를 거쳐 MEMORY.md / USER.md |
+| 압축마다 | memory nudge(`_nudge_memory`): `create_agent` nudge agent를 fork하고 `_MEMORY_REVIEW_PROMPT` 사용 | `memory` 도구를 거쳐 MEMORY.md / USER.md |
 | 압축 시 todo 목록이 전부 완료(`completed` / `cancelled`) | plan extraction(`_nudge_plan_extraction`): nudge agent를 fork하고 `_PLAN_EXTRACTION_PROMPT` 사용 | ① 지식 JSON ② `skills/auto/` |
 | 압축 전(cut이 실제로 메시지를 버림) | memory flush(`run_memory_flush[_sync]`): 값싼 LLM 호출 한 번, agent 아님 | `MemoryStore.append_entries`를 거쳐 MEMORY.md와 USER.md |
 | 압축 후(cut이 실제로 메시지를 버림) | todo fork(`update_todos_from_compaction`): fire-and-forget nudge agent, `_COMPRESSION_TODO_PROMPT` | 메인 세션에 바인딩된 `todowrite` 심을 거쳐 `todos.db` |
@@ -26,7 +26,7 @@
 
 ### 1. 압축 시점 memory review
 
-`schedule_compression_nudges`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `state_register_db`의 `nudge_review_memory_count`를 1회 증가시킵니다. 카운터가 `nudge_memory_threshold`(기본 10)에 도달하면 카운터를 0으로 되돌리고 `_nudge_memory(session_id, system_prompt, messages)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 카운터를 늘리지만 디스패치는 하지 않습니다.
+`schedule_compression_nudges`(`agent/middlewares/summarization/nudges.py`, Summarization 미들웨어가 메시지를 실제로 버리는 compact마다 호출)는 압축마다 `_nudge_memory(session_id, system_prompt, messages)`를 fire-and-forget 작업으로 디스패치하여 `nudge_review_memory_lock`(`state_register_mem`) 아래에서 실행합니다. 둘 중 하나의 nudge 락이 잡혀 있으면 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음).
 
 `_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_nudge_agent`로 nudge agent를 만들고, 대화에 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 덧붙여 호출합니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `memory` 도구로 저장하라고 요구하며, 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
 
@@ -112,7 +112,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 | 파생 세션 키 `<id>::compression-todo` | 압축 fork의 `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` 상태 키가 메인 세션과 충돌하지 않습니다. fork가 도는 동안 메인 세션은 `awrap_model_call` 중이기 때문입니다. `compression_todo_update_lock`만 의도적으로 메인 세션에 기록되어 교차 경로 재진입 조정자 역할을 합니다. |
 | 메인 세션 바인딩 `todowrite` 심 | fork 그래프는 파생 키로 돌기 때문에, 상태 주입된 실제 `todowrite`는 잘못된 세션을 해석합니다. 심은 실제 도구의 `args_schema`와 `description`을 그대로 재사용하고(스키마 드리프트 제로), 주입된 `session_id`를 버리며, 빌드 시점에 캡처한 메인 세션 id를 바인딩합니다. |
 | 읽기 전용 fork, checkpointer 없음 | 각 nudge / 추출 fork의 결과 메시지는 로그만 남기고 버립니다. fork에는 checkpointer가 없어 메인 그래프 상태를 쓸 수 없습니다. |
-| 세션별 재진입 락 | `nudge_review_memory_lock`, `nudge_plan_extraction_lock`, `compression_todo_update_lock`이 같은 추출 경로의 중복 실행을 막습니다. nudge 락이 잡혀 있는 동안 압축 스케줄러는 그 압축을 계수하지만 디스패치는 하지 않습니다. |
+| 세션별 재진입 락 | `nudge_review_memory_lock`, `nudge_plan_extraction_lock`, `compression_todo_update_lock`이 같은 추출 경로의 중복 실행을 막습니다. nudge 락이 잡혀 있는 동안 압축 스케줄러는 디스패치를 완전히 건너뜁니다(큐잉 없음). |
 | fail-open 경계 | 각 경로는 `try/except`로 작업을 감싸고, 기록하고 반환합니다. 어떤 추출 실패도 턴, 압축, 다른 추출로 전파되지 않습니다. |
 | 백그라운드 작업 참조 유지 | `_COMPRESSION_TODO_TASKS` 집합이 강한 참조를 유지해 asyncio가 진행 중 작업을 GC하지 못하게 합니다. |
 
@@ -138,7 +138,6 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | flush 호출 타임아웃 |
 | `compression_todo_update_enabled` | `SUMMARIZATION`(`config/features/agent_side/summarization.py`) | `True` | 압축 후 todo fork 활성화 |
 | `plan_extraction_enabled` | `NUDGE`(`config/features/agent_side/nudge.py`) | `True` | todo 완료 시 plan extraction 활성화 |
-| `nudge_memory_threshold` | `NUDGE` | `10` | memory review 간격이 되는 압축 횟수 |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 실제 압축 후 능동 압축 쿨다운 |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md 상한 |
 
@@ -160,7 +159,7 @@ uv run pytest \
 - `test_compression_nudges.py`: 압축 시점 nudge 디스패치(memory review + plan extraction이 compact 접점에서 발화; 컷 없는 압축은 아무것도 디스패치하지 않음). 영속화 단언은 `tests/agent/middlewares/message_persistence/`에 있습니다.
 - `test_compression_cooldown_persist.py`: 쿨다운의 재시작 간 생존.
 - `test_memory_flush.py`: flush 게이트, 라우팅, 비블로킹 실패.
-- `test_plan_extraction.py`: `_detect_todo_all_complete` 네 분기, `schedule_compression_nudges`의 압축 시점 카운터/락 의미론, 디스패치, `_build_plan_context`.
+- `test_plan_extraction.py`: `_detect_todo_all_complete` 네 분기, `schedule_compression_nudges`의 압축마다 memory review 디스패치와 락 의미론, `_build_plan_context`.
 - `test_memory_store.py`: MEMORY.md / USER.md 저장소 의미론.
 
 AI 판정 평가: `evals/nudge_extraction/suite.py`는 완료된 plan 실행(plan 파일, 완료된 todos, 합성 자식 Agent 실행 기록)을 구성하고 실제 `_nudge_plan_extraction`을 호출한 뒤, 보조 LLM judge에게 생성된 스킬이 이번 실행에 진정으로 근거하며 재사용 가능하고 일반적이지 않은지 판정하게 합니다. 모든 쓰기는 샌드박스로 리디렉션되어 실제 `skills/auto/`와 `workspace/`는 절대 건드리지 않습니다.

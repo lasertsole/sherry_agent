@@ -478,7 +478,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **出力：** 置換後のメッセージは `HumanMessage` / `AIMessage` の**ペア**です — 中立的な `"What did we do so far?"` に続き、`additional_kwargs={"lc_source": "summarization"}` を持つ `AIMessage` が続きます — モデルが連続した同役割メッセージを見ることはなく、事後のペア修復も不要です。
 - `need_update_system_prompt=True`（メインエージェントのみ）：圧縮後にシステムプロンプトを再構築 — メモリストアを再読み込みして `build_system_prompt()` を呼び — `system_prompt` キーで両方の状態レジスタに書き戻します。2 つの配送経路（圧縮直後とアンチスラッシングゲート経路）は、リクエストが既に同一内容の `SystemMessage` を持つ場合に注入をスキップし —— override も新しい `SystemMessage` も作らず —— モデル可視プレフィックスをバイト単位で同一に保ちます。
 - **永続化は行いません：** 圧縮パスは MesMemory へ何も書き込みません。メッセージ永続化は各モデル境界で `MessagePersistenceMiddleware` が実行します；旧 `compaction_persistence.py` の破棄プレフィックスフラッシュと `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 呼び出し地点は削除されました。
-- **圧縮時 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）が圧縮ごとに `nudge_review_memory_count` を増やし、`nudge_memory_threshold`（既定 10）でメモリレビューを派遣します；プラン抽出は同じ時点で `_detect_todo_all_complete` により評価されます。どちらも NUDGE レーン上の fire-and-forget タスクとして走ります。after-agent フックはこれらを派遣しません。
+- **圧縮時 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）が圧縮のたびにメモリレビューを派遣します；プラン抽出は同じ時点で `_detect_todo_all_complete` により評価されます。どちらも NUDGE レーン上の fire-and-forget タスクとして走ります；nudge ロックが保持されている間、圧縮は派遣を完全にスキップします。after-agent フックはこれらを派遣しません。
 
 **Nudge サブエージェント**（`summarization/nudges.py`、圧縮パイプラインが派遣）：メイン LLM 上に構築された独立した `create_agent` インスタンスで、ミドルウェアは `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` はメタデータに `nudge: true` を持たないツールをすべて拒否するため、nudge エージェントは nudge フェーズで許可されたツールしか使えません。プロンプトは 2 つあります：
 
@@ -587,7 +587,6 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 | キー | 所有者 | レジスタ |
 |---|---|---|
 | `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_review_memory_count` | 圧縮時 nudge スケジューラ（Summarization → `summarization/nudges.py`） | db |
 | `nudge_plan_extraction_fired` | 圧縮時 nudge スケジューラ（Summarization → `summarization/nudges.py`） | db |
 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 圧縮時 nudge スケジューラ（Summarization → `summarization/nudges.py`） | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |

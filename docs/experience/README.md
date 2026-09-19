@@ -2,7 +2,7 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (every `nudge_memory_threshold` compressions), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. The outputs land in four stores — MEMORY.md / USER.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
+This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. The outputs land in four stores — MEMORY.md / USER.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
 
 > Every claim below was verified against the source. Symbol names, config keys, defaults and paths all exist in code in `agent/middlewares/`, `agent/tools/`, and `config/features/`.
 
@@ -17,7 +17,7 @@ This document covers the experience system: **when** the agent extracts experien
 
 | Trigger | Mechanism (fork agent? call shape?) | Destination |
 |---|---|---|
-| Every `nudge_memory_threshold` compressions (default 10) | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md via the `memory` tool |
+| Every compression | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md via the `memory` tool |
 | Todo list all-complete at a compression (`completed` / `cancelled`) | Plan extraction (`_nudge_plan_extraction`): forks a nudge agent with `_PLAN_EXTRACTION_PROMPT` | ① knowledge JSON, ② `skills/auto/` |
 | Pre-compression (a cut actually discards messages) | Memory flush (`run_memory_flush[_sync]`): one cheap LLM call, not an agent | MEMORY.md and USER.md via `MemoryStore.append_entries` |
 | Post-compression (a cut actually discards messages) | Todo fork (`update_todos_from_compaction`): fire-and-forget nudge agent with `_COMPRESSION_TODO_PROMPT` | `todos.db` via a main-session-bound `todowrite` shim |
@@ -26,7 +26,7 @@ This document covers the experience system: **when** the agent extracts experien
 
 ### 1. Compression-time memory review
 
-`schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) increments `nudge_review_memory_count` in `state_register_db` once per compression. When the counter reaches `nudge_memory_threshold` (default 10), it resets the counter to 0 and dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task that runs under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression still increments the counter but no dispatch happens.
+`schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task on every compression, running under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression skips dispatch entirely (nothing is queued).
 
 `_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations, using the `memory` tool; otherwise it answers "Nothing to save." and stops.
 
@@ -112,7 +112,7 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 | Derived session key `<id>::compression-todo` | The compression fork's `IterationBudget` / `ToolGuardrails` / `ToolCallNormalize` state keys cannot collide with the main session, which is mid `awrap_model_call` while the fork runs. Only `compression_todo_update_lock` is deliberately written on the main session, as the cross-path re-entrancy coordinator. |
 | Main-session-bound `todowrite` shim | The fork graph runs under the derived key, so the state-injected real `todowrite` would resolve the wrong session. The shim reuses the real tool's `args_schema` and `description` verbatim (zero schema drift), drops the injected `session_id`, and binds the main session id captured at build time. |
 | Read-only forks, no checkpointer | Every nudge / extraction fork's result messages are logged and discarded. The forks have no checkpointer, so they cannot write the main graph's state. |
-| Per-session re-entrancy locks | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` and `compression_todo_update_lock` prevent overlapping runs of the same extraction path. While a nudge lock is held, the compression scheduler counts the compression but skips dispatch. |
+| Per-session re-entrancy locks | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` and `compression_todo_update_lock` prevent overlapping runs of the same extraction path. While a nudge lock is held, the compression scheduler skips dispatch entirely (nothing is queued). |
 | Fail-open boundaries | Every path wraps its work in `try/except`, logs, and returns. No extraction failure propagates into a turn, a compression, or another extraction. |
 | Background-task reference retention | The `_COMPRESSION_TODO_TASKS` set holds strong refs so asyncio cannot garbage-collect an in-flight task. |
 
@@ -138,7 +138,6 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 | `timeout_seconds` | `MEMORY_FLUSH` | `30` | Flush call timeout |
 | `compression_todo_update_enabled` | `SUMMARIZATION` (`config/features/agent_side/summarization.py`) | `True` | Enables the post-compression todo fork |
 | `plan_extraction_enabled` | `NUDGE` (`config/features/agent_side/nudge.py`) | `True` | Enables todo-complete plan extraction |
-| `nudge_memory_threshold` | `NUDGE` | `10` | Compressions between memory reviews |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | Proactive-compression cooldown after an actual compression |
 | `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md caps |
 
@@ -160,7 +159,7 @@ uv run pytest \
 - `test_compression_nudges.py`: compression-time nudge dispatch (memory review + plan extraction fire from the compact seam; a no-cut compaction dispatches nothing). Persistence assertions live in `tests/agent/middlewares/message_persistence/`.
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.
 - `test_memory_flush.py`: flush gating, routing, and non-blocking failure.
-- `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the compression-time counter/lock semantics of `schedule_compression_nudges`, dispatch, and `_build_plan_context`.
+- `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the per-compression memory-review dispatch and lock semantics of `schedule_compression_nudges`, and `_build_plan_context`.
 - `test_memory_store.py`: MEMORY.md / USER.md store semantics.
 
 AI-judged evaluation: `evals/nudge_extraction/suite.py` seeds a completed-plan run (plan file, completed todos, synthetic subagent runs), invokes the real `_nudge_plan_extraction`, then asks an auxiliary LLM judge whether the produced skill is genuinely grounded in that run, reusable, and non-generic. Every write is redirected into the sandbox, so the real `skills/auto/` and `workspace/` are never touched.

@@ -25,7 +25,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
 - **上下文治理**：超大工具结果与人类消息被驱逐出提示词并保留可恢复的磁盘副本，`read_file` 结果被切片，任何压缩之前先运行不调 LLM 的尾部裁剪，链式摘要被挡在对话载荷之外
 - **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
-- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每 `nudge_memory_threshold` 次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
 - ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
 - ▶️ _详见 [Experience README](docs/experience/README.zh.md) 了解四条抽取路径与技能策展_
 

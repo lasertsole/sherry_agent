@@ -478,7 +478,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **출력:** 교체 메시지는 `HumanMessage` / `AIMessage` **쌍**입니다 — 중립적인 `"What did we do so far?"` 뒤에 `additional_kwargs={"lc_source": "summarization"}`을 담은 `AIMessage`가 이어집니다 — 모델이 연속된 같은 역할 메시지를 보는 일이 없어 사후 페어링 복구도 필요 없습니다.
 - `need_update_system_prompt=True`(메인 에이전트만): 압축 후 시스템 프롬프트를 재구축 — 메모리 스토어를 다시 로드한 뒤 `build_system_prompt()` 호출 — 하여 `system_prompt` 키로 두 상태 레지스터에 기록합니다. 두 전달 경로(압축 직후, 안티-스래싱 게이트 경로)는 요청에 이미 동일한 내용의 `SystemMessage`가 있으면 주입을 건너뛰고 —— override도 새 `SystemMessage`도 만들지 않으며 —— 모델이 보는 프리픽스를 바이트 단위로 동일하게 유지합니다.
 - **더 이상 영속화하지 않음:** 압축 경로는 MesMemory에 아무것도 쓰지 않습니다. 메시지 영속화는 각 모델 경계에서 `MessagePersistenceMiddleware`가 수행합니다; 기존 `compaction_persistence.py`의 버려진 프리픽스 플러시와 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 호출 지점은 삭제되었습니다.
-- **압축 시점 nudge:** `schedule_compression_nudges`(`summarization/nudges.py`)가 압축마다 `nudge_review_memory_count`를 증가시키고 `nudge_memory_threshold`(기본 10)에서 메모리 리뷰를 디스패치합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`로 평가됩니다. 둘 다 NUDGE 레인의 fire-and-forget 작업으로 실행됩니다. after-agent 훅은 이를 디스패치하지 않습니다.
+- **압축 시점 nudge:** `schedule_compression_nudges`(`summarization/nudges.py`)가 압축마다 메모리 리뷰를 디스패치합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`로 평가됩니다. 둘 다 NUDGE 레인의 fire-and-forget 작업으로 실행됩니다; nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다. after-agent 훅은 이를 디스패치하지 않습니다.
 
 **Nudge 서브에이전트** (`summarization/nudges.py`, 압축 파이프라인이 디스패치): 메인 LLM 기반의 독립적인 `create_agent` 인스턴스로, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool`은 메타데이터에 `nudge: true`가 없는 모든 도구를 거부하므로, nudge 에이전트는 nudge 단계 화이트리스트에 있는 도구만 사용할 수 있습니다. 프롬프트는 두 개입니다:
 
@@ -587,7 +587,6 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | 키 | 소유자 | 레지스터 |
 |---|---|---|
 | `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_review_memory_count` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | db |
 | `nudge_plan_extraction_fired` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | db |
 | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | 압축 시점 nudge 스케줄러 (Summarization → `summarization/nudges.py`) | mem |
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |

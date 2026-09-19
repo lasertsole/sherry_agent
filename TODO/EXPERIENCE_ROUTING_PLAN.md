@@ -106,7 +106,7 @@
    - 归入规则（prompt 与注释定义）：绑定具体模块 → 技能（Part 2）；用户偏好 → USER；**跨计划普适的坑/约定** → FACTS；可泛化做法 → 技能
 3. **注入**：`format_memory_for_system_prompt`（memory_store）把 FACTS.md 并入系统提示词 memory 块——**每次都在上下文里**（这类坑不绑定领域，常驻是合理的）
 4. **nudge 维护**（"用 nudge 机制抽"）：
-   - **记忆回顾 nudge**（每 10 次压缩，`_nudge_memory`）关注面扩展：除用户/行为外，新增"广泛存在的坑/约定"→ 写 `facts` target（整理式 read-modify-write：prompt 给当前 FACTS.md 内容与上限，要求合并同类、淘汰过时）
+   - **记忆回顾 nudge**（每次压缩，`_nudge_memory`）关注面扩展：除用户/行为外，新增"广泛存在的坑/约定"→ 写 `facts` target（整理式 read-modify-write：prompt 给当前 FACTS.md 内容与上限，要求合并同类、淘汰过时）
    - **plan-extraction nudge**（Part 3）：计划执行中发现的**不绑定模块**的广泛坑 → 同样写 `facts` target
    - 两条 nudge 都可维护，工具层的上限/滚动/锁保证一致性
 5. **注入格式**：FACTS.md 内容作为 memory 块内的独立小节（标题 `# FACTS`），与 MEMORY/USER 并列

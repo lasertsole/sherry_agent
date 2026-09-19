@@ -477,7 +477,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **输出：** 替换后的消息是 `HumanMessage` / `AIMessage` **成对出现**——一条中性的 `"What did we do so far?"`，后跟携带 `additional_kwargs={"lc_source": "summarization"}` 的 `AIMessage`——因此模型不会看到两条连续同角色消息，也无需事后配对修复。
 - `need_update_system_prompt=True`（仅主 Agent）：压缩完成后重建系统提示词——重载记忆库后调用 `build_system_prompt()`——并以 `system_prompt` 键写回两个状态寄存器。两条送达路径（压缩后直送、防抖闸门路径）在请求已带相同内容的 `SystemMessage` 时会跳过注入——不 override、不新建 `SystemMessage`——从而保持模型可见前缀逐字节一致。
 - **不再持久化：** 压缩路径不向 MesMemory 写任何内容。消息持久化在每个模型边界由 `MessagePersistenceMiddleware` 完成；原先 `compaction_persistence.py` 的被丢弃前缀落库及其 `_persist_discarded_messages_sync` / `_apersist_discarded_messages` 调用点均已删除。
-- **压缩时 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）每压缩一次递增 `nudge_review_memory_count`，达到 `nudge_memory_threshold`（默认 10）时派发记忆复盘；计划提取在同一时点用 `_detect_todo_all_complete` 评估。两者都以 fire-and-forget 任务在 NUDGE 车道上运行。after-agent 钩子不再派发它们。
+- **压缩时 nudge：** `schedule_compression_nudges`（`summarization/nudges.py`）每次压缩都派发记忆复盘；计划提取在同一时点用 `_detect_todo_all_complete` 评估。两者都以 fire-and-forget 任务在 NUDGE 车道上运行；nudge 锁被持有时压缩完全跳过派发。after-agent 钩子不再派发它们。
 
 **Nudge 子 Agent**（`summarization/nudges.py`，由压缩管线调度）：基于主 LLM 构建的独立 `create_agent` 实例，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`。`_NudgeLimitTool` 会拒绝所有元数据缺少 `nudge: true` 的工具，因此 nudge Agent 只能使用 nudge 阶段白名单内的工具。共有两个提示词：
 
@@ -580,7 +580,6 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | 键 | 归属 | 寄存器 |
 |---|---|---|
 | `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_review_memory_count` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | db |
 | `nudge_plan_extraction_fired` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | db |
 | `nudge_review_memory_lock`、`nudge_plan_extraction_lock` | 压缩时 nudge 调度器（Summarization → `summarization/nudges.py`） | mem |
 | `iteration_budget`、`iteration_budget_used` | IterationBudget | mem |

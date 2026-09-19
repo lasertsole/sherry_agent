@@ -216,7 +216,7 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 
 메시지 영속화는 압축 경로 밖에서 동작합니다: `MessagePersistenceMiddleware`(`agent/middlewares/message_persistence/`)가 새 human/AI 메시지를 각 모델 호출 경계에서, 도구 결과를 반환 시 MesMemory로 플러시하고, 영속 워터마크 `persisted_message_ids`로 write-once를 보장합니다. compact는 압축과 아래 nudge 스케줄만 담당합니다. 트리거 의미론은 `agent/middlewares/README.md`를 참조하세요.
 
-**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰 카운터(`nudge_review_memory_count`, `state_register_db`)가 압축마다 1회 증가하고 `nudge_memory_threshold`(기본 10) 도달 시 `_nudge_memory`를 발화합니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. 단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장하며, 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
+**압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰(`_nudge_memory`)는 압축마다 디스패치됩니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음). 단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장하며, 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
 
 **절단점 선택**(`_determine_cutoff`, :1310): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, :565)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(:1340)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입 :1968/:2054에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 

@@ -212,7 +212,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 消息持久化在压缩路径之外运行：human/AI 消息在每个模型调用边界、工具结果在返回时，都由 `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）增量落库到 MesMemory，靠持久水位 `persisted_message_ids` 保证写一次。一次 compact 只做压缩并调度下面的 nudge。触发语义详见 `agent/middlewares/README.md`。
 
-**压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾计数器（`nudge_review_memory_count`，`state_register_db`）每次压缩递增一次，达到 `nudge_memory_threshold`（默认 10）时触发 `_nudge_memory`；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。单发 `nudge_plan_extraction_fired` 标记保证每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
+**压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾（`_nudge_memory`）每次压缩都派发；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。nudge 锁被持有时压缩完全跳过派发（不排队）。单发 `nudge_plan_extraction_fired` 标记保证每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
 **切点选择**（`_determine_cutoff`，:1310）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，:565）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（:1340）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 :1968/:2054 调用），切点绝不越过最后一条 `HumanMessage`。
 

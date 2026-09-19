@@ -217,7 +217,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 
 メッセージ永続化は圧縮パスとは別に動作します: `MessagePersistenceMiddleware`（`agent/middlewares/message_persistence/`）が新しい human/AI メッセージをモデル呼び出しの各境界で、ツール結果を返却時に MesMemory へフラッシュし、永続ウォーターマーク `persisted_message_ids` で write-once を保証します。compact は圧縮と下記 nudge のスケジュールだけを行います。トリガー意味論は `agent/middlewares/README.md` を参照してください。
 
-**圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）: メモリレビューカウンタ（`nudge_review_memory_count`、`state_register_db`）が圧縮ごとに 1 回増え、`nudge_memory_threshold`（既定 10）到達で `_nudge_memory` を発火します; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。単発の `nudge_plan_extraction_fired` フラグは完了サイクルごとに 1 回の抽出を保証します —— そのため、一度も圧縮しないセッションはプラン抽出を発火しません。
+**圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）: メモリレビュー（`_nudge_memory`）は圧縮のたびにディスパッチされます; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。nudge ロックが保持されている間、圧縮はディスパッチを完全にスキップします（キューイングなし）。単発の `nudge_plan_extraction_fired` フラグは完了サイクルごとに 1 回の抽出を保証します —— そのため、一度も圧縮しないセッションはプラン抽出を発火しません。
 
 **カットポイント選択**（`_determine_cutoff`、:1310）: 履歴をターンに分割し、**最新から逆方向**に歩きながら保持予算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`、:565）に照らして累積します; 丸ごと入らないターンはターン途中で割られることがあります。`_adjust_for_orphan_pairs`（:1340）がカットポイントを逆に歩き、`ToolMessage` が `AIMessage` のツール呼び出しから分離する状態がなくなるまで調整します。最終ターン比率ゲートが発火しない限り（最後のユーザーターン ≥ 全トークンの `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`、wrap 入口 :1968/:2054 で呼び出し）、カットポイントが最後の `HumanMessage` を超えることはありません。
 

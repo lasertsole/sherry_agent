@@ -25,7 +25,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **대화 요약**: Summarization 미들웨어가 auxiliary LLM으로 긴 대화 이력을 도중에 압축
 - **컨텍스트 거버넌스**: 과대한 도구 결과와 인간 메시지는 복구 가능한 디스크 사본을 남기고 프롬프트에서 축출되며, `read_file` 결과는 슬라이스되고, 어떤 압축보다도 먼저 LLM 없는 테일 클립이 돌며, 체인 요약은 대화 페이로드에서 제외됩니다
 - **프라이빗 지식 그래프 RAG**: `multimodal_rag` 스킬이 문서/폴더를 엔티티-관계 그래프로 인덱싱(벤더드 LightRAG + RAG-Anything, `snkv` 벡터 스토리지)하고 멀티홉 그래프 검색으로 답변
-- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(`nudge_memory_threshold`회 압축마다), 압축 시 todo가 전부 완료일 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
+- **경험 추출(Experience Extraction)**: 네 개의 라이프사이클 경로가 대화 이력을 재사용 가능한 경험으로 축적합니다: 압축 시점 memory review(압축마다), 압축 시 todo가 전부 완료일 때의 plan 추출, 압축 전 memory flush, 압축 후 todo fork. 이들은 MEMORY.md / USER.md, plan 지식 베이스(`agent/tools/todolist/knowledge/`), `skills/auto/`, `todos.db`에 각각 기록합니다
 - ▶️ _아키텍처, 데이터 모델, API 세부사항은 [Context Engine README](context_engine/README.md) 참조_
 - ▶️ _네 개 추출 경로와 스킬 큐레이션은 [Experience README](docs/experience/README.ko.md) 참조_
 

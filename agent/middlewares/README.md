@@ -480,7 +480,7 @@ The innermost middleware — closest to the LLM. A from-scratch `AgentMiddleware
 - **Output:** the replacement messages are a `HumanMessage` / `AIMessage` **pair** — a neutral `"What did we do so far?"` followed by an `AIMessage` carrying `additional_kwargs={"lc_source": "summarization"}` — so the model never sees two consecutive same-role messages and no post-hoc pairing repair is needed.
 - `need_update_system_prompt=True` (main agent only): after a compression the system prompt is rebuilt — `build_system_prompt()` after reloading the memory store — and written back to both state registers under `system_prompt`. Both delivery paths (directly after compaction, and the anti-thrash gate path) skip the injection when the request already carries a `SystemMessage` with identical content — no `override`, no new `SystemMessage` — keeping the model-visible prefix byte-identical.
 - **No persistence anymore:** the compression path writes nothing to MesMemory. Message persistence runs at every model boundary in `MessagePersistenceMiddleware`; the former `compaction_persistence.py` flush of the discarded prefix and its `_persist_discarded_messages_sync` / `_apersist_discarded_messages` call sites were removed.
-- **Compression-time nudges:** `schedule_compression_nudges` (`summarization/nudges.py`) increments `nudge_review_memory_count` once per compression and dispatches the memory review at `nudge_memory_threshold` (default 10); plan extraction is evaluated with `_detect_todo_all_complete` at the same point. Both run as fire-and-forget tasks under the NUDGE lane. The after-agent hook no longer dispatches these.
+- **Compression-time nudges:** `schedule_compression_nudges` (`summarization/nudges.py`) dispatches the memory review on every compression; plan extraction is evaluated with `_detect_todo_all_complete` at the same point. Both run as fire-and-forget tasks under the NUDGE lane; while a nudge lock is held the compression skips dispatch entirely. The after-agent hook no longer dispatches these.
 
 **Nudge sub-agents** (`summarization/nudges.py`), dispatched by the compression pipeline: separate `create_agent` instances built on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget()]`. `_NudgeLimitTool` rejects any tool whose metadata lacks `nudge: true`, so a nudge agent can only touch tools whitelisted for the nudge phase. Two prompts exist:
 
@@ -590,7 +590,6 @@ Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`
 | Key(s) | Owner | Register |
 |---|---|---|
 | `system_prompt` | system_prompt_injection / Summarization | mem + db |
-| `nudge_review_memory_count` | compression-time nudge scheduler (Summarization → `summarization/nudges.py`) | db |
 | `nudge_plan_extraction_fired` | compression-time nudge scheduler (Summarization → `summarization/nudges.py`) | db |
 | `nudge_review_memory_lock`, `nudge_plan_extraction_lock` | compression-time nudge scheduler (Summarization → `summarization/nudges.py`) | mem |
 | `iteration_budget`, `iteration_budget_used` | IterationBudget | mem |
