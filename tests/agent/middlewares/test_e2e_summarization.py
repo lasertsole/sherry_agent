@@ -31,10 +31,9 @@ hermetic module group (B, the ``module`` marker) and is explicitly NOT part of t
 ``llm_e2e`` marker system (see README "Testing": that marker is reserved for
 real-LLM network e2e tests; this one is the static path only).
 
-Skip guard: when the effective MAIN_LLM configuration is missing (no .env and no
-``MAIN_LLM_*`` environment variables, or a blank injected value) the e2e class is
-SKIPPED with an explicit reason — the suite must never FAIL on a machine that
-merely lacks configuration.
+Skip guard: none. Both models are stubs, so this file is hermetic and runs even
+on a machine without a .env (CI included). ``_probe_main_llm_config`` and its
+unit tests remain as pure-logic coverage, but they no longer gate the e2e class.
 """
 
 import asyncio
@@ -332,11 +331,10 @@ class TestSkipGuardProbe:
 
 
 # ======================================================================
-# The e2e itself (§14 semantics; guarded by the MAIN_LLM config probe)
+# The e2e itself (§14 semantics; fully hermetic — both models are stubs)
 # ======================================================================
 
 
-@pytest.mark.skipif(not _MAIN_LLM_CONFIG_OK, reason=_MAIN_LLM_SKIP_REASON)
 class TestE2ESummarizationStaticFallback:
     """Real agent chain -> compression triggered -> static fallback -> assertions."""
 
