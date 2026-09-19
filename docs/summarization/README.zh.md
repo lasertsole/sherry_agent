@@ -223,13 +223,32 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 `_create_summary` / `_acreate_summary`（:1410 / :1435）：
 
 1. **序列化**（`_serialize_for_summary`，:258）：每条消息变成一行带标签的文本 —— `[User]:`（≤ 2 000 字符）、`[Assistant]:`（≤ 2 000 字符）、`[Assistant tool call]: name(args: > 500 chars → head 300 + tail 150 + omission marker)`、`[Tool result|Tool error] (id):`（> 2 000 字符 → 保留 1 800 + 省略标记）。
-2. **链上之前的检查点**（`_extract_previous_summary`，:1376）：找到最新的 `additional_kwargs["lc_source"] == "summarization"` 的 `AIMessage`，抽取其 `<summary>…</summary>` 正文。若存在，提示词变为 `conversation + prior-summary + _SUMMARY_PROMPT_UPDATE`（:245）而非 `_SUMMARY_PROMPT_FIRST`（:237）—— 目标/约束/决策向前携带，冲突时最新优先，遵守 FIFO 上限。
-3. **调用**辅助模型，带 `config={"metadata": {"lc_source": "summarization"}}`，让下游工具链能识别摘要调用。
-4. **护栏：**响应为空或过短时回退到确定性摘要；任何异常同样回退。失败时 LLM 永远没有最终话语权。
+2. **链上之前的检查点**（`_extract_previous_doc` / `_extract_previous_summary`）：找到最新的 `additional_kwargs["lc_source"] == "summarization"` 的 `AIMessage`，优先读取其结构化 `summary_doc` 载荷（渲染回 Markdown 供 `<prior-summary>` 使用）；没有该载荷的消息 —— 存量会话，或回退到 free-form 的一轮 —— 仍按 `<summary>…</summary>` 正文解析。存在上一份 Doc 时，提示词变为 `conversation + <prior-summary-json> + _SUMMARY_PROMPT_UPDATE_STRUCTURED`；旧 Markdown 照常经 `<prior-summary>` 注入；升级后的第一轮压缩即输出新的 `SummaryDoc`（无需迁移）。
+3. **结构化输出**（`summary_doc.py::SummaryDoc`）：辅助模型经 `with_structured_output(SummaryDoc, method="json_mode")` 包装。当前配置的 `glm-5.3-flash` 端点忽略函数调用 schema（默认 method 返回自由文本，被 Pydantic 解析器拒绝 —— 已实测），因此 `json_mode` 是主档；解析/校验失败退化为原始调用 + `json_repair`（`_sync_json_repair_doc` / `_async_json_repair_doc`）；再失败则以旧的 free-form Markdown 提示词作为最后的 LLM 档，静态回退仍是最终保险。
+4. **调用**辅助模型，带 `config={"metadata": {"lc_source": "summarization"}}`，让下游工具链能识别摘要调用。
+5. **护栏：**free-form 响应为空或过短时回退到确定性摘要；任何异常同样回退。失败时 LLM 永远没有最终话语权。
 
-**链式摘要过滤**（`_filter_summary_messages`）：存在旧检查点时，其 Human/AI 消息对会从序列化的 `<conversation>` 输入中剔除 —— 提取出的旧摘要仅经 `<prior-summary>` 注入，同一段旧摘要文本在提示词中只出现一次。该消息对**两条**都带 `additional_kwargs={"lc_source": "summarization"}`，这同时让两条都不落入 MesMemory（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）：摘要是压缩的内部产物，不是对话历史。过滤发生在 `_extract_previous_summary` **之后**（链式仍能看到旧摘要），过滤后的列表用于序列化、提示词构建，以及两条静态回退分支（LLM 失败/响应过短）—— 也包括 `_apply_compression_under_lock` / `_aapply_compression_under_lock` 的 `skip_llm` 路径。与 opencode-dev 的 `hidden` 集合、deepagents 的 `_filter_summary_messages` 对齐。
+**渲染（Doc → Markdown）。** `render_summary_markdown` 是纯函数、确定性（同 Doc → 同字节，前缀缓存安全）：输出旧的节骨架，仅在数组非空时追加 *Active Plan Notes* / *Evicted References*：
 
-提示词模板（`_SUMMARY_TEMPLATE`，:190）固定了 Markdown 骨架 —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 要求"即使为空也保留每一节"并带保密规则（"NEVER include API keys, tokens, passwords, secrets"）。`_enforce_fifo_limits`（:381）对返回文本确定性地重新施加条目上限，追加 `"(N earlier items omitted for brevity)"`。
+| `SummaryDoc` 字段 | 渲染节 | 代码层 cap |
+| :--- | :--- | :--- |
+| `latest_user_request` | `## Latest Unresolved User Request` | 逐字、无上限 |
+| `goal` | `## Goal` | — |
+| `constraints` | `## Constraints & Preferences` | — |
+| `completed` | `### Completed` | `completed[-5:]` |
+| `in_progress` / `blocked` | `### In Progress` / `### Blocked` | — |
+| `key_decisions` | `## Key Decisions` | `key_decisions[-5:]` |
+| `next_steps` | `## Next Steps` | — |
+| `critical_context` | `## Critical Context` | `critical_context[-3:]` |
+| `relevant_files` | `## Relevant Files` | — |
+| `active_plan_notes` | `## Active Plan Notes`（仅非空时） | `active_plan_notes[-20:]` |
+| `evicted_refs` | `## Evicted References`（仅非空时） | `evicted_refs[-20:]` |
+
+cap 是 `cap_summary_doc` 中的数组切片（链上存储的形态）；渲染器在展示时再次切片并追加 `"(N earlier items omitted for brevity)"`。`evicted_refs` 由代码维护：`_collect_evicted_refs` 扫描本压缩范围内的 `[evicted to: <path>]` 标记与人类消息的 `lc_evicted_to` 标签，`_finalize_summary_doc` 把上一份 Doc 的条目与新条目按序去重合并。`_inject_recovery_context` 把文件操作棘轮同时写回渲染出的 `## Relevant Files` 节与存储 Doc 的 `relevant_files` 字段。
+
+**链式摘要过滤**（`_filter_summary_messages`）：存在旧检查点时，其 Human/AI 消息对会从序列化的 `<conversation>` 输入中剔除 —— 提取出的旧摘要仅经 `<prior-summary>`（或 `<prior-summary-json>`）注入，同一段旧摘要文本在提示词中只出现一次。该消息对**两条**都带 `additional_kwargs={"lc_source": "summarization"}`，这同时让两条都不落入 MesMemory（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）：摘要是压缩的内部产物，不是对话历史。过滤发生在 `_extract_previous_doc` / `_extract_previous_summary` **之后**（链式仍能看到旧摘要），过滤后的列表用于序列化、提示词构建，以及两条静态回退分支（LLM 失败/响应过短）—— 也包括 `_apply_compression_under_lock` / `_aapply_compression_under_lock` 的 `skip_llm` 路径。与 opencode-dev 的 `hidden` 集合、deepagents 的 `_filter_summary_messages` 对齐。
+
+旧提示词模板（`_SUMMARY_TEMPLATE`）仍固定 free-form 回退的骨架 —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 要求"即使为空也保留每一节"并带保密规则（"NEVER include API keys, tokens, passwords, secrets"）。结构化路径以 `_SUMMARY_JSON_RULES`（JSON 字段清单 + 同一保密规则）取代 Markdown 骨架；字段语义直接定义在 Pydantic `SummaryDoc` 模型上。
 
 **用户请求来源的正向识别。** 每个落库的 `human` 行都带 `origin`（在传输入口打标）：WS/渠道用户输入为 `"user"`，编排引导注入为 `"task_intent"`，完成载体为 `"subagent_completion"`，定时投递轮次为 `"cron"`（`ai`/`tool` 行保持 `NULL`；origin 标记上线前的存量行按 user 消息读取）。*Latest Unresolved User Request* 的来源由该列正向识别：只有用户来源消息（`origin = 'user'`，或存量 `NULL`）才算用户请求 —— 内部注入（`task_intent` / `subagent_completion` / `cron`）绝不会被当作请求引用。routing plan 的复数 `unresolved_user_requests[]` 清单使用同一正向过滤。
 
@@ -262,6 +281,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 - **HumanMessage** `"What did we do so far?"` —— 一个中性问题，维持角色交替；与 AI 半边携带相同的 `lc_source` 标记。
 - **AIMessage**，带 `additional_kwargs={"lc_source": "summarization"}` —— 这个标记被后续回合用于：(a) 找到并链起之前的检查点，(b) 在链式再摘要输入中剔除该消息对、并让修剪停在检查点处，(c) 让测试断言被取代后的摘要可以从模型视图整体吞下。
 - 该消息对永不进入 MesMemory：`MessagePersistenceMiddleware._is_persistable` 跳过两条 `lc_source="summarization"` 的消息（human 行构造器有同样的闸门）。
+- AIMessage 还携带结构化文档本体：`additional_kwargs["summary_doc"]`（cap 后的 `SummaryDoc`，纯 JSON 可序列化 dict —— 链式载体，回喂为 `<prior-summary-json>`）。free-form 回退轮次不带该载荷，`_extract_previous_summary` 回退解析 `<summary>` 正文。
 - 总内容以 `SUMMARY_TOTAL_MAX_CHARS (16 000)` 封顶，头部/尾部 30/30 保留。
 
 ## 🛡️ 防抖护栏矩阵与退化恢复
@@ -348,6 +368,7 @@ Summarization(
 | `PROTECTED_TOOLS` ◆ | `{"memory", "skill_view", "skill_list"}` | 豁免于一切收缩策略 |
 | `LAST_TURN_RATIO_THRESHOLD` ◆ | `0.5` | 最后一回合压缩闸门 |
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO 段落上限 |
+| `ACTIVE_PLAN_NOTES_MAX_ITEMS` / `EVICTED_REFS_MAX_ITEMS` ◆ | `20` / `20` | 文档数组上限（计划注意事项 / 驱逐指针） |
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | 文件操作棘轮列表上限 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 恢复上下文请求上限 |
 | `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`（估算器） | `4` / `2` | 确定性 token 估算除数（非 CJK / CJK）；定义于 `config/features/agent_side/token_estimation.py` |
@@ -372,6 +393,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 中间件集成：T1/T2 不调 LLM 裁剪、裁剪不足降级、总开关、T4/T5 先裁后重试与裁→压缩降级、同步/异步奇偶、sanitizer 不移位 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶、链式摘要过滤 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 链式摘要过滤：旧消息对从序列化对话中移除、普通/空/多对输入、无标记的旧会话 human 保留、async `_acreate_summary` 镜像 |
+| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 结构化摘要：schema 兼容/强制转换、渲染往返 + 字节稳定 + 节顺序、代码层 cap + 注记、latest request 逐字、json_mode/json_repair/free-form 三档、prior-doc JSON 链式、旧 MD 过渡、驱逐指针收集与延续 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
@@ -395,4 +417,5 @@ Summarization(
 - **T4/T5 设计上绕过防抖矩阵** —— 这正是"强制"的意义所在。超过 `MAX_OVERFLOW_RETRIES (3)`（T4/T5 共用的单一计数器，每回合重置）、或强制压缩步骤自身失败时，原始 provider 异常向上传播（绝不吞掉、绝不被压缩错误顶替）。
 - **压缩是 fail-open 的。** `_apply_compression` 内的任何异常都会记日志并吞掉；回合带着未压缩的历史继续。
 - **静态回退是启发式的。** 基于关键词的决策/完成分类与从原始工具参数提取路径都是尽力而为；段落骨架有保证，内容质量没有。
+- **结构化档使用 `json_mode` 是因为当前端点要求如此。** `glm-5.3-flash`（openai 兼容）不会为 `with_structured_output` 发出函数调用，默认 function-calling 档会抛 Pydantic 解析错误；`_structured_runnable` 对不接受 `method` 参数的 provider 退回无参调用，其余由 `json_repair` 与 free-form 两档兜底。代码层 cap 与渲染器仍保证输出形态。
 - **`_SUMMARY_PREFIX`/`_SUMMARY_SUFFIX`/`<summary>` 标签/`lc_source="summarization"` 是承重的精确字符串。** 后续回合的链式（`_extract_previous_summary`）、修剪停止条件与全部测试套件都按字面匹配它们 —— 不要随手改写。

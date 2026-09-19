@@ -228,13 +228,32 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 `_create_summary` / `_acreate_summary`（:1410 / :1435）:
 
 1. **直列化**（`_serialize_for_summary`、:258）: 各メッセージがタグ付きの 1 行になります —— `[User]:`（≤ 2 000 文字）、`[Assistant]:`（≤ 2 000 文字）、`[Assistant tool call]: name(args: > 500 chars → head 300 + tail 150 + omission marker)`、`[Tool result|Tool error] (id):`（> 2 000 文字 → 1 800 文字保持 + 省略マーカー）。
-2. **前のチェックポイントのチェイニング**（`_extract_previous_summary`、:1376）: `additional_kwargs["lc_source"] == "summarization"` を持つ最新の `AIMessage` を見つけ、`<summary>…</summary>` 本体を抽出します。存在すれば、プロンプトは `_SUMMARY_PROMPT_FIRST`（:237）ではなく `conversation + prior-summary + _SUMMARY_PROMPT_UPDATE`（:245）になります —— 目標/制約/決定を前へ運び、競合時は最新を優先し、FIFO 上限を守ります。
-3. **呼び出し**は補助モデルに対し `config={"metadata": {"lc_source": "summarization"}}` 付きで行われ、下流のツールチェーンが要約呼び出しを識別できるようにします。
-4. **ガードレール:** 空または極端に短い応答は決定論的要約へフォールバックし、例外も同様です。失敗時に LLM が最後の言葉を持つことはありません。
+2. **前のチェックポイントのチェイニング**（`_extract_previous_doc` / `_extract_previous_summary`）: `additional_kwargs["lc_source"] == "summarization"` を持つ最新の `AIMessage` を探し、まず構造化 `summary_doc` ペイロードとして読み取ります（`<prior-summary>` 用に Markdown へ再レンダリング）。ペイロードのないメッセージ —— レガシーセッション、または free-form にフォールバックした回 —— は従来どおり `<summary>…</summary>` 本体から解析します。前回の Doc が存在すれば、プロンプトは `conversation + <prior-summary-json> + _SUMMARY_PROMPT_UPDATE_STRUCTURED` になります。レガシー Markdown は `<prior-summary>` 経由でそのまま注入され、アップグレード後の最初の圧縮ラウンドで新しい `SummaryDoc` が出力されます（移行不要）。
+3. **構造化出力**（`summary_doc.py::SummaryDoc`）: 補助モデルは `with_structured_output(SummaryDoc, method="json_mode")` でラップされます。設定済みの `glm-5.3-flash` エンドポイントは関数呼び出しスキーマを無視するため（デフォルト method は自由テキストを返し Pydantic パーサーに拒否されます —— 実測済み）、`json_mode` が主ティアです。解析/検証の失敗は生呼び出し + `json_repair`（`_sync_json_repair_doc` / `_async_json_repair_doc`）へ降格し、それも失敗すればレガシー free-form Markdown プロンプトが最後の LLM ティア、静的フォールバックが最終ガードです。
+4. **呼び出し**は補助モデルに対し `config={"metadata": {"lc_source": "summarization"}}` 付きで行われ、下流のツールチェーンが要約呼び出しを識別できるようにします。
+5. **ガードレール:** free-form 応答が空または極端に短い場合は決定論的要約へフォールバックし、例外も同様です。失敗時に LLM が最後の言葉を持つことはありません。
 
-**チェイニング要約のフィルタリング**（`_filter_summary_messages`）: 前のチェックポイントが存在する場合、その Human/AI ペアは直列化された `<conversation>` 入力から除去されます —— 抽出済みの前回要約は `<prior-summary>` 経由でのみ注入され、古い要約テキストはプロンプト内にちょうど 1 回だけ現れます。ペアは**両方**が `additional_kwargs={"lc_source": "summarization"}` を持ち、これにより両方とも MesMemory に入りません（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）: このペアは圧縮の内部成果物であり、会話履歴ではありません。フィルタは `_extract_previous_summary` の**後**に走り（チェイニングは旧要約を引き続き参照できます）、フィルタ後のリストが直列化・プロンプト構築・2 つの静的フォールバック分岐（LLM 失敗/短すぎる応答）に使われます —— `_apply_compression_under_lock` / `_aapply_compression_under_lock` の `skip_llm` パスも同様です。opencode-dev の `hidden` セットと deepagents の `_filter_summary_messages` に整合します。
+**レンダリング（Doc → Markdown）。** `render_summary_markdown` は純粋かつ決定論的（同じ Doc → 同じバイト、プレフィックスキャッシュ安全）です。従来のセクション骨格を出力し、配列が非空の場合のみ *Active Plan Notes* / *Evicted References* を追加します:
 
-プロンプトテンプレート（`_SUMMARY_TEMPLATE`、:190）は Markdown 骨格を固定します —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 「空でもすべてのセクションを保持する」ことと秘密保持ルール（"NEVER include API keys, tokens, passwords, secrets"）を要求します。`_enforce_fifo_limits`（:381）が返されたテキストに項目上限を決定論的に再適用し、`"(N earlier items omitted for brevity)"` を追記します。
+| `SummaryDoc` フィールド | レンダリングされるセクション | コード層 cap |
+| :--- | :--- | :--- |
+| `latest_user_request` | `## Latest Unresolved User Request` | 逐字、上限なし |
+| `goal` | `## Goal` | — |
+| `constraints` | `## Constraints & Preferences` | — |
+| `completed` | `### Completed` | `completed[-5:]` |
+| `in_progress` / `blocked` | `### In Progress` / `### Blocked` | — |
+| `key_decisions` | `## Key Decisions` | `key_decisions[-5:]` |
+| `next_steps` | `## Next Steps` | — |
+| `critical_context` | `## Critical Context` | `critical_context[-3:]` |
+| `relevant_files` | `## Relevant Files` | — |
+| `active_plan_notes` | `## Active Plan Notes`（非空時のみ） | `active_plan_notes[-20:]` |
+| `evicted_refs` | `## Evicted References`（非空時のみ） | `evicted_refs[-20:]` |
+
+cap は `cap_summary_doc` の配列スライス（チェーンに保存される形）で、レンダラーは表示時に再度スライスし `"(N earlier items omitted for brevity)"` を追記します。`evicted_refs` はコードが維持します: `_collect_evicted_refs` が圧縮範囲内の `[evicted to: <path>]` マーカーと人間メッセージの `lc_evicted_to` タグを走査し、`_finalize_summary_doc` が前回 Doc のエントリと新規エントリを順序どおり重複排除してマージします。`_inject_recovery_context` はファイル操作ラチェットを、レンダリング済み `## Relevant Files` セクションと保存 Doc の `relevant_files` フィールドの両方へ書き戻します。
+
+**チェイニング要約のフィルタリング**（`_filter_summary_messages`）: 前のチェックポイントが存在する場合、その Human/AI ペアは直列化された `<conversation>` 入力から除去されます —— 抽出済みの前回要約は `<prior-summary>`（または `<prior-summary-json>`）経由でのみ注入され、古い要約テキストはプロンプト内にちょうど 1 回だけ現れます。ペアは**両方**が `additional_kwargs={"lc_source": "summarization"}` を持ち、これにより両方とも MesMemory に入りません（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）: このペアは圧縮の内部成果物であり、会話履歴ではありません。フィルタは `_extract_previous_doc` / `_extract_previous_summary` の**後**に走り（チェイニングは旧要約を引き続き参照できます）、フィルタ後のリストが直列化・プロンプト構築・2 つの静的フォールバック分岐（LLM 失敗/短すぎる応答）に使われます —— `_apply_compression_under_lock` / `_aapply_compression_under_lock` の `skip_llm` パスも同様です。opencode-dev の `hidden` セットと deepagents の `_filter_summary_messages` に整合します。
+
+レガシープロンプトテンプレート（`_SUMMARY_TEMPLATE`）は free-form フォールバックの骨格を引き続き固定します —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 「空でもすべてのセクションを保持する」ことと秘密保持ルール（"NEVER include API keys, tokens, passwords, secrets"）を要求します。構造化パスは Markdown 骨格を `_SUMMARY_JSON_RULES`（JSON フィールド一覧 + 同じ秘密保持ルール）に置き換えます。フィールドの意味は Pydantic `SummaryDoc` モデル自体に定義されています。
 
 **ユーザー要求の送信元の正同定。** 永続化された各 `human` 行は `origin` を持ちます（トランスポート入口で刻印）: WS/チャネルのユーザー入力は `"user"`、オーケストレーターのステアリング注入は `"task_intent"`、完了キャリアは `"subagent_completion"`、Cron 配信ターンは `"cron"`（`ai`/`tool` 行は `NULL` のまま；origin タグ導入前の行はレガシー user メッセージとして読み取られます）。*Latest Unresolved User Request* の送信元はこの列で正同定されます: ユーザー送信元のみ（`origin = 'user'`、またはレガシー `NULL`）がユーザー要求であり、内部注入（`task_intent` / `subagent_completion` / `cron`）が要求として引用されることはありません。routing plan の複数形 `unresolved_user_requests[]` リストも同じ正フィルタを使います。
 
@@ -267,6 +286,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 - **HumanMessage** `"What did we do so far?"` —— 役割交代を維持する中立的な質問; AI 半分と同じ `lc_source` マーカーを持ちます。
 - **AIMessage**、`additional_kwargs={"lc_source": "summarization"}` 付き —— このマーカーを後続のターンは (a) 前のチェックポイントを発見してチェーンし、(b) チェイニング再要約の入力からペアを除去し、プルーンがチェックポイントで停止するようにし、(c) テストが置き換え後の要約がモデル視点から丸ごと呑み込めることを検証するために使います。
 - このペアが MesMemory に入ることはありません: `MessagePersistenceMiddleware._is_persistable` が `lc_source="summarization"` の両半分をスキップします（human 行ビルダーも同じゲートを持ちます）。
+- AIMessage は構造化ドキュメント本体も保持します: `additional_kwargs["summary_doc"]`（cap 後の `SummaryDoc`、JSON 直列化可能な素の dict —— チェーンキャリア。`<prior-summary-json>` として再入力されます）。free-form フォールバックの回はこのペイロードを持たず、`_extract_previous_summary` が `<summary>` 本体の解析へフォールバックします。
 - 合計コンテンツは `SUMMARY_TOTAL_MAX_CHARS (16 000)` で封印され、先頭/末尾 30/30 保持。
 
 ## 🛡️ スラッシング防止マトリクスと劣化リカバリ
@@ -353,6 +373,7 @@ Summarization(
 | `PROTECTED_TOOLS` ◆ | `{"memory", "skill_view", "skill_list"}` | すべての縮小戦略から免除 |
 | `LAST_TURN_RATIO_THRESHOLD` ◆ | `0.5` | 最終ターン圧縮ゲート |
 | `COMPLETED_MAX_ITEMS` / `KEY_DECISIONS_MAX_ITEMS` / `CRITICAL_CONTEXT_MAX_ITEMS` ◆ | `5` / `5` / `3` | FIFO セクション上限 |
+| `ACTIVE_PLAN_NOTES_MAX_ITEMS` / `EVICTED_REFS_MAX_ITEMS` ◆ | `20` / `20` | ドキュメント配列上限（計画ノート / 退避ポインタ） |
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | ファイル操作ラチェットのリスト上限 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 復帰コンテキストの要求上限 |
 | `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`（推定器） | `4` / `2` | 決定論的トークン推定の除数（非 CJK / CJK）; `config/features/agent_side/token_estimation.py` で定義 |
@@ -377,6 +398,7 @@ Summarization(
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 ミドルウェア統合: T1/T2 の LLM なしクリップ、不十分クリップの劣化、キルスイッチ、T4/T5 のクリップ→再試行とクリップ→圧縮劣化、同期/非同期パリティ、サニタイザ不変 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ、チェイニング要約フィルタリング |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | チェイニング要約フィルタリング: 旧ペアを直列化会話から除去、通常/空/複数ペア入力、未マークの旧セッション human を保持、async `_acreate_summary` ミラー |
+| `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 構造化要約: schema 強制変換、レンダリング往復 + バイト安定 + セクション順、コード層 cap + 注記、latest request 逐字、json_mode/json_repair/free-form の 3 ティア、prior-doc JSON チェイニング、旧 MD 遷移、退避ポインタの収集と継承 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 つのエンドツーエンドシナリオ + 3 つのオーバーフローカウンタ回帰テスト × 2 登録順、静的フォールバック圧縮、ゼロネットワーク |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 登録契約（テスト固定ウィンドウ）: `MAIN_LLM_MAX_TOKEN = 65 536` → トリガー閾値 `52 428`; 低トークン通過 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | レガシー深層スイート: カットポイント/予算、FIFO 上限、フォールバック、プルーン/重複排除/ターゲット切り詰め、劣化 |
@@ -400,4 +422,5 @@ Summarization(
 - **T4/T5 は設計上アンチスラッシングマトリクスを迂回します** —— それが「強制」の要点です。`MAX_OVERFLOW_RETRIES (3)`（T4/T5 共有の単一カウンタ、ターンごとにリセット）を超えるか、強制圧縮ステップ自体が失敗すると、元のプロバイダ例外が伝播します（決して飲み込まれず、圧縮エラーで置き換えられることもありません）。
 - **圧縮は fail-open です。** `_apply_compression` 内のどんな例外もログに記録され、飲み込まれます; ターンは圧縮されていない履歴のまま進行します。
 - **静的フォールバックはヒューリスティックです。** キーワードベースの決定/完了分類と生のツール引数からのパス抽出はベストエフォートです; セクション骨格は保証されますが、コンテンツ品質は保証されません。
+- **構造化ティアが `json_mode` なのは設定済みエンドポイントがそれを要求するためです。** `glm-5.3-flash`（openai 互換）は `with_structured_output` の関数呼び出しを発行せず、デフォルトの function-calling ティアは Pydantic 解析エラーになります; `_structured_runnable` は `method` 引数を受け付けないプロバイダー向けに引数なし呼び出しへ退避し、残りは `json_repair` と free-form ティアがカバーします。コード層 cap とレンダラーが出力形状を保証します。
 - **`_SUMMARY_PREFIX`/`_SUMMARY_SUFFIX`/`<summary>` タグ/`lc_source="summarization"` は荷重を支える正確な文字列です。** 後続ターンのチェイニング（`_extract_previous_summary`）、プルーン停止条件、全テストスイートがこれらを文字通り照合します —— 軽々しく言い換えないでください。
