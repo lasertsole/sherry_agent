@@ -1,15 +1,21 @@
 """Tests for LLMRetryMiddleware — retry loop, circuit breaker, content filter, fallback."""
 
 import asyncio
+import base64
+import io
 
 import pytest
+from PIL import Image
 from langchain.agents.middleware.types import ModelRequest
+from langchain_core.messages import AIMessage, HumanMessage
 
+from agent.middlewares import llm_capability_cache
 from agent.middlewares.llm_retry.core import (
     ContentFilterError,
     FallbackCandidate,
     LLMRetryConfig,
     LLMRetryMiddleware,
+    _detect_media_types_in_messages,
 )
 from runtime import state_register_mem
 
@@ -45,6 +51,18 @@ def _zero_backoff(monkeypatch) -> None:
 def _clean_session():
     yield
     state_register_mem.clear_session(SID)
+
+
+@pytest.fixture(autouse=True)
+def _clean_capability_cache():
+    llm_capability_cache.reset_cache()
+    yield
+    llm_capability_cache.reset_cache()
+
+
+@pytest.fixture(autouse=True)
+def _fallback_src_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr("agent.middlewares.media_pipeline.fallback.SRC_DIR", tmp_path / "src")
 
 
 def _sync_middleware(**config) -> LLMRetryMiddleware:
@@ -526,3 +544,204 @@ class TestFallbackChain:
 
         with pytest.raises(RuntimeError, match="Provider unresponsive"):
             asyncio.run(mw.awrap_model_call(_request(), dead))
+
+
+# ---- native multimodal → skill fallback -------------------------------------
+
+TRYING_KEY = "_multimodal_trying_native"
+MODEL_KEY = "_multimodal_native_model"
+MODEL_KEY_VALUE = "testprov/testmodel"
+
+
+def _png_base64() -> str:
+    buf = io.BytesIO()
+    Image.new("RGB", (2, 2), color=(1, 2, 3)).save(buf, format="PNG")
+    return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+
+def _media_message() -> HumanMessage:
+    return HumanMessage(
+        content=[
+            {"type": "text", "text": "看图"},
+            {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_png_base64()}"}},
+        ]
+    )
+
+
+def _media_request() -> ModelRequest:
+    return ModelRequest(
+        model=_SentinelModel("main"),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+        messages=[_media_message()],
+        state={"session_id": SID},
+    )
+
+
+def _multimodal_error() -> Exception:
+    return type("BadRequest", (Exception,), {"status_code": 400})("unsupported content type")
+
+
+class TestMultimodalFallback:
+    def _arm_attempt(self, model_key: str = MODEL_KEY_VALUE) -> None:
+        state_register_mem.set_state(SID, TRYING_KEY, True)
+        state_register_mem.set_state(SID, MODEL_KEY, model_key)
+
+    def test_rejection_writes_cache_and_retries_on_skill_path(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=0)
+        self._arm_attempt()
+        seen: list = []
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            seen.append(req.messages[-1].content)
+            if calls["n"] == 1:
+                raise _multimodal_error()
+            return "ok"
+
+        assert mw.wrap_model_call(_media_request(), handler) == "ok"
+        assert calls["n"] == 2  # fallback retried despite max_retries=0
+        assert all(item["type"] == "text" for item in seen[1])
+        assert "image_to_text" in seen[1][0]["text"]
+        assert (
+            llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "unsupported"
+        )
+        assert state_register_mem.get_state(SID, TRYING_KEY, False) is False
+
+    def test_cache_write_covers_every_media_family_present(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=0)
+        self._arm_attempt()
+        calls = {"n": 0}
+        req = ModelRequest(
+            model=_SentinelModel("main"),  # type: ignore[arg-type]  # pyright: ignore[reportArgumentType]
+            messages=[
+                HumanMessage(
+                    content=[
+                        {"type": "text", "text": "混合"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+                        {"type": "video_bytes", "video_bytes": b"\x00\x00\x00\x18ftypmp42"},
+                    ]
+                )
+            ],
+            state={"session_id": SID},
+        )
+
+        def handler(r):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _multimodal_error()
+            return "ok"
+
+        assert mw.wrap_model_call(req, handler) == "ok"
+        assert (
+            llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "unsupported"
+        )
+        assert (
+            llm_capability_cache.get_capability("testprov", "testmodel", "video") == "unsupported"
+        )
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "audio") == "auto"
+
+    def test_without_active_attempt_rejection_is_reraised_without_retry(self):
+        mw = _sync_middleware(max_retries=3)
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            raise _multimodal_error()
+
+        with pytest.raises(Exception, match="unsupported content type"):
+            mw.wrap_model_call(_media_request(), handler)
+        assert calls["n"] == 1
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+
+    def test_active_attempt_without_media_is_not_retried(self):
+        mw = _sync_middleware(max_retries=3)
+        self._arm_attempt()
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            raise _multimodal_error()
+
+        with pytest.raises(Exception, match="unsupported content type"):
+            mw.wrap_model_call(_request(), handler)
+        assert calls["n"] == 1
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+        assert state_register_mem.get_state(SID, TRYING_KEY, False) is False
+
+    def test_non_multimodal_error_leaves_cache_and_flag_untouched(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=0)
+        self._arm_attempt()
+
+        def handler(req):
+            raise TimeoutError("timed out")
+
+        with pytest.raises(TimeoutError):
+            mw.wrap_model_call(_media_request(), handler)
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+        assert state_register_mem.get_state(SID, TRYING_KEY, False) is True
+
+    def test_async_rejection_falls_back(self, monkeypatch):
+        _zero_backoff(monkeypatch)
+        mw = _sync_middleware(max_retries=0)
+        self._arm_attempt()
+        calls = {"n": 0}
+
+        async def handler(req):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise _multimodal_error()
+            return "ok"
+
+        assert asyncio.run(mw.awrap_model_call(_media_request(), handler)) == "ok"
+        assert calls["n"] == 2
+        assert (
+            llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "unsupported"
+        )
+
+    def test_detect_media_types_in_messages(self):
+        messages = [
+            HumanMessage(content="plain"),
+            AIMessage(
+                content=[
+                    {"type": "text", "text": "x"},
+                    {"type": "image_url", "image_url": {"url": "u"}},
+                    {"type": "audio_bytes", "audio_bytes": b"a"},
+                    "not-a-dict",
+                ]
+            ),
+        ]
+
+        assert _detect_media_types_in_messages(messages) == {"vision", "audio"}
+
+    def test_detect_media_types_in_messages_without_media(self):
+        assert _detect_media_types_in_messages([HumanMessage(content="plain")]) == set()
+
+    def test_rejection_on_a_fallback_candidate_still_rewrites_to_skill_path(self, monkeypatch):
+        """A sticky fallback candidate that rejects the media blocks gets the
+        same skill-path rewrite — the fallback stays the serving model."""
+        _zero_backoff(monkeypatch)
+        chain = [FallbackCandidate("deepseek", "deepseek-chat", _SentinelModel("fb1"))]
+        mw = LLMRetryMiddleware(config=LLMRetryConfig(max_retries=0), fallback_chain=chain)
+        state_register_mem.set_state(SID, "llm_fallback_index", 1)
+        self._arm_attempt()
+        seen_models: list[str] = []
+        seen_content: list = []
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            seen_models.append(getattr(req.model, "model_name", "?"))
+            seen_content.append(req.messages[-1].content)
+            if calls["n"] == 1:
+                raise _multimodal_error()
+            return "ok"
+
+        assert mw.wrap_model_call(_media_request(), handler) == "ok"
+        assert calls["n"] == 2
+        assert seen_models == ["fb1", "fb1"]
+        assert [item["type"] for item in seen_content[0]] == ["text", "image_url"]
+        assert [item["type"] for item in seen_content[1]] == ["text"]
+        assert "image_to_text" in seen_content[1][0]["text"]
