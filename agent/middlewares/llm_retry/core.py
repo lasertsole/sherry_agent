@@ -40,10 +40,12 @@ from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain.agents.middleware.types import ModelRequest
+from langchain_core.messages import AIMessage
 from loguru import logger
 
-from config.features import LLM_RETRY
+from config.features import LLM_RETRY, MEDIA_PIPELINE
 from agent.middlewares.llm_capability_cache import set_capability
+from agent.middlewares.media_pipeline.degradation import detect_media_blindness
 from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from pub.func.retry_utils import jittered_backoff
@@ -154,6 +156,7 @@ class LLMRetryMiddleware(AgentMiddleware):
                 request = rebound
                 retry_count = 0
                 continue
+            self._evaluate_silent_degradation(request, session_id, result)
             stub_reason = self._consume_partial_stream_stub(session_id)
             if stub_reason is None:
                 return result
@@ -226,6 +229,7 @@ class LLMRetryMiddleware(AgentMiddleware):
                 request = rebound
                 retry_count = 0
                 continue
+            self._evaluate_silent_degradation(request, session_id, result)
             stub_reason = self._consume_partial_stream_stub(session_id)
             if stub_reason is None:
                 return result
@@ -469,6 +473,48 @@ class LLMRetryMiddleware(AgentMiddleware):
             f"{candidate.provider}/{candidate.model_name}",
         )
 
+    def _evaluate_silent_degradation(
+        self, request: ModelRequest, session_id: str, result: Any
+    ) -> None:
+        """Cache a native attempt the model silently ignored.
+
+        Runs on the success path of a call that started as an auto-mode native
+        attempt. The model did not error, so the only evidence is its own text:
+        when it self-reports media blindness, every media family present in the
+        request is cached ``unsupported`` against the model that actually served
+        the call. The per-turn native flag is cleared either way — the attempt
+        is over, so a stale flag must never authorize a fallback for a later
+        call in the same turn. Precision-first: a false positive would silently
+        degrade a capable model (see ``detect_media_blindness``).
+        """
+        from agent.middlewares.media_pipeline.core import (
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            MULTIMODAL_TRYING_NATIVE_KEY,
+        )
+
+        if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
+            return
+        state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False)
+        if not MEDIA_PIPELINE.get("main_llm_silent_degradation_detection", True):
+            return
+        if not detect_media_blindness(_extract_ai_text(result)):
+            return
+
+        media_types = _detect_media_types_in_messages(getattr(request, "messages", None) or [])
+        model_key = state_register_mem.get_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, "")
+        if not media_types or not model_key:
+            return
+        provider, _, model = model_key.partition("/")
+        for media in media_types:
+            set_capability(provider, model, media, "unsupported")
+        logger.warning(
+            "Native model {}/{} ignored the media (self-reported blindness; media: {}) "
+            "— caching them as unsupported",
+            provider,
+            model,
+            ", ".join(sorted(media_types)),
+        )
+
     # ---- fallback chain ---------------------------------------------------
 
     def _apply_sticky_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest:
@@ -536,3 +582,33 @@ def _detect_media_types_in_messages(messages: list[Any]) -> set[MediaType]:
             if media is not None:
                 found.add(media)
     return found
+
+
+def _extract_ai_text(result: Any) -> str:
+    """Best-effort text of the AIMessage carried by a handler result.
+
+    The handler may return a bare ``AIMessage`` or a ``ModelRequest``-shaped
+    response object carrying ``.messages``; non-text content blocks are ignored.
+    """
+    message: AIMessage | None = None
+    if isinstance(result, AIMessage):
+        message = result
+    else:
+        messages = getattr(result, "messages", None)
+        if messages:
+            for candidate in reversed(messages):
+                if isinstance(candidate, AIMessage):
+                    message = candidate
+                    break
+    if message is None:
+        return ""
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return ""

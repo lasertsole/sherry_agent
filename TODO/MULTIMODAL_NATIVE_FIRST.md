@@ -149,13 +149,21 @@ _cache: dict[str, dict[str, str]] = {
 class MediaPipelineConfig(TypedDict):
     multimodal_temp_retention_days: int
     main_llm_native_multimodal: str  # "auto" | "true" | "false"
+    main_llm_silent_degradation_detection: bool
 
 MEDIA_PIPELINE: MediaPipelineConfig = {
     "multimodal_temp_retention_days": 7,
     "main_llm_native_multimodal": "auto",
+    "main_llm_silent_degradation_detection": True,
 }
 ```
 
+> `main_llm_native_multimodal` 只认 `"auto"` / `"true"` / `"false"`；任何其他值
+> （空串、`"yes"`、`"TRUE"` 等）都走 fail-safe 技能路径，不保留原生 block。
+>
+> `main_llm_silent_degradation_detection` 控制 auto 模式下的静默降级检测（见 §5.3），
+> 默认开启；关闭时只清除本轮 native 尝试标记，不写能力缓存。
+>
 > 该字段是三态总开关，覆盖全部媒体类型（vision / audio / video），不只是 image——
 > 因此命名为 `native_multimodal` 而非 `supports_vision`。
 >
@@ -524,9 +532,25 @@ def _try_multimodal_fallback(
 
 ### 5.3 静默降级
 
-模型不报错但忽略图片 → 缓存不更新 → 下次仍尝试原生。
+模型不报错但忽略图片 → 如果放任不管，缓存不更新 → 下次仍尝试原生。
 
-**用户已接受此风险。** 后续可选增强：轻量启发式检测（模型回复完全未提及图片内容 → 标记 "unsupported"），但不在本期范围。
+已实现**精确率优先**的启发式检测：`agent/middlewares/media_pipeline/degradation.py`
+的 `detect_media_blindness(text)`（纯正则、大小写不敏感、不调用 LLM），多语匹配
+（en / zh / ja / ko）模型**自述无法感知媒体**（如 `cannot see the image` / 无法查看图片 /
+画像を見ることができません / 이미지를 볼 수 없습니다），以及**明确请求用户描述所附媒体**
+（如 `please describe the image` / 请描述一下图片 / 画像を説明して / 이미지를 설명해）。
+
+检测信号是「模型自述盲」而非计划字面版的「回复未提及图片内容」：字面启发式假阳性过高
+（`The cat is orange` 明明看到了却没有媒体关键词），会把有能力的模型误标为盲、静默劣化质量。
+自述信号精确率高、可测试，代价是召回率有限——模型既不报错、也不自述盲、只是默默忽略媒体时
+仍检测不到（见 §7）。
+
+挂接点在 `LLMRetryMiddleware` 的**成功路径**（`LLMRetry` 收到结果之后、partial-stub 处理之前）：
+仅当本轮处于 auto 模式 native 尝试（`_multimodal_trying_native`）且开关
+`main_llm_silent_degradation_detection` 为真时评估；命中则对**实际服务模型**（沿用 fallback
+重绑后的归属语义）在消息内**实际出现的媒体族**写 `"unsupported"` 并记 warning。无论是否命中，
+评估后都清除 `_multimodal_trying_native`，避免陈旧 flag 影响同轮后续调用。既有的
+`multimodal_not_supported` 错误分支语义不变。
 
 ### 5.4 缓存重置
 
@@ -555,7 +579,8 @@ def _try_multimodal_fallback(
 
 ## 7. 已知限制
 
-- **静默降级**：模型不报错但忽略图片 → 检测不到。用户已接受。
+- **静默降级**：仅当模型自述无法感知媒体（或明确要求用户描述媒体）时才检测到；模型既不报错、
+  也不自述、只是默默忽略媒体时仍检测不到，缓存保持 `auto`（下一轮继续尝试原生）。
 - **错误模式匹配**：不同 provider 报错措辞不一，可能漏匹配。首轮不触发，后续迭代补充模式。
 - **重启重新检测**：进程内存不跨重启，重启后首次发图浪费 1 次调用。代价可忽略。
 - **混合媒体**（首期）：全有或全无，不支持部分剥离。
