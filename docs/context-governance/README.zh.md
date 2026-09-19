@@ -49,16 +49,16 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 | 信息来源 | origin / 标记 | internal | 产生场景 | 持久化 | 注入行为 |
 |---|---|---|---|---|---|
-| 前端 WS 用户消息 | `origin='user'` | — | 用户在前端发消息 | `messages` 行 `origin='user'` + 全文（逐边界落库） | state/MesMemory 常驻；模型视图可驱逐为预览；摘要保留用户请求（多请求清单 + 逐字文本 + 驱逐指针：`planned`） |
+| 前端 WS 用户消息 | `origin='user'` | — | 用户在前端发消息 | `messages` 行 `origin='user'` + 全文（逐边界落库） | state/MesMemory 常驻；模型视图可驱逐为预览；摘要逐字保留最新用户请求（`latest_user_request`；多请求清单 + 逐请求驱逐指针：`planned`） |
 | 渠道用户消息（QQ 等） | `origin='user'` | — | 用户经渠道适配器发消息 | 同上 | 同上 |
 | TaskIntent 引导 / 提醒 | `origin='task_intent'` | `True` | 计划活跃引导 / 任务意图武装（`task_intent/core.py::_task_intent_message`） | `messages` 行 | **非用户请求** —— 不入 Unresolved 清单 |
 | 子代理完成载体 | `origin='subagent_completion'` | `True` | 后台子代理完成并回传结果 | `messages` 行（origin 由持久化缝线落标，`context_engine/store/core.py`） | 非用户请求；模型视图可见 |
 | 心跳触发的轮次 | `origin='heartbeat'` | — | 心跳服务的会话轮次（**当前不存在此路径 —— `reserved`**） | — | 非用户请求 |
 | cron 触发的轮次 | `origin='cron'` | `True` | 定时任务的会话轮次（`origin_for_source`） | `messages` 行 | 非用户请求 |
 | 压缩摘要对 | `lc_source='summarization'`（在 `additional_kwargs`，非 origin 列） | — | 压缩产物（`_build_new_messages`） | **不落 MesMemory**；state 摘要对 | `<summary>` 常驻模型视图；以 `<prior-summary>` 链式延续 |
-| 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链带 `evicted_refs[]` 指针（`planned`） |
+| 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链在结构化摘要文档中携带 `evicted_refs[]` 指针 |
 | 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
-| FACTS.md（`planned`，未实现） | `workspace/memory/FACTS.md` | — | 跨计划事实（EXPERIENCE_ROUTING_PLAN Part 3） | memory 文件 | `planned` —— 不属于当前系统 |
+| FACTS.md | `workspace/memory/FACTS.md`（memory 工具 target `facts`） | — | 跨计划、不绑定模块的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory 文件（1 375 字符上限；超限先淘汰最旧条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
 
 ## 💾 逐边界持久化
 

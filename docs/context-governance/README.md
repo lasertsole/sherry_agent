@@ -49,16 +49,16 @@ Everything that reaches graph state or MesMemory enters from one of the sources 
 
 | Information source | origin / marker | internal | Produced when | Persistence | Injection behavior |
 |---|---|---|---|---|---|
-| Frontend WS user message | `origin='user'` | — | the user sends a message in the client | `messages` row `origin='user'` + full text (flushed at every boundary) | resident in state/MesMemory; the model view may be evicted to a preview; the summary keeps the user request (multi-request list + exact text + eviction pointer: `planned`) |
+| Frontend WS user message | `origin='user'` | — | the user sends a message in the client | `messages` row `origin='user'` + full text (flushed at every boundary) | resident in state/MesMemory; the model view may be evicted to a preview; the summary keeps the latest user request verbatim (`latest_user_request`; a multi-request list + per-request eviction pointer: `planned`) |
 | Channel user message (QQ, …) | `origin='user'` | — | the user sends through a channel adapter | same as above | same as above |
 | TaskIntent steering / reminder | `origin='task_intent'` | `True` | plan-active steering / task-intent arming (`task_intent/core.py::_task_intent_message`) | `messages` row | **not a user request** — excluded from the Unresolved list |
 | Subagent completion carrier | `origin='subagent_completion'` | `True` | a background subagent finishes and announces its result | `messages` row (origin stamped at the persistence seam, `context_engine/store/core.py`) | not a user request; visible to the model view |
 | Heartbeat-triggered turn | `origin='heartbeat'` | — | heartbeat-service turn (**no such path today — `reserved`**) | — | not a user request |
 | Cron-triggered turn | `origin='cron'` | `True` | a scheduled job's session turn (`origin_for_source`) | `messages` row | not a user request |
 | Compression summary pair | `lc_source='summarization'` (in `additional_kwargs`, not the origin column) | — | a compaction artifact (`_build_new_messages`) | **never persisted to MesMemory**; a state summary pair | `<summary>` resident in the model view; carried forward as `<prior-summary>` |
-| Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers (`planned`) |
+| Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers in the structured summary doc |
 | Plan knowledge | non-message — disk directory | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | injected as a `<knowledge>` block via `plan_ref` |
-| FACTS.md (`planned`, not implemented) | `workspace/memory/FACTS.md` | — | cross-plan facts (EXPERIENCE_ROUTING_PLAN Part 3) | memory file | `planned` — not part of the current system |
+| FACTS.md | `workspace/memory/FACTS.md` (memory tool target `facts`) | — | broad, module-independent pitfalls and conventions: compression-time memory review + completed-plan extraction | memory file (1 375-char limit; overflow drops the oldest entries first) | injected into every system prompt as a resident FACTS memory block |
 
 ## 💾 Persistence at Every Boundary
 

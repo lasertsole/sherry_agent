@@ -49,16 +49,16 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 | 정보 출처 | origin / 마커 | internal | 발생 상황 | 영속화 | 주입 동작 |
 |---|---|---|---|---|---|
-| 프런트엔드 WS 사용자 메시지 | `origin='user'` | — | 사용자가 클라이언트에서 메시지 전송 | `messages` 행 `origin='user'` + 전문(경계마다 영속화) | state/MesMemory에 상주; 모델 뷰는 프리뷰로 축출될 수 있음; 요약은 사용자 요청 보존(다중 요청 목록 + 축자 텍스트 + 축출 포인터: `planned`) |
+| 프런트엔드 WS 사용자 메시지 | `origin='user'` | — | 사용자가 클라이언트에서 메시지 전송 | `messages` 행 `origin='user'` + 전문(경계마다 영속화) | state/MesMemory에 상주; 모델 뷰는 프리뷰로 축출될 수 있음; 요약은 최신 사용자 요청을 축자로 보존(`latest_user_request`; 다중 요청 목록 + 요청별 축출 포인터: `planned`) |
 | 채널 사용자 메시지(QQ 등) | `origin='user'` | — | 사용자가 채널 어댑터로 전송 | 위와 같음 | 위와 같음 |
 | TaskIntent 스티어링 / 리마인더 | `origin='task_intent'` | `True` | 계획 활성 유도 / 작업 의도 무장(`task_intent/core.py::_task_intent_message`) | `messages` 행 | **사용자 요청이 아님** —— Unresolved 목록에 들어가지 않음 |
 | 서브에이전트 완료 캐리어 | `origin='subagent_completion'` | `True` | 백그라운드 서브에이전트가 완료 후 결과 통지 | `messages` 행(origin은 영속화 이음매에서 각인, `context_engine/store/core.py`) | 사용자 요청이 아님; 모델 뷰에 가시 |
 | 하트비트로 트리거된 턴 | `origin='heartbeat'` | — | 하트비트 서비스의 턴(**현재 이런 경로 없음 —— `reserved`**) | — | 사용자 요청이 아님 |
 | cron으로 트리거된 턴 | `origin='cron'` | `True` | 예약 작업의 세션 턴(`origin_for_source`) | `messages` 행 | 사용자 요청이 아님 |
 | 압축 요약 쌍 | `lc_source='summarization'`(`additional_kwargs` 내, origin 열 아님) | — | 압축 산출물(`_build_new_messages`) | **MesMemory에 영속화되지 않음**; state 요약 쌍 | `<summary>`가 모델 뷰에 상주; `<prior-summary>`로 체인 연속 |
-| 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 `evicted_refs[]` 포인터를 운반(`planned`) |
+| 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 구조화 요약 문서에 `evicted_refs[]` 포인터를 운반 |
 | 계획 지식 | 비메시지 —— 디렉터리 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref`로 `<knowledge>` 블록 주입 |
-| FACTS.md(`planned`, 미구현) | `workspace/memory/FACTS.md` | — | 계획 횡단 사실(EXPERIENCE_ROUTING_PLAN Part 3) | memory 파일 | `planned` —— 현행 시스템에 포함되지 않음 |
+| FACTS.md | `workspace/memory/FACTS.md`(memory 도구 target `facts`) | — | 모듈 비의존적 광범위 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 파일(1 375자 상한; 초과 시 가장 오래된 항목부터 축출) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
 
 ## 💾 경계마다의 영속화
 

@@ -49,16 +49,16 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 
 | 情報源 | origin / マーカー | internal | 発生場面 | 永続化 | 注入挙動 |
 |---|---|---|---|---|---|
-| フロントエンド WS ユーザーメッセージ | `origin='user'` | — | ユーザーがクライアントで送信 | `messages` 行 `origin='user'` + 全文（境界ごとに永続化） | state/MesMemory に常駐；モデルビューはプレビューへ退避され得る；要約はユーザー要求を保持（複数要求リスト + 逐語テキスト + 退避ポインタ：`planned`） |
+| フロントエンド WS ユーザーメッセージ | `origin='user'` | — | ユーザーがクライアントで送信 | `messages` 行 `origin='user'` + 全文（境界ごとに永続化） | state/MesMemory に常駐；モデルビューはプレビューへ退避され得る；要約は最新のユーザー要求を逐語で保持（`latest_user_request`；複数要求リスト + 要求ごとの退避ポインタ：`planned`） |
 | チャネルユーザーメッセージ（QQ 等） | `origin='user'` | — | ユーザーがチャネルアダプタ経由で送信 | 上記と同じ | 上記と同じ |
 | TaskIntent ステアリング / リマインダ | `origin='task_intent'` | `True` | 計画アクティブ誘導 / タスク意図アーミング（`task_intent/core.py::_task_intent_message`） | `messages` 行 | **ユーザーリクエストではない** —— Unresolved リストに入らない |
 | サブエージェント完了キャリア | `origin='subagent_completion'` | `True` | バックグラウンドのサブエージェントが完了し結果を通知 | `messages` 行（origin は永続化の継ぎ目で刻印、`context_engine/store/core.py`） | ユーザーリクエストではない；モデルビューには可視 |
 | ハートビート起動のターン | `origin='heartbeat'` | — | ハートビートサービスのターン（**現時点でこの経路は存在しない —— `reserved`**） | — | ユーザーリクエストではない |
 | cron 起動のターン | `origin='cron'` | `True` | 定期ジョブのセッションターン（`origin_for_source`） | `messages` 行 | ユーザーリクエストではない |
 | 圧縮要約ペア | `lc_source='summarization'`（`additional_kwargs` 内、origin 列ではない） | — | 圧縮成果物（`_build_new_messages`） | **MesMemory には永続化されない**；state の要約ペア | `<summary>` がモデルビューに常駐；`<prior-summary>` として連鎖継続 |
-| 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンが `evicted_refs[]` ポインタを運ぶ（`planned`） |
+| 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンは構造化要約ドキュメント内で `evicted_refs[]` ポインタを運ぶ |
 | 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
-| FACTS.md（`planned`、未実装） | `workspace/memory/FACTS.md` | — | 計画横断の事実（EXPERIENCE_ROUTING_PLAN Part 3） | memory ファイル | `planned` —— 現行システムには含まれない |
+| FACTS.md | `workspace/memory/FACTS.md`（memory ツール target `facts`） | — | モジュール非依存の広範な落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ファイル（1 375 文字上限；超過時は最古のエントリから淘汰） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
 
 ## 💾 境界ごとの永続化
 
