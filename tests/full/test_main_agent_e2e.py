@@ -22,6 +22,14 @@ REQUIRES
 - ``uv run pytest`` (the uv venv has ``llama_cpp``; system ``python`` does not).
 - A populated ``.env`` with a valid ``MAIN_LLM_API_KEY`` for the configured
   endpoint. No network mocking — this is a live integration test.
+
+MARKER
+------
+``llm_e2e``: deselected by default via the ``pyproject.toml`` addopts, and
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/``. Run it
+explicitly with::
+
+    uv run --no-sync pytest -m llm_e2e tests/full/test_main_agent_e2e.py -v
 """
 
 from __future__ import annotations
@@ -36,7 +44,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from models import build_main_llm
 
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
 
 
 class _E2EState(AgentState):

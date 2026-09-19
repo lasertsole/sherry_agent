@@ -8,13 +8,12 @@ harness for the FACTS prompt context, real SQLite stores and real files under
 sandboxed roots. They require a populated ``.env`` with working endpoints.
 Run with::
 
-    uv run --no-sync pytest tests/full/test_facts_module_notes_e2e.py -v --durations=0
+    uv run --no-sync pytest -m llm_e2e tests/full/test_facts_module_notes_e2e.py -v --durations=0
 
-Marker decision: deliberately NOT tagged ``llm_e2e`` (same rationale as
-``test_context_governance_e2e.py``): ``tests/full/`` is excluded from
-``tests/run_tests_split.py``, so the hermetic CI gate never collects this file;
-``llm_e2e`` would instead pull it into the dedicated live-network CI job, which
-must not depend on live credentials nor write real session data.
+Marker policy: tagged ``llm_e2e`` (same policy as
+``test_context_governance_e2e.py``), so a bare ``pytest`` run deselects it and
+the hermetic CI gate never collects this file; ``tests/run_tests_split.py``
+additionally ``--ignore``s ``tests/full/`` outright.
 
 Coverage:
 
@@ -73,7 +72,7 @@ from context_engine.curator import constants as curator_constants
 from context_engine.curator import usage as curator_usage
 from runtime import clear_all_register_sessions, state_register_db, state_register_mem
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(1500)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(1500)]
 
 _TEST_SYSTEM_PROMPT = "You are Sherry, an e2e test session agent. Follow the instructions exactly."
 _BROAD_SENTINEL = "BROAD-FACT-9137"

@@ -6,14 +6,13 @@ and the real components (MesMemory SQLite store, SQLite checkpointer, session
 dirs). They write real session data and require a populated ``.env`` with
 working endpoints. Run with::
 
-    uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
+    uv run --no-sync pytest -m llm_e2e tests/full/test_context_governance_e2e.py -v
 
-Marker decision: deliberately NOT tagged ``llm_e2e``. ``tests/full/`` is
-excluded from ``tests/run_tests_split.py`` by construction, so the hermetic CI
-gate never collects this file; tagging it ``llm_e2e`` would instead pull it into
-the dedicated ``--with-llm-e2e`` CI job, which must not depend on live network
-credentials nor write real session data. The file is exercised only by the
-explicit command above.
+Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
+``pyproject.toml`` addopts and the hermetic CI gate never collects this file;
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright,
+so the dedicated ``--with-llm-e2e`` job does not pick it up either. The tag is
+what keeps the file restricted to explicit invocation.
 
 Coverage (features that previously had no e2e coverage):
 
@@ -71,7 +70,7 @@ from pub.func.message.eviction import EVICTED_TO_KEY, _READ_FILE_SLICE_NOTICE
 from pub.func.message.overflow_clip import CLIP_MARKER
 from runtime import clear_all_register_sessions, state_register_mem
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
 
 _CTX_WINDOW = 41_600  # 41600 − 16000 reserve = usable 25600 (compact @ 20480)
 _EVICTED_PATH_RE = re.compile(r"\[evicted to: (.*?)\]")

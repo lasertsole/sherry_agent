@@ -387,7 +387,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pyt
 
 **CI:** `.github/workflows/ci.yml`는 `main`에 대한 모든 push/PR에서 `uv run python tests/run_tests_split.py`를 실행하며, 스위트를 **세 개의 순차 pytest 프로세스**(결코 병렬 아님)로 수행합니다: A = `unit`, B = `integration` + `module` + `system`, C = `regression`. `--with-llm-e2e`는 별도의 더 느린 job으로 유지하세요(API 토큰을 소모하며, 다른 스위트와 병렬로 절대 실행하지 마세요).
 
-> **참고:** `tests/full/`은 위 표준 그룹 밖의 보조/실험 디렉터리입니다. 특히 `tests/full/test_main_agent_e2e.py`는 라이브 네트워크 테스트로 `llm_e2e` 태그가 **없으므로**, 태그를 달기 전에는 CI에 연결하지 마세요.
+> **참고:** `tests/full/`은 위 표준 그룹 밖의 보조/실험 디렉터리입니다. 실제 LLM을 구동하는 모든 파일에는 `llm_e2e` 태그가 붙어 있으므로 기본 addopts에서 선택 해제되고 split runner도 수집하지 않습니다(또한 `tests/full/`을 `--ignore`합니다). 수동 실행: `uv run --no-sync pytest -m llm_e2e tests/full/<file>`. hermetic 테스트는 여기에 두지 않습니다 — real-graph HITL 테스트는 `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py`로 이동해 표준 그룹에서 실행됩니다.
 
 ### Evals
 

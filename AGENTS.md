@@ -148,6 +148,8 @@ tests/
 
 Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (deselected by default).
 
+`tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Hermetic tests belong in the standard tree, not `tests/full/`.
+
 **IMPORTANT**: `tests/agent/tools/subagent/conftest.py` installs sys.modules stubs at collection time. When running multiple test dirs in one process, use the stub-tolerant loading pattern from `tests/agent/tools/taskflow/conftest.py`. The split runner (`tests/run_tests_split.py`) avoids this by running groups in separate processes.
 
 ## Conventions

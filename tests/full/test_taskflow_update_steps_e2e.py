@@ -2,11 +2,13 @@
 
 LIVE-NETWORK, RUN EXPLICITLY. These tests drive the production graph built by
 ``agent.core.built_agent()`` against the real configured main LLM, and the real
-TaskFlow tools against a real per-test SQLite store. ``tests/full/`` is excluded
-from ``tests/run_tests_split.py`` by construction, so the hermetic CI gate never
-collects this file; it is exercised only by the explicit command::
+TaskFlow tools against a real per-test SQLite store. Marker policy: tagged
+``llm_e2e``, so a bare ``pytest`` run deselects it via the ``pyproject.toml``
+addopts and the hermetic CI gate never collects this file;
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright.
+Run it explicitly with::
 
-    uv run --no-sync pytest tests/full/test_taskflow_update_steps_e2e.py -v --durations=0
+    uv run --no-sync pytest -m llm_e2e tests/full/test_taskflow_update_steps_e2e.py -v --durations=0
 
 Coverage (the Phase 7 e2e layer for ``taskflow_update_steps``):
 
@@ -62,7 +64,7 @@ from context_engine import delete_messages_by_session
 from pub.func.build_agent_config import build_agent_config
 from runtime import clear_all_register_sessions
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
 
 
 # ---------------------------------------------------------------------------

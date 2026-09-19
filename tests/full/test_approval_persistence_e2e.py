@@ -6,13 +6,12 @@ real ``HumanInTheLoop`` middleware, a real ``ToolApprovalStore`` pointed at a
 per-test tmp sandbox, and a real ``MemorySaver`` checkpointer. They do not
 touch MesMemory, session dirs, or any repo-tracked file. Run with::
 
-    uv run --no-sync pytest tests/full/test_approval_persistence_e2e.py -v
+    uv run --no-sync pytest -m llm_e2e tests/full/test_approval_persistence_e2e.py -v
 
-Marker decision: deliberately NOT tagged ``llm_e2e`` — ``tests/full/`` is
-excluded from ``tests/run_tests_split.py``, so the hermetic CI gate never
-collects this file; tagging it ``llm_e2e`` would instead pull it into the
-dedicated ``--with-llm-e2e`` CI job, which must not depend on live network
-credentials.
+Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
+``pyproject.toml`` addopts and the hermetic CI gate never collects it;
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright.
+The tag is what keeps the file restricted to explicit invocation.
 
 Harness shape mirrors ``tests/full/test_hitl_real_graph.py`` (real compiled
 graph + real ``langgraph.types.interrupt`` propagation), with two differences:
@@ -74,7 +73,7 @@ from agent.middlewares.humanInTheLoop.types import BLOCKED_MESSAGE
 from models import build_main_llm
 from runtime import clear_all_register_sessions, state_register_mem
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
 
 TOOL_NAME = "approval_probe"
 PROBE_ARGS = {"probe": "alpha"}

@@ -8,10 +8,15 @@ a real ``boulder.json`` sandbox, and the real ``spawn_subagent_direct`` pipeline
 code under test; only file locations / storage seams are redirected so each
 test cleans up after itself and can be re-run independently.
 
-Run explicitly (NOT wired into CI; ``tests/full/`` is excluded from the hermetic
-split runner):
+Run explicitly::
 
-    uv run --no-sync pytest tests/full/test_session_isolation_e2e.py -v --durations=0
+    uv run --no-sync pytest -m llm_e2e tests/full/test_session_isolation_e2e.py -v --durations=0
+
+Marker policy: tagged ``llm_e2e`` because case 4 drives a real
+``spawn_subagent_direct`` run against the configured LLM (the other cases are
+hermetic). A bare ``pytest`` run therefore deselects the file via the
+``pyproject.toml`` addopts, and ``tests/run_tests_split.py`` additionally
+``--ignore``s ``tests/full/`` outright.
 
 Case map (one test each):
 
@@ -63,7 +68,7 @@ from agent.tools.taskflow.registry import store_sqlite as flow_store
 from config import SESSIONS_DIR
 from runtime import state_register_db
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(900)]
 
 
 # ---------------------------------------------------------------------------

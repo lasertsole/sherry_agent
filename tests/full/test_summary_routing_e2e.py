@@ -7,14 +7,13 @@ method="json_mode")``), real SQLite stores (todos.db, state registers), and the
 real agent graph (``agent.core.built_agent()``) for the P1-9 eviction cases.
 They require a populated ``.env`` with working endpoints. Run with::
 
-    uv run --no-sync pytest tests/full/test_summary_routing_e2e.py -v --durations=0
+    uv run --no-sync pytest -m llm_e2e tests/full/test_summary_routing_e2e.py -v --durations=0
 
-Marker decision: deliberately NOT tagged ``llm_e2e``. ``tests/full/`` is
-excluded from ``tests/run_tests_split.py`` by construction, so the hermetic CI
-gate never collects this file; tagging it ``llm_e2e`` would instead pull it into
-the dedicated ``--with-llm-e2e`` CI job, which must not depend on live network
-credentials nor write real session data. The file is exercised only by the
-explicit command above.
+Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
+``pyproject.toml`` addopts and the hermetic CI gate never collects this file;
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright,
+so the dedicated ``--with-llm-e2e`` job does not pick it up either. The tag is
+what keeps the file restricted to explicit invocation.
 
 Coverage (Part 0 = structured_output compression; Part 1 = plan context +
 ``active_plan_notes``):
@@ -85,7 +84,7 @@ from models import build_auxiliary_llm
 from pub.func.message.eviction import EVICTED_TO_KEY
 from runtime import clear_all_register_sessions, state_register_db, state_register_mem
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(1200)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(1200)]
 
 # A small window keeps the auxiliary prompts cheap: usable 4000, compact
 # threshold 3200, preserve budget 5000 — the same knobs test_nudge_cadence_e2e

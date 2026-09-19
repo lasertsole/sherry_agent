@@ -8,13 +8,11 @@ LIVE-NETWORK, RUN EXPLICITLY. These tests drive the production
 (MesMemory, todos.db, taskflow registry, state registers). They require a
 populated ``.env`` with working endpoints. Run with::
 
-    uv run --no-sync pytest tests/full/test_nudge_cadence_e2e.py -v --durations=0
+    uv run --no-sync pytest -m llm_e2e tests/full/test_nudge_cadence_e2e.py -v --durations=0
 
-Marker decision: deliberately NOT tagged ``llm_e2e``. ``tests/full/`` is
-excluded from ``tests/run_tests_split.py`` by construction, so the hermetic CI
-gate never collects this file; tagging it ``llm_e2e`` would instead pull it into
-the dedicated ``--with-llm-e2e`` CI job, which must not depend on live network
-credentials nor write real session data.
+Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
+``pyproject.toml`` addopts and the hermetic CI gate never collects this file;
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright.
 
 Contract under test (the "nudge cadence" contract): every compression that
 actually discards messages dispatches ONE memory review; there is no counter or
@@ -105,7 +103,7 @@ from models import build_auxiliary_llm
 from pub.func.message.eviction import EVICTED_TO_KEY
 from runtime import clear_all_register_sessions, state_register_db, state_register_mem
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(1200)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(1200)]
 
 _CTX_WINDOW = 20_000  # usable 4000; compact threshold 3200; preserve budget 5000
 _BIG_CHARS = 26_000  # ~6.5K estimated tokens: hard overflow, no tail clip

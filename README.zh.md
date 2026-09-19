@@ -387,7 +387,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数�
 
 **CI：** `.github/workflows/ci.yml` 会在每次向 `main` 推送/提 PR 时运行 `uv run python tests/run_tests_split.py`，以**三个顺序执行的 pytest 进程**（从不并行）跑完整套件：A = `unit`，B = `integration` + `module` + `system`，C = `regression`。`--with-llm-e2e` 仍作为单独的、更慢的 job（它消耗 API token；绝不要与其他套件并行运行）。
 
-> **注意：** `tests/full/` 是标准分组之外的辅助/实验目录。其中 `tests/full/test_main_agent_e2e.py` 是真实联网测试，**未**打上 `llm_e2e` 标记，未经标记不要接入 CI。
+> **注意：** `tests/full/` 是标准分组之外的辅助/实验目录。其中所有驱动真实 LLM 的文件都带有 `llm_e2e` 标记，因此默认 addopts 会取消选择它们，split runner 也从不收集（它还会 `--ignore` `tests/full/`）。手动运行：`uv run --no-sync pytest -m llm_e2e tests/full/<file>`。hermetic 测试不应放在这里 —— real-graph HITL 测试现已移至 `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py`，随标准分组运行。
 
 ### Evals
 

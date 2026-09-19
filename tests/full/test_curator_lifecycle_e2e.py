@@ -6,9 +6,13 @@ real main LLM for umbrella generation. The sandbox is a tmp dir so no real
 ``skills/auto`` content is touched; ``tmp_path`` + ``monkeypatch`` remove it
 after the test.
 
+Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
+``pyproject.toml`` addopts and the hermetic CI gate never collects this file;
+``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright.
+
 Run with::
 
-    uv run --no-sync pytest tests/full/test_curator_lifecycle_e2e.py -v
+    uv run --no-sync pytest -m llm_e2e tests/full/test_curator_lifecycle_e2e.py -v
 """
 
 from __future__ import annotations
@@ -30,7 +34,7 @@ from context_engine.curator import usage as curator_usage
 from context_engine.curator.transitions import apply_automatic_transitions
 from runtime import data_provider
 
-pytestmark = [pytest.mark.unit, pytest.mark.timeout(600)]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.timeout(600)]
 
 
 @dataclass(frozen=True)
