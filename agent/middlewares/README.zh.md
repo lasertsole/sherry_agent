@@ -197,7 +197,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **文本**条目直接透传（至多一条）。
 - **`image_url`**：远程 `http(s)` URL 原样保留；`data:` / base64 载荷被解码并用 PIL 保存到 `src/<session_id>/mutil_temp/<时间戳><扩展名>`（扩展名通过 `_IMAGE_MAGIC` 魔数推断），同时在 `media/` 中保留一份持久副本。
 - **`audio_url`**：下载到临时文件（30 秒超时）。**`audio_bytes` / `video_url` / `video_bytes`**：以同样方式解码保存（`_AUDIO_MAGIC` / `_VIDEO_MAGIC`）。
-- 消息文本末尾追加 `"[Uploaded media]"` 指令块，告知模型使用 `skill_view` 工具 `image_to_text` / `speech_to_text` / `video_text_to_text` 查看文件（模型本身没有原生视觉能力）。
+- `main_llm_native_multimodal` 配置决定路径：`"true"` 为主模型保留原始媒体块，`"false"` 始终走技能路径，`"auto"` 则按媒体类型（vision / audio / video）查询进程级能力缓存（键为 `"{provider}/{model_name}"`）逐类决策。
+- `"auto"` 下，只要没有任何类型被判定为 `"unsupported"` 就保留媒体块；存在未探测类型时会写入本回合的原生尝试标志（`_multimodal_trying_native` / `_multimodal_native_model`）。`"[Uploaded media]"` 指令块仅在技能路径下追加，告知模型使用 `skill_view` 工具 `image_to_text` / `speech_to_text` / `video_text_to_text` 查看文件。
+- 当模型拒绝被分类为 `multimodal_not_supported` 时，`LLMRetryMiddleware` 会把消息中实际出现的媒体类型写为 `"unsupported"`，并把请求改写为技能路径；同进程内的后续会话与回合因此不再尝试原生。
 - 持久化路径写入 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`，随后由 MesMemory 写库供历史渲染使用。
 - **更早的** `HumanMessage` 中的 `image_url` 块会被剥离，避免过期的 base64 大对象滞留在上下文中；但仅在确实存在此类块时才执行剥离（廉价前置检查会跳过无可剥离内容的消息），且仅当剥离后的文本非空时才写回。
 
@@ -443,7 +445,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 在主 Agent 中注册于 **`HumanInTheLoop` 与 `Summarization` 之间**：相对 `MaxTokensBoostMiddleware` 为内层（只看到 boost 重呼之后仍未解决的真正截断），相对 Summarization 为外层（重试环从外部包住 T4/T5 溢出恢复环）。worker 流水线中**不**注册。当状态中没有 `session_id` 时，中间件直接透传。
 
-每次 handler 调用都经过基于 `pub/func/message/llm_error_classifier.py` 的"分类 → 处置"循环——`FailoverReason` 枚举（18 种原因）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` 标志）、8 步优先级管线 `classify_api_error`——并通过 `pub/func/retry_utils.py::jittered_backoff` 退避。
+每次 handler 调用都经过基于 `pub/func/message/llm_error_classifier.py` 的"分类 → 处置"循环——`FailoverReason` 枚举（19 种原因）、`ClassifiedError` 判定（`retryable` / `should_compress` / `should_fallback` 标志）、8 步优先级管线 `classify_api_error`——并通过 `pub/func/retry_utils.py::jittered_backoff` 退避。
 
 **按 `FailoverReason` 的重试语义**
 
@@ -451,6 +453,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 |---|---|---|
 | 抖动退避重试（`retryable=True`） | `auth`、`rate_limit`、`overloaded`、`server_error`、`timeout`、`image_too_large`、`invalid_response`、`unknown` | 至多重试 `max_retries` 次；延迟 = `base_delay × 2^(attempt−1)`，封顶 `max_delay`，±`jitter`，钳制在 `[0.1, max_delay]` |
 | 压缩委托（`should_compress=True`） | `context_overflow`、`payload_too_large` | 立即重新抛出——溢出错误归 Summarization 的 T4/T5 恢复环管 |
+| 多模态技能回退（`retryable=True`） | `multimodal_not_supported` | 仅在 auto 模式的原生尝试中：把消息中实际出现的媒体类型写为 `unsupported`，将请求改写为技能路径，重置重试预算后重呼；其他情况重新抛出 |
 | 回退（`should_fallback=True`，不可重试） | `auth_permanent`、`billing`、`upstream_rate_limit`、`ssl_cert_verification`、`model_not_found`、`provider_policy_blocked`、`content_policy_blocked` | 切换到下一个回退候选；链耗尽 → 重新抛出 |
 | 硬失败 | `format_error` | 重新抛出（不重试、不回退） |
 
@@ -462,7 +465,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **部分流桩消费：** 流被网络中断切断后，流式层会设置 `llm_partial_stream_stub` 与 `llm_partial_stream_cause`（保留的 `FailoverReason` 值，默认 `timeout`）。中间件在成功的 handler 调用之后消费该标志：被切断的结果被丢弃，handler 在退避后以全新尝试重呼一次——绝不加大 max_tokens 提额。流式回合（`is_stream_turn` 标志）下，重呼前先剥离 `request.config["callbacks"]` 并在 `finally` 中恢复（MaxTokensBoost 的 strip → call → restore 契约），避免已流出的 token 重复输出。timeout 分类的原因会累加过期连击。重试预算耗尽时，中间件优雅降级并返回当前（部分）结果。
 
-**状态键（全部存于 `state_register_mem`）：** `llm_stale_streak`、`llm_fallback_index`（本中间件所有）；`llm_content_filter_blocked`、`llm_content_filter_terminated`、`llm_partial_stream_stub`、`llm_partial_stream_cause`（流式层写入，本中间件消费）。
+**状态键（全部存于 `state_register_mem`）：** `llm_stale_streak`、`llm_fallback_index`（本中间件所有）；`llm_content_filter_blocked`、`llm_content_filter_terminated`、`llm_partial_stream_stub`、`llm_partial_stream_cause`（流式层写入，本中间件消费）；`_multimodal_trying_native`、`_multimodal_native_model`（`MultimodalProcessor` 写入，本中间件消费以实现技能回退）。
 
 ### Summarization
 
@@ -591,6 +594,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 | `heartbeat_iter`、`heartbeat_tool`、`heartbeat_stale`、`heartbeat_killed`、`heartbeat_skip`、`_last_heartbeat_iter`、`_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard 的键（`SESSION_STATE_KEYS`，六个） | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
 | `llm_stale_streak`、`llm_fallback_index` | LLMRetryMiddleware | mem |
+| `_multimodal_trying_native`、`_multimodal_native_model` | MultimodalProcessor（写入）→ LLMRetryMiddleware（消费） | mem |
 | `llm_content_filter_blocked`、`llm_content_filter_terminated` | 流式层（写入）→ LLMRetryMiddleware（消费） | mem |
 | `llm_partial_stream_stub`、`llm_partial_stream_cause` | 流式层（写入）→ LLMRetryMiddleware（消费） | mem |
 | `summarization_force_recovery` | ContextLimitGuardWrapper（写入）→ Summarization（消费） | mem |
@@ -679,7 +683,7 @@ agent = create_agent(
 ├─ before_agent（列表顺序）
 │   MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · MultimodalProcessor  规范化最后一条 HumanMessage，剥离旧 image_url 块
+│   · MultimodalProcessor  先存盘媒体，再按配置 / 能力缓存保留原生块或注入技能提示
 │   · IterationBudget  重置预算计数器
 │   · ToolGuardrails  重置回合级护栏状态
 │   · HeartbeatStaleness  重置状态键 + 启动 1 分钟心跳定时器
@@ -763,6 +767,7 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 公开导出
 ├── base.py                      # require_session_id / args_hash 辅助
+├── llm_capability_cache.py      # 进程级原生多模态能力缓存
 ├── system_prompt/               # @dynamic_prompt 系统提示词注入
 │   ├── __init__.py              # 仅导出 system_prompt_injection
 │   └── core.py                  # system_prompt_injection + _get_and_reload_system_prompt
@@ -790,6 +795,7 @@ agent/middlewares/
 ├── media_pipeline/              # MultimodalProcessor
 │   ├── __init__.py              # 导出 MultimodalProcessor
 │   ├── core.py                  # MultimodalProcessor
+│   ├── fallback.py             # 技能路径回退（媒体提示 + 请求改写）
 │   ├── media_handlers.py        # MultimodalProcessor 的分媒体类型处理策略
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin（共享）
 ├── message_persistence/         # MessagePersistenceMiddleware

@@ -200,7 +200,9 @@ Second in the list, right after `TodoContinuationEnforcer` (which implements no 
 - **Text** items pass through (at most one).
 - **`image_url`**: remote `http(s)` URLs are kept as-is; `data:` / base64 payloads are decoded and saved with PIL under `src/<session_id>/mutil_temp/<timestamp><ext>` (extension inferred from magic bytes via `_IMAGE_MAGIC`), with a durable copy in `media/`.
 - **`audio_url`**: downloaded to a temp file (30 s timeout). **`audio_bytes` / `video_url` / `video_bytes`**: decoded and saved the same way (`_AUDIO_MAGIC` / `_VIDEO_MAGIC`).
-- An `"[Uploaded media]"` instruction block is appended to the message text, telling the model to inspect the files with the `skill_view` tools `image_to_text` / `speech_to_text` / `video_text_to_text` (the model has no native vision).
+- The `main_llm_native_multimodal` config picks the path: `"true"` keeps the media blocks for the model itself, `"false"` always takes the skill path, and `"auto"` decides per media family (vision / audio / video) through a process-level capability cache keyed by `"{provider}/{model_name}"`.
+- Under `"auto"` the blocks stay while no family is known `"unsupported"`; an unprobed family records the per-turn native-attempt flags (`_multimodal_trying_native` / `_multimodal_native_model`). The `"[Uploaded media]"` instruction block is appended only on the skill path, telling the model to inspect the files with the `skill_view` tools `image_to_text` / `speech_to_text` / `video_text_to_text`.
+- A model rejection classified as `multimodal_not_supported` makes `LLMRetryMiddleware` write `"unsupported"` for the media families actually present and rewrite the request onto the skill path, so later sessions and turns in the same process skip the native probe.
 - Persisted paths are stored in `additional_kwargs["images"]` / `["audios"]` / `["videos"]` and later written to MesMemory for history rendering.
 - `image_url` blocks are stripped from **older** `HumanMessage`s so stale base64 blobs do not linger in context — but only when such a block actually exists (a cheap pre-check skips messages with nothing to strip) and only when the stripped text is non-empty.
 
@@ -446,7 +448,7 @@ Why the difference: the human message is persisted at the turn's first `after_mo
 
 Registered in the main agent **between `HumanInTheLoop` and `Summarization`**: inner relative to `MaxTokensBoostMiddleware` (it only sees genuine truncations that survived the boost re-calls) and outer relative to Summarization (the retry loop wraps the T4/T5 overflow-recovery ring from the outside). Not registered in the worker pipeline. When the state carries no `session_id`, the middleware is a passthrough.
 
-Each handler call runs through a classify → act loop built on `pub/func/message/llm_error_classifier.py` — the `FailoverReason` enum (18 reasons), the `ClassifiedError` verdict (`retryable` / `should_compress` / `should_fallback` flags), and the 8-step priority pipeline `classify_api_error` — and backs off via `pub/func/retry_utils.py::jittered_backoff`.
+Each handler call runs through a classify → act loop built on `pub/func/message/llm_error_classifier.py` — the `FailoverReason` enum (19 reasons), the `ClassifiedError` verdict (`retryable` / `should_compress` / `should_fallback` flags), and the 8-step priority pipeline `classify_api_error` — and backs off via `pub/func/retry_utils.py::jittered_backoff`.
 
 **Retry semantics by `FailoverReason`**
 
@@ -454,6 +456,7 @@ Each handler call runs through a classify → act loop built on `pub/func/messag
 |---|---|---|
 | Retry with jittered backoff (`retryable=True`) | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown` | Up to `max_retries` re-calls; delay = `base_delay × 2^(attempt−1)` capped at `max_delay`, ±`jitter`, clamped to `[0.1, max_delay]` |
 | Compress-delegate (`should_compress=True`) | `context_overflow`, `payload_too_large` | Re-raise immediately — Summarization's T4/T5 recovery ring owns overflow errors |
+| Multimodal skill fallback (`retryable=True`) | `multimodal_not_supported` | Only during an auto-mode native attempt: cache the media families present as `unsupported`, rewrite the request onto the skill path, reset the retry budget and re-call; otherwise re-raise |
 | Fallback (`should_fallback=True`, non-retryable) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | Switch to the next fallback candidate; chain exhausted → re-raise |
 | Hard fail | `format_error` | Re-raise (no retry, no fallback) |
 
@@ -465,7 +468,7 @@ Each handler call runs through a classify → act loop built on `pub/func/messag
 
 **Partial-stream stub consumption:** after a mid-stream network cut the stream layer sets `llm_partial_stream_stub` plus `llm_partial_stream_cause` (the preserved `FailoverReason` value, defaulting to `timeout`). The middleware consumes the flag after a successful handler call: the cut result is discarded and the handler is re-called once as a fresh attempt after backoff — never boosted with larger max_tokens. On stream turns (`is_stream_turn` flag) the re-call strips `request.config["callbacks"]` first and restores them in `finally` (the MaxTokensBoost strip → call → restore contract), so the already-streamed tokens are not duplicated. A timeout-classified cause bumps the stale streak. When the retry budget is exhausted, the middleware degrades gracefully and returns the current (partial) result.
 
-**State keys (all in `state_register_mem`):** `llm_stale_streak`, `llm_fallback_index` (owned here); `llm_content_filter_blocked`, `llm_content_filter_terminated`, `llm_partial_stream_stub`, `llm_partial_stream_cause` (written by the stream layer, consumed here).
+**State keys (all in `state_register_mem`):** `llm_stale_streak`, `llm_fallback_index` (owned here); `llm_content_filter_blocked`, `llm_content_filter_terminated`, `llm_partial_stream_stub`, `llm_partial_stream_cause` (written by the stream layer, consumed here); `_multimodal_trying_native`, `_multimodal_native_model` (written by `MultimodalProcessor`, consumed here for the skill fallback).
 
 ### Summarization
 
@@ -601,6 +604,7 @@ Common interface (`runtime/session/state_register.py`): `set_state`, `get_state`
 | `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard keys (`SESSION_STATE_KEYS`, six) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
 | `llm_stale_streak`, `llm_fallback_index` | LLMRetryMiddleware | mem |
+| `_multimodal_trying_native`, `_multimodal_native_model` | MultimodalProcessor (written) → LLMRetryMiddleware (consumed) | mem |
 | `llm_content_filter_blocked`, `llm_content_filter_terminated` | stream layer (written) → LLMRetryMiddleware (consumed) | mem |
 | `llm_partial_stream_stub`, `llm_partial_stream_cause` | stream layer (written) → LLMRetryMiddleware (consumed) | mem |
 | `summarization_force_recovery` | ContextLimitGuardWrapper (written) → Summarization (consumed) | mem |
@@ -688,7 +692,7 @@ user turn arrives
 ├─ before_agent (list order)
 │   MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · MultimodalProcessor  normalize last HumanMessage, strip old image_url blocks
+│   · MultimodalProcessor  persist media, then keep the native blocks or attach skill hints (config / capability cache)
 │   · IterationBudget  reset budget counters
 │   · ToolGuardrails  reset per-turn guard state
 │   · HeartbeatStaleness  reset keys + start 1-min heartbeat timer
@@ -772,6 +776,7 @@ Async variants follow the `a` prefix convention: `abefore_agent`, `aafter_agent`
 agent/middlewares/
 ├── __init__.py                  # public exports
 ├── base.py                      # require_session_id / args_hash helpers
+├── llm_capability_cache.py      # process-level native multimodal capability cache
 ├── system_prompt/               # @dynamic_prompt system-prompt injection
 │   ├── __init__.py              # exports system_prompt_injection only
 │   └── core.py                  # system_prompt_injection + _get_and_reload_system_prompt
@@ -799,6 +804,7 @@ agent/middlewares/
 ├── media_pipeline/              # MultimodalProcessor
 │   ├── __init__.py              # exports MultimodalProcessor
 │   ├── core.py                  # MultimodalProcessor
+│   ├── fallback.py             # skill-path fallback (media hints + request rewrite)
 │   ├── media_handlers.py        # per-media-type strategies for MultimodalProcessor
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (shared)
 ├── message_persistence/         # MessagePersistenceMiddleware

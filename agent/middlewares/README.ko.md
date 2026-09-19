@@ -198,7 +198,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - **텍스트** 항목은 그대로 통과(최대 1개).
 - **`image_url`**: 원격 `http(s)` URL은 그대로 유지. `data:` / base64 페이로드는 디코딩되어 PIL로 `src/<session_id>/mutil_temp/<타임스탬프><확장자>`에 저장됩니다(확장자는 `_IMAGE_MAGIC` 매직바이트로 추정), 영구 복사본이 `media/`에도 생성됩니다.
 - **`audio_url`**: 임시 파일로 다운로드(30초 타임아웃). **`audio_bytes` / `video_url` / `video_bytes`**: 동일하게 디코딩·저장(`_AUDIO_MAGIC` / `_VIDEO_MAGIC`).
-- 메시지 텍스트 끝에 `"[Uploaded media]"` 지시 블록을 덧붙여, `skill_view` 도구인 `image_to_text` / `speech_to_text` / `video_text_to_text`로 파일을 확인하도록 모델에 지시합니다(모델은 네이티브 비전 능력이 없음).
+- `main_llm_native_multimodal` 설정이 경로를 결정합니다: `"true"`는 미디어 블록을 모델에 그대로 전달하고, `"false"`는 항상 스킬 경로를 사용하며, `"auto"`는 미디어 종류(vision / audio / video)별로 프로세스 수준 능력 캐시(키: `"{provider}/{model_name}"`)를 조회해 판단합니다.
+- `"auto"`에서는 `"unsupported"`로 판정된 종류가 없으면 블록을 유지하고, 아직 검증되지 않은 종류가 있으면 턴 단위 네이티브 시도 플래그(`_multimodal_trying_native` / `_multimodal_native_model`)를 기록합니다. `"[Uploaded media]"` 지시 블록은 스킬 경로에서만 덧붙여, `skill_view` 도구인 `image_to_text` / `speech_to_text` / `video_text_to_text`로 파일을 확인하도록 모델에 지시합니다.
+- 모델이 `multimodal_not_supported`로 분류되는 거부를 반환하면 `LLMRetryMiddleware`가 메시지에 실제로 존재하는 미디어 종류를 `"unsupported"`로 기록하고 요청을 스킬 경로로 다시 씁니다. 같은 프로세스의 이후 세션과 턴은 네이티브 시도를 건너뜁니다.
 - 영속화된 경로는 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`에 저장되고, 이후 MesMemory에 기록되어 히스토리 렌더링에 사용됩니다.
 - **더 오래된** `HumanMessage`에서는 `image_url` 블록이 제거되어, 낡은 base64 덩어리가 컨텍스트에 남지 않습니다. 다만 실제로 그러한 블록이 존재할 때만 수행되며(제거할 것이 없는 메시지는 저비용 사전 검사로 건너뜀), 제거 후 텍스트가 비어 있지 않을 때만 기록합니다.
 
@@ -444,7 +446,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 메인 에이전트에 **`HumanInTheLoop`와 `Summarization` 사이**에 등록됩니다: `MaxTokensBoostMiddleware`에 대해서는 안쪽(부스트 재호출을 통과한 진짜 잘림만 목격), Summarization에 대해서는 바깥쪽(재시도 루프가 T4/T5 오버플로 복구 링을 바깥에서 감쌈). 워커 파이프라인에는 등록되지 않습니다. 상태에 `session_id`가 없으면 그냥 통과합니다.
 
-각 handler 호출은 `pub/func/message/llm_error_classifier.py`에 기반한 "분류 → 처분" 루프를 거칩니다 — `FailoverReason` 열거형(18종), `ClassifiedError` 판정(`retryable` / `should_compress` / `should_fallback` 플래그), 8단계 우선순위 파이프라인 `classify_api_error` — 그리고 `pub/func/retry_utils.py::jittered_backoff`로 백오프합니다.
+각 handler 호출은 `pub/func/message/llm_error_classifier.py`에 기반한 "분류 → 처분" 루프를 거칩니다 — `FailoverReason` 열거형(19종), `ClassifiedError` 판정(`retryable` / `should_compress` / `should_fallback` 플래그), 8단계 우선순위 파이프라인 `classify_api_error` — 그리고 `pub/func/retry_utils.py::jittered_backoff`로 백오프합니다.
 
 **`FailoverReason`별 재시도 시맨틱스**
 
@@ -452,6 +454,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 |---|---|---|
 | 지터 백오프 재시도 (`retryable=True`) | `auth`, `rate_limit`, `overloaded`, `server_error`, `timeout`, `image_too_large`, `invalid_response`, `unknown` | 최대 `max_retries`회 재호출. 지연 = `base_delay × 2^(attempt−1)`를 `max_delay`로 상한 적용, ±`jitter`, `[0.1, max_delay]`로 클램프 |
 | 압축 위임 (`should_compress=True`) | `context_overflow`, `payload_too_large` | 즉시 재발생 — 오버플로 오류는 Summarization의 T4/T5 복구 링이 담당 |
+| 멀티모달 스킬 폴백(`retryable=True`) | `multimodal_not_supported` | auto 모드 네이티브 시도 중에만: 메시지에 실제로 존재하는 미디어 종류를 `unsupported`로 기록하고 요청을 스킬 경로로 다시 쓴 뒤 재시도 예산을 리셋하고 재호출. 그 외에는 재발생 |
 | 폴백 (`should_fallback=True`, 재시도 불가) | `auth_permanent`, `billing`, `upstream_rate_limit`, `ssl_cert_verification`, `model_not_found`, `provider_policy_blocked`, `content_policy_blocked` | 다음 폴백 후보로 전환. 체인 소진 시 재발생 |
 | 하드 페일 | `format_error` | 재발생(재시도·폴백 없음) |
 
@@ -463,7 +466,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **부분 스트림 스텁 소비:** 스트림 도중 네트워크 단절 후 스트림 계층은 `llm_partial_stream_stub`과 `llm_partial_stream_cause`(보존된 `FailoverReason` 값, 기본값 `timeout`)를 설정합니다. 미들웨어는 성공한 handler 호출 후 플래그를 소비합니다: 잘린 결과는 폐기되고, handler가 백오프 후 새 시도로 한 번 재호출됩니다 — 더 큰 max_tokens로 부스트되는 일은 결코 없습니다. 스트리밍 턴(`is_stream_turn` 플래그)에서는 재호출 전에 `request.config["callbacks"]`를 제거하고 `finally`에서 복원합니다(MaxTokensBoost의 strip → call → restore 계약). 이미 스트리밍된 토큰이 중복되지 않습니다. timeout 분류 원인은 스테일 연속을 증가시킵니다. 재시도 예산이 소진되면 미들웨어는 우아하게 저하되어 현재(부분) 결과를 반환합니다.
 
-**상태 키(모두 `state_register_mem` 내):** `llm_stale_streak`, `llm_fallback_index`(여기서 소유). `llm_content_filter_blocked`, `llm_content_filter_terminated`, `llm_partial_stream_stub`, `llm_partial_stream_cause`(스트림 계층이 기록, 여기서 소비).
+**상태 키(모두 `state_register_mem` 내):** `llm_stale_streak`, `llm_fallback_index`(여기서 소유). `llm_content_filter_blocked`, `llm_content_filter_terminated`, `llm_partial_stream_stub`, `llm_partial_stream_cause`(스트림 계층이 기록, 여기서 소비). `_multimodal_trying_native`, `_multimodal_native_model`(`MultimodalProcessor`가 기록, 스킬 폴백을 위해 여기서 소비).
 
 ### Summarization
 
@@ -598,6 +601,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `heartbeat_iter`, `heartbeat_tool`, `heartbeat_stale`, `heartbeat_killed`, `heartbeat_skip`, `_last_heartbeat_iter`, `_last_heartbeat_tool` | HeartbeatStaleness | mem |
 | OutputRepetitionGuard 키(`SESSION_STATE_KEYS`, 6개) | OutputRepetitionGuard / RepetitionGuardWrapper | mem |
 | `llm_stale_streak`, `llm_fallback_index` | LLMRetryMiddleware | mem |
+| `_multimodal_trying_native`, `_multimodal_native_model` | MultimodalProcessor(기록) → LLMRetryMiddleware(소비) | mem |
 | `llm_content_filter_blocked`, `llm_content_filter_terminated` | 스트림 계층(기록) → LLMRetryMiddleware(소비) | mem |
 | `llm_partial_stream_stub`, `llm_partial_stream_cause` | 스트림 계층(기록) → LLMRetryMiddleware(소비) | mem |
 | `summarization_force_recovery` | ContextLimitGuardWrapper(기록) → Summarization(소비) | mem |
@@ -686,7 +690,7 @@ agent = create_agent(
 ├─ before_agent (리스트 순서)
 │   MultimodalProcessor → IterationBudget → ToolGuardrails
 │   → ToolCallNormalize → HeartbeatStaleness → HumanInTheLoop → Summarization
-│   · MultimodalProcessor  마지막 HumanMessage 정규화, 오래된 image_url 블록 제거
+│   · MultimodalProcessor  미디어를 저장한 뒤 설정 / 능력 캐시에 따라 네이티브 블록 유지 또는 스킬 힌트 주입
 │   · IterationBudget  예산 카운터 리셋
 │   · ToolGuardrails  턴 단위 가드 상태 리셋
 │   · HeartbeatStaleness  상태 키 리셋 + 1분 주기 하트비트 타이머 시작
@@ -770,6 +774,7 @@ class MyMiddleware(AgentMiddleware):
 agent/middlewares/
 ├── __init__.py                  # 공개 익스포트
 ├── base.py                      # require_session_id / args_hash 헬퍼
+├── llm_capability_cache.py      # 프로세스 수준 네이티브 멀티모달 능력 캐시
 ├── system_prompt/               # @dynamic_prompt 시스템 프롬프트 주입
 │   ├── __init__.py              # system_prompt_injection만 익스포트
 │   └── core.py                  # system_prompt_injection + _get_and_reload_system_prompt
@@ -797,6 +802,7 @@ agent/middlewares/
 ├── media_pipeline/              # MultimodalProcessor
 │   ├── __init__.py              # MultimodalProcessor 익스포트
 │   ├── core.py                  # MultimodalProcessor
+│   ├── fallback.py             # 스킬 경로 폴백(미디어 힌트 + 요청 재작성)
 │   ├── media_handlers.py        # MultimodalProcessor의 미디어 타입별 전략
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (공유)
 ├── message_persistence/         # MessagePersistenceMiddleware
