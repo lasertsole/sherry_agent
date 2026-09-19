@@ -42,7 +42,12 @@ from loguru import logger
 
 from config.features import INPUT_QUEUE, WS_STREAM
 from server.queue.user_input_queue import UserInputQueueStatus
-from server.service.input_queue_service import BatchTurnExecutor, TurnInput, route_for
+from server.service.input_queue_service import (
+    BatchTurnExecutor,
+    TurnInput,
+    origin_for_source,
+    route_for,
+)
 from server.service.stream_driver import StreamDriver
 from server.utils.ws_helpers import send_ws_json
 from pub.types.message import MultiModalMessage
@@ -519,8 +524,10 @@ class WsTurnExecutor(BatchTurnExecutor):
         if current is not None:
             active[session_id] = current
         messages = [MultiModalMessage(text=item.message) for item in batch]
+        sources = {item.source for item in batch}
+        origin = origin_for_source("cron" if "cron" in sources else "user")
         await _WsTurnStreamDriver(session_id, websocket, turn_info).drive(
-            async_generate_multi(session_id, messages)
+            async_generate_multi(session_id, messages, origin=origin)
         )
 
 

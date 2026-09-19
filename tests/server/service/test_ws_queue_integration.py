@@ -107,8 +107,17 @@ async def _handler_session(socket: _HandlerSocket):
             pass
 
 
-def _msg_frame(session_id: str, msg_id: str, text: str) -> dict[str, Any]:
-    return {"session_id": session_id, "msg_id": msg_id, "multi_modal_message": {"text": text}}
+def _msg_frame(
+    session_id: str, msg_id: str, text: str, *, origin: str | None = None
+) -> dict[str, Any]:
+    frame: dict[str, Any] = {
+        "session_id": session_id,
+        "msg_id": msg_id,
+        "multi_modal_message": {"text": text},
+    }
+    if origin is not None:
+        frame["origin"] = origin
+    return frame
 
 
 def _payload(text: str) -> str:
@@ -147,10 +156,12 @@ async def _no_interrupt(session_id: str) -> dict[str, Any] | None:
     return None
 
 
-def _simple_generate_factory(calls, *, on_text=None):
+def _simple_generate_factory(calls, *, on_text=None, origins=None):
     async def fake(session_id, messages, is_stream=True, origin=None):
         texts = [getattr(m, "text", str(m)) for m in messages]
         calls.append((session_id, texts))
+        if origins is not None:
+            origins.append(origin)
         if on_text is not None:
             await on_text(texts)
         yield {"type": "text", "content": f"echo:{'|'.join(texts)}"}
@@ -175,6 +186,7 @@ def ws_env(monkeypatch, tmp_path: Path):
     detector = {"busy": False}
     inline_calls: list[tuple[str, str]] = []
     drain_calls: list[tuple[str, str]] = []
+    drain_origins: list[dict[str, object] | None] = []
     socket_holder: dict[str, _HandlerSocket] = {}
 
     def fake_detect(session_key: str):
@@ -195,7 +207,11 @@ def ws_env(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         wsm, "async_generate", _simple_generate_factory(inline_calls), raising=False
     )
-    monkeypatch.setattr(turn_runner, "async_generate_multi", _simple_generate_factory(drain_calls))
+    monkeypatch.setattr(
+        turn_runner,
+        "async_generate_multi",
+        _simple_generate_factory(drain_calls, origins=drain_origins),
+    )
     monkeypatch.setattr(wsm, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(turn_runner, "get_pending_interrupt", _no_interrupt)
     monkeypatch.setattr(
@@ -208,6 +224,7 @@ def ws_env(monkeypatch, tmp_path: Path):
         detector=detector,
         inline_calls=inline_calls,
         drain_calls=drain_calls,
+        drain_origins=drain_origins,
         socket_holder=socket_holder,
     )
 
@@ -255,8 +272,43 @@ async def test_idle_message_starts_turn_and_completes_without_queued_frame(ws_en
         assert "queued" not in _events(socket), "STARTED must not send a queued frame"
         assert inline_calls == [], "handler must NOT drive an inline async_generate turn"
         assert drain_calls == [("s1", ["hello"])], "the executor drives the turn exactly once"
+        assert ws_env.drain_origins == [{"origin": "user"}], "a WS user turn is stamped origin=user"
         assert _events(socket)[-1] == "done"
         assert wsm._active_tasks == {}, "executor task must be unregistered after completion"
+
+
+@pytest.mark.asyncio
+async def test_client_origin_marker_is_accepted_and_user_origin_applied(ws_env):
+    """A client origin='user' marker is validated; the entry stamps user origin."""
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m1", "hello", origin="user"))
+        await _wait_until(
+            lambda: any(f.get("event") == "done" for f in socket.frames),
+            what="done frame for marked message",
+        )
+        await _wait_until(lambda: turn_runner._DRAIN_TASKS == {}, what="drain exited")
+        assert ws_env.drain_calls == [("s1", ["hello"])]
+        assert ws_env.drain_origins == [{"origin": "user"}]
+
+
+@pytest.mark.asyncio
+async def test_unsupported_client_origin_is_ignored_and_still_user(ws_env):
+    """A client cannot self-declare an internal origin; it is ignored."""
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m1", "hello", origin="task_intent"))
+        await _wait_until(
+            lambda: any(f.get("event") == "done" for f in socket.frames),
+            what="done frame for unsupported origin",
+        )
+        await _wait_until(lambda: turn_runner._DRAIN_TASKS == {}, what="drain exited")
+        assert ws_env.drain_calls == [("s1", ["hello"])]
+        assert ws_env.drain_origins == [{"origin": "user"}]
 
 
 @pytest.mark.asyncio

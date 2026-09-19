@@ -199,10 +199,12 @@ def channel_env(core, tmp_path, monkeypatch):  # noqa: ARG001 - core pins module
     monkeypatch.setattr(iqs, "detect_state", fake_detect_state)
 
     generate_calls: list[tuple[str, list[str]]] = []
+    generate_origins: list[dict[str, object] | None] = []
 
     async def fake_generate_multi(session_id, messages, is_stream=True, origin=None):  # noqa: ANN001
         texts = [m.text for m in messages]
         generate_calls.append((session_id, texts))
+        generate_origins.append(origin)
         yield {"type": "text", "content": f"echo:{'|'.join(texts)}"}
 
     monkeypatch.setattr(core, "async_generate_multi", fake_generate_multi)
@@ -225,6 +227,7 @@ def channel_env(core, tmp_path, monkeypatch):  # noqa: ARG001 - core pins module
         store=store,
         detector=detector,
         generate_calls=generate_calls,
+        generate_origins=generate_origins,
         stub_runner=stub_runner,
         fake_channel=fake_channel,
         sid=sid,
@@ -257,6 +260,7 @@ async def test_user_message_starts_turn_and_reply_goes_to_captured_reply_target(
 
     # Turn driven through the AI service with the queued text (as a batch).
     assert env.generate_calls == [(env.sid, ["hello"])]
+    assert env.generate_origins == [{"origin": "user"}]
 
     # Reply captured at enqueue time (chat-A), passive msg_id preserved.
     assert len(env.fake_channel.sent) == 1
@@ -304,6 +308,28 @@ async def test_cron_sender_id_maps_to_source_cron_row(core, channel_env):
     assert env.generate_calls == []
     assert env.fake_channel.sent == []
     assert env.stub_runner.finished == []
+
+
+@pytest.mark.asyncio
+async def test_idle_cron_message_drives_turn_with_cron_origin(core, channel_env):
+    """An idle cron delivery drives a turn tagged origin='cron' + internal."""
+    env = channel_env
+    message = SimpleNamespace(
+        channel="qq",
+        sender_id="cron tool",
+        chat_id="chat-cron",
+        content="cron result",
+        timestamp=0,
+        media=None,
+        metadata={},
+        session_id=None,
+    )
+
+    await core._process_inbound(message, env.fake_channel)
+    await _wait_until(lambda: env.stub_runner.finished)
+
+    assert env.generate_calls == [(env.sid, ["cron result"])]
+    assert env.generate_origins == [{"origin": "cron", "internal": True}]
 
 
 @pytest.mark.asyncio

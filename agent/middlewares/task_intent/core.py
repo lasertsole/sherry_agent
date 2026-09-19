@@ -230,6 +230,16 @@ def _is_internal_completion(msg: Any) -> bool:
     return bool(meta.get("internal")) and meta.get("provenance") == "subagent_completion"
 
 
+def _task_intent_message(content: str) -> HumanMessage:
+    """Build a steering message tagged as an internal TaskIntent injection.
+
+    ``origin="task_intent"`` lets the message store positively identify the
+    injection (never a real user request) and keeps it out of session titles;
+    ``internal=True`` marks it as a system directive for every consumer.
+    """
+    return HumanMessage(content=content, metadata={"origin": "task_intent", "internal": True})
+
+
 def _has_active_boulder(session_id: str | None = None) -> bool:
     """True when the boulder file holds continuable work.
 
@@ -311,7 +321,7 @@ class TaskIntentMiddleware(AgentMiddleware):
             # ── Plan-active steering (priority over arming) ────────────────
             if _has_active_boulder(session_id):
                 logger.info("TaskIntentMiddleware: plan-active reminder for session {}", session_id)
-                return {"messages": [HumanMessage(content=_PLAN_ACTIVE_REMINDER.strip())]}
+                return {"messages": [_task_intent_message(_PLAN_ACTIVE_REMINDER.strip())]}
 
             # ── First arming / short reminder ──────────────────────────────
             if not _detect_task_intent(content):
@@ -319,12 +329,12 @@ class TaskIntentMiddleware(AgentMiddleware):
 
             is_armed = bool(session_id) and session_id in _armed_sessions
             if is_armed:
-                steering = HumanMessage(content=_TASK_STEERING_REMINDER)
+                steering = _task_intent_message(_TASK_STEERING_REMINDER)
                 logger.info("TaskIntentMiddleware: re-arming reminder for session {}", session_id)
             else:
                 if session_id:
                     _armed_sessions.add(session_id)
-                steering = HumanMessage(content=_TASK_STEERING_PROMPT)
+                steering = _task_intent_message(_TASK_STEERING_PROMPT)
                 logger.info("TaskIntentMiddleware: first-arm steering for session {}", session_id)
 
             return {"messages": [steering]}

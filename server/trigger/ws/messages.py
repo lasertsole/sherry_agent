@@ -246,6 +246,15 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 # queue-then-drain. A busy session never gets its turn
                 # cancelled — the message is queued and executed FIFO when the
                 # current turn finishes (on_turn_finished → TurnRunner drain).
+                # The client may declare origin="user"; anything else is
+                # rejected (a client can never self-declare an internal
+                # origin) and the entry stamps the authoritative source.
+                client_origin = obj.get("origin")
+                if client_origin is not None and client_origin != "user":
+                    logger.warning(
+                        f"Agent WS ignoring unsupported origin={client_origin!r}: "
+                        f"session_id={session_id}"
+                    )
                 submit_result = await iqs.submit_user_input(
                     session_id,
                     multi_modal_message.text,

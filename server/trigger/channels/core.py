@@ -129,7 +129,7 @@ class _ChannelTurnExecutor(iqs.BatchTurnExecutor):
                 claim_row_ids = [resolved]
         completed = False
         try:
-            await self._drive_turn(session_id, [item.message for item in batch], reply_target)
+            await self._drive_turn(session_id, batch, reply_target)
             completed = True
         finally:
             if not completed and claim_row_ids:
@@ -171,7 +171,7 @@ class _ChannelTurnExecutor(iqs.BatchTurnExecutor):
         return claimed.id
 
     async def _drive_turn(
-        self, session_id: str, messages: Sequence[str], reply_target: str | None
+        self, session_id: str, batch: Sequence[iqs.TurnInput], reply_target: str | None
     ) -> None:
         target = _parse_reply_target(session_id, reply_target)
         if target is None:
@@ -180,10 +180,14 @@ class _ChannelTurnExecutor(iqs.BatchTurnExecutor):
             logger.warning("channel turn for session {} has no reply_target; dropping", session_id)
             return
 
-        user_inputs: list[MultiModalMessage] = [MultiModalMessage(text=text) for text in messages]
+        user_inputs: list[MultiModalMessage] = [
+            MultiModalMessage(text=item.message) for item in batch
+        ]
+        sources = {item.source for item in batch}
+        origin = iqs.origin_for_source("cron" if "cron" in sources else "user")
         ai_reply: str = ""
         stream = async_generate_multi(
-            session_id=session_id, messages=user_inputs, is_stream=False
+            session_id=session_id, messages=user_inputs, is_stream=False, origin=origin
         )
         async for item in stream:
             ai_reply += item["content"]

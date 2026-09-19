@@ -77,6 +77,7 @@ __all__ = [
     "TurnInput",
     "get_default_queue",
     "get_default_registry",
+    "origin_for_source",
     "queued",
     "route_for",
     "submit_user_input",
@@ -226,6 +227,21 @@ def route_for(reply_target: str | None) -> str:
     Mirrors the queue schema (``reply_target`` is NULL on the WS path).
     """
     return ROUTE_CHANNEL if reply_target else ROUTE_WS
+
+
+def origin_for_source(source: Source) -> dict[str, object]:
+    """Graph-input ``HumanMessage.metadata`` for a queue row's trusted source.
+
+    ``source`` is fixed at the transport entry (WS handler / channel consumer)
+    and never taken from a client payload. ``{"origin": "user"}`` marks real
+    user input; ``{"origin": "cron", "internal": True}`` marks a
+    cron-delivered result, so downstream consumers can positively identify
+    user-originated requests. The dict is passed as the ``origin`` argument to
+    ``async_generate*`` and persisted verbatim by the message row builder.
+    """
+    if source == "cron":
+        return {"origin": "cron", "internal": True}
+    return {"origin": "user"}
 
 
 # Per-session critical sections. The dict is bounded: once it exceeds

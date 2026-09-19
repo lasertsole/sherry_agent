@@ -61,6 +61,7 @@ class TestArming:
         first = await mw.abefore_model(_state(HumanMessage(content=_TASK)))
         assert first is not None
         assert ti._TASK_STEERING_PROMPT in first["messages"][0].content
+        assert first["messages"][0].metadata == {"origin": "task_intent", "internal": True}
 
         later = await mw.abefore_model(
             _state(
@@ -72,6 +73,12 @@ class TestArming:
         )
         assert later is not None
         assert later["messages"][0].content == ti._TASK_STEERING_REMINDER
+        assert later["messages"][0].metadata == {"origin": "task_intent", "internal": True}
+
+    def test_injection_metadata_marks_system_directive(self):
+        """The origin/internal metadata alone identifies a directive (content aside)."""
+        msg = ti._task_intent_message("plain text without a directive prefix")
+        assert ti._is_system_directive(msg) is True
 
 
 # ============================================================================
@@ -132,6 +139,7 @@ class TestPlanActiveBoulder:
         content = out["messages"][0].content
         assert "<sherry-ulw-execute>" in content
         assert ti._TASK_STEERING_PROMPT not in content
+        assert out["messages"][0].metadata == {"origin": "task_intent", "internal": True}
         assert "s-e7" not in ti._armed_sessions
 
     @pytest.mark.asyncio
