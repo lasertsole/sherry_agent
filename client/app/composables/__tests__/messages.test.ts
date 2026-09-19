@@ -283,6 +283,7 @@ describe('postAgentStream', () => {
     const payload = JSON.parse(ws.sent[0]!);
     expect(payload).toMatchObject({
       session_id: 's1',
+      origin: 'user',
       multi_modal_message: {
         text: 'hi',
         image_base64_list: [],
@@ -335,6 +336,7 @@ describe('postAgentStream', () => {
     const payload = JSON.parse(ws.sent[0]!);
     expect(payload).toMatchObject({
       session_id: 's7',
+      origin: 'user',
       multi_modal_message: {
         text: 'ping',
         image_base64_list: [],

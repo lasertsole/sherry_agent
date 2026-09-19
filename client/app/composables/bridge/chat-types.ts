@@ -18,6 +18,12 @@ export interface ChatRequest {
    * originating send on the shared per-session socket.
    */
   msg_id?: string;
+  /**
+   * Message source marker sent on the wire. The client always sends `"user"`;
+   * the backend validates it and stamps the authoritative origin from the
+   * transport entry, so no other value can be self-declared.
+   */
+  origin?: string;
   /** Text content */
   text: string;
   /** Image base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to image_path_list) */

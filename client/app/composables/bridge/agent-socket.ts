@@ -118,7 +118,10 @@ export function acquireAgentSocket(sessionId: string): AgentSocket {
   return created;
 }
 
-/** Release the session's socket, closing it and settling pending sends. */
+/**
+ * Release the session's socket, closing it and settling pending sends.
+ * @param sessionId
+ */
 export function releaseAgentSocket(sessionId: string): void {
   const key = sessionId || 'default';
   const socket = sockets.get(key);
@@ -254,7 +257,10 @@ class SessionAgentSocket implements AgentSocket {
 
   // ── outbound ─────────────────────────────────────────────
 
-  /** Upload media then enqueue the payload (synchronously when there is none). */
+  /**
+   * Upload media then enqueue the payload (synchronously when there is none).
+   * @param pending
+   */
   private async dispatch(pending: PendingSend): Promise<void> {
     const request = pending.request;
     const hasMedia =
@@ -274,11 +280,16 @@ class SessionAgentSocket implements AgentSocket {
     }
   }
 
-  /** Serialize the payload and send it now (OPEN) or on the next `onopen`. */
+  /**
+   * Serialize the payload and send it now (OPEN) or on the next `onopen`.
+   * @param pending
+   * @param urls
+   */
   private finishPreparation(pending: PendingSend, urls: MediaUrls): void {
     pending.payload = JSON.stringify({
       session_id: this.sessionId,
       msg_id: pending.msgId,
+      origin: pending.request.origin || 'user',
       multi_modal_message: {
         text: pending.request.text || '',
         image_base64_list: [],
@@ -300,7 +311,7 @@ class SessionAgentSocket implements AgentSocket {
       try {
         return await uploadBase64ToUrls(kind, list, API_BASE_URL);
       } catch (e) {
-        throw new Error(`${KIND_LABEL[kind]} upload failed: ${e}`);
+        throw new Error(`${KIND_LABEL[kind]} upload failed: ${e}`, { cause: e });
       }
     };
     return {
@@ -499,7 +510,10 @@ class SessionAgentSocket implements AgentSocket {
     }
   }
 
-  /** Resolve `message_ids`, falling back to the active turn's member ids, then all pending. */
+  /**
+   * Resolve `message_ids`, falling back to the active turn's member ids, then all pending.
+   * @param messageIds
+   */
   private turnMessageIds(messageIds?: string[]): string[] {
     if (messageIds && messageIds.length > 0) return messageIds;
     if (this.activeTurn && this.activeTurn.msgIds.length > 0) return this.activeTurn.msgIds;

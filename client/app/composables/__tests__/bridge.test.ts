@@ -51,7 +51,10 @@ class FakeWebSocket {
     this.readyState = FakeWebSocket.OPEN;
     this.onopen?.({});
   }
-  /** Simulate an inbound frame (assumes string payload). */
+  /**
+   * Simulate an inbound frame (assumes string payload).
+   * @param payload
+   */
   frame(payload: unknown) {
     const data = typeof payload === 'string' ? payload : JSON.stringify(payload);
     this.onmessage?.({ data });
@@ -101,6 +104,7 @@ describe('sendChatMessage (browser WebSocket)', () => {
     const payload = JSON.parse(ws.sent[0]!);
     expect(payload).toMatchObject({
       session_id: 's1',
+      origin: 'user',
       multi_modal_message: {
         text: 'hi',
         image_base64_list: [],
@@ -176,6 +180,7 @@ describe('sendChatMessage (browser WebSocket)', () => {
     const payload = JSON.parse(ws.sent[0]!);
     expect(payload).toMatchObject({
       session_id: 's9',
+      origin: 'user',
       multi_modal_message: {
         text: '',
         image_base64_list: [],

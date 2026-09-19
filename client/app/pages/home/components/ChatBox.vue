@@ -436,13 +436,14 @@ const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && 
 
 /**
  * Background-task completion carrier: a USER-role message whose backend origin is
- * "subagent_completion" (subagent-origin-tagging; see CachedMessage.origin in db.ts).
+ * an internal source (e.g. "subagent_completion"; see CachedMessage.origin in db.ts).
  * Carriers render as a centered, muted system card instead of the regular user bubble;
- * legacy rows without origin (TEXT NULL = a real user message) keep the existing
- * user-bubble rendering untouched.
+ * user-origin rows ("user") and legacy rows without origin (TEXT NULL = a real user
+ * message) keep the existing user-bubble rendering untouched.
  * @param message
  */
-const isBackgroundTask = (message: MessageItem): boolean => message.role === CHAT_ROLE.USER && !!message.origin;
+const isBackgroundTask = (message: MessageItem): boolean =>
+  message.role === CHAT_ROLE.USER && !!message.origin && message.origin !== 'user';
 
 /**
  * Messages of a turn group that render as regular rows (background-task carriers excluded).
