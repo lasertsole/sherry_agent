@@ -4,7 +4,7 @@
 
 > 에이전트가 긴 대화를 모델의 컨텍스트 윈도우 안에 유지하는 방법: 다섯 개의 트리거 지점이 전체 라이프사이클(턴 시작 전, 모든 모델 호출 전, 모든 모델 응답 후, 프로바이더 오버플로 에러 시)을 감시하고, 순수 함수형 4-경로 라우터가 가장 저렴한 수리책을 고르며(큰 도구 결과와 과도하게 큰 도구 호출 인자를 먼저 잘라내고, 강제될 때만 AI 압축), 안티-스래싱 가드가 압축이 통제 없이 불어나는 일을 원천 차단합니다.
 
-사실상의 기준(source of truth): `agent/middlewares/summarization/core.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -250,6 +250,22 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 
 cap은 `cap_summary_doc`의 배열 슬라이스(체인에 저장되는 형태)이고, 렌더러는 표시 시 다시 슬라이스해 `"(N earlier items omitted for brevity)"`를 덧붙입니다. `evicted_refs`는 코드가 유지합니다: `_collect_evicted_refs`가 압축 범위의 `[evicted to: <path>]` 마커와 인간 메시지의 `lc_evicted_to` 태그를 스캔하고, `_finalize_summary_doc`이 이전 Doc 항목과 새 항목을 순서대로 중복 제거해 병합합니다. `_inject_recovery_context`는 파일 작업 래칫을 렌더링된 `## Relevant Files` 섹션과 저장 Doc의 `relevant_files` 필드 양쪽에 되씁니다.
 
+### 🗂️ Active Plan Notes와 계획 컨텍스트 주입
+
+압축은 계획을 인식합니다. 보조 모델 호출 전에 `_get_plan_context_sync(session_id)`(`core.py`, TaskFlow 블록 옆)가 이 세션이 실행 중인 계획을 권위 블록으로 렌더링합니다:
+
+- 계획 활성 판정은 `agent/tools/todolist/knowledge/ownership.py`의 두 원시 연관 소스를 재사용합니다 — 세션의 `plan_ref` state 키와 이 세션의 todo 중 하나에 있는 `plan_ref`(`plan_context.py::resolve_active_plan`); **boulder 소스는 의도적으로 제외**됩니다.
+- 주입 내용은 **계획 파일 상대 경로 + 계획 이름 + 미완료 todo 요약**이며, 계획 본문은 절대 주입하지 않습니다(모델이 경로를 `read_file`할 수 있음). todos가 모두 `completed` / `cancelled`인 세션은 **활성 계획이 아닙니다**.
+- 이 블록은 두 프롬프트 경로(최초 요약과 체인 업데이트, 구조화와 레거시 free-form) 모두에 주입됩니다.
+
+`SummaryDoc.active_plan_notes`는 모델이 아니라 파이프라인이 소유하므로, 계획 범위의 교훈은 계획이 활성인 동안 계속 유지됩니다:
+
+- 체인 업데이트에서 이전 Doc의 항목을 **그대로, 순서대로 상속**하며, 모델은 새 한 줄 교훈(`증상 -> 회피책`)을 덧붙이는 것만 할 수 있습니다.
+- 배열 상한은 `active_plan_notes[-20:]`; 체인 렌더는 `(N earlier items omitted for brevity)`를 덧붙이고 저장 페이로드는 잘라낸 꼬리를 유지합니다.
+- 계획이 완료되면(todos가 모두 `completed` / `cancelled`) 리졸버가 "활성 계획 없음"을 보고하여 렌더에서 `## Active Plan Notes` 섹션이 사라지고 다음 Doc의 배열은 비워집니다. `plan_ref`가 전혀 없는 세션도 마찬가지로 배열을 갖지 않습니다.
+
+**최신 사용자 요청 그대로 + 퇴출 포인터.** *Latest Unresolved User Request* 섹션은 결코 잘리지 않습니다: `latest_user_request`는 그대로 제시되며(레거시 템플릿의 `max 800 chars` 지시도 제거됨), 직렬화되는 `<conversation>`은 **state**에서 옵니다 — 퇴출된 인간 메시지는 state에 전체 텍스트와 `lc_evicted_to` 태그를 유지하고 모델 뷰만 미리보기입니다. 최신 사용자 요청 자체가 퇴출된 경우, 파이프라인이 그 `[evicted to: <path>]` 포인터를 필드에 덧붙입니다(코드 소유, `_latest_human_eviction_ref`). 따라서 요약 체인은 항상 디스크의 전체 텍스트로 돌아가는 길을 보존합니다. 내부 주입(`metadata.internal`)은 이 앵커를 빼앗지 않습니다.
+
 **체이닝 요약 필터링**(`_filter_summary_messages`): 이전 체크포인트가 있으면 그 Human/AI 쌍을 직렬화된 `<conversation>` 입력에서 제거합니다 — 추출된 이전 요약은 `<prior-summary>`(또는 `<prior-summary-json>`)로만 주입되므로, 오래된 요약 텍스트는 프롬프트에 정확히 한 번만 나타납니다. 이 쌍은 **양쪽 모두** `additional_kwargs={"lc_source": "summarization"}`을 가지며, 이는 양쪽 모두 MesMemory에 들어가지 않게 합니다(`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`): 이 쌍은 압축의 내부 산출물이지 대화 기록이 아닙니다. 필터는 `_extract_previous_doc` / `_extract_previous_summary` **이후**에 실행되어(체이닝은 여전히 이전 요약을 봅니다), 필터된 목록이 직렬화·프롬프트 구성·두 정적 폴백 분기(LLM 실패/너무 짧은 응답)에 쓰입니다 — `_apply_compression_under_lock` / `_aapply_compression_under_lock`의 `skip_llm` 경로도 마찬가지입니다. opencode-dev의 `hidden` 집합, deepagents의 `_filter_summary_messages`와 정렬됩니다.
 
 레거시 프롬프트 템플릿(`_SUMMARY_TEMPLATE`)은 free-form 폴백 골격을 계속 고정합니다 — *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress(Completed ≤ 5 · In Progress · Blocked) / Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* — "비어 있어도 모든 섹션을 유지"와 기밀 규칙("NEVER include API keys, tokens, passwords, secrets")을 요구합니다. 구조화 경로는 Markdown 골격을 `_SUMMARY_JSON_RULES`(JSON 필드 목록 + 동일 기밀 규칙)로 대체합니다. 필드 의미는 Pydantic `SummaryDoc` 모델 자체에 정의됩니다.
@@ -398,6 +414,7 @@ Summarization(
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티, 체이닝 요약 필터링 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 체이닝 요약 필터링: 이전 쌍을 직렬화된 대화에서 제거, 일반/빈/다중 쌍 입력, 마커 없는 레거시 human 보존, async `_acreate_summary` 미러 |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 구조화 요약: schema 강제 변환, 렌더링 왕복 + 바이트 안정 + 섹션 순서, 코드층 cap + 주석, latest request 그대로, json_mode/json_repair/free-form 3티어, prior-doc JSON 체이닝, 레거시 MD 전환, 퇴출 포인터 수집·승계 |
+| `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: 계획 활성 판정(state/todo 소스, 전체 완료 게이트, fail-open), 최초/업데이트 프롬프트 양 경로 주입, 체인 압축을 넘는 노트 상속/추가/cap/클리어, latest request 그대로 + 퇴출 포인터, 다중 메시지 연속 발송 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6개 엔드투엔드 시나리오 + 3개 오버플로 카운터 회귀 테스트 × 2 등록 순서, 정적 폴백 압축, 제로 네트워크 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 등록 계약(테스트 고정 윈도우): `MAIN_LLM_MAX_TOKEN = 65 536` → 트리거 임계값 `52 428`; 저토큰 통과 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 레거시 딥 스위트: 절단점/예산, FIFO 상한, 폴백, 프루닝/중복 제거/타깃 트렁케이트, 성능 저하 |

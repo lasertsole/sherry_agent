@@ -4,7 +4,7 @@
 
 > Agent 如何让长对话保持在模型的上下文窗口之内：五个触发点覆盖整个生命周期（回合开始前、每次模型调用前、每次模型响应后、以及 provider 溢出报错时），一个纯函数式的四路路由选择最省钱的修复手段（先截断超大工具输出和超大的工具调用参数，实在不行才让 AI 压缩历史），防抖护栏保证压缩永远不会失控打转。
 
-事实来源：`agent/middlewares/summarization/core.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
+事实来源：`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -246,6 +246,22 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 cap 是 `cap_summary_doc` 中的数组切片（链上存储的形态）；渲染器在展示时再次切片并追加 `"(N earlier items omitted for brevity)"`。`evicted_refs` 由代码维护：`_collect_evicted_refs` 扫描本压缩范围内的 `[evicted to: <path>]` 标记与人类消息的 `lc_evicted_to` 标签，`_finalize_summary_doc` 把上一份 Doc 的条目与新条目按序去重合并。`_inject_recovery_context` 把文件操作棘轮同时写回渲染出的 `## Relevant Files` 节与存储 Doc 的 `relevant_files` 字段。
 
+### 🗂️ Active Plan Notes 与计划上下文注入
+
+压缩是计划感知的。调用辅助模型前，`_get_plan_context_sync(session_id)`（`core.py`，紧邻 TaskFlow 注入块）把本会话正在执行的计划渲染成权威提示块：
+
+- 计划活跃判定复用 `agent/tools/todolist/knowledge/ownership.py` 的两个原始关联来源 —— 会话的 `plan_ref` state 键与本会话某条 todo 的 `plan_ref`（`plan_context.py::resolve_active_plan`）；**boulder 来源被有意排除**；
+- 注入内容为**计划文件相对路径 + 计划名 + 未完成 todo 概要**，绝不注入计划全文（模型可自行 `read_file`）。todos 全部 `completed` / `cancelled` 的会话**不是**活跃计划；
+- 首摘与链式更新两条提示词路径（结构化与旧 free-form）都注入该块。
+
+`SummaryDoc.active_plan_notes` 由管线而非模型掌管，保证计划注意事项在计划活跃期全程保留：
+
+- 链式更新时，上一份 Doc 的条目**逐字、按序继承**；模型只能追加新的一行教训（`现象 -> 规避动作`）；
+- 数组上限为 `active_plan_notes[-20:]`；链上渲染追加 `(N earlier items omitted for brevity)`，存储载荷保留截尾；
+- 计划完成（todos 全部 `completed` / `cancelled`）后，解析器报告"无活跃计划"：渲染不再含 `## Active Plan Notes` 节，下一份 Doc 的数组清空。完全没有 `plan_ref` 的会话同样永不携带该数组。
+
+**最新用户请求逐字 + 驱逐指针。** *Latest Unresolved User Request* 节永不截断：`latest_user_request` 逐字呈现（旧模板里的 `max 800 chars` 指令也已移除）；序列化的 `<conversation>` 来自 **state** —— 被驱逐的人类消息在 state 中保留全文与 `lc_evicted_to` 标签，只有模型视图是预览。当最新用户请求本身被驱逐时，管线把它的 `[evicted to: <path>]` 指针追加到该字段（代码掌管，`_latest_human_eviction_ref`），摘要链因此永远保留回到磁盘全文的路径；内部注入（`metadata.internal`）不会抢走这个锚点。
+
 **链式摘要过滤**（`_filter_summary_messages`）：存在旧检查点时，其 Human/AI 消息对会从序列化的 `<conversation>` 输入中剔除 —— 提取出的旧摘要仅经 `<prior-summary>`（或 `<prior-summary-json>`）注入，同一段旧摘要文本在提示词中只出现一次。该消息对**两条**都带 `additional_kwargs={"lc_source": "summarization"}`，这同时让两条都不落入 MesMemory（`MessagePersistenceMiddleware._is_persistable` + `HumanMessageRowBuilder`）：摘要是压缩的内部产物，不是对话历史。过滤发生在 `_extract_previous_doc` / `_extract_previous_summary` **之后**（链式仍能看到旧摘要），过滤后的列表用于序列化、提示词构建，以及两条静态回退分支（LLM 失败/响应过短）—— 也包括 `_apply_compression_under_lock` / `_aapply_compression_under_lock` 的 `skip_llm` 路径。与 opencode-dev 的 `hidden` 集合、deepagents 的 `_filter_summary_messages` 对齐。
 
 旧提示词模板（`_SUMMARY_TEMPLATE`）仍固定 free-form 回退的骨架 —— *Latest Unresolved User Request / Goal / Constraints & Preferences / Progress（Completed ≤ 5 · In Progress · Blocked）/ Key Decisions ≤ 5 / Next Steps / Critical Context ≤ 3 / Relevant Files* —— 要求"即使为空也保留每一节"并带保密规则（"NEVER include API keys, tokens, passwords, secrets"）。结构化路径以 `_SUMMARY_JSON_RULES`（JSON 字段清单 + 同一保密规则）取代 Markdown 骨架；字段语义直接定义在 Pydantic `SummaryDoc` 模型上。
@@ -394,6 +410,7 @@ Summarization(
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶、链式摘要过滤 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 链式摘要过滤：旧消息对从序列化对话中移除、普通/空/多对输入、无标记的旧会话 human 保留、async `_acreate_summary` 镜像 |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 结构化摘要：schema 兼容/强制转换、渲染往返 + 字节稳定 + 节顺序、代码层 cap + 注记、latest request 逐字、json_mode/json_repair/free-form 三档、prior-doc JSON 链式、旧 MD 过渡、驱逐指针收集与延续 |
+| `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1：计划活跃判定（state/todo 来源、全完成门、fail-open）、首摘/更新两条提示词路径注入、跨链式压缩的注意事项继承/追加/cap/清空、latest request 逐字 + 驱逐指针、多消息连发 |
 | `tests/agent/middlewares/test_compression_e2e_static.py` | 18 | 6 个端到端场景 + 3 个溢出计数器回归测试 × 2 种注册顺序、静态回退压缩、零网络 |
 | `tests/agent/middlewares/test_summarization_trigger.py` | 3 | 注册契约（测试固定窗口）：`MAIN_LLM_MAX_TOKEN = 65 536` → 触发阈值 `52 428`；低 token 直通 |
 | `tests/agent/middlewares/test_summarization_comprehensive.py` | 140 | 遗留深度套件：切点/预算、FIFO 上限、回退、修剪/去重/定向截断、退化 |
