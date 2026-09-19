@@ -27,7 +27,7 @@
 
 ### 方案：aux 压缩改走 LangChain structured_output，代码拼接 Markdown
 
-1. **Pydantic `SummaryDoc`**（字段与现模板一一对应）：`latest_user_request / goal / constraints[] / completed[] / in_progress[] / blocked[] / key_decisions[] / next_steps[] / critical_context[] / relevant_files[]` + **`active_plan_notes[]`**（Part 1 的载体，代码层 cap 与逐字延续）
+1. **Pydantic `SummaryDoc`**（字段与现模板一一对应）：`latest_user_request / goal / constraints[] / completed[] / in_progress[] / blocked[] / key_decisions[] / next_steps[] / critical_context[] / relevant_files[]` + **`active_plan_notes[]`**（Part 1 的载体，代码层 cap 与逐字延续）+ **`evicted_refs[]`**（本次压缩覆盖范围内出现过的驱逐文件路径——预览中的 `[evicted to: <path>]` 收进字段，随 Doc 链逐字延续、不受 FIFO 限制；保证被驱逐的超长内容**在摘要链上永远带指针**，模型任意后续轮次可顺指针 `read_file`/`message_search` 找回全文；计划完成后该数组清空）
 2. **aux 模型**经 `with_structured_output(SummaryDoc)`（失败退化 `json_mode` + `json_repair`——仓库既有 `instructor`/`json_repair`）；链式更新时把**上一份 SummaryDoc** 作为结构化输入与 `<conversation>` 一起喂入，输出**合并后的新 Doc**（"conversation wins" 语义由 prompt 表达，载体类型化）
 3. **代码渲染 Markdown**（节与顺序同现模板）→ 包 `<summary>` 标签进摘要对——模型可见形态不变；**同 Doc → 同渲染字节**，前缀缓存不受影响
 4. **FIFO/上限变数组切片**：`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`——`_enforce_fifo_limits` 的 Markdown 解析**整段删除**；`SUMMARY_TOTAL_MAX_CHARS` 的 head/tail 截断对 Doc 渲染后仍作最终保险
