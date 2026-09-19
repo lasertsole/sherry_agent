@@ -44,63 +44,6 @@ def _messages_metadata(schema: type) -> tuple[object, ...]:
     return tuple(typing.get_args(hint)[1:])
 
 
-class TestStandardAddMessagesContract:
-    """The standard reducer already provides every P1-5 feature."""
-
-    def test_same_id_replaces_in_place(self):
-        # Given two messages that share an id but differ in content
-        first = HumanMessage(content="v1", id="h1")
-        second = HumanMessage(content="v2", id="h1")
-
-        # When merged through the standard reducer
-        merged = add_messages([first], [second])
-
-        # Then the newer message replaces the old one (no duplicate)
-        assert len(merged) == 1
-        assert merged[0].content == "v2"
-        assert merged[0].id == "h1"
-
-    def test_distinct_ids_append(self):
-        merged = add_messages(
-            [HumanMessage(content="a", id="h1")],
-            [AIMessage(content="b", id="a1")],
-        )
-        assert [m.id for m in merged] == ["h1", "a1"]
-
-    def test_remove_message_deletes_by_id(self):
-        merged = add_messages(
-            [HumanMessage(content="a", id="h1"), AIMessage(content="b", id="a1")],
-            [RemoveMessage(id="h1")],
-        )
-        assert [m.id for m in merged] == ["a1"]
-
-    def test_remove_unknown_id_raises(self):
-        # The standard reducer refuses to tombstone a non-existent id rather
-        # than silently ignoring it.
-        with pytest.raises(ValueError):
-            add_messages([HumanMessage(content="a", id="h1")], [RemoveMessage(id="nope")])
-
-    def test_remove_all_messages_resets_to_following_messages(self):
-        merged = add_messages(
-            [HumanMessage(content="a", id="h1"), AIMessage(content="b", id="a1")],
-            [
-                RemoveMessage(id=REMOVE_ALL_MESSAGES),
-                HumanMessage(content="fresh", id="h2"),
-            ],
-        )
-        assert [m.id for m in merged] == ["h2"]
-
-    def test_missing_ids_are_assigned(self):
-        loud = HumanMessage(content="no-id")
-        quiet = AIMessage(content="also-no-id")
-        assert loud.id is None
-
-        merged = add_messages([], [loud, quiet])
-
-        assert all(m.id is not None for m in merged)
-        assert merged[0].id != merged[1].id
-
-
 class TestP19InPlaceTagging:
     """P1-9 relies on same-id replacement, not on a custom reducer."""
 

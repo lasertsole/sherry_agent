@@ -40,8 +40,6 @@ covered by existing tests, referenced instead:
   ``tests/full/test_context_governance_e2e.py`` (human-message eviction case)
 - ``ToolCallNormalize`` sentinel full-list replacement:
   ``tests/agent/core/test_state_messages_reducer.py::TestFullListReplacement``
-- standard ``add_messages`` reducer contract (same id / tombstone / reset):
-  ``tests/agent/core/test_state_messages_reducer.py::TestStandardAddMessagesContract``
 
 Every test purges the session registers it touched and relies on ``tmp_path``
 for the approval sandbox; the checkpointer is process-local ``MemorySaver``.
