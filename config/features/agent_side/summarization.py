@@ -38,6 +38,8 @@ class SummarizationConfig(TypedDict):
     completed_max_items: int
     key_decisions_max_items: int
     critical_context_max_items: int
+    active_plan_notes_max_items: int
+    evicted_refs_max_items: int
     file_ops_list_max_chars: int
     file_ops_section_max_chars: int
     latest_user_request_max_chars: int
@@ -90,6 +92,8 @@ SUMMARIZATION: SummarizationConfig = {
     "completed_max_items": 5,
     "key_decisions_max_items": 5,
     "critical_context_max_items": 3,
+    "active_plan_notes_max_items": 20,
+    "evicted_refs_max_items": 20,
     "file_ops_list_max_chars": 900,
     "file_ops_section_max_chars": 2_000,
     "latest_user_request_max_chars": 800,
