@@ -2,8 +2,7 @@
 middleware T1 (before_agent PREFLIGHT) / T2 (wrap_model_call PRE-API) paths,
 plus the two anti-thrash state keys (cooldown + per-turn attempt cap).
 
-QA scenarios implemented as tests (plan .omo/plans/context-compression.md
-L588-628):
+QA scenarios implemented as tests (context-compression spec L588-628):
 1. soft overflow -> truncate track (NO auxiliary-LLM compression call)
 2. cooldown suppresses consecutive triggers (2nd skipped, later call recovers)
 3. low pressure -> complete no-op (byte-identical, no compression state writes)
@@ -752,7 +751,7 @@ T5_OVERFLOW_TEXT = "This model's maximum context length is 65536 tokens"
 
 
 class TestT4T5Recovery:
-    """Plan QA scenarios (.omo/plans/context-compression.md): T4 recover,
+    """Plan QA scenarios (context-compression spec): T4 recover,
     T5 recover, exhaust->propagate, negative passthrough, sync/async parity,
     plus independent per-class counters and gate/skip bypass coverage.
 
@@ -1049,7 +1048,7 @@ def _resp_text(resp):
 
 
 class TestAntiThrashMatrix:
-    """Task 9 Part A (.omo/plans/context-compression.md item 9a): the
+    """Task 9 Part A (context-compression spec item 9a): the
     anti-thrash interactions no earlier test pinned together:
 
     - ineffective counting x MIN_EFFECTIVENESS_PCT x INEFFECTIVE_THRESHOLD

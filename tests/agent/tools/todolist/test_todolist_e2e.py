@@ -809,7 +809,7 @@ class TestTodolistPromptBlocks:
                     "works": {
                         "w1": {
                             "work_id": "w1",
-                            "active_plan": ".omo/plans/e2e.md",
+                            "active_plan": "workspace/sessions/e2e-all-blocks/plans/e2e.md",
                             "status": "active",
                         }
                     },

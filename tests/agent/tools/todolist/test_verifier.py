@@ -4,7 +4,7 @@ The verifier implements the evidence-recording half of the 5-gate completion
 contract. Every external read (plan file, TaskFlow flow, subagent run, ledger)
 is a module-level injectable reference on ``agent.tools.todolist.verifier``, so
 tests substitute fakes and never touch real TaskFlow/subagent state or the real
-``.omo/ledger.jsonl``.
+repo ledger.
 """
 
 from __future__ import annotations
@@ -136,17 +136,21 @@ def test_verify_fails_when_plan_missing(tmp_path: Path):
     assert EvidenceLedger.read_all() == []
 
 
-def test_verify_resolves_legacy_relative_plan_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_verify_rejects_external_orchestration_plan_ref(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
     root = tmp_path / "repo"
     _write_plan(root / ".omo" / "plans")
     monkeypatch.setattr("config.path.ROOT_DIR", root)
     monkeypatch.setattr("config.path.SESSIONS_DIR", root / "workspace" / "sessions")
 
-    passed, _evidence = asyncio.run(
+    passed, evidence = asyncio.run(
         SisyphusVerifier.verify("sess-rel", {}, ".omo/plans/plan.md", LABEL)
     )
 
-    assert passed is True
+    assert passed is False
+    assert evidence["reason"]
+    assert EvidenceLedger.read_all() == []
 
 
 def test_verify_resolves_session_scoped_plan_ref(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):

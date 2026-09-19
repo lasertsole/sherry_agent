@@ -1,6 +1,6 @@
 """Hermetic e2e compression matrix over REAL create_agent assembly (Task 8).
 
-Plan item 8 (.omo/plans/context-compression.md): exercise the Summarization
+Plan item 8 (context-compression spec): exercise the Summarization
 middleware through the REAL agent graph (create_agent + real tool node +
 real middleware hooks) with scripted stub models - zero network, zero LLM.
 

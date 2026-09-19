@@ -1,6 +1,6 @@
 """Hermetic end-to-end test: Summarization redesign STATIC-FALLBACK path (PART2 §14 adapted).
 
-Task 10 of the summarization-redesign plan (``.omo/plans/summarization-redesign.md`` L886).
+Task 10 of the summarization-redesign plan.
 
 What this proves, end to end and without a single network byte:
 

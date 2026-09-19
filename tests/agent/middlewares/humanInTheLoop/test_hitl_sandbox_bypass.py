@@ -1,7 +1,6 @@
 """Task 8 tests: HITL sandbox-bypass approval + scope-guard wiring + YOLO public API.
 
-Written FIRST (TDD RED) against `.omo/plans/sandbox-hardening.md` Task 8 (line
-732). GREEN comes from:
+Written FIRST (TDD RED) against the sandbox-hardening spec Task 8. GREEN comes from:
 
 - ``approval.py``: public ``is_yolo_mode(config)`` (verbatim migration of the
   ``_is_yolo_active`` logic) + ``_is_yolo_active`` kept as a backward-compatible

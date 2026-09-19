@@ -63,7 +63,9 @@ def session_id() -> str:
 
 def _associate(state_db: _FakeStateDB, plan_name: str, session_id: str = SESSION_ID) -> None:
     """Link the session to a plan through the state plan_ref source."""
-    state_db.set_state(session_id, "plan_ref", f".omo/plans/{plan_name}.md")
+    state_db.set_state(
+        session_id, "plan_ref", f"workspace/sessions/{session_id}/plans/{plan_name}.md"
+    )
 
 
 @pytest.fixture()

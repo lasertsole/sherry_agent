@@ -98,7 +98,7 @@ async def test_status_priority_category_delegation_stored_as_given(isolated_db: 
                 subagent_id="agent:main:subagent:child-1",
                 flow_id="flow-1",
                 step_id="step-2",
-                plan_ref=".omo/plans/todolist-phase1.md",
+                plan_ref="workspace/sessions/sess-1/plans/todolist-phase1.md",
             )
         ],
     )
@@ -112,7 +112,7 @@ async def test_status_priority_category_delegation_stored_as_given(isolated_db: 
     assert row["subagent_id"] == "agent:main:subagent:child-1"
     assert row["flow_id"] == "flow-1"
     assert row["step_id"] == "step-2"
-    assert row["plan_ref"] == ".omo/plans/todolist-phase1.md"
+    assert row["plan_ref"] == "workspace/sessions/sess-1/plans/todolist-phase1.md"
     assert row["created_at"] is not None
 
 

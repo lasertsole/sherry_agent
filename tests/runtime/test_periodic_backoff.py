@@ -1,6 +1,6 @@
 """Unit tests for runtime.process.periodic_backoff.PeriodicBackoff.
 
-TDD task 2 of .omo/plans/loop-detection-cron-breaker.md.
+TDD task 2 of the loop-detection cron-breaker plan.
 Covers: exponential doubling arithmetic, max_interval cap,
 exhausted flag at max_consecutive_failures, reason recording,
 full reset on record_success.

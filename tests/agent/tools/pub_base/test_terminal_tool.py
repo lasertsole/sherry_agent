@@ -1,4 +1,4 @@
-"""TDD tests for terminal.py sandbox-hardening (Task 6 of .omo/plans/sandbox-hardening.md).
+"""TDD tests for terminal.py sandbox-hardening (Task 6 of the sandbox spec).
 
 Covers (plan lines 557-568):
 - schema propagation: ``SafeShellInput`` subclass exposes ``sandbox`` through

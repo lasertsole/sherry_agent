@@ -1,6 +1,6 @@
 """Tests for agent.tools.pub_base.env_scrub.scrub_env.
 
-Behavior contract (see .omo/plans/sandbox-hardening.md Task 1):
+Behavior contract (sandbox-hardening spec):
 - Vars whose NAME contains a secret substring (case-insensitive) are dropped.
 - Critical vars are kept by exact name or by name prefix so child processes
   keep working (PATH lookup, Windows loader, etc.).
@@ -92,8 +92,7 @@ class TestNamePrecedence:
     KEY_PATH_DELIM contains the substring KEY. The keep rule matches EXACT
     names only (PATH, HOME, ...), not arbitrary names containing PATH, so
     KEY_PATH_DELIM is NOT name-kept and the substring rule drops it.
-    This behavior is asserted explicitly here and in
-    .omo/evidence/task-1-scrub-precedence.txt.
+    This behavior is asserted explicitly here.
     """
 
     def test_key_path_delim_is_substring_blocked(self):

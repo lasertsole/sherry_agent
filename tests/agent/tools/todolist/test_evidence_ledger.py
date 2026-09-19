@@ -1,7 +1,7 @@
 """Unit tests for EvidenceLedger: append-only JSONL with UTC ISO timestamps.
 
 The ledger is a class-level file API, so tests redirect ``LEDGER_PATH`` into
-``tmp_path`` and never touch the real ``.omo/ledger.jsonl``.
+``tmp_path`` and never touch the real repo ledger.
 """
 
 import json

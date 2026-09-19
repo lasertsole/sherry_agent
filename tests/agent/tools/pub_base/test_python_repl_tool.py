@@ -1,6 +1,6 @@
 """Tests for the sandboxed python_repl tool (sandbox-hardening Task 7).
 
-Covers the GREEN spec of `.omo/plans/sandbox-hardening.md` lines 647-731:
+Covers the sandbox-hardening spec:
 
 - schema auto-derivation: PythonREPLTool has NO explicit ``args_schema`` (the
   OPPOSITE mechanism from terminal's ShellTool), so ``tool_call_schema``

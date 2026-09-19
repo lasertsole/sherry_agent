@@ -70,7 +70,9 @@ def knowledge_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 def _associate_state(sources: _Sources, session_id: str, plan_name: str) -> None:
-    sources.state_db.set_state(session_id, "plan_ref", f".omo/plans/{plan_name}.md")
+    sources.state_db.set_state(
+        session_id, "plan_ref", f"workspace/sessions/{session_id}/plans/{plan_name}.md"
+    )
 
 
 def _associate_todos(sources: _Sources, session_id: str, plan_name: str) -> None:

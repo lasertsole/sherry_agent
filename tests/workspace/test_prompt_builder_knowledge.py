@@ -99,7 +99,9 @@ class TestKnowledgeBlockInjection:
     def test_state_plan_ref_injects_summary(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/implement-auth.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/implement-auth.md"
+        )
         _write_summary(
             prompt_env["knowledge_dir"],
             "implement-auth",
@@ -124,7 +126,9 @@ class TestKnowledgeBlockInjection:
     def test_todos_plan_ref_is_the_fallback(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["todos"].append({"content": "x", "plan_ref": ".omo/plans/legacy.md"})
+        prompt_env["todos"].append(
+            {"content": "x", "plan_ref": "workspace/sessions/sess-main/plans/legacy.md"}
+        )
         _write_summary(prompt_env["knowledge_dir"], "legacy", method="legacy-method")
 
         block = _build_knowledge_block("sess-main")
@@ -135,8 +139,12 @@ class TestKnowledgeBlockInjection:
     def test_state_plan_ref_wins_over_todos(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/state-plan.md")
-        prompt_env["todos"].append({"content": "x", "plan_ref": ".omo/plans/todo-plan.md"})
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/state-plan.md"
+        )
+        prompt_env["todos"].append(
+            {"content": "x", "plan_ref": "workspace/sessions/sess-main/plans/todo-plan.md"}
+        )
         _write_summary(prompt_env["knowledge_dir"], "state-plan", method="state-method")
         _write_summary(prompt_env["knowledge_dir"], "todo-plan", method="todo-method")
 
@@ -148,7 +156,9 @@ class TestKnowledgeBlockInjection:
     def test_caps_and_truncates_entries(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/p.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/p.md"
+        )
         _write_summary(
             prompt_env["knowledge_dir"],
             "p",
@@ -170,7 +180,9 @@ class TestKnowledgeBlockInjection:
     def test_long_entry_is_single_line_truncated(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/p.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/p.md"
+        )
         _write_summary(prompt_env["knowledge_dir"], "p", key_failures=["x" * 500 + "\nmore"])
 
         block = _build_knowledge_block("sess-main")
@@ -184,14 +196,18 @@ class TestKnowledgeFailOpen:
     def test_missing_summary_file_returns_empty(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/ghost.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/ghost.md"
+        )
 
         assert _build_knowledge_block("sess-main") == ""
 
     def test_malformed_summary_returns_empty(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/broken.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/broken.md"
+        )
         plan_dir = prompt_env["knowledge_dir"] / "broken"
         plan_dir.mkdir(parents=True)
         (plan_dir / "plan-summary.json").write_text("{not json", encoding="utf-8")
@@ -209,7 +225,9 @@ class TestKnowledgeFailOpen:
         monkeypatch.setattr(
             "agent.tools.todolist.knowledge.ownership.state_register_db", _BoomStateDB()
         )
-        prompt_env["todos"].append({"content": "x", "plan_ref": ".omo/plans/fallback.md"})
+        prompt_env["todos"].append(
+            {"content": "x", "plan_ref": "workspace/sessions/sess-main/plans/fallback.md"}
+        )
         _write_summary(prompt_env["knowledge_dir"], "fallback", method="fallback-method")
 
         block = _build_knowledge_block("sess-main")
@@ -221,7 +239,9 @@ class TestKnowledgeInSystemPrompt:
     def test_injected_into_system_prompt(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/state-plan.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/state-plan.md"
+        )
         _write_summary(prompt_env["knowledge_dir"], "state-plan", method="state-method")
 
         prompt = build_system_prompt(session_id="sess-main")
@@ -240,7 +260,9 @@ class TestKnowledgeInSystemPrompt:
     def test_absent_when_files_filtered(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        prompt_env["state"].set_state("sess-main", "plan_ref", ".omo/plans/state-plan.md")
+        prompt_env["state"].set_state(
+            "sess-main", "plan_ref", "workspace/sessions/sess-main/plans/state-plan.md"
+        )
         _write_summary(prompt_env["knowledge_dir"], "state-plan", method="state-method")
 
         prompt = build_system_prompt(selected_file_names=["AGENTS.md"], session_id="sess-main")
@@ -250,7 +272,7 @@ class TestKnowledgeInSystemPrompt:
 
 
 class TestKnowledgePlanRefPathForms:
-    """Only the plan's stem matters, so both path generations resolve."""
+    """Only the plan's stem matters, so session-scoped and bare forms resolve."""
 
     def test_session_scoped_plan_ref(self, prompt_env):
         from workspace.prompt_builder import _build_knowledge_block

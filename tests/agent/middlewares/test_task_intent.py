@@ -182,16 +182,16 @@ def _write_plan(path, content: str = "# Plan\n- [ ] step\n") -> None:
 
 
 class TestPlanPathResolution:
-    """Plan-active steering must see checkbox-bearing plans in both location generations."""
+    """Plan-active steering must see checkbox-bearing plans in the session tree."""
 
-    def test_legacy_relative_plan_is_resolved(self, tmp_path, monkeypatch):
+    def test_external_orchestration_plan_ref_is_not_resolved(self, tmp_path, monkeypatch):
         _point_roots_at(monkeypatch, tmp_path)
         _write_plan(tmp_path / ".omo" / "plans" / "legacy.md")
         boulder = tmp_path / "boulder.json"
         _write_boulder(boulder, plan=".omo/plans/legacy.md")
         monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
 
-        assert ti._has_active_boulder("sess-x") is True
+        assert ti._has_active_boulder("sess-x") is False
 
     def test_session_scoped_bare_filename_is_resolved(self, tmp_path, monkeypatch):
         _point_roots_at(monkeypatch, tmp_path)
@@ -202,15 +202,6 @@ class TestPlanPathResolution:
 
         assert ti._has_active_boulder("sess-x") is True
         assert ti._has_active_boulder("other-sess") is False
-
-    def test_migrated_plan_found_behind_legacy_ref(self, tmp_path, monkeypatch):
-        _point_roots_at(monkeypatch, tmp_path)
-        _write_plan(tmp_path / "workspace" / "sessions" / "sess-x" / "plans" / "moved.md")
-        boulder = tmp_path / "boulder.json"
-        _write_boulder(boulder, plan=".omo/plans/moved.md")
-        monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
-
-        assert ti._has_active_boulder("sess-x") is True
 
     def test_new_explicit_relative_plan_is_resolved(self, tmp_path, monkeypatch):
         _point_roots_at(monkeypatch, tmp_path)
@@ -224,7 +215,7 @@ class TestPlanPathResolution:
     def test_missing_plan_is_not_active(self, tmp_path, monkeypatch):
         _point_roots_at(monkeypatch, tmp_path)
         boulder = tmp_path / "boulder.json"
-        _write_boulder(boulder, plan=".omo/plans/ghost.md")
+        _write_boulder(boulder, plan="ghost.md")
         monkeypatch.setattr(ti, "_BOULDER_PATH", boulder)
 
         assert ti._has_active_boulder("sess-x") is False

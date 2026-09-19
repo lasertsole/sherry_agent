@@ -1,6 +1,6 @@
 """Characterization tests: lock CURRENT behavior of HITL flow + terminal/python_repl tools.
 
-Task 5 of `.omo/plans/sandbox-hardening.md` — behavior snapshot taken BEFORE the
+Task 5 of the sandbox-hardening spec — behavior snapshot taken BEFORE the
 sandbox-hardening refactor (Tasks 6/7/8). This suite is GREEN at commit time by
 design: it pins today's reality (including known defects) so Tasks 6/7/8 can
 refactor against a safety net.

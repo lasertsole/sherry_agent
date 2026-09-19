@@ -1,6 +1,6 @@
 """Unit tests for the todo + boulder injection blocks in workspace/prompt_builder.py.
 
-The todo list (todos.db) and the active-work pointer (.omo/boulder.json) are
+The todo list (todos.db) and the active-work pointer (``src/data/boulder.json``) are
 rebuilt into the system prompt on EVERY call, so they survive context
 compression. Both builders must FAIL-OPEN: a broken store or boulder file must
 never prevent the persona prompt from being assembled.
@@ -81,7 +81,9 @@ def _seed_todos(prompt_env, todos):
     prompt_env["state"]["todos"] = todos
 
 
-def _write_boulder(prompt_env, *, work_id="w1", plan=".omo/plans/w1.md", status="active"):
+def _write_boulder(
+    prompt_env, *, work_id="w1", plan="workspace/sessions/sess-boulder/plans/w1.md", status="active"
+):
     prompt_env["boulder_path"].write_text(
         json.dumps(
             {
@@ -191,7 +193,11 @@ class TestBoulderBlock:
     def test_active_boulder_renders_plan_and_remaining_count(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        _write_boulder(prompt_env, work_id="w1", plan=".omo/plans/todolist-phase1.md")
+        _write_boulder(
+            prompt_env,
+            work_id="w1",
+            plan="workspace/sessions/sess-boulder/plans/todolist-phase1.md",
+        )
         _seed_todos(
             prompt_env,
             [
@@ -205,25 +211,29 @@ class TestBoulderBlock:
         prompt = build_system_prompt(session_id="sess-boulder")
 
         assert "## Active Work" in prompt
-        assert ".omo/plans/todolist-phase1.md" in prompt
+        assert "workspace/sessions/sess-boulder/plans/todolist-phase1.md" in prompt
         # pending + in_progress only -> 2 remaining
         assert "Remaining: 2" in prompt
 
     def test_paused_boulder_still_renders(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        _write_boulder(prompt_env, plan=".omo/plans/paused.md", status="paused")
+        _write_boulder(
+            prompt_env, plan="workspace/sessions/sess-paused/plans/paused.md", status="paused"
+        )
         _seed_todos(prompt_env, [_todo("still pending")])
 
         prompt = build_system_prompt(session_id="sess-paused")
 
         assert "## Active Work" in prompt
-        assert ".omo/plans/paused.md" in prompt
+        assert "workspace/sessions/sess-paused/plans/paused.md" in prompt
 
     def test_completed_boulder_renders_nothing(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        _write_boulder(prompt_env, plan=".omo/plans/done.md", status="completed")
+        _write_boulder(
+            prompt_env, plan="workspace/sessions/sess-done/plans/done.md", status="completed"
+        )
 
         prompt = build_system_prompt(session_id="sess-done")
 
@@ -247,18 +257,19 @@ class TestBoulderPlanResolution:
         assert "## Active Work" in prompt
         assert str(plan) in prompt
 
-    def test_migrated_file_found_behind_legacy_ref(self, prompt_env):
+    def test_external_orchestration_ref_is_not_resolved(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        plan = prompt_env["dir"] / "workspace" / "sessions" / "sess-boulder" / "plans" / "moved.md"
-        plan.parent.mkdir(parents=True)
-        plan.write_text("# Plan\n", encoding="utf-8")
+        legacy = prompt_env["dir"] / ".omo" / "plans" / "moved.md"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text("# Plan\n", encoding="utf-8")
         _write_boulder(prompt_env, plan=".omo/plans/moved.md")
         _seed_todos(prompt_env, [_todo("one", status="pending")])
 
         prompt = build_system_prompt(session_id="sess-boulder")
 
-        assert str(plan) in prompt
+        assert "## Active Work" in prompt
+        assert str(legacy) not in prompt
 
 
 class TestFailOpen:
@@ -288,7 +299,7 @@ class TestSessionGuard:
     def test_none_session_skips_store_and_boulder(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        _write_boulder(prompt_env, plan=".omo/plans/should-not-show.md")
+        _write_boulder(prompt_env, plan="workspace/sessions/sess/plans/should-not-show.md")
         _seed_todos(prompt_env, [_todo("should not show")])
 
         prompt = build_system_prompt(session_id=None)
@@ -301,7 +312,7 @@ class TestSessionGuard:
     def test_empty_session_skips_store_and_boulder(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
-        _write_boulder(prompt_env, plan=".omo/plans/should-not-show.md")
+        _write_boulder(prompt_env, plan="workspace/sessions/sess/plans/should-not-show.md")
         _seed_todos(prompt_env, [_todo("should not show")])
 
         prompt = build_system_prompt(session_id="")

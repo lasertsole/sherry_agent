@@ -66,10 +66,12 @@ class TestTodoServicePlanRef:
         await TodoService.update_todos(
             "sess-1",
             [{"content": "a", "position": 0}],
-            plan_ref=".omo/plans/auth.md",
+            plan_ref="workspace/sessions/sess-1/plans/auth.md",
         )
 
-        assert fake_state.get_state("sess-1", "plan_ref") == ".omo/plans/auth.md"
+        assert (
+            fake_state.get_state("sess-1", "plan_ref") == "workspace/sessions/sess-1/plans/auth.md"
+        )
 
     @pytest.mark.asyncio
     async def test_update_todos_writes_session_scoped_plan_ref(
@@ -92,12 +94,14 @@ class TestTodoServicePlanRef:
         fake_state: FakeStateDB,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        fake_state.set_state("sess-1", "plan_ref", ".omo/plans/old.md")
+        fake_state.set_state("sess-1", "plan_ref", "workspace/sessions/sess-1/plans/old.md")
         monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
 
         await TodoService.update_todos("sess-1", [{"content": "a", "position": 0}])
 
-        assert fake_state.get_state("sess-1", "plan_ref") == ".omo/plans/old.md"
+        assert (
+            fake_state.get_state("sess-1", "plan_ref") == "workspace/sessions/sess-1/plans/old.md"
+        )
 
     @pytest.mark.asyncio
     async def test_update_todos_empty_plan_ref_keeps_existing_value(
@@ -106,12 +110,14 @@ class TestTodoServicePlanRef:
         fake_state: FakeStateDB,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        fake_state.set_state("sess-1", "plan_ref", ".omo/plans/old.md")
+        fake_state.set_state("sess-1", "plan_ref", "workspace/sessions/sess-1/plans/old.md")
         monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
 
         await TodoService.update_todos("sess-1", [{"content": "a", "position": 0}], plan_ref="")
 
-        assert fake_state.get_state("sess-1", "plan_ref") == ".omo/plans/old.md"
+        assert (
+            fake_state.get_state("sess-1", "plan_ref") == "workspace/sessions/sess-1/plans/old.md"
+        )
 
 
 class TestTodowritePlanRef:
@@ -132,11 +138,11 @@ class TestTodowritePlanRef:
 
         await _todowrite().coroutine(
             todos=[{"content": "x"}],
-            plan_ref=".omo/plans/auth.md",
+            plan_ref="workspace/sessions/sess-1/plans/auth.md",
             session_id="sess-1",
         )
 
-        assert calls == [("sess-1", [{"content": "x"}], ".omo/plans/auth.md")]
+        assert calls == [("sess-1", [{"content": "x"}], "workspace/sessions/sess-1/plans/auth.md")]
 
     @pytest.mark.asyncio
     async def test_todowrite_without_plan_ref_forwards_none(self, monkeypatch: pytest.MonkeyPatch):
@@ -169,11 +175,14 @@ class TestTodowritePlanRef:
 
         await _todowrite().coroutine(
             todos=[{"content": "chain", "position": 0}],
-            plan_ref=".omo/plans/chain.md",
+            plan_ref="workspace/sessions/sess-chain/plans/chain.md",
             session_id="sess-chain",
         )
 
-        assert fake_state.get_state("sess-chain", "plan_ref") == ".omo/plans/chain.md"
+        assert (
+            fake_state.get_state("sess-chain", "plan_ref")
+            == "workspace/sessions/sess-chain/plans/chain.md"
+        )
 
     @pytest.mark.asyncio
     async def test_todowrite_without_plan_ref_leaves_state_untouched(
@@ -182,7 +191,7 @@ class TestTodowritePlanRef:
         fake_state: FakeStateDB,
         monkeypatch: pytest.MonkeyPatch,
     ):
-        fake_state.set_state("sess-keep", "plan_ref", ".omo/plans/keep.md")
+        fake_state.set_state("sess-keep", "plan_ref", "workspace/sessions/sess-keep/plans/keep.md")
         monkeypatch.setattr(service_module, "relation_register", _NoWebsocket())
         monkeypatch.setattr(todowrite_module, "_reminded_sessions", {"sess-keep"})
 
@@ -190,4 +199,7 @@ class TestTodowritePlanRef:
             todos=[{"content": "keep", "position": 0}], session_id="sess-keep"
         )
 
-        assert fake_state.get_state("sess-keep", "plan_ref") == ".omo/plans/keep.md"
+        assert (
+            fake_state.get_state("sess-keep", "plan_ref")
+            == "workspace/sessions/sess-keep/plans/keep.md"
+        )

@@ -503,7 +503,7 @@ class TestUpdateTodosFromCompaction:
                 "priority": "high",
                 "category": "deep",
                 "delegation": "self",
-                "plan_ref": ".omo/plans/p.md",
+                "plan_ref": "workspace/sessions/sess-prompt/plans/p.md",
                 "flow_id": "flow-1",
                 "step_id": "step-2",
             },
@@ -521,7 +521,7 @@ class TestUpdateTodosFromCompaction:
         combined = f"{system_prompt}\n{human_content}"
 
         assert "ship feature" in combined
-        assert ".omo/plans/p.md" in combined
+        assert "workspace/sessions/sess-prompt/plans/p.md" in combined
         assert "I finished shipping" in combined
         assert "<discarded_conversation>" in human_content
         assert "<current_todos>" in human_content
@@ -1029,11 +1029,15 @@ class TestTodowriteShim:
         await shim.ainvoke(
             {
                 "todos": [{"content": "x", "status": "pending"}],
-                "plan_ref": ".omo/plans/p.md",
+                "plan_ref": "workspace/sessions/shim-plan/plans/p.md",
                 "session_id": "derived",
             }
         )
 
         assert fake_todo_store.writes == [
-            (main_sid, [{"content": "x", "status": "pending"}], ".omo/plans/p.md")
+            (
+                main_sid,
+                [{"content": "x", "status": "pending"}],
+                "workspace/sessions/shim-plan/plans/p.md",
+            )
         ]
