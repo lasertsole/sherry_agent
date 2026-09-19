@@ -137,7 +137,7 @@ _cache: dict[str, dict[str, str]] = {
 | Flag                        | 设定时机                          | 含义                                         | 生命周期            |
 | --------------------------- | --------------------------------- | -------------------------------------------- | ------------------- |
 | `_multimodal_trying_native` | before_agent, auto 模式尝试原生时 | 当前 turn 正在尝试原生                       | session 内，单 turn |
-| `_multimodal_native_model`  | before_agent, auto 模式           | 记录当前尝试的模型 key，用于 LLMRetry 写缓存 | session 内，单 turn |
+| `_multimodal_native_model`  | before_agent, auto 模式           | 记录当前尝试的模型 key（LLMRetry 重绑 fallback 候选时刷新为实际服务模型），用于 LLMRetry 写缓存 | session 内，单 turn |
 
 ### 3.3 配置
 
@@ -477,6 +477,13 @@ def _try_multimodal_fallback(
         logger.error("Failed to override messages for multimodal fallback: {}", exc)
         return None
 ```
+
+**fallback 归属**：`LLMRetryMiddleware` 因故障重绑到 fallback 候选时
+（`_apply_sticky_fallback` 与 `_try_fallback` 两条路径），若当前 turn 处于 native
+尝试（`_multimodal_trying_native` 为真），先把 `_multimodal_native_model` 刷新为
+`"{candidate.provider}/{candidate.model_name}"`（实际服务模型）。这样候选模型拒绝媒体时，
+`unsupported` 记在候选模型名下，env 主模型保持 `auto`（§2.2 场景 2）；非 native 尝试时
+重绑不写该 key。
 
 #### `agent/middlewares/__init__.py`
 

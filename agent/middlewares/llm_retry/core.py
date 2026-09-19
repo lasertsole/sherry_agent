@@ -443,6 +443,32 @@ class LLMRetryMiddleware(AgentMiddleware):
             logger.error("Failed to override messages for multimodal fallback: {}", exc)
             return None
 
+    def _refresh_native_model_key(self, session_id: str, candidate: FallbackCandidate) -> None:
+        """Point the per-turn native-attempt key at the model now serving the call.
+
+        ``MultimodalProcessor`` records the env main model in
+        ``_multimodal_native_model`` when the native attempt starts. Once the
+        request is re-bound to a fallback candidate, a media rejection belongs
+        to that candidate — not to the env main model — so the key is rewritten
+        to ``{candidate.provider}/{candidate.model_name}`` before the call.
+
+        Guarded by ``_multimodal_trying_native``: outside an in-flight native
+        attempt there is no key to attribute a rejection to, so no state is
+        written.
+        """
+        from agent.middlewares.media_pipeline.core import (
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            MULTIMODAL_TRYING_NATIVE_KEY,
+        )
+
+        if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
+            return
+        state_register_mem.set_state(
+            session_id,
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            f"{candidate.provider}/{candidate.model_name}",
+        )
+
     # ---- fallback chain ---------------------------------------------------
 
     def _apply_sticky_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest:
@@ -452,7 +478,12 @@ class LLMRetryMiddleware(AgentMiddleware):
         idx = state_register_mem.get_state(session_id, _FALLBACK_INDEX_KEY, 0) or 0
         if not 0 < idx <= len(self.fallback_chain):
             return request
-        return self._rebind_model(request, self.fallback_chain[idx - 1]) or request
+        candidate = self.fallback_chain[idx - 1]
+        rebound = self._rebind_model(request, candidate)
+        if rebound is None:
+            return request
+        self._refresh_native_model_key(session_id, candidate)
+        return rebound
 
     def _try_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest | None:
         """Activate the next fallback candidate; None when the chain is exhausted."""
@@ -466,6 +497,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         rebound = self._rebind_model(request, candidate)
         if rebound is None:
             return None
+        self._refresh_native_model_key(session_id, candidate)
         logger.warning(
             "Switching to fallback model {}/{} (candidate {} of {})",
             candidate.provider,

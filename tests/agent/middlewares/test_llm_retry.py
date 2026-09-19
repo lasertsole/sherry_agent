@@ -745,3 +745,95 @@ class TestMultimodalFallback:
         assert [item["type"] for item in seen_content[0]] == ["text", "image_url"]
         assert [item["type"] for item in seen_content[1]] == ["text"]
         assert "image_to_text" in seen_content[1][0]["text"]
+
+    def test_sticky_fallback_rejection_is_attributed_to_candidate(self, monkeypatch):
+        """§2.2 scenario 2 (sticky path): the env main model is natively
+        capable, but a fallback candidate serves the call and rejects the media
+        — the rejection is cached against the candidate, never the main model."""
+        _zero_backoff(monkeypatch)
+        chain = [FallbackCandidate("deepseek", "deepseek-chat", _SentinelModel("fb1"))]
+        mw = LLMRetryMiddleware(config=LLMRetryConfig(max_retries=0), fallback_chain=chain)
+        state_register_mem.set_state(SID, "llm_fallback_index", 1)
+        self._arm_attempt()  # MultimodalProcessor recorded the env main model key
+        seen_models: list[str] = []
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            seen_models.append(getattr(req.model, "model_name", "?"))
+            if calls["n"] == 1:
+                raise _multimodal_error()
+            return "ok"
+
+        assert mw.wrap_model_call(_media_request(), handler) == "ok"
+        assert calls["n"] == 2  # skill-path retry despite max_retries=0
+        assert seen_models == ["fb1", "fb1"]
+        assert (
+            llm_capability_cache.get_capability("deepseek", "deepseek-chat", "vision")
+            == "unsupported"
+        )
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+        assert state_register_mem.get_state(SID, MODEL_KEY, "") == "deepseek/deepseek-chat"
+        assert state_register_mem.get_state(SID, TRYING_KEY, False) is False
+
+    def test_switching_candidate_rejection_is_attributed_to_candidate(self, monkeypatch):
+        """§2.2 scenario 2 (_try_fallback path): the main model fails with a
+        fallback-classified error mid-loop, the candidate is activated, then the
+        candidate rejects the media — the cache lands on the candidate."""
+        _zero_backoff(monkeypatch)
+        chain = [
+            FallbackCandidate("deepseek", "deepseek-chat", _SentinelModel("fb1")),
+            FallbackCandidate("moonshot", "kimi", _SentinelModel("fb2")),
+        ]
+        mw = LLMRetryMiddleware(config=LLMRetryConfig(max_retries=0), fallback_chain=chain)
+        self._arm_attempt()
+        seen_models: list[str] = []
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            name = getattr(req.model, "model_name", "?")
+            seen_models.append(name)
+            if name == "main":
+                raise type("PermissionDeniedError", (Exception,), {})("denied")
+            if calls["n"] == 2:
+                raise _multimodal_error()
+            return "ok"
+
+        assert mw.wrap_model_call(_media_request(), handler) == "ok"
+        assert calls["n"] == 3
+        assert seen_models == ["main", "fb1", "fb1"]
+        assert (
+            llm_capability_cache.get_capability("deepseek", "deepseek-chat", "vision")
+            == "unsupported"
+        )
+        assert llm_capability_cache.get_capability("testprov", "testmodel", "vision") == "auto"
+        assert llm_capability_cache.get_capability("moonshot", "kimi", "vision") == "auto"
+        assert state_register_mem.get_state(SID, "llm_fallback_index", 0) == 1
+
+    def test_rebind_without_native_attempt_writes_no_native_model_key(self):
+        """Rebinding to a fallback candidate outside a native attempt must not
+        create the per-turn native-model key (no superfluous state writes)."""
+        chain = [FallbackCandidate("deepseek", "deepseek-chat", _SentinelModel("fb1"))]
+        mw = LLMRetryMiddleware(config=LLMRetryConfig(max_retries=0), fallback_chain=chain)
+        state_register_mem.delete_state(SID, MODEL_KEY)
+        state_register_mem.delete_state(SID, TRYING_KEY)
+
+        # sticky rebind path
+        state_register_mem.set_state(SID, "llm_fallback_index", 1)
+        assert mw.wrap_model_call(_request(), lambda req: "ok") == "ok"
+        assert state_register_mem.has_key(SID, MODEL_KEY) is False
+
+        # switching rebind path
+        state_register_mem.set_state(SID, "llm_fallback_index", 0)
+        calls = {"n": 0}
+
+        def handler(req):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise type("PermissionDeniedError", (Exception,), {})("denied")
+            return "ok"
+
+        assert mw.wrap_model_call(_request(), handler) == "ok"
+        assert calls["n"] == 2
+        assert state_register_mem.has_key(SID, MODEL_KEY) is False
