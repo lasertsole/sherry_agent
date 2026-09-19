@@ -13,7 +13,7 @@ import base64
 import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from PIL import Image
 from loguru import logger
@@ -298,4 +298,16 @@ _MEDIA_HANDLERS: dict[str, MediaItemHandler] = {
     "audio_bytes": AudioBytesHandler(),
     "video_url": VideoUrlHandler(),
     "video_bytes": VideoBytesHandler(),
+}
+
+MediaType = Literal["vision", "audio", "video"]
+
+# Media family each content-item type belongs to — the per-type key of the
+# process-level multimodal capability cache.
+MEDIA_TYPE_BY_ITEM: dict[str, MediaType] = {
+    "image_url": "vision",
+    "audio_url": "audio",
+    "audio_bytes": "audio",
+    "video_url": "video",
+    "video_bytes": "video",
 }

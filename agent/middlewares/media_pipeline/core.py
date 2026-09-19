@@ -1,4 +1,5 @@
 import time
+from dataclasses import dataclass
 from typing import Any
 from loguru import logger
 from config import SRC_DIR
@@ -8,9 +9,27 @@ from langgraph.runtime import Runtime
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from ..llm_capability_cache import get_capability, get_model_key
+from .fallback import apply_skill_fallback as apply_skill_fallback
+from .fallback import attach_media_hints
 from .mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
-from .media_handlers import MediaPaths, _MEDIA_HANDLERS
+from .media_handlers import MediaPaths, MediaType, _MEDIA_HANDLERS
 from pub.func.validator import is_safe_session_id
+from runtime import state_register_mem
+
+MULTIMODAL_TRYING_NATIVE_KEY = "_multimodal_trying_native"
+MULTIMODAL_NATIVE_MODEL_KEY = "_multimodal_native_model"
+
+
+@dataclass
+class _TurnMedia:
+    """The media state of one processed turn: the last message, its text block
+    (media hints are appended here) and the paths collected while persisting."""
+
+    state_mes_list: list[BaseMessage]
+    last_mes: HumanMessage
+    text_dict: dict[str, Any]
+    paths: MediaPaths
 
 
 class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddleware):
@@ -57,6 +76,13 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         if not isinstance(content, list):
             return
 
+        # These flags describe only the current turn's native attempt; a stale
+        # value from an earlier turn must never authorize a fallback.
+        state_register_mem.delete_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY)
+        state_register_mem.delete_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY)
+
+        # Phase 1 — always persist the uploaded media (decode/save payloads) and
+        # collect their paths, independently of the native-vs-skill decision.
         text_dict: dict[str, Any] | None = None
         paths = MediaPaths()
 
@@ -75,14 +101,67 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         if text_dict is None:
             text_dict = {"type": "text", "text": ""}
 
-        self._attach_media_hints(text_dict, paths)
-        last_mes.content = [text_dict]
-        self._persist_media_kwargs(last_mes, paths)
+        if not (paths.image_hints or paths.audios or paths.videos):
+            # Pure-text list: normalize to a single text block and keep
+            # stripping stale image_url blocks from history (existing behavior).
+            last_mes.content = [text_dict]
+            self._strip_history_images(state_mes_list)
+            return
 
-        # Strip image_url blocks from history messages. The cheap pre-check
-        # avoids extracting/assigning on messages with nothing to strip, and the
-        # assignment only happens when the stripped text is non-empty (same
-        # semantics as before, minus the needless rewrite).
+        turn = _TurnMedia(state_mes_list, last_mes, text_dict, paths)
+        native_mode = MEDIA_PIPELINE.get("main_llm_native_multimodal", "auto")
+
+        # Phase 2 — explicit user config wins; "auto" consults the process-level
+        # capability cache and keeps the blocks unless a family is unsupported.
+        if native_mode == "true" or (
+            native_mode == "auto" and self._should_keep_native(paths, session_id)
+        ):
+            self._persist_media_kwargs(last_mes, paths)
+            return
+
+        self._apply_skill_path(turn)
+
+    def _should_keep_native(self, paths: MediaPaths, session_id: str) -> bool:
+        """Auto mode: decide whether the media blocks stay for a native call.
+
+        One known-unsupported family sends the whole message down the skill
+        path (all-or-nothing, no partial stripping). When no family is known
+        unsupported the blocks stay; if any family is still unprobed, the turn
+        is marked as a native attempt so LLMRetry can write the cache and fall
+        back when the model rejects the blocks.
+        """
+        model_key = get_model_key()
+        provider, _, model = model_key.partition("/")
+        families: tuple[tuple[bool, MediaType], ...] = (
+            (bool(paths.image_hints), "vision"),
+            (bool(paths.audios), "audio"),
+            (bool(paths.videos), "video"),
+        )
+        unprobed = False
+        for present, media in families:
+            if not present:
+                continue
+            capability = get_capability(provider, model, media)
+            if capability == "unsupported":
+                return False
+            if capability == "auto":
+                unprobed = True
+        if unprobed:
+            state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, True)
+            state_register_mem.set_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, model_key)
+        return True
+
+    def _apply_skill_path(self, turn: _TurnMedia) -> None:
+        attach_media_hints(turn.text_dict, turn.paths)
+        turn.last_mes.content = [turn.text_dict]
+        self._persist_media_kwargs(turn.last_mes, turn.paths)
+        self._strip_history_images(turn.state_mes_list)
+
+    def _strip_history_images(self, state_mes_list: list[BaseMessage]) -> None:
+        """Strip image_url blocks from history messages. The cheap pre-check
+        avoids extracting/assigning on messages with nothing to strip, and the
+        assignment only happens when the stripped text is non-empty (same
+        semantics as before, minus the needless rewrite)."""
         for mes in state_mes_list[:-1]:
             if not isinstance(mes, HumanMessage):
                 continue
@@ -97,51 +176,6 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             text_only = self._strip_image_url_from_content(mes_content)
             if text_only and text_only != mes_content:
                 mes.content = text_only
-
-    @staticmethod
-    def _attach_media_hints(text_dict: dict[str, Any], paths: MediaPaths) -> None:
-        """Attach the media hints directly into the HumanMessage's text block
-        (NOT a SystemMessage). The user explicitly required this HumanMessage
-        approach — the previous version steered the model this way. Mentioning
-        the media location here lets the model know it must invoke the native
-        image_to_text TOOL to actually "see" the image, since current model has no
-        native vision ability. The persistence layer (add_messages) stores the
-        HumanMessage, so the hint remains visible for reasoning within this turn.
-        """
-        if len(paths.image_hints) > 0:
-            text_dict["text"] += (
-                f"\n[Uploaded media] The user uploaded {len(paths.image_hints)} image(s). "
-                f"Location: {','.join(paths.image_hints)}. "
-                "You MUST use skill discovery to recognize this/these image(s): call the "
-                "skill_view tool with name 'image_to_text' to read its SKILL.md. Then follow "
-                "the skill's script instructions exactly (it tells you how to run the "
-                "image_to_text recognition logic via the terminal tool). "
-                "current model has no native vision ability, so do NOT answer based on guesswork — "
-                "the recognition result reported by the skill script is the ground truth "
-                "you must base your reply on."
-            )
-        if len(paths.audios) > 0:
-            text_dict["text"] += (
-                f"\n[Uploaded media] The user uploaded {len(paths.audios)} audio(s). "
-                f"Location: {','.join(paths.audios)}. "
-                "You MUST use skill discovery to transcribe this/these audio(s): call the "
-                "skill_view tool with name 'speech_to_text' to read its SKILL.md. Then follow "
-                "the skill's script instructions exactly (it tells you how to run the "
-                "speech_to_text recognition logic via the terminal tool). "
-                "Do NOT answer based on guesswork — the transcription result reported by the "
-                "skill script is the ground truth you must base your reply on."
-            )
-        if len(paths.videos) > 0:
-            text_dict["text"] += (
-                f"\n[Uploaded media] The user uploaded {len(paths.videos)} video(s). "
-                f"Location: {','.join(paths.videos)}. "
-                "You MUST use skill discovery to process this/these video(s): call the "
-                "skill_view tool with name 'video_text_to_text' to read its SKILL.md. Then follow "
-                "the skill's script instructions exactly (it tells you how to run the "
-                "video_text_to_text recognition logic via the terminal tool). "
-                "Do NOT answer based on guesswork — the recognition result reported by the "
-                "skill script is the ground truth you must base your reply on."
-            )
 
     @staticmethod
     def _persist_media_kwargs(last_mes: HumanMessage, paths: MediaPaths) -> None:
