@@ -1,4 +1,4 @@
-"""Behavior tests for taskflow_update_steps (Phase 7: dynamic DAG edits).
+"""Behavior tests for taskflow_update_steps (dynamic DAG edits).
 
 Covers the full-replace contract plus all safety rules:
 
