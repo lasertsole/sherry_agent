@@ -672,20 +672,20 @@ class TestSummarizationCore:
         assert len(content) < 20000
 
     def test_build_new_messages_fifo_completed_section(self):
-        # _enforce_fifo_limits keeps only the newest COMPLETED_MAX_ITEMS
-        # (5) bullets in the "### Completed" section.
+        # FIFO is now a code-layer array slice on SummaryDoc.completed (the
+        # _enforce_fifo_limits Markdown re-parse is deleted): the renderer
+        # keeps only the newest COMPLETED_MAX_ITEMS (5) items and annotates
+        # the omission; the stored payload carries the sliced array.
         mw = make_middleware()
-        summary = (
-            "### Completed (most recent 5)\n"
-            "- item1\n- item2\n- item3\n- item4\n"
-            "- item5\n- item6\n- item7\n- item8\n"
-            "\n## Next Steps\n- finish the work\n"
-        )
-        result = mw._build_new_messages(summary)
+        summary_doc = mget("SummaryDoc")(completed=[f"item{i}" for i in range(1, 9)])
+        result = mw._build_new_messages(summary_doc)
         content = result[1].content
         assert "(3 earlier items omitted for brevity)" in content
         assert "- item8" in content
         assert "- item1" not in content
+        assert result[1].additional_kwargs["summary_doc"]["completed"] == [
+            f"item{i}" for i in range(4, 9)
+        ]
 
     # ------------------------------------------------------------------
     # _extract_previous_summary (§9.7 L1233): last lc_source="summarization"
@@ -1467,45 +1467,41 @@ class TestSummarizationFallback:
         parse = mget("_parse_file_ops_from_summary")
         assert not parse("no relevant section here")
 
-    # ---- FIFO enforcement ----
+    # ---- FIFO caps (code-layer array slicing, replaces _enforce_fifo_limits) ----
 
     def test_fifo_caps_completed_list(self, sid):
-        fifo = mget("_enforce_fifo_limits")
-        text = "### Completed (most recent 5)\n" + "\n".join(f"- item{i}" for i in range(8)) + "\n"
-        out = fifo(text)
-        assert "- item7" in out
-        assert "- item2" not in out
+        # New contract: cap_summary_doc slices SummaryDoc.completed[-5:]; the
+        # Markdown re-parse helper and its regex annotations are gone.
+        cap = mget("cap_summary_doc")
+        doc = mget("SummaryDoc")(completed=[f"item{i}" for i in range(8)])
+        capped = cap(doc)
+        assert "item7" in capped.completed
+        assert "item2" not in capped.completed
 
     def test_fifo_caps_key_decisions(self, sid):
-        fifo = mget("_enforce_fifo_limits")
-        text = (
-            "## Key Decisions (most recent 5)\n"
-            + "\n".join(f"- decision{i}" for i in range(8))
-            + "\n"
-        )
-        out = fifo(text)
-        assert "- decision7" in out
-        assert "- decision2" not in out
+        cap = mget("cap_summary_doc")
+        doc = mget("SummaryDoc")(key_decisions=[f"decision{i}" for i in range(8)])
+        capped = cap(doc)
+        assert "decision7" in capped.key_decisions
+        assert "decision2" not in capped.key_decisions
 
     def test_fifo_caps_critical_context(self, sid):
-        fifo = mget("_enforce_fifo_limits")
-        text = (
-            "## Critical Context (most recent 3)\n" + "\n".join(f"- c{i}" for i in range(6)) + "\n"
-        )
-        out = fifo(text)
-        assert "- c5" in out
-        assert "- c2" not in out
+        cap = mget("cap_summary_doc")
+        doc = mget("SummaryDoc")(critical_context=[f"c{i}" for i in range(6)])
+        capped = cap(doc)
+        assert "c5" in capped.critical_context
+        assert "c2" not in capped.critical_context
 
     def test_fifo_leaves_other_sections(self, sid):
-        fifo = mget("_enforce_fifo_limits")
-        text = "## Goal\n- keep me\n"
-        assert "- keep me" in fifo(text)
+        cap = mget("cap_summary_doc")
+        doc = mget("SummaryDoc")(goal="keep me", completed=[f"c{i}" for i in range(8)])
+        assert cap(doc).goal == "keep me"
 
     def test_fifo_idempotent(self, sid):
-        fifo = mget("_enforce_fifo_limits")
-        text = "### Completed (most recent 5)\n" + "\n".join(f"- item{i}" for i in range(8)) + "\n"
-        once = fifo(text)
-        assert fifo(once) == once
+        cap = mget("cap_summary_doc")
+        doc = mget("SummaryDoc")(completed=[f"item{i}" for i in range(8)])
+        once = cap(doc)
+        assert cap(once) == once
 
 
 # ======================================================================
