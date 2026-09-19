@@ -109,6 +109,40 @@ class TestGetSessionIds:
         assert result[0]["session_id"] == "s1"
         assert result[0]["title"] == "latest question"
 
+    def test_title_only_from_user_origin_rows(self, sid_db, patch_db):
+        """Internal origins (task_intent) never become the title; user origin does."""
+        from context_engine.store.core import get_session_ids
+
+        db = sid_db["db"]
+        db.execute(
+            """INSERT INTO messages (session_id, turn_num, role, content, timestamp, origin)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                "s1",
+                1,
+                "human",
+                json.dumps("real user question", ensure_ascii=False),
+                "20260101100000",
+                "user",
+            ),
+        )
+        db.execute(
+            """INSERT INTO messages (session_id, turn_num, role, content, timestamp, origin)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (
+                "s1",
+                1,
+                "human",
+                json.dumps("[SYSTEM DIRECTIVE: ARM]", ensure_ascii=False),
+                "20260101110000",
+                "task_intent",
+            ),
+        )
+
+        result = get_session_ids()
+        assert result[0]["session_id"] == "s1"
+        assert result[0]["title"] == "real user question"
+
     def test_title_ignores_ai_message_after_human_in_same_turn(self, sid_db, patch_db):
         """A newer AI message in the last turn must NOT override the human title."""
         from context_engine.store.core import get_session_ids

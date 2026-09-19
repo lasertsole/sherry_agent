@@ -1,25 +1,25 @@
 """Unit tests for ``origin`` persistence in the message store (store/core.py).
 
-Plan: subagent-origin-tagging, Task 3 — TDD RED->GREEN.
+Covers the full-coverage origin contract:
 
-Covers:
-- ``add_messages`` tags a human row ``origin = "subagent_completion"`` ONLY
-  when the message carries the FULL frozen completion-metadata contract
-  (``internal is True`` AND ``provenance == "subagent_completion"``) — the
-  same contract built by ``agent/tools/subagent/announce/completion_message.py``
-  and judged by ``_is_internal_completion``
-  (``agent/middlewares/subagent_completion_drain/core.py``).
-- Every other row (plain human, partial-contract human, ai, tool) persists
-  ``origin IS NULL`` — never an empty string.
-- ``get_session_ids`` title derivation excludes origin-tagged rows:
-  ``[user "hello", carrier]`` → title "hello"; carrier-only session →
-  title "" (client renders an i18n placeholder).
+- A human row without an explicit ``metadata.origin`` (and without the frozen
+  completion-carrier contract) persists ``origin = "user"``.
+- An explicit ``metadata.origin`` is persisted verbatim (``"user"`` /
+  ``"task_intent"`` / ...), so every entry can positively identify its source.
+- The frozen subagent-completion contract (``internal is True`` AND
+  ``provenance == "subagent_completion"``) persists
+  ``origin = "subagent_completion"``.
+- AI / tool rows persist ``origin IS NULL`` — origin describes the human
+  request source only.
+- ``get_session_ids`` title derivation only accepts user-origin human rows:
+  carriers and TaskIntent injections are excluded.
 - Read paths (``get_history_by_turn_page``, SELECT *) surface the new
   ``origin`` field automatically.
 
-Contract (decisions.md): ``origin`` TEXT NULL — NULL = real user message;
-``"subagent_completion"`` = background subagent-completion injection. Plain
-string, no JSON, no backfill of old rows.
+Contract: ``origin`` TEXT — full origin semantics (``"user"`` /
+``"task_intent"`` / ``"subagent_completion"`` / ...); NULL is legacy
+compatibility for rows written before origin tagging and is read as a user
+message. Plain string, no JSON, no backfill of old rows.
 """
 
 from __future__ import annotations
@@ -78,7 +78,7 @@ def store_db(monkeypatch, tmp_path) -> sqlite3.Connection:
 
 
 class TestOriginTagging:
-    """Full-contract human rows get tagged; the write path covers all roles."""
+    """Human rows get an explicit origin; the write path covers all roles."""
 
     @pytest.mark.asyncio
     async def test_full_contract_carrier_origin_is_subagent_completion(self, store_db):
@@ -90,8 +90,34 @@ class TestOriginTagging:
         assert row["origin"] == "subagent_completion"
 
     @pytest.mark.asyncio
-    async def test_ai_and_tool_rows_origin_is_null(self, store_db):
-        """ai/tool row dicts must carry ``origin`` too (INSERT column list)."""
+    async def test_explicit_origin_persists_verbatim(self, store_db):
+        """An explicit metadata.origin (TaskIntent) is persisted unchanged."""
+        task_intent = HumanMessage(
+            content="[SYSTEM DIRECTIVE: ARM]",
+            metadata={"origin": "task_intent", "internal": True},
+        )
+        await store_core.add_messages("s_intent", [task_intent])
+
+        row = store_db.execute(
+            "SELECT origin FROM messages WHERE session_id = 's_intent'"
+        ).fetchone()
+        assert row["origin"] == "task_intent"
+
+    @pytest.mark.asyncio
+    async def test_explicit_user_origin_persists(self, store_db):
+        """The entry-stamped user origin lands as 'user' (not NULL)."""
+        await store_core.add_messages(
+            "s_explicit_user", [HumanMessage("hi", metadata={"origin": "user"})]
+        )
+
+        row = store_db.execute(
+            "SELECT origin FROM messages WHERE session_id = 's_explicit_user'"
+        ).fetchone()
+        assert row["origin"] == "user"
+
+    @pytest.mark.asyncio
+    async def test_unmarked_human_defaults_to_user_ai_tool_null(self, store_db):
+        """human without metadata → 'user'; ai/tool rows stay NULL."""
         await store_core.add_messages(
             "s_roles",
             [
@@ -106,41 +132,27 @@ class TestOriginTagging:
         ).fetchall()
         by_role = {r["role"]: r["origin"] for r in rows}
         assert set(by_role) == {"human", "ai", "tool"}
-        # NULL (never empty string) for every non-carrier role.
+        assert by_role["human"] == "user"
         assert by_role["ai"] is None
         assert by_role["tool"] is None
-        assert by_role["human"] is None
 
 
-class TestNullOrigin:
-    """Partial / missing contracts must NOT tag — partial match stays NULL."""
-
-    @pytest.mark.asyncio
-    async def test_plain_human_origin_is_null(self, store_db):
-        """A plain HumanMessage (no metadata) → origin IS NULL."""
-        await store_core.add_messages("s_plain", [HumanMessage("hello")])
-
-        row = store_db.execute(
-            "SELECT origin FROM messages WHERE session_id = 's_plain'"
-        ).fetchone()
-        assert row["origin"] is None
+class TestContractMismatchFallsBackToUser:
+    """Partial completion contracts never tag 'subagent_completion'."""
 
     @pytest.mark.asyncio
-    async def test_provenance_without_internal_origin_is_null(self, store_db):
-        """Right provenance but internal not True → partial contract, NULL."""
-        partial = HumanMessage(
-            "hi",
-            metadata={"provenance": "subagent_completion"},
-        )
+    async def test_provenance_without_internal_origin_is_user(self, store_db):
+        """Right provenance but internal not True → partial contract → user."""
+        partial = HumanMessage("hi", metadata={"provenance": "subagent_completion"})
         await store_core.add_messages("s_partial", [partial])
 
         row = store_db.execute(
             "SELECT origin FROM messages WHERE session_id = 's_partial'"
         ).fetchone()
-        assert row["origin"] is None
+        assert row["origin"] == "user"
 
     @pytest.mark.asyncio
-    async def test_internal_truthy_string_origin_is_null(self, store_db):
+    async def test_internal_truthy_string_origin_is_user(self, store_db):
         """``internal`` must be True (bool), not merely truthy — strict check."""
         strict = HumanMessage(
             "hi",
@@ -151,25 +163,22 @@ class TestNullOrigin:
         row = store_db.execute(
             "SELECT origin FROM messages WHERE session_id = 's_truthy'"
         ).fetchone()
-        assert row["origin"] is None
+        assert row["origin"] == "user"
 
     @pytest.mark.asyncio
-    async def test_internal_without_provenance_origin_is_null(self, store_db):
-        """internal=True but provenance missing/wrong → NULL."""
-        wrong = HumanMessage(
-            "hi",
-            metadata={"internal": True, "provenance": "something_else"},
-        )
+    async def test_internal_without_provenance_origin_is_user(self, store_db):
+        """internal=True but provenance missing/wrong → user, not carrier."""
+        wrong = HumanMessage("hi", metadata={"internal": True, "provenance": "something_else"})
         await store_core.add_messages("s_wrong_prov", [wrong])
 
         row = store_db.execute(
             "SELECT origin FROM messages WHERE session_id = 's_wrong_prov'"
         ).fetchone()
-        assert row["origin"] is None
+        assert row["origin"] == "user"
 
 
 class TestSessionTitleExcludesOrigin:
-    """The title query must ignore origin-tagged human rows."""
+    """The title query only accepts user-origin human rows."""
 
     @pytest.mark.asyncio
     async def test_title_ignores_carrier_row(self, store_db):
@@ -188,6 +197,33 @@ class TestSessionTitleExcludesOrigin:
 
         sessions = {s["session_id"]: s for s in store_core.get_session_ids()}
         assert sessions["s_carrier_only"]["title"] == ""
+
+    @pytest.mark.asyncio
+    async def test_title_prefers_user_over_later_task_intent(self, store_db):
+        """A later TaskIntent injection must not override the user question."""
+        await store_core.add_messages("s_intent_title", [HumanMessage("real question")])
+        await store_core.add_messages(
+            "s_intent_title",
+            [
+                HumanMessage(
+                    content="[SYSTEM DIRECTIVE: ORCHESTRATOR MODE ARMED]",
+                    metadata={"origin": "task_intent", "internal": True},
+                )
+            ],
+        )
+
+        sessions = {s["session_id"]: s for s in store_core.get_session_ids()}
+        assert sessions["s_intent_title"]["title"] == "real question"
+
+    @pytest.mark.asyncio
+    async def test_title_reads_explicit_user_origin_row(self, store_db):
+        """An entry-stamped origin='user' row is a valid title source."""
+        await store_core.add_messages(
+            "s_user_origin", [HumanMessage("stamped question", metadata={"origin": "user"})]
+        )
+
+        sessions = {s["session_id"]: s for s in store_core.get_session_ids()}
+        assert sessions["s_user_origin"]["title"] == "stamped question"
 
 
 class TestHistoryRowsExposeOrigin:
@@ -208,7 +244,7 @@ class TestHistoryRowsExposeOrigin:
             assert "origin" in row, "SELECT * must surface the origin column"
 
         by_content = {row["content"]: row["origin"] for row in rows}
-        assert by_content["user question"] is None
+        assert by_content["user question"] == "user"
         assert by_content["[subagent:researcher completed]\nTask result text"] == (
             "subagent_completion"
         )

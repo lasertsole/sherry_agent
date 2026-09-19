@@ -142,20 +142,26 @@ class HumanMessageRowBuilder(MessageRowBuilder):
         audios: list[str] = _as_str_list(additional_kwargs.get("audios", []))
         videos: list[str] = _as_str_list(additional_kwargs.get("videos", []))
 
-        # Tag background subagent-completion injections. The tag fires
-        # ONLY on a full match of the frozen metadata contract built by
+        # Full-coverage origin tagging. The entry decides the source and stamps
+        # ``metadata.origin`` (WS/channel user input -> "user", TaskIntent ->
+        # "task_intent", cron queue rows -> "cron" + internal); here we persist
+        # that value verbatim. The frozen subagent-completion contract built by
         # agent/tools/subagent/announce/completion_message.py (mirrors
-        # _is_internal_completion in the completion-drain middleware):
-        # internal must be True (strict bool, not merely truthy) AND
-        # provenance must be exactly "subagent_completion". Everything
-        # else — plain user input, partial-contract metadata — stays
-        # NULL (= real user message). Never an empty string.
+        # _is_internal_completion in the completion-drain middleware) carries no
+        # ``origin`` key, so it is mapped to its own tag: internal must be True
+        # (strict bool, not merely truthy) AND provenance must be exactly
+        # "subagent_completion". Every other human row is a user message, so a
+        # legacy/unmarked human row also reads back as "user" (NULL = legacy
+        # compatibility for rows written before this contract). AI/tool rows
+        # keep NULL: origin describes the human request source only.
         meta: dict[str, Any] = getattr(msg, "metadata", None) or {}
-        origin: str | None = (
-            "subagent_completion"
-            if (meta.get("internal") is True and meta.get("provenance") == "subagent_completion")
-            else None
-        )
+        explicit_origin = meta.get("origin")
+        if explicit_origin is not None:
+            origin: str | None = str(explicit_origin)
+        elif meta.get("internal") is True and meta.get("provenance") == "subagent_completion":
+            origin = "subagent_completion"
+        else:
+            origin = "user"
 
         return {
             "session_id": session_id,
@@ -832,7 +838,7 @@ def get_session_ids() -> list[dict]:
                     FROM messages m2
                     WHERE m2.session_id = agg.session_id
                       AND m2.role = 'human'
-                      AND m2.origin IS NULL
+                      AND (m2.origin IS NULL OR m2.origin = 'user')
                     ORDER BY m2.turn_num DESC, m2.id DESC
                     LIMIT 1
                 ) AS title_content
@@ -848,12 +854,14 @@ def get_session_ids() -> list[dict]:
     result: list[dict] = []
     for row in rows:
         # Title comes from the latest human message of the session (the
-        # user's most recent question). Background subagent-completion
-        # injections (``origin = 'subagent_completion'``) are excluded, so a
-        # carrier never becomes the session title; a session whose only human
-        # rows are carriers gets an empty title, which the client renders as
-        # an i18n placeholder (e.g. "新会话") instead of leaking the raw
-        # session_id.
+        # user's most recent question). Only user-origin human rows qualify
+        # (``origin`` NULL = legacy rows written before origin tagging, or
+        # ``'user'`` for current entries); background subagent-completion
+        # carriers (``origin = 'subagent_completion'``) and other internal
+        # injections (task_intent / cron) are excluded, so a carrier never
+        # becomes the session title. A session whose only human rows are
+        # internal gets an empty title, which the client renders as an i18n
+        # placeholder (e.g. "新会话") instead of leaking the raw session_id.
         result.append(
             {
                 "session_id": str(row["session_id"]),
