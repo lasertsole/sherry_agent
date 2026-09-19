@@ -68,6 +68,22 @@ def compute_summarization_defaults(max_input_tokens: int) -> dict:
 
 ## P1-4：增量检查点优化
 
+> **评估结论（2026-09-19）：未落地（评估后判定不安全且无收益）。**
+>
+> 实测（`N=200` 消息，项目真实 `ThreadSafeAsyncSqliteSaver`，含 1 条初始 HumanMessage）：
+>
+> | 方案 | checkpoints | writes | live bytes | 剪枝后状态 |
+> | --- | ---: | ---: | ---: | --- |
+> | 标准 `add_messages`，不剪枝（计划所述 O(N²) 基线） | 603 | 603 | 22,728,481 | 完好（402 条） |
+> | 标准 `add_messages` + 现有 `aclean_old_checkpoints`（每线程只留最新） | 1 | 0 | 74,717 | 完好（402 条） |
+> | `DeltaChannel(snapshot_frequency=50)` + 现有剪枝 | 1 | 0 | 502 | **重建为空（0 条，静默丢状态）** |
+>
+> 结论：Sherry 每次 `built_agent()` 都调用 `aclean_old_checkpoints()`（`agent/core.py:166`），每线程仅保留最新检查点，检查点存储已是 O(N)；**计划所述"默认 MessagesState 导致 O(N²)"的前提在本项目中不成立**（生产库实测：38 线程仅 38 个检查点 / 156 KB 有效载荷，30 MB 文件大小是 `auto_vacuum=0` 的空闲页膨胀，与检查点数量无关）。LangGraph 明确文档化：`prune`/keep-latest 会切断 `DeltaChannel` 的祖先写入回放，使 delta 通道静默重建为空（`langgraph/checkpoint/base/__init__.py:387-413` 的 `prune` warning；同一机制即上表第 3 行）。要让 DeltaChannel 安全，必须保留祖先链（磁盘反而增大）或强制快照（等价于现状，外加 beta API 复杂度）。
+>
+> API 本身可用：`langgraph.channels.delta.DeltaChannel` 存在于已安装的 `langgraph 1.2.5`；`AsyncSqliteSaver.aget_delta_channel_history`（`langgraph-checkpoint-sqlite 3.1.1`）与项目 `ThreadSafeAsyncSqliteSaver.get_delta_channel_history`（`agent/checkpointer/thread_safe_checkpointer.py:270`）均已实现；旧全量快照格式可由 `DeltaChannel.from_checkpoint` 直接读取（`langgraph/channels/delta.py:118-137`，纯值迁移路径）。**阻塞点不是 LangGraph 的 channel API，而是本项目的激进剪枝策略。** `DeltaChannel` 在 1.2.5 仍为 beta，磁盘格式可能变化（`delta.py:29-36`）。
+>
+> 因此不实现；`messages` 通道保持标准 `add_messages` 快照，由 `tests/agent/core/test_state_messages_reducer.py::TestStateSchemaChannelChoice` 锁定，防止无配套剪枝改造的 DeltaChannel 迁移。
+
 ### 问题
 
 Sherry 使用 LangGraph 的默认 MessagesState，长对话中检查点增长为 O(N²)（每轮保存全部消息的快照），导致 SQLite 膨胀和恢复变慢。
@@ -95,6 +111,16 @@ Sherry 使用 LangGraph 的默认 MessagesState，长对话中检查点增长为
 ---
 
 ## P1-5：消息增量缩减器
+
+> **评估结论（2026-09-19）：已被 LangGraph 标准能力覆盖，不重复造轮子（不新增自定义 reducer）。**
+>
+> 标准 `add_messages`（`langgraph/graph/message.py:60`，`langgraph 1.2.5`）已提供计划要求的全部能力：按 id 去重（同 id **替换**，非跳过）、`RemoveMessage` 墓碑删除、`RemoveMessage(REMOVE_ALL_MESSAGES)` 全量重置、缺失 id 自动 UUID、`BaseMessageChunk` 归一。
+>
+> 计划样例 `messages_delta_reducer` 是重复实现，且其"同 id 跳过"语义**与 P1-9 原地打标直接冲突**：P1-9（`ContextEvictionMiddleware`）用同 id `model_copy` 更新超大 HumanMessage，依赖标准 reducer 的**替换**语义（`model_copy` 保留 id，替换后标签生效）；若改成跳过，重复计数不变但标签被丢弃。`ToolCallNormalize` 与 `Summarization` 的 `[RemoveMessage(REMOVE_ALL_MESSAGES), *rebuilt]` 全列表替换同样依赖标准能力（计划样例的 `{"__reset__": True}` 哨兵是非标准写法，无法被现有代码触发）。
+>
+> 真实"重复注入/压缩残留"痛点不在 reducer：子代理完成载体在 `announce` 层已有幂等（`build_idempotency_key(run_id, generation)` + 内容镜像去重，`agent/tools/subagent/announce/delivery.py`）与 steering 队列的 `CONSUMED` 恰好一次语义（`agent/tools/subagent/announce/steering_queue.py`）；且载体消息无 `id`（`build_completion_message` / `_rebuild_message` 不设 id），由 reducer 在合并时才赋 UUID，reducer 无法按 id 去重内容重复。若确需更强幂等，修复点在注入层（给载体稳定 id），而非状态层。
+>
+> 行为由 `tests/agent/core/test_state_messages_reducer.py` 全量锁定：标准契约（替换/墓碑/重置/自动 id）、P1-9 同 id 替换、`REMOVE_ALL_MESSAGES` 全列表替换。
 
 ### 问题
 
@@ -333,5 +359,5 @@ Sherry 的 HITL 审批是会话级的，重启后丢失。无操作员场景缺�
 ## 实施优先级与依赖关系总览
 
 - **独立实施**：P1-3 模型感知摘要默认值、P1-6 中间件脚手架保护、P1-7 多模态内容清理、P1-8 威胁模型文档
-- **长期优化（高复杂度）**：P1-4 增量检查点优化（深入 LangGraph reducer）、P1-5 消息增量缩减器（需修改状态 schema）
+- **已评估不落地**：P1-4 增量检查点优化（前提被现有 `aclean_old_checkpoints` 剪枝消除，DeltaChannel+现剪枝会静默丢状态）、P1-5 消息增量缩减器（标准 `add_messages` 已覆盖，且样例语义会破坏 P1-9）
 - **增量改进**：P2-1 ripgrep 双重超时看门狗（疑似不适用，见小节）、P2-2 持久化审批策略（依赖现有 HITL）
