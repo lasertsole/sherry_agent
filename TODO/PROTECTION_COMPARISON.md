@@ -143,9 +143,9 @@
 | 消息驱逐       | ✅ 工具结果→`SESSIONS_DIR/<sid>/evicted/` + head/tail预览(各5行) + `read_file`执行期切片 | ✅ 工具结果→文件系统 + head/tail预览 + 内联媒体卸载     |
 | 参数截断       | ⚠️ 预算截断路径会截断超大工具调用参数（`pub/func/message/tool_args_truncate.py`，head+tail+中段省略）；无摘要期模型感知等价物 | ✅ `TruncateArgsSettings` 摘要前截断旧工具参数          |
 | 模型感知默认值 | ❌ 手动配置                                                                    | ✅ `compute_summarization_defaults()` 从模型profile计算 |
-| 增量检查点优化 | ❌ 无                                                                          | ✅ `DeltaChannel(snapshot_frequency=50)` O(N²)→O(N)     |
+| 增量检查点优化 | ⚠️ 评估后不落地（检查点已是 O(N)：`aclean_old_checkpoints` 每线程只留最新；`DeltaChannel` 与 keep-latest 剪枝不兼容，实测静默丢状态——评估见 `DEEPAGENTS_BORROWING_PLAN.md` 头部）                                                                          | ✅ `DeltaChannel(snapshot_frequency=50)` O(N²)→O(N)（需保留祖先链）     |
 | 人类消息驱逐   | ✅ 超大 HumanMessage 全文落 `SESSIONS_DIR/<sid>/evicted/human-<id>.md`，state 与 MesMemory 保留全文，`before_model` 只打 `lc_evicted_to` 标记、`wrap_model_call` 仅把模型视图换成 路径+head/tail+`read_file` 提示 | ✅ `human_message_token_limit_before_evict`             |
-| **结论**       | **Sherry 在触发精度、防抖动与非LLM溢出裁剪方面领先；DeepAgents 在增量检查点优化与模型感知默认值方面领先；工具结果驱逐/预览/read_file 切片与人类消息驱逐两侧对齐** |
+| **结论**       | **Sherry 在触发精度、防抖动与非LLM溢出裁剪方面领先；增量检查点两侧各有千秋（DeepAgents 需保留祖先链，Sherry 的激进剪枝下不兼容且无收益）；DeepAgents 在模型感知默认值方面领先；工具结果驱逐/预览/read_file 切片与人类消息驱逐两侧对齐** |
 
 **关键文件**：
 
@@ -191,14 +191,14 @@
 | 外部路径审批     | ✅ 六检查网关（`approve`/`approve_dir`/`yolo`/`reject`）                             | ❌ 无外部路径概念（virtual_mode；路径规则走 permission 谓词） |
 | 路径感知中断谓词 | ❌ 无                                                                                | ✅ exact vs bulk scope 谓词                   |
 | 批量模式绕过检测 | ❌ 无                                                                                | ✅ `_bulk_pattern_fires()` 检测glob可绕过HITL |
-| 持久化审批策略   | ❌ 无                                                                                | ✅ `ToolApprovalStore` 字节修订CAS            |
-| 操作员范围       | ❌ 无                                                                                | ✅ `APPROVAL_OPERATOR` ContextVar             |
-| 定时任务审批     | ❌ 无                                                                                | ✅ 无操作员时自动拒绝                         |
-| **结论**         | **Sherry 更全面(14层+47+模式+外部路径六检查网关)；DeepAgents 在路径感知谓词和持久化审批方面有独到设计** |
+| 持久化审批策略   | ✅ `ToolApprovalStore`+`approval_scope`（逐调用决策，`(operator,session,tool,args-hash)` 全链键 + 字节修订 CAS + 无操作员自动拒绝；提交 `a8b70c0e`/`9144f8e7`/`688720da`）                                                                                | ✅ `ToolApprovalStore` 字节修订CAS            |
+| 操作员范围       | ✅ `approval_scope.py`（ContextVar；无认证传输时以 session 身份为等价作用域 + headless 判定）                                                                                | ✅ `APPROVAL_OPERATOR` ContextVar（bool 授权闸门）             |
+| 定时任务审批     | ✅ `metadata.origin=="cron"`/`internal` 判定无操作员，审批门自动拒绝（不挂起图）                                                                                | ✅ 无操作员时自动拒绝                         |
+| **结论**         | **Sherry 更全面(14层+47+模式+外部路径六检查网关)；持久化审批两侧各有千秋（Sherry 逐调用决策 + 全链键 + 无操作员自动拒绝；DeepAgents 工具级策略持久化 + 授权闸门）；DeepAgents 在路径感知谓词方面有独到设计** |
 
 **关键文件**：
 
-- Sherry: `agent/middlewares/humanInTheLoop/`（`detection.py` Layer 1–2 hardline/dangerous + `gates.py` Layer 8/9/11/12/13/14 + `approval.py` + `core.py`）+ `agent/tools/pub_base/path_utils.py::resolve_external_path`（外部路径网关，`allowed_decisions`:391）
+- Sherry: `agent/middlewares/humanInTheLoop/`（`detection.py` Layer 1–2 hardline/dangerous + `gates.py` Layer 8/9/11/12/13/14 + `approval.py` + `core.py` + `approval_store.py`（持久化审批 CAS）/ `approval_scope.py`（操作员作用域），提交 `a8b70c0e`/`9144f8e7`/`688720da`）+ `agent/tools/pub_base/path_utils.py::resolve_external_path`（外部路径网关，`allowed_decisions`:391）
 - DeepAgents: `libs/deepagents/deepagents/middleware/_fs_interrupt.py`（exact/bulk 谓词:49 / `_bulk_pattern_fires`:140）+ `libs/talon/deepagents_talon/tool_approvals.py`（`APPROVAL_OPERATOR`:87 / `ToolApprovalStore`:90 / 字节修订 CAS:142）+ `libs/talon/deepagents_talon/runtime.py:526` + `libs/talon/deepagents_talon/host.py`
 
 ---
@@ -396,8 +396,8 @@
 | 排除覆盖审计     | ❌ 无                                                                                          | ✅ 检测typo/过期排除条目                   |
 | 名称冲突检测     | ❌ 无                                                                                          | ✅ 检测字符串排除匹配多个类                |
 | 多模态内容清理   | ❌ 无                                                                                          | ✅ 替换模型不支持的内容块                  |
-| 增量检查点优化   | ❌ 无                                                                                          | ✅ DeltaChannel O(N²)→O(N)                 |
-| 消息去重         | ❌ 无                                                                                          | ✅ `_messages_delta_reducer()` ID去重+墓碑 |
+| 增量检查点优化   | ⚠️ 已评估不适用（keep-latest 剪枝下检查点已是 O(N)；DeltaChannel 与剪枝不兼容）                                                                                          | ✅ DeltaChannel O(N²)→O(N)（需保留祖先链）                 |
+| 消息去重         | ⚠️ 标准 `add_messages` 已覆盖（按 id 替换去重、`RemoveMessage` 墓碑、`REMOVE_ALL_MESSAGES` 重置），无自定义 reducer                                                                                          | ✅ `_messages_delta_reducer()` ID去重+墓碑 |
 | 前缀缓存稳定     | ✅ 记忆快照冻结(会话内不变) + ToolCallNormalize 无变化不写状态                                  | ✅ `_prompt_caching.py` 中间件             |
 | 威胁模型文档     | ⚠️ 无独立 THREAT_MODEL.md；docs/sandbox/README* 含威胁模型章节与局限清单                       | ✅ THREAT_MODEL.md                         |
 | 模型安全解析     | ❌ 无                                                                                          | ✅ `openai:`前缀检测+数据保留文档          |
@@ -448,14 +448,14 @@
 | 内联base64媒体卸载                     | ⭐⭐⭐⭐   | 中         |
 | 摘要期模型感知参数截断(TruncateArgsSettings) | ⭐⭐⭐⭐ | 中       |
 | 模型感知摘要默认值                     | ⭐⭐⭐⭐   | 低         |
-| DeltaChannel增量检查点(O(N²)→O(N))     | ⭐⭐⭐⭐⭐ | 高         |
-| 消息增量缩减器(去重+墓碑+重置)         | ⭐⭐⭐⭐   | 高         |
+| DeltaChannel增量检查点(O(N²)→O(N)) — 已评估不适用（Sherry 剪枝下检查点已是 O(N)；DeltaChannel+keep-latest 会静默丢状态）     | ⭐⭐⭐⭐⭐ | 高         |
+| 消息增量缩减器(去重+墓碑+重置) — 已评估不适用（标准 `add_messages` 已覆盖全部语义）         | ⭐⭐⭐⭐   | 高         |
 | 多模态内容清理(替换不支持块)           | ⭐⭐⭐     | 中         |
 | 中间件脚手架保护(不可排除)             | ⭐⭐⭐⭐   | 低         |
 | 排除覆盖审计(typo检测)                 | ⭐⭐⭐     | 低         |
 | 路径感知HITL谓词(exact vs bulk)        | ⭐⭐⭐⭐   | 中         |
 | 批量模式绕过HITL检测                   | ⭐⭐⭐⭐   | 中         |
-| 持久化工具审批策略(字节修订CAS)        | ⭐⭐⭐     | 中         |
+| 持久化工具审批策略(字节修订CAS) — ✅ Sherry 已落地（2026-09：`approval_store.py`/`approval_scope.py`，提交 `a8b70c0e`/`9144f8e7`/`688720da`）        | ⭐⭐⭐     | 中         |
 | ripgrep双重超时看门狗(SIGKILL双重有界等待) | ⭐⭐⭐⭐ | 中        |
 | 威胁模型文档(THREAT_MODEL.md)          | ⭐⭐⭐     | 低         |
 | 输出截断原因标记                       | ⭐⭐⭐     | 低         |
@@ -483,6 +483,6 @@
 
 - **Sherry Agent** 在**运行时行为安全**与**文件工具路径纵深防御**方面更强：工具调用病理检测、输出重复防护、LLM错误处理、并发控制、崩溃回路、心跳检测、TODO停滞追踪、`PathGuard` 参数级筛查、外部路径六检查审批、OS 沙箱读遮蔽等，形成了深度防御体系。适合**长时运行、多子代理、复杂工具编排**的场景。
 
-- **DeepAgents** 在**记忆/上下文工程与框架安全**方面更强：`virtual_mode` 虚拟命名空间路径模型、增量检查点、模型感知摘要默认值、多模态内容清理、中间件脚手架保护、威胁模型文档等。适合**文件操作密集、多模型供应商**的场景。
+- **DeepAgents** 在**记忆/上下文工程与框架安全**方面更强：`virtual_mode` 虚拟命名空间路径模型、模型感知摘要默认值、多模态内容清理、中间件脚手架保护、威胁模型文档等。适合**文件操作密集、多模型供应商**的场景。
 
-两者互补性极强：Sherry 可从 DeepAgents 借鉴增量检查点优化、摘要期模型感知参数截断、模型感知摘要默认值、多模态内容清理和威胁模型文档；DeepAgents 可从 Sherry 借鉴工具病理检测、输出重复防护、LLM错误处理、并发控制、OS级沙箱和外部路径人审网关。
+两者互补性极强：Sherry 可从 DeepAgents 借鉴摘要期模型感知参数截断、模型感知摘要默认值、多模态内容清理和威胁模型文档；DeepAgents 可从 Sherry 借鉴工具病理检测、输出重复防护、LLM错误处理、并发控制、OS级沙箱和外部路径人审网关。
