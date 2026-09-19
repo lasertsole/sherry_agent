@@ -240,6 +240,37 @@ class TestTriStateConfig:
 
         assert [item["type"] for item in mes.content] == ["text", "image_url"]
 
+    @pytest.mark.parametrize(
+        ("illegal", "sid"),
+        [
+            ("", "illegal-empty"),
+            ("yes", "illegal-yes"),
+            ("TRUE", "illegal-upper"),
+            ("1", "illegal-one"),
+            ("on", "illegal-on"),
+        ],
+    )
+    def test_illegal_value_fails_safe_to_skill_path(self, processor, illegal, sid, monkeypatch):
+        monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_native_multimodal", illegal)
+        mes = HumanMessage(content=_valid_image_content("看图"))
+
+        processor._before_agent_impl(_state([mes], sid))
+
+        assert [item["type"] for item in mes.content] == ["text"]
+        assert "image_to_text" in mes.content[0]["text"]
+        assert len(mes.additional_kwargs["images"]) == 1
+        assert state_register_mem.get_state(sid, TRYING_KEY, False) is False
+
+    def test_illegal_value_overrides_cached_supported(self, processor, monkeypatch):
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_native_multimodal", "")
+        mes = HumanMessage(content=_valid_image_content("看图"))
+
+        processor._before_agent_impl(_state([mes], "illegal-over-cache"))
+
+        assert [item["type"] for item in mes.content] == ["text"]
+        assert "image_to_text" in mes.content[0]["text"]
+
     def test_auto_clears_stale_flags_on_skill_path(self, processor):
         state_register_mem.set_state("auto-stale", TRYING_KEY, True)
         state_register_mem.set_state("auto-stale", MODEL_KEY, "stale/model")
