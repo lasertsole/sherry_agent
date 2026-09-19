@@ -6,6 +6,12 @@ the latest revision so the caller can re-read (taskflow_summary) and retry
 with the freshest expected_revision, per skills/builtin/core/taskflow/SKILL.md.
 """
 
+# allow: SIZE_OK — the family's single shared-plumbing module: DAG status/deps
+# primitives, optimistic-lock conflict retry, dispatched-step merge, and the
+# full-replace step-list validation contract are consumed by multiple tool
+# modules; splitting by helper would fragment one shared contract for no
+# cohesion gain.
+
 import hashlib
 from collections.abc import Callable
 from typing import Any
@@ -261,3 +267,56 @@ def steps_summary(steps: list[dict]) -> dict[str, int]:
         status = step_status(step)
         counts[status] = counts.get(status, 0) + 1
     return counts
+
+
+def validate_steps_list(steps: list) -> str | None:
+    """Validate the structural contract of a full steps-list replacement.
+
+    Returns an ``Error:``-prefixed string when the list is malformed, else
+    ``None``. The contract (shared by ``taskflow_update_steps`` and its tests):
+    ``step_id`` is non-empty and unique across the list; ``task`` is non-empty;
+    ``status`` is one of the four ``StepStatus`` values; ``depends_on`` is a
+    list of non-empty ids that all exist **in this same list** and never name
+    the step itself. Cross-step safety rules (dispatched/done immutability,
+    child-key retention) are enforced by ``taskflow_update_steps``, which owns
+    the previous step list and therefore cannot live here.
+    """
+    if not isinstance(steps, list):
+        return "Error: steps must be a list of step objects"
+    seen: set[str] = set()
+    valid_statuses = {member.value for member in StepStatus}
+    for index, step in enumerate(steps):
+        if not isinstance(step, dict):
+            return f"Error: steps[{index}] must be an object"
+        step_id = step.get("step_id")
+        if not isinstance(step_id, str) or not step_id.strip():
+            return f"Error: steps[{index}].step_id is required"
+        step_id = step_id.strip()
+        if step_id in seen:
+            return f"Error: duplicate step_id '{step_id}'"
+        seen.add(step_id)
+        task = step.get("task")
+        if not isinstance(task, str) or not task.strip():
+            return f"Error: step '{step_id}' task is required"
+        status = step.get("status")
+        if status not in valid_statuses:
+            valid_text = ", ".join(member.value for member in StepStatus)
+            return (
+                f"Error: step '{step_id}' has invalid status {status!r} "
+                f"(expected one of: {valid_text})"
+            )
+        depends_on = step.get("depends_on")
+        if not isinstance(depends_on, list):
+            return f"Error: step '{step_id}' depends_on must be a list"
+        for dep in depends_on:
+            if not isinstance(dep, str) or not dep.strip():
+                return f"Error: step '{step_id}' has an invalid depends_on entry"
+            if dep.strip() == step_id:
+                return f"Error: step '{step_id}' cannot depend on itself"
+    for step in steps:
+        step_id = str(step["step_id"]).strip()
+        for dep in step.get("depends_on") or []:
+            dep_id = str(dep).strip()
+            if dep_id not in seen:
+                return f"Error: step '{step_id}' depends_on references unknown step_id '{dep_id}'"
+    return None

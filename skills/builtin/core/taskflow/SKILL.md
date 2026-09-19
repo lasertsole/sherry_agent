@@ -41,6 +41,17 @@ getTaskSummary).
   rejected — nothing is dispatched and no state changes; if a dispatch fails
   mid-batch, the steps already dispatched successfully are persisted first and
   the failures are reported.
+- `taskflow_update_steps(flow_id, steps, expected_revision)`: full-replace the
+  flow's steps list (like `todowrite` for TaskFlow). Pass the COMPLETE list;
+  each step is an object with `step_id`, `task`, `depends_on`, `status`
+  (`ready | blocked | dispatched | done`). Use it to add, remove, reorder, or
+  rewrite steps. New steps must be `ready`/`blocked` — dispatch still goes
+  through `taskflow_dispatch`. A `dispatched` step keeps its
+  `child_session_key` and cannot be downgraded to `ready`/`blocked` (its task
+  may change, but the running child keeps the old task). A `done` step cannot
+  change its task/`depends_on`/status. Removing a `dispatched` step whose
+  child is still running succeeds with a non-blocking `Warning:` — kill the
+  child or settle it first. Terminal flows reject the call.
 - `taskflow_wait_all(flow_id, timeout_seconds, poll_interval_seconds)`: bounded
   polling that waits for the child sessions of all `dispatched` steps in this
   flow to settle. It only checks child sessions dispatched by this flow and does
@@ -123,6 +134,20 @@ Status progression: `blocked -> ready -> dispatched -> done`.
   `taskflow_resume`.
 
 `taskflow_summary` renders each step's status, depends_on, and the per-status counts.
+
+## Dynamic step editing (`taskflow_update_steps`)
+
+`taskflow_update_steps(flow_id, steps, expected_revision)` full-replaces the DAG:
+pass the complete list and it becomes the stored list, so steps can be added,
+removed, reordered, or rewritten in one call. Safety rules: `step_id` must be
+unique; every `depends_on` entry must reference a `step_id` present in the new
+list (no self-dependency); a `dispatched` step keeps its `child_session_key`
+and cannot be downgraded to `ready`/`blocked`; a `done` step cannot change its
+task, `depends_on`, or status; new steps must be `ready`/`blocked` (dispatch
+through `taskflow_dispatch`); terminal flows reject the call. Deleting a
+dispatched step whose child is still running succeeds but returns a
+non-blocking warning — kill the child or settle it (`taskflow_wait_all` /
+`taskflow_resume`) before relying on the new DAG.
 
 ## Recommended flow (dependencies + parallelism)
 
