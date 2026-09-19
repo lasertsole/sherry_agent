@@ -1,7 +1,5 @@
 """Unit + integration tests for pre-compression Memory Flush.
 
-Plan: ``TODO/P0-1_MEMORY_FLUSH_PLAN.md`` §6.1 (13 tests).
-
 The flush extraction LLM is fully stubbed (zero network); ``MemoryStore`` is a
 real instance backed by a per-test tmp directory so the on-disk MEMORY.md write
 is actually exercised.

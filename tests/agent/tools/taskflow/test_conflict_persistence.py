@@ -33,7 +33,8 @@ from agent.tools.taskflow.tools.taskflow_dispatch import taskflow_dispatch
 from agent.tools.taskflow.tools.taskflow_run_task import taskflow_run_task
 
 # The family package re-exports the wait_all tool object under the same name,
-# shadowing the submodule for package-attribute traversal (see TODO 8 note).
+# shadowing the submodule for package-attribute traversal (see the re-export in
+# agent/tools/taskflow/tools/__init__.py) — import the module by its full path.
 wait_mod = importlib.import_module("agent.tools.taskflow.tools.taskflow_wait_all")
 
 pytestmark = [pytest.mark.unit]

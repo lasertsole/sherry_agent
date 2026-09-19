@@ -6,9 +6,9 @@
 # have a dedicated manually-dispatched workflow (llm-e2e.yml).
 #
 # Heavy local-inference packages (llama-cpp-python, funasr, torch) are NOT
-# installed: the hermetic suite was verified to pass without them (350 passed,
-# 5 deselected). Skipping them avoids a multi-GB CUDA/torch download and a
-# llama-cpp-python source build on the runner.
+# installed: the hermetic suite was verified to pass without them. Skipping
+# them avoids a multi-GB CUDA/torch download and a llama-cpp-python source
+# build on the runner.
 # NOTE: `uv run --no-sync` below is REQUIRED - a plain `uv run` would re-sync
 # the lockfile and silently reinstall the excluded packages.
 
