@@ -8,8 +8,9 @@ associated with a plan when any of three sources links them:
 1. the session's ``plan_ref`` state key (``state_register_db``);
 2. a ``plan_ref`` on one of this session's todos (``todos.db``, filtered by
    ``session_id`` in SQL);
-3. a ``.omo/boulder.json`` work whose ``plan_name`` matches and whose
-   ``session_ids`` list contains this session (multi-session collaboration).
+3. a boulder work (``config.path.resolve_boulder_path``) whose ``plan_name``
+   matches and whose ``session_ids`` list contains this session
+   (multi-session collaboration).
 
 :func:`association_plan_refs` returns those links as :class:`PlanRef` records.
 Each carries ``anchor_session_id`` — the session whose plans directory anchors

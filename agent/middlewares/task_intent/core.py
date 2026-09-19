@@ -8,9 +8,10 @@ Two independent components of the original design are fused here:
   (module-level ``_armed_sessions`` ledger). ``rearm_after_compact`` clears the
   entry after context compression so the full prompt is injected again.
 - **Plan-active steering** (mirrors omo ``ulw-execute-continuation``
-  input hook): when ``.omo/boulder.json`` holds an active/paused work whose plan
-  file exists and contains a checkbox, append the plan-active reminder instead
-  and skip arming entirely (plan-active steering has priority).
+  input hook): when the boulder file (``config.path.resolve_boulder_path``)
+  holds an active/paused work whose plan file exists and contains a checkbox,
+  append the plan-active reminder instead and skip arming entirely
+  (plan-active steering has priority).
 
 Anti-loop guarantees (design intent; see this module + skills/builtin/core/ulw-execute/SKILL.md):
 
@@ -148,7 +149,7 @@ This message appears to be a work request. Before responding, assess the scope:
 
 2. You are an ORCHESTRATOR, not an implementer:
    - Create a session plan file under workspace/sessions/<session_id>/plans/
-     (legacy .omo/plans/ accepted) or use todowrite to register tasks
+     or use todowrite to register tasks
    - Set proper category, delegation, flow_id/step_id fields
    - For dependencies, register TaskFlow steps with depends_on and let TaskFlow
      block/unlock/parallel-dispatch — do NOT build a second DAG
@@ -182,10 +183,10 @@ _TASK_STEERING_REMINDER = (
 _PLAN_ACTIVE_REMINDER = (
     "\n\n<sherry-ulw-execute>\n"
     "An active ulw-execute plan is present in this working directory.\n"
-    "Before continuing, read `.omo/boulder.json` and the plan file its active_plan\n"
-    "points to (session-scoped `workspace/sessions/<session_id>/plans/`, or legacy\n"
-    "`.omo/plans/`), then determine what remains; use the ledger and plan as the\n"
-    "source of truth.\n"
+    "Before continuing, read the boulder state (`src/data/boulder.json`) and the\n"
+    "plan file its active_plan points to (session-scoped\n"
+    "`workspace/sessions/<session_id>/plans/`), then determine what remains; use\n"
+    "the plan and the evidence ledger as the source of truth.\n"
     "Continue the current work with evidence-bound execution; do not start "
     "unrelated work until every top-level checkbox is `- [x]`.\n"
     "</sherry-ulw-execute>"
@@ -230,15 +231,14 @@ def _is_internal_completion(msg: Any) -> bool:
 
 
 def _has_active_boulder(session_id: str | None = None) -> bool:
-    """True when ``.omo/boulder.json`` holds continuable work.
+    """True when the boulder file holds continuable work.
 
     Mirrors omo ``findContinuableBoulderWork``: the active work's status is
     ``active`` or ``paused`` AND its plan file exists and contains at least one
     checkbox (``- [ ]`` or ``- [x]``). The plan reference resolves through
-    ``config.path.resolve_plan_path`` — session-scoped
-    ``workspace/sessions/<session_id>/plans/`` first, legacy ``.omo/plans/`` as
-    fallback — so an unmigrated boulder entry never goes silently dark. Any
-    read/parse failure → False.
+    ``config.path.resolve_plan_path`` (session-scoped
+    ``workspace/sessions/<session_id>/plans/``). A missing boulder file means no
+    active work; any read/parse failure → False.
     """
     try:
         boulder_path = _BOULDER_PATH

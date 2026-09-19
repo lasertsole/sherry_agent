@@ -1,4 +1,4 @@
-"""Append-only evidence ledger (``.omo/ledger.jsonl`` at the repo root).
+"""Append-only evidence ledger (``src/data/evidence-ledger.jsonl``).
 
 One JSON object per line records the evidence trail for a plan's checkboxes
 (``task-started`` / ``task-completed`` ...). Appends never rewrite existing
@@ -18,7 +18,7 @@ from config.path import resolve_evidence_ledger_path
 class EvidenceLedger:
     """Class-level append/read API over a JSONL evidence file."""
 
-    # Repo-root absolute (never cwd-relative). Deliberately NOT session-scoped:
+    # Repo absolute (never cwd-relative). Deliberately NOT session-scoped:
     # this ledger is the shared audit trail across every plan and session.
     LEDGER_PATH = str(resolve_evidence_ledger_path())
 

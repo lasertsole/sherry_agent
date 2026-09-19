@@ -111,15 +111,12 @@ def is_allowed_skill_path(skill_file: Path, skills_dir: Path | None = None) -> b
 
 
 # ── Plan / boulder path resolution (single source of truth) ────────────────
-# Plans were migrated from repo-level ``.omo/plans/`` into each session tree
-# (``workspace/sessions/<session_id>/plans/``). Legacy ``.omo`` references stay
-# resolvable, and migrated files are found behind a legacy reference.
-# ``ROOT_DIR`` / ``SESSIONS_DIR`` are read at call time so tests can repoint them.
-
-
-def _omo_dir() -> Path:
-    """Return the repo-root ``.omo`` orchestration directory (absolute)."""
-    return ROOT_DIR / ".omo"
+# Plans live in each session tree (``workspace/sessions/<session_id>/plans/``).
+# Active-work state and the evidence ledger live under ``src/data/``. These
+# locations are Sherry-owned by contract: no external orchestration directory
+# participates in plan, boulder or ledger resolution.
+# ``ROOT_DIR`` / ``SESSIONS_DIR`` / ``SRC_DIR`` are read at call time so tests
+# can repoint them.
 
 
 def is_safe_session_segment(session_id: str) -> bool:
@@ -150,20 +147,30 @@ def session_plans_dir(session_id: str) -> Path | None:
     return SESSIONS_DIR / session_id / "plans"
 
 
+def _is_plain_relative_ref(candidate: Path) -> bool:
+    """True when a relative plan reference may be rooted at ``ROOT_DIR``.
+
+    Plans are user-visible workspace artifacts: a reference that enters a
+    hidden (dot-prefixed) tooling directory, or traverses upwards, never names
+    a plan file and must not resolve.
+    """
+    parts = candidate.parts
+    if not parts or ".." in parts:
+        return False
+    return not parts[0].startswith(".")
+
+
 def resolve_plan_path(plan_ref: str | Path | None, session_id: str | None = None) -> Path | None:
     """Resolve a plan reference to an existing file, or ``None``.
 
     Accepted forms, in priority order:
 
     1. **Session-scoped** — a bare filename (``x.md``) or any reference whose
-       basename exists under ``SESSIONS_DIR/<session_id>/plans/``. This wins
-       over the legacy copy when both exist, and also finds the migrated file
-       behind a legacy ``.omo/plans/x.md`` reference.
-    2. **Repo-relative** — ``ROOT_DIR / ref`` when that file exists; covers
-       explicit new-form paths (``workspace/sessions/<id>/plans/x.md``) and the
-       legacy ``.omo/plans/x.md`` layout.
-    3. **Legacy basename** — ``ROOT_DIR/.omo/plans/<basename>`` (absolute
-       references are accepted only when the file exists).
+       basename exists under ``SESSIONS_DIR/<session_id>/plans/``.
+    2. **Repo-relative** — ``ROOT_DIR / ref`` when that file exists and the
+       reference is a plain (non-hidden, non-traversing) path; covers explicit
+       paths (``workspace/sessions/<id>/plans/x.md``). References into hidden
+       tooling directories or upwards out of the repo never resolve.
 
     The reference is never guessed: a missing file returns ``None``.
     """
@@ -185,33 +192,27 @@ def resolve_plan_path(plan_ref: str | Path | None, session_id: str | None = None
                 return scoped
 
     rooted = ROOT_DIR / candidate
-    if rooted.is_file():
+    if _is_plain_relative_ref(candidate) and rooted.is_file():
         return rooted
 
-    legacy = _omo_dir() / "plans" / candidate.name
-    if legacy.is_file():
-        return legacy
     return None
 
 
 def resolve_boulder_path() -> Path:
-    """Return the absolute active-work pointer path (``ROOT_DIR/.omo/boulder.json``).
+    """Return the absolute active-work pointer path (``SRC_DIR/data/boulder.json``).
 
-    ``boulder.json`` is written by the external orchestration layer, not by
-    this repo; the repo only reads it.
+    The pointer records the plan work the execution protocol is driving. A
+    missing file means "no active work" — every reader treats it as a safe
+    default, never as an error.
     """
-    return _omo_dir() / "boulder.json"
+    return SRC_DIR / "data" / "boulder.json"
 
 
 def resolve_evidence_ledger_path() -> Path:
-    """Return the absolute evidence-ledger path (``ROOT_DIR/.omo/ledger.jsonl``).
+    """Return the absolute evidence-ledger path (``SRC_DIR/data/evidence-ledger.jsonl``).
 
     The ledger deliberately stays repo-scoped (not session-scoped): it is the
     append-only audit trail shared across sessions that verify the same plan.
+    The ``data`` directory is created on the ledger's first append.
     """
-    return _omo_dir() / "ledger.jsonl"
-
-
-def resolve_start_work_ledger_path() -> Path:
-    """Return the absolute start-work ledger path (``ROOT_DIR/.omo/start-work/ledger.jsonl``)."""
-    return _omo_dir() / "start-work" / "ledger.jsonl"
+    return SRC_DIR / "data" / "evidence-ledger.jsonl"

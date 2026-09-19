@@ -39,8 +39,8 @@ from .registry import store_sqlite as store
 _TASKFLOW_STEP_DONE = "done"
 
 # Session state key holding the plan file pointer (session-scoped
-# ``workspace/sessions/<id>/plans/*.md``; legacy ``.omo/plans/*.md`` accepted)
-# that the prompt builder reads to locate the plan's knowledge summary.
+# ``workspace/sessions/<id>/plans/*.md``) that the prompt builder reads to
+# locate the plan's knowledge summary.
 _PLAN_REF_STATE_KEY = "plan_ref"
 
 

@@ -40,9 +40,8 @@ def _read_plan(plan_path: str) -> str:
     """Read the plan file; a missing/unreadable file is an empty string.
 
     The reference resolves through ``config.path.resolve_plan_path`` (session
-    scoped location first, legacy ``.omo/plans/`` fallback); an unresolvable
-    reference falls back to the raw path so the OSError path still reports the
-    caller's value.
+    scoped location); an unresolvable reference falls back to the raw path so
+    the OSError path still reports the caller's value.
     """
     resolved = resolve_plan_path(plan_path)
     target = resolved if resolved is not None else Path(plan_path)

@@ -49,7 +49,7 @@ async def todowrite(
     Delegation (optional): self|subagent.
     Subagent_id (optional): child_session_key returned by task tool.
     Plan_ref (optional): plan file path — session-scoped
-    workspace/sessions/<session_id>/plans/*.md (legacy .omo/plans/*.md accepted).
+    workspace/sessions/<session_id>/plans/*.md.
     Flow_id (optional): TaskFlow flow id this todo tracks.
     Step_id (optional): TaskFlow step id (e.g. step-2) for DAG status.
 

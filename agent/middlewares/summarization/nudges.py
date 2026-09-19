@@ -12,7 +12,7 @@ from langgraph.types import Command
 from loguru import logger
 
 from config.features import NUDGE, SUMMARIZATION
-from config.path import resolve_plan_path, resolve_start_work_ledger_path
+from config.path import resolve_plan_path
 from pub.func import sanitize_tool_use_result_pairing
 from runtime import state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
@@ -516,37 +516,6 @@ def _resolve_plan_ref(session_id: str, todos: list[dict]) -> str:
     return ""
 
 
-def _read_ledger_entries(plan_ref: str, plan_path: str, plan_name: str) -> list[dict]:
-    """Read the start-work ledger, keeping entries for this plan (fail-open).
-
-    Ledger writers recorded a plan under a bare name or a historical path
-    (``.omo/plans/x.md``); every accepted spelling — the raw ``plan_ref``, the
-    resolved path, the plan name, and the legacy path — is matched so a
-    migrated reference still finds its history.
-    """
-    entries: list[dict] = []
-    ledger_path = resolve_start_work_ledger_path()
-    accepted = {plan_name, f".omo/plans/{plan_name}.md"}
-    accepted.update(part for part in (plan_ref, plan_path) if part)
-    try:
-        if not ledger_path.is_file():
-            return entries
-        with ledger_path.open("r", encoding="utf-8") as ledger_file:
-            for line in ledger_file:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    entry = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if entry.get("plan") in accepted:
-                    entries.append(entry)
-    except OSError:
-        logger.exception("plan extraction: failed to read ledger {}", ledger_path)
-    return entries
-
-
 def _read_subagent_runs(session_id: str) -> list[dict]:
     """Collect the trimmed subagent run records for this session (fail-open)."""
     runs_out: list[dict] = []
@@ -578,16 +547,14 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
 
     Reads:
     1. Plan file (``plan_ref`` from session state, else first non-empty todo
-       ref), resolved through ``config.path.resolve_plan_path`` — session-scoped
-       ``workspace/sessions/<session_id>/plans/`` first, legacy ``.omo/plans/``
-       as fallback
+       ref), resolved through ``config.path.resolve_plan_path``
+       (``workspace/sessions/<session_id>/plans/``)
     2. Todos (todos.db)
-    3. Ledger (``.omo/start-work/ledger.jsonl``, repo-root absolute)
-    4. Subagent runs (registry queries)
+    3. Subagent runs (registry queries)
 
     Returns an empty dict when there is no todo list to extract from; every
-    downstream read is fail-open so a missing plan file or ledger never breaks
-    the extraction pass.
+    downstream read is fail-open so a missing plan file never breaks the
+    extraction pass.
     """
     try:
         from agent.tools.todolist.registry.store_sqlite import get_todos_sync
@@ -621,7 +588,6 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
         "plan_path": plan_path,
         "plan_content": plan_content,
         "todos": todos,
-        "ledger_entries": _read_ledger_entries(plan_ref, plan_path, plan_name),
         "subagent_runs": _read_subagent_runs(session_id),
     }
 
@@ -651,7 +617,7 @@ async def _nudge_plan_extraction(
     """Plan-aware knowledge extraction + skill library update.
 
     Triggered when all todos are complete. Builds plan context (plan file +
-    todos + ledger + subagent runs) and launches a nudge agent with the
+    todos + subagent runs) and launches a nudge agent with the
     rendered ``_PLAN_EXTRACTION_PROMPT`` (Part 1: JSON knowledge extraction via
     knowledge(action="write"); Part 2: skill library update via skill_manage).
     Both tools carry ``nudge: True`` metadata and pass ``_NudgeLimitTool``.

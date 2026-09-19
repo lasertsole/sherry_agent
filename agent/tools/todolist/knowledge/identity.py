@@ -90,7 +90,7 @@ def _normalize_ref(ref: str, anchor_session_id: str) -> Path | None:
     """Resolve one raw reference to a canonical, lexically normalized path.
 
     Existing files win (``config.path.resolve_plan_path`` — session-scoped
-    first, then repo-relative, then legacy ``.omo/plans/``). A missing
+    first, then repo-relative). A missing
     reference is normalized syntactically so identity stays deterministic
     before the plan file is first written: a bare filename anchors to the
     anchor session's ``plans/`` directory; a path-shaped reference anchors to

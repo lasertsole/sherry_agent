@@ -30,9 +30,9 @@ loguru and swallowed — this runs ON the cancellation exception paths of
 ``server.service.messages.async_generate`` and must never mask the cancel
 frames or raise into the generator teardown.
 
-Design authority: ``.omo/evidence/task-3-spike-verdict.md`` (verdict: heal at
-WRITE time, deterministic-id upsert, marker must not rely on ToolCallNormalize
-— see the inline comment at the heal decision).
+Design authority: the interrupt-marker spike verdict (heal at WRITE time,
+deterministic-id upsert, marker must not rely on ToolCallNormalize — see the
+inline comment at the heal decision).
 """
 
 from __future__ import annotations
@@ -180,9 +180,9 @@ async def _write_interrupted_marker_inner(
 def _heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> list[ToolMessage]:
     """Synthesize error ToolMessages for the TRAILING incomplete super-step.
 
-    Decision (per ``.omo/evidence/task-3-spike-verdict.md``): heal at WRITE
-    time, in the SAME ``aupdate_state`` commit as the marker. Verdict FACT B1
-    shows relying on input-time ``ToolCallNormalize`` healing is NOT safe —
+    Decision (spike verdict): heal at WRITE time, in the SAME
+    ``aupdate_state`` commit as the marker. The verdict's FACT B1 shows relying
+    on input-time ``ToolCallNormalize`` healing is NOT safe —
     its span scan silently DROPS the next HumanMessage when the dangling span
     reaches end-of-transcript (pre-existing P1, out of scope) — and FACT B3
     shows the marker only rescues that case by accident of its message type.
