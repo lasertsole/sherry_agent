@@ -52,7 +52,7 @@
               option-value="code"
               class="w-40"
               size="small"
-              aria-label="Language / 语言"
+              :aria-label="t('a11y.language')"
               @update:model-value="onLanguageChange">
               <template #value="slotProps">
                 <span

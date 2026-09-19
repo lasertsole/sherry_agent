@@ -1,6 +1,7 @@
 {
   "a11y": {
-    "previewImage": "预览图片"
+    "previewImage": "预览图片",
+    "language": "语言"
   },
   "common": {
     "confirmDelete": "确认删除",

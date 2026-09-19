@@ -1,6 +1,7 @@
 {
   "a11y": {
-    "previewImage": "이미지 미리보기"
+    "previewImage": "이미지 미리보기",
+    "language": "언어"
   },
   "common": {
     "confirmDelete": "삭제 확인",

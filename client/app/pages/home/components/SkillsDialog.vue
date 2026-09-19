@@ -4,6 +4,7 @@
     "skills": {
       "title": "Skill Manager",
       "empty": "No skills in this category",
+      "noFiles": "No files",
       "selectHint": "Select a skill on the left to view details",
       "readonly": "Read-only",
       "uploading": "Uploading…",
@@ -50,6 +51,7 @@
     "skills": {
       "title": "スキル管理",
       "empty": "このカテゴリにはスキルがありません",
+      "noFiles": "ファイルがありません",
       "selectHint": "左側のスキルを選択して詳細を表示",
       "readonly": "読み取り専用",
       "uploading": "アップロード中…",
@@ -96,6 +98,7 @@
     "skills": {
       "title": "스킬 관리",
       "empty": "이 카테고리에 스킬이 없습니다",
+      "noFiles": "파일이 없습니다",
       "selectHint": "왼쪽에서 스킬을 선택해 세부 정보를 확인하세요",
       "readonly": "읽기 전용",
       "uploading": "업로드 중…",
@@ -142,6 +145,7 @@
     "skills": {
       "title": "技能管理",
       "empty": "该分类下暂无技能",
+      "noFiles": "暂无文件",
       "selectHint": "请选择左侧技能查看详情",
       "readonly": "只读",
       "uploading": "上传中…",
