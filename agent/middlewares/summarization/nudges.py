@@ -31,19 +31,52 @@ _MEMORY_REVIEW_PROMPT = (
     "Review the conversation above and consider saving to memory if appropriate.\n\n"
     "Focus on:\n"
     "1. Has the user revealed things about themselves — their persona, desires, "
-    "preferences, or personal details worth remembering?\n"
+    "preferences, or personal details worth remembering? (target: 'user')\n"
     "2. Has the user expressed expectations about how you should behave, their work "
-    "style, or ways they want you to operate?\n\n"
+    "style, or ways they want you to operate? (target: 'user')\n"
+    "3. Did the work surface a broad pitfall or convention that is NOT bound to a "
+    "specific file/module — something any future task in this environment could hit? "
+    "(target: 'facts')\n\n"
+    "Routing: user preferences and traits go to 'user'; general agent-side notes about "
+    "this environment/project go to 'memory'; broad cross-plan pitfalls and conventions "
+    "go to 'facts'. A pitfall bound to one module belongs in a '<module>-notes' skill "
+    "(skill_manage), not in memory.\n\n"
+    "Current FACTS.md content (target 'facts', limit {facts_limit} chars):\n"
+    "<facts>\n{facts_block}\n</facts>\n\n"
+    "Maintain FACTS.md like an editor, not an appender: merge entries describing the "
+    "same pitfall, replace outdated ones, and prefer saving nothing over bloating the "
+    "file (prefer nothing over noise).\n\n"
     "If something stands out, save it using the memory tool. "
     "If nothing is worth saving, just say 'Nothing to save.' and stop."
 )
 
+
+def _render_facts_context() -> tuple[str, str]:
+    """Return ``(current FACTS.md content, formatted char limit)`` for nudge prompts.
+
+    Reads the live content (not the frozen system-prompt snapshot) so a
+    compression-time nudge hands the model what the file holds right now.
+    """
+    from agent.tools.memory import memory_store
+
+    content = memory_store.format_live_content("facts")
+    return content or "(FACTS.md is empty)", f"{memory_store.facts_char_limit:,}"
+
+
+def _render_prompt_facts(template: str) -> str:
+    """Substitute the FACTS placeholders (injected content may contain braces)."""
+    facts_block, facts_limit = _render_facts_context()
+    return template.replace("{facts_limit}", facts_limit).replace("{facts_block}", facts_block)
+
+
 # Plan-aware extraction prompt. Part 1 writes structured JSON knowledge via
 # knowledge(action="write"); Part 2 carries the complete skill-library-update
 # guidance (the former standalone skill-review prompt, merged here and removed
-# as a separate constant).
+# as a separate constant) including the module-bound `<module>-notes`
+# carry-forward; Part 3 routes broad, module-independent pitfalls to the
+# FACTS.md memory target.
 _PLAN_EXTRACTION_PROMPT = """You are a knowledge extraction and skill maintenance specialist.
-A plan has just been completed. Do TWO things:
+A plan has just been completed. Do THREE things:
 
 ## Part 1: Structured Knowledge Extraction
 
@@ -160,6 +193,29 @@ not WHETHER you update.
 If you notice two existing skills that overlap, note it in your reply —
 the background curator handles consolidation at scale.
 
+### Module-bound carry-forward (`<module>-notes` skills)
+
+The class-level umbrellas above cover reusable classes of work. Module-bound
+pitfalls need a narrower channel: a lesson that binds to a SPECIFIC file /
+module / test and whose module can foreseeably be modified again.
+
+- Judgment: the lesson names a concrete file, module, or test (e.g.
+  `auth/token.py`, `test_auth_17`) and whoever touches that module next would
+  hit the same pitfall. If the module is finished for good, leave the detail
+  to Part 1 knowledge instead.
+- Output: write that module's notes skill with
+  `skill_manage(action="create", name="<module>-notes", content=...)` —
+  naming convention `<module>-notes` (e.g. `auth-module-notes`). If a skill
+  with that exact name already exists, do NOT create a duplicate: append the
+  new rows with
+  `skill_manage(action="patch", name="<module>-notes", old_string=..., new_string=...)`
+  (use action="edit" only for a full rewrite).
+- Content format: a short, actionable list grouped by module — "symptom →
+  cause → avoidance action", one line per lesson.
+- Keep it lean (prefer nothing over noise): one-off task details stay in
+  Part 1 knowledge; only carry forward what is genuinely reusable by the next
+  plan that touches the same module.
+
 ### User-preference embedding:
 When the user expressed a style/format/workflow preference during the plan,
 the update belongs in the SKILL.md body, not just in memory. Memory
@@ -192,6 +248,35 @@ skill — never 'this tool does not work' as a standalone constraint.
 Use the skill_manage tool to update or create skills as described above.
 Act on Part 2 only if there is real signal from the plan execution. If
 genuinely nothing stands out, skip Part 2 and say 'No skill updates needed.'
+
+## Part 3: Broad Pitfalls → FACTS.md
+
+Not every durable lesson is bound to a module or belongs to a skill class.
+Broad pitfalls and conventions — environment/toolchain constraints, recurring
+cross-module gotchas, ways of working that any future task could hit — are
+kept in FACTS.md, the third memory file, which is injected into every system
+prompt.
+
+Judge each candidate against the routing rules:
+- Bound to a specific file / module / test → Part 2 `<module>-notes` skill.
+- About the user (preferences, traits, expectations) → USER.
+- A reusable class of work or technique → Part 2 skill.
+- Broad, cross-plan pitfall or convention (not bound to one module) → FACTS.md.
+- General agent-side environment/project note → MEMORY.
+
+To write: call the memory tool with target="facts" (actions: add / replace /
+remove). Keep each entry to one short line — symptom plus avoidance.
+A transient setup failure the user can fix is not durable (see the Do-NOT
+list); a recurring constraint of this environment is.
+
+Current FACTS.md content (target 'facts', limit {facts_limit} chars):
+<facts>
+{facts_block}
+</facts>
+
+Maintain it like an editor: merge entries describing the same pitfall, replace
+outdated ones, and prefer saving nothing over bloating the file (prefer
+nothing over noise).
 
 ## Important
 
@@ -593,7 +678,10 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
             res = await _agent.ainvoke(
                 input={
                     "session_id": session_id,
-                    "messages": [*messages, HumanMessage(content=_MEMORY_REVIEW_PROMPT)],
+                    "messages": [
+                        *messages,
+                        HumanMessage(content=_render_prompt_facts(_MEMORY_REVIEW_PROMPT)),
+                    ],
                 }
             )
         logger.debug("nudge memory res is {}", res["messages"][-1])
@@ -609,7 +697,9 @@ async def _nudge_plan_extraction(
     Triggered when all todos are complete. Builds plan context (plan file +
     todos + subagent runs) and launches a nudge agent with the
     rendered ``_PLAN_EXTRACTION_PROMPT`` (Part 1: JSON knowledge extraction via
-    knowledge(action="write"); Part 2: skill library update via skill_manage).
+    knowledge(action="write"); Part 2: skill library update via skill_manage,
+    including ``<module>-notes`` carry-forward; Part 3: broad pitfalls to the
+    ``facts`` memory target).
     Both tools carry ``nudge: True`` metadata and pass ``_NudgeLimitTool``.
 
     Fail-open: errors are logged and swallowed, never propagated into the
@@ -624,6 +714,7 @@ async def _nudge_plan_extraction(
 
         context_str = json.dumps(context, ensure_ascii=False, indent=2)
         prompt = _PLAN_EXTRACTION_PROMPT.replace("{plan_context}", context_str)
+        prompt = _render_prompt_facts(prompt)
 
         async with lane_slot(LaneType.NUDGE):
             _agent = await _create_nudge_agent(system_prompt)
