@@ -1,4 +1,6 @@
+import json
 import re
+import json_repair
 from loguru import logger
 from langgraph.runtime import Runtime
 from langgraph.typing import ContextT
@@ -33,6 +35,7 @@ from pub.func.message.tool_output_prune import prune_tool_outputs
 from pub.func.message.target_truncation import target_truncate_tool_outputs
 from pub.func.message.tool_args_truncate import truncate_tool_args
 from config.features import SUMMARIZATION
+from pub.func.message.eviction import EVICTED_TO_KEY
 from pub.func.message.overflow_router import (
     ROUTE_FITS,
     ROUTE_TRUNCATE_TOOL_RESULTS_ONLY,
@@ -66,6 +69,7 @@ from .summarization_components import (
     _SKIP_LLM_KEY as _SKIP_LLM_KEY,
     _SUMMARY_LC_SOURCE as _SUMMARY_LC_SOURCE,
 )
+from .summary_doc import SummaryDoc, cap_summary_doc, render_summary_markdown
 
 # ── Summarization tunables (bound from the feature registry) ─────────────
 PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
@@ -97,6 +101,21 @@ MAX_COMPRESS_ATTEMPTS_PER_TURN = SUMMARIZATION["max_compress_attempts_per_turn"]
 MAX_OVERFLOW_RETRIES = SUMMARIZATION["max_overflow_retries"]
 TRUNCATE_BUDGET_RATIO = SUMMARIZATION["truncate_budget_ratio"]
 COMPRESSION_RESERVE_TOKENS = SUMMARIZATION["compression_reserve_tokens"]
+ACTIVE_PLAN_NOTES_MAX_ITEMS = SUMMARIZATION["active_plan_notes_max_items"]
+EVICTED_REFS_MAX_ITEMS = SUMMARIZATION["evicted_refs_max_items"]
+
+# Structured-output method used for the auxiliary summary call. Verified live
+# against the configured `glm-5.3-flash` openai-compatible endpoint: the
+# default function-calling path returns free text that the Pydantic parser
+# rejects, while json_mode + response_format={"type": "json_object"} works.
+# `_structured_runnable` retries without the method kwarg for providers whose
+# with_structured_output does not accept it.
+_STRUCTURED_OUTPUT_METHOD = "json_mode"
+
+# `[evicted to: <path>]` marker emitted by both eviction paths
+# (tool-result preview and human-message preview) — collected into
+# SummaryDoc.evicted_refs so the pointer survives on the summary chain.
+_EVICTED_REF_PATTERN = re.compile(r"\[evicted to: ([^\]\n]+)\]")
 
 
 # ======================================================================
@@ -279,6 +298,58 @@ _SUMMARY_PROMPT_UPDATE = (
     f"{_SUMMARY_TEMPLATE}"
 )
 
+_SUMMARY_JSON_RULES = (
+    "Respond with a single valid JSON object and no other text (no Markdown, no code fences).\n"
+    "Use exactly these keys, every key present (use [] for an empty list):\n"
+    '  "latest_user_request": string — the user\'s most recent unanswered request,\n'
+    '    quoted VERBATIM (no paraphrase, no truncation); "" when none;\n'
+    '  "goal": string — one or two sentences;\n'
+    '  "constraints": string[] — constraints / preferences / decisions that limit the work;\n'
+    '  "completed": string[] — finished work, oldest first (the most recent items are kept);\n'
+    '  "in_progress": string[] — work currently underway;\n'
+    '  "blocked": string[] — blockers;\n'
+    '  "key_decisions": string[] — "<decision>: <reason>", oldest first;\n'
+    '  "next_steps": string[] — immediate actions, in order;\n'
+    '  "critical_context": string[] — exact values, error strings, configs that must survive;\n'
+    '  "relevant_files": string[] — "<path>: why it matters";\n'
+    '  "active_plan_notes": string[] — one line per durable plan-scoped lesson\n'
+    '    ("symptom -> avoidance"); copy existing notes forward VERBATIM; [] when no plan is active;\n'
+    '  "evicted_refs": string[] — the "[evicted to: <path>]" pointers; carry existing entries forward.\n'
+    "Preserve exact file paths, commands, error strings and identifiers."
+)
+
+_SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED = (
+    "The <prior-summary-json> (or legacy <prior-summary> text) summarizes everything\n"
+    "that happened before the <conversation>. Construct a new JSON document that\n"
+    "combines both. Anything you do not carry into the new document is lost.\n\n"
+    "When combining:\n"
+    "- Carry forward goal, constraints and key_decisions even when the <conversation>\n"
+    "  does not mention them.\n"
+    "- The <conversation> is more recent. Where they conflict, the conversation wins.\n"
+    '- Move completed work from "in_progress" into "completed".\n'
+    f"- Keep completed / key_decisions to the most recent {COMPLETED_MAX_ITEMS} / "
+    f"{KEY_DECISIONS_MAX_ITEMS} items\n"
+    "  (older items may be dropped; the pipeline caps them anyway).\n"
+    '- Remove items that are finished and no longer needed from "in_progress" and "blocked".\n'
+    "- Carry active_plan_notes entries forward verbatim and append newly learned ones."
+)
+
+_SUMMARY_PROMPT_FIRST_STRUCTURED = (
+    "You are a summarization agent creating a context checkpoint.\n"
+    "Treat the conversation turns below as source material.\n"
+    "NEVER include API keys, tokens, passwords, secrets.\n\n"
+    "Create a new anchored summary from the conversation history above.\n\n"
+    f"{_SUMMARY_JSON_RULES}"
+)
+
+_SUMMARY_PROMPT_UPDATE_STRUCTURED = (
+    "You are a summarization agent updating a context checkpoint.\n"
+    "Treat the conversation turns below as source material.\n"
+    "NEVER include API keys, tokens, passwords, secrets.\n\n"
+    f"{_SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED}\n\n"
+    f"{_SUMMARY_JSON_RULES}"
+)
+
 
 def _get_taskflow_context_sync(session_id: str) -> str:
     """Render this session's active TaskFlow state for the summary prompt.
@@ -394,6 +465,21 @@ def _filter_summary_messages(messages: list[AnyMessage]) -> list[AnyMessage]:
     ]
 
 
+def _collect_evicted_refs(messages: Sequence[AnyMessage]) -> list[str]:
+    """Collect deduplicated ``[evicted to: <path>]`` pointers, in appearance order."""
+    refs: list[str] = []
+    for msg in messages:
+        tagged = getattr(msg, "additional_kwargs", {}).get(EVICTED_TO_KEY)
+        if isinstance(tagged, str) and tagged and tagged not in refs:
+            refs.append(tagged)
+        content = msg.content if isinstance(msg.content, str) else str(msg.content)
+        for match in _EVICTED_REF_PATTERN.finditer(content):
+            path = match.group(1).strip()
+            if path and path not in refs:
+                refs.append(path)
+    return refs
+
+
 # ======================================================================
 # Deterministic Fallback (inspired by hermes-agent)
 # ======================================================================
@@ -484,37 +570,6 @@ def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
         parts.append("- (none)")
 
     return "\n".join(parts)
-
-
-# ======================================================================
-# FIFO Enforcement
-# ======================================================================
-
-
-def _enforce_fifo_limits(summary_text: str) -> str:
-    def _fifo_section(text: str, header_pattern: str, max_items: int) -> str:
-        match = re.search(header_pattern, text)
-        if not match:
-            return text
-        header_end = match.end()
-        next_section = re.search(r"\n#{2,3} ", text[header_end:])
-        block_end = header_end + next_section.start() if next_section else len(text)
-        block = text[header_end:block_end]
-        items = [line for line in block.split("\n") if line.strip().startswith("-")]
-        if len(items) <= max_items:
-            return text
-        kept = items[-max_items:]
-        omitted = len(items) - max_items
-        omitted_line = f"({omitted} earlier items omitted for brevity)"
-        new_block = "\n".join(kept) + "\n" + omitted_line + "\n"
-        return text[:header_end] + new_block + text[block_end:]
-
-    summary_text = _fifo_section(summary_text, r"### Completed[^\n]*\n", COMPLETED_MAX_ITEMS)
-    summary_text = _fifo_section(summary_text, r"## Key Decisions[^\n]*\n", KEY_DECISIONS_MAX_ITEMS)
-    summary_text = _fifo_section(
-        summary_text, r"## Critical Context[^\n]*\n", CRITICAL_CONTEXT_MAX_ITEMS
-    )
-    return summary_text
 
 
 # ======================================================================
@@ -626,6 +681,19 @@ def _parse_file_ops_from_summary(summary_text: str) -> dict | None:
         if line.strip().startswith("-")
     ]
     return {"read_files": read_files, "modified_files": mod_files}
+
+
+def _labeled_file_ops(file_ops_section: str) -> list[str]:
+    parsed = _parse_file_ops_from_summary(file_ops_section) or {}
+    entries: list[str] = []
+    for label, key in (("read", "read_files"), ("modified", "modified_files")):
+        for path in parsed.get(key, []):
+            if not path or path.startswith("("):
+                continue
+            entry = f"{path} ({label})"
+            if entry not in entries:
+                entries.append(entry)
+    return entries
 
 
 def _schedule_compression_todo_update(session_id: str, discarded_messages: Sequence[Any]) -> None:
@@ -1608,7 +1676,28 @@ class Summarization(AgentMiddleware):
     # Previous summary chaining
     # ------------------------------------------------------------------
 
+    def _extract_previous_doc(self, messages: list[AnyMessage]) -> SummaryDoc | None:
+        """Return the newest chained SummaryDoc, or None for legacy/free-form summaries."""
+        for msg in reversed(messages):
+            if (
+                isinstance(msg, AIMessage)
+                and getattr(msg, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE
+            ):
+                raw = msg.additional_kwargs.get("summary_doc")
+                if isinstance(raw, dict):
+                    try:
+                        return SummaryDoc.model_validate(raw)
+                    except Exception:
+                        logger.warning(
+                            "chained summary_doc payload invalid; falling back to markdown extraction"
+                        )
+                return None
+        return None
+
     def _extract_previous_summary(self, messages: list[AnyMessage]) -> str | None:
+        previous_doc = self._extract_previous_doc(messages)
+        if previous_doc is not None:
+            return render_summary_markdown(previous_doc)
         for msg in reversed(messages):
             if (
                 isinstance(msg, AIMessage)
@@ -1660,27 +1749,130 @@ class Summarization(AgentMiddleware):
 
         return "\n\n".join(parts)
 
+    def _build_structured_summary_prompt(
+        self,
+        messages_text: str,
+        previous_doc: SummaryDoc | None,
+        previous_summary: str | None,
+        session_id: str = "",
+    ) -> str:
+        conversation = (
+            f"Here is the conversation so far:\n\n<conversation>\n{messages_text}\n</conversation>"
+        )
+        parts = [conversation]
+
+        if previous_doc is not None:
+            prior_json = json.dumps(
+                previous_doc.model_dump(), ensure_ascii=False, separators=(",", ":")
+            )
+            parts.append(
+                "Here is the previous summary document as JSON:\n\n"
+                f"<prior-summary-json>\n{prior_json}\n</prior-summary-json>"
+            )
+            parts.append(_SUMMARY_PROMPT_UPDATE_STRUCTURED)
+        elif previous_summary:
+            parts.append(
+                f"Here is the summary of the conversation before the <conversation> above:\n\n"
+                f"<prior-summary>\n{previous_summary}\n</prior-summary>"
+            )
+            parts.append(_SUMMARY_PROMPT_UPDATE_STRUCTURED)
+        else:
+            parts.append(_SUMMARY_PROMPT_FIRST_STRUCTURED)
+
+        if session_id:
+            taskflow_ctx = _get_taskflow_context_sync(session_id)
+            if taskflow_ctx:
+                parts.append(taskflow_ctx)
+
+        return "\n\n".join(parts)
+
+    # ------------------------------------------------------------------
+    # Structured summary invocation (json_mode -> json_repair -> free-form)
+    # ------------------------------------------------------------------
+
+    def _structured_runnable(self):
+        try:
+            return self._model.with_structured_output(SummaryDoc, method=_STRUCTURED_OUTPUT_METHOD)
+        except TypeError:
+            try:
+                return self._model.with_structured_output(SummaryDoc)
+            except Exception:
+                logger.debug("Structured output unavailable; using the free-form summary path")
+                return None
+        except Exception:
+            logger.debug("Structured output unavailable; using the free-form summary path")
+            return None
+
+    def _sync_json_repair_doc(self, prompt: str, config: dict) -> SummaryDoc:
+        response = self._model.invoke(prompt, config=config)
+        return self._parse_json_repair_doc(response.text)
+
+    async def _async_json_repair_doc(self, prompt: str, config: dict) -> SummaryDoc:
+        response = await self._model.ainvoke(prompt, config=config)
+        return self._parse_json_repair_doc(response.text)
+
+    @staticmethod
+    def _parse_json_repair_doc(text: str) -> SummaryDoc:
+        parsed = json_repair.loads(text.strip())
+        if not isinstance(parsed, dict) or not parsed:
+            raise ValueError("json_repair returned no JSON object")
+        return SummaryDoc.model_validate(parsed)
+
+    @staticmethod
+    def _finalize_summary_doc(
+        doc: SummaryDoc,
+        messages: Sequence[AnyMessage],
+        previous_doc: SummaryDoc | None,
+    ) -> SummaryDoc:
+        """Merge the carried and freshly observed eviction pointers (code owns this list)."""
+        carried = previous_doc.evicted_refs if previous_doc is not None else []
+        refs: list[str] = []
+        for ref in [*carried, *_collect_evicted_refs(messages)]:
+            if ref and ref not in refs:
+                refs.append(ref)
+        if refs != doc.evicted_refs:
+            return doc.model_copy(update={"evicted_refs": refs})
+        return doc
+
     # ------------------------------------------------------------------
     # LLM summary creation (sync / async)
     # ------------------------------------------------------------------
 
-    def _create_summary(self, messages_to_summarize: list[AnyMessage], session_id: str = "") -> str:
+    def _create_summary(
+        self, messages_to_summarize: list[AnyMessage], session_id: str = ""
+    ) -> SummaryDoc | str:
         if not messages_to_summarize:
             return "No previous conversation history."
 
+        previous_doc = self._extract_previous_doc(messages_to_summarize)
         previous_summary = self._extract_previous_summary(messages_to_summarize)
         filtered = _filter_summary_messages(messages_to_summarize)
         serialized = _serialize_for_summary(filtered)
         if not serialized.strip():
             return "No previous conversation history."
 
-        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
-
-        try:
-            response = self._model.invoke(
-                prompt,
-                config={"metadata": {"lc_source": _SUMMARY_LC_SOURCE}},
+        config = {"metadata": {"lc_source": _SUMMARY_LC_SOURCE}}
+        runnable = self._structured_runnable()
+        if runnable is not None:
+            prompt = self._build_structured_summary_prompt(
+                serialized, previous_doc, previous_summary, session_id=session_id
             )
+            try:
+                doc = runnable.invoke(prompt, config=config)
+                if not isinstance(doc, SummaryDoc):
+                    doc = SummaryDoc.model_validate(doc)
+                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+            except Exception as e:
+                logger.warning("Structured summary failed ({}) - retrying via json_repair", e)
+            try:
+                doc = self._sync_json_repair_doc(prompt, config)
+                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+            except Exception as e:
+                logger.error("json_repair summary failed ({}) - using the free-form path", e)
+
+        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
+        try:
+            response = self._model.invoke(prompt, config=config)
             summary = response.text.strip()
             if not summary or len(summary) < 50:
                 logger.warning("Summary too short, using fallback")
@@ -1692,23 +1884,39 @@ class Summarization(AgentMiddleware):
 
     async def _acreate_summary(
         self, messages_to_summarize: list[AnyMessage], session_id: str = ""
-    ) -> str:
+    ) -> SummaryDoc | str:
         if not messages_to_summarize:
             return "No previous conversation history."
 
+        previous_doc = self._extract_previous_doc(messages_to_summarize)
         previous_summary = self._extract_previous_summary(messages_to_summarize)
         filtered = _filter_summary_messages(messages_to_summarize)
         serialized = _serialize_for_summary(filtered)
         if not serialized.strip():
             return "No previous conversation history."
 
-        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
-
-        try:
-            response = await self._model.ainvoke(
-                prompt,
-                config={"metadata": {"lc_source": _SUMMARY_LC_SOURCE}},
+        config = {"metadata": {"lc_source": _SUMMARY_LC_SOURCE}}
+        runnable = self._structured_runnable()
+        if runnable is not None:
+            prompt = self._build_structured_summary_prompt(
+                serialized, previous_doc, previous_summary, session_id=session_id
             )
+            try:
+                doc = await runnable.ainvoke(prompt, config=config)
+                if not isinstance(doc, SummaryDoc):
+                    doc = SummaryDoc.model_validate(doc)
+                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+            except Exception as e:
+                logger.warning("Structured summary failed ({}) - retrying via json_repair", e)
+            try:
+                doc = await self._async_json_repair_doc(prompt, config)
+                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+            except Exception as e:
+                logger.error("json_repair summary failed ({}) - using the free-form path", e)
+
+        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
+        try:
+            response = await self._model.ainvoke(prompt, config=config)
             summary = response.text.strip()
             if not summary or len(summary) < 50:
                 logger.warning("Summary too short, using fallback")
@@ -1722,22 +1930,31 @@ class Summarization(AgentMiddleware):
     # Build new messages (HumanMessage + AIMessage pair)
     # ------------------------------------------------------------------
 
-    def _build_new_messages(self, summary: str) -> list[BaseMessage]:
-        summary = _enforce_fifo_limits(summary)
+    def _build_new_messages(self, summary: SummaryDoc | str) -> list[BaseMessage]:
+        doc_payload: dict[str, Any] | None = None
+        if isinstance(summary, SummaryDoc):
+            markdown = render_summary_markdown(summary)
+            doc_payload = cap_summary_doc(summary).model_dump()
+        else:
+            markdown = summary
 
-        if len(summary) > SUMMARY_TOTAL_MAX_CHARS:
-            head = summary[: int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_HEAD_RATIO)]
-            tail = summary[-int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_TAIL_RATIO) :]
-            omitted = len(summary) - len(head) - len(tail)
-            summary = f"{head}...[summary truncated, omitted {omitted} chars]...{tail}"
+        if len(markdown) > SUMMARY_TOTAL_MAX_CHARS:
+            head = markdown[: int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_HEAD_RATIO)]
+            tail = markdown[-int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_TAIL_RATIO) :]
+            omitted = len(markdown) - len(head) - len(tail)
+            markdown = f"{head}...[summary truncated, omitted {omitted} chars]...{tail}"
 
         full_content = (
             f"{_SUMMARY_PREFIX}\n\n"
             f"{_SUMMARY_OPEN_TAG}\n"
-            f"{summary}\n"
+            f"{markdown}\n"
             f"{_SUMMARY_CLOSE_TAG}"
             f"{_SUMMARY_SUFFIX}"
         )
+
+        ai_kwargs: dict[str, Any] = {"lc_source": _SUMMARY_LC_SOURCE}
+        if doc_payload is not None:
+            ai_kwargs["summary_doc"] = doc_payload
 
         return [
             HumanMessage(
@@ -1746,7 +1963,7 @@ class Summarization(AgentMiddleware):
             ),
             AIMessage(
                 content=full_content,
-                additional_kwargs={"lc_source": _SUMMARY_LC_SOURCE},
+                additional_kwargs=ai_kwargs,
             ),
         ]
 
@@ -1834,7 +2051,7 @@ class Summarization(AgentMiddleware):
                 and getattr(m, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE
             ):
                 existing = m.content if isinstance(m.content, str) else str(m.content)
-                pattern = r"## Relevant Files\n.*?(?=\n---|\n</summary>|\Z)"
+                pattern = r"## Relevant Files\n.*?(?=\n## |\n---|\n</summary>|\Z)"
                 if re.search(pattern, existing, re.DOTALL):
                     replacement = f"## Relevant Files\n{file_ops_section}"
                     new_content = re.sub(pattern, replacement, existing, flags=re.DOTALL)
@@ -1843,7 +2060,16 @@ class Summarization(AgentMiddleware):
                         _SUMMARY_CLOSE_TAG,
                         f"\n## Relevant Files\n{file_ops_section}\n{_SUMMARY_CLOSE_TAG}",
                     )
-                messages[i] = m.model_copy(update={"content": new_content})
+                kwargs = dict(m.additional_kwargs)
+                raw_doc = kwargs.get("summary_doc")
+                if isinstance(raw_doc, dict):
+                    kwargs["summary_doc"] = {
+                        **raw_doc,
+                        "relevant_files": _labeled_file_ops(file_ops_section),
+                    }
+                messages[i] = m.model_copy(
+                    update={"content": new_content, "additional_kwargs": kwargs}
+                )
                 break
 
         return messages
