@@ -16,7 +16,7 @@ User 上传图片 → MultimodalProcessor.before_agent
   → 模型收到纯文本提示 → 调 skill_view('image_to_text') → terminal 工具
 ```
 
-**问题**：硬编码假设模型无 vision 能力（line 109 `"current model has no native vision ability"`）。如果主 LLM 是 GPT-4o / Claude / Gemini 等原生支持多模态的模型，图片被白白剥离，模型被强制走技能绕路。
+**问题**：硬编码假设模型无 vision 能力（`agent/middlewares/media_pipeline/core.py:119` `"current model has no native vision ability"`）。如果主 LLM 是 GPT-4o / Claude / Gemini 等原生支持多模态的模型，图片被白白剥离，模型被强制走技能绕路。
 
 ### 1.2 架构约束
 
@@ -31,11 +31,11 @@ User 上传图片 → MultimodalProcessor.before_agent
 
 | 文件                                                | 行数 | 角色                                       |
 | --------------------------------------------------- | ---- | ------------------------------------------ |
-| `agent/middlewares/media_pipeline/core.py`               | 224  | 媒体处理 + 技能提示注入                    |
+| `agent/middlewares/media_pipeline/core.py`               | 232  | 媒体处理 + 技能提示注入                    |
 | `agent/middlewares/media_pipeline/media_handlers.py`               | 301  | 各媒体类型处理器（存盘）                   |
-| `agent/middlewares/llm_retry/core.py`                    | 426  | LLM 调用重试 + fallback chain              |
+| `agent/middlewares/llm_retry/core.py`                    | 425  | LLM 调用重试 + fallback chain              |
 | `pub/func/message/llm_error_classifier.py`          | 470  | 错误分类引擎                               |
-| `config/features/agent_side/context_engine_hook.py` | 18   | ContextEngineHook 配置                     |
+| `config/features/agent_side/media_pipeline.py`      | 14   | MEDIA_PIPELINE 配置（唯一 TypedDict）      |
 | `models/LLMs/main_llm.py`                           | 169  | 主 LLM 构建（env: MAIN_LLM_PROVIDER/NAME） |
 
 ## 2. 设计方案
@@ -89,7 +89,7 @@ wrap_model_call (LLMRetry)
 ### 2.3 三层优先级
 
 ```
-1. 用户显式配置 (CONTEXT_ENGINE_HOOK["main_llm_supports_vision"] = "true"/"false")
+1. 用户显式配置 (MEDIA_PIPELINE["main_llm_native_multimodal"] = "true"/"false")
    → 最高优先级，忽略缓存（用户明确指定）
 
 2. 运行时检测缓存 (模块级进程内存 dict)
@@ -141,22 +141,26 @@ _cache: dict[str, dict[str, str]] = {
 
 ### 3.3 配置
 
-`config/features/agent_side/context_engine_hook.py` 新增：
+仓库约定「一个 feature 一个 TypedDict + 一个实例」，媒体管线配置位于
+`config/features/agent_side/media_pipeline.py`（**不是** `context_engine_hook.py`——该文件不存在）。
+新增 `main_llm_native_multimodal: str` 字段，默认 `"auto"`：
 
 ```python
-class ContextEngineHookConfig(TypedDict):
-    nudge_memory_threshold: int
-    plan_extraction_enabled: bool
+class MediaPipelineConfig(TypedDict):
     multimodal_temp_retention_days: int
-    main_llm_supports_vision: str  # "auto" | "true" | "false"
+    main_llm_native_multimodal: str  # "auto" | "true" | "false"
 
-CONTEXT_ENGINE_HOOK: ContextEngineHookConfig = {
-    "nudge_memory_threshold": 10,
-    "plan_extraction_enabled": True,
+MEDIA_PIPELINE: MediaPipelineConfig = {
     "multimodal_temp_retention_days": 7,
-    "main_llm_supports_vision": "auto",
+    "main_llm_native_multimodal": "auto",
 }
 ```
+
+> 该字段是三态总开关，覆盖全部媒体类型（vision / audio / video），不只是 image——
+> 因此命名为 `native_multimodal` 而非 `supports_vision`。
+>
+> `tests/config/test_features_agent_side.py` 按 `(实例, 键, 默认值)` 逐项断言配置，
+> 新增字段后需同步补一行。
 
 ## 4. 改动清单
 
@@ -214,9 +218,9 @@ def reset_cache() -> None:
 
 ### 4.2 修改文件
 
-#### `config/features/agent_side/context_engine_hook.py`
+#### `config/features/agent_side/media_pipeline.py`
 
-新增 `main_llm_supports_vision: str` 字段，默认 `"auto"`。
+新增 `main_llm_native_multimodal: str` 字段，默认 `"auto"`。
 
 #### `agent/middlewares/media_pipeline/core.py`
 
@@ -250,14 +254,14 @@ def _before_agent_impl(self, state: AgentState) -> None:
         last_mes.content = [text_dict]
         return
 
-    vision_mode = CONTEXT_ENGINE_HOOK.get("main_llm_supports_vision", "auto")
+    native_mode = MEDIA_PIPELINE.get("main_llm_native_multimodal", "auto")
 
-    if vision_mode == "true":
+    if native_mode == "true":
         # 用户显式说支持 → 保留 block，只持久化 media paths
         self._persist_media_kwargs(last_mes, paths)
         return  # content 保持原样（含 image_url blocks）
 
-    if vision_mode == "false":
+    if native_mode == "false":
         # 用户显式说不支持 → 当前行为
         self._attach_media_hints(text_dict, paths)
         last_mes.content = [text_dict]
@@ -265,7 +269,7 @@ def _before_agent_impl(self, state: AgentState) -> None:
         self._strip_history_images(state_mes_list)
         return
 
-    # vision_mode == "auto"
+    # native_mode == "auto"
     # 按媒体类型查缓存
     model_key = get_model_key()
     provider, _, model = model_key.partition("/")
@@ -305,6 +309,12 @@ def _before_agent_impl(self, state: AgentState) -> None:
     self._persist_media_kwargs(last_mes, paths)
     self._strip_history_images(state_mes_list)
 ```
+
+**重构 `_before_agent_impl` 的现状对齐要点**（照现状实现，勿按上面伪码字面照抄）：
+
+- 保留 `raise Exception("Only one text item allowed per input list")` 校验（现状 `core.py:68`），伪码里省略了它——它是既有契约，不能被本次重构删掉。
+- 现状**没有** `_strip_history_images` 方法：历史 `image_url` 剥离逻辑内联在 `_before_agent_impl`（`core.py:82-99`，配 `_strip_image_url_from_content` 静态助手）。重构时把这段原样保留（可抽成同名私有方法），不要凭伪码新造调用。
+- 非 dict 的 content item 现状是 `continue` 跳过（`core.py:64-65`），保持不变。
 
 **重构 `_attach_media_hints`** — 去掉硬编码 "model has no native vision"：
 
@@ -364,6 +374,13 @@ def apply_skill_fallback(messages: list[BaseMessage], session_id: str) -> list[B
     new_last.additional_kwargs = dict(getattr(last_mes, "additional_kwargs", {}) or {})
     return messages[:-1] + [new_last]
 ```
+
+**实现要点（避免重复落盘）**：`apply_skill_fallback` 重建 `MediaPaths` 时**优先复用
+`last_mes.additional_kwargs` 里已记录的 `images` / `audios` / `videos` 路径**，只有当它们缺失时
+才回退到 `handler.process(...)` 重新处理 content。原因是 `_before_agent_impl` 在 auto 模式下
+**已经**对同一批 content 调过一次 `handler.process`（存盘 + 写 additional_kwargs）；若 fallback
+再次 `process` 一遍 `data:`/base64 载荷，会重复解码并产生第二份临时文件，且 `paths` 与已持久化的
+`additional_kwargs` 路径不一致。「技能提示文案用重建的 paths、持久化用原 kwargs」两侧必须自洽。
 
 #### `pub/func/message/llm_error_classifier.py`
 
@@ -470,7 +487,7 @@ def _try_multimodal_fallback(
 | 文件                                                          | 测试点                                                                                                                                |
 | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
 | `tests/agent/middlewares/test_llm_capability_cache.py` (新增) | 读写缓存、模型 key 隔离、未知模型返回 "auto"、并发写安全、reset、同进程跨 session 共享                                                |
-| `tests/agent/middlewares/test_media_pipeline.py` (新增) | 三态分支（true/false/auto）、auto+缓存=supported 保留 block、auto+缓存=unsupported 走技能、auto+缓存=auto 设 flag、各媒体类型独立判断 |
+| `tests/agent/middlewares/test_multimodal_processor.py` (扩展) | 三态分支（true/false/auto）、auto+缓存=supported 保留 block、auto+缓存=unsupported 走技能、auto+缓存=auto 设 flag、各媒体类型独立判断、**既有用例全部保持通过** |
 | `tests/pub/func/message/test_llm_error_classifier.py` (扩展)  | `multimodal_not_supported` 模式匹配、不误匹配普通 "image" 关键词、400 + 关键词组合                                                    |
 | `tests/agent/middlewares/test_llm_retry.py` (扩展)            | 模型报 multimodal 错误 → 写缓存 → fallback → retry 成功、非 auto 模式不触发 fallback、模型 key 校验                                   |
 
@@ -510,12 +527,15 @@ def _try_multimodal_fallback(
 | --------------------------------------- | --------------------------------- |
 | 重启服务器                              | 进程内存清空，所有模型回到 "auto" |
 | 调用 `reset_cache()`                    | 清空进程内存 dict（测试用）       |
-| 设 `main_llm_supports_vision = "true"`  | 覆盖缓存，始终保留 block          |
-| 设 `main_llm_supports_vision = "false"` | 覆盖缓存，始终走技能              |
+| 设 `main_llm_native_multimodal = "true"`  | 覆盖缓存，始终保留 block          |
+| 设 `main_llm_native_multimodal = "false"` | 覆盖缓存，始终走技能              |
 
 ### 5.5 request.override(messages=...) API 验证
 
-LangChain 1.3.9 `ModelRequest` 构造函数接受 `messages` 参数（见 test_llm_retry.py:27）。`request.override()` 应支持覆盖 messages 字段。**需在实现时验证**；如不支持，降级为直接修改 `request.messages` 属性。
+**已验证支持**：LangChain 1.3.9 的 `ModelRequest.override(messages=...)` 已在生产路径中使用——
+`Summarization`（压缩后替换 messages）与 `ContextEvictionMiddleware`（P1-9 人以 preview 替换）都走
+`request.override(messages=...)`；`LLMRetryMiddleware._rebind_model` 用的是同一 API 的
+`override(model=...)` 形式。无需降级方案。
 
 ## 6. 实现顺序
 
@@ -523,7 +543,7 @@ LangChain 1.3.9 `ModelRequest` 构造函数接受 `messages` 参数（见 test_l
 2. `llm_error_classifier.py` — 新增 `multimodal_not_supported` 分类 + 测试
 3. `media_pipeline/core.py` — 重构 `_before_agent_impl` + 新增 `apply_skill_fallback` + 测试
 4. `llm_retry/core.py` — 新增 multimodal fallback 分支 + 测试
-5. `context_engine_hook.py` — 新增配置字段
+5. `media_pipeline.py`（配置）— 新增 `main_llm_native_multimodal` 字段 + 同步 `tests/config/test_features_agent_side.py` 的逐键断言
 6. 端到端验证：auto 模式 → 发图 → 模型报错 → 写缓存 → fallback → 同进程后续 session 直接走技能
 
 ## 7. 已知限制
@@ -532,4 +552,6 @@ LangChain 1.3.9 `ModelRequest` 构造函数接受 `messages` 参数（见 test_l
 - **错误模式匹配**：不同 provider 报错措辞不一，可能漏匹配。首轮不触发，后续迭代补充模式。
 - **重启重新检测**：进程内存不跨重启，重启后首次发图浪费 1 次调用。代价可忽略。
 - **混合媒体**（首期）：全有或全无，不支持部分剥离。
-- **ModelRequest.override API**：需验证是否支持 messages 覆盖，如不支持需降级方案。
+- **ModelRequest.override API**：已验证支持 `messages` 覆盖（见 §5.5），无降级路径。
+- **总开关而非按类型**：`main_llm_native_multimodal` 是覆盖全部媒体类型（vision / audio / video）
+  的三态总开关；若未来要「vision 原生、audio 走技能」这类按类型配置，需要扩展为每类型一份配置。
