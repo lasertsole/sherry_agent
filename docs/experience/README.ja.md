@@ -45,7 +45,7 @@
 
 `plan_extraction_enabled` が有効で検出が発火すると、`_nudge_plan_extraction` が同じ接縫から fire-and-forget で派遣され、`nudge_plan_extraction_lock` の下で走る：
 
-1. `_build_plan_context` が plan ファイル（`plan_ref` 状態を優先、次に `plan_ref` を持つ最初の todo）、todo リスト、start-work ledger（`.omo/start-work/ledger.jsonl`）、本セッションの子 Agent 実行記録（`result_text` は 24 KB に切り詰め、`outcome`、task）を集める。todo リストがなければ `{}` を返し、呼び出し側はそれを見てスキップする。
+1. `_build_plan_context` が plan ファイル（`plan_ref` 状態を優先、次に `plan_ref` を持つ最初の todo）、todo リスト、本セッションの子 Agent 実行記録（`result_text` は 24 KB に切り詰め、`outcome`、task）を集める。todo リストがなければ `{}` を返し、呼び出し側はそれを見てスキップする。
 2. plan コンテキストを差し込んだ `_PLAN_EXTRACTION_PROMPT` を、会話とともに nudge agent（同じビルダー、同じ `nudge: True` ゲート）へ送る。
 
 プロンプトは 3 種類の産出を行う：

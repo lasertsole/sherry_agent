@@ -45,8 +45,8 @@ One-liner: **the planning & discipline layer is responsible for "think clearly, 
 | Whether a step is complete / deps satisfied | TaskFlow `state_json` | Only `taskflow_resume` can mark a step `done` and unlock successors |
 | Whether a child session is still running    | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`              |
 | Plan file progress (checkboxes)             | `workspace/sessions/<id>/plans/*.md` | Orchestrator edits `- [ ]` → `- [x]`                                |
-| Execution evidence                          | `.omo/ledger.jsonl`   | `EvidenceLedger` appends                                            |
-| Active work state                           | `.omo/boulder.json`   | Plan activation/recovery                                            |
+| Execution evidence                          | `src/data/evidence-ledger.jsonl` | `EvidenceLedger` appends                                 |
+| Active work state                           | `src/data/boulder.json` | Plan activation/recovery                                            |
 
 ### Association (Single Source of Truth)
 
@@ -147,8 +147,9 @@ E7       │ Intent Recognizer│ before_model: arming (no plan + task intent) +
 
 Checkbox-format Markdown defining the complete HTN decomposition. Plans are
 session-scoped: **clearing a session deletes that session's plans** (the whole
-`workspace/sessions/<session_id>/` tree is removed). Legacy `.omo/plans/*.md`
-paths still resolve through `config.path.resolve_plan_path`.
+`workspace/sessions/<session_id>/` tree is removed). A plan reference resolves
+through `config.path.resolve_plan_path` to the session tree or an explicit
+repo-relative path; no external orchestration directory participates.
 
 ```markdown
 # <Plan Name>
@@ -183,7 +184,7 @@ paths still resolve through `config.path.resolve_plan_path`.
 - [ ] Cleanup receipts: <list of resources to tear down>
 ```
 
-### Boulder State (.omo/boulder.json)
+### Boulder State (src/data/boulder.json)
 
 Persistent work state:
 
@@ -205,13 +206,13 @@ Persistent work state:
 }
 ```
 
-### Evidence Ledger (.omo/ledger.jsonl)
+### Evidence Ledger (src/data/evidence-ledger.jsonl)
 
 One JSON object per line, recording execution evidence per checkbox:
 
 ```json
 {"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
-{"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": ".omo/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
+{"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": "src/data/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
 ```
 
 ### todos.db — Session-Level TODO Storage
@@ -236,7 +237,7 @@ CREATE TABLE IF NOT EXISTS todos (
 
 | Field      | Description                                                        |
 | ---------- | ------------------------------------------------------------------ |
-| `plan_ref` | Linked plan file path — session-scoped `workspace/sessions/<session_id>/plans/*.md` (legacy `.omo/plans/*.md` accepted) |
+| `plan_ref` | Linked plan file path — session-scoped `workspace/sessions/<session_id>/plans/*.md` |
 | `flow_id`  | Linked TaskFlow flow id (DAG owned by TaskFlow)                    |
 | `step_id`  | Linked TaskFlow step id (e.g. `step-2`), for re-reading DAG status |
 
@@ -292,7 +293,7 @@ class TodoService:
 
 ```python
 class EvidenceLedger:
-    LEDGER_PATH = ".omo/ledger.jsonl"
+    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
     def append(cls, entry: dict) -> None:
@@ -378,7 +379,7 @@ The skill file defines when to use todolist (3+ step work), available tools, sta
 
 ### knowledge — Plan-Identity Isolation
 
-The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by **plan identity**, not by plan name. Association comes from three sources (`ownership.association_plan_refs()`): the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `.omo/boulder.json` work whose `plan_name` matches and whose `session_ids` contains the session. `identity.resolve_plan_identity()` maps that name to the canonical plan path and derives the storage directory `workspace/knowledge/plans/<plan_key>/`, where `plan_key = sha1(repo-relative plan path)[:12]`; each directory carries a `meta.json` with the readable `plan_name` / `plan_ref`. Consequences:
+The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by **plan identity**, not by plan name. Association comes from three sources (`ownership.association_plan_refs()`): the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `src/data/boulder.json` work whose `plan_name` matches and whose `session_ids` contains the session. `identity.resolve_plan_identity()` maps that name to the canonical plan path and derives the storage directory `workspace/knowledge/plans/<plan_key>/`, where `plan_key = sha1(repo-relative plan path)[:12]`; each directory carries a `meta.json` with the readable `plan_name` / `plan_ref`. Consequences:
 
 - Same-named plans held in different plan files are **physically isolated** — each session writes its own key directory, so neither can overwrite the other;
 - One plan file shared through boulder `session_ids` resolves the same path for every listed session, so **multi-session collaboration stays intact** (one shared directory);
@@ -387,8 +388,6 @@ The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by **plan iden
 
 `list` returns only the session's associated plans (readable name + key), and a foreign plan is refused on `read` / `write` (never a silent empty result). Legacy name-keyed `workspace/knowledge/plans/<plan-name>/` directories stay readable until the key directory exists; writes always land in the key directory. `clear_session` deletes the session's private identity directories and retains plans shared with another session through boulder `session_ids`; legacy directories are never deleted. A missing/corrupt boulder file, an empty `session_id`, or an unknown plan all deny safely — no exception, no cross-session read.
 
-The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by plan name, so it is isolated **per plan ownership** instead of by a session column: a session may only `write` / `read` / `list` plans it is associated with. `ownership.is_plan_associated()` resolves association from three sources — the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `.omo/boulder.json` work whose `plan_name` matches and whose `session_ids` list contains the session. `list` returns only the session's associated plans, and a foreign plan is refused with a diagnosable error (never a silent empty result). **Multi-session collaboration stays intact**: a plan listed in several sessions' boulder `session_ids` remains readable and writable by every one of them. A missing/corrupt boulder file, an empty `session_id`, or an unknown plan all deny safely — no exception, no cross-session read.
-
 ---
 
 ## Orchestration Execution Layer
@@ -396,7 +395,7 @@ The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by plan name, 
 ### 5-Phase Flow
 
 ```
-Phase 1: Select the plan → read .omo/boulder.json, list workspace/sessions/<session_id>/plans/*.md (legacy .omo/plans/*.md accepted), match or restore
+Phase 1: Select the plan → read src/data/boulder.json, list workspace/sessions/<session_id>/plans/*.md, match or restore
 Phase 2: Create/update Boulder state → write boulder.json, register phases/tasks as todos
 Phase 3: Execute next checkbox (scheduling delegated to TaskFlow)
   → Find first unchecked checkbox
@@ -405,7 +404,7 @@ Phase 3: Execute next checkbox (scheduling delegated to TaskFlow)
   → Blocked steps not dispatched; ready steps via taskflow_dispatch
   → taskflow_wait_all → taskflow_resume (inject result, unlock successors)
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: Verify and record evidence → 5 gates → .omo/ledger.jsonl
+Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.jsonl
 Phase 5: Mark progress → edit checkbox - [ ] → - [x], continue without asking
 ```
 
@@ -464,7 +463,7 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 | Block                      | Data source       | Context cost | Description                                                 |
 | -------------------------- | ----------------- | ------------ | ----------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
-| `_build_boulder_block()`   | .omo/boulder.json | ~5 lines     | Active work state                                           |
+| `_build_boulder_block()`   | src/data/boulder.json | ~5 lines     | Active work state                                           |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 lines | key_failures + key_successes + reusable_patterns (identity-resolved)         |
 
 ### Implementation

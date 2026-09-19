@@ -45,8 +45,8 @@
 | step が完了したか / 依存が充足したか   | TaskFlow `state_json` | `taskflow_resume` のみが step を `done` にして後続をアンロック |
 | 子セッションが実行中か                 | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`         |
 | 計画ファイルの進捗（チェックボックス） | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator が `- [ ]` → `- [x]` に編集                       |
-| 実行エビデンス                         | `.omo/ledger.jsonl`   | `EvidenceLedger` が追記                                        |
-| アクティブワーク状態                   | `.omo/boulder.json`   | 計画のアクティベーション/復元                                  |
+| 実行エビデンス                         | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` が追記                                        |
+| アクティブワーク状態                   | `src/data/boulder.json`   | 計画のアクティベーション/復元                                  |
 
 ### 関連付け（唯一の真実のソース）
 
@@ -119,7 +119,7 @@ E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タ
 
 ### 計画ファイル (workspace/sessions/<session_id>/plans/*.md)
 
-計画ファイルはセッションスコープです：**セッションを削除するとそのセッションの plans も削除されます**（`workspace/sessions/<session_id>/` ツリー全体が削除）。legacy `.omo/plans/*.md` も `config.path.resolve_plan_path` で解決できます。
+計画ファイルはセッションスコープです：**セッションを削除するとそのセッションの plans も削除されます**（`workspace/sessions/<session_id>/` ツリー全体が削除）。計画参照は `config.path.resolve_plan_path` によってセッションツリーまたは明示的なリポジトリ相対パスへ解決され、外部オーケストレーションディレクトリは関与しません。
 
 チェックボックス形式の Markdown で、完全な HTN 分解を定義します：
 
@@ -156,7 +156,7 @@ E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タ
 - [ ] Cleanup receipts: <list of resources to tear down>
 ```
 
-### Boulder 状態 (.omo/boulder.json)
+### Boulder 状態 (src/data/boulder.json)
 
 永続的なワーク状態。`session_id` に `sherry:` プレフィックスを使用：
 
@@ -175,7 +175,7 @@ E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タ
 }
 ```
 
-### エビデンス台帳 (.omo/ledger.jsonl)
+### エビデンス台帳 (src/data/evidence-ledger.jsonl)
 
 1行1 JSON オブジェクトで、各チェックボックスの実行エビデンスを記録します。
 
@@ -217,7 +217,7 @@ CRUD インターフェース：`replace_all`（全量置換）、`get_todos`（
 
 ```python
 class EvidenceLedger:
-    LEDGER_PATH = ".omo/ledger.jsonl"
+    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
     def append(cls, entry: dict) -> None:
@@ -280,7 +280,7 @@ todolist をいつ使うか（3+ ステップの複雑な作業）、利用可�
 
 ### knowledge — 計画アイデンティティ分離
 
-`knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名ではなく**計画アイデンティティ**をキーとします。関連は 3 つのソース（`ownership.association_plan_refs()`）から取得します：セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、`.omo/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`identity.resolve_plan_identity()` が名前を正規化された計画パスへ解決し、保存ディレクトリ `workspace/knowledge/plans/<plan_key>/` を導出します（`plan_key = sha1(リポジトリルート相対の計画パス)[:12]`）。各ディレクトリの `meta.json` に可読な `plan_name` / `plan_ref` を記録します。結果：
+`knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名ではなく**計画アイデンティティ**をキーとします。関連は 3 つのソース（`ownership.association_plan_refs()`）から取得します：セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、`src/data/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`identity.resolve_plan_identity()` が名前を正規化された計画パスへ解決し、保存ディレクトリ `workspace/knowledge/plans/<plan_key>/` を導出します（`plan_key = sha1(リポジトリルート相対の計画パス)[:12]`）。各ディレクトリの `meta.json` に可読な `plan_name` / `plan_ref` を記録します。結果：
 
 - 計画ファイルが異なる同名計画は**物理的に隔離**され——各自の key ディレクトリへ書き込み、相互に上書きしません；
 - boulder `session_ids` で**1 つの計画ファイル**を共有する全セッションは同じパスに解決されるため、**複数セッションの協業は維持**されます（1 ディレクトリを共有）；
@@ -289,8 +289,6 @@ todolist をいつ使うか（3+ ステップの複雑な作業）、利用可�
 
 `list` は関連付けられた計画のみ（可読名 + key）を返し、`read` / `write` の他セッション・曖昧計画へのアクセスは拒否されます（沈黙の空結果にはしません）。レガシーの名前キー・ディレクトリ `workspace/knowledge/plans/<plan-name>/` は key ディレクトリが現れるまで読み取り可能；書き込みは常に key ディレクトリへ。`clear_session` はセッション私有のアイデンティティディレクトリを削除し、boulder `session_ids` で他セッションと共有された計画は保持します；レガシー・ディレクトリは決して削除しません。boulder ファイルの欠落/破損、空の `session_id`、未知の計画はいずれも安全に拒否されます——例外もクロスセッション読み取りもありません。
 
-`knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名をキーとするため、セッション列ではなく**計画オーナーシップ**で分離します：セッションは自分が関連付けられた計画のみ `write` / `read` / `list` できます。`ownership.is_plan_associated()` は 3 つのソースから関連を判定します——セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、そして `.omo/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`list` は関連付けられた計画のみを返し、他セッションの計画へのアクセスは診断可能なエラーで拒否されます（沈黙の空結果にはしません）。**複数セッションの協業は維持されます**：同じ計画が複数セッションの boulder `session_ids` に列挙されていれば、そのすべてが読み書きできます。boulder ファイルの欠落/破損、空の `session_id`、未知の計画はいずれも安全に拒否されます——例外もクロスセッション読み取りもありません。
-
 ---
 
 ## オーケストレーション実行レイヤー
@@ -298,7 +296,7 @@ todolist をいつ使うか（3+ ステップの複雑な作業）、利用可�
 ### 5フェーズフロー
 
 ```
-Phase 1: 計画の選択 → .omo/boulder.json を読取、workspace/sessions/<session_id>/plans/*.md をリスト（legacy .omo/plans/*.md も可）、マッチまたは復元
+Phase 1: 計画の選択 → src/data/boulder.json を読取、workspace/sessions/<session_id>/plans/*.md をリスト、マッチまたは復元
 Phase 2: Boulder 状態の作成/更新 → boulder.json に書き込み、フェーズ/タスクを todos として登録
 Phase 3: 次のチェックボックスを実行（スケジューリングはすべて TaskFlow に委譲）
   → 最初の未チェックの checkbox を見つける
@@ -307,7 +305,7 @@ Phase 3: 次のチェックボックスを実行（スケジューリングは�
   → blocked はディスパッチしない；ready は taskflow_dispatch で一括ディスパッチ
   → taskflow_wait_all → taskflow_resume（結果注入、後続アンロック）
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: 検証とエビデンス記録 → 5 gates → .omo/ledger.jsonl
+Phase 4: 検証とエビデンス記録 → 5 gates → src/data/evidence-ledger.jsonl
 Phase 5: 進捗マーク → checkbox - [ ] → - [x]、継続するか尋ねない
 ```
 
@@ -362,7 +360,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | Block                      | データソース      | コンテキストコスト | 説明                                                      |
 | -------------------------- | ----------------- | ------------------ | --------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
-| `_build_boulder_block()`   | .omo/boulder.json | ~5行               | アクティブワーク状態                                      |
+| `_build_boulder_block()`   | src/data/boulder.json | ~5行               | アクティブワーク状態                                      |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20行              | key_failures + key_successes + reusable_patterns（アイデンティティ解決） |
 
 ### omo の5層防御より軽量な理由

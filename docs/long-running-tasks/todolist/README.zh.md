@@ -45,8 +45,8 @@
 | step 是否完成 / 依赖是否满足 | TaskFlow `state_json` | 只有 `taskflow_resume` 能把 step 标 `done` 并解锁后继  |
 | 子会话是否还在跑             | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run` |
 | 计划文件进度（checkbox）     | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator 编辑 `- [ ]` → `- [x]`                    |
-| 执行证据                     | `.omo/ledger.jsonl`   | `EvidenceLedger` 追加                                  |
-| 活跃工作状态                 | `.omo/boulder.json`   | 计划激活/恢复                                          |
+| 执行证据                     | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 追加                                  |
+| 活跃工作状态                 | `src/data/boulder.json`   | 计划激活/恢复                                          |
 
 ### 关联方式（唯一事实来源）
 
@@ -115,7 +115,7 @@ E7       │ 意图识别器 ★★     │ before_model: arming(无计划+任�
 
 ### 计划文件 (workspace/sessions/<session_id>/plans/*.md)
 
-计划文件是会话作用域的：**清除会话会删除该会话的 plans**（整个 `workspace/sessions/<session_id>/` 树被删除）。legacy `.omo/plans/*.md` 路径仍可通过 `config.path.resolve_plan_path` 解析。
+计划文件是会话作用域的：**清除会话会删除该会话的 plans**（整个 `workspace/sessions/<session_id>/` 树被删除）。计划引用经 `config.path.resolve_plan_path` 解析到会话树或显式的仓库相对路径；外部编排目录不参与解析。
 
 Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 
@@ -152,7 +152,7 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 - [ ] Cleanup receipts: <list of resources to tear down>
 ```
 
-### Boulder 状态 (.omo/boulder.json)
+### Boulder 状态 (src/data/boulder.json)
 
 持久化工作状态，`session_id` 前缀用 `sherry:`：
 
@@ -174,7 +174,7 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 }
 ```
 
-### 证据账本 (.omo/ledger.jsonl)
+### 证据账本 (src/data/evidence-ledger.jsonl)
 
 每行一个 JSON 对象，记录每个 checkbox 的执行证据：
 
@@ -221,7 +221,7 @@ CRUD 接口：`replace_all`（全量替换）、`get_todos`（按 position 排�
 
 ```python
 class EvidenceLedger:
-    LEDGER_PATH = ".omo/ledger.jsonl"
+    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
     def append(cls, entry: dict) -> None:
@@ -284,7 +284,7 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 ### knowledge — 按计划身份隔离
 
-`knowledge` 工具（`agent/tools/todolist/knowledge/`）以**计划身份**为键，而非计划名。归属来自三个来源（`ownership.association_plan_refs()`）：本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤）、`.omo/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`identity.resolve_plan_identity()` 把该名称映射到规范化计划路径并派生存储目录 `workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的计划路径)[:12]`；每个目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。由此：
+`knowledge` 工具（`agent/tools/todolist/knowledge/`）以**计划身份**为键，而非计划名。归属来自三个来源（`ownership.association_plan_refs()`）：本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤）、`src/data/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`identity.resolve_plan_identity()` 把该名称映射到规范化计划路径并派生存储目录 `workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的计划路径)[:12]`；每个目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。由此：
 
 - 计划文件不同的同名计划**物理隔离**——各自写自己的 key 目录，互不覆盖；
 - 通过 boulder `session_ids` 共享**同一计划文件**的所有会话解析同一路径，因此**多会话协同不受影响**（共享同一目录）；
@@ -293,8 +293,6 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 `list` 只返回本会话关联的计划（可读名 + key）；`read` / `write` 访问他会话或歧义计划会被拒绝（绝不静默返回空）。旧的名称为键目录 `workspace/knowledge/plans/<plan-name>/` 在 key 目录出现前保持可读；写入总是落在 key 目录。`clear_session` 删除本会话私有身份目录，保留通过 boulder `session_ids` 与其他会话共享的计划；旧目录永不删除。boulder 文件缺失/损坏、`session_id` 为空或计划未知时一律安全拒绝——不抛异常，也不发生跨会话读取。
 
-`knowledge` 工具（`agent/tools/todolist/knowledge/`）以计划名为键，因此按**计划归属**隔离，而不是按会话列隔离：会话只能 `write` / `read` / `list` 与自己关联的计划。`ownership.is_plan_associated()` 从三个来源判定归属——本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤），以及 `.omo/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`list` 只返回本会话关联的计划；访问他会话的计划会被拒绝并给出可诊断的错误（绝不静默返回空）。**多会话协同不受影响**：同一计划若出现在多个会话的 boulder `session_ids` 中，每个会话都仍可读写。boulder 文件缺失/损坏、`session_id` 为空或计划未知时一律安全拒绝——不抛异常，也不发生跨会话读取。
-
 ---
 
 ## 编排执行层
@@ -302,7 +300,7 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 ### 5 Phase 流程
 
 ```
-Phase 1: Select the plan → 读 .omo/boulder.json，列 workspace/sessions/<session_id>/plans/*.md（legacy .omo/plans/*.md 仍接受），匹配或恢复
+Phase 1: Select the plan → 读 src/data/boulder.json，列 workspace/sessions/<session_id>/plans/*.md，匹配或恢复
 Phase 2: Create or update Boulder state → 写 boulder.json，注册所有 Phase 和 Task 为 todos
 Phase 3: Execute next checkbox（调度全部交给 TaskFlow）
   → 读计划，找到第一个未勾选的 checkbox
@@ -311,7 +309,7 @@ Phase 3: Execute next checkbox（调度全部交给 TaskFlow）
   → blocked 不派发；ready 步骤 taskflow_dispatch 批量派发
   → taskflow_wait_all → taskflow_resume（注入结果，解锁后继）
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: Verify and record evidence → 5 gates → .omo/ledger.jsonl
+Phase 4: Verify and record evidence → 5 gates → src/data/evidence-ledger.jsonl
 Phase 5: Mark progress → 编辑 checkbox - [ ] → - [x]，不询问是否继续
 ```
 
@@ -366,7 +364,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | Block                      | 数据源            | 上下文开销 | 说明                                             |
 | -------------------------- | ----------------- | ---------- | ------------------------------------------------ |
 | `_build_todo_block()`      | todos.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
-| `_build_boulder_block()`   | .omo/boulder.json | ~5 行      | 活跃工作状态                                     |
+| `_build_boulder_block()`   | src/data/boulder.json | ~5 行      | 活跃工作状态                                     |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 行     | key_failures + key_successes + reusable_patterns（按身份解析） |
 
 ### 为什么比 omo 的 5 层防御更轻量

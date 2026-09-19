@@ -45,7 +45,7 @@
 
 当 `plan_extraction_enabled` 开启且检测触发时，`_nudge_plan_extraction` 从同一接缝 fire-and-forget 派发，并在 `nudge_plan_extraction_lock` 保护下运行：
 
-1. `_build_plan_context` 收集 plan 文件（优先 `plan_ref` 状态，其次第一个带 `plan_ref` 的 todo）、todo 列表、start-work ledger（`.omo/start-work/ledger.jsonl`）以及本会话的子 agent 运行记录（`result_text` 截断到 24 KB、`outcome`、task）。无 todo 列表时返回 `{}`，调用方据此跳过。
+1. `_build_plan_context` 收集 plan 文件（优先 `plan_ref` 状态，其次第一个带 `plan_ref` 的 todo）、todo 列表以及本会话的子 agent 运行记录（`result_text` 截断到 24 KB、`outcome`、task）。无 todo 列表时返回 `{}`，调用方据此跳过。
 2. 用 plan 上下文渲染 `_PLAN_EXTRACTION_PROMPT`，连同对话一起发给 nudge agent（同一构建器、同一 `nudge: True` 门禁）。
 
 该提示产出两项结果：

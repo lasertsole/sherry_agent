@@ -6,7 +6,7 @@ scope: main_only
 
 # ulw-execute: Orchestrated Execution
 
-The execution side of the planning and discipline layer. It drives a plan file (session-scoped `workspace/sessions/<session_id>/plans/*.md`; legacy `.omo/plans/*.md` is still accepted) from start to completion: select the plan, write boulder state, execute the next checkbox, verify and record evidence, mark progress. It does not implement DAG scheduling — that part belongs to TaskFlow.
+The execution side of the planning and discipline layer. It drives a plan file (session-scoped `workspace/sessions/<session_id>/plans/*.md`) from start to completion: select the plan, write boulder state, execute the next checkbox, verify and record evidence, mark progress. It does not implement DAG scheduling — that part belongs to TaskFlow.
 
 ## Doctrine (MANDATORY)
 
@@ -20,13 +20,13 @@ The main session is responsible for: building the plan, splitting tasks, delegat
 
 ```
 Phase 1: Select the plan
-  -> Read .omo/boulder.json
+  -> Read src/data/boulder.json
   -> List the session plan dir workspace/sessions/<session_id>/plans/*.md
-     (legacy .omo/plans/*.md is still accepted; deleting a session deletes its plans)
+     (deleting a session deletes its plans)
   -> Match by plan-name, or resume the active work with status="active"
 
 Phase 2: Create or update Boulder state
-  -> Write .omo/boulder.json (session_id prefix sherry:)
+  -> Write src/data/boulder.json (session_id prefix sherry:)
   -> Register the plan's Phases and Tasks as todos
 
 Phase 3: Execute the next checkbox (all scheduling is delegated to TaskFlow)
@@ -42,7 +42,7 @@ Phase 3: Execute the next checkbox (all scheduling is delegated to TaskFlow)
 
 Phase 4: Verify and record evidence
   -> 5 gates (see the Sisyphus contract)
-  -> Evidence is written to .omo/ledger.jsonl
+  -> Evidence is written to src/data/evidence-ledger.jsonl
 
 Phase 5: Mark progress
   -> Edit the plan checkbox: - [ ] -> - [x]

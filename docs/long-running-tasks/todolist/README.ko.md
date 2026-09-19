@@ -45,8 +45,8 @@
 | step 완료 여부 / 의존성 충족 여부 | TaskFlow `state_json` | `taskflow_resume`만 step을 `done`으로 표시하고 후속 언록 |
 | 자식 세션 실행 중 여부            | subagent registry     | `get_run_by_child_session_key` + `is_live_unended_run`   |
 | 계획 파일 진행 (체크박스)         | `workspace/sessions/<session_id>/plans/*.md`     | orchestrator가 `- [ ]` → `- [x]` 편집                    |
-| 실행 증거                         | `.omo/ledger.jsonl`   | `EvidenceLedger` 추가                                    |
-| 활성 작업 상태                    | `.omo/boulder.json`   | 계획 활성화/복원                                         |
+| 실행 증거                         | `src/data/evidence-ledger.jsonl`   | `EvidenceLedger` 추가                                    |
+| 활성 작업 상태                    | `src/data/boulder.json`   | 계획 활성화/복원                                         |
 
 ### 연결 (단일 진실 소스)
 
@@ -119,7 +119,7 @@ E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태�
 
 ### 계획 파일 (workspace/sessions/<session_id>/plans/*.md)
 
-계획 파일은 세션 스코프입니다: **세션을 삭제하면 해당 세션의 plans도 삭제됩니다** (`workspace/sessions/<session_id>/` 트리 전체 삭제). legacy `.omo/plans/*.md` 경로도 `config.path.resolve_plan_path`로 해석됩니다.
+계획 파일은 세션 스코프입니다: **세션을 삭제하면 해당 세션의 plans도 삭제됩니다** (`workspace/sessions/<session_id>/` 트리 전체 삭제). 계획 참조는 `config.path.resolve_plan_path`로 세션 트리 또는 명시적 리포지토리 상대 경로로 해석되며, 외부 오케스트레이션 디렉터리는 관여하지 않습니다.
 
 체크박스 형식의 Markdown으로, 완전한 HTN 분해를 정의합니다:
 
@@ -156,7 +156,7 @@ E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태�
 - [ ] Cleanup receipts: <list of resources to tear down>
 ```
 
-### Boulder 상태 (.omo/boulder.json)
+### Boulder 상태 (src/data/boulder.json)
 
 영구 작업 상태. `session_id`에 `sherry:` 접두사 사용:
 
@@ -175,7 +175,7 @@ E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태�
 }
 ```
 
-### 증거 원장 (.omo/ledger.jsonl)
+### 증거 원장 (src/data/evidence-ledger.jsonl)
 
 한 줄에 하나의 JSON 객체로, 각 체크박스의 실행 증거를 기록합니다.
 
@@ -217,7 +217,7 @@ CRUD 인터페이스: `replace_all` (전량 교체), `get_todos` (position순), 
 
 ```python
 class EvidenceLedger:
-    LEDGER_PATH = ".omo/ledger.jsonl"
+    LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
     def append(cls, entry: dict) -> None:
@@ -275,7 +275,7 @@ todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구,
 
 ### knowledge — 계획 아이덴티티 격리
 
-`knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름이 아니라 **계획 아이덴티티**를 키로 사용합니다. 연결은 세 가지 소스(`ownership.association_plan_refs()`)에서 옵니다: 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), `.omo/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `identity.resolve_plan_identity()`가 그 이름을 정규화된 계획 경로로 해석하고 저장 디렉터리 `workspace/knowledge/plans/<plan_key>/`를 도출합니다(`plan_key = sha1(리포지토리 루트 상대 계획 경로)[:12]`). 각 디렉터리의 `meta.json`에 가독 `plan_name` / `plan_ref`를 기록합니다. 결과:
+`knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름이 아니라 **계획 아이덴티티**를 키로 사용합니다. 연결은 세 가지 소스(`ownership.association_plan_refs()`)에서 옵니다: 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), `src/data/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `identity.resolve_plan_identity()`가 그 이름을 정규화된 계획 경로로 해석하고 저장 디렉터리 `workspace/knowledge/plans/<plan_key>/`를 도출합니다(`plan_key = sha1(리포지토리 루트 상대 계획 경로)[:12]`). 각 디렉터리의 `meta.json`에 가독 `plan_name` / `plan_ref`를 기록합니다. 결과:
 
 - 계획 파일이 다른 같은 이름 계획은 **물리적으로 격리**됩니다 — 각자 자신의 key 디렉터리에 기록하며 서로 덮어쓰지 않습니다;
 - boulder `session_ids`로 **하나의 계획 파일**을 공유하는 모든 세션은 같은 경로로 해석되므로 **다중 세션 협업이 유지**됩니다(하나의 디렉터리 공유);
@@ -284,8 +284,6 @@ todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구,
 
 `list`는 연결된 계획만(가독 이름 + key) 반환하고, `read` / `write`의 다른 세션·모호한 계획 접근은 거부됩니다(조용한 빈 결과가 아님). 레거시 이름 키 디렉터리 `workspace/knowledge/plans/<plan-name>/`는 key 디렉터리가 생기기 전까지 읽기 가능하며, 쓰기는 항상 key 디렉터리에 기록됩니다. `clear_session`은 세션 전용 아이덴티티 디렉터리를 삭제하고 boulder `session_ids`로 다른 세션과 공유된 계획은 유지합니다; 레거시 디렉터리는 절대 삭제하지 않습니다. boulder 파일 누락/손상, 빈 `session_id`, 알 수 없는 계획은 모두 안전하게 거부됩니다 — 예외도, 교차 세션 읽기도 없습니다.
 
-`knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름을 키로 사용하므로, 세션 컬럼이 아니라 **계획 소유권**으로 격리됩니다: 세션은 자신이 연결된 계획만 `write` / `read` / `list` 할 수 있습니다. `ownership.is_plan_associated()`는 세 가지 소스에서 연결을 판정합니다 — 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), 그리고 `.omo/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `list`는 연결된 계획만 반환하며, 다른 세션의 계획 접근은 진단 가능한 오류로 거부됩니다(조용한 빈 결과가 아님). **다중 세션 협업은 그대로 유지됩니다**: 같은 계획이 여러 세션의 boulder `session_ids`에 등록되어 있으면 모든 세션이 읽고 쓸 수 있습니다. boulder 파일 누락/손상, 빈 `session_id`, 알 수 없는 계획은 모두 안전하게 거부됩니다 — 예외도, 교차 세션 읽기도 없습니다.
-
 ---
 
 ## 오케스트레이션 실행 레이어
@@ -293,7 +291,7 @@ todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구,
 ### 5단계 흐름
 
 ```
-Phase 1: 계획 선택 → .omo/boulder.json 읽기, workspace/sessions/<session_id>/plans/*.md 리스트 (legacy .omo/plans/*.md 허용), 매치 또는 복원
+Phase 1: 계획 선택 → src/data/boulder.json 읽기, workspace/sessions/<session_id>/plans/*.md 리스트, 매치 또는 복원
 Phase 2: Boulder 상태 생성/업데이트 → boulder.json 작성, 단계/태스크를 todos로 등록
 Phase 3: 다음 체크박스 실행 (스케줄링은 모두 TaskFlow에 위임)
   → 첫 번째 미체크 체크박스 찾기
@@ -302,7 +300,7 @@ Phase 3: 다음 체크박스 실행 (스케줄링은 모두 TaskFlow에 위임)
   → blocked는 디스패치 안 함; ready는 taskflow_dispatch로 일괄 디스패치
   → taskflow_wait_all → taskflow_resume (결과 주입, 후속 언록)
   → DELEGATE EVERYTHING via delegation router (E6)
-Phase 4: 검증 및 증거 기록 → 5 gates → .omo/ledger.jsonl
+Phase 4: 검증 및 증거 기록 → 5 gates → src/data/evidence-ledger.jsonl
 Phase 5: 진행 마크 → 체크박스 - [ ] → - [x], 계속할지 묻지 않음
 ```
 
@@ -357,7 +355,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | Block                      | 데이터 소스       | 컨텍스트 비용 | 설명                                              |
 | -------------------------- | ----------------- | ------------- | ------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10행         | 현재 todo 리스트 + 상태 + TaskFlow flow/step 연결 |
-| `_build_boulder_block()`   | .omo/boulder.json | ~5행          | 활성 작업 상태                                    |
+| `_build_boulder_block()`   | src/data/boulder.json | ~5행          | 활성 작업 상태                                    |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20행         | key_failures + key_successes + reusable_patterns (아이덴티티 해석) |
 
 ### omo의 5층 방어보다 경량인 이유
