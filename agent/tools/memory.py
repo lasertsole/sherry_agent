@@ -2,13 +2,15 @@
 """
 Memory Tool Module - Persistent Curated Memory
 
-Provides bounded, file-backed memory that persists across sessions. Two stores:
+Provides bounded, file-backed memory that persists across sessions. Three stores:
   - MEMORY.md: agent's personal notes and observations (environment facts, project
     conventions, tool quirks, things learned)
   - USER.md: what the agent knows about the user (preferences, communication style,
     expectations, workflow habits)
+  - FACTS.md: broad, module-independent pitfalls and conventions that recur across
+    plans (always injected into the system prompt; oldest entries roll off at the cap)
 
-Both are injected into the system prompt as a frozen snapshot at session start.
+All three are injected into the system prompt as a frozen snapshot at session start.
 Mid-session writes update files on disk immediately (durable) but do NOT change
 the system prompt -- this preserves the prefix cache for the entire session.
 The snapshot refreshes on the next session start.
@@ -31,6 +33,7 @@ import tempfile
 from loguru import logger
 from pathlib import Path
 from config import MEMORY_DIR
+from config.features import MEMORY_TOOL
 from pub.func import atomic_replace
 from langchain.tools import BaseTool
 from contextlib import contextmanager
@@ -108,49 +111,49 @@ class MemoryStore:
     Maintains two parallel states:
       - _system_prompt_snapshot: frozen at load time, used for system prompt injection.
         Never mutated mid-session. Keeps prefix cache stable.
-      - memory_entries / user_entries: live state, mutated by tool calls, persisted to disk.
-        Tool responses always reflect this live state.
+      - memory_entries / user_entries / facts_entries: live state, mutated by tool
+        calls, persisted to disk. Tool responses always reflect this live state.
     """
 
-    def __init__(self, memory_char_limit: int = 2200, user_char_limit: int = 1375):
+    def __init__(
+        self,
+        memory_char_limit: int = MEMORY_TOOL["memory_char_limit"],
+        user_char_limit: int = MEMORY_TOOL["user_char_limit"],
+        facts_char_limit: int = MEMORY_TOOL["facts_char_limit"],
+    ):
         self.memory_entries: list[str] = []
         self.user_entries: list[str] = []
+        self.facts_entries: list[str] = []
         self.memory_char_limit = memory_char_limit
         self.user_char_limit = user_char_limit
+        self.facts_char_limit = facts_char_limit
         # Frozen snapshot for system prompt -- set once at load_from_disk()
-        self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": ""}
+        self._system_prompt_snapshot: dict[str, str] = {"memory": "", "user": "", "facts": ""}
 
     def load_from_disk(self):
-        """Load entries from MEMORY.md and USER.md, capture system prompt snapshot."""
+        """Load entries from MEMORY.md, USER.md and FACTS.md, capture the snapshot."""
         mem_dir = MEMORY_DIR
         mem_dir.mkdir(parents=True, exist_ok=True)
 
-        user_md_path: Path = self._path_for("user")
-        with self._file_lock(user_md_path):
-            self._reload_target("user")
+        for target in ("user", "memory", "facts"):
+            path: Path = self._path_for(target)
+            with self._file_lock(path):
+                self._reload_target(target)
 
-            if not user_md_path.exists():
-                user_md_path.touch()
+                if not path.exists():
+                    path.touch()
 
-            self.user_entries = self._read_file(user_md_path)
-
-        memory_md_path: Path = self._path_for("memory")
-        with self._file_lock(memory_md_path):
-            self._reload_target("memory")
-
-            if not memory_md_path.exists():
-                memory_md_path.touch()
-
-            self.memory_entries = self._read_file(memory_md_path)
+                self._set_entries(target, self._read_file(path))
 
         # Deduplicate entries (preserves order, keeps first occurrence)
-        self.memory_entries = list(dict.fromkeys(self.memory_entries))
-        self.user_entries = list(dict.fromkeys(self.user_entries))
+        for target in ("memory", "user", "facts"):
+            self._set_entries(target, list(dict.fromkeys(self._entries_for(target))))
 
-        # Capture frozen snapshot for system prompt injection
+        # Capture frozen snapshot for system prompt injection. Empty stores render
+        # to "" so an empty file never produces an empty prompt block.
         self._system_prompt_snapshot = {
-            "memory": self._render_block("memory", self.memory_entries),
-            "user": self._render_block("user", self.user_entries),
+            target: self._render_block(target, self._entries_for(target))
+            for target in ("memory", "user", "facts")
         }
 
     @staticmethod
@@ -195,6 +198,8 @@ class MemoryStore:
         mem_dir = MEMORY_DIR
         if target == "user":
             return mem_dir / "USER.md"
+        if target == "facts":
+            return mem_dir / "FACTS.md"
         return mem_dir / "MEMORY.md"
 
     def _reload_target(self, target: str):
@@ -214,11 +219,15 @@ class MemoryStore:
     def _entries_for(self, target: str) -> list[str]:
         if target == "user":
             return self.user_entries
+        if target == "facts":
+            return self.facts_entries
         return self.memory_entries
 
     def _set_entries(self, target: str, entries: list[str]):
         if target == "user":
             self.user_entries = entries
+        elif target == "facts":
+            self.facts_entries = entries
         else:
             self.memory_entries = entries
 
@@ -231,10 +240,18 @@ class MemoryStore:
     def _char_limit(self, target: str) -> int:
         if target == "user":
             return self.user_char_limit
+        if target == "facts":
+            return self.facts_char_limit
         return self.memory_char_limit
 
     def add(self, target: str, content: str) -> dict[str, Any]:
-        """Append a new entry. Returns error if it would exceed the char limit."""
+        """Append a new entry. Returns error if it would exceed the char limit.
+
+        ``facts`` is nudge-maintained and high-churn, so when the new entry
+        would overflow FACTS.md the oldest entries roll off first (the same
+        oldest-first eviction ``_append_to_target`` uses) and the new entry
+        still lands. MEMORY / USER keep the interactive reject-on-overflow rule.
+        """
         content = content.strip()
         if not content:
             return {"success": False, "error": "Content cannot be empty."}
@@ -244,6 +261,7 @@ class MemoryStore:
         if scan_error:
             return {"success": False, "error": scan_error}
 
+        evicted = 0
         with self._file_lock(self._path_for(target)):
             # Re-read from disk under lock to pick up writes from other sessions
             self._reload_target(target)
@@ -259,6 +277,12 @@ class MemoryStore:
             new_entries = entries + [content]
             new_total = len(ENTRY_DELIMITER.join(new_entries))
 
+            if new_total > limit and target == "facts":
+                before = len(new_entries)
+                self._evict_oldest_to_fit(new_entries, limit)
+                evicted = before - len(new_entries)
+                new_total = len(ENTRY_DELIMITER.join(new_entries))
+
             if new_total > limit:
                 current = self._char_count(target)
                 return {
@@ -272,11 +296,26 @@ class MemoryStore:
                     "usage": f"{current:,}/{limit:,}",
                 }
 
-            entries.append(content)
-            self._set_entries(target, entries)
+            self._set_entries(target, new_entries)
             self.save_to_disk(target)
 
+        if evicted:
+            return self._success_response(
+                target, f"Entry added (evicted {evicted} oldest entries to stay within the limit)."
+            )
         return self._success_response(target, "Entry added.")
+
+    @staticmethod
+    def _evict_oldest_to_fit(entries: list[str], limit: int) -> list[str]:
+        """Drop the oldest entries (in place) until the delimiter-joined text fits.
+
+        Stops at one entry — a single entry larger than the limit is kept so
+        callers can decide whether to reject it instead of silently losing the
+        only content of a file.
+        """
+        while len(entries) > 1 and len(ENTRY_DELIMITER.join(entries)) > limit:
+            entries.pop(0)
+        return entries
 
     @staticmethod
     def _target_for_entry(entry: str) -> str:
@@ -304,12 +343,10 @@ class MemoryStore:
             new_items = [e for e in candidates if e not in existing_set]
 
             all_entries = entries + new_items
-            combined = ENTRY_DELIMITER.join(all_entries)
 
             # Capacity overflow: evict the oldest entries until the file fits.
-            while len(combined) > limit and len(all_entries) > 1:
-                all_entries.pop(0)
-                combined = ENTRY_DELIMITER.join(all_entries)
+            self._evict_oldest_to_fit(all_entries, limit)
+            combined = ENTRY_DELIMITER.join(all_entries)
 
             if new_items:
                 self._set_entries(target, all_entries)
@@ -488,6 +525,14 @@ class MemoryStore:
         block = self._system_prompt_snapshot.get(target, "")
         return block if block else None
 
+    def format_live_content(self, target: str) -> str:
+        """Return the store's current on-disk content, delimiter-joined.
+
+        Unlike ``format_for_system_prompt`` this reads the file, so nudge
+        prompts can hand the model the latest state; returns "" when empty.
+        """
+        return ENTRY_DELIMITER.join(self._read_file(self._path_for(target)))
+
     # -- Internal helpers --
 
     def _success_response(self, target: str, message: str = None) -> dict[str, Any]:
@@ -508,15 +553,25 @@ class MemoryStore:
         return resp
 
     def _render_block(self, target: str, entries: list[str]) -> str:
-        """Render a system prompt block with header and usage indicator."""
+        """Render a system prompt block with header and usage indicator.
+
+        An empty store renders to "" — callers skip falsy block strings, so an
+        empty file never injects an empty header-only block.
+        """
 
         limit = self._char_limit(target)
         content = ENTRY_DELIMITER.join(entries)
+        if not content:
+            return ""
         current = len(content)
         pct = min(100, int((current / limit) * 100)) if limit > 0 else 0
 
         if target == "user":
             header = f"USER PROFILE (who the user is) [{pct}% — {current:,}/{limit:,} chars]"
+        elif target == "facts":
+            header = (
+                f"FACTS (broad pitfalls and conventions) [{pct}% — {current:,}/{limit:,} chars]"
+            )
         else:
             header = f"MEMORY (your personal notes) [{pct}% — {current:,}/{limit:,} chars]"
 
@@ -598,9 +653,11 @@ def memory_tool(
         f"content_preview='{content_preview}', old_text_preview='{old_text_preview}'"
     )
 
-    if action in ("add", "replace", "remove") and target not in ("memory", "user"):
+    if action in ("add", "replace", "remove") and target not in ("memory", "user", "facts"):
         logger.warning(f"Invalid memory target: {target}")
-        return _tool_error(f"Invalid target '{target}'. Use 'memory' or 'user'.", success=False)
+        return _tool_error(
+            f"Invalid target '{target}'. Use 'memory', 'user' or 'facts'.", success=False
+        )
 
     try:
         if action == "add":
@@ -655,11 +712,13 @@ class MemoryActionSchema(BaseModel):
     """Schema for memory tool arguments."""
 
     action: Literal["add", "replace", "remove"] = Field(
-        description="The action to perform: 'add' / 'replace' / 'remove' on MEMORY.md or USER.md."
+        description=(
+            "The action to perform: 'add' / 'replace' / 'remove' on MEMORY.md, USER.md or FACTS.md."
+        )
     )
     target: str = Field(
         default="memory",
-        description="Which store: 'memory' or 'user'.",
+        description="Which store: 'memory', 'user' or 'facts'.",
     )
     content: str | None = Field(
         default=None,
@@ -689,9 +748,15 @@ class MemoryTool(BaseTool):
         "state to memory; use session_search to recall those from past transcripts.\n"
         "If you've discovered a new way to do something, solved a problem that could be "
         "necessary later, save it as a skill with the skill tool.\n\n"
-        "TWO TARGETS:\n"
+        "THREE TARGETS:\n"
         "- 'user': who the user is -- name, role, preferences, communication style, pet peeves\n"
-        "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n\n"
+        "- 'memory': your notes -- environment facts, project conventions, tool quirks, lessons learned\n"
+        "- 'facts': broad, module-independent pitfalls and conventions that recur across tasks "
+        "(always injected into the system prompt; oldest entries roll off at the cap)\n\n"
+        "ROUTING: a lesson bound to a specific file/module/test belongs in a "
+        "'<module>-notes' skill (skill_manage), not in memory; user preferences belong "
+        "in 'user'; broad cross-plan pitfalls belong in 'facts'; general agent-side "
+        "notes belong in 'memory'.\n\n"
         "ACTIONS: add (new entry), replace (update existing -- old_text identifies it), "
         "remove (delete -- old_text identifies it).\n\n"
         "SKIP: trivial/obvious info, things easily re-discovered, raw data dumps, and temporary task state.\n\n"
