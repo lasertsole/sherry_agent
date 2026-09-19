@@ -27,7 +27,7 @@
 
 ### 方案：aux 压缩改走 LangChain structured_output，代码拼接 Markdown
 
-1. **Pydantic `SummaryDoc`**（字段与现模板一一对应）：`latest_user_request / goal / constraints[] / completed[] / in_progress[] / blocked[] / key_decisions[] / next_steps[] / critical_context[] / relevant_files[]` + **`active_plan_notes[]`**（Part 1 的载体，代码层 cap 与逐字延续）+ **`evicted_refs[]`**（本次压缩覆盖范围内出现过的驱逐文件路径——预览中的 `[evicted to: <path>]` 收进字段，随 Doc 链逐字延续、不受 FIFO 限制；保证被驱逐的超长内容**在摘要链上永远带指针**，模型任意后续轮次可顺指针 `read_file`/`message_search` 找回全文；计划完成后该数组清空）
+1. **Pydantic `SummaryDoc`**（字段与现模板一一对应）：`latest_user_request`（**原封不动、无上限**——会话的锚点，随链逐字延续直到 resolved）/ `goal / constraints[] / completed[] / in_progress[] / blocked[] / key_decisions[] / next_steps[] / critical_context[] / relevant_files[]` + **`active_plan_notes[]`**（Part 1 的载体，代码层 cap 与逐字延续）+ **`evicted_refs[]`**（本次压缩覆盖范围内出现过的驱逐文件路径——预览中的 `[evicted to: <path>]` 收进字段，随 Doc 链逐字延续、不受 FIFO 限制；保证被驱逐的超长内容**在摘要链上永远带指针**，模型任意后续轮次可顺指针 `read_file`/`message_search` 找回全文；计划完成后该数组清空）
 2. **aux 模型**经 `with_structured_output(SummaryDoc)`（失败退化 `json_mode` + `json_repair`——仓库既有 `instructor`/`json_repair`）；链式更新时把**上一份 SummaryDoc** 作为结构化输入与 `<conversation>` 一起喂入，输出**合并后的新 Doc**（"conversation wins" 语义由 prompt 表达，载体类型化）
 3. **代码渲染 Markdown**（节与顺序同现模板）→ 包 `<summary>` 标签进摘要对——模型可见形态不变；**同 Doc → 同渲染字节**，前缀缓存不受影响
 4. **FIFO/上限变数组切片**：`completed[-5:]`、`key_decisions[-5:]`、`active_plan_notes[-20:]`——`_enforce_fifo_limits` 的 Markdown 解析**整段删除**；`SUMMARY_TOTAL_MAX_CHARS` 的 head/tail 截断对 Doc 渲染后仍作最终保险
@@ -70,6 +70,9 @@
    - 注入内容：计划文件相对路径 + 计划名 + todos 未完成项概要（**计划全文不注入**，避免与模型可自行 `read_file` 重复）
    - 放在 TaskFlow 注入块旁，同为 "authoritative" 标注
 3. **计划上下文的注入同样作用于首次摘要**（`_SUMMARY_PROMPT_FIRST` 路径）：计划注意事项在**第一次压缩**就该被收进 `active_plan_notes`，不等链式
+4. **`latest_user_request` 原封不动**：渲染的 `## Latest Unresolved User Request` 节**去掉 `max {LATEST_USER_REQUEST_MAX_CHARS}` 截断**——用户最后的问题**逐字**呈现（会话的锚点，不许转述/截断）
+   - 被驱逐消息的 verbatim 来源：压缩时 `_serialize_for_summary` 从 **state** 序列化（P1-9 state=全文+标记，模型视图的截断不影响 state）⇒ aux 摘要器**看得到原文**，可逐字引用
+   - 该消息已驱逐 → 节内**附驱逐指针**（`[evicted to: <path>]`）；该字段随 Doc 链逐字延续直到 resolved
 
 ### 文件清单
 
@@ -85,6 +88,7 @@
 - 对话中出现的新计划教训在下一次压缩后被并入该节
 - 计划完成（todos 全 done）后压缩 → 该节被移除
 - 无活跃计划 → 不出现该节、指令不提计划
+- **驱逐 + 压缩**：超长人类消息被驱逐后触发压缩 → 摘要的 `Latest Unresolved User Request` 含**逐字原文**与驱逐指针（原文来源 = state 全文）
 - 既有摘要测试全绿（模板加节不得破坏既有断言的结构性检查）
 
 ### 执行顺序（Part 1）
