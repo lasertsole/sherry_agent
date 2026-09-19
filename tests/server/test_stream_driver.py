@@ -143,9 +143,7 @@ class TestDoneAndInterrupt:
         }
 
     def test_turn_info_emits_turn_started_once_and_tags_terminal_frames(self):
-        driver = _RecordingDriver(
-            turn_info={"turn_id": "t-1", "message_ids": ["m1", "m2"]}
-        )
+        driver = _RecordingDriver(turn_info={"turn_id": "t-1", "message_ids": ["m1", "m2"]})
 
         _run(driver.drive(_chunks_source([{"type": "text", "content": "x"}])))
 

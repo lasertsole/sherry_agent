@@ -74,6 +74,7 @@ extend-exclude = [
     ".omo",
     ".playwright-mcp",
     "docs",             # hand-formatted VitePress markdown (see .pre-commit-config.yaml)
+    "TODO",             # hand-written plan notes (same rationale as docs)
 ]
 
 [tool.ruff.lint]
