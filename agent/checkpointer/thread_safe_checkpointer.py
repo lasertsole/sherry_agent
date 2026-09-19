@@ -39,6 +39,13 @@ from langgraph.checkpoint.base import (
 )
 from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from loguru import logger
+
+# Reclaim the freelist left behind by keep-latest pruning only once the freed
+# space is worth a full-file rewrite: ``VACUUM`` copies the whole database, so
+# a few MB of free pages are cheaper to leave in place than to reclaim on every
+# ``built_agent()`` call.
+_VACUUM_THRESHOLD_BYTES = 10 * 1024 * 1024
 
 # ---------------------------------------------------------------------------
 # _LoopSafeLock  —  asyncio.Lock that never binds to a specific loop
@@ -204,6 +211,11 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
         Keeps the latest checkpoint so that ``aget_state()`` / ``aget_tuple()``
         still return the session's most recent state (messages remain visible).
 
+        After pruning, runs a conditional ``VACUUM`` when the freelist exceeds
+        ``_VACUUM_THRESHOLD_BYTES`` — with ``auto_vacuum=0`` the DELETE only
+        returns pages to the freelist, it never shrinks the file.  The VACUUM
+        is fail-open: an error is logged and never affects the prune result.
+
         Returns
         -------
         dict with keys: threads_kept, deleted_checkpoints, deleted_writes
@@ -225,41 +237,64 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
             keep_rows = await cursor.fetchall()
             await cursor.close()
 
-            if not keep_rows:
-                return dict(threads_kept=0, deleted_checkpoints=0, deleted_writes=0)
-
             total_kept = len(keep_rows)
             total_del_ckpt = 0
             total_del_write = 0
 
-            for tid, last_id in keep_rows:
-                cursor = await conn.execute(
-                    "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ? AND checkpoint_ns = ''",
-                    (tid, last_id),
-                )
-                total_del_ckpt += cursor.rowcount
-                await cursor.close()
+            if keep_rows:
+                for tid, last_id in keep_rows:
+                    cursor = await conn.execute(
+                        "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_id != ? AND checkpoint_ns = ''",
+                        (tid, last_id),
+                    )
+                    total_del_ckpt += cursor.rowcount
+                    await cursor.close()
 
+                    cursor = await conn.execute(
+                        "DELETE FROM writes WHERE thread_id = ? AND (checkpoint_ns != '' OR checkpoint_id != ?)",
+                        (tid, last_id),
+                    )
+                    total_del_write += cursor.rowcount
+                    await cursor.close()
+
+                # orphan writes
                 cursor = await conn.execute(
-                    "DELETE FROM writes WHERE thread_id = ? AND (checkpoint_ns != '' OR checkpoint_id != ?)",
-                    (tid, last_id),
+                    "DELETE FROM writes WHERE NOT EXISTS ("
+                    "  SELECT 1 FROM checkpoints c"
+                    "   WHERE c.thread_id = writes.thread_id"
+                    "     AND c.checkpoint_ns = writes.checkpoint_ns"
+                    "     AND c.checkpoint_id = writes.checkpoint_id"
+                    ")"
                 )
                 total_del_write += cursor.rowcount
                 await cursor.close()
 
-            # orphan writes
-            cursor = await conn.execute(
-                "DELETE FROM writes WHERE NOT EXISTS ("
-                "  SELECT 1 FROM checkpoints c"
-                "   WHERE c.thread_id = writes.thread_id"
-                "     AND c.checkpoint_ns = writes.checkpoint_ns"
-                "     AND c.checkpoint_id = writes.checkpoint_id"
-                ")"
-            )
-            total_del_write += cursor.rowcount
-            await cursor.close()
+                await conn.commit()
 
-            await conn.commit()
+            # ── conditional VACUUM: reclaim the pages the prune just freed ──
+            # ``commit()`` above ends the implicit transaction; VACUUM cannot
+            # run inside one.  The prune is already committed, so a VACUUM
+            # failure is logged and swallowed (fail-open).
+            try:
+                cursor = await conn.execute("PRAGMA freelist_count")
+                row = await cursor.fetchone()
+                await cursor.close()
+                freelist_count = int(row[0]) if row else 0
+
+                cursor = await conn.execute("PRAGMA page_size")
+                row = await cursor.fetchone()
+                await cursor.close()
+                page_size = int(row[0]) if row else 0
+
+                freelist_bytes = freelist_count * page_size
+                if freelist_bytes > _VACUUM_THRESHOLD_BYTES:
+                    await conn.execute("VACUUM")
+                    logger.info(
+                        "checkpoint db vacuumed: reclaimed ~{:.0f}MB",
+                        freelist_bytes / (1024 * 1024),
+                    )
+            except Exception as exc:
+                logger.warning("checkpoint db vacuum skipped: {}", exc)
 
         return dict(
             threads_kept=total_kept,
