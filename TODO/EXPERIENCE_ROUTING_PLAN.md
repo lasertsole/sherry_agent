@@ -52,6 +52,8 @@
 
 ## Part 1：压缩保留计划注意事项（计划活跃期）
 
+> 状态：**已落地**（2026-09-19）。实现：`agent/middlewares/summarization/plan_context.py`（来源 ①② 计划活跃判定 + prompt 块渲染）、`agent/middlewares/summarization/core.py`（`_get_plan_context_sync` 首摘/更新双路径注入；`_finalize_summary_doc` 的 `active_plan_notes` 逐字继承/追加/清空与 `latest_user_request` 驱逐指针；模板逐字化）。测试：`tests/agent/middlewares/test_summary_active_plan.py`（20 条）。提交：`d33a1515`（实现）+ `60d77bcc`（四语文档）。
+
 ### 现状（已核实，`agent/middlewares/summarization/core.py`）
 
 1. **链式延续指令已存在**：`_SUMMARY_UPDATE_INSTRUCTIONS`（`:250-262`）明确 "anything you do not carry into the new summary is lost" 与 "Carry forward objectives, constraints, decisions from `<prior-summary>` even when the `<conversation>` does not mention them"。上一批的链式摘要过滤（`_filter_summary_messages` 把旧摘要对剔出 `<conversation>`）**不丢内容**——旧摘要文本经 `_extract_previous_summary`（`:1611`）注入 `<prior-summary>`，由延续指令负责搬运。
