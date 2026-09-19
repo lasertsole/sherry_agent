@@ -22,6 +22,7 @@ provider SDK is imported at module level (duck-typing only).
 # (status / type / message / recovery matrices) that must stay one unit.
 
 import enum
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -53,6 +54,11 @@ class FailoverReason(enum.Enum):
     context_overflow = "context_overflow"  # prompt exceeded the context window — compress
     payload_too_large = "payload_too_large"  # 413 — compress the payload
     image_too_large = "image_too_large"  # single image over the limit — shrink and retry
+
+    # Multimodal
+    multimodal_not_supported = (
+        "multimodal_not_supported"  # native media block rejected — skill fallback
+    )
 
     # Model / provider policy
     model_not_found = "model_not_found"  # 404 — switch model
@@ -91,6 +97,7 @@ PAYLOAD_TOO_LARGE = FailoverReason.payload_too_large.value
 CONTEXT_OVERFLOW = FailoverReason.context_overflow.value
 
 _STATUS_CODE_TOO_LARGE = 413
+_STATUS_CODE_BAD_REQUEST = 400
 _PAYLOAD_TEXT_HINTS = ("payload", "too large")
 
 _CONTEXT_OVERFLOW_PATTERNS = (
@@ -200,6 +207,30 @@ _MESSAGE_PATTERNS: dict[FailoverReason, tuple[str, ...]] = {
         "no response content",
         "response is empty",
     ),
+    FailoverReason.multimodal_not_supported: (
+        "unsupported content type",
+        "unrecognized content type",
+        "content type.*not supported",
+        "image input not supported",
+        "multimodal.*not supported",
+        "vision.*not supported",
+        "does not support.*image",
+        "does not support.*audio",
+        "does not support.*video",
+        "invalid.*image_url",
+        "image_url.*not.*valid",
+        "unsupported.*image",
+        "unsupported.*audio",
+        "unsupported.*video",
+    ),
+}
+
+# The table is compiled once: the mostly-literal entries behave exactly like the
+# previous substring scan, while the multimodal entries need their ``.*``
+# wildcards to match provider word order without firing on a bare "image" word.
+_MESSAGE_PATTERNS_COMPILED: dict[FailoverReason, tuple[re.Pattern[str], ...]] = {
+    reason: tuple(re.compile(pattern, re.IGNORECASE) for pattern in patterns)
+    for reason, patterns in _MESSAGE_PATTERNS.items()
 }
 
 # Step 5: TLS warning strings that appear in messages without a status code.
@@ -269,6 +300,9 @@ _RECOVERY_MATRIX: dict[FailoverReason, dict[str, bool]] = {
     ),
     FailoverReason.format_error: dict(
         retryable=False, should_compress=False, should_fallback=False
+    ),
+    FailoverReason.multimodal_not_supported: dict(
+        retryable=True, should_compress=False, should_fallback=False
     ),
     FailoverReason.invalid_response: dict(
         retryable=True, should_compress=False, should_fallback=False
@@ -404,7 +438,19 @@ def _match_special_cases(
         return FailoverReason.context_overflow
     if any(kw in lowered for kw in ("content_filter", "content_policy")):
         return FailoverReason.content_policy_blocked
+    if status_code == _STATUS_CODE_BAD_REQUEST and _match_multimodal_patterns(lowered):
+        return FailoverReason.multimodal_not_supported
     return None
+
+
+def _match_multimodal_patterns(lowered: str) -> bool:
+    """True when the text names a rejected native media input.
+
+    Uses the precise multimodal patterns only, so a plain "image" word in an
+    unrelated error (image_too_large, generic 400 wording) is never caught.
+    """
+    patterns = _MESSAGE_PATTERNS_COMPILED[FailoverReason.multimodal_not_supported]
+    return any(pattern.search(lowered) for pattern in patterns)
 
 
 def _match_payload_too_large(status_code: int | None, lowered: str) -> bool:
@@ -440,8 +486,8 @@ def _match_exception_type(exc: BaseException) -> FailoverReason | None:
 
 def _match_message_patterns(lowered: str) -> FailoverReason | None:
     """Step 4: fixed message-pattern table (dict order = priority)."""
-    for reason, patterns in _MESSAGE_PATTERNS.items():
-        if any(pattern in lowered for pattern in patterns):
+    for reason, patterns in _MESSAGE_PATTERNS_COMPILED.items():
+        if any(pattern.search(lowered) for pattern in patterns):
             return reason
     return None
 
