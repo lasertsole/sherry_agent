@@ -2,8 +2,7 @@
 
 The compression path no longer persists messages (that moved to
 ``MessagePersistenceMiddleware``), but it still schedules the memory-review and
-plan-extraction nudges from the same seam. These assertions move with the
-scheduler, unchanged.
+plan-extraction nudges from the same seam.
 """
 
 from __future__ import annotations
@@ -118,17 +117,6 @@ async def _settle() -> None:
         await asyncio.sleep(0)
 
 
-class _FakeStateRegister:
-    def __init__(self) -> None:
-        self.data: dict[tuple[str, str], object] = {}
-
-    def get_state(self, session_id: str, key: str, default: object = None) -> object:
-        return self.data.get((session_id, key), default)
-
-    def set_state(self, session_id: str, key: str, value: object) -> None:
-        self.data[(session_id, key)] = value
-
-
 class TestCompressionNudgeDispatch:
     @pytest.mark.asyncio
     async def test_compression_dispatches_memory_and_plan_nudges(
@@ -150,11 +138,6 @@ class TestCompressionNudgeDispatch:
             "_get_and_reload_system_prompt",
             lambda session_id: "sys-prompt",
         )
-        fake_db = _FakeStateRegister()
-        fake_db.set_state(
-            sid, nudge_mod._NUDGE_MEMORY_COUNT_KEY, nudge_mod._NUDGE_MEMORY_THRESHOLD - 1
-        )
-        monkeypatch.setattr(nudge_mod, "state_register_db", fake_db)
 
         await _make_summarization()._aapply_compression_under_lock(
             _request(_large_history(), sid), sid
@@ -162,7 +145,6 @@ class TestCompressionNudgeDispatch:
         await _settle()
 
         assert calls == ["memory", "plan"]
-        assert fake_db.get_state(sid, nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 0
 
     @pytest.mark.asyncio
     async def test_no_cut_does_not_dispatch_nudges(self, isolated_db, sid, monkeypatch):

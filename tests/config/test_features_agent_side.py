@@ -159,7 +159,6 @@ SPOT_DEFAULTS = [
     (HITL_DEFAULTS, "default_timeout", 60),
     (HITL_DEFAULTS, "default_clarify_timeout", 3600),
     (HITL_DEFAULTS, "default_description_prefix", "Action requires human approval"),
-    (NUDGE, "nudge_memory_threshold", 10),
     (NUDGE, "plan_extraction_enabled", True),
     (MEDIA_PIPELINE, "multimodal_temp_retention_days", 7),
     (CONTEXT_GUARD, "output_cut_ratio", 0.20),

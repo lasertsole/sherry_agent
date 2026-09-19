@@ -649,10 +649,10 @@ def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> No
 
     Memory review and plan extraction moved here from the middleware's
     after-agent hook:
-    the scheduler advances the memory counter, evaluates the plan-extraction
-    single-fire flag, and dispatches under the NUDGE lane when no nudge is
-    already in flight. Call-time import keeps the nudges module out of the
-    summarization module-load graph.
+    the scheduler dispatches the memory review on every compression, evaluates
+    the plan-extraction single-fire flag, and dispatches under the NUDGE lane
+    when no nudge is already in flight. Call-time import keeps the nudges
+    module out of the summarization module-load graph.
     """
     try:
         from agent.middlewares.summarization.nudges import schedule_compression_nudges

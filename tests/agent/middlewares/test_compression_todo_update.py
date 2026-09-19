@@ -343,6 +343,15 @@ class TestReentrancyLock:
 
 
 class TestCompressionPathWiring:
+    @pytest.fixture(autouse=True)
+    def _stub_memory_review(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep compression-path tests hermetic: every compression now dispatches a memory review."""
+
+        async def _noop(*args: Any, **kwargs: Any) -> None:
+            return None
+
+        monkeypatch.setattr(nudge_mod, "_nudge_memory", _noop)
+
     @pytest.mark.asyncio
     async def test_async_path_fires_real_task_with_discarded_slice(
         self, monkeypatch: pytest.MonkeyPatch, fake_nudge_state: _FakeStateRegister, sid: str
@@ -363,7 +372,10 @@ class TestCompressionPathWiring:
         await asyncio.sleep(0)
 
         assert len(result.messages) < len(messages)
-        assert len(created) == 1
+        todo_tasks = [
+            t for t in created if getattr(t.get_coro(), "cr_code", None) is _runner.__code__
+        ]
+        assert len(todo_tasks) == 1
         assert runs[0][0] == sid
         assert runs[0][1] > 0
 

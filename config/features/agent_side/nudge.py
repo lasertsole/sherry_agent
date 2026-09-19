@@ -1,16 +1,18 @@
-"""Compression-time nudge settings (memory review + plan extraction)."""
+"""Compression-time nudge settings.
+
+The memory review is dispatched on every compression; plan extraction fires
+when the todo list is all-complete at a compression.
+"""
 
 from typing import TypedDict
 
 
 class NudgeConfig(TypedDict):
-    """Compression-time nudge settings (memory review + plan extraction)."""
+    """Compression-time nudge settings."""
 
-    nudge_memory_threshold: int
     plan_extraction_enabled: bool
 
 
 NUDGE: NudgeConfig = {
-    "nudge_memory_threshold": 10,
     "plan_extraction_enabled": True,
 }

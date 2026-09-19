@@ -276,21 +276,20 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 # after-agent hook (removed with the @dynamic_prompt migration). They are now
 # unified with the compression pipeline: the Summarization middleware calls
 # ``schedule_compression_nudges`` on every compression that actually discards
-# messages, so the nudge cadence is
-# "per N compressions" and plan extraction is evaluated at compression time.
-# The single-fire flag semantics are unchanged: ``nudge_plan_extraction_fired``
-# still guarantees one extraction per completion cycle and resets whenever the
-# list is not all-complete.
+# messages. The memory review is dispatched on **every** compression (a
+# compaction discards content, so the review must never be skipped), and plan
+# extraction is evaluated at compression time. The single-fire flag semantics
+# are unchanged: ``nudge_plan_extraction_fired`` still guarantees one
+# extraction per completion cycle and resets whenever the list is not
+# all-complete.
 #
-# The memory counter lives in ``state_register_db`` (survives restarts), the
-# in-flight locks in ``state_register_mem`` (same as before). Dispatch is
+# The in-flight locks live in ``state_register_mem``. Dispatch is
 # fire-and-forget: compression runs inside ``wrap_model_call`` and must never
-# block on a nudge agent's LLM call.
+# block on a nudge agent's LLM call. While a nudge lock is held the
+# compression dispatches nothing — nothing is queued.
 # ---------------------------------------------------------------------------
 
-_NUDGE_MEMORY_COUNT_KEY = "nudge_review_memory_count"
 _NUDGE_MEMORY_LOCK_KEY = "nudge_review_memory_lock"
-_NUDGE_MEMORY_THRESHOLD = NUDGE["nudge_memory_threshold"]
 _PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
 _PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 
@@ -346,7 +345,6 @@ def _nudges_locked(session_id: str) -> bool:
 
 async def _run_compression_nudges(
     session_id: str,
-    need_memory: bool,
     need_plan: bool,
     messages: list[BaseMessage],
 ) -> None:
@@ -359,8 +357,7 @@ async def _run_compression_nudges(
 
         system_prompt = _get_and_reload_system_prompt(session_id)
         sanitized = sanitize_tool_use_result_pairing(list(messages))
-        if need_memory:
-            await _nudge_memory(session_id, system_prompt, sanitized)
+        await _nudge_memory(session_id, system_prompt, sanitized)
         if need_plan:
             await _nudge_plan_extraction(session_id, system_prompt, sanitized)
     except Exception:
@@ -368,16 +365,16 @@ async def _run_compression_nudges(
 
 
 def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]) -> bool:
-    """Advance the compression-scoped nudge state and dispatch as needed.
+    """Dispatch the compression-scoped nudges.
 
     Called by the Summarization middleware once per compression that actually
     discards messages. Returns True when a nudge task was created.
 
-    Counter/lock semantics mirror the former per-turn implementation: the
-    memory counter increments on every compression; while a nudge is in flight
-    the compression is counted but no dispatch happens; reaching the threshold
-    resets the counter. With no running event loop (the sync compression path
-    outside an async caller) scheduling is skipped entirely.
+    The memory review runs on every compression; plan extraction additionally
+    fires when the todo list just became all-complete (single fire per
+    completion cycle). While a nudge is in flight, dispatch is skipped
+    entirely — nothing is queued. With no running event loop (the sync
+    compression path outside an async caller) scheduling is skipped entirely.
     """
     try:
         asyncio.get_running_loop()
@@ -388,19 +385,12 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
         )
         return False
 
-    count = int(state_register_db.get_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0) or 0) + 1
     if _nudges_locked(session_id):
-        state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, count)
         return False
 
-    need_memory = count >= _NUDGE_MEMORY_THRESHOLD
     need_plan = _PLAN_EXTRACTION_ENABLED and _detect_todo_all_complete(session_id)
 
-    state_register_db.set_state(session_id, _NUDGE_MEMORY_COUNT_KEY, 0 if need_memory else count)
-    if not (need_memory or need_plan):
-        return False
-
-    coro = _run_compression_nudges(session_id, need_memory, need_plan, list(messages))
+    coro = _run_compression_nudges(session_id, need_plan, list(messages))
     try:
         task = asyncio.create_task(coro)
     except RuntimeError:  # pragma: no cover - the loop vanished after the check

@@ -3,8 +3,8 @@
 Covers:
 - ``_detect_todo_all_complete`` — the four decision branches (no todos /
   first all-complete fire / already-fired / not-all-complete reset).
-- ``schedule_compression_nudges`` — compression-time counter and lock
-  semantics, memory-review threshold reset, and plan-extraction dispatch.
+- ``schedule_compression_nudges`` — per-compression memory-review dispatch,
+  lock semantics, and plan-extraction dispatch.
 - ``system_prompt_injection`` — the ``@dynamic_prompt`` middleware does not
   override the after-agent hooks (nudge dispatch moved to the compression
   pipeline).
@@ -126,37 +126,37 @@ class TestDetectTodoAllComplete:
 
 class TestScheduleCompressionNudges:
     @pytest.mark.asyncio
-    async def test_below_threshold_counts_without_dispatch(
+    async def test_first_compression_dispatches_memory(
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
         calls = _nudge_spies(monkeypatch)
         monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
 
-        scheduled = schedule_compression_nudges("sess-count", [HumanMessage("hi")])
-        await _settle()
-
-        assert scheduled is False
-        assert calls == []
-        assert fake_state_db.get_state("sess-count", nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 1
-
-    @pytest.mark.asyncio
-    async def test_threshold_resets_counter_and_dispatches_memory(
-        self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
-    ):
-        calls = _nudge_spies(monkeypatch)
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
-        fake_state_db.set_state(
-            "sess-threshold",
-            nudge_mod._NUDGE_MEMORY_COUNT_KEY,
-            nudge_mod._NUDGE_MEMORY_THRESHOLD - 1,
-        )
-
-        scheduled = schedule_compression_nudges("sess-threshold", [HumanMessage("hi")])
+        scheduled = schedule_compression_nudges("sess-first", [HumanMessage("hi")])
         await _settle()
 
         assert scheduled is True
-        assert calls == [("memory", "sess-threshold", "sys-prompt")]
-        assert fake_state_db.get_state("sess-threshold", nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 0
+        assert calls == [("memory", "sess-first", "sys-prompt")]
+        assert fake_state_db.data == {}
+
+    @pytest.mark.asyncio
+    async def test_consecutive_compressions_both_dispatch(
+        self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
+    ):
+        calls = _nudge_spies(monkeypatch)
+        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: False)
+
+        first = schedule_compression_nudges("sess-twice", [HumanMessage("hi")])
+        await _settle()
+        second = schedule_compression_nudges("sess-twice", [HumanMessage("hi")])
+        await _settle()
+
+        assert first is True
+        assert second is True
+        assert calls == [
+            ("memory", "sess-twice", "sys-prompt"),
+            ("memory", "sess-twice", "sys-prompt"),
+        ]
 
     @pytest.mark.asyncio
     async def test_plan_extraction_dispatches_when_todos_complete(
@@ -170,14 +170,22 @@ class TestScheduleCompressionNudges:
         await _settle()
 
         assert scheduled is True
-        assert calls == [("plan", "sess-plan", "sys-prompt")]
+        assert calls == [
+            ("memory", "sess-plan", "sys-prompt"),
+            ("plan", "sess-plan", "sys-prompt"),
+        ]
 
     @pytest.mark.asyncio
-    async def test_lock_increments_counter_but_skips_dispatch(
+    async def test_lock_skips_dispatch(
         self, monkeypatch, fake_state_db, fake_state_mem, prompt_stub
     ):
         calls = _nudge_spies(monkeypatch)
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
+        detect_calls: list[str] = []
+        monkeypatch.setattr(
+            nudge_mod,
+            "_detect_todo_all_complete",
+            lambda session_id: detect_calls.append(session_id) or True,
+        )
         fake_state_mem.set_state("sess-locked", nudge_mod._NUDGE_MEMORY_LOCK_KEY, True)
 
         scheduled = schedule_compression_nudges("sess-locked", [HumanMessage("hi")])
@@ -185,17 +193,22 @@ class TestScheduleCompressionNudges:
 
         assert scheduled is False
         assert calls == []
-        assert fake_state_db.get_state("sess-locked", nudge_mod._NUDGE_MEMORY_COUNT_KEY, 0) == 1
+        assert detect_calls == []
 
-    def test_no_running_loop_skips_without_touching_counter(
-        self, monkeypatch, fake_state_db, fake_state_mem
-    ):
-        monkeypatch.setattr(nudge_mod, "_detect_todo_all_complete", lambda session_id: True)
+    def test_no_running_loop_skips_dispatch(self, monkeypatch, fake_state_db, fake_state_mem):
+        calls = _nudge_spies(monkeypatch)
+        detect_calls: list[str] = []
+        monkeypatch.setattr(
+            nudge_mod,
+            "_detect_todo_all_complete",
+            lambda session_id: detect_calls.append(session_id) or True,
+        )
 
         scheduled = schedule_compression_nudges("sess-sync", [HumanMessage("hi")])
 
         assert scheduled is False
-        assert fake_state_db.get_state("sess-sync", nudge_mod._NUDGE_MEMORY_COUNT_KEY, None) is None
+        assert calls == []
+        assert detect_calls == []
 
 
 # ---------------------------------------------------------------------------
