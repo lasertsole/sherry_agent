@@ -379,7 +379,12 @@ class TestUC09MultimodalFlow:
         monkeypatch.setattr(mm_mod, "SRC_DIR", tmp_path / "src")
         return mm_mod.MultimodalProcessor(), tmp_path / "src"
 
-    def test_image_base64_saved_and_hint_injected(self, mm):
+    def test_image_base64_saved_and_hint_injected(self, mm, monkeypatch):
+        from config.features import MEDIA_PIPELINE
+
+        # This case covers the explicit skill path; the default "auto" mode
+        # keeps the media blocks while the model is unprobed.
+        monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_native_multimodal", "false")
         mw, src = mm
         b64 = _png_base64()
         msg = HumanMessage(
