@@ -24,6 +24,16 @@ SESSION 메모리 플랜의 전체 13개 기능(opencode-dev / oh-my-openagent /
 | 벡터 의미 검색 | 마이그레이션 v13, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow 편성 | `docs/long-running-tasks/` |
 
+## 메모리 파일
+
+세 개의 단일 파일 메모리 저장소는 `MemoryStore.load_from_disk()`(`agent/tools/memory.py`)가 로드하여 동결된 시스템 프롬프트 스냅샷으로 캡처합니다. FACTS.md는 첫 사용 시 `workspace/template/<lang>/FACTS.md`에서 지연 생성됩니다. 압축 전 memory flush는 이 파일을 쓰지 않습니다.
+
+| 파일 | 용도 | 상한 | 유지보수자 |
+|---|---|---|---|
+| `workspace/memory/MEMORY.md` | Agent 측 노트: 환경 사실, 프로젝트 관례, 도구 특이점 | 2200자(`MEMORY_TOOL["memory_char_limit"]`) | `memory` 도구(`memory` 대상: memory review nudge, memory flush) |
+| `workspace/memory/USER.md` | 사용자 프로필: 선호, 소통 스타일, 기대 | 1375자(`MEMORY_TOOL["user_char_limit"]`) | `memory` 도구(`user` 대상: memory review nudge, memory flush) |
+| `workspace/memory/FACTS.md` | 모듈에 얽매이지 않는 광범위한 함정과 관례; 매 시스템 프롬프트에 주입 | 1375자(`MEMORY_TOOL["facts_char_limit"]`), 상한 초과 시 가장 오래된 항목부터 롤오프 | `memory` 도구(`facts` 대상: memory review / plan extraction nudge) |
+
 ## MesMemory 마이그레이션(v10–v17)
 
 | 버전 | 스키마 |

@@ -24,6 +24,16 @@ All 13 capabilities of the SESSION memory plan (borrowed from opencode-dev, oh-m
 | Vector semantic search | migration v13, `context_engine/embeddings/`, `message_search --semantic` |
 | TaskFlow orchestration | `docs/long-running-tasks/` |
 
+## Memory Files
+
+The three single-file memory stores are loaded by `MemoryStore.load_from_disk()` (`agent/tools/memory.py`) and captured as a frozen system-prompt snapshot. FACTS.md is lazily created from `workspace/template/<lang>/FACTS.md` on first use; it is not written by the pre-compression memory flush.
+
+| File | Purpose | Limit | Maintainer |
+|---|---|---|---|
+| `workspace/memory/MEMORY.md` | Agent-side notes: environment facts, project conventions, tool quirks | 2,200 chars (`MEMORY_TOOL["memory_char_limit"]`) | `memory` tool (`memory` target: memory review nudge, memory flush) |
+| `workspace/memory/USER.md` | User profile: preferences, communication style, expectations | 1,375 chars (`MEMORY_TOOL["user_char_limit"]`) | `memory` tool (`user` target: memory review nudge, memory flush) |
+| `workspace/memory/FACTS.md` | Broad, module-independent pitfalls and conventions; injected into every system prompt | 1,375 chars (`MEMORY_TOOL["facts_char_limit"]`), oldest-first rollover on overflow | `memory` tool (`facts` target: memory review / plan extraction nudges) |
+
 ## MesMemory Migrations (v10–v17)
 
 | Version | Schema |

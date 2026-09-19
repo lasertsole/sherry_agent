@@ -24,6 +24,16 @@ SESSION 内存计划的全部 13 项能力（借鉴自 opencode-dev / oh-my-open
 | 向量语义搜索 | 迁移 v13，`context_engine/embeddings/`，`message_search --semantic` |
 | TaskFlow 编排 | `docs/long-running-tasks/` |
 
+## 记忆文件
+
+三个单文件记忆存储由 `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）加载，并捕获为冻结的系统提示快照。FACTS.md 在首次使用时从 `workspace/template/<lang>/FACTS.md` 懒创建；压缩前 memory flush 不写该文件。
+
+| 文件 | 用途 | 上限 | 维护者 |
+|---|---|---|---|
+| `workspace/memory/MEMORY.md` | Agent 侧笔记：环境事实、项目约定、工具怪癖 | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） | `memory` 工具（`memory` 目标：memory review nudge、memory flush） |
+| `workspace/memory/USER.md` | 用户画像：偏好、沟通风格、期望 | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） | `memory` 工具（`user` 目标：memory review nudge、memory flush） |
+| `workspace/memory/FACTS.md` | 跨计划普适的坑与约定；每次系统提示都会注入 | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`），超限滚动淘汰最旧条目 | `memory` 工具（`facts` 目标：memory review / plan extraction nudge） |
+
 ## MesMemory 迁移（v10–v17）
 
 | 版本 | 结构 |

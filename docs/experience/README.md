@@ -2,13 +2,13 @@
 
 English · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. The outputs land in four stores — MEMORY.md / USER.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
+This document covers the experience system: **when** the agent extracts experience, **by which mechanism**, **where** that experience is written, and how the resulting skill library is maintained. Four extraction paths are wired into the agent lifecycle: the compression-time memory review (on every compression), plan extraction when the todo list is all-complete at a compression, the pre-compression memory flush, and the post-compression todo fork. The outputs land in five stores — MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, and `todos.db` — and the **Curator** section below documents the background pass that maintains the `skills/auto/` store that plan extraction writes into.
 
 > Every claim below was verified against the source. Symbol names, config keys, defaults and paths all exist in code in `agent/middlewares/`, `agent/tools/`, and `config/features/`.
 
 ## Design Principles
 
-1. **Every extraction extends an existing store.** Activity lands in MEMORY.md / USER.md, the plan knowledge directory, `skills/auto/`, or `todos.db`. No extraction path creates a parallel store.
+1. **Every extraction extends an existing store.** Activity lands in MEMORY.md / USER.md / FACTS.md, the plan knowledge directory, `skills/auto/`, or `todos.db`. No extraction path creates a parallel store.
 2. **Fail-open everywhere.** Every trigger logs its failure and swallows it. A broken todo store, an unreadable plan file, or a failed LLM call never blocks or breaks the main conversation turn.
 3. **Zero blocking on the turn path.** The post-compression todo fork and the compression-time nudges are fire-and-forget background tasks; the memory review and plan extraction run as detached sub-agents under the NUDGE lane and never block the model call.
 4. **Right-sized mechanism.** Full `create_agent` forks are reserved for work that needs tool use (memory nudge, plan extraction, todo fork). Pure extraction (memory flush) uses a single auxiliary-LLM call.
@@ -17,8 +17,8 @@ This document covers the experience system: **when** the agent extracts experien
 
 | Trigger | Mechanism (fork agent? call shape?) | Destination |
 |---|---|---|
-| Every compression | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md via the `memory` tool |
-| Todo list all-complete at a compression (`completed` / `cancelled`) | Plan extraction (`_nudge_plan_extraction`): forks a nudge agent with `_PLAN_EXTRACTION_PROMPT` | ① knowledge JSON, ② `skills/auto/` |
+| Every compression | Memory nudge (`_nudge_memory`): forks a `create_agent` nudge agent with `_MEMORY_REVIEW_PROMPT` | MEMORY.md / USER.md / FACTS.md via the `memory` tool |
+| Todo list all-complete at a compression (`completed` / `cancelled`) | Plan extraction (`_nudge_plan_extraction`): forks a nudge agent with `_PLAN_EXTRACTION_PROMPT` | ① knowledge JSON, ② `skills/auto/` (class-level skills + `<module>-notes`), ③ FACTS.md |
 | Pre-compression (a cut actually discards messages) | Memory flush (`run_memory_flush[_sync]`): one cheap LLM call, not an agent | MEMORY.md and USER.md via `MemoryStore.append_entries` |
 | Post-compression (a cut actually discards messages) | Todo fork (`update_todos_from_compaction`): fire-and-forget nudge agent with `_COMPRESSION_TODO_PROMPT` | `todos.db` via a main-session-bound `todowrite` shim |
 
@@ -28,7 +28,7 @@ This document covers the experience system: **when** the agent extracts experien
 
 `schedule_compression_nudges` (`agent/middlewares/summarization/nudges.py`, called by the Summarization middleware whenever a compact discards messages) dispatches `_nudge_memory(session_id, system_prompt, messages)` as a fire-and-forget task on every compression, running under the `nudge_review_memory_lock` (`state_register_mem`). While either nudge lock is held, the compression skips dispatch entirely (nothing is queued).
 
-`_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations, using the `memory` tool; otherwise it answers "Nothing to save." and stops.
+`_nudge_memory` (`agent/middlewares/summarization/nudges.py`) builds a nudge agent via `_create_nudge_agent` and invokes it with the conversation plus the rendered `_MEMORY_REVIEW_PROMPT` appended as a `HumanMessage`. The prompt asks the agent to save durable user traits (persona, preferences, personal details) and behavioral expectations under the `user` target, and broad module-independent pitfalls under the `facts` target. It is rendered with the current FACTS.md content and char limit (`_render_prompt_facts`) and tells the agent to maintain the file like an editor — merge entries describing the same pitfall, replace outdated ones, prefer saving nothing over bloating the file. Otherwise it answers "Nothing to save." and stops.
 
 - The nudge agent is a separate `create_agent` on the main LLM with middleware `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]` and no checkpointer.
 - `_NudgeLimitTool` (no `allowed_metadata_key`) admits only tools whose metadata carries `nudge: True`. `memory`, `skill_list`, `skill_view`, `skill_manage` and `knowledge` carry that marker, so the nudge agent can write memory but cannot call arbitrary main tools.
@@ -48,10 +48,11 @@ When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extractio
 1. `_build_plan_context` gathers the plan file (`plan_ref` state first, else the first todo carrying one), the todo list, and this session's subagent runs (`result_text` truncated to 24 KB, `outcome`, task). It returns `{}` when there is no todo list, which makes the caller skip the pass.
 2. The prompt `_PLAN_EXTRACTION_PROMPT` is rendered with the plan context, then sent to a nudge agent (same builder, same `nudge: True` gate) with the conversation.
 
-The prompt produces two outputs:
+The prompt produces three outputs:
 
 - **Part 1: structured knowledge.** `knowledge(action="write", ...)` writes JSON documents under `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan_key>/`, keyed by plan identity — see `agent/tools/todolist/knowledge/identity.py`): `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. Each task carries `failure_set`, `success_path`, `method`; waves carry failure / success patterns; the plan carries overall method, key failures / successes, and reusable patterns.
-- **Part 2: skill library update.** `skill_manage` patches a loaded or existing class-level skill, adds a support file, or creates a new class-level umbrella under `skills/auto/`. The prompt is explicitly active ("most completed plans produce at least one skill update") and lists user corrections, workflow corrections, non-trivial techniques, and outdated skills as first-class signals.
+- **Part 2: skill library update.** `skill_manage` patches a loaded or existing class-level skill, adds a support file, or creates a new class-level umbrella under `skills/auto/`. The prompt is explicitly active ("most completed plans produce at least one skill update") and lists user corrections, workflow corrections, non-trivial techniques, and outdated skills as first-class signals. It also carries module-bound lessons forward: a lesson bound to a specific file/module/test whose module can foreseeably change again becomes a `<module>-notes` skill (`skill_manage(action="create", name="<module>-notes", ...)`); an existing same-named skill is appended with `action="patch"`, never duplicated. The notes are a terse "symptom → cause → avoidance action" list per module.
+- **Part 3: broad pitfalls → FACTS.md.** Pitfalls that are not bound to any module but recur across plans — environment/toolchain constraints, cross-module gotchas, working conventions — are written through the `memory` tool with `target="facts"`. The prompt carries the current FACTS.md content and its char limit and instructs merge/replace instead of append ("prefer nothing over noise").
 
 Reads are served later by the same tool (`knowledge(action="read")`), and a condensed plan summary is auto-injected into the system prompt by `build_knowledge_block` (`knowledge/prompt_block.py`).
 
@@ -84,7 +85,7 @@ The fork result messages are logged only. Nothing reaches the main graph or its 
 
 ## Curator (Skill Curation)
 
-The Curator (`context_engine/curator/`) is the background maintenance pass that owns the lifecycle of the skill library under `skills/auto/` — exactly the store extraction path 2 above writes into. It only reads and writes skills; MEMORY.md / USER.md, the plan knowledge directory and `todos.db` are outside its scope.
+The Curator (`context_engine/curator/`) is the background maintenance pass that owns the lifecycle of the skill library under `skills/auto/` — exactly the store extraction path 2 above writes into. It only reads and writes skills; MEMORY.md / USER.md / FACTS.md, the plan knowledge directory and `todos.db` are outside its scope.
 
 **What it is.** An inactivity-triggered orchestrator, not a scheduled cron. The service entry point starts a daemon thread (`curator-timer`) through `context_engine.curator.init()` (`server/__main__.py:140`; skipped in HTTP-only mode, `server/__main__.py:66-73`). The thread wakes every 3600 s and calls `maybe_run_curator(idle_for_seconds=...)` (`context_engine/curator/__init__.py:122-140`). Importing the package is side-effect-free — only `init()` starts the thread (`context_engine/curator/__init__.py:151-165`).
 
@@ -120,8 +121,9 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 
 | Store | Path (constant) | Limit |
 |---|---|---|
-| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"` (`workspace/memory/MEMORY.md`) | 2200 chars (`MemoryStore.memory_char_limit`) |
-| USER.md | `config.path.MEMORY_DIR / "USER.md"` (`workspace/memory/USER.md`) | 1375 chars (`MemoryStore.user_char_limit`) |
+| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"` (`workspace/memory/MEMORY.md`) | 2200 chars (`MEMORY_TOOL["memory_char_limit"]`) |
+| USER.md | `config.path.MEMORY_DIR / "USER.md"` (`workspace/memory/USER.md`) | 1375 chars (`MEMORY_TOOL["user_char_limit"]`) |
+| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"` (`workspace/memory/FACTS.md`; template per language under `workspace/template/<lang>/FACTS.md`) | 1375 chars (`MEMORY_TOOL["facts_char_limit"]`); an over-limit `add` rolls the oldest entries off |
 | plan knowledge | `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan_key>/` — identity-keyed) | `task-<n>.json`, `wave-<n>.json`, `plan-summary.json` per plan; prompt-guided field caps (150 / 100 chars) |
 | skills | `config.path.AUTO_SKILLS_DIR` (`skills/auto/`) | `SKILL.md` plus `references/`, `templates/`, `scripts/` support files |
 | todos | `agent/tools/todolist/data/todos.db` (`store_sqlite._DB_PATH`) | session-scoped list, full-replacement writes |
@@ -139,7 +141,7 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 | `compression_todo_update_enabled` | `SUMMARIZATION` (`config/features/agent_side/summarization.py`) | `True` | Enables the post-compression todo fork |
 | `plan_extraction_enabled` | `NUDGE` (`config/features/agent_side/nudge.py`) | `True` | Enables todo-complete plan extraction |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | Proactive-compression cooldown after an actual compression |
-| `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md caps |
+| `memory_char_limit` / `user_char_limit` / `facts_char_limit` | `MEMORY_TOOL` (`config/features/agent_side/memory_tool.py`) | `2200` / `1375` / `1375` | MEMORY.md / USER.md / FACTS.md caps |
 
 ## Verification
 
@@ -152,7 +154,9 @@ uv run pytest \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/system_prompt/test_plan_extraction.py \
-    tests/agent/tools/test_memory_store.py -q
+    tests/agent/middlewares/test_plan_extraction_module_notes.py \
+    tests/agent/tools/test_memory_store.py \
+    tests/agent/tools/test_memory_store_facts.py -q
 ```
 
 - `test_compression_todo_update.py`: trigger gating, fire-and-forget scheduling, re-entrancy lock, fail-open release, prompt content, the `todo_update` metadata gate, and full-fork isolation (derived key, main-session `todowrite` shim, no checkpointer / message leakage).
@@ -160,7 +164,9 @@ uv run pytest \
 - `test_compression_cooldown_persist.py`: cooldown survival across restarts.
 - `test_memory_flush.py`: flush gating, routing, and non-blocking failure.
 - `test_plan_extraction.py`: the four `_detect_todo_all_complete` branches, the per-compression memory-review dispatch and lock semantics of `schedule_compression_nudges`, and `_build_plan_context`.
+- `test_plan_extraction_module_notes.py`: the Part 2 `<module>-notes` carry-forward guidance and Part 3 FACTS instruction, the live FACTS.md rendering into both nudge prompts, and the stub-LLM behavior (create lands `skills/auto/<module>-notes/`; an existing skill is patched, never duplicated).
 - `test_memory_store.py`: MEMORY.md / USER.md store semantics.
+- `test_memory_store_facts.py`: the `facts` target — add/replace/remove, oldest-first rollover, atomic writes, load-time file creation, live content rendering, and prompt-snapshot injection (empty file → no block).
 
 AI-judged evaluation: `evals/nudge_extraction/suite.py` seeds a completed-plan run (plan file, completed todos, synthetic subagent runs), invokes the real `_nudge_plan_extraction`, then asks an auxiliary LLM judge whether the produced skill is genuinely grounded in that run, reusable, and non-generic. Every write is redirected into the sandbox, so the real `skills/auto/` and `workspace/` are never touched.
 
@@ -173,7 +179,8 @@ The suite checks `knowledge_written`, `skills_created`, `ai_judge_skill_quality`
 ## Known Boundaries
 
 - **The compression fork is not given `todoread`.** Only the `todo_update`-marked `todowrite` shim is admitted; the fork receives the current list in its prompt, and `todoread` is intentionally left untagged (`agent/tools/todolist/tools/__init__.py`).
-- **Memory flush extracts cross-session facts only.** Temporary task progress belongs to the summary, not to MEMORY.md / USER.md.
+- **Memory flush extracts cross-session facts only.** Temporary task progress belongs to the summary, not to MEMORY.md / USER.md. The flush is not a FACTS.md writer — that file is maintained by the memory-review / plan-extraction nudges.
+- **FACTS.md is a single-file memory.** It shares the MEMORY.md / USER.md machinery (one file, `§`-delimited entries, atomic rename writes, per-file char cap) and is injected into every system prompt; it is not a tiered or classified store, and the oldest entries roll off when the cap is exceeded.
 - **The cooldown suppresses proactive compression only.** `compaction_cooldown_rounds` (3) blocks T1 / T2 / T3 compaction after an actual compression; the T4 / T5 provider-error recovery bypasses the cooldown, the per-turn attempt cap, and the other anti-thrash gates by construction.
 
 ## Related Documentation

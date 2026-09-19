@@ -24,6 +24,16 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 | ベクトル意味検索 | 移行 v13、`context_engine/embeddings/`、`message_search --semantic` |
 | TaskFlow 編成 | `docs/long-running-tasks/` |
 
+## メモリファイル
+
+3 つの単一ファイルメモリストアは `MemoryStore.load_from_disk()`（`agent/tools/memory.py`）が読み込み、凍結されたシステムプロンプトスナップショットとして取得される。FACTS.md は初回使用時に `workspace/template/<lang>/FACTS.md` から遅延作成される。圧縮前 memory flush は同ファイルを書かない。
+
+| ファイル | 用途 | 上限 | メンテナ |
+|---|---|---|---|
+| `workspace/memory/MEMORY.md` | Agent 側ノート：環境事実、プロジェクト規約、ツールの癖 | 2200 文字（`MEMORY_TOOL["memory_char_limit"]`） | `memory` ツール（`memory` ターゲット：memory review nudge、memory flush） |
+| `workspace/memory/USER.md` | ユーザープロファイル：好み、コミュニケーションスタイル、期待 | 1375 文字（`MEMORY_TOOL["user_char_limit"]`） | `memory` ツール（`user` ターゲット：memory review nudge、memory flush） |
+| `workspace/memory/FACTS.md` | モジュールに依存しない広範な落とし穴と規約；毎回のシステムプロンプトへ注入 | 1375 文字（`MEMORY_TOOL["facts_char_limit"]`）、上限超過時は最古の項目からロールオフ | `memory` ツール（`facts` ターゲット：memory review / plan extraction nudge） |
+
 ## MesMemory マイグレーション（v10–v17）
 
 | バージョン | スキーマ |

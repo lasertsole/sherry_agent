@@ -2,13 +2,13 @@
 
 [English](README.md) · 中文 · [日本語](README.ja.md) · [한국어](README.ko.md)
 
-本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩）、压缩时 todo 全部完成的 plan extraction、压缩前 memory flush、压缩后 todo fork。产出分别落入四个存储——MEMORY.md / USER.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
+本文梳理经验体系：Agent 在运行过程中**何时**抽取经验、**以何种机制**抽取、经验**写到哪里**，以及产出的技能库如何被维护。生命周期中共接入四条抽取路径：压缩时 memory review（每次压缩）、压缩时 todo 全部完成的 plan extraction、压缩前 memory flush、压缩后 todo fork。产出分别落入五个存储——MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、`todos.db`——下文 **Curator** 一节记录维护 `skills/auto/`（plan extraction 的写入目标）的后台流程。
 
 > 下文每条断言均已对照源码核实。符号名、配置键、默认值与路径均真实存在于 `agent/middlewares/`、`agent/tools/`、`config/features/` 的代码中。
 
 ## 设计原则
 
-1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md、plan 知识目录、`skills/auto/`、或 `todos.db`。没有任何抽取路径另建平行存储。
+1. **所有抽取都扩展既有存储。** 产出分别落到 MEMORY.md / USER.md / FACTS.md、plan 知识目录、`skills/auto/`、或 `todos.db`。没有任何抽取路径另建平行存储。
 2. **全部 fail-open。** 每个触发点都记录并吞掉自身失败。todo 存储损坏、plan 文件不可读、LLM 调用失败，都不会阻塞或打断主对话回合。
 3. **回合路径零阻塞。** 压缩后 todo fork 与压缩时 nudge 都是 fire-and-forget 后台任务；memory review 与 plan extraction 作为独立子 agent 在 NUDGE 车道上运行，绝不阻塞模型调用。
 4. **机制按需匹配。** 需要工具调用的工作才用完整 `create_agent` fork（memory nudge、plan extraction、todo fork）。纯抽取（memory flush）只用一次辅助 LLM 调用。
@@ -17,8 +17,8 @@
 
 | 触发 | 机制（是否 fork agent / 调用形态） | 写入目标 |
 |---|---|---|
-| 每次压缩 | memory nudge（`_nudge_memory`）：fork 一个 `create_agent` nudge agent，使用 `_MEMORY_REVIEW_PROMPT` | 经 `memory` 工具写入 MEMORY.md / USER.md |
-| 压缩时 todo 列表全部完成（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：fork 一个 nudge agent，使用 `_PLAN_EXTRACTION_PROMPT` | ① 知识 JSON ② `skills/auto/` |
+| 每次压缩 | memory nudge（`_nudge_memory`）：fork 一个 `create_agent` nudge agent，使用 `_MEMORY_REVIEW_PROMPT` | 经 `memory` 工具写入 MEMORY.md / USER.md / FACTS.md |
+| 压缩时 todo 列表全部完成（`completed` / `cancelled`） | plan extraction（`_nudge_plan_extraction`）：fork 一个 nudge agent，使用 `_PLAN_EXTRACTION_PROMPT` | ① 知识 JSON ② `skills/auto/`（类级技能 + `<module>-notes`） ③ FACTS.md |
 | 压缩前（cut 确实丢弃了消息） | memory flush（`run_memory_flush[_sync]`）：一次廉价 LLM 调用，非 agent | 经 `MemoryStore.append_entries` 写入 MEMORY.md 与 USER.md |
 | 压缩后（cut 确实丢弃了消息） | todo fork（`update_todos_from_compaction`）：fire-and-forget nudge agent，使用 `_COMPRESSION_TODO_PROMPT` | 经绑定主会话的 `todowrite` 垫片写入 `todos.db` |
 
@@ -28,7 +28,7 @@
 
 `schedule_compression_nudges`（`agent/middlewares/summarization/nudges.py`，由 Summarization 中间件在每次真正丢弃消息的 compact 时调用）每次压缩都以 fire-and-forget 任务派发 `_nudge_memory(session_id, system_prompt, messages)`，在 `nudge_review_memory_lock`（`state_register_mem`）保护下运行。任一 nudge 锁被持有时，压缩完全跳过派发（不排队）。
 
-`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_nudge_agent` 构建 nudge agent，并把 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到对话后调用。该提示要求 agent 用 `memory` 工具保存持久的用户特征（persona、偏好、个人细节）与行为期望；若无内容可存，则回复 "Nothing to save." 并停止。
+`_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_nudge_agent` 构建 nudge agent，并把渲染后的 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到对话后调用。该提示要求 agent 用 `memory` 工具把持久的用户特征（persona、偏好、个人细节）与行为期望写入 `user` 目标，把不绑定模块的广泛坑写入 `facts` 目标。提示渲染时会带上当前 FACTS.md 内容与字符上限（`_render_prompt_facts`），并要求 agent 像编辑一样维护该文件——合并同类、替换过时条目、宁缺毋滥。若无内容可存，则回复 "Nothing to save." 并停止。
 
 - nudge agent 是主 LLM 上独立的 `create_agent`，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，无 checkpointer。
 - `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory`、`skill_list`、`skill_view`、`skill_manage`、`knowledge` 都带该标记，因此 nudge agent 能写 memory，但无法调用任意主工具。
@@ -48,10 +48,11 @@
 1. `_build_plan_context` 收集 plan 文件（优先 `plan_ref` 状态，其次第一个带 `plan_ref` 的 todo）、todo 列表以及本会话的子 agent 运行记录（`result_text` 截断到 24 KB、`outcome`、task）。无 todo 列表时返回 `{}`，调用方据此跳过。
 2. 用 plan 上下文渲染 `_PLAN_EXTRACTION_PROMPT`，连同对话一起发给 nudge agent（同一构建器、同一 `nudge: True` 门禁）。
 
-该提示产出两项结果：
+该提示产出三项结果：
 
 - **Part 1：结构化知识。** `knowledge(action="write", ...)` 把 JSON 文档写入 `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`，按计划身份为键——见 `agent/tools/todolist/knowledge/identity.py`）：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。每个 task 带 `failure_set`、`success_path`、`method`；wave 带失败 / 成功模式；plan 带整体方法、关键失败 / 成功与可复用模式。
-- **Part 2：技能库更新。** `skill_manage` 修补已加载或既有的类级技能、新增支持文件、或在 `skills/auto/` 下创建新的类级 umbrella。提示明确要求主动（"most completed plans produce at least one skill update"），并把用户纠正、流程纠正、非平凡技巧、过时技能列为一级信号。
+- **Part 2：技能库更新。** `skill_manage` 修补已加载或既有的类级技能、新增支持文件、或在 `skills/auto/` 下创建新的类级 umbrella。提示明确要求主动（"most completed plans produce at least one skill update"），并把用户纠正、流程纠正、非平凡技巧、过时技能列为一级信号。它同时承接模块级教训：绑定具体文件/模块/测试、且该模块可预见会再次改动的教训，沉淀为 `<module>-notes` 技能（`skill_manage(action="create", name="<module>-notes", ...)`）；已存在同名技能时用 `action="patch"` 追加，绝不重复创建。内容为按模块归类的简短"现象 → 原因 → 规避动作"清单。
+- **Part 3：广泛坑 → FACTS.md。** 不绑定任何模块、却在计划间反复出现的坑——环境/工具链约束、跨模块陷阱、工作约定——经 `memory` 工具以 `target="facts"` 写入。提示会带上当前 FACTS.md 内容与字符上限，并要求合并/替换而非追加（"宁缺毋滥"）。
 
 后续读取由同一工具提供（`knowledge(action="read")`），精简后的 plan 摘要则由 `build_knowledge_block`（`knowledge/prompt_block.py`）自动注入系统提示。
 
@@ -84,7 +85,7 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 
 ## Curator（技能策展）
 
-Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md、plan 知识目录与 `todos.db` 都不在其范围内。
+Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md / FACTS.md、plan 知识目录与 `todos.db` 都不在其范围内。
 
 **是什么。** 它是空闲触发的编排器，而非定时 cron。服务入口通过 `context_engine.curator.init()` 启动守护线程（`curator-timer`）（`server/__main__.py:140`；HTTP-only 模式下跳过，`server/__main__.py:66-73`）。线程每 3600 秒唤醒一次并调用 `maybe_run_curator(idle_for_seconds=...)`（`context_engine/curator/__init__.py:122-140`）。导入该包无副作用——只有 `init()` 会启动线程（`context_engine/curator/__init__.py:151-165`）。
 
@@ -99,7 +100,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 
 **LLM 合并。** 当 `curator.consolidate` 开启（默认开）时，`run_curator_review()` 渲染非 pinned 技能候选列表（`context_engine/curator/orchestrator.py:65-81`），让主 LLM 以 temperature 0.3 把重叠的窄技能合并为类级 umbrella 技能（`CURATOR_REVIEW_PROMPT`，`context_engine/curator/orchestrator.py:18-45`）。新 umbrella 及其支持文件生成后写入 `skills/auto/`（`_generate_umbrella_skill`，`context_engine/curator/orchestrator.py:412`；`_apply_consolidation`，`context_engine/curator/orchestrator.py:755`）。合并是该流程唯一的 LLM 步骤；失败会被捕获，运行继续。
 
-**与四条抽取路径的关系。** 路径 2（压缩时 plan extraction）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 plan extraction 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md、plan 知识目录、`todos.db`），因此与 Curator 没有交集。
+**与四条抽取路径的关系。** 路径 2（压缩时 plan extraction）是生产者：它经 `skill_manage` 创建或修补 `skills/auto/`。Curator 是同一产出的下游维护者——对 plan extraction 创建的技能做流转、合并与修剪。另外三条路径从不触碰 `skills/auto/`（分别写 MEMORY.md / USER.md / FACTS.md、plan 知识目录、`todos.db`），因此与 Curator 没有交集。
 
 **状态与边界。** 运行状态存于 `skills/.curator_state`（`context_engine/curator/constants.py:3`，由 `context_engine/curator/state.py` 读写）；每次运行在 `logs/curator/{timestamp}/` 下写出 `run.json` + `REPORT.md`（`context_engine/curator/constants.py:4`；`context_engine/curator/report.py:196-205`）。范围仅限 `skills/auto/`——绝不触碰内置技能，pinned 技能跳过所有破坏性流转，整个流程在后台线程运行，不占对话回合路径。完整细节：[curator/README.md](../../context_engine/curator/README.zh.md)。
 
@@ -120,8 +121,9 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 
 | 存储 | 路径（常量） | 上限 |
 |---|---|---|
-| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 字符（`MemoryStore.memory_char_limit`） |
-| USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 字符（`MemoryStore.user_char_limit`） |
+| MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 字符（`MEMORY_TOOL["memory_char_limit"]`） |
+| USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 字符（`MEMORY_TOOL["user_char_limit"]`） |
+| FACTS.md | `config.path.MEMORY_DIR / "FACTS.md"`（`workspace/memory/FACTS.md`；四语模板在 `workspace/template/<lang>/FACTS.md`） | 1375 字符（`MEMORY_TOOL["facts_char_limit"]`）；`add` 超限时滚动淘汰最旧条目 |
 | plan 知识 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——按身份为键） | 每个 plan 有 `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`；字段上限由提示约束（150 / 100 字符） |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件 |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |
@@ -139,7 +141,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 | `compression_todo_update_enabled` | `SUMMARIZATION`（`config/features/agent_side/summarization.py`） | `True` | 启用压缩后 todo fork |
 | `plan_extraction_enabled` | `NUDGE`（`config/features/agent_side/nudge.py`） | `True` | 启用 todo 完成时的 plan extraction |
 | `compaction_cooldown_rounds` | `SUMMARIZATION` | `3` | 实际压缩后的主动压缩冷却 |
-| `memory_char_limit` / `user_char_limit` | `MemoryStore.__init__` | `2200` / `1375` | MEMORY.md / USER.md 上限 |
+| `memory_char_limit` / `user_char_limit` / `facts_char_limit` | `MEMORY_TOOL`（`config/features/agent_side/memory_tool.py`） | `2200` / `1375` / `1375` | MEMORY.md / USER.md / FACTS.md 上限 |
 
 ## 验证
 
@@ -152,7 +154,9 @@ uv run pytest \
     tests/agent/middlewares/test_compression_cooldown_persist.py \
     tests/agent/middlewares/test_memory_flush.py \
     tests/agent/middlewares/system_prompt/test_plan_extraction.py \
-    tests/agent/tools/test_memory_store.py -q
+    tests/agent/middlewares/test_plan_extraction_module_notes.py \
+    tests/agent/tools/test_memory_store.py \
+    tests/agent/tools/test_memory_store_facts.py -q
 ```
 
 - `test_compression_todo_update.py`：触发门槛、fire-and-forget 调度、防重入锁、fail-open 释放、提示内容、`todo_update` metadata 门禁，以及完整 fork 隔离（派生键、主会话 `todowrite` 垫片、无 checkpointer / 消息泄漏）。
@@ -160,7 +164,9 @@ uv run pytest \
 - `test_compression_cooldown_persist.py`：冷却跨重启存活。
 - `test_memory_flush.py`：flush 门槛、路由与非阻塞失败。
 - `test_plan_extraction.py`：`_detect_todo_all_complete` 四个分支、`schedule_compression_nudges` 的每次压缩派发记忆回顾与锁语义，以及 `_build_plan_context`。
+- `test_plan_extraction_module_notes.py`：Part 2 的 `<module>-notes` carry-forward 指引与 Part 3 的 FACTS 指令、两个 nudge 提示中的实时 FACTS.md 渲染，以及假 LLM 行为测试（create 落到 `skills/auto/<module>-notes/`；同名已存在则 patch，绝不重复创建）。
 - `test_memory_store.py`：MEMORY.md / USER.md 存储语义。
+- `test_memory_store_facts.py`：`facts` target——add/replace/remove、超限滚动淘汰最旧、原子写、加载时创建文件、实时内容渲染与提示快照注入（空文件不产生空块）。
 
 AI 评判评估：`evals/nudge_extraction/suite.py` 构造一次已完成 plan 的运行（plan 文件、已完成 todos、合成的子 agent 运行记录），调用真实的 `_nudge_plan_extraction`，再让辅助 LLM judge 判断产出的技能是否真正扎根于本次运行、可复用且非泛泛而谈。所有写入都重定向进沙箱，真实 `skills/auto/` 与 `workspace/` 绝不被触碰。
 
@@ -173,7 +179,8 @@ uv run python evals/evals.py nudge_extraction
 ## 已知边界
 
 - **压缩 fork 有意不给 `todoread`。** 只放行带 `todo_update` 标记的 `todowrite` 垫片；fork 在提示中已收到当前列表，`todoread` 有意不打标记（`agent/tools/todolist/tools/__init__.py`）。
-- **memory flush 只提取跨会话事实。** 临时任务进度归摘要，不进 MEMORY.md / USER.md。
+- **memory flush 只提取跨会话事实。** 临时任务进度归摘要，不进 MEMORY.md / USER.md。flush 也不写 FACTS.md——该文件由 memory review / plan extraction nudge 维护。
+- **FACTS.md 是单文件记忆。** 它与 MEMORY.md / USER.md 同机制（单文件、`§` 分隔条目、原子改名写入、每文件字符上限），并注入每次系统提示；它不是分层/分类存储，超出上限时最旧条目滚动淘汰。
 - **冷却只抑制主动压缩。** `compaction_cooldown_rounds`（3）在实际压缩后阻止 T1 / T2 / T3 压缩；T4 / T5 提供方错误恢复在构造上绕过冷却、每回合尝试上限等反抖动门槛。
 
 ## 相关文档
