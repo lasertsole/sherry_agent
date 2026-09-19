@@ -25,8 +25,11 @@ async def clear_session(session_id: str) -> None:
       3. The session's records from the sqlite checkpointer
          (``src/checkpoints/sqlite.db`` — checkpoints + writes).
       4. The session's folder under the ``sessions`` directory.
-      5. The in-memory session state via ``clear_all_register_sessions``.
-      6. The session's variables from the ``state_register_db`` SQLite store.
+      5. The session's private plan-knowledge directories (session-scoped
+         knowledge is keyed by plan identity, not by session; plans shared
+         with another session through boulder ``session_ids`` are retained).
+      6. The in-memory session state via ``clear_all_register_sessions``.
+      7. The session's variables from the ``state_register_db`` SQLite store.
     """
     # (0) Session continuity: persist the tail state before deletion.
     try:
@@ -64,5 +67,14 @@ async def clear_session(session_id: str) -> None:
     if path.exists() and path.is_dir():
         shutil.rmtree(path)
 
-    # (5) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
+    # (5) Plan knowledge produced for this session's own plans (best-effort).
+    try:
+        from agent.tools.todolist.knowledge import clear_session_plan_knowledge
+
+        purged = clear_session_plan_knowledge(session_id)
+        logger.debug(f"Cleared {purged} plan-knowledge director(ies) for session_id={session_id}")
+    except Exception as e:
+        logger.warning(f"Failed to clear plan knowledge for session_id={session_id}: {e}")
+
+    # (6) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
