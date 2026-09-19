@@ -34,15 +34,18 @@ class FakeStateDB:
 class FakeMemoryStore:
     """Stand-in for agent.tools.memory.memory_store."""
 
-    def __init__(self, memory: str = "MEMORY-V1", user: str = "USER-V1"):
+    def __init__(self, memory: str = "MEMORY-V1", user: str = "USER-V1", facts: str | None = None):
         self.memory = memory
         self.user = user
+        self.facts = facts
 
     def format_for_system_prompt(self, target: str):
         if target == "memory":
             return self.memory
         if target == "user":
             return self.user
+        if target == "facts":
+            return self.facts
         return None
 
 
@@ -69,9 +72,9 @@ def workspace(tmp_path, monkeypatch):
     return fakes
 
 
-def _set_memory_store(monkeypatch, *, memory="MEMORY-V1", user="USER-V1"):
+def _set_memory_store(monkeypatch, *, memory="MEMORY-V1", user="USER-V1", facts=None):
     """Patch prompt_builder's lazy memory_store import target."""
-    fake_mem = FakeMemoryStore(memory=memory, user=user)
+    fake_mem = FakeMemoryStore(memory=memory, user=user, facts=facts)
     monkeypatch.setattr("agent.tools.memory.memory_store", fake_mem)
     return fake_mem
 
@@ -224,3 +227,15 @@ class TestMemoryNotCached:
         assert "MEM-V2-NEW" in rebuilt, "memory must be live"
         assert "USER-V2-NEW" in rebuilt, "user memory must be live"
         assert "MEM-V1" not in rebuilt, "old memory should not appear"
+
+    def test_facts_block_injected_and_empty_skipped(self, workspace, monkeypatch):
+        from workspace.prompt_builder import build_system_prompt
+
+        fake_mem = _set_memory_store(monkeypatch, facts="FACTS-V1")
+
+        with_facts = build_system_prompt(session_id="sess-facts")
+        assert "FACTS-V1" in with_facts
+
+        fake_mem.facts = None
+        without_facts = build_system_prompt(session_id="sess-facts-empty")
+        assert "FACTS-V1" not in without_facts

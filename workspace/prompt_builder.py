@@ -290,6 +290,7 @@ def build_system_prompt(
                 for content in (
                     provider.format_memory_for_system_prompt("memory"),
                     provider.format_memory_for_system_prompt("user"),
+                    provider.format_memory_for_system_prompt("facts"),
                 )
                 if content
             )
