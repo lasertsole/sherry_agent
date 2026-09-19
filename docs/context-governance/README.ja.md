@@ -43,6 +43,23 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **オーバーフロー（既存ルート）** | `summarization` 4 ルート分岐 | compact 系ルートは補助 LLM 1 回 | 切り詰めおよび／または履歴圧縮 |
 | **オーバーフロー（プロバイダエラー）** | T4/T5 強制リカバリ | compact ステップごとに 1 回 | クリップ → 圧縮 + 予算切り詰め、最大 3 回再試行 |
 
+## 🗂️ 情報源
+
+グラフ state や MesMemory に到達するすべての情報は、以下のいずれかの情報源から入る。`origin` 列は全量の情報源マーカーへと昇格中である：`NULL` はタグ付け以前に書かれた既存のユーザーメッセージ（読み側では `user` と同義）、`internal=True` を持つメッセージは**ユーザーリクエストではない** —— 要約の Unresolved リストはユーザーが直接送ったメッセージのみを受け付ける（正の識別 / positive identification）。非メッセージ情報源（退避ファイル、計画知識）も併記する：`messages` 行にはならないが、注入可能なコンテキストである。`planned` / `reserved` の行は未実装。
+
+| 情報源 | origin / マーカー | internal | 発生場面 | 永続化 | 注入挙動 |
+|---|---|---|---|---|---|
+| フロントエンド WS ユーザーメッセージ | `origin='user'` | — | ユーザーがクライアントで送信 | `messages` 行 `origin='user'` + 全文（境界ごとに永続化） | state/MesMemory に常駐；モデルビューはプレビューへ退避され得る；要約はユーザー要求を保持（複数要求リスト + 逐語テキスト + 退避ポインタ：`planned`） |
+| チャネルユーザーメッセージ（QQ 等） | `origin='user'` | — | ユーザーがチャネルアダプタ経由で送信 | 上記と同じ | 上記と同じ |
+| TaskIntent ステアリング / リマインダ | `origin='task_intent'` | `True` | 計画アクティブ誘導 / タスク意図アーミング（`task_intent/core.py::_task_intent_message`） | `messages` 行 | **ユーザーリクエストではない** —— Unresolved リストに入らない |
+| サブエージェント完了キャリア | `origin='subagent_completion'` | `True` | バックグラウンドのサブエージェントが完了し結果を通知 | `messages` 行（origin は永続化の継ぎ目で刻印、`context_engine/store/core.py`） | ユーザーリクエストではない；モデルビューには可視 |
+| ハートビート起動のターン | `origin='heartbeat'` | — | ハートビートサービスのターン（**現時点でこの経路は存在しない —— `reserved`**） | — | ユーザーリクエストではない |
+| cron 起動のターン | `origin='cron'` | `True` | 定期ジョブのセッションターン（`origin_for_source`） | `messages` 行 | ユーザーリクエストではない |
+| 圧縮要約ペア | `lc_source='summarization'`（`additional_kwargs` 内、origin 列ではない） | — | 圧縮成果物（`_build_new_messages`） | **MesMemory には永続化されない**；state の要約ペア | `<summary>` がモデルビューに常駐；`<prior-summary>` として連鎖継続 |
+| 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンが `evicted_refs[]` ポインタを運ぶ（`planned`） |
+| 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
+| FACTS.md（`planned`、未実装） | `workspace/memory/FACTS.md` | — | 計画横断の事実（EXPERIENCE_ROUTING_PLAN Part 3） | memory ファイル | `planned` —— 現行システムには含まれない |
+
 ## 💾 境界ごとの永続化
 
 `agent/middlewares/message_persistence/core.py`（`MessagePersistenceMiddleware`）は本ページ全体が立脚する永続化の床である。**二つのタイミング**で書き込む：

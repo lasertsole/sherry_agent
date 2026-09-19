@@ -43,6 +43,23 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **溢出（既有路由）** | `summarization` 四路由分发 | compact 类路由调一次辅助 LLM | 截断与/或历史压缩 |
 | **溢出（提供商错误）** | T4/T5 强制恢复 | 每个 compact 步骤一次调用 | 先裁剪 → 再压缩 + 预算截断，最多重试 3 次 |
 
+## 🗂️ 信息来源
+
+进入图 state 或 MesMemory 的一切信息都来自下列来源之一。`origin` 列正在升级为全量来源标记：`NULL` 是标记之前写入的存量用户消息（读侧视同 `user`），携带 `internal=True` 的消息**不是用户请求** —— 摘要的 Unresolved 清单只收用户亲发消息（正向识别）。非消息来源（驱逐文件、计划知识）也一并列出：它们永远不会成为 `messages` 行，但同样是可注入的上下文。标注 `planned` / `reserved` 的行尚未实现。
+
+| 信息来源 | origin / 标记 | internal | 产生场景 | 持久化 | 注入行为 |
+|---|---|---|---|---|---|
+| 前端 WS 用户消息 | `origin='user'` | — | 用户在前端发消息 | `messages` 行 `origin='user'` + 全文（逐边界落库） | state/MesMemory 常驻；模型视图可驱逐为预览；摘要保留用户请求（多请求清单 + 逐字文本 + 驱逐指针：`planned`） |
+| 渠道用户消息（QQ 等） | `origin='user'` | — | 用户经渠道适配器发消息 | 同上 | 同上 |
+| TaskIntent 引导 / 提醒 | `origin='task_intent'` | `True` | 计划活跃引导 / 任务意图武装（`task_intent/core.py::_task_intent_message`） | `messages` 行 | **非用户请求** —— 不入 Unresolved 清单 |
+| 子代理完成载体 | `origin='subagent_completion'` | `True` | 后台子代理完成并回传结果 | `messages` 行（origin 由持久化缝线落标，`context_engine/store/core.py`） | 非用户请求；模型视图可见 |
+| 心跳触发的轮次 | `origin='heartbeat'` | — | 心跳服务的会话轮次（**当前不存在此路径 —— `reserved`**） | — | 非用户请求 |
+| cron 触发的轮次 | `origin='cron'` | `True` | 定时任务的会话轮次（`origin_for_source`） | `messages` 行 | 非用户请求 |
+| 压缩摘要对 | `lc_source='summarization'`（在 `additional_kwargs`，非 origin 列） | — | 压缩产物（`_build_new_messages`） | **不落 MesMemory**；state 摘要对 | `<summary>` 常驻模型视图；以 `<prior-summary>` 链式延续 |
+| 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链带 `evicted_refs[]` 指针（`planned`） |
+| 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
+| FACTS.md（`planned`，未实现） | `workspace/memory/FACTS.md` | — | 跨计划事实（EXPERIENCE_ROUTING_PLAN Part 3） | memory 文件 | `planned` —— 不属于当前系统 |
+
 ## 💾 逐边界持久化
 
 `agent/middlewares/message_persistence/core.py`（`MessagePersistenceMiddleware`）是整页依赖的持久化底座。它在**两个时机**落库：

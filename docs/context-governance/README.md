@@ -43,6 +43,23 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **Overflow (existing routes)** | `summarization` 4-route dispatch | one auxiliary-LLM call on compact routes | truncation and/or history compaction |
 | **Overflow (provider error)** | T4/T5 forced recovery | one call per compact step | clip → compact + budget truncate, retried up to 3 times |
 
+## 🗂️ Information Sources
+
+Everything that reaches graph state or MesMemory enters from one of the sources below. The `origin` column is being upgraded into a full-coverage source marker: `NULL` is a legacy user row written before tagging (the read side treats it as `user`), and a message carrying `internal=True` is **not a user request** — the summary's Unresolved list accepts only user-sent messages (positive identification). Non-message sources (eviction files, plan knowledge) are listed too: they never become a `messages` row but are still injectable context. Rows marked `planned` / `reserved` are not implemented yet.
+
+| Information source | origin / marker | internal | Produced when | Persistence | Injection behavior |
+|---|---|---|---|---|---|
+| Frontend WS user message | `origin='user'` | — | the user sends a message in the client | `messages` row `origin='user'` + full text (flushed at every boundary) | resident in state/MesMemory; the model view may be evicted to a preview; the summary keeps the user request (multi-request list + exact text + eviction pointer: `planned`) |
+| Channel user message (QQ, …) | `origin='user'` | — | the user sends through a channel adapter | same as above | same as above |
+| TaskIntent steering / reminder | `origin='task_intent'` | `True` | plan-active steering / task-intent arming (`task_intent/core.py::_task_intent_message`) | `messages` row | **not a user request** — excluded from the Unresolved list |
+| Subagent completion carrier | `origin='subagent_completion'` | `True` | a background subagent finishes and announces its result | `messages` row (origin stamped at the persistence seam, `context_engine/store/core.py`) | not a user request; visible to the model view |
+| Heartbeat-triggered turn | `origin='heartbeat'` | — | heartbeat-service turn (**no such path today — `reserved`**) | — | not a user request |
+| Cron-triggered turn | `origin='cron'` | `True` | a scheduled job's session turn (`origin_for_source`) | `messages` row | not a user request |
+| Compression summary pair | `lc_source='summarization'` (in `additional_kwargs`, not the origin column) | — | a compaction artifact (`_build_new_messages`) | **never persisted to MesMemory**; a state summary pair | `<summary>` resident in the model view; carried forward as `<prior-summary>` |
+| Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers (`planned`) |
+| Plan knowledge | non-message — disk directory | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | injected as a `<knowledge>` block via `plan_ref` |
+| FACTS.md (`planned`, not implemented) | `workspace/memory/FACTS.md` | — | cross-plan facts (EXPERIENCE_ROUTING_PLAN Part 3) | memory file | `planned` — not part of the current system |
+
 ## 💾 Persistence at Every Boundary
 
 `agent/middlewares/message_persistence/core.py` (`MessagePersistenceMiddleware`) is the persistence floor the whole page rests on. It writes at **two timings**:
