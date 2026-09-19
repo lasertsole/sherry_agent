@@ -499,3 +499,68 @@ class TestBackwardCompatConstants:
         assert classify_provider_error(Exception("context window exceeded")) == CONTEXT_OVERFLOW
         assert classify_provider_error(TimeoutError("timed out")) is None
         assert classify_provider_error(_StubStatusError("boom", 500)) is None
+
+
+# ---------------------------------------------------------------------------
+# multimodal_not_supported — precise patterns, no bare-"image" false positives
+# ---------------------------------------------------------------------------
+
+_MULTIMODAL_MESSAGES = [
+    "unsupported content type",
+    "unrecognized content type",
+    "content type not supported by this model",
+    "image input not supported by this model",
+    "multimodal input not supported",
+    "vision is not supported",
+    "this model does not support image inputs",
+    "this model does not support audio input",
+    "this model does not support video input",
+    "invalid image_url format",
+    "the image_url is not valid",
+    "unsupported image format",
+    "unsupported audio codec",
+    "unsupported video codec",
+]
+
+
+class TestMultimodalNotSupported:
+    @pytest.mark.parametrize("message", _MULTIMODAL_MESSAGES)
+    def test_each_precise_pattern_matches_with_skill_fallback_hints(self, message):
+        classified = classify_api_error(Exception(message))
+        assert classified.reason is FailoverReason.multimodal_not_supported
+        assert classified.retryable is True
+        assert classified.should_compress is False
+        assert classified.should_fallback is False
+
+    def test_400_plus_keyword_outranks_format_error(self):
+        classified = classify_api_error(
+            _StubStatusError("unsupported content type: image_url", 400)
+        )
+        assert classified.reason is FailoverReason.multimodal_not_supported
+
+    def test_400_without_keyword_stays_format_error(self):
+        assert (
+            classify_api_error(_StubStatusError("bad request payload", 400)).reason
+            is FailoverReason.format_error
+        )
+
+    def test_plain_image_errors_are_not_matched(self):
+        for message in (
+            "the image was resized before upload",
+            "image analysis complete",
+            "the uploaded image is blurry",
+        ):
+            assert (
+                classify_api_error(Exception(message)).reason
+                is not FailoverReason.multimodal_not_supported
+            )
+
+    def test_image_too_large_keeps_its_reason(self):
+        assert (
+            classify_api_error(Exception("image too large: 8MB exceeds limit")).reason
+            is FailoverReason.image_too_large
+        )
+        assert (
+            classify_api_error(Exception("image_too_large")).reason
+            is FailoverReason.image_too_large
+        )
