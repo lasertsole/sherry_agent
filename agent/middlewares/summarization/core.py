@@ -70,6 +70,7 @@ from .summarization_components import (
     _SUMMARY_LC_SOURCE as _SUMMARY_LC_SOURCE,
 )
 from .summary_doc import SummaryDoc, cap_summary_doc, render_summary_markdown
+from .plan_context import render_plan_context, resolve_active_plan
 
 # ── Summarization tunables (bound from the feature registry) ─────────────
 PREEMPTIVE_TRUNCATE_RATIO = SUMMARIZATION["preemptive_truncate_ratio"]
@@ -239,8 +240,9 @@ _SUMMARY_TEMPLATE = (
     "Output exactly the Markdown structure below. Keep every section, even when empty.\n"
     "Use terse bullets, not prose paragraphs.\n"
     "Preserve exact file paths, commands, error strings, identifiers.\n\n"
-    f"## Latest Unresolved User Request\n"
-    f'- Quote the user\'s most recent unanswered request (max {LATEST_USER_REQUEST_MAX_CHARS} chars), or "(none)"\n\n'
+    "## Latest Unresolved User Request\n"
+    "- Quote the user's most recent unanswered request VERBATIM — no paraphrase,\n"
+    '  no truncation, or "(none)"\n\n'
     "## Goal\n"
     '- [one or two brief sentences, or "(none)"]\n\n'
     "## Constraints & Preferences\n"
@@ -312,8 +314,10 @@ _SUMMARY_JSON_RULES = (
     '  "next_steps": string[] — immediate actions, in order;\n'
     '  "critical_context": string[] — exact values, error strings, configs that must survive;\n'
     '  "relevant_files": string[] — "<path>: why it matters";\n'
-    '  "active_plan_notes": string[] — one line per durable plan-scoped lesson\n'
-    '    ("symptom -> avoidance"); copy existing notes forward VERBATIM; [] when no plan is active;\n'
+    '  "active_plan_notes": string[] — plan-scoped lessons learned while executing the\n'
+    '    active plan, one line each ("symptom -> avoidance"); copy previous entries\n'
+    "    forward VERBATIM and append only newly learned ones; [] when the prompt has\n"
+    '    no "Active Plan (authoritative)" block;\n'
     '  "evicted_refs": string[] — the "[evicted to: <path>]" pointers; carry existing entries forward.\n'
     "Preserve exact file paths, commands, error strings and identifiers."
 )
@@ -331,7 +335,8 @@ _SUMMARY_UPDATE_INSTRUCTIONS_STRUCTURED = (
     f"{KEY_DECISIONS_MAX_ITEMS} items\n"
     "  (older items may be dropped; the pipeline caps them anyway).\n"
     '- Remove items that are finished and no longer needed from "in_progress" and "blocked".\n'
-    "- Carry active_plan_notes entries forward verbatim and append newly learned ones."
+    "- Carry active_plan_notes entries forward verbatim — never rewrite an existing\n"
+    "  entry — and append newly learned plan-scoped lessons at the end."
 )
 
 _SUMMARY_PROMPT_FIRST_STRUCTURED = (
@@ -403,6 +408,23 @@ def _get_taskflow_context_sync(session_id: str) -> str:
         return "\n".join(lines)
     except Exception:
         logger.debug("taskflow context unavailable for session {}", session_id)
+        return ""
+
+
+def _get_plan_context_sync(session_id: str) -> str:
+    """Render this session's active plan for the summary prompt.
+
+    The plan file path (relative to the repo), the plan name and the open-todo
+    summary are injected — never the plan body (the model can ``read_file`` the
+    path). Returns "" — never raises — so a broken plan/todo store cannot block
+    compression."""
+    try:
+        plan = resolve_active_plan(session_id)
+        if plan is None:
+            return ""
+        return render_plan_context(plan)
+    except Exception:
+        logger.debug("plan context unavailable for session {}", session_id)
         return ""
 
 
@@ -478,6 +500,33 @@ def _collect_evicted_refs(messages: Sequence[AnyMessage]) -> list[str]:
             if path and path not in refs:
                 refs.append(path)
     return refs
+
+
+def _latest_human_eviction_ref(messages: Sequence[AnyMessage]) -> str:
+    """Eviction pointer of the newest user-request human message, if any.
+
+    The field that describes the latest user request carries the request's own
+    eviction pointer, so the summary chain never loses the way back to the
+    verbatim text on disk. Summary artifacts (``lc_source="summarization"``)
+    and internal injections (``metadata.internal`` — task-intent steering,
+    subagent completion carriers) are skipped; the first real user message is
+    the latest request — when it is untagged, older evictions do not belong to
+    this field.
+    """
+    for msg in reversed(messages):
+        if not isinstance(msg, HumanMessage):
+            continue
+        kwargs = getattr(msg, "additional_kwargs", {}) or {}
+        if kwargs.get("lc_source") == _SUMMARY_LC_SOURCE:
+            continue
+        meta = getattr(msg, "metadata", {}) or {}
+        if kwargs.get("internal") or meta.get("internal"):
+            continue
+        tagged = kwargs.get(EVICTED_TO_KEY)
+        if isinstance(tagged, str) and tagged.strip():
+            return tagged.strip()
+        return ""
+    return ""
 
 
 # ======================================================================
@@ -1746,6 +1795,9 @@ class Summarization(AgentMiddleware):
             taskflow_ctx = _get_taskflow_context_sync(session_id)
             if taskflow_ctx:
                 parts.append(taskflow_ctx)
+            plan_ctx = _get_plan_context_sync(session_id)
+            if plan_ctx:
+                parts.append(plan_ctx)
 
         return "\n\n".join(parts)
 
@@ -1783,6 +1835,9 @@ class Summarization(AgentMiddleware):
             taskflow_ctx = _get_taskflow_context_sync(session_id)
             if taskflow_ctx:
                 parts.append(taskflow_ctx)
+            plan_ctx = _get_plan_context_sync(session_id)
+            if plan_ctx:
+                parts.append(plan_ctx)
 
         return "\n\n".join(parts)
 
@@ -1823,16 +1878,58 @@ class Summarization(AgentMiddleware):
         doc: SummaryDoc,
         messages: Sequence[AnyMessage],
         previous_doc: SummaryDoc | None,
+        session_id: str = "",
     ) -> SummaryDoc:
-        """Merge the carried and freshly observed eviction pointers (code owns this list)."""
+        """Merge the code-owned fields into the model's document.
+
+        The model proposes, the pipeline owns:
+
+        * ``evicted_refs`` — carried pointers + the ones observed in range;
+        * ``active_plan_notes`` — entries inherited verbatim from the prior
+          document plus the newly appended tail (the model never rewrites an
+          existing entry); cleared when no plan is active (finished or never
+          associated);
+        * the ``[evicted to: <path>]`` pointer of the latest user request.
+
+        Without a ``session_id`` only the eviction-pointer merge runs, so
+        document-level unit callers keep the model's array untouched.
+        """
+        updates: dict[str, Any] = {}
+
         carried = previous_doc.evicted_refs if previous_doc is not None else []
         refs: list[str] = []
         for ref in [*carried, *_collect_evicted_refs(messages)]:
             if ref and ref not in refs:
                 refs.append(ref)
         if refs != doc.evicted_refs:
-            return doc.model_copy(update={"evicted_refs": refs})
-        return doc
+            updates["evicted_refs"] = refs
+
+        if session_id:
+            if resolve_active_plan(session_id) is None:
+                if doc.active_plan_notes:
+                    updates["active_plan_notes"] = []
+            else:
+                carried_notes = list(previous_doc.active_plan_notes) if previous_doc else []
+                appended = [
+                    note for note in doc.active_plan_notes if note and note not in carried_notes
+                ]
+                merged = [*carried_notes, *appended]
+                if merged != doc.active_plan_notes:
+                    updates["active_plan_notes"] = merged
+
+        evicted_ref = _latest_human_eviction_ref(messages)
+        if (
+            evicted_ref
+            and doc.latest_user_request.strip()
+            and "[evicted to:" not in doc.latest_user_request
+        ):
+            updates["latest_user_request"] = (
+                f"{doc.latest_user_request}\n[evicted to: {evicted_ref}]"
+            )
+
+        if not updates:
+            return doc
+        return doc.model_copy(update=updates)
 
     # ------------------------------------------------------------------
     # LLM summary creation (sync / async)
@@ -1861,12 +1958,16 @@ class Summarization(AgentMiddleware):
                 doc = runnable.invoke(prompt, config=config)
                 if not isinstance(doc, SummaryDoc):
                     doc = SummaryDoc.model_validate(doc)
-                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+                return self._finalize_summary_doc(
+                    doc, messages_to_summarize, previous_doc, session_id=session_id
+                )
             except Exception as e:
                 logger.warning("Structured summary failed ({}) - retrying via json_repair", e)
             try:
                 doc = self._sync_json_repair_doc(prompt, config)
-                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+                return self._finalize_summary_doc(
+                    doc, messages_to_summarize, previous_doc, session_id=session_id
+                )
             except Exception as e:
                 logger.error("json_repair summary failed ({}) - using the free-form path", e)
 
@@ -1905,12 +2006,16 @@ class Summarization(AgentMiddleware):
                 doc = await runnable.ainvoke(prompt, config=config)
                 if not isinstance(doc, SummaryDoc):
                     doc = SummaryDoc.model_validate(doc)
-                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+                return self._finalize_summary_doc(
+                    doc, messages_to_summarize, previous_doc, session_id=session_id
+                )
             except Exception as e:
                 logger.warning("Structured summary failed ({}) - retrying via json_repair", e)
             try:
                 doc = await self._async_json_repair_doc(prompt, config)
-                return self._finalize_summary_doc(doc, messages_to_summarize, previous_doc)
+                return self._finalize_summary_doc(
+                    doc, messages_to_summarize, previous_doc, session_id=session_id
+                )
             except Exception as e:
                 logger.error("json_repair summary failed ({}) - using the free-form path", e)
 
