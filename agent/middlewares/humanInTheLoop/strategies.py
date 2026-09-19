@@ -21,6 +21,8 @@ from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.errors import GraphInterrupt
 
 from .approval import is_yolo_mode, set_session_yolo
+from .approval_scope import NO_OPERATOR_MESSAGE
+from .approval_store import ApprovalVerdict
 from .detection import detect_clawhub_command
 from .types import (
     ApprovalDecision,
@@ -40,6 +42,17 @@ from .types import (
 
 if TYPE_CHECKING:
     from .core import HumanInTheLoop
+
+
+def _deny_content(reason: str) -> str:
+    reason = reason.strip()
+    if reason and not reason.endswith("."):
+        reason = f"{reason}."
+    return f"{reason} {BLOCKED_MESSAGE}".strip()
+
+
+def _auto_deny_content() -> str:
+    return f"{NO_OPERATOR_MESSAGE} {BLOCKED_MESSAGE}"
 
 
 @dataclass
@@ -117,6 +130,9 @@ class TerminalApprovalHandler(ToolApprovalHandler):
         # scope/policy denial is NOT repeated here — _deny_sandbox_bypass
         # in terminal.py owns it and raises ToolException at execution.
         if not is_yolo_mode(mw.config, ctx.session_id) and not tool_args.get("sandbox", True):
+            if mw._turn_operator(ctx.state) is None:
+                ctx.outcome.deny(tool_call, tool_name, _auto_deny_content())
+                return True
             approved, deny_msg = mw._sandbox_bypass_interrupt(
                 tool_call, tool_name, f"Command: {command}", ctx.session_id
             )
@@ -148,6 +164,9 @@ class TerminalApprovalHandler(ToolApprovalHandler):
         # If still not approved — or the call is clawhub remote execution —
         # use interrupt for human decision.
         if (clawhub_tag or not result.approved) and not is_yolo_mode(mw.config, ctx.session_id):
+            if mw._turn_operator(ctx.state) is None:
+                ctx.outcome.deny(tool_call, tool_name, _auto_deny_content())
+                return True
             description = (
                 f"clawhub remote npm execution ({clawhub_tag}): {command}"
                 if clawhub_tag
@@ -217,6 +236,9 @@ class SandboxBypassApprovalHandler(ToolApprovalHandler):
 
     def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
         tool_name: str = tool_call.get("name", "")
+        if ctx.mw._turn_operator(ctx.state) is None:
+            ctx.outcome.deny(tool_call, tool_name, _auto_deny_content())
+            return True
         approved, deny_msg = ctx.mw._sandbox_bypass_interrupt(
             tool_call,
             tool_name,
@@ -267,6 +289,17 @@ class InterruptOnApprovalHandler(ToolApprovalHandler):
         mw = ctx.mw
         tool_name: str = tool_call.get("name", "")
         tool_args: dict[str, Any] = tool_call.get("args", {})
+        operator = mw._turn_operator(ctx.state)
+        evaluation = mw.approval.store.evaluate(
+            tool_name, tool_args, ctx.session_id, operator=operator
+        )
+        if evaluation.verdict is ApprovalVerdict.DENY:
+            fallback = f"Tool '{tool_name}' is denied for this session"
+            ctx.outcome.deny(tool_call, tool_name, _deny_content(evaluation.reason or fallback))
+            return True
+        if evaluation.verdict is ApprovalVerdict.ALLOW:
+            ctx.outcome.approve(tool_call)
+            return True
         config: InterruptOnConfig = mw._interrupt_on[tool_name]
         description_value = config.get("description")
         if callable(description_value):
@@ -304,6 +337,9 @@ class InterruptOnApprovalHandler(ToolApprovalHandler):
                 ctx.outcome.approve(tool_call)
             elif decision["type"] == "approve" and "approve" in allowed:
                 ctx.outcome.approve(tool_call)
+                mw.approval.approve_tool_for_session(
+                    tool_name, tool_args, ctx.session_id, operator=operator
+                )
             elif decision["type"] == "edit" and "edit" in allowed:
                 edited = decision.get("edited_action", {})
                 revised_tc: Any = dict(tool_call)
@@ -313,6 +349,13 @@ class InterruptOnApprovalHandler(ToolApprovalHandler):
             elif decision["type"] == "reject" and "reject" in allowed:
                 msg = decision.get("message", f"User rejected {tool_name}")
                 ctx.outcome.deny(tool_call, tool_name, f"{msg}. {BLOCKED_MESSAGE}")
+                mw.approval.deny_tool_for_session(
+                    tool_name,
+                    tool_args,
+                    ctx.session_id,
+                    operator=operator,
+                    reason=f"User denied: {msg}",
+                )
             else:
                 ctx.outcome.deny(
                     tool_call, tool_name, f"Unexpected decision type. {BLOCKED_MESSAGE}"

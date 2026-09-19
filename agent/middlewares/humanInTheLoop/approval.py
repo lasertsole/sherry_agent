@@ -17,6 +17,8 @@ from .types import (
     SESSION_YOLO_KEY,
     BLOCKED_MESSAGE,
 )
+from .approval_scope import current_operator
+from .approval_store import ApprovalVerdict, ToolApprovalStore
 from .detection import detect_hardline_command, detect_dangerous_command
 
 # Use shared args_hash from middlewares.base (audit 1.1.8)
@@ -108,15 +110,31 @@ class ApprovalPipeline:
     back to the allowlists.
     """
 
-    def __init__(self, config: HITLConfig, fire_hooks: Callable[[str, ApprovalResult], None]):
+    def __init__(
+        self,
+        config: HITLConfig,
+        fire_hooks: Callable[[str, ApprovalResult], None],
+        store: ToolApprovalStore | None = None,
+    ):
         """Initialize the pipeline.
 
         Args:
             config: HITL configuration dataclass.
             fire_hooks: Callback invoked after every approval decision (for event tracking).
+            store: Persistent approval store; defaults to a new
+                :class:`ToolApprovalStore` at the configured Sherry path.
         """
         self.config = config
         self._fire_hooks = fire_hooks
+        self.store = store or ToolApprovalStore()
+
+    def _store_operator(self, operator: str | None, session_id: str) -> str:
+        if operator and operator.strip():
+            return operator.strip()
+        scoped = current_operator()
+        if isinstance(scoped, str) and scoped.strip():
+            return scoped.strip()
+        return session_id.strip() or "default"
 
     def check_command(self, command: str, session_id: str) -> ApprovalResult:
         """Run the full approval pipeline on a command string.
@@ -334,14 +352,16 @@ class ApprovalPipeline:
         tool_name: str,
         tool_args: dict[str, Any],
         session_id: str,
+        *,
+        operator: str | None = None,
     ) -> ApprovalResult:
         """Check whether a plugin tool invocation has been pre-approved.
 
-        Previously session-approved tool calls (by args hash) are auto-approved.
-        All other tool calls are approved by default (allow-through) so the
-        agent's tools can execute without a human gate. Tools are blocked only
-        when explicitly denied for the session (presence of the args-hash key
-        with a False value).
+        Previously session-approved tool calls (by args hash, in-memory or in
+        the persistent :class:`ToolApprovalStore`) are auto-approved. All other
+        tool calls are approved by default (allow-through) so the agent's tools
+        can execute without a human gate. Tools are blocked only when explicitly
+        denied for the session (a False args-hash record).
         """
         key = f"tool_approved:{tool_name}"
         approved_args: dict[str, bool] = _get_state(session_id, key, {})
@@ -358,14 +378,85 @@ class ApprovalPipeline:
                 decision=ApprovalDecision.DENY,
                 reason=f"Tool '{tool_name}' is denied for this session.",
             )
+        evaluation = self.store.evaluate(
+            tool_name,
+            tool_args,
+            session_id,
+            operator=self._store_operator(operator, session_id),
+        )
+        if evaluation.verdict == ApprovalVerdict.ALLOW:
+            return ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.SESSION,
+                reason=evaluation.reason or "Previously approved (persisted)",
+            )
+        if evaluation.verdict == ApprovalVerdict.DENY:
+            return ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=evaluation.reason or f"Tool '{tool_name}' is denied for this session.",
+            )
         # No explicit decision recorded → allow the tool through by default.
         return ApprovalResult(
             approved=True, decision=ApprovalDecision.ONCE, reason="Tool allowed by default"
         )
 
-    def approve_tool_for_session(self, tool_name: str, tool_args: dict[str, Any], session_id: str):
-        """Mark a specific tool + args combination as approved for the current session."""
+    def approve_tool_for_session(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        operator: str | None = None,
+    ):
+        """Approve a tool + args combination for the session (memory + persistent)."""
+        self._set_tool_decision(
+            tool_name,
+            tool_args,
+            session_id,
+            allow=True,
+            operator=operator,
+            reason="User approved for this session",
+        )
+
+    def deny_tool_for_session(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        operator: str | None = None,
+        reason: str = "",
+    ):
+        """Deny a tool + args combination for the session (memory + persistent)."""
+        self._set_tool_decision(
+            tool_name,
+            tool_args,
+            session_id,
+            allow=False,
+            operator=operator,
+            reason=reason or "User denied for this session",
+        )
+
+    def _set_tool_decision(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        allow: bool,
+        operator: str | None,
+        reason: str,
+    ) -> None:
         key = f"tool_approved:{tool_name}"
         approved_args: dict[str, bool] = _get_state(session_id, key, {})
-        approved_args[_args_hash(tool_args)] = True
+        approved_args[_args_hash(tool_args)] = allow
         _set_state(session_id, key, approved_args)
+        self.store.record(
+            tool_name,
+            tool_args,
+            session_id,
+            allow=allow,
+            reason=reason,
+            operator=self._store_operator(operator, session_id),
+        )

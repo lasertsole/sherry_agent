@@ -32,6 +32,18 @@ from .detection import (
     CLAWHUB_REMOTE_NPM_TAG,
 )
 from .approval import ApprovalPipeline, _extract_pattern, _args_hash
+from .approval_scope import (
+    NO_OPERATOR_MESSAGE,
+    current_operator,
+    operator_scope,
+    resolve_turn_operator,
+    set_operator,
+)
+from .approval_store import (
+    ApprovalEvaluation,
+    ApprovalVerdict,
+    ToolApprovalStore,
+)
 from .gates import (
     PendingWrite,
     WriteApprovalGate,
@@ -66,6 +78,14 @@ __all__ = [
     "ApprovalPipeline",
     "_extract_pattern",
     "_args_hash",
+    "ApprovalEvaluation",
+    "ApprovalVerdict",
+    "ToolApprovalStore",
+    "NO_OPERATOR_MESSAGE",
+    "current_operator",
+    "operator_scope",
+    "resolve_turn_operator",
+    "set_operator",
     "WriteApprovalGate",
     "InterruptManager",
     "MCPElicitationConsent",

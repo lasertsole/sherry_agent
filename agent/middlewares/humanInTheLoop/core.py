@@ -38,6 +38,8 @@ from .types import (
     interrupt,
 )
 from .approval import ApprovalPipeline, set_session_yolo
+from .approval_scope import operator_scope, resolve_turn_operator
+from .approval_store import ToolApprovalStore
 from .gates import (
     WriteApprovalGate,
     InterruptManager,
@@ -58,11 +60,18 @@ class HumanInTheLoop(AgentMiddleware):
     - ``abefore_agent``: reset per-turn state
     """
 
-    def __init__(self, config: HITLConfig | None = None):
+    def __init__(
+        self, config: HITLConfig | None = None, *, approval_store: ToolApprovalStore | None = None
+    ):
         """Initialise the HITL middleware with an optional custom config.
 
         Instantiates all sub-gates and parses ``interrupted_tools`` from the
         config into :class:`InterruptOnConfig` entries.
+
+        Args:
+            config: HITL configuration; defaults to :class:`HITLConfig`.
+            approval_store: Persistent approval store shared by the pipeline.
+                Defaults to a new store at the configured Sherry path.
         """
         super().__init__()
         self.config = config or HITLConfig()
@@ -70,7 +79,7 @@ class HumanInTheLoop(AgentMiddleware):
         self._approval_hooks: list[Callable[[str, ApprovalResult], None]] = []
         self._fire_hooks = self._make_hook_dispatcher()
 
-        self.approval = ApprovalPipeline(self.config, self._fire_hooks)
+        self.approval = ApprovalPipeline(self.config, self._fire_hooks, store=approval_store)
         self.write_gate = WriteApprovalGate(self.config)
         self.interrupt_mgr = InterruptManager()
         self.mcp_consent = MCPElicitationConsent()
@@ -123,6 +132,10 @@ class HumanInTheLoop(AgentMiddleware):
     def _set_state(self, session_id: str, key: str, value: Any) -> bool:
         """Write a namespaced HITL value to the in-memory state register."""
         return state_register_mem.set_state(session_id, f"{_STATE_PREFIX}:{key}", value)
+
+    def _turn_operator(self, state: AgentState) -> str | None:
+        """Resolve this turn's approval operator (``None`` = nobody present)."""
+        return resolve_turn_operator(state, self._session_id(state))
 
     # ── Delegating convenience methods ───────────────────────────────────
 
@@ -354,8 +367,9 @@ class HumanInTheLoop(AgentMiddleware):
             session_id=self._session_id(state),
             outcome=outcome,
         )
-        for tool_call in last_ai_msg.tool_calls:
-            self._approval_registry.dispatch(tool_call, ctx)
+        with operator_scope(self._turn_operator(state)):
+            for tool_call in last_ai_msg.tool_calls:
+                self._approval_registry.dispatch(tool_call, ctx)
 
         last_ai_msg.tool_calls = outcome.revised_tool_calls
         return (
