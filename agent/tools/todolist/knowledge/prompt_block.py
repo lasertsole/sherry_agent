@@ -1,18 +1,17 @@
 """Tier-1 plan-knowledge block for the system prompt.
 
-``build_knowledge_block`` resolves the session's plan name (the ``plan_ref``
-state key first, a todo's ``plan_ref`` second), reads the plan's
-``plan-summary.json`` from ``config.path.PLAN_KNOWLEDGE_DIR`` and renders a
-compact, compression-proof summary (method + capped key_failures /
-key_successes / reusable_patterns). Full detail is fetched on demand through
-``knowledge(action="read")``. Every path is fail-open: no plan_ref, a missing
-or malformed summary, or any read failure yields "".
+``build_knowledge_block`` resolves the session's primary plan identity
+(``identity.resolve_session_plan_identity``: state ``plan_ref`` first, a todo's
+``plan_ref`` second, a boulder work third, the session-derived fallback last),
+reads that identity's ``plan-summary.json`` through the knowledge store key,
+and renders a compact, compression-proof summary (method + capped
+key_failures / key_successes / reusable_patterns). Full detail is fetched on
+demand through ``knowledge(action="read")``. Every path is fail-open: no
+identity, a missing or malformed summary, or any read failure yields "".
 """
 
-import json
-from pathlib import Path
-
-_PLAN_REF_STATE_KEY = "plan_ref"
+from .identity import PlanIdentity, resolve_session_plan_identity
+from .knowledge_store import KnowledgeStore
 
 
 def _trunc(text: str, max_len: int) -> str:
@@ -21,45 +20,24 @@ def _trunc(text: str, max_len: int) -> str:
     return flat[:max_len] + "..." if len(flat) > max_len else flat
 
 
-def _resolve_plan_name(session_id: str) -> str:
-    """Resolve the session's plan name: state key first, todo plan_ref second."""
-    plan_ref = ""
+def _resolve_identity(session_id: str) -> PlanIdentity | None:
+    """Resolve the session's primary plan identity; None on any failure."""
     try:
-        from runtime import state_register_db
-
-        value = state_register_db.get_state(session_id, _PLAN_REF_STATE_KEY, "")
-        if isinstance(value, str):
-            plan_ref = value
+        return resolve_session_plan_identity(session_id)
     except Exception:
-        plan_ref = ""
-    if not plan_ref:
-        try:
-            from agent.tools.todolist.registry.store_sqlite import get_todos_sync
-
-            for todo in get_todos_sync(session_id):
-                candidate = todo.get("plan_ref")
-                if candidate:
-                    plan_ref = str(candidate)
-                    break
-        except Exception:
-            plan_ref = ""
-    return Path(plan_ref).stem if plan_ref else ""
+        return None
 
 
 def build_knowledge_block(session_id: str) -> str:
     """Render the current plan's knowledge summary; "" on none or any failure."""
     try:
-        plan_name = _resolve_plan_name(session_id)
-        if not plan_name:
+        identity = _resolve_identity(session_id)
+        if identity is None:
             return ""
-        from config.path import PLAN_KNOWLEDGE_DIR
-
-        summary_path = PLAN_KNOWLEDGE_DIR / plan_name / "plan-summary.json"
-        if not summary_path.is_file():
+        summary = KnowledgeStore.read_summary(identity)
+        if summary is None:
             return ""
-        summary = json.loads(summary_path.read_text(encoding="utf-8"))
-        if not isinstance(summary, dict):
-            return ""
+        plan_name = identity.plan_name
         lines = [
             f"## Knowledge Summary: {plan_name}",
             f"Method: {_trunc(str(summary.get('method') or 'unknown'), 200)}",

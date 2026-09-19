@@ -70,7 +70,18 @@ def prompt_env(tmp_path, monkeypatch):
         "agent.tools.todolist.registry.store_sqlite.get_todos_sync",
         lambda session_id: list(env["todos"]),
     )
-    monkeypatch.setattr("config.path.PLAN_KNOWLEDGE_DIR", knowledge_dir)
+    monkeypatch.setattr("agent.tools.todolist.knowledge.ownership.state_register_db", env["state"])
+    monkeypatch.setattr(
+        "agent.tools.todolist.knowledge.ownership.get_todos_sync",
+        lambda session_id: list(env["todos"]),
+    )
+    monkeypatch.setattr(
+        "agent.tools.todolist.knowledge.ownership.resolve_boulder_path",
+        lambda: tmp_path / "boulder.json",
+    )
+    monkeypatch.setattr(
+        "agent.tools.todolist.knowledge.knowledge_store._KNOWLEDGE_ROOT", knowledge_dir
+    )
     monkeypatch.setattr(
         "agent.tools.taskflow.registry.store_sqlite.get_active_flows_sync",
         FakeFlowStore().get_active_flows_sync,
@@ -195,6 +206,9 @@ class TestKnowledgeFailOpen:
                 raise RuntimeError("state db unavailable")
 
         monkeypatch.setattr("runtime.state_register_db", _BoomStateDB())
+        monkeypatch.setattr(
+            "agent.tools.todolist.knowledge.ownership.state_register_db", _BoomStateDB()
+        )
         prompt_env["todos"].append({"content": "x", "plan_ref": ".omo/plans/fallback.md"})
         _write_summary(prompt_env["knowledge_dir"], "fallback", method="fallback-method")
 
