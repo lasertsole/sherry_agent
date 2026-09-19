@@ -376,7 +376,16 @@ def build_todolist_tools() -> list[BaseTool]:
 
 The skill file defines when to use todolist (3+ step work), available tools, status/priority/delegation fields, DAG fields (delegated to TaskFlow), and rules (full replacement each call, one in_progress at a time, no marking completed before subagent returns).
 
-### knowledge — Plan-Ownership Isolation
+### knowledge — Plan-Identity Isolation
+
+The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by **plan identity**, not by plan name. Association comes from three sources (`ownership.association_plan_refs()`): the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `.omo/boulder.json` work whose `plan_name` matches and whose `session_ids` contains the session. `identity.resolve_plan_identity()` maps that name to the canonical plan path and derives the storage directory `workspace/knowledge/plans/<plan_key>/`, where `plan_key = sha1(repo-relative plan path)[:12]`; each directory carries a `meta.json` with the readable `plan_name` / `plan_ref`. Consequences:
+
+- Same-named plans held in different plan files are **physically isolated** — each session writes its own key directory, so neither can overwrite the other;
+- One plan file shared through boulder `session_ids` resolves the same path for every listed session, so **multi-session collaboration stays intact** (one shared directory);
+- A session whose plan file does not resolve writes under the fallback identity `session-<sha1(session_id)[:8]>` — hashing the full id keeps sessions whose ids share an 8-char prefix apart;
+- `plan_ref` takes precedence when a name matches several paths; a name that stays ambiguous (and is not the session's own fallback) is refused with a diagnosable error, never silently written elsewhere.
+
+`list` returns only the session's associated plans (readable name + key), and a foreign plan is refused on `read` / `write` (never a silent empty result). Legacy name-keyed `workspace/knowledge/plans/<plan-name>/` directories stay readable until the key directory exists; writes always land in the key directory. `clear_session` deletes the session's private identity directories and retains plans shared with another session through boulder `session_ids`; legacy directories are never deleted. A missing/corrupt boulder file, an empty `session_id`, or an unknown plan all deny safely — no exception, no cross-session read.
 
 The `knowledge` tool (`agent/tools/todolist/knowledge/`) is keyed by plan name, so it is isolated **per plan ownership** instead of by a session column: a session may only `write` / `read` / `list` plans it is associated with. `ownership.is_plan_associated()` resolves association from three sources — the session's `plan_ref` state key, a `plan_ref` on one of the session's todos (SQL filtered by `session_id`), and a `.omo/boulder.json` work whose `plan_name` matches and whose `session_ids` list contains the session. `list` returns only the session's associated plans, and a foreign plan is refused with a diagnosable error (never a silent empty result). **Multi-session collaboration stays intact**: a plan listed in several sessions' boulder `session_ids` remains readable and writable by every one of them. A missing/corrupt boulder file, an empty `session_id`, or an unknown plan all deny safely — no exception, no cross-session read.
 
@@ -456,7 +465,7 @@ The `build_system_prompt()` is re-called by the `Summarization` middleware after
 | -------------------------- | ----------------- | ------------ | ----------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10 lines    | Current todo list + status + TaskFlow flow/step association |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5 lines     | Active work state                                           |
-| `_build_knowledge_block()` | workspace/knowledge/plans/ | ~20 lines | key_failures + key_successes + reusable_patterns            |
+| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 lines | key_failures + key_successes + reusable_patterns (identity-resolved)         |
 
 ### Implementation
 

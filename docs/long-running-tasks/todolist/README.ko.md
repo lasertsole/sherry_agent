@@ -273,7 +273,16 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 todolist를 언제 사용할지 (3+ 단계 복잡 작업), 사용 가능 도구, 상태/우선순위/위임 필드, DAG 필드 (TaskFlow에 위임), 규칙을 정의합니다.
 
-### knowledge — 계획 소유권 격리
+### knowledge — 계획 아이덴티티 격리
+
+`knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름이 아니라 **계획 아이덴티티**를 키로 사용합니다. 연결은 세 가지 소스(`ownership.association_plan_refs()`)에서 옵니다: 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), `.omo/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `identity.resolve_plan_identity()`가 그 이름을 정규화된 계획 경로로 해석하고 저장 디렉터리 `workspace/knowledge/plans/<plan_key>/`를 도출합니다(`plan_key = sha1(리포지토리 루트 상대 계획 경로)[:12]`). 각 디렉터리의 `meta.json`에 가독 `plan_name` / `plan_ref`를 기록합니다. 결과:
+
+- 계획 파일이 다른 같은 이름 계획은 **물리적으로 격리**됩니다 — 각자 자신의 key 디렉터리에 기록하며 서로 덮어쓰지 않습니다;
+- boulder `session_ids`로 **하나의 계획 파일**을 공유하는 모든 세션은 같은 경로로 해석되므로 **다중 세션 협업이 유지**됩니다(하나의 디렉터리 공유);
+- 계획 파일이 해석되지 않는 세션은 폴백 아이덴티티 `session-<sha1(session_id)[:8]>`에 기록합니다 — 전체 id 해시로 앞 8자가 같은 세션 id도 서로 격리됩니다;
+- 이름이 여러 경로에 걸리면 세션 자신의 `plan_ref`를 우선하며, 그래도 모호하면(자기 세션의 폴백 이름이 아닌 경우) 진단 가능한 오류로 거부하고 다른 곳에 조용히 기록하지 않습니다.
+
+`list`는 연결된 계획만(가독 이름 + key) 반환하고, `read` / `write`의 다른 세션·모호한 계획 접근은 거부됩니다(조용한 빈 결과가 아님). 레거시 이름 키 디렉터리 `workspace/knowledge/plans/<plan-name>/`는 key 디렉터리가 생기기 전까지 읽기 가능하며, 쓰기는 항상 key 디렉터리에 기록됩니다. `clear_session`은 세션 전용 아이덴티티 디렉터리를 삭제하고 boulder `session_ids`로 다른 세션과 공유된 계획은 유지합니다; 레거시 디렉터리는 절대 삭제하지 않습니다. boulder 파일 누락/손상, 빈 `session_id`, 알 수 없는 계획은 모두 안전하게 거부됩니다 — 예외도, 교차 세션 읽기도 없습니다.
 
 `knowledge` 도구(`agent/tools/todolist/knowledge/`)는 계획 이름을 키로 사용하므로, 세션 컬럼이 아니라 **계획 소유권**으로 격리됩니다: 세션은 자신이 연결된 계획만 `write` / `read` / `list` 할 수 있습니다. `ownership.is_plan_associated()`는 세 가지 소스에서 연결을 판정합니다 — 세션의 `plan_ref` 상태 키, 세션 todo의 `plan_ref`(SQL에서 `session_id`로 필터), 그리고 `.omo/boulder.json`에서 `plan_name`이 일치하고 `session_ids`에 해당 세션을 포함하는 work. `list`는 연결된 계획만 반환하며, 다른 세션의 계획 접근은 진단 가능한 오류로 거부됩니다(조용한 빈 결과가 아님). **다중 세션 협업은 그대로 유지됩니다**: 같은 계획이 여러 세션의 boulder `session_ids`에 등록되어 있으면 모든 세션이 읽고 쓸 수 있습니다. boulder 파일 누락/손상, 빈 `session_id`, 알 수 없는 계획은 모두 안전하게 거부됩니다 — 예외도, 교차 세션 읽기도 없습니다.
 
@@ -349,7 +358,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | -------------------------- | ----------------- | ------------- | ------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10행         | 현재 todo 리스트 + 상태 + TaskFlow flow/step 연결 |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5행          | 활성 작업 상태                                    |
-| `_build_knowledge_block()` | workspace/knowledge/plans/   | ~20행         | key_failures + key_successes + reusable_patterns  |
+| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20행         | key_failures + key_successes + reusable_patterns (아이덴티티 해석) |
 
 ### omo의 5층 방어보다 경량인 이유
 

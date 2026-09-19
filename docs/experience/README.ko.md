@@ -50,7 +50,7 @@
 
 프롬프트는 두 종류의 산출물을 만듭니다:
 
-- **Part 1: 구조화 지식.** `knowledge(action="write", ...)`가 JSON 문서를 `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan-name>/`)에 씁니다: `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. 각 task는 `failure_set`, `success_path`, `method`를, wave는 실패 / 성공 패턴을, plan은 전체 방법, 핵심 실패 / 성공, 재사용 패턴을 담습니다.
+- **Part 1: 구조화 지식.** `knowledge(action="write", ...)`가 JSON 문서를 `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/`, 계획 아이덴티티 키 — `agent/tools/todolist/knowledge/identity.py` 참조)에 씁니다: `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. 각 task는 `failure_set`, `success_path`, `method`를, wave는 실패 / 성공 패턴을, plan은 전체 방법, 핵심 실패 / 성공, 재사용 패턴을 담습니다.
 - **Part 2: 스킬 라이브러리 갱신.** `skill_manage`가 로드되었거나 기존인 클래스 레벨 스킬을 패치하고, 지원 파일을 추가하거나, `skills/auto/` 아래 새 클래스 레벨 umbrella를 만듭니다. 프롬프트는 명시적으로 능동적이며("most completed plans produce at least one skill update") 사용자 교정, 워크플로 교정, 비자명한 기법, 오래된 스킬을 일급 신호로 나열합니다.
 
 이후 읽기는 같은 도구(`knowledge(action="read")`)가 제공하고, 압축된 plan 요약은 `build_knowledge_block`(`knowledge/prompt_block.py`)이 시스템 프롬프트에 자동 주입합니다.
@@ -122,7 +122,7 @@ UI에서는 `POST /curator/run`으로 강제 실행할 수 있으며, 워커 스
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`(`workspace/memory/MEMORY.md`) | 2200자(`MemoryStore.memory_char_limit`) |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`(`workspace/memory/USER.md`) | 1375자(`MemoryStore.user_char_limit`) |
-| plan 지식 | `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan>/`) | plan마다 `task-<n>.json`, `wave-<n>.json`, `plan-summary.json`. 필드 상한은 프롬프트로 유도(150 / 100자) |
+| plan 지식 | `config.path.PLAN_KNOWLEDGE_DIR`(`workspace/knowledge/plans/<plan_key>/` — 아이덴티티 키) | plan마다 `task-<n>.json`, `wave-<n>.json`, `plan-summary.json`. 필드 상한은 프롬프트로 유도(150 / 100자) |
 | 스킬 | `config.path.AUTO_SKILLS_DIR`(`skills/auto/`) | `SKILL.md`와 `references/`, `templates/`, `scripts/` 지원 파일 |
 | todos | `agent/tools/todolist/data/todos.db`(`store_sqlite._DB_PATH`) | 세션 범위 목록, 전체 교체 쓰기 |
 

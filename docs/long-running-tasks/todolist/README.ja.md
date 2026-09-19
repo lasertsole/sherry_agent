@@ -278,7 +278,16 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 todolist をいつ使うか（3+ ステップの複雑な作業）、利用可能ツール、ステータス/優先度/委譲フィールド、DAG フィールド（TaskFlow に委譲）、ルールを定義します。
 
-### knowledge — 計画オーナーシップ分離
+### knowledge — 計画アイデンティティ分離
+
+`knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名ではなく**計画アイデンティティ**をキーとします。関連は 3 つのソース（`ownership.association_plan_refs()`）から取得します：セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、`.omo/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`identity.resolve_plan_identity()` が名前を正規化された計画パスへ解決し、保存ディレクトリ `workspace/knowledge/plans/<plan_key>/` を導出します（`plan_key = sha1(リポジトリルート相対の計画パス)[:12]`）。各ディレクトリの `meta.json` に可読な `plan_name` / `plan_ref` を記録します。結果：
+
+- 計画ファイルが異なる同名計画は**物理的に隔離**され——各自の key ディレクトリへ書き込み、相互に上書きしません；
+- boulder `session_ids` で**1 つの計画ファイル**を共有する全セッションは同じパスに解決されるため、**複数セッションの協業は維持**されます（1 ディレクトリを共有）；
+- 計画ファイルが解決できないセッションはフォールバックアイデンティティ `session-<sha1(session_id)[:8]>` に書き込みます——全 id ハッシュにより先頭 8 文字が同じセッション id も互いに隔離されます；
+- 名前が複数パスに一致する場合はセッション自身の `plan_ref` を優先；それでも曖昧な場合（自セッションのフォールバック名でない）は診断可能なエラーで拒否し、別の場所へ黙って書き込みません。
+
+`list` は関連付けられた計画のみ（可読名 + key）を返し、`read` / `write` の他セッション・曖昧計画へのアクセスは拒否されます（沈黙の空結果にはしません）。レガシーの名前キー・ディレクトリ `workspace/knowledge/plans/<plan-name>/` は key ディレクトリが現れるまで読み取り可能；書き込みは常に key ディレクトリへ。`clear_session` はセッション私有のアイデンティティディレクトリを削除し、boulder `session_ids` で他セッションと共有された計画は保持します；レガシー・ディレクトリは決して削除しません。boulder ファイルの欠落/破損、空の `session_id`、未知の計画はいずれも安全に拒否されます——例外もクロスセッション読み取りもありません。
 
 `knowledge` ツール（`agent/tools/todolist/knowledge/`）は計画名をキーとするため、セッション列ではなく**計画オーナーシップ**で分離します：セッションは自分が関連付けられた計画のみ `write` / `read` / `list` できます。`ownership.is_plan_associated()` は 3 つのソースから関連を判定します——セッションの `plan_ref` 状態キー、セッションの todo の `plan_ref`（SQL で `session_id` をフィルタ）、そして `.omo/boulder.json` のうち `plan_name` が一致し `session_ids` に当該セッションを含む work。`list` は関連付けられた計画のみを返し、他セッションの計画へのアクセスは診断可能なエラーで拒否されます（沈黙の空結果にはしません）。**複数セッションの協業は維持されます**：同じ計画が複数セッションの boulder `session_ids` に列挙されていれば、そのすべてが読み書きできます。boulder ファイルの欠落/破損、空の `session_id`、未知の計画はいずれも安全に拒否されます——例外もクロスセッション読み取りもありません。
 
@@ -354,7 +363,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | -------------------------- | ----------------- | ------------------ | --------------------------------------------------------- |
 | `_build_todo_block()`      | todos.db          | ~10行              | 現在の todo リスト + ステータス + TaskFlow flow/step 関連 |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5行               | アクティブワーク状態                                      |
-| `_build_knowledge_block()` | workspace/knowledge/plans/   | ~20行              | key_failures + key_successes + reusable_patterns          |
+| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20行              | key_failures + key_successes + reusable_patterns（アイデンティティ解決） |
 
 ### omo の5層防御より軽量な理由
 

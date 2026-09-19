@@ -50,7 +50,7 @@
 
 プロンプトは 3 種類の産出を行う：
 
-- **Part 1：構造化知識。** `knowledge(action="write", ...)` が JSON 文書を `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan-name>/`）へ書く：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。各 task は `failure_set`、`success_path`、`method` を持ち、wave は失敗 / 成功パターン、plan は全体手法、主要な失敗 / 成功、再利用パターンを持つ。
+- **Part 1：構造化知識。** `knowledge(action="write", ...)` が JSON 文書を `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`、計画アイデンティティをキーとする——`agent/tools/todolist/knowledge/identity.py`）へ書く：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。各 task は `failure_set`、`success_path`、`method` を持ち、wave は失敗 / 成功パターン、plan は全体手法、主要な失敗 / 成功、再利用パターンを持つ。
 - **Part 2：スキルライブラリ更新。** `skill_manage` がロード済みまたは既存のクラスレベルスキルを修正し、サポートファイルを追加し、または `skills/auto/` に新しいクラスレベル umbrella を作成する。プロンプトは明確に能動的で（"most completed plans produce at least one skill update"）、ユーザーの訂正、ワークフローの訂正、非自明な技法、陳腐化したスキルを一次信号として挙げる。
 
 後続の読み取りは同じツール（`knowledge(action="read")`）が提供し、圧縮された plan 要約は `build_knowledge_block`（`knowledge/prompt_block.py`）がシステムプロンプトへ自動注入する。
@@ -122,7 +122,7 @@ UI からは `POST /curator/run` で強制実行でき、ワーカースレッ�
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 文字（`MemoryStore.memory_char_limit`） |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 文字（`MemoryStore.user_char_limit`） |
-| plan 知識 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan>/`） | plan ごとに `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`。フィールド上限はプロンプトで誘導（150 / 100 文字） |
+| plan 知識 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——アイデンティティ・キー） | plan ごとに `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`。フィールド上限はプロンプトで誘導（150 / 100 文字） |
 | スキル | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` と `references/`、`templates/`、`scripts/` サポートファイル |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | セッションスコープのリスト、全置換書込 |
 

@@ -282,7 +282,16 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 定义何时使用 todolist（3+ 步复杂工作）、可用工具、状态/优先级/委派字段、DAG 字段（委派给 TaskFlow）以及规则。
 
-### knowledge — 按计划归属隔离
+### knowledge — 按计划身份隔离
+
+`knowledge` 工具（`agent/tools/todolist/knowledge/`）以**计划身份**为键，而非计划名。归属来自三个来源（`ownership.association_plan_refs()`）：本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤）、`.omo/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`identity.resolve_plan_identity()` 把该名称映射到规范化计划路径并派生存储目录 `workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的计划路径)[:12]`；每个目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。由此：
+
+- 计划文件不同的同名计划**物理隔离**——各自写自己的 key 目录，互不覆盖；
+- 通过 boulder `session_ids` 共享**同一计划文件**的所有会话解析同一路径，因此**多会话协同不受影响**（共享同一目录）；
+- 计划文件无法解析的会话写入兜底身份 `session-<sha1(session_id)[:8]>`——全 id 哈希让前 8 字符相同的会话 id 彼此隔离；
+- 名称命中多个路径时优先本会话 `plan_ref`；仍然歧义（且不是本会话自己的兜底名）时给出可诊断错误并拒绝，绝不静默写到别处。
+
+`list` 只返回本会话关联的计划（可读名 + key）；`read` / `write` 访问他会话或歧义计划会被拒绝（绝不静默返回空）。旧的名称为键目录 `workspace/knowledge/plans/<plan-name>/` 在 key 目录出现前保持可读；写入总是落在 key 目录。`clear_session` 删除本会话私有身份目录，保留通过 boulder `session_ids` 与其他会话共享的计划；旧目录永不删除。boulder 文件缺失/损坏、`session_id` 为空或计划未知时一律安全拒绝——不抛异常，也不发生跨会话读取。
 
 `knowledge` 工具（`agent/tools/todolist/knowledge/`）以计划名为键，因此按**计划归属**隔离，而不是按会话列隔离：会话只能 `write` / `read` / `list` 与自己关联的计划。`ownership.is_plan_associated()` 从三个来源判定归属——本会话的 `plan_ref` 状态键、本会话某条 todo 的 `plan_ref`（SQL 按 `session_id` 过滤），以及 `.omo/boulder.json` 中 `plan_name` 匹配且 `session_ids` 含本会话的 work。`list` 只返回本会话关联的计划；访问他会话的计划会被拒绝并给出可诊断的错误（绝不静默返回空）。**多会话协同不受影响**：同一计划若出现在多个会话的 boulder `session_ids` 中，每个会话都仍可读写。boulder 文件缺失/损坏、`session_id` 为空或计划未知时一律安全拒绝——不抛异常，也不发生跨会话读取。
 
@@ -358,7 +367,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | -------------------------- | ----------------- | ---------- | ------------------------------------------------ |
 | `_build_todo_block()`      | todos.db          | ~10 行     | 当前 todo 列表 + 状态 + TaskFlow flow/step 关联  |
 | `_build_boulder_block()`   | .omo/boulder.json | ~5 行      | 活跃工作状态                                     |
-| `_build_knowledge_block()` | workspace/knowledge/plans/   | ~20 行     | key_failures + key_successes + reusable_patterns |
+| `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 行     | key_failures + key_successes + reusable_patterns（按身份解析） |
 
 ### 为什么比 omo 的 5 层防御更轻量
 

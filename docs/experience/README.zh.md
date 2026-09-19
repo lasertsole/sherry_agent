@@ -50,7 +50,7 @@
 
 该提示产出两项结果：
 
-- **Part 1：结构化知识。** `knowledge(action="write", ...)` 把 JSON 文档写入 `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan-name>/`）：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。每个 task 带 `failure_set`、`success_path`、`method`；wave 带失败 / 成功模式；plan 带整体方法、关键失败 / 成功与可复用模式。
+- **Part 1：结构化知识。** `knowledge(action="write", ...)` 把 JSON 文档写入 `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`，按计划身份为键——见 `agent/tools/todolist/knowledge/identity.py`）：`task-<position>.json`、`wave-<index>.json`、`plan-summary.json`。每个 task 带 `failure_set`、`success_path`、`method`；wave 带失败 / 成功模式；plan 带整体方法、关键失败 / 成功与可复用模式。
 - **Part 2：技能库更新。** `skill_manage` 修补已加载或既有的类级技能、新增支持文件、或在 `skills/auto/` 下创建新的类级 umbrella。提示明确要求主动（"most completed plans produce at least one skill update"），并把用户纠正、流程纠正、非平凡技巧、过时技能列为一级信号。
 
 后续读取由同一工具提供（`knowledge(action="read")`），精简后的 plan 摘要则由 `build_knowledge_block`（`knowledge/prompt_block.py`）自动注入系统提示。
@@ -122,7 +122,7 @@ UI 可通过 `POST /curator/run` 强制触发一次运行，它在工作线程�
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"`（`workspace/memory/MEMORY.md`） | 2200 字符（`MemoryStore.memory_char_limit`） |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"`（`workspace/memory/USER.md`） | 1375 字符（`MemoryStore.user_char_limit`） |
-| plan 知识 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan>/`） | 每个 plan 有 `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`；字段上限由提示约束（150 / 100 字符） |
+| plan 知识 | `config.path.PLAN_KNOWLEDGE_DIR`（`workspace/knowledge/plans/<plan_key>/`——按身份为键） | 每个 plan 有 `task-<n>.json`、`wave-<n>.json`、`plan-summary.json`；字段上限由提示约束（150 / 100 字符） |
 | 技能 | `config.path.AUTO_SKILLS_DIR`（`skills/auto/`） | `SKILL.md` 及 `references/`、`templates/`、`scripts/` 支持文件 |
 | todos | `agent/tools/todolist/data/todos.db`（`store_sqlite._DB_PATH`） | 会话作用域列表，全量替换写入 |
 

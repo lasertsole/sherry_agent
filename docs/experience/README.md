@@ -50,7 +50,7 @@ When `plan_extraction_enabled` is on and detection fires, `_nudge_plan_extractio
 
 The prompt produces two outputs:
 
-- **Part 1: structured knowledge.** `knowledge(action="write", ...)` writes JSON documents under `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan-name>/`): `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. Each task carries `failure_set`, `success_path`, `method`; waves carry failure / success patterns; the plan carries overall method, key failures / successes, and reusable patterns.
+- **Part 1: structured knowledge.** `knowledge(action="write", ...)` writes JSON documents under `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan_key>/`, keyed by plan identity — see `agent/tools/todolist/knowledge/identity.py`): `task-<position>.json`, `wave-<index>.json`, `plan-summary.json`. Each task carries `failure_set`, `success_path`, `method`; waves carry failure / success patterns; the plan carries overall method, key failures / successes, and reusable patterns.
 - **Part 2: skill library update.** `skill_manage` patches a loaded or existing class-level skill, adds a support file, or creates a new class-level umbrella under `skills/auto/`. The prompt is explicitly active ("most completed plans produce at least one skill update") and lists user corrections, workflow corrections, non-trivial techniques, and outdated skills as first-class signals.
 
 Reads are served later by the same tool (`knowledge(action="read")`), and a condensed plan summary is auto-injected into the system prompt by `build_knowledge_block` (`knowledge/prompt_block.py`).
@@ -122,7 +122,7 @@ The UI can force a run through `POST /curator/run`, which calls `run_curator_rev
 |---|---|---|
 | MEMORY.md | `config.path.MEMORY_DIR / "MEMORY.md"` (`workspace/memory/MEMORY.md`) | 2200 chars (`MemoryStore.memory_char_limit`) |
 | USER.md | `config.path.MEMORY_DIR / "USER.md"` (`workspace/memory/USER.md`) | 1375 chars (`MemoryStore.user_char_limit`) |
-| plan knowledge | `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan>/`) | `task-<n>.json`, `wave-<n>.json`, `plan-summary.json` per plan; prompt-guided field caps (150 / 100 chars) |
+| plan knowledge | `config.path.PLAN_KNOWLEDGE_DIR` (`workspace/knowledge/plans/<plan_key>/` — identity-keyed) | `task-<n>.json`, `wave-<n>.json`, `plan-summary.json` per plan; prompt-guided field caps (150 / 100 chars) |
 | skills | `config.path.AUTO_SKILLS_DIR` (`skills/auto/`) | `SKILL.md` plus `references/`, `templates/`, `scripts/` support files |
 | todos | `agent/tools/todolist/data/todos.db` (`store_sqlite._DB_PATH`) | session-scoped list, full-replacement writes |
 
