@@ -21,10 +21,10 @@ Case map (one test each):
 2. ``test_knowledge_two_session_isolation_and_no_overwrite`` — B (associated
    with another plan) is denied A's plan on read/write and cannot even see it in
    ``list``; a third non-associated session cannot overwrite A's document either.
-   Two sessions that legitimately share a plan name through different
-   association sources (state ``plan_ref`` vs todos ``plan_ref``) each write a
-   different knowledge document — neither write overwrites the other, and each
-   reads its own back. Session-derived fallback names stay per-session.
+   Two sessions that hold same-named plans in different files each write a
+   different knowledge document under their own ``<plan_key>`` — neither write
+   overwrites the other, and each reads its own back. Session-derived fallback
+   names stay per-session.
 3. ``test_knowledge_multi_session_boulder_collaboration`` — a work in a real
    ``boulder.json`` lists ``session_ids=[A, B]``: both may read/write the plan's
    knowledge; an unlisted session is denied.
@@ -57,6 +57,7 @@ from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.todolist.knowledge import build_knowledge_tools
 from agent.tools.todolist.knowledge import knowledge_store as knowledge_store_mod
 from agent.tools.todolist.knowledge import ownership as ownership_mod
+from agent.tools.todolist.knowledge.identity import fallback_plan_name, resolve_plan_identity
 from agent.tools.todolist.registry import store_sqlite as todo_store
 from agent.tools.taskflow.registry import store_sqlite as flow_store
 from config import SESSIONS_DIR
@@ -64,7 +65,6 @@ from runtime import state_register_db
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
 
-_FALLBACK_PREFIX = "session-"
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -72,12 +72,7 @@ _FALLBACK_PREFIX = "session-"
 
 
 def _new_sid(tag: str) -> str:
-    """Unique-per-test session id with a unique first 8 chars.
-
-    The knowledge fallback plan name is ``session-<session_id[:8]>``; sessions
-    whose ids share an 8-char prefix would resolve to the same fallback plan,
-    so the random part starts at index 4.
-    """
+    """Unique-per-test session id."""
     return f"{tag[:3]}-{uuid.uuid4().hex[:8]}"
 
 
@@ -259,10 +254,11 @@ async def test_knowledge_two_session_isolation_and_no_overwrite(
     assert read_b.startswith("Error: knowledge read denied for plan 'alpha'"), read_b
     assert write_b.startswith("Error: knowledge write denied for plan 'alpha'"), write_b
     assert "alpha" not in list_b, list_b
-    assert (root / "alpha" / "plan-summary.json").is_file()
+    alpha_identity = resolve_plan_identity(sid_a, "alpha")
+    assert alpha_identity is not None
+    assert (root / alpha_identity.key / "plan-summary.json").is_file()
 
-    # Same plan name through two different association sources: each session
-    # writes its own document; neither write overwrites the other.
+    # Same name, different plan files: each session resolves its own <plan_key>.
     knowledge_env["associate_state"](sid_a, "dup-plan")
     await todo_store.replace_all(
         sid_b,
@@ -291,8 +287,15 @@ async def test_knowledge_two_session_isolation_and_no_overwrite(
     )
     assert dup_a.startswith("Knowledge written to "), dup_a
     assert dup_b.startswith("Knowledge written to "), dup_b
-    assert json.loads((root / "dup-plan" / "plan-summary.json").read_text())["method"] == "from-A"
-    assert json.loads((root / "dup-plan" / "task-0.json").read_text())["method"] == "from-B"
+    dup_a_identity = resolve_plan_identity(sid_a, "dup-plan")
+    dup_b_identity = resolve_plan_identity(sid_b, "dup-plan")
+    assert dup_a_identity is not None and dup_b_identity is not None
+    assert dup_a_identity.key != dup_b_identity.key
+    assert (
+        json.loads((root / dup_a_identity.key / "plan-summary.json").read_text())["method"]
+        == "from-A"
+    )
+    assert json.loads((root / dup_b_identity.key / "task-0.json").read_text())["method"] == "from-B"
 
     read_a_own = await tool.coroutine(
         action="read", plan_name="dup-plan", layer="plan", session_id=sid_a
@@ -313,7 +316,10 @@ async def test_knowledge_two_session_isolation_and_no_overwrite(
         session_id=sid_c,
     )
     assert write_c.startswith("Error: knowledge write denied for plan 'dup-plan'"), write_c
-    assert json.loads((root / "dup-plan" / "plan-summary.json").read_text())["method"] == "from-A"
+    assert (
+        json.loads((root / dup_a_identity.key / "plan-summary.json").read_text())["method"]
+        == "from-A"
+    )
 
 
 @pytest.mark.asyncio
@@ -324,7 +330,7 @@ async def test_knowledge_session_fallback_names_are_per_session(
     root: Path = knowledge_env["root"]
     tool = _knowledge_tool()
     sid_a, sid_b = _new_sid("fb-a"), _new_sid("fb-b")
-    name_a, name_b = f"{_FALLBACK_PREFIX}{sid_a[:8]}", f"{_FALLBACK_PREFIX}{sid_b[:8]}"
+    name_a, name_b = fallback_plan_name(sid_a), fallback_plan_name(sid_b)
 
     write_a = await tool.coroutine(
         action="write",
@@ -350,8 +356,13 @@ async def test_knowledge_session_fallback_names_are_per_session(
     assert "fallback-A" in read_a and "fallback-B" not in read_a, read_a
     assert "fallback-B" in read_b and "fallback-A" not in read_b, read_b
     assert cross.startswith("Error: knowledge read denied"), cross
-    assert (root / name_a / "plan-summary.json").is_file()
-    assert (root / name_b / "plan-summary.json").is_file()
+    fallback_a = resolve_plan_identity(sid_a, name_a)
+    fallback_b = resolve_plan_identity(sid_b, name_b)
+    assert fallback_a is not None and fallback_a.is_session_fallback is True
+    assert fallback_b is not None and fallback_b.is_session_fallback is True
+    assert fallback_a.key != fallback_b.key
+    assert (root / fallback_a.key / "plan-summary.json").is_file()
+    assert (root / fallback_b.key / "plan-summary.json").is_file()
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +380,13 @@ async def test_knowledge_multi_session_boulder_collaboration(knowledge_env: dict
         json.dumps(
             {
                 "schema_version": 2,
-                "works": {"work-0": {"plan_name": "shared-plan", "session_ids": [sid_a, sid_b]}},
+                "works": {
+                    "work-0": {
+                        "plan_name": "shared-plan",
+                        "session_ids": [sid_a, sid_b],
+                        "active_plan": f"workspace/sessions/{sid_a}/plans/shared-plan.md",
+                    }
+                },
             }
         ),
         encoding="utf-8",
@@ -406,7 +423,11 @@ async def test_knowledge_multi_session_boulder_collaboration(knowledge_env: dict
     assert "from-B" in read_a, read_a
     assert "shared-plan" in list_b, list_b
     assert denied_c.startswith("Error: knowledge read denied"), denied_c
-    assert (root / "shared-plan" / "plan-summary.json").is_file()
+    shared_identity = resolve_plan_identity(sid_a, "shared-plan")
+    assert shared_identity is not None
+    assert (root / shared_identity.key / "plan-summary.json").is_file()
+    shared_dirs = [entry for entry in root.iterdir() if entry.is_dir()]
+    assert len(shared_dirs) == 1
 
 
 # ---------------------------------------------------------------------------

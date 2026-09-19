@@ -93,7 +93,10 @@ class TestWriteAction:
         )
 
         assert output.startswith("Knowledge written to ")
-        assert (knowledge_root / "implement-auth" / "plan-summary.json").is_file()
+        written_dirs = [entry for entry in knowledge_root.iterdir() if entry.is_dir()]
+        assert len(written_dirs) == 1
+        assert (written_dirs[0] / "plan-summary.json").is_file()
+        assert (written_dirs[0] / "meta.json").is_file()
 
     @pytest.mark.asyncio
     async def test_write_missing_params_returns_error_text(self, tool, session_id: str):
@@ -178,4 +181,5 @@ class TestListAction:
         output = await tool.coroutine(action="list", session_id=session_id)
 
         assert "Available plans with knowledge:" in output
-        assert "alpha (method: m-alpha)" in output
+        assert "alpha" in output
+        assert "method: m-alpha" in output

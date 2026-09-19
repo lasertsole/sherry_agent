@@ -19,7 +19,7 @@ from langchain_core.tools import BaseTool
 
 from agent.middlewares.summarization import nudges as nudge_mod
 from agent.middlewares.summarization.nudges import StateSchema
-from agent.tools.todolist.knowledge import build_knowledge_tools, ownership
+from agent.tools.todolist.knowledge import build_knowledge_tools, identity, ownership
 
 pytestmark = [pytest.mark.unit]
 
@@ -83,7 +83,15 @@ def _write_boulder(sources: _Sources, works: list[tuple[str, list[str]]]) -> Non
     payload = {
         "schema_version": 2,
         "works": {
-            f"work-{index}": {"plan_name": plan_name, "session_ids": session_ids}
+            f"work-{index}": {
+                "plan_name": plan_name,
+                "session_ids": session_ids,
+                "active_plan": (
+                    f"workspace/sessions/{session_ids[0]}/plans/{plan_name}.md"
+                    if session_ids
+                    else f"workspace/sessions/unknown/plans/{plan_name}.md"
+                ),
+            }
             for index, (plan_name, session_ids) in enumerate(works)
         },
     }
@@ -159,9 +167,12 @@ class TestOwnershipSources:
         assert ownership.is_plan_associated("sess-a", "  ") is False
 
     def test_session_derived_fallback_name_is_owned(self, sources: _Sources):
-        """The nudge fallback name (session-<id8>) belongs to its own session."""
-        assert ownership.is_plan_associated("sess-nudge", "session-sess-nud") is True
-        assert ownership.is_plan_associated("sess-nudge", "session-other-se") is False
+        """The nudge fallback name (session-<sha1(id)[:8]>) belongs only to its session."""
+        own_name = identity.fallback_plan_name("sess-nudge")
+        other_name = identity.fallback_plan_name("sess-other")
+
+        assert ownership.is_plan_associated("sess-nudge", own_name) is True
+        assert ownership.is_plan_associated("sess-nudge", other_name) is False
 
 
 class TestToolPlanIsolation:
@@ -199,7 +210,7 @@ class TestToolPlanIsolation:
 
         assert output.startswith("Error: knowledge write denied for plan 'beta'")
         assert "not associated with this session ('sess-a')" in output
-        assert (knowledge_root / "beta").exists() is False
+        assert not knowledge_root.exists() or list(knowledge_root.iterdir()) == []
 
     @pytest.mark.asyncio
     async def test_foreign_plan_read_is_denied(self, sources: _Sources, knowledge_root: Path):
@@ -237,9 +248,9 @@ class TestToolPlanIsolation:
         output_a = await tool.coroutine(action="list", session_id="sess-a")
         output_b = await tool.coroutine(action="list", session_id="sess-b")
 
-        assert "plan-a (method: plan-a-method)" in output_a
+        assert "plan-a" in output_a and "plan-a-method" in output_a
         assert "plan-b" not in output_a
-        assert "plan-b (method: plan-b-method)" in output_b
+        assert "plan-b" in output_b and "plan-b-method" in output_b
         assert "plan-a" not in output_b
 
     @pytest.mark.asyncio
@@ -276,6 +287,8 @@ class TestToolPlanIsolation:
         assert write_b.startswith("Knowledge written to ")
         assert "# Task 0 Knowledge: shared-plan" in read_a
         assert "from-b" in read_a
+        shared_dirs = [entry for entry in knowledge_root.iterdir() if entry.is_dir()]
+        assert len(shared_dirs) == 1
 
     @pytest.mark.asyncio
     async def test_empty_session_id_denies_write_read_and_list(
@@ -369,4 +382,6 @@ class TestNudgeSessionIdSupply:
 
         tool_contents = [m.content for m in out["messages"] if m.type == "tool"]
         assert any("Knowledge written to" in str(content) for content in tool_contents)
-        assert (knowledge_root / "extract-plan" / "plan-summary.json").is_file()
+        written_dirs = [entry for entry in knowledge_root.iterdir() if entry.is_dir()]
+        assert len(written_dirs) == 1
+        assert (written_dirs[0] / "plan-summary.json").is_file()

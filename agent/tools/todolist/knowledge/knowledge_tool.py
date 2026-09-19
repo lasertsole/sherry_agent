@@ -2,13 +2,16 @@
 
 Writes happen during plan extraction (nudge agent, on todo completion); reads
 are on-demand lookups by the main agent before similar work. Access is isolated
-per plan ownership: a session may only read / write / list knowledge for plans
+per plan identity: a session may only read / write / list knowledge for plans
 it is associated with (state ``plan_ref``, todos ``plan_ref``, or a boulder work
-whose ``session_ids`` include the session) — see ``ownership.py``. Invalid
-input and ownership denials are returned as ``"Error: ..."`` text — the repo's
-error-as-text contract — never raised. The tool carries ``nudge``/``main_only``
-metadata so the nudge allowlist accepts it and the subagent tool policy keeps it
-on the main agent.
+whose ``session_ids`` include the session — see ``ownership.py``), and the
+storage key derives from the canonical plan path (``identity.py``), so
+same-named plan files in different sessions are physically isolated while
+collaborators of one plan file share a directory. Invalid input and ownership
+denials are returned as ``"Error: ..."`` text — the repo's error-as-text
+contract — never raised. The tool carries ``nudge``/``main_only`` metadata so
+the nudge allowlist accepts it and the subagent tool policy keeps it on the
+main agent.
 """
 
 from typing import Annotated, Literal
@@ -17,8 +20,8 @@ from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 from loguru import logger
 
+from .identity import resolve_plan_identity
 from .knowledge_store import KnowledgeStore, Layer
-from .ownership import associated_plan_names, is_plan_associated
 
 
 def _deny(action: str, plan_name: str, session_id: str) -> str:
@@ -91,12 +94,13 @@ async def knowledge(
                 return "Error: write requires plan_name, layer, and data"
             if not sid:
                 return _deny_missing_session("write")
-            if not is_plan_associated(sid, plan_name):
+            identity = resolve_plan_identity(sid, plan_name)
+            if identity is None:
                 return _deny("write", plan_name, sid)
             try:
                 path = await KnowledgeStore.write(
+                    identity,
                     layer=layer,
-                    plan_name=plan_name,
                     data=data,
                     position=position,
                     wave_index=wave_index,
@@ -110,10 +114,11 @@ async def knowledge(
                 return "Error: read requires plan_name"
             if not sid:
                 return _deny_missing_session("read")
-            if not is_plan_associated(sid, plan_name):
+            identity = resolve_plan_identity(sid, plan_name)
+            if identity is None:
                 return _deny("read", plan_name, sid)
             return KnowledgeStore.read_formatted(
-                plan_name=plan_name,
+                identity,
                 layer=layer,
                 position=position,
                 wave_index=wave_index,
@@ -123,15 +128,15 @@ async def knowledge(
             if not sid:
                 logger.debug("knowledge list: empty session_id; no plans to list")
                 return "No knowledge files found."
-            associated = associated_plan_names(sid)
-            plans = [plan for plan in KnowledgeStore.list_plans() if plan in associated]
+            plans = KnowledgeStore.list_plans(sid)
             if not plans:
                 return "No knowledge files found."
             lines = ["Available plans with knowledge:"]
-            for plan in plans:
-                summary = KnowledgeStore.read_summary(plan)
+            for identity in plans:
+                summary = KnowledgeStore.read_summary(identity)
                 method = summary.get("method", "unknown") if summary else None
-                lines.append(f"  - {plan} (method: {method})" if method else f"  - {plan}")
+                label = f"{identity.plan_name} (key: {identity.key}"
+                lines.append(f"  - {label}, method: {method})" if method else f"  - {label})")
             return "\n".join(lines)
 
         case _:
