@@ -1,5 +1,6 @@
 """Filesystem path configuration (repo roots, data and skill directories)."""
 
+import os
 import sys
 from pathlib import Path
 
@@ -216,3 +217,19 @@ def resolve_evidence_ledger_path() -> Path:
     The ``data`` directory is created on the ledger's first append.
     """
     return SRC_DIR / "data" / "evidence-ledger.jsonl"
+
+
+def resolve_approval_store_path() -> Path:
+    """Return the absolute tool-approval store path (``SRC_DIR/data/approvals.json``).
+
+    The store is Sherry-owned runtime state — the same repo-scoped ``src/data``
+    tree as the boulder pointer and the evidence ledger — so it never leaks into
+    the tracked persona workspace. ``SRC_DIR`` is read at call time (tests
+    repoint it), and the ``SHERRY_APPROVAL_STORE_PATH`` environment variable
+    overrides the location outright (tests and operators). A missing file means
+    "no recorded decisions", never an error.
+    """
+    override = os.environ.get("SHERRY_APPROVAL_STORE_PATH", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return SRC_DIR / "data" / "approvals.json"
