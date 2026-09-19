@@ -20,7 +20,7 @@ Coverage map (plan Task 5, 6 items):
 5. handle_tool_error=True semantics (ToolException -> error
    ToolMessage channel) ....................................... test_handle_tool_error_*
 
-Graph tests mirror ``tests/full/test_hitl_real_graph.py``: a REAL LangGraph
+Graph tests mirror ``test_hitl_real_graph.py``: a REAL LangGraph
 (``create_agent`` + real ``HumanInTheLoop`` middleware), no LLM — a scripted
 ``BaseChatModel`` stub emits one terminal/python_repl tool call, then idles.
 KNOWN MECHANICS discovered while writing this (see notepad learnings):

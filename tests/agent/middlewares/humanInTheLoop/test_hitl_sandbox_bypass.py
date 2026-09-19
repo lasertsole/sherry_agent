@@ -81,7 +81,7 @@ _SENTINEL_REPL = "__REPL_EXECUTED__"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Scripted model + real-graph harness (mirrors the ``module`` marker
-# characterization and tests/full/test_hitl_real_graph.py)
+# characterization and test_hitl_real_graph.py)
 # ─────────────────────────────────────────────────────────────────────────────
 class _ScriptedModel(BaseChatModel):
     """Emits one scripted tool call, then idles."""

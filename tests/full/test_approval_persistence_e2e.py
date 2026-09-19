@@ -13,7 +13,7 @@ Marker policy: tagged ``llm_e2e``, so a bare ``pytest`` run deselects it via the
 ``tests/run_tests_split.py`` additionally ``--ignore``s ``tests/full/`` outright.
 The tag is what keeps the file restricted to explicit invocation.
 
-Harness shape mirrors ``tests/full/test_hitl_real_graph.py`` (real compiled
+Harness shape mirrors ``tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py`` (real compiled
 graph + real ``langgraph.types.interrupt`` propagation), with two differences:
 the model is the live main LLM instead of a stub, and a probe tool is
 registered under ``interrupted_tools`` so the approval gate is the real
