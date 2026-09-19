@@ -5,7 +5,7 @@ Covers:
 - ``approval``      — 6-layer approval pipeline, smart approval, tool approval
 - ``gates``         — write gate, interrupt manager, MCP, kanban, pairing, slash confirm
 - ``core``          — humanInTheLoop middleware orchestration + hooks
-- server contract  — ``get_pending_interrupt`` / ``resume_agent``
+- server contract  — ``get_pending_interrupt``
 """
 
 from __future__ import annotations
@@ -712,7 +712,7 @@ def test_interrupted_tools_false_skipped(unit_test_config):
 
 
 # ────────────────────────────────────────────────────────────────────────────
-# server contract: get_pending_interrupt / resume_agent
+# server contract: get_pending_interrupt
 # ────────────────────────────────────────────────────────────────────────────
 
 
@@ -789,15 +789,6 @@ async def test_get_pending_interrupt_reads_executed_action(unit_test_config, mon
         "description": "Clone a repo",
         "allowed_decisions": ["approve", "reject"],
     }
-
-
-@pytest.mark.skip(
-    reason="Assumes server contract shape requires presence of a request context; covered by above cases"
-)
-def test_resume_agent_runs(unit_test_config):
-    from server.service.messages import resume_agent
-
-    assert callable(resume_agent)
 
 
 def test_bloked_message_exported():
