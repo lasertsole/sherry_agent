@@ -43,6 +43,8 @@ from langchain.agents.middleware.types import ModelRequest
 from loguru import logger
 
 from config.features import LLM_RETRY
+from agent.middlewares.llm_capability_cache import set_capability
+from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from pub.func.retry_utils import jittered_backoff
 from pub.types.llm import FallbackCandidate
@@ -109,6 +111,13 @@ class LLMRetryMiddleware(AgentMiddleware):
                 classified = classify_api_error(exc)
                 if classified.should_compress:
                     raise  # Summarization's T4/T5 recovery loop owns overflow errors
+                if classified.reason == FailoverReason.multimodal_not_supported:
+                    rebound = self._try_multimodal_fallback(request, session_id)
+                    if rebound is None:
+                        raise
+                    request = rebound
+                    retry_count = 0
+                    continue
                 rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
                 if rebound is not None:
                     request = rebound
@@ -174,6 +183,13 @@ class LLMRetryMiddleware(AgentMiddleware):
                 classified = classify_api_error(exc)
                 if classified.should_compress:
                     raise  # Summarization's T4/T5 recovery loop owns overflow errors
+                if classified.reason == FailoverReason.multimodal_not_supported:
+                    rebound = self._try_multimodal_fallback(request, session_id)
+                    if rebound is None:
+                        raise
+                    request = rebound
+                    retry_count = 0
+                    continue
                 rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
                 if rebound is not None:
                     request = rebound
@@ -378,6 +394,55 @@ class LLMRetryMiddleware(AgentMiddleware):
         if stub_reason == FailoverReason.timeout:
             self._bump_stale_streak(session_id)
 
+    # ---- native multimodal → skill fallback ------------------------------
+
+    def _try_multimodal_fallback(
+        self, request: ModelRequest, session_id: str
+    ) -> ModelRequest | None:
+        """Fall back from native multimodal to the skill-based path.
+
+        Only triggers while the session is in an auto-mode native attempt
+        (``_multimodal_trying_native``): the model just rejected the media
+        blocks, so record the rejection in the process-wide capability cache
+        for every media family present in the request and rewrite the request's
+        messages onto the skill path. Returns None when no fallback applies —
+        the caller then re-raises the original error.
+        """
+        from agent.middlewares.media_pipeline.core import (
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            MULTIMODAL_TRYING_NATIVE_KEY,
+            apply_skill_fallback,
+        )
+
+        if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
+            logger.debug("Multimodal error outside an auto-mode native attempt — no fallback")
+            return None
+        state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False)
+
+        messages = getattr(request, "messages", None) or []
+        media_types = _detect_media_types_in_messages(messages)
+        if not media_types:
+            return None
+
+        model_key = state_register_mem.get_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, "")
+        if model_key:
+            provider, _, model = model_key.partition("/")
+            for media in media_types:
+                set_capability(provider, model, media, "unsupported")
+            logger.warning(
+                "Native multimodal rejected by {}/{} (media: {}) — falling back to the skill path",
+                provider,
+                model,
+                ", ".join(sorted(media_types)),
+            )
+
+        new_messages = apply_skill_fallback(list(messages), session_id)
+        try:
+            return request.override(messages=new_messages)
+        except Exception as exc:
+            logger.error("Failed to override messages for multimodal fallback: {}", exc)
+            return None
+
     # ---- fallback chain ---------------------------------------------------
 
     def _apply_sticky_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest:
@@ -423,3 +488,19 @@ class LLMRetryMiddleware(AgentMiddleware):
                 exc,
             )
             return None
+
+
+def _detect_media_types_in_messages(messages: list[Any]) -> set[MediaType]:
+    """Collect the media families of every multimodal content item in `messages`."""
+    found: set[MediaType] = set()
+    for mes in messages:
+        content = getattr(mes, "content", None)
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            media = MEDIA_TYPE_BY_ITEM.get(item.get("type", ""))
+            if media is not None:
+                found.add(media)
+    return found
