@@ -503,6 +503,8 @@ default              -> "[tool] output {len} chars, first 100: ..."
 3. 收集该会话的活动 flow id。
 4. 调用 `save_session_end_state(...)`，写入 `src/data/session_continuity/{safe-key}.json`（`session_continuity.py:25`），字段为 `last_session_id`、`ended_at`、`ended_ts`、`summary`、`taskflow_ids`。
 
+在删除消息存储之后，`clear_session` 还会清理该会话的**计划存储**——`agent.tools.todolist.registry.store_sqlite.delete_todos_by_session(session_id)` 与 `agent.tools.taskflow.registry.store_sqlite.delete_flows_by_session(session_id)`——因此被清除的会话不会留下任何 todo 或任务流残留。删除是尽力而为的（失败会记录日志，绝不阻塞其余清理），只删除 `session_id` 匹配的行，且隔离前的任务流行（`session_id = ''`）永远不会被匹配。
+
 下一个会话通过 `build_continuity_prompt(session_id)`（`session_continuity.py:80`）读取它，它由 `workspace/prompt_builder.py:169` 的 `_build_continuity_block` 调用，并在构建完整提示词时注入（`prompt_builder.py:289-295`）：
 
 ```
@@ -516,7 +518,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## ♻️ TaskFlow 自动恢复
 
-活动 flow 会被重新浮现到系统提示词中，使新会话能接手未完成的工作。三个独立的读取者使用同一套配方——`requester_session_key(session_id)` + `get_active_flows_sync()` + `state["creator_session_key"]` 过滤：
+活动 flow 会被重新浮现到系统提示词中，使新会话能接手未完成的工作。三个独立的读取者使用同一套配方——会话级 `get_active_flows_sync(session_id)`，经由 `PromptDataProvider.get_active_flows(session_id)` 获取：
 
 | 读取者 | 位置 | 用途 |
 | :--- | :--- | :--- |

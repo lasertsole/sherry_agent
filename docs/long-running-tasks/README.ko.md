@@ -503,6 +503,8 @@ default              -> "[tool] output {len} chars, first 100: ..."
 3. 해당 세션의 활성 flow id를 수집합니다.
 4. `save_session_end_state(...)`를 `src/data/session_continuity/{safe-key}.json`에 씁니다(`session_continuity.py:25`). 필드는 `last_session_id`, `ended_at`, `ended_ts`, `summary`, `taskflow_ids`입니다.
 
+메시지 저장소 삭제 후, `clear_session`은 해당 세션의 **계획 저장소**도 정리합니다——`agent.tools.todolist.registry.store_sqlite.delete_todos_by_session(session_id)`와 `agent.tools.taskflow.registry.store_sqlite.delete_flows_by_session(session_id)`——따라서 정리된 세션에는 todo나 태스크 플로우 잔여물이 남지 않습니다. 삭제는 베스트 에포트이며(실패는 로그로 남고 나머지 정리를 막지 않음), `session_id`가 일치하는 행만 삭제되고, 격리 이전의 태스크 플로우 행(`session_id = ''`)은 절대 매칭되지 않습니다.
+
 다음 세션은 `build_continuity_prompt(session_id)`(`session_continuity.py:80`)로 이를 읽습니다. 이는 `workspace/prompt_builder.py:169`의 `_build_continuity_block`에서 호출되며 전체 프롬프트를 구성할 때 주입됩니다(`prompt_builder.py:289-295`):
 
 ```
@@ -516,7 +518,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## ♻️ TaskFlow 자동 재개
 
-활성 flow는 시스템 프롬프트로 다시 떠올라 새 세션이 미완료 작업을 이어받을 수 있게 합니다. 세 개의 독립적 판독기가 같은 레시피를 씁니다 — `requester_session_key(session_id)` + `get_active_flows_sync()` + `state["creator_session_key"]` 필터:
+활성 flow는 시스템 프롬프트로 다시 떠올라 새 세션이 미완료 작업을 이어받을 수 있게 합니다. 세 개의 독립적 판독기가 같은 레시피를 씁니다 — 세션 범위의 `get_active_flows_sync(session_id)`를 `PromptDataProvider.get_active_flows(session_id)`를 통해 가져옵니다:
 
 | 판독기 | 위치 | 목적 |
 | :--- | :--- | :--- |

@@ -503,6 +503,8 @@ default              -> "[tool] output {len} chars, first 100: ..."
 3. そのセッションのアクティブ flow id を収集します。
 4. `save_session_end_state(...)` を `src/data/session_continuity/{safe-key}.json` に書き込みます（`session_continuity.py:25`）。フィールドは `last_session_id`、`ended_at`、`ended_ts`、`summary`、`taskflow_ids` です。
 
+メッセージストアの削除後、`clear_session` はそのセッションの**計画ストア**もパージします——`agent.tools.todolist.registry.store_sqlite.delete_todos_by_session(session_id)` と `agent.tools.taskflow.registry.store_sqlite.delete_flows_by_session(session_id)`——そのため、クリアされたセッションに todo やタスクフローの残骸は残りません。削除はベストエフォートで（失敗はログに記録され、残りのパージをブロックしません）、`session_id` が一致する行だけが削除され、分離前のタスクフロー行（`session_id = ''`）は決して一致しません。
+
 次のセッションは `build_continuity_prompt(session_id)`（`session_continuity.py:80`）でこれを読みます。これは `workspace/prompt_builder.py:169` の `_build_continuity_block` から呼ばれ、完全なプロンプトを構築するときに注入されます（`prompt_builder.py:289-295`）：
 
 ```
@@ -516,7 +518,7 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 ## ♻️ TaskFlow 自動再開
 
-アクティブな flow はシステムプロンプトへ再浮上し、新しいセッションが未完了の作業を引き継げるようにします。3 つの独立した読み取りが同じレシピを使います——`requester_session_key(session_id)` + `get_active_flows_sync()` + `state["creator_session_key"]` フィルタ：
+アクティブな flow はシステムプロンプトへ再浮上し、新しいセッションが未完了の作業を引き継げるようにします。3 つの独立した読み取りが同じレシピを使います——セッション単位の `get_active_flows_sync(session_id)` を `PromptDataProvider.get_active_flows(session_id)` 経由で取得します：
 
 | 読み取り | 場所 | 目的 |
 | :--- | :--- | :--- |
