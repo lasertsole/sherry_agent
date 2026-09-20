@@ -17,7 +17,7 @@ caller, Robyn 0.84's ``shutdown_handler`` is registered yet never invoked on
 SIGINT/SIGTERM (verified with a live probe), and ``atexit`` is synchronous.
 The exit drain is therefore bounded to ``timeout=0`` — it flips drain mode,
 reports the final per-lane counters, and never delays process exit.
-In-flight turns are abandoned to the OS (plan §14: acceptable).
+In-flight turns are abandoned to the OS; the drain reports counters and exits.
 """
 
 from __future__ import annotations
