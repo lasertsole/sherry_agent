@@ -229,3 +229,138 @@ def test_allowlisted_hit_is_skipped_and_reprinted(
     assert "allowlisted: 1" in out
     assert f"  - .: {reason}" in out
     assert "VERDICT: PASS" in out
+
+
+# --- Blind spot B: heading reorder under an unchanged level sequence ---------
+
+_MARKER_BODY = {
+    "en": (
+        "This section carries enough English prose for the body-length ratio check to compare a"
+        " real sample against its translation without tripping the near-empty rule."
+    ),
+    "zh": "本节包含足够长度的中文正文，使长度比检查能够将真实样本与其译文进行比较，而不会触发近空规则。",
+    "ja": "このセクションには、長さ比チェックが実サンプルと翻訳を比較できるだけの十分な長さの日本語本文が含まれています。",
+    "ko": "이 섹션에는 길이 비율 검사가 실제 샘플과 번역을 비교할 수 있을 만큼 충분히 긴 한국어 본문이 포함되어 있습니다.",
+}
+
+
+def _render_marker_sections(lang: str, headings: list[str]) -> str:
+    """Four-language fixture whose headings are the supplied Markdown lines."""
+    text = f"# {_TITLES[lang]}\n\nIntro paragraph.\n"
+    for heading in headings:
+        text += f"\n{heading}\n\n{_MARKER_BODY[lang]}\n"
+    return text
+
+
+def test_reordered_marked_headings_fail_with_first_divergence(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Given swapped marker-bearing headings with identical levels, the gate fails."""
+    _write_group(
+        tmp_path,
+        {
+            "en": _render_marker_sections("en", ["## `alpha`", "## `beta`", "## `gamma`"]),
+            "zh": _render_marker_sections("zh", ["## `beta`", "## `alpha`", "## `gamma`"]),
+            "ja": _render_marker_sections("ja", ["## `alpha`", "## `beta`", "## `gamma`"]),
+            "ko": _render_marker_sections("ko", ["## `alpha`", "## `beta`", "## `gamma`"]),
+        },
+    )
+
+    assert parity.main(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "heading markers diverge at position 0" in out
+    assert "reference code:alpha vs translation code:beta" in out
+    assert "VERDICT: FAIL" in out
+
+
+def test_consistent_marker_order_including_markerless_and_link_headings_passes(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A consistent order — marker-less and link-target headings included — passes."""
+    _write_group(
+        tmp_path,
+        {
+            lang: _render_marker_sections(
+                lang,
+                ["## `alpha`", "## Overview", f"## [Guide]({_DESTS[lang]})", "## `gamma`"],
+            )
+            for lang in _FILES
+        },
+    )
+
+    assert parity.main(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "VERDICT: PASS" in out
+    assert "section pairing:" in out
+    assert "pairing note:" in out
+
+
+# --- Blind spot A: long but stale translation (missing invariant tokens) -----
+
+_TOKEN_EN = (
+    "The persistence layer reads `TOOL_CALL_TIMEOUT_MINUTES` and hashes paths with `sha256[:16]`"
+    " before writing them under `agent/tools/todolist/registry/`, which is why the section is"
+    " long enough to defeat a near-empty check on its own."
+)
+_TOKEN_KEPT = {
+    "zh": (
+        "持久化层读取 `TOOL_CALL_TIMEOUT_MINUTES`，并用 `sha256[:16]` 对路径做哈希，再写入"
+        " `agent/tools/todolist/registry/` 目录，因此这一段正文足够长，不会触发近空检查。"
+    ),
+    "ja": (
+        "永続化レイヤーは `TOOL_CALL_TIMEOUT_MINUTES` を読み、`sha256[:16]` でパスをハッシュして"
+        " `agent/tools/todolist/registry/` の下に書き込みます。この本文は近空チェックを回避できる"
+        " 十分な長さです。"
+    ),
+    "ko": (
+        "영속화 계층은 `TOOL_CALL_TIMEOUT_MINUTES`를 읽고 `sha256[:16]`로 경로를 해시한 뒤"
+        " `agent/tools/todolist/registry/` 아래에 기록합니다. 이 본문은 근접 빈 섹션 검사를 피할"
+        " 만큼 충분히 깁니다."
+    ),
+}
+_TOKEN_DROPPED = (
+    "这段译文在讲同一件事，但故意一个代码标识符或路径都没有保留下来，同时正文长度仍然足够长，"
+    "因此旧的近空长度比指标完全看不出这里有内容缺失。"
+)
+
+
+def _render_token_section(lang: str, body: str) -> str:
+    return f"# {_TITLES[lang]}\n\nIntro paragraph.\n\n## Section One\n\n{body}\n"
+
+
+def test_long_but_stale_translation_missing_tokens_fails(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Given a long translation that dropped all of EN's code spans/paths, the gate fails."""
+    overrides = {
+        "en": _render_token_section("en", _TOKEN_EN),
+        "zh": _render_token_section("zh", _TOKEN_DROPPED),
+        "ja": _render_token_section("ja", _TOKEN_KEPT["ja"]),
+        "ko": _render_token_section("ko", _TOKEN_KEPT["ko"]),
+    }
+    _write_group(tmp_path, overrides)
+
+    assert parity.main(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "missing invariant tokens" in out
+    assert "`TOOL_CALL_TIMEOUT_MINUTES`" in out
+    assert "`sha256[:16]`" in out
+    assert "`agent/tools/todolist/registry/`" in out
+    assert "VERDICT: FAIL" in out
+
+
+def test_long_translation_retaining_tokens_passes(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A long translation that keeps the reference tokens passes the invariant-token gate."""
+    _write_group(
+        tmp_path,
+        {
+            "en": _render_token_section("en", _TOKEN_EN),
+            **{lang: _render_token_section(lang, _TOKEN_KEPT[lang]) for lang in ("zh", "ja", "ko")},
+        },
+    )
+
+    assert parity.main(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "VERDICT: PASS" in out
