@@ -35,7 +35,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Skill Management Tools**: the agent can list, view, and manage skills at runtime; third-party uploads (`skills/plugins/`) stay inactive until explicitly enabled
 - **SkillSpector Security Scanning** ([server/service/skill_scanner.py](server/service/skill_scanner.py)): third-party skills are scanned by NVIDIA SkillSpector (static YARA/rule analysis + optional LLM semantic analysis via the auxiliary LLM) before activation; flagged skills are blocked from installation
 - **Skill Curator**: the context-engine curator thread maintains auto-learned skills under `skills/auto/` — see the [Experience README](docs/experience/README.md)
-- **Tool Timeouts**: tool calls are bounded by `TOOL_CALL_TIMEOUT_MINUTES` (default 5) to prevent deadlocks
+- **Tool Timeouts**: real per-tool limits come from the `TOOLS_TIMEOUTS` registry (`WEB_SEARCH_TIMEOUT=15`, `TERMINAL_TIMEOUT=30`, `PYTHON_REPL_TIMEOUT=30`); `TOOL_CALL_TIMEOUT_MINUTES` is a stored setting that **no execution path consumes**
 - ▶️ _See the [Middlewares README](agent/middlewares/README.md) for the middleware pipeline (guardrails, iteration budget, HITL, normalization, summarization, multimodal processing)_
 
 ### 3. 🤖 Multi-level Subagent System
@@ -308,7 +308,7 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector security scanner switch (on by default); LLM semantic analysis is opt-in (off by default) and requires a provider supporting json_schema structured output |
-| `TOOL_CALL_TIMEOUT_MINUTES` / `LOG_LEVEL` | — | Tool timeout (5) and log level (INFO) |
+| `TOOL_CALL_TIMEOUT_MINUTES` (sherry.jsonc) / `LOG_LEVEL` | — | Stored setting only (default 5) — no tool-execution path consumes it; log level (INFO) |
 | `WORKSPACE_TEMPLATE_LANG` | — | Persona template language: `en` / `zh` / `ja` / `ko` (lazy-copied on first use) |
 | `"LANGSMITH"` (sherry.jsonc) | — | Optional LangSmith tracing |
 

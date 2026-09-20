@@ -35,7 +35,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **스킬 관리 도구**: 에이전트가 런타임에 스킬을 나열, 조회, 관리할 수 있습니다. 서드파티 업로드 스킬(`skills/plugins/`)은 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다
 - **SkillSpector 보안 스캔**([server/service/skill_scanner.py](server/service/skill_scanner.py)): 서드파티 스킬은 활성화 전에 NVIDIA SkillSpector로 스캔됩니다(정적 YARA/룰 분석 + auxiliary LLM을 통한 선택적 LLM 시맨틱 분석). 플래그가 지정된 스킬은 설치가 차단됩니다
 - **스킬 큐레이터**: context engine의 curator 스레드가 `skills/auto/` 하위의 자동 학습 스킬을 관리 — 자세한 내용은 [Experience README](docs/experience/README.ko.md)
-- **도구 타임아웃**: 도구 호출은 `TOOL_CALL_TIMEOUT_MINUTES`(기본값 5)로 제한되어 교착 상태를 방지
+- **도구 타임아웃**: 실제 도구별 제한은 `TOOLS_TIMEOUTS` 레지스트리(`WEB_SEARCH_TIMEOUT=15`, `TERMINAL_TIMEOUT=30`, `PYTHON_REPL_TIMEOUT=30`)에서 오며, `TOOL_CALL_TIMEOUT_MINUTES`는 저장 설정일 뿐 **어떤 실행 경로도 소비하지 않습니다**
 - ▶️ _미들웨어 파이프라인(가드레일, 반복 예산, HITL, 정규화, 요약, 멀티모달 처리)은 [Middlewares README](agent/middlewares/README.md) 참조_
 
 ### 3. 🤖 멀티레벨 서브에이전트 시스템
@@ -308,7 +308,7 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 보안 스캐너 스위치(기본값 켜짐) |
-| `TOOL_CALL_TIMEOUT_MINUTES` / `LOG_LEVEL` | — | 도구 타임아웃(5분) 및 로그 레벨(INFO) |
+| `TOOL_CALL_TIMEOUT_MINUTES`(sherry.jsonc) / `LOG_LEVEL` | — | 저장 설정일 뿐(기본값 5) — 도구 실행 경로가 소비하지 않음; 로그 레벨(INFO) |
 | `WORKSPACE_TEMPLATE_LANG` | — | 페르소나 템플릿 언어: `en` / `zh` / `ja` / `ko`(첫 사용 시 지연 복사) |
 | `"LANGSMITH"` (sherry.jsonc) | — | 선택적 LangSmith 트레이싱 |
 

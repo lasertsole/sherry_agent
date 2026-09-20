@@ -35,7 +35,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
 - **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
 - **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](docs/experience/README.ja.md)
-- **ツールタイムアウト**：ツール呼び出しは `TOOL_CALL_TIMEOUT_MINUTES`（デフォルト 5）で制限され、デッドロックを防止
+- **ツールタイムアウト**：実際のツール別制限は `TOOLS_TIMEOUTS` レジストリ（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）から取得されます。`TOOL_CALL_TIMEOUT_MINUTES` は保存設定にすぎず、**どの実行パスも消費しません**
 - ▶️ _ミドルウェアパイプライン（ガードレール、反復予算、HITL、正規化、要約、マルチモーダル処理）の詳細は [Middlewares README](agent/middlewares/README.md) を参照_
 
 ### 3. 🤖 マルチレベルサブエージェントシステム
@@ -308,7 +308,7 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector セキュリティスキャンのスイッチ（デフォルトで有効） |
-| `TOOL_CALL_TIMEOUT_MINUTES` / `LOG_LEVEL` | — | ツールタイムアウト（5 分）とログレベル（INFO） |
+| `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 保存設定のみ（デフォルト 5）— ツール実行パスは消費しません。ログレベル（INFO） |
 | `WORKSPACE_TEMPLATE_LANG` | — | ペルソナテンプレートの言語：`en` / `zh` / `ja` / `ko`（初回使用時に遅延コピー） |
 | `"LANGSMITH"`（sherry.jsonc） | — | オプションの LangSmith トレーシング |
 
