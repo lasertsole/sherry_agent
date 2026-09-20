@@ -3,9 +3,11 @@
 > 基于 `PROTECTION_COMPARISON.md` 对比报告，筛选 DeepAgents 中 Sherry 可落地的防护能力，给出具体实现方案。
 > 优先级：P1(增强体验) → P2(长期优化)
 >
-> **未执行项清单**：P1-3 模型感知摘要默认值、P1-6 中间件脚手架保护、P1-7 多模态内容清理、P1-8 威胁模型文档、P2-1 ripgrep 双重超时看门狗（已完成项见 git 历史）。
+> **未执行项清单**：P1-3 模型感知摘要默认值、P1-6 中间件脚手架保护、P1-8 威胁模型文档、P2-1 ripgrep 双重超时看门狗（已完成项见 git 历史）。
 >
 > **已评估不落地**：P1-4 增量检查点优化（`aclean_old_checkpoints` 每线程只留最新，检查点存储已是 O(N)；`DeltaChannel` 与 keep-latest 剪枝不兼容，实测静默丢状态）、P1-5 消息增量缩减器（标准 `add_messages` 已覆盖去重/墓碑/重置，自定义 reducer 会破坏 P1-9 同 id 替换语义）。
+>
+> **已落地**：P1-7 多模态内容清理（每请求能力擦洗 + 按块部分剥离）。落点与提案不同——未新建 `agent/middlewares/multimodal_scrub.py`，实现为 `MultimodalProcessor.wrap_model_call` + `agent/middlewares/media_pipeline/scrub.py`（每请求、request-only、按块部分剥离；state/checkpointer/MesMemory 不动）。
 
 ---
 
@@ -13,10 +15,9 @@
 
 1. [P1-3：模型感知摘要默认值](#p1-3模型感知摘要默认值)
 2. [P1-6：中间件脚手架保护](#p1-6中间件脚手架保护)
-3. [P1-7：多模态内容清理](#p1-7多模态内容清理)
-4. [P1-8：威胁模型文档](#p1-8威胁模型文档)
-5. [P2-1：ripgrep 双重超时看门狗](#p2-1ripgrep-双重超时看门狗)
-6. [实施优先级与依赖关系总览](#实施优先级与依赖关系总览)
+3. [P1-8：威胁模型文档](#p1-8威胁模型文档)
+4. [P2-1：ripgrep 双重超时看门狗](#p2-1ripgrep-双重超时看门狗)
+5. [实施优先级与依赖关系总览](#实施优先级与依赖关系总览)
 
 ---
 
@@ -109,58 +110,6 @@ def validate_required_middleware(active_middleware: list[str]) -> None:
 
 ---
 
-## P1-7：多模态内容清理
-
-### 问题
-
-当模型不支持某些内容类型（如视频帧），Sherry 没有清理机制，可能导致 API 调用失败。
-
-### DeepAgents 做法
-
-`_scrub_unsupported_multimodal_content()` 替换模型不支持的内容块为文本占位符。
-
-### 具体实现方案
-
-#### 文件清单
-
-| 文件                                    | 修改类型 | 说明           |
-| --------------------------------------- | -------- | -------------- |
-| `agent/middlewares/multimodal_scrub.py` | 新建     | 多模态内容清理 |
-
-#### 实现代码
-
-```python
-from langchain_core.messages import HumanMessage
-
-def scrub_unsupported_content(
-    messages: list,
-    supported_types: set[str],
-) -> list:
-    """替换模型不支持的多模态内容块为文本占位符。"""
-    result = []
-    for msg in messages:
-        if not isinstance(msg, HumanMessage):
-            result.append(msg)
-            continue
-        if not isinstance(msg.content, list):
-            result.append(msg)
-            continue
-        new_content = []
-        for block in msg.content:
-            block_type = block.get("type") if isinstance(block, dict) else None
-            if block_type and block_type in supported_types:
-                new_content.append(block)
-            else:
-                new_content.append({
-                    "type": "text",
-                    "text": f"[unsupported content type: {block_type}]",
-                })
-        result.append(HumanMessage(content=new_content))
-    return result
-```
-
----
-
 ## P1-8：威胁模型文档
 
 ### 问题
@@ -223,6 +172,7 @@ DeepAgents 参考：`threading.Timer` 看门狗 → SIGTERM → 5s 等待 → SI
 
 ## 实施优先级与依赖关系总览
 
-- **独立实施**：P1-3 模型感知摘要默认值、P1-6 中间件脚手架保护、P1-7 多模态内容清理、P1-8 威胁模型文档
+- **独立实施**：P1-3 模型感知摘要默认值、P1-6 中间件脚手架保护、P1-8 威胁模型文档
+- **已落地**：P1-7 多模态内容清理（见头部"已落地"行；落点为 `MultimodalProcessor.wrap_model_call` + `agent/middlewares/media_pipeline/scrub.py`，非提案中的 `agent/middlewares/multimodal_scrub.py`）
 - **已评估不落地**：P1-4 增量检查点优化（前提被现有 `aclean_old_checkpoints` 剪枝消除，DeltaChannel+现剪枝会静默丢状态）、P1-5 消息增量缩减器（标准 `add_messages` 已覆盖，且样例语义会破坏 P1-9）
 - **增量改进**：P2-1 ripgrep 双重超时看门狗（疑似不适用，见小节）
