@@ -2,7 +2,7 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> TaskFlow provides durable, cross-turn task flows persisted in SQLite with optimistic locking, detached subagent step dispatch, DAG-based dependency management, parallel batch dispatch, bounded-poll waiting, and idempotent result injection. Ten tools form a complete lifecycle API mirroring the openclaw managedFlows surface: `taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`, with `taskflow_summary` for read-only re-read and `taskflow_set_waiting` for parking.
+> TaskFlow provides durable, cross-turn task flows persisted in SQLite with optimistic locking, detached subagent step dispatch, DAG-based dependency management, parallel batch dispatch, bounded-poll waiting, and idempotent result injection. Fourteen tools form a complete lifecycle API mirroring the openclaw managedFlows surface: `taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`, with `taskflow_summary` for read-only re-read, `taskflow_set_waiting` for parking, `taskflow_progress` for progress reports, `taskflow_budget` for token/cost budgets, `taskflow_update_steps` for full steps replacement, and `taskflow_list` for the session-scoped board.
 
 Source of truth: `agent/tools/taskflow/tools/*.py`, `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/taskflow/config.py`. Skill reference: `skills/builtin/core/taskflow/SKILL.md`.
 
@@ -13,7 +13,7 @@ Source of truth: `agent/tools/taskflow/tools/*.py`, `agent/tools/taskflow/regist
 - [Overview](#overview)
 - [Architecture](#architecture)
 - [State Machine](#state-machine)
-- [Tool Family (10 Tools)](#tool-family-10-tools)
+- [Tool Family (14 Tools)](#tool-family-14-tools)
 - [Optimistic Locking & Conflict Retry](#optimistic-locking--conflict-retry)
 - [DAG Dependency System](#dag-dependency-system)
 - [Parallel Step Execution](#parallel-step-execution)
@@ -42,7 +42,7 @@ Key design choices:
 
 ```
 agent/tools/taskflow/
-├── __init__.py              # Package exports (8 tools re-exported)
+├── __init__.py              # Package exports (11 tools re-exported)
 ├── config.py                # TaskFlowStatus, StepStatus enums, TERMINAL_STATUSES, TABLE_NAME
 ├── registry/
 │   ├── __init__.py
@@ -50,7 +50,7 @@ agent/tools/taskflow/
 │                            #   FlowConflictError/FlowNotFoundError/FlowExistsError,
 │                            #   sync path (get_flow_sync)
 └── tools/
-    ├── __init__.py           # build_taskflow_tools() → 10 tools, scope=main_only
+    ├── __init__.py           # build_taskflow_tools() → 14 tools, scope=main_only
     ├── _dispatch.py          # Monkeypatchable dispatch seam (spawn_subagent_direct)
     ├── _shared.py            # DAG helpers + conflict-retry persistence
     ├── taskflow_create.py    # Create flow at revision 1
@@ -60,6 +60,10 @@ agent/tools/taskflow/
     ├── taskflow_resume.py    # Inject result, mark done, unlock dependents (idempotent)
     ├── taskflow_set_waiting.py # Park flow in waiting state
     ├── taskflow_summary.py   # Read-only re-read (also post-conflict re-read)
+    ├── taskflow_progress.py  # Read-only progress report
+    ├── taskflow_budget.py    # Token/cost budget query and set
+    ├── taskflow_update_steps.py # Full replacement of the steps list
+    ├── taskflow_list.py      # Session-scoped flow board
     ├── taskflow_finish.py    # Mark done (terminal)
     ├── taskflow_fail.py      # Mark failed (terminal)
     └── taskflow_cancel.py    # Cancel flow (terminal)
@@ -67,7 +71,7 @@ agent/tools/taskflow/
 
 ### Registration
 
-Tools are registered via `build_taskflow_tools()` in `agent/tools/taskflow/tools/__init__.py`, which returns all 10 tools tagged with `metadata = {"scope": "main_only"}` and `handle_tool_error = True`. The subagent tool-policy drops them unconditionally — only the main agent manages shared flow state.
+Tools are registered via `build_taskflow_tools()` in `agent/tools/taskflow/tools/__init__.py`, which returns all 14 tools tagged with `metadata = {"scope": "main_only"}` and `handle_tool_error = True`. The subagent tool-policy drops them unconditionally — only the main agent manages shared flow state.
 
 ---
 
@@ -106,7 +110,7 @@ Steps without a `status` field are handled by `step_status()`: a step with a `ch
 
 ---
 
-## Tool Family (10 Tools)
+## Tool Family (14 Tools)
 
 ### taskflow_create
 
@@ -196,6 +200,44 @@ async def taskflow_summary(flow_id: str) -> str
 ```
 
 Read-only re-read of the full flow state: status, revision, child_session_key, description, all steps (with status, depends_on, child_session_key), step status counts, results, wait payload, summary, failure_reason, cancel_reason. Also the designated re-read step after a revision conflict.
+
+### taskflow_progress
+
+```python
+async def taskflow_progress(flow_id: str) -> str
+```
+
+Read-only completion report: completion percentage, status breakdown, next steps, and an estimated remaining time (when at least two `done` steps carry a `dispatched_at` timestamp). Never mutates the flow.
+
+### taskflow_budget
+
+```python
+async def taskflow_budget(
+    flow_id: str, action: str = "query", token_budget: int | None = None,
+    expected_revision: int | None = None,
+) -> str
+```
+
+Queries (`query`) or sets (`set`) the flow's token/cost budget. `query` reports `total_tokens`, `total_cost`, the budget, tokens remaining, and a status (`ok` / `WARNING` at 80% / `EXCEEDED`); `set` requires a positive `token_budget` and writes through the optimistic lock.
+
+### taskflow_update_steps
+
+```python
+async def taskflow_update_steps(
+    flow_id: str, steps: list[dict],
+    expected_revision: int | None = None,
+) -> str
+```
+
+Full replacement of the flow's steps list (like `todowrite` for TaskFlow): steps can be added, removed, reordered, or have their `task`/`depends_on` rewritten. Safety rules keep a `dispatched` step bound to its `child_session_key` and refuse to rewrite a `done` step; deleting a `dispatched` step whose child still runs succeeds with a non-blocking `Warning:` naming the child key.
+
+### taskflow_list
+
+```python
+async def taskflow_list(status_filter: str = "active") -> str
+```
+
+Read-only board of this session's flows: `"active"` (running + waiting), `"all"` (terminal statuses included), or an exact status name. Every read filters the owning `session_id` in SQL; the rendered table caps the description at 40 chars and derives `updated_at` from the flow's activity stamps.
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

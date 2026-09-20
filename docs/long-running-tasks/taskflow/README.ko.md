@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> TaskFlow는 SQLite(낙관적 락, WAL 모드) 기반의 턴 간 영속 태스크 플로우 관리 시스템입니다. 핵심 기능: 분리된 서브에이전트 단계 디스패치, DAG 기반 의존성 관리, 배치 병렬 디스패치, 유계 폴링 대기, 멱등 결과 주입. 10개의 도구가 완전한 라이프사이클 API를 구성하며 openclaw managedFlows 인터페이스와 대응됩니다: `taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`, 그리고 `taskflow_summary`(읽기 전용 재조회)와 `taskflow_set_waiting`(대기 상태 전환).
+> TaskFlow는 SQLite(낙관적 락, WAL 모드) 기반의 턴 간 영속 태스크 플로우 관리 시스템입니다. 핵심 기능: 분리된 서브에이전트 단계 디스패치, DAG 기반 의존성 관리, 배치 병렬 디스패치, 유계 폴링 대기, 멱등 결과 주입. 14개의 도구가 완전한 라이프사이클 API를 구성하며 openclaw managedFlows 인터페이스와 대응됩니다: `taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`, 그리고 `taskflow_summary`(읽기 전용 재조회), `taskflow_set_waiting`(대기 상태 전환), `taskflow_progress`(진행 보고서), `taskflow_budget`(토큰/비용 예산), `taskflow_update_steps`(단계 목록 전체 교체), `taskflow_list`(세션 보드).
 
 신뢰할 수 있는 소스: `agent/tools/taskflow/tools/*.py`, `agent/tools/taskflow/registry/store_sqlite.py`, `agent/tools/taskflow/config.py`. 스킬 참조: `skills/builtin/core/taskflow/SKILL.md`.
 
@@ -13,7 +13,7 @@
 - [개요](#개요)
 - [아키텍처](#아키텍처)
 - [상태 머신](#상태-머신)
-- [도구 패밀리 (10개 도구)](#도구-패밀리-10개-도구)
+- [도구 패밀리 (14개 도구)](#도구-패밀리-14개-도구)
 - [낙관적 락과 충돌 재시도](#낙관적-락과-충돌-재시도)
 - [DAG 의존성 시스템](#dag-의존성-시스템)
 - [병렬 단계 실행](#병렬-단계-실행)
@@ -42,7 +42,7 @@ TaskFlow(`agent/tools/taskflow/`)는 SQLite(WAL 모드) 기반의 영속적 태�
 
 ```
 agent/tools/taskflow/
-├── __init__.py              # 패키지 내보내기 (8개 도구 재내보내기)
+├── __init__.py              # 패키지 내보내기 (11개 도구 재내보내기)
 ├── config.py                # TaskFlowStatus, StepStatus 열거형, TERMINAL_STATUSES, TABLE_NAME
 ├── registry/
 │   ├── __init__.py
@@ -50,7 +50,7 @@ agent/tools/taskflow/
 │                            #   FlowConflictError/FlowNotFoundError/FlowExistsError,
 │                            #   동기 경로 (get_flow_sync)
 └── tools/
-    ├── __init__.py           # build_taskflow_tools() → 10개 도구, scope=main_only
+    ├── __init__.py           # build_taskflow_tools() → 14개 도구, scope=main_only
     ├── _dispatch.py          # monkeypatch 가능한 디스패치 시임 (spawn_subagent_direct)
     ├── _shared.py            # DAG 헬퍼 + 충돌 재시도 영속화
     ├── taskflow_create.py    # 플로우 생성, 초기 리비전 1
@@ -60,6 +60,10 @@ agent/tools/taskflow/
     ├── taskflow_resume.py    # 결과 주입, 완료 마크, 후속 단계 언락 (멱등)
     ├── taskflow_set_waiting.py # 플로우를 waiting 상태로 전환
     ├── taskflow_summary.py   # 읽기 전용 재조회 (충돌 후 재조회에도 사용)
+    ├── taskflow_progress.py  # 읽기 전용 진행 보고서
+    ├── taskflow_budget.py    # 토큰/비용 예산 조회와 설정
+    ├── taskflow_update_steps.py # 단계 목록 전체 교체
+    ├── taskflow_list.py      # 세션 단위 플로우 보드
     ├── taskflow_finish.py    # 완료 마크 (종단 상태)
     ├── taskflow_fail.py      # 실패 마크 (종단 상태)
     └── taskflow_cancel.py    # 플로우 취소 (종단 상태)
@@ -67,7 +71,7 @@ agent/tools/taskflow/
 
 ### 등록
 
-도구는 `agent/tools/taskflow/tools/__init__.py`의 `build_taskflow_tools()`를 통해 등록되며, 전체 10개 도구를 `metadata = {"scope": "main_only"}` 및 `handle_tool_error = True` 태그와 함께 반환합니다. 서브에이전트 도구 정책은 이를 무조건 폐기——메인 에이전트만 공유 플로우 상태를 관리합니다.
+도구는 `agent/tools/taskflow/tools/__init__.py`의 `build_taskflow_tools()`를 통해 등록되며, 전체 14개 도구를 `metadata = {"scope": "main_only"}` 및 `handle_tool_error = True` 태그와 함께 반환합니다. 서브에이전트 도구 정책은 이를 무조건 폐기——메인 에이전트만 공유 플로우 상태를 관리합니다.
 
 ---
 
@@ -106,7 +110,7 @@ blocked → ready → dispatched → done
 
 ---
 
-## 도구 패밀리 (10개 도구)
+## 도구 패밀리 (14개 도구)
 
 ### taskflow_create
 
@@ -196,6 +200,44 @@ async def taskflow_summary(flow_id: str) -> str
 ```
 
 읽기 전용으로 플로우 상태를 전부 재조회: 상태, 리비전, child_session_key, 설명, 전체 단계(상태, depends_on, child_session_key 포함), 단계 상태 카운트, 결과, 대기 페이로드, 요약, 실패 사유, 취소 사유. 리비전 충돌 후의 지정 재조회 단계이기도 함.
+
+### taskflow_progress
+
+```python
+async def taskflow_progress(flow_id: str) -> str
+```
+
+읽기 전용 완료 보고서: 완료율, 상태 분포, 다음 단계, 예상 남은 시간(`dispatched_at` 타임스탬프가 있는 `done` 단계가 2개 이상일 때). 플로우를 변경하지 않습니다.
+
+### taskflow_budget
+
+```python
+async def taskflow_budget(
+    flow_id: str, action: str = "query", token_budget: int | None = None,
+    expected_revision: int | None = None,
+) -> str
+```
+
+플로우의 토큰/비용 예산을 조회(`query`)하거나 설정(`set`)합니다. `query`는 `total_tokens`, `total_cost`, 예산, 남은 토큰, 상태(`ok` / 80%에서 `WARNING` / `EXCEEDED`)를 보고하고, `set`은 양의 `token_budget`을 요구하며 낙관적 락을 통해 기록합니다.
+
+### taskflow_update_steps
+
+```python
+async def taskflow_update_steps(
+    flow_id: str, steps: list[dict],
+    expected_revision: int | None = None,
+) -> str
+```
+
+플로우의 단계 목록을 전체 교체합니다(TaskFlow의 `todowrite`에 해당): 단계를 추가·삭제·재정렬하거나 `task`/`depends_on`을 다시 쓸 수 있습니다. 안전 규칙은 `dispatched` 단계를 해당 `child_session_key`에 묶어 두고 `done` 단계 재작성을 거부합니다. 자식이 아직 실행 중인 `dispatched` 단계를 삭제하면 성공하지만 자식 키를 명시한 비차단 `Warning:`을 반환합니다.
+
+### taskflow_list
+
+```python
+async def taskflow_list(status_filter: str = "active") -> str
+```
+
+이 세션의 플로우에 대한 읽기 전용 보드: `"active"`(running + waiting), `"all"`(종단 상태 포함), 또는 정확한 상태 이름. 모든 읽기는 소유 `session_id`로 SQL 필터링되며, 렌더링된 표는 설명을 40자로 제한하고 플로우의 활동 타임스탬프에서 `updated_at`을 파생합니다.
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

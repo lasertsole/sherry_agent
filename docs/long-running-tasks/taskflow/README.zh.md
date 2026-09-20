@@ -2,7 +2,7 @@
 
 [English](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> TaskFlow 提供基于 SQLite（乐观锁、WAL 模式）的跨轮次持久化任务流管理。核心能力包括：分离式子代理步骤派发、DAG 依赖管理、批量并行派发、有界轮询等待、幂等结果注入。十个工具构成完整生命周期 API，与 openclaw managedFlows 接口对齐：`taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`，外加 `taskflow_summary`（只读重读）和 `taskflow_set_waiting`（挂起等待）。
+> TaskFlow 提供基于 SQLite（乐观锁、WAL 模式）的跨轮次持久化任务流管理。核心能力包括：分离式子代理步骤派发、DAG 依赖管理、批量并行派发、有界轮询等待、幂等结果注入。十四个工具构成完整生命周期 API，与 openclaw managedFlows 接口对齐：`taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`，外加 `taskflow_summary`（只读重读）、`taskflow_set_waiting`（挂起等待）、`taskflow_progress`（进度报告）、`taskflow_budget`（Token/成本预算）、`taskflow_update_steps`（全量替换步骤列表）和 `taskflow_list`（会话面板）。
 
 权威源码：`agent/tools/taskflow/tools/*.py`、`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/taskflow/config.py`。技能参考：`skills/builtin/core/taskflow/SKILL.md`。
 
@@ -13,7 +13,7 @@
 - [概览](#概览)
 - [架构](#架构)
 - [状态机](#状态机)
-- [工具族（10 个工具）](#工具族10-个工具)
+- [工具族（14 个工具）](#工具族14-个工具)
 - [乐观锁与冲突重试](#乐观锁与冲突重试)
 - [DAG 依赖系统](#dag-依赖系统)
 - [并行步骤执行](#并行步骤执行)
@@ -42,7 +42,7 @@ TaskFlow（`agent/tools/taskflow/`）是基于 SQLite（WAL 模式）的持久�
 
 ```
 agent/tools/taskflow/
-├── __init__.py              # 包导出（重导出 8 个工具）
+├── __init__.py              # 包导出（重导出 11 个工具）
 ├── config.py                # TaskFlowStatus、StepStatus 枚举，TERMINAL_STATUSES，TABLE_NAME
 ├── registry/
 │   ├── __init__.py
@@ -50,7 +50,7 @@ agent/tools/taskflow/
 │                            #   FlowConflictError/FlowNotFoundError/FlowExistsError，
 │                            #   同步路径（get_flow_sync）
 └── tools/
-    ├── __init__.py           # build_taskflow_tools() → 10 个工具，scope=main_only
+    ├── __init__.py           # build_taskflow_tools() → 14 个工具，scope=main_only
     ├── _dispatch.py          # 可 monkeypatch 的派发接缝（spawn_subagent_direct）
     ├── _shared.py            # DAG 辅助函数 + 冲突重试持久化
     ├── taskflow_create.py    # 创建流，初始版本号 1
@@ -60,6 +60,10 @@ agent/tools/taskflow/
     ├── taskflow_resume.py    # 注入结果、标记完成、解锁后继（幂等）
     ├── taskflow_set_waiting.py # 将流挂起为 waiting 状态
     ├── taskflow_summary.py   # 只读重读（亦用于冲突后重读）
+    ├── taskflow_progress.py  # 只读进度报告
+    ├── taskflow_budget.py    # Token/成本预算查询与设置
+    ├── taskflow_update_steps.py # 步骤列表全量替换
+    ├── taskflow_list.py      # 会话级流面板
     ├── taskflow_finish.py    # 标记完成（终态）
     ├── taskflow_fail.py      # 标记失败（终态）
     └── taskflow_cancel.py    # 取消流（终态）
@@ -67,7 +71,7 @@ agent/tools/taskflow/
 
 ### 注册方式
 
-工具通过 `agent/tools/taskflow/tools/__init__.py` 中的 `build_taskflow_tools()` 注册，返回全部 10 个工具，标记 `metadata = {"scope": "main_only"}` 和 `handle_tool_error = True`。子代理工具策略无条件丢弃它们——只有主代理管理共享流状态。
+工具通过 `agent/tools/taskflow/tools/__init__.py` 中的 `build_taskflow_tools()` 注册，返回全部 14 个工具，标记 `metadata = {"scope": "main_only"}` 和 `handle_tool_error = True`。子代理工具策略无条件丢弃它们——只有主代理管理共享流状态。
 
 ---
 
@@ -106,7 +110,7 @@ blocked → ready → dispatched → done
 
 ---
 
-## 工具族（10 个工具）
+## 工具族（14 个工具）
 
 ### taskflow_create
 
@@ -196,6 +200,44 @@ async def taskflow_summary(flow_id: str) -> str
 ```
 
 只读重读完整流状态：状态、版本号、child_session_key、描述、所有步骤（含状态、depends_on、child_session_key）、步骤状态计数、结果、等待载荷、摘要、失败原因、取消原因。也是版本冲突后的指定重读步骤。
+
+### taskflow_progress
+
+```python
+async def taskflow_progress(flow_id: str) -> str
+```
+
+只读完成度报告：完成百分比、状态分布、下一步骤，以及预计剩余时间（至少两个 `done` 步骤带有 `dispatched_at` 时间戳时给出）。绝不修改流状态。
+
+### taskflow_budget
+
+```python
+async def taskflow_budget(
+    flow_id: str, action: str = "query", token_budget: int | None = None,
+    expected_revision: int | None = None,
+) -> str
+```
+
+查询（`query`）或设置（`set`）流的 Token/成本预算。`query` 报告 `total_tokens`、`total_cost`、预算、剩余 Token 以及状态（`ok` / 80% 时 `WARNING` / `EXCEEDED`）；`set` 要求正整数 `token_budget`，并通过乐观锁写入。
+
+### taskflow_update_steps
+
+```python
+async def taskflow_update_steps(
+    flow_id: str, steps: list[dict],
+    expected_revision: int | None = None,
+) -> str
+```
+
+全量替换流的步骤列表（类似 TaskFlow 的 `todowrite`）：可新增、删除、重排步骤，或改写其 `task`/`depends_on`。安全规则保证 `dispatched` 步骤仍绑定其 `child_session_key`，并拒绝改写 `done` 步骤；删除子代理仍在运行的 `dispatched` 步骤会成功，但返回非阻塞的 `Warning:` 并指出子代理 key。
+
+### taskflow_list
+
+```python
+async def taskflow_list(status_filter: str = "active") -> str
+```
+
+本会话流的只读面板：`"active"`（running + waiting）、`"all"`（含终态）或精确状态名。每次读取都在 SQL 中按所属 `session_id` 过滤；渲染表格将描述截断为 40 字符，并从流的活动时间戳推导 `updated_at`。
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 

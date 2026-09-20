@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> TaskFlow は、SQLite（楽観的ロック、WAL モード）に基づくターン間永続タスクフロー管理システムです。主な機能：分離されたサブエージェントステップのディスパッチ、DAG ベースの依存関係管理、バッチ並列ディスパッチ、有界ポーリング待機、べき等結果注入。10 個のツールが完全なライフサイクル API を構成し、openclaw managedFlows インターフェースと対応します：`taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`、加えて `taskflow_summary`（読み取り専用再読み）と `taskflow_set_waiting`（待機状態への移行）。
+> TaskFlow は、SQLite（楽観的ロック、WAL モード）に基づくターン間永続タスクフロー管理システムです。主な機能：分離されたサブエージェントステップのディスパッチ、DAG ベースの依存関係管理、バッチ並列ディスパッチ、有界ポーリング待機、べき等結果注入。14 個のツールが完全なライフサイクル API を構成し、openclaw managedFlows インターフェースと対応します：`taskflow_create` → `taskflow_run_task` → `taskflow_dispatch` / `taskflow_wait_all` → `taskflow_resume` → `taskflow_finish` / `taskflow_fail` / `taskflow_cancel`、加えて `taskflow_summary`（読み取り専用再読み）、`taskflow_set_waiting`（待機状態への移行）、`taskflow_progress`（進捗レポート）、`taskflow_budget`（トークン/コスト予算）、`taskflow_update_steps`（ステップリストの完全置換）、`taskflow_list`（セッションボード）。
 
 信頼できる情報源：`agent/tools/taskflow/tools/*.py`、`agent/tools/taskflow/registry/store_sqlite.py`、`agent/tools/taskflow/config.py`。スキルリファレンス：`skills/builtin/core/taskflow/SKILL.md`。
 
@@ -13,7 +13,7 @@
 - [概要](#概要)
 - [アーキテクチャ](#アーキテクチャ)
 - [状態機械](#状態機械)
-- [ツールファミリー（10 個のツール）](#ツールファミリー10-個のツール)
+- [ツールファミリー（14 個のツール）](#ツールファミリー14-個のツール)
 - [楽観的ロックと競合リトライ](#楽観的ロックと競合リトライ)
 - [DAG 依存関係システム](#dag-依存関係システム)
 - [並列ステップ実行](#並列ステップ実行)
@@ -42,7 +42,7 @@ TaskFlow（`agent/tools/taskflow/`）は、SQLite（WAL モード）上に構築
 
 ```
 agent/tools/taskflow/
-├── __init__.py              # パッケージエクスポート（8 ツール再エクスポート）
+├── __init__.py              # パッケージエクスポート（11 ツール再エクスポート）
 ├── config.py                # TaskFlowStatus、StepStatus 列挙型、TERMINAL_STATUSES、TABLE_NAME
 ├── registry/
 │   ├── __init__.py
@@ -50,7 +50,7 @@ agent/tools/taskflow/
 │                            #   FlowConflictError/FlowNotFoundError/FlowExistsError、
 │                            #   同期パス（get_flow_sync）
 └── tools/
-    ├── __init__.py           # build_taskflow_tools() → 10 ツール、scope=main_only
+    ├── __init__.py           # build_taskflow_tools() → 14 ツール、scope=main_only
     ├── _dispatch.py          # monkeypatch 可能なディスパッチシーム（spawn_subagent_direct）
     ├── _shared.py            # DAG ヘルパー + 競合リトライ永続化
     ├── taskflow_create.py    # フロー作成、初期リビジョン 1
@@ -60,6 +60,10 @@ agent/tools/taskflow/
     ├── taskflow_resume.py    # 結果注入、完了マーク、後続アンロック（べき等）
     ├── taskflow_set_waiting.py # フローを waiting 状態に移行
     ├── taskflow_summary.py   # 読み取り専用再読み（競合後の再読みにも使用）
+    ├── taskflow_progress.py  # 読み取り専用の進捗レポート
+    ├── taskflow_budget.py    # トークン/コスト予算の照会と設定
+    ├── taskflow_update_steps.py # ステップリストの完全置換
+    ├── taskflow_list.py      # セッション単位のフローボード
     ├── taskflow_finish.py    # 完了マーク（終端状態）
     ├── taskflow_fail.py      # 失敗マーク（終端状態）
     └── taskflow_cancel.py    # フロー取消（終端状態）
@@ -67,7 +71,7 @@ agent/tools/taskflow/
 
 ### 登録
 
-ツールは `agent/tools/taskflow/tools/__init__.py` の `build_taskflow_tools()` で登録され、全 10 ツールを `metadata = {"scope": "main_only"}` および `handle_tool_error = True` タグ付きで返します。サブエージェントのツールポリシーはこれらを無条件で破棄——メインエージェントのみが共有フロー状態を管理します。
+ツールは `agent/tools/taskflow/tools/__init__.py` の `build_taskflow_tools()` で登録され、全 14 ツールを `metadata = {"scope": "main_only"}` および `handle_tool_error = True` タグ付きで返します。サブエージェントのツールポリシーはこれらを無条件で破棄——メインエージェントのみが共有フロー状態を管理します。
 
 ---
 
@@ -106,7 +110,7 @@ blocked → ready → dispatched → done
 
 ---
 
-## ツールファミリー（10 個のツール）
+## ツールファミリー（14 個のツール）
 
 ### taskflow_create
 
@@ -196,6 +200,44 @@ async def taskflow_summary(flow_id: str) -> str
 ```
 
 読み取り専用でフロー状態を全て再読み：状態、リビジョン、child_session_key、説明、全ステップ（状態、depends_on、child_session_key 付き）、ステップ状態カウント、結果、待機ペイロード、サマリー、失敗理由、取消理由。リビジョン競合後の指定再読みステップでもある。
+
+### taskflow_progress
+
+```python
+async def taskflow_progress(flow_id: str) -> str
+```
+
+読み取り専用の完了レポート：完了率、ステータス内訳、次のステップ、推定残り時間（`dispatched_at` タイムスタンプを持つ `done` ステップが 2 つ以上ある場合）。フローを変更しません。
+
+### taskflow_budget
+
+```python
+async def taskflow_budget(
+    flow_id: str, action: str = "query", token_budget: int | None = None,
+    expected_revision: int | None = None,
+) -> str
+```
+
+フローのトークン/コスト予算を照会（`query`）または設定（`set`）します。`query` は `total_tokens`、`total_cost`、予算、残りトークン、ステータス（`ok` / 80% で `WARNING` / `EXCEEDED`）を報告し、`set` は正の `token_budget` を要求して楽観的ロック経由で書き込みます。
+
+### taskflow_update_steps
+
+```python
+async def taskflow_update_steps(
+    flow_id: str, steps: list[dict],
+    expected_revision: int | None = None,
+) -> str
+```
+
+フローのステップリストを完全置換します（TaskFlow における `todowrite` 相当）：ステップの追加・削除・並べ替え、`task`/`depends_on` の書き換えが可能です。安全規則により `dispatched` ステップは `child_session_key` に束縛されたままとなり、`done` ステップの書き換えは拒否されます。子がまだ実行中の `dispatched` ステップを削除すると成功しますが、子キーを示す非ブロッキングの `Warning:` を返します。
+
+### taskflow_list
+
+```python
+async def taskflow_list(status_filter: str = "active") -> str
+```
+
+このセッションのフローの読み取り専用ボード：`"active"`（running + waiting）、`"all"`（終端ステータスを含む）、または正確なステータス名。すべての読み取りは所有する `session_id` で SQL フィルタされ、レンダリング表は説明を 40 文字に制限し、フローのアクティビティタイムスタンプから `updated_at` を導出します。
 
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 
