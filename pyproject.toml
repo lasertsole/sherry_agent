@@ -52,6 +52,13 @@ dev = [
 # Real-LLM network e2e tests are slow, cost API tokens and are order-sensitive:
 # deselect them by default; run them explicitly with `pytest -m llm_e2e`.
 addopts = "-m 'not llm_e2e'"
+# Timeout enforcement must survive PRoot / restricted containers, where the
+# SIGALRM delivery of the default "signal" method can be silently dropped
+# (observed: a @pytest.mark.timeout(900) test hung >16 min). The "thread"
+# watchdog fails the run bounded instead of hanging forever; on expiry it
+# terminates the pytest process — a bounded failure is the CI-desired outcome.
+# No global `timeout` value is set: per-test marks remain the only budgets.
+timeout_method = "thread"
 markers = [
     "unit: pure logic, fully mocked",
     "integration: multi-component, backend mocked",
