@@ -23,6 +23,7 @@ class LlmClientDefaultsConfig(TypedDict):
     local_n_gpu_layers: int
     ittt_remote_temperature: float
     ittt_remote_max_retries: int
+    ittt_remote_timeout: int
     vttt_remote_temperature: float
     vttt_remote_max_retries: int
 
@@ -53,6 +54,10 @@ LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
     "local_n_gpu_layers": -1,
     "ittt_remote_temperature": 0.8,
     "ittt_remote_max_retries": 2,
+    # Per-request timeout for the ITTT remote client (seconds) — aligned with
+    # ``main_timeout``. Without it the OpenAI SDK default (600 s) applies to
+    # every attempt (max_retries + 1).
+    "ittt_remote_timeout": 120,
     "vttt_remote_temperature": 0.8,
     "vttt_remote_max_retries": 2,
 }

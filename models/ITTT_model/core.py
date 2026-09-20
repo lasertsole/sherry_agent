@@ -25,6 +25,7 @@ from pathlib import Path
 from loguru import logger
 
 from config import ENV_PATH
+from config.features import LLM_CLIENT_DEFAULTS
 from typing import Any
 from dotenv import load_dotenv
 from langchain_core.messages import (
@@ -65,8 +66,10 @@ if not _is_local:
         "model": _api_name,
         "api_key": _api_key,
         "base_url": _api_base,
-        "temperature": 0.8,
-        "max_retries": 2,
+        "temperature": LLM_CLIENT_DEFAULTS["ittt_remote_temperature"],
+        "max_retries": LLM_CLIENT_DEFAULTS["ittt_remote_max_retries"],
+        # Explicit bounded window for each remote request (seconds).
+        "timeout": LLM_CLIENT_DEFAULTS["ittt_remote_timeout"],
     }
     _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}
 
