@@ -597,6 +597,8 @@ Worker 返却 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
   Gate 5: Cleanup（一時リソースのクリーンアップ）
 ```
 
+**実装**：`verifier.py`（~80 行）+ `subagent_completion_drain/core.py` 拡張（~15 行、subagent 完了後に Sisyphus 検証リマインダーを追記）。
+
 ### E6: 委譲ルーティング ★
 
 **ライフサイクル**：

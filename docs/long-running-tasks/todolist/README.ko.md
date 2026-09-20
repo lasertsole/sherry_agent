@@ -597,6 +597,8 @@ Worker 반환 → DoneClaim → AdversarialVerify (5 gates) → FullyDone / NOT 
   Gate 5: Cleanup (임시 리소스 정리)
 ```
 
+**구현**: `verifier.py`(~80줄) + `subagent_completion_drain/core.py` 확장(~15줄, subagent 완료 후 Sisyphus 검증 리마인더 추가).
+
 ### E6: 위임 라우팅 ★
 
 **라이프사이클**:
