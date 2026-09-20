@@ -127,7 +127,7 @@ E6       │ 委譲ルーティング ★ │ #a fan-out + #b category ルート
 E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タスク意図→注入) + plan-active(計画あり→reminder)
 ```
 
-**Layer 5 の DAG 機能は本層では実装されていません** — TaskFlow が提供します。本層は呼び出すだけで、再構築しません。
+**Layer 5 の DAG 機能は本層では実装されていません** — TaskFlow（`agent/tools/taskflow/tools/*`）が提供します。本層は呼び出すだけで、再構築しません。
 
 ---
 
@@ -427,7 +427,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | トポロジー                      | 条件                            | 戦略                                              |
 | ------------------------------- | ------------------------------- | ------------------------------------------------- |
 | 独立チャネル → 並行 workers     | 分離ファイル、共有契約なし      | 一括並行 spawn burst（`taskflow_dispatch`）       |
-| 順序依存チャネル → ウェーブ直列 | C が A と B の完了を必要        | 前提 step の `done` + `resume` アンロック後に実行 |
+| 順序依存チャネル → ウェーブ直列 | C が A と B の完了を必要        | 前提 step の `done` 後、`depends_on` + `resume` アンロックで実行 |
 | 重複チャネル → team             | 同じモジュール/契約、並行が高速 | 直列化または手動調整                              |
 
 ---
@@ -555,6 +555,8 @@ turn ends (no tool_call, agent loop exits)
       → user sends message → detect_state() busy → cancel → reset()
 ```
 
+**ファイル**：`stagnation_tracker.py`（~90 行）+ `todo_continuation/core.py`（~110 行）+ `agent/core.py`（~2 行登録）。
+
 ### E4: 遷移バリア — 二重保険
 
 **プロンプトレベル**（E1 AGENTS.md）：subagent 実行中 / TaskFlow step 未完了時に completed をマークしない。
@@ -642,7 +644,9 @@ LLM creates todo (with category + delegation fields)
 
 **意図検出**：軽量ヒューリスティック、LLM 呼び出しなし（ゼロ遅延、ゼロコスト）— 質問パターン → 非タスク、雑談パターン → 非タスク、タスクキーワード → タスク、長文（>100文字）非質問 → タスクの可能性。
 
-**ループ防止設計**：E7b が E7a より優先、E7a はセッション毎1回、E7b は before_model のみ、`_is_system_directive()` でシステム注入メッセージをフィルタ（E7 注入は `metadata={"origin":"task_intent","internal":true}` を持ち、ストアとフィルタが内部メッセージとして正しく識別し、実ユーザー要求とは決して扱わず、セッションタイトルやユーザー要求抽出にも入りません）、E3 はバックオフ冷却あり、圧縮後に re-arm。
+**ループ防止設計**：E7b が E7a より優先、E7a はセッション毎1回（`_armed_sessions` Set。armed 済みなら短いリマインダーのみ）、E7b は `before_model` のみで動作（E3 の `after_agent` 継続は E7b をトリガーしません）、`_is_system_directive()` でシステム注入メッセージをフィルタ（E7 注入は `metadata={"origin":"task_intent","internal":true}` を持ち、ストアとフィルタが内部メッセージとして正しく識別し、実ユーザー要求とは決して扱わず、セッションタイトルやユーザー要求抽出にも入りません）、E3 はバックオフ冷却あり、圧縮後に re-arm。
+
+**ファイル**：`agent/middlewares/task_intent/core.py`（~160 行）+ `agent/core.py`（~2 行登録）。
 
 ---
 

@@ -129,7 +129,7 @@ E6       │ 委派路由 ★        │ #a fan-out + #b category 路由 + #c �
 E7       │ 意图识别器 ★★     │ before_model: arming(无计划+任务意图→注入引导) + plan-active(有计划→追加 reminder)
 ```
 
-**Layer 5 的 DAG 能力不是本层实现的**，它由 TaskFlow 提供。本层只调用、不重建。
+**Layer 5 的 DAG 能力不是本层实现的**，它由 TaskFlow（`agent/tools/taskflow/tools/*`）提供。本层只调用、不重建。
 
 ---
 
@@ -432,7 +432,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | 拓扑                    | 条件                  | 策略                                        |
 | ----------------------- | --------------------- | ------------------------------------------- |
 | 独立通道 → 并行 workers | 分离文件，无共享契约  | 一次并行 spawn burst（`taskflow_dispatch`） |
-| 有序依赖通道 → 波次串行 | C 需要 A 和 B 先完成  | 等前置 step `done` 解锁后执行               |
+| 有序依赖通道 → 波次串行 | C 需要 A 和 B 先完成  | 等前置 step `done` 后执行（`depends_on` + `resume` 解锁） |
 | 重叠通道 → team         | 同模块/契约，并发更快 | 串行化或手动协调                            |
 
 ---
@@ -661,7 +661,7 @@ LLM creates todo (with category + delegation fields)
 
 **意图检测**：轻量级启发式，不调用 LLM（零延迟、零成本）——问答模式 → 非任务；闲聊模式 → 非任务；任务关键词 → 任务；长消息非问答 → 可能是任务。
 
-**防循环设计**：E7b 优先于 E7a；E7a once-per-session；E7b 只在 before_model 运行；`_is_system_directive()` 过滤系统注入消息（E7 注入带 `metadata={"origin":"task_intent","internal":true}`，存储层与过滤器可正向识别为内部消息，绝不当作真实用户请求，也不会进入会话标题或用户请求提取）；E3 有退避冷却；压缩后 re-arm。
+**防循环设计**：E7b 优先于 E7a；E7a 每会话一次（`_armed_sessions` Set；已 armed 则只发短提醒）；E7b 只在 `before_model` 运行（E3 的 `after_agent` 续作不会触发 E7b）；`_is_system_directive()` 过滤系统注入消息（E7 注入带 `metadata={"origin":"task_intent","internal":true}`，存储层与过滤器可正向识别为内部消息，绝不当作真实用户请求，也不会进入会话标题或用户请求提取）；E3 有退避冷却；压缩后 re-arm。
 
 **文件**：`agent/middlewares/task_intent/core.py`（~160 行）+ `agent/core.py`（~2 行注册）。
 

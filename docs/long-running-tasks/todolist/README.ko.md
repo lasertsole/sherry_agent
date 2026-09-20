@@ -127,7 +127,7 @@ E6       │ 위임 라우팅 ★    │ #a fan-out + #b category 라우팅 + #c
 E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태스크 의도→주입) + plan-active(계획 있음→reminder)
 ```
 
-**Layer 5의 DAG 기능은 본 레이어에서 구현되지 않습니다** — TaskFlow가 제공합니다. 본 레이어는 호출만 하고, 재구축하지 않습니다.
+**Layer 5의 DAG 기능은 본 레이어에서 구현되지 않습니다** — TaskFlow(`agent/tools/taskflow/tools/*`)가 제공합니다. 본 레이어는 호출만 하고, 재구축하지 않습니다.
 
 ---
 
@@ -427,7 +427,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | 토폴로지                     | 조건                           | 전략                                        |
 | ---------------------------- | ------------------------------ | ------------------------------------------- |
 | 독립 채널 → 병렬 workers     | 분리 파일, 공유 계약 없음      | 일괄 병렬 spawn burst (`taskflow_dispatch`) |
-| 순서 의존 채널 → 웨이브 직렬 | C가 A와 B 완료 필요            | 선행 step `done` + `resume` 언록 후 실행    |
+| 순서 의존 채널 → 웨이브 직렬 | C가 A와 B 완료 필요            | 선행 step `done` 후 `depends_on` + `resume` 언록으로 실행 |
 | 중복 채널 → team             | 동일 모듈/계약, 병렬이 더 빠름 | 직렬화 또는 수동 조정                       |
 
 ---
@@ -555,6 +555,8 @@ turn ends (no tool_call, agent loop exits)
       → user sends message → detect_state() busy → cancel → reset()
 ```
 
+**파일**: `stagnation_tracker.py`(~90줄) + `todo_continuation/core.py`(~110줄) + `agent/core.py`(~2줄 등록).
+
 ### E4: 전환 배리어 — 이중 보험
 
 **프롬프트 레벨** (E1 AGENTS.md): subagent 실행 중 / TaskFlow step 미완료 시 completed 마크 금지.
@@ -642,7 +644,9 @@ LLM creates todo (with category + delegation fields)
 
 **의도 검출**: 경량 휴리스틱, LLM 호출 없음 (제로 지연, 제로 비용) — 질문 패턴 → 비태스크, 잡담 패턴 → 비태스크, 태스크 키워드 → 태스크, 장문 (>100자) 비질문 → 태스크 가능성.
 
-**루프 방지 설계**: E7b가 E7a보다 우선, E7a는 세션당 1회, E7b는 before_model에서만, `_is_system_directive()`로 시스템 주입 메시지 필터(E7 주입은 `metadata={"origin":"task_intent","internal":true}`를 가지며, 저장소와 필터가 내부 메시지로 올바르게 식별하여 실제 사용자 요청으로 취급하지 않고 세션 제목이나 사용자 요청 추출에도 들어가지 않습니다), E3는 백오프 냉각 있음, 압축 후 re-arm.
+**루프 방지 설계**: E7b가 E7a보다 우선, E7a는 세션당 1회(`_armed_sessions` Set. 이미 armed면 짧은 리마인더만), E7b는 `before_model`에서만 실행(E3의 `after_agent` 계속은 E7b를 트리거하지 않음), `_is_system_directive()`로 시스템 주입 메시지 필터(E7 주입은 `metadata={"origin":"task_intent","internal":true}`를 가지며, 저장소와 필터가 내부 메시지로 올바르게 식별하여 실제 사용자 요청으로 취급하지 않고 세션 제목이나 사용자 요청 추출에도 들어가지 않습니다), E3는 백오프 냉각 있음, 압축 후 re-arm.
+
+**파일**: `agent/middlewares/task_intent/core.py`(~160줄) + `agent/core.py`(~2줄 등록).
 
 ---
 
