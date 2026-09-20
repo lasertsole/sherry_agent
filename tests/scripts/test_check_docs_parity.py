@@ -1,14 +1,18 @@
 """Unit tests for the four-language README parity gate.
 
 The gate has two layers: a structural signature (heading levels, fences, table
-rows) and second-order semantic metrics (link-target set, per-section body
-length ratio). These tests build disposable four-language README groups, prove
-the semantic metrics fail on the drift they exist to catch — a dropped link, an
-emptied translation section, a deleted section — and prove a correct group
-passes. They also pin the exemption contract: ``ALLOWLIST`` must stay empty
-(add an entry only alongside an explicit edit here), short or placeholder
-reasons must be rejected, and every allowlisted hit must be re-printed in the
-summary so CI logs cannot bury it.
+rows) and second-order semantic metrics (link-target set plus per-target
+language variants, per-section body length ratio, tiny-section non-emptiness,
+heading markers, invariant tokens). These tests build disposable four-language
+README groups, prove the semantic metrics fail on the drift they exist to catch
+— a dropped link, a link retargeted at the wrong language, an emptied
+translation section (large or tiny), a deleted section — and prove a correct
+group passes. They also pin the exemption contract: ``ALLOWLIST`` must stay
+empty (add an entry only alongside an explicit edit here), short/placeholder/
+clause-less reasons must be rejected, and every allowlisted hit must be
+re-printed in the summary so CI logs cannot bury it. Finally they pin the
+calibration margin so a denser legitimate section turns them red before the
+ratio band silently narrows.
 """
 
 from __future__ import annotations
@@ -103,6 +107,31 @@ def _write_group(root: Path, overrides: dict[str, str] | None = None) -> None:
     overrides = overrides or {}
     for lang, filename in _FILES.items():
         (root / filename).write_text(overrides.get(lang, _render(lang)), encoding="utf-8")
+
+
+def _render_switcher(lang: str) -> str:
+    """A group whose every page links all four language variants of itself."""
+    variants = ("README.md", "README.zh.md", "README.ja.md", "README.ko.md")
+    links = " · ".join(f"[{name}]({name})" for name in variants)
+    return (
+        f"# {_TITLES[lang]}\n\n"
+        f"{links}\n\n"
+        "## Section One\n\n"
+        f"{_ONE_BODIES[lang]}\n\n"
+        "## Section Two\n\n"
+        f"{_TWO_BODIES[lang]}\n"
+    )
+
+
+def _render_tiny_sections(lang: str, one_body: str) -> str:
+    """A group whose first section body is supplied verbatim (may be empty)."""
+    return (
+        f"# {_TITLES[lang]}\n\n"
+        "## Section One\n\n"
+        f"{one_body}\n\n"
+        "## Section Two\n\n"
+        f"{_TWO_BODIES[lang]}\n"
+    )
 
 
 def test_valid_group_passes_and_localized_links_normalize(
@@ -204,7 +233,12 @@ def test_stale_allowlist_entry_fails(
     """An exemption that matches no discovered group is dead weight and fails."""
     _write_group(tmp_path)
     monkeypatch.setattr(
-        parity, "ALLOWLIST", {"ghost/group": "deliberate language-specific divergence, reviewed"}
+        parity,
+        "ALLOWLIST",
+        {
+            "ghost/group": "Fixing the document is wrong because this divergence is"
+            " deliberate and language-specific, reviewed and approved."
+        },
     )
 
     assert parity.main(tmp_path) == 1
@@ -220,7 +254,10 @@ def test_allowlisted_hit_is_skipped_and_reprinted(
 ) -> None:
     """A valid exemption skips the group and is echoed, with its reason, in the summary."""
     _write_group(tmp_path, {"ja": _empty_section_one("ja")})
-    reason = "Japanese keeps this section as a stub because upstream data is authored in en only"
+    reason = (
+        "Japanese keeps this section as a stub. Fixing the document is wrong because the"
+        " upstream data is authored in English only and has no translation to copy."
+    )
     monkeypatch.setattr(parity, "ALLOWLIST", {".": reason})
 
     assert parity.main(tmp_path) == 0
@@ -364,3 +401,135 @@ def test_long_translation_retaining_tokens_passes(
     assert parity.main(tmp_path) == 0
     out = capsys.readouterr().out
     assert "VERDICT: PASS" in out
+
+
+# --- Blind spot C: a link retargeted at the wrong language -------------------
+
+
+def test_wrong_language_link_fails(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Given zh links README.ja.md where EN links the base, the gate fails."""
+    _write_group(tmp_path, {"zh": _render("zh", link_dest="../guide/README.ja.md")})
+
+    assert parity.main(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "points at a different language" in out
+    assert "../guide/README.md" in out
+    assert "README.zh.md" in out
+    assert "VERDICT: FAIL" in out
+
+
+def test_language_switcher_links_pass(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A language switcher listing every variant in every language is not drift."""
+    _write_group(tmp_path, {lang: _render_switcher(lang) for lang in _FILES})
+
+    assert parity.main(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "VERDICT: PASS" in out
+
+
+# --- Blind spot D: a tiny English section with an emptied translation --------
+
+
+def test_tiny_english_section_with_empty_translation_fails(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """An EN section below the ratio band still requires a non-empty translation."""
+    _write_group(
+        tmp_path,
+        {
+            "en": _render_tiny_sections("en", "A tiny English note."),
+            "zh": _render_tiny_sections("zh", ""),
+            "ja": _render_tiny_sections("ja", "短い注記。"),
+            "ko": _render_tiny_sections("ko", "짧은 메모."),
+        },
+    )
+
+    assert parity.main(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "translation body is empty" in out
+    assert "README.zh.md" in out
+    assert "VERDICT: FAIL" in out
+
+
+def test_tiny_section_with_only_a_separator_passes(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A thematic break carries no prose, so an emptied translation is not drift."""
+    _write_group(
+        tmp_path,
+        {lang: _render_tiny_sections(lang, "---" if lang == "en" else "") for lang in _FILES},
+    )
+
+    assert parity.main(tmp_path) == 0
+    out = capsys.readouterr().out
+    assert "VERDICT: PASS" in out
+
+
+# --- Blind spot E: ratio-band recalibration ----------------------------------
+
+
+def test_calibrate_mode_prints_distribution_without_gating(
+    parity: ModuleType, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """``--calibrate`` prints the distribution and returns 0 even for a failing group."""
+    _write_group(tmp_path, {"ja": _empty_section_one("ja")})
+
+    assert parity.main(tmp_path, calibrate=True) == 0
+    out = capsys.readouterr().out
+    assert "README parity calibration" in out
+    assert "margin=" in out
+    assert "required minimum margin" in out
+
+
+def test_repo_calibration_margin_exceeds_required(parity: ModuleType) -> None:
+    """The smallest legitimate ratio must keep the required margin above the band."""
+    stats = parity.calibration_stats(parity.REPO_ROOT)
+    assert stats, "calibration found no section pairs — discovery or extraction is broken"
+    for cal in stats:
+        assert cal.pairs > 0, f"{cal.language}: no section pairs measured"
+        assert cal.margin >= parity.MIN_CALIBRATION_MARGIN, (
+            f"{cal.language}: smallest legitimate ratio {cal.minimum:.3f} keeps only"
+            f" {cal.margin:.3f}x the band, below the required"
+            f" {parity.MIN_CALIBRATION_MARGIN:.2f}x — recalibrate with --calibrate"
+        )
+
+
+# --- Blind spot F: exemptions must argue why fixing is wrong -----------------
+
+
+def test_allowlist_reason_without_fix_clause_fails(
+    parity: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A long, non-placeholder reason that never argues why fixing is wrong is rejected."""
+    _write_group(tmp_path)
+    monkeypatch.setattr(
+        parity,
+        "ALLOWLIST",
+        {".": "Japanese keeps this section as a stub because upstream data is authored in en only"},
+    )
+
+    assert parity.main(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "must argue why fixing the document(s) is wrong" in out
+
+
+def test_allowlist_fix_clause_without_rationale_fails(
+    parity: ModuleType,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The fix clause must be followed by a substantive rationale, not a stub."""
+    _write_group(tmp_path)
+    monkeypatch.setattr(parity, "ALLOWLIST", {".": "Fixing the document is wrong because nope."})
+
+    assert parity.main(tmp_path) == 1
+    out = capsys.readouterr().out
+    assert "rationale minimum" in out

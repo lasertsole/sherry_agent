@@ -8,13 +8,16 @@ group against its English reference on two layers:
 
   * first order (exact) — heading level sequence, fence count, table row count.
     Catches a missing section, code block, or table row in one translation.
-  * second order (semantic) — link-target set, per-section body length ratio,
-    a language-independent heading-marker sequence, and a per-section
-    invariant-token multiset. Together they catch "structure intact but the
-    translation is stale": an emptied section, a reordered set of headings, and
-    a section that is long enough yet has lost the code spans / file paths the
-    English reference still carries. The normalization rules and the calibrated
-    bands are documented inline at their constants below.
+  * second order (semantic) — link-target set with its per-target language
+    variant set, per-section body length ratio, a non-empty check for even the
+    smallest English sections, a language-independent heading-marker sequence,
+    and a per-section invariant-token multiset. Together they catch "structure
+    intact but the translation is stale": an emptied section (including a tiny
+    one below the ratio band), a link retargeted at the wrong language, a
+    reordered set of headings, and a section that is long enough yet has lost
+    the code spans / file paths the English reference still carries. The
+    normalization rules and the calibrated bands are documented inline at their
+    constants below.
   * third order (markers) — every heading is reduced to the markers a
     translation cannot change (its inline code spans and link targets); the
     per-document marker sequence of each translation must equal the English
@@ -25,16 +28,31 @@ group against its English reference on two layers:
 
 Exemption discipline (``ALLOWLIST``): an entry may only cover a deliberate,
 language-specific divergence — never a drift that should be fixed — and its
-reason must explain why fixing the documents instead is wrong. The gate
-enforces a minimum reason length, bans placeholder openings, rejects stale
-entries, and re-prints every hit, with its reason, in the summary block.
+reason must both be substantive and contain an explicit "why fixing the
+document(s) instead is wrong" clause (one of the templates in
+``_ALLOWLIST_FIX_CLAUSE``) with a real rationale after it. The gate enforces a
+minimum reason length, bans placeholder openings, requires that clause, rejects
+stale entries, and re-prints every hit, with its reason, in the summary block.
 ``tests/scripts/test_check_docs_parity.py`` pins ``ALLOWLIST == {}``: adding an
 entry requires an explicit test edit, so it always lands in review.
+
+Recalibration: the ratio band is a snapshot, not a constant of nature. Run
+``uv run --no-sync python scripts/check_docs_parity.py --calibrate`` to print the
+per-language section-ratio distribution (min / p1 / p5 / median, over sections
+with an English body >= ``MIN_REFERENCE_BODY_CHARS``) and the margin the smallest
+legitimate ratio keeps above the band. The test file asserts that margin stays
+above ``MIN_CALIBRATION_MARGIN``, so a newly added dense legitimate section
+turns the test red before the band silently narrows. To retune a band: run
+``--calibrate``, inspect the distribution, adjust the constant, update the
+numbers in the comment at that constant, then re-run the gate and the test file.
+``--calibrate`` never gates: it prints and exits 0; the default mode validates
+and returns 0/1.
 
 Exit codes: 0 = every gate passes; 1 = a mismatch, an allowlist-contract
 violation, or no group discovered (a discovery bug must not pass as success).
 
 Usage: ``uv run --no-sync python scripts/check_docs_parity.py``
+       ``uv run --no-sync python scripts/check_docs_parity.py --calibrate``
 """
 
 # allow: SIZE_OK - single-purpose gate; a third of the crude LOC count is the
@@ -82,18 +100,26 @@ SKIP_DIRS = frozenset(
 # stripped character count against English. A section fails when:
 #   * EN body >= MIN_REFERENCE_BODY_CHARS and ratio < NEAR_EMPTY_RATIO -> near-empty
 #   * EN body >= EMPTY_SECTION_REFERENCE_CHARS and translated body == 0 -> empty
+#   * EN body < EMPTY_SECTION_REFERENCE_CHARS, EN has real (non-separator)
+#     content, and the translation has none -> tiny empty (_tiny_empty_sections)
 #
-# Calibrated on this repository, not guessed. Over 1278 section pairs with an
-# EN body >= 100 chars the median translation/EN ratio is 0.590 (zh) / 0.696
-# (ja) / 0.695 (ko); the 5th percentile is 0.411 / 0.543 / 0.534. The smallest
-# ratio of a legitimately translated section — after the stale E5 section this
-# metric first caught was repaired — is 0.256 (one dense Chinese paragraph).
-# 0.20 therefore sits below every legitimate section with margin while still
-# catching the 0.100 / 0.135 stale sections that motivated the metric. Re-run
-# the distribution before changing the band.
+# Calibrated on this repository with ``--calibrate``, not guessed. Over 1278
+# section pairs (3 translations x 426 sections) with an EN body >= 100 chars the
+# per-language translation/EN ratio distribution is:
+#   zh: min 0.256, p1 0.350, p5 0.414, median 0.591, margin 1.281x
+#   ja: min 0.350, p1 0.452, p5 0.551, median 0.696, margin 1.750x
+#   ko: min 0.350, p1 0.481, p5 0.548, median 0.696, margin 1.750x
+# The smallest ratio of a legitimately translated section — after the stale E5
+# section this metric first caught was repaired — is 0.256 (one dense Chinese
+# paragraph). 0.20 therefore sits below every legitimate section with margin
+# while still catching the 0.100 / 0.135 stale sections that motivated the
+# metric. MIN_CALIBRATION_MARGIN pins the smallest legitimate ratio at >=1.15x
+# the band so a denser legitimate section turns the test red before the band
+# silently narrows; re-run --calibrate before changing the band.
 NEAR_EMPTY_RATIO = 0.20
 MIN_REFERENCE_BODY_CHARS = 100
 EMPTY_SECTION_REFERENCE_CHARS = 40
+MIN_CALIBRATION_MARGIN = 1.15
 
 # Heading markers (blind spot B). A heading's translation-invariant content is
 # its inline code spans and link targets; the heading prose around them can be
@@ -145,11 +171,23 @@ _FILE_PATH_TOKEN = re.compile(
 _ENV_TOKEN = re.compile(r"(?<![A-Za-z0-9_])[A-Z][A-Z0-9_]{3,}(?![A-Za-z0-9_])")
 _NUMBER_TOKEN = re.compile(r"(?<![A-Za-z0-9_.])(?:\d+\.\d+|\d[\d_]*\d)")
 
-# Allowlist contract: substantive reason, no placeholder opening (see the
-# docstring's "Exemption discipline").
+# Allowlist contract: substantive reason, no placeholder opening, and an explicit
+# "why fixing the documents instead is wrong" clause (see the docstring's
+# "Exemption discipline"). The clause templates below are the only accepted
+# openings; anything after them must be a real rationale of at least
+# MIN_ALLOWLIST_FIX_RATIONALE_CHARS chars, so an exemption must argue, not just
+# reach a character count.
 MIN_ALLOWLIST_REASON_CHARS = 40
+MIN_ALLOWLIST_FIX_RATIONALE_CHARS = 20
 ALLOWLIST_PLACEHOLDER = re.compile(
     r"^\s*(?:skip|n/?a|todo|tbd|fixme|wip|placeholder)\b", re.IGNORECASE
+)
+_ALLOWLIST_FIX_CLAUSE = re.compile(
+    r"(?:Fixing the documents? is wrong because"
+    r"|Cannot be fixed in the documents? because"
+    r"|The documents? cannot be fixed because)"
+    r"\s+(?P<why>.+)$",
+    re.IGNORECASE | re.DOTALL,
 )
 
 # Explicit exemptions: repo-relative group directory -> reason.
@@ -173,8 +211,17 @@ _LINK = re.compile(r"(?<!!)\[([^\[\]]*(?:\[[^\]]*\][^\[\]]*)*)\]\(([^()\s]+)")
 # deliberately links to the translated sibling document, so the linked
 # *document set* is what must stay invariant across languages. Comparing raw
 # strings would flag every localization as drift; normalized sets catch a link
-# dropped or invented in one language.
-_LOCALIZED_README = re.compile(r"README\.(?:zh|ja|ko)\.md$")
+# dropped or invented in one language — but on their own they cannot see a link
+# retargeted at the *wrong* language, because README.ja.md and README.md both
+# collapse to README.md. Each document therefore also records, per normalized
+# target, the set of language suffixes actually linked ("" for the base file).
+# The gate then compares the "foreign" suffixes of EN and each translation after
+# removing that translation's own language and the base: linking the base and
+# linking one's own localized sibling are the same self-reference, so the
+# language switcher (every page links the other three) stays equal, while a
+# translation that links a foreign sibling EN does not link is flagged.
+_OWN_SUFFIX = {"README.zh.md": "zh", "README.ja.md": "ja", "README.ko.md": "ko"}
+_LOCALIZED_README = re.compile(r"README\.(zh|ja|ko)\.md$")
 
 
 @dataclass(frozen=True)
@@ -186,6 +233,7 @@ class Document:
     fences: int
     table_rows: int
     links: frozenset[str]
+    link_suffixes: tuple[tuple[str, tuple[str, ...]], ...]
     bodies: tuple[int, ...]
     heading_markers: tuple[tuple[str, ...], ...]
     section_texts: tuple[str, ...]
@@ -206,12 +254,37 @@ class SectionGap:
         return self.translation_chars / self.reference_chars
 
 
+@dataclass(frozen=True)
+class LanguageCalibration:
+    """Per-language ratio distribution over sections above the ratio band."""
+
+    language: str
+    pairs: int
+    minimum: float
+    p1: float
+    p5: float
+    median: float
+
+    @property
+    def margin(self) -> float:
+        """How many times the band the smallest legitimate ratio keeps."""
+        return self.minimum / NEAR_EMPTY_RATIO
+
+
+def _split_localized(target: str) -> tuple[str, str | None]:
+    """Return ``(normalized base, language suffix or None)`` for one target."""
+    match = _LOCALIZED_README.search(target)
+    if match is None:
+        return target, None
+    return _LOCALIZED_README.sub("README.md", target), match.group(1)
+
+
 def _link_target(dest: str) -> str | None:
     """Normalize one link destination; ``None`` for a pure in-page anchor."""
     target = dest.split("#", 1)[0].strip()
     if not target:
         return None
-    return _LOCALIZED_README.sub("README.md", target)
+    return _split_localized(target)[0]
 
 
 def _canon_marker(text: str) -> str:
@@ -277,6 +350,7 @@ def extract(path: Path) -> Document:
     heading_levels: list[int] = []
     headings: list[str] = []
     links: set[str] = set()
+    link_suffixes: dict[str, set[str]] = {}
     bodies: list[int] = []
     heading_markers: list[tuple[str, ...]] = []
     section_texts: list[str] = []
@@ -313,15 +387,19 @@ def extract(path: Path) -> Document:
             bodies[-1] += len(raw.strip())
             section_texts[-1] += raw + "\n"
         for match in _LINK.finditer(raw):
-            target = _link_target(match.group(2))
-            if target is not None:
-                links.add(target)
+            dest = match.group(2).split("#", 1)[0].strip()
+            if not dest:
+                continue
+            target, suffix = _split_localized(dest)
+            links.add(target)
+            link_suffixes.setdefault(target, set()).add(suffix or "")
     return Document(
         tuple(heading_levels),
         tuple(headings),
         fences,
         table_rows,
         frozenset(links),
+        tuple((base, tuple(sorted(suffixes))) for base, suffixes in sorted(link_suffixes.items())),
         tuple(bodies),
         tuple(heading_markers),
         tuple(section_texts),
@@ -469,7 +547,79 @@ def _section_gaps(reference: Document, other: Document) -> tuple[SectionGap, ...
     return tuple(gaps)
 
 
-def _semantic_diffs(reference: Document, other: Document) -> list[str]:
+_THEMATIC_BREAK = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
+
+
+def _meaningful_body_chars(text: str) -> int:
+    """Body length ignoring blank lines and Markdown thematic breaks.
+
+    A ``---`` separator carries no prose and is not a translation obligation, so
+    it must not make a section look non-empty (the client READMEs end their
+    directory-structure section with one).
+    """
+    return sum(
+        len(line.strip())
+        for line in text.splitlines()
+        if line.strip() and not _THEMATIC_BREAK.match(line)
+    )
+
+
+def _tiny_empty_sections(reference: Document, other: Document) -> list[str]:
+    """English sections below the ratio band whose translation body is empty.
+
+    The ratio gates skip an English section shorter than
+    ``EMPTY_SECTION_REFERENCE_CHARS`` entirely; this closes that hole by
+    asserting the translation is non-empty whenever English carries real
+    (non-separator) content. Only sections the ratio gates do not already cover
+    are reported, so a section is never flagged twice.
+    """
+    if len(reference.section_texts) != len(other.section_texts):
+        return []
+    parts: list[str] = []
+    for index, (ref_chars, ref_text) in enumerate(zip(reference.bodies, reference.section_texts)):
+        if ref_chars >= EMPTY_SECTION_REFERENCE_CHARS:
+            continue
+        if _meaningful_body_chars(ref_text) == 0:
+            continue
+        if _meaningful_body_chars(other.section_texts[index]) == 0:
+            parts.append(
+                f"section #{index} ({reference.headings[index]}) translation body is empty"
+                f" (EN body {ref_chars} chars, below the {EMPTY_SECTION_REFERENCE_CHARS}-char"
+                " ratio band)"
+            )
+    return parts
+
+
+def _format_languages(suffixes: set[str]) -> str:
+    return ", ".join(sorted(suffixes)) if suffixes else "the unlocalized base"
+
+
+def _link_language_diffs(reference: Document, other: Document, translation: str) -> list[str]:
+    """Links pointing at a different language than the English reference.
+
+    The base-language suffix and the translation's own suffix are both
+    self-references and are removed from both sides (see the normalization note
+    at ``_LOCALIZED_README``); a remaining mismatch means the translation links
+    a foreign README the reference does not. Targets present on only one side
+    are left to the missing/extra link check, so nothing is reported twice.
+    """
+    own = _OWN_SUFFIX[translation]
+    reference_map = dict(reference.link_suffixes)
+    other_map = dict(other.link_suffixes)
+    parts: list[str] = []
+    for target in sorted(set(reference_map) & set(other_map)):
+        reference_foreign = set(reference_map[target]) - {"", own}
+        other_foreign = set(other_map[target]) - {"", own}
+        if reference_foreign != other_foreign:
+            parts.append(
+                f"link target {target} points at a different language:"
+                f" reference {_format_languages(reference_foreign)} vs"
+                f" {translation} {_format_languages(other_foreign)}"
+            )
+    return parts
+
+
+def _semantic_diffs(reference: Document, other: Document, translation: str) -> list[str]:
     """Every second-order mismatch of ``other`` against the reference."""
     parts: list[str] = []
     missing = sorted(reference.links - other.links)
@@ -478,12 +628,14 @@ def _semantic_diffs(reference: Document, other: Document) -> list[str]:
         parts.append(f"links missing: {missing}")
     if extra:
         parts.append(f"links extra: {extra}")
+    parts.extend(_link_language_diffs(reference, other, translation))
     for gap in _section_gaps(reference, other):
         parts.append(
             f"section #{gap.index} ({gap.heading}) body ratio {gap.ratio:.3f}"
             f" < {NEAR_EMPTY_RATIO:.2f} (EN {gap.reference_chars} chars,"
             f" translated {gap.translation_chars} chars)"
         )
+    parts.extend(_tiny_empty_sections(reference, other))
     parts.extend(_invariant_token_gaps(reference, other))
     return parts
 
@@ -498,8 +650,23 @@ def allowlist_violations(groups: list[Path], root: Path) -> list[str]:
                 f"{group}: reason is {len(text)} chars,"
                 f" below the {MIN_ALLOWLIST_REASON_CHARS}-char minimum"
             )
-        elif ALLOWLIST_PLACEHOLDER.match(text):
+            continue
+        if ALLOWLIST_PLACEHOLDER.match(text):
             violations.append(f"{group}: reason starts with placeholder text: {text!r}")
+            continue
+        clause = _ALLOWLIST_FIX_CLAUSE.search(text)
+        if clause is None:
+            violations.append(
+                f"{group}: reason must argue why fixing the document(s) is wrong"
+                " (e.g. 'Fixing the document(s) is wrong because ...')"
+            )
+            continue
+        rationale = clause.group("why").strip()
+        if len(rationale) < MIN_ALLOWLIST_FIX_RATIONALE_CHARS:
+            violations.append(
+                f"{group}: the 'why fixing is wrong' clause has only {len(rationale)} chars,"
+                f" below the {MIN_ALLOWLIST_FIX_RATIONALE_CHARS}-char rationale minimum"
+            )
     discovered = {str(group_path.relative_to(root)) for group_path in groups}
     for group in sorted(set(ALLOWLIST) - discovered):
         violations.append(f"{group}: allowlisted group was not discovered (stale exemption)")
@@ -522,8 +689,71 @@ def _format_signature(document: Document) -> str:
     )
 
 
-def main(root: Path = REPO_ROOT) -> int:
+def _percentile(values: list[float], quantile: float) -> float:
+    """Linear-interpolated percentile (the numpy default method)."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    if len(ordered) == 1:
+        return ordered[0]
+    position = quantile * (len(ordered) - 1)
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    fraction = position - lower
+    return ordered[lower] * (1 - fraction) + ordered[upper] * fraction
+
+
+def calibration_stats(root: Path = REPO_ROOT) -> tuple[LanguageCalibration, ...]:
+    """Per-language ratio distribution over sections with a large EN body."""
+    ratios: dict[str, list[float]] = {translation: [] for translation in TRANSLATIONS}
+    for group in discover_groups(root):
+        reference = extract(group / REFERENCE)
+        for translation in TRANSLATIONS:
+            other = extract(group / translation)
+            if len(reference.bodies) != len(other.bodies):
+                continue
+            for ref_chars, tr_chars in zip(reference.bodies, other.bodies):
+                if ref_chars >= MIN_REFERENCE_BODY_CHARS:
+                    ratios[translation].append(tr_chars / ref_chars)
+    return tuple(
+        LanguageCalibration(
+            translation,
+            len(values),
+            min(values, default=0.0),
+            _percentile(values, 0.01),
+            _percentile(values, 0.05),
+            _percentile(values, 0.50),
+        )
+        for translation, values in ratios.items()
+    )
+
+
+def print_calibration(root: Path = REPO_ROOT) -> None:
+    """Print the ratio distribution and its margin above the band; never gates."""
+    stats = calibration_stats(root)
+    _out(
+        f"README parity calibration — band {NEAR_EMPTY_RATIO:.2f},"
+        f" sections with EN body >= {MIN_REFERENCE_BODY_CHARS} chars"
+    )
+    for cal in stats:
+        _out(
+            f"  {cal.language}: pairs={cal.pairs} min={cal.minimum:.3f}"
+            f" p1={cal.p1:.3f} p5={cal.p5:.3f} median={cal.median:.3f}"
+            f" margin={cal.margin:.3f}x"
+        )
+    smallest = min((cal.minimum for cal in stats), default=0.0)
+    _out(
+        f"  smallest legitimate ratio {smallest:.3f} keeps"
+        f" {smallest / NEAR_EMPTY_RATIO:.3f}x the band;"
+        f" required minimum margin {MIN_CALIBRATION_MARGIN:.2f}x"
+    )
+
+
+def main(root: Path = REPO_ROOT, *, calibrate: bool = False) -> int:
     """Run the parity gate over ``root``; return the process exit code."""
+    if calibrate:
+        print_calibration(root)
+        return 0
     groups = discover_groups(root)
     violations = allowlist_violations(groups, root)
     if violations:
@@ -557,7 +787,7 @@ def main(root: Path = REPO_ROOT) -> int:
             fingerprinted += len(pairs) - fallback_pairs
             fallback += fallback_pairs
             parts = _structural_diffs(reference, other, translation) + _semantic_diffs(
-                reference, other
+                reference, other, translation
             )
             if parts:
                 details.append(f"      {translation}: " + "; ".join(parts))
@@ -590,4 +820,4 @@ def main(root: Path = REPO_ROOT) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    raise SystemExit(main(calibrate="--calibrate" in sys.argv[1:]))
