@@ -160,6 +160,7 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - **Middleware hooks**: `abefore_model(self, state, runtime=None)`, `aafter_agent(self, state, runtime=None)` — LangChain 1.3.9 signatures; after_agent runs in REVERSE list order
 - **Tool registration**: `@tool("name")` + `build_*_tools()` factory + `_MAIN_TOOLS_BUILDERS` list in `agent/tools/__init__.py`
 - **Test fixtures**: `isolated_db` (tmp SQLite), `build_main_tools_real` (stub-tolerant), `scan_skills_real`
+- **Docs parity** (`scripts/check_docs_parity.py`): gates every four-language README group on structure plus two semantic metrics (link-target sets after `README.<lang>.md` normalization; per-section body-length ratio calibrated so empty/near-empty translations fail — see the calibration comment at the constants before changing the band). Exempting a group via `ALLOWLIST` is a last resort: the reason must explain why fixing the documents instead is wrong, must be ≥40 chars and may not open with placeholder text, stale entries fail the gate, and `tests/scripts/test_check_docs_parity.py` pins the mapping empty so every addition requires an explicit test edit
 - **Commits**: angular conventional (commitlint enforced), pathspec-only (`git commit -- <files>`)
 - **File naming**: snake_case enforced by pre-commit hook
 - **Line length**: 100 chars (ruff)
