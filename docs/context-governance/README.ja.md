@@ -6,7 +6,7 @@
 
 エージェントが生むメッセージには二つの価値がある：**生の履歴**（実際に起きたこと。検索と圧縮のため）と、**モデルコンテキスト**（今ウィンドウに収まるもの）である。本ページはこの二つを両立させる六つの機構を記録する —— すべてが一つの規則を共有する：**データは決して失わず、縮めるのはモデルビューだけ、そして全文へのポインタを必ず残す。**
 
-**一次情報:** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`。以下の主張はすべてこのコードと突き合わせて検証済みです。
+**一次情報:** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/media_offload.py`、`pub/func/estimate_tokens.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`、`config/features/agent_side/token_estimation.py`。以下の主張はすべてこのコードと突き合わせて検証済みです。
 
 ## 🎯 概要とパイプライン
 
@@ -42,6 +42,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **オーバーフロー（第一手）** | `clip_overflow_tail`（P1-2） | なし | 末尾のツール結果をスタブ化；メッセージ同一性とペアリングは不変 |
 | **オーバーフロー（既存ルート）** | `summarization` 4 ルート分岐 | compact 系ルートは補助 LLM 1 回 | 切り詰めおよび／または履歴圧縮 |
 | **オーバーフロー（プロバイダエラー）** | T4/T5 強制リカバリ | compact ステップごとに 1 回 | クリップ → 圧縮 + 予算切り詰め、最大 3 回再試行 |
+| **メディア・オフロード（圧縮）** | `offload_inline_media` | なし | 要約されるプレフィックスのインライン・メディア → ディスクコピー + `[evicted to: …]` ポインタ；保持ウィンドウは不変 |
 
 ## 🗂️ 情報源
 
@@ -142,6 +143,21 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 非対称性はメッセージが**いつ**永続化されるかに由来する。ツール結果はツール返却時に内側の永続化層が書き込むので、state は安全にプレビューだけを持てる。人間メッセージはターン最初の `after_model` 境界で永続化される —— state がプレビューしか持たなければ、MesMemory はプレビューをアーカイブし、`message_search` も圧縮も本当のテキストを失う。だから state は全文を保ち、リクエストビューだけが切り詰められる。メッセージ id は決して変わらないため、ウォーターマークは無傷で、二行目が書かれることもない。
 
+## 🖼️ メディア・ガバナンス（オフロード、参照、トークン分類）
+
+圧縮とトークン推定はどちらもマルチモーダル・ペイロードを扱わなければならず、どちらも base64 をテキストとして扱ってはなりません。
+
+**圧縮時オフロード。** `_apply_compression` が要約されるプレフィックス（`current_messages[:cutoff]`）を直列化する前に、`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）がその範囲だけのすべてのインライン・メディアブロックを書き換えます：
+
+- `data:` URL / base64 ペイロード（`image_url` / `audio_url` / `video_url`、裸の `base64` フィールド、`audio_bytes` / `video_bytes`、または Anthropic 形式の `source.data`）をデコードし、`SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}` に書き込みます；拡張子はマジックバイトから `media_handlers._infer_extension` で導出します；
+- 同一バイトは一度だけ書き込みます —— 内容ハッシュのファイル名が単一回および複数回の圧縮をまたいで重複を排除します；
+- ブロックはテキストポインタ `[evicted to: <path>]` になります。P0-2 / P1-9 の退避経路が出すのと同じマーカーなので、`_collect_evicted_refs` が拾い、`SummaryDoc.evicted_refs` がパスを要約チェーンに運びます（*Evicted References* として描画）；
+- デコードまたは書き込みに失敗したブロックは `<media error="failed_to_offload" />` になります —— fail-open、決してクラッシュしません。
+
+保持ウィンドウはメディアをそのまま保ちます。両方の圧縮経路がプレフィックススライスにオフロードを呼びます —— `_apply_compression_under_lock`（同期）と `_aapply_compression_under_lock`（非同期）。要約プロンプトはメディア参照ルールを運びます：ポインタを逐語で保持し、視覚/音声/動画の詳細を捏造せず、パスからペイロードを取得します。メディアファイルはセッションツリー内にあるため、`clear_session()` が `evicted/` と `plans/` とともに削除します。
+
+**トークン分類。** `pub/func/estimate_tokens.py` は content **リスト**をブロック単位で数えます：テキストブロックはテキスト、メディアブロックは `TOKEN_ESTIMATION` の型ごとの固定コスト（`tokens_per_image_block = 85` —— `langchain_core.count_tokens_approximately` と整合；`tokens_per_audio_block = 256`；`tokens_per_video_block = 1024`；未知ブロックは `tokens_per_unknown_block = 85`、`data:` ペイロードを隠したブロックも含む）。base64 は決して直列化されず、決してテキストとして数えられません：削除された JSON 経路は 5 MB の base64 を約 125 万トークンと読み、画像 1 枚で圧縮を発火させていました。`str` content、`None`、純テキストのリストはテキスト推定を保ちます。
+
 ## ⚡ オーバーフロー・テールクリップ（P1-2）
 
 最新のツール出力は通常、最大のコンテキスト消費者であり、最も犠牲にできる —— しかもそのすべてがすでに永続化済みである。`pub/func/message/overflow_clip.py::clip_overflow_tail` はこれを**あらゆるオーバーフロー経路の最初の、ゼロ LLM の一手**に変える：
@@ -224,6 +240,15 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `max_tool_output_chars` | `2_000` | ツール結果の圧縮時クリップ予算 |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | 圧縮時クリップの head/tail 保持比率 |
 
+`TOKEN_ESTIMATION`（`config/features/agent_side/token_estimation.py`）、マルチモーダル・トークン分類：
+
+| キー | デフォルト | 意味 |
+|---|---|---|
+| `chars_per_token` / `chars_per_token_cjk` | `4` / `2` | テキスト推定の除数（非 CJK / CJK） |
+| `tokens_per_image_block` | `85` | 画像ブロックあたりの固定コスト（`langchain_core.count_tokens_approximately` と整合） |
+| `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | 保守的な固定コスト（推定時に長さメタデータなし） |
+| `tokens_per_unknown_block` | `85` | 未知ブロックの固定コスト —— その base64 では決してない |
+
 これらのノブに環境変数はない：設計上、上記 feature TypedDict のコードデフォルトである。
 
 ## 🧪 テストマップ
@@ -240,6 +265,8 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tests/pub/func/message/test_overflow_clip.py` | P1-2 純粋クリップ：末尾バッチ検出、ゲート、トークン目標、マーカー保持 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | P1-2 ミドルウェア統合：ゼロ LLM 回復、劣化、T4/T5、同期／非同期パリティ |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | チェーン要約フィルタリングと `<prior-summary>` 注入 |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 圧縮時インライン・メディア・オフロード：書き込み + ポインタ、ハッシュ重複排除、失敗プレースホルダ、保持ウィンドウ不変、同期／非同期、`evicted_refs` |
+| `tests/pub/func/test_estimate_tokens_media.py` | ブロック単位マルチモーダル推定：固定メディアコスト、5 MB base64 回帰、メディアを隠す未知ブロック、`str` / `None` / 空リスト境界 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | `persisted_message_ids` ウォーターマークストア |
 | `tests/full/test_context_governance_e2e.py` | ライブネットワーク e2e（実 LLM + 実グラフ）：六機構の端から端まで —— 明示的に実行 |
 
@@ -252,6 +279,8 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_compression_media_offload.py \
+    tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q
 
 # Live-network e2e — RUN EXPLICITLY, never part of the CI gate

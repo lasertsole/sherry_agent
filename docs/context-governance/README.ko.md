@@ -6,7 +6,7 @@
 
 에이전트가 만드는 모든 메시지는 두 번 가치 있다: **원본 기록**(실제로 일어난 일 — 검색과 압축을 위해)과 **모델 컨텍스트**(지금 윈도에 들어가는 것)다. 이 페이지는 그 두 요구를 화해시키는 여섯 가지 메커니즘을 기록한다 — 모두 하나의 규칙을 공유한다: **데이터는 절대 잃지 않고, 줄이는 것은 모델 뷰뿐이며, 전문을 가리키는 포인터를 항상 남긴다.**
 
-**사실상의 기준(source of truth):** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`. 아래의 모든 주장은 해당 코드와 대조하여 검증했습니다.
+**사실상의 기준(source of truth):** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/media_offload.py`, `pub/func/estimate_tokens.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`, `config/features/agent_side/token_estimation.py`. 아래의 모든 주장은 해당 코드와 대조하여 검증했습니다.
 
 ## 🎯 개요와 파이프라인
 
@@ -42,6 +42,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **오버플로(첫 수)** | `clip_overflow_tail` (P1-2) | 없음 | 꼬리 도구 결과를 스텁화; 메시지 정체성과 페어링 불변 |
 | **오버플로(기존 라우트)** | `summarization` 4-라우트 디스패치 | compact 계열 라우트는 보조 LLM 1회 | 트렁케이션 및/또는 이력 압축 |
 | **오버플로(프로바이더 오류)** | T4/T5 강제 복구 | compact 단계마다 1회 | 클립 → 압축 + 예산 트렁케이션, 최대 3회 재시도 |
+| **미디어 오프로드(압축)** | `offload_inline_media` | 없음 | 요약될 프리픽스의 인라인 미디어 → 디스크 사본 + `[evicted to: …]` 포인터; 보존 윈도우 불변 |
 
 ## 🗂️ 정보 출처
 
@@ -142,6 +143,21 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 이 비대칭은 메시지가 **언제** 영속화되는지에서 나온다. 도구 결과는 도구 반환 시점에 내부 영속화 계층이 플러시하므로 state가 안전하게 프리뷰만 가질 수 있다. 인간 메시지는 턴의 첫 `after_model` 경계에서 영속화된다 — state가 프리뷰만 가지면 MesMemory가 프리뷰를 아카이브하고 `message_search`와 압축 모두 진짜 텍스트를 잃는다. 그래서 state는 전문을 유지하고 요청 뷰만 절단된다. 메시지 id가 결코 바뀌지 않으므로 워터마크는 그대로이고 두 번째 행도 기록되지 않는다.
 
+## 🖼️ 미디어 거버넌스 (오프로드, 참조, 토큰 분류)
+
+압축과 토큰 추정 모두 멀티모달 페이로드를 다뤄야 하며, 둘 다 base64를 텍스트로 취급해서는 안 됩니다.
+
+**압축 시점 오프로드.** `_apply_compression`이 요약될 프리픽스(`current_messages[:cutoff]`)를 직렬화하기 전에 `offload_inline_media`(`agent/middlewares/summarization/media_offload.py`)가 그 범위만의 모든 인라인 미디어 블록을 다시 씁니다:
+
+- `data:` URL / base64 페이로드(`image_url` / `audio_url` / `video_url`, 맨 `base64` 필드, `audio_bytes` / `video_bytes`, 또는 Anthropic 형식 `source.data`)를 디코드해 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`에 씁니다; 확장자는 매직 바이트에서 `media_handlers._infer_extension`으로 도출합니다;
+- 동일 바이트는 한 번만 씁니다 —— 내용 해시 파일명이 단일 및 여러 압축에 걸쳐 중복을 제거합니다;
+- 블록은 텍스트 포인터 `[evicted to: <path>]`가 됩니다. P0-2 / P1-9 축출 경로가 내는 것과 같은 마커라서 `_collect_evicted_refs`가 줍고 `SummaryDoc.evicted_refs`가 경로를 요약 체인으로 실어 나릅니다(*Evicted References*로 렌더링);
+- 디코드나 쓰기에 실패한 블록은 `<media error="failed_to_offload" />`가 됩니다 —— fail-open, 결코 크래시하지 않습니다.
+
+보존 윈도우는 미디어를 그대로 유지합니다. 두 압축 경로 모두 프리픽스 슬라이스에 오프로드를 호출합니다 —— `_apply_compression_under_lock`(동기)와 `_aapply_compression_under_lock`(비동기). 요약 프롬프트는 미디어 참조 규칙을 싣습니다: 포인터를 그대로 보존하고, 시각/오디오/비디오 세부를 지어내지 말고, 경로에서 페이로드를 가져옵니다. 미디어 파일은 세션 트리 안에 있으므로 `clear_session()`이 `evicted/` 및 `plans/`와 함께 삭제합니다.
+
+**토큰 분류.** `pub/func/estimate_tokens.py`는 content **리스트**를 블록 단위로 셉니다: 텍스트 블록은 텍스트, 미디어 블록은 `TOKEN_ESTIMATION`의 유형별 고정 비용(`tokens_per_image_block = 85` —— `langchain_core.count_tokens_approximately`와 정렬; `tokens_per_audio_block = 256`; `tokens_per_video_block = 1024`; 알 수 없는 블록은 `tokens_per_unknown_block = 85`, `data:` 페이로드를 숨긴 블록 포함). base64는 결코 직렬화되지 않고 결코 텍스트로 세어지지 않습니다: 제거된 JSON 경로는 5 MB base64를 약 125만 토큰으로 읽어 이미지 한 장으로 압축을 발화시켰습니다. `str` content, `None`, 순수 텍스트 리스트는 텍스트 추정치를 유지합니다.
+
 ## ⚡ 오버플로 테일 클립 (P1-2)
 
 최신 도구 출력은 대개 가장 큰 컨텍스트 소비자이자 가장 희생 가능한 부분이다 — 그리고 그 모두가 이미 영속화되어 있다. `pub/func/message/overflow_clip.py::clip_overflow_tail`은 이것을 **모든 오버플로 경로의 첫 번째, 제로 LLM 수**로 만든다:
@@ -224,6 +240,15 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `max_tool_output_chars` | `2_000` | 도구 결과의 압축 시점 클립 예산 |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | 압축 시점 클립의 head/tail 유지 비율 |
 
+`TOKEN_ESTIMATION`(`config/features/agent_side/token_estimation.py`), 멀티모달 토큰 분류:
+
+| 키 | 기본값 | 의미 |
+|---|---|---|
+| `chars_per_token` / `chars_per_token_cjk` | `4` / `2` | 텍스트 추정 제수(비 CJK / CJK) |
+| `tokens_per_image_block` | `85` | 이미지 블록당 고정 비용(`langchain_core.count_tokens_approximately`와 정렬) |
+| `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | 보수적 고정 비용(추정 시 길이 메타데이터 없음) |
+| `tokens_per_unknown_block` | `85` | 알 수 없는 블록의 고정 비용 —— 결코 그 base64가 아님 |
+
 이 노브들에는 환경 변수가 없다: 설계상 위 feature TypedDict들의 코드 기본값이다.
 
 ## 🧪 테스트 맵
@@ -240,6 +265,8 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tests/pub/func/message/test_overflow_clip.py` | P1-2 순수 클립: 꼬리 배치 감지, 게이트, 토큰 목표, 마커 보존 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | P1-2 미들웨어 통합: 제로 LLM 복구, 퇴화, T4/T5, 동기/비동기 패리티 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 체인 요약 필터링과 `<prior-summary>` 주입 |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 압축 시점 인라인 미디어 오프로드: 쓰기 + 포인터, 해시 중복 제거, 실패 플레이스홀더, 보존 윈도우 불변, 동기/비동기, `evicted_refs` |
+| `tests/pub/func/test_estimate_tokens_media.py` | 블록 단위 멀티모달 추정: 고정 미디어 비용, 5 MB base64 회귀, 미디어를 숨긴 미지 블록, `str` / `None` / 빈 리스트 경계 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | `persisted_message_ids` 워터마크 저장소 |
 | `tests/full/test_context_governance_e2e.py` | 라이브 네트워크 e2e(실제 LLM + 실제 그래프): 여섯 메커니즘 종단 간 — 명시적으로 실행 |
 
@@ -252,6 +279,8 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_compression_media_offload.py \
+    tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q
 
 # Live-network e2e — RUN EXPLICITLY, never part of the CI gate

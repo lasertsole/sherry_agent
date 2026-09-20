@@ -70,6 +70,7 @@ from .summarization_components import (
     _SUMMARY_LC_SOURCE as _SUMMARY_LC_SOURCE,
 )
 from .summary_doc import SummaryDoc, cap_summary_doc, render_summary_markdown
+from .media_offload import offload_inline_media
 from .plan_context import render_plan_context, resolve_active_plan
 
 # ── Summarization tunables (bound from the feature registry) ─────────────
@@ -267,6 +268,10 @@ _SUMMARY_TEMPLATE = (
     f'- For "Completed" and "Key Decisions", keep only the most recent '
     f"{COMPLETED_MAX_ITEMS}/{KEY_DECISIONS_MAX_ITEMS} items.\n"
     '  Append "(N earlier items omitted for brevity)" when truncating.\n'
+    "- Inline media (image/audio/video) may have been replaced by a\n"
+    '  "[evicted to: <path>]" pointer. Preserve those pointers verbatim in the\n'
+    "  Evicted References section and never invent visual/audio/video details you\n"
+    "  cannot see — the payload is on disk at the path.\n"
     "- Do not mention the summary process or that context was compacted."
 )
 
@@ -318,7 +323,13 @@ _SUMMARY_JSON_RULES = (
     '    active plan, one line each ("symptom -> avoidance"); copy previous entries\n'
     "    forward VERBATIM and append only newly learned ones; [] when the prompt has\n"
     '    no "Active Plan (authoritative)" block;\n'
-    '  "evicted_refs": string[] — the "[evicted to: <path>]" pointers; carry existing entries forward.\n'
+    '  "evicted_refs": string[] — the "[evicted to: <path>]" pointers, including\n'
+    "    pointers that replaced offloaded inline media; carry existing entries forward.\n"
+    "Media pointers: an inline image/audio/video may appear as\n"
+    '"[evicted to: <path>]". Preserve those pointers verbatim in evicted_refs.\n'
+    "Never describe or invent visual, audio or video details you cannot see —\n"
+    "the payload is on disk at the path and can be retrieved with read_file or\n"
+    "the matching media skill.\n"
     "Preserve exact file paths, commands, error strings and identifiers."
 )
 
@@ -2275,6 +2286,7 @@ class Summarization(AgentMiddleware):
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+                messages_to_summarize = offload_inline_media(messages_to_summarize, session_id)
 
                 _schedule_compression_nudges(session_id, original_messages)
 
@@ -2381,6 +2393,7 @@ class Summarization(AgentMiddleware):
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+                messages_to_summarize = offload_inline_media(messages_to_summarize, session_id)
 
                 _schedule_compression_nudges(session_id, original_messages)
 

@@ -6,7 +6,7 @@
 
 Agent 产出的每条消息都有双重价值：既是**原始历史**（真实发生过什么，用于搜索与压缩），也是**模型上下文**（当下能塞进窗口的部分）。本页记录调和这两种需求的六项机制 —— 它们共享同一条规则：**绝不丢数据，只压缩模型视图，并始终留下指回全文的指针。**
 
-**事实来源：** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`。以下每条结论均已与上述代码逐条核对。
+**事实来源：** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/media_offload.py`、`pub/func/estimate_tokens.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`、`config/features/agent_side/token_estimation.py`。以下每条结论均已与上述代码逐条核对。
 
 ## 🎯 总览与流水线
 
@@ -42,6 +42,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **溢出（首步）** | `clip_overflow_tail`（P1-2） | 无 | 尾部工具结果替换为 stub；消息身份与配对不变 |
 | **溢出（既有路由）** | `summarization` 四路由分发 | compact 类路由调一次辅助 LLM | 截断与/或历史压缩 |
 | **溢出（提供商错误）** | T4/T5 强制恢复 | 每个 compact 步骤一次调用 | 先裁剪 → 再压缩 + 预算截断，最多重试 3 次 |
+| **媒体卸载（压缩）** | `offload_inline_media` | 无 | 被摘要前缀中的内联媒体 → 落盘副本 + `[evicted to: …]` 指针；保留窗口不动 |
 
 ## 🗂️ 信息来源
 
@@ -142,6 +143,21 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 不对称源于消息**何时**落库。工具结果在工具返回时由内层持久化刷盘，所以 state 可以安全地只留预览。人类消息在回合的第一个 `after_model` 边界落库 —— 若 state 只留预览，MesMemory 就会归档预览，`message_search` 与压缩都会失去真实文本。因此 state 保留全文，只截断请求视图。由于消息 id 从不改变，水位不受影响，也不会写出第二行。
 
+## 🖼️ 媒体治理（卸载、引用与 token 分型）
+
+压缩与 token 估算都必须处理多模态载荷；两者都绝不能把 base64 当作文本。
+
+**压缩期卸载。** 在 `_apply_compression` 序列化被摘要的前缀（`current_messages[:cutoff]`）之前，`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）只重写该范围内的每个内联媒体块：
+
+- `data:` URL / base64 载荷（`image_url` / `audio_url` / `video_url`、裸 `base64` 字段、`audio_bytes` / `video_bytes`，或 Anthropic 风格的 `source.data`）被解码并写入 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`；扩展名由魔数经 `media_handlers._infer_extension` 推导；
+- 相同字节只写一份 —— 以内容 hash 命名的文件名在单次及多次压缩之间去重；
+- 该块变成文本指针 `[evicted to: <path>]`，与 P0-2 / P1-9 驱逐路径发出的标记一致，因此 `_collect_evicted_refs` 能收集到它，`SummaryDoc.evicted_refs` 会把路径带到摘要链上（渲染为 *Evicted References*）；
+- 无法解码或写入的块变成 `<media error="failed_to_offload" />` —— fail-open，绝不崩溃。
+
+保留窗口保持其媒体不动。两条压缩路径都会对前缀切片调用卸载 —— `_apply_compression_under_lock`（同步）与 `_aapply_compression_under_lock`（异步）。摘要提示词携带媒体引用规则：原样保留指针、不得臆测视觉/音频/视频细节、按路径取回载荷。媒体文件位于会话目录树内，因此 `clear_session()` 会把它们随 `evicted/` 与 `plans/` 一并删除。
+
+**token 分型。** `pub/func/estimate_tokens.py` 对 content **列表**逐块计数：文本块按文本，媒体块按 `TOKEN_ESTIMATION` 的固定分型成本（`tokens_per_image_block = 85` —— 与 `langchain_core.count_tokens_approximately` 对齐；`tokens_per_audio_block = 256`；`tokens_per_video_block = 1024`；未知块取 `tokens_per_unknown_block = 85`，包括藏有 `data:` 载荷的块）。base64 绝不被序列化、绝不被计入文本：被移除的 JSON 路径会把 5 MB base64 读成约 125 万 token，单张图片就会触发压缩。`str` content、`None` 与纯文本列表保持其文本估算。
+
 ## ⚡ 溢出尾部裁剪（P1-2）
 
 最新的工具输出通常既是最大的上下文消耗者，也最可牺牲 —— 而且每一条都已持久化。`pub/func/message/overflow_clip.py::clip_overflow_tail` 把它变成**每条溢出路径上的第一个、零 LLM 动作**：
@@ -224,6 +240,15 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `max_tool_output_chars` | `2_000` | 工具结果的压缩期裁切预算 |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | 压缩期裁切的 head/tail 保留比例 |
 
+`TOKEN_ESTIMATION`（`config/features/agent_side/token_estimation.py`），多模态 token 分型：
+
+| 键 | 默认值 | 含义 |
+|---|---|---|
+| `chars_per_token` / `chars_per_token_cjk` | `4` / `2` | 文本估算除数（非 CJK / CJK） |
+| `tokens_per_image_block` | `85` | 每个图像块的固定成本（与 `langchain_core.count_tokens_approximately` 对齐） |
+| `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | 保守固定成本（估算时无时长元数据） |
+| `tokens_per_unknown_block` | `85` | 未识别块的固定成本 —— 绝不是它的 base64 |
+
 这些旋钮没有环境变量：按设计它们就是上述 feature TypedDict 中的代码默认值。
 
 ## 🧪 测试地图
@@ -240,6 +265,8 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tests/pub/func/message/test_overflow_clip.py` | P1-2 纯裁剪：尾部批次检测、闸门、token 目标、标记保留 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | P1-2 中间件集成：零 LLM 恢复、降级、T4/T5、同步/异步奇偶 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 链式摘要过滤与 `<prior-summary>` 注入 |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 压缩期内联媒体卸载：写盘 + 指针、hash 去重、失败占位、保留窗口不动、同步/异步、`evicted_refs` |
+| `tests/pub/func/test_estimate_tokens_media.py` | 逐块多模态估算：固定媒体成本、5 MB base64 回归、未知块藏媒体、`str` / `None` / 空列表边界 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | `persisted_message_ids` 水位存储 |
 | `tests/full/test_context_governance_e2e.py` | 实网 e2e（真实 LLM + 真实图）：六项机制端到端 —— 显式运行 |
 
@@ -252,6 +279,8 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_compression_media_offload.py \
+    tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q
 
 # Live-network e2e — RUN EXPLICITLY, never part of the CI gate

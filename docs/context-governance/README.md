@@ -6,7 +6,7 @@
 
 Every message the agent produces is valuable twice: once as **raw history** (what actually happened, for search and for compression) and once as **model context** (what fits in the window right now). This page documents the six mechanisms that reconcile those two needs — they all share one rule: **never lose data, only shrink the model view, and always leave a pointer back to the full text.**
 
-**Source of truth:** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`. Every claim below was checked against that code.
+**Source of truth:** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/media_offload.py`, `pub/func/estimate_tokens.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`, `config/features/agent_side/token_estimation.py`. Every claim below was checked against that code.
 
 ## 🎯 Overview & Pipeline
 
@@ -42,6 +42,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **Overflow (first move)** | `clip_overflow_tail` (P1-2) | none | trailing tool results stubbed; message identity and pairing intact |
 | **Overflow (existing routes)** | `summarization` 4-route dispatch | one auxiliary-LLM call on compact routes | truncation and/or history compaction |
 | **Overflow (provider error)** | T4/T5 forced recovery | one call per compact step | clip → compact + budget truncate, retried up to 3 times |
+| **Media offload (compression)** | `offload_inline_media` | none | inline media in the summarized prefix → on-disk copy + `[evicted to: …]` pointer; preserved tail untouched |
 
 ## 🗂️ Information Sources
 
@@ -142,6 +143,21 @@ A user can paste a payload no tool produced: logs, documents, transcripts, whole
 
 The asymmetry follows from *when* the message is persisted. A tool result is flushed by the inner persistence layer at tool return, so state can safely hold the preview. A human message is persisted at the turn's first `after_model` boundary — if state held only the preview, MesMemory would archive the preview and both `message_search` and compression would lose the real text. So state keeps the full text and only the request view is truncated. Because the message id never changes, the watermark is untouched and no second row is written.
 
+## 🖼️ Media Governance (Offload, Reference & Token Classing)
+
+Both compression and token estimation have to deal with multimodal payloads; neither may ever treat base64 as text.
+
+**Compression-time offload.** Before `_apply_compression` serializes the summarized prefix (`current_messages[:cutoff]`), `offload_inline_media` (`agent/middlewares/summarization/media_offload.py`) rewrites every inline media block in that range only:
+
+- a `data:` URL / base64 payload (`image_url` / `audio_url` / `video_url`, a bare `base64` field, `audio_bytes` / `video_bytes`, or an Anthropic-style `source.data`) is decoded and written to `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`; the extension comes from the magic bytes via `media_handlers._infer_extension`;
+- identical bytes are written once — the content-hash filename deduplicates within and across compactions;
+- the block becomes the text pointer `[evicted to: <path>]`, the same marker the P0-2 / P1-9 eviction paths emit, so `_collect_evicted_refs` collects it and `SummaryDoc.evicted_refs` carries the path onto the summary chain (rendered as *Evicted References*);
+- a block that cannot be decoded or written becomes `<media error="failed_to_offload" />` — fail-open, never a crash.
+
+The preserved tail window keeps its media. Both compression paths call the offload on the prefix slice — `_apply_compression_under_lock` (sync) and `_aapply_compression_under_lock` (async). The summary prompt carries the media-reference rules: preserve the pointers verbatim, do not invent visual / audio / video details, retrieve the payload from the path. Media files live under the session tree, so `clear_session()` removes them with `evicted/` and `plans/`.
+
+**Token classing.** `pub/func/estimate_tokens.py` counts a content **list** block by block: text blocks as text, media blocks at a fixed per-type cost from `TOKEN_ESTIMATION` (`tokens_per_image_block = 85` — aligned with `langchain_core.count_tokens_approximately`; `tokens_per_audio_block = 256`; `tokens_per_video_block = 1024`; `tokens_per_unknown_block = 85` for unrecognised blocks, including ones hiding a `data:` payload). Base64 is never serialized and never counted as text: the removed JSON path read 5 MB of base64 as ~1.25M tokens, which would fire compression on a single image. `str` content, `None`, and pure-text lists keep their text estimates.
+
 ## ⚡ Overflow Tail Clip (P1-2)
 
 The newest tool outputs are usually the largest context consumers and the most expendable — and every one of them is already persisted. `pub/func/message/overflow_clip.py::clip_overflow_tail` turns that into the **first, zero-LLM move on every overflow path**:
@@ -224,6 +240,15 @@ The interaction map:
 | `max_tool_output_chars` | `2_000` | Compression-time clip budget for a tool result |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | Head/tail keep ratios for compression-time clips |
 
+`TOKEN_ESTIMATION` (`config/features/agent_side/token_estimation.py`), multimodal token classing:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `chars_per_token` / `chars_per_token_cjk` | `4` / `2` | Text-estimate divisors (non-CJK / CJK) |
+| `tokens_per_image_block` | `85` | Fixed cost per image block (aligned with `langchain_core.count_tokens_approximately`) |
+| `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | Conservative fixed costs (no duration metadata at estimation time) |
+| `tokens_per_unknown_block` | `85` | Fixed cost for an unrecognised block — never its base64 |
+
 There are no environment variables for these knobs: they are code defaults in the feature TypedDicts above, by design.
 
 ## 🧪 Testing Map
@@ -240,6 +265,8 @@ There are no environment variables for these knobs: they are code defaults in th
 | `tests/pub/func/message/test_overflow_clip.py` | P1-2 pure clip: trailing-batch detection, gates, token target, marker preservation |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | P1-2 middleware integration: zero-LLM recovery, degradation, T4/T5, sync/async parity |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | Chain-summary filtering and `<prior-summary>` injection |
+| `tests/agent/middlewares/test_compression_media_offload.py` | Compression-time inline-media offload: write + pointer, hash dedup, failure placeholder, preserved window untouched, sync/async, `evicted_refs` |
+| `tests/pub/func/test_estimate_tokens_media.py` | Block-wise multimodal estimation: fixed media costs, 5 MB-base64 regression, unknown-block media, `str` / `None` / empty-list edges |
 | `tests/context_engine/store/test_persisted_message_ids.py` | The `persisted_message_ids` watermark store |
 | `tests/full/test_context_governance_e2e.py` | Live-network e2e (real LLM + real graph): all six mechanisms end to end — run explicitly |
 
@@ -252,6 +279,8 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_compression_media_offload.py \
+    tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q
 
 # Live-network e2e — RUN EXPLICITLY, never part of the CI gate

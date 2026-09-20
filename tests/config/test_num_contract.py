@@ -295,6 +295,14 @@ class TestPreservedConstants:
         assert isinstance(TOKEN_ESTIMATION["chars_per_token"], int)
         assert TOKEN_ESTIMATION["chars_per_token_cjk"] == 2
         assert isinstance(TOKEN_ESTIMATION["chars_per_token_cjk"], int)
+        assert TOKEN_ESTIMATION["tokens_per_image_block"] == 85
+        assert isinstance(TOKEN_ESTIMATION["tokens_per_image_block"], int)
+        assert TOKEN_ESTIMATION["tokens_per_audio_block"] == 256
+        assert isinstance(TOKEN_ESTIMATION["tokens_per_audio_block"], int)
+        assert TOKEN_ESTIMATION["tokens_per_video_block"] == 1024
+        assert isinstance(TOKEN_ESTIMATION["tokens_per_video_block"], int)
+        assert TOKEN_ESTIMATION["tokens_per_unknown_block"] == 85
+        assert isinstance(TOKEN_ESTIMATION["tokens_per_unknown_block"], int)
 
 
 class TestUploadLimits:

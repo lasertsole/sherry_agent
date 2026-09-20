@@ -10,8 +10,6 @@ Tiers under test:
   degenerate case for pure-ASCII text (pinned here as the regression floor).
 """
 
-import json
-
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
@@ -130,10 +128,11 @@ class TestEstimateMsgTokens:
     def test_content_only_ascii(self):
         assert estimate_msg_tokens(HumanMessage(content="abcdefgh")) == 2
 
-    def test_structured_content_serialized_as_json(self):
-        content = [{"type": "text", "text": "hi"}]
-        expected = json.dumps(content)
-        assert estimate_msg_tokens(AIMessage(content=content)) == len(expected) // CHARS_PER_TOKEN
+    def test_text_block_list_matches_the_same_string_content(self):
+        # Guards the removed JSON-serialization semantics that counted base64 as text.
+        assert estimate_msg_tokens(
+            AIMessage(content=[{"type": "text", "text": "hi"}])
+        ) == estimate_msg_tokens(AIMessage(content="hi"))
 
     def test_empty_content_counts_zero(self):
         assert estimate_msg_tokens(HumanMessage(content="")) == 0

@@ -14,6 +14,7 @@
 - [Token 估算（无分词器）](#-token-估算无分词器)
 - [截断轨道：预算截断与 TTL 模块](#-截断轨道预算截断与-ttl-模块)
 - [压缩轨道：`_apply_compression` 内部](#-压缩轨道_apply_compression-内部)
+- [压缩期媒体卸载（内联媒体 → 引用）](#-压缩期媒体卸载内联媒体--引用)
 - [LLM 摘要：提示词、链式与回退](#-llm-摘要提示词链式与回退)
 - [静态回退（无 LLM 摘要）](#-静态回退无-llm-摘要)
 - [输出：摘要消息对](#-输出摘要消息对)
@@ -163,9 +164,13 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 ```python
 tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
        + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
-# 消息级：str content（或 len(json.dumps(content))）
+# 消息级：str content → 文本估算
 #        + Σ tool_call name/args 字符 + tool_call_id 字符
+# 列表 content → 逐块：文本块按文本，媒体块按固定分型成本，
+#   未知块按保守的未知成本
 ```
+
+content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：文本块按文本估算，媒体块（`image_url` / `audio_url` / `video_url` / `audio_bytes` / `video_bytes`，或任何携带 `data:` 载荷的块）取 `TOKEN_ESTIMATION` 的固定成本 —— `tokens_per_image_block = 85`、`tokens_per_audio_block = 256`、`tokens_per_video_block = 1024` —— 未知块取 `tokens_per_unknown_block = 85`。被移除的 JSON 路径会把 5 MB base64 算成约 125 万 token，单张图片就会触发压缩；这些固定值是在没有模型时无法推导真实 token 数的媒体的保守替代。`str` content 与 `None` 不变，纯文本列表估算等同于拼接后的文本。
 
 `pub/func/message/estimate_msg_tokens.py` 现为同一组 helper 的向后兼容 re-export。它快、跨运行稳定（相同输入 → 相同数字 → 测试可复现），并且有意做成保守近似。触发/预算路径上的任何环节都不依赖模型分词器。
 
@@ -217,6 +222,19 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 **切点选择**（`_determine_cutoff`，:1310）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，:565）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（:1340）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 :1968/:2054 调用），切点绝不越过最后一条 `HumanMessage`。
 
 所有失败模式都是 fail-open：`_apply_compression` 抛异常只会记日志，原始请求原样继续 —— 坏掉的压缩从不弄坏回合。
+
+## 🖼️ 压缩期媒体卸载（内联媒体 → 引用）
+
+压缩绝不能把 base64 载荷交给辅助摘要模型。在序列化被摘要的前缀（`current_messages[:cutoff]`）之前，`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）只重写**该范围**内的每个内联媒体块：
+
+- `data:` URL / base64 载荷（`image_url` / `audio_url` / `video_url`、裸 `base64` 字段、`audio_bytes` / `video_bytes`，或 Anthropic 风格的 `source.data`）被解码并写入 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`；扩展名由魔数经 `media_handlers._infer_extension` 推导；
+- 相同字节只写一份 —— 以内容 hash 命名的文件名在单次及多次压缩之间去重；
+- 该块被替换为文本指针 `[evicted to: <path>]`，与 `pub/func/message/eviction.py` 发出的标记一致，因此 `_collect_evicted_refs` 能收集到它，`_finalize_summary_doc` 会把路径带进 `SummaryDoc.evicted_refs`（渲染为 *Evicted References*）；
+- 无法解码或写入的块变成 `<media error="failed_to_offload" />` —— 媒体失败绝不会弄坏压缩。
+
+保留窗口（`current_messages[cutoff:]`）绝不触碰：媒体只在它的回合真正被摘要时才离开。两条压缩路径都会在 nudge 调度与记忆落库之前对前缀切片调用卸载 —— `_apply_compression_under_lock`（同步）与 `_aapply_compression_under_lock`（异步）。摘要提示词（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）告诉模型这些指针存在、必须原样带进 `evicted_refs`、不得臆测视觉/音频/视频细节，并可按路径取回载荷。
+
+媒体文件位于会话目录树内，因此 `clear_session()` 会把它们随 `evicted/` 与 `plans/` 一并删除。
 
 ## 📝 LLM 摘要：提示词、链式与回退
 
@@ -388,6 +406,7 @@ Summarization(
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | 文件操作棘轮列表上限 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 恢复上下文请求上限 |
 | `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`（估算器） | `4` / `2` | 确定性 token 估算除数（非 CJK / CJK）；定义于 `config/features/agent_side/token_estimation.py` |
+| `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK`（估算器） | `85` / `256` / `1024` / `85` | 多模态 content 列表的逐块固定成本 —— base64 绝不计入文本；定义于 `config/features/agent_side/token_estimation.py` |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 过期地平线 —— 仅 TTL 三件套消费（如今仅测试） |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 首见注册表上限（如今仅测试） |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 被中间件导入、从未读取 |
@@ -408,6 +427,8 @@ Summarization(
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 纯裁剪：尾部批次检测、max_remove/min_keep/enabled 闸门、token 目标、标记保留（P0-2 指针、P2-4 通知）、no-op 幂等、配对不变量 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 中间件集成：T1/T2 不调 LLM 裁剪、裁剪不足降级、总开关、T4/T5 先裁后重试与裁→压缩降级、同步/异步奇偶、sanitizer 不移位 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶、链式摘要过滤 |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 压缩期内联媒体卸载：写盘 + 指针、内容 hash 去重、解码/写盘失败占位、保留窗口媒体不动、同步/异步两路径、`evicted_refs` 收集 |
+| `tests/pub/func/test_estimate_tokens_media.py` | 22 | 逐块多模态估算：固定分型成本、5 MB base64 回归、未知块藏媒体、`str` / `None` / 空列表 / 纯文本边界 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 链式摘要过滤：旧消息对从序列化对话中移除、普通/空/多对输入、无标记的旧会话 human 保留、async `_acreate_summary` 镜像 |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 结构化摘要：schema 兼容/强制转换、渲染往返 + 字节稳定 + 节顺序、代码层 cap + 注记、latest request 逐字、json_mode/json_repair/free-form 三档、prior-doc JSON 链式、旧 MD 过渡、驱逐指针收集与延续 |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1：计划活跃判定（state/todo 来源、全完成门、fail-open）、首摘/更新两条提示词路径注入、跨链式压缩的注意事项继承/追加/cap/清空、latest request 逐字 + 驱逐指针、多消息连发 |

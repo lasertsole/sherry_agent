@@ -100,10 +100,10 @@ class TestEstimateMsgTokens:
         msg = SimpleNamespace(content="hello world")
         assert estimate_msg_tokens(msg) == len("hello world") // 4
 
-    def test_structured_content_uses_json(self):
-        content = [{"type": "text", "text": "hi"}]
+    def test_text_block_list_uses_block_text(self):
+        content = [{"type": "text", "text": "hello world"}]
         msg = SimpleNamespace(content=content)
-        assert estimate_msg_tokens(msg) == len('[{"type": "text", "text": "hi"}]') // 4
+        assert estimate_msg_tokens(msg) == len("hello world") // 4
 
     def test_empty_string(self):
         msg = SimpleNamespace(content="")

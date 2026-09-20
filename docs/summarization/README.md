@@ -14,6 +14,7 @@ Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/s
 - [Token Estimation (No Tokenizer)](#-token-estimation-no-tokenizer)
 - [The Truncate Track: Budget Truncation & the TTL Module](#-the-truncate-track-budget-truncation--the-ttl-module)
 - [The Compact Track: Inside `_apply_compression`](#-the-compact-track-inside-_apply_compression)
+- [Compression-Time Media Offload (Inline Media → Reference)](#-compression-time-media-offload-inline-media--reference)
 - [LLM Summary: Prompt, Chaining, Fallback](#-llm-summary-prompt-chaining-fallback)
 - [The Static Fallback (LLM-Free Summary)](#-the-static-fallback-llm-free-summary)
 - [The Output: Summary Message Pair](#-the-output-summary-message-pair)
@@ -170,9 +171,13 @@ Window math (test contracts): window `41 600` → usable `25 600`, lines `17 920
 ```python
 tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
        + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
-# message-level: str content (or len(json.dumps(content)))
+# message-level: str content → text estimate
 #              + Σ tool_call name/args chars + tool_call_id chars
+# list content → per block: text blocks as text, media blocks at a fixed
+#   per-type cost, unknown blocks at the conservative unknown cost
 ```
+
+A content **list** is counted block by block, never by JSON-serializing the whole list: text blocks are estimated as text, media blocks (`image_url` / `audio_url` / `video_url` / `audio_bytes` / `video_bytes`, or any block carrying a `data:` payload) get a fixed cost from `TOKEN_ESTIMATION` — `tokens_per_image_block = 85`, `tokens_per_audio_block = 256`, `tokens_per_video_block = 1024` — and unknown blocks get `tokens_per_unknown_block = 85`. The removed JSON path counted 5 MB of base64 as ~1.25M tokens and would fire compression on a single image; the fixed costs are conservative stand-ins for media whose real token count is not derivable without a model. `str` content and `None` are unchanged, and a pure-text list estimates like the concatenated text.
 
 `pub/func/message/estimate_msg_tokens.py` is now a backward-compatible re-export of the same helpers. The estimator is fast, stable across runs (same input → same number → reproducible tests), and intentionally conservative-approximate. Nothing in the trigger/budget path depends on a model tokenizer.
 
@@ -224,6 +229,19 @@ Message persistence runs outside the compression path: human/AI messages are flu
 **Cutoff selection** (`_determine_cutoff`, :1310): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, :565); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (:1340) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry :1968/:2054), the cutoff never crosses the last `HumanMessage`.
 
 Every failure mode is fail-open: if `_apply_compression` raises, the exception is logged and the original request proceeds unchanged — a broken compaction never breaks the turn.
+
+## 🖼️ Compression-Time Media Offload (Inline Media → Reference)
+
+Compression must never hand a base64 payload to the auxiliary summarizer. Before the summarized prefix (`current_messages[:cutoff]`) is serialized, `offload_inline_media` (`agent/middlewares/summarization/media_offload.py`) rewrites every inline media block in **that range only**:
+
+- a `data:` URL / base64 payload (`image_url` / `audio_url` / `video_url`, a bare `base64` field, `audio_bytes` / `video_bytes`, or an Anthropic-style `source.data`) is decoded and written to `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`; the extension is derived from the magic bytes via `media_handlers._infer_extension`;
+- identical bytes are written once — the content-hash filename deduplicates repeats within and across compactions;
+- the block is replaced by a text pointer `[evicted to: <path>]`, the same marker `pub/func/message/eviction.py` emits, so `_collect_evicted_refs` picks it up and `_finalize_summary_doc` carries it into `SummaryDoc.evicted_refs` (rendered as *Evicted References*);
+- a block that cannot be decoded or written becomes `<media error="failed_to_offload" />` — a media failure never crashes compression.
+
+The preserved tail window (`current_messages[cutoff:]`) is never touched: media stays resident until its turn is actually summarized. Both compression paths call the offload — `_apply_compression_under_lock` (sync) and `_aapply_compression_under_lock` (async) — on the prefix slice, before the nudge scheduling and the memory flush. The summary prompt (`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`) tells the model the pointers exist, that they must be carried into `evicted_refs` verbatim, that it must not invent visual / audio / video details, and that the payload can be retrieved from the path.
+
+Media files live in the session tree, so `clear_session()` removes them together with `evicted/` and `plans/`.
 
 ## 📝 LLM Summary: Prompt, Chaining, Fallback
 
@@ -395,6 +413,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | file-ops ratchet list cap |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | recovery-context request cap |
 | `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK` (estimator) | `4` / `2` | deterministic token estimate divisors (non-CJK / CJK); defined in `config/features/agent_side/token_estimation.py` |
+| `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK` (estimator) | `85` / `256` / `1024` / `85` | fixed per-block costs for a multimodal content list — base64 is never counted as text; defined in `config/features/agent_side/token_estimation.py` |
 | `PRUNE_TTL_SECONDS` | `300` | TTL-expiry horizon — consumed only by the TTL trio (test-only today) |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL first-seen registry bound (test-only today) |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | imported by the middleware, never read |
@@ -415,6 +434,8 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 pure clip: trailing-batch detection, max_remove/min_keep/enabled gates, token target, marker preservation (P0-2 pointer, P2-4 notice), no-op idempotency, pairing invariant |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 middleware integration: T1/T2 clip without LLM, insufficient-clip degradation, kill switch, T4/T5 clip-then-retry and clip→compression degradation, sync/async parity, sanitizer-unchanged |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 classes: T2 soft-overflow, T2 cooldown, T2 negative/no-op, sync/async parity, T1 preflight, route decision, T3 trigger/three-forms/negative-double, T4/T5 recovery, the full anti-thrash matrix, full-branch parity, chained-summary filtering |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 12 | Compression-time inline-media offload: write + pointer, content-hash dedup, placeholder on decode/store failure, preserved-window media untouched, sync/async parity, `evicted_refs` collection |
+| `tests/pub/func/test_estimate_tokens_media.py` | 22 | Block-wise multimodal estimation: fixed media costs, 5 MB-base64 regression, unknown blocks hiding media, `str` / `None` / empty-list / pure-text edges |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | Chained-summary filtering: prior pair stripped from the serialized conversation, normal/empty/multi-pair inputs, unmarked legacy human preserved, async `_acreate_summary` mirror |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | Structured summary: schema coercion, render round-trip + byte stability + section order, code-layer caps + annotations, verbatim latest request, json_mode/json_repair/free-form tiers, prior-doc JSON chaining, legacy-MD transition, evicted-refs collection + carry-forward |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: plan-active detection (state/todo refs, all-done gate, fail-open), prompt injection on first/update paths, notes inherit/append/cap/clear across chained compressions, verbatim latest request + eviction pointer, multi-message burst |

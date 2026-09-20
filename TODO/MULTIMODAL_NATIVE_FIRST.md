@@ -36,6 +36,9 @@ User 上传图片 → MultimodalProcessor.before_agent
 | `agent/middlewares/llm_retry/core.py`                    | 425  | LLM 调用重试 + fallback chain              |
 | `pub/func/message/llm_error_classifier.py`          | 470  | 错误分类引擎                               |
 | `config/features/agent_side/media_pipeline.py`      | 14   | MEDIA_PIPELINE 配置（唯一 TypedDict）      |
+| `agent/middlewares/summarization/media_offload.py`  | 176  | 压缩期内联媒体归档 + 引用化（§8.1）        |
+| `pub/func/estimate_tokens.py`                       | 190  | 逐块 token 估算（含媒体分型，§8.2）        |
+| `config/features/agent_side/token_estimation.py`    | 33   | TOKEN_ESTIMATION 配置（含媒体固定成本）    |
 | `models/LLMs/main_llm.py`                           | 169  | 主 LLM 构建（env: MAIN_LLM_PROVIDER/NAME） |
 
 ## 2. 设计方案
@@ -593,3 +596,39 @@ unsupported 时整体走技能路径；混合（部分 supported、部分 unsupp
 - **ModelRequest.override API**：已验证支持 `messages` 覆盖（见 §5.5），无降级路径。
 - **总开关而非按类型**：`main_llm_native_multimodal` 是覆盖全部媒体类型（vision / audio / video）
   的三态总开关；若未来要「vision 原生、audio 走技能」这类按类型配置，需要扩展为每类型一份配置。
+
+## 8. 压缩期媒体归档与 token 估算语义
+
+### 8.1 压缩期媒体卸载 / 引用化
+
+原生模式保留的媒体块在压缩离开活动上下文时，`agent/middlewares/summarization/media_offload.py::offload_inline_media`
+在序列化被摘要前缀（`current_messages[:cutoff]`）之前，只对该范围内的内联媒体块做归档：
+
+| 步骤     | 行为                                                                 |
+| -------- | -------------------------------------------------------------------- |
+| 检出     | `data:` URL / base64 载荷：`image_url` / `audio_url` / `video_url`、裸 `base64` 字段、`audio_bytes` / `video_bytes`、Anthropic 风格 `source.data`；远程 `http(s)` URL 不处理 |
+| 写盘     | 解码后写入 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`；ext 由魔数经 `media_handlers._infer_extension` 推导 |
+| 去重     | 文件名即内容 hash，同内容只写一份（跨多次压缩亦然）                  |
+| 引用化   | 块替换为文本指针 `[evicted to: <path>]`（与 P0-2 / P1-9 驱逐标记一致） |
+| 失败     | 解码 / 写盘失败 → `<media error="failed_to_offload" />`，fail-open 不崩溃 |
+| 保留窗口 | `current_messages[cutoff:]` 内的媒体原样保留，不剥离                 |
+| 存活     | 指针被 `_collect_evicted_refs` 收集 → `SummaryDoc.evicted_refs` → 渲染为 *Evicted References*；摘要提示词要求原样保留引用、不臆测视觉 / 音频 / 视频细节、可按路径取回 |
+| 清理     | 媒体文件位于会话目录树，`clear_session()` 随 `evicted/` 与 `plans/` 一并删除 |
+
+sync（`_apply_compression_under_lock`）与 async（`_aapply_compression_under_lock`）两条路径都在 nudge
+调度与记忆落库之前调用卸载。
+
+### 8.2 token 估算分型
+
+`pub/func/estimate_tokens.py` 对 content **列表**逐块计数，绝不再 `json.dumps` 整份列表：
+
+| 块类型                                                       | 计法                                 |
+| ------------------------------------------------------------ | ------------------------------------ |
+| `{"type": "text"}`                                           | 文本估算（CJK 感知）                 |
+| `image_url` / `image` / 含 image `data:` 的未知块            | `tokens_per_image_block = 85`        |
+| `audio_url` / `audio_bytes` / `audio` / 含 audio `data:` 的未知块 | `tokens_per_audio_block = 256`   |
+| `video_url` / `video_bytes` / `video` / 含 video `data:` 的未知块 | `tokens_per_video_block = 1024`  |
+| 未知块（无媒体，或 `data:` mime 不可辨）                     | `tokens_per_unknown_block = 85`      |
+
+配置位于 `config/features/agent_side/token_estimation.py`。`str` content 与 `None` 不变；纯文本列表等同
+拼接文本估算。旧实现把 5 MB base64 读成约 125 万 token（单图即可触发压缩），现为固定 85。

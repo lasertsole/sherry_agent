@@ -14,6 +14,7 @@
 - [토큰 추정 (토크나이저 없음)](#-토큰-추정-토크나이저-없음)
 - [트렁케이트 트랙: 예산 트렁케이션과 TTL 모듈](#-트렁케이트-트랙-예산-트렁케이션과-ttl-모듈)
 - [컴팩트 트랙: `_apply_compression` 내부](#-컴팩트-트랙-_apply_compression-내부)
+- [압축 시점 미디어 오프로드 (인라인 미디어 → 참조)](#-압축-시점-미디어-오프로드-인라인-미디어--참조)
 - [LLM 요약: 프롬프트, 체이닝, 폴백](#-llm-요약-프롬프트-체이닝-폴백)
 - [정적 폴백 (LLM 없는 요약)](#-정적-폴백-llm-없는-요약)
 - [출력: 요약 메시지 쌍](#-출력-요약-메시지-쌍)
@@ -167,9 +168,13 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 ```python
 tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
        + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
-# 메시지 단위: str content(또는 len(json.dumps(content)))
+# 메시지 단위: str content → 텍스트 추정
 #           + Σ tool_call name/args 문자 + tool_call_id 문자
+# 리스트 content → 블록 단위: 텍스트 블록은 텍스트, 미디어 블록은
+#   유형별 고정 비용, 알 수 없는 블록은 보수적 미지 비용
 ```
+
+content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON 직렬화하지 않습니다: 텍스트 블록은 텍스트로 추정하고, 미디어 블록(`image_url` / `audio_url` / `video_url` / `audio_bytes` / `video_bytes`, 또는 `data:` 페이로드를 담은 임의 블록)은 `TOKEN_ESTIMATION`의 고정 비용 —— `tokens_per_image_block = 85`, `tokens_per_audio_block = 256`, `tokens_per_video_block = 1024` —— 을, 알 수 없는 블록은 `tokens_per_unknown_block = 85`를 받습니다. 제거된 JSON 경로는 5 MB base64를 약 125만 토큰으로 세어 이미지 한 장으로 압축을 발화시켰습니다; 이 고정값은 모델 없이는 실제 토큰 수를 도출할 수 없는 미디어의 보수적 대체값입니다. `str` content와 `None`은 그대로이고, 순수 텍스트 리스트는 연결된 텍스트와 같은 추정치를 냅니다.
 
 `pub/func/message/estimate_msg_tokens.py`는 이제 같은 헬퍼들의 하위 호환 re-export입니다. 빠르고, 실행 간 안정적이며(같은 입력 → 같은 숫자 → 재현 가능한 테스트), 의도적으로 보수적으로 근사합니다. 트리거/예산 경로의 어떤 것도 모델 토크나이저에 의존하지 않습니다.
 
@@ -221,6 +226,19 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 **절단점 선택**(`_determine_cutoff`, :1310): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, :565)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(:1340)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입 :1968/:2054에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 
 모든 실패 모드는 fail-open입니다: `_apply_compression`이 예외를 던지면 로그만 남기고 원본 요청이 그대로 진행됩니다 — 깨진 압축이 턴을 망치는 일은 없습니다.
+
+## 🖼️ 압축 시점 미디어 오프로드 (인라인 미디어 → 참조)
+
+압축이 base64 페이로드를 보조 요약 모델에 넘겨서는 안 됩니다. 요약될 프리픽스(`current_messages[:cutoff]`)를 직렬화하기 전에 `offload_inline_media`(`agent/middlewares/summarization/media_offload.py`)가 **그 범위만** 모든 인라인 미디어 블록을 다시 씁니다:
+
+- `data:` URL / base64 페이로드(`image_url` / `audio_url` / `video_url`, 맨 `base64` 필드, `audio_bytes` / `video_bytes`, 또는 Anthropic 형식 `source.data`)를 디코드해 `SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}`에 씁니다; 확장자는 매직 바이트에서 `media_handlers._infer_extension`으로 도출합니다;
+- 동일 바이트는 한 번만 씁니다 —— 내용 해시 파일명이 단일 및 여러 압축에 걸쳐 중복을 제거합니다;
+- 블록은 텍스트 포인터 `[evicted to: <path>]`로 대체됩니다. `pub/func/message/eviction.py`가 내는 것과 같은 마커라서 `_collect_evicted_refs`가 줍고 `_finalize_summary_doc`이 경로를 `SummaryDoc.evicted_refs`로 실어 나릅니다(*Evicted References*로 렌더링);
+- 디코드나 쓰기에 실패한 블록은 `<media error="failed_to_offload" />`가 됩니다 —— 미디어 실패가 압축을 망치는 일은 없습니다.
+
+보존 윈도우(`current_messages[cutoff:]`)는 절대 건드리지 않습니다: 미디어는 해당 턴이 실제로 요약될 때까지 남습니다. 두 압축 경로 모두 nudge 스케줄링과 메모리 플러시 전에 프리픽스 슬라이스에 오프로드를 호출합니다 —— `_apply_compression_under_lock`(동기)와 `_aapply_compression_under_lock`(비동기). 요약 프롬프트(`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`)는 포인터가 존재한다는 것, `evicted_refs`로 그대로 옮겨야 한다는 것, 시각/오디오/비디오 세부를 지어내지 말 것, 페이로드는 경로에서 가져올 수 있다는 것을 모델에 알립니다.
+
+미디어 파일은 세션 트리 안에 있으므로 `clear_session()`이 `evicted/` 및 `plans/`와 함께 삭제합니다.
 
 ## 📝 LLM 요약: 프롬프트, 체이닝, 폴백
 
@@ -392,6 +410,7 @@ Summarization(
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | 파일 작업 래칫 목록 상한 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 복구 컨텍스트 요청 상한 |
 | `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`(추정기) | `4` / `2` | 결정론적 토큰 추정 제수(비 CJK / CJK); `config/features/agent_side/token_estimation.py`에 정의 |
+| `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK`(추정기) | `85` / `256` / `1024` / `85` | 멀티모달 content 리스트의 블록별 고정 비용 —— base64는 절대 텍스트로 세지 않음; `config/features/agent_side/token_estimation.py`에 정의 |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 만료 지평 — TTL 트리오만 소비 (오늘날 테스트 전용) |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 최초 관찰 레지스트리 한계 (오늘날 테스트 전용) |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | 미들웨어가 임포트, 절대 읽지 않음 |
@@ -412,6 +431,8 @@ Summarization(
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 순수 클립: 꼬리 배치 감지, max_remove/min_keep/enabled 게이트, 토큰 목표, 마커 보존(P0-2 포인터, P2-4 안내), no-op 멱등성, 페어링 불변식 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 미들웨어 통합: T1/T2 LLM 없는 클립, 불충분 클립 퇴화, 킬 스위치, T4/T5 클립 후 재시도와 클립→압축 퇴화, 동기/비동기 패리티, 새니타이저 불변 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티, 체이닝 요약 필터링 |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 압축 시점 인라인 미디어 오프로드: 쓰기 + 포인터, 내용 해시 중복 제거, 디코드/쓰기 실패 플레이스홀더, 보존 윈도우 미디어 불변, 동기/비동기 패리티, `evicted_refs` 수집 |
+| `tests/pub/func/test_estimate_tokens_media.py` | 22 | 블록 단위 멀티모달 추정: 유형별 고정 비용, 5 MB base64 회귀, 미디어를 숨긴 미지 블록, `str` / `None` / 빈 리스트 / 순수 텍스트 경계 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 체이닝 요약 필터링: 이전 쌍을 직렬화된 대화에서 제거, 일반/빈/다중 쌍 입력, 마커 없는 레거시 human 보존, async `_acreate_summary` 미러 |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 구조화 요약: schema 강제 변환, 렌더링 왕복 + 바이트 안정 + 섹션 순서, 코드층 cap + 주석, latest request 그대로, json_mode/json_repair/free-form 3티어, prior-doc JSON 체이닝, 레거시 MD 전환, 퇴출 포인터 수집·승계 |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: 계획 활성 판정(state/todo 소스, 전체 완료 게이트, fail-open), 최초/업데이트 프롬프트 양 경로 주입, 체인 압축을 넘는 노트 상속/추가/cap/클리어, latest request 그대로 + 퇴출 포인터, 다중 메시지 연속 발송 |

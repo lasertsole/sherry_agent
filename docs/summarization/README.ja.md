@@ -14,6 +14,7 @@
 - [トークン推定（トークナイザなし）](#-トークン推定トークナイザなし)
 - [切り詰めトラック：予算切り詰めとTTLモジュール](#-切り詰めトラック予算切り詰めとttlモジュール)
 - [圧縮トラック：`_apply_compression` の内部](#-圧縮トラック_apply_compression-の内部)
+- [圧縮時メディア・オフロード（インライン・メディア → 参照）](#-圧縮時メディアオフロードインラインメディア--参照)
 - [LLM要約：プロンプト、チェイニング、フォールバック](#-llm要約プロンプトチェイニングフォールバック)
 - [静的フォールバック（LLMを使わない要約）](#-静的フォールバックllmを使わない要約)
 - [出力：要約メッセージペア](#-出力要約メッセージペア)
@@ -168,9 +169,13 @@ truncate budget= usable × TRUNCATE_BUDGET_RATIO (0.60)
 ```python
 tokens = (cjk chars // CHARS_PER_TOKEN_CJK)   # CHARS_PER_TOKEN_CJK = 2
        + (other chars // CHARS_PER_TOKEN)     # CHARS_PER_TOKEN = 4
-# メッセージ単位: str content（または len(json.dumps(content))）
+# メッセージ単位: str content → テキスト推定
 #            + Σ tool_call name/args 文字 + tool_call_id 文字
+# リスト content → ブロック単位: テキストブロックはテキスト、メディア
+#   ブロックは型ごとの固定コスト、未知ブロックは保守的な未知コスト
 ```
+
+content が**リスト**の場合はブロック単位で数え、リスト全体を JSON 直列化することは決してありません: テキストブロックはテキストとして推定し、メディアブロック（`image_url` / `audio_url` / `video_url` / `audio_bytes` / `video_bytes`、または `data:` ペイロードを含む任意のブロック）は `TOKEN_ESTIMATION` の固定コスト —— `tokens_per_image_block = 85`、`tokens_per_audio_block = 256`、`tokens_per_video_block = 1024` —— を、未知ブロックは `tokens_per_unknown_block = 85` を取ります。削除された JSON 経路は 5 MB の base64 を約 125 万トークンと数え、画像 1 枚で圧縮を発火させていました; これらの固定値は、モデルなしでは実際のトークン数を導出できないメディアの保守的な代替です。`str` content と `None` は変わらず、純テキストのリストは連結テキストと同じ推定になります。
 
 `pub/func/message/estimate_msg_tokens.py` は同じヘルパー群の後方互換 re-export になりました。速く、実行間で安定し（同じ入力 → 同じ数値 → 再現可能なテスト）、意図的に保守的な近似です。トリガー/予算経路のどの部分もモデルのトークナイザに依存しません。
 
@@ -222,6 +227,19 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 **カットポイント選択**（`_determine_cutoff`、:1310）: 履歴をターンに分割し、**最新から逆方向**に歩きながら保持予算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`、:565）に照らして累積します; 丸ごと入らないターンはターン途中で割られることがあります。`_adjust_for_orphan_pairs`（:1340）がカットポイントを逆に歩き、`ToolMessage` が `AIMessage` のツール呼び出しから分離する状態がなくなるまで調整します。最終ターン比率ゲートが発火しない限り（最後のユーザーターン ≥ 全トークンの `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`、wrap 入口 :1968/:2054 で呼び出し）、カットポイントが最後の `HumanMessage` を超えることはありません。
 
 すべての失敗モードは fail-open です: `_apply_compression` が例外を投げてもログに記録されるだけで、元のリクエストがそのまま進行します —— 壊れた圧縮がターンを壊すことはありません。
+
+## 🖼️ 圧縮時メディア・オフロード（インライン・メディア → 参照）
+
+圧縮が base64 ペイロードを補助要約モデルに渡してはなりません。要約されるプレフィックス（`current_messages[:cutoff]`）を直列化する前に、`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）が**その範囲だけ**のすべてのインライン・メディアブロックを書き換えます:
+
+- `data:` URL / base64 ペイロード（`image_url` / `audio_url` / `video_url`、裸の `base64` フィールド、`audio_bytes` / `video_bytes`、または Anthropic 形式の `source.data`）をデコードし、`SESSIONS_DIR/<session_id>/media/{sha256(raw)[:16]}{ext}` に書き込みます; 拡張子はマジックバイトから `media_handlers._infer_extension` で導出します;
+- 同一バイトは一度だけ書き込みます —— 内容ハッシュのファイル名が単一回および複数回の圧縮をまたいで重複を排除します;
+- ブロックはテキストポインタ `[evicted to: <path>]` に置き換わります。`pub/func/message/eviction.py` が出すのと同じマーカーなので、`_collect_evicted_refs` が拾い、`_finalize_summary_doc` がパスを `SummaryDoc.evicted_refs` に運びます（*Evicted References* として描画）;
+- デコードまたは書き込みに失敗したブロックは `<media error="failed_to_offload" />` になります —— メディアの失敗が圧縮を壊すことはありません。
+
+保持ウィンドウ（`current_messages[cutoff:]`）は決して触りません: メディアはそのターンが実際に要約されるまで残ります。両方の圧縮経路が nudge スケジュールとメモリフラッシュの前にプレフィックススライスに対してオフロードを呼びます —— `_apply_compression_under_lock`（同期）と `_aapply_compression_under_lock`（非同期）。要約プロンプト（`_SUMMARY_JSON_RULES` / `_SUMMARY_TEMPLATE`）は、ポインタが存在すること、`evicted_refs` に逐語で持ち越すこと、視覚/音声/動画の詳細を捏造しないこと、ペイロードはパスから取得できることをモデルに伝えます。
+
+メディアファイルはセッションツリー内にあるため、`clear_session()` が `evicted/` と `plans/` とともに削除します。
 
 ## 📝 LLM要約：プロンプト、チェイニング、フォールバック
 
@@ -393,6 +411,7 @@ Summarization(
 | `FILE_OPS_LIST_MAX_CHARS` ◆ | `900` | ファイル操作ラチェットのリスト上限 |
 | `LATEST_USER_REQUEST_MAX_CHARS` ◆ | `800` | 復帰コンテキストの要求上限 |
 | `CHARS_PER_TOKEN` / `CHARS_PER_TOKEN_CJK`（推定器） | `4` / `2` | 決定論的トークン推定の除数（非 CJK / CJK）; `config/features/agent_side/token_estimation.py` で定義 |
+| `TOKENS_PER_IMAGE_BLOCK` / `TOKENS_PER_AUDIO_BLOCK` / `TOKENS_PER_VIDEO_BLOCK` / `TOKENS_PER_UNKNOWN_BLOCK`（推定器） | `85` / `256` / `1024` / `85` | マルチモーダル content リストのブロック単位固定コスト —— base64 は決してテキストとして数えない; `config/features/agent_side/token_estimation.py` で定義 |
 | `PRUNE_TTL_SECONDS` | `300` | TTL 有効期限の地平 —— TTL トリオのみ消費（現在はテスト専用） |
 | `TTL_REGISTRY_MAX_ENTRIES` | `512` | TTL 初回観測レジストリの上限（現在はテスト専用） |
 | `SUMMARY_TRIM_TOKENS` ○ | `12_000` | ミドルウェアがインポート、一度も読まれない |
@@ -413,6 +432,8 @@ Summarization(
 | `tests/pub/func/message/test_overflow_clip.py` | 21 | P1-2 純クリップ: 末尾バッチ検出、max_remove/min_keep/enabled ゲート、トークン目標、マーカー保持（P0-2 ポインタ、P2-4 通知）、no-op 冪等性、ペアリング不変量 |
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 ミドルウェア統合: T1/T2 の LLM なしクリップ、不十分クリップの劣化、キルスイッチ、T4/T5 のクリップ→再試行とクリップ→圧縮劣化、同期/非同期パリティ、サニタイザ不変 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ、チェイニング要約フィルタリング |
+| `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 圧縮時のインライン・メディア・オフロード: 書き込み + ポインタ、内容ハッシュ重複排除、デコード/書き込み失敗のプレースホルダ、保持ウィンドウのメディア不変、同期/非同期パリティ、`evicted_refs` 収集 |
+| `tests/pub/func/test_estimate_tokens_media.py` | 22 | ブロック単位のマルチモーダル推定: 固定型コスト、5 MB base64 回帰、メディアを隠す未知ブロック、`str` / `None` / 空リスト / 純テキスト境界 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | チェイニング要約フィルタリング: 旧ペアを直列化会話から除去、通常/空/複数ペア入力、未マークの旧セッション human を保持、async `_acreate_summary` ミラー |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 構造化要約: schema 強制変換、レンダリング往復 + バイト安定 + セクション順、コード層 cap + 注記、latest request 逐字、json_mode/json_repair/free-form の 3 ティア、prior-doc JSON チェイニング、旧 MD 遷移、退避ポインタの収集と継承 |
 | `tests/agent/middlewares/test_summary_active_plan.py` | 20 | Part 1: 計画アクティブ判定（state/todo ソース、全完了ゲート、fail-open）、初回/更新プロンプト両経路への注入、チェーン圧縮を跨ぐノートの継承/追記/cap/クリア、latest request 逐字 + 退避ポインタ、複数メッセージ連投 |
