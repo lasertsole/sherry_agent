@@ -283,7 +283,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `ROOT_DIR` の外に解決される値は、ハード拒否フロア（YOLO 拒否リスト / `/etc/passwd`、`/etc/shadow`、`/etc/sudoers`）に当たらない限り通します；
 - それ以外の外部パスはツール自身の `resolve_external_path()` HITL フローに委ねます——ミドルウェアは承認・引数書き換え・インタラプトのいずれも行いません。ツールは実行時に同じゲートを再実行するため、ここで介入すると決定が二重になります。
 
-拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[docs/sandbox/README.ja.md §5](../../docs/sandbox/README.ja.md#5-外部ファイルパスゲートファイルツール)。
+拒否時はツールを実行せず、構造化エラー `ToolMessage`（`status="error"`、元の `tool_call_id` / ツール名を保持）を返します。外部パスの詳細：[docs/sandbox/isolation/README.ja.md §5](../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ### SubagentCompletionDrainMiddleware
 
@@ -345,7 +345,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. ハードライン / 危険コマンド検知（`detection.py`：`detect_hardline_command`、`detect_dangerous_command`、基盤は `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`）を `ApprovalPipeline.check_command`（`approval.py`）経由で実施。
 2. スマート承認（`ApprovalMode.SMART`、任意の `smart_approval_llm`）— 明らかに安全な呼び出しを自動承認。
 3. `interrupt()` — 既定の決定タイムアウトは 60 秒。
-4. `write_approval_memory=True` の場合、メモリツールの書き込みは `WriteApprovalGate` を通過。`interrupted_tools` に列挙されたツールは常に中断され、決定は `approve` / `edit` / `reject`（`edit` はツール呼び出しの引数/名称を書き換えます）。別途、外部パスゲートは独自の割り込みを起こし、決定セットは `approve` / `approve_dir` / `yolo` / `reject` です（詳細: [docs/sandbox/README.ja.md](../../docs/sandbox/README.ja.md#5-外部ファイルパスゲートファイルツール)）。
+4. `write_approval_memory=True` の場合、メモリツールの書き込みは `WriteApprovalGate` を通過。`interrupted_tools` に列挙されたツールは常に中断され、決定は `approve` / `edit` / `reject`（`edit` はツール呼び出しの引数/名称を書き換えます）。別途、外部パスゲートは独自の割り込みを起こし、決定セットは `approve` / `approve_dir` / `yolo` / `reject` です（詳細: [docs/sandbox/isolation/README.ja.md](../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)）。
 5. `wrap_tool_call` は承認が拒否またはタイムアウトした呼び出しの実行を拒否します（ターン単位のフラグは `before_agent` でリセット）。
 
 サブゲート（`gates.py` / `approval.py`）：`ApprovalPipeline`、`WriteApprovalGate`、`InterruptManager`、`MCPElicitationConsent`、`KanbanTriage`、`PairingStore`、`SlashConfirm`。状態は `state_register_mem` に `hitl:` 接頭辞キーで格納されます。

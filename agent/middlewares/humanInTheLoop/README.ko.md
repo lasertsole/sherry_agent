@@ -195,7 +195,7 @@ LLM 출력 → after_model
 - `yolo` — 모든 외부 경로를 영구 허용(전역 YOLO 플래그 기록);
 - `reject` — 접근 거부.
 
-▶️ 자세히: [docs/sandbox/README.ko.md](../../docs/sandbox/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
+▶️ 자세히: [docs/sandbox/isolation/README.ko.md](../../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
 
 ---
 

@@ -283,7 +283,7 @@ Screening is deliberately conservative:
 - a value resolving outside `ROOT_DIR` is passed through **unless** it hits the hard-deny floor (the YOLO deny list / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`);
 - every other external path is left to the tool's own `resolve_external_path()` HITL flow — the middleware never approves, rewrites args, or raises an interrupt, because the tool re-runs the same gate during execution (intercepting here would decide twice).
 
-On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [docs/sandbox/README.md §5](../../docs/sandbox/README.md#5-external-file-path-gate-file-tools).
+On a rejection the middleware returns a structured error `ToolMessage` (`status="error"`, the original `tool_call_id` / tool name) without executing the tool. Related external-path details: [docs/sandbox/isolation/README.md §5](../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -345,7 +345,7 @@ Per-call pipeline in `after_model`:
 1. Hard-line / dangerous command detection (`detection.py`: `detect_hardline_command`, `detect_dangerous_command`, backed by `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`) via `ApprovalPipeline.check_command` (`approval.py`).
 2. Smart approval (`ApprovalMode.SMART`, optional `smart_approval_llm`) — auto-approves clearly safe calls.
 3. `interrupt()` — decision timeout 60 s by default.
-4. Memory-tool writes go through `WriteApprovalGate` when `write_approval_memory=True`; tools listed in `interrupted_tools` always interrupt with decisions `approve` / `edit` / `reject` (`edit` rewrites the tool-call args/name). Independently, the external-path gateway raises its own interrupt with decisions `approve` / `approve_dir` / `yolo` / `reject` (see [docs/sandbox/README.md](../../docs/sandbox/README.md#5-external-file-path-gate-file-tools)).
+4. Memory-tool writes go through `WriteApprovalGate` when `write_approval_memory=True`; tools listed in `interrupted_tools` always interrupt with decisions `approve` / `edit` / `reject` (`edit` rewrites the tool-call args/name). Independently, the external-path gateway raises its own interrupt with decisions `approve` / `approve_dir` / `yolo` / `reject` (see [docs/sandbox/isolation/README.md](../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools)).
 5. `wrap_tool_call` rejects execution for calls whose approval was denied or timed out (the per-turn flag is reset in `before_agent`).
 
 Sub-gates (`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`, `InterruptManager`, `MCPElicitationConsent`, `KanbanTriage`, `PairingStore`, `SlashConfirm`. State is namespaced under `hitl:` keys in `state_register_mem`.

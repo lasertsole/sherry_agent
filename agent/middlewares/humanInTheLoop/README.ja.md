@@ -195,7 +195,7 @@ LLM 出力 → after_model
 - `yolo` — すべての外部パスを恒久的に許可(グローバル YOLO フラグを書き込む);
 - `reject` — アクセスを拒否。
 
-▶️ 詳細: [docs/sandbox/README.ja.md](../../docs/sandbox/README.ja.md#5-外部ファイルパスゲートファイルツール)。
+▶️ 詳細: [docs/sandbox/isolation/README.ja.md](../../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ---
 

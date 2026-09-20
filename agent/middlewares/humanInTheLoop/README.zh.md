@@ -195,7 +195,7 @@ LLM 输出 → after_model
 - `yolo` —— 永久允许所有外部路径（写入全局 YOLO 标志）；
 - `reject` —— 拒绝本次访问。
 
-▶️ 详见：[docs/sandbox/README.zh.md](../../docs/sandbox/README.zh.md#5-外部文件路径门禁文件工具)。
+▶️ 详见：[docs/sandbox/isolation/README.zh.md](../../../docs/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)。
 
 ---
 

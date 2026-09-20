@@ -283,7 +283,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `ROOT_DIR` 밖으로 해석되는 값은 하드 거부 바닥(YOLO 거부 목록 / `/etc/passwd`, `/etc/shadow`, `/etc/sudoers`)에 걸리지 않는 한 통과합니다;
 - 그 밖의 외부 경로는 도구 자체의 `resolve_external_path()` HITL 흐름에 맡깁니다 —— 미들웨어는 승인도, 인자 재작성도, 인터럽트도 하지 않습니다. 도구가 실행 시 같은 게이트를 다시 돌기 때문에 여기서 개입하면 결정이 두 번 내려집니다.
 
-거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [docs/sandbox/README.ko.md §5](../../docs/sandbox/README.ko.md#5-외부-파일-경로-게이트파일-도구).
+거부 시 도구를 실행하지 않고 구조화된 오류 `ToolMessage`(`status="error"`, 원래 `tool_call_id` / 도구 이름 유지)를 반환합니다. 외부 경로 세부 사항: [docs/sandbox/isolation/README.ko.md §5](../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구).
 
 ### SubagentCompletionDrainMiddleware
 
@@ -345,7 +345,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. 하드라인 / 위험 명령 감지(`detection.py`: `detect_hardline_command`, `detect_dangerous_command`, 기반은 `HARDLINE_PATTERNS` / `DANGEROUS_PATTERNS`)를 `ApprovalPipeline.check_command`(`approval.py`)로 수행.
 2. 스마트 승인(`ApprovalMode.SMART`, 선택적 `smart_approval_llm`) — 명백히 안전한 호출을 자동 승인.
 3. `interrupt()` — 기본 결정 타임아웃 60초.
-4. `write_approval_memory=True`일 때 메모리 도구 쓰기는 `WriteApprovalGate`를 통과. `interrupted_tools`에 나열된 도구는 항상 인터럽트되며 결정은 `approve` / `edit` / `reject`(`edit`은 도구 호출의 인자/이름을 재작성). 별도로, 외부 경로 게이트는 자체 인터럽트를 일으키며 결정 세트는 `approve` / `approve_dir` / `yolo` / `reject`입니다(자세히: [docs/sandbox/README.ko.md](../../docs/sandbox/README.ko.md#5-외부-파일-경로-게이트파일-도구)).
+4. `write_approval_memory=True`일 때 메모리 도구 쓰기는 `WriteApprovalGate`를 통과. `interrupted_tools`에 나열된 도구는 항상 인터럽트되며 결정은 `approve` / `edit` / `reject`(`edit`은 도구 호출의 인자/이름을 재작성). 별도로, 외부 경로 게이트는 자체 인터럽트를 일으키며 결정 세트는 `approve` / `approve_dir` / `yolo` / `reject`입니다(자세히: [docs/sandbox/isolation/README.ko.md](../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)).
 5. `wrap_tool_call`은 승인이 거부되었거나 타임아웃된 호출의 실행을 거부합니다(턴 단위 플래그는 `before_agent`에서 리셋).
 
 서브게이트(`gates.py` / `approval.py`): `ApprovalPipeline`, `WriteApprovalGate`, `InterruptManager`, `MCPElicitationConsent`, `KanbanTriage`, `PairingStore`, `SlashConfirm`. 상태는 `state_register_mem`에 `hitl:` 접두사 키로 저장됩니다.

@@ -195,7 +195,7 @@ Not every interrupt comes from this middleware. When a file tool (`read_file`, `
 - `yolo` — permanently allow all external paths (sets the global YOLO flag);
 - `reject` — deny the access.
 
-▶️ Full details: [docs/sandbox/README.md](../../docs/sandbox/README.md#5-external-file-path-gate-file-tools).
+▶️ Full details: [docs/sandbox/isolation/README.md](../../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
 
 ---
 
