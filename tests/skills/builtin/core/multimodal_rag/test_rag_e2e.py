@@ -30,7 +30,7 @@ import rag_index as rag_index_module  # noqa: E402
 from rag_index import file_index  # noqa: E402
 from rag_query import query  # noqa: E402
 
-pytestmark = [pytest.mark.llm_e2e]
+pytestmark = [pytest.mark.llm_e2e, pytest.mark.integration]
 
 _TIMEOUT_S = 600
 
