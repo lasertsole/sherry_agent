@@ -154,6 +154,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
 - `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
+- `MaxTokensBoostMiddleware` は非ストリーミング経路を取ります。子は
+  `ainvoke` で実行されるため、子セッション id に `is_stream_turn` フラグが立つことはありません。
 - 子セッション終了時、spawn コードは `finally` ブロックで `state_register_mem` から `OutputRepetitionGuard` の 6 つの状態キー（`SESSION_STATE_KEYS`）を削除します。
 
 ### ターンごとの実効順序（メインエージェント）

@@ -154,6 +154,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
 - `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
+- `MaxTokensBoostMiddleware`는 비스트리밍 경로를 탑니다. 자식은
+  `ainvoke`로 실행되므로 자식 세션 id에는 `is_stream_turn` 플래그가 절대 설정되지 않습니다.
 - 자식 세션이 끝나면 spawn 코드가 `finally` 블록에서 `state_register_mem`으로부터 `OutputRepetitionGuard`의 6개 상태 키(`SESSION_STATE_KEYS`)를 삭제합니다.
 
 ### 턴별 실제 실행 순서 (메인 에이전트)

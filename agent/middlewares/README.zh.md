@@ -153,6 +153,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
+- `MaxTokensBoostMiddleware` 走非流式路径：子会话通过
+  `ainvoke` 运行，因此子会话 id 永远不会置上 `is_stream_turn` 标志。
 - 子会话结束时，spawn 代码会在 `finally` 块中从 `state_register_mem` 删除 `OutputRepetitionGuard` 的六个状态键（`SESSION_STATE_KEYS`）。
 
 ### 每回合的实际执行顺序（主 Agent）
