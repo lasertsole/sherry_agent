@@ -400,7 +400,12 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - **보호 효과**: 모든 자동 전환(오래됨/삭제가 절대 트리거되지 않음)을 우회; `_pinned_guard()`는 모든 삭제 또는 상태 변경을 차단
 - **가드 동작**: `set_state()`, `delete_skill()`, `archive_skill()` 모두 진행 전에 `_pinned_guard()`를 확인 — 고정된 경우 경고와 함께 작업이 거부됨
 
-현재 구현에는 공개 `pin_skill()` / `unpin_skill()` 함수가 없습니다. 고정은 외부에서 관리됩니다(사용 기록의 `pinned` 필드 설정 또는 `.pinned` 마커 파일 생성).
+공개 API:
+
+- `pin_skill(name) -> (bool, str)` — 사용 기록에 `pinned: True`를 설정하고 영속화합니다. 스킬은 이미 디스크의 `skills/auto/` 아래에 존재해야 합니다. 성공 시 `(True, desc)`를, 스킬 디렉터리가 없으면 `(False, error)`를 반환합니다.
+- `unpin_skill(name) -> (bool, str)` — 사용 기록의 `pinned` 플래그(있는 경우)를 지우고 스킬 디렉터리에서 `.pinned` 마커 파일을 제거합니다. `skills/auto/<category>/<skill>/` 아래의 중첩 스킬은 `_skill_dir`로 해석되며, `is_pinned`와 일치합니다.
+
+고정은 이러한 공개 함수, HTTP API(`POST /skills/pin`)를 통해, 또는 외부에서 사용 기록의 `pinned` 필드를 설정하거나 `.pinned` 마커 파일을 생성하여 관리할 수 있습니다.
 
 ---
 

@@ -399,7 +399,12 @@ Pinned 技能享有最高保护级别：
 - **保护效果**：跳过所有自动转换（stale/删除均不触发）；`_pinned_guard()` 阻止任何删除或状态变更操作
 - **守卫行为**：`set_state()`、`delete_skill()` 和 `archive_skill()` 在执行前都会检查 `_pinned_guard()` —— 如果是 pinned，操作会被拒绝并记录警告
 
-当前实现中没有公开的 `pin_skill()` / `unpin_skill()` 函数。固定操作通过外部管理（设置 usage record 中的 `pinned` 字段或创建 `.pinned` 标记文件）。
+公开 API：
+
+- `pin_skill(name) -> (bool, str)` —— 在 usage record 中设置 `pinned: True` 并持久化。技能必须已存在于磁盘的 `skills/auto/` 下。成功时返回 `(True, desc)`，若技能目录缺失则返回 `(False, error)`。
+- `unpin_skill(name) -> (bool, str)` —— 清除 usage record 中的 `pinned` 标志（若存在），并删除技能目录下的所有 `.pinned` 标记文件。`skills/auto/<category>/<skill>/` 下的嵌套技能通过 `_skill_dir` 解析，与 `is_pinned` 一致。
+
+固定操作可以通过这些公开函数、HTTP API（`POST /skills/pin`）管理，也可以在外部通过设置 usage record 中的 `pinned` 字段或创建 `.pinned` 标记文件来管理。
 
 ---
 

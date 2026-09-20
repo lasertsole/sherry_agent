@@ -402,7 +402,12 @@ _reconcile_classification(removed, heuristic, model_block, destinations, absorbe
 - **保護効果**: すべての自動遷移をバイパス（古い/削除が決してトリガーされない）; `_pinned_guard()` は任意の削除または状態変更をブロック
 - **ガード動作**: `set_state()`、`delete_skill()`、`archive_skill()` はすべて進行前に `_pinned_guard()` をチェック — ピン留めされている場合は警告とともに操作が拒否されます
 
-現在の実装には公開の `pin_skill()` / `unpin_skill()` 関数はありません。ピン留めは外部で管理されます（使用レコードの `pinned` フィールドを設定するか、`.pinned` マーカーファイルを作成する）。
+公開 API：
+
+- `pin_skill(name) -> (bool, str)` — 使用レコードに `pinned: True` を設定して永続化します。スキルはディスク上の `skills/auto/` に既に存在している必要があります。成功時は `(True, desc)`、スキルディレクトリが存在しない場合は `(False, error)` を返します。
+- `unpin_skill(name) -> (bool, str)` — 使用レコードの `pinned` フラグ（存在する場合）をクリアし、スキルディレクトリから `.pinned` マーカーファイルを削除します。`skills/auto/<category>/<skill>/` 配下のネストされたスキルは `_skill_dir` 経由で解決され、`is_pinned` と一致します。
+
+ピン留めは、これらの公開関数、HTTP API（`POST /skills/pin`）、または外部から使用レコードの `pinned` フィールドを設定するか `.pinned` マーカーファイルを作成する方法で管理できます。
 
 ---
 
