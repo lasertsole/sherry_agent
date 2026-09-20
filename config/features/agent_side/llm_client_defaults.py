@@ -12,6 +12,7 @@ class LlmClientDefaultsConfig(TypedDict):
     fallback_max_retries: int
     fallback_timeout: int
     aux_max_retries: int
+    aux_timeout: int
     aux_remote_max_tokens: int
     reasoner_max_retries: int
     reasoner_max_tokens_cap: int
@@ -32,6 +33,11 @@ LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
     "fallback_max_retries": 2,
     "fallback_timeout": 120,
     "aux_max_retries": 2,
+    # Per-request timeout for the auxiliary remote client (seconds) — aligned
+    # with ``main_timeout``. Without it the OpenAI SDK default (600 s) applies
+    # to every attempt (max_retries + 1), so one stalled aux call can silently
+    # hang for ~30 min.
+    "aux_timeout": 120,
     "aux_remote_max_tokens": 121072,
     "reasoner_max_retries": 2,
     "reasoner_max_tokens_cap": 65536,

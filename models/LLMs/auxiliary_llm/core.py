@@ -79,6 +79,10 @@ def build_auxiliary_llm(temperature: float | None = None):
             "base_url": _api_base,
             "temperature": temperature if temperature is not None else 0,
             "max_retries": LLM_CLIENT_DEFAULTS["aux_max_retries"],
+            # Bounded per-request window (seconds), mirroring main_llm. No
+            # stream_chunk_timeout: every aux call site is invoke/ainvoke —
+            # the model is never streamed.
+            "timeout": LLM_CLIENT_DEFAULTS["aux_timeout"],
             "profile": {"max_input_tokens": _max_tokens},
         }
         _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}

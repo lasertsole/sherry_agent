@@ -179,6 +179,7 @@ SPOT_DEFAULTS = [
     (LLM_CLIENT_DEFAULTS, "main_max_retries", 2),
     (LLM_CLIENT_DEFAULTS, "main_timeout", 120),
     (LLM_CLIENT_DEFAULTS, "main_stream_chunk_timeout", 60),
+    (LLM_CLIENT_DEFAULTS, "aux_timeout", 120),
     (LLM_CLIENT_DEFAULTS, "aux_remote_max_tokens", 121072),
     (LLM_CLIENT_DEFAULTS, "local_n_gpu_layers", -1),
     (LLM_CLIENT_DEFAULTS, "ittt_remote_temperature", 0.8),
