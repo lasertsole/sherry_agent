@@ -27,6 +27,8 @@ model_config: dict[str, Any] = {
     "base_url": api_base,
     "temperature": 0.5,
     "max_retries": LLM_CLIENT_DEFAULTS["reasoner_max_retries"],
+    # Explicit bounded window for each LLM request (seconds).
+    "timeout": LLM_CLIENT_DEFAULTS["reasoner_timeout"],
     "profile": {"max_input_tokens": max_tokens},  # Set model context window size
 }
 

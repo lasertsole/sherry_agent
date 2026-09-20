@@ -15,6 +15,7 @@ class LlmClientDefaultsConfig(TypedDict):
     aux_timeout: int
     aux_remote_max_tokens: int
     reasoner_max_retries: int
+    reasoner_timeout: int
     reasoner_max_tokens_cap: int
     local_n_ctx: int
     local_temperature: float
@@ -40,6 +41,11 @@ LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
     "aux_timeout": 120,
     "aux_remote_max_tokens": 121072,
     "reasoner_max_retries": 2,
+    # Per-request timeout for the reasoner remote client (seconds) — aligned
+    # with ``main_timeout``/``aux_timeout``. Without it the OpenAI SDK default
+    # (600 s) applies to every attempt (max_retries + 1), so one stalled
+    # reasoner call can silently hang for ~30 min.
+    "reasoner_timeout": 120,
     "reasoner_max_tokens_cap": 65536,
     "local_n_ctx": 4096,
     "local_temperature": 0.0,
