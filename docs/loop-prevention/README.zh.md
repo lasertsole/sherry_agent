@@ -206,7 +206,7 @@
 ## 🛠️ 配置与使用
 
 - **所有阈值都是代码默认值**（dataclass / 构造函数参数）；有意不为它们提供环境变量。值得注意的是，`config/schema.py` 的 `max_tool_iterations = 40` *并未*被中间件消费（预算是显式传入的：90 / 60），`HeartbeatConfig.interval_s = 1800` 与心跳服务默认值一致但服务是以默认参数构造的。
-- `TOOL_CALL_TIMEOUT_MINUTES`（`.env.example` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
+- `TOOL_CALL_TIMEOUT_MINUTES`（`sherry.jsonc` 中默认 5）目前**只存在于文档里**：没有任何代码消费它。实际生效的每工具边界是常量（web search 15s，terminal 30s，python REPL 30s）。不要把它当作循环边界。
 - Worker 以中间件形式获得 `OutputRepetitionGuard`；主 Agent 由 `RepetitionGuardWrapper` 包裹（中间件钩子看不到原始流式 chunk）。
 - `MaxTokensBoostMiddleware` 是唯一带环境变量旋钮的护栏：`MAIN_LLM_OUTPUT_MAX_TOKEN`（默认 8192）在导入时读取作为提升基数；上限（32768）与重试次数（3）为代码常量。
 - `ToolGuardrails` 旋钮：`warnings_enabled`（默认 True）、`hard_stop_enabled`（默认 False，BLOCK 仍是拦截）、`recovery_mode_enabled`（默认 True）、`recovery_max_violations`（默认 1）。
@@ -247,5 +247,5 @@
 - **`hard_stop_enabled` 默认为 False**：严格模式下，只有同工具失败和被转换成 hard-stop 的 BLOCK 能到达 HALT；其他病理停在 BLOCK（受恢复模式约束）。
 - **内容归一化是双刃剑**：去空白 / 去标点让哈希对格式噪声免疫，但每次*换一种说法*重复循环的模型能躲开基于哈希的检测。内部片段 / 连跑检测器部分覆盖了这一点；完全改写的循环不在范围内。
 - **恢复模式给了模型失败的空间**：顽固的病理在 HALT 之前要付出一次受管重试的代价。想要立即竖墙的运维应设 `recovery_mode_enabled=False`。
-- **`TOOL_CALL_TIMEOUT_MINUTES` 有声明但无人读取**：它存在于 `.env.example`（根 README 也有描述），但今天没有任何代码消费它；上文列出的每工具常量才是真正的边界。
+- **`TOOL_CALL_TIMEOUT_MINUTES` 有声明但无人读取**：它存在于 `sherry.jsonc`（根 README 也有描述），但今天没有任何代码消费它；上文列出的每工具常量才是真正的边界。
 - **HTTP-only 模式是收缩后的足迹，不是封锁**：聊天、HTTP/WS 路由和 cron REST 按设计保持在线；目标是打断*崩溃循环*，不是把进程与世隔绝。

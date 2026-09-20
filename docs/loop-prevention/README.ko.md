@@ -209,7 +209,7 @@
 ## 🛠️ 설정과 사용법
 
 - **모든 임계값은 코드 기본값입니다** (dataclass / 생성자 파라미터); 환경 변수는 의도적으로 두지 않았습니다. 특히 `config/schema.py`의 `max_tool_iterations = 40`은 미들웨어가 소비하지 *않고*(예산은 명시적으로 전달됨: 90 / 60), `HeartbeatConfig.interval_s = 1800`은 하트비트 서비스 기본값과 일치하지만 서비스는 기본값으로 생성됩니다.
-- `TOOL_CALL_TIMEOUT_MINUTES` (`.env.example` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
+- `TOOL_CALL_TIMEOUT_MINUTES` (`sherry.jsonc` 기본 5)는 현재 **문서 전용**입니다: 이를 소비하는 코드가 없습니다. 실제로 활성인 도구별 상한은 상수입니다(웹 검색 15s, 터미널 30s, python REPL 30s). 이것을 루프 경계로 삼지 마세요.
 - 워커는 미들웨어로 `OutputRepetitionGuard`를 받고; 메인 에이전트는 `RepetitionGuardWrapper`로 래핑됩니다(미들웨어 훅은 원시 스트림 청크를 볼 수 없음).
 - `MaxTokensBoostMiddleware`는 환경 변수 노브를 가진 유일한 가드입니다: `MAIN_LLM_OUTPUT_MAX_TOKEN`(기본 8192)이 임포트 시 읽혀 부스트 base가 됩니다; 상한(32768)과 재시도 횟수(3)는 코드 상수입니다.
 - `ToolGuardrails` 노브: `warnings_enabled` (기본 True), `hard_stop_enabled` (기본 False, BLOCK은 차단으로 유지), `recovery_mode_enabled` (기본 True), `recovery_max_violations` (기본 1).
@@ -250,5 +250,5 @@
 - **`hard_stop_enabled`는 기본 False입니다**: 엄격 모드에서는 동일 도구 실패와 hard-stop으로 변환된 BLOCK만 HALT에 도달합니다; 다른 병리는 BLOCK에서 멈춥니다(복구 모드의 영향을 받음).
 - **콘텐츠 정규화는 양날의 검입니다**: 공백/구두점 제거는 해시를 포맷 노이즈에 강하게 만들지만, 매번 *말을 바꿔* 루프를 도는 모델은 해시 기반 감지를 피해갑니다. 내부 세그먼트/연속 실행 감지기가 부분적으로 이를 커버합니다; 완전히 바꿔 말한 루프는 범위 밖입니다.
 - **복구 모드는 모델에게 실패의 여지를 줍니다**: 완고한 병리는 HALT 전에 관리되는 재시도 한 번을 치러야 합니다. 즉시 벽을 원하는 운영자는 `recovery_mode_enabled=False`로 설정해야 합니다.
-- **`TOOL_CALL_TIMEOUT_MINUTES`는 선언만 있고 읽히지 않습니다**: `.env.example`에 존재하고(루트 README에도 설명됨) 하지만 오늘날 이를 소비하는 코드는 없습니다; 위에 나열된 도구별 상수가 실제 경계입니다.
+- **`TOOL_CALL_TIMEOUT_MINUTES`는 선언만 있고 읽히지 않습니다**: `sherry.jsonc`에 존재하고(루트 README에도 설명됨) 하지만 오늘날 이를 소비하는 코드는 없습니다; 위에 나열된 도구별 상수가 실제 경계입니다.
 - **HTTP 전용 모드는 축소된 풋프린트이지 잠금이 아닙니다**: 채팅, HTTP/WS 라우트, cron REST는 설계상 유지됩니다; 목표는 *크래시 루프*를 끊는 것이지 프로세스를 완전히 격리하는 것이 아닙니다.

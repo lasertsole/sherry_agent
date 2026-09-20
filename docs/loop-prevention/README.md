@@ -212,7 +212,7 @@ Within a turn, the turn guards are orthogonal and fire in parallel: `OutputRepet
 ## 🛠️ Configuration & Usage
 
 - **All thresholds are code defaults** (dataclass / constructor parameters); there are intentionally no env vars for them. Notably, `config/schema.py`'s `max_tool_iterations = 40` is *not* consumed by the middleware (budgets are passed explicitly: 90 / 60), and `HeartbeatConfig.interval_s = 1800` matches the heartbeat service default but the service is constructed with defaults.
-- `TOOL_CALL_TIMEOUT_MINUTES` (default 5 in `.env.example`) is currently **documentation-only**: no code consumes it. The active per-tool bounds are constants (web search 15s, terminal 30s, python REPL 30s). Do not rely on it as a loop bound.
+- `TOOL_CALL_TIMEOUT_MINUTES` (default 5 in `sherry.jsonc`) is currently **documentation-only**: no code consumes it. The active per-tool bounds are constants (web search 15s, terminal 30s, python REPL 30s). Do not rely on it as a loop bound.
 - Workers get `OutputRepetitionGuard` as middleware; the main agent is wrapped by `RepetitionGuardWrapper` (middleware hooks do not see raw stream chunks).
 - `MaxTokensBoostMiddleware` is the one guard with an env knob: `MAIN_LLM_OUTPUT_MAX_TOKEN` (default 8192) sets the boost base read at import time; the cap (32768) and retry count (3) are code constants.
 - `ToolGuardrails` knobs: `warnings_enabled` (default True), `hard_stop_enabled` (default False, BLOCK stays a block), `recovery_mode_enabled` (default True), `recovery_max_violations` (default 1).
@@ -253,6 +253,6 @@ Manual recovery cheatsheet:
 - **`hard_stop_enabled` defaults to False**: in strict mode, only same-tool failures and hard-stop-converted BLOCKs reach HALT; other pathologies stop at BLOCK (subject to recovery mode).
 - **Content normalization cuts both ways**: stripping whitespace/punctuation makes hashing resilient to formatting noise, but a model that *paraphrases* its loop each time evades hash-based detection. Internal segment/run detectors partially cover this; fully paraphrased loops are out of scope.
 - **Recovery mode gives the model room to fail**: a stubborn pathology costs one managed retry before HALT. Operators who want the immediate wall should set `recovery_mode_enabled=False`.
-- **`TOOL_CALL_TIMEOUT_MINUTES` is declared but unread**: it exists in `.env.example` (and is described in the root README), but no code consumes it today; the per-tool constants listed above are the real bounds.
+- **`TOOL_CALL_TIMEOUT_MINUTES` is declared but unread**: it exists in `sherry.jsonc` (and is described in the root README), but no code consumes it today; the per-tool constants listed above are the real bounds.
 - **HTTP-only mode is a reduced footprint, not a lock-down**: chat, HTTP/WS routes, and cron REST stay up by design; the goal is breaking the *crash loop*, not air-gapping the process.
 
