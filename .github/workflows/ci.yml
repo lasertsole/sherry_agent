@@ -50,6 +50,9 @@ jobs:
       - name: Run hermetic test suite
         run: uv run --no-sync python tests/run_tests_split.py
 
+      - name: Check README structural parity (4 languages)
+        run: uv run --no-sync python scripts/check_docs_parity.py
+
       - name: Check server layer contract
         run: uv run --no-sync lint-imports
 
