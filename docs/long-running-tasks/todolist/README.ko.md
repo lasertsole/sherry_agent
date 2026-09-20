@@ -81,11 +81,27 @@ Plan (workspace/sessions/<session_id>/plans/*.md)
 
 모델의 자각에 의존하지 않고, 7층 강제로 폐루프를 형성합니다:
 
-- 모델이 계획하지 않음 → E7이 가이던스 주입
-- 모델이 게을러서 멈춤 → E3이 끌어옴
-- 모델이 가짜 완료 → E5가 블록
-- 모델이 직접 코드 작성 → E1 doctrine이 억제
-- 모델이 일찍 완료 표시 → E4가 하드 블록
+```
+Before (message arrives)    During                     After
+┌──────────┐  ┌────────────────────┐  ┌──────────────────────┐
+│ E7 Intent │  │ E6 Delegation ★    │  │ E3 Continuation ★★  │
+│ Recognizer│  │ #a fan-out         │  │ idle + incomplete    │
+│ ★★       │  │ #b category route  │  │ todo + backoff +     │
+│ before_   │  │ #c delegation cmd  │  │ stagnation + abort   │
+│ model     │  │ #d barrier         │  │ + recovery mode      │
+│ inject    │  └────────────────────┘  └──────────────────────┘
+└──────────┘  ┌────────────────────┐  ┌──────────────────────┐
+┌──────────┐  │ E1 System prompt   │  │ E5 Sisyphus verify ★★│
+│ E2 Tool  │  │ orchestrator       │  │ DoneClaim →          │
+│ desc      │  │ doctrine           │  │ AdversarialVerify →  │
+│ MANDATORY │  │ + hook notice      │  │ FullyDone             │
+│ format    │  └────────────────────┘  └──────────────────────┘
+└──────────┘                            ┌──────────────────────┐
+                                          │ E4 Transition barrier│
+                                          │ TaskFlow step status+│
+                                          │ subagent alive → block│
+                                          └──────────────────────┘
+```
 
 ---
 
@@ -179,6 +195,11 @@ E7       │ 의도 인식 ★★    │ before_model: arming(계획 없음+태�
 
 한 줄에 하나의 JSON 객체로, 각 체크박스의 실행 증거를 기록합니다.
 
+```json
+{"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
+{"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": "src/data/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
+```
+
 ### todos.db — 세션 수준 TODO 저장
 
 ```sql
@@ -199,9 +220,29 @@ CREATE TABLE IF NOT EXISTS todos (
 );
 ```
 
+| 필드       | 설명                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `plan_ref` | 연결된 계획 파일 경로 — 세션 스코프 `workspace/sessions/<session_id>/plans/*.md` |
+| `flow_id`  | 연결된 TaskFlow flow id (DAG는 TaskFlow가 소유)                    |
+| `step_id`  | 연결된 TaskFlow step id (예: `step-2`), DAG 상태 재읽기용          |
+
 > **설계 경계**: `todos.db`는 `depends_on` / 웨이브 / step 상태를 보유하지 않습니다. 의존성 그래프, `blocked/ready/dispatched/done`과 언록 로직은 모두 TaskFlow가 제공합니다. todo는 `flow_id`/`step_id`로 해당 flow step을 가리킬 뿐이며, DAG 상태는 `taskflow_summary(flow_id)`로 재읽기합니다.
 
-CRUD 인터페이스: `replace_all` (전량 교체), `get_todos` (position순), `get_todos_sync` (동기 경로, 프롬프트 주입용), `get_todos_by_flow` (flow 관련 todo 조회).
+CRUD 인터페이스:
+
+```python
+async def replace_all(session_id: str, todos: list[dict]) -> None:
+    """전량 교체: DELETE + INSERT (트랜잭션)"""
+
+async def get_todos(session_id: str) -> list[dict]:
+    """position순 읽기"""
+
+def get_todos_sync(session_id: str) -> list[dict]:
+    """시스템 프롬프트 주입용 동기 경로 (이벤트 루프 없음)"""
+
+async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
+    """TaskFlow flow에 연결된 todo 읽기 (DAG 상태를 UI로 매핑)"""
+```
 
 ---
 
@@ -209,9 +250,29 @@ CRUD 인터페이스: `replace_all` (전량 교체), `get_todos` (position순), 
 
 ### TodoService
 
-- `update_todos`: 전량 교체 + E4 전환 배리어 검증 + WS 푸시.
-- `get_todos`: DB에서 읽기.
-- `get_flow_progress`: TaskFlow의 DAG 상태를 todo 뷰에 매핑 (frontier 재계산 없음). 읽기 전용 `taskflow_summary`를 호출하여 step의 status/depends_on을 가져옴.
+```python
+class TodoService:
+    @staticmethod
+    async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
+        validated = _validate_todos(todos)
+        # E4: 전환 배리어 — TaskFlow step 미 done / subagent 실행 중이면 completed 블록
+        for todo in validated:
+            if todo["status"] == "completed":
+                _assert_transition_allowed(todo)
+        await store.replace_all(session_id, validated)
+        latest = await store.get_todos(session_id)
+        await _push_todo_update(session_id, latest)
+        return latest
+
+    @staticmethod
+    async def get_flow_progress(session_id: str, flow_id: str) -> dict:
+        """TaskFlow의 DAG 상태를 todo 뷰에 매핑 (frontier 재계산 없음).
+        DAG 스케줄링은 TaskFlow가 소유; 이 메서드는 읽기 전용 taskflow_summary만 호출."""
+        from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
+        linked = await store.get_todos_by_flow(session_id, flow_id)
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
+        return {"todos": linked, "taskflow_summary": summary_text}
+```
 
 ### EvidenceLedger
 
@@ -231,6 +292,17 @@ class EvidenceLedger:
 ```
 
 ### WS 푸시
+
+```python
+async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
+    from runtime import relation_register
+    ws = relation_register.get_websocket_by_session_id(session_id)
+    if ws:
+        await ws.send_text(json.dumps({
+            "event": "todo_updated", "session_id": session_id,
+            "content": {"todos": todos}
+        }))
+```
 
 `relation_register`의 직접 전송 패턴을 재사용하여 `todo_updated` 이벤트를 푸시합니다.
 
@@ -267,7 +339,21 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 
 ### 도구 등록 (E2 주입 지점)
 
-`build_todolist_tools()`에서 todowrite 설명을 오버라이드하고 MANDATORY 형식 규칙을 주입: 각 todo 제목은 WHERE/WHY/HOW/RESULT를 인코딩, 원자 입자도 (1-3 도구 호출로 완료), 동시에 하나의 in_progress만, subagent 반환 전 completed 마크 금지.
+```python
+def build_todolist_tools() -> list[BaseTool]:
+    for t in _TODOLIST_TOOLS:
+        t.handle_tool_error = True
+        t.metadata = {"scope": "main_only"}
+    todowrite.description += _TODOWRITE_FORMAT_RULES  # E2 형식 규칙
+    return list(_TODOLIST_TOOLS)
+```
+
+`build_todolist_tools()`에서 todowrite 설명을 오버라이드하고 MANDATORY 형식 규칙을 주입:
+
+- 각 todo 제목은 WHERE/WHY/HOW/RESULT를 인코딩
+- 원자 입자도 (1-3 도구 호출로 완료)
+- 동시에 하나의 in_progress만
+- subagent 반환 전 completed 마크 금지
 
 ### SKILL.md
 
@@ -358,6 +444,32 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | `_build_boulder_block()`   | src/data/boulder.json | ~5행          | 활성 작업 상태                                    |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20행         | key_failures + key_successes + reusable_patterns (아이덴티티 해석) |
 
+### 구현
+
+```python
+def _build_todo_block(session_id: str) -> str:
+    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+    todos = get_todos_sync(session_id)
+    if not todos:
+        return ""
+    lines = ["## Current Todo List"]
+    for t in todos:
+        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
+        tag_parts = [t.get("category", "quick")]
+        if t.get("delegation", "self") != "self":
+            tag_parts.append(t["delegation"])
+        if t.get("flow_id"):
+            tag_parts.append(f"flow:{t['flow_id']}")
+        if t.get("step_id"):
+            tag_parts.append(t["step_id"])
+        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
+    lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
+    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    return "\n".join(lines)
+```
+
 ### omo의 5층 방어보다 경량인 이유
 
 | omo의 5층                     | 본 접근 방식                                       |
@@ -367,6 +479,7 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 | 8세그먼트 압축 컨텍스트 주입  | 불필요 (todos가 대화 기록에 없음)                  |
 | 60s 압축 보호 창              | 불필요 (보호할 계속 주입기 없음)                   |
 | 계속 강제기                   | 필요, after_agent 미들웨어로 간소화 (E3)           |
+| 지식 요약 주입                | 신규 `_build_knowledge_block()` (약 25행)          |
 | **합계 ~600+ 행**             | **~65행 (프롬프트 주입) + ~130행 (계속 미들웨어)** |
 
 ---
@@ -375,13 +488,43 @@ blocked (의존성이 모두 done이 아님; run_task는 등록만, spawn 없음
 
 ### E1: 시스템 프롬프트 강제 — orchestrator doctrine
 
-`AGENTS.md`에 추가. 제로 코드, 순 텍스트. 핵심:
+`AGENTS.md`에 추가. 제로 코드, 순 텍스트:
 
-- YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER
-- 다단계 태스크 (2+ 단계) → 반드시 먼저 todos 생성
-- 각 단계에서 in_progress 마크 → subagent 반환 후 검증 → completed 마크
-- 전환 배리어: subagent 실행 중 / TaskFlow step 미완료 시 completed 마크 금지
-- Sisyphus 계약: DoneClaim → AdversarialVerify → FullyDone
+```markdown
+## Task Management & Orchestration (CRITICAL)
+
+### Orchestrator Doctrine (MANDATORY)
+
+YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
+
+- You DO NOT write code. You DO NOT edit product files.
+- EVERY unit of implementation MUST be delegated to a spawned subagent.
+
+### When to Create Todos (MANDATORY)
+
+- Multi-step task (2+ steps) → ALWAYS create todos first
+- Uncertain scope → ALWAYS (todos clarify thinking)
+
+### Workflow (NON-NEGOTIABLE)
+
+1. IMMEDIATELY on receiving request: todowrite to plan atomic steps.
+2. For each checkbox: decompose into atomic sub-tasks for ONE worker.
+3. DELEGATE every sub-task via task tool — route by category.
+4. Before starting each step: Mark in_progress (only ONE at a time)
+5. After subagent returns: verify via acceptance criteria, then mark completed.
+
+### Transition Barrier (CRITICAL)
+
+- Do NOT mark a todo as completed while its subagent is still running
+- Do NOT mark a TaskFlow-linked todo completed while its step is not `done`
+
+### Completion Contract (Sisyphus)
+
+- DoneClaim → AdversarialVerify → FullyDone
+- If verification fails, the task is NOT done — re-dispatch or fix.
+
+**FAILURE TO FOLLOW ORCHESTRATOR DOCTRINE = INCOMPLETE WORK.**
+```
 
 ### E2: 도구 설명 강제 — 형식 + 위임 규칙
 
@@ -393,7 +536,24 @@ turn 종료 후 미완료 todo가 있으면 시스템이 자동으로 계속 메
 
 **주요 상수**: `_MAX_STAGNATION = 3` (연속 3회 변화 없음 → 정지), `_BASE_COOLDOWN_S = 2.0` (기본 백오프), `_MAX_COOLDOWN_S = 60.0` (최대 백오프), `_FAILURE_RESET_WINDOW_S = 300` (5분간 실패 없음 → 리셋), `_MAX_RECOVERY_ATTEMPTS = 2` (복구 모드 상한).
 
-**워크플로우**: turn 종료 → todos 읽기 → 미완료 필터 → 정체 검출 → 백오프 냉각 → 계속 프롬프트 구축 → `maybe_trigger_auto_turn()`으로 주입. 사용자가 메시지 전송 → 취소 → reset().
+**워크플로우**:
+
+```
+turn ends (no tool_call, agent loop exits)
+  → Summarization.aafter_agent (rebuild system prompt with latest todos)
+  → TodoContinuationEnforcer.aafter_agent
+      → is_abort_error? → skip
+      → get_todos_sync(session_id) → filter incomplete
+      → check_stagnation: snapshot compare, N consecutive no-change?
+          → should_enter_recovery? → RECOVERY_PROMPT
+          → else: stop continuation
+      → is_in_cooldown? → skip
+      → build continuation prompt (full todo status + flow/step)
+      → maybe_trigger_auto_turn(session_key, prompt)
+          → detect_state() → idle? → fire-and-forget
+          → _watch_user_takeover() 0.5s poll
+      → user sends message → detect_state() busy → cancel → reset()
+```
 
 ### E4: 전환 배리어 — 이중 보험
 
@@ -403,6 +563,26 @@ turn 종료 후 미완료 todo가 있으면 시스템이 자동으로 계속 메
 
 1. **TaskFlow step 상태**: todo가 `flow_id`/`step_id`에 연결 → `done`만 `completed` 허용. `blocked`/`ready`/`dispatched`는 모두 블록.
 2. **subagent registry liveness**: todo가 `subagent_id`에 연결 → `get_run_by_child_session_key` + `is_live_unended_run`으로 자식 세션 실행 중 판단.
+
+```python
+for todo in validated:
+    if todo["status"] != "completed":
+        continue
+    # 소스 1: TaskFlow step 상태
+    flow_id, step_id = todo.get("flow_id"), todo.get("step_id")
+    if flow_id and step_id:
+        step_status = _read_taskflow_step_status(flow_id, step_id)
+        if step_status is not None and step_status != "done":
+            raise TodoStoreError(
+                f"Cannot mark todo completed: TaskFlow step {step_id} is '{step_status}'. "
+                "Call taskflow_wait_all then taskflow_resume to inject the result first."
+            )
+    # 소스 2: subagent liveness
+    if todo.get("subagent_id") and _is_subagent_running(todo["subagent_id"]):
+        raise TodoStoreError(
+            f"Cannot mark todo completed: subagent {todo['subagent_id']} is still running."
+        )
+```
 
 ### E5: Sisyphus 완료 계약 ★★
 
@@ -419,7 +599,20 @@ Worker 반환 → DoneClaim → AdversarialVerify (5 gates) → FullyDone / NOT 
 
 ### E6: 위임 라우팅 ★
 
-**라이프사이클**: LLM이 todo 생성 (category + delegation) → #a fan-out reminder → #b category로 subagent 유형 지정 → #c AGENTS.md가 위임 방법 지도 → 의존성 step은 taskflow_run_task(depends_on) → ready step은 taskflow_dispatch → LLM이 subagent_id + flow_id/step_id 업데이트 → #d 전환 배리어 → taskflow_wait_all → taskflow_resume → E5 검증 → completed 마크.
+**라이프사이클**:
+
+```
+LLM creates todo (with category + delegation fields)
+  → #a fan-out reminder (first time per session)
+  → #b category tells LLM which subagent type to spawn
+  → #c AGENTS.md guides how to delegate
+  → Dependent steps: taskflow_run_task(depends_on=[...]) → blocked or dispatched
+  → Ready steps: taskflow_dispatch(flow_id, step_ids) → get child_session_key
+  → LLM updates todo's subagent_id + flow_id/step_id
+  → #d-prompt: "Do NOT mark done before step done / subagent returned"
+  → #d-code: update_todos() checks step status + is_live_unended_run() → hard block
+  → taskflow_wait_all → taskflow_resume → E5 Sisyphus verify → LLM marks completed
+```
 
 **Category 라우팅 테이블**:
 
@@ -476,5 +669,26 @@ WS 이벤트: `todo_updated` (변경 시 푸시) + `todo_refresh` (재연결 시
 
 - **TodoDock.vue**: `flow_id`별 그룹화 표시, 진행 카운트, 접기 가능.
 - **TodoItem.vue**: Checkbox (PrimeVue), category 배지, 위임 아이콘, in_progress 펄스 닷.
+
+### WS 메시지 형식
+
+```json
+{
+  "event": "todo_updated",
+  "session_id": "xxx",
+  "content": {
+    "todos": [
+      {
+        "content": "Implement login",
+        "status": "completed",
+        "priority": "high",
+        "flow_id": "login-flow",
+        "step_id": "step-1",
+        "taskflow_status": "done"
+      }
+    ]
+  }
+}
+```
 
 `taskflow_status`는 `taskflow_summary(flow_id)`로 재읽기한 step 상태이며, 프론트엔드는 웨이브/의존성을 재계산하지 않습니다.

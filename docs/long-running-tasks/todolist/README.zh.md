@@ -81,6 +81,28 @@ Plan (workspace/sessions/<session_id>/plans/*.md)
 
 不依赖模型自觉，通过 7 层强制形成闭环：
 
+```
+Before (message arrives)    During                     After
+┌──────────┐  ┌────────────────────┐  ┌──────────────────────┐
+│ E7 Intent │  │ E6 Delegation ★    │  │ E3 Continuation ★★  │
+│ Recognizer│  │ #a fan-out         │  │ idle + incomplete    │
+│ ★★       │  │ #b category route  │  │ todo + backoff +     │
+│ before_   │  │ #c delegation cmd  │  │ stagnation + abort   │
+│ model     │  │ #d barrier         │  │ + recovery mode      │
+│ inject    │  └────────────────────┘  └──────────────────────┘
+└──────────┘  ┌────────────────────┐  ┌──────────────────────┐
+┌──────────┐  │ E1 System prompt   │  │ E5 Sisyphus verify ★★│
+│ E2 Tool  │  │ orchestrator       │  │ DoneClaim →          │
+│ desc      │  │ doctrine           │  │ AdversarialVerify →  │
+│ MANDATORY │  │ + hook notice      │  │ FullyDone             │
+│ format    │  └────────────────────┘  └──────────────────────┘
+└──────────┘                            ┌──────────────────────┐
+                                          │ E4 Transition barrier│
+                                          │ TaskFlow step status+│
+                                          │ subagent alive → block│
+                                          └──────────────────────┘
+```
+
 一句话逻辑：模型不自觉做计划 → E7 注入引导；模型偷懒停下来 → E3 拉回；模型虚假完成 → E5 阻断；模型自己写代码 → E1 doctrine 威慑；模型提前标完成 → E4 硬阻断。
 
 ---
@@ -203,9 +225,29 @@ CREATE TABLE IF NOT EXISTS todos (
 );
 ```
 
+| 字段       | 说明                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `plan_ref` | 关联的计划文件路径 —— 会话作用域 `workspace/sessions/<session_id>/plans/*.md` |
+| `flow_id`  | 关联的 TaskFlow flow id（DAG 由 TaskFlow 持有）                    |
+| `step_id`  | 关联的 TaskFlow step id（如 `step-2`），用于回读 DAG 状态          |
+
 > **设计边界**：`todos.db` **不持有** `depends_on` / 波次 / step 状态。依赖图、`blocked/ready/dispatched/done` 与解锁逻辑全部由 TaskFlow 提供。todo 只通过 `flow_id`/`step_id` 指向对应 flow step，DAG 状态用 `taskflow_summary(flow_id)` 回读。
 
-CRUD 接口：`replace_all`（全量替换）、`get_todos`（按 position 排序）、`get_todos_sync`（同步路径，用于系统提示词注入）、`get_todos_by_flow`（读取某个 flow 关联的 todo）。
+CRUD 接口：
+
+```python
+async def replace_all(session_id: str, todos: list[dict]) -> None:
+    """全量替换：DELETE + INSERT（事务）"""
+
+async def get_todos(session_id: str) -> list[dict]:
+    """按 position 排序读取"""
+
+def get_todos_sync(session_id: str) -> list[dict]:
+    """系统提示词注入的同步路径（无事件循环）"""
+
+async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
+    """读取关联到某个 TaskFlow flow 的 todo（把 DAG 状态映射回 UI）"""
+```
 
 ---
 
@@ -213,9 +255,29 @@ CRUD 接口：`replace_all`（全量替换）、`get_todos`（按 position 排�
 
 ### TodoService
 
-- `update_todos`：全量替换 + E4 转换屏障校验 + WS 推送。
-- `get_todos`：从 DB 读取。
-- `get_flow_progress`：把 TaskFlow 的 DAG 状态映射回 todo 视图（不重算 frontier）。调用只读的 `taskflow_summary` 回读 step 的 status/depends_on。
+```python
+class TodoService:
+    @staticmethod
+    async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
+        validated = _validate_todos(todos)
+        # E4：转换屏障 —— TaskFlow step 未 done / subagent 运行中时阻断 completed
+        for todo in validated:
+            if todo["status"] == "completed":
+                _assert_transition_allowed(todo)
+        await store.replace_all(session_id, validated)
+        latest = await store.get_todos(session_id)
+        await _push_todo_update(session_id, latest)
+        return latest
+
+    @staticmethod
+    async def get_flow_progress(session_id: str, flow_id: str) -> dict:
+        """把 TaskFlow 的 DAG 状态映射回 todo 视图（不重算 frontier）。
+        DAG 调度住在 TaskFlow；本方法只调用只读的 taskflow_summary。"""
+        from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
+        linked = await store.get_todos_by_flow(session_id, flow_id)
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
+        return {"todos": linked, "taskflow_summary": summary_text}
+```
 
 ### EvidenceLedger
 
@@ -235,6 +297,17 @@ class EvidenceLedger:
 ```
 
 ### WS 推送
+
+```python
+async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
+    from runtime import relation_register
+    ws = relation_register.get_websocket_by_session_id(session_id)
+    if ws:
+        await ws.send_text(json.dumps({
+            "event": "todo_updated", "session_id": session_id,
+            "content": {"todos": todos}
+        }))
+```
 
 复用 `relation_register` 直发模式，推送 `todo_updated` 事件。
 
@@ -270,6 +343,15 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 ```
 
 ### 工具注册（E2 注入点）
+
+```python
+def build_todolist_tools() -> list[BaseTool]:
+    for t in _TODOLIST_TOOLS:
+        t.handle_tool_error = True
+        t.metadata = {"scope": "main_only"}
+    todowrite.description += _TODOWRITE_FORMAT_RULES  # E2 格式规则
+    return list(_TODOLIST_TOOLS)
+```
 
 在 `build_todolist_tools()` 中覆盖 todowrite 描述，注入 MANDATORY 格式规则 + 委派规则：
 
@@ -367,6 +449,32 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | `_build_boulder_block()`   | src/data/boulder.json | ~5 行      | 活跃工作状态                                     |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20 行     | key_failures + key_successes + reusable_patterns（按身份解析） |
 
+### 实现
+
+```python
+def _build_todo_block(session_id: str) -> str:
+    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+    todos = get_todos_sync(session_id)
+    if not todos:
+        return ""
+    lines = ["## Current Todo List"]
+    for t in todos:
+        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
+        tag_parts = [t.get("category", "quick")]
+        if t.get("delegation", "self") != "self":
+            tag_parts.append(t["delegation"])
+        if t.get("flow_id"):
+            tag_parts.append(f"flow:{t['flow_id']}")
+        if t.get("step_id"):
+            tag_parts.append(t["step_id"])
+        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
+    lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
+    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    return "\n".join(lines)
+```
+
 ### 为什么比 omo 的 5 层防御更轻量
 
 | omo 的 5 层             | 本方案                                           |
@@ -376,6 +484,7 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 | 8 段式压缩上下文注入    | 不需要（todos 不在对话历史中）                   |
 | 60s 压缩保护窗口        | 不需要（无续作注入器需要保护）                   |
 | 续作强制器              | 需要，简化为 after_agent 中间件（E3）            |
+| 知识摘要注入            | 新增 `_build_knowledge_block()`（约 25 行）      |
 | **总计 ~600+ 行代码**   | **~65 行（prompt 注入）+ ~130 行（续作中间件）** |
 
 ---
@@ -384,13 +493,43 @@ blocked (依赖未全部 done；run_task 只登记、不派发)
 
 ### E1: 系统提示词强制 — orchestrator doctrine
 
-添加到 `AGENTS.md`，零代码纯文本。核心内容：
+添加到 `AGENTS.md`，零代码纯文本：
 
-- YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER
-- 多步任务（2+ 步）→ 必须先创建 todos
-- 每步标记 in_progress → 子代理返回后验证 → 标记 completed
-- 转换屏障：subagent 运行中 / TaskFlow step 未 done 时不得标记 completed
-- Sisyphus 契约：DoneClaim → AdversarialVerify → FullyDone
+```markdown
+## Task Management & Orchestration (CRITICAL)
+
+### Orchestrator Doctrine (MANDATORY)
+
+YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
+
+- You DO NOT write code. You DO NOT edit product files.
+- EVERY unit of implementation MUST be delegated to a spawned subagent.
+
+### When to Create Todos (MANDATORY)
+
+- Multi-step task (2+ steps) → ALWAYS create todos first
+- Uncertain scope → ALWAYS (todos clarify thinking)
+
+### Workflow (NON-NEGOTIABLE)
+
+1. IMMEDIATELY on receiving request: todowrite to plan atomic steps.
+2. For each checkbox: decompose into atomic sub-tasks for ONE worker.
+3. DELEGATE every sub-task via task tool — route by category.
+4. Before starting each step: Mark in_progress (only ONE at a time)
+5. After subagent returns: verify via acceptance criteria, then mark completed.
+
+### Transition Barrier (CRITICAL)
+
+- Do NOT mark a todo as completed while its subagent is still running
+- Do NOT mark a TaskFlow-linked todo completed while its step is not `done`
+
+### Completion Contract (Sisyphus)
+
+- DoneClaim → AdversarialVerify → FullyDone
+- If verification fails, the task is NOT done — re-dispatch or fix.
+
+**FAILURE TO FOLLOW ORCHESTRATOR DOCTRINE = INCOMPLETE WORK.**
+```
 
 ### E2: 工具描述强制 — 格式 + 委派规则
 
@@ -414,7 +553,24 @@ turn 结束后如果有未完成 todo，系统自动注入续作消息把 LLM �
 - `_FAILURE_RESET_WINDOW_S = 300`（5 分钟无失败 → 重置）
 - `_MAX_RECOVERY_ATTEMPTS = 2`（恢复模式上限）
 
-**工作流程**：turn 结束 → 读 todos → 过滤未完成 → 停滞检测 → 退避冷却 → 构建 continuation prompt → `maybe_trigger_auto_turn()` 注入。用户发消息 → 取消续作 → reset()。
+**工作流程**：
+
+```
+turn ends (no tool_call, agent loop exits)
+  → Summarization.aafter_agent (rebuild system prompt with latest todos)
+  → TodoContinuationEnforcer.aafter_agent
+      → is_abort_error? → skip
+      → get_todos_sync(session_id) → filter incomplete
+      → check_stagnation: snapshot compare, N consecutive no-change?
+          → should_enter_recovery? → RECOVERY_PROMPT
+          → else: stop continuation
+      → is_in_cooldown? → skip
+      → build continuation prompt (full todo status + flow/step)
+      → maybe_trigger_auto_turn(session_key, prompt)
+          → detect_state() → idle? → fire-and-forget
+          → _watch_user_takeover() 0.5s poll
+      → user sends message → detect_state() busy → cancel → reset()
+```
 
 **文件**：`stagnation_tracker.py`（~90 行）+ `todo_continuation/core.py`（~110 行）+ `agent/core.py`（~2 行注册）。
 
@@ -426,6 +582,26 @@ turn 结束后如果有未完成 todo，系统自动注入续作消息把 LLM �
 
 1. **TaskFlow step 状态**：todo 关联 `flow_id`/`step_id` → 只有 `done` 允许标 `completed`，`blocked`/`ready`/`dispatched` 都阻断。
 2. **subagent registry 存活检测**：todo 关联 `subagent_id` → `get_run_by_child_session_key` + `is_live_unended_run` 判断子会话是否仍在运行。
+
+```python
+for todo in validated:
+    if todo["status"] != "completed":
+        continue
+    # 来源 1：TaskFlow step 状态
+    flow_id, step_id = todo.get("flow_id"), todo.get("step_id")
+    if flow_id and step_id:
+        step_status = _read_taskflow_step_status(flow_id, step_id)
+        if step_status is not None and step_status != "done":
+            raise TodoStoreError(
+                f"Cannot mark todo completed: TaskFlow step {step_id} is '{step_status}'. "
+                "Call taskflow_wait_all then taskflow_resume to inject the result first."
+            )
+    # 来源 2：subagent 存活检测
+    if todo.get("subagent_id") and _is_subagent_running(todo["subagent_id"]):
+        raise TodoStoreError(
+            f"Cannot mark todo completed: subagent {todo['subagent_id']} is still running."
+        )
+```
 
 ### E5: Sisyphus 完成契约 ★★
 
@@ -444,7 +620,20 @@ Worker 返回 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
 
 ### E6: 委派路由 ★
 
-**生命周期**：LLM 创建 todo（含 category + delegation）→ #a fan-out reminder → #b category 告诉派哪类 subagent → #c AGENTS.md 指导如何委派 → 带依赖步骤 taskflow_run_task(depends_on) → ready 步骤 taskflow_dispatch → LLM 更新 subagent_id + flow_id/step_id → #d 转换屏障 → taskflow_wait_all → taskflow_resume → E5 验证 → 标记 completed。
+**生命周期**：
+
+```
+LLM creates todo (with category + delegation fields)
+  → #a fan-out reminder (first time per session)
+  → #b category tells LLM which subagent type to spawn
+  → #c AGENTS.md guides how to delegate
+  → Dependent steps: taskflow_run_task(depends_on=[...]) → blocked or dispatched
+  → Ready steps: taskflow_dispatch(flow_id, step_ids) → get child_session_key
+  → LLM updates todo's subagent_id + flow_id/step_id
+  → #d-prompt: "Do NOT mark done before step done / subagent returned"
+  → #d-code: update_todos() checks step status + is_live_unended_run() → hard block
+  → taskflow_wait_all → taskflow_resume → E5 Sisyphus verify → LLM marks completed
+```
 
 **Category 路由表**：
 
@@ -505,5 +694,24 @@ WS 事件：`todo_updated`（变更推送）+ `todo_refresh`（重连重发）�
 - **TodoItem.vue**：Checkbox (PrimeVue)、category 徽章、委派图标、in_progress 脉冲点。
 
 ### WS 消息格式
+
+```json
+{
+  "event": "todo_updated",
+  "session_id": "xxx",
+  "content": {
+    "todos": [
+      {
+        "content": "Implement login",
+        "status": "completed",
+        "priority": "high",
+        "flow_id": "login-flow",
+        "step_id": "step-1",
+        "taskflow_status": "done"
+      }
+    ]
+  }
+}
+```
 
 `taskflow_status` 是 `taskflow_summary(flow_id)` 回读的 step 状态；前端不重算波次/依赖。

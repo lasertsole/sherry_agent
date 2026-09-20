@@ -81,11 +81,27 @@ Plan (workspace/sessions/<session_id>/plans/*.md)
 
 モデルの自覚に依存せず、7層の強制でクローズドループを形成します：
 
-- モデルが計画しない → E7 がガイダンスを注入
-- モデルが怠けて止まる → E3 が引き戻す
-- モデルが虚偽完了する → E5 がブロック
-- モデルが自分でコードを書く → E1 doctrine が牽制
-- モデルが早めに完了マークする → E4 がハードブロック
+```
+Before (message arrives)    During                     After
+┌──────────┐  ┌────────────────────┐  ┌──────────────────────┐
+│ E7 Intent │  │ E6 Delegation ★    │  │ E3 Continuation ★★  │
+│ Recognizer│  │ #a fan-out         │  │ idle + incomplete    │
+│ ★★       │  │ #b category route  │  │ todo + backoff +     │
+│ before_   │  │ #c delegation cmd  │  │ stagnation + abort   │
+│ model     │  │ #d barrier         │  │ + recovery mode      │
+│ inject    │  └────────────────────┘  └──────────────────────┘
+└──────────┘  ┌────────────────────┐  ┌──────────────────────┐
+┌──────────┐  │ E1 System prompt   │  │ E5 Sisyphus verify ★★│
+│ E2 Tool  │  │ orchestrator       │  │ DoneClaim →          │
+│ desc      │  │ doctrine           │  │ AdversarialVerify →  │
+│ MANDATORY │  │ + hook notice      │  │ FullyDone             │
+│ format    │  └────────────────────┘  └──────────────────────┘
+└──────────┘                            ┌──────────────────────┐
+                                          │ E4 Transition barrier│
+                                          │ TaskFlow step status+│
+                                          │ subagent alive → block│
+                                          └──────────────────────┘
+```
 
 ---
 
@@ -179,6 +195,11 @@ E7       │ 意図認識 ★★       │ before_model: arming(計画なし+タ
 
 1行1 JSON オブジェクトで、各チェックボックスの実行エビデンスを記録します。
 
+```json
+{"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
+{"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": "src/data/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
+```
+
 ### todos.db — セッションレベル TODO ストレージ
 
 ```sql
@@ -199,9 +220,29 @@ CREATE TABLE IF NOT EXISTS todos (
 );
 ```
 
+| フィールド | 説明                                                              |
+| ---------- | ----------------------------------------------------------------- |
+| `plan_ref` | リンクされた計画ファイルパス — セッションスコープ `workspace/sessions/<session_id>/plans/*.md` |
+| `flow_id`  | リンクされた TaskFlow flow id（DAG は TaskFlow が所有）            |
+| `step_id`  | リンクされた TaskFlow step id（例：`step-2`）、DAG ステータス再読取用 |
+
 > **設計境界**：`todos.db` は `depends_on` / ウェーブ / step ステータスを保持しません。依存グラフ、`blocked/ready/dispatched/done` とアンロックロジックはすべて TaskFlow が提供します。todo は `flow_id`/`step_id` で対応する flow step を指すだけで、DAG ステータスは `taskflow_summary(flow_id)` で再読取します。
 
-CRUD インターフェース：`replace_all`（全量置換）、`get_todos`（position 順）、`get_todos_sync`（同期パス、プロンプト注入用）、`get_todos_by_flow`（flow 関連の todo 取得）。
+CRUD インターフェース：
+
+```python
+async def replace_all(session_id: str, todos: list[dict]) -> None:
+    """全量置換：DELETE + INSERT（トランザクション）"""
+
+async def get_todos(session_id: str) -> list[dict]:
+    """position 順に読取"""
+
+def get_todos_sync(session_id: str) -> list[dict]:
+    """システムプロンプト注入用の同期パス（イベントループなし）"""
+
+async def get_todos_by_flow(session_id: str, flow_id: str) -> list[dict]:
+    """TaskFlow flow に関連する todo を読取（DAG ステータスを UI にマッピング）"""
+```
 
 ---
 
@@ -209,9 +250,29 @@ CRUD インターフェース：`replace_all`（全量置換）、`get_todos`（
 
 ### TodoService
 
-- `update_todos`：全量置換 + E4 遷移バリア検証 + WS プッシュ。
-- `get_todos`：DB から読取。
-- `get_flow_progress`：TaskFlow の DAG ステータスを todo ビューにマッピング（frontier を再計算しない）。読み取り専用の `taskflow_summary` を呼び出して step の status/depends_on を取得。
+```python
+class TodoService:
+    @staticmethod
+    async def update_todos(session_id: str, todos: list[dict]) -> list[dict]:
+        validated = _validate_todos(todos)
+        # E4：遷移バリア — TaskFlow step 未 done / subagent 実行中は completed をブロック
+        for todo in validated:
+            if todo["status"] == "completed":
+                _assert_transition_allowed(todo)
+        await store.replace_all(session_id, validated)
+        latest = await store.get_todos(session_id)
+        await _push_todo_update(session_id, latest)
+        return latest
+
+    @staticmethod
+    async def get_flow_progress(session_id: str, flow_id: str) -> dict:
+        """TaskFlow の DAG ステータスを todo ビューにマッピング（frontier を再計算しない）。
+        DAG スケジューリングは TaskFlow が所有；本メソッドは読み取り専用の taskflow_summary を呼ぶだけ。"""
+        from agent.tools.taskflow.tools.taskflow_summary import taskflow_summary
+        linked = await store.get_todos_by_flow(session_id, flow_id)
+        summary_text = await taskflow_summary.ainvoke({"flow_id": flow_id})
+        return {"todos": linked, "taskflow_summary": summary_text}
+```
 
 ### EvidenceLedger
 
@@ -231,6 +292,17 @@ class EvidenceLedger:
 ```
 
 ### WS プッシュ
+
+```python
+async def _push_todo_update(session_id: str, todos: list[dict]) -> None:
+    from runtime import relation_register
+    ws = relation_register.get_websocket_by_session_id(session_id)
+    if ws:
+        await ws.send_text(json.dumps({
+            "event": "todo_updated", "session_id": session_id,
+            "content": {"todos": todos}
+        }))
+```
 
 `relation_register` の直接送信パターンを再利用し、`todo_updated` イベントをプッシュします。
 
@@ -266,6 +338,15 @@ async def todoread(session_id: Annotated[str, InjectedState("session_id")] = "")
 ```
 
 ### ツール登録（E2 注入ポイント）
+
+```python
+def build_todolist_tools() -> list[BaseTool]:
+    for t in _TODOLIST_TOOLS:
+        t.handle_tool_error = True
+        t.metadata = {"scope": "main_only"}
+    todowrite.description += _TODOWRITE_FORMAT_RULES  # E2 フォーマットルール
+    return list(_TODOLIST_TOOLS)
+```
 
 `build_todolist_tools()` で todowrite の説明をオーバーライドし、MANDATORY フォーマットルールを注入：
 
@@ -363,6 +444,32 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | `_build_boulder_block()`   | src/data/boulder.json | ~5行               | アクティブワーク状態                                      |
 | `_build_knowledge_block()` | workspace/knowledge/plans/&lt;plan_key&gt;/ | ~20行              | key_failures + key_successes + reusable_patterns（アイデンティティ解決） |
 
+### 実装
+
+```python
+def _build_todo_block(session_id: str) -> str:
+    from agent.tools.todolist.registry.store_sqlite import get_todos_sync
+    todos = get_todos_sync(session_id)
+    if not todos:
+        return ""
+    lines = ["## Current Todo List"]
+    for t in todos:
+        icon = {"pending": "○", "in_progress": "◐", "completed": "●", "cancelled": "✕"}
+        tag_parts = [t.get("category", "quick")]
+        if t.get("delegation", "self") != "self":
+            tag_parts.append(t["delegation"])
+        if t.get("flow_id"):
+            tag_parts.append(f"flow:{t['flow_id']}")
+        if t.get("step_id"):
+            tag_parts.append(t["step_id"])
+        lines.append(f"- [{icon.get(t['status'], '○')}] ({', '.join(tag_parts)}) {t['content']} ({t['priority']})")
+    lines.append("Update todos via todowrite. Pass the COMPLETE list each time.")
+    lines.append("Dependency scheduling is owned by TaskFlow; declare depends_on via taskflow_run_task.")
+    lines.append("Your todo list is tracked by the continuation system. Incomplete todos will trigger automatic continuation.")
+    lines.append("Completion is verified by the Sisyphus contract — unverified claims will be rejected.")
+    return "\n".join(lines)
+```
+
 ### omo の5層防御より軽量な理由
 
 | omo の5層                           | 本アプローチ                                            |
@@ -372,6 +479,7 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 | 8セグメント圧縮コンテキスト注入     | 不要（todos は会話履歴にない）                          |
 | 60s 圧縮保護ウィンドウ              | 不要（保護すべき継続注入器がない）                      |
 | 継続強制器                          | 必要、after_agent ミドルウェアに簡略化（E3）            |
+| 知識サマリー注入                    | 新規 `_build_knowledge_block()`（約25行）               |
 | **合計 ~600+ 行**                   | **~65行（プロンプト注入）+ ~130行（継続ミドルウェア）** |
 
 ---
@@ -380,13 +488,43 @@ blocked（依存がすべて done ではない；run_task は登録のみ、spaw
 
 ### E1: システムプロンプト強制 — orchestrator doctrine
 
-`AGENTS.md` に追加。ゼロコード、純テキスト。核心：
+`AGENTS.md` に追加。ゼロコード、純テキスト：
 
-- YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER
-- 複数ステップタスク（2+ 歩）→ 必ず先に todos を作成
-- 各ステップで in_progress をマーク → subagent 返却後検証 → completed マーク
-- 遷移バリア：subagent 実行中 / TaskFlow step 未完了時に completed をマークしない
-- Sisyphus 契約：DoneClaim → AdversarialVerify → FullyDone
+```markdown
+## Task Management & Orchestration (CRITICAL)
+
+### Orchestrator Doctrine (MANDATORY)
+
+YOU ARE AN ORCHESTRATOR — NEVER THE IMPLEMENTER.
+
+- You DO NOT write code. You DO NOT edit product files.
+- EVERY unit of implementation MUST be delegated to a spawned subagent.
+
+### When to Create Todos (MANDATORY)
+
+- Multi-step task (2+ steps) → ALWAYS create todos first
+- Uncertain scope → ALWAYS (todos clarify thinking)
+
+### Workflow (NON-NEGOTIABLE)
+
+1. IMMEDIATELY on receiving request: todowrite to plan atomic steps.
+2. For each checkbox: decompose into atomic sub-tasks for ONE worker.
+3. DELEGATE every sub-task via task tool — route by category.
+4. Before starting each step: Mark in_progress (only ONE at a time)
+5. After subagent returns: verify via acceptance criteria, then mark completed.
+
+### Transition Barrier (CRITICAL)
+
+- Do NOT mark a todo as completed while its subagent is still running
+- Do NOT mark a TaskFlow-linked todo completed while its step is not `done`
+
+### Completion Contract (Sisyphus)
+
+- DoneClaim → AdversarialVerify → FullyDone
+- If verification fails, the task is NOT done — re-dispatch or fix.
+
+**FAILURE TO FOLLOW ORCHESTRATOR DOCTRINE = INCOMPLETE WORK.**
+```
 
 ### E2: ツール説明強制 — フォーマット + 委譲ルール
 
@@ -398,7 +536,24 @@ turn 終了後に未完了 todo があれば、システムが自動的に継続
 
 **主要定数**：`_MAX_STAGNATION = 3`（連続3回変化なし → 停止）、`_BASE_COOLDOWN_S = 2.0`（基本バックオフ）、`_MAX_COOLDOWN_S = 60.0`（最大バックオフ）、`_FAILURE_RESET_WINDOW_S = 300`（5分間失敗なし → リセット）、`_MAX_RECOVERY_ATTEMPTS = 2`（リカバリモード上限）。
 
-**ワークフロー**：turn 終了 → todos 読取 → 未完了フィルタ → 停滞検出 → バックオフ冷却 → 継続プロンプト構築 → `maybe_trigger_auto_turn()` で注入。ユーザーがメッセージ送信 → キャンセル → reset()。
+**ワークフロー**：
+
+```
+turn ends (no tool_call, agent loop exits)
+  → Summarization.aafter_agent (rebuild system prompt with latest todos)
+  → TodoContinuationEnforcer.aafter_agent
+      → is_abort_error? → skip
+      → get_todos_sync(session_id) → filter incomplete
+      → check_stagnation: snapshot compare, N consecutive no-change?
+          → should_enter_recovery? → RECOVERY_PROMPT
+          → else: stop continuation
+      → is_in_cooldown? → skip
+      → build continuation prompt (full todo status + flow/step)
+      → maybe_trigger_auto_turn(session_key, prompt)
+          → detect_state() → idle? → fire-and-forget
+          → _watch_user_takeover() 0.5s poll
+      → user sends message → detect_state() busy → cancel → reset()
+```
 
 ### E4: 遷移バリア — 二重保険
 
@@ -408,6 +563,26 @@ turn 終了後に未完了 todo があれば、システムが自動的に継続
 
 1. **TaskFlow step ステータス**：todo が `flow_id`/`step_id` に関連 → `done` のみ `completed` を許可。`blocked`/`ready`/`dispatched` はすべてブロック。
 2. **subagent registry liveness**：todo が `subagent_id` に関連 → `get_run_by_child_session_key` + `is_live_unended_run` で子セッションが実行中か判定。
+
+```python
+for todo in validated:
+    if todo["status"] != "completed":
+        continue
+    # ソース1：TaskFlow step ステータス
+    flow_id, step_id = todo.get("flow_id"), todo.get("step_id")
+    if flow_id and step_id:
+        step_status = _read_taskflow_step_status(flow_id, step_id)
+        if step_status is not None and step_status != "done":
+            raise TodoStoreError(
+                f"Cannot mark todo completed: TaskFlow step {step_id} is '{step_status}'. "
+                "Call taskflow_wait_all then taskflow_resume to inject the result first."
+            )
+    # ソース2：subagent liveness
+    if todo.get("subagent_id") and _is_subagent_running(todo["subagent_id"]):
+        raise TodoStoreError(
+            f"Cannot mark todo completed: subagent {todo['subagent_id']} is still running."
+        )
+```
 
 ### E5: Sisyphus 完了契約 ★★
 
@@ -424,7 +599,20 @@ Worker 返却 → DoneClaim → AdversarialVerify（5 gates）→ FullyDone / NO
 
 ### E6: 委譲ルーティング ★
 
-**ライフサイクル**：LLM が todo 作成（category + delegation）→ #a fan-out reminder → #b category で subagent タイプを指定 → #c AGENTS.md が委譲方法を指導 → 依存ステップは taskflow_run_task(depends_on) → ready ステップは taskflow_dispatch → LLM が subagent_id + flow_id/step_id を更新 → #d 遷移バリア → taskflow_wait_all → taskflow_resume → E5 検証 → completed マーク。
+**ライフサイクル**：
+
+```
+LLM creates todo (with category + delegation fields)
+  → #a fan-out reminder (first time per session)
+  → #b category tells LLM which subagent type to spawn
+  → #c AGENTS.md guides how to delegate
+  → Dependent steps: taskflow_run_task(depends_on=[...]) → blocked or dispatched
+  → Ready steps: taskflow_dispatch(flow_id, step_ids) → get child_session_key
+  → LLM updates todo's subagent_id + flow_id/step_id
+  → #d-prompt: "Do NOT mark done before step done / subagent returned"
+  → #d-code: update_todos() checks step status + is_live_unended_run() → hard block
+  → taskflow_wait_all → taskflow_resume → E5 Sisyphus verify → LLM marks completed
+```
 
 **Category ルーティング表**：
 
@@ -481,5 +669,26 @@ WS イベント：`todo_updated`（変更時プッシュ）+ `todo_refresh`（�
 
 - **TodoDock.vue**：`flow_id` ごとにグループ化して表示、進捗カウント、折りたたみ可能。
 - **TodoItem.vue**：Checkbox (PrimeVue)、category バッジ、委譲アイコン、in_progress パルスドット。
+
+### WS メッセージ形式
+
+```json
+{
+  "event": "todo_updated",
+  "session_id": "xxx",
+  "content": {
+    "todos": [
+      {
+        "content": "Implement login",
+        "status": "completed",
+        "priority": "high",
+        "flow_id": "login-flow",
+        "step_id": "step-1",
+        "taskflow_status": "done"
+      }
+    ]
+  }
+}
+```
 
 `taskflow_status` は `taskflow_summary(flow_id)` で再読取した step ステータスであり、フロントエンドはウェーブ/依存を再計算しません。
