@@ -234,8 +234,8 @@ async def built_agent(
         #
         # 1. RepetitionGuardWrapper: stream-level repetition
         # detection (in addition to the OutputRepetitionGuard middleware
-        # registered above; it also subsumed the former check_stream_repetition
-        # calls in messages.py, since removed by the stream_dispatch refactor).
+        # registered above; it owns the stream seam end to end and subsumed
+        # the former check_stream_repetition helper, now deleted).
         # phantom_stream_guard=True: the middleware-equipped graph ALWAYS
         # emits before_agent "updates" before any model text on fresh
         # dict-input runs — pre-update model text is physically impossible

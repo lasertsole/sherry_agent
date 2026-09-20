@@ -476,21 +476,17 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
 
 
 # ---------------------------------------------------------------------------
-# Stream-layer (Layer C) helper.
+# Stream-layer (Layer C) warning text.
 #
-# The middleware backstop (``wrap_model_call``) inspects a model call's result
-# *after* the full response is produced -- a post-hoc replacement. During
-# streaming the client already received the repetitive text before it can be
-# replaced. This helper lets the stream-consumption loop (see
-# ``server/service/messages.py::async_generate``) run the same internal
-# repetition detectors on the *accumulated visible text as it streams*, so the
-# repetitive tail is cut before it reaches the client.
+# The production mid-flight stream cut is owned by ``RepetitionGuardWrapper``
+# (``agent/wrapper/repetition_guard.py``): its ``astream`` interception runs
+# this module's internal-repetition detector with the same
+# ``_INTERNAL_WARNED_KEY`` dedupe gate and yields the warning below.
 #
-# It reuses a lightweight shared instance with the middleware's default
-# thresholds and the same ``_INTERNAL_WARNED_KEY`` dedupe gate, so a session
-# warns at most once across both layers.
+# The former module-level ``check_stream_repetition`` helper had no production
+# caller (its only callers were removed by the stream_dispatch refactor) and
+# was deleted; the wrapper owns that seam end to end.
 # ---------------------------------------------------------------------------
-_STREAM_GUARD = OutputRepetitionGuard()
 
 # Warning surfaced to the user on a stream-cut, mirroring the middleware's
 # internal-repetition wording so it carries the same ``[Output Repetition
@@ -500,39 +496,3 @@ _STREAM_WARNING = (
     "patterns. Please avoid repeating the same content and provide a concise "
     "answer."
 )
-
-
-def check_stream_repetition(session_id: str, accumulated_text: str) -> str | None:
-    """Stream-level (Layer C) internal-repetition check.
-
-    Runs the internal-repetition sub-detectors on ``accumulated_text`` (the
-    visible model text gathered so far in the current stream). When a
-    repetitive pattern is detected **and** no internal-repetition warning has
-    fired for this session yet, marks the shared ``_INTERNAL_WARNED_KEY`` and
-    returns a warning string for the caller to yield in place of the remaining
-    repetitive stream.
-
-    Honors the same ``_INTERNAL_WARNED_KEY`` dedupe gate as the middleware
-    ``wrap_model_call`` path, so a session warns at most once across both the
-    streaming path and the post-hoc backstop.
-
-    Returns ``None`` when no escalation applies.
-    """
-    # Skip detection entirely below the content floor, mirroring the middleware
-    # behaviour -- this avoids churn on tiny fragments and keeps the
-    # false-positive surface identical to the post-hoc path.
-    if len(accumulated_text) < _MIN_CONTENT_LENGTH:
-        return None
-
-    if not _STREAM_GUARD._detect_internal_repetition(accumulated_text):
-        return None
-
-    if state_register_mem.get_state(session_id, _INTERNAL_WARNED_KEY, False):
-        return None
-
-    state_register_mem.set_state(session_id, _INTERNAL_WARNED_KEY, True)
-    logger.debug(
-        "[OutputRepetitionGuard] session={} stream internal repetition detected -- cutting output",
-        session_id,
-    )
-    return _STREAM_WARNING

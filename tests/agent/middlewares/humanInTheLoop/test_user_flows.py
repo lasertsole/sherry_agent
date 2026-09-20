@@ -14,7 +14,7 @@ from types import SimpleNamespace
 
 import pytest
 from PIL import Image
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage, ToolMessage
 
 from context_engine.store import core as store_core
 from context_engine.store.db import _migrate
@@ -564,22 +564,52 @@ class TestUC12GuardrailsEscalation:
 
 
 class TestUC13RepetitionGuard:
+    """Production stream path: ``RepetitionGuardWrapper`` cuts a repetitive tail."""
+
+    class _StreamGraph:
+        def __init__(self, chunks):
+            self._chunks = chunks
+
+        async def astream(self, *args, **kwargs):
+            for chunk in self._chunks:
+                yield chunk
+
+    @staticmethod
+    def _collect(session: str, content: str) -> str:
+        from agent.wrapper.repetition_guard import RepetitionGuardWrapper
+
+        chunk = (
+            "messages",
+            (AIMessageChunk(content=content), {"langgraph_node": "model"}),
+        )
+        wrapper = RepetitionGuardWrapper(TestUC13RepetitionGuard._StreamGraph([chunk]))
+        out = []
+
+        async def run():
+            async for item in wrapper.astream(
+                input={"session_id": session, "messages": []},
+                config={},
+                stream_mode=["messages", "updates"],
+            ):
+                out.append(item)
+
+        asyncio.run(run())
+        return "".join(
+            str(data[0].content)
+            for mode, data in out
+            if mode == "messages" and getattr(data[0], "content", "")
+        )
+
     def test_char_run_warns_once_per_session(self):
-        from agent.middlewares.output_repetition_guard.core import check_stream_repetition
+        first = self._collect("uc13", "a" * 100)
+        assert "[Output Repetition Guard]" in first, "字符连跑必须触发一次性警告"
 
-        first = check_stream_repetition("uc13", "a" * 100)
-        assert first is not None, "字符连跑必须触发一次性警告"
-
-        second = check_stream_repetition("uc13", "a" * 100)
-        assert second is None, "去重门：同会话至多警告一次"
+        second = self._collect("uc13", "a" * 100)
+        assert "[Output Repetition Guard]" not in second, "去重门：同会话至多警告一次"
 
     def test_benign_text_passes(self):
-        from agent.middlewares.output_repetition_guard.core import check_stream_repetition
-
-        assert (
-            check_stream_repetition("uc13b", "这是一段完全正常的回复内容，没有任何重复模式。")
-            is None
-        )
+        out = self._collect("uc13b", "这是一段完全正常的回复内容，没有任何重复模式。")
+        assert "[Output Repetition Guard]" not in out
 
 
 # ---------------------------------------------------------------------------

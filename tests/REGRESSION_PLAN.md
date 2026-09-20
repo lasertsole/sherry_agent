@@ -65,7 +65,7 @@ uv run pytest -m regression -k "UC-03 or cron" -q
 | UC-10 | 渠道收发消息 | `MessageBus` 双队列 publish/consume 顺序 |
 | UC-11 | 预算耗尽被终止 | `IterationBudget.wrap_model_call`：N 次后终态 AIMessage、handler 不再调用、新回合重置 |
 | UC-12 | 工具连续失败被拦截 | `ToolGuardrails.wrap_tool_call`：失败 ×2 警告 → ×5 预检拦截（legacy 模式） |
-| UC-13 | 模型复读被切断 | `check_stream_repetition`：字符连跑 → 一次性警告 → 去重门 |
+| UC-13 | 模型复读被切断 | `RepetitionGuardWrapper.astream`（生产流路径）：字符连跑 → 一次性警告 → 去重门 |
 | UC-14 | 卡死回合被心跳击杀 | `_check_progress` 停滞累计 → killed → `wrap_model_call` 抛 HeartbeatTimeoutError |
 | UC-15 | 同秒多会话排序 | 同秒两个会话 → `MAX(ts_ms)` 稳定排序（#21 回归） |
 | UC-16 | 渠道满载背压 | 队列填满 → publish 挂起不丢失 → 消费后恢复 |

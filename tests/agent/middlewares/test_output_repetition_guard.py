@@ -52,8 +52,6 @@ from langchain.agents.middleware.types import (
 
 from agent.middlewares.output_repetition_guard.core import (
     OutputRepetitionGuard,
-    check_stream_repetition,
-    _STREAM_WARNING,
 )
 from agent.middlewares.output_repetition_guard.repetition_detectors import (
     _CHAR_RUN_MIN,
@@ -709,68 +707,6 @@ class TestConfigAndConstants:
         assert _HALTED_KEY == "output_repetition_halted"
         assert _REASONING_HISTORY_KEY == "output_repetition_reasoning_history"
         assert _REASONING_WARNED_KEY == "output_repetition_reasoning_warned"
-
-
-class TestStreamRepetition:
-    """Layer C — module-level ``check_stream_repetition`` (stream-level guard).
-
-    Used by ``async_generate`` / ``resume_agent`` to cut a repetitive tail mid-stream.
-    Reuses the middleware's internal-repetition detector and the per-session
-    ``_INTERNAL_WARNED_KEY`` dedupe so a session warns at most once across both the
-    stream path and the ``wrap_model_call`` backstop.
-    """
-
-    def test_clean_long_text_returns_none(self, fresh_state):
-        # Long, distinct text has no repetitive pattern -> never warns.
-        clean = "This is a perfectly normal and varied answer that says many distinct things about the topic and avoids repeating any single phrase or character run at all in this long output."
-        assert check_stream_repetition("s1", clean) is None
-        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is False
-
-    def test_char_run_fires_once_per_session(self, fresh_state):
-        # 40 identical CJK chars is a char-run (> char_run_min=8) and > 20 length.
-        repetitive = "字" * 40
-        warning = check_stream_repetition("s1", repetitive)
-        assert warning is not None
-        assert warning == _STREAM_WARNING
-        assert "[Output Repetition Guard]" in warning and "highly repetitive" in warning
-        # Deduped on the same session: second call returns None despite repetition.
-        assert check_stream_repetition("s1", repetitive) is None
-        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is True
-
-    def test_phrase_repetition_fires(self, fresh_state):
-        # 8 repeats of a 4-char phrase (> min_repeats=5) and > 20 chars total.
-        repetitive = "我来帮你" * 8
-        assert check_stream_repetition("s1", repetitive) is not None
-        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is True
-
-    def test_below_length_gate_returns_none(self, fresh_state):
-        # Even a pure char-run is gated below _MIN_CONTENT_LENGTH=20 to mirror
-        # the post-hoc middleware path (no new false-positive surface).
-        short_run = "啊" * 10  # 10 < 20
-        assert check_stream_repetition("s1", short_run) is None
-        # And it must NOT have consumed the session's single warning.
-        assert check_stream_repetition("s1", "啊" * 40) is not None
-
-    def test_sessions_independent(self, fresh_state):
-        repetitive = "字" * 40
-        assert check_stream_repetition("sA", repetitive) is not None
-        # Session B starts fresh -> warns independently.
-        assert check_stream_repetition("sB", repetitive) is not None
-        assert fresh_state.get_state("sA", _INTERNAL_WARNED_KEY, False) is True
-        assert fresh_state.get_state("sB", _INTERNAL_WARNED_KEY, False) is True
-        # A already warned -> once per session, so third call on sA returns None.
-        assert check_stream_repetition("sA", repetitive) is None
-
-    def test_warn_flag_reset_allows_rearming(self, fresh_state):
-        # before_agent resets the flag each turn. After reset, a fresh repetitive
-        # stream can warn again (dedupe is turn-scoped, not lifetime-scoped).
-        repetitive = "字" * 40
-        assert check_stream_repetition("s1", repetitive) is not None
-        # Simulate the middleware's per-turn reset (see TestHooks).
-        guard = OutputRepetitionGuard()
-        guard.before_agent(_make_state("s1"), MagicMock())
-        assert fresh_state.get_state("s1", _INTERNAL_WARNED_KEY, False) is False
-        assert check_stream_repetition("s1", repetitive) is not None
 
 
 class TestNoSessionStateCleanup:
