@@ -190,18 +190,21 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### MultimodalProcessor
 
 **模块：** `agent/middlewares/media_pipeline/core.py` · **类：** `MultimodalProcessor(AgentMiddleware)`
-**钩子：** `before_agent` / `abefore_agent`、`after_agent` / `aafter_agent`
+**钩子：** `before_agent` / `abefore_agent`、`wrap_model_call` / `awrap_model_call`、`after_agent` / `aafter_agent`
 
 `before_agent` 在最后一条 `HumanMessage` 的内容为多模态列表时对其进行处理：
 
 - **文本**条目直接透传（至多一条）。
 - **`image_url`**：远程 `http(s)` URL 原样保留；`data:` / base64 载荷被解码并用 PIL 保存到 `src/<session_id>/mutil_temp/<时间戳><扩展名>`（扩展名通过 `_IMAGE_MAGIC` 魔数推断），同时在 `media/` 中保留一份持久副本。
 - **`audio_url`**：下载到临时文件（30 秒超时）。**`audio_bytes` / `video_url` / `video_bytes`**：以同样方式解码保存（`_AUDIO_MAGIC` / `_VIDEO_MAGIC`）。
+- **体积上限**：写盘之前先校验体积，超过 `max_media_bytes`（20 MiB，与 DeepAgents CLI 硬限一致）的载荷被跳过——不写盘、绝不进入 `MediaPaths`、以 warning 记录实际字节数，并在 `HumanMessage` 上追加一条"附件已跳过"的文本提示。远程 URL 优先按 `Content-Length` 判定，缺失时按带上限的流式读取判定，因此错误响应头也无法导致超限写盘。恰好等于上限的载荷允许通过；0 字节 / 非法载荷沿用既有失败路径。
 - `main_llm_native_multimodal` 配置决定路径：`"true"` 为主模型保留原始媒体块，`"false"` 始终走技能路径，`"auto"` 则按媒体类型（vision / audio / video）查询进程级能力缓存（键为 `"{provider}/{model_name}"`）逐类决策。
-- `"auto"` 下，只要没有任何类型被判定为 `"unsupported"` 就保留媒体块；存在未探测类型时会写入本回合的原生尝试标志（`_multimodal_trying_native` / `_multimodal_native_model`）。`"[Uploaded media]"` 指令块仅在技能路径下追加，告知模型使用 `skill_view` 工具 `image_to_text` / `speech_to_text` / `video_text_to_text` 查看文件。
+- `"auto"` 下：**全部**在途类型均缓存为 `"unsupported"` 时整条消息走技能路径；**混合**消息（部分类型 supported、部分 unsupported）保留原生块，由每请求擦洗层只替换不支持的那些块；未探测（`"auto"`）的类型保留其块并写入本回合的原生尝试标志（`_multimodal_trying_native` / `_multimodal_native_model`）。`"[Uploaded media]"` 指令块仅在技能路径下追加，告知模型使用 `skill_view` 工具 `image_to_text` / `speech_to_text` / `video_text_to_text` 查看文件。
 - 当模型拒绝被分类为 `multimodal_not_supported` 时，`LLMRetryMiddleware` 会把消息中实际出现的媒体类型写为 `"unsupported"`，并把请求改写为技能路径；同进程内的后续会话与回合因此不再尝试原生。
 - 持久化路径写入 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`，随后由 MesMemory 写库供历史渲染使用。
 - **更早的** `HumanMessage` 中的 `image_url` 块会被剥离，避免过期的 base64 大对象滞留在上下文中；但仅在确实存在此类块时才执行剥离（廉价前置检查会跳过无可剥离内容的消息），且仅当剥离后的文本非空时才写回。
+
+`wrap_model_call` / `awrap_model_call` 在**每次模型请求**上运行（仅 `"auto"` 模式），擦洗请求副本：族被缓存为 `"unsupported"` 的媒体块被替换为文本占位符，其中写明被剥离的媒体、其落盘路径与对应技能（`image_to_text` / `speech_to_text` / `video_text_to_text`）；supported 与未探测的块原样保留。改写使用 `request.override(messages=...)`——state、checkpointer 与 MesMemory 均不被触碰——无需擦洗时原样返回原请求对象。能力查询使用环境主模型 key（`get_model_key()`）：本层包在 `LLMRetryMiddleware` 之外，无法感知在链路更内层重绑的粘性回退候选；该候选的拒绝仍由既有的 `multimodal_not_supported` → 技能路径改写覆盖。
 
 `after_agent` 清理 `mutil_temp`：删除文件名主干不是纯数字时间戳、或超过 7 天的文件。
 
@@ -695,7 +698,8 @@ agent = create_agent(
 │   │   · ContextEvictionMiddleware  给末条超长 HumanMessage 打标（P1-9）
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 重写
 │   ├─ wrap_model_call（最外层 → 最内层）
-│   │   · system_prompt_injection  注入系统提示词（装饰器调用 request.override）
+│   │   · system_prompt_injection  注入系统提示（装饰器调用 request.override）
+│   │   · MultimodalProcessor  仅 auto 模式：把不支持的媒体块替换为文本占位符（仅请求副本）
 │   │   · IterationBudget  消耗 1；耗尽时返回终止 AIMessage
 │   │   · ContextEvictionMiddleware  把被驱逐的人类消息换成预览（P1-9）
 │   │   · HeartbeatStaleness  已杀死则抛 HeartbeatTimeoutError；否则 heartbeat_iter += 1
@@ -797,6 +801,7 @@ agent/middlewares/
 │   ├── core.py                  # MultimodalProcessor
 │   ├── fallback.py             # 技能路径回退（媒体提示 + 请求改写）
 │   ├── media_handlers.py        # MultimodalProcessor 的分媒体类型处理策略
+│   ├── scrub.py                 # 每请求擦洗不支持的媒体块
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin（共享）
 ├── message_persistence/         # MessagePersistenceMiddleware
 │   ├── __init__.py              # 导出 MessagePersistenceMiddleware

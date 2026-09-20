@@ -1,4 +1,5 @@
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 from loguru import logger
@@ -6,14 +7,22 @@ from config import SRC_DIR
 from config.features import MEDIA_PIPELINE
 from typing import override
 from langgraph.runtime import Runtime
+from langgraph.typing import ContextT
 from langchain.agents.middleware import AgentMiddleware, AgentState
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain.agents.middleware.types import (
+    ExtendedModelResponse,
+    ModelRequest,
+    ModelResponse,
+    ResponseT,
+)
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from ..llm_capability_cache import get_capability, get_model_key
 from .fallback import apply_skill_fallback as apply_skill_fallback
 from .fallback import attach_media_hints
 from .mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
 from .media_handlers import MediaPaths, MediaType, _MEDIA_HANDLERS
+from .scrub import scrub_messages
 from pub.func.validator import is_safe_session_id
 from runtime import state_register_mem
 
@@ -101,6 +110,11 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         if text_dict is None:
             text_dict = {"type": "text", "text": ""}
 
+        if paths.skipped:
+            notices = "\n".join(paths.skipped)
+            existing_text = str(text_dict.get("text") or "")
+            text_dict["text"] = f"{existing_text}\n{notices}" if existing_text else notices
+
         if not (paths.image_hints or paths.audios or paths.videos):
             # Pure-text list: normalize to a single text block and keep
             # stripping stale image_url blocks from history (existing behavior).
@@ -124,11 +138,12 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
     def _should_keep_native(self, paths: MediaPaths, session_id: str) -> bool:
         """Auto mode: decide whether the media blocks stay for a native call.
 
-        One known-unsupported family sends the whole message down the skill
-        path (all-or-nothing, no partial stripping). When no family is known
-        unsupported the blocks stay; if any family is still unprobed, the turn
-        is marked as a native attempt so LLMRetry can write the cache and fall
-        back when the model rejects the blocks.
+        A message whose present families are all known-unsupported takes the
+        whole skill path. Otherwise the blocks stay: a mixed message (some
+        families supported, some unsupported) keeps its native blocks and the
+        per-request scrub replaces only the unsupported ones, while an unprobed
+        family records the per-turn native-attempt flags so LLMRetry can write
+        the cache and fall back when the model rejects the blocks.
         """
         model_key = get_model_key()
         provider, _, model = model_key.partition("/")
@@ -137,19 +152,36 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             (bool(paths.audios), "audio"),
             (bool(paths.videos), "video"),
         )
-        unprobed = False
-        for present, media in families:
-            if not present:
-                continue
-            capability = get_capability(provider, model, media)
-            if capability == "unsupported":
-                return False
-            if capability == "auto":
-                unprobed = True
-        if unprobed:
+        present: list[MediaType] = [media for is_present, media in families if is_present]
+        capabilities = {media: get_capability(provider, model, media) for media in present}
+        if present and all(cap == "unsupported" for cap in capabilities.values()):
+            return False
+        if any(cap == "auto" for cap in capabilities.values()):
             state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, True)
             state_register_mem.set_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, model_key)
         return True
+
+    # ------------------------------------------------------------------
+    # per-request capability scrub (wrap_model_call)
+    # ------------------------------------------------------------------
+    def _scrub_request(self, request: ModelRequest[ContextT]) -> ModelRequest[ContextT]:
+        """Replace unsupported media blocks in the request copy only.
+
+        The serving model key is the env main-model key: this layer wraps
+        outside ``LLMRetryMiddleware``, so a sticky fallback candidate rebound
+        deeper in the chain is not observable here. Every media block whose
+        family is cached ``"unsupported"`` for that key becomes a text
+        placeholder; supported and unprobed blocks pass through untouched. When
+        nothing changes the original request object is returned.
+        """
+        if MEDIA_PIPELINE.get("main_llm_native_multimodal", "auto") != "auto":
+            return request
+        model_key = get_model_key()
+        provider, _, model = model_key.partition("/")
+        scrubbed, changed = scrub_messages(list(request.messages), provider, model, model_key)
+        if not changed:
+            return request
+        return request.override(messages=scrubbed)
 
     def _apply_skill_path(self, turn: _TurnMedia) -> None:
         attach_media_hints(turn.text_dict, turn.paths)
@@ -249,6 +281,27 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         logger.debug("{} abefore_agent hook fired", type(self).__name__)
         self._before_agent_impl(state)
         return None
+
+    # ------------------------------------------------------------------
+    # wrap_model_call / awrap_model_call
+    # ------------------------------------------------------------------
+    @override
+    def wrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
+        return handler(self._scrub_request(request))
+
+    @override
+    async def awrap_model_call(
+        self,
+        request: ModelRequest[ContextT],
+        handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
+    ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
+        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
+        return await handler(self._scrub_request(request))
 
     # ------------------------------------------------------------------
     # after_agent / aafter_agent

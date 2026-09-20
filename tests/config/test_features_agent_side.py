@@ -169,6 +169,7 @@ SPOT_DEFAULTS = [
     (MEDIA_PIPELINE, "multimodal_temp_retention_days", 7),
     (MEDIA_PIPELINE, "main_llm_native_multimodal", "auto"),
     (MEDIA_PIPELINE, "main_llm_silent_degradation_detection", True),
+    (MEDIA_PIPELINE, "max_media_bytes", 20 * 1024 * 1024),
     (CONTEXT_GUARD, "output_cut_ratio", 0.20),
     (CONTEXT_GUARD, "check_interval", 20),
     (LLM_CLIENT_DEFAULTS, "main_max_retries", 2),

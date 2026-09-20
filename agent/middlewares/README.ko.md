@@ -191,18 +191,21 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 ### MultimodalProcessor
 
 **모듈:** `agent/middlewares/media_pipeline/core.py` · **클래스:** `MultimodalProcessor(AgentMiddleware)`
-**후크:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`
+**후크:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `after_agent` / `aafter_agent`
 
 `before_agent`는 내용이 멀티모달 리스트인 **마지막** `HumanMessage`를 처리합니다:
 
 - **텍스트** 항목은 그대로 통과(최대 1개).
 - **`image_url`**: 원격 `http(s)` URL은 그대로 유지. `data:` / base64 페이로드는 디코딩되어 PIL로 `src/<session_id>/mutil_temp/<타임스탬프><확장자>`에 저장됩니다(확장자는 `_IMAGE_MAGIC` 매직바이트로 추정), 영구 복사본이 `media/`에도 생성됩니다.
 - **`audio_url`**: 임시 파일로 다운로드(30초 타임아웃). **`audio_bytes` / `video_url` / `video_bytes`**: 동일하게 디코딩·저장(`_AUDIO_MAGIC` / `_VIDEO_MAGIC`).
+- **크기 상한**: 디스크에 쓰기 전에 크기를 검증하여 `max_media_bytes`(20 MiB, DeepAgents CLI 하드 리밋과 일치)를 초과하는 페이로드는 건너뜁니다 — 디스크에 쓰지 않고 `MediaPaths`에도 들어가지 않으며, warning에 실제 바이트 수를 기록하고 `HumanMessage`에 "첨부가 건너뛰어졌다"는 텍스트 줄을 덧붙입니다. 원격 URL은 `Content-Length`가 있으면 그것으로, 없으면 상한이 걸린 스트리밍 읽기로 판정하므로 잘못된 헤더가 초과 쓰기를 강제할 수 없습니다. 정확히 상한과 같은 페이로드는 허용되며, 0바이트 / 잘못된 페이로드는 기존 실패 경로를 유지합니다.
 - `main_llm_native_multimodal` 설정이 경로를 결정합니다: `"true"`는 미디어 블록을 모델에 그대로 전달하고, `"false"`는 항상 스킬 경로를 사용하며, `"auto"`는 미디어 종류(vision / audio / video)별로 프로세스 수준 능력 캐시(키: `"{provider}/{model_name}"`)를 조회해 판단합니다.
-- `"auto"`에서는 `"unsupported"`로 판정된 종류가 없으면 블록을 유지하고, 아직 검증되지 않은 종류가 있으면 턴 단위 네이티브 시도 플래그(`_multimodal_trying_native` / `_multimodal_native_model`)를 기록합니다. `"[Uploaded media]"` 지시 블록은 스킬 경로에서만 덧붙여, `skill_view` 도구인 `image_to_text` / `speech_to_text` / `video_text_to_text`로 파일을 확인하도록 모델에 지시합니다.
+- `"auto"`에서는: **모든** 재적 미디어 종류가 `"unsupported"`로 캐시되면 메시지 전체가 스킬 경로로 갑니다. **혼합** 메시지(일부 supported, 일부 unsupported)는 네이티브 블록을 유지하고 요청 단위 스크럽이 지원되지 않는 블록만 교체합니다. 미검증(`"auto"`) 종류는 블록을 유지하고 턴 단위 네이티브 시도 플래그(`_multimodal_trying_native` / `_multimodal_native_model`)를 기록합니다. `"[Uploaded media]"` 지시 블록은 스킬 경로에서만 덧붙여, `skill_view` 도구인 `image_to_text` / `speech_to_text` / `video_text_to_text`로 파일을 확인하도록 모델에 지시합니다.
 - 모델이 `multimodal_not_supported`로 분류되는 거부를 반환하면 `LLMRetryMiddleware`가 메시지에 실제로 존재하는 미디어 종류를 `"unsupported"`로 기록하고 요청을 스킬 경로로 다시 씁니다. 같은 프로세스의 이후 세션과 턴은 네이티브 시도를 건너뜁니다.
 - 영속화된 경로는 `additional_kwargs["images"]` / `["audios"]` / `["videos"]`에 저장되고, 이후 MesMemory에 기록되어 히스토리 렌더링에 사용됩니다.
 - **더 오래된** `HumanMessage`에서는 `image_url` 블록이 제거되어, 낡은 base64 덩어리가 컨텍스트에 남지 않습니다. 다만 실제로 그러한 블록이 존재할 때만 수행되며(제거할 것이 없는 메시지는 저비용 사전 검사로 건너뜀), 제거 후 텍스트가 비어 있지 않을 때만 기록합니다.
+
+`wrap_model_call` / `awrap_model_call`은 **모든 모델 요청**에서(`"auto"` 모드에서만) 실행되어 요청 복사본을 스크럽합니다: 종류가 `"unsupported"`로 캐시된 미디어 블록은 제거된 미디어, 디스크 경로, 대응 스킬(`image_to_text` / `speech_to_text` / `video_text_to_text`)을 명시한 텍스트 자리표시자로 교체됩니다. supported 및 미검증 블록은 그대로 통과합니다. 재작성은 `request.override(messages=...)`로 이루어지며 state / checkpointer / MesMemory는 전혀 건드리지 않고, 스크럽할 것이 없으면 원래 요청 객체를 그대로 반환합니다. 능력 조회는 환경 메인 모델 키(`get_model_key()`)를 사용합니다: 이 계층은 `LLMRetryMiddleware` 바깥을 감싸므로 체인 안쪽에서 재바인딩된 스티키 폴백 후보를 관측할 수 없습니다. 그 후보의 거부는 기존 `multimodal_not_supported` → 스킬 경로 재작성이 여전히 담당합니다.
 
 `after_agent`는 `mutil_temp`를 청소합니다: 파일명 본체가 순수 숫자 타임스탬프가 아니거나 7일보다 오래된 파일을 삭제합니다.
 
@@ -703,6 +706,7 @@ agent = create_agent(
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage 재작성
 │   ├─ wrap_model_call (최외곽 → 최내곽)
 │   │   · system_prompt_injection  시스템 프롬프트 주입(데코레이터가 request.override 호출)
+│   │   · MultimodalProcessor  auto 모드 전용: 미지원 미디어 블록을 텍스트 자리표시자로 교체(요청 복사본만)
 │   │   · IterationBudget  1 소모. 소진 시 종단 AIMessage
 │   │   · ContextEvictionMiddleware  퇴거된 인간 메시지를 미리보기로 교체(P1-9)
 │   │   · HeartbeatStaleness  kill됐으면 HeartbeatTimeoutError, 아니면 heartbeat_iter += 1
@@ -804,6 +808,7 @@ agent/middlewares/
 │   ├── core.py                  # MultimodalProcessor
 │   ├── fallback.py             # 스킬 경로 폴백(미디어 힌트 + 요청 재작성)
 │   ├── media_handlers.py        # MultimodalProcessor의 미디어 타입별 전략
+│   ├── scrub.py                 # 요청 단위로 미지원 미디어 블록 스크럽
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (공유)
 ├── message_persistence/         # MessagePersistenceMiddleware
 │   ├── __init__.py              # MessagePersistenceMiddleware 익스포트

@@ -6,11 +6,13 @@ reassigned when stripping actually produces text — a text-only block list (the
 common shape left behind by an earlier turn) is no longer rewritten.
 """
 
+import asyncio
 import base64
 import io
 
 import pytest
 from PIL import Image
+from langchain.agents.middleware.types import ModelRequest
 from langchain_core.messages import AIMessage, HumanMessage
 
 from agent.middlewares import llm_capability_cache as cache
@@ -73,6 +75,23 @@ def _valid_image_content(text: str) -> list:
         {"type": "text", "text": text},
         {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{_png_base64()}"}},
     ]
+
+
+class _SentinelModel:
+    def __init__(self, name: str = "main") -> None:
+        self.model_name = name
+
+
+def _model_request(mes: HumanMessage, session_id: str = "scrub-session") -> ModelRequest:
+    return ModelRequest(model=_SentinelModel(), messages=[mes], state={"session_id": session_id})
+
+
+def _video_item() -> dict:
+    return {"type": "video_bytes", "video_bytes": b"\x00\x00\x00\x18ftypmp42"}
+
+
+def _audio_item() -> dict:
+    return {"type": "audio_bytes", "audio_bytes": b"\x49\x44\x33\x03"}
 
 
 class TestHistoryImageStrip:
@@ -289,42 +308,163 @@ class TestTriStateConfig:
 
 
 class TestIndependentMediaFamilies:
-    @staticmethod
-    def _video_item() -> dict:
-        return {"type": "video_bytes", "video_bytes": b"\x00\x00\x00\x18ftypmp42"}
-
-    @staticmethod
-    def _audio_item() -> dict:
-        return {"type": "audio_bytes", "audio_bytes": b"\x49\x44\x33\x03"}
-
-    def test_video_unsupported_forces_skill_path_even_when_vision_supported(self, processor):
+    def test_mixed_vision_supported_video_unsupported_keeps_native_blocks(self, processor):
         cache.set_capability("test-provider", "test-model", "vision", "supported")
         cache.set_capability("test-provider", "test-model", "video", "unsupported")
-        mes = HumanMessage(content=[*_valid_image_content("看图"), self._video_item()])
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _video_item()])
 
         processor._before_agent_impl(_state([mes], "mixed-video-off"))
 
+        assert [item["type"] for item in mes.content] == ["text", "image_url", "video_bytes"]
+        assert state_register_mem.get_state("mixed-video-off", TRYING_KEY, False) is False
+
+    def test_all_present_families_unsupported_takes_skill_path(self, processor):
+        cache.set_capability("test-provider", "test-model", "vision", "unsupported")
+        cache.set_capability("test-provider", "test-model", "audio", "unsupported")
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _audio_item()])
+
+        processor._before_agent_impl(_state([mes], "mixed-all-off"))
+
         assert [item["type"] for item in mes.content] == ["text"]
         assert "image_to_text" in mes.content[0]["text"]
-        assert "video_text_to_text" in mes.content[0]["text"]
+        assert "speech_to_text" in mes.content[0]["text"]
 
     def test_unprobed_video_with_supported_vision_still_tries_native(self, processor):
         cache.set_capability("test-provider", "test-model", "vision", "supported")
-        mes = HumanMessage(content=[*_valid_image_content("看图"), self._video_item()])
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _video_item()])
 
         processor._before_agent_impl(_state([mes], "mixed-video-auto"))
 
         assert [item["type"] for item in mes.content] == ["text", "image_url", "video_bytes"]
         assert state_register_mem.get_state("mixed-video-auto", TRYING_KEY, False) is True
 
-    def test_audio_unsupported_with_unprobed_image_forces_skill_path(self, processor):
+    def test_audio_unsupported_with_unprobed_image_keeps_native_and_flags(self, processor):
         cache.set_capability("test-provider", "test-model", "audio", "unsupported")
-        mes = HumanMessage(content=[*_valid_image_content("看图"), self._audio_item()])
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _audio_item()])
 
         processor._before_agent_impl(_state([mes], "mixed-audio-off"))
 
-        assert [item["type"] for item in mes.content] == ["text"]
-        assert state_register_mem.get_state("mixed-audio-off", TRYING_KEY, False) is False
+        assert [item["type"] for item in mes.content] == ["text", "image_url", "audio_bytes"]
+        assert state_register_mem.get_state("mixed-audio-off", TRYING_KEY, False) is True
+
+
+# ---------------------------------------------------------------------------
+# Functional — per-request capability scrub (wrap_model_call)
+# ---------------------------------------------------------------------------
+
+
+class TestPerRequestScrub:
+    def test_mixed_families_strip_only_the_unsupported_block(self, processor):
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        cache.set_capability("test-provider", "test-model", "video", "unsupported")
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _video_item()])
+        processor._before_agent_impl(_state([mes], "scrub-mixed"))
+
+        captured: list[ModelRequest] = []
+        processor.wrap_model_call(
+            _model_request(mes, "scrub-mixed"), lambda req: captured.append(req) or "ok"
+        )
+
+        content = captured[0].messages[-1].content
+        assert [item["type"] for item in content] == ["text", "image_url", "text"]
+        placeholder = content[2]["text"]
+        assert "video_text_to_text" in placeholder
+        assert mes.additional_kwargs["videos"][0] in placeholder
+
+    def test_supported_block_is_kept_verbatim(self, processor):
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        cache.set_capability("test-provider", "test-model", "video", "unsupported")
+        original_image = _valid_image_content("看图")[1]
+        mes = HumanMessage(
+            content=[{"type": "text", "text": "看图"}, original_image, _video_item()]
+        )
+        processor._before_agent_impl(_state([mes], "scrub-keep"))
+
+        captured: list[ModelRequest] = []
+        processor.wrap_model_call(
+            _model_request(mes, "scrub-keep"), lambda req: captured.append(req) or "ok"
+        )
+
+        content = captured[0].messages[-1].content
+        assert content[1] == original_image
+
+    def test_scrub_does_not_touch_state_kwargs_or_disk(self, processor, src_dir):
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        cache.set_capability("test-provider", "test-model", "video", "unsupported")
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _video_item()])
+        processor._before_agent_impl(_state([mes], "scrub-state"))
+        original_content = mes.content
+        original_kwargs = dict(mes.additional_kwargs)
+        media_dir = src_dir / "scrub-state" / "media"
+        files_before = sorted(path.name for path in media_dir.iterdir())
+        states_before = dict(state_register_mem.get_all_states("scrub-state"))
+
+        processor.wrap_model_call(_model_request(mes, "scrub-state"), lambda req: "ok")
+
+        assert mes.content is original_content
+        assert mes.additional_kwargs == original_kwargs
+        assert sorted(path.name for path in media_dir.iterdir()) == files_before
+        assert dict(state_register_mem.get_all_states("scrub-state")) == states_before
+
+    def test_all_supported_returns_the_same_request_object(self, processor):
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        mes = HumanMessage(content=_valid_image_content("看图"))
+        processor._before_agent_impl(_state([mes], "scrub-supported"))
+        request = _model_request(mes, "scrub-supported")
+        captured: list[ModelRequest] = []
+
+        processor.wrap_model_call(request, lambda req: captured.append(req) or "ok")
+
+        assert captured[0] is request
+
+    def test_unprobed_family_block_is_not_scrubbed(self, processor):
+        cache.set_capability("test-provider", "test-model", "vision", "unsupported")
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _video_item()])
+        processor._before_agent_impl(_state([mes], "scrub-auto"))
+
+        captured: list[ModelRequest] = []
+        processor.wrap_model_call(
+            _model_request(mes, "scrub-auto"), lambda req: captured.append(req) or "ok"
+        )
+
+        content = captured[0].messages[-1].content
+        assert [item["type"] for item in content] == ["text", "text", "video_bytes"]
+        assert "image_to_text" in content[1]["text"]
+
+    def test_explicit_true_mode_is_never_scrubbed(self, processor, monkeypatch):
+        monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_native_multimodal", "true")
+        cache.set_capability("test-provider", "test-model", "video", "unsupported")
+        mes = HumanMessage(content=[{"type": "text", "text": "看视频"}, _video_item()])
+        processor._before_agent_impl(_state([mes], "scrub-true"))
+        request = _model_request(mes, "scrub-true")
+        captured: list[ModelRequest] = []
+
+        processor.wrap_model_call(request, lambda req: captured.append(req) or "ok")
+
+        assert captured[0] is request
+        assert [item["type"] for item in captured[0].messages[-1].content] == [
+            "text",
+            "video_bytes",
+        ]
+
+    def test_async_scrub_strips_the_unsupported_block(self, processor):
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        cache.set_capability("test-provider", "test-model", "video", "unsupported")
+        mes = HumanMessage(content=[*_valid_image_content("看图"), _video_item()])
+        processor._before_agent_impl(_state([mes], "scrub-async"))
+        captured: list[ModelRequest] = []
+
+        async def handler(req):
+            captured.append(req)
+            return "ok"
+
+        assert (
+            asyncio.run(processor.awrap_model_call(_model_request(mes, "scrub-async"), handler))
+            == "ok"
+        )
+        content = captured[0].messages[-1].content
+        assert [item["type"] for item in content] == ["text", "image_url", "text"]
+        assert "video_text_to_text" in content[2]["text"]
 
 
 # ---------------------------------------------------------------------------

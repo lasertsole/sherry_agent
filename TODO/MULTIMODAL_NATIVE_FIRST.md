@@ -150,11 +150,13 @@ class MediaPipelineConfig(TypedDict):
     multimodal_temp_retention_days: int
     main_llm_native_multimodal: str  # "auto" | "true" | "false"
     main_llm_silent_degradation_detection: bool
+    max_media_bytes: int  # 单条媒体体积上限；超限跳过（不落盘、不进 MediaPaths）
 
 MEDIA_PIPELINE: MediaPipelineConfig = {
     "multimodal_temp_retention_days": 7,
     "main_llm_native_multimodal": "auto",
     "main_llm_silent_degradation_detection": True,
+    "max_media_bytes": 20 * 1024 * 1024,
 }
 ```
 
@@ -526,9 +528,13 @@ def _try_multimodal_fallback(
 视频: 缓存 = "unsupported" → 剥离 video block + 加视频技能提示
 ```
 
-`apply_skill_fallback` 和 `_before_agent_impl` 需要支持**部分剥离**：保留支持的 block，只剥离不支持的。这是一个复杂度增量。
+`apply_skill_fallback` 和 `_before_agent_impl` 需要支持**部分剥离**：保留支持的 block，只剥离不支持的。
 
-**简化方案**（首期）：全有或全无 — 只要有一个媒体类型 unsupported → 全部走技能路径。后续可优化为部分剥离。
+**已实现部分剥离**：`MultimodalProcessor._should_keep_native` 只在**全部**在途媒体族
+unsupported 时整体走技能路径；混合（部分 supported、部分 unsupported）保留原生块，
+由新增的 `wrap_model_call` / `awrap_model_call` 能力擦洗层在每次模型请求上把 unsupported
+族的块替换为文本占位符（含落盘路径与技能提示），只改请求副本、不动 state/checkpointer/MesMemory。
+`apply_skill_fallback` 仍是模型整体拒绝时的整条改写路径。
 
 ### 5.3 静默降级
 
@@ -583,7 +589,7 @@ def _try_multimodal_fallback(
   也不自述、只是默默忽略媒体时仍检测不到，缓存保持 `auto`（下一轮继续尝试原生）。
 - **错误模式匹配**：不同 provider 报错措辞不一，可能漏匹配。首轮不触发，后续迭代补充模式。
 - **重启重新检测**：进程内存不跨重启，重启后首次发图浪费 1 次调用。代价可忽略。
-- **混合媒体**（首期）：全有或全无，不支持部分剥离。
+- **混合媒体**：已实现按块部分剥离（见 §5.2）；模型整体拒绝时仍由 `apply_skill_fallback` 整条改写。
 - **ModelRequest.override API**：已验证支持 `messages` 覆盖（见 §5.5），无降级路径。
 - **总开关而非按类型**：`main_llm_native_multimodal` 是覆盖全部媒体类型（vision / audio / video）
   的三态总开关；若未来要「vision 原生、audio 走技能」这类按类型配置，需要扩展为每类型一份配置。

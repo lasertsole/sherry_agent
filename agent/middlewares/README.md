@@ -193,18 +193,21 @@ Second in the list, right after `TodoContinuationEnforcer` (which implements no 
 ### MultimodalProcessor
 
 **Module:** `agent/middlewares/media_pipeline/core.py` · **Class:** `MultimodalProcessor(AgentMiddleware)`
-**Hooks:** `before_agent` / `abefore_agent`, `after_agent` / `aafter_agent`
+**Hooks:** `before_agent` / `abefore_agent`, `wrap_model_call` / `awrap_model_call`, `after_agent` / `aafter_agent`
 
 `before_agent` processes the **last** `HumanMessage` when its content is a multimodal list:
 
 - **Text** items pass through (at most one).
 - **`image_url`**: remote `http(s)` URLs are kept as-is; `data:` / base64 payloads are decoded and saved with PIL under `src/<session_id>/mutil_temp/<timestamp><ext>` (extension inferred from magic bytes via `_IMAGE_MAGIC`), with a durable copy in `media/`.
 - **`audio_url`**: downloaded to a temp file (30 s timeout). **`audio_bytes` / `video_url` / `video_bytes`**: decoded and saved the same way (`_AUDIO_MAGIC` / `_VIDEO_MAGIC`).
+- **Size limit**: before anything is written, a payload over `max_media_bytes` (20 MiB, matching DeepAgents' CLI hard limit) is skipped — no disk write, never in `MediaPaths`, a warning logs the actual byte count, and the HumanMessage gets a text line saying the attachment was skipped. A remote URL is judged by `Content-Length` when present and otherwise by a capped streaming read, so a wrong header cannot force an oversized write. A payload exactly at the limit is allowed; a zero-byte / invalid payload keeps its existing failure path.
 - The `main_llm_native_multimodal` config picks the path: `"true"` keeps the media blocks for the model itself, `"false"` always takes the skill path, and `"auto"` decides per media family (vision / audio / video) through a process-level capability cache keyed by `"{provider}/{model_name}"`.
-- Under `"auto"` the blocks stay while no family is known `"unsupported"`; an unprobed family records the per-turn native-attempt flags (`_multimodal_trying_native` / `_multimodal_native_model`). The `"[Uploaded media]"` instruction block is appended only on the skill path, telling the model to inspect the files with the `skill_view` tools `image_to_text` / `speech_to_text` / `video_text_to_text`.
+- Under `"auto"`: if **every** present family is cached `"unsupported"` the whole message takes the skill path; a **mixed** message (some families supported, some unsupported) keeps its native blocks and the per-request scrub replaces only the unsupported ones; an unprobed (`"auto"`) family keeps its block and records the per-turn native-attempt flags (`_multimodal_trying_native` / `_multimodal_native_model`). The `"[Uploaded media]"` instruction block is appended only on the skill path, telling the model to inspect the files with the `skill_view` tools `image_to_text` / `speech_to_text` / `video_text_to_text`.
 - A model rejection classified as `multimodal_not_supported` makes `LLMRetryMiddleware` write `"unsupported"` for the media families actually present and rewrite the request onto the skill path, so later sessions and turns in the same process skip the native probe.
 - Persisted paths are stored in `additional_kwargs["images"]` / `["audios"]` / `["videos"]` and later written to MesMemory for history rendering.
 - `image_url` blocks are stripped from **older** `HumanMessage`s so stale base64 blobs do not linger in context — but only when such a block actually exists (a cheap pre-check skips messages with nothing to strip) and only when the stripped text is non-empty.
+
+`wrap_model_call` / `awrap_model_call` runs on **every model request** (auto mode only) and scrubs the request copy: each media block whose family is cached `"unsupported"` is replaced by a text placeholder naming the stripped media, its on-disk path and the matching skill (`image_to_text` / `speech_to_text` / `video_text_to_text`); supported and unprobed blocks pass through untouched. The rebuild is `request.override(messages=...)` — state, checkpointer and MesMemory are never touched — and the original request object is returned unchanged when nothing needs scrubbing. The capability lookup uses the env main-model key (`get_model_key()`): this layer wraps outside `LLMRetryMiddleware` and so cannot observe a sticky fallback candidate rebound deeper in the chain; that candidate's rejection is still covered by the existing `multimodal_not_supported` → skill-path rewrite.
 
 `after_agent` cleans `mutil_temp`: deletes files whose stem is not a pure numeric timestamp or that are older than 7 days.
 
@@ -705,6 +708,7 @@ user turn arrives
 │   │   · ToolCallNormalize  sanitize_tool_use_result_pairing + RemoveMessage rewrite
 │   ├─ wrap_model_call (outermost → innermost)
 │   │   · system_prompt_injection  inject system prompt (decorator calls request.override)
+│   │   · MultimodalProcessor  auto mode only: replace unsupported media blocks with text placeholders (request copy)
 │   │   · IterationBudget  consume 1; terminal AIMessage when exhausted
 │   │   · ContextEvictionMiddleware  replace evicted human messages with previews (P1-9)
 │   │   · HeartbeatStaleness  raise HeartbeatTimeoutError if killed; else heartbeat_iter += 1
@@ -806,6 +810,7 @@ agent/middlewares/
 │   ├── core.py                  # MultimodalProcessor
 │   ├── fallback.py             # skill-path fallback (media hints + request rewrite)
 │   ├── media_handlers.py        # per-media-type strategies for MultimodalProcessor
+│   ├── scrub.py                 # per-request unsupported-media block scrub
 │   └── mixins.py                # BeforeAgentHooksMixin / AfterAgentHooksMixin (shared)
 ├── message_persistence/         # MessagePersistenceMiddleware
 │   ├── __init__.py              # exports MessagePersistenceMiddleware

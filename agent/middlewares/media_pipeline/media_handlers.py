@@ -18,6 +18,7 @@ from typing import Any, Literal
 from PIL import Image
 from loguru import logger
 
+from config.features import MEDIA_PIPELINE
 from pub.func import is_url
 
 # Magic byte signatures → file extension
@@ -76,7 +77,54 @@ def _infer_extension(data: bytes, kind: str) -> str:
     return fallback
 
 
-def _download_url_to_temp(url: str, session_id: str, kind: str, src_dir: Path) -> str | None:
+def _max_media_bytes() -> int:
+    return MEDIA_PIPELINE["max_media_bytes"]
+
+
+def _mb_label(max_bytes: int) -> str:
+    return f"{max_bytes / (1024 * 1024):g} MB"
+
+
+def _record_oversize(paths: "MediaPaths", kind: str, size: int) -> None:
+    """Skip an oversized payload: record a model-visible notice and a warning.
+
+    The payload is never written to disk and never recorded as a path, so it
+    cannot reach the model as a media block.
+    """
+    limit = _max_media_bytes()
+    paths.skipped.append(
+        f"[Uploaded media] An attached {kind} was skipped: it exceeds the "
+        f"{_mb_label(limit)} input limit ({size} bytes). It was not saved and "
+        "was not sent to the model."
+    )
+    logger.warning(
+        "Media attachment skipped (oversize): kind={} size_bytes={} limit_bytes={}",
+        kind,
+        size,
+        limit,
+    )
+
+
+def _exceeds_media_limit(data: bytes, paths: "MediaPaths", kind: str) -> bool:
+    if len(data) <= _max_media_bytes():
+        return False
+    _record_oversize(paths, kind, len(data))
+    return True
+
+
+def _declared_content_length(resp: Any) -> int | None:
+    declared = resp.headers.get("Content-Length") if resp.headers else None
+    if declared is None:
+        return None
+    try:
+        return int(declared)
+    except (TypeError, ValueError):
+        return None
+
+
+def _download_url_to_temp(
+    url: str, session_id: str, kind: str, src_dir: Path, paths: "MediaPaths"
+) -> str | None:
     """Download a media URL into the session folder, persisting a durable copy.
 
     Writes two copies so the media stays reachable after mutil_temp is
@@ -84,12 +132,25 @@ def _download_url_to_temp(url: str, session_id: str, kind: str, src_dir: Path) -
       - <src_dir>/<session_id>/mutil_temp/<ts><ext>   (short-lived, skills read)
       - <src_dir>/<session_id>/media/<ts><ext>        (durable, /media endpoint)
 
+    A body over ``max_media_bytes`` is aborted before any write and recorded on
+    ``paths`` as a skipped attachment. A declared ``Content-Length`` is only a
+    fast path; the capped read is authoritative, so a wrong header cannot force
+    an oversized write.
+
     Returns the persistent media/ path (posix-style) on success, or None on failure.
     """
+    limit = _max_media_bytes()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (EMA_AI_agent)"})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = resp.read()
+            declared = _declared_content_length(resp)
+            if declared is not None and declared > limit:
+                _record_oversize(paths, kind, declared)
+                return None
+            data = resp.read(limit + 1)
+        if len(data) > limit:
+            _record_oversize(paths, kind, len(data))
+            return None
         if not data:
             logger.error(f"Media download returned empty body: {url}")
             return None
@@ -162,6 +223,9 @@ class MediaPaths:
     audios: list[str] = field(default_factory=list)
     # Persisted video paths for the hint text and additional_kwargs["videos"].
     videos: list[str] = field(default_factory=list)
+    # Model-visible notices for attachments skipped by the size limit. They are
+    # not paths: oversized media is never written down nor persisted.
+    skipped: list[str] = field(default_factory=list)
 
 
 class MediaItemHandler(abc.ABC):
@@ -198,6 +262,9 @@ class ImageUrlHandler(MediaItemHandler):
             image_bytes = base64.b64decode(base64_data)
         except Exception as e:
             logger.error(f"Base64 decode failed: {e}")
+            return
+
+        if _exceeds_media_limit(image_bytes, paths, "image"):
             return
 
         try:
@@ -237,7 +304,7 @@ class AudioUrlHandler(MediaItemHandler):
     ) -> None:
         url: str = item.get("audio_url", {}).get("url", "")
         if is_url(url):
-            local_path = _download_url_to_temp(url, session_id, "audio", src_dir)
+            local_path = _download_url_to_temp(url, session_id, "audio", src_dir, paths)
             if local_path is not None:
                 paths.audios.append(local_path)
 
@@ -250,6 +317,8 @@ class AudioBytesHandler(MediaItemHandler):
     ) -> None:
         media_bytes = _unwrap_media_bytes(item)
         if media_bytes is None:
+            return
+        if _exceeds_media_limit(media_bytes, paths, "audio"):
             return
 
         temp_path, media_path, ext = _write_bytes_media(media_bytes, session_id, "audio", src_dir)
@@ -269,6 +338,8 @@ class VideoBytesHandler(MediaItemHandler):
         media_bytes = _unwrap_media_bytes(item)
         if media_bytes is None:
             return
+        if _exceeds_media_limit(media_bytes, paths, "video"):
+            return
 
         temp_path, media_path, ext = _write_bytes_media(media_bytes, session_id, "video", src_dir)
         logger.debug(
@@ -287,7 +358,7 @@ class VideoUrlHandler(MediaItemHandler):
     ) -> None:
         url: str = item.get("video_url", {}).get("url", "")
         if is_url(url):
-            local_path = _download_url_to_temp(url, session_id, "video", src_dir)
+            local_path = _download_url_to_temp(url, session_id, "video", src_dir, paths)
             if local_path is not None:
                 paths.videos.append(local_path)
 

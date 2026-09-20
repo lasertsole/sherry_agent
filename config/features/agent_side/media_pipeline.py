@@ -17,10 +17,16 @@ class MediaPipelineConfig(TypedDict):
     # self-reports media blindness, cache the media families present as
     # "unsupported" so later turns skip the doomed native probe.
     main_llm_silent_degradation_detection: bool
+    # Hard ceiling for one uploaded media payload, in bytes. A payload over
+    # this limit is skipped before any disk write: it never enters MediaPaths
+    # and never reaches the model; the model gets a text notice instead.
+    # 20 MiB matches DeepAgents' CLI hard limit for inbound media.
+    max_media_bytes: int
 
 
 MEDIA_PIPELINE: MediaPipelineConfig = {
     "multimodal_temp_retention_days": 7,
     "main_llm_native_multimodal": "auto",
     "main_llm_silent_degradation_detection": True,
+    "max_media_bytes": 20 * 1024 * 1024,
 }
