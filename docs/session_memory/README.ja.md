@@ -54,7 +54,7 @@ SESSION メモリプランの全 13 機能（opencode-dev / oh-my-openagent / he
 - **`agent/tools/message_search.py`** —— 二段階検索：永続化済み `messages` テーブルの FTS5 を先に検索し、ヒットがない場合はセッションの最新チェックポイント（`SRC_DIR/checkpoints/sqlite.db` の `state["messages"]`）へ降格して、未永続化ターンを新しい順にキーワード一致（`_CHECKPOINT_SCAN_MAX_MESSAGES` / `message_search_max_session_chars` で上限）。フォールバックのヒットには `source="checkpoint"` を付与。永続化が各モデル境界と各ツール返却時に走るため、このフォールバックが効くのは「チェックポイントがストアより先行している」狭い窓のみです —— 次のモデル境界で永続化されるのを待つ HITL 拒否（ツール結果は返却時にすでに書き込み済み）。
 - **`agent/middlewares/message_persistence/`** —— write-once のセッション永続化、2 つのタイミング: human/AI メッセージは各モデル呼び出し境界で、ツール結果は返却の瞬間に。`persisted_message_ids` ウォーターマークが各メッセージをちょうど 1 回だけ着地させ、永続化は圧縮の発火に依存しません。
 - **コンテキスト量の統治** —— `ContextEvictionMiddleware` は過大なツール結果（> 20 000 文字）を state に入る前に `SESSIONS_DIR/<session_id>/evicted/` へ退避します（state に残るのは head+tail プレビューのみ）。巨大な人間メッセージ（> 200 000 文字）も同じディレクトリへ書き出し `lc_evicted_to` でタグ付けしますが、切り詰めるのはモデルビューだけです——state と MesMemory は全文を保持します。`clear_session()` はセッションディレクトリごと削除するため、退避ファイルも一緒に消えます。P1-2 のオーバーフロー・テールクリップは末尾 `ToolMessage` の内容を `model_copy` でスタブ化するだけ（同一性とペアリングは不変）—— データは失われません。すべての結果はすでに MesMemory へ永続化済みで、退避された本文もディスク上に残るためです: `message_search` がテキストを呼び戻し、`read_file` が退避ファイルを読み直せます。
-- **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）。
+- **`agent/middlewares/summarization/compaction_lock.py`** —— SQLite 圧縮ロック（TTL 自己修復、同期 + 非同期取得、タイムアウト時 fail-open）、`_apply_compression` と `_aapply_compression` の両方をラップします。
 - **`runtime/session/state_register.py`** —— `context_epoch` テーブル上の `ContextEpoch` ライフサイクル（initialize / prepare / replace / advance）。
 
 ## テスト
