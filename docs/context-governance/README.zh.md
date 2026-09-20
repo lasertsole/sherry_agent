@@ -2,11 +2,11 @@
 
 [**English**](README.md) · **中文** · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> 原始历史如何保持持久、模型可见上下文如何保持精简：逐模型边界与工具返回的写一次持久化、工具结果卸载到磁盘并留下可恢复预览、执行期 `read_file` 切片、人类消息驱逐但 state 保留全文、在任何压缩路由之前运行的不调 LLM 溢出尾部裁剪，以及把旧摘要挡在对话载荷之外的链式摘要过滤。
+> 原始历史如何保持持久、模型可见上下文如何保持精简：逐模型边界与工具返回的写一次持久化、工具结果卸载到磁盘并留下可恢复预览、执行期 `read_file` 切片、人类消息驱逐但 state 保留全文、媒体治理（输入体积上限、每请求能力擦洗、静默降级检测、压缩期卸载与逐块 token 分型）、在任何压缩路由之前运行的不调 LLM 溢出尾部裁剪，以及把旧摘要挡在对话载荷之外的链式摘要过滤。
 
-Agent 产出的每条消息都有双重价值：既是**原始历史**（真实发生过什么，用于搜索与压缩），也是**模型上下文**（当下能塞进窗口的部分）。本页记录调和这两种需求的六项机制 —— 它们共享同一条规则：**绝不丢数据，只压缩模型视图，并始终留下指回全文的指针。**
+Agent 产出的每条消息都有双重价值：既是**原始历史**（真实发生过什么，用于搜索与压缩），也是**模型上下文**（当下能塞进窗口的部分）。本页记录调和这两种需求的各项机制 —— 它们共享同一条规则：**载荷一旦进入流水线就绝不丢失，压缩的只是模型视图，且每次缩减都留下指回全文的指针。**
 
-**事实来源：** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/media_offload.py`、`pub/func/estimate_tokens.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`、`config/features/agent_side/token_estimation.py`。以下每条结论均已与上述代码逐条核对。
+**事实来源：** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/media_offload.py`、`agent/middlewares/media_pipeline/scrub.py`、`agent/middlewares/media_pipeline/degradation.py`、`agent/middlewares/media_pipeline/media_handlers.py`、`agent/middlewares/llm_capability_cache.py`、`agent/middlewares/llm_retry/core.py`、`pub/func/estimate_tokens.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`、`config/features/agent_side/media_pipeline.py`、`config/features/agent_side/token_estimation.py`。以下每条结论均已与上述代码逐条核对。
 
 ## 🎯 总览与流水线
 
@@ -58,6 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | cron 触发的轮次 | `origin='cron'` | `True` | 定时任务的会话轮次（`origin_for_source`） | `messages` 行 | 非用户请求 |
 | 压缩摘要对 | `lc_source='summarization'`（在 `additional_kwargs`，非 origin 列） | — | 压缩产物（`_build_new_messages`） | **不落 MesMemory**；state 摘要对 | `<summary>` 常驻模型视图；以 `<prior-summary>` 链式延续 |
 | 驱逐文件 | 非消息 —— 磁盘文件 | — | P0-2 / P1-9 驱逐 | `SESSIONS_DIR/<session_id>/evicted/`（字节级全文） | 按需 `read_file`；摘要链在结构化摘要文档中携带 `evicted_refs[]` 指针 |
+| 媒体文件 | 非消息 —— 磁盘文件 | — | 上传处理（`MultimodalProcessor`）、历史消息原生块剥离，或压缩期卸载（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（持久副本；压缩期卸载以 `sha256[:16]` 命名并去重）；超过 `max_media_bytes` 的载荷绝不写入 | 原生模式下作为媒体块；技能路径提示与每请求擦洗占位携带路径；摘要链把卸载路径保留在 `evicted_refs[]` |
 | 计划知识 | 非消息 —— 磁盘目录 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | 按 `plan_ref` 注入 `<knowledge>` 块 |
 | FACTS.md | `workspace/memory/FACTS.md`（memory 工具 target `facts`） | — | 跨计划、不绑定模块的坑与约定：压缩时记忆回顾 + 计划完成抽取 | memory 文件（1 375 字符上限；超限先淘汰最旧条目） | 作为常驻 FACTS 记忆块注入每次系统提示词 |
 
@@ -145,7 +146,15 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## 🖼️ 媒体治理（卸载、引用与 token 分型）
 
-压缩与 token 估算都必须处理多模态载荷；两者都绝不能把 base64 当作文本。
+媒体治理在入口与出口两侧同时进行：入口规则把无法处理的载荷挡在请求之外、让不可用的模型不被反复试探；压缩与 token 估算则绝不把 base64 当作文本。
+
+**输入体积上限。** 每个入站媒体载荷 —— 内联 base64 / `data:` 块或远程 URL 下载 —— 都在**任何磁盘写入之前**按 `MEDIA_PIPELINE["max_media_bytes"]`（20 MiB）量度。超限载荷被跳过：不写盘、路径不进入 `MediaPaths`、warning 记录字节数，消息携带一行模型可见的 `[Uploaded media]` 说明该附件未保存、也未发送给模型。远程 URL 先看服务端声明的 `Content-Length`，没有则按 `limit + 1` 字节限量读取，因此错误的响应头无法迫使超限写入；图片、音频、视频处理器共用同一闸门（`media_handlers.py::_exceeds_media_limit` / `_record_oversize`）。恰好等于上限的载荷允许通过。
+
+**每请求能力擦洗。** `MultimodalProcessor.wrap_model_call`（auto 模式）只重建请求副本 —— `request.override(messages=...)` —— 把服务模型缓存为 `"unsupported"` 的媒体族块逐一替换为文本占位，占位写明块类型、记录的落盘路径与对应内置技能（`image_to_text` / `speech_to_text` / `video_text_to_text`）。supported 与未探测的块原样通过，因此混合消息为受支持的族保留原生媒体、只剥离不受支持的块 —— 逐块进行。state、checkpointer 与 MesMemory 绝不写入；没有任何块需要替换时返回原请求对象。擦洗只在 `"auto"` 下运行：`"true"` 为模型保留全部块，`"false"` 在请求组装之前就走技能路径。
+
+**静默降级检测。** 模型可能接受媒体块却当作从未看到。对于以 auto 模式原生尝试开始并成功返回的调用，`LLMRetryMiddleware` 用 `detect_media_blindness()`（`media_pipeline/degradation.py`）评估回复文本 —— 纯正则，en / zh / ja / ko，精确率优先：只有当盲区措辞 ±40 字符窗口内出现媒体词才计命中 —— 外加显式的「请描述媒体」请求模式。命中则把请求中实际出现的每个媒体族缓存为 `"unsupported"`，后续轮次直接走技能路径；无论命中与否都会清除本轮原生标志。`main_llm_silent_degradation_detection`（True）是总开关。归属跟随实际服务模型：`LLMRetryMiddleware` 把请求重绑到黏性回退候选时，先把本轮原生模型键改写为 `{candidate.provider}/{candidate.model_name}`，因此错误拒绝与静默拒绝都记在实际服务该调用的模型名下。
+
+**能力缓存。** 三项入口行为共用一个进程级缓存（`agent/middlewares/llm_capability_cache.py`），键为 `"{provider}/{model_name}"`，逐媒体族取值 `"auto"`（未探测）/ `"supported"` / `"unsupported"`。它只存在于进程内：重启即清空（最多浪费一次原生探测），模型切换（改 env + 重启）天然产生新键。
 
 **压缩期卸载。** 在 `_apply_compression` 序列化被摘要的前缀（`current_messages[:cutoff]`）之前，`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）只重写该范围内的每个内联媒体块：
 
@@ -249,6 +258,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | 保守固定成本（估算时无时长元数据） |
 | `tokens_per_unknown_block` | `85` | 未识别块的固定成本 —— 绝不是它的 base64 |
 
+`MEDIA_PIPELINE`（`config/features/agent_side/media_pipeline.py`）中入口侧相关的键：
+
+| 键 | 默认值 | 含义 |
+|---|---|---|
+| `main_llm_native_multimodal` | `"auto"` | 三态原生开关：`"true"` 为模型保留媒体块、`"false"` 始终走技能路径、`"auto"` 经能力缓存逐媒体族决定；其他值一律 fail-safe 走技能路径 |
+| `main_llm_silent_degradation_detection` | `True` | 原生回复自述媒体盲时，把请求中实际出现的媒体族缓存为 `"unsupported"` |
+| `max_media_bytes` | `20 * 1024 * 1024` | 单个载荷硬上限；超限载荷在任何写盘之前即被跳过 |
+
 这些旋钮没有环境变量：按设计它们就是上述 feature TypedDict 中的代码默认值。
 
 ## 🧪 测试地图
@@ -267,8 +284,12 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 链式摘要过滤与 `<prior-summary>` 注入 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 压缩期内联媒体卸载：写盘 + 指针、hash 去重、失败占位、保留窗口不动、同步/异步、`evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | 逐块多模态估算：固定媒体成本、5 MB base64 回归、未知块藏媒体、`str` / `None` / 空列表边界 |
+| `tests/agent/middlewares/test_multimodal_processor.py` | 三态原生开关与每请求擦洗：混合族只剥离 unsupported 块、supported 块原样保留、state/kwargs/磁盘不动、`"true"` 永不擦洗、历史图片剥离 |
+| `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` 上限：超限载荷在写入前跳过、模型可见提示、恰好等于上限允许、声明的 `Content-Length` 快路径、限量读取 |
+| `tests/agent/middlewares/test_media_degradation.py` | 静默降级检测：en / zh / ja / ko 盲区正则 + 请求描述模式、有能力或无关回复不误报、实际出现的媒体族全部写缓存、标志无论是否命中都清除、回退候选归属 |
+| `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | 拒绝 → 缓存 + 技能路径改写：后续会话跳过原生、模型 key 隔离、显式 `"true"` 永不回退 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | `persisted_message_ids` 水位存储 |
-| `tests/full/test_context_governance_e2e.py` | 实网 e2e（真实 LLM + 真实图）：六项机制端到端 —— 显式运行 |
+| `tests/full/test_context_governance_e2e.py` | 实网 e2e（真实 LLM + 真实图）：各项机制端到端 —— 显式运行 |
 
 ```bash
 # Hermetic suites (CI gate)
@@ -279,6 +300,10 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_multimodal_processor.py \
+    tests/agent/middlewares/test_media_size_limit.py \
+    tests/agent/middlewares/test_media_degradation.py \
+    tests/agent/middlewares/test_multimodal_native_fallback_e2e.py \
     tests/agent/middlewares/test_compression_media_offload.py \
     tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q

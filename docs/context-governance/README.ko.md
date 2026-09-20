@@ -2,11 +2,11 @@
 
 [**English**](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 원본 기록을 어떻게 영속시키고 모델 가시 컨텍스트를 어떻게 작게 유지하는가: 모델 경계마다·도구 반환마다의 write-once 영속화, 복구 가능한 프리뷰를 남기는 도구 결과 디스크 축출, 실행 시점 `read_file` 슬라이스, state에 전문을 남기는 인간 메시지 축출, 어떤 압축 라우트보다 먼저 도는 LLM 없는 테일 클립, 그리고 오래된 요약을 대화 페이로드에서 차단하는 체인 요약 필터링.
+> 원본 기록을 어떻게 영속시키고 모델 가시 컨텍스트를 어떻게 작게 유지하는가: 모델 경계마다·도구 반환마다의 write-once 영속화, 복구 가능한 프리뷰를 남기는 도구 결과 디스크 축출, 실행 시점 `read_file` 슬라이스, state에 전문을 남기는 인간 메시지 축출, 미디어 거버넌스(입력 크기 상한, 요청별 능력 스크럽, 조용한 퇴화 감지, 압축 시점 오프로드, 블록 단위 토큰 분류), 어떤 압축 라우트보다 먼저 도는 LLM 없는 테일 클립, 그리고 오래된 요약을 대화 페이로드에서 차단하는 체인 요약 필터링.
 
-에이전트가 만드는 모든 메시지는 두 번 가치 있다: **원본 기록**(실제로 일어난 일 — 검색과 압축을 위해)과 **모델 컨텍스트**(지금 윈도에 들어가는 것)다. 이 페이지는 그 두 요구를 화해시키는 여섯 가지 메커니즘을 기록한다 — 모두 하나의 규칙을 공유한다: **데이터는 절대 잃지 않고, 줄이는 것은 모델 뷰뿐이며, 전문을 가리키는 포인터를 항상 남긴다.**
+에이전트가 만드는 모든 메시지는 두 번 가치 있다: **원본 기록**(실제로 일어난 일 — 검색과 압축을 위해)과 **모델 컨텍스트**(지금 윈도에 들어가는 것)다. 이 페이지는 그 두 요구를 화해시키는 각 메커니즘을 기록한다 — 모두 하나의 규칙을 공유한다: **파이프라인에 들어온 페이로드는 결코 잃지 않고, 줄이는 것은 모델 뷰뿐이며, 모든 축소는 전문을 가리키는 포인터를 남긴다.**
 
-**사실상의 기준(source of truth):** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/media_offload.py`, `pub/func/estimate_tokens.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`, `config/features/agent_side/token_estimation.py`. 아래의 모든 주장은 해당 코드와 대조하여 검증했습니다.
+**사실상의 기준(source of truth):** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/media_offload.py`, `agent/middlewares/media_pipeline/scrub.py`, `agent/middlewares/media_pipeline/degradation.py`, `agent/middlewares/media_pipeline/media_handlers.py`, `agent/middlewares/llm_capability_cache.py`, `agent/middlewares/llm_retry/core.py`, `pub/func/estimate_tokens.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`, `config/features/agent_side/media_pipeline.py`, `config/features/agent_side/token_estimation.py`. 아래의 모든 주장은 해당 코드와 대조하여 검증했습니다.
 
 ## 🎯 개요와 파이프라인
 
@@ -58,6 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | cron으로 트리거된 턴 | `origin='cron'` | `True` | 예약 작업의 세션 턴(`origin_for_source`) | `messages` 행 | 사용자 요청이 아님 |
 | 압축 요약 쌍 | `lc_source='summarization'`(`additional_kwargs` 내, origin 열 아님) | — | 압축 산출물(`_build_new_messages`) | **MesMemory에 영속화되지 않음**; state 요약 쌍 | `<summary>`가 모델 뷰에 상주; `<prior-summary>`로 체인 연속 |
 | 축출 파일 | 비메시지 —— 디스크 파일 | — | P0-2 / P1-9 축출 | `SESSIONS_DIR/<session_id>/evicted/`(바이트 단위 전문) | 필요 시 `read_file`; 요약 체인이 구조화 요약 문서에 `evicted_refs[]` 포인터를 운반 |
+| 미디어 파일 | 비메시지 —— 디스크 파일 | — | 업로드 처리(`MultimodalProcessor`), 이력 메시지의 네이티브 블록 제거, 또는 압축 시점 오프로드(`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/`(영속 사본; 압축 시점 오프로드는 `sha256[:16]` 이름으로 중복 제거); `max_media_bytes` 초과 페이로드는 결코 기록되지 않음 | 네이티브일 때 미디어 블록; 스킬 경로 힌트와 요청별 스크럽 플레이스홀더가 경로를 전달; 요약 체인은 오프로드된 경로를 `evicted_refs[]`에 유지 |
 | 계획 지식 | 비메시지 —— 디렉터리 | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref`로 `<knowledge>` 블록 주입 |
 | FACTS.md | `workspace/memory/FACTS.md`(memory 도구 target `facts`) | — | 모듈 비의존적 광범위 함정과 규약: 압축 시 기억 검토 + 계획 완료 추출 | memory 파일(1 375자 상한; 초과 시 가장 오래된 항목부터 축출) | 상주 FACTS 메모리 블록으로 매 시스템 프롬프트에 주입 |
 
@@ -145,7 +146,15 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## 🖼️ 미디어 거버넌스 (오프로드, 참조, 토큰 분류)
 
-압축과 토큰 추정 모두 멀티모달 페이로드를 다뤄야 하며, 둘 다 base64를 텍스트로 취급해서는 안 됩니다.
+미디어는 입구와 출구 양쪽에서 통치됩니다: 입구 규칙은 처리할 수 없는 페이로드를 요청 밖으로 막고 쓸 수 없는 모델을 두 번 탐색하지 않게 하며, 압축과 토큰 추정은 base64를 결코 텍스트로 취급하지 않습니다.
+
+**입력 크기 상한.** 모든 인바운드 미디어 페이로드 —— 인라인 base64 / `data:` 블록 또는 원격 URL 다운로드 —— 는 **어떤 디스크 쓰기보다 먼저** `MEDIA_PIPELINE["max_media_bytes"]`(20 MiB)와 비교됩니다. 상한을 넘는 페이로드는 건너뜁니다: 아무것도 기록되지 않고, 경로가 `MediaPaths`에 들어가지 않으며, 경고가 바이트 수를 기록하고, 메시지에는 첨부가 저장되지 않았고 모델로 보내지지 않았다는 모델 가시 `[Uploaded media]` 줄이 붙습니다. 원격 URL은 서버가 선언한 `Content-Length`가 있으면 그것으로, 없으면 `limit + 1` 바이트로 제한한 읽기로 판정하므로 잘못된 헤더가 초과 쓰기를 강제할 수 없습니다; 이미지·오디오·비디오 핸들러가 같은 게이트를 공유합니다(`media_handlers.py::_exceeds_media_limit` / `_record_oversize`). 상한과 정확히 같은 페이로드는 허용됩니다.
+
+**요청별 능력 스크럽.** `MultimodalProcessor.wrap_model_call`(auto 모드)은 요청 사본만 재구성합니다 —— `request.override(messages=...)` —— 서빙 모델이 `"unsupported"`로 캐시된 패밀리의 미디어 블록마다 블록 유형, 기록된 디스크 경로, 대응 내장 스킬(`image_to_text` / `speech_to_text` / `video_text_to_text`)을 담은 텍스트 플레이스홀더로 바꿉니다. supported와 미탐색 블록은 그대로 통과하므로 혼합 메시지는 지원 패밀리의 네이티브 미디어를 유지하고 지원되지 않는 것만 블록 단위로 벗겨집니다. state·checkpointer·MesMemory에는 결코 쓰지 않고, 교체할 블록이 없으면 원래 요청 객체를 반환합니다. 스크럽은 `"auto"`에서만 동작합니다: `"true"`는 모든 블록을 모델에 남기고, `"false"`는 요청이 조립되기 전에 스킬 경로를 탑니다.
+
+**조용한 퇴화 감지.** 모델은 미디어 블록을 받아 놓고 보지 못한 것처럼 답할 수 있습니다. auto 모드 네이티브 시도로 시작해 성공한 호출에서 `LLMRetryMiddleware`는 응답을 `detect_media_blindness()`(`media_pipeline/degradation.py`)로 평가합니다 —— 순수 정규식, en / zh / ja / ko, 정밀도 우선: 실명 표현의 ±40자 안에 미디어 단어가 있을 때만 히트 —— 그리고 명시적 "미디어를 설명해 달라" 요청 패턴도 포함합니다. 히트하면 요청에 실제로 나타난 모든 미디어 패밀리가 `"unsupported"`로 캐시되어 이후 턴은 스킬 경로로 직행합니다; 턴별 네이티브 플래그는 어느 쪽이든 지웁니다. `main_llm_silent_degradation_detection`(True)이 마스터 스위치입니다. 귀속은 서빙 모델을 따릅니다: `LLMRetryMiddleware`가 요청을 스티키 폴백 후보로 재바인딩할 때 먼저 턴별 네이티브 모델 키를 `{candidate.provider}/{candidate.model_name}`으로 다시 쓰므로, 오류 거부와 조용한 거부 모두 실제로 그 호출을 처리한 모델에 캐시됩니다.
+
+**능력 캐시.** 세 입구 동작은 하나의 프로세스 수준 캐시(`agent/middlewares/llm_capability_cache.py`)를 공유합니다. 키는 `"{provider}/{model_name}"`, 패밀리별 값은 `"auto"`(미테스트) / `"supported"` / `"unsupported"`. 캐시는 프로세스 안에만 존재합니다: 재시작하면 깨끗해지고(최대 한 번의 헛된 네이티브 탐색), 모델 전환(env 변경 + 재시작)은 자연히 새 키가 됩니다.
 
 **압축 시점 오프로드.** `_apply_compression`이 요약될 프리픽스(`current_messages[:cutoff]`)를 직렬화하기 전에 `offload_inline_media`(`agent/middlewares/summarization/media_offload.py`)가 그 범위만의 모든 인라인 미디어 블록을 다시 씁니다:
 
@@ -249,6 +258,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | 보수적 고정 비용(추정 시 길이 메타데이터 없음) |
 | `tokens_per_unknown_block` | `85` | 알 수 없는 블록의 고정 비용 —— 결코 그 base64가 아님 |
 
+`MEDIA_PIPELINE`(`config/features/agent_side/media_pipeline.py`)의 입구 측 키:
+
+| 키 | 기본값 | 의미 |
+|---|---|---|
+| `main_llm_native_multimodal` | `"auto"` | 3-상태 네이티브 스위치: `"true"`는 모델에 미디어 블록을 남기고, `"false"`는 항상 스킬 경로, `"auto"`는 능력 캐시로 패밀리별 결정; 그 밖의 값은 페일세이프로 스킬 경로 |
+| `main_llm_silent_degradation_detection` | `True` | 네이티브 응답이 미디어 실명을 자술하면 요청에 나타난 미디어 패밀리를 `"unsupported"`로 캐시 |
+| `max_media_bytes` | `20 * 1024 * 1024` | 페이로드당 하드 상한; 초과 페이로드는 쓰기 전에 건너뜀 |
+
 이 노브들에는 환경 변수가 없다: 설계상 위 feature TypedDict들의 코드 기본값이다.
 
 ## 🧪 테스트 맵
@@ -267,8 +284,12 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 체인 요약 필터링과 `<prior-summary>` 주입 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 압축 시점 인라인 미디어 오프로드: 쓰기 + 포인터, 해시 중복 제거, 실패 플레이스홀더, 보존 윈도우 불변, 동기/비동기, `evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | 블록 단위 멀티모달 추정: 고정 미디어 비용, 5 MB base64 회귀, 미디어를 숨긴 미지 블록, `str` / `None` / 빈 리스트 경계 |
+| `tests/agent/middlewares/test_multimodal_processor.py` | 3-상태 네이티브 스위치와 요청별 스크럽: 혼합 패밀리는 지원되지 않는 블록만 제거, 지원 블록은 그대로, state/kwargs/디스크 불변, `"true"`는 결코 스크럽하지 않음, 이력 이미지 제거 |
+| `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` 상한: 초과 페이로드는 쓰기 전에 건너뜀, 모델 가시 알림, 상한 정확히는 허용, 선언된 `Content-Length` 고속 경로, 제한된 읽기 |
+| `tests/agent/middlewares/test_media_degradation.py` | 조용한 퇴화 감지: en / zh / ja / ko 실명 정규식 + 설명 요청 패턴, 유능하거나 무관한 응답은 오탐 없음, 실제 나타난 모든 패밀리 캐시, 어느 쪽이든 플래그 해제, 폴백 후보 귀속 |
+| `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | 거부 → 캐시 + 스킬 경로 재작성: 다음 세션 네이티브 건너뜀, 모델 키 격리, 명시 `"true"`는 폴백하지 않음 |
 | `tests/context_engine/store/test_persisted_message_ids.py` | `persisted_message_ids` 워터마크 저장소 |
-| `tests/full/test_context_governance_e2e.py` | 라이브 네트워크 e2e(실제 LLM + 실제 그래프): 여섯 메커니즘 종단 간 — 명시적으로 실행 |
+| `tests/full/test_context_governance_e2e.py` | 라이브 네트워크 e2e(실제 LLM + 실제 그래프): 모든 메커니즘 종단 간 — 명시적으로 실행 |
 
 ```bash
 # Hermetic suites (CI gate)
@@ -279,6 +300,10 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_multimodal_processor.py \
+    tests/agent/middlewares/test_media_size_limit.py \
+    tests/agent/middlewares/test_media_degradation.py \
+    tests/agent/middlewares/test_multimodal_native_fallback_e2e.py \
     tests/agent/middlewares/test_compression_media_offload.py \
     tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q

@@ -2,11 +2,11 @@
 
 [**English**](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> 生の履歴をいかに永続させ、モデル可視コンテキストをいかに小さく保つか：モデル境界ごと・ツール返却ごとの write-once 永続化、回収可能なプレビューを残すツール結果のディスク退避、実行時 `read_file` スライス、state に全文を残す人間メッセージ退避、あらゆる圧縮ルートより先に走る LLM なしテールクリップ、そして古い要約を会話ペイロードから締め出すチェーン要約フィルタリング。
+> 生の履歴をいかに永続させ、モデル可視コンテキストをいかに小さく保つか：モデル境界ごと・ツール返却ごとの write-once 永続化、回収可能なプレビューを残すツール結果のディスク退避、実行時 `read_file` スライス、state に全文を残す人間メッセージ退避、メディア・ガバナンス（入力サイズ上限、リクエストごとのケイパビリティ・スクラブ、サイレント劣化の検出、圧縮時オフロード、ブロック単位トークン分類）、あらゆる圧縮ルートより先に走る LLM なしテールクリップ、そして古い要約を会話ペイロードから締め出すチェーン要約フィルタリング。
 
-エージェントが生むメッセージには二つの価値がある：**生の履歴**（実際に起きたこと。検索と圧縮のため）と、**モデルコンテキスト**（今ウィンドウに収まるもの）である。本ページはこの二つを両立させる六つの機構を記録する —— すべてが一つの規則を共有する：**データは決して失わず、縮めるのはモデルビューだけ、そして全文へのポインタを必ず残す。**
+エージェントが生むメッセージには二つの価値がある：**生の履歴**（実際に起きたこと。検索と圧縮のため）と、**モデルコンテキスト**（今ウィンドウに収まるもの）である。本ページはこの二つを両立させる各機構を記録する —— すべてが一つの規則を共有する：**パイプラインに入ったペイロードは決して失わず、縮めるのはモデルビューだけ、そしてあらゆる縮小は全文へのポインタを残す。**
 
-**一次情報:** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/media_offload.py`、`pub/func/estimate_tokens.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`、`config/features/agent_side/token_estimation.py`。以下の主張はすべてこのコードと突き合わせて検証済みです。
+**一次情報:** `agent/middlewares/context_eviction/core.py`、`agent/middlewares/message_persistence/core.py`、`agent/middlewares/message_persistence/prepare.py`、`pub/func/message/eviction.py`、`pub/func/message/overflow_clip.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/media_offload.py`、`agent/middlewares/media_pipeline/scrub.py`、`agent/middlewares/media_pipeline/degradation.py`、`agent/middlewares/media_pipeline/media_handlers.py`、`agent/middlewares/llm_capability_cache.py`、`agent/middlewares/llm_retry/core.py`、`pub/func/estimate_tokens.py`、`context_engine/store/core.py`、`config/features/agent_side/tool_result_eviction.py`、`config/features/agent_side/summarization.py`、`config/features/agent_side/media_pipeline.py`、`config/features/agent_side/token_estimation.py`。以下の主張はすべてこのコードと突き合わせて検証済みです。
 
 ## 🎯 概要とパイプライン
 
@@ -58,6 +58,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | cron 起動のターン | `origin='cron'` | `True` | 定期ジョブのセッションターン（`origin_for_source`） | `messages` 行 | ユーザーリクエストではない |
 | 圧縮要約ペア | `lc_source='summarization'`（`additional_kwargs` 内、origin 列ではない） | — | 圧縮成果物（`_build_new_messages`） | **MesMemory には永続化されない**；state の要約ペア | `<summary>` がモデルビューに常駐；`<prior-summary>` として連鎖継続 |
 | 退避ファイル | 非メッセージ —— ディスクファイル | — | P0-2 / P1-9 退避 | `SESSIONS_DIR/<session_id>/evicted/`（バイト単位の全文） | オンデマンド `read_file`；要約チェーンは構造化要約ドキュメント内で `evicted_refs[]` ポインタを運ぶ |
+| メディアファイル | 非メッセージ —— ディスクファイル | — | アップロード処理（`MultimodalProcessor`）、履歴メッセージのネイティブブロック除去、または圧縮時オフロード（`offload_inline_media`） | `SESSIONS_DIR/<session_id>/media/`（永続コピー；圧縮時オフロードは `sha256[:16]` 命名で重複排除）；`max_media_bytes` 超のペイロードは決して書き込まれない | ネイティブ時のメディアブロック；スキルパスのヒントとリクエストごとのスクラブ・プレースホルダがパスを運ぶ；要約チェーンはオフロード済みパスを `evicted_refs[]` に保つ |
 | 計画知識 | 非メッセージ —— ディレクトリ | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | `plan_ref` により `<knowledge>` ブロックを注入 |
 | FACTS.md | `workspace/memory/FACTS.md`（memory ツール target `facts`） | — | モジュール非依存の広範な落とし穴・規約：圧縮時の記憶レビュー + 計画完了時の抽出 | memory ファイル（1 375 文字上限；超過時は最古のエントリから淘汰） | 常駐 FACTS メモリブロックとして毎回のシステムプロンプトに注入 |
 
@@ -145,7 +146,15 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## 🖼️ メディア・ガバナンス（オフロード、参照、トークン分類）
 
-圧縮とトークン推定はどちらもマルチモーダル・ペイロードを扱わなければならず、どちらも base64 をテキストとして扱ってはなりません。
+メディアは入口と出口の両側で統治されます：入口側の規則が処理不能なペイロードをリクエストから締め出し、使えないモデルを二度探らないようにし、圧縮とトークン推定は base64 を決してテキストとして扱いません。
+
+**入力サイズ上限。** すべての受信メディア・ペイロード —— インラインの base64 / `data:` ブロックまたはリモート URL のダウンロード —— は、**ディスクへ書き込む前に** `MEDIA_PIPELINE["max_media_bytes"]`（20 MiB）と比較されます。上限を超えたペイロードはスキップされます：書き込みは行われず、パスは `MediaPaths` に入らず、警告がバイト数を記録し、メッセージには添付が保存されずモデルにも送られなかったことを示すモデル可視の `[Uploaded media]` 行が付きます。リモート URL はサーバーが申告した `Content-Length` があればそれで、なければ `limit + 1` バイトに制限した読み取りで判定するため、誤ったヘッダーが過大な書き込みを強制することはありません；画像・音声・動画のハンドラが同じゲートを共有します（`media_handlers.py::_exceeds_media_limit` / `_record_oversize`）。上限ちょうどのペイロードは許可されます。
+
+**リクエストごとのケイパビリティ・スクラブ。** `MultimodalProcessor.wrap_model_call`（auto モード）はリクエストのコピーだけを再構築し —— `request.override(messages=...)` —— サービングモデルが `"unsupported"` とキャッシュされているファミリーのメディアブロックを、ブロック種別・記録済みのディスクパス・対応する組み込みスキル（`image_to_text` / `speech_to_text` / `video_text_to_text`）を記したテキスト・プレースホルダに置き換えます。supported と未プローブのブロックはそのまま通り、混合メッセージは対応ファミリーのネイティブ・メディアを保ち、非対応のものだけがブロック単位で剥がされます。state・checkpointer・MesMemory には決して書き込まれず、置換が不要なときは元のリクエストオブジェクトが返ります。スクラブは `"auto"` のときだけ動きます：`"true"` は全ブロックをモデルに残し、`"false"` はリクエストが組まれる前にスキルパスを取ります。
+
+**サイレント劣化の検出。** モデルはメディアブロックを受け取りながら、見なかったかのように答えることがあります。auto モードのネイティブ試行として始まり成功した呼び出しでは、`LLMRetryMiddleware` が返答を `detect_media_blindness()`（`media_pipeline/degradation.py`）で評価します —— 純正規表現、en / zh / ja / ko、精度優先：盲目の言い回しの ±40 文字以内にメディア語があるときだけヒット —— さらに明示的な「メディアを説明して」要求パターンも対象です。ヒットすると、リクエストに実際に現れたすべてのメディアファミリーが `"unsupported"` としてキャッシュされ、以降のターンはスキルパスへ直行します；ターンごとのネイティブ・フラグはどちらでもクリアされます。`main_llm_silent_degradation_detection`（True）がマスタースイッチです。帰属はサービングモデルに従います：`LLMRetryMiddleware` がリクエストをスティッキーなフォールバック候補に再バインドするとき、まずターンごとのネイティブモデル・キーを `{candidate.provider}/{candidate.model_name}` に書き換えるため、エラー拒否もサイレント拒否も実際にその呼び出しを処理したモデルに対してキャッシュされます。
+
+**ケイパビリティ・キャッシュ。** 三つの入口側挙動は一つのプロセスレベル・キャッシュ（`agent/middlewares/llm_capability_cache.py`）を共有します。キーは `"{provider}/{model_name}"`、ファミリーごとの値は `"auto"`（未テスト）/ `"supported"` / `"unsupported"`。キャッシュはプロセス内にのみ存在します：再起動でクリーンになり（無駄なネイティブ試行は最大 1 回）、モデル切り替え（env 変更 + 再起動）は自然に新しいキーになります。
 
 **圧縮時オフロード。** `_apply_compression` が要約されるプレフィックス（`current_messages[:cutoff]`）を直列化する前に、`offload_inline_media`（`agent/middlewares/summarization/media_offload.py`）がその範囲だけのすべてのインライン・メディアブロックを書き換えます：
 
@@ -249,6 +258,14 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | 保守的な固定コスト（推定時に長さメタデータなし） |
 | `tokens_per_unknown_block` | `85` | 未知ブロックの固定コスト —— その base64 では決してない |
 
+`MEDIA_PIPELINE`（`config/features/agent_side/media_pipeline.py`）の入口側キー：
+
+| キー | デフォルト | 意味 |
+|---|---|---|
+| `main_llm_native_multimodal` | `"auto"` | 三態ネイティブ・スイッチ：`"true"` はモデルにメディアブロックを残し、`"false"` は常にスキルパス、`"auto"` はケイパビリティ・キャッシュでファミリーごとに決定。それ以外の値はフェイルセーフでスキルパス |
+| `main_llm_silent_degradation_detection` | `True` | ネイティブ返答がメディア盲目を自述したとき、リクエストに現れたメディアファミリーを `"unsupported"` としてキャッシュ |
+| `max_media_bytes` | `20 * 1024 * 1024` | ペイロード単位のハード上限。超過ペイロードは書き込み前にスキップ |
+
 これらのノブに環境変数はない：設計上、上記 feature TypedDict のコードデフォルトである。
 
 ## 🧪 テストマップ
@@ -267,8 +284,12 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 | `tests/agent/middlewares/test_summary_message_filtering.py` | チェーン要約フィルタリングと `<prior-summary>` 注入 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 圧縮時インライン・メディア・オフロード：書き込み + ポインタ、ハッシュ重複排除、失敗プレースホルダ、保持ウィンドウ不変、同期／非同期、`evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | ブロック単位マルチモーダル推定：固定メディアコスト、5 MB base64 回帰、メディアを隠す未知ブロック、`str` / `None` / 空リスト境界 |
+| `tests/agent/middlewares/test_multimodal_processor.py` | 三態ネイティブ・スイッチとリクエストごとのスクラブ：混合ファミリーは非対応ブロックだけを剥がし、対応ブロックはそのまま、state/kwargs/ディスク不変、`"true"` は決してスクラブしない、履歴画像の除去 |
+| `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` 上限：超過ペイロードは書き込み前にスキップ、モデル可視の通知、上限ちょうどは許可、申告 `Content-Length` の高速パス、制限付き読み取り |
+| `tests/agent/middlewares/test_media_degradation.py` | サイレント劣化の検出：en / zh / ja / ko の盲目正規表現 + 説明要求パターン、有能・無関係な返答は誤検出しない、実際の全ファミリーをキャッシュ、どちらでもフラグ解除、フォールバック候補への帰属 |
+| `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | 拒否 → キャッシュ + スキルパス書き換え：次セッションのネイティブ・スキップ、モデルキー分離、明示 `"true"` はフォールバックしない |
 | `tests/context_engine/store/test_persisted_message_ids.py` | `persisted_message_ids` ウォーターマークストア |
-| `tests/full/test_context_governance_e2e.py` | ライブネットワーク e2e（実 LLM + 実グラフ）：六機構の端から端まで —— 明示的に実行 |
+| `tests/full/test_context_governance_e2e.py` | ライブネットワーク e2e（実 LLM + 実グラフ）：各機構の端から端まで —— 明示的に実行 |
 
 ```bash
 # Hermetic suites (CI gate)
@@ -279,6 +300,10 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_multimodal_processor.py \
+    tests/agent/middlewares/test_media_size_limit.py \
+    tests/agent/middlewares/test_media_degradation.py \
+    tests/agent/middlewares/test_multimodal_native_fallback_e2e.py \
     tests/agent/middlewares/test_compression_media_offload.py \
     tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q

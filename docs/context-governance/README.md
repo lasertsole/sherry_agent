@@ -2,11 +2,11 @@
 
 **English** · [中文](README.zh.md) · [한국어](README.ko.md) · [日本語](README.ja.md)
 
-> How raw history is kept durable and the model-visible context is kept small: write-once persistence at every model boundary and tool return, tool-result eviction to disk with a recoverable preview, execution-time `read_file` slicing, human-message eviction with a full-text state, a no-LLM overflow tail clip that runs before any compression route, and chain-summary filtering that keeps old summaries out of the conversation payload.
+> How raw history is kept durable and the model-visible context is kept small: write-once persistence at every model boundary and tool return, tool-result eviction to disk with a recoverable preview, execution-time `read_file` slicing, human-message eviction with a full-text state, media governance (an input size cap, per-request capability scrubbing, silent-degradation detection, compression-time offload, and block-wise token classing), a no-LLM overflow tail clip that runs before any compression route, and chain-summary filtering that keeps old summaries out of the conversation payload.
 
-Every message the agent produces is valuable twice: once as **raw history** (what actually happened, for search and for compression) and once as **model context** (what fits in the window right now). This page documents the six mechanisms that reconcile those two needs — they all share one rule: **never lose data, only shrink the model view, and always leave a pointer back to the full text.**
+Every message the agent produces is valuable twice: once as **raw history** (what actually happened, for search and for compression) and once as **model context** (what fits in the window right now). This page documents the mechanisms that reconcile those two needs — they all share one rule: **once a payload has entered the pipeline it is never lost, only the model view is shrunk, and every reduction leaves a pointer back to the full text.**
 
-**Source of truth:** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/media_offload.py`, `pub/func/estimate_tokens.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`, `config/features/agent_side/token_estimation.py`. Every claim below was checked against that code.
+**Source of truth:** `agent/middlewares/context_eviction/core.py`, `agent/middlewares/message_persistence/core.py`, `agent/middlewares/message_persistence/prepare.py`, `pub/func/message/eviction.py`, `pub/func/message/overflow_clip.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/media_offload.py`, `agent/middlewares/media_pipeline/scrub.py`, `agent/middlewares/media_pipeline/degradation.py`, `agent/middlewares/media_pipeline/media_handlers.py`, `agent/middlewares/llm_capability_cache.py`, `agent/middlewares/llm_retry/core.py`, `pub/func/estimate_tokens.py`, `context_engine/store/core.py`, `config/features/agent_side/tool_result_eviction.py`, `config/features/agent_side/summarization.py`, `config/features/agent_side/media_pipeline.py`, `config/features/agent_side/token_estimation.py`. Every claim below was checked against that code.
 
 ## 🎯 Overview & Pipeline
 
@@ -58,6 +58,7 @@ Everything that reaches graph state or MesMemory enters from one of the sources 
 | Cron-triggered turn | `origin='cron'` | `True` | a scheduled job's session turn (`origin_for_source`) | `messages` row | not a user request |
 | Compression summary pair | `lc_source='summarization'` (in `additional_kwargs`, not the origin column) | — | a compaction artifact (`_build_new_messages`) | **never persisted to MesMemory**; a state summary pair | `<summary>` resident in the model view; carried forward as `<prior-summary>` |
 | Eviction file | non-message — disk file | — | P0-2 / P1-9 eviction | `SESSIONS_DIR/<session_id>/evicted/` (byte-exact full text) | on-demand `read_file`; the summary chain carries `evicted_refs[]` pointers in the structured summary doc |
+| Media file | non-message — disk file | — | upload processing (`MultimodalProcessor`), native history stripping, or compression-time offload (`offload_inline_media`) | `SESSIONS_DIR/<session_id>/media/` (durable copies; compression-time offload names by `sha256[:16]` and dedups); a payload over `max_media_bytes` is never written | media blocks when native; skill-path hints and per-request scrub placeholders carry the path; the summary chain keeps offloaded paths in `evicted_refs[]` |
 | Plan knowledge | non-message — disk directory | — | plan extraction | `workspace/knowledge/plans/<plan_key>/` | injected as a `<knowledge>` block via `plan_ref` |
 | FACTS.md | `workspace/memory/FACTS.md` (memory tool target `facts`) | — | broad, module-independent pitfalls and conventions: compression-time memory review + completed-plan extraction | memory file (1 375-char limit; overflow drops the oldest entries first) | injected into every system prompt as a resident FACTS memory block |
 
@@ -145,7 +146,15 @@ The asymmetry follows from *when* the message is persisted. A tool result is flu
 
 ## 🖼️ Media Governance (Offload, Reference & Token Classing)
 
-Both compression and token estimation have to deal with multimodal payloads; neither may ever treat base64 as text.
+Media is governed on the way in and on the way out: entry-side rules keep unprocessable payloads out of the request and stop an unusable model from being probed twice, while compression and token estimation never treat base64 as text.
+
+**Input size cap.** Every inbound media payload — an inline base64 / `data:` block or a remote URL download — is measured against `MEDIA_PIPELINE["max_media_bytes"]` (20 MiB) **before any disk write**. A payload over the cap is skipped: nothing is written, no path enters `MediaPaths`, a warning logs the byte count, and the message carries a model-visible `[Uploaded media]` line saying the attachment was not saved and was not sent to the model. A remote URL is judged by `Content-Length` when the server declares one and otherwise by a read capped at `limit + 1` bytes, so a wrong header can never force an oversized write; the same gate covers the image, audio and video handlers (`media_handlers.py::_exceeds_media_limit` / `_record_oversize`). A payload exactly at the limit is allowed.
+
+**Per-request capability scrub.** `MultimodalProcessor.wrap_model_call` (auto mode) rebuilds the request copy only — `request.override(messages=...)` — replacing every media block whose family the serving model is cached as `"unsupported"` with a text placeholder that names the block type, its recorded on-disk path and the matching builtin skill (`image_to_text` / `speech_to_text` / `video_text_to_text`). Supported and unprobed blocks pass through verbatim, so a mixed message keeps native media for the supported families and only the unsupported ones are stripped — block by block. State, checkpointer and MesMemory are never written; when no block needs replacement the original request object is returned. The scrub runs only under `"auto"`: `"true"` keeps every block for the model, `"false"` takes the skill path before the request is assembled.
+
+**Silent-degradation detection.** A model can accept media blocks and answer as if it never saw them. On the success path of a call that started as an auto-mode native attempt, `LLMRetryMiddleware` evaluates the reply with `detect_media_blindness()` (`media_pipeline/degradation.py`) — a pure regex, en / zh / ja / ko, precision-first: a blindness phrase counts only when a media word sits within ±40 characters — plus an explicit "please describe the media" request pattern. On a hit every media family present in the request is cached `"unsupported"`, so later turns go straight to the skill path; the per-turn native flag is cleared either way. `main_llm_silent_degradation_detection` (True) is the master switch. Attribution follows the serving model: when `LLMRetryMiddleware` re-binds the request to a sticky fallback candidate it first rewrites the per-turn native-model key to `{candidate.provider}/{candidate.model_name}`, so an error rejection and a silent one are both cached against the model that actually served the call.
+
+**Capability cache.** All three entry-side behaviors share one process-level cache (`agent/middlewares/llm_capability_cache.py`), keyed `"{provider}/{model_name}"` with per-family values `"auto"` (untested) / `"supported"` / `"unsupported"`. It lives for the process only: a restart starts clean (at most one wasted native probe), and a model switch — env change plus restart — is naturally a new key.
 
 **Compression-time offload.** Before `_apply_compression` serializes the summarized prefix (`current_messages[:cutoff]`), `offload_inline_media` (`agent/middlewares/summarization/media_offload.py`) rewrites every inline media block in that range only:
 
@@ -249,6 +258,14 @@ The interaction map:
 | `tokens_per_audio_block` / `tokens_per_video_block` | `256` / `1024` | Conservative fixed costs (no duration metadata at estimation time) |
 | `tokens_per_unknown_block` | `85` | Fixed cost for an unrecognised block — never its base64 |
 
+`MEDIA_PIPELINE` (`config/features/agent_side/media_pipeline.py`), the input-side keys:
+
+| Key | Default | Meaning |
+|---|---|---|
+| `main_llm_native_multimodal` | `"auto"` | Tri-state native switch: `"true"` keeps media blocks for the model, `"false"` always takes the skill path, `"auto"` decides per family through the capability cache; any other value fails safe to the skill path |
+| `main_llm_silent_degradation_detection` | `True` | Cache the media families present as `"unsupported"` when a native reply self-reports media blindness |
+| `max_media_bytes` | `20 * 1024 * 1024` | Hard per-payload ceiling; an oversize payload is skipped before any disk write |
+
 There are no environment variables for these knobs: they are code defaults in the feature TypedDicts above, by design.
 
 ## 🧪 Testing Map
@@ -267,8 +284,12 @@ There are no environment variables for these knobs: they are code defaults in th
 | `tests/agent/middlewares/test_summary_message_filtering.py` | Chain-summary filtering and `<prior-summary>` injection |
 | `tests/agent/middlewares/test_compression_media_offload.py` | Compression-time inline-media offload: write + pointer, hash dedup, failure placeholder, preserved window untouched, sync/async, `evicted_refs` |
 | `tests/pub/func/test_estimate_tokens_media.py` | Block-wise multimodal estimation: fixed media costs, 5 MB-base64 regression, unknown-block media, `str` / `None` / empty-list edges |
+| `tests/agent/middlewares/test_multimodal_processor.py` | Tri-state native switch and per-request scrub: mixed families strip only unsupported blocks, supported blocks kept verbatim, state/kwargs/disk untouched, `"true"` never scrubbed, history image stripping |
+| `tests/agent/middlewares/test_media_size_limit.py` | `max_media_bytes` cap: oversize payloads skipped before any write, model-visible notice, exactly-at-limit allowed, declared `Content-Length` fast path, capped read |
+| `tests/agent/middlewares/test_media_degradation.py` | Silent-degradation detection: en / zh / ja / ko blindness regex + describe-request patterns, capable or unrelated replies stay clean, every present family cached, flag cleared either way, fallback-candidate attribution |
+| `tests/agent/middlewares/test_multimodal_native_fallback_e2e.py` | Rejection → cache + skill-path rewrite: next-session native skip, per-model-key isolation, explicit `"true"` never falls back |
 | `tests/context_engine/store/test_persisted_message_ids.py` | The `persisted_message_ids` watermark store |
-| `tests/full/test_context_governance_e2e.py` | Live-network e2e (real LLM + real graph): all six mechanisms end to end — run explicitly |
+| `tests/full/test_context_governance_e2e.py` | Live-network e2e (real LLM + real graph): all mechanisms end to end — run explicitly |
 
 ```bash
 # Hermetic suites (CI gate)
@@ -279,6 +300,10 @@ uv run pytest tests/agent/middlewares/context_eviction \
     tests/pub/func/message/test_overflow_clip.py \
     tests/agent/middlewares/test_summarization_overflow_clip.py \
     tests/agent/middlewares/test_summary_message_filtering.py \
+    tests/agent/middlewares/test_multimodal_processor.py \
+    tests/agent/middlewares/test_media_size_limit.py \
+    tests/agent/middlewares/test_media_degradation.py \
+    tests/agent/middlewares/test_multimodal_native_fallback_e2e.py \
     tests/agent/middlewares/test_compression_media_offload.py \
     tests/pub/func/test_estimate_tokens_media.py \
     tests/context_engine/store/test_persisted_message_ids.py -q
