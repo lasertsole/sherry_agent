@@ -595,7 +595,7 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 - `_MIN_CONTENT_LENGTH = 20` 文字未満の内容はスキップ。ツール呼び出しを含むモデル応答は丸ごとスキップします（ツールループの後に再チェックされます）。
 - **推論内容は別個に追跡**されます（`additional_kwargs` の `reasoning_content` / `reasoning` / `reasoning_text`、および可視内容から抽出・剥ぎ取られるインラインの `<think>` / `<thinking>` / `<reasoning>` ブロック）。
 
-**ストリーム層ヘルパー** `check_stream_repetition(session_id, accumulated_text)` — 共有の `_STREAM_GUARD` シングルトンに支えられたモジュールレベルヘルパーです。蓄積テキストに対して内部繰り返しサブ検出器を実行し、同じ状態キーと同じ内部警告の重複排除ゲートを使い、警告文字列（または `None`）を返します。本番のストリーム途中切断は `RepetitionGuardWrapper` が担い、グラフの `astream` をインターセプトします。このヘルパーは直接テスト可能なストリーム検査シームとして残っています。
+**ストリーム途中の切断**は `RepetitionGuardWrapper`（`agent/wrapper/repetition_guard.py`）が担います: グラフの `astream` をインターセプトし、本モジュールの内部繰り返し検出器、同じセッション単位の内部警告重複排除ゲート、共有の `_STREAM_WARNING` 文言を再利用します。旧モジュールレベルヘルパー `check_stream_repetition` には本番呼び出し元がなく、削除されました。
 
 **ワーカーのクリーンアップ：** 子セッション終了時、`SESSION_STATE_KEYS`（6 つのキー）が `state_register_mem` から削除されます。
 

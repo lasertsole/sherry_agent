@@ -595,7 +595,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - `_MIN_CONTENT_LENGTH = 20`자 미만의 내용은 건너뜀. 도구 호출을 포함한 모델 응답은 통째로 건너뜁니다(도구 루프 후에 재점검).
 - **추론 내용은 별도 추적**됩니다(`additional_kwargs`의 `reasoning_content` / `reasoning` / `reasoning_text`, 그리고 가시 내용에서 추출·제거되는 인라인 `<think>` / `<thinking>` / `<reasoning>` 블록).
 
-**스트림 계층 헬퍼** `check_stream_repetition(session_id, accumulated_text)` — 공유 `_STREAM_GUARD` 싱글턴에 기반한 모듈 수준 헬퍼로, 누적 텍스트에 내부 반복 하위 검출기를 실행하고 같은 상태 키와 같은 내부 경고 중복 제거 게이트를 사용하며 경고 문자열(또는 `None`)을 반환합니다. 프로덕션의 스트림 중간 차단은 그래프의 `astream`을 인터셉트하는 `RepetitionGuardWrapper`가 담당하며, 이 헬퍼는 직접 테스트 가능한 스트림 검사 이음새로 남아 있습니다.
+**스트림 중간 차단**은 `RepetitionGuardWrapper`(`agent/wrapper/repetition_guard.py`)가 담당합니다: 그래프의 `astream`을 인터셉트하고 이 모듈의 내부 반복 검출기, 동일한 세션별 내부 경고 중복 제거 게이트, 공유 `_STREAM_WARNING` 문구를 재사용합니다. 기존 모듈 수준 헬퍼 `check_stream_repetition`은 프로덕션 호출자가 없어 삭제되었습니다.
 
 **워커 클린업:** 자식 세션 종료 시 `SESSION_STATE_KEYS`(6개 키)가 `state_register_mem`에서 삭제됩니다.
 

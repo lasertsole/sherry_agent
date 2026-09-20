@@ -588,7 +588,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 - 少于 `_MIN_CONTENT_LENGTH = 20` 字符的内容跳过；含工具调用的模型响应整体跳过（工具循环结束后会再次检查）。
 - **推理内容单独跟踪**（`additional_kwargs` 中的 `reasoning_content` / `reasoning` / `reasoning_text`，以及内联的 `<think>` / `<thinking>` / `<reasoning>` 块——会被提取并从可见内容中剥离）。
 
-**流式辅助函数** `check_stream_repetition(session_id, accumulated_text)` —— 由共享的 `_STREAM_GUARD` 单例支撑的模块级辅助函数：对累积文本运行内部重复子检测器，使用同一组状态键与相同的内部警告去重门，返回警告字符串（或 `None`）。生产中，流中途截断由 `RepetitionGuardWrapper` 负责，它拦截图的 `astream`；该辅助函数仍是可直接测试的流式检查接缝。
+**流式截断**由 `RepetitionGuardWrapper`（`agent/wrapper/repetition_guard.py`）负责：它拦截图的 `astream`，复用本模块的内部重复检测器、同一套按会话的内部警告去重门以及共享的 `_STREAM_WARNING` 文案。原模块级辅助函数 `check_stream_repetition` 没有任何生产调用者，已删除。
 
 **Worker 清理：** 子会话结束时，`SESSION_STATE_KEYS`（六个键）会从 `state_register_mem` 中删除。
 

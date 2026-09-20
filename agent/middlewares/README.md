@@ -598,7 +598,7 @@ For the main agent the same detection runs through **`RepetitionGuardWrapper`** 
 - Contents shorter than `_MIN_CONTENT_LENGTH = 20` characters are skipped; model responses that contain tool calls are skipped entirely (they are re-checked after the tool loop).
 - **Reasoning is tracked separately** (`reasoning_content` / `reasoning` / `reasoning_text` in `additional_kwargs`, plus inline `<think>` / `<thinking>` / `<reasoning>` blocks, which are extracted and stripped from the visible content).
 
-**Stream-layer helper** `check_stream_repetition(session_id, accumulated_text)` — a module-level helper backed by the shared `_STREAM_GUARD` singleton; it runs the internal-repetition sub-detectors on the accumulated text with the same state keys and the same internal-warn dedupe gate, returning the warning string (or `None`). In production the mid-flight stream cut is owned by `RepetitionGuardWrapper`, which intercepts the graph's `astream`; the helper remains the directly-testable stream-check seam.
+**Stream-layer cutting** is owned by `RepetitionGuardWrapper` (`agent/wrapper/repetition_guard.py`), which intercepts the graph's `astream` and reuses this module's internal-repetition detector, the same per-session internal-warn dedupe gate, and the shared `_STREAM_WARNING` text. The former module-level `check_stream_repetition` helper had no production caller and was deleted.
 
 **Worker cleanup:** `SESSION_STATE_KEYS` (six keys) are deleted from `state_register_mem` when the child session finishes.
 
