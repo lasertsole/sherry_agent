@@ -26,6 +26,7 @@ class LlmClientDefaultsConfig(TypedDict):
     ittt_remote_timeout: int
     vttt_remote_temperature: float
     vttt_remote_max_retries: int
+    vttt_remote_timeout: int
 
 
 LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
@@ -60,4 +61,8 @@ LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
     "ittt_remote_timeout": 120,
     "vttt_remote_temperature": 0.8,
     "vttt_remote_max_retries": 2,
+    # Per-request timeout for the VTTT remote client (seconds) — aligned with
+    # ``main_timeout``. Without it the OpenAI SDK default (600 s) applies to
+    # every attempt (max_retries + 1).
+    "vttt_remote_timeout": 120,
 }
