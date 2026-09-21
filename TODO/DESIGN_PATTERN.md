@@ -400,6 +400,8 @@ class SessionState:
 - **文件**: `client/app/pages/home/index/[sid].vue:689-708`
 - **问题**: 4-case：createSession, uploadImage, uploadAudio, uploadVideo
 
+**Status: Done (2026-09-21)** — `pages/home/session-toolbar.ts::SESSION_TOOLBAR_EVENTS` + `buildSessionToolbarCommands` 注册表；4 个命令目标逐值不变，未知事件 no-op，`session-toolbar-commands.test.ts` 全分支钉死（见 §8 判据）。
+
 #### 4.1.3 [CONFIRMED] `badgeClass`/`statusLabel` — 硬编码 if-else 映射
 
 - **文件**: `client/app/composables/useSubagentTasks.ts:50,66`
@@ -422,11 +424,15 @@ class SessionState:
 - **问题**: `everyToMs()`（4-case）、`buildSchedule()`（3-case）、`describeSchedule()`（3-case）围绕同一调度类型枚举
 - **模式**: 合并为一个 Strategy 模式
 
+**Status: Done (2026-09-21)** — 提炼为 `utils/cron-schedule.ts` 表驱动（`EVERY_UNIT_MS`/`SCHEDULE_BUILDERS`/`DESCRIBERS`，保留原 `default` 回退）；每分支输出逐值不变，`utils/__tests__/cron-schedule.test.ts`（12）钉死（见 §8 判据）。
+
 #### 4.1.6 [NEW] TodoItem.vue — statusIcon switch
 
 - **文件**: `client/app/components/chat/TodoItem.vue:41-52`
 - **问题**: 4-case switch 将 todo 状态映射到图标
 - **模式**: 小型查找表
+
+**Status: Done (2026-09-21)** — 提炼为 `utils/todo-status.ts::resolveTodoStatusIcon`（`TODO_STATUS_ICON` + fallback）；4 状态 + 未知/空值逐值不变，`utils/__tests__/todo-status.test.ts`（7）钉死（见 §8 判据）。
 
 ---
 
@@ -438,11 +444,15 @@ class SessionState:
 - **职责**: WS 连接生命周期、消息解析/路由（7 种事件）、指数退避重连 + 回退定时器、出站消息队列、媒体上传调度、Promise 追踪、会话 turn 追踪、mitt 事件广播
 - **模式**: 拆分为 `ConnectionManager`、`MessageRouter`、`SendQueue`、`UploadPipeline`
 
+**Status: Done (2026-09-21)** — 560 → 347 行；拆出 `agent-socket-{pending,queue,reconnect,frames,upload,types}.ts`，恢复感知重连/事件名/公共 API/结算语义全部保留（见 §8 3.7 判据）。
+
 #### 4.2.2 [CONFIRMED] `ChatBox.vue` — 888 行混合
 
 - **文件**: `client/app/pages/home/components/ChatBox.vue`
 - **职责**: 消息渲染（4 种布局）、复制到剪贴板、滚动管理、载体消息分流、图片/音频/视频 src 解析（3 处重复）、图片加载失败处理、工具卡片展开/折叠、思考过程展开、连续消息判断、turn 分组
 - **模式**: 提取 `useMessageMedia`、`useCopyMessage`、`useScrollManagement`、`useCardExpansion`
+
+**Status: Done (2026-09-21)** — 888 → 292 行；5 composable + 6 渲染子组件，DOM/class/v-if/渲染顺序/DOMPurify/媒体 URL 逐项不变（见 §8 3.6 判据）。
 
 #### 4.2.3 [CONFIRMED] `ws.ts` — 双 WS 管理在一个文件
 
@@ -488,6 +498,8 @@ class SessionState:
 - `bridge/health.ts:18` — `fetch(...)` 同上
 - **模式**: 统一通过 requestApi.ts
 
+**Status: Done (2026-09-21)** — `requestApi.ts` 新增 `fetchApiRaw()`（同 baseURL/token，显式不重试/不 toast/不解析、返回原始 `Response`）；`bridge/upload.ts` / `bridge/health.ts` 改经该入口，各自「抛出 / 返回默认对象且不 toast」语义逐字不变（见 §8 3.10 判据）。
+
 #### 4.4.2 [CONFIRMED] 3 个 WebSocket 管理无统一抽象
 
 | 实现                     | 重连策略            | 心跳                     |
@@ -519,6 +531,8 @@ class SessionState:
 | requestApi.ts | `$fetch`     | 3 次 | 自动  | 自动  |
 | bridge/upload.ts | 原始 `fetch` | 无 | 无  | 无    |
 | bridge/health.ts | 原始 `fetch` | 无 | 无  | 无    |
+
+**Status: Done (2026-09-21)** — upload/health 的裸 `fetch` 已收敛进统一客户端的静默原始入口 `fetchApiRaw()`（见 §4.4.1 / §8 3.10）。`fetchApi`（ofetch，retry:3 + token + 统一 toast）与 `fetchApiRaw`（无重试/token 有/toast 无/原始 Response）是**两条刻意区分**的通道，而非不一致。
 
 #### 4.5.2 [CONFIRMED] 状态管理位置不一致
 
@@ -795,19 +809,26 @@ class SessionState:
 | 3.3  | `built_agent()` Builder           | Builder        | 1 天        | Done   |
 | 3.4  | `state_register` Protocol 完善    | Interface Seg. | 1 天        | Done   |
 | 3.5  | `curator/orchestrator.py` 拆分    | 分层架构       | 2 天        | Done   |
-| 3.6  | `ChatBox.vue` 拆分为多 composable | Separation     | 2 天        | Open   |
-| 3.7  | `agent-socket.ts` 拆分            | Separation     | 2 天        | Open   |
-| 3.9  | 前端错误处理统一                  | Result/规范    | 1 天        | Open   |
-| 3.10 | 前端 upload.ts/health.ts 统一 API | Adapter        | 0.5 天      | Open   |
-| 3.11 | if-else 链 → Strategy（后端剩余 4 处 + 前端 §4.1.x） | Strategy | 2 天 | Done（后端） |
+| 3.6  | `ChatBox.vue` 拆分为多 composable | Separation     | 2 天        | Done   |
+| 3.7  | `agent-socket.ts` 拆分            | Separation     | 2 天        | Done   |
+| 3.9  | 前端错误处理统一                  | Result/规范    | 1 天        | Done   |
+| 3.10 | 前端 upload.ts/health.ts 统一 API | Adapter        | 0.5 天      | Done   |
+| 3.11 | if-else 链 → Strategy（后端剩余 4 处 + 前端 §4.1.x） | Strategy | 2 天 | Done（后端 + 前端） |
 
-- 后端项 Status 更新（2026-09-21）：3.1 / 3.3 / 3.4 / 3.5 / 3.11（后端）Done；3.2 Obsolete（保持现状）。3.6/3.7/3.9/3.10 与前端 3.11 仍 Open，属下一批。
+- 后端项 Status 更新（2026-09-21）：3.1 / 3.3 / 3.4 / 3.5 / 3.11（后端）Done；3.2 Obsolete（保持现状）。
+- 前端项 Status 更新（2026-09-21，本批）：3.6 / 3.7 / 3.9 / 3.10 / 3.11（前端）Done；§4.1.2 Done；§4.1.5 / §4.1.6 Done。判据如下。
 - 3.1 判据：4 处真实副作用改为显式初始化——`models/embed_model/core.py`（`setup_embed_model()`，`build_embed_model()` + 首次调用触发）、`models/extract_model/core.py`（`setup_mineru_env()`，工厂 + `load()` 触发）、`server/trigger/channels/core.py`（`start()`，`server.trigger.init()` 调用）、`server/trigger/subagent/core.py`（`start()`，同上）；ITTT/VTTT 上批已惰性代理。import 期注册类副作用（route/consumer 绑定）按"必须"保留并注明。
 - 3.2 判据：`turn_runner` 的 7 个惰性导入是**文档化的 call-time 循环安全接缝**，且已有 `register_active_tasks_provider` / `register_outbound_router` 两个显式 DI seam。改为构造注入需引入装配层并触碰大量签名，风险高于收益，判"保持现状"。
 - 3.3 判据：`agent/core.py` 拆为 `_assert_max_token()` / `_build_middlewares()` / `_build_graph()`；新增 `tests/agent/core/test_middleware_order.py` 逐项钉住 17 项 middleware 顺序。
 - 3.4 判据：上批（B1）已落地 `StateRegisterProtocol`（`runtime/session/state_register.py:30`，`@runtime_checkable`，`:316-317` 双实现符合性探针）+ `tests/runtime/test_state_register.py`；本轮零改动确认。
 - 3.5 判据：`context_engine/curator/orchestrator.py` 775 → 180 行；拆出 `review.py` / `run_state.py` / `umbrella.py` / `migration.py` / `refresh.py`；公共 API 与测试 patch surface（`_generate_umbrella_skill`/`_merge_umbrella_skills`/`_archive_*`/`_schedule_system_prompt_refresh`/`_provider_misses_logged`/`_resolve_skill_dir`）在 orchestrator 命名空间保留；sync `llm.invoke` 时机、归档/删除语义、4 阶段顺序不变。
 - 3.11（后端）判据：`reasoning_payload` → `_ReasoningStrategy` 注册表（同一策略承载 build + `get_thinking_budget`，杜绝二者漂移）；`skill_manage` → `_SKILL_ACTION_HANDLERS` 注册表；`tool_guardrails` 3 条遗留链收敛进既有 `_chain_action`（same-tool 经 `_ACTION_RANK` 保持 escalation-only）；`memory.py` 3 路判 Obsolete（§#25）。
+- 3.6（前端）判据：`ChatBox.vue` 888 → 292 行；抽出 5 composable（`use-chat-turn-groups` / `use-chat-scroll` / `use-chat-media` / `use-message-copy` / `use-chat-card-expansion`）+ 6 渲染子组件（`components/chat/Chat{MessageAvatar,ThinkingBlock,ToolCard,CopyButton,MediaAttachments,ModelMeta}.vue`）。DOM 结构/class/v-if/渲染顺序/DOMPurify/markdown/媒体 URL 处理逐项不变：既有 `ChatBox.integration.test.ts`（8）与 `image-rendering.integration.test.ts`（7）**未改动全绿**；新增 5 个 composable 单测 29 条。i18n 文案经子组件 props 传入，key/文案不变（`i18nBlocks.test.ts` 仍解析）。
+- 3.7（前端）判据：`agent-socket.ts` 560 → 347 行；抽出 `agent-socket-pending`（发送注册表：结算一次、abandon 保持 promise pending）、`agent-socket-queue`（FIFO 出站缓冲）、`agent-socket-reconnect`（纯 `decideReconnect()` + 可取消 `ReconnectTimer`）、`agent-socket-frames`（8 事件路由）、`agent-socket-upload`（上传 + 帧序列化）、`agent-socket-types`（公共类型原路径 re-export）。恢复感知重连语义全保留：mid-stream 立刻以 `StreamInterruptedError(msg,true)` 拒绝 + `ws:conn-loss(midStream:true)`；pre-chunk 按 `wsReconnectDelayMs` 指数退避重发；预算耗尽 5s 回退 + `stream:reconnect:failed`；per-session socket Map、事件名/公共 API 不变。既有 `bridge.test.ts`/`queued-bridge`/`hitl-bridge`/`typed-chunks` 全绿；新增 4 文件 27 条（fake timers 重连策略 + 队列顺序 + 结算语义 + 全事件路由）。
+- 3.9（前端）判据：见 §4.5.3（逐处复核可观察行为 → 文档化分层策略；仅 `shouldRequestFailureToast()` 判定与 `fetchApiRaw` 两处为等价统一，其余全部保持并列入清单）。
+- 3.10（前端）判据：`requestApi.ts` 新增独立入口 `fetchApiRaw()`（同 `API_BASE_URL`/token 策略，**显式不重试/不 toast/不解析**，返回原始 `Response`，失败原样 reject）；`bridge/upload.ts`（移除裸 `fetch` 与 `baseURL` 形参，抛出文案逐字不变）与 `bridge/health.ts`（探测失败返回 `{healthy:false,message}`，绝不 toast）改经该入口。既有 `bridge.test.ts` checkHealth 3 条断言未改全绿（mock 增补 `fetchApiRaw` 转发 global fetch）；新增 `fetch-api-raw.test.ts`（3）+ `upload.test.ts`（7）。
+- 3.11（前端）判据：`CronDialog.vue` 的 `everyToMs`/`buildSchedule`/`describeSchedule` 三处 switch → `utils/cron-schedule.ts` 表驱动（`EVERY_UNIT_MS`/`SCHEDULE_BUILDERS`/`DESCRIBERS`，保留原 `default` 回退）；`TodoItem.vue` `statusIcon` → `utils/todo-status.ts` 查表（`TODO_STATUS_ICON` + fallback）。每分支输出（毫秒/kind/expr/文案/i18n 命名参数/图标类名）逐值不变；`utils/__tests__/{cron-schedule,todo-status}.test.ts` 共 19 条全分支钉死。
+- §4.1.2 判据：`[sid].vue` `handleOperate` 4 路 switch → `pages/home/session-toolbar.ts::SESSION_TOOLBAR_EVENTS` + `buildSessionToolbarCommands`（内部 `Record<SessionToolbarEvent, …>` 漏项即编译错误，返回 `Record<string, () => void>` 保持未知事件 no-op）；四个命令目标逐值不变，`session-toolbar-commands.test.ts`（7）钉死并覆盖 `tools` 全部 event。
 
 - 3.1 定位：5 处导入时副作用见 §2.1.5。
 - 3.2 定位：`server/service/turn_runner.py`（7 个 lazy import）。
