@@ -19,7 +19,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 from ..config import StepStatus
 from ..registry import store_sqlite
 from . import _dispatch
-from ._retry import is_redispatch, normalize_policy, step_retry_count
+from ._retry import is_redispatch, normalize_policy, step_retry_count, with_judge_feedback
 from ._shared import (
     apply_dispatched_steps,
     deps_satisfied,
@@ -115,15 +115,8 @@ async def taskflow_dispatch(
     failure: Exception | None = None
     for sid in requested:
         step = by_id[sid]
-        task_text = str(step.get("task") or "")
         feedback = str(step.get("judge_feedback") or "").strip()
-        if feedback:
-            task_text += (
-                "\n\n## Previous Attempt Feedback\n"
-                "The previous attempt was judged and needs revision:\n"
-                f"{feedback}\n\n"
-                "Address this feedback and complete the task."
-            )
+        task_text = with_judge_feedback(str(step.get("task") or ""), feedback)
         try:
             child_key = await _dispatch.dispatch_child(
                 task=task_text,

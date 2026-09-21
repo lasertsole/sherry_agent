@@ -29,6 +29,7 @@ from ._retry import (
     spawn_replacement,
     step_retry_count,
     wait_before_retry,
+    with_judge_feedback,
 )
 from ._shared import (
     conflict_error,
@@ -131,7 +132,10 @@ async def taskflow_resume(
             await wait_before_retry(policy)
             try:
                 redispatched_key = await spawn_replacement(
-                    str(step.get("task") or ""), requester_key
+                    with_judge_feedback(
+                        str(step.get("task") or ""), str(step.get("judge_feedback") or "")
+                    ),
+                    requester_key,
                 )
             except Exception as exc:
                 retry_text = (
@@ -170,7 +174,8 @@ async def taskflow_resume(
                     requester_key = requester_key_for_retry(state, session_id)
                     try:
                         redispatched_key = await spawn_replacement(
-                            str(step.get("task") or ""), requester_key
+                            with_judge_feedback(str(step.get("task") or ""), judge_result.feedback),
+                            requester_key,
                         )
                     except Exception as exc:  # tool boundary: block instead of raising
                         step["status"] = str(StepStatus.BLOCKED)

@@ -151,7 +151,12 @@ async def test_retry_redispatches_and_persists_feedback(
 
     assert "judge: RETRY (1/2)" in out, out
     assert len(calls) == 2  # run_task spawn + judge re-dispatch
-    assert calls[1] == "write report"
+    # The in-place re-dispatch must carry the judge's guidance: a step marked
+    # DISPATCHED never goes through taskflow_dispatch again, so this is the only
+    # path that can hand the replacement child the feedback.
+    assert calls[1].startswith("write report")
+    assert "## Previous Attempt Feedback" in calls[1]
+    assert "emit the PASS token" in calls[1]
 
     flow = await _flow("flow-1")
     assert flow["expected_revision"] == before["expected_revision"] + 1

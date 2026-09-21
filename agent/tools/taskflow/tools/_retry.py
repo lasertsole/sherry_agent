@@ -158,6 +158,25 @@ async def wait_before_retry(policy: dict) -> None:
         await asyncio.sleep(delay)
 
 
+def with_judge_feedback(task: str, feedback: str) -> str:
+    """Append a judge's retry guidance to a re-dispatched task.
+
+    Shared by ``taskflow_dispatch`` (pre-dispatch) and ``taskflow_resume``'s
+    in-place re-dispatch: a step already marked DISPATCHED can no longer go
+    through ``taskflow_dispatch``, so its replacement child would otherwise be
+    spawned with the bare task text and never see the judge's guidance.
+    """
+    feedback = (feedback or "").strip()
+    if not feedback:
+        return task
+    return (
+        f"{task}\n\n## Previous Attempt Feedback\n"
+        "The previous attempt was judged and needs revision:\n"
+        f"{feedback}\n\n"
+        "Address this feedback and complete the task."
+    )
+
+
 async def spawn_replacement(task: str, requester_key: str) -> str:
     """Spawn the step's replacement child through the shared dispatch seam."""
     return await _dispatch.dispatch_child(
