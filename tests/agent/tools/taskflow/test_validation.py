@@ -1,15 +1,17 @@
 """Step result validation criteria plumbing.
 
 ``taskflow_run_task`` accepts natural-language ``validation_criteria`` and
-stores them on the step. ``taskflow_resume`` echoes the criteria back together
-with the injected result so the orchestrator LLM can judge the child output
-against them (the tools never call an LLM themselves). ``taskflow_summary``
-surfaces the criteria so pending manual checks are visible.
+stores them on the step. ``taskflow_resume`` judges the injected result against
+those criteria with the auxiliary-LLM :mod:`step_judge` (PASS -> done, RETRY ->
+re-dispatch, BLOCK -> blocked). ``taskflow_summary`` surfaces the criteria so
+the verdict stays visible.
 
 Backward compatibility is pinned: without criteria, every response keeps its
-legacy shape and no ``validation_criteria`` key is written to the step.
+legacy shape, no ``validation_criteria`` key is written to the step, and the
+judge is never consulted.
 
-The dispatch seam is monkeypatched; the real spawn pipeline is never invoked.
+The dispatch and judge seams are monkeypatched; neither the real spawn pipeline
+nor a real LLM is ever invoked.
 """
 
 import sys
@@ -19,6 +21,7 @@ import pytest
 from agent.tools.taskflow import build_taskflow_tools
 from agent.tools.taskflow.config import StepStatus
 from agent.tools.taskflow.registry import store_sqlite
+from agent.tools.taskflow.step_judge import JudgeResult, StepVerdict
 from agent.tools.taskflow.tools._shared import step_status
 
 _SESSION = "sess-1"
@@ -26,12 +29,9 @@ _SESSION = "sess-1"
 pytestmark = [pytest.mark.unit]
 
 taskflow_dispatch_module = sys.modules["agent.tools.taskflow.tools._dispatch"]
+taskflow_resume_module = sys.modules["agent.tools.taskflow.tools.taskflow_resume"]
 
 _CRITERIA = "output must contain PASS and must not contain ERROR"
-
-
-def _tools() -> dict:
-    return {t.name: t for t in build_taskflow_tools()}
 
 
 def _fake_dispatch(child_key: str):
@@ -39,6 +39,23 @@ def _fake_dispatch(child_key: str):
         return child_key
 
     return _dispatch
+
+
+def _tools() -> dict:
+    return {t.name: t for t in build_taskflow_tools()}
+
+
+def _patch_judge_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _judge(
+        step_task: str,
+        criteria: str | None,
+        result_text: str,
+        evidence_summary: str | None = None,
+    ) -> JudgeResult:
+        return JudgeResult(StepVerdict.PASS, "criteria met", "")
+
+    monkeypatch.setattr(taskflow_resume_module, "judge_step_result", _judge)
+    monkeypatch.setattr(taskflow_resume_module, "collect_evidence_summary", lambda **_: None)
 
 
 # ---------------------------------------------------------------------------
@@ -104,17 +121,18 @@ async def test_run_task_stores_validation_criteria_on_blocked_step(
 
 
 # ---------------------------------------------------------------------------
-# resume: criteria are echoed with a validation warning, step stays done
+# resume: criteria are judged, step reflects the verdict
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_resume_echoes_criteria_and_warning_after_marking_done(
+async def test_resume_judges_criteria_pass_and_marks_done(
     isolated_db, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
+    _patch_judge_pass(monkeypatch)
     tools = _tools()
     await tools["taskflow_create"].coroutine(
         session_id=_SESSION, flow_id="flow-1", description="resume probe"
@@ -126,19 +144,16 @@ async def test_resume_echoes_criteria_and_warning_after_marking_done(
         session_id=_SESSION,
     )
 
-    # Adversarial (misleading_success_output): the child claims "SUCCESS!" but
-    # never emits the required PASS token. The tool must NOT silently accept
-    # it: it still marks the step done (the orchestrator owns the verdict) but
-    # the response carries the criteria + explicit warning.
     out = await tools["taskflow_resume"].coroutine(
         session_id=_SESSION,
         flow_id="flow-1",
         child_session_key="agent:main:subagent:child-1",
-        result="SUCCESS! Everything is fine, trust me.",
+        result="PASS token present",
     )
     assert "TaskFlow resumed" in out
     assert f"\n  validation_criteria: {_CRITERIA}" in out
-    assert "\n  ⚠ Result needs validation against criteria" in out
+    assert "\n  judge: PASS criteria met" in out
+    assert "needs validation" not in out
 
     flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
@@ -152,6 +167,7 @@ async def test_resume_accepts_criteria_param_for_dispatch_without_criteria(
     monkeypatch.setattr(
         taskflow_dispatch_module, "dispatch_child", _fake_dispatch("agent:main:subagent:child-1")
     )
+    _patch_judge_pass(monkeypatch)
     tools = _tools()
     await tools["taskflow_create"].coroutine(
         session_id=_SESSION, flow_id="flow-1", description="late criteria probe"
@@ -169,7 +185,8 @@ async def test_resume_accepts_criteria_param_for_dispatch_without_criteria(
         validation_criteria=criteria,
     )
     assert f"\n  validation_criteria: {criteria}" in out
-    assert "\n  ⚠ Result needs validation against criteria" in out
+    assert "\n  judge: PASS criteria met" in out
+    assert "needs validation" not in out
 
     flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None

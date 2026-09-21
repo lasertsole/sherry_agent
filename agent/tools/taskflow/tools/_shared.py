@@ -153,11 +153,15 @@ def mark_step_done(steps: list[dict], child_session_key: str) -> str | None:
 def unlock_dependents(steps: list[dict]) -> list[str]:
     """Move blocked steps with satisfied deps to ready; return their ids.
 
+    A blocked step with no ``depends_on`` is not waiting on the DAG (for
+    example it was blocked by the step judge), so it is never auto-unlocked.
     A single pass, so a self-dependency or a dependency cycle can never loop.
     """
     newly_ready: list[str] = []
     for step in steps:
         if step_status(step) != StepStatus.BLOCKED:
+            continue
+        if not step.get("depends_on"):
             continue
         if deps_satisfied(step, steps):
             step["status"] = str(StepStatus.READY)

@@ -15,9 +15,12 @@ from typing import Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 
+from config.features import STEP_JUDGE
 from ..config import StepStatus, TaskFlowStatus
+from ..evidence_collector import collect_evidence_summary
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
+from ..step_judge import StepVerdict, judge_step_result
 from ._retry import (
     apply_redispatch,
     normalize_policy,
@@ -64,9 +67,11 @@ async def taskflow_resume(
     accumulate the child's token spend and estimated cost onto the flow.
 
     When the step carries validation_criteria (set by taskflow_run_task or
-    passed here), the response echoes them with a warning that the result
-    still needs validation: the orchestrator judges the result against the
-    criteria. The criteria are not enforced by the tool.
+    passed here), the step result is judged by an auxiliary-LLM step judge:
+    PASS marks the step done, RETRY re-dispatches it (reusing the step's own
+    retry budget) and records the judge's guidance on ``judge_feedback``, and
+    BLOCK marks the step blocked. The judge is fail-open: when it is disabled
+    or unavailable the step is marked done as before.
 
     When the result text classifies as a failure and the step's retry_policy
     allows it (``retry_on`` filter, budget left), a replacement child is
@@ -144,17 +149,61 @@ async def taskflow_resume(
                 )
 
     validation_text = ""
+    judge_text = ""
     if step is not None and redispatched_key is None:
-        step["status"] = str(StepStatus.DONE)
         criteria = (validation_criteria or "").strip()
         if criteria:
             step["validation_criteria"] = criteria
         stored_criteria = str(step.get("validation_criteria") or "").strip()
         if stored_criteria:
-            validation_text = (
-                f"\n  validation_criteria: {stored_criteria}"
-                f"\n  ⚠ Result needs validation against criteria"
+            validation_text = f"\n  validation_criteria: {stored_criteria}"
+            judge_result = await judge_step_result(
+                step_task=str(step.get("task") or ""),
+                criteria=stored_criteria,
+                result_text=result,
+                evidence_summary=collect_evidence_summary(
+                    session_key=str(step.get("child_session_key") or "")
+                ),
             )
+            if judge_result.verdict == StepVerdict.RETRY:
+                if step_retry_count(step) < STEP_JUDGE["max_retries"]:
+                    requester_key = requester_key_for_retry(state, session_id)
+                    try:
+                        redispatched_key = await spawn_replacement(
+                            str(step.get("task") or ""), requester_key
+                        )
+                    except Exception as exc:  # tool boundary: block instead of raising
+                        step["status"] = str(StepStatus.BLOCKED)
+                        step["block_reason"] = f"StepJudge RETRY re-dispatch failed: {exc}"
+                        judge_text = (
+                            f"\n  judge: RETRY re-dispatch failed ({type(exc).__name__}: {exc})"
+                        )
+                    else:
+                        retry_count_after = step_retry_count(step) + 1
+                        apply_redispatch(step, redispatched_key, retry_count_after)
+                        step["judge_feedback"] = judge_result.feedback
+                        judge_text = (
+                            f"\n  judge: RETRY ({retry_count_after}/"
+                            f"{STEP_JUDGE['max_retries']}), "
+                            f"child_session_key={redispatched_key}: {judge_result.reason}"
+                        )
+                else:
+                    step["status"] = str(StepStatus.BLOCKED)
+                    step["block_reason"] = (
+                        f"StepJudge RETRY budget exhausted (retry_count="
+                        f"{step_retry_count(step)}, max_retries={STEP_JUDGE['max_retries']}): "
+                        f"{judge_result.reason}"
+                    )
+                    judge_text = f"\n  judge: BLOCKED retry budget exhausted: {judge_result.reason}"
+            elif judge_result.verdict == StepVerdict.BLOCK:
+                step["status"] = str(StepStatus.BLOCKED)
+                step["block_reason"] = f"StepJudge blocked: {judge_result.reason}"
+                judge_text = f"\n  judge: BLOCKED {judge_result.reason}"
+            else:
+                step["status"] = str(StepStatus.DONE)
+                judge_text = f"\n  judge: PASS {judge_result.reason}"
+        else:
+            step["status"] = str(StepStatus.DONE)
     newly_ready = unlock_dependents(steps)
     state["steps"] = steps
     counts = steps_summary(steps)
@@ -201,6 +250,8 @@ async def taskflow_resume(
             target = next((s for s in fresh_steps if s.get("step_id") == step_id), None)
             if target is not None:
                 apply_redispatch(target, replacement_key, replacement_count)
+                if step is not None and step.get("judge_feedback"):
+                    target["judge_feedback"] = step["judge_feedback"]
             fresh_state["results"] = fresh_results
             fresh_state["steps"] = fresh_steps
             return fresh_state
@@ -246,4 +297,5 @@ async def taskflow_resume(
         f"unlocked=[{unlocked_text}], step_statuses={counts_text}"
         f"{validation_text}"
         f"{retry_text}"
+        f"{judge_text}"
     )
