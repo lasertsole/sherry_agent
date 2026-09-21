@@ -59,11 +59,11 @@ channels/
 - `__init__(config=None, bus=None)`：未传入配置时加载 `plugins/channels/config.json`（若文件不存在则初始化提前返回——没有通道也没有总线）；未传入总线时创建 `MessageBus()`；随后执行 `_init_channels()`
 - `_init_channels()`：实例化所有已发现且配置段中 `"enabled": true` 的通道（经 `channels.registry.discover_all()`）；实例化异常会被记录并跳过该通道；最后调用 `_validate_allow_from()`
 - `_validate_allow_from()`：任何通道的 `allow_from` 等于 `[]` 时抛出 `SystemExit`
-- `start_service()`：调度 `_dispatch_outbound()` 分发器、`_inbound_consume_loop()` / `_outbound_consume_loop()` 消费者以及每个通道的 `_start_channel()` 任务，然后永久运行事件循环（未启用任何通道时警告并返回）
+- `start_service()`：调度 `_dispatch_outbound()` 分发器（唯一的出站消费者）、`_inbound_consume_loop()` 消费者以及每个通道的 `_start_channel()` 任务，然后返回（非阻塞——事件循环由调用方负责；未启用任何通道时警告并返回）
 - `async stop_service()`：取消分发器任务，对每个通道调用 `stop()`，并停止事件循环
 - `_dispatch_outbound()`：以 1 秒的 `asyncio.wait_for` 超时轮询 `bus.consume_outbound()`，并将每条消息转发给 `self._channels[msg.channel].send(msg)`
 - `set_inbound_consumer(cb)` / `set_outbound_consumer(cb)`：注册形如 `(msg, channel) -> Awaitable[None]` 的回调
-- `_inbound_consume_loop()` / `_outbound_consume_loop()`：从总线消费消息，并对每个已配置的通道调用一次已注册的消费者
+- `_inbound_consume_loop()`：消费入站消息，并按 `msg.channel` 路由到对应通道，调用已注册的入站消费者。出站由唯一消费者 `_dispatch_outbound()` 负责。
 - 访问器：`get_channel(name)`、`get_status()`（每个通道的 `enabled` / `running`）、`get_bus()`、`get_event_loop()`、`enabled_channels` 属性
 
 ### Channel Registry (registry.py)
@@ -199,7 +199,7 @@ class MyChannel(BaseChannel):
 ┌──────────────────────────────────────────────────────────┐
 │                     ChannelManager                        │
 │  - start_service() / stop_service()                      │
-│  - _inbound_consume_loop() / _outbound_consume_loop()    │
+│  - _inbound_consume_loop()                               │
 │  - _dispatch_outbound()                                  │
 │  - _validate_allow_from()                                │
 └────────────────────────────┬─────────────────────────────┘
@@ -235,9 +235,9 @@ class MyChannel(BaseChannel):
 
 1. 平台事件经 `botpy` WebSocket 到达并分发给 `QQChannel._on_message()`
 2. 去重与解析后，`_handle_message()` 检查 `allow_from` 并通过 `bus.publish_inbound()` 发布 `InboundMessage`
-3. `ChannelManager._inbound_consume_loop()` 消费该消息并调用已注册的消费者 `_process_inbound()`（`server/trigger/channels/core.py`）：图片 URL 转为 base64，由通道名派生会话 ID 并经 `relation_register.register_channel_chat()` 注册，代理回复通过 `server.service.async_generate()` 生成
+3. `ChannelManager._inbound_consume_loop()` 消费该消息，按 `msg.channel` 路由到对应通道，并调用已注册的消费者 `_process_inbound()`（`server/trigger/channels/core.py`）：图片 URL 转为 base64，由通道名派生会话 ID 并经 `relation_register.register_channel_chat()` 注册，代理回复通过 `server.service.async_generate()` 生成
 4. 回复通过直接调用 `channel.send(OutboundMessage(...))` 送达
 
-**出站（总线路径）：** 任何调用 `bus.publish_outbound()` 的消息都会被 `_dispatch_outbound()` 接收，并路由到 `msg.channel` 指定的通道（`_outbound_consume_loop()` 的消费者 `_process_outbound()` 仅注册通道会话）。
+**出站（总线路径）：** 任何调用 `bus.publish_outbound()` 的消息都会被唯一出站消费者 `_dispatch_outbound()` 接收，并路由到 `msg.channel` 指定的通道；若注册了出站消费者，它仅对该目标通道先行执行。
 
 **主动推送（心跳）：** 当通道配置段为 `"heartbeat": true` 且其插件配置定义了 `receiver` 时，心跳服务（`server/service/heartbeat.py`）通过 `channel.send()` 将代理输出投递到该会话。

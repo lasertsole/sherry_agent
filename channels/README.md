@@ -59,11 +59,11 @@ Coordinates all enabled channels. A module-level singleton `channel_manager` is 
 - `__init__(config=None, bus=None)`: loads `plugins/channels/config.json` when no config is passed (if the file does not exist, initialization returns early — no channels and no bus); creates a `MessageBus()` when no bus is passed; then runs `_init_channels()`
 - `_init_channels()`: instantiates every discovered channel (via `channels.registry.discover_all()`) whose config section has `"enabled": true`; instantiation errors are logged and the channel is skipped; then calls `_validate_allow_from()`
 - `_validate_allow_from()`: raises `SystemExit` if any channel's `allow_from` equals `[]`
-- `start_service()`: schedules the `_dispatch_outbound()` dispatcher, the `_inbound_consume_loop()` / `_outbound_consume_loop()` consumers, and a `_start_channel()` task per channel, then runs the event loop forever (warns and returns when no channels are enabled)
+- `start_service()`: schedules the `_dispatch_outbound()` dispatcher (the sole outbound consumer), the `_inbound_consume_loop()` consumer, and a `_start_channel()` task per channel, then returns (non-blocking — the caller owns the event loop; warns and returns when no channels are enabled)
 - `async stop_service()`: cancels the dispatcher task, calls `stop()` on every channel, stops the event loop
 - `_dispatch_outbound()`: polls `bus.consume_outbound()` with a 1-second `asyncio.wait_for` timeout and forwards each message to `self._channels[msg.channel].send(msg)`
 - `set_inbound_consumer(cb)` / `set_outbound_consumer(cb)`: register callbacks of shape `(msg, channel) -> Awaitable[None]`
-- `_inbound_consume_loop()` / `_outbound_consume_loop()`: consume from the bus and invoke the registered consumer once per configured channel
+- `_inbound_consume_loop()`: consumes inbound messages and routes each to the channel named in `msg.channel`, invoking the registered inbound consumer. Outbound is handled by the single consumer `_dispatch_outbound()`.
 - Accessors: `get_channel(name)`, `get_status()` (per-channel `enabled` / `running`), `get_bus()`, `get_event_loop()`, `enabled_channels` property
 
 ### Channel Registry (registry.py)
@@ -199,7 +199,7 @@ The registry discovers the channel by scanning the channel folders under `plugin
 ┌──────────────────────────────────────────────────────────┐
 │                     ChannelManager                        │
 │  - start_service() / stop_service()                      │
-│  - _inbound_consume_loop() / _outbound_consume_loop()    │
+│  - _inbound_consume_loop()                               │
 │  - _dispatch_outbound()                                  │
 │  - _validate_allow_from()                                │
 └────────────────────────────┬─────────────────────────────┘
@@ -235,9 +235,9 @@ At server boot, `server/__main__.py` imports `server.trigger`, which imports `se
 
 1. A platform event arrives over the `botpy` WebSocket and is dispatched to `QQChannel._on_message()`
 2. After dedup and parsing, `_handle_message()` checks `allow_from` and publishes an `InboundMessage` via `bus.publish_inbound()`
-3. `ChannelManager._inbound_consume_loop()` consumes it and invokes the registered consumer `_process_inbound()` (`server/trigger/channels/core.py`): image URLs are converted to base64, a session ID is derived from the channel name and registered via `relation_register.register_channel_chat()`, and the agent reply is generated through `server.service.async_generate()`
+3. `ChannelManager._inbound_consume_loop()` consumes it, routes it to the channel named in `msg.channel`, and invokes the registered consumer `_process_inbound()` (`server/trigger/channels/core.py`): image URLs are converted to base64, a session ID is derived from the channel name and registered via `relation_register.register_channel_chat()`, and the agent reply is generated through `server.service.async_generate()`
 4. The reply is delivered with a direct `channel.send(OutboundMessage(...))` call
 
-**Outbound (bus path):** anything that calls `bus.publish_outbound()` is picked up by `_dispatch_outbound()` and routed to the channel named in `msg.channel` (the `_outbound_consume_loop()` consumer `_process_outbound()` only registers the channel session).
+**Outbound (bus path):** anything that calls `bus.publish_outbound()` is picked up by `_dispatch_outbound()` — the sole outbound consumer — and routed to the channel named in `msg.channel`; when an outbound consumer is registered, it runs first for that target channel only.
 
 **Proactive (heartbeat):** when a channel section has `"heartbeat": true` and its plugin config defines a `receiver`, the heartbeat service (`server/service/heartbeat.py`) delivers agent output to that chat via `channel.send()`.

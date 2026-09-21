@@ -59,11 +59,11 @@ channels/
 - `__init__(config=None, bus=None)`: 設定が渡されない場合は `plugins/channels/config.json` を読み込みます（ファイルが存在しない場合は初期化が早期リターン — チャネルもバスもなし）。バスが渡されない場合は `MessageBus()` を生成し、その後 `_init_channels()` を実行
 - `_init_channels()`: `channels.registry.discover_all()` で検出されたチャネルのうち、設定セクションが `"enabled": true` のものをすべてインスタンス化。インスタンス化の例外はログに記録され、そのチャネルはスキップされます。最後に `_validate_allow_from()` を呼び出し
 - `_validate_allow_from()`: いずれかのチャネルの `allow_from` が `[]` の場合に `SystemExit` を送出
-- `start_service()`: `_dispatch_outbound()` ディスパッチャ、`_inbound_consume_loop()` / `_outbound_consume_loop()` コンシューマ、およびチャネルごとの `_start_channel()` タスクをスケジュールし、イベントループを永続的に実行します（有効なチャネルがない場合は警告して返る）
+- `start_service()`: `_dispatch_outbound()` ディスパッチャ（唯一のアウトバウンドコンシューマ）、`_inbound_consume_loop()` コンシューマ、およびチャネルごとの `_start_channel()` タスクをスケジュールして返ります（非ブロッキング——イベントループは呼び出し側が所有。有効なチャネルがない場合は警告して返る）
 - `async stop_service()`: ディスパッチャタスクをキャンセルし、全チャネルの `stop()` を呼び出し、イベントループを停止
 - `_dispatch_outbound()`: 1 秒の `asyncio.wait_for` タイムアウトで `bus.consume_outbound()` をポーリングし、各メッセージを `self._channels[msg.channel].send(msg)` へ転送
 - `set_inbound_consumer(cb)` / `set_outbound_consumer(cb)`: `(msg, channel) -> Awaitable[None]` 形式のコールバックを登録
-- `_inbound_consume_loop()` / `_outbound_consume_loop()`: バスから消費し、設定された各チャネルに対して 1 回ずつ登録済みコンシューマを呼び出す
+- `_inbound_consume_loop()`: インバウンドメッセージを消費し、`msg.channel` に従って該当チャネルへルーティングして登録済みインバウンドコンシューマを呼び出します。アウトバウンドは唯一のコンシューマ `_dispatch_outbound()` が担当します。
 - アクセサ: `get_channel(name)`、`get_status()`（チャネルごとの `enabled` / `running`）、`get_bus()`、`get_event_loop()`、`enabled_channels` プロパティ
 
 ### Channel Registry (registry.py)
@@ -199,7 +199,7 @@ class MyChannel(BaseChannel):
 ┌──────────────────────────────────────────────────────────┐
 │                     ChannelManager                        │
 │  - start_service() / stop_service()                      │
-│  - _inbound_consume_loop() / _outbound_consume_loop()    │
+│  - _inbound_consume_loop()                               │
 │  - _dispatch_outbound()                                  │
 │  - _validate_allow_from()                                │
 └────────────────────────────┬─────────────────────────────┘
@@ -235,9 +235,9 @@ class MyChannel(BaseChannel):
 
 1. プラットフォームイベントが `botpy` WebSocket 経由で到着し、`QQChannel._on_message()` へディスパッチされる
 2. 重複排除と解析の後、`_handle_message()` が `allow_from` を確認し、`bus.publish_inbound()` で `InboundMessage` を公開
-3. `ChannelManager._inbound_consume_loop()` がこれを消費し、登録済みコンシューマ `_process_inbound()`（`server/trigger/channels/core.py`）を呼び出す：画像 URL は base64 に変換、チャネル名からセッション ID を導出して `relation_register.register_channel_chat()` で登録、エージェントの返信は `server.service.async_generate()` で生成
+3. `ChannelManager._inbound_consume_loop()` がこれを消費し、`msg.channel` に従って該当チャネルへルーティングして登録済みコンシューマ `_process_inbound()`（`server/trigger/channels/core.py`）を呼び出す：画像 URL は base64 に変換、チャネル名からセッション ID を導出して `relation_register.register_channel_chat()` で登録、エージェントの返信は `server.service.async_generate()` で生成
 4. 返信は直接の `channel.send(OutboundMessage(...))` 呼び出しで配信される
 
-**アウトバウンド（バス経路）:** `bus.publish_outbound()` を呼び出したメッセージは `_dispatch_outbound()` が拾い、`msg.channel` で指定されたチャネルへルーティングします（`_outbound_consume_loop()` のコンシューマ `_process_outbound()` はチャネルセッションの登録のみ行います）。
+**アウトバウンド（バス経路）:** `bus.publish_outbound()` を呼び出したメッセージは唯一のアウトバウンドコンシューマ `_dispatch_outbound()` が拾い、`msg.channel` で指定されたチャネルへルーティングします。アウトバウンドコンシューマが登録されている場合は、その対象チャネルに対してのみ先に実行されます。
 
 **プロアクティブ（ハートビート）:** チャネルセクションが `"heartbeat": true` で、そのプラグイン設定に `receiver` が定義されている場合、ハートビートサービス（`server/service/heartbeat.py`）が `channel.send()` でエージェントの出力をそのチャットへ配信します。
