@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> **MesMemory**는 EMA AI Agent의 단기 대화 메모리 엔진(`context_engine` 패키지)입니다. SQLite 기반 세션 메시지 영속화, 히스토리 조회, FTS5 전문 검색을 담당합니다. 이 패키지에는 백그라운드 스킬 유지보수를 담당하는 **Curator** 서브패키지도 포함되어 있습니다 — [Curator(스킬 유지보수 서브패키지)](#curator스킬-유지보수-서브패키지) 참조.
+> **MesMemory**는 EMA AI Agent의 단기 대화 메모리 엔진(`context_engine` 패키지)입니다. SQLite 기반 세션 메시지 영속화, 히스토리 조회, FTS5 전문 검색을 담당합니다. 이 패키지에는 백그라운드 스킬 유지보수를 담당하는 **Curator** 서브패키지도 포함되어 있습니다 — [Curator(스킬 유지보수 서브패키지)](#curator-스킬-유지보수-서브패키지) 참조.
 
 ---
 
@@ -13,7 +13,7 @@
 - [데이터 모델](#데이터-모델)
 - [핵심 기능](#핵심-기능)
 - [통합 지점](#통합-지점)
-- [Curator(스킬 유지보수 서브패키지)](#curator스킬-유지보수-서브패키지)
+- [Curator(스킬 유지보수 서브패키지)](#curator-스킬-유지보수-서브패키지)
 - [API 레퍼런스](#api-레퍼런스)
 - [FAQ](#faq)
 - [기술 스택](#기술-스택)
@@ -35,7 +35,7 @@ MesMemory는 **세션 단위의 단기 메시지 저장소**이며, 의도적으
 
 서브에이전트(subagent) 세션은 **이 저장소에 기록되지 않습니다**. 해당 대화는 각자의 checkpointer(`agent:{agent_id}:subagent:{uuid}`)에 저장되고, run 레코드는 `subagent_registry.db`에 저장됩니다([`agent/tools/subagent/README.ko.md`](../agent/tools/subagent/README.ko.md) 참조). MesMemory에 들어오는 서브에이전트 관련 행은 **부모** 세션으로 다시 쓰이는 완료 캐리어(`origin='subagent_completion'`)뿐입니다.
 
-에이전트가 생성한 스킬의 장기 유지보수(라이프사이클 전이, 통합, 정리)는 `context_engine/` 내부의 별도 [Curator](#curator스킬-유지보수-서브패키지) 서브패키지가 담당합니다 — 메시지 데이터에는 **전혀 접근하지 않습니다**.
+에이전트가 생성한 스킬의 장기 유지보수(라이프사이클 전이, 통합, 정리)는 `context_engine/` 내부의 별도 [Curator](#curator-스킬-유지보수-서브패키지) 서브패키지가 담당합니다 — 메시지 데이터에는 **전혀 접근하지 않습니다**.
 
 ### 핵심 기능
 
