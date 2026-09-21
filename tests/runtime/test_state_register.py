@@ -1,6 +1,7 @@
 """Module tests for runtime/session/state_register.py — StateRegisterMeM and StateRegisterDB."""
 
 import sqlite3
+import threading
 
 import pytest
 from runtime.session.core import SessionRegister
@@ -184,6 +185,7 @@ class TestStateRegisterDBFailures:
 
     def test_corrupt_json_value_is_logged_separately(self, db_reg, error_logs):
         """A corrupt stored value gets its own classification, not a DB error."""
+        db_reg.ensure_initialized()
         conn = sqlite3.connect(db_reg.db_path)
         try:
             conn.execute(
@@ -197,3 +199,89 @@ class TestStateRegisterDBFailures:
         assert db_reg.get_state("s", "k", "fallback") == "fallback"
         assert any("corrupt JSON" in record for record in error_logs)
         assert not any("database error" in record for record in error_logs)
+
+
+class TestStateRegisterProtocolConformance:
+    """Both implementations expose the full StateRegisterProtocol contract."""
+
+    @pytest.fixture
+    def fresh_db_reg(self, tmp_path, monkeypatch):
+        import runtime.session.state_register as mod
+
+        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
+        return mod.StateRegisterDB()
+
+    def test_mem_conforms(self, fresh_db_reg):
+        import runtime.session.state_register as mod
+
+        assert isinstance(mod.state_register_mem, mod.StateRegisterProtocol)
+
+    def test_db_conforms(self, fresh_db_reg):
+        import runtime.session.state_register as mod
+
+        assert isinstance(fresh_db_reg, mod.StateRegisterProtocol)
+
+
+class TestStateRegisterDBLazyInit:
+    def test_construction_has_no_io_and_first_use_initializes(self, tmp_path, monkeypatch):
+        import runtime.session.state_register as mod
+
+        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
+        reg = mod.StateRegisterDB()
+
+        assert reg._conn is None, "constructing the register must not open a connection"
+        assert not (tmp_path / "data" / "state_register.db").exists()
+
+        reg.ensure_initialized()
+
+        assert reg._conn is not None
+        assert (tmp_path / "data" / "state_register.db").exists()
+
+    def test_operations_lazily_initialize(self, tmp_path, monkeypatch):
+        import runtime.session.state_register as mod
+
+        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
+        reg = mod.StateRegisterDB()
+        assert reg._conn is None
+
+        assert reg.get_state("lazy", "missing", "default") == "default"
+        assert reg._conn is not None
+
+
+class TestStateRegisterDBConcurrency:
+    def test_concurrent_writes_and_reads_lose_no_state(self, tmp_path, monkeypatch):
+        import runtime.session.state_register as mod
+
+        monkeypatch.setattr(mod, "SRC_DIR", tmp_path)
+        reg = mod.StateRegisterDB()
+        reg.ensure_initialized()
+
+        workers = 8
+        per_worker = 40
+        errors: list[BaseException] = []
+
+        def worker(worker_id: int) -> None:
+            try:
+                for index in range(per_worker):
+                    key = f"k{worker_id}_{index}"
+                    assert reg.set_state("concurrent", key, {"w": worker_id, "i": index}) is True
+                    assert reg.get_state("concurrent", key) == {"w": worker_id, "i": index}
+            except BaseException as exc:  # noqa: BLE001 - recorded and asserted below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=worker, args=(w,)) for w in range(workers)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+
+        assert errors == []
+        states = reg.get_all_states("concurrent")
+        assert len(states) == workers * per_worker
+        for worker_id in range(workers):
+            for index in range(per_worker):
+                assert states[f"k{worker_id}_{index}"] == {"w": worker_id, "i": index}
+
+        for key in list(reg.get_all_states("concurrent")):
+            reg.delete_state("concurrent", key)
+        assert reg.get_all_states("concurrent") == {}

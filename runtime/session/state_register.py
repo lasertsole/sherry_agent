@@ -1,7 +1,7 @@
 import json
 import sqlite3
 import threading
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 from pathlib import Path
 from loguru import logger
 from config import SRC_DIR
@@ -25,6 +25,20 @@ def _log_state_db_failure(operation: str, exc: BaseException, **context: object)
         logger.opt(exception=exc).error(
             "state_register_db {}: unexpected error ({})", operation, details
         )
+
+
+@runtime_checkable
+class StateRegisterProtocol(Protocol):
+    """Full contract shared by the in-memory and DB-backed state registers."""
+
+    def set_state(self, session_id: str, key: str, value: Any) -> bool: ...
+    def get_state(self, session_id: str, key: str, default: Any = None) -> Any: ...
+    def get_all_states(self, session_id: str) -> dict[str, Any]: ...
+    def delete_state(self, session_id: str, key: str) -> bool: ...
+    def clear_session(self, session_id: str) -> bool: ...
+    def has_session(self, session_id: str) -> bool: ...
+    def has_key(self, session_id: str, key: str) -> bool: ...
+    def update_states(self, session_id: str, states: dict[str, Any]) -> bool: ...
 
 
 class StateRegisterMeM(SessionRegister):
@@ -119,15 +133,37 @@ state_register_mem = StateRegisterMeM()
 
 
 class StateRegisterDB(SessionRegister):
-    def __init__(self):
-        self.db_path: Path = (SRC_DIR / "data" / "state_register.db").resolve()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._init_db()
+    """SQLite-backed state register.
 
-    def _init_db(self):
-        with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.cursor()
-            cursor.execute("""
+    Connection strategy: one shared connection per process, opened lazily on
+    first use and guarded by an ``RLock``. SQLite serializes writes regardless,
+    the register only performs tiny key/value statements, and this mirrors the
+    proven ``context_engine/store/db.py`` strategy — so a lock-guarded single
+    connection avoids the per-operation connect churn (WAL/handle) without the
+    multiplied handles of a per-thread pool, and keeps behaviour identical.
+    """
+
+    def __init__(self):
+        db_path = (SRC_DIR / "data" / "state_register.db").resolve()
+        if getattr(self, "db_path", None) != db_path:
+            old_conn = getattr(self, "_conn", None)
+            if old_conn is not None:
+                try:
+                    old_conn.close()
+                except sqlite3.Error:  # noqa: S110
+                    pass
+            self._conn: sqlite3.Connection | None = None
+            self.db_path: Path = db_path
+        self._conn_lock = getattr(self, "_conn_lock", threading.RLock())
+
+    def _init_db(self) -> sqlite3.Connection:
+        """Create the schema on first use and return the shared connection."""
+        if self._conn is not None:
+            return self._conn
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
+        try:
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS states (
                     session_id TEXT NOT NULL,
                     key TEXT NOT NULL,
@@ -135,7 +171,7 @@ class StateRegisterDB(SessionRegister):
                     PRIMARY KEY (session_id, key)
                 )
             """)
-            cursor.execute("""
+            conn.execute("""
                 CREATE TABLE IF NOT EXISTS context_epoch (
                     session_id TEXT PRIMARY KEY,
                     baseline TEXT NOT NULL,
@@ -146,12 +182,22 @@ class StateRegisterDB(SessionRegister):
                 )
             """)
             conn.commit()
+        except Exception:
+            conn.close()
+            raise
+        self._conn = conn
+        return conn
+
+    def ensure_initialized(self) -> sqlite3.Connection:
+        """Materialize the connection/schema on first use (idempotent)."""
+        with self._conn_lock:
+            return self._init_db()
 
     def set_state(self, session_id: str, key: str, value: Any) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
+            with self._conn_lock:
+                conn = self._init_db()
+                conn.execute(
                     "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
                     (session_id, key, json.dumps(value)),
                 )
@@ -163,13 +209,15 @@ class StateRegisterDB(SessionRegister):
 
     def get_state(self, session_id: str, key: str, default: Any = None) -> Any:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT value FROM states WHERE session_id = ? AND key = ?", (session_id, key)
+            with self._conn_lock:
+                row = (
+                    self._init_db()
+                    .execute(
+                        "SELECT value FROM states WHERE session_id = ? AND key = ?",
+                        (session_id, key),
+                    )
+                    .fetchone()
                 )
-                row = cursor.fetchone()
-
             if row:
                 return json.loads(row[0])
             return default
@@ -179,10 +227,12 @@ class StateRegisterDB(SessionRegister):
 
     def get_all_states(self, session_id: str) -> dict[str, Any]:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT key, value FROM states WHERE session_id = ?", (session_id,))
-                rows = cursor.fetchall()
+            with self._conn_lock:
+                rows = (
+                    self._init_db()
+                    .execute("SELECT key, value FROM states WHERE session_id = ?", (session_id,))
+                    .fetchall()
+                )
             return {row[0]: json.loads(row[1]) for row in rows}
         except Exception as exc:
             _log_state_db_failure("get_all_states", exc, session_id=session_id)
@@ -190,12 +240,11 @@ class StateRegisterDB(SessionRegister):
 
     def delete_state(self, session_id: str, key: str) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
+            with self._conn_lock:
+                conn = self._init_db()
+                affected = conn.execute(
                     "DELETE FROM states WHERE session_id = ? AND key = ?", (session_id, key)
-                )
-                affected = cursor.rowcount
+                ).rowcount
                 conn.commit()
             return affected > 0
         except Exception as exc:
@@ -205,10 +254,9 @@ class StateRegisterDB(SessionRegister):
     def get_all_session_ids(self) -> list[str]:
         """Return all distinct session_id values from the database."""
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT DISTINCT session_id FROM states")
-                return [row[0] for row in cursor.fetchall()]
+            with self._conn_lock:
+                rows = self._init_db().execute("SELECT DISTINCT session_id FROM states").fetchall()
+            return [row[0] for row in rows]
         except Exception as exc:
             _log_state_db_failure("get_all_session_ids", exc)
         return []
@@ -219,35 +267,39 @@ class StateRegisterDB(SessionRegister):
 
     def has_session(self, session_id: str) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT 1 FROM states WHERE session_id = ? LIMIT 1", (session_id,))
-                result = cursor.fetchone() is not None
-            return result
+            with self._conn_lock:
+                row = (
+                    self._init_db()
+                    .execute("SELECT 1 FROM states WHERE session_id = ? LIMIT 1", (session_id,))
+                    .fetchone()
+                )
+            return row is not None
         except Exception as exc:
             _log_state_db_failure("has_session", exc, session_id=session_id)
         return False
 
     def has_key(self, session_id: str, key: str) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute(
-                    "SELECT 1 FROM states WHERE session_id = ? AND key = ? LIMIT 1",
-                    (session_id, key),
+            with self._conn_lock:
+                row = (
+                    self._init_db()
+                    .execute(
+                        "SELECT 1 FROM states WHERE session_id = ? AND key = ? LIMIT 1",
+                        (session_id, key),
+                    )
+                    .fetchone()
                 )
-                result = cursor.fetchone() is not None
-            return result
+            return row is not None
         except Exception as exc:
             _log_state_db_failure("has_key", exc, session_id=session_id, key=key)
         return False
 
     def update_states(self, session_id: str, states: dict[str, Any]) -> bool:
         try:
-            with sqlite3.connect(self.db_path) as conn:
-                cursor = conn.cursor()
+            with self._conn_lock:
+                conn = self._init_db()
                 for key, value in states.items():
-                    cursor.execute(
+                    conn.execute(
                         "INSERT OR REPLACE INTO states (session_id, key, value) VALUES (?, ?, ?)",
                         (session_id, key, json.dumps(value)),
                     )
@@ -259,6 +311,10 @@ class StateRegisterDB(SessionRegister):
 
 
 state_register_db = StateRegisterDB()
+
+# Both implementations satisfy the shared register contract (static check).
+_mem_conforms_to_protocol: StateRegisterProtocol = state_register_mem
+_db_conforms_to_protocol: StateRegisterProtocol = state_register_db
 
 
 class ContextEpoch:
