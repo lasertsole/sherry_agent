@@ -516,7 +516,12 @@ curator/
 ├── state.py              # Curator run state persistence (.curator_state)
 ├── usage.py              # Skill usage record CRUD (.usage/{name}.json) + agent_created_report + orphan cleanup
 ├── transitions.py        # Auto state transitions + should_run_now logic
-├── orchestrator.py       # Main orchestrator (run_curator_review / maybe_run_curator / _apply_consolidation / _generate_umbrella_skill)
+├── orchestrator.py       # Run entry points + consolidation apply loop (run_curator_review / maybe_run_curator / _apply_consolidation / _merge_umbrella_skills)
+├── review.py             # LLM review pass + agent-created-skill candidate snapshot (CURATOR_REVIEW_PROMPT / _run_llm_review)
+├── run_state.py          # Run accumulator (_ReviewRun) + snapshots + report finalization (_finalize_run)
+├── umbrella.py           # Umbrella-skill generation (_generate_umbrella_skill: multifile parse + fallback)
+├── migration.py          # Consolidation file migration + archive phases (_migrate_source_files / _archive_*)
+├── refresh.py            # Provider resolution + system-prompt refresh (_resolve_skill_writer / _schedule_system_prompt_refresh)
 ├── classify.py           # Removed skill classification (consolidated vs pruned) + reconciliation
 ├── helpers.py            # Utilities (ISO parsing, atomic writes, skill description reader, path needle matching)
 └── report.py             # Run report generation (run.json + REPORT.md + _build_rename_summary)

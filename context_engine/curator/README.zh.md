@@ -512,7 +512,12 @@ curator/
 ├── state.py              # Curator 运行状态持久化（.curator_state）
 ├── usage.py              # 技能使用记录 CRUD（.usage/{name}.json）+ agent_created_report + 孤立记录清理
 ├── transitions.py        # 自动状态转换 + should_run_now 判定
-├── orchestrator.py       # 主编排器（run_curator_review / maybe_run_curator / _apply_consolidation / _generate_umbrella_skill）
+├── orchestrator.py       # 运行入口与合并应用循环（run_curator_review / maybe_run_curator / _apply_consolidation / _merge_umbrella_skills）
+├── review.py             # LLM 审查通道 + agent 创建技能候选快照（CURATOR_REVIEW_PROMPT / _run_llm_review）
+├── run_state.py          # 运行累加器（_ReviewRun）+ 快照 + 报告定稿（_finalize_run）
+├── umbrella.py           # 伞形技能生成（_generate_umbrella_skill：多文件解析 + 回退骨架）
+├── migration.py          # 合并文件迁移与归档阶段（_migrate_source_files / _archive_*）
+├── refresh.py            # Provider 解析与系统提示词刷新（_resolve_skill_writer / _schedule_system_prompt_refresh）
 ├── classify.py           # 移除技能分类（合并 vs 清理）+ 三源对账
 ├── helpers.py            # 工具函数（ISO 解析、原子写入、技能描述读取、路径匹配）
 └── report.py             # 运行报告生成（run.json + REPORT.md + _build_rename_summary）
