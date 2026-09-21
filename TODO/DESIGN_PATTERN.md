@@ -40,16 +40,16 @@
 | **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                | Done   |
 | **P2** | 9   | 原始 HTTP requests.post                                     | embed_model/reranker_model                                          | API Client Adapter                | Done |
 | **P2** | 10  | 原始 subprocess/Popen                                       | terminal/python_repl/skill_manage                                   | Command Executor 抽象             | Obsolete |
-| **P2** | 11  | `handleOperate` switch（11 路）                             | 前端 ad-hoc 对话框管理                                              | Command Registry + Dialog Manager | Open |
-| **P2** | 12  | `badgeClass`/`statusLabel`/`statusColor`/`statusKey`        | 状态映射重复 4 处                                                   | Lookup Table                      | Open |
+| **P2** | 11  | `handleOperate` switch（11 路）                             | 前端 ad-hoc 对话框管理                                              | Command Registry + Dialog Manager | Done |
+| **P2** | 12  | `badgeClass`/`statusLabel`/`statusColor`/`statusKey`        | 状态映射重复 4 处                                                   | Lookup Table                      | Done |
 | **P2** | 13  | `config/schema.py` 导入 `models/`                           | 已解决：改为回调注入 `set_provider_registry`（`config/schema.py:24`），models 侧装配时推送元数据；`lint-imports` "config must not import models" KEPT | 反转依赖（已落地） | Done |
 | **P2** | 14  | `models/LLMs/main_llm.py` 导入 `agent/`                     | 已解决：`FallbackCandidate` 已迁 `pub/types/llm.py:8`，`models/LLMs/main_llm.py:138` 自 pub 导入 | 提取到 pub/（已落地） | Done |
 | **P2** | 15  | 3 个 SQLite 存储无共享基类                                  | `_connect`/`_ensure_tables_sync` 重复 3 份（todolist 381 / taskflow 703 / subagent 300 行；taskflow 已加 `session_id` 会话隔离列） | BaseSQLiteRepository              | Done   |
 | **P2** | 16  | `_convert_message_to_dict` 重复                             | 已解决：共享实现上提 `LocalMultimodalLlamaChatBase` + `_convert_content_block` 钩子（VTTT 仅覆写 video_url），两处 closure 与子类覆写删除 | Template Method 完善              | Done   |
 | **P2** | 17  | 4 处 JSON content decode 重复                               | 已解决：抽出 `context_engine/content_codec.py::decode_content`（可选 `prefix` / `strict`），四处保留各自 marker/降级语义并委托 | 提取为 `ContentDecoder`           | Done   |
 | **P2** | 18  | 5 处模型 config 构建重复 | 已解决：抽出 `models/env_builder.py`（`ModelEnvBuilder`/`read_env`/`clean_client_kwargs`），5 处远程 config + fallback 候选委托；env 键名/默认值/strip 语义不变 | 提取 `ModelEnvBuilder`            | Done   |
-| **P2** | 19  | 前端 `Response.data: unknown`                               | 39 处 `as unknown as` 类型断言根因（生产代码，不含测试） | `Response<T>` 泛型                | Open |
-| **P2** | 20  | 前端 3 个 WebSocket 管理无统一抽象                          | 3 种重连策略各自实现                                                | `WebSocketConnection` 基类        | Open |
+| **P2** | 19  | 前端 `Response.data: unknown`                               | 39 处 `as unknown as` 类型断言根因（生产代码，不含测试） | `Response<T>` 泛型                | Done |
+| **P2** | 20  | 前端 3 个 WebSocket 管理无统一抽象                          | 3 种重连策略各自实现                                                | `WebSocketConnection` 基类        | Done |
 | **P2** | 21  | 前端 `bridge/upload.ts`/`bridge/health.ts` raw fetch | 绕过 requestApi，无 token/retry                                     | 统一 API 客户端                   | Open |
 | **P2** | 22  | 前端错误处理 4 种策略不一致                                 | catch→null / catch→缓存 / throw / catch→默认 —— **需执行前单独复核**（4/5/6 种口径不一致） | Result<T,E> 或统一规范            | Open |
 | **P3** | 23  | `build_reasoning_kwargs` provider 分发                      | if-elif 链                                                          | Strategy + Registry               | Open |
@@ -73,7 +73,7 @@
 | **P3** | 41  | `curator/orchestrator.py` 775 行 | sync `llm.invoke()` 在异步路径（`:98`/`:473`） | async/await 或 to_thread          | Open |
 | **P3** | 42  | 前端 `ChatBox.vue` 888 行 | 渲染+复制+滚动+载体+媒体解析                                        | 拆分为多个 composable             | Open |
 | **P3** | 43  | 前端 `agent-socket.ts` 554 行 | WS+消息+重连+上传+队列                                              | 拆分为 ConnectionManager/Router   | Open |
-| **P3** | 44  | 前端 `resolveSid`/`safeT` 重复 | 缩窄：`resolveSid`（`subagent-sync.ts:68` / `stores/todo.ts:81`）与 `safeT`（`toast.ts:52` / `stores/connection.ts:65`）仍重复；`isClient`/`clientFlagOverride` 已统一到 `utils/client.ts:29`/`:16` | 提取共享工具 | Open |
+| **P3** | 44  | 前端 `resolveSid`/`safeT` 重复 | 已解决（2026-09-21）：`sessionIdFromPathname`（`utils/session-route.ts`）+ `safeT`（`utils/i18n.ts`）；两处调用点仅保留各自 reserved 集/空值映射 | 提取共享工具 | Done |
 
 ---
 
@@ -393,6 +393,8 @@ class SessionState:
 - **附加问题**: 10 个独立的 `showXxxDialog = ref(false)` ad-hoc 管理对话框（refs 集中在 `:335-362`），无集中管理器
 - **模式**: Command Registry — `const dialogRegistry: Record<string, Ref<boolean>>` + `useDialogManager()` composable
 
+**Status: Done (2026-09-21)** — `client/app/composables/dialog-manager.ts::useDialogManager(HOME_DIALOG_IDS)`（统一可见性状态 + open/close/toggle）与 `client/app/pages/home/dialogs.ts`（`HOME_TOOLBAR_EVENTS` + `buildHomeToolbarCommands` 事件→命令注册表，内部 `Record<HomeToolbarEvent, () => void>` 保证漏项即编译错误）。`home/index.vue` 删除 10 个 `showXxxDialog` ref 与 11 路 switch；每个 action 的既有行为、i18n key、图标、可见性条件、组件渲染顺序不变。测试：`dialog-manager.test.ts`（open/close/toggle/独立性）+ `home-toolbar-commands.test.ts`（11 事件映射逐项 + 覆盖 `headerTools` 全部条目）+ `home-dialogs.integration.test.ts`（mount 真实页面，点击顶栏/九宫格驱动真实 dispatch，含 v-model 关闭路径）。§4.1.2（`[sid].vue` 4 路）不在本步范围，保持 Open。
+
 #### 4.1.2 [NEW] `handleOperate` in `[sid].vue` — 4 路 switch
 
 - **文件**: `client/app/pages/home/index/[sid].vue:689-708`
@@ -404,11 +406,15 @@ class SessionState:
 - **问题**: `badgeClass` 6 个条件分支，`statusLabel` 9 个条件分支
 - **模式**: Lookup Table — `const STATUS_STYLE: Record<string, {badge, labelKey}>`
 
+**Status: Done (2026-09-21)** — 合并进 §4.7.4 的 `SUBAGENT_STATUS_META`；`badgeClass`/`statusLabel` 保留原优先级链，仅改成查表取值，i18n key 与 class 串逐值不变。
+
 #### 4.1.4 [NEW] `statusColorLight`/`statusColorDark`/`statusKey` — 状态映射重复第 2-3 处
 
 - **文件**: `client/app/pages/home/components/SubagentFlowGraph.vue:103,123,151`
 - **问题**: 两个 switch + 一个 if-else 链，将同一 SubagentRun 状态枚举映射到颜色/i18n key。**重复了** `useSubagentTasks.ts` 中 `badgeClass`/`statusLabel` 的逻辑
 - **模式**: 提取为共享的 `SUBAGENT_STATUS_META` 查找表
+
+**Status: Done (2026-09-21)** — `statusColorLight`/`statusColorDark` 改为 `subagentStatusMeta(status).colorLight/colorDark`；`statusKey` 按原优先级取 `flowKey`。注意颜色路径的入参仍是 `execution.status`（未与 `statusKey` 的 outcome 优先链合并），DOM/画布观感逐像素不变。
 
 #### 4.1.5 [NEW] CronDialog.vue — 3 个 switch
 
@@ -492,6 +498,8 @@ class SessionState:
 
 - **模式**: `WebSocketConnection` 基类 + 可插拔重连策略
 
+**Status: Done (2026-09-21，部分适用)** — `client/app/composables/ws-connection.ts::WsConnection`：单 socket 槽 + superseded-socket 守卫 + 固定延迟重连调度（可取消）+ 可选 ping/pong 心跳（interval/timeout/maxMissed/onTimeout）+ `dispose()`；`ws.ts` 的 `useWs`/`useSubagentWs` 成为「基类 + 通道 hook」（mitt 事件名、subagent `ready` 握手、`everConnected` 均留在 `ws.ts`），模块级单例与 5s 重连语义不变。既有 `ws.test.ts` 18 条（含重连 timer 归属、reconnect storm、心跳全链路）**未改动全绿**；新增 `ws-connection.test.ts` 12 条覆盖基类重连调度/取消/过期 onclose/心跳阈值。**未并入 `agent-socket.ts`（判据）**：其重连决策与 pending-send 恢复策略耦合（mid-stream 拒绝并 `StreamInterruptedError`、pre-chunk 按 `wsReconnectDelayMs` 指数退避重发、retry 预算耗尽后 5s 回退），且 socket 按 session 建 Map 非模块单例；合并只能把该策略表达成 hooks，抽象净收益为负。
+
 #### 4.4.3 [NEW] JSON.parse 无运行时 schema 验证
 
 - `message-items.ts:64` — `JSON.parse(calls)` 无 schema
@@ -546,6 +554,8 @@ class SessionState:
 - **分布**: bridge/skills.ts(6)、bridge/cron.ts(6)、bridge/session.ts(5)、bridge/channels.ts(4)、bridge/curator.ts(3)、messages.ts(3) 等 39 处；`directives/debounce.ts:73-91` 的 4 处 DOM 断言不计入（全量生产断言 43 处，测试不计）
 - **模式**: `Response<T>` 泛型 — `export type Response<T = unknown> = { code?: number; data?: T; msg?: string }`
 
+**Status: Done (2026-09-21)** — `types/response.d.ts` 泛型化 + `requestApi.ts::fetchApi<T = Response>()` 返回调用方声明的 `T | null`（边界守卫 `isApiPayload<T>` 仍拒绝 number/boolean/undefined 等非 JSON 容器），另加 `fetchApiPayload<T>()` 把 bridge 历史「非空返回」契约集中在一处（失败仍透传 null，与改造前运行时一致）。39 处 `as unknown as` 全部消除（生产 43 → 4；余 4 处为本节已声明不计入的 `directives/debounce.ts` DOM symbol 断言）。动态 payload 改运行时守卫/收窄：`messages.ts::isJsonObject`+`isPendingInterrupt`（`None`/数组/裸对象/`{data}` 信封逐例等价）、`chat-types.ts::isHitlInterruptData`（HITL `content` 类型加宽为 `string | HitlInterruptData`，chunk/error 侧 `typeof === 'string'` 收窄）、`/sessions` 与 history 行 `Array.isArray` 收窄；`env`/`sherryConfig`/`model-config`/`knowledge-graph upload`/`mitt` window 声明一并消断言。验证：`pnpm typecheck` 0 error；`requestApi.test.ts` 新增 `expectTypeOf` 两侧类型断言 + `fetchApiPayload` 失败透传；`messages.test.ts` 新增 7 条 pending-interrupt 正/负例；`hitl-bridge.test.ts` 新增非对象 content 忽略用例。
+
 ---
 
 ### 4.7 重复代码
@@ -560,10 +570,14 @@ class SessionState:
 
 - `subagent-sync.ts:68` 和 `stores/todo.ts:81` — 几乎相同的 URL pathname 解析逻辑（旧 `use-todo-list.ts` 已删除）
 
+**Status: Done (2026-09-21)** — `client/app/utils/session-route.ts::sessionIdFromPathname(pathname, reserved = ['home'])`；`subagent-sync.ts::resolveSid(force?)` 保留 `force`/非 client 短路（返回 `undefined`），`stores/todo.ts` 传 `['home','tasks']` 并把空值映射为 `''`。语义逐字不变；新增 `session-route.test.ts` 覆盖两种 reserved 变体与空/尾斜杠边界。
+
 #### 4.7.3 [NEW] `isClient()`/`safeT()` 重复
 
 - `isClient()`/`clientFlagOverride` 已统一到 `utils/client.ts:29`/`:16`（不再重复）
 - 仍重复：`safeT()` — `toast.ts:52` 与 `stores/connection.ts:65`
+
+**Status: Done (2026-09-21)** — `client/app/utils/i18n.ts::safeT(key)`（`resolveRuntimeT()` 保持 Nuxt auto-import，`isClient()` 短路 + 无 translator 回退原样 key）；`toast.ts` 与 `stores/connection.ts` 的字节级相同私有副本删除。新增 `i18n.test.ts` 覆盖非 client/无 translator/有 translator 三条路径；既有 `toast.test.ts`、`stores/__tests__/connection.test.ts` 未改动全绿。
 
 #### 4.7.4 [NEW] 状态→颜色/标签映射重复（4 处）
 
@@ -571,6 +585,8 @@ class SessionState:
 2. `useSubagentTasks.ts:66::statusLabel()` — status → i18n key
 3. `SubagentFlowGraph.vue:103,123::statusColorLight/Dark()` — status → hex color
 4. `SubagentFlowGraph.vue:151::statusKey()` — status → i18n key
+
+**Status: Done (2026-09-21)** — `client/app/utils/subagent-status.ts`：`SUBAGENT_STATUS_META: Record<SubagentStatus, { labelKey, badgeClass, colorLight, colorDark, flowKey }>`（9 个状态：RUNNING/INTERRUPTED/PENDING/IN_PROGRESS/DELIVERED/OK/ERROR/TIMEOUT/KILLED）+ `SUBAGENT_STATUS_FALLBACK` + `subagentStatusMeta()`/`subagentStatusColorLight()`/`subagentStatusColorDark()`。4 处调用点改为查表，**各自优先级链逐字保留**（badge：exec RUNNING/INTERRUPTED → 否则 outcome；label：exec → delivery → outcome；graph key：exec → outcome），原 fallback（灰 badge / `#64748b` / `#94a3b8` / `sidebar.statusUnknown` / `unknown`）不变。`subagent-status.test.ts` 对每条 status 的 labelKey/类名/双色/flowKey 逐值钉死（含 fallback 与未知值），既有 `useSubagentTasks.test.ts` 的 badgeClass/statusLabel 断言未改动仍全绿。
 
 ---
 
@@ -690,7 +706,7 @@ class SessionState:
 
 ## 8. Recommended Refactoring Roadmap
 
-> **2026-09-21 核对**：已完成 **2.1 / 2.2 / 2.3 / 2.7 / 2.8 / 2.9 / 2.10 / 2.16 / 2.17 / 3.8**（3.8 Pinia 迁移已落地，该步已从列表删除）；其余待做。每步附当前 file:line 定位，可直接执行。
+> **2026-09-21 核对**：已完成 **2.1 / 2.2 / 2.3 / 2.5 / 2.6 / 2.7 / 2.8 / 2.9 / 2.10 / 2.11–2.15 / 2.16 / 2.17 / 3.8**（3.8 Pinia 迁移已落地，该步已从列表删除）；2.4 已判 Obsolete（见下）。每步附当前 file:line 定位，可直接执行。
 
 ### Phase 0: 修复数据丢失 Bug（P0）
 
@@ -727,11 +743,11 @@ class SessionState:
 | 2.8  | `ContentDecoder` 提取（4 处 JSON decode 重复）             | DRY                   | 0.5 天      | Done   |
 | 2.9  | `_convert_message_to_dict` 完善到基类                      | Template Method       | 0.5 天      | Done   |
 | 2.10 | `RerankerProtocol` ABC 提取                                | Interface Seg.        | 0.5 天      | Done   |
-| 2.11 | 前端 `Response<T>` 泛型                                    | Generic Type          | 0.5 天      | Open   |
-| 2.12 | 前端 `WebSocketConnection` 基类                            | Base Class + Strategy | 1-2 天      | Open   |
-| 2.13 | 前端 Command Registry + Dialog Manager                     | Registry              | 1 天        | Open   |
-| 2.14 | 前端 `SUBAGENT_STATUS_META` 查找表                         | Lookup Table          | 0.5 天      | Open   |
-| 2.15 | 前端 `resolveSid`/`safeT` 提取                             | DRY                   | 0.5 天      | Open   |
+| 2.11 | 前端 `Response<T>` 泛型                                    | Generic Type          | 0.5 天      | Done   |
+| 2.12 | 前端 `WebSocketConnection` 基类                            | Base Class + Strategy | 1-2 天      | Done   |
+| 2.13 | 前端 Command Registry + Dialog Manager                     | Registry              | 1 天        | Done   |
+| 2.14 | 前端 `SUBAGENT_STATUS_META` 查找表                         | Lookup Table          | 0.5 天      | Done   |
+| 2.15 | 前端 `resolveSid`/`safeT` 提取                             | DRY                   | 0.5 天      | Done   |
 | 2.16 | `config/schema.py` 反转 `models/` 依赖                     | 反转依赖              | 1 天        | Done   |
 | 2.17 | `models/LLMs/main_llm.py` 提取 `FallbackCandidate` 到 pub/ | 反转依赖              | 0.5 天      | Done   |
 
@@ -745,11 +761,11 @@ class SessionState:
 - 2.8 定位：`context_engine/core.py:157`；`context_engine/store/core.py:618`；`context_engine/store/core.py:788`；`context_engine/embeddings/store.py:91`。**Done (2026-09-21)**：`context_engine/content_codec.py::decode_content`（见 §3.1.7）。
 - 2.9 定位：ITTT `core.py:134-173`；VTTT `core.py:129-177`；基类 `models/LLMs/base_local_llama.py:60`。**Done (2026-09-21)**：上提到 `LocalMultimodalLlamaChatBase` + `_convert_content_block` 钩子（见 §5.2）。
 - 2.10 定位：`models/reranker_model/core.py:264`（`CrossEncoderGGUF`）/ `:537`（`CloudReranker`）。**Done (2026-09-21)**：`RerankerProtocol`（`@runtime_checkable`）+ `reranker_conformance()`（见 §3.3.4）。
-- 2.11 定位：`client/app/types/response.d.ts`；39 处断言分布见 §4.6.1。
-- 2.12 定位：`client/app/composables/ws.ts:252,410`；`client/app/composables/bridge/agent-socket.ts:405-441`。
-- 2.13 定位：`client/app/pages/home/index.vue:396-434`；`client/app/pages/home/index/[sid].vue:689-708`。
-- 2.14 定位：`client/app/composables/useSubagentTasks.ts:50,66`；`client/app/pages/home/components/SubagentFlowGraph.vue:103,123,151`。
-- 2.15 定位：`client/app/utils/client.ts:16,29`；`subagent-sync.ts:68` ↔ `stores/todo.ts:81`；`toast.ts:52` ↔ `stores/connection.ts:65`。
+- 2.11 定位：`client/app/types/response.d.ts`；39 处断言分布见 §4.6.1。**Done (2026-09-21)**：`Response<T>` + `fetchApi<T>`/`fetchApiPayload<T>`；39 处断言全消（生产 43 → 4，余 4 处为已声明不计入的 `directives/debounce.ts`），动态 payload 改运行时守卫（见 §4.6.1）。
+- 2.12 定位：`client/app/composables/ws.ts:252,410`；`client/app/composables/bridge/agent-socket.ts:405-441`。**Done (2026-09-21，部分适用)**：`ws-connection.ts::WsConnection` 统一两条推送通道；`agent-socket.ts` 保持独立类（恢复策略耦合，见 §4.4.2）。
+- 2.13 定位：`client/app/pages/home/index.vue:396-434`；`client/app/pages/home/index/[sid].vue:689-708`。**Done (2026-09-21，`[sid].vue` 4 路不在本步)**：`composables/dialog-manager.ts` + `pages/home/dialogs.ts` 注册表；`home/index.vue` 的 10 ref + 11 路 switch 删除（见 §4.1.1）。
+- 2.14 定位：`client/app/composables/useSubagentTasks.ts:50,66`；`client/app/pages/home/components/SubagentFlowGraph.vue:103,123,151`。**Done (2026-09-21)**：`utils/subagent-status.ts::SUBAGENT_STATUS_META`（见 §4.7.4）。
+- 2.15 定位：`client/app/utils/client.ts:16,29`；`subagent-sync.ts:68` ↔ `stores/todo.ts:81`；`toast.ts:52` ↔ `stores/connection.ts:65`。**Done (2026-09-21)**：`utils/session-route.ts` + `utils/i18n.ts`（见 §4.7.2/§4.7.3）。
 - 2.16/2.17 Done 依据：`config/schema.py:24 set_provider_registry`（`lint-imports` KEPT）；`pub/types/llm.py:8` + `models/LLMs/main_llm.py:138`。
 
 ### Phase 3: 架构清理 + 前端状态管理（P3）
