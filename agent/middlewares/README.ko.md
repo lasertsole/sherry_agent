@@ -597,7 +597,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - `_MIN_CONTENT_LENGTH = 20`자 미만의 내용은 건너뜀. 도구 호출을 포함한 모델 응답은 통째로 건너뜁니다(도구 루프 후에 재점검).
 - **추론 내용은 별도 추적**됩니다(`additional_kwargs`의 `reasoning_content` / `reasoning` / `reasoning_text`, 그리고 가시 내용에서 추출·제거되는 인라인 `<think>` / `<thinking>` / `<reasoning>` 블록).
 
-**스트림 중간 차단**은 `RepetitionGuardWrapper`(`agent/wrapper/repetition_guard.py`)가 담당합니다: 그래프의 `astream`을 인터셉트하고 이 모듈의 내부 반복 검출기, 동일한 세션별 내부 경고 중복 제거 게이트, 공유 `_STREAM_WARNING` 문구를 재사용합니다. 기존 모듈 수준 헬퍼 `check_stream_repetition`은 프로덕션 호출자가 없어 삭제되었습니다.
+**스트림 중간 차단**은 `RepetitionGuardWrapper`(`agent/wrapper/repetition_guard.py`)가 담당합니다: 그래프의 `astream`을 인터셉트하고 이 모듈의 내부 반복 검출기, 동일한 세션별 내부 경고 중복 제거 게이트, 공유 `_STREAM_WARNING` 문구를 재사용합니다.
 
 **워커 클린업:** 자식 세션 종료 시 `SESSION_STATE_KEYS`(6개 키)가 `state_register_mem`에서 삭제됩니다.
 
@@ -896,6 +896,11 @@ agent/middlewares/
 ├── summarization/               # Summarization
 │   ├── __init__.py              # Summarization 익스포트
 │   ├── core.py                  # Summarization
+│   ├── compression.py           # 압축 적용: 컷오프 + 비-LLM 전략 파이프라인 (락 내 실행)
+│   ├── overflow.py              # T1–T5 오버플로 라우팅 + provider 오류 복구 링
+│   ├── summary_generation.py    # LLM 요약 프롬프트/체인/폴백 + 복구 컨텍스트 추출
+│   ├── thrash.py                # 안티-스래싱 카운터, 쿨다운 기록, 열화 모니터
+│   ├── state_aliases.py         # summarization 상태 키 단축 별칭 (StateKey 값)
 │   ├── summarization_components.py # Summarization 공유 컴포넌트 (_FORCE_RECOVERY_KEY 등)
 │   ├── compaction_lock.py       # SQLite 압축 락 (TTL, fail-open)
 │   ├── media_offload.py         # 압축 시 인라인 미디어 오프로드

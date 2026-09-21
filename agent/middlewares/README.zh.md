@@ -590,7 +590,7 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
 - 少于 `_MIN_CONTENT_LENGTH = 20` 字符的内容跳过；含工具调用的模型响应整体跳过（工具循环结束后会再次检查）。
 - **推理内容单独跟踪**（`additional_kwargs` 中的 `reasoning_content` / `reasoning` / `reasoning_text`，以及内联的 `<think>` / `<thinking>` / `<reasoning>` 块——会被提取并从可见内容中剥离）。
 
-**流式截断**由 `RepetitionGuardWrapper`（`agent/wrapper/repetition_guard.py`）负责：它拦截图的 `astream`，复用本模块的内部重复检测器、同一套按会话的内部警告去重门以及共享的 `_STREAM_WARNING` 文案。原模块级辅助函数 `check_stream_repetition` 没有任何生产调用者，已删除。
+**流式截断**由 `RepetitionGuardWrapper`（`agent/wrapper/repetition_guard.py`）负责：它拦截图的 `astream`，复用本模块的内部重复检测器、同一套按会话的内部警告去重门以及共享的 `_STREAM_WARNING` 文案。
 
 **Worker 清理：** 子会话结束时，`SESSION_STATE_KEYS`（六个键）会从 `state_register_mem` 中删除。
 
@@ -889,6 +889,11 @@ agent/middlewares/
 ├── summarization/               # Summarization
 │   ├── __init__.py              # 导出 Summarization
 │   ├── core.py                  # Summarization
+│   ├── compression.py           # 压缩应用：截断点 + 非 LLM 策略管线（持锁执行）
+│   ├── overflow.py              # T1–T5 溢出路由 + provider 错误恢复环
+│   ├── summary_generation.py    # LLM 摘要提示词/链式/降级 + 恢复上下文提取
+│   ├── thrash.py                # 防抖计数器、冷却记账、退化监控
+│   ├── state_aliases.py         # summarization 状态键短别名（取 StateKey 值）
 │   ├── summarization_components.py # Summarization 共享组件（_FORCE_RECOVERY_KEY 等）
 │   ├── compaction_lock.py       # SQLite 压缩锁（TTL、fail-open）
 │   ├── media_offload.py         # 压缩时内联媒体归档

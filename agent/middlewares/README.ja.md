@@ -597,7 +597,7 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 - `_MIN_CONTENT_LENGTH = 20` 文字未満の内容はスキップ。ツール呼び出しを含むモデル応答は丸ごとスキップします（ツールループの後に再チェックされます）。
 - **推論内容は別個に追跡**されます（`additional_kwargs` の `reasoning_content` / `reasoning` / `reasoning_text`、および可視内容から抽出・剥ぎ取られるインラインの `<think>` / `<thinking>` / `<reasoning>` ブロック）。
 
-**ストリーム途中の切断**は `RepetitionGuardWrapper`（`agent/wrapper/repetition_guard.py`）が担います: グラフの `astream` をインターセプトし、本モジュールの内部繰り返し検出器、同じセッション単位の内部警告重複排除ゲート、共有の `_STREAM_WARNING` 文言を再利用します。旧モジュールレベルヘルパー `check_stream_repetition` には本番呼び出し元がなく、削除されました。
+**ストリーム途中の切断**は `RepetitionGuardWrapper`（`agent/wrapper/repetition_guard.py`）が担います: グラフの `astream` をインターセプトし、本モジュールの内部繰り返し検出器、同じセッション単位の内部警告重複排除ゲート、共有の `_STREAM_WARNING` 文言を再利用します。
 
 **ワーカーのクリーンアップ：** 子セッション終了時、`SESSION_STATE_KEYS`（6 つのキー）が `state_register_mem` から削除されます。
 
@@ -896,6 +896,11 @@ agent/middlewares/
 ├── summarization/               # Summarization
 │   ├── __init__.py              # Summarization をエクスポート
 │   ├── core.py                  # Summarization
+│   ├── compression.py           # 圧縮の適用: カットオフ + 非 LLM 戦略パイプライン（ロック内実行）
+│   ├── overflow.py              # T1–T5 オーバーフロー経路 + provider エラー復帰リング
+│   ├── summary_generation.py    # LLM 要約プロンプト/チェーン/フォールバック + 復帰コンテキスト抽出
+│   ├── thrash.py                # アンチスラッシングカウンタ、クールダウン管理、劣化モニタ
+│   ├── state_aliases.py         # summarization 状態キーの短縮エイリアス（StateKey 値）
 │   ├── summarization_components.py # Summarization 共有コンポーネント（_FORCE_RECOVERY_KEY など）
 │   ├── compaction_lock.py       # SQLite 圧縮ロック（TTL、fail-open）
 │   ├── media_offload.py         # 圧縮時のインラインメディア退避

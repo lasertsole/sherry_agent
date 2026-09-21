@@ -598,7 +598,7 @@ For the main agent the same detection runs through **`RepetitionGuardWrapper`** 
 - Contents shorter than `_MIN_CONTENT_LENGTH = 20` characters are skipped; model responses that contain tool calls are skipped entirely (they are re-checked after the tool loop).
 - **Reasoning is tracked separately** (`reasoning_content` / `reasoning` / `reasoning_text` in `additional_kwargs`, plus inline `<think>` / `<thinking>` / `<reasoning>` blocks, which are extracted and stripped from the visible content).
 
-**Stream-layer cutting** is owned by `RepetitionGuardWrapper` (`agent/wrapper/repetition_guard.py`), which intercepts the graph's `astream` and reuses this module's internal-repetition detector, the same per-session internal-warn dedupe gate, and the shared `_STREAM_WARNING` text. The former module-level `check_stream_repetition` helper had no production caller and was deleted.
+**Stream-layer cutting** is owned by `RepetitionGuardWrapper` (`agent/wrapper/repetition_guard.py`), which intercepts the graph's `astream` and reuses this module's internal-repetition detector, the same per-session internal-warn dedupe gate, and the shared `_STREAM_WARNING` text.
 
 **Worker cleanup:** `SESSION_STATE_KEYS` (six keys) are deleted from `state_register_mem` when the child session finishes.
 
@@ -896,6 +896,11 @@ agent/middlewares/
 ├── summarization/               # Summarization
 │   ├── __init__.py              # exports Summarization
 │   ├── core.py                  # Summarization
+│   ├── compression.py           # compression application: cutoff + non-LLM strategy pipeline (under-lock)
+│   ├── overflow.py              # T1–T5 overflow routing + provider-error recovery ring
+│   ├── summary_generation.py    # LLM summary prompt/chain/fallback + recovery-context extraction
+│   ├── thrash.py                # anti-thrash counters, cooldown bookkeeping, degradation monitor
+│   ├── state_aliases.py         # short aliases for the summarization state keys (StateKey values)
 │   ├── summarization_components.py # shared Summarization helpers (_FORCE_RECOVERY_KEY etc.)
 │   ├── compaction_lock.py       # SQLite compaction lock (TTL, fail-open)
 │   ├── media_offload.py         # compression-time inline-media offload
