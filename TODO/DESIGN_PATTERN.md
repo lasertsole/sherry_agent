@@ -45,9 +45,9 @@
 | **P2** | 13  | `config/schema.py` 导入 `models/`                           | 已解决：改为回调注入 `set_provider_registry`（`config/schema.py:24`），models 侧装配时推送元数据；`lint-imports` "config must not import models" KEPT | 反转依赖（已落地） | Done |
 | **P2** | 14  | `models/LLMs/main_llm.py` 导入 `agent/`                     | 已解决：`FallbackCandidate` 已迁 `pub/types/llm.py:8`，`models/LLMs/main_llm.py:138` 自 pub 导入 | 提取到 pub/（已落地） | Done |
 | **P2** | 15  | 3 个 SQLite 存储无共享基类                                  | `_connect`/`_ensure_tables_sync` 重复 3 份（todolist 381 / taskflow 703 / subagent 300 行；taskflow 已加 `session_id` 会话隔离列） | BaseSQLiteRepository              | Done   |
-| **P2** | 16  | `_convert_message_to_dict` 重复                             | ITTT↔VTTT 仍各自复制（ITTT `core.py:134-173`、VTTT `core.py:129-177`）；文本默认已上提 `base_local_llama.py:60` | Template Method 完善              | Open |
-| **P2** | 17  | 4 处 JSON content decode 重复                               | 同一 `\x00json:` 前缀解析逻辑 4 份                                  | 提取为 `ContentDecoder`           | Open |
-| **P2** | 18  | 5 处模型 config 构建重复 | config 已统一为 `config/features/` TypedDict + `LLM_CLIENT_DEFAULTS`；剩余重复收窄为「读 env + 建 dict + 过滤 None」 | 提取 `ModelEnvBuilder`            | Open |
+| **P2** | 16  | `_convert_message_to_dict` 重复                             | 已解决：共享实现上提 `LocalMultimodalLlamaChatBase` + `_convert_content_block` 钩子（VTTT 仅覆写 video_url），两处 closure 与子类覆写删除 | Template Method 完善              | Done   |
+| **P2** | 17  | 4 处 JSON content decode 重复                               | 已解决：抽出 `context_engine/content_codec.py::decode_content`（可选 `prefix` / `strict`），四处保留各自 marker/降级语义并委托 | 提取为 `ContentDecoder`           | Done   |
+| **P2** | 18  | 5 处模型 config 构建重复 | 已解决：抽出 `models/env_builder.py`（`ModelEnvBuilder`/`read_env`/`clean_client_kwargs`），5 处远程 config + fallback 候选委托；env 键名/默认值/strip 语义不变 | 提取 `ModelEnvBuilder`            | Done   |
 | **P2** | 19  | 前端 `Response.data: unknown`                               | 39 处 `as unknown as` 类型断言根因（生产代码，不含测试） | `Response<T>` 泛型                | Open |
 | **P2** | 20  | 前端 3 个 WebSocket 管理无统一抽象                          | 3 种重连策略各自实现                                                | `WebSocketConnection` 基类        | Open |
 | **P2** | 21  | 前端 `bridge/upload.ts`/`bridge/health.ts` raw fetch | 绕过 requestApi，无 token/retry                                     | 统一 API 客户端                   | Open |
@@ -331,7 +331,7 @@ class SessionState:
 - **问题**: 使用 `__import__("context_engine.store.db", fromlist=["get_db"]).get_db()` 而非正常 import
 - **模式**: 延迟导入或 DI
 
-#### 3.1.7 [NEW] JSON content decode 4 处重复
+#### 3.1.7 [RESOLVED] JSON content decode 4 处重复
 
 | 文件                                 | 函数                      | 行号    |
 | ------------------------------------ | ------------------------- | ------- |
@@ -341,6 +341,8 @@ class SessionState:
 | `context_engine/embeddings/store.py` | `_decode()`               | 91      |
 
 - **模式**: 提取为 `ContentDecoder` 共享函数
+
+**Status: Done (2026-09-21)** — `context_engine/content_codec.py::decode_content(value, *, prefix=None, strict=False)` 提供「str → json.loads」核心：非 str 原样返回，`prefix` 存在时只解码带该 marker 的字符串，非法 JSON 默认回退原串、`strict=True` 时重新抛出。四处保留各自语义并委托：`core.py::_decode_content` 保留 `\x00json:` marker 判断与告警；`store/core.py::_decode_json_columns` 用 `strict=True`（非法 JSON 仍传播）；`store/core.py::_decode_title_content`、`embeddings/store.py::_decode` 仍回退原串。新增 `tests/context_engine/test_content_codec.py`：`tests/context_engine` 274 passed（基线 256 + 18）。
 
 ---
 
@@ -365,10 +367,12 @@ class SessionState:
 - **文件**: `channels/base.py:16` — `def __init__(self, config: Any, bus: MessageBus)`
 - **模式**: 泛型或 TypedDict 约束
 
-#### 3.3.4 [NEW] reranker rank/filter/predict_scores 三方法重复
+#### 3.3.4 [RESOLVED] reranker rank/filter/predict_scores 三方法重复
 
 - `CrossEncoderGGUF` 和 `CloudReranker` 重复实现相同方法签名和逻辑
 - **模式**: 提取 `RerankerProtocol` ABC，两个实现继承接口
+
+**Status: Done (2026-09-21)** — `models/reranker_model/core.py::RerankerProtocol`（`@runtime_checkable`，覆盖 `predict`/`predict_scores`/`rank`/`filter`）+ `reranker_conformance()` 静态符合性探针；两类**未**继承（不改 MRO / 方法签名 / 行为），由探针的返回注解 + `isinstance` 测试证明结构性符合。`_LazyReranker` 也暴露同一组方法但使用 `**kwargs` 转发，未纳入 Protocol（有意保持其动态签名）。新增 `tests/models/reranker_model/test_protocol.py`。
 
 ---
 
@@ -578,7 +582,7 @@ class SessionState:
 
 **Status: Done (2026-09-21)** — `agent/tools/pub_base/sqlite_store.py` 新增 `BaseSQLiteRepository`，统一 `connect`（busy_timeout 首语句）、`switch_to_wal_if_needed`、`ensure_db`（async 循环归属握手）与 `ensure_tables_sync`（线程锁）；三方 store 各自继承并通过 `_table_ddls`/`_sync_table_ddls`/`_migration_ddls`/`_index_ddls` 钩子提供自己的 DDL，**无任何表/列/索引/迁移语句改动**（taskflow 的 `session_id` 列与增量迁移、subagent 的 `settle_wake_state` 仅同步路径创建均保留）。每 store 的进程级状态仍留在各自模块，基类经模块命名空间读写，故 `_DB_PATH`/`_initialized`/`_ensure_tables_sync` 等既有 monkeypatch 契约不变。各 store 新增 `PRAGMA table_info` DDL 等价性断言。行为保持：store 测试 14/29/5 passed（基线 13/28/4 + 新增守卫）。
 
-### 5.2 [CONFIRMED] `_convert_message_to_dict` 重复（ITTT↔VTTT 仍各自复制）
+### 5.2 [RESOLVED] `_convert_message_to_dict` 重复（ITTT↔VTTT 仍各自复制）
 
 | 文件                              | 行号    | 变体                         |
 | --------------------------------- | ------- | ---------------------------- |
@@ -589,7 +593,9 @@ class SessionState:
 - **改善**: `base_local_llama.py` 已提取 Template Method 基类（`LocalLlamaChatBase`）
 - **模式**: 完善 Template Method — ITTT/VTTT 的 `_convert_message_to_dict_impl` 提取到基类，通过 hook 扩展
 
-### 5.3 [NEW] 5 处模型 config 构建重复（读 env + 建 dict + 过滤 None）
+**Status: Done (2026-09-21)** — `LocalMultimodalLlamaChatBase` 新增 `_convert_message_to_dict`（role/纯文本/list 块遍历）与 `_convert_content_block(block)` 钩子；VTTT 的 `LocalLlamaChatModel` 仅覆写钩子实现 `video_url` → 文本占位符，ITTT 不再覆写。两处 `_convert_message_to_dict_impl` closure 与子类覆写均已删除，`AIMessage/BaseMessage/SystemMessage` 未用导入一并移除。行为保持：用 `git show HEAD` 取回的旧实现与新基类在全部 fixture（text/image_url/video_url/audio_bytes/未知块/非 dict 块）逐字段一致；新增 `tests/models/test_multimodal_message_conversion.py`。
+
+### 5.3 [RESOLVED] 5 处模型 config 构建重复（读 env + 建 dict + 过滤 None）
 
 | 文件                                | 行号      |
 | ----------------------------------- | --------- |
@@ -601,6 +607,8 @@ class SessionState:
 
 - **已统一**: `config/features/` TypedDict + `LLM_CLIENT_DEFAULTS`（`config/features/agent_side/llm_client_defaults.py:32`）——常量散落已消解
 - **模式**: 提取 `ModelEnvBuilder` — 读 env + 构建 config dict + 过滤 None
+
+**Status: Done (2026-09-21)** — `models/env_builder.py`：`ModelEnvBuilder(env_vars, *, strip=True).build(extra)`（读 env → 合并 extras → 丢 `None`/`""`）、`read_env(name, *, strip)`、`clean_client_kwargs(dict)`。5 处远程 config（ITTT/VTTT/main/reasoner/auxiliary）+ `main_llm.build_fallback_chain` 候选逐键接入；env 键名、默认值、`load_dotenv` 时机/`override` 语义、各模型特有 extras（temperature/max_retries/timeout/stream_chunk_timeout/profile/reasoning）全部不变。main/reasoner 以 `strip=False` 保留「原样读取」语义，vision/aux 保留 `.strip() or None`。新增 `tests/models/test_env_builder.py`；ITTT/VTTT/main/reasoner/aux/fallback 的 kwargs 快照改动前后逐字节一致。
 
 ### 5.5 [RESOLVED] middleware sync/async 双路径
 
@@ -676,7 +684,7 @@ class SessionState:
 
 ## 8. Recommended Refactoring Roadmap
 
-> **2026-09-21 核对**：已完成 **2.1 / 2.2 / 2.3 / 2.16 / 2.17 / 3.8**（3.8 Pinia 迁移已落地，该步已从列表删除）；其余待做。每步附当前 file:line 定位，可直接执行。
+> **2026-09-21 核对**：已完成 **2.1 / 2.2 / 2.3 / 2.7 / 2.8 / 2.9 / 2.10 / 2.16 / 2.17 / 3.8**（3.8 Pinia 迁移已落地，该步已从列表删除）；其余待做。每步附当前 file:line 定位，可直接执行。
 
 ### Phase 0: 修复数据丢失 Bug（P0）
 
@@ -709,10 +717,10 @@ class SessionState:
 | 2.4  | Command Executor 抽象                                      | Adapter               | 1 天        | Open   |
 | 2.5  | API Client Adapter（embed/reranker/media HTTP）            | Adapter               | 1 天        | Open   |
 | 2.6  | 工厂函数统一（ITTT/VTTT/reranker/extract）                 | Factory               | 1 天        | Open   |
-| 2.7  | `ModelEnvBuilder` 提取（5 处模型 config 构建重复）         | DRY                   | 0.5 天      | Open   |
-| 2.8  | `ContentDecoder` 提取（4 处 JSON decode 重复）             | DRY                   | 0.5 天      | Open   |
-| 2.9  | `_convert_message_to_dict` 完善到基类                      | Template Method       | 0.5 天      | Open   |
-| 2.10 | `RerankerProtocol` ABC 提取                                | Interface Seg.        | 0.5 天      | Open   |
+| 2.7  | `ModelEnvBuilder` 提取（5 处模型 config 构建重复）         | DRY                   | 0.5 天      | Done   |
+| 2.8  | `ContentDecoder` 提取（4 处 JSON decode 重复）             | DRY                   | 0.5 天      | Done   |
+| 2.9  | `_convert_message_to_dict` 完善到基类                      | Template Method       | 0.5 天      | Done   |
+| 2.10 | `RerankerProtocol` ABC 提取                                | Interface Seg.        | 0.5 天      | Done   |
 | 2.11 | 前端 `Response<T>` 泛型                                    | Generic Type          | 0.5 天      | Open   |
 | 2.12 | 前端 `WebSocketConnection` 基类                            | Base Class + Strategy | 1-2 天      | Open   |
 | 2.13 | 前端 Command Registry + Dialog Manager                     | Registry              | 1 天        | Open   |
@@ -727,10 +735,10 @@ class SessionState:
 - 2.4 定位：`agent/tools/terminal.py:189,198`；`agent/tools/python_repl.py:121`；`agent/tools/skill_tools/skill_manage.py:327`。
 - 2.5 定位：`models/embed_model/core.py:128`；`models/reranker_model/core.py:573,623,679`；`agent/middlewares/media_pipeline/media_handlers.py:90-91`。
 - 2.6 定位：`models/ITTT_model/core.py:81`；`models/VTTT_model/core.py:76`；`models/reranker_model/__init__.py:120`；`models/extract_model/core.py:194`。
-- 2.7 定位：ITTT `core.py:44,64-74`；VTTT `core.py:47,67-77`；`main_llm.py:17,64-88`；`reasoner_llm.py:14,23-36`；`auxiliary_llm/core.py:39`。
-- 2.8 定位：`context_engine/core.py:157`；`context_engine/store/core.py:618`；`context_engine/store/core.py:788`；`context_engine/embeddings/store.py:91`。
-- 2.9 定位：ITTT `core.py:134-173`；VTTT `core.py:129-177`；基类 `models/LLMs/base_local_llama.py:60`。
-- 2.10 定位：`models/reranker_model/core.py:264`（`CrossEncoderGGUF`）/ `:537`（`CloudReranker`）。
+- 2.7 定位：ITTT `core.py:44,64-74`；VTTT `core.py:47,67-77`；`main_llm.py:17,64-88`；`reasoner_llm.py:14,23-36`；`auxiliary_llm/core.py:39`。**Done (2026-09-21)**：`models/env_builder.py`（见 §5.3）。
+- 2.8 定位：`context_engine/core.py:157`；`context_engine/store/core.py:618`；`context_engine/store/core.py:788`；`context_engine/embeddings/store.py:91`。**Done (2026-09-21)**：`context_engine/content_codec.py::decode_content`（见 §3.1.7）。
+- 2.9 定位：ITTT `core.py:134-173`；VTTT `core.py:129-177`；基类 `models/LLMs/base_local_llama.py:60`。**Done (2026-09-21)**：上提到 `LocalMultimodalLlamaChatBase` + `_convert_content_block` 钩子（见 §5.2）。
+- 2.10 定位：`models/reranker_model/core.py:264`（`CrossEncoderGGUF`）/ `:537`（`CloudReranker`）。**Done (2026-09-21)**：`RerankerProtocol`（`@runtime_checkable`）+ `reranker_conformance()`（见 §3.3.4）。
 - 2.11 定位：`client/app/types/response.d.ts`；39 处断言分布见 §4.6.1。
 - 2.12 定位：`client/app/composables/ws.ts:252,410`；`client/app/composables/bridge/agent-socket.ts:405-441`。
 - 2.13 定位：`client/app/pages/home/index.vue:396-434`；`client/app/pages/home/index/[sid].vue:689-708`。
