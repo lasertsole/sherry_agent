@@ -15,12 +15,15 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-_STATE_PREFIX = "hitl"
+from runtime.session.state_keys import StateKey
 
 # Session-scoped bypass-all flag in state_register_mem (cleared with the
 # session) — distinct from the persistent external-path YOLO in
 # state_register_db (see agent/tools/pub_base/path_utils.py).
-SESSION_YOLO_KEY = "session_yolo"
+SESSION_YOLO_KEY = StateKey.HITL_SESSION_YOLO
+HITL_PERMANENT_KEY = StateKey.HITL_PERMANENT
+HITL_SESSION_APPROVED_KEY = StateKey.HITL_SESSION_APPROVED
+HITL_TURN_INTERRUPTED_KEY = StateKey.HITL_TURN_INTERRUPTED
 
 BLOCKED_MESSAGE = (
     "The user has NOT consented to this action. "

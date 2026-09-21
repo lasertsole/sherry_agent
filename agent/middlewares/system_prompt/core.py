@@ -30,7 +30,7 @@ from langgraph.typing import ContextT
 from langchain.agents.middleware import ModelRequest, dynamic_prompt
 from langchain_core.messages import SystemMessage
 from workspace.prompt_builder import build_system_prompt
-from runtime import state_register_db, state_register_mem
+from runtime import StateKey, state_register_db, state_register_mem
 from agent.middlewares.base import require_session_id
 
 __all__ = ["system_prompt_injection"]
@@ -43,16 +43,16 @@ def _get_and_reload_system_prompt(session_id: str) -> str:
     ``state_register_db`` hit is promoted back into mem. A full miss rebuilds
     via ``build_system_prompt`` and dual-writes db + mem.
     """
-    system_prompt = state_register_mem.get_state(session_id, "system_prompt", None)
+    system_prompt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, None)
 
     if system_prompt is None:
-        system_prompt = state_register_db.get_state(session_id, "system_prompt", None)
+        system_prompt = state_register_db.get_state(session_id, StateKey.SYSTEM_PROMPT, None)
 
         if system_prompt is None:
             system_prompt = build_system_prompt(session_id=session_id)
-            state_register_db.set_state(session_id, "system_prompt", system_prompt)
+            state_register_db.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
 
-        state_register_mem.set_state(session_id, "system_prompt", system_prompt)
+        state_register_mem.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
 
     return system_prompt
 

@@ -31,6 +31,7 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 
 from config.features import MAX_TOKENS_BOOST
+from runtime.session.state_keys import StateKey
 
 _logger = logging.getLogger(__name__)
 
@@ -41,7 +42,7 @@ _DEFAULT_MAX_TOKENS = MAX_TOKENS_BOOST["default_max_tokens"]
 _MAX_CAP = MAX_TOKENS_BOOST["max_cap"]
 _MAX_RETRIES = MAX_TOKENS_BOOST["max_retries"]
 _TRUNCATION_REASONS = frozenset({"length", "max_tokens"})
-_STREAM_FLAG = "is_stream_turn"
+_STREAM_FLAG = StateKey.IS_STREAM_TURN
 
 
 class MaxTokensBoostMiddleware(AgentMiddleware):

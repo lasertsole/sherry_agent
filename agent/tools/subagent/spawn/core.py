@@ -611,14 +611,14 @@ async def _execute_subagent(
         # Security: the child's file tools resolve external-path authorization
         # against these keys — allowlist inheritance (parent session) and
         # subagent identification (fail-closed without main-session approval).
-        from runtime import state_register_mem
+        from runtime import StateKey, state_register_mem
 
         state_register_mem.set_state(
             run.child_session_key,
-            "requester_session_key",
+            StateKey.REQUESTER_SESSION_KEY,
             normalize_session_key(run.spawned_by),
         )
-        state_register_mem.set_state(run.child_session_key, "caller_scope", "subagent")
+        state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
 
         # Invoke the child agent under a wall-clock timeout (0 disables the timeout)
         if timeout_seconds > 0:

@@ -5,7 +5,7 @@ from typing import Any
 from collections.abc import Callable
 
 from loguru import logger
-from runtime.session.state_register import state_register_mem
+from runtime.session.state_keys import TypedState, hitl_tool_approved_key
 
 from .types import (
     ApprovalDecision,
@@ -13,8 +13,9 @@ from .types import (
     ApprovalResult,
     HITLConfig,
     SmartApprovalResult,
-    _STATE_PREFIX,
     SESSION_YOLO_KEY,
+    HITL_PERMANENT_KEY,
+    HITL_SESSION_APPROVED_KEY,
     BLOCKED_MESSAGE,
 )
 from .approval_scope import current_operator
@@ -85,13 +86,13 @@ _args_hash = args_hash
 
 
 def _get_state(session_id: str, key: str, default: Any = None) -> Any:
-    """Read a value from the HITL namespace in the in-memory state register."""
-    return state_register_mem.get_state(session_id, f"{_STATE_PREFIX}:{key}", default)
+    """Read a typed HITL key from the in-memory state register."""
+    return TypedState.get(session_id, key, default)
 
 
 def _set_state(session_id: str, key: str, value: Any) -> bool:
-    """Write a value to the HITL namespace in the in-memory state register."""
-    return state_register_mem.set_state(session_id, f"{_STATE_PREFIX}:{key}", value)
+    """Write a typed HITL key to the in-memory state register."""
+    return TypedState.set(session_id, key, value)
 
 
 class ApprovalPipeline:
@@ -181,7 +182,7 @@ class ApprovalPipeline:
             return result
 
         # Layer 4: Permanent allowlist
-        permanent: list[str] = _get_state(session_id, "permanent", [])
+        permanent: list[str] = _get_state(session_id, HITL_PERMANENT_KEY, [])
         import fnmatch
 
         for pattern_str in permanent:
@@ -195,7 +196,7 @@ class ApprovalPipeline:
                 return result
 
         # Layer 5: Session allowlist
-        session_list: list[str] = _get_state(session_id, "session_approved", [])
+        session_list: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
         for pattern_str in session_list:
             if fnmatch.fnmatch(command, pattern_str):
                 result = ApprovalResult(
@@ -300,19 +301,19 @@ class ApprovalPipeline:
 
     def _add_to_permanent(self, session_id: str, command: str):
         """Add a command pattern to the permanent (cross-session) allowlist."""
-        current: list[str] = _get_state(session_id, "permanent", [])
+        current: list[str] = _get_state(session_id, HITL_PERMANENT_KEY, [])
         pattern = _extract_pattern(command)
         if pattern not in current:
             current.append(pattern)
-            _set_state(session_id, "permanent", current)
+            _set_state(session_id, HITL_PERMANENT_KEY, current)
 
     def _add_to_session(self, session_id: str, command: str):
         """Add a command pattern to the session (in-memory) allowlist."""
-        current: list[str] = _get_state(session_id, "session_approved", [])
+        current: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
         pattern = _extract_pattern(command)
         if pattern not in current:
             current.append(pattern)
-            _set_state(session_id, "session_approved", current)
+            _set_state(session_id, HITL_SESSION_APPROVED_KEY, current)
 
     # ── Layer 6: Smart approval ─────────────────────────────────────────
 
@@ -363,7 +364,7 @@ class ApprovalPipeline:
         can execute without a human gate. Tools are blocked only when explicitly
         denied for the session (a False args-hash record).
         """
-        key = f"tool_approved:{tool_name}"
+        key = hitl_tool_approved_key(tool_name)
         approved_args: dict[str, bool] = _get_state(session_id, key, {})
         args_hash = _args_hash(tool_args)
         if args_hash in approved_args:
@@ -448,7 +449,7 @@ class ApprovalPipeline:
         operator: str | None,
         reason: str,
     ) -> None:
-        key = f"tool_approved:{tool_name}"
+        key = hitl_tool_approved_key(tool_name)
         approved_args: dict[str, bool] = _get_state(session_id, key, {})
         approved_args[_args_hash(tool_args)] = allow
         _set_state(session_id, key, approved_args)

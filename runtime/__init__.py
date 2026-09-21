@@ -5,6 +5,7 @@ from .session.state_register import (
     StateRegisterDB,
     state_register_db,
 )
+from .session.state_keys import StateKey, TypedState, hitl_tool_approved_key
 from .session.count_call_register import CountCallRegister, count_call_register
 from .session.relation_register import RelationManager, relation_register
 from .session.timer_call_register import TimerCallRegister, timer_call_register
@@ -36,6 +37,9 @@ __all__ = [
     "state_register_mem",
     "StateRegisterDB",
     "state_register_db",
+    "StateKey",
+    "TypedState",
+    "hitl_tool_approved_key",
     "CountCallRegister",
     "count_call_register",
     "RelationManager",

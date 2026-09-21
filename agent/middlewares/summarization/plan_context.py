@@ -30,9 +30,9 @@ from pathlib import Path
 from loguru import logger
 
 from config.path import ROOT_DIR, resolve_plan_path
-from runtime import state_register_db
+from runtime import StateKey, state_register_db
 
-_PLAN_REF_STATE_KEY = "plan_ref"
+_PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 _DONE_STATUSES = frozenset({"completed", "cancelled"})
 
 # Render bounds: the block is a pointer, not the plan itself. The first N open

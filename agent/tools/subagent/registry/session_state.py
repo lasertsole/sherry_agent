@@ -76,6 +76,7 @@ from loguru import logger
 
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from runtime import hooks
+from runtime.session.state_keys import StateKey
 
 __all__ = [
     "SessionState",
@@ -149,7 +150,7 @@ def _has_live_ws_task(session_id: str) -> bool:
 def _is_answering(session_id: str) -> bool:
     # Truthiness matches the existing readers: the stream aborts on
     # ``get_state(...) is False``, so any truthy value means "answering".
-    return bool(_get_state_register().get_state(session_id, "answering"))
+    return bool(_get_state_register().get_state(session_id, StateKey.ANSWERING))
 
 
 def _get_auto_turn_module() -> Any | None:

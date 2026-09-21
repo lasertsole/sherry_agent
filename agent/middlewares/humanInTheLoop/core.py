@@ -15,14 +15,14 @@ from typing import Any
 from langchain_core.messages import ToolCall
 from loguru import logger
 from langgraph.errors import GraphInterrupt
-from runtime.session.state_register import state_register_mem
+from runtime.session.state_keys import TypedState
 
 from .types import (
     ApprovalResult,
     HITLConfig,
     SmartApprovalResult,
     WriteTarget,
-    _STATE_PREFIX,
+    HITL_TURN_INTERRUPTED_KEY,
     BLOCKED_MESSAGE,
     AgentMiddleware,
     AgentState,
@@ -126,12 +126,12 @@ class HumanInTheLoop(AgentMiddleware):
         return sid.strip() or "default"
 
     def _get_state(self, session_id: str, key: str, default: Any = None) -> Any:
-        """Read a namespaced HITL value from the in-memory state register."""
-        return state_register_mem.get_state(session_id, f"{_STATE_PREFIX}:{key}", default)
+        """Read a typed HITL key from the in-memory state register."""
+        return TypedState.get(session_id, key, default)
 
     def _set_state(self, session_id: str, key: str, value: Any) -> bool:
-        """Write a namespaced HITL value to the in-memory state register."""
-        return state_register_mem.set_state(session_id, f"{_STATE_PREFIX}:{key}", value)
+        """Write a typed HITL key to the in-memory state register."""
+        return TypedState.set(session_id, key, value)
 
     def _turn_operator(self, state: AgentState) -> str | None:
         """Resolve this turn's approval operator (``None`` = nobody present)."""
@@ -259,7 +259,7 @@ class HumanInTheLoop(AgentMiddleware):
 
     def _reset_turn_state(self, state: AgentState) -> None:
         session_id = self._session_id(state)
-        self._set_state(session_id, "turn_interrupted", False)
+        self._set_state(session_id, HITL_TURN_INTERRUPTED_KEY, False)
 
     @override
     def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:

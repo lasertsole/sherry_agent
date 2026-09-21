@@ -40,7 +40,7 @@ from langgraph.prebuilt.tool_node import ToolCallRequest
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain.agents.middleware.types import ModelRequest, ModelResponse, ExtendedModelResponse
 
-from runtime import state_register_mem, timer_call_register
+from runtime import StateKey, state_register_mem, timer_call_register
 from config.features import HEARTBEAT_STALENESS
 from agent.middlewares.base import (
     BeforeAgentHooksMixin,
@@ -54,11 +54,11 @@ _HEARTBEAT_INTERVAL_MINUTES = HEARTBEAT_STALENESS["heartbeat_interval_minutes"]
 _STALE_CYCLES_IDLE = HEARTBEAT_STALENESS["stale_cycles_idle"]
 _STALE_CYCLES_IN_TOOL = HEARTBEAT_STALENESS["stale_cycles_in_tool"]
 
-_STATE_KEY_ITER = "heartbeat_iter"
-_STATE_KEY_TOOL = "heartbeat_tool"
-_STATE_KEY_STALE = "heartbeat_stale"
-_STATE_KEY_KILLED = "heartbeat_killed"
-_STATE_KEY_SKIP = "heartbeat_skip"
+_STATE_KEY_ITER = StateKey.HEARTBEAT_ITER
+_STATE_KEY_TOOL = StateKey.HEARTBEAT_TOOL
+_STATE_KEY_STALE = StateKey.HEARTBEAT_STALE
+_STATE_KEY_KILLED = StateKey.HEARTBEAT_KILLED
+_STATE_KEY_SKIP = StateKey.HEARTBEAT_SKIP
 _TIMER_NAME = "heartbeat_staleness_check"
 
 
@@ -119,17 +119,17 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         current_iter: int = state_register_mem.get_state(session_id, _STATE_KEY_ITER, 0)
         current_tool: str | None = state_register_mem.get_state(session_id, _STATE_KEY_TOOL, None)
 
-        last_iter: int = state_register_mem.get_state(session_id, f"_last_{_STATE_KEY_ITER}", 0)
+        last_iter: int = state_register_mem.get_state(session_id, StateKey.HEARTBEAT_LAST_ITER, 0)
         last_tool: str | None = state_register_mem.get_state(
-            session_id, f"_last_{_STATE_KEY_TOOL}", None
+            session_id, StateKey.HEARTBEAT_LAST_TOOL, None
         )
 
         iter_advanced = current_iter > last_iter
         tool_changed = current_tool != last_tool
 
         if iter_advanced or tool_changed:
-            state_register_mem.set_state(session_id, f"_last_{_STATE_KEY_ITER}", current_iter)
-            state_register_mem.set_state(session_id, f"_last_{_STATE_KEY_TOOL}", current_tool)
+            state_register_mem.set_state(session_id, StateKey.HEARTBEAT_LAST_ITER, current_iter)
+            state_register_mem.set_state(session_id, StateKey.HEARTBEAT_LAST_TOOL, current_tool)
             state_register_mem.set_state(session_id, _STATE_KEY_STALE, 0)
             logger.debug(
                 "[HeartbeatStaleness] session={} progress detected (iter={}, tool={}), stale reset",
@@ -192,8 +192,8 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         state_register_mem.set_state(session_id, _STATE_KEY_STALE, 0)
         state_register_mem.set_state(session_id, _STATE_KEY_KILLED, False)
         state_register_mem.set_state(session_id, _STATE_KEY_SKIP, False)
-        state_register_mem.set_state(session_id, f"_last_{_STATE_KEY_ITER}", 0)
-        state_register_mem.set_state(session_id, f"_last_{_STATE_KEY_TOOL}", None)
+        state_register_mem.set_state(session_id, StateKey.HEARTBEAT_LAST_ITER, 0)
+        state_register_mem.set_state(session_id, StateKey.HEARTBEAT_LAST_TOOL, None)
         self._start_heartbeat(session_id)
 
     def _after_agent_impl(self, state: AgentState) -> None:

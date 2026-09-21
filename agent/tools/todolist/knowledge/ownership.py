@@ -35,9 +35,9 @@ from loguru import logger
 
 from agent.tools.todolist.registry.store_sqlite import get_todos_sync
 from config.path import resolve_boulder_path
-from runtime import state_register_db
+from runtime import StateKey, state_register_db
 
-_PLAN_REF_STATE_KEY = "plan_ref"
+_PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 
 PlanRefSource = Literal["state", "todos", "boulder"]
 

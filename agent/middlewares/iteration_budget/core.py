@@ -25,7 +25,7 @@ from langchain.agents.middleware.types import (
     ExtendedModelResponse,
 )
 
-from runtime import state_register_mem
+from runtime import StateKey, state_register_mem
 from config.features import ITERATION_BUDGET
 
 from agent.middlewares.base import BeforeAgentHooksMixin, require_session_id
@@ -46,8 +46,8 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         in a single turn.  Default **50**.
     """
 
-    _BUDGET_KEY = "iteration_budget"
-    _USED_KEY = "iteration_budget_used"
+    _BUDGET_KEY = StateKey.ITERATION_BUDGET
+    _USED_KEY = StateKey.ITERATION_BUDGET_USED
 
     def __init__(self, max_iterations: int = ITERATION_BUDGET["default_max_iterations"]):
         super().__init__()

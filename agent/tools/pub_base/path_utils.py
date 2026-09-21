@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from config import ROOT_DIR
+from runtime.session.state_keys import StateKey
 
 
 class PathOutOfBoundsError(ValueError):
@@ -173,8 +174,8 @@ def safe_error_detail(exc: Exception) -> str:
 # ── State keys ──────────────────────────────────────────────────────
 
 _GLOBAL_SESSION = "__global__"
-_YOLO_KEY = "external_path_yolo"
-_ALLOWLIST_KEY = "external_path_allowlist"
+_YOLO_KEY = StateKey.EXTERNAL_PATH_YOLO
+_ALLOWLIST_KEY = StateKey.EXTERNAL_PATH_ALLOWLIST
 
 
 def _extract_session_id(run_manager) -> str:
@@ -275,7 +276,7 @@ def _candidate_session_ids(session_id: str) -> list[str]:
     from runtime import state_register_mem
 
     ids = [session_id, _GLOBAL_SESSION]
-    requester = state_register_mem.get_state(session_id, "requester_session_key", "")
+    requester = state_register_mem.get_state(session_id, StateKey.REQUESTER_SESSION_KEY, "")
     if requester and requester not in ids:
         ids.insert(1, requester)
     return ids
@@ -303,7 +304,7 @@ def _is_subagent(session_id: str) -> bool:
 
     if not session_id:
         return False
-    scope = state_register_mem.get_state(session_id, "caller_scope", "main")
+    scope = state_register_mem.get_state(session_id, StateKey.CALLER_SCOPE, "main")
     return scope == "subagent"
 
 

@@ -9,6 +9,7 @@ everything defined here).
 from __future__ import annotations
 
 from config.features import REPETITION_GUARD
+from runtime.session.state_keys import StateKey
 from runtime.session.state_register import StateRegisterMeM
 
 # ---------------------------------------------------------------------------
@@ -29,12 +30,12 @@ from runtime.session.state_register import StateRegisterMeM
 # * ``_REASONING_WARNED_KEY``  -- like ``_INTERNAL_WARNED_KEY`` but scoped to
 #   reasoning text.
 # ---------------------------------------------------------------------------
-_HISTORY_KEY = "output_repetition_history"
-_WARN_COUNT_KEY = "output_repetition_warn_count"
-_INTERNAL_WARNED_KEY = "output_repetition_internal_warned"
-_HALTED_KEY = "output_repetition_halted"
-_REASONING_HISTORY_KEY = "output_repetition_reasoning_history"
-_REASONING_WARNED_KEY = "output_repetition_reasoning_warned"
+_HISTORY_KEY = StateKey.OUTPUT_REPETITION_HISTORY
+_WARN_COUNT_KEY = StateKey.OUTPUT_REPETITION_WARN_COUNT
+_INTERNAL_WARNED_KEY = StateKey.OUTPUT_REPETITION_INTERNAL_WARNED
+_HALTED_KEY = StateKey.OUTPUT_REPETITION_HALTED
+_REASONING_HISTORY_KEY = StateKey.OUTPUT_REPETITION_REASONING_HISTORY
+_REASONING_WARNED_KEY = StateKey.OUTPUT_REPETITION_REASONING_WARNED
 
 # The 6 per-session state keys owned by this middleware, exposed publicly so
 # the subagent teardown path can release exactly these (and only these) keys

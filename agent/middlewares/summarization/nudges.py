@@ -14,7 +14,7 @@ from loguru import logger
 from config.features import NUDGE, SUMMARIZATION
 from config.path import resolve_plan_path
 from pub.func import sanitize_tool_use_result_pairing
-from runtime import state_register_db, state_register_mem
+from runtime import StateKey, state_register_db, state_register_mem
 from runtime.lane import LaneType, lane_slot
 
 
@@ -288,8 +288,8 @@ similar work. A condensed summary is also auto-injected into the system
 prompt so you always know what previously failed/succeeded.
 """
 
-_PLAN_EXTRACTION_LOCK_KEY = "nudge_plan_extraction_lock"
-_PLAN_REF_STATE_KEY = "plan_ref"
+_PLAN_EXTRACTION_LOCK_KEY = StateKey.NUDGE_PLAN_EXTRACTION_LOCK
+_PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 # Subagent result text is truncated before it enters the extraction prompt so a
 # verbose child transcript cannot blow up the nudge context.
 _MAX_SUBAGENT_RESULT_CHARS = 24 * 1024
@@ -302,7 +302,7 @@ _MAX_SUBAGENT_RESULT_CHARS = 24 * 1024
 # The lock is written on the MAIN session on purpose: it is the cross-path
 # re-entrancy coordinator, so later compressions of the same session observe it.
 # Everything else the fork writes lives under the derived session key below.
-_COMPRESSION_TODO_LOCK_KEY = "compression_todo_update_lock"
+_COMPRESSION_TODO_LOCK_KEY = StateKey.COMPRESSION_TODO_UPDATE_LOCK
 
 # Metadata marker admitted by the fork's tool gate. The REAL ``todowrite``
 # tool carries it (agent/tools/todolist/tools/__init__.py); ``todoread`` does
@@ -374,8 +374,8 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 # compression dispatches nothing — nothing is queued.
 # ---------------------------------------------------------------------------
 
-_NUDGE_MEMORY_LOCK_KEY = "nudge_review_memory_lock"
-_PLAN_EXTRACTION_FIRED_KEY = "nudge_plan_extraction_fired"
+_NUDGE_MEMORY_LOCK_KEY = StateKey.NUDGE_REVIEW_MEMORY_LOCK
+_PLAN_EXTRACTION_FIRED_KEY = StateKey.NUDGE_PLAN_EXTRACTION_FIRED
 _PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 
 # Keeps scheduled nudge coroutines referenced until they complete (asyncio
@@ -671,7 +671,7 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
     # NUDGE lane is event-loop-bound: acquire only on the main loop. The sync
     # after_agent path no longer dispatches nudges (that per-turn hook was
     # removed), so no run_async() worker loop ever touches this semaphore.
-    state_register_mem.set_state(session_id, "nudge_review_memory_lock", True)
+    state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, True)
     try:
         async with lane_slot(LaneType.NUDGE):
             _agent = await _create_nudge_agent(system_prompt)
@@ -686,7 +686,7 @@ async def _nudge_memory(session_id: str, system_prompt: str, messages: list[Base
             )
         logger.debug("nudge memory res is {}", res["messages"][-1])
     finally:
-        state_register_mem.set_state(session_id, "nudge_review_memory_lock", False)
+        state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, False)
 
 
 async def _nudge_plan_extraction(

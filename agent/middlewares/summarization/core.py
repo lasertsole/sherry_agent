@@ -14,7 +14,7 @@ from langchain.agents.middleware import (
 )
 from workspace.prompt_builder import build_system_prompt
 from .compaction_lock import CompactionLock, CompactionLockError
-from runtime import state_register_db, state_register_mem
+from runtime import StateKey, state_register_db, state_register_mem
 from typing import Any, cast
 from collections.abc import Callable, Awaitable, Sequence
 from langchain_core.messages import (
@@ -124,15 +124,15 @@ _EVICTED_REF_PATTERN = re.compile(r"\[evicted to: ([^\]\n]+)\]")
 # State Keys
 # ======================================================================
 
-_LAST_USER_QUESTION_KEY = "summarization_last_user_question"
-_DEGRADATION_NO_TEXT_KEY = "summarization_degradation_no_text"
-_RECOVERY_ATTEMPTS_KEY = "summarization_recovery_attempts"
-_PREVIOUS_FILE_OPS_KEY = "summarization_previous_file_ops"
-_COOLDOWN_ROUNDS_KEY = "summarization_cooldown_rounds"
-_TURN_ATTEMPTS_KEY = "summarization_turn_attempts"
+_LAST_USER_QUESTION_KEY = StateKey.SUMMARIZATION_LAST_USER_QUESTION
+_DEGRADATION_NO_TEXT_KEY = StateKey.SUMMARIZATION_DEGRADATION_NO_TEXT
+_RECOVERY_ATTEMPTS_KEY = StateKey.SUMMARIZATION_RECOVERY_ATTEMPTS
+_PREVIOUS_FILE_OPS_KEY = StateKey.SUMMARIZATION_PREVIOUS_FILE_OPS
+_COOLDOWN_ROUNDS_KEY = StateKey.SUMMARIZATION_COOLDOWN_ROUNDS
+_TURN_ATTEMPTS_KEY = StateKey.SUMMARIZATION_TURN_ATTEMPTS
 # T4/T5 overflow retry counter: session-level, shared by every classified
 # overflow error, same state_register_mem pattern as the keys above.
-_OVERFLOW_RETRIES_KEY = "summarization_overflow_retries"
+_OVERFLOW_RETRIES_KEY = StateKey.SUMMARIZATION_OVERFLOW_RETRIES
 
 # Anti-thrash keys that must survive a process restart. The
 # CompressionEffectivenessTracker mutates these in ``state_register_mem``
@@ -932,7 +932,7 @@ class Summarization(AgentMiddleware):
         return max(int(ctx) - COMPRESSION_RESERVE_TOKENS, 0)
 
     def _estimate_system_prompt_tokens(self, session_id: str) -> int:
-        prompt = state_register_mem.get_state(session_id, "system_prompt", "")
+        prompt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, "")
         if isinstance(prompt, str) and prompt:
             return estimate_text_tokens(prompt)
         return 0
@@ -2343,8 +2343,8 @@ class Summarization(AgentMiddleware):
 
             memory_store.load_from_disk()
             system_prompt = build_system_prompt(session_id=session_id)
-            state_register_mem.set_state(session_id, "system_prompt", system_prompt)
-            state_register_db.set_state(session_id, "system_prompt", system_prompt)
+            state_register_mem.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
+            state_register_db.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
             _rearm_task_intent_after_compact(session_id)
 
         override_kwargs: dict[str, Any] = {
@@ -2450,8 +2450,8 @@ class Summarization(AgentMiddleware):
 
             memory_store.load_from_disk()
             system_prompt = build_system_prompt(session_id=session_id)
-            state_register_mem.set_state(session_id, "system_prompt", system_prompt)
-            state_register_db.set_state(session_id, "system_prompt", system_prompt)
+            state_register_mem.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
+            state_register_db.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
             _rearm_task_intent_after_compact(session_id)
 
         override_kwargs: dict[str, Any] = {
@@ -2619,7 +2619,7 @@ class Summarization(AgentMiddleware):
                 # flag is left for _monitor_degradation to consume. Identical
                 # content is left untouched (no override, no new SystemMessage).
                 if self._need_update_system_prompt:
-                    rebuilt = state_register_mem.get_state(session_id, "system_prompt", "")
+                    rebuilt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, "")
                     if rebuilt:
                         existing = request.system_message
                         content_matches = (
@@ -2701,7 +2701,7 @@ class Summarization(AgentMiddleware):
                 # flag is left for _monitor_degradation to consume. Identical
                 # content is left untouched (no override, no new SystemMessage).
                 if self._need_update_system_prompt:
-                    rebuilt = state_register_mem.get_state(session_id, "system_prompt", "")
+                    rebuilt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, "")
                     if rebuilt:
                         existing = request.system_message
                         content_matches = (

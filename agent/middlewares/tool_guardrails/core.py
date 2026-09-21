@@ -14,7 +14,7 @@ from typing import override
 from langchain_core.messages import ToolMessage
 from langchain.agents.middleware import AgentMiddleware, AgentState
 
-from runtime import state_register_mem
+from runtime import StateKey, state_register_mem
 from config.features import TOOL_GUARDRAILS
 from agent.middlewares.base import args_hash, require_session_id
 
@@ -72,7 +72,7 @@ class _TurnGuardrailState:
     recovery_violation_count: int = 0
 
 
-_GUARDRAIL_STATE_KEY = "tool_guardrail_state"
+_GUARDRAIL_STATE_KEY = StateKey.TOOL_GUARDRAIL_STATE
 _MAX_RECORDS = 200
 
 _ACTION_RANK = {

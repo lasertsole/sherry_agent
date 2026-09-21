@@ -23,7 +23,7 @@ import json
 
 from loguru import logger
 
-from runtime import relation_register
+from runtime import StateKey, relation_register
 
 from .config import (
     DEFAULT_CATEGORY,
@@ -41,7 +41,7 @@ _TASKFLOW_STEP_DONE = "done"
 # Session state key holding the plan file pointer (session-scoped
 # ``workspace/sessions/<id>/plans/*.md``) that the prompt builder reads to
 # locate the plan's knowledge summary.
-_PLAN_REF_STATE_KEY = "plan_ref"
+_PLAN_REF_STATE_KEY = StateKey.PLAN_REF
 
 
 class TodoStoreError(Exception):

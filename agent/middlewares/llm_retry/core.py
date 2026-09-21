@@ -50,20 +50,20 @@ from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, 
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from pub.func.retry_utils import jittered_backoff
 from pub.types.llm import FallbackCandidate
-from runtime import state_register_mem
+from runtime import StateKey, state_register_mem
 
-_STALE_STREAK_KEY = "llm_stale_streak"
-_FALLBACK_INDEX_KEY = "llm_fallback_index"
-_CONTENT_FILTER_KEY = "llm_content_filter_blocked"
+_STALE_STREAK_KEY = StateKey.LLM_STALE_STREAK
+_FALLBACK_INDEX_KEY = StateKey.LLM_FALLBACK_INDEX
+_CONTENT_FILTER_KEY = StateKey.LLM_CONTENT_FILTER_BLOCKED
 # Mid-stream safety-cut flag set by the stream layer (same contract as
 # ``_CONTENT_FILTER_KEY``, which covers the explicit finish_reason path).
-_FILTER_TERMINATED_KEY = "llm_content_filter_terminated"
+_FILTER_TERMINATED_KEY = StateKey.LLM_CONTENT_FILTER_TERMINATED
 # Partial-stream stub flag set by the stream layer — the PREVIOUS response was
 # cut mid-output by a network failure; the next model call must be retried (a
 # fresh attempt), never boosted with larger max_tokens.
-_PARTIAL_STUB_KEY = "llm_partial_stream_stub"
-_PARTIAL_CAUSE_KEY = "llm_partial_stream_cause"
-_STREAM_FLAG = "is_stream_turn"
+_PARTIAL_STUB_KEY = StateKey.LLM_PARTIAL_STREAM_STUB
+_PARTIAL_CAUSE_KEY = StateKey.LLM_PARTIAL_STREAM_CAUSE
+_STREAM_FLAG = StateKey.IS_STREAM_TURN
 _STALE_GIVEUP_MESSAGE = "Provider unresponsive — aborting to avoid indefinite stall."
 _CONTENT_FILTER_MESSAGE = "Model declined to respond (safety refusal)."
 

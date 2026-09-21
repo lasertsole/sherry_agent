@@ -24,10 +24,10 @@ from .mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
 from .media_handlers import MediaPaths, MediaType, _MEDIA_HANDLERS
 from .scrub import scrub_messages
 from pub.func.validator import is_safe_session_id
-from runtime import state_register_mem
+from runtime import StateKey, state_register_mem
 
-MULTIMODAL_TRYING_NATIVE_KEY = "_multimodal_trying_native"
-MULTIMODAL_NATIVE_MODEL_KEY = "_multimodal_native_model"
+MULTIMODAL_TRYING_NATIVE_KEY = StateKey.MULTIMODAL_TRYING_NATIVE
+MULTIMODAL_NATIVE_MODEL_KEY = StateKey.MULTIMODAL_NATIVE_MODEL
 
 
 @dataclass
