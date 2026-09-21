@@ -39,16 +39,16 @@ export const KIND_LABEL: Record<UploadMediaKind, string> = {
  * Upload base64 media (image/audio/video) to the backend's corresponding
  * `/images|/audio|/video/upload` endpoint and return the URL list.
  *
+ * The request goes through the shared API client (`fetchApiRaw`): same base URL
+ * and token policy as the JSON calls, but intentionally raw — this function owns
+ * the failure contract (HTTP status / non-JSON body inspection) and throws
+ * labelled errors, so no retry and no user-visible toast may be added here.
+ *
  * @param kind       Media kind (image | audio | video); determines the upload endpoint and MIME parsing rules
  * @param base64List List of base64-encoded strings (may carry a data:<mime>;base64, prefix)
- * @param baseURL    Backend HTTP base URL
  * @returns          Array of uploaded URLs (same order as the input)
  */
-export async function uploadBase64ToUrls(
-  kind: UploadMediaKind,
-  base64List: string[],
-  baseURL: string
-): Promise<string[]> {
+export async function uploadBase64ToUrls(kind: UploadMediaKind, base64List: string[]): Promise<string[]> {
   const label = KIND_LABEL[kind];
   const urls: string[] = [];
   for (const base64 of base64List) {
@@ -66,10 +66,11 @@ export async function uploadBase64ToUrls(
 
     let resp: Response;
     try {
-      resp = await fetch(`${baseURL}${KIND_ENDPOINT[kind]}`, {
-        method: 'POST',
-        headers: { 'Content-Type': contentType },
-        body: bytes
+      resp = await fetchApiRaw({
+        url: KIND_ENDPOINT[kind],
+        method: 'post',
+        body: bytes,
+        contentType
       });
     } catch (e) {
       throw new Error(`${label} upload network error: ${e}`, { cause: e });

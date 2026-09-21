@@ -10,7 +10,11 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('../requestApi', () => ({
   fetchApi: mocks.fetchApi,
-  fetchApiPayload: mocks.fetchApi
+  fetchApiPayload: mocks.fetchApi,
+  // Raw-response transport used by bridge/upload + bridge/health. Delegate to
+  // the global fetch double so the existing "stub fetch" setup keeps working
+  // unchanged.
+  fetchApiRaw: (options: unknown) => (globalThis.fetch as unknown as (init: unknown) => Promise<unknown>)(options)
 }));
 
 import * as bridge from '../bridge';

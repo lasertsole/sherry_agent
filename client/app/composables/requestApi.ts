@@ -295,3 +295,46 @@ export async function fetchApiPayload<T = Response>(params: Params): Promise<T> 
   // through unchanged to preserve the legacy bridge contract.
   return payload as T;
 }
+
+/** Options for the raw-response transport entry {@link fetchApiRaw}. */
+export interface RawFetchOptions {
+  /** Path relative to the shared API base URL (e.g. '/system_prompt'). */
+  url: string;
+  method?: 'get' | 'post' | 'put' | 'patch' | 'delete';
+  /** Raw request body (binary media uploads); omitted for bodyless requests. */
+  body?: BodyInit;
+  /** Explicit Content-Type header; omitted lets the browser infer it. */
+  contentType?: string;
+  signal?: AbortSignal;
+}
+
+/**
+ * Raw-response transport: the SAME API base URL and token policy as
+ * `fetchApi`, but deliberately NO retry, NO failure toast and NO body parsing —
+ * it returns the untouched `Response`, and a transport failure rejects with the
+ * underlying fetch error unchanged.
+ *
+ * This exists for the callers that own their own failure contract
+ * (`bridge/upload.ts` throws labelled upload errors after inspecting
+ * status/non-JSON body; `bridge/health.ts` maps failures to
+ * `{ healthy: false, message }` and must never raise a user-visible toast).
+ * Routing them through `fetchApi` (ofetch retry:3 + global toast + parsed
+ * `null`) would change their observable failure behavior.
+ * @param options
+ */
+export async function fetchApiRaw(options: RawFetchOptions): Promise<globalThis.Response> {
+  const headers = new Headers();
+  if (options.contentType) headers.set('Content-Type', options.contentType);
+  if (import.meta.client) {
+    const token = localStorage.getItem('token');
+    if (token) {
+      headers.set('token', token);
+    }
+  }
+  return fetch(`${API_BASE_URL}${options.url}`, {
+    method: options.method ?? 'get',
+    headers,
+    body: options.body,
+    signal: options.signal
+  });
+}

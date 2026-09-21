@@ -9,7 +9,6 @@
  */
 import type { ChatRequest } from './chat-types';
 import { KIND_LABEL, uploadBase64ToUrls, type UploadMediaKind } from './upload';
-import { API_BASE_URL } from '../env';
 
 /** A resolved media-URL set attached to one outgoing payload. */
 export interface MediaUrls {
@@ -38,7 +37,7 @@ export async function uploadRequestMedia(request: ChatRequest): Promise<MediaUrl
   const upload = async (kind: UploadMediaKind, list?: string[]): Promise<string[]> => {
     if (!list || list.length === 0) return [];
     try {
-      return await uploadBase64ToUrls(kind, list, API_BASE_URL);
+      return await uploadBase64ToUrls(kind, list);
     } catch (e) {
       throw new Error(`${KIND_LABEL[kind]} upload failed: ${e}`, { cause: e });
     }
