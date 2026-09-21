@@ -104,11 +104,10 @@ _setup_done: bool = False
 def setup_embed_model() -> None:
     """Detect the backend and eager-download the local GGUF — once.
 
-    Idempotent. The side effects match the former import-time block exactly:
-    ``_detect_backend()`` (env read + remote validation + warning suppression)
-    runs first, then a local GGUF download is attempted when the weights are
-    missing. The download is skipped when llama-cpp-python is absent (hermetic
-    CI never installs it): ``_load_model`` retries on first use.
+    Idempotent: ``_detect_backend()`` (env read + remote validation + warning
+    suppression) runs first, then a local GGUF download is attempted when the
+    weights are missing. The download is skipped when llama-cpp-python is absent
+    (hermetic CI never installs it): ``_load_model`` retries on first use.
     """
     global _backend, _use_local, _remote_config, _setup_done
     if _setup_done:

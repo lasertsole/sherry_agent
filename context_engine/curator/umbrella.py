@@ -1,7 +1,7 @@
 """Curator umbrella-skill generation: multifile parsing and the LLM pass.
 
-Split out of ``orchestrator.py``; the orchestrator re-imports ``_generate_umbrella_skill``
-so the test-pinned patch point stays on the orchestrator namespace.
+The orchestrator re-imports ``_generate_umbrella_skill`` so the test-pinned patch
+point stays on the orchestrator namespace.
 """
 
 from loguru import logger

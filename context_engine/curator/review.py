@@ -1,8 +1,8 @@
 """Curator LLM review pass and agent-created-skill candidate snapshot.
 
-Split out of ``orchestrator.py``; the orchestrator re-imports these names so the
-public API and the test-pinned private surface (``orchestrator._report_cache``
-reset, ``_generate_umbrella_skill`` patch points) are unchanged.
+The orchestrator re-imports these names so the public API and the test-pinned
+private surface (``orchestrator._report_cache`` reset, ``_generate_umbrella_skill``
+patch points) stay on the orchestrator namespace.
 """
 
 from typing import TYPE_CHECKING, Any

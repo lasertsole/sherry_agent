@@ -1,12 +1,11 @@
-"""Shared JSON content-cell decoder (DESIGN_PATTERN §3.1.7).
+"""Shared JSON content-cell decoder.
 
-Four call sites used to re-implement "if this is a JSON-encoded string, decode
-it, otherwise leave it alone": ``context_engine/core.py::_decode_content``,
+The four decode call sites — ``context_engine/core.py::_decode_content``,
 ``context_engine/store/core.py::_decode_json_columns`` and
-``::_decode_title_content``, and ``context_engine/embeddings/store.py::_decode``.
-They differ only in the failure mode (return the raw value vs propagate), in
+``::_decode_title_content``, and ``context_engine/embeddings/store.py::_decode``
+— differ only in the failure mode (return the raw value vs propagate), in
 whether the ``\\x00json:`` marker gates decoding, and in what happens to the
-decoded value afterwards — so the decode core lives here and each site keeps its
+decoded value afterwards, so the decode core lives here and each site keeps its
 own marker check / post-processing.
 """
 

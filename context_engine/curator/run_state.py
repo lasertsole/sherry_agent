@@ -1,7 +1,7 @@
 """Curator run state: the run accumulator, snapshots and report finalization.
 
-Split out of ``orchestrator.py``; the orchestrator re-imports these names so the
-public API and the test-pinned private surface stay unchanged.
+The orchestrator re-imports these names so the public API and the test-pinned
+private surface stay on the orchestrator namespace.
 """
 
 from collections.abc import Callable

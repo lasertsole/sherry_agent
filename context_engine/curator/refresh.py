@@ -1,8 +1,9 @@
 """Curator provider resolution and system-prompt refresh.
 
-Split out of ``orchestrator.py``; the orchestrator re-imports these names so the
-public API and the test-pinned private surface (``orchestrator._provider_misses_logged``,
-``orchestrator._schedule_system_prompt_refresh``) stay unchanged.
+The orchestrator re-imports these names so the public API and the test-pinned
+private surface (``orchestrator._provider_misses_logged``,
+``orchestrator._schedule_system_prompt_refresh``) stay on the orchestrator
+namespace.
 """
 
 import asyncio

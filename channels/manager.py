@@ -91,10 +91,9 @@ class ChannelManager:
 
         Outbound is NOT drained here — it has its own dedicated consumer,
         :meth:`_dispatch_outbound`. There is exactly ONE consumer per bus
-        direction, each routing by ``msg.channel``. Do NOT reintroduce a
-        second ``bus.consume_outbound()`` consumer (the removed
-        ``_outbound_consume_loop``) — two consumers race for the same queue
-        and the loser's message is silently dropped.
+        direction, each routing by ``msg.channel``. Do NOT add a second
+        ``bus.consume_outbound()`` consumer: two consumers race for the same
+        queue and the loser's message is silently dropped.
         """
         logger.info("Inbound message consumer loop started")
         while True:

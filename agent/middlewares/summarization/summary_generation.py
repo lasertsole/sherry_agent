@@ -1,7 +1,6 @@
 """LLM summary generation: prompt templates, chaining, JSON repair, fallbacks.
 
-Split out of ``summarization/core.py`` (DESIGN_PATTERN 1.2.1 / 5.5). The
-:class:`SummaryGenerationMixin` methods run on the middleware instance but own
+The :class:`SummaryGenerationMixin` methods run on the middleware instance but own
 only summarization-prompt concerns; the process-level seams they need
 (``_taskflow_context`` / ``_plan_context`` / ``_resolve_active_plan``) are
 provided by ``summarization.core.Summarization``.

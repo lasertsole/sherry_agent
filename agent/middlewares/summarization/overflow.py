@@ -1,8 +1,7 @@
 """Overflow routing and provider-error recovery (T1-T5) for summarization.
 
-Split out of ``summarization/core.py`` (DESIGN_PATTERN 1.2.1 / 5.5). Owns the
-four-route decision, the no-LLM tail clip, the compact executors, the T3
-post-response re-check and the T4/T5 forced-recovery ring.
+Owns the four-route decision, the no-LLM tail clip, the compact executors, the
+T3 post-response re-check and the T4/T5 forced-recovery ring.
 """
 
 # allow: SIZE_OK — the bulk is the T1-T5 trigger state machine whose methods
@@ -169,7 +168,7 @@ class OverflowMixin:
         """usable_budget = dynamic context window − COMPRESSION_RESERVE_TOKENS.
 
         The dynamic window is the constructor-injected ``main_llm_context_window``
-        (same source as agent/core.py:156 ``main_llm_max_tokens``) — never a
+        (same source as agent/core.py:11 ``main_llm_max_tokens``) — never a
         hardcoded value; langchain 1.3.9 ``ModelRequest`` has no model_profile
         field.
         """
@@ -183,12 +182,12 @@ class OverflowMixin:
         return 0
 
     def _decide_overflow_route(self, messages: list[AnyMessage], session_id: str) -> str | None:
-        """4-way route decision (upgrades the former 2-band _preemptive_check).
+        """4-way route decision.
 
         Returns one of ROUTE_FITS / ROUTE_TRUNCATE_TOOL_RESULTS_ONLY /
         ROUTE_COMPACT_THEN_TRUNCATE / ROUTE_COMPACT_ONLY, or None when no
         dynamic context window is configured. T1/T2 are estimate-driven; the
-        reported-usage input belongs to T3 ().
+        reported-usage input belongs to T3.
         """
         ctx_window = self._main_llm_context_window
         if not ctx_window or ctx_window <= 0:

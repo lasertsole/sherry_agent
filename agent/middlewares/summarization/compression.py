@@ -1,7 +1,6 @@
 """Compression application: cutoff, non-LLM strategies, under-lock pipeline.
 
-Split out of ``summarization/core.py`` (DESIGN_PATTERN 1.2.1 / 5.5). The two
-under-lock variants stay duplicated on purpose: the sync path runs the
+The two under-lock variants stay duplicated on purpose: the sync path runs the
 pre-compression memory flush via ``run_memory_flush_sync`` while the async path
 awaits ``run_memory_flush``, so collapsing them would change cancel/await
 semantics.

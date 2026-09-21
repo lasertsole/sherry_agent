@@ -1,7 +1,7 @@
 """Minimal OpenAI-compatible JSON HTTP client shared by the cloud models.
 
-Extracted from ``models/embed_model/core.py`` and
-``models/reranker_model/core.py`` (DESIGN_PATTERN §2.5). Both call sites post
+Used by ``models/embed_model/core.py`` and ``models/reranker_model/core.py``.
+Both call sites post
 JSON to an OpenAI-compatible endpoint with a Bearer token and ``verify=False``;
 this client centralises that protocol **without** changing their per-request
 semantics — no retry is added (neither call site retried), ``verify=False`` is

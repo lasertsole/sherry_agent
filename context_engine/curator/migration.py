@@ -1,9 +1,9 @@
 """Curator consolidation file migration and archive phases.
 
-Split out of ``orchestrator.py``; the orchestrator re-imports these names so the
-test-pinned private surface (``orchestrator._write_supporting_files`` /
-``_migrate_source_files`` / ``_archive_consolidated_sources`` /
-``_archive_pruned_skills``) stays unchanged.
+The orchestrator re-imports these names so the test-pinned private surface
+(``orchestrator._write_supporting_files`` / ``_migrate_source_files`` /
+``_archive_consolidated_sources`` / ``_archive_pruned_skills``) stays on the
+orchestrator namespace.
 """
 
 from loguru import logger

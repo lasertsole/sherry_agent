@@ -242,8 +242,8 @@ async def _build_graph(
     #
     # 1. RepetitionGuardWrapper: stream-level repetition
     # detection (in addition to the OutputRepetitionGuard middleware
-    # registered above; it owns the stream seam end to end and subsumed
-    # the former check_stream_repetition helper, now deleted).
+    # registered above; it owns the stream seam end to end, and the
+    # middleware exposes no separate stream helper).
     # phantom_stream_guard=True: the middleware-equipped graph ALWAYS
     # emits before_agent "updates" before any model text on fresh
     # dict-input runs — pre-update model text is physically impossible

@@ -482,10 +482,6 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
 # (``agent/wrapper/repetition_guard.py``): its ``astream`` interception runs
 # this module's internal-repetition detector with the same
 # ``_INTERNAL_WARNED_KEY`` dedupe gate and yields the warning below.
-#
-# The former module-level ``check_stream_repetition`` helper had no production
-# caller (its only callers were removed by the stream_dispatch refactor) and
-# was deleted; the wrapper owns that seam end to end.
 # ---------------------------------------------------------------------------
 
 # Warning surfaced to the user on a stream-cut, mirroring the middleware's

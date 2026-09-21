@@ -1,7 +1,6 @@
 """Anti-thrash counters and cooldown bookkeeping for summarization.
 
-Split out of ``summarization/core.py`` (DESIGN_PATTERN 1.2.1 / 5.5). The
-durable cooldown mirror (``_persist_cooldown_state`` / ``_restore_*``) stays in
+The durable cooldown mirror (``_persist_cooldown_state`` / ``_restore_*``) stays in
 ``summarization.core`` because tests patch its ``state_register_db`` seam on the
 core module.
 """

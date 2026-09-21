@@ -1,6 +1,6 @@
-"""Shared env→client-kwargs assembly for the model wrappers (DESIGN_PATTERN §5.3).
+"""Shared env→client-kwargs assembly for the model wrappers.
 
-Every remote model client (main / reasoner / auxiliary / ITTT / VTTT) repeated
+Every remote model client (main / reasoner / auxiliary / ITTT / VTTT) performs
 the same three steps: read a fixed set of env vars, place them in an
 ``init_chat_model`` kwargs dict next to model-specific keys, and drop every
 ``None``/empty-string entry before construction. This module owns that invariant

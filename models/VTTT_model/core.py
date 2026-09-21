@@ -162,7 +162,7 @@ else:
         )
 
 
-# Singleton instance matching the old ``from models import VTTT_model`` API. The
-# proxy defers weight resolution / client construction to the first use, so
-# importing this module never touches the filesystem or HuggingFace.
+# Singleton instance behind the ``from models import VTTT_model`` API. The proxy
+# defers weight resolution / client construction to the first use, so importing
+# this module never touches the filesystem or HuggingFace.
 VTTT_model: LazyInstance[Any] = LazyInstance(build_vttt_model)
