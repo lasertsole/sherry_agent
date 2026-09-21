@@ -12,6 +12,35 @@ import type {
 import type { CachedMessage } from './db';
 import { logUtil } from '~/utils/log';
 
+/** One row of the `GET /sessions` list (server/trigger/http/messages.py). */
+interface SessionListRow {
+  session_id: string;
+  last_time: string;
+  title: string;
+}
+
+/**
+ * Narrow guard for a JSON object payload (mirrors `ws-message.ts::isWsObjectFrame`,
+ * for HTTP bodies): envelope fields must only be read off a real record.
+ * @param value Any resolved payload value.
+ */
+function isJsonObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Runtime guard for the pending-interrupt payload (audit #51 style).
+ *
+ * The server answers with the interrupt object itself, the legacy `{ data }`
+ * envelope, or the literal text `"None"` (Python None) when nothing is pending.
+ * Any other shape cannot produce a usable approval card, so it is rejected here
+ * instead of being force-cast.
+ * @param value Candidate payload (after envelope unwrapping).
+ */
+function isPendingInterrupt(value: unknown): value is HitlInterruptData {
+  return isJsonObject(value) && value['None'] !== true;
+}
+
 /**
  * Controller returned by `postAgentStream`: a standard `AbortController` extended with
  * the HITL decision sender of the underlying stream (present only while the browser
@@ -78,7 +107,7 @@ export async function get_history_by_turn_page(
   const effectiveMinTurn = cachedMinTurn > min_turn_num ? cachedMinTurn : Math.max(min_turn_num, 1);
 
   try {
-    const res: Response | null = await fetchApi({
+    const res = await fetchApi<CachedMessage[] | Response<CachedMessage[]>>({
       url: '/get_history_by_turn_page',
       opts: {
         session_id,
@@ -95,9 +124,7 @@ export async function get_history_by_turn_page(
     // (list[dict]), not a { data: [...] } wrapper object. Compatibility handling here: if the
     // response itself is an array, use it directly; otherwise fall back to reading res.data
     // (for the legacy wrapped format).
-    const fetched: CachedMessage[] = Array.isArray(res)
-      ? (res as unknown as CachedMessage[])
-      : (res.data as CachedMessage[] | undefined) || [];
+    const fetched: CachedMessage[] = Array.isArray(res) ? res : res.data || [];
 
     // Write to the cache (bulkPut deduplicates by the id primary key)
     await cacheMessages(fetched);
@@ -151,7 +178,7 @@ export async function clearSession(session_id: string): Promise<boolean> {
  */
 export async function getSessionList(): Promise<SessionRecord[]> {
   try {
-    const res: Response | null = await fetchApi({
+    const res = await fetchApi<SessionListRow[] | Response<SessionListRow[]>>({
       url: '/sessions',
       method: 'get'
     });
@@ -160,9 +187,7 @@ export async function getSessionList(): Promise<SessionRecord[]> {
     // The server's /sessions directly returns an array, not a { data: [...] } wrapper object.
     // Compatibility handling here: if the response itself is an array, use it directly;
     // otherwise fall back to reading res.data.
-    const rows: Array<{ session_id: string; last_time: string; title: string }> = Array.isArray(res)
-      ? (res as unknown as Array<{ session_id: string; last_time: string; title: string }>)
-      : (res.data as Array<{ session_id: string; last_time: string; title: string }> | undefined) || [];
+    const rows: SessionListRow[] = Array.isArray(res) ? res : res.data || [];
     return rows.map(row => ({
       id: row.session_id,
       title: row.title ?? row.session_id,
@@ -187,7 +212,7 @@ export async function getSessionList(): Promise<SessionRecord[]> {
  */
 export async function getPendingInterrupt(session_id: string): Promise<HitlInterruptData | null> {
   try {
-    const res: Response | null = await fetchApi({
+    const res = await fetchApi<HitlInterruptData>({
       url: '/get_pending_interrupt',
       opts: { session_id },
       method: 'get'
@@ -195,20 +220,12 @@ export async function getPendingInterrupt(session_id: string): Promise<HitlInter
     if (res == null) return null;
     // The server directly returns the interrupt object (or null) without a { data } wrapper;
     // compatibility handled here.
-    const data = (res as unknown as { data?: unknown }).data ?? res;
+    const data = isJsonObject(res) ? (res['data'] ?? res) : res;
     // Compatibility fallback: the server may return the literal string "None" (Python None) as
     // text/plain, which ofetch will not JSON-parse; in that case data is a truthy string that must
     // be treated as "no interrupt", otherwise an invalid HITL card with an entirely empty tool_name
     // pops up (notably triggered right away on an empty session).
-    if (
-      data == null ||
-      typeof data !== 'object' ||
-      Array.isArray(data) ||
-      (data as Record<string, unknown>)['None'] === true
-    ) {
-      return null;
-    }
-    return data as HitlInterruptData;
+    return isPendingInterrupt(data) ? data : null;
   } catch (error) {
     // When the request fails (the session may have been cleared / the backend is not running),
     // silently treat it as no interrupt and do not block chat.

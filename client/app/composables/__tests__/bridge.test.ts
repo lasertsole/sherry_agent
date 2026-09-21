@@ -1,13 +1,16 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // bridge.ts *explicitly imports* fetchApi from './requestApi' (not a Nuxt
-// auto-import), so we mock that module directly.
+// auto-import), so we mock that module directly. `fetchApiPayload` is the
+// declared-payload wrapper (same resolved value, non-null type), so it forwards
+// to the same mock.
 const mocks = vi.hoisted(() => ({
   fetchApi: vi.fn()
 }));
 
 vi.mock('../requestApi', () => ({
-  fetchApi: mocks.fetchApi
+  fetchApi: mocks.fetchApi,
+  fetchApiPayload: mocks.fetchApi
 }));
 
 import * as bridge from '../bridge';

@@ -18,7 +18,6 @@
 import type {
   AgentWsEvent,
   ChatRequest,
-  HitlInterruptData,
   HitlResponse,
   OnChunkCallback,
   OnDoneCallback,
@@ -27,6 +26,7 @@ import type {
   StreamController
 } from './chat-types';
 import {
+  isHitlInterruptData,
   StreamInterruptedError,
   WS_FALLBACK_RECONNECT_MS,
   WS_RECONNECT_MAX_ATTEMPTS,
@@ -453,16 +453,21 @@ class SessionAgentSocket implements AgentSocket {
     const handler = createWsMessageHandler<AgentWsEvent>({
       chunk: data => {
         for (const pending of this.pendingSends.values()) pending.receivedChunk = true;
-        this.handlers.onChunk?.(data.content ?? '', data.type ?? 'text', data.session_id ?? this.sessionId, {
-          tool_id: data.tool_id,
-          tool_name: data.tool_name,
-          args: data.args,
-          error: data.error
-        });
+        this.handlers.onChunk?.(
+          typeof data.content === 'string' ? data.content : '',
+          data.type ?? 'text',
+          data.session_id ?? this.sessionId,
+          {
+            tool_id: data.tool_id,
+            tool_name: data.tool_name,
+            args: data.args,
+            error: data.error
+          }
+        );
       },
       hitl_request: data => {
-        if (this.handlers.onHitl && data.content) {
-          this.handlers.onHitl(data.content as unknown as HitlInterruptData);
+        if (this.handlers.onHitl && isHitlInterruptData(data.content)) {
+          this.handlers.onHitl(data.content);
         }
       },
       queued: data => {
@@ -493,7 +498,8 @@ class SessionAgentSocket implements AgentSocket {
         });
       },
       error: data => {
-        this.settleReject(this.turnMessageIds(data.message_ids), new Error(data.content || 'WebSocket stream error'));
+        const message = typeof data.content === 'string' ? data.content : '';
+        this.settleReject(this.turnMessageIds(data.message_ids), new Error(message || 'WebSocket stream error'));
         this.activeTurn = null;
       },
       stopped: data => {

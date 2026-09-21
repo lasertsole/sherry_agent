@@ -20,7 +20,7 @@ export interface SherryConfigPayload {
  * scope (see ConfigDialog.vue's setup-context watch).
  */
 export async function readSherryConfig(): Promise<SherryConfigPayload> {
-  const res = await fetchApi({
+  const res = await fetchApi<SherryConfigPayload>({
     url: '/sherry-config',
     opts: { _ts: Date.now() },
     method: 'get'
@@ -28,7 +28,7 @@ export async function readSherryConfig(): Promise<SherryConfigPayload> {
   // `res` is never null in practice on success. Guard against an empty body
   // while preserving the `{ entries }` shape so a non-throw path never yields
   // an unreadable value.
-  return (res as unknown as SherryConfigPayload | undefined) || { entries: [] };
+  return res || { entries: [] };
 }
 
 /**

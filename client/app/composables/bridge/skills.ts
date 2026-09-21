@@ -56,11 +56,11 @@ export interface PinSkillResponse {
  * calls after a curator run or any lifecycle change always return fresh data).
  */
 export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
-  return fetchApi({
+  return fetchApiPayload<{ skills: SkillInfo[] }>({
     url: '/skills',
     opts: { _ts: Date.now() },
     method: 'get'
-  }) as unknown as Promise<{ skills: SkillInfo[] }>;
+  });
 }
 
 /**
@@ -69,7 +69,7 @@ export async function listSkills(): Promise<{ skills: SkillInfo[] }> {
  */
 export async function readSkill(location: string): Promise<SkillDetail> {
   const cleanPath = location.replace(/^\.\//, '');
-  return fetchApi({ url: `/skills/${cleanPath}`, method: 'get' }) as unknown as Promise<SkillDetail>;
+  return fetchApiPayload<SkillDetail>({ url: `/skills/${cleanPath}`, method: 'get' });
 }
 
 /**
@@ -91,12 +91,12 @@ export async function uploadSkill(
   formData.append('file', file);
   const baseName = file.name.replace(/\.[^.]+$/, '');
   formData.append('name', baseName);
-  return fetchApi({
+  return fetchApiPayload<{ success: boolean; message?: string; name?: string; warnings?: string[] }>({
     url: '/skills/upload',
     opts: formData,
     method: 'post',
     contentType: 'multipart/form-data'
-  }) as unknown as Promise<{ success: boolean; message?: string; name?: string; warnings?: string[] }>;
+  });
 }
 
 /**
@@ -107,11 +107,11 @@ export async function uploadSkill(
  * @returns `{ success, message? }` from the backend.
  */
 export async function setSkillActive(name: string, active: boolean): Promise<{ success: boolean; message?: string }> {
-  return fetchApi({
+  return fetchApiPayload<{ success: boolean; message?: string }>({
     url: '/skills/toggle',
     opts: { name, active },
     method: 'post'
-  }) as unknown as Promise<{ success: boolean; message?: string }>;
+  });
 }
 
 /**
@@ -125,11 +125,11 @@ export async function setSkillActive(name: string, active: boolean): Promise<{ s
  * @returns `{ success, name?, message? }` from the backend.
  */
 export async function deleteSkill(name: string): Promise<DeleteSkillResponse> {
-  return fetchApi({
+  return fetchApiPayload<DeleteSkillResponse>({
     url: '/skills/delete',
     opts: { name },
     method: 'post'
-  }) as unknown as Promise<DeleteSkillResponse>;
+  });
 }
 
 /**
@@ -144,9 +144,9 @@ export async function deleteSkill(name: string): Promise<DeleteSkillResponse> {
  * @returns `{ success, name?, pinned?, message? }` from the backend.
  */
 export async function pinSkill(name: string, pinned: boolean): Promise<PinSkillResponse> {
-  return fetchApi({
+  return fetchApiPayload<PinSkillResponse>({
     url: '/skills/pin',
     opts: { name, pinned },
     method: 'post'
-  }) as unknown as Promise<PinSkillResponse>;
+  });
 }

@@ -81,12 +81,11 @@ export interface CronActionResponse {
  * @param includeDisabled Whether to include jobs whose `enabled` flag is false.
  */
 export async function listCronJobs(includeDisabled = false): Promise<CronListResponse> {
-  const resp = (await fetchApi({
+  return fetchApiPayload<CronListResponse>({
     url: '/cron',
     opts: { _ts: Date.now(), include_disabled: includeDisabled },
     method: 'get'
-  })) as unknown as CronListResponse;
-  return resp;
+  });
 }
 
 /**
@@ -111,11 +110,11 @@ export async function addCronJob(input: {
   to?: string | null;
   delete_after_run?: boolean;
 }): Promise<CronMutateResponse> {
-  return fetchApi({
+  return fetchApiPayload<CronMutateResponse>({
     url: '/cron',
     opts: input,
     method: 'post'
-  }) as unknown as Promise<CronMutateResponse>;
+  });
 }
 
 /**
@@ -144,11 +143,11 @@ export async function updateCronJob(
     delete_after_run?: boolean;
   }
 ): Promise<CronMutateResponse> {
-  return fetchApi({
+  return fetchApiPayload<CronMutateResponse>({
     url: '/cron',
     opts: { id, ...patch },
     method: 'put'
-  }) as unknown as Promise<CronMutateResponse>;
+  });
 }
 
 /**
@@ -159,11 +158,11 @@ export async function updateCronJob(
  * @returns `{ success, message? }` from the backend.
  */
 export async function runCronJob(id: string, force = false): Promise<CronActionResponse> {
-  return fetchApi({
+  return fetchApiPayload<CronActionResponse>({
     url: '/cron/trigger',
     opts: { id, force },
     method: 'post'
-  }) as unknown as Promise<CronActionResponse>;
+  });
 }
 
 /**
@@ -174,11 +173,11 @@ export async function runCronJob(id: string, force = false): Promise<CronActionR
  * @returns `{ success, job?, message? }` from the backend.
  */
 export async function enableCronJob(id: string, enabled = true): Promise<CronMutateResponse> {
-  return fetchApi({
+  return fetchApiPayload<CronMutateResponse>({
     url: '/cron/enable',
     opts: { id, enabled },
     method: 'post'
-  }) as unknown as Promise<CronMutateResponse>;
+  });
 }
 
 /**
@@ -188,9 +187,9 @@ export async function enableCronJob(id: string, enabled = true): Promise<CronMut
  * @returns `{ success, message? }` from the backend.
  */
 export async function deleteCronJob(id: string): Promise<CronActionResponse> {
-  return fetchApi({
+  return fetchApiPayload<CronActionResponse>({
     url: '/cron',
     opts: { id },
     method: 'delete'
-  }) as unknown as Promise<CronActionResponse>;
+  });
 }

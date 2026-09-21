@@ -54,9 +54,13 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
  * other shape (number/boolean/undefined) cannot satisfy the `Response` contract
  * the callers consume, so it is rejected at this boundary instead of being
  * forced through `as Response`.
+ *
+ * The caller declares the concrete payload type via `T`; this guard proves the
+ * wire value is a JSON container (object/string), not the declared shape.
  * @param value Value resolved by ofetch
+ * @returns True when the value is a JSON container (object or string).
  */
-function isApiPayload(value: unknown): value is Response {
+function isApiPayload<T>(value: unknown): value is T {
   if (value === null) return false;
   if (typeof value === 'string') return true;
   return typeof value === 'object';
@@ -71,16 +75,17 @@ function isApiPayload(value: unknown): value is Response {
  * @param { {[key: string]: any} } headeropts Request header parameters
  * @param { boolean } server Whether server-side rendering is used
  * @param { Array<()=>void> } watch Watch for whether a re-request is needed
- * @returns {Promise<Response | null>} Request result; null means the request failed
+ * @template T Payload type declared by the caller
+ * @returns Request result; null means the request failed
  */
 
-async function requestBaseApi({
+async function requestBaseApi<T = Response>({
   url,
   opts = {},
   method = 'get',
   contentType = 'application/json',
   headeropts = {}
-}: Params): Promise<Response | null> {
+}: Params): Promise<T | null> {
   const requestURL = opts instanceof FormData ? url : replacePathVariables(url, opts);
 
   // Set up request parameters
@@ -112,7 +117,7 @@ async function requestBaseApi({
   // Note that $fetch throws on failure, whereas the original useFetch semantics resolve(null); the
   // outer retryFetch only retries on explicit throws such as missing path parameters, so exceptions
   // are caught here and turned into null; failure info is conveyed by the flags + the unified toast.
-  let data: Response | null;
+  let data: T | null;
   try {
     const raw = await $fetch<unknown>(requestURL, {
       method,
@@ -182,8 +187,8 @@ async function requestBaseApi({
     });
 
     // Runtime boundary check (audit #51): reject payloads that cannot satisfy
-    // the Response contract before callers assert on them.
-    data = isApiPayload(raw) ? raw : null;
+    // the Response contract before callers consume them.
+    data = isApiPayload<T>(raw) ? raw : null;
     if (data === null) {
       requestFailed = true;
       logUtil.e(`[requestApi] Unexpected response payload from ${String(requestURL)}:`, raw);
@@ -213,16 +218,17 @@ async function requestBaseApi({
 /**
  * Wrap a request with retries
  *
- * @param { ()=>Promise<Response | null> } fetchFunc Request function
+ * @param { ()=>Promise<T | null> } fetchFunc Request function
  * @param { number } retryMaxCount Maximum number of retries
  * @param { number } retryDelay Delay between retries, in milliseconds
- * @returns {Promise<Response | null>} The response object, or null when the request failed
+ * @template T Payload type declared by the caller
+ * @returns The response object, or null when the request failed
  */
-function retryFetch(
-  fetchFunc: () => Promise<Response | null>,
+function retryFetch<T>(
+  fetchFunc: () => Promise<T | null>,
   retryMaxCount: number = 3,
   retryDelay: number = 1000
-): Promise<Response | null> {
+): Promise<T | null> {
   return fetchFunc().catch(err => {
     if (retryMaxCount <= 0) {
       return Promise.reject(err);
@@ -242,22 +248,26 @@ function retryFetch(
 /**
  * Request API
  *
+ * The caller declares the payload shape it consumes through `T`; the wire value
+ * is validated as a JSON container at this boundary (see `isApiPayload`).
+ *
  * @param { NitroFetchRequest } url Request path
  * @param { object } opts Request parameters
  * @param { 'get' | 'post' | 'put' | 'patch' | 'delete' } method Request method
  * @param { 'application/x-www-form-urlencoded' | 'application/json' | 'multipart/form-data' } contentType Request content type
  * @param { [key: string]: any } headeropts Request header parameters
- * @returns {Promise<Response | null>} Request result; null means the request failed
+ * @template T Payload type declared by the caller
+ * @returns Request result; null means the request failed
  */
-export async function fetchApi({
+export async function fetchApi<T = Response>({
   url,
   opts = {},
   method = 'get',
   contentType = 'application/json',
   headeropts = {}
-}: Params): Promise<Response | null> {
-  return retryFetch(() =>
-    requestBaseApi({
+}: Params): Promise<T | null> {
+  return retryFetch<T>(() =>
+    requestBaseApi<T>({
       url,
       opts,
       method,
@@ -265,4 +275,23 @@ export async function fetchApi({
       headeropts
     })
   );
+}
+
+/**
+ * Request an endpoint whose payload the caller declares and consumes as always
+ * present.
+ *
+ * The bridge modules historically promised a non-null payload to their callers
+ * (their result was force-cast), while `fetchApi` resolves null on failure. This
+ * keeps that exact contract — a failed request still passes the null through
+ * unchanged — with the payload type declared in one place instead of an
+ * `as unknown as` cast at every call site.
+ * @param params Request parameters (same shape as `fetchApi`).
+ * @returns The resolved payload; on failure, null (as `fetchApi` resolved it).
+ */
+export async function fetchApiPayload<T = Response>(params: Params): Promise<T> {
+  const payload = await fetchApi<T>(params);
+  // The declared payload of a successful request; the failure null is passed
+  // through unchanged to preserve the legacy bridge contract.
+  return payload as T;
 }

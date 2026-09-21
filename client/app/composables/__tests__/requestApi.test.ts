@@ -1,5 +1,5 @@
-import { describe, it, expect, vi, afterEach } from 'vitest';
-import { fetchApi } from '../requestApi';
+import { describe, it, expect, expectTypeOf, vi, afterEach } from 'vitest';
+import { fetchApi, fetchApiPayload } from '../requestApi';
 
 // `$fetch` is ofetch's global, globally stubbed in setup.ts.
 // Tests restub it per case and assert on how fetchApi delegates to it,
@@ -112,6 +112,31 @@ describe('fetchApi error handling', () => {
     expect(result).toBeNull();
     // swallowed inside the request layer → no retryFetch-level re-invocation
     expect((globalThis as any).$fetch).toHaveBeenCalledTimes(1);
+  }, 15000);
+});
+
+describe('fetchApi payload typing', () => {
+  it('exposes the caller-declared payload as T | null', async () => {
+    stubFetch({ jobs: [{ id: 'a' }] });
+
+    const result = await fetchApi<{ jobs: Array<{ id: string }> }>({ url: '/cron', method: 'get' });
+
+    expectTypeOf(result).toEqualTypeOf<{ jobs: Array<{ id: string }> } | null>();
+    expect(result).toEqual({ jobs: [{ id: 'a' }] });
+  });
+
+  it('fetchApiPayload declares a non-null payload and forwards the failure null unchanged', async () => {
+    stubFetch({ jobs: [{ id: 'a' }] });
+
+    const ok = await fetchApiPayload<{ jobs: Array<{ id: string }> }>({ url: '/cron', method: 'get' });
+
+    expectTypeOf(ok).toEqualTypeOf<{ jobs: Array<{ id: string }> }>();
+    expect(ok).toEqual({ jobs: [{ id: 'a' }] });
+
+    (globalThis as any).$fetch = vi.fn().mockRejectedValue(new Error('network down'));
+    const failed = await fetchApiPayload<{ jobs: Array<{ id: string }> }>({ url: '/cron', method: 'get' });
+    // Legacy bridge contract: the failure null is passed through, not replaced by a fallback.
+    expect(failed).toBeNull();
   }, 15000);
 });
 

@@ -328,6 +328,20 @@ describe('HITL resilience (edge cases)', () => {
     void promise;
   });
 
+  it('ignores hitl_request whose content is not an interrupt object', async () => {
+    const onChunk = vi.fn();
+    const onHitl = vi.fn();
+    const { promise } = bridge.streamChatMessage({ session_id: 's1', text: 'hi' }, onChunk, onHitl);
+    const ws = await awaitSocket();
+
+    ws.frame({ event: 'hitl_request', session_id: 's1', content: 'plain text' });
+    ws.frame({ event: 'hitl_request', session_id: 's1', content: ['not', 'an', 'object'] });
+    ws.frame({ event: 'hitl_request', session_id: 's1', content: 42 });
+
+    expect(onHitl).not.toHaveBeenCalled();
+    void promise;
+  });
+
   it('does not send hitl_response after the stream is done/aborted', async () => {
     const { controller, promise } = openStream();
     const ws = await awaitSocket();

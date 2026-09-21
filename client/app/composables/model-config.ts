@@ -32,12 +32,12 @@ let cached: ModelConfig | null = null;
  * @returns The current model config payload.
  */
 export async function fetchModelConfig(): Promise<ModelConfig> {
-  const res = await fetchApi({
+  const res = await fetchApi<ModelConfig>({
     url: '/model-config',
     opts: { _ts: Date.now() },
     method: 'get'
   });
-  return (res as unknown as ModelConfig | undefined) ?? invalidModelConfig();
+  return res ?? invalidModelConfig();
 }
 
 /**

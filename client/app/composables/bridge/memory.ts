@@ -17,11 +17,11 @@ import { invokeNative } from './transport';
 export async function readMemory(): Promise<Record<string, string>> {
   const native = await invokeNative<PromptFileResponse>('memory_read');
   if (native !== null) return native.value.file_to_content;
-  return fetchApi({
+  return fetchApiPayload<Record<string, string>>({
     url: '/memory',
     opts: { _ts: Date.now() },
     method: 'get'
-  }) as unknown as Promise<Record<string, string>>;
+  });
 }
 
 /**
@@ -50,11 +50,11 @@ export async function writeMemory(fileToContent: Record<string, string>): Promis
  * the previous `useFetch`-based implementation and is now harmless.
  */
 export async function readHeartbeat(): Promise<Record<string, string>> {
-  return fetchApi({
+  return fetchApiPayload<Record<string, string>>({
     url: '/heartbeat',
     opts: { _ts: Date.now() },
     method: 'get'
-  }) as unknown as Promise<Record<string, string>>;
+  });
 }
 
 /**

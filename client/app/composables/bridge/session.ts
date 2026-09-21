@@ -8,7 +8,6 @@
  * @module bridge/session
  */
 import type { HistoryMessage } from '~/types/backend/HistoryMessage';
-import type { Response as ApiResponse } from '~/types/response';
 import { invokeNative } from './transport';
 
 /**
@@ -93,12 +92,12 @@ export async function fetchSubagentRuns(
     request: { session_id: sessionId, scope }
   });
   if (native !== null) return native.value.runs ?? [];
-  const res: ApiResponse | null = await fetchApi({
+  const res = await fetchApiPayload<{ runs?: SubagentRun[] }>({
     url: '/subagents/runs',
     opts: { session_id: sessionId, scope },
     method: 'get'
   });
-  const resp = (res as unknown as { runs?: SubagentRun[] }).runs ?? [];
+  const resp = res.runs ?? [];
   return Array.isArray(resp) ? resp : [];
 }
 
@@ -118,12 +117,12 @@ export async function fetchSubagentRunSubtree(runId: string): Promise<SubagentRu
     request: { run_id: runId }
   });
   if (native !== null) return native.value.runs ?? [];
-  const res: ApiResponse | null = await fetchApi({
+  const res = await fetchApiPayload<{ runs?: SubagentRun[] }>({
     url: '/subagents/runs',
     opts: { run_id: runId },
     method: 'get'
   });
-  const resp = (res as unknown as { runs?: SubagentRun[] }).runs ?? [];
+  const resp = res.runs ?? [];
   return Array.isArray(resp) ? resp : [];
 }
 
@@ -144,12 +143,12 @@ export async function deleteSubagentRunSubtree(runId: string): Promise<number> {
     request: { run_id: runId }
   });
   if (native !== null) return native.value?.removed ?? 0;
-  const res: ApiResponse | null = await fetchApi({
+  const res = await fetchApi<{ success?: boolean; removed?: number }>({
     url: '/subagents/runs',
     opts: { run_id: runId },
     method: 'delete'
   });
-  const resp = (res as unknown as { success?: boolean; removed?: number }) ?? {};
+  const resp = res ?? {};
   return typeof resp.removed === 'number' ? resp.removed : 0;
 }
 
@@ -178,12 +177,12 @@ export async function steerSubagentRun(
   runId: string,
   payload: { new_task?: string; new_instructions?: string } = {}
 ): Promise<SubagentRun | null> {
-  const res: ApiResponse | null = await fetchApi({
+  const res = await fetchApi<{ run?: SubagentRun }>({
     url: '/subagents/steer',
     opts: { run_id: runId, ...payload },
     method: 'post'
   });
-  const resp = (res as unknown as { run?: SubagentRun }) ?? {};
+  const resp = res ?? {};
   return resp.run ?? null;
 }
 
@@ -197,9 +196,9 @@ export async function getHistory(sessionId: string, lastTurnCount: number = 10):
     request: { session_id: sessionId, last_turn_count: lastTurnCount }
   });
   if (native !== null) return native.value;
-  return fetchApi({
+  return fetchApiPayload<HistoryMessage[]>({
     url: '/n_turns_history_messages',
     opts: { session_id: sessionId, last_turn_count: lastTurnCount },
     method: 'get'
-  }) as unknown as Promise<HistoryMessage[]>;
+  });
 }

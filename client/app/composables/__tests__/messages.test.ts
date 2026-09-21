@@ -21,7 +21,7 @@ const fetchApiMock = vi.hoisted(() => vi.fn());
 
 vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
 
-import { get_history_by_turn_page, clearSession, postAgentStream } from '../messages';
+import { get_history_by_turn_page, clearSession, getPendingInterrupt, postAgentStream } from '../messages';
 import { closeAllAgentSockets } from '../bridge/agent-socket';
 
 function stubFetchApi(data: unknown) {
@@ -192,6 +192,42 @@ describe('get_history_by_turn_page', () => {
     stubFetchApi(Promise.reject(new Error('boom')));
     await expect(get_history_by_turn_page('s1', 0, 10, 1)).resolves.toEqual([rows[0]]);
     expect(mockDb.cacheMessages).not.toHaveBeenCalled();
+  });
+});
+
+describe('getPendingInterrupt', () => {
+  const interrupt = {
+    tool_name: 'terminal',
+    tool_args: { command: 'ls' },
+    description: 'needs approval',
+    allowed_decisions: ['approve', 'reject']
+  };
+
+  it('returns the bare interrupt payload', async () => {
+    stubFetchApi(interrupt);
+    await expect(getPendingInterrupt('s1')).resolves.toEqual(interrupt);
+  });
+
+  it('unwraps the legacy { data } envelope', async () => {
+    stubFetchApi({ code: 200, data: interrupt });
+    await expect(getPendingInterrupt('s1')).resolves.toEqual(interrupt);
+  });
+
+  it('returns null when the request failed', async () => {
+    fetchApiMock.mockReset();
+    fetchApiMock.mockResolvedValue(null);
+    await expect(getPendingInterrupt('s1')).resolves.toBeNull();
+  });
+
+  it.each([
+    ['the literal "None"', 'None'],
+    ['an array', [interrupt]],
+    ['the { None: true } marker', { None: true }],
+    ['a number', 42],
+    ['a boolean', true]
+  ])('treats %s payload as no pending interrupt', async (_label, payload) => {
+    stubFetchApi(payload);
+    await expect(getPendingInterrupt('s1')).resolves.toBeNull();
   });
 });
 

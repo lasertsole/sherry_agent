@@ -12,7 +12,7 @@ import { invokeNative } from './transport';
 export async function readSystemPrompt(): Promise<Record<string, string>> {
   const native = await invokeNative<PromptFileResponse>('system_prompt_read');
   if (native !== null) return native.value.file_to_content;
-  return fetchApi({ url: '/system_prompt', method: 'get' }) as unknown as Promise<Record<string, string>>;
+  return fetchApiPayload<Record<string, string>>({ url: '/system_prompt', method: 'get' });
 }
 
 /**
@@ -27,11 +27,11 @@ export async function readSystemPromptTemplate(lang?: string): Promise<Record<st
     payload: { lang: lang ?? null }
   });
   if (native !== null) return native.value.file_to_content;
-  return fetchApi({
+  return fetchApiPayload<Record<string, string>>({
     url: '/system_prompt/template',
     opts: { lang: lang ?? undefined },
     method: 'get'
-  }) as unknown as Promise<Record<string, string>>;
+  });
 }
 
 /**

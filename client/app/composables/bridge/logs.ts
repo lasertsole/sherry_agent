@@ -54,7 +54,7 @@ export interface LogStreamFrame {
  * List all available `.log` files, newest first.
  */
 export async function listLogFiles(): Promise<LogFileList> {
-  return fetchApi({ url: '/logs/files', method: 'get' }) as unknown as Promise<LogFileList>;
+  return fetchApiPayload<LogFileList>({ url: '/logs/files', method: 'get' });
 }
 
 /**
@@ -64,11 +64,11 @@ export async function listLogFiles(): Promise<LogFileList> {
  * @param lines Number of trailing lines to read.
  */
 export async function readLogFile(path: string, lines?: number): Promise<LogReadResult> {
-  return fetchApi({
+  return fetchApiPayload<LogReadResult>({
     url: '/logs',
     opts: { path, lines: lines ?? 500 },
     method: 'get'
-  }) as unknown as Promise<LogReadResult>;
+  });
 }
 
 /**

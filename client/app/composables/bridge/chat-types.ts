@@ -65,10 +65,25 @@ export interface HitlResponse {
   edited_args?: Record<string, unknown>;
 }
 
+/**
+ * Runtime guard for the `hitl_request` payload: the server sends the interrupt
+ * object under `content`, so a non-object (or an array) cannot be dispatched to
+ * the HITL card.
+ * @param value Candidate frame body.
+ */
+export function isHitlInterruptData(value: unknown): value is HitlInterruptData {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export interface AgentWsEvent {
   event: AgentWsEventType;
   session_id?: string | null;
-  content?: string;
+  /**
+   * Frame body: text for `chunk` / `error` frames, the interrupt object for
+   * `hitl_request` frames (server/service/stream_driver.py sends the payload
+   * under `content`).
+   */
+  content?: string | HitlInterruptData;
   /** Turn id (carried only on `turn_started`; identifies the generation turn). */
   turn_id?: string;
   /**

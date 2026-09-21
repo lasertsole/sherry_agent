@@ -31,11 +31,11 @@ export interface ChannelUpdate {
  * (repeated calls always return fresh channel status either way).
  */
 export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
-  return fetchApi({
+  return fetchApiPayload<{ channels: ChannelInfo[] }>({
     url: '/channels',
     opts: { _ts: Date.now() },
     method: 'get'
-  }) as unknown as Promise<{ channels: ChannelInfo[] }>;
+  });
 }
 
 /**
@@ -48,11 +48,11 @@ export async function listChannels(): Promise<{ channels: ChannelInfo[] }> {
  * @param update
  */
 export async function updateChannel(channelName: string, update: ChannelUpdate): Promise<ChannelInfo> {
-  return fetchApi({
+  return fetchApiPayload<ChannelInfo>({
     url: `/channels/${channelName}`,
     opts: { ...update },
     method: 'put'
-  }) as unknown as Promise<ChannelInfo>;
+  });
 }
 
 /**
@@ -74,11 +74,11 @@ export interface ChannelConfigResponse {
  * @param channelName
  */
 export async function getChannelConfig(channelName: string): Promise<ChannelConfigResponse> {
-  return fetchApi({
+  return fetchApiPayload<ChannelConfigResponse>({
     url: `/channels/${channelName}/config`,
     opts: { _ts: Date.now() },
     method: 'get'
-  }) as unknown as Promise<ChannelConfigResponse>;
+  });
 }
 
 /**
@@ -88,9 +88,9 @@ export async function getChannelConfig(channelName: string): Promise<ChannelConf
  * @param config
  */
 export async function updateChannelConfig(channelName: string, config: ChannelConfig): Promise<ChannelConfigResponse> {
-  return fetchApi({
+  return fetchApiPayload<ChannelConfigResponse>({
     url: `/channels/${channelName}/config`,
     opts: { ...config },
     method: 'put'
-  }) as unknown as Promise<ChannelConfigResponse>;
+  });
 }

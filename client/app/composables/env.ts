@@ -49,7 +49,7 @@ export async function readEnvConfig(): Promise<EnvConfigPayload> {
   // from setup scope (see ConfigDialog.vue's setup-context watch), otherwise the
   // `|| { groups: [] }` fallback below misleads the user into thinking the
   // `.env` file is missing.
-  const res = await fetchApi({
+  const res = await fetchApi<EnvConfigPayload>({
     url: '/env',
     opts: { _ts: Date.now() },
     method: 'get'
@@ -57,7 +57,7 @@ export async function readEnvConfig(): Promise<EnvConfigPayload> {
   // `res` is never null in practice on success (backend responds with the full
   // payload). Guard against an empty body while preserving the `{ groups }`
   // shape so a non-throw path never yields an unreadable value.
-  return (res as unknown as EnvConfigPayload | undefined) || { groups: [] };
+  return res || { groups: [] };
 }
 
 /**

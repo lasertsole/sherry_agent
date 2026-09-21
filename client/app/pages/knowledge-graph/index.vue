@@ -782,12 +782,12 @@ const uploadFiles = async (files: File[]) => {
     for (const file of files) {
       formData.append('files', file);
     }
-    const payload = (await fetchApi({
+    const payload = await fetchApi<{ success?: boolean; message?: string }>({
       url: '/knowledge-graph/upload',
       method: 'post',
       contentType: 'multipart/form-data',
       opts: formData
-    })) as unknown as { success?: boolean; message?: string };
+    });
 
     if (payload?.success) {
       uploadMessage.value = t('knowledgeGraph.uploadSuccess');

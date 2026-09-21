@@ -64,7 +64,7 @@ export interface CuratorSettingsUpdateResponse {
  * @returns `{ success, result, error }` from the backend.
  */
 export async function runCuratorReview(): Promise<CuratorRunResponse> {
-  return fetchApi({ url: '/curator/run', method: 'post' }) as unknown as Promise<CuratorRunResponse>;
+  return fetchApiPayload<CuratorRunResponse>({ url: '/curator/run', method: 'post' });
 }
 
 /**
@@ -73,7 +73,7 @@ export async function runCuratorReview(): Promise<CuratorRunResponse> {
  * @returns `{ success, auto_interval_days, interval_hours, last_run_at, last_maintenance_at }`.
  */
 export async function getCuratorSettings(): Promise<CuratorSettings> {
-  return fetchApi({ url: '/curator/settings', method: 'get' }) as unknown as Promise<CuratorSettings>;
+  return fetchApiPayload<CuratorSettings>({ url: '/curator/settings', method: 'get' });
 }
 
 /**
@@ -83,9 +83,9 @@ export async function getCuratorSettings(): Promise<CuratorSettings> {
  * @returns `{ success, auto_interval_days, interval_hours, last_maintenance_at }`.
  */
 export async function setCuratorSettings(days: number | null): Promise<CuratorSettingsUpdateResponse> {
-  return fetchApi({
+  return fetchApiPayload<CuratorSettingsUpdateResponse>({
     url: '/curator/settings',
     opts: { auto_interval_days: days },
     method: 'put'
-  }) as unknown as Promise<CuratorSettingsUpdateResponse>;
+  });
 }
