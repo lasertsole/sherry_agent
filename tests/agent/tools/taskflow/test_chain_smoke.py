@@ -43,23 +43,24 @@ class _Response:
 
 
 class _ScriptedLLM:
-    """A stub auxiliary LLM that answers with a fixed scripted sequence."""
+    """A stub auxiliary LLM that answers with one scripted content string."""
 
-    def __init__(self, contents: list[str]) -> None:
-        self._contents = list(contents)
+    def __init__(self, content: str) -> None:
+        self._content = content
         self.calls: list[list[dict]] = []
 
     async def ainvoke(self, messages: list[dict]) -> _Response:
         self.calls.append(messages)
-        index = min(len(self.calls) - 1, len(self._contents) - 1)
-        return _Response(self._contents[index])
+        return _Response(self._content)
 
 
 class _ScriptedLLMFactory:
-    """``build_auxiliary_llm`` stand-in: one fresh scripted LLM per judge call.
+    """``build_auxiliary_llm`` stand-in: the Nth judge call gets the Nth script.
 
-    ``llms`` is the judge-invocation ledger -- its length is the number of
-    auxiliary-LLM calls the judges actually made.
+    Each ``judge_step_result`` / ``judge_completion`` invocation builds exactly
+    one LLM and invokes it once, so advancing the script per build makes the
+    sequence deterministic across separate judge calls. ``llms`` is the
+    judge-invocation ledger -- its length is the number of judge calls made.
     """
 
     def __init__(self, contents: list[str]) -> None:
@@ -67,7 +68,8 @@ class _ScriptedLLMFactory:
         self.llms: list[_ScriptedLLM] = []
 
     def __call__(self, temperature: float | None = None) -> _ScriptedLLM:
-        llm = _ScriptedLLM(self._contents)
+        index = min(len(self.llms), len(self._contents) - 1)
+        llm = _ScriptedLLM(self._contents[index])
         self.llms.append(llm)
         return llm
 
