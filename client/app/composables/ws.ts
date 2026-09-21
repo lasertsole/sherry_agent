@@ -8,6 +8,12 @@
  * - The /sessions/ws channel has a built-in application-layer ping/pong
  *   heartbeat (10s interval; 2 consecutive 5s timeouts declare the connection dead)
  *
+ * Both channels share the connection lifecycle (connect / 5s fixed-delay
+ * reconnect / superseded-socket guard / cleanup) through `ws-connection.ts`;
+ * this module owns the module-level singletons and the channel-specific state
+ * (session heartbeat counters live in the base, the subagent `ready` handshake
+ * lives here).
+ *
  * @module ws
  */
 
@@ -15,31 +21,6 @@ import { ref, type Ref } from 'vue';
 
 /** Session ID (currently fixed to "default") */
 const SESSION_ID = 'default';
-
-/** WebSocket singleton reference */
-let wsInstance: WebSocket | null = null;
-
-let everConnected = false;
-
-/** Outbound bridge: sends a full `{session_id, event, content}` frame (same shape as the heartbeat send). */
-on('ws:send', (payload: unknown) => {
-  const frame = payload as { event?: unknown } | null | undefined;
-  if (!frame || typeof frame.event !== 'string') return;
-  if (!wsInstance || wsInstance.readyState !== WebSocket.OPEN) return;
-  wsInstance.send(JSON.stringify(frame));
-});
-
-/* ---------------------------------------------------------------------------
- * Application-layer heartbeat (ping/pong liveness check) — applies only to the
- * /sessions/ws session channel above
- *
- * Every HEARTBEAT_INTERVAL_MS a { event: 'ping' } frame is sent, and the server
- * replies with {"event":"pong"}; after a ping is sent, receiving any frame
- * within PONG_TIMEOUT_MS counts as alive. Only after MAX_MISSED_PONGS
- * consecutive pong timeouts is the connection declared dead and actively
- * close()d (close triggers the existing onclose -> broadcast ws:disconnected +
- * 5s auto-reconnect; reconnect logic is not duplicated here).
- * ------------------------------------------------------------------------- */
 
 /** Heartbeat send interval (milliseconds) */
 const HEARTBEAT_INTERVAL_MS = 10000;
@@ -50,104 +31,30 @@ const PONG_TIMEOUT_MS = 5000;
 /** Consecutive pong timeout threshold: the connection is declared dead only when this count is reached */
 const MAX_MISSED_PONGS = 2;
 
-/** Heartbeat interval handle (module-level: cleaned up uniformly by onclose / closeWs, preventing leaks across reconnect cycles) */
-let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+/** Fixed auto-reconnect delay shared by both push channels (milliseconds) */
+const RECONNECT_DELAY_MS = 5000;
 
-/** Timeout-check handle for the current ping */
-let pongTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+/** Session-push channel singleton (replaced by every explicit connect) */
+let sessionChannel: WsConnection | null = null;
 
-/**
- * Auto-reconnect timer handle (module-level so closeWs / an explicit connect can
- * cancel a pending reconnect; audit #50). Without the stored handle, a manual
- * close left the 5s timer running and it re-opened a socket the caller had
- * explicitly torn down.
- */
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+/** Whether the session channel ever reached OPEN (drives the `ws:reconnected` emit) */
+let everConnected = false;
 
-/** Cancel a pending auto-reconnect (called on manual close and before any explicit connect). */
-function clearReconnectTimer(): void {
-  if (reconnectTimer !== null) {
-    clearTimeout(reconnectTimer);
-    reconnectTimer = null;
-  }
-}
-
-/** A ping has been sent and no reply frame has been received yet */
-let pendingPong = false;
-
-/** Consecutive pong timeout count (reset to zero when any frame arrives) */
-let missedPongs = 0;
-
-/** Clear the pong timeout-check handle */
-function clearPongTimeout(): void {
-  if (pongTimeoutTimer !== null) {
-    clearTimeout(pongTimeoutTimer);
-    pongTimeoutTimer = null;
-  }
-}
-
-/** Stop the heartbeat: clear the interval and any pending pong timeout check (called on reconnect cycles / closeWs) */
-function stopHeartbeat(): void {
-  if (heartbeatTimer !== null) {
-    clearInterval(heartbeatTimer);
-    heartbeatTimer = null;
-  }
-  clearPongTimeout();
-}
+/** Outbound bridge: sends a full `{session_id, event, content}` frame (same shape as the heartbeat send). */
+on('ws:send', (payload: unknown) => {
+  const frame = payload as { event?: unknown } | null | undefined;
+  if (!frame || typeof frame.event !== 'string') return;
+  const socket = sessionChannel?.socket;
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify(frame));
+});
 
 /**
- * Start the heartbeat interval (called on every onopen).
- * Defensively calls stopHeartbeat first, ensuring the previous connection's
- * timers never survive into the new connection cycle.
- * @param socket
- */
-function startHeartbeat(socket: WebSocket): void {
-  stopHeartbeat();
-  heartbeatTimer = setInterval(() => heartbeatTick(socket), HEARTBEAT_INTERVAL_MS);
-}
-
-/**
- * Single heartbeat tick: send a ping frame and schedule the timeout check when OPEN and no ping is pending
- * @param socket
- */
-function heartbeatTick(socket: WebSocket): void {
-  // Connection unavailable (closing/closed) or the previous ping frame is still
-  // awaiting a pong: skip this tick; the pending timeout callback will handle
-  // the counting/decision
-  if (socket.readyState !== WebSocket.OPEN || pendingPong) return;
-
-  socket.send(JSON.stringify({ session_id: SESSION_ID, event: 'ping', content: '' }));
-  pendingPong = true;
-
-  // The timeout is measured from the "actual send moment": the send happens
-  // inside the interval callback and the timeout check also runs inside a
-  // timer callback; background browser tabs throttle both kinds of timers
-  // equally (delaying the send and the check by the same amount), so
-  // throttling does not produce false positives.
-  pongTimeoutTimer = setTimeout(() => {
-    pongTimeoutTimer = null;
-    if (!pendingPong) return;
-
-    missedPongs += 1;
-    // Release the pending flag so the next heartbeat tick can send a ping again:
-    // a single lost pong is most likely network jitter — suspicious but not fatal
-    pendingPong = false;
-
-    if (missedPongs >= MAX_MISSED_PONGS) {
-      // Two consecutive timeouts: declare the connection dead. Only broadcast
-      // the event and force close(); reconnection is left to the existing
-      // 5s auto-reconnect logic in onclose
-      emit('ws:heartbeat_timeout', undefined);
-      socket.close();
-    }
-  }, PONG_TIMEOUT_MS);
-}
-
-/**
- * Create and obtain the WebSocket connection (singleton)
+ * Create and obtain the session-push WebSocket connection (singleton)
  *
  * Equivalent of @st.cache_resource: module-level singleton + connection state
- * management
+ * management. The 10s ping / 5s pong-timeout heartbeat runs on this channel
+ * only; a dead link is closed and the existing 5s auto-reconnect rebuilds it.
  *
  * @param {{ onReconnect?: () => void }} [options] Optional connection-restored callback
  * @param options.onReconnect
@@ -160,66 +67,50 @@ export function useWs(options?: { onReconnect?: () => void }): {
   const ws: Ref<WebSocket | null> = ref(null);
   const isConnected: Ref<boolean> = ref(false);
 
-  if (wsInstance && wsInstance.readyState === WebSocket.OPEN) {
-    ws.value = wsInstance;
+  // A healthy singleton is shared as-is (the caller binds its own refs to it).
+  if (sessionChannel?.isOpen) {
+    ws.value = sessionChannel.socket;
     isConnected.value = true;
     return { ws, isConnected };
   }
 
-  const wsUrl = `${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`;
+  // An existing connection is still handshaking: reuse it directly, never
+  // close and rebuild — otherwise multiple callers (connection.ts startup +
+  // NotificationDialog mount) would close each other's not-yet-finished
+  // connections, and both sides' onclose would schedule 5s reconnects,
+  // creating a "reconnect storm".
+  if (sessionChannel?.isConnecting) {
+    ws.value = sessionChannel.socket;
+    return { ws, isConnected };
+  }
 
-  function connect(): void {
-    // An explicit connect supersedes any scheduled auto-reconnect: left armed,
-    // that stale timer would fire after this connection is OPEN and rebuild it
-    // (killing the healthy socket).
-    clearReconnectTimer();
+  // Replace the previous channel: disposing it cancels its pending
+  // auto-reconnect, so a stale timer can never rebuild a socket after this
+  // explicit connect.
+  sessionChannel?.dispose();
 
-    // An existing connection is still handshaking: reuse it directly, never
-    // close and rebuild — otherwise multiple callers (connection.ts startup +
-    // NotificationDialog mount) would close each other's not-yet-finished
-    // connections, and both sides' onclose would schedule 5s reconnects,
-    // creating a "reconnect storm"
-    if (wsInstance && wsInstance.readyState === WebSocket.CONNECTING) {
-      ws.value = wsInstance;
-      return;
-    }
+  const handleSessionFrame = createWsMessageHandler<{ content?: unknown }>({
+    notification: data => emit('ws:notification', data.content ?? ''),
+    todo_updated: data => emit('ws:todo_updated', data)
+  });
 
-    // Close the old connection
-    if (wsInstance) {
-      wsInstance.close();
-      wsInstance = null;
-    }
-
-    const socket = new WebSocket(wsUrl);
-    wsInstance = socket;
-    ws.value = socket;
-
-    socket.onopen = () => {
+  const channel = new WsConnection({
+    url: `${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`,
+    reconnectDelayMs: RECONNECT_DELAY_MS,
+    heartbeat: {
+      intervalMs: HEARTBEAT_INTERVAL_MS,
+      timeoutMs: PONG_TIMEOUT_MS,
+      maxMissed: MAX_MISSED_PONGS,
+      frame: () => ({ session_id: SESSION_ID, event: 'ping', content: '' }),
+      onTimeout: () => emit('ws:heartbeat_timeout', undefined)
+    },
+    onOpen: () => {
       isConnected.value = true;
       emit('ws:connected', undefined);
       if (everConnected) emit('ws:reconnected', undefined);
       everConnected = true;
-
-      // Reset heartbeat counters and start the heartbeat timer (counting
-      // restarts from scratch on every reconnect)
-      pendingPong = false;
-      missedPongs = 0;
-      startHeartbeat(socket);
-    };
-
-    const handleSessionFrame = createWsMessageHandler<{ content?: unknown }>({
-      notification: data => emit('ws:notification', data.content ?? ''),
-      todo_updated: data => emit('ws:todo_updated', data)
-    });
-
-    socket.onmessage = (event: MessageEvent) => {
-      // Receiving any frame (including pong) proves the server's event loop is
-      // alive: first clear pending/counters and cancel this round's timeout
-      // check, then do the original event dispatch
-      pendingPong = false;
-      missedPongs = 0;
-      clearPongTimeout();
-
+    },
+    onFrame: event => {
       try {
         const data = handleSessionFrame(event);
         if (data) {
@@ -229,59 +120,30 @@ export function useWs(options?: { onReconnect?: () => void }): {
       } catch {
         // JSON parse failed; ignore this message
       }
-    };
-
-    socket.onclose = () => {
-      // When this socket has been superseded by a newer connection (rebuilt by
-      // another caller / reopened after closeWs), it must not schedule a
-      // reconnect — otherwise the old link's timers would kill the new
-      // connection, creating a cycle of mutual kills
-      if (wsInstance !== socket) return;
-
-      // Clean up heartbeat timers first: connect() closes the old connection,
-      // so old timers must not survive across reconnect cycles
-      stopHeartbeat();
-
+    },
+    onClose: () => {
       isConnected.value = false;
       ws.value = null;
-      wsInstance = null;
       emit('ws:disconnected', undefined);
+    },
+    onReconnect: () => options?.onReconnect?.()
+  });
 
-      // Auto-reconnect (after 5 seconds). The handle is stored so closeWs()
-      // cancels it instead of leaving a zombie reconnect behind (audit #50).
-      reconnectTimer = setTimeout(() => {
-        reconnectTimer = null;
-        options?.onReconnect?.();
-        connect();
-      }, 5000);
-    };
-
-    socket.onerror = () => {
-      // onclose fires automatically after onerror; reconnection is handled by onclose
-    };
-  }
-
-  connect();
+  sessionChannel = channel;
+  channel.connect();
+  ws.value = channel.socket;
 
   return { ws, isConnected };
 }
 
 /**
- * Manually close the WebSocket connection (for cleanup)
+ * Manually close the session-push WebSocket connection (for cleanup)
  */
 export function closeWs(): void {
-  // The heartbeat timer is a module-level handle; clean it up together with the
-  // singleton close (a safety net beyond onclose, to prevent leaks)
-  stopHeartbeat();
-  // Cancel any pending auto-reconnect: a manual close must stay closed
-  clearReconnectTimer();
-  pendingPong = false;
-  missedPongs = 0;
+  const channel = sessionChannel;
+  sessionChannel = null;
+  channel?.dispose();
   everConnected = false;
-  if (wsInstance) {
-    wsInstance.close();
-    wsInstance = null;
-  }
 }
 
 /**
@@ -291,7 +153,7 @@ export function closeWs(): void {
  * connection state (instead of each maintaining its own mirrored copy).
  */
 export function isSessionWsOpen(): boolean {
-  return wsInstance !== null && wsInstance.readyState === WebSocket.OPEN;
+  return sessionChannel?.isOpen === true;
 }
 
 /* ---------------------------------------------------------------------------
@@ -310,21 +172,10 @@ export function isSessionWsOpen(): boolean {
  * ------------------------------------------------------------------------- */
 
 /** Subagent WebSocket singleton reference */
-let subagentWsInstance: WebSocket | null = null;
+let subagentChannel: WsConnection | null = null;
 
 /** Whether the subagent connection is ready (ready frame received) */
 let subagentReady = false;
-
-/** Stored auto-reconnect handle for the subagent channel (cleared by closeSubagentWs, mirrors the session channel). */
-let subagentReconnectTimer: ReturnType<typeof setTimeout> | null = null;
-
-/** Cancel a pending subagent auto-reconnect. */
-function clearSubagentReconnectTimer(): void {
-  if (subagentReconnectTimer !== null) {
-    clearTimeout(subagentReconnectTimer);
-    subagentReconnectTimer = null;
-  }
-}
 
 /**
  * Create and obtain the subagent real-time push WebSocket connection (singleton)
@@ -342,47 +193,25 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
   const isConnected: Ref<boolean> = ref(false);
   const isReady: Ref<boolean> = ref(false);
 
-  if (subagentWsInstance && subagentWsInstance.readyState === WebSocket.OPEN) {
-    ws.value = subagentWsInstance;
+  // A healthy singleton is shared as-is (the caller binds its own refs to it).
+  if (subagentChannel?.isOpen) {
+    ws.value = subagentChannel.socket;
     isConnected.value = true;
     isReady.value = subagentReady;
     return { ws, isConnected, isReady };
   }
 
-  const wsUrl = `${WS_BASE_URL}/subagents/ws`;
+  // Replace the previous channel (cancels its pending auto-reconnect).
+  subagentChannel?.dispose();
 
-  function connect(): void {
-    // Explicit connect supersedes a scheduled auto-reconnect (same race as the
-    // session channel: a stale timer would rebuild an already-OPEN socket).
-    clearSubagentReconnectTimer();
-
-    // Close the old connection
-    if (subagentWsInstance) {
-      subagentWsInstance.close();
-      subagentWsInstance = null;
-    }
-
-    const socket = new WebSocket(wsUrl);
-    subagentWsInstance = socket;
-    subagentReady = false;
-    ws.value = socket;
-
-    socket.onopen = () => {
+  const channel = new WsConnection({
+    url: `${WS_BASE_URL}/subagents/ws`,
+    reconnectDelayMs: RECONNECT_DELAY_MS,
+    onOpen: () => {
       isConnected.value = true;
       emit('ws:subagents:connected', undefined);
-    };
-
-    const handleSubagentFrame = createWsMessageHandler<{ event?: string; data?: unknown }>({
-      ready: data => {
-        subagentReady = true;
-        isReady.value = true;
-        emit('ws:subagents:ready', data.data ?? null);
-      },
-      subagent_spawned: data => emit('ws:subagent_spawned', data.data ?? null),
-      subagent_ended: data => emit('ws:subagent_ended', data.data ?? null)
-    });
-
-    socket.onmessage = (event: MessageEvent) => {
+    },
+    onFrame: event => {
       try {
         const data = handleSubagentFrame(event);
         // `ready` frames stay private to this module; every other parsed frame is passed through raw
@@ -391,35 +220,31 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
       } catch {
         // JSON parse failed; ignore this message
       }
-    };
-
-    socket.onclose = () => {
-      // Superseded-socket guard (mirrors the session channel): a socket already
-      // replaced by closeSubagentWs / a newer connect must not clear the live
-      // singleton or schedule a competing reconnect.
-      if (subagentWsInstance !== socket) return;
-
+    },
+    onClose: () => {
       subagentReady = false;
       isConnected.value = false;
       isReady.value = false;
       ws.value = null;
-      subagentWsInstance = null;
       emit('ws:subagents:disconnected', undefined);
+    },
+    onReconnect: () => options?.onReconnect?.()
+  });
 
-      // Auto-reconnect (after 5 seconds); the stored handle is cancelled by closeSubagentWs.
-      subagentReconnectTimer = setTimeout(() => {
-        subagentReconnectTimer = null;
-        options?.onReconnect?.();
-        connect();
-      }, 5000);
-    };
+  const handleSubagentFrame = createWsMessageHandler<{ event?: string; data?: unknown }>({
+    ready: data => {
+      subagentReady = true;
+      isReady.value = true;
+      emit('ws:subagents:ready', data.data ?? null);
+    },
+    subagent_spawned: data => emit('ws:subagent_spawned', data.data ?? null),
+    subagent_ended: data => emit('ws:subagent_ended', data.data ?? null)
+  });
 
-    socket.onerror = () => {
-      // onclose fires automatically after onerror; reconnection is handled by onclose
-    };
-  }
-
-  connect();
+  subagentChannel = channel;
+  subagentReady = false;
+  channel.connect();
+  ws.value = channel.socket;
 
   return { ws, isConnected, isReady };
 }
@@ -428,10 +253,8 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
  * Manually close the subagent WebSocket connection (for cleanup)
  */
 export function closeSubagentWs(): void {
-  clearSubagentReconnectTimer();
-  if (subagentWsInstance) {
-    subagentWsInstance.close();
-    subagentWsInstance = null;
-  }
+  const channel = subagentChannel;
+  subagentChannel = null;
   subagentReady = false;
+  channel?.dispose();
 }
