@@ -1,6 +1,7 @@
 import type { ToastMessageOptions } from 'primevue/toast';
 import type { ToastServiceMethods } from 'primevue/toastservice';
 import { isClient } from '~/utils/client';
+import { safeT } from '~/utils/i18n';
 
 /**
  * Global toast notification layer.
@@ -37,22 +38,6 @@ let toastApi: ToastApi | null = null;
 export function registerToastApi(api: ToastApi | null): void {
   if (!isClient()) return;
   toastApi = api;
-}
-
-/**
- * Safely get an i18n translation.
- *
- * Delegates to `resolveRuntimeT()` (i18nRuntime.ts) to resolve the real translation
- * function within the Nuxt runtime (nuxt-i18n v10's `$i18n` is a locale state proxy
- * that does not include `t`, so it cannot be used directly);
- * unit tests / non-Nuxt contexts fall back to returning the key as-is.
- * Never throws in either case.
- * @param key
- */
-function safeT(key: string): string {
-  if (!isClient()) return key;
-  const t = resolveRuntimeT();
-  return t ? t(key) : key;
 }
 
 /**

@@ -10,6 +10,7 @@ import type { SubagentRun } from './bridge';
 import type { CachedSubagentRun } from './db';
 import { useSubagentStore } from '~/stores/subagent';
 import { logUtil } from '~/utils/log';
+import { sessionIdFromPathname } from '~/utils/session-route';
 
 /** Last initialized session (used to refresh the list when switching sessions) */
 let lastLoadedSessionId: string | undefined;
@@ -68,9 +69,7 @@ export async function loadSubagentValidSessions(): Promise<void> {
 export function resolveSid(force?: string): string | undefined {
   if (force) return force;
   if (typeof window === 'undefined') return undefined;
-  const segs = window.location.pathname.split('/').filter(Boolean);
-  const sid = segs[segs.length - 1];
-  return sid && sid !== 'home' ? sid : undefined;
+  return sessionIdFromPathname(window.location.pathname);
 }
 
 /**

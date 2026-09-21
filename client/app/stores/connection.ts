@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import { isClient } from '~/utils/client';
+import { safeT } from '~/utils/i18n';
 
 /**
  * Network / backend connectivity (event-driven, based on WebSocket heartbeat liveness detection).
@@ -53,20 +54,6 @@ export const useConnectionStore = defineStore('connection', () => {
   /** Last observed overall reachability state (network loss and backend-unreachable share the same
    *  "edge" determination, used to deduplicate toasts and trigger the "recovered" toast). */
   const lastReachable = ref<boolean | null>(null);
-
-  /**
-   * Safely get an i18n translation.
-   *
-   * Delegates to `resolveRuntimeT()` (i18nRuntime.ts) to resolve the real translation function at
-   * Nuxt runtime (nuxt-i18n v10's `$i18n` is a locale state proxy without `t` and cannot be used directly);
-   * unit tests / non-Nuxt contexts fall back to returning the key unchanged. Never throws in either case.
-   * @param key
-   */
-  function safeT(key: string): string {
-    if (!isClient()) return key;
-    const t = resolveRuntimeT();
-    return t ? t(key) : key;
-  }
 
   /** Sync the browser online state once (browser environment). */
   function syncBrowserOnline(): void {

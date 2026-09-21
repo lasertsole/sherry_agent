@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
+import { sessionIdFromPathname } from '~/utils/session-route';
 
 /**
  * Session plan (todo list) store.
@@ -80,9 +81,9 @@ export type TodoState = 'hide' | 'close' | 'open';
  */
 function resolveSid(): string {
   if (typeof window === 'undefined') return '';
-  const segs = window.location.pathname.split('/').filter(Boolean);
-  const last = segs[segs.length - 1];
-  return last && last !== 'home' && last !== 'tasks' ? last : '';
+  // `tasks` is the standalone background-tasks route (/home/tasks/<sid>): the
+  // trailing segment of /home/tasks is the route name, not a session id.
+  return sessionIdFromPathname(window.location.pathname, ['home', 'tasks']) ?? '';
 }
 
 /**
