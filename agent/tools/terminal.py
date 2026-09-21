@@ -48,10 +48,12 @@ from langchain_community.tools.shell.tool import ShellInput
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_core.tools import ToolException
 
+from agent.tools.pub_base import _extract_session_id
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
+from agent.tools.todolist.evidence_recorder import record_verification_evidence
 
 # Bound to the feature registry (single source of truth); name preserved.
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
@@ -176,6 +178,12 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             if pattern.search(joined):
                 raise ToolException(_SENSITIVE_FILE_MESSAGE)
 
+    @staticmethod
+    def _record_verification(command: str, result: str, run_manager: Any) -> str:
+        """Record verification evidence for a finished command, then return the result."""
+        record_verification_evidence(command, result, _extract_session_id(run_manager))
+        return result
+
     def _resolve_sandbox_argv(
         self, cmd_str: str, env: dict[str, str]
     ) -> tuple[list[str] | None, dict[str, str]]:
@@ -299,13 +307,19 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         if sandbox:
             argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env)
             if argv is not None:
-                return self._run_wrapped(argv, wrapped_env)
+                return self._record_verification(
+                    cmd_str, self._run_wrapped(argv, wrapped_env), run_manager
+                )
 
         # ShellTool._run delegates to BashProcess which uses subprocess.run(check=True)
         # without timeout — prone to hanging and fails on Windows for console-dependent
         # commands (e.g. `timeout` needs a real console handle). Bypass it entirely and
         # use _run_with_encoding which has proper timeout and encoding handling.
-        return self._run_with_encoding(commands, encoding=self._encoding, env=env)
+        return self._record_verification(
+            cmd_str,
+            self._run_with_encoding(commands, encoding=self._encoding, env=env),
+            run_manager,
+        )
 
     @override
     async def _arun(
@@ -355,8 +369,10 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=TERMINAL_TIMEOUT)
             output = stdout_bytes.decode(self._encoding, errors="replace")
             if proc.returncode != 0:
-                return f"Exit code {proc.returncode}\n{output}"
-            return output
+                return self._record_verification(
+                    cmd_str, f"Exit code {proc.returncode}\n{output}", run_manager
+                )
+            return self._record_verification(cmd_str, output, run_manager)
         except TimeoutError:
             if proc:
                 proc.kill()
@@ -364,17 +380,23 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             logger.warning(
                 "terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120]
             )
-            return (
-                f"Terminal command timed out after {TERMINAL_TIMEOUT} seconds. "
-                "The command was forcibly terminated. Please try a simpler command."
+            return self._record_verification(
+                cmd_str,
+                (
+                    f"Terminal command timed out after {TERMINAL_TIMEOUT} seconds. "
+                    "The command was forcibly terminated. Please try a simpler command."
+                ),
+                run_manager,
             )
         except asyncio.CancelledError:
             if proc:
                 proc.kill()
             logger.warning("terminal command cancelled: {}", cmd_str[:120])
-            return "Terminal command was cancelled."
+            return self._record_verification(
+                cmd_str, "Terminal command was cancelled.", run_manager
+            )
         except Exception as e:
-            return f"Error: {e}"
+            return self._record_verification(cmd_str, f"Error: {e}", run_manager)
 
 
 def build_terminal_tool() -> SafeShellTool:
