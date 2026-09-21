@@ -3,6 +3,10 @@
 > 基于对 `hermes-agent-main`（Python 子进程 + UDS/TCP RPC）和 `deepagents-main`（QuickJS 嵌入式 JS 沙箱）的 PTC 实现调研，为 Sherry 设计子进程 + TCP RPC 方案的 PTC。
 >
 > **核心约束：仅限 subagent 可用，main agent 无法调用。**
+>
+> **前置依赖：[`TODO/subagent-role-migration.md`](subagent-role-migration.md) Phase 1（subagent 功能角色分工）。**
+> PTC 工具仅注入 `FunctionalRole.EXECUTOR` 的 subagent，Phase 1 的 `FunctionalRole` 枚举、角色定义加载器、`spawn_subagent_direct()` 的 `functional_role_hint` 参数传递必须先完成。
+> 实施顺序：subagent-role-migration Phase 1 全部步骤 → 本计划。
 
 ---
 
@@ -71,28 +75,43 @@
 | 跨平台   | TCP 无 US 限制                     | N/A                       |
 | 异步工具 | `run_coroutine_threadsafe` 桥接    | 天然 async                |
 
-### 为什么仅限 subagent
+### 为什么仅限 EXECUTOR 角色 subagent
 
 - Main agent 应该逐步推理，不应批量调工具
-- Subagent 是任务执行者，PTC 的批量能力更适合
+- PTC 是代码执行能力，属于 EXECUTOR 功能角色（"write-capable, code execution"）
+- RESEARCHER 是只读角色，不应获得 `execute_code`（可调 write_file/terminal）
+- REVIEWER 是只读审计角色，更不应获得代码执行
 - 防止 main agent 利用 PTC 绕过 middleware 链（guardrails、HITL 等）
+- 防止非 EXECUTOR 角色获得越权写入/执行能力
 
-### Main agent 不可用的实现方式
+### Main agent 不可用 + 非 EXECUTOR 不可用的实现方式
 
-PTC tool **不加入** `_MAIN_TOOLS_BUILDERS`，只在 `_build_child_agent()` 中注入：
+PTC tool **不加入** `_MAIN_TOOLS_BUILDERS`，只在 `_build_child_agent()` 中**当 `functional_role == EXECUTOR` 时**注入：
 
 ```python
-# spawn/core.py::_build_child_agent — 仅 subagent 路径
+# spawn/core.py::_build_child_agent — 仅 EXECUTOR 角色 subagent 路径
+# 前置依赖：subagent-role-migration Phase 1 已完成
+#   functional_role 和 role_def 已在 Phase 4.5 解析完毕，作为参数传入
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
 
-# ↓↓↓ 新增：仅 subagent 注入 PTC
-from agent.tools.ptc import build_ptc_tool
-ptc_tool = build_ptc_tool(available_tools=filtered_tools, session_id=run.child_session_key)
-final_tools = [*filtered_tools, ptc_tool]
+# ↓↓↓ 新增：仅 EXECUTOR 角色注入 PTC
+final_tools = list(filtered_tools)
+if functional_role == FunctionalRole.EXECUTOR:
+    from agent.tools.ptc import build_ptc_tool
+    ptc_tool = build_ptc_tool(
+        available_tools=filtered_tools,
+        session_id=run.child_session_key,
+    )
+    final_tools = [*filtered_tools, ptc_tool]
 ```
 
-Main agent 的 `built_agent()` 用 `get_agent_tools()` → `_tools = build_main_tools()` — 无 PTC tool。
+- Main agent：`built_agent()` → `get_agent_tools()` → `_tools = build_main_tools()` — 无 PTC tool，无需修改
+- LEAF subagent + EXECUTOR 角色：获得 PTC tool
+- LEAF subagent + RESEARCHER 角色：**无** PTC tool（只读角色）
+- LEAF subagent + REVIEWER 角色：**无** PTC tool（只读角色）
+- LEAF subagent + GENERAL 角色：**无** PTC tool（GENERAL 无代码执行需求，默认回退角色）
+- Orchestrator subagent：**无** PTC tool（OrCHESTRATOR 负责拆分任务，不直接执行代码）
 
 ---
 
@@ -382,13 +401,15 @@ RESTRICTED_BUILTINS = {
 
 ### 1. `agent/tools/subagent/spawn/core.py` — `_build_child_agent()` (约 line 818)
 
-**现有代码：**
+> **前置依赖：** subagent-role-migration Phase 1 Step 1.4-1.5 已完成，`_build_child_agent` 签名中已增加 `functional_role` 和 `role_def` 参数。
+
+**现有代码（Phase 1 完成后）：**
 
 ```python
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
 
-# ... LLM selection ...
+# ... LLM selection (Phase 1.5 已改为 role_def.model_tier 驱动) ...
 
 child_agent = create_agent(
     ...
@@ -397,19 +418,21 @@ child_agent = create_agent(
 )
 ```
 
-**修改后：**
+**修改后（本计划新增）：**
 
 ```python
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
 
-# Inject PTC tool — subagent only, never available to main agent
-from agent.tools.ptc import build_ptc_tool
-ptc_tool = build_ptc_tool(
-    available_tools=filtered_tools,
-    session_id=run.child_session_key,
-)
-final_tools = [*filtered_tools, ptc_tool]
+# Inject PTC tool — EXECUTOR role only, never available to main agent or other roles
+final_tools = list(filtered_tools)
+if functional_role == FunctionalRole.EXECUTOR:
+    from agent.tools.ptc import build_ptc_tool
+    ptc_tool = build_ptc_tool(
+        available_tools=filtered_tools,
+        session_id=run.child_session_key,
+    )
+    final_tools = [*filtered_tools, ptc_tool]
 
 # ... LLM selection (unchanged) ...
 
@@ -423,26 +446,28 @@ child_agent = create_agent(
 **影响范围：**
 
 - Main agent：`built_agent()` → `get_agent_tools()` → `_tools = build_main_tools()` — 不含 PTC tool，无需修改
-- Leaf subagent：自动获得 PTC tool
-- Orchestrator subagent：自动获得 PTC tool
+- EXECUTOR subagent：获得 PTC tool
+- RESEARCHER / REVIEWER / GENERAL subagent：**无** PTC tool
+- Orchestrator subagent：**无** PTC tool（不应直接执行代码）
 
-### 2. `agent/tools/subagent/spawn/system_prompt.py` — 增加 PTC 指导
+### 2. `agent/tools/subagent/spawn/system_prompt.py` — 增加 PTC 指导（仅 EXECUTOR）
 
-在 `build_subagent_system_prompt()` 的 sections 列表末尾追加条件 section：
+在 `build_subagent_system_prompt()` 中，当 `functional_role == EXECUTOR` 时追加 PTC section：
 
 ```python
-# Section 7: PTC (always present for subagents since they always get execute_code)
-sections.append(
-    "## Programmatic Tool Calling (execute_code)\n"
-    "You have an `execute_code` tool that runs Python with tool access.\n"
-    "Use it when:\n"
-    "- 3+ tool calls with processing logic between them\n"
-    "- Need to filter/reduce large outputs before they enter your context\n"
-    "- Need conditional branching or loops over tool calls\n"
-    "Don't use it for: single tool calls, tasks needing complex reasoning, "
-    "or user interaction.\n"
-    "Print your final result to stdout."
-)
+# Section 7: PTC (only for EXECUTOR role)
+if functional_role == FunctionalRole.EXECUTOR:
+    sections.append(
+        "## Programmatic Tool Calling (execute_code)\n"
+        "You have an `execute_code` tool that runs Python with tool access.\n"
+        "Use it when:\n"
+        "- 3+ tool calls with processing logic between them\n"
+        "- Need to filter/reduce large outputs before they enter your context\n"
+        "- Need conditional branching or loops over tool calls\n"
+        "Don't use it for: single tool calls, tasks needing complex reasoning, "
+        "or user interaction.\n"
+        "Print your final result to stdout."
+    )
 ```
 
 ### 3. `config/features/agent_side/tools_timeouts.py`
@@ -487,13 +512,13 @@ from .agent_side import (
 
 ## 测试计划（5 个文件）
 
-| 文件                                           | 标记          | 覆盖点                                                                                                                                                         |
-| ---------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `tests/agent/tools/ptc/test_rpc_server.py`     | `unit`        | TCP RPC 握手、JSON 序列化/反序列化、call budget 耗尽→`PTCCallBudgetExceeded`、工具调用超时、并发请求处理、连接断开恢复                                         |
-| `tests/agent/tools/ptc/test_stub_generator.py` | `unit`        | stub 生成正确性、函数签名匹配实际工具 schema、import 路径、辅助函数（json_parse/shell_quote/retry）                                                            |
-| `tests/agent/tools/ptc/test_runner.py`         | `integration` | 端到端：spawn child → RPC → stdout capture、超时 kill、env scrub 验证、stderr 捕获、exit code 传播                                                             |
-| `tests/agent/tools/ptc/test_tool.py`           | `unit`        | execute_code tool schema 生成、description 动态工具列表（只列 allowed ∩ available）、metadata scope 标签、session_id 注入                                      |
-| `tests/agent/tools/ptc/test_integration.py`    | `module`      | 在 `_build_child_agent` 中注入 PTC tool、main agent 无 PTC tool（`build_main_tools()` 不含 execute_code）、工具白名单交集计算、PTC tool 不在白名单中（防递归） |
+| 文件                                           | 标记          | 覆盖点                                                                                                                                                                        |
+| ---------------------------------------------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/agent/tools/ptc/test_rpc_server.py`     | `unit`        | TCP RPC 握手、JSON 序列化/反序列化、call budget 耗尽→`PTCCallBudgetExceeded`、工具调用超时、并发请求处理、连接断开恢复                                                        |
+| `tests/agent/tools/ptc/test_stub_generator.py` | `unit`        | stub 生成正确性、函数签名匹配实际工具 schema、import 路径、辅助函数（json_parse/shell_quote/retry）                                                                           |
+| `tests/agent/tools/ptc/test_runner.py`         | `integration` | 端到端：spawn child → RPC → stdout capture、超时 kill、env scrub 验证、stderr 捕获、exit code 传播                                                                            |
+| `tests/agent/tools/ptc/test_tool.py`           | `unit`        | execute_code tool schema 生成、description 动态工具列表（只列 allowed ∩ available）、metadata scope 标签、session_id 注入                                                     |
+| `tests/agent/tools/ptc/test_integration.py`    | `module`      | 在 `_build_child_agent` 中注入 PTC tool（仅 EXECUTOR）、main agent 无 PTC tool、RESEARCHER/REVIEWER subagent 无 PTC tool、工具白名单交集计算、PTC tool 不在白名单中（防递归） |
 
 ### 关键测试用例
 
@@ -522,8 +547,14 @@ async def test_stdout_truncation():
 async def test_main_agent_has_no_ptc():
     """build_main_tools() 返回值中不含 execute_code。"""
 
-async def test_subagent_has_ptc():
-    """_build_child_agent 构建的工具列表中包含 execute_code。"""
+async def test_executor_subagent_has_ptc():
+    """_build_child_agent(functional_role=EXECUTOR) 构建的工具列表中包含 execute_code。"""
+
+async def test_researcher_subagent_has_no_ptc():
+    """_build_child_agent(functional_role=RESEARCHER) 构建的工具列表中不含 execute_code。"""
+
+async def test_reviewer_subagent_has_no_ptc():
+    """_build_child_agent(functional_role=REVIEWER) 构建的工具列表中不含 execute_code。"""
 
 async def test_ptc_not_in_own_whitelist():
     """execute_code 不在 ptc_allowed_tools 中（防递归）。"""
@@ -535,7 +566,8 @@ async def test_ptc_not_in_own_whitelist():
 
 | 步骤 | 内容                                                                            | 依赖      | 预估工时 |
 | ---- | ------------------------------------------------------------------------------- | --------- | -------- |
-| 1    | 创建 `config/features/agent_side/ptc.py` + 修改 re-exports（`__init__.py` × 2） | 无        | 0.5h     |
+| 0    | **前置：完成 subagent-role-migration Phase 1 全部步骤**                         | 无        | —        |
+| 1    | 创建 `config/features/agent_side/ptc.py` + 修改 re-exports（`__init__.py` × 2） | 步骤 0    | 0.5h     |
 | 2    | 修改 `tools_timeouts.py` 增加 `ptc_timeout_seconds`                             | 步骤 1    | 0.25h    |
 | 3    | 创建 `agent/tools/ptc/builtins.py`                                              | 无        | 0.5h     |
 | 4    | 创建 `agent/tools/ptc/rpc_server.py`                                            | 步骤 1, 3 | 2h       |
@@ -549,7 +581,7 @@ async def test_ptc_not_in_own_whitelist():
 | 12   | `uv run --no-sync basedpyright agent/tools/ptc/`                                | 步骤 11   | 0.5h     |
 | 13   | `uv run pytest tests/agent/tools/ptc -q`                                        | 步骤 12   | 1h       |
 
-**总预估：约 13 小时**
+**总预估：约 13 小时（不含前置依赖 Phase 1）**
 
 ---
 
@@ -566,6 +598,7 @@ async def test_ptc_not_in_own_whitelist():
 | **session 隔离**             | PTC 工具用 subagent 的 `child_session_key` 调用工具，不泄漏 parent session                       | `tool.py`                             |
 | **PTC 工具自排**             | `execute_code` 不在 `ptc_allowed_tools` 中（防递归）                                             | `ptc.py`                              |
 | **main agent 不可用**        | PTC tool 不在 `_MAIN_TOOLS_BUILDERS` 中，仅 `_build_child_agent` 注入                            | `spawn/core.py`                       |
+| **非 EXECUTOR 不可用**       | PTC tool 仅在 `functional_role == EXECUTOR` 时注入，RESEARCHER/REVIEWER/GENERAL 不可用           | `spawn/core.py`                       |
 | **子 agent 递归**            | leaf subagent 无 `sessions_spawn`（已有 deny），PTC 白名单也不含 spawn/yield/kill/steer          | `inherited_tool_policy.py` + `ptc.py` |
 | **subagent 子进程内 spawn**  | PTC 白名单不含 `sessions_spawn`/`sessions_yield`/`sessions_kill`/`sessions_steer`                | `ptc.py`                              |
 | **subagent 子进程内 memory** | PTC 白名单不含 `memory`/`skill_manage`/`question`                                                | `ptc.py`                              |

@@ -4,6 +4,10 @@
 >
 > **核心约束：仅限 subagent 可用，main agent 无法调用。**
 >
+> **前置依赖：[`TODO/subagent-role-migration.md`](subagent-role-migration.md) Phase 1（subagent 功能角色分工）。**
+> 代码检索工具仅注入 `FunctionalRole.RESEARCHER` 的 subagent，Phase 1 的 `FunctionalRole` 枚举、角色定义加载器、`spawn_subagent_direct()` 的 `functional_role_hint` 参数传递必须先完成。
+> 实施顺序：subagent-role-migration Phase 1 全部步骤 → 本计划 Phase 1。
+>
 > **实施策略：Phase 1 先行，评估后再决定 P2/P3。**
 
 ---
@@ -26,7 +30,7 @@
 ## 架构概览
 
 ```
-┌─ Subagent 工具层（注入于 _build_child_agent，main agent 不可见）──────────┐
+┌─ Subagent 工具层（注入于 _build_child_agent，仅 RESEARCHER 角色，main agent 不可见）──┐
 │                                                                          │
 │  Phase 1 — AST 符号索引（tree-sitter）                                    │
 │  ├─ explore      模糊意图 → 符号源码 + 调用路径                             │
@@ -81,29 +85,40 @@
 
 **结论：** Phase 1 用 tree-sitter 做离线全量索引（符号 + 调用图），Phase 2 用 LSP 做精确即时查询，两层互补。
 
-### 为什么仅限 subagent
+### 为什么仅限 RESEARCHER 角色 subagent
 
 - Main agent 的检索需求由 `search_files` + `read_file` 覆盖
 - 代码索引构建开销大（首次全量扫描），不应由 main agent 触发
-- Subagent 是任务执行者，需要深度代码理解能力
+- 代码检索是只读探索能力，属于 RESEARCHER 功能角色（"read-only, codebase/web search"）
+- EXECUTOR 是写入/执行角色，代码检索非其职责（EXECUTOR 应专注代码执行，检索由上游 RESEARCHER 完成）
+- REVIEWER 是只读审计角色，侧重 diff 审查而非代码库探索
 - 防止 main agent 利用 explore 绕过 middleware 链的推理约束
 
-### Main agent 不可用的实现方式
+### Main agent 不可用 + 非 RESEARCHER 不可用的实现方式
 
-代码检索工具**不加入** `_MAIN_TOOLS_BUILDERS`，只在 `_build_child_agent()` 中注入：
+代码检索工具**不加入** `_MAIN_TOOLS_BUILDERS`，只在 `_build_child_agent()` 中**当 `functional_role == RESEARCHER` 时**注入：
 
 ```python
-# spawn/core.py::_build_child_agent — 仅 subagent 路径
+# spawn/core.py::_build_child_agent — 仅 RESEARCHER 角色 subagent 路径
+# 前置依赖：subagent-role-migration Phase 1 已完成
+#   functional_role 和 role_def 已在 Phase 4.5 解析完毕，作为参数传入
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
 
-# ↓↓↓ 新增：仅 subagent 注入 code_intel 工具
-from agent.tools.code_intel import build_code_intel_tools
-code_intel_tools = build_code_intel_tools(session_id=run.child_session_key)
-final_tools = [*filtered_tools, *code_intel_tools]
+# ↓↓↓ 新增：仅 RESEARCHER 角色注入 code_intel 工具
+final_tools = list(filtered_tools)
+if functional_role == FunctionalRole.RESEARCHER:
+    from agent.tools.code_intel import build_code_intel_tools
+    code_intel_tools = build_code_intel_tools(session_id=run.child_session_key)
+    final_tools = [*filtered_tools, *code_intel_tools]
 ```
 
-Main agent 的 `built_agent()` 用 `get_agent_tools()` → `_tools = build_main_tools()` — 无 code_intel 工具。
+- Main agent：`built_agent()` → `get_agent_tools()` → `_tools = build_main_tools()` — 无 code_intel 工具
+- LEAF subagent + RESEARCHER 角色：获得 code_intel 工具
+- LEAF subagent + EXECUTOR 角色：**无** code_intel 工具（写入/执行角色）
+- LEAF subagent + REVIEWER 角色：**无** code_intel 工具（审计角色）
+- LEAF subagent + GENERAL 角色：**无** code_intel 工具（GENERAL 默认回退，无专用检索需求）
+- Orchestrator subagent：**无** code_intel 工具（OrCHESTRATOR 負责拆分任务，不直接检索）
 
 ### 支持语言
 
@@ -632,13 +647,15 @@ Examples: 'database connection pooling', 'error handling for websockets',
 
 #### 1. `agent/tools/subagent/spawn/core.py` — `_build_child_agent()` (约 line 818)
 
-**现有代码：**
+> **前置依赖：** subagent-role-migration Phase 1 Step 1.4-1.5 已完成，`_build_child_agent` 签名中已增加 `functional_role` 和 `role_def` 参数。
+
+**现有代码（Phase 1 完成后）：**
 
 ```python
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
 
-# ... LLM selection ...
+# ... LLM selection (Phase 1.5 已改为 role_def.model_tier 驱动) ...
 
 child_agent = create_agent(
     ...
@@ -647,16 +664,18 @@ child_agent = create_agent(
 )
 ```
 
-**修改后：**
+**修改后（本计划新增）：**
 
 ```python
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
 
-# Inject code intelligence tools — subagent only, never available to main agent
-from agent.tools.code_intel import build_code_intel_tools
-code_intel_tools = build_code_intel_tools(session_id=run.child_session_key)
-final_tools = [*filtered_tools, *code_intel_tools]
+# Inject code intelligence tools — RESEARCHER role only, never available to main agent or other roles
+final_tools = list(filtered_tools)
+if functional_role == FunctionalRole.RESEARCHER:
+    from agent.tools.code_intel import build_code_intel_tools
+    code_intel_tools = build_code_intel_tools(session_id=run.child_session_key)
+    final_tools = [*filtered_tools, *code_intel_tools]
 
 # ... LLM selection (unchanged) ...
 
@@ -667,22 +686,24 @@ child_agent = create_agent(
 )
 ```
 
-#### 2. `agent/tools/subagent/spawn/system_prompt.py` — 增加代码检索指导
+#### 2. `agent/tools/subagent/spawn/system_prompt.py` — 增加代码检索指导（仅 RESEARCHER）
 
-在 `build_subagent_system_prompt()` 的 sections 列表末尾追加：
+在 `build_subagent_system_prompt()` 中，当 `functional_role == RESEARCHER` 时追加：
 
 ```python
-sections.append(
-    "## Code Intelligence Tools\n"
-    "You have code retrieval tools for fast repo navigation:\n"
-    "- `explore` — fuzzy intent → symbol source + call paths. USE FIRST.\n"
-    "- `callers` — who calls this symbol\n"
-    "- `callees` — what does this symbol call\n"
-    "- `impact` — blast radius of modifying a symbol\n"
-    "Workflow: explore(query) → callers(symbol) for precision → "
-    "search_files as keyword fallback.\n"
-    "Index is built on first use; subsequent queries are fast."
-)
+# Code intelligence guidance (only for RESEARCHER role)
+if functional_role == FunctionalRole.RESEARCHER:
+    sections.append(
+        "## Code Intelligence Tools\n"
+        "You have code retrieval tools for fast repo navigation:\n"
+        "- `explore` — fuzzy intent → symbol source + call paths. USE FIRST.\n"
+        "- `callers` — who calls this symbol\n"
+        "- `callees` — what does this symbol call\n"
+        "- `impact` — blast radius of modifying a symbol\n"
+        "Workflow: explore(query) → callers(symbol) for precision → "
+        "search_files as keyword fallback.\n"
+        "Index is built on first use; subsequent queries are fast."
+    )
 ```
 
 #### 3. `config/features/agent_side/__init__.py` — re-export
@@ -711,7 +732,7 @@ from .agent_side import (
 
 ### Phase 3 修改（1 个）
 
-- `agent/tools/subagent/spawn/system_prompt.py` — 追加 semantic_code_search 指导
+- `agent/tools/subagent/spawn/system_prompt.py` — 追加 semantic_code_search 指导（仅 RESEARCHER）
 
 ### 公共修改
 
@@ -732,16 +753,16 @@ CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
 
 ## 测试计划
 
-| 文件                                               | 阶段 | 标记          | 覆盖点                                                                                               |
-| -------------------------------------------------- | ---- | ------------- | ---------------------------------------------------------------------------------------------------- |
-| `tests/agent/tools/code_intel/conftest.py`         | P1   | —             | 共享 fixtures（tmp repo, mock config, test db）                                                      |
-| `tests/agent/tools/code_intel/test_indexer.py`     | P1   | `unit`        | tree-sitter 解析、符号提取（4 语言）、调用边构建、增量索引、mtime 跳过、prune_dirs 过滤、batch 事务  |
-| `tests/agent/tools/code_intel/test_query.py`       | P1   | `unit`        | 模糊匹配（精确/前缀/子串/Levenshtein）、callers/callees/impact 遍历、深度限制、空结果处理            |
-| `tests/agent/tools/code_intel/test_tools.py`       | P1   | `unit`        | explore/callers/callees/impact 工具 schema、session_id 注入、metadata scope 标签、description 正确性 |
-| `tests/agent/tools/code_intel/test_integration.py` | P1   | `module`      | `_build_child_agent` 注入、main agent 无 code_intel 工具、explore 降级到 search_files                |
-| `tests/agent/tools/code_intel/test_lsp_client.py`  | P2   | `unit`        | JSON-RPC 握手、请求/响应、超时、进程清理、didOpen 通知                                               |
-| `tests/agent/tools/code_intel/test_lsp_tools.py`   | P2   | `integration` | 4 个 LSP 工具端到端（需 LSP server 可用，skip if not）                                               |
-| `tests/agent/tools/code_intel/test_semantic.py`    | P3   | `integration` | 分块、embedding 存储、cosine 搜索、reranker 重排（需 embed model 可用）                              |
+| 文件                                               | 阶段 | 标记          | 覆盖点                                                                                                                                                |
+| -------------------------------------------------- | ---- | ------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tests/agent/tools/code_intel/conftest.py`         | P1   | —             | 共享 fixtures（tmp repo, mock config, test db）                                                                                                       |
+| `tests/agent/tools/code_intel/test_indexer.py`     | P1   | `unit`        | tree-sitter 解析、符号提取（4 语言）、调用边构建、增量索引、mtime 跳过、prune_dirs 过滤、batch 事务                                                   |
+| `tests/agent/tools/code_intel/test_query.py`       | P1   | `unit`        | 模糊匹配（精确/前缀/子串/Levenshtein）、callers/callees/impact 遍历、深度限制、空结果处理                                                             |
+| `tests/agent/tools/code_intel/test_tools.py`       | P1   | `unit`        | explore/callers/callees/impact 工具 schema、session_id 注入、metadata scope 标签、description 正确性                                                  |
+| `tests/agent/tools/code_intel/test_integration.py` | P1   | `module`      | `_build_child_agent` 注入（仅 RESEARCHER）、main agent 无 code_intel 工具、EXECUTOR/REVIEWER subagent 无 code_intel 工具、explore 降级到 search_files |
+| `tests/agent/tools/code_intel/test_lsp_client.py`  | P2   | `unit`        | JSON-RPC 握手、请求/响应、超时、进程清理、didOpen 通知                                                                                                |
+| `tests/agent/tools/code_intel/test_lsp_tools.py`   | P2   | `integration` | 4 个 LSP 工具端到端（需 LSP server 可用，skip if not）                                                                                                |
+| `tests/agent/tools/code_intel/test_semantic.py`    | P3   | `integration` | 分块、embedding 存储、cosine 搜索、reranker 重排（需 embed model 可用）                                                                               |
 
 ### 关键测试用例
 
@@ -795,8 +816,14 @@ def test_session_id_injection():
 async def test_main_agent_has_no_code_intel():
     """build_main_tools() 返回值中不含 explore/callers/callees/impact。"""
 
-async def test_subagent_has_code_intel():
-    """_build_child_agent 构建的工具列表中包含 4 个 code_intel 工具。"""
+async def test_researcher_subagent_has_code_intel():
+    """_build_child_agent(functional_role=RESEARCHER) 构建的工具列表中包含 4 个 code_intel 工具。"""
+
+async def test_executor_subagent_has_no_code_intel():
+    """_build_child_agent(functional_role=EXECUTOR) 构建的工具列表中不含 code_intel 工具。"""
+
+async def test_reviewer_subagent_has_no_code_intel():
+    """_build_child_agent(functional_role=REVIEWER) 构建的工具列表中不含 code_intel 工具。"""
 
 async def test_code_intel_tools_not_in_main_builders():
     """_MAIN_TOOLS_BUILDERS 列表中无 code_intel builder。"""
@@ -808,48 +835,51 @@ async def test_code_intel_tools_not_in_main_builders():
 
 ### Phase 1（约 15h）
 
-| 步骤        | 内容                                                                         | 依赖  | 预估     |
-| ----------- | ---------------------------------------------------------------------------- | ----- | -------- |
-| 1           | `pyproject.toml` 加 tree-sitter + 4 grammar 依赖                             | 无    | 0.25h    |
-| 2           | `config/path.py` 加 `CODE_INTEL_DIR`                                         | 无    | 0.1h     |
-| 3           | `.gitignore` 加 `.codeintel/`                                                | 无    | 0.1h     |
-| 4           | `config/features/agent_side/code_intel.py` + re-exports（`__init__.py` × 2） | 2     | 0.5h     |
-| 5           | `agent/tools/code_intel/__init__.py`                                         | 4     | 0.1h     |
-| 6           | `agent/tools/code_intel/indexer.py` — tree-sitter 索引引擎                   | 4     | 4h       |
-| 7           | `agent/tools/code_intel/query.py` — 查询引擎                                 | 6     | 3h       |
-| 8           | `agent/tools/code_intel/tools.py` — LangChain 工具                           | 7     | 2h       |
-| 9           | 修改 `spawn/core.py` — 注入 code_intel 工具                                  | 8     | 0.5h     |
-| 10          | 修改 `spawn/system_prompt.py` — 代码检索指导                                 | 4     | 0.5h     |
-| 11          | 编写 P1 测试（4 文件 + conftest）                                            | 9, 10 | 3h       |
-| 12          | `uv run --with ruff ruff check . && ruff format --check .`                   | 11    | 0.5h     |
-| 13          | `uv run --no-sync basedpyright agent/tools/code_intel/`                      | 12    | 0.5h     |
-| 14          | `uv run pytest tests/agent/tools/code_intel -q`                              | 13    | 1h       |
-| **P1 小计** |                                                                              |       | **~15h** |
+| 步骤        | 内容                                                                         | 依赖   | 预估     |
+| ----------- | ---------------------------------------------------------------------------- | ------ | -------- |
+| 0           | **前置：完成 subagent-role-migration Phase 1 全部步骤**                      | 无     | —        |
+| 1           | `pyproject.toml` 加 tree-sitter + 4 grammar 依赖                             | 步骤 0 | 0.25h    |
+| 2           | `config/path.py` 加 `CODE_INTEL_DIR`                                         | 无     | 0.1h     |
+| 3           | `.gitignore` 加 `.codeintel/`                                                | 无     | 0.1h     |
+| 4           | `config/features/agent_side/code_intel.py` + re-exports（`__init__.py` × 2） | 2      | 0.5h     |
+| 5           | `agent/tools/code_intel/__init__.py`                                         | 4      | 0.1h     |
+| 6           | `agent/tools/code_intel/indexer.py` — tree-sitter 索引引擎                   | 4      | 4h       |
+| 7           | `agent/tools/code_intel/query.py` — 查询引擎                                 | 6      | 3h       |
+| 8           | `agent/tools/code_intel/tools.py` — LangChain 工具                           | 7      | 2h       |
+| 9           | 修改 `spawn/core.py` — 注入 code_intel 工具                                  | 8      | 0.5h     |
+| 10          | 修改 `spawn/system_prompt.py` — 代码检索指导                                 | 4      | 0.5h     |
+| 11          | 编写 P1 测试（4 文件 + conftest）                                            | 9, 10  | 3h       |
+| 12          | `uv run --with ruff ruff check . && ruff format --check .`                   | 11     | 0.5h     |
+| 13          | `uv run --no-sync basedpyright agent/tools/code_intel/`                      | 12     | 0.5h     |
+| 14          | `uv run pytest tests/agent/tools/code_intel -q`                              | 13     | 1h       |
+| **P1 小计** |                                                                              |        | **~15h** |
+
+> **注意：** P1 小计不含前置依赖 subagent-role-migration Phase 1 的工时。
 
 ### Phase 2（约 13h） — Phase 1 评估通过后
 
-| 步骤        | 内容                                                 | 依赖 | 预估     |
-| ----------- | ---------------------------------------------------- | ---- | -------- |
-| 15          | `config/features/agent_side/lsp.py` + re-exports     | 无   | 0.5h     |
-| 16          | `agent/tools/code_intel/lsp/protocol.py`             | 15   | 1h       |
-| 17          | `agent/tools/code_intel/lsp/client.py`               | 16   | 3h       |
-| 18          | `agent/tools/code_intel/lsp/tools.py`                | 17   | 2h       |
-| 19          | 修改 `spawn/core.py` + `system_prompt.py` — 注入 LSP | 18   | 0.5h     |
-| 20          | 编写 P2 测试                                         | 19   | 3h       |
-| 21          | ruff + basedpyright + pytest                         | 20   | 1h       |
-| **P2 小计** |                                                      |      | **~11h** |
+| 步骤        | 内容                                                                  | 依赖 | 预估     |
+| ----------- | --------------------------------------------------------------------- | ---- | -------- |
+| 15          | `config/features/agent_side/lsp.py` + re-exports                      | 无   | 0.5h     |
+| 16          | `agent/tools/code_intel/lsp/protocol.py`                              | 15   | 1h       |
+| 17          | `agent/tools/code_intel/lsp/client.py`                                | 16   | 3h       |
+| 18          | `agent/tools/code_intel/lsp/tools.py`                                 | 17   | 2h       |
+| 19          | 修改 `spawn/core.py` + `system_prompt.py` — 注入 LSP（仅 RESEARCHER） | 18   | 0.5h     |
+| 20          | 编写 P2 测试                                                          | 19   | 3h       |
+| 21          | ruff + basedpyright + pytest                                          | 20   | 1h       |
+| **P2 小计** |                                                                       |      | **~11h** |
 
 ### Phase 3（约 9h） — Phase 1 评估通过后
 
-| 步骤        | 内容                                         | 依赖 | 预估    |
-| ----------- | -------------------------------------------- | ---- | ------- |
-| 22          | `agent/tools/code_intel/semantic/chunker.py` | P1   | 1h      |
-| 23          | `agent/tools/code_intel/semantic/indexer.py` | 22   | 2h      |
-| 24          | `agent/tools/code_intel/semantic/search.py`  | 23   | 2h      |
-| 25          | 修改 `spawn/core.py` + `system_prompt.py`    | 24   | 0.5h    |
-| 26          | 编写 P3 测试                                 | 25   | 2h      |
-| 27          | ruff + basedpyright + pytest                 | 26   | 0.5h    |
-| **P3 小计** |                                              |      | **~8h** |
+| 步骤        | 内容                                                       | 依赖 | 预估    |
+| ----------- | ---------------------------------------------------------- | ---- | ------- |
+| 22          | `agent/tools/code_intel/semantic/chunker.py`               | P1   | 1h      |
+| 23          | `agent/tools/code_intel/semantic/indexer.py`               | 22   | 2h      |
+| 24          | `agent/tools/code_intel/semantic/search.py`                | 23   | 2h      |
+| 25          | 修改 `spawn/core.py` + `system_prompt.py`（仅 RESEARCHER） | 24   | 0.5h    |
+| 26          | 编写 P3 测试                                               | 25   | 2h      |
+| 27          | ruff + basedpyright + pytest                               | 26   | 0.5h    |
+| **P3 小计** |                                                            |      | **~8h** |
 
 ### 总计
 
@@ -864,20 +894,21 @@ async def test_code_intel_tools_not_in_main_builders():
 
 ## 安全清单
 
-| 维度                  | 措施                                                              | 状态                        |
-| --------------------- | ----------------------------------------------------------------- | --------------------------- |
-| **main agent 不可用** | 不加入 `_MAIN_TOOLS_BUILDERS`，仅 `_build_child_agent` 注入       | `spawn/core.py`             |
-| **索引隔离**          | `.codeintel/` gitignored，SQLite WAL 模式                         | `.gitignore` + `indexer.py` |
-| **索引超时**          | 索引构建有超时保护（默认 60s），部分结果可返回                    | `indexer.py`                |
-| **文件遍历限制**      | 复用 `search_scan.py` 的 `bounded_walk` + `prune_dirs`            | `indexer.py`                |
-| **查询限制**          | explore 最大返回 N 个符号（默认 10），源码截断（默认 8000 chars） | `query.py`                  |
-| **调用图深度**        | impact 遍历有深度限制（默认 3 层）                                | `query.py`                  |
-| **LSP 进程隔离**      | subagent session 结束时 shutdown + kill LSP 进程                  | P2 `client.py`              |
-| **LSP 超时**          | 单请求超时（默认 10s），服务器启动超时（默认 15s）                | P2 `client.py`              |
-| **embedding 存储**    | BLOB 序列化，不泄漏敏感路径                                       | P3 `indexer.py`             |
-| **无网络调用**        | tree-sitter 索引纯本地，不发起网络请求                            | `indexer.py`                |
-| **无代码执行**        | 索引仅 parse + 读文件，不执行任何代码                             | `indexer.py`                |
-| **db 路径可控**       | SQLite 路径由配置控制，不在临时目录                               | `code_intel.py`             |
+| 维度                     | 措施                                                                                         | 状态                        |
+| ------------------------ | -------------------------------------------------------------------------------------------- | --------------------------- |
+| **main agent 不可用**    | 不加入 `_MAIN_TOOLS_BUILDERS`，仅 `_build_child_agent` 注入                                  | `spawn/core.py`             |
+| **非 RESEARCHER 不可用** | code_intel 工具仅在 `functional_role == RESEARCHER` 时注入，EXECUTOR/REVIEWER/GENERAL 不可用 | `spawn/core.py`             |
+| **索引隔离**             | `.codeintel/` gitignored，SQLite WAL 模式                                                    | `.gitignore` + `indexer.py` |
+| **索引超时**             | 索引构建有超时保护（默认 60s），部分结果可返回                                               | `indexer.py`                |
+| **文件遍历限制**         | 复用 `search_scan.py` 的 `bounded_walk` + `prune_dirs`                                       | `indexer.py`                |
+| **查询限制**             | explore 最大返回 N 个符号（默认 10），源码截断（默认 8000 chars）                            | `query.py`                  |
+| **调用图深度**           | impact 遍历有深度限制（默认 3 层）                                                           | `query.py`                  |
+| **LSP 进程隔离**         | subagent session 结束时 shutdown + kill LSP 进程                                             | P2 `client.py`              |
+| **LSP 超时**             | 单请求超时（默认 10s），服务器启动超时（默认 15s）                                           | P2 `client.py`              |
+| **embedding 存储**       | BLOB 序列化，不泄漏敏感路径                                                                  | P3 `indexer.py`             |
+| **无网络调用**           | tree-sitter 索引纯本地，不发起网络请求                                                       | `indexer.py`                |
+| **无代码执行**           | 索引仅 parse + 读文件，不执行任何代码                                                        | `indexer.py`                |
+| **db 路径可控**          | SQLite 路径由配置控制，不在临时目录                                                          | `code_intel.py`             |
 
 ---
 
