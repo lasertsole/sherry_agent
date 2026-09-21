@@ -159,12 +159,12 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | :---- | :--- | :--- |
 | 임계값 | `config/features/agent_side/token_guard.py` | `MIN_REQUIRED_MAX_TOKEN`, `TokenGuardError`, `assert_max_token_valid` |
 | 내보내기 | `config/features/__init__.py` | 세 심볼 재내보내기 |
-| 부팅 게이트 | `server/__main__.py:72` | CRITICAL 로그 후 `SystemExit(1)` |
-| 빌드 게이트 | `agent/core.py:117` | `built_agent()`가 빌드 전 검증 |
-| 스폰 게이트 | `agent/tools/subagent/spawn/core.py:762` | 자식 LLM 구성 시 검증 |
-| 쓰기 게이트 | `server/service/env.py:154` | `write_env_file()`가 쓰기 전 거부 |
+| 부팅 게이트 | `server/__main__.py:95-100` | CRITICAL 로그 후 `SystemExit(1)` |
+| 빌드 게이트 | `agent/core.py:123` | `built_agent()`가 빌드 전 검증 |
+| 스폰 게이트 | `agent/tools/subagent/spawn/core.py:815` | 자식 LLM 구성 시 검증 |
+| 쓰기 게이트 | `server/service/env.py:157` | `write_env_file()`가 쓰기 전 거부 |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | 프런트엔드 캐시 | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
-| 프런트엔드 경고 | `client/app/composables/use-chat-stream.ts:433` | 전송 시 비차단 toast |
+| 프런트엔드 경고 | `client/app/composables/use-chat-stream.ts:435` | 전송 시 비차단 toast |
 | 프런트엔드 다이얼로그 | `client/app/pages/home/components/ConfigDialog.vue` | 배너, 저장 전 검증, 캐시 무효화 |
 | 기본값 | `.env.example:8,59` | 두 키 모두 `131072` |

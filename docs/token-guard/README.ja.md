@@ -159,12 +159,12 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | :---- | :--- | :--- |
 | しきい値 | `config/features/agent_side/token_guard.py` | `MIN_REQUIRED_MAX_TOKEN`、`TokenGuardError`、`assert_max_token_valid` |
 | エクスポート | `config/features/__init__.py` | 3 シンボルを再エクスポート |
-| 起動ゲート | `server/__main__.py:72` | CRITICAL ログの後 `SystemExit(1)` |
-| 構築ゲート | `agent/core.py:117` | `built_agent()` が構築前に検証 |
-| スポーンゲート | `agent/tools/subagent/spawn/core.py:762` | 子 LLM 構築時に検証 |
-| 書き込みゲート | `server/service/env.py:154` | `write_env_file()` が書き込み前に拒否 |
+| 起動ゲート | `server/__main__.py:95-100` | CRITICAL ログの後 `SystemExit(1)` |
+| 構築ゲート | `agent/core.py:123` | `built_agent()` が構築前に検証 |
+| スポーンゲート | `agent/tools/subagent/spawn/core.py:815` | 子 LLM 構築時に検証 |
+| 書き込みゲート | `server/service/env.py:157` | `write_env_file()` が書き込み前に拒否 |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | フロントエンドキャッシュ | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |
-| フロントエンド警告 | `client/app/composables/use-chat-stream.ts:433` | 送信時の非ブロッキング toast |
+| フロントエンド警告 | `client/app/composables/use-chat-stream.ts:435` | 送信時の非ブロッキング toast |
 | フロントエンドダイアログ | `client/app/pages/home/components/ConfigDialog.vue` | バナー、保存前検証、キャッシュ無効化 |
 | 既定値 | `.env.example:8,59` | 両キーとも `131072` |

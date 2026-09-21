@@ -159,12 +159,12 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | :---- | :--- | :--- |
 | Threshold | `config/features/agent_side/token_guard.py` | `MIN_REQUIRED_MAX_TOKEN`, `TokenGuardError`, `assert_max_token_valid` |
 | Export | `config/features/__init__.py` | Re-exports the three symbols |
-| Boot gate | `server/__main__.py:72` | Critical log then `SystemExit(1)` |
-| Build gate | `agent/core.py:117` | `built_agent()` validates before building |
-| Spawn gate | `agent/tools/subagent/spawn/core.py:762` | Child LLM construction validates |
-| Write gate | `server/service/env.py:154` | `write_env_file()` rejects before writing |
+| Boot gate | `server/__main__.py:95-100` | Critical log then `SystemExit(1)` |
+| Build gate | `agent/core.py:123` | `built_agent()` validates before building |
+| Spawn gate | `agent/tools/subagent/spawn/core.py:815` | Child LLM construction validates |
+| Write gate | `server/service/env.py:157` | `write_env_file()` rejects before writing |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | Frontend cache | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
-| Frontend warn | `client/app/composables/use-chat-stream.ts:433` | Non-blocking toast on send |
+| Frontend warn | `client/app/composables/use-chat-stream.ts:435` | Non-blocking toast on send |
 | Frontend dialog | `client/app/pages/home/components/ConfigDialog.vue` | Banner, pre-save validation, cache invalidation |
 | Defaults | `.env.example:8,59` | Both keys ship at `131072` |
