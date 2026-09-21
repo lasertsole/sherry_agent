@@ -53,6 +53,9 @@ jobs:
       - name: Check README structural parity (4 languages)
         run: uv run --no-sync python scripts/check_docs_parity.py
 
+      - name: Check Markdown links and anchors
+        run: uv run --no-sync python scripts/check_doc_links.py
+
       - name: Check server layer contract
         run: uv run --no-sync lint-imports
 
