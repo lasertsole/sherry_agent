@@ -99,6 +99,10 @@ from .step_judge import (
     StepJudgeConfig as StepJudgeConfig,
     STEP_JUDGE as STEP_JUDGE,
 )
+from .completion_judge import (
+    CompletionJudgeConfig as CompletionJudgeConfig,
+    COMPLETION_JUDGE as COMPLETION_JUDGE,
+)
 from .token_guard import (
     MIN_REQUIRED_MAX_TOKEN as MIN_REQUIRED_MAX_TOKEN,
     TokenGuardError as TokenGuardError,

@@ -10,6 +10,7 @@ env-aware ``_build_*`` helpers, and (d) collection field types.
 import pytest
 
 from config.features.agent_side import (
+    COMPLETION_JUDGE,
     CONTEXT_GUARD,
     EVIDENCE_LEDGER,
     HEARTBEAT_STALENESS,
@@ -33,6 +34,7 @@ from config.features.agent_side import (
     TOKEN_ESTIMATION,
     TOOL_GUARDRAILS,
     TOOL_RESULT_EVICTION,
+    CompletionJudgeConfig,
     ContextGuardConfig,
     EvidenceLedgerConfig,
     HeartbeatStalenessConfig,
@@ -87,6 +89,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (TOOL_RESULT_EVICTION, ToolResultEvictionConfig),
     (EVIDENCE_LEDGER, EvidenceLedgerConfig),
     (STEP_JUDGE, StepJudgeConfig),
+    (COMPLETION_JUDGE, CompletionJudgeConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -235,6 +238,8 @@ SPOT_DEFAULTS = [
     (STEP_JUDGE, "max_retries", 2),
     (STEP_JUDGE, "max_result_chars", 8000),
     (STEP_JUDGE, "evidence_aware", True),
+    (COMPLETION_JUDGE, "enabled", False),
+    (COMPLETION_JUDGE, "goal_max_turns", 5),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]
