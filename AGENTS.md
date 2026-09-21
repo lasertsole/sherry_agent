@@ -13,6 +13,7 @@ uv run python -m server                              # start backend (127.0.0.1:
 uv run pytest tests/agent/middlewares -q -k "not llm_e2e"  # run middleware tests
 uv run --no-sync python tests/run_tests_split.py     # CI test gate (3-process)
 uv run --no-sync python scripts/check_docs_parity.py # four-language README parity gate
+uv run --no-sync python scripts/check_doc_links.py   # Markdown dead-link + anchor gate
 uv run --no-sync lint-imports                        # import-linter contract check
 uv run --with ruff ruff check . && uv run --with ruff ruff format --check .  # lint + format
 uv run --no-sync basedpyright agent/                 # type check
