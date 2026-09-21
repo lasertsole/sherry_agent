@@ -66,3 +66,13 @@ def record_verification_evidence(command: str, result: str, session_id: str) -> 
         )
     except Exception as exc:
         logger.warning("evidence auto-record failed: {}", exc)
+
+
+def mark_evidence_stale(file_path: str, session_id: str) -> None:
+    """Append a stale event for ``file_path`` after an edit (fail-open)."""
+    try:
+        if not EVIDENCE_LEDGER["auto_stale"]:
+            return
+        EvidenceLedger.for_session(session_id).mark_stale_for_path(file_path)
+    except Exception as exc:
+        logger.warning("evidence stale mark failed: {}", exc)

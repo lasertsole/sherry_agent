@@ -22,6 +22,7 @@ from agent.tools.pub_base import (
     resolve_project_path,
     safe_error_detail,
 )
+from agent.tools.todolist.evidence_recorder import mark_evidence_stale
 
 SessionId = Annotated[str, InjectedState("session_id")]
 
@@ -106,6 +107,7 @@ class FormattedWriteFileTool(WriteFileTool):
         except Exception as e:
             return "Error: " + safe_error_detail(e)
 
+        mark_evidence_stale(file_path, session_id)
         return f"File written successfully to {display_path(resolved)}."
 
     @override

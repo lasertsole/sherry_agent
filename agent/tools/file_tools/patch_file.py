@@ -28,6 +28,7 @@ from agent.tools.pub_base import (
     safe_error_detail,
     fuzzy_find_and_replace,
 )
+from agent.tools.todolist.evidence_recorder import mark_evidence_stale
 
 SessionId = Annotated[str, InjectedState("session_id")]
 
@@ -194,6 +195,7 @@ class PatchFileTool(BaseTool):
                 {"error": f"Failed to write file: {safe_error_detail(e)}"}, ensure_ascii=False
             )
 
+        mark_evidence_stale(file_path, session_id)
         diff = _unified_diff(content, new_content, display_path(resolved))
 
         return json.dumps(
