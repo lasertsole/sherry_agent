@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -860,6 +861,100 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
     }
 
 
+# ---------------------------------------------------------------------------
+# Action dispatch registry
+# ---------------------------------------------------------------------------
+# Each handler returns either a raw error string (validation failure, returned
+# verbatim to the caller) or the primitive's result dict. Adding an action only
+# requires a handler here plus the schema Literal.
+_SkillActionResult = str | dict[str, Any]
+
+
+def _action_create(
+    *,
+    name: str,
+    content: str | None,
+    category: str | None = None,
+    **_rest: Any,
+) -> _SkillActionResult:
+    if not content:
+        return (
+            "content is required for 'create'. Provide the full SKILL.md text (frontmatter + body)."
+        )
+    return _create_skill(name, content, category)
+
+
+def _action_edit(
+    *,
+    name: str,
+    content: str | None,
+    **_rest: Any,
+) -> _SkillActionResult:
+    if not content:
+        return "content is required for 'edit'. Provide the full updated SKILL.md text."
+    return _edit_skill(name, content)
+
+
+def _action_patch(
+    *,
+    name: str,
+    old_string: str | None,
+    new_string: str | None,
+    file_path: str | None,
+    replace_all: bool | None,
+    **_rest: Any,
+) -> _SkillActionResult:
+    if not old_string:
+        return "old_string is required for 'patch'. Provide the text to find."
+    if new_string is None:
+        return "new_string is required for 'patch'. Use empty string to delete matched text."
+    return _patch_skill(name, old_string, new_string, file_path, replace_all)
+
+
+def _action_delete(
+    *,
+    name: str,
+    absorbed_into: str | None,
+    **_rest: Any,
+) -> _SkillActionResult:
+    return _delete_skill(name, absorbed_into=absorbed_into)
+
+
+def _action_write_file(
+    *,
+    name: str,
+    file_path: str | None,
+    file_content: str | None,
+    **_rest: Any,
+) -> _SkillActionResult:
+    if not file_path:
+        return "file_path is required for 'write_file'. Example: 'references/api-guide.md'"
+    if file_content is None:
+        return "file_content is required for 'write_file'."
+    return _write_file(name, file_path, file_content)
+
+
+def _action_remove_file(
+    *,
+    name: str,
+    file_path: str | None,
+    **_rest: Any,
+) -> _SkillActionResult:
+    if not file_path:
+        return "file_path is required for 'remove_file'."
+    return _remove_file(name, file_path)
+
+
+_SKILL_ACTION_HANDLERS: dict[str, Callable[..., _SkillActionResult]] = {
+    "create": _action_create,
+    "edit": _action_edit,
+    "patch": _action_patch,
+    "delete": _action_delete,
+    "write_file": _action_write_file,
+    "remove_file": _action_remove_file,
+}
+
+
 class SkillManage(BaseTool):
     name: str = "skill_manage"
     description: str = (
@@ -914,42 +1009,28 @@ class SkillManage(BaseTool):
         absorbed_into: str | None,
         **kwargs: Any,
     ) -> Any:
-        if action == "create":
-            if not content:
-                return "content is required for 'create'. Provide the full SKILL.md text (frontmatter + body)."
-            result = _create_skill(name, content, category)
-
-        elif action in {"edit", "patch", "delete", "write_file", "remove_file"}:
-            if action == "edit":
-                if not content:
-                    return "content is required for 'edit'. Provide the full updated SKILL.md text."
-                result = _edit_skill(name, content)
-            elif action == "patch":
-                if not old_string:
-                    return "old_string is required for 'patch'. Provide the text to find."
-                if new_string is None:
-                    return "new_string is required for 'patch'. Use empty string to delete matched text."
-                result = _patch_skill(name, old_string, new_string, file_path, replace_all)
-            elif action == "delete":
-                result = _delete_skill(name, absorbed_into=absorbed_into)
-            elif action == "write_file":
-                if not file_path:
-                    return (
-                        "file_path is required for 'write_file'. Example: 'references/api-guide.md'"
-                    )
-                if file_content is None:
-                    return "file_content is required for 'write_file'."
-                result = _write_file(name, file_path, file_content)
-            else:  # remove_file
-                if not file_path:
-                    return "file_path is required for 'remove_file'."
-                result = _remove_file(name, file_path)
-
-        else:
+        handler = _SKILL_ACTION_HANDLERS.get(action)
+        result: _SkillActionResult
+        if handler is None:
             result = {
                 "success": False,
                 "error": f"Unknown action '{action}'. Use: create, edit, patch, delete, write_file, remove_file",
             }
+        else:
+            result = handler(
+                name=name,
+                content=content,
+                old_string=old_string,
+                new_string=new_string,
+                replace_all=replace_all,
+                category=category,
+                file_path=file_path,
+                file_content=file_content,
+                absorbed_into=absorbed_into,
+            )
+
+        if isinstance(result, str):
+            return result
 
         if result.get("success"):
             try:

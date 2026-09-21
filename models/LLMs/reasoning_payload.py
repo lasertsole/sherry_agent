@@ -35,7 +35,7 @@ Why it exists
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
 from config.features import REASONING_BUDGET
 
@@ -115,6 +115,95 @@ def is_zhipu_reasoning_model(model_name: str) -> bool:
     return name.startswith(_ZHIPU_REASONING_PREFIXES)
 
 
+class _ReasoningStrategy(Protocol):
+    """Provider family's reasoning payload + shared-pool headroom.
+
+    One strategy carries both operations so the two public functions can never
+    disagree about whether a given provider/model reasons.
+    """
+
+    def build(self, model_name: str | None, reasoning_effort: str | None) -> dict[str, Any]: ...
+
+    def thinking_budget(self, model_name: str | None) -> int: ...
+
+
+class _NoOpStrategy:
+    """Unknown providers: the universal switch maps to a documented no-op."""
+
+    def build(self, model_name: str | None, reasoning_effort: str | None) -> dict[str, Any]:
+        return {}
+
+    def thinking_budget(self, model_name: str | None) -> int:
+        return 0
+
+
+class _DeepSeekStrategy:
+    """DeepSeek V3.2+ chat API: thinking carried via ``extra_body``."""
+
+    def build(self, model_name: str | None, reasoning_effort: str | None) -> dict[str, Any]:
+        return {"extra_body": {"thinking": {"type": "enabled"}}}
+
+    def thinking_budget(self, model_name: str | None) -> int:
+        return _DEFAULT_NON_ANTHROPIC_BUDGET
+
+
+class _AnthropicStrategy:
+    """``thinking`` is a first-class ``ChatAnthropic`` kwarg (reasoning models)."""
+
+    def build(self, model_name: str | None, reasoning_effort: str | None) -> dict[str, Any]:
+        if model_name and _is_anthropic_reasoning_model(model_name):
+            return {
+                "thinking": {
+                    "type": "enabled",
+                    "budget_tokens": _DEFAULT_ANTHROPIC_BUDGET,
+                }
+            }
+        return {}
+
+    def thinking_budget(self, model_name: str | None) -> int:
+        if model_name and _is_anthropic_reasoning_model(model_name):
+            return _DEFAULT_ANTHROPIC_BUDGET
+        return 0
+
+
+class _OpenAICompatibleStrategy:
+    """``reasoning_effort`` on OpenAI-compatible gateways (o-series / gpt-5).
+
+    Zhipu GLM through the bigmodel v4 API is the exception: it takes the
+    DeepSeek-style request-body ``thinking`` key instead, and only for the
+    thinking-capable GLM series.
+    """
+
+    def build(self, model_name: str | None, reasoning_effort: str | None) -> dict[str, Any]:
+        if model_name and is_zhipu_reasoning_model(model_name):
+            return {"extra_body": {"thinking": {"type": "enabled"}}}
+        if model_name and is_openai_reasoning_model(model_name):
+            effort = (reasoning_effort or "high").strip().lower()
+            if effort in _VALID_REASONING_EFFORTS:
+                return {"reasoning_effort": effort}
+        return {}
+
+    def thinking_budget(self, model_name: str | None) -> int:
+        if model_name and (
+            is_zhipu_reasoning_model(model_name) or is_openai_reasoning_model(model_name)
+        ):
+            return _DEFAULT_NON_ANTHROPIC_BUDGET
+        return 0
+
+
+_NOOP_STRATEGY = _NoOpStrategy()
+
+_REASONING_STRATEGIES: dict[str, _ReasoningStrategy] = {
+    "deepseek": _DeepSeekStrategy(),
+    "anthropic": _AnthropicStrategy(),
+    **{name: _OpenAICompatibleStrategy() for name in _OPENAI_COMPATIBLE},
+}
+
+
+def _strategy_for(provider: str) -> _ReasoningStrategy:
+    return _REASONING_STRATEGIES.get(provider, _NOOP_STRATEGY)
+
+
 def get_thinking_budget(provider: str | None, model_name: str | None, enabled: bool) -> int:
     """Return the reasoning-token headroom the model config must add to ``max_tokens``.
 
@@ -129,20 +218,7 @@ def get_thinking_budget(provider: str | None, model_name: str | None, enabled: b
     """
     if not enabled or not provider:
         return 0
-    provider = provider.strip().lower()
-    if provider == "anthropic":
-        if model_name and _is_anthropic_reasoning_model(model_name):
-            return _DEFAULT_ANTHROPIC_BUDGET
-        return 0
-    if provider == "deepseek":
-        return _DEFAULT_NON_ANTHROPIC_BUDGET
-    if provider in _OPENAI_COMPATIBLE:
-        if model_name and (
-            is_zhipu_reasoning_model(model_name) or is_openai_reasoning_model(model_name)
-        ):
-            return _DEFAULT_NON_ANTHROPIC_BUDGET
-        return 0
-    return 0
+    return _strategy_for(provider.strip().lower()).thinking_budget(model_name)
 
 
 def build_reasoning_kwargs(
@@ -174,46 +250,7 @@ def build_reasoning_kwargs(
     """
     if not enabled or not provider:
         return {}
-
-    provider = provider.strip().lower()
-
-    # DeepSeek V3.2+ chat API: thinking carried via ``extra_body`` so
-    # ``ChatDeepSeek`` threads it directly into the request body.
-    if provider == "deepseek":
-        return {"extra_body": {"thinking": {"type": "enabled"}}}
-
-    # OpenAI family (+ compatible gateways): ``reasoning_effort`` is a
-    # first-class ``ChatOpenAI`` kwarg. Inject ONLY for reasoning models; other
-    # models reject the param with a 400.
-    if provider in _OPENAI_COMPATIBLE:
-        # Zhipu GLM through an OpenAI-compatible gateway (bigmodel v4 API): the
-        # DeepSeek-style request-body key ``thinking`` toggles chain-of-thought
-        # and the API streams ``delta.reasoning_content``. Inject ONLY for the
-        # thinking-capable GLM series; legacy glm-4 models reject it with a 400.
-        if model_name and is_zhipu_reasoning_model(model_name):
-            return {"extra_body": {"thinking": {"type": "enabled"}}}
-        if model_name and is_openai_reasoning_model(model_name):
-            effort = (reasoning_effort or "high").strip().lower()
-            if effort in _VALID_REASONING_EFFORTS:
-                return {"reasoning_effort": effort}
-        return {}
-
-    # Anthropic: ``thinking`` is a first-class ``ChatAnthropic`` kwarg. Inject
-    # ONLY for reasoning models; other Claude models reject the param with a 400.
-    if provider == "anthropic":
-        if model_name and _is_anthropic_reasoning_model(model_name):
-            return {
-                "thinking": {
-                    "type": "enabled",
-                    "budget_tokens": _DEFAULT_ANTHROPIC_BUDGET,
-                }
-            }
-        return {}
-
-    # gemini, ollama, azure_openai, custom, codex, copilot, byteplus, etc. →
-    # documented no-op: the switch stays safe but reasoning payloads are not
-    # (yet) mapped for these providers.
-    return {}
+    return _strategy_for(provider.strip().lower()).build(model_name, reasoning_effort)
 
 
 __all__ = [

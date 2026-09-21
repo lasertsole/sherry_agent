@@ -143,36 +143,28 @@ class ToolGuardrails(AgentMiddleware):
             gs.exact_failure_counts[exact_key] = gs.exact_failure_counts.get(exact_key, 0) + 1
             exact_count = gs.exact_failure_counts[exact_key]
 
-            if (
-                self.config.hard_stop_enabled
-                and exact_count >= self.config.exact_failure_block_after
-            ):
-                action = GuardrailAction.HALT
-            elif exact_count >= self.config.exact_failure_block_after:
-                action = GuardrailAction.BLOCK
-            elif (
-                self.config.warnings_enabled and exact_count >= self.config.exact_failure_warn_after
-            ):
-                action = GuardrailAction.WARN
+            exact_action = self._chain_action(
+                exact_count,
+                self.config.exact_failure_warn_after,
+                self.config.exact_failure_block_after,
+            )
+            if exact_action is not None:
+                action = exact_action
 
             gs.same_tool_failure_counts[tool_name] = (
                 gs.same_tool_failure_counts.get(tool_name, 0) + 1
             )
             same_count = gs.same_tool_failure_counts[tool_name]
 
-            if (
-                self.config.hard_stop_enabled
-                and same_count >= self.config.same_tool_failure_halt_after
-            ):
-                action = GuardrailAction.HALT
-            elif same_count >= self.config.same_tool_failure_halt_after:
-                action = GuardrailAction.BLOCK
-            elif (
-                self.config.warnings_enabled
-                and same_count >= self.config.same_tool_failure_warn_after
-                and action == GuardrailAction.ALLOW
-            ):
-                action = GuardrailAction.WARN
+            same_action = self._chain_action(
+                same_count,
+                self.config.same_tool_failure_warn_after,
+                self.config.same_tool_failure_halt_after,
+            )
+            # Escalation-only: never downgrade an action the exact-failure chain
+            # already raised (the legacy ``action == ALLOW`` guard on WARN).
+            if same_action is not None and _ACTION_RANK[same_action] > _ACTION_RANK[action]:
+                action = same_action
         else:
             if is_idempotent and result_hash is not None:
                 for rec in reversed(gs.records):
@@ -183,18 +175,13 @@ class ToolGuardrails(AgentMiddleware):
                         )
                         np_count = gs.no_progress_counts[no_progress_key]
 
-                        if (
-                            self.config.hard_stop_enabled
-                            and np_count >= self.config.no_progress_block_after
-                        ):
-                            action = GuardrailAction.HALT
-                        elif np_count >= self.config.no_progress_block_after:
-                            action = GuardrailAction.BLOCK
-                        elif (
-                            self.config.warnings_enabled
-                            and np_count >= self.config.no_progress_warn_after
-                        ):
-                            action = GuardrailAction.WARN
+                        no_progress_action = self._chain_action(
+                            np_count,
+                            self.config.no_progress_warn_after,
+                            self.config.no_progress_block_after,
+                        )
+                        if no_progress_action is not None:
+                            action = no_progress_action
                         break
 
         if action in (GuardrailAction.ALLOW, GuardrailAction.WARN):
