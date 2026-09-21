@@ -395,5 +395,19 @@ def _run() -> None:
         logger.exception("Channel event loop crashed")
 
 
-_channel_thread: Thread = Thread(target=_run, daemon=True)
-_channel_thread.start()
+_channel_thread: Thread | None = None
+
+
+def start() -> None:
+    """Start the channel event-loop thread (explicit, idempotent).
+
+    Used to start at import time; now invoked once by the trigger assembly
+    point (``server.trigger.init``) so importing this module has no thread
+    side effect. The registration calls above stay at import time because they
+    are declarative seam bindings that consumers expect once the package is
+    imported.
+    """
+    global _channel_thread
+    if _channel_thread is None:
+        _channel_thread = Thread(target=_run, daemon=True)
+        _channel_thread.start()

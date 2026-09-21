@@ -25,11 +25,12 @@ async def _init_registry_once() -> None:
         logger.error("Failed to initialize subagent registry at startup: {}", e)
 
 
-def _schedule_startup() -> None:
+def start() -> None:
     """Schedule ``init_registry`` onto the running channel event loop.
 
-    Runs once at import time (side-effect registration), matching the
-    heartbeat / channel startup pattern in channels/core.py.
+    Used to run at import time; now invoked once by the trigger assembly point
+    (``server.trigger.init``), matching the explicit-init pattern used for the
+    curator and cron services.
     """
     try:
         event_loop: asyncio.AbstractEventLoop | None = channel_manager.get_event_loop()
@@ -43,6 +44,3 @@ def _schedule_startup() -> None:
         # runs once the channel manager starts its loop.
         _ = event_loop.run_in_executor(None, asyncio.run, _init_registry_once())
         logger.info("Subagent init_registry scheduled when channel event loop becomes available")
-
-
-_schedule_startup()

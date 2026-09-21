@@ -19,10 +19,20 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-os.environ["MINERU_TOOLS_CONFIG_JSON"] = str(MODELS_DIR / "extract_model" / "mineru_config.json")
+_MINERU_CONFIG_JSON = str(MODELS_DIR / "extract_model" / "mineru_config.json")
 
 # ---------- paths ----------
 _VLM_DIR = MODELS_DIR / "extract_model" / "vlm"
+
+
+def setup_mineru_env() -> None:
+    """Export the MinerU config path consumed by ``mineru-vl-utils``.
+
+    Used to run at import time; now explicit and idempotent so importing this
+    module has no global side effect. Called by ``build_mineru_model()`` and by
+    ``load()`` before the first ``mineru_vl_utils`` import.
+    """
+    os.environ["MINERU_TOOLS_CONFIG_JSON"] = _MINERU_CONFIG_JSON
 
 
 def _resolve_vlm_path() -> str:
@@ -83,6 +93,7 @@ class MinerUModel:
         if self._client is not None and self._backend == backend:
             return self._client
 
+        setup_mineru_env()
         try:
             from mineru_vl_utils import MinerUClient
         except ImportError:
@@ -193,6 +204,7 @@ class MinerUModel:
 
 def build_mineru_model() -> MinerUModel:
     """Return the process-wide MinerU singleton (constructed without I/O)."""
+    setup_mineru_env()
     return MinerUModel.get_instance()
 
 

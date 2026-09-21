@@ -85,23 +85,50 @@ def _load_model():
 
 
 # ─────────────────────────────────────────────
-# 2. Module-level initialisation (runs once)
+# 2. Explicit initialisation (idempotent)
 # ─────────────────────────────────────────────
-_backend, _use_local, _remote_config = _detect_backend()
-
+# This block used to run at import time, which made any bare
+# ``import models.embed_model.core`` (tests, tooling, type checkers) read .env
+# and trigger an eager GGUF download. It is now an explicit
+# ``setup_embed_model()`` invoked by the assembly point (``build_embed_model``)
+# and lazily by the first embed call, so importing this module is
+# side-effect-free.
 _GGUF_MODEL_PATH = _WEIGHT_DIR / "bge-m3-q8_0.gguf"
 
-if _use_local and not _GGUF_MODEL_PATH.is_file():
-    # First run: download to model_weight/ (no model loading)
-    # Skipped when llama-cpp-python is absent (e.g. hermetic CI, which never
-    # installs it): _load_model re-runs _ensure_downloaded on first use.
-    try:
-        _ensure_downloaded()
-    except ModuleNotFoundError:
-        logger.warning(
-            "llama-cpp-python is not installed; skipping eager GGUF download "
-            "(will be attempted on first embed call)"
-        )
+_backend: str | None = None
+_use_local: bool = False
+_remote_config: dict | None = None
+_setup_done: bool = False
+
+
+def setup_embed_model() -> None:
+    """Detect the backend and eager-download the local GGUF — once.
+
+    Idempotent. The side effects match the former import-time block exactly:
+    ``_detect_backend()`` (env read + remote validation + warning suppression)
+    runs first, then a local GGUF download is attempted when the weights are
+    missing. The download is skipped when llama-cpp-python is absent (hermetic
+    CI never installs it): ``_load_model`` retries on first use.
+    """
+    global _backend, _use_local, _remote_config, _setup_done
+    if _setup_done:
+        return
+    _backend, _use_local, _remote_config = _detect_backend()
+    if _use_local and not _GGUF_MODEL_PATH.is_file():
+        try:
+            _ensure_downloaded()
+        except ModuleNotFoundError:
+            logger.warning(
+                "llama-cpp-python is not installed; skipping eager GGUF download "
+                "(will be attempted on first embed call)"
+            )
+    _setup_done = True
+
+
+def _ensure_setup() -> None:
+    """Run explicit setup on first use if the factory was bypassed."""
+    if not _setup_done:
+        setup_embed_model()
 
 
 # ─────────────────────────────────────────────
@@ -155,16 +182,19 @@ class CustomEmbedding(Embeddings):
         if not texts:
             return []
 
+        _ensure_setup()
         if _backend == "local":
             return self._embed_local(texts)
         return self._embed_remote(texts)
 
     def embed_query(self, text: str) -> list[float]:
         """Generate an embedding vector for a single query."""
+        _ensure_setup()
         if _backend == "local":
             return self._embed_local([text])[0]
         return self._embed_remote([text])[0]
 
 
 def build_embed_model() -> CustomEmbedding:
+    setup_embed_model()
     return CustomEmbedding()

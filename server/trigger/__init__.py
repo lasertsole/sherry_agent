@@ -22,10 +22,14 @@ def init() -> None:
 
     # Crash-loop HTTP-only mode: ``server.__main__`` sets SHERRY_HTTP_ONLY=1
     # BEFORE importing this package (timing is safe), so the env check here is
-    # reliable. The channels/subagent imports below start background threads
-    # via their import side-effect chain (channel manager, subagent
-    # consumers) and must NOT run while the crash-loop breaker has tripped;
-    # ws/http imports stay unconditional so REST + WS remain available.
+    # reliable. The channel event-loop thread and the subagent registry
+    # scheduling below must NOT run while the crash-loop breaker has tripped;
+    # ws/http registration stays unconditional so REST + WS remain available.
+    # The imports only bind registration seams — the background work is the
+    # explicit ``start()`` calls, invoked here at the assembly point.
     if os.environ.get("SHERRY_HTTP_ONLY") != "1":
-        import server.trigger.channels  # noqa: F401  (side-effect route registration)
-        import server.trigger.subagent  # noqa: F401  (side-effect route registration)
+        from server.trigger import channels as _channels
+        from server.trigger import subagent as _subagent
+
+        _channels.start()
+        _subagent.start()
