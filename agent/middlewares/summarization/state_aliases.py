@@ -1,0 +1,26 @@
+"""Short aliases for the summarization session state-register keys.
+
+The canonical values live in :class:`runtime.session.state_keys.StateKey`;
+these names preserve the historical module-level literals that tests and
+sibling modules import from ``summarization.core``.
+"""
+
+from runtime import StateKey
+
+from .summarization_components import (
+    _COMPRESSION_COUNT_KEY as _COMPRESSION_COUNT_KEY,
+    _COMPRESSION_INEFFECTIVE_KEY as _COMPRESSION_INEFFECTIVE_KEY,
+    _COMPRESSION_LAST_TOKENS_KEY as _COMPRESSION_LAST_TOKENS_KEY,
+    _FORCE_RECOVERY_KEY as _FORCE_RECOVERY_KEY,
+    _LAST_STRATEGY_KEY as _LAST_STRATEGY_KEY,
+    _SKIP_LLM_KEY as _SKIP_LLM_KEY,
+    _SUMMARY_LC_SOURCE as _SUMMARY_LC_SOURCE,
+)
+
+_LAST_USER_QUESTION_KEY = StateKey.SUMMARIZATION_LAST_USER_QUESTION
+_DEGRADATION_NO_TEXT_KEY = StateKey.SUMMARIZATION_DEGRADATION_NO_TEXT
+_RECOVERY_ATTEMPTS_KEY = StateKey.SUMMARIZATION_RECOVERY_ATTEMPTS
+_PREVIOUS_FILE_OPS_KEY = StateKey.SUMMARIZATION_PREVIOUS_FILE_OPS
+_COOLDOWN_ROUNDS_KEY = StateKey.SUMMARIZATION_COOLDOWN_ROUNDS
+_TURN_ATTEMPTS_KEY = StateKey.SUMMARIZATION_TURN_ATTEMPTS
+_OVERFLOW_RETRIES_KEY = StateKey.SUMMARIZATION_OVERFLOW_RETRIES
