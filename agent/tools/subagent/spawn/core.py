@@ -178,6 +178,8 @@ async def spawn_subagent_direct(
     output_schema: dict | None = None,
     model: str | None = None,
     launch_fingerprint: str | None = None,
+    goal_loop: bool = False,
+    goal_max_turns: int | None = None,
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
@@ -205,6 +207,12 @@ async def spawn_subagent_direct(
         output_schema: JSON Schema dict — child output will be validated against it.
         model: Override the LLM model name for this child.
         launch_fingerprint: Deduplication fingerprint for swarm launches.
+        goal_loop: When True (and the completion-judge feature is enabled), an
+            auxiliary LLM reviews each turn and the child continues until judged
+            complete or the turn budget is spent. Opt-in: False preserves the
+            single-turn behavior.
+        goal_max_turns: Goal-loop turn budget override; ``None`` uses the
+            configured ``COMPLETION_JUDGE["goal_max_turns"]``.
 
     Returns:
         A :class:`SpawnResult` with ``status="accepted"`` on success, or
@@ -446,6 +454,14 @@ async def spawn_subagent_direct(
     # --- Phase 11: Launch background execution ---
     from agent.tools import build_main_tools
 
+    from config.features import COMPLETION_JUDGE
+
+    effective_goal_max_turns = (
+        int(goal_max_turns)
+        if goal_max_turns is not None
+        else int(COMPLETION_JUDGE["goal_max_turns"])
+    )
+
     bg_task = asyncio.create_task(
         _execute_subagent_with_lane(
             run=run,
@@ -456,6 +472,8 @@ async def spawn_subagent_direct(
             timeout_seconds=timeout_seconds,
             model_override=resolved_model,
             output_schema=output_schema,
+            goal_loop=goal_loop,
+            goal_max_turns=effective_goal_max_turns,
         )
     )
 
@@ -490,6 +508,8 @@ async def _execute_subagent_with_lane(
     timeout_seconds: float,
     model_override: str | None = None,
     output_schema: dict | None = None,
+    goal_loop: bool = False,
+    goal_max_turns: int = 5,
 ) -> None:
     """Wait for a SUBAGENT lane slot, promote PENDING → RUNNING inside it, then execute.
 
@@ -521,6 +541,8 @@ async def _execute_subagent_with_lane(
                 timeout_seconds=timeout_seconds,
                 model_override=model_override,
                 output_schema=output_schema,
+                goal_loop=goal_loop,
+                goal_max_turns=goal_max_turns,
             )
     finally:
         # Early return / cancellation paths never reach _execute_subagent's own
@@ -539,6 +561,9 @@ async def _execute_subagent(
     timeout_seconds: float,
     model_override: str | None = None,
     output_schema: dict | None = None,
+    *,
+    goal_loop: bool = False,
+    goal_max_turns: int = 5,
 ) -> None:
     """Run a sub-agent to completion, handling timeouts, cancellation, and lifecycle cleanup.
 
@@ -546,10 +571,12 @@ async def _execute_subagent(
       1. Computes the effective tool deny-list from inherited policy + scope gaps.
       2. Builds a child LangGraph agent with filtered tools and role-appropriate LLM.
       3. Invokes the agent with the assembled messages under a wall-clock timeout.
-      4. Validates structured output (if an output_schema was provided).
-      5. On failure (timeout / kill / error), applies a configurable grace period
+      4. (goal loop) Reviews each turn with the completion judge; CONTINUE injects a
+         continuation prompt and runs another turn until DONE or the budget is spent.
+      5. Validates structured output (if an output_schema was provided).
+      6. On failure (timeout / kill / error), applies a configurable grace period
          to allow in-flight completion messages to arrive before finalizing.
-      6. Always runs lifecycle cleanup (thread unbinding, task removal, run completion).
+      7. Always runs lifecycle cleanup (thread unbinding, task removal, run completion).
 
     Args:
         run: The registry record for this spawn.
@@ -560,6 +587,8 @@ async def _execute_subagent(
         timeout_seconds: Wall-clock timeout in seconds.
         model_override: LLM model name override for this child.
         output_schema: Optional JSON Schema for structured output validation.
+        goal_loop: Enable the completion-judge goal loop (requires the feature enabled).
+        goal_max_turns: Goal-loop turn budget including the first turn.
     """
     from langchain_core.messages import HumanMessage
 
@@ -620,20 +649,20 @@ async def _execute_subagent(
         )
         state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
 
-        # Invoke the child agent under a wall-clock timeout (0 disables the timeout)
-        if timeout_seconds > 0:
-            agent_result = await asyncio.wait_for(
-                child_agent.ainvoke(
-                    input={"session_id": run.child_session_key, "messages": messages},
-                    config=agent_config,
-                ),
-                timeout=timeout_seconds,
-            )
-        else:
-            agent_result = await child_agent.ainvoke(
-                input={"session_id": run.child_session_key, "messages": messages},
-                config=agent_config,
-            )
+        # Invoke the child agent under a wall-clock timeout (0 disables the timeout).
+        # ``_invoke`` is reused by goal-loop continuation turns: the same config
+        # keeps the same checkpoint thread, so a continuation extends the SAME
+        # child conversation instead of starting a fresh one.
+        async def _invoke(msgs: list) -> dict:
+            payload = {"session_id": run.child_session_key, "messages": msgs}
+            if timeout_seconds > 0:
+                return await asyncio.wait_for(
+                    child_agent.ainvoke(input=payload, config=agent_config),
+                    timeout=timeout_seconds,
+                )
+            return await child_agent.ainvoke(input=payload, config=agent_config)
+
+        agent_result = await _invoke(messages)
 
         # Extract the last substantive assistant text as the result text.
         # The last message in the returned state is frequently an AIMessage with
@@ -641,6 +670,39 @@ async def _execute_subagent(
         # not the final answer. Walk backwards to the last assistant message that
         # contains real text, flattening multimodal content-block lists.
         result_text = _extract_result_text(agent_result)
+
+        # Goal loop: the completion judge reviews every turn; CONTINUE injects its
+        # continuation prompt as the next human turn until DONE or the budget is
+        # spent. Fail-open (judge errors => DONE) so it cannot trap the subagent.
+        from config.features import COMPLETION_JUDGE
+
+        if goal_loop and COMPLETION_JUDGE["enabled"] and goal_max_turns > 1:
+            from agent.tools.taskflow.evidence_collector import collect_evidence_summary
+
+            from .completion_judge import CompletionVerdict, judge_completion
+
+            turns_used = 1
+            while True:
+                judge_result = await judge_completion(
+                    task_text=user_message,
+                    last_response=result_text or "",
+                    evidence_summary=collect_evidence_summary(session_key=run.child_session_key),
+                )
+                if judge_result.verdict == CompletionVerdict.DONE:
+                    break
+                if turns_used >= goal_max_turns:
+                    outcome = RunOutcome(
+                        status=RunOutcomeStatus.OK,
+                        error="goal_loop_budget_exhausted",
+                    )
+                    break
+                if not judge_result.continuation_prompt.strip():
+                    break
+                agent_result = await _invoke(
+                    [HumanMessage(content=judge_result.continuation_prompt)]
+                )
+                result_text = _extract_result_text(agent_result)
+                turns_used += 1
 
         # Validate structured output against the provided JSON Schema (swarm mode)
         if output_schema and result_text:
