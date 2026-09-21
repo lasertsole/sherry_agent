@@ -28,11 +28,6 @@ from config import ENV_PATH
 from config.features import LLM_CLIENT_DEFAULTS
 from typing import Any
 from dotenv import load_dotenv
-from langchain_core.messages import (
-    AIMessage,
-    BaseMessage,
-    SystemMessage,
-)
 from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
 from models.env_builder import ModelEnvBuilder
 from langchain_core.runnables import ConfigurableField
@@ -128,59 +123,13 @@ else:
         return resolve_gguf_path(_mmproj_path, _HF_REPO_ID, _MMPROJ_FILENAME, _MODEL_WEIGHT_DIR)
 
     # ------------------------------------------------------------------
-    # 2c.  Message converter (supports multimodal HumanMessage)
-    # ------------------------------------------------------------------
-
-    def _convert_message_to_dict_impl(message: BaseMessage) -> dict[str, Any]:
-        """Convert a LangChain ``BaseMessage`` to the dict expected by
-        ``llama_cpp.Llama.create_chat_completion()``.
-
-        Handles both plain-text messages and multimodal messages where
-        ``HumanMessage.content`` is a list of content blocks (text + image_url).
-        """
-        role: str
-        if isinstance(message, SystemMessage):
-            role = "system"
-        elif isinstance(message, AIMessage):
-            role = "assistant"
-        else:
-            role = "user"
-
-        content = message.content
-
-        # --- Multimodal HumanMessage: content is a list of blocks ---
-        if isinstance(content, list):
-            converted: list[dict[str, Any]] = []
-            for block in content:
-                if isinstance(block, dict):
-                    block_type = block.get("type", "")
-                    if block_type == "text":
-                        converted.append({"type": "text", "text": block.get("text", "")})
-                    elif block_type == "image_url":
-                        url = block.get("image_url", {})
-                        if isinstance(url, dict):
-                            converted.append({"type": "image_url", "image_url": url.get("url", "")})
-                        else:
-                            converted.append({"type": "image_url", "image_url": url})
-                    else:
-                        # Pass unknown blocks as-is
-                        converted.append(block)
-                else:
-                    converted.append(block)
-            return {"role": role, "content": converted}
-
-        # --- Plain-text message ---
-        return {"role": role, "content": str(content) if content is not None else ""}
-
-    # ------------------------------------------------------------------
-    # 2d.  LocalLlamaChatModel — LangChain wrapper around llama_cpp.Llama
+    # 2c.  LocalLlamaChatModel — LangChain wrapper around llama_cpp.Llama
     #      with Qwen25VLChatHandler for multimodal vision support
     # ------------------------------------------------------------------
 
     class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
-        """ITTT variant: delegates conversion/resolution to this
-        module's closures; lifecycle/fields live on the multimodal base
-        (audit 1.1.1)."""
+        """ITTT variant: the shared multimodal conversion lives on the base
+        (audit 5.2); only model resolution is module-specific."""
 
         n_ctx: int = 8192
 
@@ -189,9 +138,6 @@ else:
 
         def _resolve_mmproj_path(self) -> str:
             return _resolve_mmproj_path()
-
-        def _convert_message_to_dict(self, message: BaseMessage) -> dict[str, Any]:
-            return _convert_message_to_dict_impl(message)
 
         @property
         def _llm_type(self) -> str:

@@ -140,6 +140,39 @@ class LocalMultimodalLlamaChatBase(LocalLlamaChatBase):
     def _resolve_mmproj_path(self) -> str:
         raise NotImplementedError
 
+    def _convert_message_to_dict(self, message: BaseMessage) -> dict[str, Any]:
+        """Multimodal conversion shared by ITTT/VTTT (text + image_url blocks)."""
+        role: str
+        if isinstance(message, SystemMessage):
+            role = "system"
+        elif isinstance(message, AIMessage):
+            role = "assistant"
+        else:
+            role = "user"
+
+        content = message.content
+        if isinstance(content, list):
+            converted: list[dict[str, Any]] = []
+            for block in content:
+                if isinstance(block, dict):
+                    converted.append(self._convert_content_block(block))
+                else:
+                    converted.append(block)
+            return {"role": role, "content": converted}
+        return {"role": role, "content": str(content) if content is not None else ""}
+
+    def _convert_content_block(self, block: dict[str, Any]) -> dict[str, Any]:
+        """Convert one content block; subclasses extend the supported block types."""
+        block_type = block.get("type", "")
+        if block_type == "text":
+            return {"type": "text", "text": block.get("text", "")}
+        if block_type == "image_url":
+            url = block.get("image_url", {})
+            if isinstance(url, dict):
+                return {"type": "image_url", "image_url": url.get("url", "")}
+            return {"type": "image_url", "image_url": url}
+        return block
+
     def _ensure_client(self) -> Any:
         from llama_cpp import Llama
         from llama_cpp.llama_chat_format import Qwen25VLChatHandler
