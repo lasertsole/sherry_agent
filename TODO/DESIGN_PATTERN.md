@@ -30,7 +30,7 @@
 
 | P      | #   | Location                                                    | Problem                                                             | Pattern                           | Status |
 | ------ | --- | ----------------------------------------------------------- | ------------------------------------------------------------------- | --------------------------------- | ------ |
-| **P0** | 1   | `channels/manager.py` _dispatch_outbound vs _consume_loop   | 被 `_consume_loop("outbound")` 抢到的消息**静默不投递**：`_outbound_consumer` 已绑为 `_process_outbound`（`server/trigger/channels/core.py:327`），而后者（`:317-323`）只登记 session、不调用 `channel.send()` | 统一消费者                        | Open |
+| **P0** | 1   | `channels/manager.py` _dispatch_outbound vs _consume_loop   | 已解决（统一消费者）：`_dispatch_outbound` 独占出站队列——解析目标 channel 后先 fail-open 调用 `_outbound_consumer(msg, channel)`（仅目标频道），再 `channel.send(msg)`；删除竞争的第二消费者 `_outbound_consume_loop` / `_consume_loop`，`start_service()` 仅调度 dispatcher + 入站消费者（`channels/manager.py:88,174,243`）。原缺陷：被 `_consume_loop("outbound")` 抢到的消息**静默不投递**（`_process_outbound` 只登记 session、不调用 `channel.send()`，`server/trigger/channels/core.py:317-327`） | 统一消费者                        | Done |
 | **P1** | 2   | `context_engine/store/core.py:16` `_db = get_db()` | 导入即触发 SQLite 连接 + migration                                  | Lazy init                         | Open |
 | **P1** | 3   | `state_register_mem` 全局耦合                               | 所有中间件直接依赖全局单例，裸字符串 key                            | SessionState Facade + Enum key    | Open |
 | **P1** | 4   | `runtime/session/state_register.py`                         | 每次 SQLite 操作新开连接；无 Protocol                               | 连接池/Repository + Protocol      | Open |
@@ -366,6 +366,7 @@ class SessionState:
 - **问题 1**: `_consume_loop("outbound")` 遍历所有配置渠道，每条消息发送到所有渠道而非仅目标渠道
 - **问题 2 (P0 bug)**: `_dispatch_outbound()`（第 243 行，按 msg.channel 路由）和 `_consume_loop("outbound")`（第 88 行）都从 `self._bus.consume_outbound()` 消费。两个 task 竞争同一队列——当 `_consume_loop` 赢得消息时 `_outbound_consumer` 默认为 `None`，消息被消费后丢弃
 - **模式**: 统一消费者 — 删除 `_outbound_consume_loop` 或合并为单一消费者
+- **Status**: **Done** (2026-09-21) — 出站统一由 `_dispatch_outbound`（`channels/manager.py:243`）独占：解析目标 `channel` 后先 fail-open 调用 `_outbound_consumer(msg, channel)`（仅目标频道，异常记日志不阻断），再 `channel.send(msg)`。删除 `_outbound_consume_loop` 与 `_consume_loop`；`start_service()`（`:174`）只调度 dispatcher + 入站消费者。入站同源缺陷（广播到所有配置渠道）一并修正为按 `msg.channel` 路由（`_inbound_consume_loop`，`:88`）。回归测试：`tests/channels/test_consume_loop.py`
 
 #### 3.3.3 [CONFIRMED] Channel base class `config: Any`
 
@@ -679,9 +680,9 @@ class SessionState:
 
 | Step | Target                             | Pattern    | Est. Effort | Status |
 | ---- | ---------------------------------- | ---------- | ----------- | ------ |
-| 0.1  | `channels/manager.py` 竞争消费 bug | 统一消费者 | 0.5 天      | Open   |
+| 0.1  | `channels/manager.py` 竞争消费 bug | 统一消费者 | 0.5 天      | Done   |
 
-- 定位：`channels/manager.py:88 _consume_loop` / `:243 _dispatch_outbound` 双消费者竞争；静默丢失点在 `server/trigger/channels/core.py:317-327`（`_process_outbound` 只登记 session、不调用 `channel.send()`）。
+- 已修复（2026-09-21）：`_dispatch_outbound`（`channels/manager.py:243`）为唯一出站消费者；删除 `_outbound_consume_loop`/`_consume_loop`；`start_service()` 仅调度 dispatcher + 入站消费者（`:174`）。原静默丢失点在 `server/trigger/channels/core.py:317-327`（`_process_outbound` 只登记 session、不调用 `channel.send()`）；其副作用改为在 `_dispatch_outbound` 内对目标频道 fail-open 调用。
 
 ### Phase 1: 消除最大风险 + 架构方向（P1）
 
