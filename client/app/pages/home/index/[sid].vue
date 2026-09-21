@@ -346,6 +346,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
 import { tools } from '../config';
+import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
 import { useTodoStore } from '~/stores/todo';
@@ -682,29 +683,25 @@ const handleAbortStreamOnDelete = (deletedSid: unknown) => {
 };
 
 /**
+ * Session toolbar command registry (former 4-case switch over the event).
+ * `createSession` stays a registry entry even though the empty-state button
+ * invokes `handleCreateSession` directly — the dispatch surface is unchanged.
+ */
+const sessionToolbarCommands = buildSessionToolbarCommands({
+  createSession: () => handleCreateSession(),
+  uploadImage: () => triggerImagePicker(),
+  uploadAudio: () => triggerAudioPicker(),
+  uploadVideo: () => triggerVideoPicker()
+});
+
+/**
  * Tool trigger
  * @param type
  * @param event
  */
 const handleOperate = (type: string, event: string) => {
   if (!event || !type) return;
-  // Toolbar
-  switch (event) {
-    case 'createSession':
-      handleCreateSession();
-      return;
-    case 'uploadImage':
-      triggerImagePicker();
-      return;
-    case 'uploadAudio':
-      triggerAudioPicker();
-      return;
-    case 'uploadVideo':
-      triggerVideoPicker();
-      return;
-    default:
-      return;
-  }
+  sessionToolbarCommands[event]?.();
 };
 
 /** Create session: generate a random session_id, create a new session window and switch to it */
