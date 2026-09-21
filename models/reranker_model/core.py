@@ -21,8 +21,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
-import requests
 from models.utils import read_env_file_value as _read_dotenv
+from models.http_client import OpenAICompatibleClient
 
 
 def _is_local() -> bool:
@@ -589,29 +589,21 @@ class CloudReranker:
                 "RERANKER_API_BASE and RERANKER_API_KEY must be set in .env "
                 "when RERANKER_MODEL_LOCAL=false"
             )
-        self._url = f"{self._api_base}/rerank"
-        self._headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self._api_key}",
-        }
+        self._http = OpenAICompatibleClient(self._api_base, self._api_key)
 
     # ── predict ──────────────────────────────────────────────────────────
 
     def predict(self, query: str, passage: str) -> float:
         """Score a single query–passage pair. Returns float in [0, 1]."""
-        resp = requests.post(
-            self._url,
-            headers=self._headers,
-            json={
+        data = self._http.post_json(
+            "/rerank",
+            {
                 "model": self._model,
                 "query": query,
                 "documents": [passage],
             },
-            verify=False,
             timeout=30,
         )
-        resp.raise_for_status()
-        data = resp.json()
         return max(0.0, min(1.0, float(data["results"][0]["relevance_score"])))
 
     def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]:
@@ -649,23 +641,19 @@ class CloudReranker:
                 raise ValueError("gap_score must be between 0.0 and 1.0")
             _gap_score = gap_score
 
-        resp = requests.post(
-            self._url,
-            headers=self._headers,
-            json={
+        resp_data = self._http.post_json(
+            "/rerank",
+            {
                 "model": self._model,
                 "query": query,
                 "documents": documents,
             },
-            verify=False,
             timeout=60,
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         doc_scores: list[tuple[int, float]] = [
             (int(entry["index"]), max(0.0, min(1.0, float(entry["relevance_score"]))))
-            for entry in data["results"]
+            for entry in resp_data["results"]
         ]
         ranked = sorted(doc_scores, key=lambda x: x[1], reverse=True)
 
@@ -705,19 +693,15 @@ class CloudReranker:
         if not documents:
             return []
 
-        resp = requests.post(
-            self._url,
-            headers=self._headers,
-            json={
+        data = self._http.post_json(
+            "/rerank",
+            {
                 "model": self._model,
                 "query": query,
                 "documents": documents,
             },
-            verify=False,
             timeout=60,
         )
-        resp.raise_for_status()
-        data = resp.json()
 
         idx_score: list[tuple[int, float]] = [
             (int(e["index"]), max(0.0, min(1.0, float(e["relevance_score"]))))

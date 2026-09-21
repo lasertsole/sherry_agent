@@ -1,11 +1,10 @@
 import sys
-import json
 import math
 import urllib3
-import requests
 from pathlib import Path
 from loguru import logger
 from models.utils import read_env_file_value as _read_dotenv
+from models.http_client import OpenAICompatibleClient
 from langchain_core.embeddings import Embeddings
 
 
@@ -112,22 +111,15 @@ class CustomEmbedding(Embeddings):
     """Embedding model wrapper (auto-selects local llama.cpp / remote MaaS API)."""
 
     def _call_remote_api(self, texts: list[str]) -> dict:
-        """Call remote MaaS embedding API."""
+        """Call the remote MaaS embedding API."""
         cfg = _remote_config
-        url = f"{cfg['api_base'].rstrip('/')}/embeddings"
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {cfg['api_key']}",
-        }
+        client = OpenAICompatibleClient(cfg["api_base"], cfg["api_key"])
         payload = {
             "model": cfg["api_name"],
             "input": texts,
             "encoding_format": "float",
         }
-
-        resp = requests.post(url, headers=headers, data=json.dumps(payload), verify=False)
-        resp.raise_for_status()
-        return resp.json()
+        return client.post_json("/embeddings", payload)
 
     @staticmethod
     def _l2_normalize(vec: list[float]) -> list[float]:
