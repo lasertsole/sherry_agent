@@ -1,4 +1,5 @@
 import os
+from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
@@ -119,23 +120,156 @@ _agent: CompiledStateGraph | None = None
 _agent_loop = None
 
 
-async def built_agent(
-    temperature: float = 0.8,
-    force_rebuild: bool = False,
-) -> ContextLimitGuardWrapper:
-    global _agent, _agent_loop
-    import asyncio
+def _assert_max_token() -> None:
+    """MAX_TOKEN guard, runtime second line of defense.
 
-    # MAX_TOKEN guard, runtime second line of defense: even if the server booted
-    # with a valid .env, a mid-run edit that drops either value below 128K still
-    # refuses to build the graph. TokenGuardError propagates to the caller
-    # (server/service/messages.py surfaces it as a WS error chunk).
+    Even if the server booted with a valid .env, a mid-run edit that drops
+    either value below 128K still refuses to build the graph. TokenGuardError
+    propagates to the caller (server/service/messages.py surfaces it as a WS
+    error chunk).
+    """
     _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
     _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
     assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
     assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+
+
+def _build_middlewares(
+    *,
+    fallback_chain: Any,
+    auxiliary_llm: Any,
+    main_llm_context_window: int,
+    compression_trigger_ratio: float,
+) -> list[Any]:
+    """Assemble the middleware pipeline.
+
+    ORDER IS A CONTRACT: LangChain executes ``after_model`` nodes in reverse
+    registration order and ``wrap_model_call`` layers outermost-first, so the
+    positions below are load-bearing. Pinned by
+    ``tests/agent/core/test_middleware_order.py``.
+    """
+    return [
+        # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
+        # after_agent hooks execute in REVERSE list order, so the first
+        # registered middleware sits closest to END (README "Hook
+        # Ordering Semantics"). It must observe the truly finished turn.
+        TodoContinuationEnforcer(),
+        # @dynamic_prompt middleware INSTANCE (not a constructor):
+        # the outermost wrap_model_call layer in this list.
+        system_prompt_injection,
+        MultimodalProcessor(),
+        IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+        ToolGuardrails(),
+        # Registered directly after ToolGuardrails, i.e. OUTER relative
+        # to PathGuard / HITL / MessagePersistenceMiddleware in the wrap
+        # chain (first registered = outermost). MessagePersistence
+        # stays innermost and persists the RAW tool result the moment
+        # the handler returns; this layer then swaps in the preview on
+        # the way out, so graph state only ever holds the preview while
+        # MesMemory keeps the full text (P0-2). read_file results are
+        # sliced instead of offloaded (P2-4). Its before_model hook
+        # tags an oversized trailing HumanMessage (P1-9) after
+        # MultimodalProcessor's before_agent ran (before_agent chain
+        # precedes the model loop), and wrap_model_call truncates only
+        # the model view — state keeps the full human text.
+        ContextEvictionMiddleware(),
+        ToolCallNormalize(),
+        PathGuard(),
+        SubagentCompletionDrainMiddleware(),
+        TaskIntentMiddleware(),
+        OutputRepetitionGuard(),
+        MaxTokensBoostMiddleware(),
+        HeartbeatStaleness(),
+        HumanInTheLoop(HITLConfig()),
+        # Registered directly after HITL so its after_model node runs
+        # FIRST — langchain 1.3.9 chains after_model nodes in reverse
+        # registration order (factory.py: model -> after_model[-1] ->
+        # ... -> after_model[0]). The AI message is therefore persisted
+        # before HITL strips denied tool calls or raises a
+        # GraphInterrupt, and no other hook can skip the flush.
+        MessagePersistenceMiddleware(),
+        # Between HITL and Summarization: INNER relative to
+        # MaxTokensBoost (it only sees genuine truncations) and OUTER
+        # relative to Summarization (the retry loop wraps the
+        # T4/T5 overflow recovery from outside).
+        LLMRetryMiddleware(fallback_chain=fallback_chain),
+        Summarization(
+            need_update_system_prompt=True,
+            model=auxiliary_llm,
+            main_llm_context_window=main_llm_context_window,
+            trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
+            keep=("messages", 10),
+        ),
+    ]
+
+
+async def _build_graph(
+    *,
+    temperature: float,
+    main_llm_context_window: int,
+    compression_trigger_ratio: float,
+) -> CompiledStateGraph:
+    """Compile the agent graph and apply the wrapper chain."""
+    checkpointer: ThreadSafeAsyncSqliteSaver = await build_async_sqlite_checkpointer()
+
+    # create table before using
+    await checkpointer.setup()
+
+    # Delete all checkpoints but keeps the latest checkpoint
+    await checkpointer.aclean_old_checkpoints()
+
+    main_llm = build_main_llm()
+    auxiliary_llm = build_auxiliary_llm()
+    fallback_chain = build_fallback_chain()
+
+    # Build the agent
+    compiled = create_agent(
+        model=main_llm.bind(temperature=temperature),
+        state_schema=StateSchema,
+        checkpointer=checkpointer,
+        tools=get_agent_tools(),
+        middleware=_build_middlewares(
+            fallback_chain=fallback_chain,
+            auxiliary_llm=auxiliary_llm,
+            main_llm_context_window=main_llm_context_window,
+            compression_trigger_ratio=compression_trigger_ratio,
+        ),
+    )
+    # Wrap with the pluggable graph-wrapper chain (agent/wrapper/registry.py).
+    # Defaults, innermost first:
+    #
+    # 1. RepetitionGuardWrapper: stream-level repetition
+    # detection (in addition to the OutputRepetitionGuard middleware
+    # registered above; it owns the stream seam end to end and subsumed
+    # the former check_stream_repetition helper, now deleted).
+    # phantom_stream_guard=True: the middleware-equipped graph ALWAYS
+    # emits before_agent "updates" before any model text on fresh
+    # dict-input runs — pre-update model text is physically impossible
+    # stream output and historically triggered a false repetition cut
+    # that suppressed the real reply.
+    #
+    # 2. ContextLimitGuardWrapper: context-window guard OUTSIDE the
+    # repetition wrapper — the guard sees chunks before repetition
+    # filtering, capturing real usage_metadata at model-call boundaries
+    # and enforcing the mid-stream output budget.
+    return apply_graph_wrappers(compiled)
+
+
+async def built_agent(
+    temperature: float = 0.8,
+    force_rebuild: bool = False,
+) -> ContextLimitGuardWrapper:
+    """Return the compiled, wrapped agent bound to the current event loop.
+
+    Thin orchestrator over the builder steps: token gate → per-loop cache
+    check → ``_build_graph``.
+    """
+    global _agent, _agent_loop
+    import asyncio
+
+    _assert_max_token()
 
     current_loop = asyncio.get_running_loop()
 
@@ -157,96 +291,11 @@ async def built_agent(
     # checkpointer persists session state independently of the graph object, so a
     # rebuild is safe and cheap relative to the 15-20s LLM call.
     if _agent is None or _agent_loop is not current_loop or force_rebuild:
-        checkpointer: ThreadSafeAsyncSqliteSaver = await build_async_sqlite_checkpointer()
-
-        # create table before using
-        await checkpointer.setup()
-
-        # Delete all checkpoints but keeps the latest checkpoint
-        await checkpointer.aclean_old_checkpoints()
-
-        main_llm = build_main_llm()
-        auxiliary_llm = build_auxiliary_llm()
-        fallback_chain = build_fallback_chain()
-
-        # Build the agent
-        _agent = create_agent(
-            model=main_llm.bind(temperature=temperature),
-            state_schema=StateSchema,
-            checkpointer=checkpointer,
-            tools=get_agent_tools(),
-            middleware=[
-                # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
-                # after_agent hooks execute in REVERSE list order, so the first
-                # registered middleware sits closest to END (README "Hook
-                # Ordering Semantics"). It must observe the truly finished turn.
-                TodoContinuationEnforcer(),
-                # @dynamic_prompt middleware INSTANCE (not a constructor):
-                # the outermost wrap_model_call layer in this list.
-                system_prompt_injection,
-                MultimodalProcessor(),
-                IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
-                ToolGuardrails(),
-                # Registered directly after ToolGuardrails, i.e. OUTER relative
-                # to PathGuard / HITL / MessagePersistenceMiddleware in the wrap
-                # chain (first registered = outermost). MessagePersistence
-                # stays innermost and persists the RAW tool result the moment
-                # the handler returns; this layer then swaps in the preview on
-                # the way out, so graph state only ever holds the preview while
-                # MesMemory keeps the full text (P0-2). read_file results are
-                # sliced instead of offloaded (P2-4). Its before_model hook
-                # tags an oversized trailing HumanMessage (P1-9) after
-                # MultimodalProcessor's before_agent ran (before_agent chain
-                # precedes the model loop), and wrap_model_call truncates only
-                # the model view — state keeps the full human text.
-                ContextEvictionMiddleware(),
-                ToolCallNormalize(),
-                PathGuard(),
-                SubagentCompletionDrainMiddleware(),
-                TaskIntentMiddleware(),
-                OutputRepetitionGuard(),
-                MaxTokensBoostMiddleware(),
-                HeartbeatStaleness(),
-                HumanInTheLoop(HITLConfig()),
-                # Registered directly after HITL so its after_model node runs
-                # FIRST — langchain 1.3.9 chains after_model nodes in reverse
-                # registration order (factory.py: model -> after_model[-1] ->
-                # ... -> after_model[0]). The AI message is therefore persisted
-                # before HITL strips denied tool calls or raises a
-                # GraphInterrupt, and no other hook can skip the flush.
-                MessagePersistenceMiddleware(),
-                # Between HITL and Summarization: INNER relative to
-                # MaxTokensBoost (it only sees genuine truncations) and OUTER
-                # relative to Summarization (the retry loop wraps the
-                # T4/T5 overflow recovery from outside).
-                LLMRetryMiddleware(fallback_chain=fallback_chain),
-                Summarization(
-                    need_update_system_prompt=True,
-                    model=auxiliary_llm,
-                    main_llm_context_window=main_llm_max_tokens,
-                    trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
-                    keep=("messages", 10),
-                ),
-            ],
+        _agent = await _build_graph(
+            temperature=temperature,
+            main_llm_context_window=main_llm_max_tokens,
+            compression_trigger_ratio=COMPRESSION_TRIGGER_RATIO,
         )
-        # Wrap with the pluggable graph-wrapper chain (agent/wrapper/registry.py).
-        # Defaults, innermost first:
-        #
-        # 1. RepetitionGuardWrapper: stream-level repetition
-        # detection (in addition to the OutputRepetitionGuard middleware
-        # registered above; it owns the stream seam end to end and subsumed
-        # the former check_stream_repetition helper, now deleted).
-        # phantom_stream_guard=True: the middleware-equipped graph ALWAYS
-        # emits before_agent "updates" before any model text on fresh
-        # dict-input runs — pre-update model text is physically impossible
-        # stream output and historically triggered a false repetition cut
-        # that suppressed the real reply.
-        #
-        # 2. ContextLimitGuardWrapper: context-window guard OUTSIDE the
-        # repetition wrapper — the guard sees chunks before repetition
-        # filtering, capturing real usage_metadata at model-call boundaries
-        # and enforcing the mid-stream output budget.
-        _agent = apply_graph_wrappers(_agent)
         _agent_loop = current_loop
 
     return _agent
