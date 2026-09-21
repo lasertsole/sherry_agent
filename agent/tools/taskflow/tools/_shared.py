@@ -205,6 +205,7 @@ def apply_dispatched_steps(fresh_steps: list[dict], records: list[dict]) -> list
         target["status"] = record["status"]
         target["child_session_key"] = record["child_session_key"]
         target["dispatched_at"] = record["dispatched_at"]
+        target.pop("judge_feedback", None)
     return merged
 
 

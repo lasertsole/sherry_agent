@@ -90,7 +90,9 @@ async def taskflow_dispatch(
             return f"Error: unknown step_id '{sid}'"
         status = step_status(step)
         dispatchable = status == StepStatus.READY or (
-            status == StepStatus.BLOCKED and deps_satisfied(step, steps)
+            status == StepStatus.BLOCKED
+            and bool(step.get("depends_on"))
+            and deps_satisfied(step, steps)
         )
         if not dispatchable:
             return f"Error: step_id '{sid}' is not dispatchable (status={status})"
@@ -113,15 +115,26 @@ async def taskflow_dispatch(
     failure: Exception | None = None
     for sid in requested:
         step = by_id[sid]
+        task_text = str(step.get("task") or "")
+        feedback = str(step.get("judge_feedback") or "").strip()
+        if feedback:
+            task_text += (
+                "\n\n## Previous Attempt Feedback\n"
+                "The previous attempt was judged and needs revision:\n"
+                f"{feedback}\n\n"
+                "Address this feedback and complete the task."
+            )
         try:
             child_key = await _dispatch.dispatch_child(
-                task=str(step.get("task") or ""),
+                task=task_text,
                 requester_session_key=requester_key,
                 label=None,
             )
         except Exception as exc:  # tool boundary: convert to text, persist successes below
             failure = exc
             break
+        if feedback:
+            step.pop("judge_feedback", None)
         policy = normalize_policy(step)
         if policy is not None:
             count = step_retry_count(step)
