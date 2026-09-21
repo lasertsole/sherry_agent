@@ -1,5 +1,5 @@
 import { describe, it, expect, expectTypeOf, vi, afterEach } from 'vitest';
-import { fetchApi, fetchApiPayload } from '../requestApi';
+import { fetchApi, fetchApiPayload, shouldRequestFailureToast } from '../requestApi';
 
 // `$fetch` is ofetch's global, globally stubbed in setup.ts.
 // Tests restub it per case and assert on how fetchApi delegates to it,
@@ -164,5 +164,34 @@ describe('fetchApi response payload validation (audit #51)', () => {
   ])('rejects %s payload by resolving null', async (_label, payload) => {
     stubFetch(payload);
     await expect(fetchApi({ url: '/weird', method: 'get' })).resolves.toBeNull();
+  });
+});
+
+describe('error-handling strategy: boundary toast decision', () => {
+  it('toasts on a network failure even when a payload is absent or present', () => {
+    const base = { requestFailed: false, httpFailed: false };
+    expect(shouldRequestFailureToast({ networkFailed: true, ...base, hasData: false })).toBe(true);
+    expect(shouldRequestFailureToast({ networkFailed: true, ...base, hasData: true })).toBe(true);
+  });
+
+  it('toasts on an unexpected/thrown failure', () => {
+    expect(
+      shouldRequestFailureToast({ networkFailed: false, requestFailed: true, httpFailed: false, hasData: false })
+    ).toBe(true);
+  });
+
+  it('toasts on an HTTP failure only when no usable payload was resolved', () => {
+    expect(
+      shouldRequestFailureToast({ networkFailed: false, requestFailed: false, httpFailed: true, hasData: false })
+    ).toBe(true);
+    expect(
+      shouldRequestFailureToast({ networkFailed: false, requestFailed: false, httpFailed: true, hasData: true })
+    ).toBe(false);
+  });
+
+  it('stays silent on success (a later retry resolved a payload)', () => {
+    expect(
+      shouldRequestFailureToast({ networkFailed: false, requestFailed: false, httpFailed: false, hasData: true })
+    ).toBe(false);
   });
 });

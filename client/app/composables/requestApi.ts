@@ -67,6 +67,35 @@ function isApiPayload<T>(value: unknown): value is T {
 }
 
 /**
+ * Frontend error-handling strategy — the boundary toast decision.
+ *
+ * Policy: the HTTP client (`fetchApi`) is the ONLY layer allowed to raise a
+ * generic request-error toast; domain callers either fall back silently
+ * (cache/default) or render the failure on their own surface (chat bubble),
+ * and MUST NOT toast on top of it. This predicate is the single decision point,
+ * evaluated once after the retry loop: a toast fires when the final state is a
+ * network failure, an unexpected/thrown failure, or an HTTP 4xx/5xx with no
+ * usable payload — while a payload resolved by a later retry suppresses it.
+ * @param flags
+ * @param flags.networkFailed
+ * @param flags.requestFailed
+ * @param flags.httpFailed
+ * @param flags.hasData
+ */
+export function shouldRequestFailureToast(flags: {
+  /** The request never reached the server (network layer). */
+  networkFailed: boolean;
+  /** An unexpected/thrown failure (interceptor throw, unparsable body, abort). */
+  requestFailed: boolean;
+  /** The final attempt answered with HTTP 4xx/5xx. */
+  httpFailed: boolean;
+  /** A usable payload was resolved. */
+  hasData: boolean;
+}): boolean {
+  return flags.networkFailed || flags.requestFailed || (flags.httpFailed && !flags.hasData);
+}
+
+/**
  * Request with server-side rendering support
  * @param { NitroFetchRequest } url Request path
  * @param { object } opts Request parameters
@@ -206,9 +235,12 @@ async function requestBaseApi<T = Response>({
 
   // Retries exhausted and still failing → pop one global error toast (network error; HTTP error
   // with no successful data; or an unexpected/thrown failure).
-  // This is the single decision point: the flags inside the callbacks never trigger a toast
-  // directly, avoiding duplicate toasts from retry:3.
-  if (import.meta.client && (networkFailed || requestFailed || (httpFailed && !data))) {
+  // This is the single decision point (see `shouldRequestFailureToast`): the flags inside the
+  // callbacks never trigger a toast directly, avoiding duplicate toasts from retry:3.
+  if (
+    import.meta.client &&
+    shouldRequestFailureToast({ networkFailed, requestFailed, httpFailed, hasData: data !== null })
+  ) {
     sendRequestErrorToast(`${requestURL}${lastStatus !== null ? ` (HTTP ${lastStatus})` : ''}`);
   }
 

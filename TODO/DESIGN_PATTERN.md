@@ -543,6 +543,24 @@ class SessionState:
 
 - **模式**: 统一为 `Result<T, E>` 或明确区分可恢复/不可恢复路径
 
+**Status: Done (2026-09-21，以「文档化分层策略 + 仅等价处统一」收口，不强行合并）** — 执行前逐处复核可观察行为（是否 toast / 回退到什么 / 是否抛出 / 日志级别 / 文案），结论：表中 6 种并非同层实现漂移，而是**分层契约**，强合并必改失败路径或用户可见提示。落地如下：
+
+| 层 | 站点 | 契约（保持） | 处置 |
+| --- | --- | --- | --- |
+| 边界（HTTP 客户端） | `requestApi.ts` | 重试 3 次；失败**唯一**通用 toast `errors.requestFailed`；解析 null | **统一**：判定提取为纯函数 `shouldRequestFailureToast()`（`requestApi.ts`，调用点/重试/文案/null 均不变） |
+| 静默原始传输 | `bridge/upload.ts` / `bridge/health.ts` | upload 抛出带标签错误；health 返回 `{healthy:false,message}`；均无重试/无 toast | **统一**到 `fetchApiRaw()`（3.10 独立入口，同 baseURL/token） |
+| 领域回退 | `messages.ts`（4 处） | 缓存 / `false` / `[]` / `null`，静默 | 保持（回退值各异） |
+| 领域回退 | `subagent-sync.ts`（5 处） | `logUtil.w/e` + 旧数据 | 保持（日志级别/标签各异） |
+| 传输容错 | `ws.ts` / `ws-message.ts` | 坏帧静默忽略 | 保持 |
+| 业务呈现 | `use-chat-stream.ts` / `[sid].vue` | 失败写入 AI 气泡（`errors.streamInterrupted`/`replyFailed`），不 toast | 保持（用户可见文案） |
+| 全局边界 | `errorCaptured.ts` | `logUtil.e` + `errors.pageError` toast + 返回 false 阻断冒泡 | 保持 |
+| 全局边界 | `global-error-handler.ts` | 日志，不 toast | 保持 |
+| 连接态 | `stores/connection.ts` | 去重的 `connection.*` toast | 保持 |
+
+- **保持判据**：逐处「toast 有无 / 回退目标 / 是否抛出 / 日志级别」至少一项不同；要抽统一助手需参数化 ≥4 个开关，净收益为负且必然改掉某处可观察行为。**唯一被证明等价**的统一是 `fetchApiRaw`（同一 `fetch` 传输、同一错误对象与文本）。
+- **验证**：`requestApi.test.ts` 新增 `shouldRequestFailureToast` 全布尔组合（8 组逐值）；`error-strategy.test.ts` 断言 health/upload 单次请求 + **零 toast**、`clearSession` 静默 `false`、坏帧静默 null（toast 模块 mock 后逐 helper 断言未被调用）。
+- **保持现状清单**：`messages.ts`、`subagent-sync.ts`、`ws.ts`/`ws-message.ts`、`use-chat-stream.ts`、`errorCaptured.ts`、`global-error-handler.ts`、`stores/connection.ts` 及全部对话框的 `logUtil.e` 内联错误状态。
+
 ---
 
 ### 4.6 类型安全
