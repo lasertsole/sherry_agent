@@ -1,4 +1,4 @@
-"""Boundary guards for the split summarization package (DESIGN_PATTERN 1.2.1 / 5.5).
+"""Boundary guards for the split summarization package.
 
 Verifies each responsibility module imports standalone, the package's
 package-relative dependency graph is acyclic, the split modules never pull in

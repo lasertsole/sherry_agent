@@ -1,4 +1,4 @@
-"""TDD tests for ``ChannelManager`` bus consumers (DESIGN_PATTERN #1, §3.3.2).
+"""TDD tests for ``ChannelManager`` bus consumers.
 
 Regression target: the outbound queue must have EXACTLY ONE consumer,
 ``_dispatch_outbound``. The removed ``_outbound_consume_loop`` raced it on
@@ -79,12 +79,7 @@ async def _run_until(task, predicate, *, timeout=2.0):
 
 class TestSingleConsumer:
     def test_outbound_has_no_second_consumer(self):
-        """The racing second outbound consumer must not exist (regression #1).
-
-        This is the deterministic red proof: before the fix both
-        ``_outbound_consume_loop`` and ``_consume_loop`` existed and the
-        lifecycle scheduled the former alongside ``_dispatch_outbound``.
-        """
+        """The racing second outbound consumer must not exist (regression #1)."""
         assert not hasattr(ChannelManager, "_outbound_consume_loop")
         assert not hasattr(ChannelManager, "_consume_loop")
 

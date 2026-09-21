@@ -1,4 +1,4 @@
-"""Lazy construction for the ITTT/VTTT/extract/reranker singletons (DESIGN_PATTERN §2.6).
+"""Lazy construction for the ITTT/VTTT/extract/reranker singletons.
 
 Importing a model module must not build a client or resolve/download weights;
 ``build_*()`` factories are the unified entry point and the module-level

@@ -234,7 +234,8 @@ def test_get_flow_sync_without_event_loop(isolated_db: Path):
     """The sync (stdlib sqlite3) path works with no running event loop.
 
     Exercises the threading.Lock-guarded one-time sync table creation
-    (mirroring store_sqlite.py:60-70 / 165-186 of the subagent blueprint).
+    (mirroring the subagent blueprint's init state and
+    ``agent.tools.pub_base.sqlite_store.BaseSQLiteRepository.ensure_tables_sync``).
     """
     from agent.tools.taskflow.registry import store_sqlite as store
 

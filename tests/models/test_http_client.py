@@ -1,4 +1,4 @@
-"""Tests for the shared OpenAI-compatible HTTP client (DESIGN_PATTERN §2.5).
+"""Tests for the shared OpenAI-compatible HTTP client.
 
 The adapter must be behavior-identical to the inline ``requests.post(...)``
 calls it replaced: Bearer auth, JSON body, ``verify=False``, caller-supplied

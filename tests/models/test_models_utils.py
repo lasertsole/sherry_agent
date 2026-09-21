@@ -63,13 +63,12 @@ class TestReadEnvFileValue:
 
 
 class TestDedupWired:
-    """Both model modules must now use the shared implementation.
+    """Both model modules must use the shared implementation.
 
     Source-level pin instead of an import, kept for a source-level guarantee
-    independent of module caching: `models/embed_model/core.py` no longer
-    downloads at import (the eager GGUF download is now explicit
-    ``setup_embed_model()``), so the import itself is safe — but this pin still
-    asserts the shared reader is wired rather than re-implemented.
+    independent of module caching: module import performs no download — the
+    eager GGUF download happens only in ``setup_embed_model()`` — but this pin
+    still asserts the shared reader is wired rather than re-implemented.
     """
 
     def test_embed_model_uses_shared(self):

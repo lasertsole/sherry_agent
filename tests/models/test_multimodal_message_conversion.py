@@ -1,4 +1,4 @@
-"""Shared multimodal message conversion (DESIGN_PATTERN §5.2).
+"""Shared multimodal message conversion.
 
 The text+image_url conversion used to be copied verbatim into ITTT and VTTT
 (plus a video_url branch in VTTT). It now lives on

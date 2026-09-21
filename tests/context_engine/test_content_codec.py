@@ -1,4 +1,4 @@
-"""ContentDecoder equivalence tests (DESIGN_PATTERN §3.1.7).
+"""ContentDecoder equivalence tests.
 
 Pins the shared ``decode_content`` core and the four call sites that now
 delegate to it: prefix-gated decode, malformed-JSON fallback vs strict

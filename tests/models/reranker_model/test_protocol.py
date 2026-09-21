@@ -1,4 +1,4 @@
-"""RerankerProtocol conformance (DESIGN_PATTERN §3.3.4).
+"""RerankerProtocol conformance.
 
 ``CrossEncoderGGUF`` and ``CloudReranker`` must both satisfy the shared
 ``RerankerProtocol`` contract without changing their method signatures or

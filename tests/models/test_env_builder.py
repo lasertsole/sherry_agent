@@ -1,4 +1,4 @@
-"""ModelEnvBuilder: shared env→client-kwargs assembly (DESIGN_PATTERN §5.3).
+"""ModelEnvBuilder: shared env→client-kwargs assembly.
 
 Pins both the helper behavior and the per-model client kwargs, so the extraction
 can never silently change an env key name, default, strip semantic, or the shape
