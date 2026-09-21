@@ -107,7 +107,7 @@ EMA_AI_agent/
 │       │   └── knowledge/  # Plan knowledge base + `knowledge` tool
 │       ├── file_tools/     # File I/O tools (read, write, patch, search)
 │       ├── skill_tools/    # Skill management tools (list, view, manage)
-│       ├── pub_base/       # Shared tool utilities & infrastructure
+│       ├── pub_base/       # Shared tool utilities & infrastructure (BaseSQLiteRepository, path utils)
 │       ├── mcp_plugin.py   # MCP tool integration
 │       ├── web_search.py   # Web search tool (Tavily)
 │       ├── python_repl.py  # Python code execution
@@ -198,6 +198,7 @@ EMA_AI_agent/
 │   │   ├── core.py         # Singleton SessionRegister base + per-session cleanup
 │   │   ├── relation_register.py # Session/socket relation registry
 │   │   ├── state_register.py   # State registry
+│   │   ├── state_keys.py       # Typed StateKey registry + TypedState facade
 │   │   ├── count_call_register.py # Usage/statistics counters
 │   │   ├── timer_call_register.py # Timer registry
 │   │   └── _callback_executor.py # Async callback executor

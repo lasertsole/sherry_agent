@@ -107,7 +107,7 @@ EMA_AI_agent/
 │       │   └── knowledge/  # Plan 지식 베이스 + `knowledge` 도구
 │       ├── file_tools/     # 파일 I/O 도구(읽기, 쓰기, 패치, 검색)
 │       ├── skill_tools/    # 스킬 관리 도구(나열, 조회, 관리)
-│       ├── pub_base/       # 공유 도구 유틸리티 및 기반
+│       ├── pub_base/       # 공유 도구 유틸리티 및 기반 (BaseSQLiteRepository, 경로 유틸)
 │       ├── mcp_plugin.py   # MCP 도구 통합
 │       ├── web_search.py   # 웹 검색 도구(Tavily)
 │       ├── python_repl.py  # Python 코드 실행
@@ -198,6 +198,7 @@ EMA_AI_agent/
 │   │   ├── core.py         # 싱글톤 SessionRegister 기반 + 세션별 정리
 │   │   ├── relation_register.py # 세션/socket 관계 레지스트리
 │   │   ├── state_register.py   # 상태 레지스트리
+│   │   ├── state_keys.py       # 타입 지정 StateKey 레지스트리 + TypedState 파사드
 │   │   ├── count_call_register.py # 사용량/통계 카운터
 │   │   ├── timer_call_register.py # 타이머 레지스트리
 │   │   └── _callback_executor.py # 비동기 콜백 실행기

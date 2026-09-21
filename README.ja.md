@@ -107,7 +107,7 @@ EMA_AI_agent/
 │       │   └── knowledge/  # Plan ナレッジベース + `knowledge` ツール
 │       ├── file_tools/     # ファイル I/O ツール（読み・書き・パッチ・検索）
 │       ├── skill_tools/    # スキル管理ツール（一覧・閲覧・管理）
-│       ├── pub_base/       # 共有ツールユーティリティと基盤
+│       ├── pub_base/       # 共有ツールユーティリティと基盤（BaseSQLiteRepository、パスユーティリティ）
 │       ├── mcp_plugin.py   # MCP ツール統合
 │       ├── web_search.py   # Web 検索ツール（Tavily）
 │       ├── python_repl.py  # Python コード実行
@@ -198,6 +198,7 @@ EMA_AI_agent/
 │   │   ├── core.py         # シングルトン SessionRegister 基底 + セッション単位のクリーンアップ
 │   │   ├── relation_register.py # セッション/socket 関係レジストリ
 │   │   ├── state_register.py   # ステートレジストリ
+│   │   ├── state_keys.py       # 型付き StateKey レジストリ + TypedState ファサード
 │   │   ├── count_call_register.py # 使用量/統計カウンター
 │   │   ├── timer_call_register.py # タイマーレジストリ
 │   │   └── _callback_executor.py # 非同期コールバック実行器

@@ -107,7 +107,7 @@ EMA_AI_agent/
 │       │   └── knowledge/  # Plan 知识库 + `knowledge` 工具
 │       ├── file_tools/     # 文件 I/O 工具（读、写、补丁、搜索）
 │       ├── skill_tools/    # 技能管理工具（列表、查看、管理）
-│       ├── pub_base/       # 共享工具基础组件
+│       ├── pub_base/       # 共享工具基础组件（BaseSQLiteRepository、路径工具）
 │       ├── mcp_plugin.py   # MCP 工具集成
 │       ├── web_search.py   # 联网搜索工具（Tavily）
 │       ├── python_repl.py  # Python 代码执行
@@ -198,6 +198,7 @@ EMA_AI_agent/
 │   │   ├── core.py         # 单例 SessionRegister 基类 + 按会话清理
 │   │   ├── relation_register.py # 会话/socket 关系注册表
 │   │   ├── state_register.py   # 状态注册表
+│   │   ├── state_keys.py       # 类型化 StateKey 注册表 + TypedState 门面
 │   │   ├── count_call_register.py # 用量/统计计数器
 │   │   ├── timer_call_register.py # 定时器注册表
 │   │   └── _callback_executor.py # 异步回调执行器
