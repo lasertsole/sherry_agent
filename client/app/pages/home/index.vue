@@ -154,55 +154,55 @@
 
       <!-- Skills dialog -->
       <SkillsDialog
-        v-if="showSkillsDialog"
-        v-model="showSkillsDialog" />
+        v-if="dialogs.visible.skills"
+        v-model="dialogs.visible.skills" />
 
       <!-- Statistics dialog -->
       <StatsDialog
-        v-if="showStatsDialog"
-        v-model="showStatsDialog" />
+        v-if="dialogs.visible.stats"
+        v-model="dialogs.visible.stats" />
 
       <!-- System config dialog -->
       <ConfigDialog
-        v-if="showConfigDialog"
-        v-model="showConfigDialog"
+        v-if="dialogs.visible.systemConfig"
+        v-model="dialogs.visible.systemConfig"
         @saved="loadCharacter" />
 
       <!-- AI persona dialog -->
       <PersonaDialog
-        v-if="showPersonaDialog"
-        v-model="showPersonaDialog" />
+        v-if="dialogs.visible.persona"
+        v-model="dialogs.visible.persona" />
 
       <!-- Memory dialog -->
       <MemoryDialog
-        v-if="showMemoryDialog"
-        v-model="showMemoryDialog" />
+        v-if="dialogs.visible.memory"
+        v-model="dialogs.visible.memory" />
 
       <!-- Heartbeat tasks dialog -->
       <HeartbeatDialog
-        v-if="showHeartbeatDialog"
-        v-model="showHeartbeatDialog" />
+        v-if="dialogs.visible.heartbeat"
+        v-model="dialogs.visible.heartbeat" />
 
       <!-- Cron (scheduled tasks) dialog -->
       <CronDialog
-        v-if="showCronDialog"
-        v-model="showCronDialog" />
+        v-if="dialogs.visible.cron"
+        v-model="dialogs.visible.cron" />
 
       <!-- Logs dialog -->
       <LogsDialog
-        v-if="showLogsDialog"
-        v-model="showLogsDialog" />
+        v-if="dialogs.visible.logs"
+        v-model="dialogs.visible.logs" />
 
       <!-- Notification dialog (listens to ws:notification, merges consecutive identical
          notifications, reports the unread count via changed) -->
       <NotificationDialog
-        v-model="showNotificationDialog"
+        v-model="dialogs.visible.notification"
         @changed="(n: number) => (notificationUnread = n)" />
 
       <!-- Extend dialog (integrations / mcp) -->
       <ExtendDialog
-        v-if="showExtendDialog"
-        v-model="showExtendDialog" />
+        v-if="dialogs.visible.extend"
+        v-model="dialogs.visible.extend" />
     </div>
   </div>
 </template>
@@ -225,6 +225,7 @@ import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { headerTools } from './config';
+import { buildHomeToolbarCommands, HOME_DIALOG_IDS } from './dialogs';
 
 /**
  * Wrap a dialog `import()` in an async component.
@@ -331,35 +332,17 @@ const resolvePageKey = (route: { path: string; params: Record<string, unknown> }
   return route.path.includes('/tasks/') ? `tasks-${sid}` : sid;
 };
 
-/** Skills dialog toggle */
-const showSkillsDialog = ref(false);
+/** Every dialog the shell owns, with its visibility flag + open/close actions (registry-driven) */
+const dialogs = useDialogManager(HOME_DIALOG_IDS);
 
-/** Statistics dialog toggle */
-const showStatsDialog = ref(false);
-
-/** System config dialog toggle */
-const showConfigDialog = ref(false);
-
-/** AI persona dialog toggle */
-const showPersonaDialog = ref(false);
-
-/** Memory dialog toggle */
-const showMemoryDialog = ref(false);
-
-/** Heartbeat tasks dialog toggle */
-const showHeartbeatDialog = ref(false);
-
-/** Cron (scheduled tasks) dialog toggle */
-const showCronDialog = ref(false);
-
-/** Logs dialog toggle */
-const showLogsDialog = ref(false);
-
-/** Extend dialog toggle */
-const showExtendDialog = ref(false);
-
-/** Notification dialog toggle */
-const showNotificationDialog = ref(false);
+/**
+ * Toolbar command registry: event → command (dialogs + the knowledge-graph route).
+ * `handleOperate` is now a lookup, so a new toolbar entry only needs a registry row.
+ */
+const toolbarCommands = buildHomeToolbarCommands({
+  openDialog: dialogs.open,
+  navigateToKnowledgeGraph: () => router.push(localePath('/knowledge-graph'))
+});
 
 /** Notification badge unread count (reported by NotificationDialog) */
 const notificationUnread = ref(0);
@@ -395,43 +378,7 @@ const currentSessionId = ref<string>();
  */
 const handleOperate = (type: string, event: string) => {
   if (!event || type !== 'headerBar') return;
-  switch (event) {
-    case 'skills':
-      showSkillsDialog.value = true;
-      return;
-    case 'knowledgeGraph':
-      router.push(localePath('/knowledge-graph'));
-      return;
-    case 'stats':
-      showStatsDialog.value = true;
-      return;
-    case 'systemConfig':
-      showConfigDialog.value = true;
-      return;
-    case 'persona':
-      showPersonaDialog.value = true;
-      return;
-    case 'memory':
-      showMemoryDialog.value = true;
-      return;
-    case 'heartbeat':
-      showHeartbeatDialog.value = true;
-      return;
-    case 'cron':
-      showCronDialog.value = true;
-      return;
-    case 'logs':
-      showLogsDialog.value = true;
-      return;
-    case 'notification':
-      showNotificationDialog.value = true;
-      return;
-    case 'extend':
-      showExtendDialog.value = true;
-      return;
-    default:
-      return;
-  }
+  toolbarCommands[event]?.();
 };
 
 /**
