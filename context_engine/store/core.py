@@ -12,8 +12,18 @@ from pydantic import Field, validate_call
 from langchain_core.messages import BaseMessage
 
 
-# Shared SQLite connection instance used by all store operations in this module.
-_db: sqlite3.Connection = get_db()
+# Lazy shared connection; created on first DB access, not at import (audit #14).
+# Resolved through :func:`_shared_db` so importing this module has no I/O side
+# effect; the connection itself remains the process-wide ``get_db()`` singleton.
+_db: sqlite3.Connection | None = None
+
+
+def _shared_db() -> sqlite3.Connection:
+    global _db
+    if _db is None:
+        _db = get_db()
+    return _db
+
 
 # Audit #5: serializes the read-MAX-then-INSERT turn assignment inside
 # ``add_messages``. The store runs on a single shared connection in autocommit
@@ -56,9 +66,11 @@ def get_max_turn_num(session_id: str) -> int:
 
     Returns 0 when the session has no messages yet.
     """
-    max_turn_num_row = _db.execute(
-        "SELECT MAX(turn_num) FROM messages WHERE session_id = ?", (session_id,)
-    ).fetchone()
+    max_turn_num_row = (
+        _shared_db()
+        .execute("SELECT MAX(turn_num) FROM messages WHERE session_id = ?", (session_id,))
+        .fetchone()
+    )
     return max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
 
 
@@ -231,14 +243,16 @@ _BUILDERS: dict[str, MessageRowBuilder] = {
 
 def get_session_leaf(session_id: str) -> int | None:
     """Current tree leaf of a session; None = no tree yet."""
-    row = _db.execute(
-        "SELECT leaf_message_id FROM session_leafs WHERE session_id = ?", (session_id,)
-    ).fetchone()
+    row = (
+        _shared_db()
+        .execute("SELECT leaf_message_id FROM session_leafs WHERE session_id = ?", (session_id,))
+        .fetchone()
+    )
     return row[0] if row else None
 
 
 def set_session_leaf(session_id: str, leaf_message_id: int) -> None:
-    _db.execute(
+    _shared_db().execute(
         "INSERT INTO session_leafs (session_id, leaf_message_id, updated_at) "
         "VALUES (?, ?, ?) ON CONFLICT(session_id) DO UPDATE SET "
         "leaf_message_id = excluded.leaf_message_id, updated_at = excluded.updated_at",
@@ -249,7 +263,7 @@ def set_session_leaf(session_id: str, leaf_message_id: int) -> None:
 def get_message_by_id(session_id: str, message_id: int) -> dict | None:
     # Lookup by id only: ids are globally unique (AUTOINCREMENT PK) and a fork
     # intentionally crosses session boundaries (shared tree nodes).
-    row = _db.execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    row = _shared_db().execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
     return _decode_json_columns(dict(row)) if row else None
 
 
@@ -319,7 +333,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
     # insert while holding the module-level lock, so two concurrent writers on
     # the same session can never observe the same MAX and silently merge two
     # turns into one. No explicit BEGIN: the connection is in autocommit mode
-    # (isolation_level=None) and a concurrent reader's ``with _db:`` exit would
+    # (isolation_level=None) and a concurrent reader's ``with _shared_db():`` exit would
     # commit an open transaction early — the lock is what serializes writers.
     with _turn_assign_lock:
         # Stamp here, not before row building (history-jumble race): stamping
@@ -348,7 +362,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
         parent_id: int | None = get_session_leaf(session_id)
         for row in insert_rows:
             row["parent_message_id"] = parent_id
-            cursor = _db.execute(
+            cursor = _shared_db().execute(
                 """
                 INSERT OR IGNORE INTO messages (
                     session_id,
@@ -417,7 +431,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
 
     # No-op in autocommit mode; kept so the batch also commits as one unit if
     # the connection ever switches to implicit-transaction mode.
-    _db.commit()
+    _shared_db().commit()
 
 
 async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
@@ -513,11 +527,15 @@ def filter_persisted_message_ids(session_id: str, message_ids: Sequence[str]) ->
     for start in range(0, len(unique), _WATERMARK_QUERY_CHUNK):
         batch = unique[start : start + _WATERMARK_QUERY_CHUNK]
         placeholders = ",".join("?" for _ in batch)
-        rows = _db.execute(
-            f"SELECT message_id FROM persisted_message_ids "
-            f"WHERE session_id = ? AND message_id IN ({placeholders})",
-            [session_id, *batch],
-        ).fetchall()
+        rows = (
+            _shared_db()
+            .execute(
+                f"SELECT message_id FROM persisted_message_ids "
+                f"WHERE session_id = ? AND message_id IN ({placeholders})",
+                [session_id, *batch],
+            )
+            .fetchall()
+        )
         found.update(str(row[0]) for row in rows)
     return found
 
@@ -532,12 +550,12 @@ def mark_message_ids_persisted(session_id: str, message_ids: Sequence[str]) -> i
     if not unique:
         return 0
     created = datetime.now().strftime("%Y%m%d%H%M%S")
-    cursor = _db.executemany(
+    cursor = _shared_db().executemany(
         "INSERT OR IGNORE INTO persisted_message_ids (session_id, message_id, created_at) "
         "VALUES (?, ?, ?)",
         [(session_id, mid, created) for mid in unique],
     )
-    _db.commit()
+    _shared_db().commit()
     return cursor.rowcount
 
 
@@ -548,14 +566,18 @@ def create_compaction_checkpoint(
     summary_text: str = "",
 ) -> int:
     """Record a checkpoint after a successful compaction."""
-    seq_row = _db.execute(
-        "SELECT COALESCE(MAX(checkpoint_seq), -1) + 1 FROM compaction_checkpoints "
-        "WHERE session_id = ?",
-        (session_id,),
-    ).fetchone()
+    seq_row = (
+        _shared_db()
+        .execute(
+            "SELECT COALESCE(MAX(checkpoint_seq), -1) + 1 FROM compaction_checkpoints "
+            "WHERE session_id = ?",
+            (session_id,),
+        )
+        .fetchone()
+    )
     seq = seq_row[0]
     created = datetime.now().strftime("%Y%m%d%H%M%S")
-    cursor = _db.execute(
+    cursor = _shared_db().execute(
         "INSERT INTO compaction_checkpoints (session_id, checkpoint_seq, "
         "pre_compaction_turn, post_compaction_turn, summary_text, created_at) "
         "VALUES (?, ?, ?, ?, ?, ?)",
@@ -565,10 +587,14 @@ def create_compaction_checkpoint(
 
 
 def get_compaction_checkpoint(session_id: str, checkpoint_id: int) -> dict | None:
-    row = _db.execute(
-        "SELECT * FROM compaction_checkpoints WHERE session_id = ? AND id = ?",
-        (session_id, checkpoint_id),
-    ).fetchone()
+    row = (
+        _shared_db()
+        .execute(
+            "SELECT * FROM compaction_checkpoints WHERE session_id = ? AND id = ?",
+            (session_id, checkpoint_id),
+        )
+        .fetchone()
+    )
     return dict(row) if row else None
 
 
@@ -587,12 +613,12 @@ def mark_messages_compacted(
     if from_turn is not None:
         sql += " AND turn_num >= ?"
         params.append(from_turn)
-    cursor = _db.execute(sql, params)
+    cursor = _shared_db().execute(sql, params)
     return cursor.rowcount
 
 
 def unmark_messages_compacted(session_id: str, up_to_turn: int) -> int:
-    cursor = _db.execute(
+    cursor = _shared_db().execute(
         "UPDATE messages SET compacted = 0, compaction_checkpoint_id = NULL "
         "WHERE session_id = ? AND turn_num <= ?",
         (session_id, up_to_turn),
@@ -606,7 +632,7 @@ def restore_compaction_checkpoint(session_id: str, checkpoint_id: int) -> dict:
     checkpoint = get_compaction_checkpoint(session_id, checkpoint_id)
     if checkpoint is None:
         raise ValueError(f"checkpoint not found: {checkpoint_id}")
-    _db.execute(
+    _shared_db().execute(
         "UPDATE messages SET compacted = 1, compaction_checkpoint_id = ? "
         "WHERE session_id = ? AND turn_num > ?",
         (checkpoint_id, session_id, checkpoint["pre_compaction_turn"]),
@@ -656,7 +682,7 @@ def get_turns_by_turn_num_scope(
     Returns:
         A list of message row dicts, newest turn first, with JSON columns decoded.
     """
-    with _db:
+    with _shared_db():
         max_turn_num: int = get_max_turn_num(session_id)
         min_turn_num: int = 1
 
@@ -670,14 +696,18 @@ def get_turns_by_turn_num_scope(
 
         compacted_filter = "" if include_compacted else " AND compacted = 0"
         eligible_filter = " AND context_eligible = 1" if only_eligible else ""
-        rows = _db.execute(
-            f"""
+        rows = (
+            _shared_db()
+            .execute(
+                f"""
             SELECT * FROM messages 
             WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?{compacted_filter}{eligible_filter}
             ORDER BY turn_num DESC, id ASC
         """,
-            (session_id, min_turn_num, max_turn_num),
-        ).fetchall()
+                (session_id, min_turn_num, max_turn_num),
+            )
+            .fetchall()
+        )
 
         if rows is None or len(rows) == 0:
             return []
@@ -712,7 +742,7 @@ def get_history_by_turn_page(
     Returns:
         A list of message row dicts, newest turn first, with JSON columns decoded.
     """
-    with _db:
+    with _shared_db():
         max_turn_num: int = get_max_turn_num(session_id)
 
         # Short circuit when there is no history for this session.
@@ -730,14 +760,18 @@ def get_history_by_turn_page(
 
         eligible_filter = " and context_eligible = 1" if only_eligible else ""
         compacted_filter = "" if include_compacted else " and compacted = 0"
-        rows = _db.execute(
-            f"""
+        rows = (
+            _shared_db()
+            .execute(
+                f"""
             select * from messages
             where session_id = ? and turn_num >= ? and turn_num <= ?{eligible_filter}{compacted_filter}
             ORDER BY turn_num DESC, id ASC
         """,
-            (session_id, target_start_turn_num, target_end_turn_num),
-        ).fetchall()
+                (session_id, target_start_turn_num, target_end_turn_num),
+            )
+            .fetchall()
+        )
 
         if rows is None or len(rows) == 0:
             return []
@@ -777,11 +811,13 @@ def delete_messages_by_session(session_id: str) -> int:
     Returns:
         The number of rows deleted.
     """
-    with _db:
-        cur = _db.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+    with _shared_db():
+        cur = _shared_db().execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
         # The watermark belongs to the session's messages: drop it with them so
         # a reused session id starts with no stale tombstones.
-        _db.execute("DELETE FROM persisted_message_ids WHERE session_id = ?", (session_id,))
+        _shared_db().execute(
+            "DELETE FROM persisted_message_ids WHERE session_id = ?", (session_id,)
+        )
     return cur.rowcount
 
 
@@ -828,8 +864,10 @@ def get_session_ids() -> list[dict]:
     ``last_time`` is the newest message's ``timestamp`` text (the same
     ``YYYYMMDDHHmmss`` format used across the store).
     """
-    with _db:
-        rows = _db.execute("""
+    with _shared_db():
+        rows = (
+            _shared_db()
+            .execute("""
             SELECT
                 agg.session_id,
                 agg.last_time,
@@ -849,7 +887,9 @@ def get_session_ids() -> list[dict]:
                 GROUP BY session_id
             ) agg
             ORDER BY agg.last_sort DESC, agg.last_time DESC
-        """).fetchall()
+        """)
+            .fetchall()
+        )
 
     result: list[dict] = []
     for row in rows:
