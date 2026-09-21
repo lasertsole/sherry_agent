@@ -8,7 +8,7 @@
 
 ## ✂️ 截断轨道：预算截断与 TTL 模块
 
-`_run_budget_truncation`（:659）内部按顺序运行两层截断：
+`_run_budget_truncation`（overflow.py:219）内部按顺序运行两层截断：
 
 **第 1 步 —— 工具调用参数**（`pub/func/message/tool_args_truncate.py`）：每条 JSON 序列化后超过 `MIN_ARGS_CHARS_TO_TRUNCATE (500)` 字符的 `AIMessage.tool_calls[].args` —— 且其工具不在 `PROTECTED_TOOLS` 中 —— 会被替换为 `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}`，并以 `MAX_TOOL_ARGS_CHARS (2_000)` 字符封顶（头部 30% / 尾部 30%，与工具输出比例相同）。这样 `args` 仍是 dict（LangChain 的 `ToolCall.args` 类型），对每个 provider 适配器都保持 JSON 可序列化，模型也能看出参数被切过。最近 `TRUNCATABLE_RECENT_SKIP (6)` 条消息会被跳过，被替换的 `AIMessage` 是 `model_copy` 克隆 —— tool_call_ids 绝不触碰，AIMessage↔ToolMessage 配对保持完好。
 
@@ -18,7 +18,7 @@
 - **占位符非空** —— 被截断的结果始终保留非空内容：`ToolCallNormalize.before_model` 会**丢弃空的 `ToolMessage`** 来净化转录，空占位符会悄悄破坏配对。
 - **头部 30% / 尾部 30% 保留**（`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`）加省略标记。
 
-中间件实际消费的部分：`truncate_tool_args`（第 1 步，参数）与 **`truncate_to_budget`**（第 2 步，工具输出），由路由的候选列表驱动 —— `_run_budget_truncation`（:659）按预算（`usable × TRUNCATE_BUDGET_RATIO`）截断候选，直到达标。因为第 1 步返回的是新的 `AIMessage` 而非原地修改，该函数返回最终列表，每个调用方**必须**把该列表喂给 `request.override`。
+中间件实际消费的部分：`truncate_tool_args`（第 1 步，参数）与 **`truncate_to_budget`**（第 2 步，工具输出），由路由的候选列表驱动 —— `_run_budget_truncation`（overflow.py:219）按预算（`usable × TRUNCATE_BUDGET_RATIO`）截断候选，直到达标。因为第 1 步返回的是新的 `AIMessage` 而非原地修改，该函数返回最终列表，每个调用方**必须**把该列表喂给 `request.override`。
 
 **read_file 结果保持可找回**：`pub/func/message/target_truncation.py` 中的头+尾截断（由非 LLM 策略 `_run_non_llm_strategies` 执行）会按 `tool_call_id` 把每条 `ToolMessage` 反查回 AIMessage 的工具调用；当工具是 `read_file` 且 `args.file_path` 存在时，被切掉的中段会替换为找回通知而非匿名标记。该通知沿用同样的头部 30% / 尾部 30% 比例，写出原始 `file_path`，并给出 `Use offset=<N> to continue reading: read_file(file_path='<path>', offset=<N>, limit=500)`。`N` 是**头段未完整保留的第一行的绝对（1-based）文件行号** —— 因此以 `offset=100` 读取的页会从头部真正停止的位置继续，被切在半途的行会被重读、绝不会跳过。无法推算 offset 时（载荷不是 read_file 的 JSON 结果），通知要求从 `offset=1` 重新分段读取，绝不猜测 offset。其余工具逐字节保留匿名 `...[truncated N chars]...` 标记。
 
@@ -26,10 +26,10 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 ## 🔁 压缩轨道：`_apply_compression` 内部
 
-`_apply_compression`（:1688；异步孪生 :1760）按顺序执行：
+`_apply_compression`（compression.py:85；异步孪生 compression.py:98）按顺序执行：
 
-1. **捕获恢复上下文**（`_capture_recovery_context`，:1577）：最后一条用户请求（≤ 800 字符）与文件操作棘轮 —— 从 `read`/`write` 族工具调用中提取路径（:415），与上一轮的集合合并（读过的会记住，改过的文件绝不会被降级为只读）。
-2. **非 LLM 策略**（`_run_non_llm_strategies`，:1493）：`去重 → 修剪 → 定向截断 → 工具参数截断`（细节见 [截断轨道](#-截断轨道预算截断与-ttl-模块)）。这些是免费的 —— 不调模型。
+1. **捕获恢复上下文**（`_capture_recovery_context`，compression.py:363）：最后一条用户请求（≤ 800 字符）与文件操作棘轮 —— 从 `read`/`write` 族工具调用中提取路径（summary_generation.py:390），与上一轮的集合合并（读过的会记住，改过的文件绝不会被降级为只读）。
+2. **非 LLM 策略**（`_run_non_llm_strategies`，compression.py:314）：`去重 → 修剪 → 定向截断 → 工具参数截断`（细节见 [截断轨道](#-截断轨道预算截断与-ttl-模块)）。这些是免费的 —— 不调模型。
 3. **是否用 LLM 的决策**：
 
    ```
@@ -40,10 +40,10 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
    ```
 
    非 LLM 收缩先拿走第一次机会；只有当历史仍超过保留预算的两倍（或防抖控制器已禁用 LLM 摘要，或非 LLM 策略毫无所得）时才花费辅助 LLM。
-4. **激进兜底**（`_aggressive_truncate`，:1539）：如果结果*依然*过大，每个超过 `AGGRESSIVE_TRUNCATE_CHARS (1 000)` 字符的 `ToolMessage` 被硬切并加标记 —— 每一个超过同一上限的工具调用参数 JSON 也一样（只保留头部，`PROTECTED_TOOLS` 豁免，替换为 `{"_truncated_args": ...}`）。
-5. **摘要自截断**（`_truncate_summary_messages`，:1630）：任何超过 `SUMMARY_TOTAL_MAX_CHARS (16 000)` 字符的既有摘要消息（`lc_source == "summarization"`）被重新截断为头部 30% / 尾部 30%（`_truncate_content`，:1622）。
-6. **恢复注入**（`_inject_recovery_context`，:1595）：捕获的文件操作棘轮被改写进摘要的 `## Relevant Files` 段，检查点始终携带最新的读/改文件地图。
-7. **记账**（`_record_compression`，:1277，最后 `request.override(messages=..., system_message=...)`。
+4. **激进兜底**（`_aggressive_truncate`，compression.py:360）：如果结果*依然*过大，每个超过 `AGGRESSIVE_TRUNCATE_CHARS (1 000)` 字符的 `ToolMessage` 被硬切并加标记 —— 每一个超过同一上限的工具调用参数 JSON 也一样（只保留头部，`PROTECTED_TOOLS` 豁免，替换为 `{"_truncated_args": ...}`）。
+5. **摘要自截断**（`_truncate_summary_messages`，compression.py:417）：任何超过 `SUMMARY_TOTAL_MAX_CHARS (16 000)` 字符的既有摘要消息（`lc_source == "summarization"`）被重新截断为头部 30% / 尾部 30%（`_truncate_content`，compression.py:414）。
+6. **恢复注入**（`_inject_recovery_context`，compression.py:379）：捕获的文件操作棘轮被改写进摘要的 `## Relevant Files` 段，检查点始终携带最新的读/改文件地图。
+7. **记账**（`_record_compression`，thrash.py:117，最后 `request.override(messages=..., system_message=...)`。
 
 ### 💾 压缩时 nudge
 
@@ -51,7 +51,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 **压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾（`_nudge_memory`）每次压缩都派发；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。nudge 锁被持有时压缩完全跳过派发（不排队）。单发 `nudge_plan_extraction_fired` 标记保证每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
-**切点选择**（`_determine_cutoff`，:1310）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，:565）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（:1340）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 :1968/:2054 调用），切点绝不越过最后一条 `HumanMessage`。
+**切点选择**（`_determine_cutoff`，compression.py:277）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，compression.py:70）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（compression.py:311）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 core.py:421 / core.py:503 调用），切点绝不越过最后一条 `HumanMessage`。
 
 所有失败模式都是 fail-open：`_apply_compression` 抛异常只会记日志，原始请求原样继续 —— 坏掉的压缩从不弄坏回合。
 
@@ -70,9 +70,9 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 ## 📝 LLM 摘要：提示词、链式与回退
 
-`_create_summary` / `_acreate_summary`（:1410 / :1435）：
+`_create_summary` / `_acreate_summary`（summary_generation.py:710 / summary_generation.py:758）：
 
-1. **序列化**（`_serialize_for_summary`，:258）：每条消息变成一行带标签的文本 —— `[User]:`（≤ 2 000 字符）、`[Assistant]:`（≤ 2 000 字符）、`[Assistant tool call]: name(args: > 500 chars → head 300 + tail 150 + omission marker)`、`[Tool result|Tool error] (id):`（> 2 000 字符 → 保留 1 800 + 省略标记）。
+1. **序列化**（`_serialize_for_summary`，summary_generation.py:207）：每条消息变成一行带标签的文本 —— `[User]:`（≤ 2 000 字符）、`[Assistant]:`（≤ 2 000 字符）、`[Assistant tool call]: name(args: > 500 chars → head 300 + tail 150 + omission marker)`、`[Tool result|Tool error] (id):`（> 2 000 字符 → 保留 1 800 + 省略标记）。
 2. **链上之前的检查点**（`_extract_previous_doc` / `_extract_previous_summary`）：找到最新的 `additional_kwargs["lc_source"] == "summarization"` 的 `AIMessage`，优先读取其结构化 `summary_doc` 载荷（渲染回 Markdown 供 `<prior-summary>` 使用）；没有该载荷的消息 —— 存量会话，或回退到 free-form 的一轮 —— 仍按 `<summary>…</summary>` 正文解析。存在上一份 Doc 时，提示词变为 `conversation + <prior-summary-json> + _SUMMARY_PROMPT_UPDATE_STRUCTURED`；旧 Markdown 照常经 `<prior-summary>` 注入；升级后的第一轮压缩即输出新的 `SummaryDoc`（无需迁移）。
 3. **结构化输出**（`summary_doc.py::SummaryDoc`）：辅助模型经 `with_structured_output(SummaryDoc, method="json_mode")` 包装。当前配置的 `glm-5.3-flash` 端点忽略函数调用 schema（默认 method 返回自由文本，被 Pydantic 解析器拒绝 —— 已实测），因此 `json_mode` 是主档；解析/校验失败退化为原始调用 + `json_repair`（`_sync_json_repair_doc` / `_async_json_repair_doc`）；再失败则以旧的 free-form Markdown 提示词作为最后的 LLM 档，静态回退仍是最终保险。
 4. **调用**辅助模型，带 `config={"metadata": {"lc_source": "summarization"}}`，让下游工具链能识别摘要调用。
@@ -131,7 +131,7 @@ cap 是 `cap_summary_doc` 中的数组切片（链上存储的形态）；渲染
 
 ## 📦 输出：摘要消息对
 
-`_build_new_messages`（:1464）包裹摘要文本，恰好产出两条消息：
+`_build_new_messages`（summary_generation.py:806）包裹摘要文本，恰好产出两条消息：
 
 ```
 [CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted …
@@ -152,23 +152,23 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🛡️ 防抖护栏矩阵与退化恢复
 
-状态存放在会话级 `state_register_mem` 的**十三个** `summarization_*` 键中（:92–107）。`_reset_turn_state`（:1849）在每个回合开始时重置其中**十一个**；`summarization_last_user_question` 与 `summarization_cooldown_rounds` 被刻意**不**按回合重置。
+状态存放在会话级 `state_register_mem` 的**十三个** `summarization_*` 键中（state_aliases.py:17–24）。`_reset_turn_state`（thrash.py:157）在每个回合开始时重置其中**十一个**；`summarization_last_user_question` 与 `summarization_cooldown_rounds` 被刻意**不**按回合重置。
 
 | 护栏 | 键 | 阈值 | 效果 |
 | :---- | :-- | :-------- | :----- |
-| 回合冷却期 | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | 每次实际 compact 后武装（:694）；**每次**模型调用递减（:832）；封锁 T1 compact 路由、T2 主动压缩与 T3 —— 永不封锁 T4/T5 强制恢复环 |
-| 每回合压缩数 | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | 由 :694 递增；压制 T2 主动压缩 + T3（强制环豁免） |
+| 回合冷却期 | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | 每次实际 compact 后武装（core.py:345）；**每次**模型调用递减（thrash.py:87）；封锁 T1 compact 路由、T2 主动压缩与 T3 —— 永不封锁 T4/T5 强制恢复环 |
+| 每回合压缩数 | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | 由 core.py:345 递增；压制 T2 主动压缩 + T3（强制环豁免） |
 | 溢出重试（T4/T5 共用） | `summarization_overflow_retries` | `MAX_OVERFLOW_RETRIES = 3` | 两类错误共用、按回合重置；每次成功的强制步骤后递增；耗尽 → 原始 provider 错误向上传播 |
-| 会话压缩总数 | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression`（:1255）返回 True —— 主动压缩完全停止 |
+| 会话压缩总数 | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression`（thrash.py:110）返回 True —— 主动压缩完全停止 |
 | 连续无效次数 | `summarization_compression_ineffective` | `INEFFECTIVE_THRESHOLD = 2` | 置 `skip_llm` —— 只跑非 LLM 策略 |
-| 有效性判定 | （`_record_compression`，:1277 | 消息数下降**或** token 缩减 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 成功的非 LLM 策略（`dedup`/`prune`/`truncate`/`fallback`/`aggressive`）会再次清掉 `skip_llm` |
+| 有效性判定 | （`_record_compression`，thrash.py:117 | 消息数下降**或** token 缩减 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 成功的非 LLM 策略（`dedup`/`prune`/`truncate`/`fallback`/`aggressive`）会再次清掉 `skip_llm` |
 | 退化恢复预算 | `summarization_recovery_attempts` | `MAX_RECOVERY_ATTEMPTS = 2` | 限制退化监视器发起的强制恢复次数 |
 
-**退化监视器**（`_monitor_degradation`，:1661）：只在本次调用真的发生过压缩时才被咨询（`_compaction_just_happened` 标志）。模型回复没有文本时计数器递增；连续 `DEGRADATION_NO_TEXT_THRESHOLD (3)` 次空回复 —— 且 `summarization_recovery_attempts < 2` —— 时置 `force_recovery`、清零无效连击与会话压缩计数。任何非空回复都会清零计数器。它捕捉的是"压缩 → 模型懵了 → 空输出 → 再压缩"的病态循环。注意二者的配合：force 标志在 wrap 入口（:1973）被读取，**先于** `_should_skip_compression`，而跳过闸门会消费它（重置各计数器并继续，:1256–1261）—— 恢复压缩恰好跑一次。
+**退化监视器**（`_monitor_degradation`，thrash.py:131）：只在本次调用真的发生过压缩时才被咨询（`_compaction_just_happened` 标志）。模型回复没有文本时计数器递增；连续 `DEGRADATION_NO_TEXT_THRESHOLD (3)` 次空回复 —— 且 `summarization_recovery_attempts < 2` —— 时置 `force_recovery`、清零无效连击与会话压缩计数。任何非空回复都会清零计数器。它捕捉的是"压缩 → 模型懵了 → 空输出 → 再压缩"的病态循环。注意二者的配合：force 标志在 wrap 入口（core.py:426）被读取，**先于** `_should_skip_compression`，而跳过闸门会消费它（重置各计数器并继续，thrash.py:110–115）—— 恢复压缩恰好跑一次。
 
 ## 🔄 系统提示词刷新
 
-仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（:1993–2005），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / nudge 管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
+仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（core.py:441–459），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / nudge 管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
 
 ## 📌 注册点
 

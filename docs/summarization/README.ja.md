@@ -4,7 +4,7 @@
 
 > エージェントが長い会話をモデルのコンテキストウィンドウの中に収め続ける仕組み: 5つのトリガーポイントがライフサイクル全体（ターン開始前、すべてのモデル呼び出し前、すべてのモデル応答後、プロバイダのオーバーフローエラー時）を監視し、純粋関数型の4ルートルーターが最も安価な修復手段を選び（まず大きいツール結果と過大なツール呼び出し引数を切り詰め、強制されたときだけ AI 圧縮）、アンチスラッシングガードが圧縮の暴走を構造的に防ぎます。
 
-一次情報: `agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`、および 2 つの登録箇所 `agent/core.py` と `agent/tools/subagent/spawn/core.py`。本文書の行番号と定数はすべてこのコードと突き合わせて検証済みです。
+一次情報: `agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/compression.py`、`agent/middlewares/summarization/overflow.py`、`agent/middlewares/summarization/summary_generation.py`、`agent/middlewares/summarization/thrash.py`、`agent/middlewares/summarization/state_aliases.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`、および 2 つの登録箇所 `agent/core.py` と `agent/tools/subagent/spawn/core.py`。本文書の行番号と定数はすべてこのコードと突き合わせて検証済みです。
 
 ## 目次
 
@@ -29,10 +29,10 @@
 
 ## 🎯 概要
 
-`Summarization`（`agent/middlewares/summarization/core.py`、クラスは 500 行）は**ゼロから実装された** `AgentMiddleware` であり、LangChain 組み込みの `SummarizationMiddleware` を継承し**ません**。エージェントライフサイクルの正確に 2 箇所だけにフックします:
+`Summarization`（`agent/middlewares/summarization/core.py`、クラスは `core.py:234`）は**ゼロから実装された** `AgentMiddleware` であり、LangChain 組み込みの `SummarizationMiddleware` を継承し**ません**。エージェントライフサイクルの正確に 2 箇所だけにフックします:
 
-- `before_agent` / `abefore_agent`（1946 / 1950 行）—— **T1 事前点検**
-- `wrap_model_call` / `awrap_model_call`（1960 / 2046 行）—— **T2 ディスパッチ、T3 応答後の再確認、T4/T5 エラー復帰リング**
+- `before_agent` / `abefore_agent`（`core.py:399` / `core.py:403`）—— **T1 事前点検**
+- `wrap_model_call` / `awrap_model_call`（`core.py:413` / `core.py:495`）—— **T2 ディスパッチ、T3 応答後の再確認、T4/T5 エラー復帰リング**
 
 ミドルウェアチェーンでは**最も内側 —— LLM に最も近い**位置に置かれます。圧縮が発動すると、履歴は常に次の形になります:
 
@@ -48,14 +48,14 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 箇所 | トリガー | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| メインエージェント（`agent/core.py:152`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| ワーカー/サブエージェント（`agent/tools/subagent/spawn/core.py:755`） | `("messages", 40)` **または** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（デフォルト） |
+| メインエージェント（`agent/core.py:198`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| ワーカー/サブエージェント（`agent/tools/subagent/spawn/core.py:847`） | `("messages", 40)` **または** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（デフォルト） |
 
 どちらも `main_llm_context_window=main_llm_max_tokens`（`MAIN_LLM_MAX_TOKEN` 由来）と `keep=("messages", 10)` を渡します。
 
 ## 🪙 トークン推定（トークナイザなし）
 
-`pub/func/estimate_tokens.py`（109 行）は意図的にトークナイザを使わず、決定論的に動作し、3 段階のフォールバックを持ちます:
+`pub/func/estimate_tokens.py`（230 行）は意図的にトークナイザを使わず、決定論的に動作し、3 段階のフォールバックを持ちます:
 
 - **T1 — API 報告使用量:** 最後の `AIMessage` が `usage_metadata` を持つ場合（または呼び出し側が `reported_tokens` を明示した場合）、`estimate_messages_tokens` はその値をそのまま返します — プロバイダーの実測値がローカル推定をすべてショートカットします;
 - **T2 — CJK 対応ヒューリスティック:** `estimate_text_tokens` はテキストを CJK 文字（`// CHARS_PER_TOKEN_CJK = 2`）とそれ以外（`// CHARS_PER_TOKEN = 4`）に分け、検出には `pub.func.cjk.count_cjk` を再利用します;
@@ -82,8 +82,8 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | `decide_route` のハードオーバーフローバンド; T3 圧力ゲート; 両トリガー節の構築 |
 | `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route` のソフトオーバーフローバンド |
-| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`（:615）: ウィンドウ − 予備量 |
-| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 切り詰めトラック予算 = usable × 0.60（:680） |
+| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`（overflow.py:168）: ウィンドウ − 予備量 |
+| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 切り詰めトラック予算 = usable × 0.60（overflow.py:219） |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results` の候補下限 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 最新メッセージは切り詰め不可（ペアリングのマージン） |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 強制リカバリ上限（単一の共有カウンタ） |
@@ -159,7 +159,7 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 - **`keep=("messages", 10)` は受け取られるが使用されません。** コンストラクタは API 互換のために保存するだけ; 末尾保持は予算ベース（`PRESERVE_RATIO` × ウィンドウ、[2 000, 15 000] にクランプ）にルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。`keep` を変えても効果はありません。
 - **飾りインポート。** `summarization/core.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。
 - **TTL レジストリは本番に接続されていません。** `record_first_seen` / `select_expired` / `truncate_expired`（および `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）を消費するのはテストだけです; ミドルウェアはもっぱら `truncate_to_budget` を使います。`agent/` 全域の grep でも TTL トリオの本番呼び出し箇所は見つかりません。レジストリは揮発性でもあります（インメモリ、`tool_call_id` キー、再起動で喪失）。
-- **残存するが不活性なコード。** `_preemptive_check`（:589）と `_preemptive_truncate`（:1159）は参照専用です: これらが実装する 2 バンドの先取りに到達する本番呼び出し箇所はありません。
+- **残存するが不活性なコード。** `_preemptive_check`（overflow.py:148）と `_preemptive_truncate`（compression.py:420）は参照専用です: これらが実装する 2 バンドの先取りに到達する本番呼び出し箇所はありません。
 - **推定器はトークナイザではなく、3 段階のトークナイザフリー・ヒューリスティックです。** API 報告使用量があれば T1 がそれを返し、T2 が CJK 対応ヒューリスティック（CJK 文字は `CHARS_PER_TOKEN_CJK = 2`、それ以外は `CHARS_PER_TOKEN = 4`）、T3 のレガシー `len // 4` は T2 の純 ASCII 退化ケースです。意図的に決定論的（再現可能なテスト、安定した予算）です; `CHARS_PER_TOKEN_CJK = 2` は中国語が 4 ではなく 1–2 字/トークンに近いことを反映しています。
 - **報告値が勝つ場所。** T3 だけが報告使用量駆動のトリガーです（`compute_pressure` は max を取る）。T1/T2 のルート判定は推定駆動です（推定値 + システムプロンプトのオーバーヘッドのみ）; レガシーの `_check_trigger` 節フォールバックは `max(ローカル推定値, 報告値)` を使います。
 - **T3 は返される応答を決して変えません。** T3 ディスパッチの永続効果はツール結果のその場での切り詰め（メッセージオブジェクトはグラフ状態と共有）とアンチスラッシングの帳簿記録だけです; T3 の compact ルートの `request.override` はローカルであり、元の応答が常に返ります。T3 本体全体が fail-open です。

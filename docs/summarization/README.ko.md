@@ -4,7 +4,7 @@
 
 > 에이전트가 긴 대화를 모델의 컨텍스트 윈도우 안에 유지하는 방법: 다섯 개의 트리거 지점이 전체 라이프사이클(턴 시작 전, 모든 모델 호출 전, 모든 모델 응답 후, 프로바이더 오버플로 에러 시)을 감시하고, 순수 함수형 4-경로 라우터가 가장 저렴한 수리책을 고르며(큰 도구 결과와 과도하게 큰 도구 호출 인자를 먼저 잘라내고, 강제될 때만 AI 압축), 안티-스래싱 가드가 압축이 통제 없이 불어나는 일을 원천 차단합니다.
 
-사실상의 기준(source of truth): `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
+사실상의 기준(source of truth): `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/compression.py`, `agent/middlewares/summarization/overflow.py`, `agent/middlewares/summarization/summary_generation.py`, `agent/middlewares/summarization/thrash.py`, `agent/middlewares/summarization/state_aliases.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, 그리고 두 등록 지점 `agent/core.py`와 `agent/tools/subagent/spawn/core.py`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조하여 검증했습니다.
 
 ## 목차
 
@@ -29,10 +29,10 @@
 
 ## 🎯 개요
 
-`Summarization`(`agent/middlewares/summarization/core.py`, 클래스는 500행)은 **처음부터 직접 구현한** `AgentMiddleware`입니다 — LangChain 내장 `SummarizationMiddleware`를 상속하지 **않습니다**. 에이전트 라이프사이클의 정확히 두 지점에만 훅을 겁니다:
+`Summarization`(`agent/middlewares/summarization/core.py`, 클래스는 `core.py:234`)은 **처음부터 직접 구현한** `AgentMiddleware`입니다 — LangChain 내장 `SummarizationMiddleware`를 상속하지 **않습니다**. 에이전트 라이프사이클의 정확히 두 지점에만 훅을 겁니다:
 
-- `before_agent` / `abefore_agent`(1946 / 1950행) — **T1 사전 점검**
-- `wrap_model_call` / `awrap_model_call`(1960 / 2046행) — **T2 디스패치, T3 응답 후 재확인, T4/T5 에러 복구 링**
+- `before_agent` / `abefore_agent`(`core.py:399` / `core.py:403`) — **T1 사전 점검**
+- `wrap_model_call` / `awrap_model_call`(`core.py:413` / `core.py:495`) — **T2 디스패치, T3 응답 후 재확인, T4/T5 에러 복구 링**
 
 미들웨어 체인에서는 **가장 안쪽 — LLM에 가장 가까운** 위치에 놓입니다. 압축이 발동되면 히스토리는 항상 다음 모양이 됩니다:
 
@@ -48,14 +48,14 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 사이트 | 트리거 | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| 메인 에이전트(`agent/core.py:152`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| 워커/서브에이전트(`agent/tools/subagent/spawn/core.py:755`) | `("messages", 40)` **또는** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`(기본값) |
+| 메인 에이전트(`agent/core.py:198`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| 워커/서브에이전트(`agent/tools/subagent/spawn/core.py:847`) | `("messages", 40)` **또는** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`(기본값) |
 
 둘 다 `main_llm_context_window=main_llm_max_tokens`(`MAIN_LLM_MAX_TOKEN`에서 유래)와 `keep=("messages", 10)`을 전달합니다.
 
 ## 🪙 토큰 추정 (토크나이저 없음)
 
-`pub/func/estimate_tokens.py`(109행)는 의도적으로 토크나이저 없이 결정론적으로 동작하며, 3단계 폴백을 가집니다:
+`pub/func/estimate_tokens.py`(230행)는 의도적으로 토크나이저 없이 결정론적으로 동작하며, 3단계 폴백을 가집니다:
 
 - **T1 — API 보고 사용량:** 마지막 `AIMessage`가 `usage_metadata`를 가지면(또는 호출자가 `reported_tokens`를 명시하면) `estimate_messages_tokens`가 그 값을 그대로 반환합니다 — provider의 실측값이 모든 로컬 추정을 단축합니다;
 - **T2 — CJK 인식 휴리스틱:** `estimate_text_tokens`는 텍스트를 CJK 문자(`// CHARS_PER_TOKEN_CJK = 2`)와 나머지(`// CHARS_PER_TOKEN = 4`)로 나누고, 감지에는 `pub.func.cjk.count_cjk`를 재사용합니다;
@@ -82,8 +82,8 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | `decide_route`의 하드 오버플로 밴드; T3 압력 게이트; 두 트리거 절을 구성 |
 | `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route`의 소프트 오버플로 밴드 |
-| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`(:615): 윈도우 − 예비량 |
-| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 트렁케이트 트랙 예산 = usable × 0.60 (:680) |
+| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`(overflow.py:168): 윈도우 − 예비량 |
+| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 트렁케이트 트랙 예산 = usable × 0.60 (overflow.py:219) |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results`의 후보 하한 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 최신 메시지는 절대 트렁케이트 불가 (페어링 마진) |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 강제 복구 상한 (단일 공유 카운터) |
@@ -159,7 +159,7 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 - **`keep=("messages", 10)`은 받아들여지지만 사용되지 않습니다.** 생성자는 API 호환성을 위해 저장할 뿐; 꼬리 보존은 예산 기반(`PRESERVE_RATIO` × 윈도우, [2 000, 15 000] 클램프)에 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. `keep`을 바꿔도 효과가 없습니다.
 - **문서 장식용 임포트.** `summarization/core.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).
-- **남아 있지만 비활성인 코드.** `_preemptive_check`(:589)와 `_preemptive_truncate`(:1159)는 참조 전용입니다: 이들이 구현하는 2-밴드 선점에 도달하는 프로덕션 호출 지점은 없습니다.
+- **남아 있지만 비활성인 코드.** `_preemptive_check`(overflow.py:148)와 `_preemptive_truncate`(compression.py:420)는 참조 전용입니다: 이들이 구현하는 2-밴드 선점에 도달하는 프로덕션 호출 지점은 없습니다.
 - **추정기는 토크나이저가 아니라 3단계 토크나이저프리 휴리스틱입니다.** API 보고 사용량이 있으면 T1이 반환하고, T2는 CJK 인식 휴리스틱(CJK 문자 `CHARS_PER_TOKEN_CJK = 2`, 나머지 `CHARS_PER_TOKEN = 4`), T3의 레거시 `len // 4`는 T2의 순수 ASCII 퇴화 케이스입니다. 의도적으로 결정론적(재현 가능한 테스트, 안정적 예산)입니다; `CHARS_PER_TOKEN_CJK = 2`는 중국어가 4가 아닌 1–2자/토큰에 가까움을 반영합니다.
 - **보고된 사용량이 이기는 곳.** T3만이 보고된 사용량 기반 트리거입니다(`compute_pressure`는 max를 취함). T1/T2 라우트 결정은 추정 기반입니다(추정치 + 시스템 프롬프트 오버헤드만); 레거시 `_check_trigger` 절 폴백은 `max(로컬 추정치, 보고값)`을 사용합니다.
 - **T3는 반환되는 응답을 절대 바꾸지 않습니다.** T3 디스패치의 지속 효과는 도구 결과의 제자리 트렁케이션(메시지 객체는 그래프 상태와 공유됨)과 안티-스래싱 장부 기록뿐입니다; T3 compact 라우트의 `request.override`는 로컬이며 원본 응답이 항상 반환됩니다. T3 본문 전체가 fail-open입니다.

@@ -4,7 +4,7 @@
 
 > Agent 如何让长对话保持在模型的上下文窗口之内：五个触发点覆盖整个生命周期（回合开始前、每次模型调用前、每次模型响应后、以及 provider 溢出报错时），一个纯函数式的四路路由选择最省钱的修复手段（先截断超大工具输出和超大的工具调用参数，实在不行才让 AI 压缩历史），防抖护栏保证压缩永远不会失控打转。
 
-事实来源：`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
+事实来源：`agent/middlewares/summarization/core.py`、`agent/middlewares/summarization/compression.py`、`agent/middlewares/summarization/overflow.py`、`agent/middlewares/summarization/summary_generation.py`、`agent/middlewares/summarization/thrash.py`、`agent/middlewares/summarization/state_aliases.py`、`agent/middlewares/summarization/plan_context.py`、`pub/func/message/overflow_router.py`、`pub/func/message/tool_result_ttl.py`、`pub/func/message/llm_error_classifier.py`、`pub/func/estimate_tokens.py`、`pub/func/message/tool_output_dedup.py`、`pub/func/message/tool_output_prune.py`、`pub/func/message/target_truncation.py`、`pub/func/message/tool_args_truncate.py`、`pub/func/message/turn_utils.py`、`config/features/agent_side/summarization.py`，外加两处注册点 `agent/core.py` 和 `agent/tools/subagent/spawn/core.py`。本文档中的每一处行号与常量都已对照这些代码逐一核实。
 
 ## 目录
 
@@ -29,10 +29,10 @@
 
 ## 🎯 概览
 
-`Summarization`（`agent/middlewares/summarization/core.py`，类定义在第 500 行）是一个**从零实现**的 `AgentMiddleware` —— 它**并不**继承 LangChain 内置的 `SummarizationMiddleware`。它只挂载 agent 生命周期的两个位置：
+`Summarization`（`agent/middlewares/summarization/core.py`，类定义在 `core.py:234`）是一个**从零实现**的 `AgentMiddleware` —— 它**并不**继承 LangChain 内置的 `SummarizationMiddleware`。它只挂载 agent 生命周期的两个位置：
 
-- `before_agent` / `abefore_agent`（第 1946 / 1950 行）—— **T1 预检**
-- `wrap_model_call` / `awrap_model_call`（第 1960 / 2046 行）—— **T2 派发、T3 响应后复检、T4/T5 错误恢复环**
+- `before_agent` / `abefore_agent`（`core.py:399` / `core.py:403`）—— **T1 预检**
+- `wrap_model_call` / `awrap_model_call`（`core.py:413` / `core.py:495`）—— **T2 派发、T3 响应后复检、T4/T5 错误恢复环**
 
 在中间件链中它位于**最内层 —— 离 LLM 最近**。压缩发生后，历史始终呈现如下形态：
 
@@ -48,14 +48,14 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 注册点 | 触发条件 | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| 主 agent（`agent/core.py:152`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| Worker/子 agent（`agent/tools/subagent/spawn/core.py:755`） | `("messages", 40)` **或** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（默认） |
+| 主 agent（`agent/core.py:198`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| Worker/子 agent（`agent/tools/subagent/spawn/core.py:847`） | `("messages", 40)` **或** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（默认） |
 
 两者都传入 `main_llm_context_window=main_llm_max_tokens`（来自 `MAIN_LLM_MAX_TOKEN`）和 `keep=("messages", 10)`。
 
 ## 🪙 Token 估算（无分词器）
 
-`pub/func/estimate_tokens.py`（109 行）刻意不依赖分词器、完全确定，并提供三层降级：
+`pub/func/estimate_tokens.py`（230 行）刻意不依赖分词器、完全确定，并提供三层降级：
 
 - **T1——API 上报用量：** 当最后一条 `AIMessage` 带 `usage_metadata`（或调用方显式传入 `reported_tokens`）时，`estimate_messages_tokens` 原样返回该值——provider 的真实计数会短路全部本地估算；
 - **T2——CJK 感知启发式：** `estimate_text_tokens` 把文本拆成 CJK 字符（`// CHARS_PER_TOKEN_CJK = 2`）与其余字符（`// CHARS_PER_TOKEN = 4`），复用 `pub.func.cjk.count_cjk` 做检测；
@@ -82,8 +82,8 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | `decide_route` 的硬溢出档；T3 压力闸门；构造两处触发子句 |
 | `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | `decide_route` 的软溢出档 |
-| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`（:615）：窗口 − 保留量 |
-| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 截断轨道预算 = usable × 0.60（:680） |
+| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget`（overflow.py:168）：窗口 − 保留量 |
+| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | 截断轨道预算 = usable × 0.60（overflow.py:219） |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | `find_truncatable_tool_results` 的候选门槛 |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | 最新若干条永不可截断（配对安全边距） |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 强制恢复上限（单一共用计数器） |
@@ -159,7 +159,7 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 - **`keep=("messages", 10)` 被接受但从未使用。** 构造函数仅为 API 兼容而存储它；尾部保留由预算决定（`PRESERVE_RATIO` × 窗口，夹在 [2 000, 15 000]），加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距。改 `keep` 没有任何效果。
 - **纯装饰性导入。** `summarization/core.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
 - **TTL 注册表没有接入生产。** `record_first_seen` / `select_expired` / `truncate_expired`（以及 `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）只有测试在用；中间件只使用 `truncate_to_budget`。对 `agent/` 的 grep 找不到 TTL 三件套的任何生产调用点。注册表同样是易失的（内存态、以 `tool_call_id` 为键、重启即失）。
-- **保留但失效的代码。** `_preemptive_check`（:589）与 `_preemptive_truncate`（:1159）仅供参照：没有任何生产调用点会走到它们实现的二档抢先机制。
+- **保留但失效的代码。** `_preemptive_check`（overflow.py:148）与 `_preemptive_truncate`（compression.py:420）仅供参照：没有任何生产调用点会走到它们实现的二档抢先机制。
 - **估算器是三层、不依赖分词器的启发式，而不是分词器。** 有 API 上报用量时 T1 直接返回；T2 是 CJK 感知启发式（CJK 字符按 `CHARS_PER_TOKEN_CJK = 2`、其余按 `CHARS_PER_TOKEN = 4`）；T3 是遗留的 `len // 4`，即 T2 的纯 ASCII 退化情形。它刻意保持确定性（测试可复现、预算稳定）；`CHARS_PER_TOKEN_CJK = 2` 对应中文平均更接近 1–2 字符/token 而非 4 的事实。
 - **上报值何时胜出。** T3 是唯一由上报用量驱动的触发点（`compute_pressure` 取 max）。T1/T2 的路由决策由估算驱动（仅估算 + 系统提示词开销）；遗留的 `_check_trigger` 子句兜底使用 `max(本地估算, 上报值)`。
 - **T3 绝不改写返回的响应。** T3 派发的持久效果是工具输出的原地截断（消息对象与图状态共享）和防抖记账；T3 的 compact 路由 `request.override` 只在本地生效，原始响应始终返回。整个 T3 函数体 fail-open。

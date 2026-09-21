@@ -8,7 +8,7 @@
 
 ## ✂️ The Truncate Track: Budget Truncation & the TTL Module
 
-Two truncation layers run inside `_run_budget_truncation` (:659), in order:
+Two truncation layers run inside `_run_budget_truncation` (overflow.py:219), in order:
 
 **Step 1 — tool-call args** (`pub/func/message/tool_args_truncate.py`): every `AIMessage.tool_calls[].args` whose JSON serialization exceeds `MIN_ARGS_CHARS_TO_TRUNCATE (500)` chars — and whose tool is not in `PROTECTED_TOOLS` — is replaced with `{"_truncated_args": "head…[args truncated, omitted N chars]…tail"}` capped at `MAX_TOOL_ARGS_CHARS (2_000)` chars (head 30% / tail 30%, same ratios as tool results). This keeps `args` a dict (LangChain's `ToolCall.args` type), stays JSON-serializable for every provider adapter, and lets the model see the args were cut. The most recent `TRUNCATABLE_RECENT_SKIP (6)` messages are skipped and replaced `AIMessage`s are `model_copy` clones — tool_call_ids are never touched, so AIMessage↔ToolMessage pairing stays intact.
 
@@ -18,7 +18,7 @@ Two truncation layers run inside `_run_budget_truncation` (:659), in order:
 - **Non-empty placeholders** — a truncated result always keeps non-empty content: `ToolCallNormalize.before_model` sanitizes the transcript by **dropping empty `ToolMessage`s**, so an empty placeholder would silently break the pairing.
 - **30% head / 30% tail keep** (`CONTENT_HEAD_RATIO` / `CONTENT_TAIL_RATIO`) with an omission marker.
 
-What the middleware actually consumes: `truncate_tool_args` (step 1, args) and **`truncate_to_budget`** (step 2, tool results), driven by the router's candidate list — `_run_budget_truncation` (:659) truncates candidates until the budget (`usable × TRUNCATE_BUDGET_RATIO`) is met. Because step 1 returns new `AIMessage`s instead of mutating, the function returns the final list and every caller MUST feed that list into `request.override`.
+What the middleware actually consumes: `truncate_tool_args` (step 1, args) and **`truncate_to_budget`** (step 2, tool results), driven by the router's candidate list — `_run_budget_truncation` (overflow.py:219) truncates candidates until the budget (`usable × TRUNCATE_BUDGET_RATIO`) is met. Because step 1 returns new `AIMessage`s instead of mutating, the function returns the final list and every caller MUST feed that list into `request.override`.
 
 **read_file results stay recoverable**: the head+tail clip in `pub/func/message/target_truncation.py` (run by the non-LLM strategies, `_run_non_llm_strategies`) resolves each `ToolMessage` back to its AIMessage tool call by `tool_call_id`; when the tool is `read_file` and `args.file_path` is set, the clipped middle is replaced with a recovery notice instead of the anonymous marker. The notice keeps the same 30% head / 30% tail ratios, names the original `file_path`, and states `Use offset=<N> to continue reading: read_file(file_path='<path>', offset=<N>, limit=500)`. `N` is the **absolute, 1-based** file line of the first line not fully retained in the head — a page read with `offset=100` therefore resumes past wherever the head actually stopped, and a line cut mid-way is re-read, never skipped. When the offset cannot be derived (the payload is not a read_file JSON result), the notice asks for a restart from `offset=1` instead of guessing. Every other tool keeps the anonymous `...[truncated N chars]...` marker byte-for-byte.
 
@@ -26,10 +26,10 @@ The TTL registry itself (`record_first_seen` / `select_expired` / `truncate_expi
 
 ## 🔁 The Compact Track: Inside `_apply_compression`
 
-`_apply_compression` (:1688; async twin :1760) runs, in order:
+`_apply_compression` (compression.py:85; async twin compression.py:98) runs, in order:
 
-1. **Capture recovery context** (`_capture_recovery_context`, :1577): the last user request (≤ 800 chars) and the file-operations ratchet — paths extracted from `read`/`write`-family tool calls (:415), merged with the previous round's set (reads are remembered, modified files are never downgraded to read-only).
-2. **Non-LLM strategies** (`_run_non_llm_strategies`, :1493): `dedup → prune → target truncate → tool-args truncate` (details in the [truncate track](#-the-truncate-track-budget-truncation--the-ttl-module)). These are free — no model call.
+1. **Capture recovery context** (`_capture_recovery_context`, compression.py:363): the last user request (≤ 800 chars) and the file-operations ratchet — paths extracted from `read`/`write`-family tool calls (summary_generation.py:390), merged with the previous round's set (reads are remembered, modified files are never downgraded to read-only).
+2. **Non-LLM strategies** (`_run_non_llm_strategies`, compression.py:314): `dedup → prune → target truncate → tool-args truncate` (details in the [truncate track](#-the-truncate-track-budget-truncation--the-ttl-module)). These are free — no model call.
 3. **LLM-or-not decision**:
 
    ```
@@ -40,10 +40,10 @@ The TTL registry itself (`record_first_seen` / `select_expired` / `truncate_expi
    ```
 
    Non-LLM shrinking is given the first chance; the auxiliary LLM is only spent when the history is still more than twice the preserve budget (or LLM summarization was disabled by the governor, or non-LLM strategies reduced nothing).
-4. **Aggressive backstop** (`_aggressive_truncate`, :1539): if the result is *still* too big, every `ToolMessage` > `AGGRESSIVE_TRUNCATE_CHARS (1 000)` chars is hard-cut with a marker — and so is every tool-call args JSON beyond the same cap (head-only, `PROTECTED_TOOLS` exempt, replaced with `{"_truncated_args": ...}`).
-5. **Summary self-truncation** (`_truncate_summary_messages`, :1630): any existing summary message (`lc_source == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS (16 000)` chars is re-truncated head 30% / tail 30% (`_truncate_content`, :1622).
-6. **Recovery injection** (`_inject_recovery_context`, :1595): the captured file-ops ratchet is rewritten into the summary's `## Relevant Files` section, so the checkpoint always carries an up-to-date read/modified file map.
-7. **Bookkeeping** (`_record_compression`, :1277) and finally `request.override(messages=..., system_message=...)`.
+4. **Aggressive backstop** (`_aggressive_truncate`, compression.py:360): if the result is *still* too big, every `ToolMessage` > `AGGRESSIVE_TRUNCATE_CHARS (1 000)` chars is hard-cut with a marker — and so is every tool-call args JSON beyond the same cap (head-only, `PROTECTED_TOOLS` exempt, replaced with `{"_truncated_args": ...}`).
+5. **Summary self-truncation** (`_truncate_summary_messages`, compression.py:417): any existing summary message (`lc_source == "summarization"`) longer than `SUMMARY_TOTAL_MAX_CHARS (16 000)` chars is re-truncated head 30% / tail 30% (`_truncate_content`, compression.py:414).
+6. **Recovery injection** (`_inject_recovery_context`, compression.py:379): the captured file-ops ratchet is rewritten into the summary's `## Relevant Files` section, so the checkpoint always carries an up-to-date read/modified file map.
+7. **Bookkeeping** (`_record_compression`, thrash.py:117) and finally `request.override(messages=..., system_message=...)`.
 
 ### 💾 Compression-time nudges
 
@@ -51,7 +51,7 @@ Message persistence runs outside the compression path: human/AI messages are flu
 
 **Compression-time nudges** (`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): the memory review (`_nudge_memory`) is dispatched on every compression; plan extraction evaluates `_detect_todo_all_complete` at the same point. Both dispatch fire-and-forget under the NUDGE lane, so they can never block the model call. While a nudge lock is held the compression skips dispatch entirely (nothing is queued). The single-fire `nudge_plan_extraction_fired` flag allows one extraction per completion cycle, so a session that never compresses never fires plan extraction.
 
-**Cutoff selection** (`_determine_cutoff`, :1310): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, :565); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (:1340) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry :1968/:2054), the cutoff never crosses the last `HumanMessage`.
+**Cutoff selection** (`_determine_cutoff`, compression.py:277): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, compression.py:70); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (compression.py:311) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry core.py:421 / core.py:503), the cutoff never crosses the last `HumanMessage`.
 
 Every failure mode is fail-open: if `_apply_compression` raises, the exception is logged and the original request proceeds unchanged — a broken compaction never breaks the turn.
 
@@ -70,9 +70,9 @@ Media files live in the session tree, so `clear_session()` removes them together
 
 ## 📝 LLM Summary: Prompt, Chaining, Fallback
 
-`_create_summary` / `_acreate_summary` (:1410 / :1435):
+`_create_summary` / `_acreate_summary` (summary_generation.py:710 / summary_generation.py:758):
 
-1. **Serialize** (`_serialize_for_summary`, :258): each message becomes a tagged line — `[User]:` (≤ 2 000 chars), `[Assistant]:` (≤ 2 000 chars), `[Assistant tool call]: name(args: > 500 chars → head 300 + tail 150 + omission marker)`, `[Tool result|Tool error] (id):` (> 2 000 chars → keep 1 800 + omission marker).
+1. **Serialize** (`_serialize_for_summary`, summary_generation.py:207): each message becomes a tagged line — `[User]:` (≤ 2 000 chars), `[Assistant]:` (≤ 2 000 chars), `[Assistant tool call]: name(args: > 500 chars → head 300 + tail 150 + omission marker)`, `[Tool result|Tool error] (id):` (> 2 000 chars → keep 1 800 + omission marker).
 2. **Chain the prior checkpoint** (`_extract_previous_doc` / `_extract_previous_summary`): the newest `AIMessage` with `additional_kwargs["lc_source"] == "summarization"` is read as the structured `summary_doc` payload (rendered back to Markdown for `<prior-summary>`); a message without the payload — legacy sessions, or a round that fell back to free-form — is parsed from its `<summary>…</summary>` body instead. With a prior document the prompt becomes `conversation + <prior-summary-json> + _SUMMARY_PROMPT_UPDATE_STRUCTURED`; legacy Markdown goes in through `<prior-summary>` unchanged, and the first compressed round after an upgrade already outputs a new `SummaryDoc` (no migration).
 3. **Structured output** (`summary_doc.py::SummaryDoc`): the auxiliary model is wrapped with `with_structured_output(SummaryDoc, method="json_mode")`. The configured `glm-5.3-flash` endpoint ignores function-call schemas (the default method returns free text that the Pydantic parser rejects — verified live), so `json_mode` is the primary tier; a parse/validation failure degrades to a raw call parsed by `json_repair` (`_sync_json_repair_doc` / `_async_json_repair_doc`); if that also fails, the legacy free-form Markdown prompt is the last LLM tier, and the static fallback stays the final guard.
 4. **Invoke** the auxiliary model with `config={"metadata": {"lc_source": "summarization"}}` so downstream tooling can identify summary calls.
@@ -131,7 +131,7 @@ It is used verbatim when `skip_llm` is active, and as the safety net for short/f
 
 ## 📦 The Output: Summary Message Pair
 
-`_build_new_messages` (:1464) wraps the summary text and emits exactly two messages:
+`_build_new_messages` (summary_generation.py:806) wraps the summary text and emits exactly two messages:
 
 ```
 [CONTEXT COMPACTION — REFERENCE ONLY] Earlier turns were compacted …
@@ -152,23 +152,23 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 
 ## 🛡️ Anti-Thrash Guard Matrix & Degradation Recovery
 
-State lives in session-scoped `state_register_mem` under **thirteen** `summarization_*` keys (:92–107). `_reset_turn_state` (:1849) resets **eleven** of them at every turn start; `summarization_last_user_question` and `summarization_cooldown_rounds` are deliberately **not** reset per turn.
+State lives in session-scoped `state_register_mem` under **thirteen** `summarization_*` keys (state_aliases.py:17–24). `_reset_turn_state` (thrash.py:157) resets **eleven** of them at every turn start; `summarization_last_user_question` and `summarization_cooldown_rounds` are deliberately **not** reset per turn.
 
 | Guard | Key | Threshold | Effect |
 | :---- | :-- | :-------- | :----- |
-| Turn cooldown | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | Armed after every actual compact (:694); ticked down by **every** model call (:832); blocks T1 compact routes, T2 proactive and T3 — never the T4/T5 forced ring |
-| Per-turn compactions | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | Incremented by :694; suppresses T2 proactive + T3 (forced ring exempt) |
+| Turn cooldown | `summarization_cooldown_rounds` | `COMPACTION_COOLDOWN_ROUNDS = 3` | Armed after every actual compact (core.py:345); ticked down by **every** model call (thrash.py:87); blocks T1 compact routes, T2 proactive and T3 — never the T4/T5 forced ring |
+| Per-turn compactions | `summarization_turn_attempts` | `MAX_COMPRESS_ATTEMPTS_PER_TURN = 3` | Incremented by core.py:345; suppresses T2 proactive + T3 (forced ring exempt) |
 | Overflow retries (T4/T5 shared) | `summarization_overflow_retries` | `MAX_OVERFLOW_RETRIES = 3` | Shared by both error classes and reset per turn; incremented after each successful forced step; exhausted → original provider error propagates |
-| Session compressions | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression` (:1255) returns True — proactive compression stops entirely |
+| Session compressions | `summarization_compression_count` | `MAX_TOTAL_COMPRESSION_ATTEMPTS = 5` | `_should_skip_compression` (thrash.py:110) returns True — proactive compression stops entirely |
 | Consecutive ineffective | `summarization_compression_ineffective` | `INEFFECTIVE_THRESHOLD = 2` | Sets `skip_llm` — non-LLM strategies only |
-| Effectiveness | (`_record_compression`, :1277) | message count reduced **or** token reduction ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | Successful non-LLM strategies (`dedup`/`prune`/`truncate`/`fallback`/`aggressive`) clear `skip_llm` again |
+| Effectiveness | (`_record_compression`, thrash.py:117) | message count reduced **or** token reduction ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | Successful non-LLM strategies (`dedup`/`prune`/`truncate`/`fallback`/`aggressive`) clear `skip_llm` again |
 | Degradation recovery budget | `summarization_recovery_attempts` | `MAX_RECOVERY_ATTEMPTS = 2` | Caps forced recoveries from the degradation monitor |
 
-**Degradation monitor** (`_monitor_degradation`, :1661): only consulted when a compaction actually happened this call (`_compaction_just_happened` flag). If the model's reply has no text, a counter increments; at `DEGRADATION_NO_TEXT_THRESHOLD (3)` consecutive empty replies — and while `summarization_recovery_attempts < 2` — it sets `force_recovery`, clears the ineffective streak and the session compression count. Any non-empty reply resets the counter. This catches the pathological "compact → model confused → empty output → compact again" loop. Note the interplay: the forced flag is read at wrap entry (:1973) **before** `_should_skip_compression`, and the skip gate consumes it by resetting the counters and proceeding (:1256–1261) — recovery compression runs exactly once.
+**Degradation monitor** (`_monitor_degradation`, thrash.py:131): only consulted when a compaction actually happened this call (`_compaction_just_happened` flag). If the model's reply has no text, a counter increments; at `DEGRADATION_NO_TEXT_THRESHOLD (3)` consecutive empty replies — and while `summarization_recovery_attempts < 2` — it sets `force_recovery`, clears the ineffective streak and the session compression count. Any non-empty reply resets the counter. This catches the pathological "compact → model confused → empty output → compact again" loop. Note the interplay: the forced flag is read at wrap entry (core.py:426) **before** `_should_skip_compression`, and the skip gate consumes it by resetting the counters and proceeding (thrash.py:110–115) — recovery compression runs exactly once.
 
 ## 🔄 System Prompt Refresh
 
-Main agent only (`need_update_system_prompt=True`): after a compression the middleware rebuilds the system prompt and writes it to the `system_prompt` state key, so the next model call sees persona files / long-term memory as they are now. Two delivery paths: `request.override(system_message=SystemMessage(...))` directly after compaction, and — when a T1 compact already happened but the anti-thrash gate blocks a second one — the rebuilt prompt is still delivered in the gate path (:1993–2005), because chains without the `@dynamic_prompt` system-prompt middleware (subagent / nudge pipelines) rely on this middleware delivering it. On the gate path the rebuild is injected **only when the request's current system message differs**: if the content already matches, no `override` and no new `SystemMessage` are created (the prompt is not re-injected).
+Main agent only (`need_update_system_prompt=True`): after a compression the middleware rebuilds the system prompt and writes it to the `system_prompt` state key, so the next model call sees persona files / long-term memory as they are now. Two delivery paths: `request.override(system_message=SystemMessage(...))` directly after compaction, and — when a T1 compact already happened but the anti-thrash gate blocks a second one — the rebuilt prompt is still delivered in the gate path (core.py:441–459), because chains without the `@dynamic_prompt` system-prompt middleware (subagent / nudge pipelines) rely on this middleware delivering it. On the gate path the rebuild is injected **only when the request's current system message differs**: if the content already matches, no `override` and no new `SystemMessage` are created (the prompt is not re-injected).
 
 ## 📌 Registration Sites
 

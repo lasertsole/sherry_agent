@@ -4,7 +4,7 @@
 
 > How the agent keeps long conversations inside the model's context window: five trigger points watch the whole lifecycle (before the turn, before every model call, after every model response, and on provider overflow errors), a pure 4-route router picks the cheapest fix (truncate big tool results and oversized tool-call args first, AI-compact only when forced), and anti-thrash guards make sure compression can never spiral.
 
-Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
+Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/summarization/compression.py`, `agent/middlewares/summarization/overflow.py`, `agent/middlewares/summarization/summary_generation.py`, `agent/middlewares/summarization/thrash.py`, `agent/middlewares/summarization/state_aliases.py`, `agent/middlewares/summarization/plan_context.py`, `pub/func/message/overflow_router.py`, `pub/func/message/tool_result_ttl.py`, `pub/func/message/llm_error_classifier.py`, `pub/func/estimate_tokens.py`, `pub/func/message/tool_output_dedup.py`, `pub/func/message/tool_output_prune.py`, `pub/func/message/target_truncation.py`, `pub/func/message/tool_args_truncate.py`, `pub/func/message/turn_utils.py`, `config/features/agent_side/summarization.py`, plus the two registration sites `agent/core.py` and `agent/tools/subagent/spawn/core.py`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -29,10 +29,10 @@ Source of truth: `agent/middlewares/summarization/core.py`, `agent/middlewares/s
 
 ## 🎯 Overview
 
-`Summarization` (`agent/middlewares/summarization/core.py`, class at line 500) is a **from-scratch** `AgentMiddleware` — it does **not** inherit from LangChain's built-in `SummarizationMiddleware`. It hooks exactly two points of the agent lifecycle:
+`Summarization` (`agent/middlewares/summarization/core.py`, class at `core.py:234`) is a **from-scratch** `AgentMiddleware` — it does **not** inherit from LangChain's built-in `SummarizationMiddleware`. It hooks exactly two points of the agent lifecycle:
 
-- `before_agent` / `abefore_agent` (lines 1946 / 1950) — **T1 preflight**
-- `wrap_model_call` / `awrap_model_call` (lines 1960 / 2046) — **T2 dispatch, T3 post-response re-check, T4/T5 error-recovery ring**
+- `before_agent` / `abefore_agent` (`core.py:399` / `core.py:403`) — **T1 preflight**
+- `wrap_model_call` / `awrap_model_call` (`core.py:413` / `core.py:495`) — **T2 dispatch, T3 post-response re-check, T4/T5 error-recovery ring**
 
 In the middleware chain it sits **innermost — closest to the LLM**. When compression fires, the history always ends up in the shape:
 
@@ -48,14 +48,14 @@ Two registrations exist:
 
 | Site | Trigger | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| Main agent (`agent/core.py:152`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| Worker/subagent (`agent/tools/subagent/spawn/core.py:755`) | `("messages", 40)` **or** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False` (default) |
+| Main agent (`agent/core.py:198`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| Worker/subagent (`agent/tools/subagent/spawn/core.py:847`) | `("messages", 40)` **or** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False` (default) |
 
 Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`) and `keep=("messages", 10)`.
 
 ## 🪙 Token Estimation (No Tokenizer)
 
-`pub/func/estimate_tokens.py` (109 lines) is deliberately tokenizer-free and deterministic, with a three-tier fallback:
+`pub/func/estimate_tokens.py` (230 lines) is deliberately tokenizer-free and deterministic, with a three-tier fallback:
 
 - **T1 — API-reported usage:** `estimate_messages_tokens` returns the last `AIMessage`'s `usage_metadata` (or an explicit `reported_tokens`) verbatim when present — the provider's ground-truth count short-circuits all local estimation;
 - **T2 — CJK-aware heuristic:** `estimate_text_tokens` splits the text into CJK characters (`// CHARS_PER_TOKEN_CJK = 2`) and the rest (`// CHARS_PER_TOKEN = 4`), reusing `pub.func.cjk.count_cjk` for detection;
@@ -82,8 +82,8 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | :------- | :---- | :------------- |
 | `COMPRESSION_TRIGGER_RATIO` ◆ | `0.80` | hard-overflow band in `decide_route`; T3 pressure gate; builds both trigger clauses |
 | `PREEMPTIVE_TRUNCATE_RATIO` ◆ | `0.70` | soft-overflow band in `decide_route` |
-| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget` (:605): window − reserve |
-| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | truncate-track budget = usable × 0.60 (:660) |
+| `COMPRESSION_RESERVE_TOKENS` ◆ | `16_000` | `_usable_budget` (overflow.py:168): window − reserve |
+| `TRUNCATE_BUDGET_RATIO` ◆ | `0.60` | truncate-track budget = usable × 0.60 (overflow.py:219) |
 | `MIN_TOOL_RESULT_TOKENS_TO_TRUNCATE` ◆ | `200` | candidate floor in `find_truncatable_tool_results` |
 | `TRUNCATABLE_RECENT_SKIP` ◆ | `6` | newest messages never truncatable (pairing margin) |
 | `MAX_OVERFLOW_RETRIES` ◆ | `3` | T4/T5 forced-recovery cap (shared counter) |
@@ -159,7 +159,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 - **`keep=("messages", 10)` is accepted but unused.** The constructor stores it for API compatibility; tail retention is budget-based (`PRESERVE_RATIO` × window clamped to [2 000, 15 000]) plus the router's `TRUNCATABLE_RECENT_SKIP` margin. Changing `keep` has no effect.
 - **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).
-- **Retained-but-inert code.** `_preemptive_check` (:589) and `_preemptive_truncate` (:1159) are reference-only: no production call site reaches the two-band preemption they implement.
+- **Retained-but-inert code.** `_preemptive_check` (overflow.py:148) and `_preemptive_truncate` (compression.py:420) are reference-only: no production call site reaches the two-band preemption they implement.
 - **The estimator is a three-tier tokenizer-free heuristic, not a tokenizer.** T1 returns provider-reported usage when available; T2 is the CJK-aware heuristic (CJK characters at `CHARS_PER_TOKEN_CJK = 2`, everything else at `CHARS_PER_TOKEN = 4`); T3 is the legacy `len // 4`, the pure-ASCII degenerate case of T2. It is intentionally deterministic (reproducible tests, stable budgets); `CHARS_PER_TOKEN_CJK = 2` reflects Chinese averaging closer to 1–2 chars/token than 4.
 - **Where reported usage wins.** T3 is the only reported-usage-driven trigger (`compute_pressure` takes the max). The T1/T2 route decision is estimate-driven (estimate + system-prompt overhead only); the legacy `_check_trigger` clause fallback uses `max(local estimate, reported)`.
 - **T3 never alters the returned response.** A T3 dispatch's durable effects are the in-place truncation of tool results (message objects are shared with the graph state) and the anti-thrash bookkeeping; the compact route's `request.override` at T3 is local and the original response is always returned. The whole T3 body is fail-open.
