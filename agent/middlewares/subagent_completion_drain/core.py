@@ -33,6 +33,7 @@ import asyncio
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import HumanMessage
 from loguru import logger
 
 __all__ = ["SubagentCompletionDrainMiddleware"]
@@ -48,6 +49,32 @@ _VERIFICATION_REMINDER = (
     "4. Only then mark completed via todowrite\n"
     "Unverified completion = SISYPHUS VIOLATION = Lost progress."
 )
+
+# Opt-in programmatic gate (``enforce_verification``): appended to the drained
+# batch when the session has no passing verification evidence, replacing the
+# text reminder with a mandatory-verification instruction.
+_VERIFICATION_GATE_MESSAGE = (
+    "[GATE] Completion blocked: verification evidence missing or failing. "
+    "Run verification commands (test/lint/build) before completing."
+)
+
+
+def _completion_gate_violated(session_key: str) -> bool:
+    """True when the session lacks passing verification evidence.
+
+    Fail-open: an unavailable collector or any lookup error is treated as
+    "not violated" so the drain never becomes a hard block.
+    """
+    try:
+        from agent.tools.taskflow.evidence_collector import collect_evidence_summary
+
+        evidence = collect_evidence_summary(session_key=session_key)
+    except Exception:  # noqa: BLE001 - optional probe; never block the turn
+        logger.exception("completion drain: evidence lookup failed; skipping gate")
+        return False
+    if not evidence:
+        return True
+    return "FAIL" in evidence
 
 
 def _is_internal_completion(msg: Any) -> bool:
@@ -98,6 +125,10 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
     the injected messages bypass the sanitize rewrite on the injection turn.
     """
 
+    # Optional programmatic verification gate. False (the default) preserves the
+    # text-reminder path; True is wired from EVIDENCE_LEDGER["enforce_on_complete"].
+    enforce_verification: bool = False
+
     async def abefore_model(self, state, runtime=None):
         """Drain the session queue; return ``{"messages": [...]}`` or ``None``.
 
@@ -127,14 +158,20 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
             )
             # Completion carriers are DoneClaims, not verified results —
             # append the Sisyphus reminder without mutating the shared message.
-            messages = []
-            for item in items:
-                message = item.message
-                if _is_internal_completion(message) and isinstance(message.content, str):
-                    message = message.model_copy(
-                        update={"content": message.content + _VERIFICATION_REMINDER}
-                    )
-                messages.append(message)
+            if not self.enforce_verification:
+                messages = []
+                for item in items:
+                    message = item.message
+                    if _is_internal_completion(message) and isinstance(message.content, str):
+                        message = message.model_copy(
+                            update={"content": message.content + _VERIFICATION_REMINDER}
+                        )
+                    messages.append(message)
+                return {"messages": messages}
+
+            messages = [item.message for item in items]
+            if _completion_gate_violated(str(key)):
+                messages.append(HumanMessage(content=_VERIFICATION_GATE_MESSAGE))
             return {"messages": messages}
         except Exception:
             logger.exception("completion drain failed; continuing turn without injection")

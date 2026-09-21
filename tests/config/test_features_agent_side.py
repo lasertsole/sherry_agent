@@ -223,6 +223,7 @@ SPOT_DEFAULTS = [
     ),
     (EVIDENCE_LEDGER, "auto_record", True),
     (EVIDENCE_LEDGER, "auto_stale", True),
+    (EVIDENCE_LEDGER, "enforce_on_complete", False),
     (
         EVIDENCE_LEDGER,
         "verify_commands",

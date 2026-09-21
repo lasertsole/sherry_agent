@@ -10,6 +10,7 @@ from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
 from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
 from config.features import (
+    EVIDENCE_LEDGER,
     ITERATION_BUDGET,
     LLM_CLIENT_DEFAULTS,
     SUMMARIZATION,
@@ -150,6 +151,10 @@ def _build_middlewares(
     positions below are load-bearing. Pinned by
     ``tests/agent/core/test_middleware_order.py``.
     """
+    # Optional programmatic completion gate: off by default (text reminder),
+    # enabled from EVIDENCE_LEDGER without changing the middleware's position.
+    drain_middleware = SubagentCompletionDrainMiddleware()
+    drain_middleware.enforce_verification = bool(EVIDENCE_LEDGER["enforce_on_complete"])
     return [
         # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
         # after_agent hooks execute in REVERSE list order, so the first
@@ -177,7 +182,7 @@ def _build_middlewares(
         ContextEvictionMiddleware(),
         ToolCallNormalize(),
         PathGuard(),
-        SubagentCompletionDrainMiddleware(),
+        drain_middleware,
         TaskIntentMiddleware(),
         OutputRepetitionGuard(),
         MaxTokensBoostMiddleware(),

@@ -14,12 +14,16 @@ class EvidenceLedgerConfig(TypedDict):
 
     auto_record: bool
     auto_stale: bool
+    enforce_on_complete: bool
+    """Whether the completion-drain middleware turns the Sisyphus reminder into
+    a programmatic gate. Default False keeps the existing text-reminder path."""
     verify_commands: dict[str, list[str]]
 
 
 EVIDENCE_LEDGER: EvidenceLedgerConfig = {
     "auto_record": True,
     "auto_stale": True,
+    "enforce_on_complete": False,
     "verify_commands": {
         "test": ["pytest", "jest", "vitest", "cargo test", "go test", "npm test"],
         "lint": ["ruff", "eslint", "flake8", "pylint", "clippy"],
