@@ -85,41 +85,31 @@ class ChannelManager:
     _consumer_tasks: list[asyncio.Task]
     _started: bool
 
-    async def _consume_loop(self, direction: str) -> None:
-        """Shared consumer loop (audit 3.1.1): drain one bus queue forever,
-        invoking the direction's registered consumer once per configured
-        channel. ``direction`` is ``"inbound"`` or ``"outbound"``.
+    async def _inbound_consume_loop(self) -> None:
+        """Drain the inbound bus queue forever, routing each message to the
+        channel that produced it (``msg.channel``).
+
+        Outbound is NOT drained here — it has its own dedicated consumer,
+        :meth:`_dispatch_outbound`. There is exactly ONE consumer per bus
+        direction, each routing by ``msg.channel``. Do NOT reintroduce a
+        second ``bus.consume_outbound()`` consumer (the removed
+        ``_outbound_consume_loop``) — two consumers race for the same queue
+        and the loser's message is silently dropped.
         """
-        consume = (
-            self._bus.consume_inbound if direction == "inbound" else self._bus.consume_outbound
-        )
-        logger.info(f"{direction.capitalize()} message consumer loop started")
+        logger.info("Inbound message consumer loop started")
         while True:
-            msg = await consume()
-            if direction == "inbound":
-                logger.debug(
-                    f"Processing inbound message: channel={msg.channel}, chat_id={msg.chat_id}"
-                )
-            else:
-                logger.debug(
-                    f"Processing outbound message: channel={msg.channel}, "
-                    f"content_length={len(getattr(msg, 'content', ''))}"
-                )
+            msg = await self._bus.consume_inbound()
+            logger.debug(
+                f"Processing inbound message: channel={msg.channel}, chat_id={msg.chat_id}"
+            )
 
-            consumer = self._inbound_consumer if direction == "inbound" else self._outbound_consumer
-            if consumer is not None:
-                for channel_name, c in self._config.items():
-                    channel = self._channels.get(channel_name)
-                    if channel:
-                        await consumer(msg, channel)
-                    else:
-                        logger.warning(f"Channel {channel_name} not found")
-
-    async def _inbound_consume_loop(self):
-        await self._consume_loop("inbound")
-
-    async def _outbound_consume_loop(self):
-        await self._consume_loop("outbound")
+            if self._inbound_consumer is None:
+                continue
+            channel = self._channels.get(msg.channel)
+            if channel is None:
+                logger.warning(f"Unknown channel: {msg.channel}")
+                continue
+            await self._inbound_consumer(msg, channel)
 
     def set_inbound_consumer(
         self, inbound_consumer: Callable[[InboundMessage, BaseChannel], Awaitable[None]]
@@ -191,12 +181,13 @@ class ChannelManager:
         self._started = True
         logger.info(f"Starting channel manager service: channel_count={len(self._channels)}")
 
-        # Start outbound dispatcher
+        # Start outbound dispatcher — the ONLY consumer of the outbound queue.
+        # Do not schedule a second outbound consumer here: two consumers on
+        # ``bus.consume_outbound()`` race and silently drop messages.
         self._dispatch_task = self._event_loop.create_task(self._dispatch_outbound())
 
         self._consumer_tasks = [
             self._event_loop.create_task(self._inbound_consume_loop()),
-            self._event_loop.create_task(self._outbound_consume_loop()),
         ]
 
         # Start channels
@@ -241,26 +232,40 @@ class ChannelManager:
         logger.debug("Channel manager service stopped")
 
     async def _dispatch_outbound(self) -> None:
-        """Dispatch outbound messages to the appropriate channel."""
+        """Sole consumer of the outbound bus queue: route each message to the
+        channel named in ``msg.channel`` and deliver it.
+
+        The optional ``_outbound_consumer`` side effect runs first for the
+        TARGET channel only and is fail-open — an exception is logged and never
+        blocks delivery. Do NOT add a second consumer of
+        ``bus.consume_outbound()``: it would race this dispatcher and silently
+        drop messages it wins.
+        """
         logger.debug("Outbound dispatcher started")
 
         while True:
             try:
                 msg = await asyncio.wait_for(self._bus.consume_outbound(), timeout=1.0)
-
-                channel = self._channels.get(msg.channel)
-                if channel:
-                    try:
-                        await channel.send(msg)
-                    except Exception as e:
-                        logger.error(f"Error sending to {msg.channel}: {e}")
-                else:
-                    logger.warning(f"Unknown channel: {msg.channel}")
-
             except TimeoutError:
                 continue
             except asyncio.CancelledError:
                 break
+
+            channel = self._channels.get(msg.channel)
+            if channel is None:
+                logger.warning(f"Unknown channel: {msg.channel}")
+                continue
+
+            if self._outbound_consumer is not None:
+                try:
+                    await self._outbound_consumer(msg, channel)
+                except Exception as e:
+                    logger.error(f"Outbound consumer failed for {msg.channel}: {e}")
+
+            try:
+                await channel.send(msg)
+            except Exception as e:
+                logger.error(f"Error sending to {msg.channel}: {e}")
 
     def get_channel(self, name: str) -> BaseChannel | None:
         """Get a channel by name."""

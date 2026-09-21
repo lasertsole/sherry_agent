@@ -194,8 +194,9 @@ class TestStartService:
         assert fake_loop.run_forever_calls == 0, (
             "start_service must never call run_forever (caller owns the loop)"
         )
-        assert len(fake_loop.scheduled) == 4, (
-            f"expected dispatcher + 2 consumers + 1 channel start, got {len(fake_loop.scheduled)}"
+        assert len(fake_loop.scheduled) == 3, (
+            "expected dispatcher + inbound consumer + 1 channel start (outbound "
+            f"must have exactly one consumer), got {len(fake_loop.scheduled)}"
         )
         assert manager._dispatch_task is not None
 
