@@ -18,7 +18,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
 import requests
@@ -254,6 +254,35 @@ def compute_logit(
     x = np.tanh(x)
     logit = float(x @ cw.W2 + cw.b2[0])
     return logit
+
+
+@runtime_checkable
+class RerankerProtocol(Protocol):
+    """Shared contract of the local GGUF and cloud reranker backends.
+
+    Both backends are selected interchangeably behind ``reranker_model`` and
+    expose the same three operations; this protocol makes that contract explicit
+    without introducing inheritance.
+    """
+
+    def predict(self, query: str, passage: str) -> float: ...
+
+    def predict_scores(self, pairs: list[tuple[str, str]]) -> list[float]: ...
+
+    def rank(
+        self,
+        query: str,
+        documents: list[str],
+        top_k: int | None = None,
+        gap_score: float | None = None,
+    ) -> list[dict[str, Any]]: ...
+
+    def filter(
+        self,
+        query: str,
+        documents: list[str],
+        gap_score: float = 0.5,
+    ) -> list[str]: ...
 
 
 # ---------------------------------------------------------------------------
@@ -698,4 +727,16 @@ class CloudReranker:
         return [documents[idx] for idx, sc in idx_score if sc >= gap_score]
 
 
-__all__ = ["CrossEncoderGGUF", "CloudReranker"]
+def reranker_conformance(
+    local: CrossEncoderGGUF, cloud: CloudReranker
+) -> tuple[RerankerProtocol, RerankerProtocol]:
+    """Static conformance probe: both backends satisfy :class:`RerankerProtocol`.
+
+    Returns its inputs unchanged. The return annotation makes a type checker
+    prove the two implementations share one contract without inheritance, and a
+    runtime test can call it to assert the same.
+    """
+    return local, cloud
+
+
+__all__ = ["CrossEncoderGGUF", "CloudReranker", "RerankerProtocol", "reranker_conformance"]

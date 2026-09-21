@@ -17,9 +17,11 @@ from pathlib import Path
 from .core import (
     CloudReranker,
     CrossEncoderGGUF,
+    RerankerProtocol,
     _get_meta,
     _is_local,
     _META_CACHE,
+    reranker_conformance,
 )
 
 _MODEL_DIR = Path(__file__).parent.resolve() / "model_weight"
@@ -123,4 +125,6 @@ __all__ = [
     "reranker_model",
     "CrossEncoderGGUF",
     "CloudReranker",
+    "RerankerProtocol",
+    "reranker_conformance",
 ]
