@@ -30,6 +30,7 @@ from typing import Any
 from dotenv import load_dotenv
 from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
 from models.env_builder import ModelEnvBuilder
+from models.utils import LazyInstance
 from langchain_core.runnables import ConfigurableField
 
 # ---------------------------------------------------------------------------
@@ -74,9 +75,12 @@ if not _is_local:
         # the model unbuilt; it is only needed when _vision_model_func (or a
         # user) actually invokes it on a configured environment.
         logger.warning("no ITTT_* configuration found; model left unbuilt")
-        ITTT_model = None
-    else:
-        ITTT_model = init_chat_model(**_model_config).configurable_fields(
+
+    def build_ittt_model() -> Any:
+        """Build a fresh remote ITTT client (``None`` when unconfigured)."""
+        if not _model_config:
+            return None
+        return init_chat_model(**_model_config).configurable_fields(
             temperature=ConfigurableField(id="temperature"),
         )
 
@@ -147,6 +151,14 @@ else:
     # 2e.  Instantiate the singleton
     # ------------------------------------------------------------------
 
-    ITTT_model = LocalLlamaChatModel().configurable_fields(
-        temperature=ConfigurableField(id="temperature"),
-    )
+    def build_ittt_model() -> Any:
+        """Build a fresh local ITTT model (weight resolution happens here)."""
+        return LocalLlamaChatModel().configurable_fields(
+            temperature=ConfigurableField(id="temperature"),
+        )
+
+
+# Singleton instance matching the old ``from models import ITTT_model`` API. The
+# proxy defers weight resolution / client construction to the first use, so
+# importing this module never touches the filesystem or HuggingFace.
+ITTT_model: LazyInstance[Any] = LazyInstance(build_ittt_model)

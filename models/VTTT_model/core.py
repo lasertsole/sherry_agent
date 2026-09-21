@@ -33,6 +33,7 @@ from typing import Any
 from dotenv import load_dotenv
 from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
 from models.env_builder import ModelEnvBuilder
+from models.utils import LazyInstance
 from langchain_core.runnables import ConfigurableField
 
 # ---------------------------------------------------------------------------
@@ -71,9 +72,11 @@ if not _is_local:
         }
     )
 
-    VTTT_model = init_chat_model(**_model_config).configurable_fields(
-        temperature=ConfigurableField(id="temperature"),
-    )
+    def build_vttt_model() -> Any:
+        """Build a fresh remote VTTT client."""
+        return init_chat_model(**_model_config).configurable_fields(
+            temperature=ConfigurableField(id="temperature"),
+        )
 
 else:
     # ======================== Local (GGUF) branch ========================
@@ -152,6 +155,14 @@ else:
     # 2e.  Instantiate the singleton
     # ------------------------------------------------------------------
 
-    VTTT_model = LocalLlamaChatModel().configurable_fields(
-        temperature=ConfigurableField(id="temperature"),
-    )
+    def build_vttt_model() -> Any:
+        """Build a fresh local VTTT model (weight resolution happens here)."""
+        return LocalLlamaChatModel().configurable_fields(
+            temperature=ConfigurableField(id="temperature"),
+        )
+
+
+# Singleton instance matching the old ``from models import VTTT_model`` API. The
+# proxy defers weight resolution / client construction to the first use, so
+# importing this module never touches the filesystem or HuggingFace.
+VTTT_model: LazyInstance[Any] = LazyInstance(build_vttt_model)

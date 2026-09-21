@@ -35,7 +35,7 @@
 | **P1** | 3   | `state_register_mem` 全局耦合                               | 所有中间件直接依赖全局单例，裸字符串 key                            | SessionState Facade + Enum key    | Open |
 | **P1** | 4   | `runtime/session/state_register.py`                         | 每次 SQLite 操作新开连接；无 Protocol                               | 连接池/Repository + Protocol      | Open |
 | **P1** | 5   | `agent/middlewares/summarization/core.py` 2745 → 573 行 | 已解决：核心拆为 `compression.py`/`overflow.py`/`summary_generation.py`/`thrash.py`（+ `state_aliases.py`），`core.py` 仅留中间件类 + hook 编排 + 进程级接缝（573 行，纯 402 ≤ 800）；sync/async 收敛 4 对（`_execute_compact`/`_dispatch_overflow_route`/`_post_response_check`/`_forced_recovery_request` 共享 `_impl`），未收敛 3 对见 §5.5 | 拆分核心 + 共享 impl | Done |
-| **P2** | 6   | ITTT/VTTT/reranker/extract 模块级单例                       | 与 main_llm 工厂模式不一致                                          | 统一工厂函数                      | Open |
+| **P2** | 6   | ITTT/VTTT/reranker/extract 模块级单例                       | 与 main_llm 工厂模式不一致                                          | 统一工厂函数                      | Done |
 | **P2** | 7   | `RepetitionGuardWrapper` + `ContextLimitGuard` 导入私有常量 | 跨模块私有依赖（8 个私有符号）                                      | 依赖倒置 + Protocol               | Open |
 | **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                | Done   |
 | **P2** | 9   | 原始 HTTP requests.post                                     | embed_model/reranker_model                                          | API Client Adapter                | Done |
@@ -243,11 +243,13 @@ class SessionState:
 - **问题**: 中间件层创建完整 LangGraph agent，导入 `build_main_llm`、`get_agent_tools`、`create_agent`（`ContextEngineHook` 已不存在，被 `@dynamic_prompt` 取代；耦合本身仍在）
 - **模式**: Factory + DI — `NudgeAgentFactory` 协议注入
 
-#### 1.4.6 [CONFIRMED] ITTT/VTTT/reranker/extract 模块级单例 vs 工厂不一致
+#### 1.4.6 [RESOLVED] ITTT/VTTT/reranker/extract 模块级单例 vs 工厂不一致
 
 - **文件**: `ITTT_model/core.py:81`; `VTTT_model/core.py:76`; `reranker_model/__init__.py:120`; `extract_model/core.py:194`
 - **问题**: 这 4 个模块在导入时创建单例，而 `main_llm`/`auxiliary_llm`/`reasoner_llm` 使用 `build_*()` 工厂函数
 - **模式**: 统一使用 `build_*()` 工厂函数
+
+**Status: Done (2026-09-21，部分适用)** — 四个模型均新增 `build_*()` 工厂（`build_ittt_model`/`build_vttt_model`/`build_mineru_model`/`build_reranker_model`，经 `models/__init__.py` 与各自包导出）。ITTT/VTTT 模块级名改为 `models/utils.py::LazyInstance` 惰性代理（双检锁 + `__getattr__` 转发，首次访问才构造，同进程同实例）：导入 `core.py` 不再 `init_chat_model(...)`、也不再触发 `LocalLlamaChatModel()` 的权重解析/下载；`_model_config` 仍在 import 期计算（纯读 env，零 IO），保持既有测试契约。extract 的 `build_mineru_model()` 返回 `MinerUModel.get_instance()`，模块级 `mineru_model` 保留 eager（其构造仅 `_client=None`，无 IO，符合「无副作用可只给工厂」例外）；reranker 本已惰性（`_LazyReranker`），仅补工厂。新增 `tests/models/test_lazy_model_factories.py`（远程计数 `init_chat_model`、本地计数 `resolve_gguf_path`、单例同一性）。
 
 ---
 
@@ -720,7 +722,7 @@ class SessionState:
 | 2.3  | Repository Pattern（SQL 封装：5 个文件）                   | Repository            | 2-3 天      | Done   |
 | 2.4  | Command Executor 抽象                                      | Adapter               | 1 天        | Obsolete |
 | 2.5  | API Client Adapter（embed/reranker/media HTTP）            | Adapter               | 1 天        | Done   |
-| 2.6  | 工厂函数统一（ITTT/VTTT/reranker/extract）                 | Factory               | 1 天        | Open   |
+| 2.6  | 工厂函数统一（ITTT/VTTT/reranker/extract）                 | Factory               | 1 天        | Done   |
 | 2.7  | `ModelEnvBuilder` 提取（5 处模型 config 构建重复）         | DRY                   | 0.5 天      | Done   |
 | 2.8  | `ContentDecoder` 提取（4 处 JSON decode 重复）             | DRY                   | 0.5 天      | Done   |
 | 2.9  | `_convert_message_to_dict` 完善到基类                      | Template Method       | 0.5 天      | Done   |
@@ -738,7 +740,7 @@ class SessionState:
 - 2.3 定位：`agent/checkpointer/thread_safe_checkpointer.py:196-242`；`context_engine/store/core.py`（872 行）；`context_engine/store/db.py`（DDL）；`context_engine/embeddings/store.py:32-54`；`context_engine/events/store.py`。**Done (2026-09-21)**：仅 `context_engine/store/core.py` 存在真实重复/散落的消息表查询（两个 history reader 构造同一条 turn-range SELECT）→ 抽出 `context_engine/store/message_repository.py::MessageRepository`，`core.py` 公开函数委托，SQL 语义/结果逐字段不变（新增 `tests/context_engine/store/test_message_repository.py` 等价性锁定）。其余 4 处保持不变并附理由：`db.py` 是 schema/连接管理（DDL 无 Repository 语义）、`embeddings/store.py` 与 `events/store.py` 各为单一实体的内聚 2 条语句访问、checkpointer 的 `aclean_old_checkpoints` 是单次维护操作，均无散落或可复用查询。
 - 2.4 定位：`agent/tools/terminal.py:189,198`；`agent/tools/python_repl.py:121`；`agent/tools/skill_tools/skill_manage.py:327`。**Obsolete (2026-09-21)**：逐处判定语义不共构（terminal 单点 `_execute_sync` + asyncio 孪生；python_repl text/分离流/JSON；skill_manage Windows 一次性回退），抽共享 executor 需 ≥7 开关且净收益为负——详见 §1.3.4。
 - 2.5 定位：`models/embed_model/core.py:128`；`models/reranker_model/core.py:573,623,679`；`agent/middlewares/media_pipeline/media_handlers.py:90-91`。**Done (2026-09-21，部分适用)**：`models/http_client.py::OpenAICompatibleClient`（见 §1.3.3）；media 限长流式下载语义不同，不入抽象。
-- 2.6 定位：`models/ITTT_model/core.py:81`；`models/VTTT_model/core.py:76`；`models/reranker_model/__init__.py:120`；`models/extract_model/core.py:194`。
+- 2.6 定位：`models/ITTT_model/core.py:81`；`models/VTTT_model/core.py:76`；`models/reranker_model/__init__.py:120`；`models/extract_model/core.py:194`。**Done (2026-09-21，部分适用)**：`build_*()` 工厂 + `models/utils.py::LazyInstance` 惰性代理（见 §1.4.6）。
 - 2.7 定位：ITTT `core.py:44,64-74`；VTTT `core.py:47,67-77`；`main_llm.py:17,64-88`；`reasoner_llm.py:14,23-36`；`auxiliary_llm/core.py:39`。**Done (2026-09-21)**：`models/env_builder.py`（见 §5.3）。
 - 2.8 定位：`context_engine/core.py:157`；`context_engine/store/core.py:618`；`context_engine/store/core.py:788`；`context_engine/embeddings/store.py:91`。**Done (2026-09-21)**：`context_engine/content_codec.py::decode_content`（见 §3.1.7）。
 - 2.9 定位：ITTT `core.py:134-173`；VTTT `core.py:129-177`；基类 `models/LLMs/base_local_llama.py:60`。**Done (2026-09-21)**：上提到 `LocalMultimodalLlamaChatBase` + `_convert_content_block` 钩子（见 §5.2）。

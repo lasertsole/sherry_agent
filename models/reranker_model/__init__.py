@@ -118,11 +118,17 @@ class _LazyReranker:
         self._gguf_meta = None
 
 
+def build_reranker_model() -> _LazyReranker:
+    """Create a fresh lazy reranker (backends still load on first use)."""
+    return _LazyReranker()
+
+
 # Singleton instance matching the old `from models.reranker_model import reranker_model`
-reranker_model: _LazyReranker = _LazyReranker()
+reranker_model: _LazyReranker = build_reranker_model()
 
 __all__ = [
     "reranker_model",
+    "build_reranker_model",
     "CrossEncoderGGUF",
     "CloudReranker",
     "RerankerProtocol",

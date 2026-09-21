@@ -11,9 +11,14 @@ _MODULE_MAP = {
     "is_openai_reasoning_model": ".LLMs",
     "is_zhipu_reasoning_model": ".LLMs",
     "ITTT_model": ".ITTT_model",
+    "build_ittt_model": ".ITTT_model",
     "VTTT_model": ".VTTT_model",
+    "build_vttt_model": ".VTTT_model",
     "build_embed_model": ".embed_model",
     "reranker_model": ".reranker_model",
+    "build_reranker_model": ".reranker_model",
+    "mineru_model": ".extract_model",
+    "build_mineru_model": ".extract_model",
 }
 
 __all__ = list(_MODULE_MAP.keys())

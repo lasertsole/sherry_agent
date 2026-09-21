@@ -1,10 +1,41 @@
 """Shared utilities for the models/ packages (audit 1.1 dedup)."""
 
 import re
+import threading
+from collections.abc import Callable
+from typing import Any
 
 from loguru import logger
 
 from config import ENV_PATH
+
+
+class LazyInstance[T]:
+    """Defer a singleton's construction until its first attribute access.
+
+    Import-time construction of the vision models resolves (and may download)
+    GGUF weights and builds HTTP clients; wrapping the factory in this proxy
+    keeps module import side-effect free while preserving the singleton
+    contract — the first access constructs once, under a lock, and every later
+    access returns the same instance (thread-safe behavior unchanged).
+    """
+
+    def __init__(self, factory: Callable[[], T]) -> None:
+        """Store *factory*; nothing is built here."""
+        self._factory = factory
+        self._instance: T | None = None
+        self._lock = threading.Lock()
+
+    def _resolve(self) -> T:
+        if self._instance is None:
+            with self._lock:
+                if self._instance is None:
+                    self._instance = self._factory()
+        return self._instance
+
+    def __getattr__(self, name: str) -> Any:
+        """Forward attribute access (``invoke``, ``default``, ...) to the instance."""
+        return getattr(self._resolve(), name)
 
 
 def read_env_file_value(key: str, default: str = "", env_path=None) -> str:

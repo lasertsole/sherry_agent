@@ -191,4 +191,12 @@ class MinerUModel:
         return json2md(content_list)
 
 
+def build_mineru_model() -> MinerUModel:
+    """Return the process-wide MinerU singleton (constructed without I/O)."""
+    return MinerUModel.get_instance()
+
+
+# The singleton itself performs no I/O at construction (``_client`` stays
+# ``None`` until ``load()``), so it is safe to keep building it at import time
+# for backward compatibility; the factory above is the unified entry point.
 mineru_model = MinerUModel.get_instance()
