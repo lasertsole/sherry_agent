@@ -23,6 +23,7 @@ import time
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager, contextmanager
+from pathlib import Path
 
 from loguru import logger
 
@@ -59,7 +60,12 @@ class CompactionLock:
         return self._db_path_override or _resolve_db_path()
 
     def _connect(self) -> sqlite3.Connection:
-        return sqlite3.connect(self._db_path(), timeout=5.0)
+        # The MesMemory store opens its connection lazily, so its parent
+        # directory is not guaranteed to exist yet; SQLite cannot create the
+        # file (nor the directory) itself.
+        db_path = self._db_path()
+        Path(db_path).parent.mkdir(parents=True, exist_ok=True)
+        return sqlite3.connect(db_path, timeout=5.0)
 
     @contextmanager
     def acquire_sync(

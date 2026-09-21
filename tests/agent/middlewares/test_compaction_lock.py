@@ -44,6 +44,17 @@ def _make_request(session_id: str):
     )
 
 
+def test_connect_creates_missing_mes_memory_parent_dir(tmp_path, monkeypatch):
+    """The lock must work before the lazy MesMemory store has created its dir."""
+    nested = tmp_path / "store" / "mes_memory" / "mes_memory.db"
+    monkeypatch.setattr(mes_memory_store, "_db_path", nested)
+
+    lock = CompactionLock()
+    with lock.acquire_sync(_SID, timeout_s=1.0):
+        assert lock._current_holder(_SID) is not None
+    assert nested.exists()
+
+
 def test_sync_acquire_release_roundtrip(lock_db):
     lock = CompactionLock(db_path=str(lock_db))
 
