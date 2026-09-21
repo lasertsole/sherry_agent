@@ -37,14 +37,14 @@
 | **P1** | 5   | `agent/middlewares/summarization/core.py` 2745 → 573 行 | 已解决：核心拆为 `compression.py`/`overflow.py`/`summary_generation.py`/`thrash.py`（+ `state_aliases.py`），`core.py` 仅留中间件类 + hook 编排 + 进程级接缝（573 行，纯 402 ≤ 800）；sync/async 收敛 4 对（`_execute_compact`/`_dispatch_overflow_route`/`_post_response_check`/`_forced_recovery_request` 共享 `_impl`），未收敛 3 对见 §5.5 | 拆分核心 + 共享 impl | Done |
 | **P2** | 6   | ITTT/VTTT/reranker/extract 模块级单例                       | 与 main_llm 工厂模式不一致                                          | 统一工厂函数                      | Open |
 | **P2** | 7   | `RepetitionGuardWrapper` + `ContextLimitGuard` 导入私有常量 | 跨模块私有依赖（8 个私有符号）                                      | 依赖倒置 + Protocol               | Open |
-| **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                | Open |
+| **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                | Done   |
 | **P2** | 9   | 原始 HTTP requests.post                                     | embed_model/reranker_model                                          | API Client Adapter                | Open |
 | **P2** | 10  | 原始 subprocess/Popen                                       | terminal/python_repl/skill_manage                                   | Command Executor 抽象             | Open |
 | **P2** | 11  | `handleOperate` switch（11 路）                             | 前端 ad-hoc 对话框管理                                              | Command Registry + Dialog Manager | Open |
 | **P2** | 12  | `badgeClass`/`statusLabel`/`statusColor`/`statusKey`        | 状态映射重复 4 处                                                   | Lookup Table                      | Open |
 | **P2** | 13  | `config/schema.py` 导入 `models/`                           | 已解决：改为回调注入 `set_provider_registry`（`config/schema.py:24`），models 侧装配时推送元数据；`lint-imports` "config must not import models" KEPT | 反转依赖（已落地） | Done |
 | **P2** | 14  | `models/LLMs/main_llm.py` 导入 `agent/`                     | 已解决：`FallbackCandidate` 已迁 `pub/types/llm.py:8`，`models/LLMs/main_llm.py:138` 自 pub 导入 | 提取到 pub/（已落地） | Done |
-| **P2** | 15  | 3 个 SQLite 存储无共享基类                                  | `_connect`/`_ensure_tables_sync` 重复 3 份（todolist 381 / taskflow 703 / subagent 300 行；taskflow 已加 `session_id` 会话隔离列） | BaseSQLiteRepository              | Open |
+| **P2** | 15  | 3 个 SQLite 存储无共享基类                                  | `_connect`/`_ensure_tables_sync` 重复 3 份（todolist 381 / taskflow 703 / subagent 300 行；taskflow 已加 `session_id` 会话隔离列） | BaseSQLiteRepository              | Done   |
 | **P2** | 16  | `_convert_message_to_dict` 重复                             | ITTT↔VTTT 仍各自复制（ITTT `core.py:134-173`、VTTT `core.py:129-177`）；文本默认已上提 `base_local_llama.py:60` | Template Method 完善              | Open |
 | **P2** | 17  | 4 处 JSON content decode 重复                               | 同一 `\x00json:` 前缀解析逻辑 4 份                                  | 提取为 `ContentDecoder`           | Open |
 | **P2** | 18  | 5 处模型 config 构建重复 | config 已统一为 `config/features/` TypedDict + `LLM_CLIENT_DEFAULTS`；剩余重复收窄为「读 env + 建 dict + 过滤 None」 | 提取 `ModelEnvBuilder`            | Open |
@@ -566,7 +566,7 @@ class SessionState:
 
 ## 5. Cross-cutting: Duplicate Code Inventory
 
-### 5.1 [CONFIRMED] 三 SQLite 存储无共享基类
+### 5.1 [RESOLVED] 三 SQLite 存储无共享基类
 
 | 文件                                            | 重复模式（规模/行号，2026-09-21 核对）                                                                                                             |
 | ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -575,6 +575,8 @@ class SessionState:
 | `agent/tools/subagent/registry/store_sqlite.py` | 300 行；`_connect():85`、`_ensure_tables_sync():166`、init 锁 `:64-71`                                                                              |
 
 - **模式**: `BaseSQLiteRepository` 基类 + `SQLiteRepositoryFactory`
+
+**Status: Done (2026-09-21)** — `agent/tools/pub_base/sqlite_store.py` 新增 `BaseSQLiteRepository`，统一 `connect`（busy_timeout 首语句）、`switch_to_wal_if_needed`、`ensure_db`（async 循环归属握手）与 `ensure_tables_sync`（线程锁）；三方 store 各自继承并通过 `_table_ddls`/`_sync_table_ddls`/`_migration_ddls`/`_index_ddls` 钩子提供自己的 DDL，**无任何表/列/索引/迁移语句改动**（taskflow 的 `session_id` 列与增量迁移、subagent 的 `settle_wake_state` 仅同步路径创建均保留）。每 store 的进程级状态仍留在各自模块，基类经模块命名空间读写，故 `_DB_PATH`/`_initialized`/`_ensure_tables_sync` 等既有 monkeypatch 契约不变。各 store 新增 `PRAGMA table_info` DDL 等价性断言。行为保持：store 测试 14/29/5 passed（基线 13/28/4 + 新增守卫）。
 
 ### 5.2 [CONFIRMED] `_convert_message_to_dict` 重复（ITTT↔VTTT 仍各自复制）
 
@@ -674,7 +676,7 @@ class SessionState:
 
 ## 8. Recommended Refactoring Roadmap
 
-> **2026-09-21 核对**：已完成仅 **2.16 / 2.17 / 3.8**（3.8 Pinia 迁移已落地，该步已从列表删除）；其余待做。每步附当前 file:line 定位，可直接执行。
+> **2026-09-21 核对**：已完成 **2.1 / 2.2 / 2.3 / 2.16 / 2.17 / 3.8**（3.8 Pinia 迁移已落地，该步已从列表删除）；其余待做。每步附当前 file:line 定位，可直接执行。
 
 ### Phase 0: 修复数据丢失 Bug（P0）
 
@@ -702,8 +704,8 @@ class SessionState:
 | Step | Target                                                     | Pattern               | Est. Effort | Status |
 | ---- | ---------------------------------------------------------- | --------------------- | ----------- | ------ |
 | 2.1  | `BaseSQLiteRepository` 基类提取（3 个 SQLite 存储）        | Base Class            | 1 天        | Open   |
-| 2.2  | `FileStore` 基类提取 + 工具函数提取                        | Template Method       | 1 天        | Open   |
-| 2.3  | Repository Pattern（SQL 封装：5 个文件）                   | Repository            | 2-3 天      | Open   |
+| 2.2  | `FileStore` 基类提取 + 工具函数提取                        | Template Method       | 1 天        | Done   |
+| 2.3  | Repository Pattern（SQL 封装：5 个文件）                   | Repository            | 2-3 天      | Done   |
 | 2.4  | Command Executor 抽象                                      | Adapter               | 1 天        | Open   |
 | 2.5  | API Client Adapter（embed/reranker/media HTTP）            | Adapter               | 1 天        | Open   |
 | 2.6  | 工厂函数统一（ITTT/VTTT/reranker/extract）                 | Factory               | 1 天        | Open   |
@@ -719,9 +721,9 @@ class SessionState:
 | 2.16 | `config/schema.py` 反转 `models/` 依赖                     | 反转依赖              | 1 天        | Done   |
 | 2.17 | `models/LLMs/main_llm.py` 提取 `FallbackCandidate` 到 pub/ | 反转依赖              | 0.5 天      | Done   |
 
-- 2.1 定位：`agent/tools/{todolist,taskflow,subagent}/registry/store_sqlite.py`（381/703/300 行）；`_connect` :167/:290/:85，`_ensure_tables_sync` :271/:376/:166，init 锁 :95-102/:188-195/:64-71；taskflow 已有 `session_id` 列与迁移（`:137-169`），基类化须参数化 DDL。
-- 2.2 定位：`server/service/file_store.py:28`（`class FileStore`）。
-- 2.3 定位：`agent/checkpointer/thread_safe_checkpointer.py:196-242`；`context_engine/store/core.py`（872 行）；`context_engine/store/db.py`（DDL）；`context_engine/embeddings/store.py:32-54`；`context_engine/events/store.py`。
+- 2.1 定位：`agent/tools/{todolist,taskflow,subagent}/registry/store_sqlite.py`（381/703/300 行）；`_connect` :167/:290/:85，`_ensure_tables_sync` :271/:376/:166，init 锁 :95-102/:188-195/:64-71；taskflow 已有 `session_id` 列与迁移（`:137-169`），基类化须参数化 DDL。**Done (2026-09-21)**：`agent/tools/pub_base/sqlite_store.py::BaseSQLiteRepository`（见 §5.1）。
+- 2.2 定位：`server/service/file_store.py:28`（`class FileStore`）。**Done**：`FileStore` 已存在（`read_files`/`write_files`/`update_files`/`merge_files` + `_before_read`/`_content_length`/`_file_path`/`_validate` 钩子），`server/service/{workplace,memory,heartbeat}.py` 各以子类复用；原子写已由 `pub.func.atomic_replace` / `server.utils.atomic_io` 共享。其余 JSON/JSONL 读写点（evidence ledger / knowledge_store 等）为各异领域语义，非可复用文件存储模式，不再抽象。
+- 2.3 定位：`agent/checkpointer/thread_safe_checkpointer.py:196-242`；`context_engine/store/core.py`（872 行）；`context_engine/store/db.py`（DDL）；`context_engine/embeddings/store.py:32-54`；`context_engine/events/store.py`。**Done (2026-09-21)**：仅 `context_engine/store/core.py` 存在真实重复/散落的消息表查询（两个 history reader 构造同一条 turn-range SELECT）→ 抽出 `context_engine/store/message_repository.py::MessageRepository`，`core.py` 公开函数委托，SQL 语义/结果逐字段不变（新增 `tests/context_engine/store/test_message_repository.py` 等价性锁定）。其余 4 处保持不变并附理由：`db.py` 是 schema/连接管理（DDL 无 Repository 语义）、`embeddings/store.py` 与 `events/store.py` 各为单一实体的内聚 2 条语句访问、checkpointer 的 `aclean_old_checkpoints` 是单次维护操作，均无散落或可复用查询。
 - 2.4 定位：`agent/tools/terminal.py:189,198`；`agent/tools/python_repl.py:121`；`agent/tools/skill_tools/skill_manage.py:327`。
 - 2.5 定位：`models/embed_model/core.py:128`；`models/reranker_model/core.py:573,623,679`；`agent/middlewares/media_pipeline/media_handlers.py:90-91`。
 - 2.6 定位：`models/ITTT_model/core.py:81`；`models/VTTT_model/core.py:76`；`models/reranker_model/__init__.py:120`；`models/extract_model/core.py:194`。
