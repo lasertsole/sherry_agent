@@ -24,6 +24,7 @@ from config.features.agent_side import (
     NUDGE,
     REASONING_BUDGET,
     REPETITION_GUARD,
+    STEP_JUDGE,
     SUBAGENT_INFRA,
     SUMMARIZATION,
     TASKFLOW_INFRA,
@@ -46,6 +47,7 @@ from config.features.agent_side import (
     NudgeConfig,
     ReasoningBudgetConfig,
     RepetitionGuardConfig,
+    StepJudgeConfig,
     SubagentInfraConfig,
     SummarizationConfig,
     TaskFlowInfraConfig,
@@ -84,6 +86,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (MODEL_BACKEND, ModelBackendConfig),
     (TOOL_RESULT_EVICTION, ToolResultEvictionConfig),
     (EVIDENCE_LEDGER, EvidenceLedgerConfig),
+    (STEP_JUDGE, StepJudgeConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -228,6 +231,10 @@ SPOT_DEFAULTS = [
             "format": ["ruff format", "prettier", "black"],
         },
     ),
+    (STEP_JUDGE, "enabled", True),
+    (STEP_JUDGE, "max_retries", 2),
+    (STEP_JUDGE, "max_result_chars", 8000),
+    (STEP_JUDGE, "evidence_aware", True),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]
