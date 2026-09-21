@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-import json
 import time
 from datetime import datetime
 from typing import Any
 
+from context_engine.content_codec import decode_content
 from context_engine.store.db import get_db
 
 EmbeddingRow = dict[str, Any]
@@ -89,9 +89,4 @@ def _unpack(blob: bytes) -> list[float]:
 
 
 def _decode(content: Any) -> Any:
-    if isinstance(content, str):
-        try:
-            return json.loads(content)
-        except (json.JSONDecodeError, ValueError):
-            return content
-    return content
+    return decode_content(content)

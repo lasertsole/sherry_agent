@@ -3,6 +3,7 @@ import hashlib
 import json
 import sqlite3
 import threading
+from ..content_codec import decode_content
 from .db import get_db
 from .message_repository import MessageRepository
 from abc import ABC, abstractmethod
@@ -653,16 +654,13 @@ def _decode_json_columns(row: dict) -> dict:
     # Internal columns — not part of the client-facing shape.
     row.pop("ts_ms", None)
     row.pop("idempotency_key", None)
-    if isinstance(row["content"], str):
-        row["content"] = json.loads(row["content"])
-    if isinstance(row["tool_calls"], str):
-        row["tool_calls"] = json.loads(row["tool_calls"])
-    if isinstance(row["images"], str):
-        row["images"] = json.loads(row["images"])
-    if isinstance(row["audios"], str):
-        row["audios"] = json.loads(row["audios"])
-    if isinstance(row["videos"], str):
-        row["videos"] = json.loads(row["videos"])
+    # ``strict=True`` keeps the previous behavior of letting malformed JSON
+    # propagate instead of silently returning the raw cell.
+    row["content"] = decode_content(row["content"], strict=True)
+    row["tool_calls"] = decode_content(row["tool_calls"], strict=True)
+    row["images"] = decode_content(row["images"], strict=True)
+    row["audios"] = decode_content(row["audios"], strict=True)
+    row["videos"] = decode_content(row["videos"], strict=True)
     return row
 
 
@@ -816,10 +814,7 @@ def _decode_title_content(raw_content: str | None) -> str:
     ``[{"type":"text","text":"..."},{"type":"image",...}]``. This extractor
     returns the first text segment (trimmed), or a fallback when nothing usable.
     """
-    try:
-        decoded = json.loads(raw_content) if raw_content else None
-    except (json.JSONDecodeError, TypeError):
-        decoded = raw_content
+    decoded = decode_content(raw_content) if raw_content else None
     if isinstance(decoded, str):
         return decoded.strip()
     if isinstance(decoded, list):

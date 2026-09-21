@@ -1,5 +1,4 @@
 import re
-import json
 import asyncio
 import sqlite3
 import threading
@@ -9,6 +8,7 @@ from typing import Any
 from config.features import MES_MEMORY
 from loguru import logger
 from pub.func import contains_cjk, count_cjk
+from .content_codec import decode_content
 from .store import get_db, get_messages_by_lastest_n_turns
 
 
@@ -157,11 +157,10 @@ def _sanitize_fts5_query(query: str) -> str:
 def _decode_content(content: Any) -> Any:
     """Reverse :meth:`_encode_content`; returns scalars unchanged."""
     if isinstance(content, str) and content.startswith(_CONTENT_JSON_PREFIX):
-        try:
-            return json.loads(content[len(_CONTENT_JSON_PREFIX) :])
-        except (json.JSONDecodeError, TypeError):
+        decoded = decode_content(content, prefix=_CONTENT_JSON_PREFIX)
+        if decoded is content:
             logger.warning("Failed to decode JSON-encoded message content; returning raw string")
-            return content
+        return decoded
     return content
 
 
