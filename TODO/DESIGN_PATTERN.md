@@ -34,7 +34,7 @@
 | **P1** | 2   | `context_engine/store/core.py:16` `_db = get_db()` | 导入即触发 SQLite 连接 + migration                                  | Lazy init                         | Open |
 | **P1** | 3   | `state_register_mem` 全局耦合                               | 所有中间件直接依赖全局单例，裸字符串 key                            | SessionState Facade + Enum key    | Open |
 | **P1** | 4   | `runtime/session/state_register.py`                         | 每次 SQLite 操作新开连接；无 Protocol                               | 连接池/Repository + Protocol      | Open |
-| **P1** | 5   | `agent/middlewares/summarization/core.py` 2745 行 | 15+ 职责的上帝类；12+ sync/async 双路径（6 个兄弟模块已抽出：`compaction_lock`/`media_offload`/`memory_flush`/`nudges`/`plan_context`/`summary_doc`，核心仍混合） | 拆分核心（6 兄弟模块已抽出） | Open |
+| **P1** | 5   | `agent/middlewares/summarization/core.py` 2745 → 573 行 | 已解决：核心拆为 `compression.py`/`overflow.py`/`summary_generation.py`/`thrash.py`（+ `state_aliases.py`），`core.py` 仅留中间件类 + hook 编排 + 进程级接缝（573 行，纯 402 ≤ 800）；sync/async 收敛 4 对（`_execute_compact`/`_dispatch_overflow_route`/`_post_response_check`/`_forced_recovery_request` 共享 `_impl`），未收敛 3 对见 §5.5 | 拆分核心 + 共享 impl | Done |
 | **P2** | 6   | ITTT/VTTT/reranker/extract 模块级单例                       | 与 main_llm 工厂模式不一致                                          | 统一工厂函数                      | Open |
 | **P2** | 7   | `RepetitionGuardWrapper` + `ContextLimitGuard` 导入私有常量 | 跨模块私有依赖（8 个私有符号）                                      | 依赖倒置 + Protocol               | Open |
 | **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                | Open |
@@ -125,28 +125,20 @@ return strategy.build(**kwargs)
 
 ### 1.2 混合关注点 / 上帝类
 
-#### 1.2.1 [CONFIRMED] `summarization/core.py` — 2745 行上帝类（从 1996 增长）
+#### 1.2.1 [RESOLVED] `summarization/core.py` — 2745 行上帝类（从 1996 增长）
 
 - **文件**: `agent/middlewares/summarization/core.py`
-- **进展（2026-09-21 核对）**: 已抽出 6 个兄弟模块 `compaction_lock.py`/`media_offload.py`/`memory_flush.py`/`nudges.py`/`plan_context.py`/`summary_doc.py`；核心仍 2745 行、职责未净
-- **职责清单** (15+ 职责；锚点为 2026-09-21 核对):
-  1. Token 估算 (`_estimate_tokens:862`)
-  2. Budget 计算 (`_calculate_preserve_budget:875`)
-  3. 触发检查 (`_check_trigger:886`)
-  4. 抢占式检查/截断 (`_preemptive_check:899`, `_preemptive_truncate:1586`)
-  5. 4 路由溢出决策 (`_decide_overflow_route:940`, `_dispatch_overflow_route:1131`)
-  6. T3 后响应重新检查 (`_post_response_check:1240`)
-  7. T4/T5 提供商错误恢复 (`_forced_recovery_request:1368`, `_execute_with_recovery:1484`)
-  8. 冷却/降级管理 (`_cooldown_degraded:1645`, `_monitor_degradation:2224`)
-  9. Cutoff 确定 (`_determine_cutoff:1698`)
-  10. Summary prompt 构造 (`_build_summary_prompt:1785`)
-  11. LLM summary 创建 (`_create_summary:1949`)
-  12. 非 LLM 策略管道 (`_run_non_llm_strategies:2090`)
-  13. 恢复上下文捕获/注入 (`_capture_recovery_context:2143`, `_inject_recovery_context:2159`)
-  14. 文件操作棘轮 (`_format_file_ops:696`, `_parse_file_ops_from_summary:728`)
-  15. 系统提示词重建 (`need_update_system_prompt` 流程, `:822`)
-- **附加问题**: 12+ sync/async 方法对（`_apply_compression:2254`/`_aapply_compression:2361`、`_execute_compact:1077`/`_aexecute_compact:1104` 等全量复制）
-- **模式**: 拆分为 `OverflowRouter`、`SummaryGenerator`、`CompressionExecutor`、`DegradationMonitor`、`FileOpsExtractor`、`CooldownManager`
+- **已完成（2026-09-21）**: 除既有的 6 个兄弟模块（`compaction_lock.py`/`media_offload.py`/`memory_flush.py`/`nudges.py`/`plan_context.py`/`summary_doc.py`）外，核心按职责拆为 4 个新模块 + 1 个共享键别名模块：
+  - `compression.py`（421 行）: `_calculate_preserve_budget`/`_determine_cutoff`/`_adjust_for_orphan_pairs`/`_run_non_llm_strategies`/`_aggressive_truncate`/`_capture_recovery_context`/`_inject_recovery_context`/`_truncate_*`/`_preemptive_truncate`/`_apply_compression*`/`_aapply_compression*`
+  - `overflow.py`（841 行）: T1–T5 触发环——`_check_trigger`/`_preemptive_check`/`_decide_overflow_route`/`_run_budget_truncation`/`_fast_tail_clip`/`_execute_compact`/`_dispatch_overflow_route`/`_post_response_check`/`_forced_recovery_request`/`_execute_with_recovery`/`_t1_preflight` + `extract_reported_input_tokens`
+  - `summary_generation.py`（857 行）: prompt 模板/序列化/文件操作棘轮/静态回退/`_build_*_prompt`/`_structured_runnable`/`_finalize_summary_doc`/`_create_summary`/`_build_new_messages`
+  - `thrash.py`（169 行）: 反抖动计数器/冷却 tick/`_monitor_degradation`/`_reset_turn_state`/`_check_last_turn_ratio`
+  - `state_aliases.py`（26 行）: `StateKey` 短别名单一来源
+- **`core.py` 573 行（纯 402，≤ 800 目标）**: 仅保留 `Summarization` 类（`__init__` + 生命周期 hook）、持久冷却镜像（`state_register_db` 接缝）、进程级接缝（`_rebuild_system_prompt`/`_persist_system_prompt`/`_fire_compression_nudges`/`_taskflow_context`/`_plan_context`/`_resolve_active_plan`），并 re-export 全部被移出的模块级名字（既有测试可零改）。
+- **>250 纯 LOC 模块**已按仓库惯例加 `# allow: SIZE_OK` + 理由（`compression`/`overflow`/`summary_generation`）。
+- **sync/async**: 4 对收敛为共享 `_impl`（见 §5.5）；3 对保持双份并注明理由。
+- **门禁**: 受影响测试 `318 passed`（与拆分前基线逐一致）；`lint-imports` 7 kept；`basedpyright agent/` 0 errors；`ruff check/format` 干净；`check_docs_parity.py` PASS；新增 `tests/agent/middlewares/test_module_boundaries.py`（独立 import + 无环 + 组合根 re-export）。
+- **模式**: 已落地 `CompressionMixin`/`OverflowMixin`/`SummaryGenerationMixin`/`ThrashMixin` + 组合根 `Summarization`
 
 #### 1.2.2 [CONFIRMED] `built_agent()` — 组合根
 
@@ -608,11 +600,19 @@ class SessionState:
 - **已统一**: `config/features/` TypedDict + `LLM_CLIENT_DEFAULTS`（`config/features/agent_side/llm_client_defaults.py:32`）——常量散落已消解
 - **模式**: 提取 `ModelEnvBuilder` — 读 env + 构建 config dict + 过滤 None
 
-### 5.5 [CONFIRMED] middleware sync/async 双路径
+### 5.5 [RESOLVED] middleware sync/async 双路径
 
-- **唯一存在全量复制的中间件**: `summarization/core.py`（12+ 方法对）
-- **已正确使用共享 impl 的中间件**: media_pipeline、tool_guardrails、iteration_budget、context_engine/core — 都通过 `_xxx_impl` 方法被 sync 和 async 版本共享
-- **模式**: 将 summarization 的 sync/async 对重构为共享 `_impl` 模式
+- **已完成（2026-09-21）**: `summarization` 的 sync/async 对按「共享同步实现 + async 薄包装」收敛 **4 对**（仅当语义等价时）：
+  - `_execute_compact` / `_aexecute_compact` → 共享 `_finish_compact`
+  - `_dispatch_overflow_route` / `_adispatch_overflow_route` → 共享 `_prepare_overflow_dispatch`
+  - `_post_response_check` / `_apost_response_check` → 共享 `_evaluate_post_response` + `_log_post_response`
+  - `_forced_recovery_request` / `_aforced_recovery_request` → 共享 `_begin_forced_recovery` / `_finish_forced_recovery`
+- **未收敛（3 对，附理由）**:
+  - `_apply_compression_under_lock` / `_aapply_compression_under_lock` — sync 走 `run_memory_flush_sync`，async `await run_memory_flush`；折叠会改变 await/取消语义（任务显式要求保留）
+  - `_execute_with_recovery` / `_aexecute_with_recovery` — 非目标异常的 `raise`（bare re-raise，保留原始 traceback）与 handler 的同步/异步调用必须各自成立
+  - `_before_agent_impl` / `_abefore_agent_impl` — T1 preflight 的 `_t1_preflight` / `await _at1_preflight` 差异
+- **已正确使用共享 impl 的中间件（不变）**: media_pipeline、tool_guardrails、iteration_budget、context_engine/core
+- **覆盖**: 收敛后的每条路径仍由既有 sync + async 两侧测试覆盖（`test_summarization_comprehensive` 的 `TestSummarizationAsync` 等），未删任何一侧测试
 
 ---
 
@@ -633,7 +633,7 @@ class SessionState:
 | followup         | `_followup_task`                                                      | `followup/core.py:12`                |
 | bridge           | `_bridge_task`                                                        | `events/bridge.py:34`                |
 | 压缩 TODO        | `_COMPRESSION_TODO_TASKS`                                             | `summarization/nudges.py:355`                       |
-| 冷却会话         | `_RESTORED_COOLDOWN_SESSIONS`                                         | `summarization/core.py:151`               |
+| 冷却会话         | `_RESTORED_COOLDOWN_SESSIONS`                                         | `summarization/core.py:105`               |
 | 提醒会话         | `_reminded_sessions`                                                  | `todowrite.py:34`                    |
 | 任务流错误       | `_REGISTRY_ERROR`                                                     | `taskflow_wait_all.py:43`            |
 | wrapper 工厂     | `_GRAPH_WRAPPER_FACTORIES`                                            | `wrapper/registry.py:45`（有意为之的进程级可插拔注册表：公共 API `register_graph_wrapper`/`unregister_graph_wrapper`/`reset_graph_wrappers`，非待消除 smell）             |
@@ -691,11 +691,11 @@ class SessionState:
 | 1.1  | `context_engine/store/core.py:16` eager DB → lazy      | Lazy init               | 0.5 天      | Open   |
 | 1.2  | 中间件 `session_id` 提取 + `state_register_mem` Facade | Mixin + Enum key        | 1 天        | Open   |
 | 1.3  | `runtime/session/state_register.py` Protocol + 连接池 + lazy | Interface Seg. + 连接池 | 1-2 天      | Open   |
-| 1.4  | `summarization/core.py` 拆分（2745 行 → 6 模块）       | 分层 + 共享 impl        | 3-5 天      | Open   |
+| 1.4  | `summarization/core.py` 拆分（2745 → 573 行 + 共享 impl） | 分层 + 共享 impl        | 3-5 天      | Done   |
 
 - 1.1 定位：`context_engine/store/core.py:16`（`_db = get_db()`）。
 - 1.2/1.3 定位：`runtime/session/state_register.py`（`StateRegisterMem`/`StateRegisterDB` 无 Protocol；DB 每次 `sqlite3.connect()`）。
-- 1.4 定位：`agent/middlewares/summarization/core.py` 2745 行；6 个兄弟模块已抽出（`compaction_lock.py`/`media_offload.py`/`memory_flush.py`/`nudges.py`/`plan_context.py`/`summary_doc.py`），剩余核心拆分见 §1.2.1。
+- 1.4 定位（已完成 2026-09-21）：`agent/middlewares/summarization/core.py` 2745 → 573 行；核心拆为 `compression.py`(421)/`overflow.py`(841)/`summary_generation.py`(857)/`thrash.py`(169)/`state_aliases.py`(26)，`core.py` 仅留类 + hook 编排 + 进程级接缝；sync/async 收敛 4 对（未收敛 3 对见 §5.5）。
 
 ### Phase 2: 拆解 God 模块 + DRY 清理（P2）
 
