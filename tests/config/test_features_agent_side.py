@@ -11,6 +11,7 @@ import pytest
 
 from config.features.agent_side import (
     CONTEXT_GUARD,
+    EVIDENCE_LEDGER,
     HEARTBEAT_STALENESS,
     HITL_DEFAULTS,
     ITERATION_BUDGET,
@@ -32,6 +33,7 @@ from config.features.agent_side import (
     TOOL_GUARDRAILS,
     TOOL_RESULT_EVICTION,
     ContextGuardConfig,
+    EvidenceLedgerConfig,
     HeartbeatStalenessConfig,
     HitlDefaultsConfig,
     IterationBudgetConfig,
@@ -81,6 +83,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (REASONING_BUDGET, ReasoningBudgetConfig),
     (MODEL_BACKEND, ModelBackendConfig),
     (TOOL_RESULT_EVICTION, ToolResultEvictionConfig),
+    (EVIDENCE_LEDGER, EvidenceLedgerConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -211,6 +214,19 @@ SPOT_DEFAULTS = [
                 "skill_list",
             }
         ),
+    ),
+    (EVIDENCE_LEDGER, "auto_record", True),
+    (EVIDENCE_LEDGER, "auto_stale", True),
+    (
+        EVIDENCE_LEDGER,
+        "verify_commands",
+        {
+            "test": ["pytest", "jest", "vitest", "cargo test", "go test", "npm test"],
+            "lint": ["ruff", "eslint", "flake8", "pylint", "clippy"],
+            "build": ["cargo build", "npm run build", "make", "cmake"],
+            "typecheck": ["basedpyright", "mypy", "tsc", "pyright"],
+            "format": ["ruff format", "prettier", "black"],
+        },
     ),
 ]
 
