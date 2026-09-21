@@ -30,6 +30,7 @@ from config.features import LLM_CLIENT_DEFAULTS
 from models.LLMs.base_local_llama import LocalLlamaChatBase
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.auxiliary_llm.local_adapters import LocalStructuredOutput, LocalToolBinder
+from models.env_builder import ModelEnvBuilder, read_env
 
 
 # ---------------------------------------------------------------------------
@@ -58,9 +59,8 @@ def build_auxiliary_llm(temperature: float | None = None):
     thread) to get a fresh instance whose transport pool is correctly
     bound to the *current* event loop.
     """
-    _provider = os.getenv("AUXILIARY_LLM_PROVIDER", "").strip()
-    _api_key = os.getenv("AUXILIARY_LLM_API_KEY", "").strip()
-    _api_base = os.getenv("AUXILIARY_LLM_API_BASE", "").strip()
+    _provider = read_env("AUXILIARY_LLM_PROVIDER")
+    _api_base = read_env("AUXILIARY_LLM_API_BASE")
 
     _is_local = os.getenv("AUXILIARY_LLM_MODEL_LOCAL", "").strip().lower() == "true"
 
@@ -68,24 +68,27 @@ def build_auxiliary_llm(temperature: float | None = None):
         # ---------- Remote (online) branch ----------
         from langchain.chat_models import init_chat_model
 
-        _api_name = os.getenv("AUXILIARY_LLM_API_NAME", "").strip()
         _raw_max = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
         _max_tokens = int(_raw_max) if _raw_max else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
 
-        _model_config: dict[str, Any] = {
-            "model_provider": _provider,
-            "model": _api_name,
-            "api_key": _api_key,
-            "base_url": _api_base,
-            "temperature": temperature if temperature is not None else 0,
-            "max_retries": LLM_CLIENT_DEFAULTS["aux_max_retries"],
-            # Bounded per-request window (seconds), mirroring main_llm. No
-            # stream_chunk_timeout: every aux call site is invoke/ainvoke —
-            # the model is never streamed.
-            "timeout": LLM_CLIENT_DEFAULTS["aux_timeout"],
-            "profile": {"max_input_tokens": _max_tokens},
-        }
-        _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}
+        _model_config: dict[str, Any] = ModelEnvBuilder(
+            {
+                "model_provider": "AUXILIARY_LLM_PROVIDER",
+                "model": "AUXILIARY_LLM_API_NAME",
+                "api_key": "AUXILIARY_LLM_API_KEY",
+                "base_url": "AUXILIARY_LLM_API_BASE",
+            }
+        ).build(
+            {
+                "temperature": temperature if temperature is not None else 0,
+                "max_retries": LLM_CLIENT_DEFAULTS["aux_max_retries"],
+                # Bounded per-request window (seconds), mirroring main_llm. No
+                # stream_chunk_timeout: every aux call site is invoke/ainvoke —
+                # the model is never streamed.
+                "timeout": LLM_CLIENT_DEFAULTS["aux_timeout"],
+                "profile": {"max_input_tokens": _max_tokens},
+            }
+        )
 
         model = init_chat_model(**_model_config)
         model = NormalizingChatModel(inner=model)

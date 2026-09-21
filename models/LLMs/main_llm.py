@@ -12,13 +12,15 @@ from models.LLMs.reasoning_payload import (
     get_thinking_budget,
     is_zhipu_reasoning_model,
 )
+from models.env_builder import ModelEnvBuilder, clean_client_kwargs
 
 # Load environment variables
 load_dotenv(ENV_PATH, override=True)
-api_key = os.getenv("MAIN_LLM_API_KEY")
+# ``model_provider``/``api_name`` are read verbatim (no strip) because the
+# reasoning-payload dispatch consumes them directly; the builder below reads its
+# own copies of the four credential vars for the client config.
 api_name = os.getenv("MAIN_LLM_NAME")
 model_provider = os.getenv("MAIN_LLM_PROVIDER")
-api_base = os.getenv("MAIN_LLM_API_BASE")
 max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
 if max_tokens:
     max_tokens = int(max_tokens)
@@ -61,19 +63,25 @@ def apply_thinking_budget(
     return model_config
 
 
-model_config: dict[str, Any] = {
-    "model_provider": model_provider,
-    "model": api_name,
-    "api_key": api_key,
-    "base_url": api_base,
-    "temperature": 0,
-    "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
-    # Explicit bounded window for each LLM request (seconds).
-    "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
-    # Max idle gap between streamed chunks before aborting.
-    "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
-    "profile": {"max_input_tokens": max_tokens},  # Set model context window size
-}
+model_config: dict[str, Any] = ModelEnvBuilder(
+    {
+        "model_provider": "MAIN_LLM_PROVIDER",
+        "model": "MAIN_LLM_NAME",
+        "api_key": "MAIN_LLM_API_KEY",
+        "base_url": "MAIN_LLM_API_BASE",
+    },
+    strip=False,
+).build(
+    {
+        "temperature": 0,
+        "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
+        # Explicit bounded window for each LLM request (seconds).
+        "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
+        # Max idle gap between streamed chunks before aborting.
+        "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
+        "profile": {"max_input_tokens": max_tokens},  # Set model context window size
+    }
+)
 # Map the universal switch to the provider-correct reasoning payload. Returns
 # {} (no-op) for providers/models that don't accept one, so it never crashes.
 model_config.update(
@@ -85,7 +93,7 @@ model_config.update(
     )
 )
 apply_thinking_budget(model_config, model_provider, api_name, enable_thinking)
-model_config = {k: v for k, v in model_config.items() if v is not None and v != ""}
+model_config = clean_client_kwargs(model_config)
 
 
 def _build_inner_chat_model():
@@ -153,7 +161,7 @@ def build_fallback_chain():
             "max_retries": LLM_CLIENT_DEFAULTS["fallback_max_retries"],
             "timeout": LLM_CLIENT_DEFAULTS["fallback_timeout"],
         }
-        candidate_config = {k: v for k, v in candidate_config.items() if v is not None and v != ""}
+        candidate_config = clean_client_kwargs(candidate_config)
         try:
             inner = init_chat_model(**candidate_config)
         except Exception as exc:

@@ -34,6 +34,7 @@ from langchain_core.messages import (
     SystemMessage,
 )
 from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
+from models.env_builder import ModelEnvBuilder
 from langchain_core.runnables import ConfigurableField
 
 # ---------------------------------------------------------------------------
@@ -56,22 +57,21 @@ if not _is_local:
     # ======================== Remote (API) branch ========================
     from langchain.chat_models import init_chat_model
 
-    _api_key = os.getenv("ITTT_API_KEY", "").strip() or None
-    _api_name = os.getenv("ITTT_API_NAME", "").strip() or None
-    _api_base = os.getenv("ITTT_API_BASE", "").strip() or None
-    _provider = os.getenv("ITTT_MODEL_PROVIDER", "").strip() or None
-
-    _model_config: dict[str, Any] = {
-        "model_provider": _provider,
-        "model": _api_name,
-        "api_key": _api_key,
-        "base_url": _api_base,
-        "temperature": LLM_CLIENT_DEFAULTS["ittt_remote_temperature"],
-        "max_retries": LLM_CLIENT_DEFAULTS["ittt_remote_max_retries"],
-        # Explicit bounded window for each remote request (seconds).
-        "timeout": LLM_CLIENT_DEFAULTS["ittt_remote_timeout"],
-    }
-    _model_config = {k: v for k, v in _model_config.items() if v is not None and v != ""}
+    _model_config: dict[str, Any] = ModelEnvBuilder(
+        {
+            "model_provider": "ITTT_MODEL_PROVIDER",
+            "model": "ITTT_API_NAME",
+            "api_key": "ITTT_API_KEY",
+            "base_url": "ITTT_API_BASE",
+        }
+    ).build(
+        {
+            "temperature": LLM_CLIENT_DEFAULTS["ittt_remote_temperature"],
+            "max_retries": LLM_CLIENT_DEFAULTS["ittt_remote_max_retries"],
+            # Explicit bounded window for each remote request (seconds).
+            "timeout": LLM_CLIENT_DEFAULTS["ittt_remote_timeout"],
+        }
+    )
 
     if not _model_config:
         # No ITTT_* configuration at all (e.g. hermetic CI: no .env, remote
