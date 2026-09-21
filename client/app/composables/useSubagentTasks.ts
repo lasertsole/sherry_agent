@@ -13,6 +13,7 @@ import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 import { useSubagentStore } from '~/stores/subagent';
+import { subagentStatusMeta } from '~/utils/subagent-status';
 import type { SubagentRun } from './bridge';
 
 /**
@@ -49,14 +50,8 @@ export function useSubagentTasks() {
    */
   function badgeClass(run: SubagentRun): string {
     const exec = run?.execution?.status;
-    if (exec === 'RUNNING') return 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300';
-    if (exec === 'INTERRUPTED') return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
-    const outcome = run?.execution?.outcome?.status;
-    if (outcome === 'OK') return 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-300';
-    if (outcome === 'ERROR') return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
-    if (outcome === 'TIMEOUT' || outcome === 'KILLED')
-      return 'bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300';
-    return 'bg-gray-100 text-gray-600 dark:bg-gray-800 dark:text-gray-300';
+    if (exec === 'RUNNING' || exec === 'INTERRUPTED') return subagentStatusMeta(exec).badgeClass;
+    return subagentStatusMeta(run?.execution?.outcome?.status).badgeClass;
   }
 
   /**
@@ -65,18 +60,12 @@ export function useSubagentTasks() {
    */
   function statusLabel(run: SubagentRun): string {
     const exec = run?.execution?.status;
-    if (exec === 'RUNNING') return t('sidebar.statusRunning');
-    if (exec === 'INTERRUPTED') return t('sidebar.statusInterrupted');
+    if (exec === 'RUNNING' || exec === 'INTERRUPTED') return t(subagentStatusMeta(exec).labelKey);
     const delivery = run?.delivery?.status;
-    if (delivery === 'PENDING') return t('sidebar.statusPending');
-    if (delivery === 'IN_PROGRESS') return t('sidebar.statusInProgress');
-    if (delivery === 'DELIVERED') return t('sidebar.statusDelivered');
-    const outcome = run?.execution?.outcome?.status;
-    if (outcome === 'OK') return t('sidebar.statusDone');
-    if (outcome === 'ERROR') return t('sidebar.statusError');
-    if (outcome === 'TIMEOUT') return t('sidebar.statusTimeout');
-    if (outcome === 'KILLED') return t('sidebar.statusKilled');
-    return t('sidebar.statusUnknown');
+    if (delivery === 'PENDING' || delivery === 'IN_PROGRESS' || delivery === 'DELIVERED') {
+      return t(subagentStatusMeta(delivery).labelKey);
+    }
+    return t(subagentStatusMeta(run?.execution?.outcome?.status).labelKey);
   }
 
   /**

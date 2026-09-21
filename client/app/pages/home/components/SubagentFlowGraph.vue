@@ -44,6 +44,7 @@ import { Graph, NodeEvent } from '@antv/g6';
 import type { GraphData, IElementEvent, NodeData } from '@antv/g6';
 import type { SubagentRun } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
+import { subagentStatusColorDark, subagentStatusColorLight, subagentStatusMeta } from '~/utils/subagent-status';
 
 const { t } = useI18n();
 
@@ -100,41 +101,13 @@ const isDark = () => colorMode.value === 'dark';
  * Run status → node color (light theme)
  * @param status
  */
-const statusColorLight = (status: string): string => {
-  switch (status) {
-    case 'RUNNING':
-    case 'INTERRUPTED':
-      return '#3b82f6';
-    case 'OK':
-      return '#10b981';
-    case 'ERROR':
-    case 'TIMEOUT':
-    case 'KILLED':
-      return '#ef4444';
-    default:
-      return '#64748b';
-  }
-};
+const statusColorLight = (status: string): string => subagentStatusColorLight(status);
 
 /**
  * Run status → node color (dark theme)
  * @param status
  */
-const statusColorDark = (status: string): string => {
-  switch (status) {
-    case 'RUNNING':
-    case 'INTERRUPTED':
-      return '#60a5fa';
-    case 'OK':
-      return '#34d399';
-    case 'ERROR':
-    case 'TIMEOUT':
-    case 'KILLED':
-      return '#f87171';
-    default:
-      return '#94a3b8';
-  }
-};
+const statusColorDark = (status: string): string => subagentStatusColorDark(status);
 
 /**
  * Run status → node color (per theme)
@@ -150,11 +123,8 @@ const statusColor = (status: string): string => {
  */
 const statusKey = (run: SubagentRun): string => {
   const exec = run?.execution?.status;
-  if (exec === 'RUNNING' || exec === 'INTERRUPTED') return 'running';
-  const outcome = run?.execution?.outcome?.status;
-  if (outcome === 'OK') return 'completed';
-  if (outcome === 'ERROR' || outcome === 'TIMEOUT' || outcome === 'KILLED') return 'failed';
-  return 'unknown';
+  if (exec === 'RUNNING' || exec === 'INTERRUPTED') return subagentStatusMeta(exec).flowKey;
+  return subagentStatusMeta(run?.execution?.outcome?.status).flowKey;
 };
 
 /**
