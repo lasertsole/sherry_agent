@@ -95,33 +95,8 @@ _ALLOWLIST_FIX_CLAUSE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
-_LICENSE_DEFERRED_REASON = (
-    "Fixing the documents is wrong because these links deliberately point at the"
-    " project's top-level LICENSE, which the repository declares as MIT but does"
-    " not yet ship; the copyright holder cannot be uniquely derived"
-    ' (client/src-tauri/Cargo.toml authors = "EMA AI Agent Team" versus the sole'
-    ' git author and repository owner "lasertsole <3132225629@qq.com>"), so'
-    " creating the file is an owner decision, not a documentation rewrite."
-)
-
 # (source path relative to the repo root, raw link destination) -> reason.
 ALLOWLIST: dict[tuple[str, str], str] = {
-    (
-        "skills/builtin/core/multimodal_rag/README.md",
-        "../../../../LICENSE",
-    ): (_LICENSE_DEFERRED_REASON),
-    (
-        "skills/builtin/core/multimodal_rag/README.zh.md",
-        "../../../../LICENSE",
-    ): (_LICENSE_DEFERRED_REASON),
-    (
-        "skills/builtin/core/multimodal_rag/README.ja.md",
-        "../../../../LICENSE",
-    ): (_LICENSE_DEFERRED_REASON),
-    (
-        "skills/builtin/core/multimodal_rag/README.ko.md",
-        "../../../../LICENSE",
-    ): (_LICENSE_DEFERRED_REASON),
     (
         "skills/builtin/code_wiki/templates/getting-started.md",
         "diagrams/",
