@@ -52,10 +52,12 @@ MesMemory 是一个**面向单会话的短期消息存储**，设计刻意保持
 context_engine/
 ├── __init__.py          # 包导出（re-export store 与 core 的 API）
 ├── core.py              # 业务层：历史格式化、FTS5 搜索
+├── content_codec.py     # 共享 JSON 内容单元解码器
 ├── store/
 │   ├── __init__.py      # 存储层导出
 │   ├── db.py            # SQLite 连接、WAL 模式、版本化迁移（建表、索引、FTS5 触发器）
-│   └── core.py          # 消息 CRUD：新增/查询/删除 + 会话列举
+│   ├── core.py          # 消息 CRUD：新增/查询/删除 + 会话列举（惰性共享连接）
+│   └── message_repository.py # messages 表的轮次范围与标识读取
 └── curator/             # 后台技能维护编排器（有独立 README）
 ```
 
@@ -311,7 +313,7 @@ for r in results:
 净化用户输入以安全用于 FTS5 MATCH 查询。
 
 #### `_decode_content(content: Any) -> Any`（内部）
-解码携带 `\x00json:` 前缀的消息内容字符串；其他值原样返回。
+解码携带 `\x00json:` 前缀的消息内容字符串；其他值原样返回。解码核心由 `context_engine/content_codec.py::decode_content` 共享。
 
 ---
 

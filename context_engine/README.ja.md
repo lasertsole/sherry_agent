@@ -52,10 +52,12 @@ Agent が生成したスキルの長期保守（ライフサイクル遷移・�
 context_engine/
 ├── __init__.py          # パッケージのエクスポート（store と core の API を再エクスポート）
 ├── core.py              # ビジネス層：履歴フォーマット、FTS5 検索
+├── content_codec.py     # 共有 JSON コンテンツセルデコーダ
 ├── store/
 │   ├── __init__.py      # ストア層のエクスポート
 │   ├── db.py            # SQLite 接続、WAL モード、バージョン管理されたマイグレーション（テーブル・インデックス・FTS5 トリガー）
-│   └── core.py          # メッセージ CRUD：追加/照会/削除 + セッション一覧
+│   ├── core.py          # メッセージ CRUD：追加/照会/削除 + セッション一覧（遅延共有接続）
+│   └── message_repository.py # messages テーブルのターン範囲・識別子読み取り
 └── curator/             # バックグラウンドのスキル保守オーケストレーター（専用 README あり）
 ```
 
@@ -311,7 +313,7 @@ for r in results:
 ユーザー入力を安全な FTS5 MATCH クエリ用にサニタイズします。
 
 #### `_decode_content(content: Any) -> Any`（内部）
-`\x00json:` 接頭辞を持つメッセージ内容文字列をデコードします。その他の値はそのまま返します。
+`\x00json:` 接頭辞を持つメッセージ内容文字列をデコードします。その他の値はそのまま返します。デコードの中核は `context_engine/content_codec.py::decode_content` が共有します。
 
 ---
 

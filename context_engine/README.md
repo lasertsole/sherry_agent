@@ -52,10 +52,12 @@ Long-term maintenance of agent-created skills (lifecycle transitions, consolidat
 context_engine/
 ├── __init__.py          # Package exports (re-exports store + core APIs)
 ├── core.py              # Business layer: history prompt formatting, FTS5 search
+├── content_codec.py     # Shared JSON content-cell decoder
 ├── store/
 │   ├── __init__.py      # Store-layer exports
 │   ├── db.py            # SQLite connection, WAL mode, versioned migrations (tables, indexes, FTS5 triggers)
-│   └── core.py          # Message CRUD: add/query/delete + session listing
+│   ├── core.py          # Message CRUD: add/query/delete + session listing (lazy shared connection)
+│   └── message_repository.py # Turn-range & identity reads over the messages table
 └── curator/             # Background skill maintenance orchestrator (has its own README)
 ```
 
@@ -314,7 +316,7 @@ Full-text search messages.
 Sanitize user input for safe FTS5 MATCH queries.
 
 #### `_decode_content(content: Any) -> Any` (internal)
-Decode message content strings that carry the `\x00json:` prefix; returns other values unchanged.
+Decode message content strings that carry the `\x00json:` prefix; returns other values unchanged. The decode core is shared through `context_engine/content_codec.py::decode_content`.
 
 ---
 

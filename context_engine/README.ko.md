@@ -52,10 +52,12 @@ MesMemory는 **세션 단위의 단기 메시지 저장소**이며, 의도적으
 context_engine/
 ├── __init__.py          # 패키지 익스포트 (store와 core의 API 재익스포트)
 ├── core.py              # 비즈니스 레이어: 히스토리 포맷팅, FTS5 검색
+├── content_codec.py     # 공유 JSON 콘텐츠 셀 디코더
 ├── store/
 │   ├── __init__.py      # 스토어 레이어 익스포트
 │   ├── db.py            # SQLite 연결, WAL 모드, 버전 관리된 마이그레이션(테이블, 인덱스, FTS5 트리거)
-│   └── core.py          # 메시지 CRUD: 추가/조회/삭제 + 세션 목록
+│   ├── core.py          # 메시지 CRUD: 추가/조회/삭제 + 세션 목록 (지연 공유 연결)
+│   └── message_repository.py # messages 테이블의 턴 범위·식별자 읽기
 └── curator/             # 백그라운드 스킬 유지보수 오케스트레이터 (별도 README 보유)
 ```
 
@@ -311,7 +313,7 @@ for r in results:
 사용자 입력을 안전한 FTS5 MATCH 쿼리로 정화합니다.
 
 #### `_decode_content(content: Any) -> Any` (내부)
-`\x00json:` 접두사가 붙은 메시지 콘텐츠 문자열을 디코딩합니다. 다른 값은 그대로 반환합니다.
+`\x00json:` 접두사가 붙은 메시지 콘텐츠 문자열을 디코딩합니다. 다른 값은 그대로 반환합니다. 디코딩 코어는 `context_engine/content_codec.py::decode_content`가 공유합니다.
 
 ---
 
