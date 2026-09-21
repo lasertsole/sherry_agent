@@ -154,7 +154,8 @@ def _build_middlewares(
     # Optional programmatic completion gate: off by default (text reminder),
     # enabled from EVIDENCE_LEDGER without changing the middleware's position.
     drain_middleware = SubagentCompletionDrainMiddleware()
-    drain_middleware.enforce_verification = bool(EVIDENCE_LEDGER["enforce_on_complete"])
+    if EVIDENCE_LEDGER["enforce_on_complete"]:
+        drain_middleware.enforce_verification = True
     return [
         # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
         # after_agent hooks execute in REVERSE list order, so the first

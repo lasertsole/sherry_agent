@@ -75,6 +75,70 @@ def test_default_class_attribute_is_disabled():
 
 
 # ---------------------------------------------------------------------------
+# Production wiring in agent.core._build_middlewares
+# ---------------------------------------------------------------------------
+
+
+def _stub_core_middlewares(monkeypatch: pytest.MonkeyPatch, drain):
+    from agent import core as agent_core
+
+    names = [
+        "TodoContinuationEnforcer",
+        "MultimodalProcessor",
+        "IterationBudget",
+        "ToolGuardrails",
+        "ContextEvictionMiddleware",
+        "ToolCallNormalize",
+        "PathGuard",
+        "TaskIntentMiddleware",
+        "OutputRepetitionGuard",
+        "MaxTokensBoostMiddleware",
+        "HeartbeatStaleness",
+        "HumanInTheLoop",
+        "MessagePersistenceMiddleware",
+        "LLMRetryMiddleware",
+        "Summarization",
+    ]
+    for name in names:
+        monkeypatch.setattr(agent_core, name, lambda *a, **k: object())
+    monkeypatch.setattr(agent_core, "HITLConfig", lambda: None)
+    monkeypatch.setattr(agent_core, "system_prompt_injection", object())
+    monkeypatch.setattr(agent_core, "SubagentCompletionDrainMiddleware", lambda: drain)
+    return agent_core
+
+
+def _build(agent_core):
+    return agent_core._build_middlewares(
+        fallback_chain=None,
+        auxiliary_llm=None,
+        main_llm_context_window=131072,
+        compression_trigger_ratio=0.8,
+    )
+
+
+def test_build_middlewares_leaves_drain_untouched_when_disabled(monkeypatch: pytest.MonkeyPatch):
+    agent_core = _stub_core_middlewares(monkeypatch, object())
+    monkeypatch.setattr(agent_core, "EVIDENCE_LEDGER", {"enforce_on_complete": False})
+
+    middlewares = _build(agent_core)
+
+    assert len(middlewares) == 17
+
+
+def test_build_middlewares_enables_drain_when_configured(monkeypatch: pytest.MonkeyPatch):
+    class _Drain:
+        enforce_verification = False
+
+    drain = _Drain()
+    agent_core = _stub_core_middlewares(monkeypatch, drain)
+    monkeypatch.setattr(agent_core, "EVIDENCE_LEDGER", {"enforce_on_complete": True})
+
+    _build(agent_core)
+
+    assert drain.enforce_verification is True
+
+
+# ---------------------------------------------------------------------------
 # Default (disabled): existing text-reminder behavior, unchanged
 # ---------------------------------------------------------------------------
 
