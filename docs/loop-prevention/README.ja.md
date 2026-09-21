@@ -189,6 +189,47 @@
 | 起動 (プロセスライフサイクル) | `CrashLoopBreaker`、`server/__main__` ゲーティング、`trigger.__init__` の早期終了 | クラッシュ再起動ループ |
 | インフラ / 運用 | cron REST ハッチ、HTTP 専用 env、状態ファイル削除 | オペレータの介入が要る、動けなくなったブレーカー状態 |
 
+## 🚦 完了ゲート：有界リトライと検証済み完了
+
+ループは*早すぎる完了*や*上限のないリトライ*からも生まれます。三つの品質ゲートがその隙間を埋め、TaskFlow とサブエージェントのライフサイクルに載ります。いずれも fail-open で、判定器の欠如や読めないプローブが進行を妨げることはありません。
+
+### ステップレベル: `StepJudge` + 有界リトライ
+
+`agent/tools/taskflow/step_judge.py` は温度 0 の補助 LLM 判定器で、ディスパッチ済みステップの結果を `validation_criteria` に照らして審査し、`pass` / `retry` / `block` を返します。ステップが基準を持つ場合（`taskflow_run_task` または `taskflow_resume` が設定）にのみ起動するため、通常のステップが判定呼び出しのコストを払うことはありません。
+
+- `retry` は共有の `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback`（`## Previous Attempt Feedback`）で代替タスクに注入します。予算を使い切るとステップは `blocked` になります。
+- `block` は判定器の理由とともにステップを `blocked` にします。
+- Fail-open：判定器が無効、モデルエラー、応答が解析不能な場合は `pass` に縮退します。
+
+`STEP_JUDGE`：`enabled=True`、`max_retries=2`、`max_result_chars=8000`、`evidence_aware=True`。
+
+### サブエージェントレベル: 完了判定器 + goal loop 予算
+
+`agent/tools/subagent/spawn/completion_judge.py` は `complete_subagent_run` が確定する前に子実行の最新応答を審査し、`done` / `continue` を返します。`continue` 判定は判定器の `continuation_prompt` を子の次の人間ターンとして注入し、実行は同じ checkpoint スレッド上で継続します。
+
+- ループは `goal_max_turns`（最初のターンを含む）で制限され、`_execute_subagent` で数えられます。予算を使い切ると実行は OK で確定し、`error="goal_loop_budget_exhausted"` を持ちます。
+- 二段階の opt-in です。機能スイッチ `COMPLETION_JUDGE["enabled"]` の既定は `False` で、`sessions_spawn` は `goal_loop` / `goal_max_turns`（既定 `False` / 5）を公開します。単一ターン予算（`goal_max_turns=1`）または機能無効時は子を一度だけ実行します。
+- Fail-open：判定器が無効、モデルエラー、応答が解析不能な場合は `done` に縮退するため、判定器がサブエージェントをループに閉じ込めることはありません。
+
+### パイプラインレベル: 証跡台帳と完了ゲート
+
+証跡台帳は共有の追記専用検証トレイルです（`src/data/evidence-ledger.jsonl`、1 行 1 JSON オブジェクト）。`agent/tools/todolist/evidence_recorder.py` は `terminal` / `python_repl` から認識された検証コマンドを自動記録し（`auto_record`、既定 `True`）、`write_file` / `patch_file` は編集されたパスに `stale` イベントを追記します（`auto_stale`、既定 `True`）。`agent/tools/taskflow/evidence_collector.py` は読み取り時に古さを導出し（後続の `stale` 行が、ある行のコマンドに含まれるパスを指す場合）、判定器に見せる要約を描画します。
+
+`taskflow_finish.py` は DONE 遷移を四つの検査で順にゲートします：
+
+| ゲート | 検査 | 拒否理由 |
+|---|---|---|
+| **A — DAG 完全性** | すべてのステップが `done` または `blocked` | `step(s) not done/blocked` |
+| **B — ブロックなし** | どのステップも `blocked` でない | `step(s) are blocked` |
+| **C — フロー証跡** | フローの証跡に `FAIL` も `[stale]` 行もない | `failing verification evidence` / `stale evidence` |
+| **D — SisyphusVerifier** | プラン再読、受け入れ基準、リンクされた `done` ステップ — 呼び出し側が `todo` と `plan_path` の両方を渡したときのみ | `SisyphusVerifier` の理由 |
+
+Gate D は `todo` + `plan_path` の連携がない場合は完全にスキップされ、すべてのゲートは fail-open です。読めない台帳や検証器のエラーは、完了を妨げず通過させます。
+
+### パイプラインレベル: 完了 drain のプログラム的ゲート（opt-in）
+
+`SubagentCompletionDrainMiddleware.enforce_verification` は、drain されたサブエージェント完了キャリアの意味を決めます。既定の `False` はテキストのみの Sisyphus リマインダーを保ち、`True`（`EVIDENCE_LEDGER["enforce_on_complete"]` から配線）は、セッションに合格した証跡がないとき必須検証メッセージを追記するプログラム的ゲートに切り替えます。ゲートは fail-open で、証跡照会が利用できなくてもターンを止めません。
+
 ## 📊 優先順位マトリクス
 
 | ガード | 高さ | 状態の住処 | リセットのタイミング |

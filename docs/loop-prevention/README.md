@@ -191,6 +191,85 @@ Manual reset: delete `src/data/boot_lifecycle.json`, or simply exit cleanly once
 | Boot (process lifecycle) | `CrashLoopBreaker`, `server/__main__` gating, `trigger.__init__` early exit | crash-reboot loops |
 | Infra / ops | cron REST hatches, HTTP-only env, state-file delete | stuck breaker state that needs an operator exit |
 
+## 🚦 Completion Gates: Bounded Retries & Verified Completion
+
+A loop can also come from *finishing too early* or from *retrying without a
+bound*. Three quality gates close that gap, mounted on the TaskFlow and
+subagent lifecycles; every one of them is fail-open, so a missing judge or an
+unreadable probe never blocks progress.
+
+### Step level: `StepJudge` + bounded retry
+
+`agent/tools/taskflow/step_judge.py` is an auxiliary-LLM discriminator at
+temperature 0 that reviews a dispatched step's result against its
+`validation_criteria` and returns `pass` / `retry` / `block`. It engages only
+when the step carries criteria (set by `taskflow_run_task` or
+`taskflow_resume`), so a plain step never pays for a judge call.
+
+- `retry` re-dispatches the step through the shared `_retry` seam, reusing the
+  step's own `retry_count` budget (`STEP_JUDGE["max_retries"]`, default 2) and
+  injecting the judge's guidance into the replacement task via
+  `with_judge_feedback` (`## Previous Attempt Feedback`). An exhausted budget
+  marks the step `blocked`.
+- `block` marks the step `blocked` with the judge's reason.
+- Fail-open: a disabled judge, a model error, or an unparseable response
+  degrades to `pass`.
+
+`STEP_JUDGE`: `enabled=True`, `max_retries=2`, `max_result_chars=8000`,
+`evidence_aware=True`.
+
+### Subagent level: completion judge + goal-loop budget
+
+`agent/tools/subagent/spawn/completion_judge.py` reviews a child run's latest
+response before `complete_subagent_run` finalizes it and returns `done` /
+`continue`. A `continue` verdict injects the judge's `continuation_prompt` as
+the child's next human turn and the run continues on the same checkpoint
+thread.
+
+- The loop is bounded by `goal_max_turns` (including the first turn), counted
+  in `_execute_subagent`; when the budget is spent the run finalizes OK with
+  `error="goal_loop_budget_exhausted"`.
+- It is opt-in on two levels: the feature switch `COMPLETION_JUDGE["enabled"]`
+  defaults to `False`, and `sessions_spawn` exposes `goal_loop` /
+  `goal_max_turns` (defaults `False` / 5). A single-turn budget
+  (`goal_max_turns=1`) or a disabled feature runs the child once.
+- Fail-open: a disabled judge, a model error, or an unparseable response
+  degrades to `done`, so a judge can never trap a subagent in the loop.
+
+### Pipeline level: evidence ledger & the finish gate
+
+The evidence ledger is the shared, append-only verification trail
+(`src/data/evidence-ledger.jsonl`, one JSON object per line).
+`agent/tools/todolist/evidence_recorder.py` auto-records recognized
+verification commands from `terminal` / `python_repl` (`auto_record`, default
+`True`), and `write_file` / `patch_file` append a `stale` event for the edited
+path (`auto_stale`, default `True`).
+`agent/tools/taskflow/evidence_collector.py` derives staleness on read (a
+later `stale` row naming a path contained in a row's command) and renders the
+summary shown to the judges.
+
+`taskflow_finish.py` gates the DONE transition on four checks, in order:
+
+| Gate | Checks | Reject reason |
+|---|---|---|
+| **A — DAG completeness** | every step is `done` or `blocked` | `step(s) not done/blocked` |
+| **B — no blocked steps** | no step is `blocked` | `step(s) are blocked` |
+| **C — flow evidence** | the flow's evidence has no `FAIL` and no `[stale]` row | `failing verification evidence` / `stale evidence` |
+| **D — SisyphusVerifier** | plan reread, acceptance criteria, and a linked `done` step — only when the caller passes both `todo` and `plan_path` | the `SisyphusVerifier` reason |
+
+Gate D is skipped entirely without the `todo` + `plan_path` linkage, and every
+gate is fail-open: an unreadable ledger or a verifier error passes rather than
+blocking a finish.
+
+### Pipeline level: completion-drain programmatic gate (opt-in)
+
+`SubagentCompletionDrainMiddleware.enforce_verification` decides what a drained
+subagent-completion carrier means. The default `False` keeps the text-only
+Sisyphus reminder; `True` (wired from `EVIDENCE_LEDGER["enforce_on_complete"]`)
+switches to a programmatic gate that appends a mandatory-verification message
+when the session has no passing evidence. The gate is fail-open: an
+unavailable evidence lookup never blocks the turn.
+
 ## 📊 Precedence Matrix
 
 | Guard | Altitude | State home | Reset when |
