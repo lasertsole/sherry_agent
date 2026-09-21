@@ -39,7 +39,7 @@
 | **P2** | 7   | `RepetitionGuardWrapper` + `ContextLimitGuard` 导入私有常量 | 跨模块私有依赖（8 个私有符号）                                      | 依赖倒置 + Protocol               | Open |
 | **P2** | 8   | 原始 SQL 泄漏（5 个文件）                                   | checkpointer/store/embeddings/events                                | Repository Pattern                | Done   |
 | **P2** | 9   | 原始 HTTP requests.post                                     | embed_model/reranker_model                                          | API Client Adapter                | Open |
-| **P2** | 10  | 原始 subprocess/Popen                                       | terminal/python_repl/skill_manage                                   | Command Executor 抽象             | Open |
+| **P2** | 10  | 原始 subprocess/Popen                                       | terminal/python_repl/skill_manage                                   | Command Executor 抽象             | Obsolete |
 | **P2** | 11  | `handleOperate` switch（11 路）                             | 前端 ad-hoc 对话框管理                                              | Command Registry + Dialog Manager | Open |
 | **P2** | 12  | `badgeClass`/`statusLabel`/`statusColor`/`statusKey`        | 状态映射重复 4 处                                                   | Lookup Table                      | Open |
 | **P2** | 13  | `config/schema.py` 导入 `models/`                           | 已解决：改为回调注入 `set_provider_registry`（`config/schema.py:24`），models 侧装配时推送元数据；`lint-imports` "config must not import models" KEPT | 反转依赖（已落地） | Done |
@@ -197,12 +197,14 @@ class SessionState:
 - `agent/middlewares/media_pipeline/media_handlers.py:90-91` — `urllib.request.urlopen(req, timeout=30)`
 - **模式**: API Client Adapter — `EmbeddingApiClient`、`RerankerApiClient`、`MediaDownloader`
 
-#### 1.3.4 [CONFIRMED] 原始 subprocess/Popen 操作泄漏
+#### 1.3.4 [OBSOLETE] 原始 subprocess/Popen 操作泄漏
 
 - `agent/tools/terminal.py:189,198` — `subprocess.Popen`
 - `agent/tools/python_repl.py:121` — `subprocess.Popen`
 - `agent/tools/skill_tools/skill_manage.py:327` — `subprocess.run`
 - **模式**: Command Executor 抽象 — `CommandExecutor.run(argv, env, timeout) -> ExecutionResult`
+
+**Status: Obsolete (2026-09-21，不适用)** — 逐处判定后**不抽**。判据：三处语义不共构——`terminal` 已是单点 `_execute_sync`（shell 字符串 vs 沙箱 list-exec、bytes + `errors="replace"`、stderr 合并进 stdout、超时 kill，另有 asyncio 孪生路径）；`python_repl` 是 `text=True`、stdout/stderr **分离**、list argv、超时 kill 后 JSON 解析；`skill_manage` 是 Windows-only `cmd rd` 一次性回退（无 timeout/env/cwd，仅 `capture_output`）。共享核只剩「Popen+communicate」约 5 行；抽象需 `shell/text/merge_stderr/timeout/encoding/env/cwd` ≥7 个开关（自身即 Smell 2 参数膨胀），净收益为负。且全仓还有 `server/service/skill_scan_*`、`channels/deps.py`、`skills/builtin/**` 等更多语义各异的 subprocess 点，跨 `agent/server/skills` 收敛会撞分层契约。
 
 ---
 
@@ -714,7 +716,7 @@ class SessionState:
 | 2.1  | `BaseSQLiteRepository` 基类提取（3 个 SQLite 存储）        | Base Class            | 1 天        | Open   |
 | 2.2  | `FileStore` 基类提取 + 工具函数提取                        | Template Method       | 1 天        | Done   |
 | 2.3  | Repository Pattern（SQL 封装：5 个文件）                   | Repository            | 2-3 天      | Done   |
-| 2.4  | Command Executor 抽象                                      | Adapter               | 1 天        | Open   |
+| 2.4  | Command Executor 抽象                                      | Adapter               | 1 天        | Obsolete |
 | 2.5  | API Client Adapter（embed/reranker/media HTTP）            | Adapter               | 1 天        | Open   |
 | 2.6  | 工厂函数统一（ITTT/VTTT/reranker/extract）                 | Factory               | 1 天        | Open   |
 | 2.7  | `ModelEnvBuilder` 提取（5 处模型 config 构建重复）         | DRY                   | 0.5 天      | Done   |
@@ -732,7 +734,7 @@ class SessionState:
 - 2.1 定位：`agent/tools/{todolist,taskflow,subagent}/registry/store_sqlite.py`（381/703/300 行）；`_connect` :167/:290/:85，`_ensure_tables_sync` :271/:376/:166，init 锁 :95-102/:188-195/:64-71；taskflow 已有 `session_id` 列与迁移（`:137-169`），基类化须参数化 DDL。**Done (2026-09-21)**：`agent/tools/pub_base/sqlite_store.py::BaseSQLiteRepository`（见 §5.1）。
 - 2.2 定位：`server/service/file_store.py:28`（`class FileStore`）。**Done**：`FileStore` 已存在（`read_files`/`write_files`/`update_files`/`merge_files` + `_before_read`/`_content_length`/`_file_path`/`_validate` 钩子），`server/service/{workplace,memory,heartbeat}.py` 各以子类复用；原子写已由 `pub.func.atomic_replace` / `server.utils.atomic_io` 共享。其余 JSON/JSONL 读写点（evidence ledger / knowledge_store 等）为各异领域语义，非可复用文件存储模式，不再抽象。
 - 2.3 定位：`agent/checkpointer/thread_safe_checkpointer.py:196-242`；`context_engine/store/core.py`（872 行）；`context_engine/store/db.py`（DDL）；`context_engine/embeddings/store.py:32-54`；`context_engine/events/store.py`。**Done (2026-09-21)**：仅 `context_engine/store/core.py` 存在真实重复/散落的消息表查询（两个 history reader 构造同一条 turn-range SELECT）→ 抽出 `context_engine/store/message_repository.py::MessageRepository`，`core.py` 公开函数委托，SQL 语义/结果逐字段不变（新增 `tests/context_engine/store/test_message_repository.py` 等价性锁定）。其余 4 处保持不变并附理由：`db.py` 是 schema/连接管理（DDL 无 Repository 语义）、`embeddings/store.py` 与 `events/store.py` 各为单一实体的内聚 2 条语句访问、checkpointer 的 `aclean_old_checkpoints` 是单次维护操作，均无散落或可复用查询。
-- 2.4 定位：`agent/tools/terminal.py:189,198`；`agent/tools/python_repl.py:121`；`agent/tools/skill_tools/skill_manage.py:327`。
+- 2.4 定位：`agent/tools/terminal.py:189,198`；`agent/tools/python_repl.py:121`；`agent/tools/skill_tools/skill_manage.py:327`。**Obsolete (2026-09-21)**：逐处判定语义不共构（terminal 单点 `_execute_sync` + asyncio 孪生；python_repl text/分离流/JSON；skill_manage Windows 一次性回退），抽共享 executor 需 ≥7 开关且净收益为负——详见 §1.3.4。
 - 2.5 定位：`models/embed_model/core.py:128`；`models/reranker_model/core.py:573,623,679`；`agent/middlewares/media_pipeline/media_handlers.py:90-91`。
 - 2.6 定位：`models/ITTT_model/core.py:81`；`models/VTTT_model/core.py:76`；`models/reranker_model/__init__.py:120`；`models/extract_model/core.py:194`。
 - 2.7 定位：ITTT `core.py:44,64-74`；VTTT `core.py:47,67-77`；`main_llm.py:17,64-88`；`reasoner_llm.py:14,23-36`；`auxiliary_llm/core.py:39`。**Done (2026-09-21)**：`models/env_builder.py`（见 §5.3）。
