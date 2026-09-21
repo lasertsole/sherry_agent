@@ -3,7 +3,9 @@
 Database path: subagent/data/subagent_registry.db
 Table schema: subagent_runs(run_id TEXT PK, data TEXT) where data is model_dump_json()
 
-Connection lifecycle: EVERY connection (aiosqlite and stdlib sqlite3 alike) is
+Connection lifecycle comes from ``agent.tools.pub_base.sqlite_store``
+(``BaseSQLiteRepository``, the shared skeleton also used by the todolist and
+taskflow registries): EVERY connection (aiosqlite and stdlib sqlite3 alike) is
 configured with a 5s busy timeout as its first statement (or the equivalent
 connect ``timeout``), so contended writes wait for the lock instead of failing
 with ``sqlite3.OperationalError: database is locked``. The WAL check/switch and
@@ -18,14 +20,11 @@ import asyncio
 import json
 import sqlite3
 import threading
-import time
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
-import aiosqlite
 from loguru import logger
 
+from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
 from config.features import SUBAGENT_INFRA
 from ..types.registry import (
     SubagentRunRecord,
@@ -81,110 +80,26 @@ def _deserialize_run(data: str) -> SubagentRunRecord:
     return SubagentRunRecord.model_validate_json(data)
 
 
-@asynccontextmanager
-async def _connect() -> AsyncGenerator[aiosqlite.Connection]:
-    """Open a short-lived connection; busy_timeout is always the FIRST statement."""
-    db = await aiosqlite.connect(_DB_PATH)
-    try:
-        await db.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-        yield db
-    finally:
-        await db.close()
+class _SubagentRegistryRepository(BaseSQLiteRepository):
+    """Base-class wiring for the subagent_runs / settle_wake_state store."""
+
+    wal_label = "subagent registry db"
+
+    def _table_ddls(self) -> tuple[str, ...]:
+        return (_CREATE_TABLE_SQL,)
+
+    def _sync_table_ddls(self) -> tuple[str, ...]:
+        return (_CREATE_TABLE_SQL, _CREATE_SETTLE_WAKE_TABLE_SQL)
 
 
-async def _switch_to_wal_if_needed(db: aiosqlite.Connection) -> None:
-    """Switch the database to WAL mode, unless it is already WAL.
+# The base reads/writes the module-level init state through this namespace, so
+# the existing monkeypatch contract (``_DB_PATH``/``_initialized``/...) is intact.
+_repository = _SubagentRegistryRepository(globals())
 
-    The journal-mode switch does NOT reliably honor busy_timeout: with an
-    active writer it can raise OperationalError("database is locked") immediately.
-    Once the file is WAL (the steady state after the first init) the pragma is
-    skipped entirely, so later inits never contend on it. If a concurrent
-    initializer is mid-switch, re-check and tolerate the outcome — init must
-    never fail over the journal mode.
-    """
-    async with db.execute("PRAGMA journal_mode") as cursor:
-        row = await cursor.fetchone()
-    mode = str(row[0]) if row and row[0] else ""
-    if mode.lower() == "wal":
-        return
-    try:
-        await db.execute("PRAGMA journal_mode=WAL")
-    except aiosqlite.OperationalError:
-        # Another connection may hold the exclusive lock for its own switch.
-        async with db.execute("PRAGMA journal_mode") as cursor:
-            row = await cursor.fetchone()
-        mode = str(row[0]) if row and row[0] else ""
-        if mode.lower() != "wal":
-            logger.warning(
-                "subagent registry db stays in {!r} journal mode (WAL switch contended); proceeding without WAL",
-                mode,
-            )
-
-
-async def _init_db() -> None:
-    """One-time schema setup; safe to run concurrently (busy_timeout + IF NOT EXISTS)."""
-    _DB_DIR.mkdir(parents=True, exist_ok=True)
-    async with _connect() as db:
-        await _switch_to_wal_if_needed(db)
-        await db.execute(_CREATE_TABLE_SQL)
-        await db.commit()
-
-
-async def ensure_db() -> None:
-    """Ensure the database directory and required tables exist (once per process).
-
-    Fast-returns once initialized. On first use the calling loop takes ownership
-    and runs the schema init under its asyncio.Lock. Callers from other event
-    loops never touch that lock (a foreign-thread release would wake a queued
-    waiter via a non-threadsafe call_soon that can leave their loop asleep
-    forever) — they poll for the owner's one-time init and only self-init as a
-    last resort, avoiding a rollback-journal stampede of concurrent DDL.
-    """
-    global _initialized, _init_loop
-    if _initialized:
-        return
-    loop = asyncio.get_running_loop()
-    if _init_loop is None:
-        _init_loop = loop
-    if _init_loop is loop:
-        async with _init_lock:
-            if _initialized:
-                return
-            await _init_db()
-            _initialized = True
-        return
-    # Non-owning loop: wait for the owning loop to finish its one-time init.
-    deadline = time.monotonic() + _INIT_WAIT_TIMEOUT_S
-    while not _initialized and time.monotonic() < deadline:
-        await asyncio.sleep(0.01)
-    if not _initialized:
-        # Owning loop never finished (died mid-init): initialize ourselves.
-        await _init_db()
-        _initialized = True
-
-
-def _ensure_tables_sync() -> None:
-    """One-time table creation for the sync (stdlib sqlite3) paths.
-
-    Called inside each sync function's existing try/except, so a failure keeps
-    the logged-and-swallowed contract. Creates both tables so the once-only
-    flag is shared safely regardless of which sync path runs first.
-    """
-    global _sync_tables_ready
-    if _sync_tables_ready:
-        return
-    with _sync_init_lock:
-        if _sync_tables_ready:
-            return
-        _DB_DIR.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
-        try:
-            conn.execute(_CREATE_TABLE_SQL)
-            conn.execute(_CREATE_SETTLE_WAKE_TABLE_SQL)
-            conn.commit()
-        finally:
-            conn.close()
-        _sync_tables_ready = True
+_connect = _repository.connect
+_switch_to_wal_if_needed = _repository.switch_to_wal_if_needed
+ensure_db = _repository.ensure_db
+_ensure_tables_sync = _repository.ensure_tables_sync
 
 
 async def save_runs_to_sqlite(runs: dict[str, SubagentRunRecord]) -> None:

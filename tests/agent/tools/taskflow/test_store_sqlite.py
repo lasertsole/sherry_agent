@@ -513,6 +513,32 @@ async def test_delete_flows_by_session_rejects_blank_session(isolated_db: Path):
         await store_sqlite.delete_flows_by_session("  ")
 
 
+@pytest.mark.asyncio
+async def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
+    """DDL equivalence guard: sharing the base class must not alter the table."""
+    await store_sqlite.create_flow("flow-ddl", _make_state(), session_id=_SESSION)
+
+    conn = sqlite3.connect(isolated_db)
+    try:
+        info = conn.execute(f"PRAGMA table_info({TABLE_NAME})").fetchall()
+    finally:
+        conn.close()
+
+    assert {row[1]: row[2] for row in info} == {
+        "flow_id": "TEXT",
+        "state_json": "TEXT",
+        "wait_json": "TEXT",
+        "expected_revision": "INTEGER",
+        "status": "TEXT",
+        "child_session_key": "TEXT",
+        "total_tokens": "INTEGER",
+        "total_cost": "REAL",
+        "token_budget": "INTEGER",
+        "deadline_ts": "REAL",
+        "session_id": "TEXT",
+    }
+
+
 def test_full_persistence_across_restart_new_event_loop(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):

@@ -7,14 +7,15 @@ child_session_key TEXT, total_tokens INTEGER DEFAULT 0,
 total_cost REAL DEFAULT 0.0, token_budget INTEGER DEFAULT 0,
 deadline_ts REAL)
 
-Connection lifecycle mirrors the subagent registry blueprint
-(agent/tools/subagent/registry/store_sqlite.py): EVERY connection (aiosqlite
-and stdlib sqlite3 alike) is configured with a 5s busy timeout as its first
-statement (or the equivalent connect ``timeout``), so contended writes wait
-for the lock instead of failing with ``sqlite3.OperationalError: database is
-locked``. The WAL check/switch and the ``CREATE TABLE IF NOT EXISTS``
-statements run ONCE per process, lazy, loop-gated under an asyncio.Lock on
-the async path and thread-locked on the sync path, never per operation.
+Connection lifecycle comes from ``agent.tools.pub_base.sqlite_store``
+(``BaseSQLiteRepository``, the shared skeleton also used by the todolist and
+subagent registries): EVERY connection (aiosqlite and stdlib sqlite3 alike) is
+configured with a 5s busy timeout as its first statement (or the equivalent
+connect ``timeout``), so contended writes wait for the lock instead of failing
+with ``sqlite3.OperationalError: database is locked``. The WAL check/switch and
+the ``CREATE TABLE IF NOT EXISTS`` statements run ONCE per process, lazy,
+loop-gated under an asyncio.Lock on the async path and thread-locked on the
+sync path, never per operation.
 
 Optimistic locking: ALL mutations go through
 ``UPDATE ... WHERE flow_id = ? AND expected_revision = ?``. When the update
@@ -31,14 +32,12 @@ import asyncio
 import json
 import sqlite3
 import threading
-import time
-from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiosqlite
 from loguru import logger
 
+from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
 from config.features import TASKFLOW_INFRA
 from ..config import INITIAL_REVISION, TABLE_NAME, TERMINAL_STATUSES, TaskFlowStatus
 
@@ -89,7 +88,7 @@ _TOKEN_COLUMN_DDL: list[str] = [
 
 
 async def _ensure_token_columns(db: aiosqlite.Connection) -> None:
-    """Additive migration: add the token columns when absent."""
+    """Additive migration: add the token columns when absent (idempotent)."""
     for ddl in _TOKEN_COLUMN_DDL:
         try:
             await db.execute(ddl)
@@ -98,62 +97,14 @@ async def _ensure_token_columns(db: aiosqlite.Connection) -> None:
             pass
 
 
-def _ensure_token_columns_sync(conn: sqlite3.Connection) -> None:
-    """Additive token-column migration for the stdlib sqlite3 paths."""
-    for ddl in _TOKEN_COLUMN_DDL:
-        try:
-            conn.execute(ddl)
-        except sqlite3.OperationalError:
-            # Column already exists - nothing to do.
-            pass
-
-
 # Additive migration DDL for databases created before deadline support.
 _DEADLINE_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN deadline_ts REAL"
-
-
-async def _ensure_deadline_column(db: aiosqlite.Connection) -> None:
-    """Additive migration: add the deadline_ts column when absent."""
-    try:
-        await db.execute(_DEADLINE_COLUMN_DDL)
-    except aiosqlite.OperationalError:
-        # Column already exists - nothing to do.
-        pass
-
-
-def _ensure_deadline_column_sync(conn: sqlite3.Connection) -> None:
-    """Additive deadline-column migration for the stdlib sqlite3 paths."""
-    try:
-        conn.execute(_DEADLINE_COLUMN_DDL)
-    except sqlite3.OperationalError:
-        # Column already exists - nothing to do.
-        pass
-
 
 # Additive migration DDL for databases created before session isolation. Rows
 # written by pre-isolation code keep ``session_id = ''`` and are therefore
 # invisible to every session-scoped read; the system-level sweeps
 # (get_overdue_flows / get_waiting_flows) still see and finish them.
 _SESSION_ID_COLUMN_DDL = f"ALTER TABLE {TABLE_NAME} ADD COLUMN session_id TEXT NOT NULL DEFAULT ''"
-
-
-async def _ensure_session_id_column(db: aiosqlite.Connection) -> None:
-    """Additive migration: add the session_id column when absent."""
-    try:
-        await db.execute(_SESSION_ID_COLUMN_DDL)
-    except aiosqlite.OperationalError:
-        # Column already exists - nothing to do.
-        pass
-
-
-def _ensure_session_id_column_sync(conn: sqlite3.Connection) -> None:
-    """Additive session-id-column migration for the stdlib sqlite3 paths."""
-    try:
-        conn.execute(_SESSION_ID_COLUMN_DDL)
-    except sqlite3.OperationalError:
-        # Column already exists - nothing to do.
-        pass
-
 
 # Query-coverage indexes (2026-09 SQLite index audit). Both are created with
 # ``IF NOT EXISTS`` on every schema init -- async and sync alike -- so a
@@ -168,18 +119,6 @@ _INDEX_DDL: tuple[str, ...] = (
     "WHERE deadline_ts IS NOT NULL",
     f"CREATE INDEX IF NOT EXISTS idx_taskflow_session_status ON {TABLE_NAME}(session_id, status)",
 )
-
-
-async def _ensure_indexes(db: aiosqlite.Connection) -> None:
-    """Create the query-coverage indexes when absent (idempotent DDL)."""
-    for ddl in _INDEX_DDL:
-        await db.execute(ddl)
-
-
-def _ensure_indexes_sync(conn: sqlite3.Connection) -> None:
-    """Create the query-coverage indexes on the stdlib sqlite3 paths."""
-    for ddl in _INDEX_DDL:
-        conn.execute(ddl)
 
 
 # Once-per-process async schema-init state. asyncio primitives are single-loop
@@ -286,117 +225,29 @@ def _row_to_flow(row: tuple) -> dict:
     }
 
 
-@asynccontextmanager
-async def _connect() -> AsyncGenerator[aiosqlite.Connection]:
-    """Open a short-lived connection; busy_timeout is always the FIRST statement."""
-    db = await aiosqlite.connect(_DB_PATH)
-    try:
-        await db.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
-        yield db
-    finally:
-        await db.close()
+class _TaskFlowRepository(BaseSQLiteRepository):
+    """Base-class wiring for the task_flows store: DDL + additive migrations."""
+
+    wal_label = "taskflow registry db"
+
+    def _table_ddls(self) -> tuple[str, ...]:
+        return (_CREATE_TABLE_SQL,)
+
+    def _migration_ddls(self) -> tuple[str, ...]:
+        return (*_TOKEN_COLUMN_DDL, _DEADLINE_COLUMN_DDL, _SESSION_ID_COLUMN_DDL)
+
+    def _index_ddls(self) -> tuple[str, ...]:
+        return _INDEX_DDL
 
 
-async def _switch_to_wal_if_needed(db: aiosqlite.Connection) -> None:
-    """Switch the database to WAL mode, unless it is already WAL.
+# The base reads/writes the module-level init state through this namespace, so
+# the existing monkeypatch contract (``_DB_PATH``/``_initialized``/...) is intact.
+_repository = _TaskFlowRepository(globals())
 
-    The journal-mode switch does NOT reliably honor busy_timeout: with an
-    active writer it can raise OperationalError("database is locked")
-    immediately. Once the file is WAL (the steady state after the first init)
-    the pragma is skipped entirely, so later inits never contend on it. If a
-    concurrent initializer is mid-switch, re-check and tolerate the outcome;
-    init must never fail over the journal mode.
-    """
-    async with db.execute("PRAGMA journal_mode") as cursor:
-        row = await cursor.fetchone()
-    mode = str(row[0]) if row and row[0] else ""
-    if mode.lower() == "wal":
-        return
-    try:
-        await db.execute("PRAGMA journal_mode=WAL")
-    except aiosqlite.OperationalError:
-        # Another connection may hold the exclusive lock for its own switch.
-        async with db.execute("PRAGMA journal_mode") as cursor:
-            row = await cursor.fetchone()
-        mode = str(row[0]) if row and row[0] else ""
-        if mode.lower() != "wal":
-            logger.warning(
-                "taskflow registry db stays in {!r} journal mode (WAL switch contended); proceeding without WAL",
-                mode,
-            )
-
-
-async def _init_db() -> None:
-    """One-time schema setup; safe to run concurrently (busy_timeout + IF NOT EXISTS)."""
-    _DB_DIR.mkdir(parents=True, exist_ok=True)
-    async with _connect() as db:
-        await _switch_to_wal_if_needed(db)
-        await db.execute(_CREATE_TABLE_SQL)
-        await _ensure_token_columns(db)
-        await _ensure_deadline_column(db)
-        await _ensure_session_id_column(db)
-        await _ensure_indexes(db)
-        await db.commit()
-
-
-async def ensure_db() -> None:
-    """Ensure the database directory and required tables exist (once per process).
-
-    Fast-returns once initialized. On first use the calling loop takes
-    ownership and runs the schema init under its asyncio.Lock. Callers from
-    other event loops never touch that lock (a foreign-thread release would
-    wake a queued waiter via a non-threadsafe call_soon that can leave their
-    loop asleep forever); they poll for the owner's one-time init and only
-    self-init as a last resort, avoiding a rollback-journal stampede of
-    concurrent DDL.
-    """
-    global _initialized, _init_loop
-    if _initialized:
-        return
-    loop = asyncio.get_running_loop()
-    if _init_loop is None:
-        _init_loop = loop
-    if _init_loop is loop:
-        async with _init_lock:
-            if _initialized:
-                return
-            await _init_db()
-            _initialized = True
-        return
-    # Non-owning loop: wait for the owning loop to finish its one-time init.
-    deadline = time.monotonic() + _INIT_WAIT_TIMEOUT_S
-    while not _initialized and time.monotonic() < deadline:
-        await asyncio.sleep(0.01)
-    if not _initialized:
-        # Owning loop never finished (died mid-init): initialize ourselves.
-        await _init_db()
-        _initialized = True
-
-
-def _ensure_tables_sync() -> None:
-    """One-time table creation for the sync (stdlib sqlite3) paths.
-
-    Thread-locked so concurrent sync callers cannot race on DDL; keeps the
-    logged-and-swallowed contract of the sync read path.
-    """
-    global _sync_tables_ready
-    if _sync_tables_ready:
-        return
-    with _sync_init_lock:
-        if _sync_tables_ready:
-            return
-        _DB_DIR.mkdir(parents=True, exist_ok=True)
-        conn = sqlite3.connect(str(_DB_PATH), timeout=_BUSY_TIMEOUT_S)
-        try:
-            conn.execute(_CREATE_TABLE_SQL)
-            _ensure_token_columns_sync(conn)
-            _ensure_deadline_column_sync(conn)
-            _ensure_session_id_column_sync(conn)
-            _ensure_indexes_sync(conn)
-            conn.commit()
-        finally:
-            conn.close()
-        _sync_tables_ready = True
+_connect = _repository.connect
+_switch_to_wal_if_needed = _repository.switch_to_wal_if_needed
+ensure_db = _repository.ensure_db
+_ensure_tables_sync = _repository.ensure_tables_sync
 
 
 async def create_flow(

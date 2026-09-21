@@ -11,6 +11,7 @@ degradation, replace (not append) semantics, and the no-event-loop sync path.
 """
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -231,3 +232,33 @@ def test_get_todos_sync_without_event_loop(isolated_db: Path):
     rows = store_sqlite.get_todos_sync("sess-sync")
     assert [t["content"] for t in rows] == ["sync"]
     assert rows[0]["status"] == "pending"
+
+
+def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
+    """DDL equivalence guard: sharing the base class must not alter the table."""
+
+    async def _setup() -> None:
+        await store_sqlite.replace_all("sess-ddl", [_todo("x", position=0)])
+
+    asyncio.run(_setup())
+
+    conn = sqlite3.connect(isolated_db)
+    try:
+        info = conn.execute(f"PRAGMA table_info({store_sqlite.TABLE_NAME})").fetchall()
+    finally:
+        conn.close()
+
+    assert {row[1]: row[2] for row in info} == {
+        "session_id": "TEXT",
+        "content": "TEXT",
+        "status": "TEXT",
+        "priority": "TEXT",
+        "position": "INTEGER",
+        "category": "TEXT",
+        "delegation": "TEXT",
+        "subagent_id": "TEXT",
+        "flow_id": "TEXT",
+        "step_id": "TEXT",
+        "plan_ref": "TEXT",
+        "created_at": "TIMESTAMP",
+    }

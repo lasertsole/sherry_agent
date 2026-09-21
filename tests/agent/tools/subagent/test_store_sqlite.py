@@ -13,6 +13,7 @@ real data directory is never touched.
 """
 
 import asyncio
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -121,3 +122,18 @@ async def test_save_runs_empty_snapshot_clears_all_rows(isolated_db: Path):
 
     loaded = await store_sqlite.load_runs_from_sqlite()
     assert loaded == {}
+
+
+def test_created_schema_columns_and_types_unchanged(isolated_db: Path):
+    """DDL equivalence guard: the base-class refactor must not alter either table."""
+    store_sqlite.upsert_run_sync(_make_run())
+
+    conn = sqlite3.connect(isolated_db)
+    try:
+        runs = conn.execute("PRAGMA table_info(subagent_runs)").fetchall()
+        settle = conn.execute("PRAGMA table_info(settle_wake_state)").fetchall()
+    finally:
+        conn.close()
+
+    assert {row[1]: row[2] for row in runs} == {"run_id": "TEXT", "data": "TEXT"}
+    assert {row[1]: row[2] for row in settle} == {"id": "INTEGER", "data": "TEXT"}
