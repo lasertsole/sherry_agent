@@ -182,9 +182,9 @@
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 生成済みの子を失わない永続化 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 締め切りの執行 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | アイドル検出マーカー |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 要約連携 |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 自動再開プロンプトブロック |
-| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | ツール出力の一行要約 |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 要約連携 |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 自動再開プロンプトブロック |
+| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | ツール出力の一行要約 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 継続性保存フック |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 圧縮前フラッシュ |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md への一括追記 |

@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 本身（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）完全存放在 `state_json` 中——新增 DAG 字段无需迁移表结构。token/成本/截止时间列来自增量 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`_SESSION_ID_COLUMN_DDL`，`store_sqlite.py:83-129`）。`session_id` 是隔离列（由 `idx_taskflow_session_status` 索引）：创建时写入，之后每次读取/变更都按它过滤（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL 模式每个进程只切换一次，且每条语句之前都会执行 `PRAGMA busy_timeout = 5000`（`store_sqlite.py:234-271`）。
+DAG 本身（`steps[]`、`results[]`、`depends_on`、`creator_session_key`）完全存放在 `state_json` 中——新增 DAG 字段无需迁移表结构。token/成本/截止时间列来自增量 DDL（`_TOKEN_COLUMN_DDL`、`_DEADLINE_COLUMN_DDL`、`_SESSION_ID_COLUMN_DDL`，`store_sqlite.py:83-107`）。`session_id` 是隔离列（由 `idx_taskflow_session_status` 索引）：创建时写入，之后每次读取/变更都按它过滤（`WHERE flow_id = ? AND session_id = ?`、`WHERE session_id = ? AND status IN (…)`）。WAL 模式每个进程只切换一次，且每条语句之前都会执行 `PRAGMA busy_timeout = 5000`（`agent/tools/pub_base/sqlite_store.py:79-139`）。
 
 ### 步骤状态机
 
@@ -116,10 +116,10 @@ async def taskflow_run_task(
 
 ### 乐观锁
 
-每一次变更都走 `UPDATE … WHERE flow_id = ? AND expected_revision = ?`，并把版本号恰好加 1（`store_sqlite.py:460-481`）。匹配到零行即表示冲突：
+每一次变更都走 `UPDATE … WHERE flow_id = ? AND expected_revision = ?`，并把版本号恰好加 1（`store_sqlite.py:393-406`）。匹配到零行即表示冲突：
 
 ```python
-# FlowConflictError 消息（store_sqlite.py:173）
+# FlowConflictError 消息（store_sqlite.py:177）
 "TaskFlow '<id>' revision conflict: expected_revision=2 but latest revision=3;
  re-read with taskflow_summary and retry with expected_revision=3"
 ```

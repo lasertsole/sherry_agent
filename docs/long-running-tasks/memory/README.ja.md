@@ -21,7 +21,7 @@
 
 `memory` ツールは `scope="main_only"` とタグ付けされているため、サブエージェントには決して見えません。
 
-**グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です：`built_agent()` の呼び出しごとにスレッドごとの最新チェックポイントへ剪定され（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`、`agent/core.py:166`）、`auto_vacuum=0` では DELETE はページを解放するだけでファイルを縮めないため、同じ呼び出しが剪定直後に `PRAGMA freelist_count × page_size` を読み、解放された領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超える場合にのみ `VACUUM` を実行します——フェイルオープン：VACUUM のエラーはログに記録されるだけで、剪定結果はそのまま有効です。
+**グラフ状態チェックポイントストア。** セッションの LangGraph 状態は `src/checkpoints/sqlite.db` にも永続化され、上記 2 層とは別です：`built_agent()` の呼び出しごとにスレッドごとの最新チェックポイントへ剪定され（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`、`agent/core.py:221`）、`auto_vacuum=0` では DELETE はページを解放するだけでファイルを縮めないため、同じ呼び出しが剪定直後に `PRAGMA freelist_count × page_size` を読み、解放された領域が `_VACUUM_THRESHOLD_BYTES`（10 MB、`agent/checkpointer/thread_safe_checkpointer.py`）を超える場合にのみ `VACUUM` を実行します——フェイルオープン：VACUUM のエラーはログに記録されるだけで、剪定結果はそのまま有効です。
 
 ## 🔥 圧縮前メモリフラッシュ
 
@@ -38,11 +38,11 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 発火すると、`run_memory_flush`（非同期）/ `run_memory_flush_sync` が注入されたファクトリでモデルを構築し、単一のプレーンテキスト抽出プロンプト（`_FLUSH_PROMPT`、`memory_flush.py:19`）を使います。出力は `§` で区切られた `Environment / Project / Decision / User / Tool` の事実リストです。空の結果やリテラル `(none)` はスキップされます。抽出テキストは `MemoryStore.append_entries(new_entries)`（`memory.py:281`）へ渡され、`§` で分割し、各候補を注入スキャンし、既存集合と重複排除し、追記し、2200 文字を超える間は最古のエントリを追い出し、最後に一度のアトミック書き込みを行います。`append_entries` は常に `MEMORY.md` を対象にします。すべての失敗経路は `False` を返して握りつぶされます——フラッシュが圧縮をブロックすることは決してありません。
 
-⚠️ **配線状況。** `Summarization.__init__` は `memory_store` / `llm_factory` を受け取り（どちらも既定 `None`、`summarization/core.py:623-624`）、両方が設定されている場合にのみ、`_apply_compression`（`summarization/core.py:1703`）と `_aapply_compression`（`summarization/core.py:1791`）の中でフラッシュを呼びます。現在の本番インスタンス——メインエージェント `agent/core.py:170` とサブエージェント `agent/tools/subagent/spawn/core.py:784`——はこれらを渡して**いません**。したがってフラッシュは実装・テスト済みですが、呼び出し箇所がストアと `factory(model=…, max_tokens=…, timeout=…)` の形のファクトリを提供するまで潜在状態にあります。
+⚠️ **配線状況。** `Summarization.__init__` は `memory_store` / `llm_factory` を受け取り（どちらも既定 `None`、`summarization/core.py:259-260`）、両方が設定されている場合にのみ、`_apply_compression`（`summarization/compression.py:138`）と `_aapply_compression`（`summarization/compression.py:221`）の中でフラッシュを呼びます。現在の本番インスタンス——メインエージェント `agent/core.py:198` とサブエージェント `agent/tools/subagent/spawn/core.py:847`——はこれらを渡して**いません**。したがってフラッシュは実装・テスト済みですが、呼び出し箇所がストアと `factory(model=…, max_tokens=…, timeout=…)` の形のファクトリを提供するまで潜在状態にあります。
 
 ## 🔗 要約 ↔ TaskFlow 連携
 
-圧縮が LLM プロンプトを組み立てるとき、`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:262`）がこのセッションのアクティブな flow を描画し、要約プロンプトの**最後**の部分として追記します（`_build_summary_prompt`、`summarization/core.py:1431-1434`）：
+圧縮が LLM プロンプトを組み立てるとき、`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:122`）がこのセッションのアクティブな flow を描画し、要約プロンプトの**最後**の部分として追記します（`_build_summary_prompt`、`summarization/summary_generation.py:554`）：
 
 ```python
 taskflow_ctx = _get_taskflow_context_sync(session_id)
@@ -50,7 +50,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-このブロックは `## Current TaskFlow State (authoritative)` を見出しとし（`summarization/core.py:286`）、セッションが所有する最大 3 つの flow（ストア読み取りは SQL 層で `session_id` にスコープされ、Python 側の再フィルタはありません）について、flow id/ステータス、説明、`done/total` 進捗とステータス内訳、最後の 2 つの完了ステップ、最初の 2 つの保留ステップ、待機理由を列挙します。DAG ヘルパー `step_status` と `steps_summary` を再利用し、完全にフェイルオープンです（`except Exception → ""`）。決定論的フォールバック要約（`_build_static_fallback_summary`）はこのブロックを**含みません**；これは LLM プロンプト専用の追加です。
+このブロックは `## Current TaskFlow State (authoritative)` を見出しとし（`summarization/core.py:137`）、セッションが所有する最大 3 つの flow（ストア読み取りは SQL 層で `session_id` にスコープされ、Python 側の再フィルタはありません）について、flow id/ステータス、説明、`done/total` 進捗とステータス内訳、最後の 2 つの完了ステップ、最初の 2 つの保留ステップ、待機理由を列挙します。DAG ヘルパー `step_status` と `steps_summary` を再利用し、完全にフェイルオープンです（`except Exception → ""`）。決定論的フォールバック要約（`_build_static_fallback_summary`）はこのブロックを**含みません**；これは LLM プロンプト専用の追加です。
 
 ## 🧠 サブエージェントメモリ還流
 
@@ -88,7 +88,7 @@ def _backflow_shared_memory() -> None:
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
 
-`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`（`tool_output_prune.py:103`）は新しい順から古い順へメッセージを走査し、最初の要約メッセージで停止し、最新の `prune_protect_tokens`（40 000）を保護し、保護対象ツール（`{"memory", "skill_view", "skill_list"}`）をスキップし、解放トークンが `prune_min_reduction_tokens`（5 000）に達した場合にのみ確定します。置換されたメッセージは `additional_kwargs["status"] = "compacted"` と `["original_length"]` を持つ `model_copy` クローンです。要約は 200 文字に制限され、テンプレート例外はマーカーへフォールバックします。呼び出し元は `Summarization._run_non_llm_strategies` です（`summarization/core.py:1538`）。
+`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`（`tool_output_prune.py:104`）は新しい順から古い順へメッセージを走査し、最初の要約メッセージで停止し、最新の `prune_protect_tokens`（40 000）を保護し、保護対象ツール（`{"memory", "skill_view", "skill_list"}`）をスキップし、解放トークンが `prune_min_reduction_tokens`（5 000）に達した場合にのみ確定します。置換されたメッセージは `additional_kwargs["status"] = "compacted"` と `["original_length"]` を持つ `model_copy` クローンです。要約は 200 文字に制限され、テンプレート例外はマーカーへフォールバックします。呼び出し元は `Summarization._run_non_llm_strategies` です（`summarization/compression.py:314`）。
 
 ## 🔄 セッション継続性
 
@@ -118,11 +118,11 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 | 読み取り | 場所 | 目的 |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | システムプロンプトの `## Pending TaskFlows` |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 圧縮要約プロンプトの TaskFlow ブロック |
-| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | 永続化された継続性状態の `taskflow_ids` |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | システムプロンプトの `## Pending TaskFlows` |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 圧縮要約プロンプトの TaskFlow ブロック |
+| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | 永続化された継続性状態の `taskflow_ids` |
 
-`creator_session_key` は flow 作成時に `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` として刻まれます（`taskflow_create.py:38`、`_shared.py:21`）。`get_active_flows_sync()`（`store_sqlite.py:538`）は `running` と `waiting` の flow だけをリビジョン順で返し、イベントループを必要としない stdlib `sqlite3` パスを使います；失敗時は `[]` を返します。
+`creator_session_key` は flow 作成時に `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` として刻まれます（`taskflow_create.py:38`、`_shared.py:21`）。`get_active_flows_sync()`（`store_sqlite.py:466`）は `running` と `waiting` の flow だけをリビジョン順で返し、イベントループを必要としない stdlib `sqlite3` パスを使います；失敗時は `[]` を返します。
 
 システムプロンプトブロック（`prompt_builder.py:140`）は次の形です：
 

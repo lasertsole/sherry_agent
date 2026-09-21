@@ -21,7 +21,7 @@
 
 `memory` 도구는 `scope="main_only"`로 태그되어 서브에이전트는 절대 볼 수 없습니다.
 
-**그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다: `built_agent()` 호출마다 스레드별 최신 체크포인트로 정리되고(`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:166`), `auto_vacuum=0`에서는 DELETE가 페이지를 해제할 뿐 파일을 줄이지 않으므로, 같은 호출이 정리 직후 `PRAGMA freelist_count × page_size`를 읽고 해제된 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 초과할 때만 `VACUUM`을 실행합니다 — 페일오픈: VACUUM 오류는 로그만 남기고 정리 결과는 그대로 유지됩니다.
+**그래프 상태 체크포인트 저장소.** 세션의 LangGraph 상태는 `src/checkpoints/sqlite.db`에도 영속화되며, 위 두 계층과 별개입니다: `built_agent()` 호출마다 스레드별 최신 체크포인트로 정리되고(`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:221`), `auto_vacuum=0`에서는 DELETE가 페이지를 해제할 뿐 파일을 줄이지 않으므로, 같은 호출이 정리 직후 `PRAGMA freelist_count × page_size`를 읽고 해제된 공간이 `_VACUUM_THRESHOLD_BYTES`(10 MB, `agent/checkpointer/thread_safe_checkpointer.py`)를 초과할 때만 `VACUUM`을 실행합니다 — 페일오픈: VACUUM 오류는 로그만 남기고 정리 결과는 그대로 유지됩니다.
 
 ## 🔥 압축 전 메모리 플러시
 
@@ -38,11 +38,11 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 발화하면 `run_memory_flush`(비동기) / `run_memory_flush_sync`가 주입된 팩토리로 모델을 구성하고 단일 일반 텍스트 추출 프롬프트(`_FLUSH_PROMPT`, `memory_flush.py:19`)를 사용합니다. 출력은 `§`로 구분된 `Environment / Project / Decision / User / Tool` 사실 목록입니다. 빈 결과나 리터럴 `(none)`은 건너뜁니다. 추출 텍스트는 `MemoryStore.append_entries(new_entries)`(`memory.py:281`)로 넘어가며, 이는 `§`로 나누고, 각 후보를 주입 스캔하고, 기존 집합과 중복 제거하고, 덧붙이고, 2200자를 넘는 동안 가장 오래된 항목을 축출하고, 마지막으로 한 번의 원자적 쓰기를 수행합니다. `append_entries`는 항상 `MEMORY.md`를 대상으로 합니다. 모든 실패 경로는 `False`를 반환하고 삼켜집니다 — 플러시가 압축을 막을 수 없습니다.
 
-⚠️ **배선 상태.** `Summarization.__init__`은 `memory_store` / `llm_factory`를 받으며(둘 다 기본 `None`, `summarization/core.py:623-624`), 둘 다 설정된 경우에만 `_apply_compression`(`summarization/core.py:1703`)과 `_aapply_compression`(`summarization/core.py:1791`) 안에서 플러시를 호출합니다. 현재 프로덕션 인스턴스 — 메인 에이전트 `agent/core.py:170`과 서브에이전트 `agent/tools/subagent/spawn/core.py:784` — 는 이들을 전달하지 **않습니다**. 따라서 플러시는 구현·테스트되었지만 호출 지점이 저장소와 `factory(model=…, max_tokens=…, timeout=…)` 형태의 팩토리를 제공할 때까지 잠재 상태에 머뭅니다.
+⚠️ **배선 상태.** `Summarization.__init__`은 `memory_store` / `llm_factory`를 받으며(둘 다 기본 `None`, `summarization/core.py:259-260`), 둘 다 설정된 경우에만 `_apply_compression`(`summarization/compression.py:138`)과 `_aapply_compression`(`summarization/compression.py:221`) 안에서 플러시를 호출합니다. 현재 프로덕션 인스턴스 — 메인 에이전트 `agent/core.py:198`과 서브에이전트 `agent/tools/subagent/spawn/core.py:847` — 는 이들을 전달하지 **않습니다**. 따라서 플러시는 구현·테스트되었지만 호출 지점이 저장소와 `factory(model=…, max_tokens=…, timeout=…)` 형태의 팩토리를 제공할 때까지 잠재 상태에 머뭅니다.
 
 ## 🔗 요약 ↔ TaskFlow 조정
 
-압축이 LLM 프롬프트를 구성할 때, `_get_taskflow_context_sync(session_id)`(`agent/middlewares/summarization/core.py:262`)가 이 세션의 활성 flow를 렌더링하여 요약 프롬프트의 **마지막** 부분으로 덧붙입니다(`_build_summary_prompt`, `summarization/core.py:1431-1434`):
+압축이 LLM 프롬프트를 구성할 때, `_get_taskflow_context_sync(session_id)`(`agent/middlewares/summarization/core.py:122`)가 이 세션의 활성 flow를 렌더링하여 요약 프롬프트의 **마지막** 부분으로 덧붙입니다(`_build_summary_prompt`, `summarization/summary_generation.py:554`):
 
 ```python
 taskflow_ctx = _get_taskflow_context_sync(session_id)
@@ -50,7 +50,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-이 블록은 `## Current TaskFlow State (authoritative)`를 제목으로 하며(`summarization/core.py:286`), 세션이 소유한 최대 3개 flow(저장소 읽기가 SQL 계층에서 `session_id`로 범위가 정해지며 Python 재필터가 없습니다)에 대해 flow id/상태, 설명, `done/total` 진행과 상태 내역, 마지막 두 완료 단계, 처음 두 대기 단계, 대기 이유를 나열합니다. DAG 헬퍼 `step_status`와 `steps_summary`를 재사용하며 완전히 페일오픈입니다(`except Exception → ""`). 결정론적 폴백 요약(`_build_static_fallback_summary`)은 이 블록을 **포함하지 않습니다** — LLM 프롬프트 전용 추가입니다.
+이 블록은 `## Current TaskFlow State (authoritative)`를 제목으로 하며(`summarization/core.py:137`), 세션이 소유한 최대 3개 flow(저장소 읽기가 SQL 계층에서 `session_id`로 범위가 정해지며 Python 재필터가 없습니다)에 대해 flow id/상태, 설명, `done/total` 진행과 상태 내역, 마지막 두 완료 단계, 처음 두 대기 단계, 대기 이유를 나열합니다. DAG 헬퍼 `step_status`와 `steps_summary`를 재사용하며 완전히 페일오픈입니다(`except Exception → ""`). 결정론적 폴백 요약(`_build_static_fallback_summary`)은 이 블록을 **포함하지 않습니다** — LLM 프롬프트 전용 추가입니다.
 
 ## 🧠 서브에이전트 메모리 역류
 
@@ -88,7 +88,7 @@ def _backflow_shared_memory() -> None:
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
 
-`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`(`tool_output_prune.py:103`)는 최신→오래된 순으로 메시지를 순회하고, 첫 요약 메시지에서 멈추며, 최신 `prune_protect_tokens`(40 000)를 보호하고, 보호 대상 도구(`{"memory", "skill_view", "skill_list"}`)를 건너뛰며, 해제된 토큰이 `prune_min_reduction_tokens`(5 000)에 도달할 때만 반영합니다. 교체된 메시지는 `additional_kwargs["status"] = "compacted"`와 `["original_length"]`를 지닌 `model_copy` 복제본입니다. 요약은 200자로 제한되며, 템플릿 예외는 마커로 폴백합니다. 호출자는 `Summarization._run_non_llm_strategies`입니다(`summarization/core.py:1538`).
+`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`(`tool_output_prune.py:104`)는 최신→오래된 순으로 메시지를 순회하고, 첫 요약 메시지에서 멈추며, 최신 `prune_protect_tokens`(40 000)를 보호하고, 보호 대상 도구(`{"memory", "skill_view", "skill_list"}`)를 건너뛰며, 해제된 토큰이 `prune_min_reduction_tokens`(5 000)에 도달할 때만 반영합니다. 교체된 메시지는 `additional_kwargs["status"] = "compacted"`와 `["original_length"]`를 지닌 `model_copy` 복제본입니다. 요약은 200자로 제한되며, 템플릿 예외는 마커로 폴백합니다. 호출자는 `Summarization._run_non_llm_strategies`입니다(`summarization/compression.py:314`).
 
 ## 🔄 세션 연속성
 
@@ -118,11 +118,11 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 | 판독기 | 위치 | 목적 |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 시스템 프롬프트의 `## Pending TaskFlows` |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 압축 요약 프롬프트의 TaskFlow 블록 |
-| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | 영속 연속성 상태의 `taskflow_ids` |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 시스템 프롬프트의 `## Pending TaskFlows` |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 압축 요약 프롬프트의 TaskFlow 블록 |
+| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | 영속 연속성 상태의 `taskflow_ids` |
 
-`creator_session_key`는 flow 생성 시 `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"`로 찍힙니다(`taskflow_create.py:38`, `_shared.py:21`). `get_active_flows_sync()`(`store_sqlite.py:538`)는 `running`과 `waiting` flow만 리비전 순으로 반환하며, 이벤트 루프가 필요 없는 stdlib `sqlite3` 경로를 사용합니다. 실패 시 `[]`를 반환합니다.
+`creator_session_key`는 flow 생성 시 `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"`로 찍힙니다(`taskflow_create.py:38`, `_shared.py:21`). `get_active_flows_sync()`(`store_sqlite.py:466`)는 `running`과 `waiting` flow만 리비전 순으로 반환하며, 이벤트 루프가 필요 없는 stdlib `sqlite3` 경로를 사용합니다. 실패 시 `[]`를 반환합니다.
 
 시스템 프롬프트 블록(`prompt_builder.py:140`)은 다음과 같습니다:
 

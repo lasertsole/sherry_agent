@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns come from additive DDL (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-129`). `session_id` is the isolation column (additive `_SESSION_ID_COLUMN_DDL`, indexed by `idx_taskflow_session_status`): it is stamped at creation and every read/mutation filters on it (`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). Legacy rows created before the column carry `session_id = ''`, are invisible to every session-scoped read, and stay reachable only through the system-level sweeper queries. The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`store_sqlite.py:234-271`).
+The DAG itself (`steps[]`, `results[]`, `depends_on`, `creator_session_key`) lives entirely inside `state_json` — no schema migration is needed to add DAG fields. The token/cost/deadline columns come from additive DDL (`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `store_sqlite.py:83-107`). `session_id` is the isolation column (additive `_SESSION_ID_COLUMN_DDL`, indexed by `idx_taskflow_session_status`): it is stamped at creation and every read/mutation filters on it (`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). Legacy rows created before the column carry `session_id = ''`, are invisible to every session-scoped read, and stay reachable only through the system-level sweeper queries. The WAL pragma is applied once per process and `PRAGMA busy_timeout = 5000` precedes every statement (`agent/tools/pub_base/sqlite_store.py:79-139`).
 
 ### Step status machine
 
@@ -116,10 +116,10 @@ async def taskflow_run_task(
 
 ### Optimistic locking
 
-Every mutation goes through `UPDATE … WHERE flow_id = ? AND expected_revision = ?` and bumps the revision by exactly 1 (`store_sqlite.py:460-481`). Zero matched rows means a conflict:
+Every mutation goes through `UPDATE … WHERE flow_id = ? AND expected_revision = ?` and bumps the revision by exactly 1 (`store_sqlite.py:393-406`). Zero matched rows means a conflict:
 
 ```python
-# FlowConflictError message (store_sqlite.py:173)
+# FlowConflictError message (store_sqlite.py:177)
 "TaskFlow '<id>' revision conflict: expected_revision=2 but latest revision=3;
  re-read with taskflow_summary and retry with expected_revision=3"
 ```

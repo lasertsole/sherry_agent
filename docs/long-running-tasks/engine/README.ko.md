@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS task_flows (
 );
 ```
 
-DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 DDL(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `_SESSION_ID_COLUMN_DDL`, `store_sqlite.py:83-129`)로 정의됩니다. `session_id`는 격리 컬럼입니다(`idx_taskflow_session_status` 인덱스): 생성 시 기록되며 이후 모든 읽기/변경이 이를 필터링합니다(`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`store_sqlite.py:234-271`).
+DAG 자체(`steps[]`, `results[]`, `depends_on`, `creator_session_key`)는 전부 `state_json` 안에 있습니다 — DAG 필드를 추가하는 데 스키마 마이그레이션이 필요 없습니다. 토큰/비용/데드라인 컬럼은 추가적 DDL(`_TOKEN_COLUMN_DDL`, `_DEADLINE_COLUMN_DDL`, `_SESSION_ID_COLUMN_DDL`, `store_sqlite.py:83-107`)로 정의됩니다. `session_id`는 격리 컬럼입니다(`idx_taskflow_session_status` 인덱스): 생성 시 기록되며 이후 모든 읽기/변경이 이를 필터링합니다(`WHERE flow_id = ? AND session_id = ?`, `WHERE session_id = ? AND status IN (…)`). WAL 프라그마는 프로세스당 한 번만 전환되며, 모든 문장 앞에 `PRAGMA busy_timeout = 5000`이 실행됩니다(`agent/tools/pub_base/sqlite_store.py:79-139`).
 
 ### 단계 상태 기계
 
@@ -116,10 +116,10 @@ async def taskflow_run_task(
 
 ### 낙관적 잠금
 
-모든 변경은 `UPDATE … WHERE flow_id = ? AND expected_revision = ?`를 거치며 리비전을 정확히 1만큼 올립니다(`store_sqlite.py:460-481`). 일치하는 행이 0이면 충돌입니다:
+모든 변경은 `UPDATE … WHERE flow_id = ? AND expected_revision = ?`를 거치며 리비전을 정확히 1만큼 올립니다(`store_sqlite.py:393-406`). 일치하는 행이 0이면 충돌입니다:
 
 ```python
-# FlowConflictError 메시지(store_sqlite.py:173)
+# FlowConflictError 메시지(store_sqlite.py:177)
 "TaskFlow '<id>' revision conflict: expected_revision=2 but latest revision=3;
  re-read with taskflow_summary and retry with expected_revision=3"
 ```

@@ -182,9 +182,9 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `update_flow_with_conflict_retry` | `_shared.py:191` | Never-lose-a-spawned-child persist |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | Deadline enforcement |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | Idle detection marker |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | summary coordination |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | Auto-resume prompt block |
-| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | One-line tool summaries |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | summary coordination |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | Auto-resume prompt block |
+| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | One-line tool summaries |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | Continuity save hook |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | Pre-compression flush |
 | `append_entries` | `agent/tools/memory.py:281` | Batch MEMORY.md append |

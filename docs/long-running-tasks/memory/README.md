@@ -21,7 +21,7 @@ Layer 1 is managed by `MemoryStore` (`memory.py:104`): per-file character limits
 
 The `memory` tool is tagged `scope="main_only"`, so subagents never see it.
 
-**Graph-state checkpoint store.** Sessions also persist their LangGraph state to `src/checkpoints/sqlite.db`, separate from the two layers above: every `built_agent()` call prunes it to the latest checkpoint per thread (`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:166`), and because `auto_vacuum=0` that DELETE only frees pages instead of shrinking the file, the same call reads `PRAGMA freelist_count × page_size` right after pruning and runs `VACUUM` only when the freed space exceeds `_VACUUM_THRESHOLD_BYTES` (10 MB, `agent/checkpointer/thread_safe_checkpointer.py`) — fail-open: a VACUUM error is logged and the prune result stands.
+**Graph-state checkpoint store.** Sessions also persist their LangGraph state to `src/checkpoints/sqlite.db`, separate from the two layers above: every `built_agent()` call prunes it to the latest checkpoint per thread (`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`, `agent/core.py:221`), and because `auto_vacuum=0` that DELETE only frees pages instead of shrinking the file, the same call reads `PRAGMA freelist_count × page_size` right after pruning and runs `VACUUM` only when the freed space exceeds `_VACUUM_THRESHOLD_BYTES` (10 MB, `agent/checkpointer/thread_safe_checkpointer.py`) — fail-open: a VACUUM error is logged and the prune result stands.
 
 ## 🔥 Pre-Compression Memory Flush
 
@@ -38,11 +38,11 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 When it fires, `run_memory_flush` (async) / `run_memory_flush_sync` builds the model with an injected factory and one plain-text extraction prompt (`_FLUSH_PROMPT`, `memory_flush.py:19`) whose output is a `§`-separated list of `Environment / Project / Decision / User / Tool` facts. An empty result or the literal `(none)` is skipped. The extracted text is handed to `MemoryStore.append_entries(new_entries)` (`memory.py:281`), which splits on `§`, scans every candidate for injection, dedups against the existing set, appends, evicts oldest entries while over 2200 chars, and performs one atomic write. `append_entries` always targets `MEMORY.md`. Every failure path returns `False` and is swallowed — the flush can never block compression.
 
-⚠️ **Wiring status.** `Summarization.__init__` accepts `memory_store` / `llm_factory` (both default `None`, `summarization/core.py:623-624`) and calls the flush only when both are set, inside `_apply_compression` (`summarization/core.py:1703`) and `_aapply_compression` (`summarization/core.py:1791`). The current production instantiations — main agent `agent/core.py:170` and subagent `agent/tools/subagent/spawn/core.py:784` — do **not** pass them, so the flush is implemented and tested but latent until a call site supplies the store and a factory shaped `factory(model=…, max_tokens=…, timeout=…)`.
+⚠️ **Wiring status.** `Summarization.__init__` accepts `memory_store` / `llm_factory` (both default `None`, `summarization/core.py:259-260`) and calls the flush only when both are set, inside `_apply_compression` (`summarization/compression.py:138`) and `_aapply_compression` (`summarization/compression.py:221`). The current production instantiations — main agent `agent/core.py:198` and subagent `agent/tools/subagent/spawn/core.py:847` — do **not** pass them, so the flush is implemented and tested but latent until a call site supplies the store and a factory shaped `factory(model=…, max_tokens=…, timeout=…)`.
 
 ## 🔗 Summary ↔ TaskFlow Coordination
 
-When compression builds its LLM prompt, `_get_taskflow_context_sync(session_id)` (`agent/middlewares/summarization/core.py:262`) renders this session's active flows and appends them as the **last** part of the summary prompt (`_build_summary_prompt`, `summarization/core.py:1431-1434`):
+When compression builds its LLM prompt, `_get_taskflow_context_sync(session_id)` (`agent/middlewares/summarization/core.py:122`) renders this session's active flows and appends them as the **last** part of the summary prompt (`_build_summary_prompt`, `summarization/summary_generation.py:554`):
 
 ```python
 taskflow_ctx = _get_taskflow_context_sync(session_id)
@@ -50,7 +50,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-The block is headed `## Current TaskFlow State (authoritative)` (`summarization/core.py:286`) and, for up to three flows owned by the session (the store read is scoped by `session_id` in SQL — no post-filtering), lists the flow id/status, description, `done/total` progress with the status breakdown, the last two completed steps, the first two pending steps, and any wait reason. It reuses the DAG helpers `step_status` and `steps_summary`, and is fully fail-open (`except Exception → ""`). The deterministic fallback summary (`_build_static_fallback_summary`) does **not** include this block; it is an LLM-prompt-only addition.
+The block is headed `## Current TaskFlow State (authoritative)` (`summarization/core.py:137`) and, for up to three flows owned by the session (the store read is scoped by `session_id` in SQL — no post-filtering), lists the flow id/status, description, `done/total` progress with the status breakdown, the last two completed steps, the first two pending steps, and any wait reason. It reuses the DAG helpers `step_status` and `steps_summary`, and is fully fail-open (`except Exception → ""`). The deterministic fallback summary (`_build_static_fallback_summary`) does **not** include this block; it is an LLM-prompt-only addition.
 
 ## 🧠 Subagent Memory Backflow
 
@@ -88,7 +88,7 @@ Older oversized `ToolMessage` content is normally cleared to a marker during non
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
 
-`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)` (`tool_output_prune.py:103`) walks messages newest→oldest, stops at the first summary message, protects the newest `prune_protect_tokens` (40 000), skips protected tools (`{"memory", "skill_view", "skill_list"}`), and only commits when the freed tokens reach `prune_min_reduction_tokens` (5 000). Replaced messages are `model_copy` clones carrying `additional_kwargs["status"] = "compacted"` and `["original_length"]`. Summaries are capped at 200 chars; any template exception falls back to the marker. It is called from `Summarization._run_non_llm_strategies` (`summarization/core.py:1538`).
+`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)` (`tool_output_prune.py:104`) walks messages newest→oldest, stops at the first summary message, protects the newest `prune_protect_tokens` (40 000), skips protected tools (`{"memory", "skill_view", "skill_list"}`), and only commits when the freed tokens reach `prune_min_reduction_tokens` (5 000). Replaced messages are `model_copy` clones carrying `additional_kwargs["status"] = "compacted"` and `["original_length"]`. Summaries are capped at 200 chars; any template exception falls back to the marker. It is called from `Summarization._run_non_llm_strategies` (`summarization/compression.py:314`).
 
 ## 🔄 Session Continuity
 
@@ -118,9 +118,9 @@ Active flows are re-surfaced into the system prompt so a fresh session can pick 
 
 | Reader | Location | Purpose |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | `## Pending TaskFlows` in the system prompt |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | TaskFlow block in the compression summary prompt |
-| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | `taskflow_ids` in the persisted continuity state |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | `## Pending TaskFlows` in the system prompt |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | TaskFlow block in the compression summary prompt |
+| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | `taskflow_ids` in the persisted continuity state |
 
 `creator_session_key` is still stamped on the flow at creation (`taskflow_create.py:38`) as `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"` (`_shared.py:21`) because child dispatch builds the requester key from it; it is no longer the isolation mechanism. `get_active_flows_sync(session_id)` returns only this session's `running` and `waiting` flows ordered by revision, using the stdlib `sqlite3` path that works without an event loop; failures return `[]`.
 

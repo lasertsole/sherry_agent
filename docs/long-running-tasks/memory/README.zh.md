@@ -21,7 +21,7 @@
 
 `memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
-**图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:166`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
+**图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:221`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
 
 ## 🔥 压缩前的记忆落盘
 
@@ -38,11 +38,11 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 触发时，`run_memory_flush`（异步）/ `run_memory_flush_sync` 通过注入的工厂构建模型，并使用单个纯文本抽取提示词（`_FLUSH_PROMPT`，`memory_flush.py:19`），其输出是一个以 `§` 分隔的 `Environment / Project / Decision / User / Tool` 事实列表。空结果或字面量 `(none)` 会被跳过。抽取出的文本交给 `MemoryStore.append_entries(new_entries)`（`memory.py:281`），后者按 `§` 切分，对每个候选做注入扫描，与现有集合去重，追加，并在超过 2200 字符时淘汰最旧条目，最后做一次原子写入。`append_entries` 始终写入 `MEMORY.md`。每条失败路径都返回 `False` 并被吞掉——落盘永远不会阻塞压缩。
 
-⚠️ **接线状态。** `Summarization.__init__` 接受 `memory_store` / `llm_factory`（二者默认均为 `None`，`summarization/core.py:623-624`），且仅在二者都设置时调用落盘，位置在 `_apply_compression`（`summarization/core.py:1703`）与 `_aapply_compression`（`summarization/core.py:1791`）内。当前生产实例——主 Agent `agent/core.py:170` 与子 Agent `agent/tools/subagent/spawn/core.py:784`——并**未**传入它们，因此落盘功能已实现并有测试覆盖，但在某个调用点提供 store 与形如 `factory(model=…, max_tokens=…, timeout=…)` 的工厂之前一直处于潜伏状态。
+⚠️ **接线状态。** `Summarization.__init__` 接受 `memory_store` / `llm_factory`（二者默认均为 `None`，`summarization/core.py:259-260`），且仅在二者都设置时调用落盘，位置在 `_apply_compression`（`summarization/compression.py:138`）与 `_aapply_compression`（`summarization/compression.py:221`）内。当前生产实例——主 Agent `agent/core.py:198` 与子 Agent `agent/tools/subagent/spawn/core.py:847`——并**未**传入它们，因此落盘功能已实现并有测试覆盖，但在某个调用点提供 store 与形如 `factory(model=…, max_tokens=…, timeout=…)` 的工厂之前一直处于潜伏状态。
 
 ## 🔗 摘要 ↔ TaskFlow 协调
 
-当压缩构建其 LLM 提示词时，`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:262`）会渲染本会话的活动 flow，并把它作为摘要提示词的**最后**一部分追加（`_build_summary_prompt`，`summarization/core.py:1431-1434`）：
+当压缩构建其 LLM 提示词时，`_get_taskflow_context_sync(session_id)`（`agent/middlewares/summarization/core.py:122`）会渲染本会话的活动 flow，并把它作为摘要提示词的**最后**一部分追加（`_build_summary_prompt`，`summarization/summary_generation.py:554`）：
 
 ```python
 taskflow_ctx = _get_taskflow_context_sync(session_id)
@@ -50,7 +50,7 @@ if taskflow_ctx:
     parts.append(taskflow_ctx)
 ```
 
-该区块以 `## Current TaskFlow State (authoritative)` 为标题（`summarization/core.py:286`），对于本会话拥有的至多三个 flow（存储读取在 SQL 层按 `session_id` 过滤，无 Python 层二次过滤），列出 flow id/状态、描述、`done/total` 进度与状态分解、最后两个已完成的步骤、前两个待处理步骤，以及任何等待原因。它复用了 DAG 辅助函数 `step_status` 与 `steps_summary`，并且完全失败开放（`except Exception → ""`）。确定性回退摘要（`_build_static_fallback_summary`）**不**包含该区块；它只是 LLM 提示词的补充。
+该区块以 `## Current TaskFlow State (authoritative)` 为标题（`summarization/core.py:137`），对于本会话拥有的至多三个 flow（存储读取在 SQL 层按 `session_id` 过滤，无 Python 层二次过滤），列出 flow id/状态、描述、`done/total` 进度与状态分解、最后两个已完成的步骤、前两个待处理步骤，以及任何等待原因。它复用了 DAG 辅助函数 `step_status` 与 `steps_summary`，并且完全失败开放（`except Exception → ""`）。确定性回退摘要（`_build_static_fallback_summary`）**不**包含该区块；它只是 LLM 提示词的补充。
 
 ## 🧠 子 Agent 记忆回流
 
@@ -88,7 +88,7 @@ def _backflow_shared_memory() -> None:
 default              -> "[tool] output {len} chars, first 100: ..."
 ```
 
-`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`（`tool_output_prune.py:103`）从最新到最旧遍历消息，遇到摘要消息即停止，保护最新的 `prune_protect_tokens`（40 000）个 token，跳过受保护工具（`{"memory", "skill_view", "skill_list"}`），并且只有当释放的 token 达到 `prune_min_reduction_tokens`（5 000）时才提交。被替换的消息是 `model_copy` 克隆，携带 `additional_kwargs["status"] = "compacted"` 与 `["original_length"]`。摘要上限为 200 字符；任何模板异常都会回退到标记。它由 `Summarization._run_non_llm_strategies` 调用（`summarization/core.py:1538`）。
+`prune_tool_outputs(messages, protect_tokens=…, min_reduction_tokens=…, protected_tools=None, estimator=None)`（`tool_output_prune.py:104`）从最新到最旧遍历消息，遇到摘要消息即停止，保护最新的 `prune_protect_tokens`（40 000）个 token，跳过受保护工具（`{"memory", "skill_view", "skill_list"}`），并且只有当释放的 token 达到 `prune_min_reduction_tokens`（5 000）时才提交。被替换的消息是 `model_copy` 克隆，携带 `additional_kwargs["status"] = "compacted"` 与 `["original_length"]`。摘要上限为 200 字符；任何模板异常都会回退到标记。它由 `Summarization._run_non_llm_strategies` 调用（`summarization/compression.py:314`）。
 
 ## 🔄 会话连续性
 
@@ -118,11 +118,11 @@ If the user says 'continue' or doesn't specify a new task, refer to the above co
 
 | 读取者 | 位置 | 用途 |
 | :--- | :--- | :--- |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 系统提示词中的 `## Pending TaskFlows` |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 压缩摘要提示词中的 TaskFlow 区块 |
-| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:186` | 持久化连续性状态中的 `taskflow_ids` |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 系统提示词中的 `## Pending TaskFlows` |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 压缩摘要提示词中的 TaskFlow 区块 |
+| `_get_active_taskflow_ids_sync` | `context_engine/session_continuity.py:215` | 持久化连续性状态中的 `taskflow_ids` |
 
-`creator_session_key` 在创建 flow 时被写入（`taskflow_create.py:38`），值为 `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"`（`_shared.py:21`）。`get_active_flows_sync()`（`store_sqlite.py:538`）仅返回 `running` 与 `waiting` 的 flow，按版本排序，使用无需事件循环的 stdlib `sqlite3` 路径；失败时返回 `[]`。
+`creator_session_key` 在创建 flow 时被写入（`taskflow_create.py:38`），值为 `requester_session_key(session_id)` = `f"agent:main:session:{session_id}"`（`_shared.py:21`）。`get_active_flows_sync()`（`store_sqlite.py:466`）仅返回 `running` 与 `waiting` 的 flow，按版本排序，使用无需事件循环的 stdlib `sqlite3` 路径；失败时返回 `[]`。
 
 系统提示词区块（`prompt_builder.py:140`）形如：
 

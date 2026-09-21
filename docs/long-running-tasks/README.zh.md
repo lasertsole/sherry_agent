@@ -182,9 +182,9 @@
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 绝不丢失已派子 Agent 的持久化 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 截止时间执行 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | 空闲检测标记 |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 摘要协调 |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 自动恢复提示词区块 |
-| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | 工具输出单行摘要 |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 摘要协调 |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 自动恢复提示词区块 |
+| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | 工具输出单行摘要 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 连续性保存钩子 |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 压缩前落盘 |
 | `append_entries` | `agent/tools/memory.py:281` | 批量追加 MEMORY.md |

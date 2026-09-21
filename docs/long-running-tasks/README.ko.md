@@ -182,9 +182,9 @@
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 생성된 자식을 잃지 않는 영속화 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 데드라인 집행 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | 유휴 감지 마커 |
-| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:262` | 요약 조정 |
-| `_build_taskflow_block` | `workspace/prompt_builder.py:112` | 자동 재개 프롬프트 블록 |
-| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:103` | 도구 출력 한 줄 요약 |
+| `_get_taskflow_context_sync` | `agent/middlewares/summarization/core.py:122` | 요약 조정 |
+| `_build_taskflow_block` | `workspace/prompt_builder.py:145` | 자동 재개 프롬프트 블록 |
+| `prune_tool_outputs` | `pub/func/message/tool_output_prune.py:104` | 도구 출력 한 줄 요약 |
 | `auto_save_on_session_end` | `context_engine/session_continuity.py:117` | 연속성 저장 훅 |
 | `should_flush` / `run_memory_flush` | `agent/middlewares/summarization/memory_flush.py:43,65` | 압축 전 플러시 |
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md 일괄 추가 |
