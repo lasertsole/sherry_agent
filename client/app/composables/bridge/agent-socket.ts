@@ -13,94 +13,29 @@
  * (reusing the constants in `chat-types.ts`), then falls back to a fixed 5s
  * liveness reconnect once the retry budget is exhausted.
  *
+ * Supporting state is split into focused siblings: `agent-socket-pending.ts`
+ * (in-flight sends), `agent-socket-queue.ts` (outbound buffering),
+ * `agent-socket-reconnect.ts` (backoff policy + timer) and
+ * `agent-socket-upload.ts` (media upload + payload serialization); this class
+ * owns only orchestration and the connection lifecycle.
+ *
  * @module bridge/agentSocket
  */
-import type {
-  AgentWsEvent,
-  ChatRequest,
-  HitlResponse,
-  OnChunkCallback,
-  OnDoneCallback,
-  OnHitlCallback,
-  OnQueuedCallback,
-  StreamController
-} from './chat-types';
-import {
-  isHitlInterruptData,
-  StreamInterruptedError,
-  WS_FALLBACK_RECONNECT_MS,
-  WS_RECONNECT_MAX_ATTEMPTS,
-  wsReconnectDelayMs
-} from './chat-types';
-import { KIND_LABEL, uploadBase64ToUrls, type UploadMediaKind } from './upload';
+import type { ChatRequest, HitlResponse, StreamController } from './chat-types';
+import { StreamInterruptedError, WS_RECONNECT_MAX_ATTEMPTS } from './chat-types';
+import type { AgentSocket, AgentSocketHandlers } from './agent-socket-types';
 import { teardownWebSocket } from './transport';
-import { createWsMessageHandler } from '../ws-message';
 import { emit } from '../mitt';
-import { API_BASE_URL, WS_BASE_URL } from '../env';
+import { WS_BASE_URL } from '../env';
+import { OutboundQueue } from './agent-socket-queue';
+import { PendingSendRegistry, type PendingSend } from './agent-socket-pending';
+import { decideReconnect, ReconnectTimer } from './agent-socket-reconnect';
+import { buildAgentPayload, requestHasMedia, uploadRequestMedia, type MediaUrls } from './agent-socket-upload';
+import { routeAgentFrame } from './agent-socket-frames';
 
-/** Notification payload for a `turn_started` frame. */
-export interface TurnStartedInfo {
-  /** Session the turn belongs to. */
-  sessionId: string;
-  /** Server-assigned turn id. */
-  turnId: string;
-  /** Client `msg_id`s whose sends make up this turn (N user bubbles -> one AI reply). */
-  messageIds: string[];
-}
-
-/**
- * Session-level handlers set once by the page: every frame of the session is
- * routed here regardless of which `send()` produced it.
- */
-export interface AgentSocketHandlers {
-  /** One invocation per `chunk` frame. */
-  onChunk?: OnChunkCallback;
-  /** `hitl_request` -> approval card. */
-  onHitl?: OnHitlCallback;
-  /** `turn_started` -> consolidate placeholders / clear member badges. */
-  onTurnStarted?: (info: TurnStartedInfo) => void;
-  /** `queued` -> queue badge for the (busy) session. */
-  onQueued?: OnQueuedCallback;
-  /** `done` -> turn succeeded (carries model metadata). */
-  onDone?: OnDoneCallback;
-}
-
-/** A single in-flight send awaiting its turn's `done` / `error` / `stopped`. */
-interface PendingSend {
-  msgId: string;
-  request: ChatRequest;
-  /** Serialized payload, filled once any base64 media finished uploading. */
-  payload: string | null;
-  /** At least one chunk of this turn was received (disconnect after this must never resend). */
-  receivedChunk: boolean;
-  settled: boolean;
-  resolve: () => void;
-  reject: (err: unknown) => void;
-}
-
-/** A resolved media-URL set attached to one outgoing payload. */
-interface MediaUrls {
-  images: string[];
-  audios: string[];
-  videos: string[];
-}
-
-/**
- * The session-scoped socket handle returned by {@link acquireAgentSocket}.
- */
-export interface AgentSocket {
-  readonly sessionId: string;
-  /** Merge handlers (page sets `onTurnStarted` once; per-send callbacks are merged in). */
-  setHandlers(handlers: AgentSocketHandlers): void;
-  /** Send a chat request; returns a controller + a promise settled by the turn's end. */
-  send(request: ChatRequest): { controller: StreamController; promise: Promise<void> };
-  /** Send a stop frame on the SAME socket (never closes it). */
-  stop(): Promise<void>;
-  /** Send a HITL decision on the SAME socket (never opens a new connection). */
-  sendHitlResponse(response: HitlResponse): void;
-  /** Tear the connection down and settle every pending send (page unmount). */
-  dispose(): void;
-}
+// Public protocol types stay available at the historical module path
+// (`bridge.ts` re-exports them from here).
+export type { AgentSocket, AgentSocketHandlers, TurnStartedInfo } from './agent-socket-types';
 
 /** Registry: exactly one socket per session id. */
 const sockets = new Map<string, SessionAgentSocket>();
@@ -141,13 +76,13 @@ class SessionAgentSocket implements AgentSocket {
 
   private socket: WebSocket | null = null;
   private handlers: AgentSocketHandlers = {};
-  private pendingSends = new Map<string, PendingSend>();
+  private readonly sends = new PendingSendRegistry();
+  private readonly outboundQueue = new OutboundQueue();
+  private readonly reconnectTimer = new ReconnectTimer();
   private activeTurn: { turnId: string; msgIds: string[] } | null = null;
-  private outboundQueue: string[] = [];
   private stopResolvers: Array<() => void> = [];
   private attempt = 0;
   private reconnectScheduled = false;
-  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
 
   constructor(sessionId: string) {
@@ -169,34 +104,7 @@ class SessionAgentSocket implements AgentSocket {
 
   send(request: ChatRequest): { controller: StreamController; promise: Promise<void> } {
     const msgId = request.msg_id ?? generateId();
-    let resolveFn: () => void = () => {};
-    let rejectFn: (err: unknown) => void = () => {};
-    const pending: PendingSend = {
-      msgId,
-      request,
-      payload: null,
-      receivedChunk: false,
-      settled: false,
-      resolve: () => {},
-      reject: () => {}
-    };
-    const promise = new Promise<void>((resolve, reject) => {
-      resolveFn = resolve;
-      rejectFn = reject;
-    });
-    pending.resolve = () => {
-      if (pending.settled) return;
-      pending.settled = true;
-      this.pendingSends.delete(msgId);
-      resolveFn();
-    };
-    pending.reject = (err: unknown) => {
-      if (pending.settled) return;
-      pending.settled = true;
-      this.pendingSends.delete(msgId);
-      rejectFn(err instanceof Error ? err : new Error(String(err)));
-    };
-    this.pendingSends.set(msgId, pending);
+    const { pending, promise } = this.sends.create(msgId, request);
 
     const controller: StreamController = {
       get closed() {
@@ -208,7 +116,7 @@ class SessionAgentSocket implements AgentSocket {
         // session. The promises stay pending (no rejection) — matching the
         // long-standing abort contract consumed by `postAgentStream`.
         this.sendStopFrame();
-        this.abandonAll();
+        this.sends.abandonAll();
       },
       sendHitlResponse: (response: HitlResponse) => {
         // A settled (done/aborted) send must not emit frames on the socket.
@@ -228,7 +136,7 @@ class SessionAgentSocket implements AgentSocket {
     this.sendStopFrame();
     // A stop targets the session's generation: abandon every in-flight send (the
     // promises stay pending) so no error is surfaced for a user-initiated stop.
-    this.abandonAll();
+    this.sends.abandonAll();
     return promise;
   }
 
@@ -246,9 +154,9 @@ class SessionAgentSocket implements AgentSocket {
 
   dispose(): void {
     this.disposed = true;
-    this.clearReconnectTimer();
+    this.reconnectTimer.clear();
     // Settle (resolve) rather than reject: teardown must not surface an error.
-    for (const pending of [...this.pendingSends.values()]) pending.resolve();
+    this.sends.resolveAll();
     this.stopResolvers.splice(0).forEach(resolve => resolve());
     const s = this.socket;
     this.socket = null;
@@ -262,17 +170,12 @@ class SessionAgentSocket implements AgentSocket {
    * @param pending
    */
   private async dispatch(pending: PendingSend): Promise<void> {
-    const request = pending.request;
-    const hasMedia =
-      (request.image_base64_list?.length ?? 0) > 0 ||
-      (request.audio_bytes_list?.length ?? 0) > 0 ||
-      (request.video_bytes_list?.length ?? 0) > 0;
-    if (!hasMedia) {
+    if (!requestHasMedia(pending.request)) {
       this.finishPreparation(pending, { images: [], audios: [], videos: [] });
       return;
     }
     try {
-      const urls = await this.uploadAll(request);
+      const urls = await uploadRequestMedia(pending.request);
       if (pending.settled || this.disposed) return;
       this.finishPreparation(pending, urls);
     } catch (e) {
@@ -286,39 +189,10 @@ class SessionAgentSocket implements AgentSocket {
    * @param urls
    */
   private finishPreparation(pending: PendingSend, urls: MediaUrls): void {
-    pending.payload = JSON.stringify({
-      session_id: this.sessionId,
-      msg_id: pending.msgId,
-      origin: pending.request.origin || 'user',
-      multi_modal_message: {
-        text: pending.request.text || '',
-        image_base64_list: [],
-        image_path_list: urls.images,
-        audio_bytes_list: [],
-        audio_path_list: urls.audios,
-        video_bytes_list: [],
-        video_path_list: urls.videos
-      }
-    });
+    pending.payload = buildAgentPayload(this.sessionId, pending.msgId, pending.request, urls);
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(pending.payload);
     }
-  }
-
-  private async uploadAll(request: ChatRequest): Promise<MediaUrls> {
-    const upload = async (kind: UploadMediaKind, list?: string[]): Promise<string[]> => {
-      if (!list || list.length === 0) return [];
-      try {
-        return await uploadBase64ToUrls(kind, list, API_BASE_URL);
-      } catch (e) {
-        throw new Error(`${KIND_LABEL[kind]} upload failed: ${e}`, { cause: e });
-      }
-    };
-    return {
-      images: await upload('image', request.image_base64_list),
-      audios: await upload('audio', request.audio_bytes_list),
-      videos: await upload('video', request.video_bytes_list)
-    };
   }
 
   private sendStopFrame(): void {
@@ -329,14 +203,12 @@ class SessionAgentSocket implements AgentSocket {
     if (this.socket && this.socket.readyState === WebSocket.OPEN) {
       this.socket.send(frame);
     } else if (!this.disposed) {
-      this.outboundQueue.push(frame);
+      this.outboundQueue.enqueue(frame);
     }
   }
 
   private flushOutboundQueue(): void {
-    const queue = this.outboundQueue;
-    this.outboundQueue = [];
-    for (const frame of queue) this.socket?.send(frame);
+    this.outboundQueue.flush(frame => this.socket?.send(frame));
   }
 
   // ── connection lifecycle ─────────────────────────────────
@@ -363,7 +235,7 @@ class SessionAgentSocket implements AgentSocket {
       // (Re)send every pending send that has not received a chunk yet; the
       // backend persists a round only when the agent graph completes, so a
       // pre-chunk reconnect is safe (a mid-stream one was already rejected).
-      for (const pending of this.pendingSends.values()) {
+      for (const pending of this.sends.values()) {
         if (pending.payload && !pending.receivedChunk) ws.send(pending.payload);
       }
       this.flushOutboundQueue();
@@ -388,11 +260,13 @@ class SessionAgentSocket implements AgentSocket {
   private handleConnectionLoss(): void {
     if (this.disposed || this.reconnectScheduled) return;
     this.reconnectScheduled = true;
-    this.clearReconnectTimer();
+    this.reconnectTimer.clear();
+
+    const inFlight = this.sends.all();
 
     // Case B: a send already produced chunks — its content is on screen and
     // resending would duplicate it. Fail it immediately and never resend.
-    const midStream = [...this.pendingSends.values()].filter(p => p.receivedChunk);
+    const midStream = inFlight.filter(p => p.receivedChunk);
     if (midStream.length > 0) {
       for (const pending of midStream) {
         pending.reject(new StreamInterruptedError('WebSocket closed after streaming began', true));
@@ -401,20 +275,22 @@ class SessionAgentSocket implements AgentSocket {
     }
 
     // Case A: sends that have not produced a chunk can be re-sent after a reconnect.
-    const resumable = [...this.pendingSends.values()].filter(p => !p.receivedChunk && p.payload);
-    if (resumable.length > 0 && this.attempt < WS_RECONNECT_MAX_ATTEMPTS) {
-      this.attempt += 1;
+    const resumable = inFlight.filter(p => !p.receivedChunk && p.payload);
+    const decision = decideReconnect(resumable.length > 0, this.attempt);
+
+    if (decision.retrying) {
+      this.attempt = decision.attempt;
       emit('ws:conn-loss', { sessionId: this.sessionId, midStream: false });
       emit('stream:reconnecting', {
         sessionId: this.sessionId,
         attempt: this.attempt,
         maxAttempts: WS_RECONNECT_MAX_ATTEMPTS
       });
-      this.scheduleReconnect(wsReconnectDelayMs(this.attempt));
+      this.scheduleReconnect(decision.delayMs);
       return;
     }
 
-    if (resumable.length > 0) {
+    if (decision.budgetExhausted) {
       // Retry budget exhausted: surface the interruption and keep the socket
       // alive for future sends with the fixed fallback cadence.
       for (const pending of resumable) {
@@ -422,132 +298,43 @@ class SessionAgentSocket implements AgentSocket {
       }
       emit('ws:conn-loss', { sessionId: this.sessionId, midStream: false });
       emit('stream:reconnect:failed', { sessionId: this.sessionId });
-      this.attempt = 0;
-      this.scheduleReconnect(WS_FALLBACK_RECONNECT_MS);
+      this.attempt = decision.attempt;
+      this.scheduleReconnect(decision.delayMs);
       return;
     }
 
     // No in-flight send: quietly keep the persistent socket alive.
-    this.attempt = 0;
-    this.scheduleReconnect(WS_FALLBACK_RECONNECT_MS);
+    this.attempt = decision.attempt;
+    this.scheduleReconnect(decision.delayMs);
   }
 
   private scheduleReconnect(delayMs: number): void {
-    this.reconnectTimer = setTimeout(() => {
-      this.reconnectTimer = null;
+    this.reconnectTimer.schedule(delayMs, () => {
       this.reconnectScheduled = false;
       if (!this.disposed) this.connect();
-    }, delayMs);
-  }
-
-  private clearReconnectTimer(): void {
-    if (this.reconnectTimer !== null) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    });
   }
 
   // ── inbound ──────────────────────────────────────────────
 
   private handleFrame(event: MessageEvent): void {
-    const handler = createWsMessageHandler<AgentWsEvent>({
-      chunk: data => {
-        for (const pending of this.pendingSends.values()) pending.receivedChunk = true;
-        this.handlers.onChunk?.(
-          typeof data.content === 'string' ? data.content : '',
-          data.type ?? 'text',
-          data.session_id ?? this.sessionId,
-          {
-            tool_id: data.tool_id,
-            tool_name: data.tool_name,
-            args: data.args,
-            error: data.error
-          }
-        );
+    routeAgentFrame(event, {
+      sessionId: this.sessionId,
+      handlers: this.handlers,
+      markAllReceivedChunk: () => {
+        for (const pending of this.sends.values()) pending.receivedChunk = true;
       },
-      hitl_request: data => {
-        if (this.handlers.onHitl && isHitlInterruptData(data.content)) {
-          this.handlers.onHitl(data.content);
-        }
+      settleResolve: messageIds => this.sends.settleResolve(messageIds),
+      settleReject: (messageIds, err) => this.sends.settleReject(messageIds, err),
+      getActiveTurn: () => this.activeTurn,
+      setActiveTurn: turn => {
+        this.activeTurn = turn;
       },
-      queued: data => {
-        if (this.handlers.onQueued && typeof data.position === 'number') {
-          this.handlers.onQueued({
-            sessionId: data.session_id ?? this.sessionId,
-            position: data.position,
-            queueSize: data.queue_size ?? 0,
-            messageId: data.message_id ?? undefined
-          });
-        }
-      },
-      turn_started: data => {
-        this.activeTurn = { turnId: data.turn_id ?? '', msgIds: data.message_ids ?? [] };
-        this.handlers.onTurnStarted?.({
-          sessionId: data.session_id ?? this.sessionId,
-          turnId: this.activeTurn.turnId,
-          messageIds: this.activeTurn.msgIds
-        });
-      },
-      done: data => {
-        this.settleResolve(this.turnMessageIds(data.message_ids));
-        this.activeTurn = null;
-        this.handlers.onDone?.({
-          modelName: data.model_name ?? undefined,
-          inputTokens: data.input_tokens ?? undefined,
-          outputTokens: data.output_tokens ?? undefined
-        });
-      },
-      error: data => {
-        const message = typeof data.content === 'string' ? data.content : '';
-        this.settleReject(this.turnMessageIds(data.message_ids), new Error(message || 'WebSocket stream error'));
-        this.activeTurn = null;
-      },
-      stopped: data => {
-        this.settleResolve(this.turnMessageIds(data.message_ids));
-        this.activeTurn = null;
+      pendingKeys: () => this.sends.keys(),
+      flushStopResolvers: () => {
         this.stopResolvers.splice(0).forEach(resolve => resolve());
-      },
-      todo_updated: data => emit('ws:todo_updated', data)
+      }
     });
-    try {
-      handler(event);
-    } catch {
-      // Non-JSON frame: ignore.
-    }
-  }
-
-  /**
-   * Resolve `message_ids`, falling back to the active turn's member ids, then all pending.
-   * @param messageIds
-   */
-  private turnMessageIds(messageIds?: string[]): string[] {
-    if (messageIds && messageIds.length > 0) return messageIds;
-    if (this.activeTurn && this.activeTurn.msgIds.length > 0) return this.activeTurn.msgIds;
-    return [...this.pendingSends.keys()];
-  }
-
-  private settleResolve(messageIds: string[]): void {
-    const ids = messageIds.length > 0 ? messageIds : [...this.pendingSends.keys()];
-    for (const id of ids) this.pendingSends.get(id)?.resolve();
-  }
-
-  private settleReject(messageIds: string[], err: unknown): void {
-    const ids = messageIds.length > 0 ? messageIds : [...this.pendingSends.keys()];
-    for (const id of ids) this.pendingSends.get(id)?.reject(err);
-  }
-
-  /**
-   * Silently drop every in-flight send of the session: mark each settled and
-   * remove it from the registry WITHOUT settling its promise. Used by a
-   * user-initiated stop/abort, where the long-standing contract keeps the
-   * returned promise pending (so `postAgentStream` never fires `onError`).
-   */
-  private abandonAll(): void {
-    for (const pending of [...this.pendingSends.values()]) {
-      if (pending.settled) continue;
-      pending.settled = true;
-      this.pendingSends.delete(pending.msgId);
-    }
   }
 }
 
