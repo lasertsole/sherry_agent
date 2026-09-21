@@ -4,6 +4,7 @@ import json
 import sqlite3
 import threading
 from .db import get_db
+from .message_repository import MessageRepository
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Annotated, Any
@@ -23,6 +24,11 @@ def _shared_db() -> sqlite3.Connection:
     if _db is None:
         _db = get_db()
     return _db
+
+
+# messages-table reads live in the repository; the provider keeps resolution on
+# ``_shared_db`` so the lazy connection and the ``_db`` injection seam are intact.
+_message_repository = MessageRepository(_shared_db)
 
 
 # Audit #5: serializes the read-MAX-then-INSERT turn assignment inside
@@ -66,12 +72,7 @@ def get_max_turn_num(session_id: str) -> int:
 
     Returns 0 when the session has no messages yet.
     """
-    max_turn_num_row = (
-        _shared_db()
-        .execute("SELECT MAX(turn_num) FROM messages WHERE session_id = ?", (session_id,))
-        .fetchone()
-    )
-    return max_turn_num_row[0] if max_turn_num_row and max_turn_num_row[0] is not None else 0
+    return _message_repository.max_turn_num(session_id)
 
 
 class MessageRowBuilder(ABC):
@@ -263,7 +264,7 @@ def set_session_leaf(session_id: str, leaf_message_id: int) -> None:
 def get_message_by_id(session_id: str, message_id: int) -> dict | None:
     # Lookup by id only: ids are globally unique (AUTOINCREMENT PK) and a fork
     # intentionally crosses session boundaries (shared tree nodes).
-    row = _shared_db().execute("SELECT * FROM messages WHERE id = ?", (message_id,)).fetchone()
+    row = _message_repository.get_by_id(message_id)
     return _decode_json_columns(dict(row)) if row else None
 
 
@@ -694,19 +695,12 @@ def get_turns_by_turn_num_scope(
         max_turn_num = min(max_turn_num, target_turn_num + half_scope)
         min_turn_num = max(min_turn_num, target_turn_num - half_scope)
 
-        compacted_filter = "" if include_compacted else " AND compacted = 0"
-        eligible_filter = " AND context_eligible = 1" if only_eligible else ""
-        rows = (
-            _shared_db()
-            .execute(
-                f"""
-            SELECT * FROM messages 
-            WHERE session_id = ? AND turn_num >= ? AND turn_num <= ?{compacted_filter}{eligible_filter}
-            ORDER BY turn_num DESC, id ASC
-        """,
-                (session_id, min_turn_num, max_turn_num),
-            )
-            .fetchall()
+        rows = _message_repository.fetch_turn_range(
+            session_id,
+            min_turn_num,
+            max_turn_num,
+            only_eligible=only_eligible,
+            include_compacted=include_compacted,
         )
 
         if rows is None or len(rows) == 0:
@@ -758,19 +752,12 @@ def get_history_by_turn_page(
         if target_start_turn_num < min_turn_num:
             target_start_turn_num = min_turn_num
 
-        eligible_filter = " and context_eligible = 1" if only_eligible else ""
-        compacted_filter = "" if include_compacted else " and compacted = 0"
-        rows = (
-            _shared_db()
-            .execute(
-                f"""
-            select * from messages
-            where session_id = ? and turn_num >= ? and turn_num <= ?{eligible_filter}{compacted_filter}
-            ORDER BY turn_num DESC, id ASC
-        """,
-                (session_id, target_start_turn_num, target_end_turn_num),
-            )
-            .fetchall()
+        rows = _message_repository.fetch_turn_range(
+            session_id,
+            target_start_turn_num,
+            target_end_turn_num,
+            only_eligible=only_eligible,
+            include_compacted=include_compacted,
         )
 
         if rows is None or len(rows) == 0:
