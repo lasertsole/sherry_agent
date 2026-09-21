@@ -11,7 +11,7 @@
 - **멀티모달 수집**: 다양한 형식의 문서(TXT / Markdown / PDF 등)를 활성화된 파서로 인덱싱합니다.
 - **지식 그래프**: 플랫한 벡터 청크 대신 문서로부터 엔티티–관계 그래프를 구축합니다.
 - **멀티홉 검색**: 여러 문서/엔티티를 오가는 추론이 필요한 복잡한 질문에 답합니다.
-- **네이티브 스토리지**: 전체 검색 스택은 완전히 벤더되어 있습니다 — RAG-Anything 파이프라인과 그 스토리지 계층이 [SNKV 백엔드와 완전히 융합](scripts/graph_rag/vendored_lightrag/README.md)된 LightRAG 엔진입니다.
+- **네이티브 스토리지**: 전체 검색 스택은 완전히 벤더되어 있습니다 — RAG-Anything 파이프라인과 그 스토리지 계층이 [SNKV 백엔드와 완전히 융합](scripts/graph_rag/vendored_lightrag/)된 LightRAG 엔진입니다.
 
 ---
 

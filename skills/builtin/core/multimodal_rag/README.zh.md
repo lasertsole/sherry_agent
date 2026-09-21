@@ -11,7 +11,7 @@
 - **多模态摄取**：可摄取多种格式文档（TXT / Markdown / PDF 等），由启用的解析器处理。
 - **知识图谱**：基于你的文档构建实体–关系图谱，而非扁平向量分块。
 - **多跳检索**：回答需要跨多个文档 / 实体推理的复杂问题。
-- **原生存储**：整个检索栈已完全 vendored —— RAG-Anything 管线与存储层已[完全融合 SNKV 后端](scripts/graph_rag/vendored_lightrag/README.md)的 LightRAG 引擎。
+- **原生存储**：整个检索栈已完全 vendored —— RAG-Anything 管线与存储层已[完全融合 SNKV 后端](scripts/graph_rag/vendored_lightrag/)的 LightRAG 引擎。
 
 ---
 

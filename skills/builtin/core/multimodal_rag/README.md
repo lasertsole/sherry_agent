@@ -11,7 +11,7 @@
 - **Multimodal ingestion**: indexes documents of many formats (TXT / Markdown / PDF / and more) by any enabled parser.
 - **Knowledge graph**: builds entity–relationship graphs from your documents instead of flat vector chunks.
 - **Multi-hop retrieval**: answers complex questions that require reasoning across multiple documents / entities.
-- **Native storage**: the entire retrieval stack is fully vendored — the RAG-Anything pipeline and a LightRAG engine whose storage layer is [fully fused with the SNKV backend](scripts/graph_rag/vendored_lightrag/README.md).
+- **Native storage**: the entire retrieval stack is fully vendored — the RAG-Anything pipeline and a LightRAG engine whose storage layer is [fully fused with the SNKV backend](scripts/graph_rag/vendored_lightrag/).
 
 ---
 
