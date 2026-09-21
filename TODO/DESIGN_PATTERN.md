@@ -52,25 +52,25 @@
 | **P2** | 20  | 前端 3 个 WebSocket 管理无统一抽象                          | 3 种重连策略各自实现                                                | `WebSocketConnection` 基类        | Done |
 | **P2** | 21  | 前端 `bridge/upload.ts`/`bridge/health.ts` raw fetch | 绕过 requestApi，无 token/retry                                     | 统一 API 客户端                   | Open |
 | **P2** | 22  | 前端错误处理 4 种策略不一致                                 | catch→null / catch→缓存 / throw / catch→默认 —— **需执行前单独复核**（4/5/6 种口径不一致） | Result<T,E> 或统一规范            | Open |
-| **P3** | 23  | `build_reasoning_kwargs` provider 分发                      | if-elif 链                                                          | Strategy + Registry               | Open |
-| **P3** | 24  | `ToolGuardrails._evaluate` + 消息构造                       | 嵌套 if-else action 决策                                            | Chain of Responsibility           | Open |
+| **P3** | 23  | `build_reasoning_kwargs` provider 分发                      | 已解决：`_ReasoningStrategy` 注册表（同一策略同时承载 build + budget） | Strategy + Registry               | Done |
+| **P3** | 24  | `ToolGuardrails._evaluate` + 消息构造                       | 已解决（部分）：3 条遗留病理链收敛进既有 `_chain_action`；完整 CoR 未做（见 §3.11） | Chain of Responsibility           | Done（部分） |
 | **P3** | 25  | `memory.py` action 分发（5 路）                             | 已过时：facts action 链已删；`agent/tools/memory.py:663-684` 现为 `add/replace/remove` 3 路 | Strategy + Registry（不再单列） | Obsolete |
-| **P3** | 26  | `skill_manage.py` action 分发（5+ 路）                      | 嵌套 if-elif 链                                                     | Strategy + Registry               | Open |
-| **P3** | 27  | `built_agent()`                                             | 混合事件循环/checkpointer/LLM/中间件（`agent/core.py:122-252`） | Builder Pattern                   | Open |
+| **P3** | 26  | `skill_manage.py` action 分发（5+ 路）                      | 已解决：`_SKILL_ACTION_HANDLERS` 注册表；handler 返回契约与 telemetry 路径不变 | Strategy + Registry               | Done |
+| **P3** | 27  | `built_agent()`                                             | 已解决：拆为 `_assert_max_token` / `_build_middlewares` / `_build_graph`，顺序逐项钉住 | Builder Pattern                   | Done |
 | **P3** | 28  | `reranker_model/core.py` 701 行                             | FFI+numpy+HTTP+排序混合                                             | 分层架构                          | Open |
 | **P3** | 29  | `Summarization` 依赖 agent.tools                            | 中间件层依赖工具层（5 处）                                          | 依赖倒置                          | Open |
 | **P3** | 30  | nudge 创建子代理（`agent/middlewares/summarization/nudges.py:549`，891 行） | 中间件直接依赖 agent 构建；`ContextEngineHook` 已不存在（被 `@dynamic_prompt` 取代），但该耦合仍在 | Factory + DI                      | Open |
 | **P3** | 31  | `IterationBudget` 依赖私有函数                              | `_is_internal_completion` 跨模块私有                                | Protocol                          | Open |
-| **P3** | 32  | 导入时副作用（5 处）                                        | channels/core、subagent/core、embed_model、extract_model、ITTT/VTTT | Explicit initialization           | Open |
+| **P3** | 32  | 导入时副作用（5 处）                                        | 已解决：embed/extract 用 `setup_*()`，channels/subagent 用显式 `start()`（ITTT/VTTT 上批已惰性代理） | Explicit initialization           | Done |
 | **P3** | 33  | `ws_event_processor_dict` 全局 dict                         | 事件分发无类型安全                                                  | Registry Pattern                  | Open |
 | **P3** | 34  | `stream_dispatch.py` 模块级可变状态                         | `_pending_args`/`_pending_raw` 为 session-scoped 模块级 dict        | State Pattern                     | Open |
-| **P3** | 35  | `turn_runner.py` 延迟导入                                   | 7 个 lazy import 绕循环依赖                                         | Dependency Injection              | Open |
-| **P3** | 36  | `state_register.py` 无公共接口                              | Mem/DB 无 Protocol                                                  | Interface Segregation             | Open |
+| **P3** | 35  | `turn_runner.py` 延迟导入                                   | 保持现状：7 个 call-time seam 是文档化的循环安全接缝，改造需装配注入且收益为负（见 §3.2） | Dependency Injection              | Obsolete |
+| **P3** | 36  | `state_register.py` 无公共接口                              | 已解决（上批）：`StateRegisterProtocol` + `@runtime_checkable` + 符合性探针 | Interface Segregation             | Done |
 | **P3** | 37  | `ContextEngineHook._after_agent_impl`                       | 已过时：`ContextEngineHook` 类全仓不存在（被 `@dynamic_prompt` 取代） | Dataclass + NudgeCounter          | Obsolete |
 | **P3** | 38  | `aclean_old_checkpoints`                                    | 70 行原始 SQL                                                       | Repository Pattern                | Open |
 | **P3** | 39  | `postAgentStream`                                           | 适配器 + 流编排混合 —— **需执行前单独复核** | Adapter + Error Classifier        | Open |
 | **P3** | 40  | `events/store.py` `__import__()` 反模式                     | 为绕循环依赖用动态导入                                              | 延迟导入或 DI                     | Open |
-| **P3** | 41  | `curator/orchestrator.py` 775 行 | sync `llm.invoke()` 在异步路径（`:98`/`:473`） | async/await 或 to_thread          | Open |
+| **P3** | 41  | `curator/orchestrator.py` 775 行 | 已解决（拆分）：775 → 180 行；sync `llm.invoke()` 调用时机/语义按本轮要求**保留**（async 化另行评估） | async/await 或 to_thread          | Done（拆分） |
 | **P3** | 42  | 前端 `ChatBox.vue` 888 行 | 渲染+复制+滚动+载体+媒体解析                                        | 拆分为多个 composable             | Open |
 | **P3** | 43  | 前端 `agent-socket.ts` 554 行 | WS+消息+重连+上传+队列                                              | 拆分为 ConnectionManager/Router   | Open |
 | **P3** | 44  | 前端 `resolveSid`/`safeT` 重复 | 已解决（2026-09-21）：`sessionIdFromPathname`（`utils/session-route.ts`）+ `safeT`（`utils/i18n.ts`）；两处调用点仅保留各自 reserved 集/空值映射 | 提取共享工具 | Done |
@@ -772,16 +772,24 @@ class SessionState:
 
 | Step | Target                            | Pattern        | Est. Effort | Status |
 | ---- | --------------------------------- | -------------- | ----------- | ------ |
-| 3.1  | 导入时副作用 → `setup()` 函数     | Explicit init  | 1 天        | Open   |
-| 3.2  | `turn_runner` 依赖注入            | DI             | 2 天        | Open   |
-| 3.3  | `built_agent()` Builder           | Builder        | 1 天        | Open   |
-| 3.4  | `state_register` Protocol 完善    | Interface Seg. | 1 天        | Open   |
-| 3.5  | `curator/orchestrator.py` 拆分    | 分层架构       | 2 天        | Open   |
+| 3.1  | 导入时副作用 → `setup()` 函数     | Explicit init  | 1 天        | Done   |
+| 3.2  | `turn_runner` 依赖注入            | DI             | 2 天        | Obsolete（保持现状） |
+| 3.3  | `built_agent()` Builder           | Builder        | 1 天        | Done   |
+| 3.4  | `state_register` Protocol 完善    | Interface Seg. | 1 天        | Done   |
+| 3.5  | `curator/orchestrator.py` 拆分    | 分层架构       | 2 天        | Done   |
 | 3.6  | `ChatBox.vue` 拆分为多 composable | Separation     | 2 天        | Open   |
 | 3.7  | `agent-socket.ts` 拆分            | Separation     | 2 天        | Open   |
 | 3.9  | 前端错误处理统一                  | Result/规范    | 1 天        | Open   |
 | 3.10 | 前端 upload.ts/health.ts 统一 API | Adapter        | 0.5 天      | Open   |
-| 3.11 | if-else 链 → Strategy（后端剩余 4 处 + 前端 §4.1.x） | Strategy | 2 天 | Open |
+| 3.11 | if-else 链 → Strategy（后端剩余 4 处 + 前端 §4.1.x） | Strategy | 2 天 | Done（后端） |
+
+- 后端项 Status 更新（2026-09-21）：3.1 / 3.3 / 3.4 / 3.5 / 3.11（后端）Done；3.2 Obsolete（保持现状）。3.6/3.7/3.9/3.10 与前端 3.11 仍 Open，属下一批。
+- 3.1 判据：4 处真实副作用改为显式初始化——`models/embed_model/core.py`（`setup_embed_model()`，`build_embed_model()` + 首次调用触发）、`models/extract_model/core.py`（`setup_mineru_env()`，工厂 + `load()` 触发）、`server/trigger/channels/core.py`（`start()`，`server.trigger.init()` 调用）、`server/trigger/subagent/core.py`（`start()`，同上）；ITTT/VTTT 上批已惰性代理。import 期注册类副作用（route/consumer 绑定）按"必须"保留并注明。
+- 3.2 判据：`turn_runner` 的 7 个惰性导入是**文档化的 call-time 循环安全接缝**，且已有 `register_active_tasks_provider` / `register_outbound_router` 两个显式 DI seam。改为构造注入需引入装配层并触碰大量签名，风险高于收益，判"保持现状"。
+- 3.3 判据：`agent/core.py` 拆为 `_assert_max_token()` / `_build_middlewares()` / `_build_graph()`；新增 `tests/agent/core/test_middleware_order.py` 逐项钉住 17 项 middleware 顺序。
+- 3.4 判据：上批（B1）已落地 `StateRegisterProtocol`（`runtime/session/state_register.py:30`，`@runtime_checkable`，`:316-317` 双实现符合性探针）+ `tests/runtime/test_state_register.py`；本轮零改动确认。
+- 3.5 判据：`context_engine/curator/orchestrator.py` 775 → 180 行；拆出 `review.py` / `run_state.py` / `umbrella.py` / `migration.py` / `refresh.py`；公共 API 与测试 patch surface（`_generate_umbrella_skill`/`_merge_umbrella_skills`/`_archive_*`/`_schedule_system_prompt_refresh`/`_provider_misses_logged`/`_resolve_skill_dir`）在 orchestrator 命名空间保留；sync `llm.invoke` 时机、归档/删除语义、4 阶段顺序不变。
+- 3.11（后端）判据：`reasoning_payload` → `_ReasoningStrategy` 注册表（同一策略承载 build + `get_thinking_budget`，杜绝二者漂移）；`skill_manage` → `_SKILL_ACTION_HANDLERS` 注册表；`tool_guardrails` 3 条遗留链收敛进既有 `_chain_action`（same-tool 经 `_ACTION_RANK` 保持 escalation-only）；`memory.py` 3 路判 Obsolete（§#25）。
 
 - 3.1 定位：5 处导入时副作用见 §2.1.5。
 - 3.2 定位：`server/service/turn_runner.py`（7 个 lazy import）。
