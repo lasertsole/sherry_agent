@@ -244,8 +244,25 @@ import { ref, computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { CronJob, CronSchedule } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
+import {
+  DAY_MS,
+  HOUR_MS,
+  MINUTE_MS,
+  SECOND_MS,
+  buildSchedule as buildScheduleFromForm,
+  describeSchedule as describeScheduleText,
+  everyValueToMs,
+  type ScheduleTranslator
+} from '~/utils/cron-schedule';
 
 const { t } = useI18n({ useScope: 'local' });
+
+/**
+ * Typed translator adapter for the schedule helpers (named-argument calls only).
+ * @param key
+ * @param named
+ */
+const tr: ScheduleTranslator = (key, named) => t(key, named);
 
 const props = defineProps<{ modelValue: boolean }>();
 const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
@@ -278,10 +295,6 @@ const everyUnitOptions = [
   { label: '天 / days', value: 'd' }
 ];
 
-const DAY_MS = 24 * 60 * 60 * 1000;
-const HOUR_MS = 60 * 60 * 1000;
-const MINUTE_MS = 60 * 1000;
-const SECOND_MS = 1000;
 const MIN_EVERY_MS = 1000;
 
 const form = ref({
@@ -318,32 +331,17 @@ const everyBelowFloor = computed(() => {
 });
 
 function everyToMs(): number | null {
-  const v = form.value.everyValue;
-  if (!v || v <= 0) return null;
-  switch (form.value.everyUnit) {
-    case 's':
-      return v * SECOND_MS;
-    case 'm':
-      return v * MINUTE_MS;
-    case 'h':
-      return v * HOUR_MS;
-    case 'd':
-      return v * DAY_MS;
-    default:
-      return null;
-  }
+  return everyValueToMs(form.value.everyValue, form.value.everyUnit);
 }
 
 function buildSchedule(): CronSchedule {
-  switch (form.value.scheduleType) {
-    case 'at':
-      return { kind: 'at', atMs: form.value.atDate ? form.value.atDate.getTime() : null };
-    case 'cron':
-      return { kind: 'cron', expr: form.value.expr.trim() };
-    case 'every':
-    default:
-      return { kind: 'every', everyMs: everyToMs() };
-  }
+  return buildScheduleFromForm({
+    scheduleType: form.value.scheduleType,
+    atDate: form.value.atDate,
+    everyValue: form.value.everyValue,
+    everyUnit: form.value.everyUnit,
+    expr: form.value.expr
+  });
 }
 
 function resetForm() {
@@ -482,24 +480,7 @@ async function removeJob(job: CronJob) {
 
 // ── Display helpers ───────────────────────────────
 function describeSchedule(job: CronJob): string {
-  const s = job.schedule;
-  switch (s.kind) {
-    case 'at':
-      return s.atMs ? t('config.cron.descAt', { time: formatTime(s.atMs) }) : t('config.cron.descAtEmpty');
-    case 'every':
-      return fmtInterval(s.everyMs);
-    case 'cron':
-    default:
-      return s.expr ?? '';
-  }
-}
-
-function fmtInterval(ms?: number | null): string {
-  if (!ms) return '';
-  if (ms % DAY_MS === 0) return t('config.cron.everyDays', { n: ms / DAY_MS });
-  if (ms % HOUR_MS === 0) return t('config.cron.everyHours', { n: ms / HOUR_MS });
-  if (ms % MINUTE_MS === 0) return t('config.cron.everyMinutes', { n: ms / MINUTE_MS });
-  return t('config.cron.everySeconds', { n: ms / SECOND_MS });
+  return describeScheduleText(job.schedule, tr, formatTime);
 }
 
 function formatTime(ms: number): string {

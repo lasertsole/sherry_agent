@@ -30,6 +30,7 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Todo } from '~/stores/todo';
+import { resolveTodoStatusIcon } from '~/utils/todo-status';
 
 const props = defineProps<{ todo: Todo }>();
 const { t } = useI18n();
@@ -38,18 +39,7 @@ const isTerminal = computed(() => props.todo.status === 'completed' || props.tod
 
 const showCategory = computed(() => !!props.todo.category && props.todo.category !== 'quick');
 
-const statusIcon = computed(() => {
-  switch (props.todo.status) {
-    case 'completed':
-      return 'pi pi-check-circle text-green-500';
-    case 'cancelled':
-      return 'pi pi-times-circle text-color-secondary';
-    case 'in_progress':
-      return 'pi pi-spin pi-spinner text-primary';
-    default:
-      return 'pi pi-circle text-color-secondary';
-  }
-});
+const statusIcon = computed(() => resolveTodoStatusIcon(props.todo.status));
 
 const linkedLabel = computed(() => {
   const flow = props.todo.flow_id;
