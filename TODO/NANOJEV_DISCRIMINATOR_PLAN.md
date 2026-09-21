@@ -1,5 +1,7 @@
 # NanoJev 本地判别器接入计划 — TODO 意图识别 + STEP_JUDGE
 
+> **⛔ 已放弃（ABANDONED）— 2026-09-22**：NanoJev 实测性能不满足判别器要求，经用户决定放弃本计划。**本文仅作存档，禁止执行**；两个判别器维持现状（正则意图识别 + auxiliary LLM 判官）。若将来重启本地判别器方向，应先重新选型（更大 backbone 或微调后的模型）再参考本文架构。
+
 > 目标：用本地 NanoJev（Qwen3-0.6B backbone + 结构化决策头，Hugging Face `C-Tianyu/NanoJev`，596M 参数，MIT 参考实现）替换两个判别器的判定路径：
 > ① **TODO 意图识别**：`agent/middlewares/task_intent/core.py:110` 的 `_detect_task_intent`（现为纯正则启发式，boolean 命题判定）。
 > ② **STEP_JUDGE 步骤判官**：`agent/tools/taskflow/step_judge.py:142` 的 `judge_step_result`（现为 auxiliary LLM，pass/retry/block 三选一裁决）。
