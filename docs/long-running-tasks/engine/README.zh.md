@@ -80,7 +80,7 @@ blocked ──(依赖满足)──▶ ready ──(派发)──▶ dispatched �
 | `taskflow_dispatch` | 全有或全无地批量派发多个就绪步骤 |
 | `taskflow_update_steps` | 全量替换 steps 列表（增/删/重排/改 task 或 depends_on；dispatched/done 安全规则；孤儿 child 警告） |
 | `taskflow_wait_all` | 按 flow 范围有界轮询，等待已派发步骤落定（对带策略的落定步骤自动重试） |
-| `taskflow_resume` | 幂等地注入子结果、解锁后继步骤、聚合 token（感知失败重试 + 标准回显） |
+| `taskflow_resume` | 幂等地注入子结果、解锁后继步骤、聚合 token（感知失败重试 + 步骤判别器） |
 | `taskflow_set_waiting` | 带上原因把 flow 置为 `waiting` |
 | `taskflow_summary` | 只读回读（也是冲突后的重读手段） |
 | `taskflow_progress` | 人类可读的进度/完成度报告 |
@@ -249,10 +249,10 @@ for flow in overdue:
 
 ## ✅ 结果校验
 
-步骤可以携带自然语言的**验收标准**，让编排者有一个具体的依据来判断子 Agent 的结果。两个工具都接受 `validation_criteria`：
+步骤可以携带自然语言的**验收标准**，两个工具都接受 `validation_criteria`：
 
 ```python
-# agent/tools/taskflow/tools/taskflow_run_task.py:46
+# agent/tools/taskflow/tools/taskflow_run_task.py:40
 async def taskflow_run_task(
     flow_id: str,
     task: str,
@@ -265,29 +265,26 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）。在恢复时，标准是被**回显**给编排者，而不是被强制执行：
+`taskflow_run_task` 会把去空白后非空的 `validation_criteria` 存到步骤上（`blocked` 与 `dispatched` 两条写入路径都如此）。在恢复时，携带标准的步骤会由**辅助 LLM**（`agent/tools/taskflow/step_judge.py`，温度 0）按这些标准审查：
 
 ```python
-# taskflow_resume.py:146-157
-if step is not None and redispatched_key is None:
-    step["status"] = str(StepStatus.DONE)
-    criteria = (validation_criteria or "").strip()
-    if criteria:
-        step["validation_criteria"] = criteria
-    stored_criteria = str(step.get("validation_criteria") or "").strip()
-    if stored_criteria:
-        validation_text = (
-            f"\n  validation_criteria: {stored_criteria}"
-            f"\n  ⚠ Result needs validation against criteria"
-        )
+# agent/tools/taskflow/step_judge.py:28-31
+class StepVerdict(StrEnum):
+    PASS = "pass"
+    RETRY = "retry"
+    BLOCK = "block"
 ```
 
-工具从不评估这些标准——它只是在注入结果的同时把它们呈现出来，并在响应末尾追加 `validation_criteria: …` 与 `⚠ Result needs validation against criteria` 区块。有两条护栏值得注意：
+- `pass` 把步骤标记为 `done` 并解锁后继。
+- `retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback`（`## Previous Attempt Feedback`）把判别器指引附加到替换任务；预算耗尽的步骤标记为 `blocked`。
+- `block` 依据判别器原因把步骤标记为 `blocked`。
+
+判别器会看到本流的证据摘要（`agent/tools/taskflow/evidence_collector.py`），且**失败开放**：判别器禁用、模型报错或响应无法解析时降级为 `pass`。没有标准的步骤仍走旧路径——直接标记 `done`，且当存有 `validation_criteria` 时响应仍会在末尾回显 `validation_criteria: …`。有两条护栏值得注意：
 
 - 向 `taskflow_resume` 传入 `validation_criteria` 会**覆盖**已存值（例如根据子 Agent 实际所做的工作收紧或修正它）。
-- 只有当步骤确实被标记为 `done`（`redispatched_key is None`）时才会回显；在重试策略下被重新派发的步骤会保留其标准，并在最终成功恢复时得到回显。
+- 判别器仅在步骤真正落定（`redispatched_key is None`）时运行；在重试策略下被重新派发的步骤会保留其标准，并在最终恢复时接受判别。
 
-编排者（主 Agent 模型）是裁判：把子 Agent 结果与标准比对，然后决定接受该步骤、重新派发，还是让 flow 失败。不存在自动的通过/失败闸门。
+编排者（主 Agent 模型）仍掌管 flow 级决策，但携带标准的步骤不再依赖模型去发现未满足的标准：判别器可以将其 `block`，或者用重试预算再试一次。
 
 ## 📊 进度报告
 

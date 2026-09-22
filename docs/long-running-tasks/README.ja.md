@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、ステップの受け入れ基準をオーケストレータが検証できるようエコーし、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
+> エージェントが単一ターンを超えて生き続ける作業をどう実行するか：永続化された SQLite DAG エンジン（`taskflow_*`、14 ツール）が、依存関係を持つステップを会話ターンをまたいで追跡し、各ステップを分離された子エージェントへディスパッチし、オプトインのポリシーに従って失敗/死亡ステップを再ディスパッチし、受け入れ基準を持つステップ結果を補助 LLM が審査し（`pass` / `retry` / `block`）、予算に対してトークン/コスト消費を集計し、バックグラウンド sweeper が期限切れやアイドル状態の flow を失効させ、セッションごとに分離された flow ボードを公開し（すべての読み取りは SQL 層で所有セッションをフィルタし、子エージェントが taskflow/todolist/knowledge を受け取ることはありません）、2 層メモリシステム、圧縮前メモリフラッシュ、要約と TaskFlow の橋渡し、ツール出力の一行要約、セッション間の継続性、サブエージェント完了時のメモリ還流、そしてアクティブな flow のシステムプロンプトへの自動再注入を通じて、コンテキストを先へ引き継ぎます。
 
 一次情報：`agent/tools/taskflow/**`、`agent/tools/memory.py`、`agent/middlewares/summarization/memory_flush.py`、`agent/middlewares/summarization/core.py`（TaskFlow コンテキストブロック）、`agent/middlewares/subagent_completion_drain/core.py`（メモリ還流）、`agent/middlewares/task_intent/core.py`、`agent/middlewares/todo_continuation/core.py`、`context_engine/session_continuity.py`、`workspace/prompt_builder.py`、`pub/func/message/tool_output_prune.py`、`agent/tools/subagent/registry/sweeper.py`、`agent/wrapper/**`、`config/features/**`。以下の定数、シグネチャ、行番号はすべてこのコードと突き合わせて検証済みです。
 
@@ -54,13 +54,13 @@
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **19** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
+| `config/features/agent_side/` | **26** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
 | `config/features/infra_side/` | **19** 個のインフラ側設定モジュール（サーバー、キュー、スキル、コンテキストエンジン、ランタイム、モデル価格） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **39 個の feature オブジェクト**を保持します——エージェント側 20 + インフラ側 19——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **45 個の feature オブジェクト**を保持します——エージェント側 26 + インフラ側 19——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -154,13 +154,13 @@
 | `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | ディスパッチ済みステップ、または未充足依存付き `blocked` |
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | ディスパッチ済み step id + リビジョン |
 | `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | ステップごとの確定レポート（完全または部分；ポリシー付きステップを自動再試行） |
-| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | 再開後ステータス、アンロック済みステップ、ステップ状態カウント、基準エコー、再試行ノート |
+| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | 再開後ステータス、アンロック済みステップ、ステップ状態カウント、基準エコー、判定器の判定、再試行ノート |
 | `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting ステータス + リビジョン |
 | `taskflow_summary` | `(flow_id, session_id)` | 待機/締め切り状態を含む完全な flow 状態 |
 | `taskflow_progress` | `(flow_id, session_id)` | 完了率、内訳、次のステップ、残り推定 |
 | `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 予算レポート、または設定確認 |
 | `taskflow_list` | `(status_filter="active", session_id)` | このセッションのボード（`active` / `all` / ステータス名） |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, session_id)` | 終端 `done` |
+| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 終端 `done`（4 ゲート、フェイルオープン） |
 | `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `failed` |
 | `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | 終端 `cancelled` |
 
@@ -178,7 +178,7 @@
 | `update_flow` | `agent/tools/taskflow/registry/store_sqlite.py` | 楽観的ロック付きセッションスコープ変更 |
 | `get_active_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | セッションスコープのアクティブ flow 読み取り（SQL `session_id` フィルタ） |
 | `get_overdue_flows` / `get_waiting_flows` | `store_sqlite.py` | sweeper クエリ（意図的にセッション横断） |
-| `deps_satisfied` / `unlock_dependents` | `agent/tools/taskflow/tools/_shared.py:99,137` | DAG 遷移 |
+| `deps_satisfied` / `unlock_dependents` | `agent/tools/taskflow/tools/_shared.py:115,153` | DAG 遷移 |
 | `update_flow_with_conflict_retry` | `_shared.py:191` | 生成済みの子を失わない永続化 |
 | `_expire_overdue_taskflows` | `agent/tools/subagent/registry/sweeper.py:123` | 締め切りの執行 |
 | `_scan_stale_waiting_taskflows` | `sweeper.py:154` | アイドル検出マーカー |
@@ -190,13 +190,15 @@
 | `append_entries` | `agent/tools/memory.py:281` | MEMORY.md への一括追記 |
 | `get_all_flows_sync` | `agent/tools/taskflow/registry/store_sqlite.py` | セッションボード読み取り（SQL `session_id` フィルタ） |
 | `classify_failure` / `should_retry_failure` | `agent/tools/taskflow/tools/_retry.py:56,103` | 失敗分類 |
-| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:199,254` | wait_all 再試行の計画/永続化 |
-| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:68` | メモリ還流の照合 |
+| `plan_settled_retries` / `persist_retry_actions` | `agent/tools/taskflow/tools/_retry.py:218,273` | wait_all 再試行の計画/永続化 |
+| `_backflow_shared_memory` | `agent/middlewares/subagent_completion_drain/core.py:93` | メモリ還流の照合 |
+| `judge_step_result` | `agent/tools/taskflow/step_judge.py:142` | ステップ単位の pass/retry/block 判定 |
+| `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 判定プロンプト用 evidence 要約 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | プラグ可能なグラフラッパーチェーン |
 
 ## 🧪 テスト
 
-TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（17 個の `unit` テストファイル + 共有 `conftest.py`）：
+TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個の `unit` テストファイル + 共有 `conftest.py`）：
 
 | テストファイル | カバー内容 |
 | :--- | :--- |
@@ -215,10 +217,17 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（17 個�
 | `test_deadline.py` | `deadline_hours`、要約描画、sweeper 失効 |
 | `test_idle_detection.py` | active/stale 待機状態、sweeper マーカー、生存子スキップ |
 | `test_retry_policy.py` | ポリシー検証、失敗分類、再ディスパッチ、枯渇 |
-| `test_validation.py` | 基準の保存、再開エコー、上書き |
+| `test_validation.py` | 基準の保存、判定器の判定（`pass`/`retry`/`block`）、上書き、フェイルオープン |
+| `test_step_judge.py` | StepJudge 応答解析、判定の正規化、`pass` へのフェイルオープン、プロンプト組立 |
+| `test_resume_with_judge.py` | `taskflow_resume` + 判定器：pass/retry/block、再試行フィードバック注入、予算枯渇、フェイルオープン |
+| `test_evidence_collector.py` | 判定プロンプト用 evidence 要約の描画；staleness は後続の `stale` 行から導出 |
+| `test_finish_gate.py` | 完了ゲート A–D：DAG 完全性、blocked ステップ、失敗/stale evidence、`SisyphusVerifier` |
+| `test_chain_smoke.py` | 判定器 → 再試行フィードバック → goal loop → 完了ゲートの統合スモーク（stub 補助 LLM） |
 | `test_taskflow_list.py` | セッションボード描画、ステータスフィルタ、最終活動タイムスタンプ |
+| `test_index_audit.py` | SQLite インデックス更新パスとクエリプラン監査 |
+| `test_update_steps.py` | ステップリスト全置換：追加/削除/書き換え/並べ替えと dispatched/done 安全規則 |
 
-横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証リマインダー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留 flow のプロンプト注入）。
+横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証リマインダー）、`tests/agent/middlewares/test_completion_drain_gate.py`（オプトイン `enforce_verification` プログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/todolist/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留 flow のプロンプト注入）。
 
 標準の uv/pytest ツールでこの領域だけを実行：
 
@@ -238,11 +247,11 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 39。** 設定レジストリは 39 個の feature オブジェクト（エージェント側 20 + インフラ側 19）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING` を省いています。
+- **レジストリ規模は 45。** 設定レジストリは 45 個の feature オブジェクト（エージェント側 26 + インフラ側 19）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING` を省いています。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。
-- **結果検証は助言的。** `validation_criteria` は保存され結果と共にエコーされますが、ツールが強制することはありません；合否はオーケストレータ自身が判断する必要があります。基準未達でステップを失敗させられる自動ゲートはありません。
+- **基準がある場合の結果検証は判定器が行う。** 基準を持つステップは再開時に補助 LLM のステップ判定器が審査します：`retry` はステップ自身の再試行予算内で再ディスパッチし、`block`（または予算枯渇）はステップを `blocked` にします。判定器はフェイルオープンなので、無効/利用不能時は `pass` に劣化します——結果が基準を満たしたという硬い保証はなく、ステップ受け入れ前のベストエフォート判定にすぎません。
 - **再試行分類はテキストベース。** `classify_failure` は結果テキストに対する部分文字列ヒューリスティックです：パターン表の外の言い回しの失敗（または否定フレーズに隠れた真の失敗）は再試行を引き起こさず、空の `retry_on` は分類されたすべての失敗を再試行します。`taskflow_wait_all` は結果テキストの無い死亡した子を分類できないため、予算が残る限り常に再試行予算を消費します。
 - **`taskflow_list` はセッションスコープ。** グローバルなセッション横断ボードは存在しません：すべての読み取りが所有 `session_id` で SQL フィルタされるため、あるセッションが別のセッションの flow を列挙することはできません。分離前の行（`session_id = ''`）はセッション読み取りからは見えませんが、sweeper のセッション横断締め切り/アイドルスキャンは解決します。
 - **Knowledge の保存は計画名ではなく計画アイデンティティをキーとします。** アクセスは所有権チェック（`ownership.is_plan_associated()`：セッションの `plan_ref`、todo の `plan_ref`、または `session_ids` に当該セッションを含む boulder work）で制御され、保存ディレクトリは正規化された計画パスから導出されます——`workspace/knowledge/plans/<plan_key>/`、`plan_key = sha1(リポジトリルート相対パス)[:12]`、各ディレクトリの `meta.json` に可読な `plan_name` / `plan_ref` を記録します。**計画ファイルが異なる**同名計画は 2 セッション間で**物理的に隔離**され（各自の key ディレクトリへ書き込み）、boulder `session_ids` で**1 つの計画ファイル**を協業するセッションは同じパスに解決され 1 つのディレクトリを共有します。計画ファイルが解決できないセッションはフォールバックアイデンティティ `session-<sha1(session_id)[:8]>` に書き込みます（全 id ハッシュにより先頭 8 文字が同じセッション id も衝突しません）。レガシーの名前キー・ディレクトリは読み取り可能なまま；書き込みは常に key ディレクトリへ。`clear_session` はセッション私有のアイデンティティディレクトリを削除し、他セッションと共有された計画は保持します。サブエージェント境界は絶対的のままです——`knowledge` は `main_only` です。

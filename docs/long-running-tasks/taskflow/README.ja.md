@@ -44,6 +44,8 @@ TaskFlow（`agent/tools/taskflow/`）は、SQLite（WAL モード）上に構築
 agent/tools/taskflow/
 ├── __init__.py              # パッケージエクスポート（11 ツール再エクスポート）
 ├── config.py                # TaskFlowStatus、StepStatus 列挙型、TERMINAL_STATUSES、TABLE_NAME
+├── step_judge.py            # StepJudge — 補助 LLM の pass/retry/block 判定器
+├── evidence_collector.py    # 判定プロンプト用のセッション/フロー evidence 要約を描画
 ├── registry/
 │   ├── __init__.py
 │   └── store_sqlite.py      # SQLite 永続化：create/get/update、WAL、busy_timeout、
@@ -102,7 +104,7 @@ blocked → ready → dispatched → done
 | `dispatched` | 分離された子セッションが spawn 済み、`child_session_key` 永続化済み              | `taskflow_resume` が結果注入                   |
 | `done`       | 結果が `taskflow_resume` で注入済み                                              | （このステップの終端状態）                     |
 
-> `done` は「結果が注入された」ことを意味し、**「子エージェントが成功した」ことを意味しない**。失敗対応の遷移（`failed`/`skipped` ステップ状態）は意図的に後段に先送りされています。
+> `done` は「結果が注入された」ことを意味し、**「子エージェントが成功した」ことを意味しない**。`failed`/`skipped` ステップ状態は存在せず、失敗対応はステップのオプトイン `retry_policy` とステップ判定器（`block` 判定または再試行予算の枯渇で `blocked`）にあります。
 
 ### 従来ステップの互換性
 
@@ -174,13 +176,16 @@ async def taskflow_wait_all(
 ```python
 async def taskflow_resume(
     flow_id: str, child_session_key: str = "", result: str = "",
-    expected_revision: int | None = None,
+    expected_revision: int | None = None, token_usage: dict | None = None,
+    validation_criteria: str | None = None,
 ) -> str
 ```
 
 完了した子セッションの結果をフロー状態に注入（べき等）。`{child_session_key, result, result_hash, injected_at}` を results に追加。フローが `waiting` だった場合、`running` に復帰。
 
 **DAG 記簿**：マッチするステップを `done` にマークし、`unlock_dependents()` を呼んで新たに満たされた `blocked` ステップを `ready` に移行。アンロックされたステップ id を返す。**resume は決して spawn しない**——呼び出し側は `taskflow_dispatch` で新たに準備完了したステップを明示的にディスパッチする必要がある。
+
+**ステップ判定器**：ステップが `validation_criteria` を持つ場合（`taskflow_run_task` が設定、またはここで渡す）、補助 LLM 判定器（`agent/tools/taskflow/step_judge.py`、温度 0）が結果を基準に照らして審査し、`pass` / `retry` / `block` を返す。`retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback` で代替タスクに追加する。予算を使い切るか `block` 判定の場合は、判定器の理由とともにステップを `blocked` にする。判定器にはこのフローの evidence 要約が渡され、フェイルオープンである — 判定器の無効化、モデルエラー、解析不能な応答は `pass` に劣化する。
 
 ### taskflow_set_waiting
 
@@ -242,12 +247,16 @@ async def taskflow_list(status_filter: str = "active") -> str
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 
 ```python
-async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
+async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None,
+                          todo: dict | None = None, plan_path: str | None = None,
+                          checkbox_label: str | None = None) -> str
 async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
 終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` をフロー状態に記録。ディスパッチ済みの子セッションは実行を継続し、フローが取消される前の結果は `taskflow_resume` で配信可能。
+
+`finish` は DONE 遷移の前に 4 つのゲートを順に通す：**A** すべてのステップが `done` または `blocked`；**B** `blocked` のステップが存在しない；**C** このフローの evidence（`agent/tools/taskflow/evidence_collector.py`）に `FAIL` 行も `[stale]` 行もない；**D** `SisyphusVerifier` が合格 — 呼び出し側が `todo` と `plan_path` の両方を明示的に渡した場合のみで、フロー/ステップの schema 移行は不要。すべてのゲートはフェイルオープン：evidence コレクタが利用不能、または検証器エラーの場合は完了をブロックせず通過する。
 
 ---
 
@@ -334,6 +343,6 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 ## 既知の制限
 
-- **`done` ≠ 成功**：ステップ `done` は「結果が注入された」ことのみを意味し、「子エージェントが成功した」ことを意味しない。ステップ級 `failed`/`skipped` 状態は存在しない。子セッションが失敗しても `taskflow_resume` はステップを `done` にマークし後続をアンロックする。失敗対応のリカバリにはステップに `retry_policy` を付与：`taskflow_wait_all` はリトライ予算が残る間、終了した子を再ディスパッチし、予算尽き後は失敗注記付きで `done` にマークする。
+- **`done` ≠ 成功**：ステップ `done` は「結果が注入された」ことのみを意味し、「子エージェントが成功した」ことを意味しない。`failed`/`skipped` ステップ状態は存在せず、`validation_criteria` も一致する `retry_policy` も持たないステップは、子が失敗しても `done` となり後続をアンロックする。失敗対応のリカバリにはステップに `retry_policy` を付与：`taskflow_wait_all` はリトライ予算が残る間、終了した子を再ディスパッチし、予算尽き後は失敗注記付きで `done` にマークする。`validation_criteria` がある場合、判定器の `block` 判定またはリトライ予算の枯渇が代わりにステップを `blocked` にする。
 - **`taskflow_wait_all` タイムアウトは有界ポーリング**：完了しない子セッションが自動的にフローを失敗させることはない。タイムアウトは部分レポートを返す。
 - **ステップ id は順次割当**：登録時に `step-{len(steps)+1}` を割当。ステップが並行して追加される場合、id は競合リトライ時に `build_state` 内で再計算。

@@ -44,6 +44,8 @@ Key design choices:
 agent/tools/taskflow/
 ├── __init__.py              # Package exports (11 tools re-exported)
 ├── config.py                # TaskFlowStatus, StepStatus enums, TERMINAL_STATUSES, TABLE_NAME
+├── step_judge.py            # StepJudge — auxiliary-LLM pass/retry/block discriminator
+├── evidence_collector.py    # Session/flow evidence summary rendered for judge prompts
 ├── registry/
 │   ├── __init__.py
 │   └── store_sqlite.py      # SQLite persistence: create/get/update, WAL, busy_timeout,
@@ -102,7 +104,7 @@ blocked → ready → dispatched → done
 | `dispatched` | Detached child session spawned, `child_session_key` persisted                 | `taskflow_resume` injects result              |
 | `done`       | Result injected via `taskflow_resume`                                         | (terminal for this step)                      |
 
-> `done` means "a result was injected", **not** "the child succeeded". Failure-aware transitions (`failed`/`skipped` step statuses) are deliberately deferred to a later phase.
+> `done` means "a result was injected", **not** "the child succeeded". There are no `failed`/`skipped` step statuses; failure-aware handling lives in the step's opt-in `retry_policy` and in the step judge (`blocked` on `block` or on an exhausted retry budget).
 
 ### Legacy Step Compatibility
 
@@ -174,13 +176,16 @@ Waits until this flow's dispatched child sessions settle (or a timeout). Polls O
 ```python
 async def taskflow_resume(
     flow_id: str, child_session_key: str = "", result: str = "",
-    expected_revision: int | None = None,
+    expected_revision: int | None = None, token_usage: dict | None = None,
+    validation_criteria: str | None = None,
 ) -> str
 ```
 
 Injects a completed child session result into the flow state (idempotent). Appends `{child_session_key, result, result_hash, injected_at}` to results. If the flow was `waiting`, returns it to `running`.
 
 **DAG bookkeeping**: marks the matching step `done` and calls `unlock_dependents()` to move newly-satisfied `blocked` steps to `ready`. Returns the unlocked step ids. **Resume never spawns** — the caller dispatches newly-ready steps explicitly via `taskflow_dispatch`.
+
+**Step judge**: when the step carries `validation_criteria` (set by `taskflow_run_task` or passed here), an auxiliary-LLM judge (`agent/tools/taskflow/step_judge.py`, temperature 0) reviews the result against the criteria and returns `pass` / `retry` / `block`. `retry` re-dispatches the step through the shared `_retry` seam, reusing the step's own `retry_count` budget (`STEP_JUDGE["max_retries"]`, default 2) and appending the judge's guidance to the replacement task via `with_judge_feedback`; an exhausted budget or a `block` verdict marks the step `blocked` with the judge's reason. The judge is shown the flow's evidence summary and is fail-open — a disabled judge, a model error, or an unparseable response degrades to `pass`.
 
 ### taskflow_set_waiting
 
@@ -242,12 +247,16 @@ Read-only board of this session's flows: `"active"` (running + waiting), `"all"`
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 
 ```python
-async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
+async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None,
+                          todo: dict | None = None, plan_path: str | None = None,
+                          checkbox_label: str | None = None) -> str
 async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
 Terminal transitions. `finish` records a `summary`, `fail` records a `failure_reason`, `cancel` records a `cancel_reason` in the flow state. Already-dispatched child sessions keep running; their results are still deliverable via `taskflow_resume` until the flow was cancelled.
+
+`finish` gates the DONE transition on four checks, in order: **A** every step is `done` or `blocked`; **B** no step is `blocked`; **C** the flow's evidence (`agent/tools/taskflow/evidence_collector.py`) carries no `FAIL` and no `[stale]` row; **D** `SisyphusVerifier` passes — only when the caller explicitly supplies both `todo` and `plan_path`, so no flow/step schema migration is needed. Every gate is fail-open: an unavailable collector or a verifier error passes rather than blocking a finish.
 
 ---
 
@@ -334,6 +343,6 @@ The `build_state` callback receives a fresh flow and an attempt number, so it ca
 
 ## Known Limitations
 
-- **`done` ≠ success**: step `done` only means "a result was injected", not "the child succeeded". No step-level `failed`/`skipped` statuses exist. Even if a child session fails, `taskflow_resume` still marks the step `done` and unlocks successors. For failure-aware recovery, attach a `retry_policy` to the step: `taskflow_wait_all` re-dispatches a settled child while retry budget remains, and marks the step `done` with a failure-note once the budget is exhausted.
+- **`done` ≠ success**: step `done` only means "a result was injected", not "the child succeeded". No step-level `failed`/`skipped` statuses exist, and a step with neither `validation_criteria` nor a matching `retry_policy` still lands `done` and unlocks successors even after a failed child. For failure-aware recovery, attach a `retry_policy` to the step: `taskflow_wait_all` re-dispatches a settled child while retry budget remains, and marks the step `done` with a failure-note once the budget is exhausted; with `validation_criteria`, the step judge's `block` verdict or exhausted retry budget marks the step `blocked` instead.
 - **`taskflow_wait_all` timeout is bounded polling**: a never-settling child session does not automatically fail the flow. The timeout returns a partial report.
 - **Step ids are sequential**: `step-{len(steps)+1}` assigned at registration time. If steps are appended concurrently, the id is re-computed inside `build_state` on conflict retry.

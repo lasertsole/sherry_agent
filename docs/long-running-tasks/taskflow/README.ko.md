@@ -44,6 +44,8 @@ TaskFlow(`agent/tools/taskflow/`)는 SQLite(WAL 모드) 기반의 영속적 태�
 agent/tools/taskflow/
 ├── __init__.py              # 패키지 내보내기 (11개 도구 재내보내기)
 ├── config.py                # TaskFlowStatus, StepStatus 열거형, TERMINAL_STATUSES, TABLE_NAME
+├── step_judge.py            # StepJudge — 보조 LLM pass/retry/block 판정기
+├── evidence_collector.py    # 판정 프롬프트용 세션/플로우 evidence 요약 렌더링
 ├── registry/
 │   ├── __init__.py
 │   └── store_sqlite.py      # SQLite 영속화: create/get/update, WAL, busy_timeout,
@@ -102,7 +104,7 @@ blocked → ready → dispatched → done
 | `dispatched` | 분리된 자식 세션이 spawn됨, `child_session_key` 영속화됨                   | `taskflow_resume`이 결과 주입           |
 | `done`       | 결과가 `taskflow_resume`로 주입됨                                          | (이 단계의 종단 상태)                   |
 
-> `done`은 "결과가 주입됨"을 의미하며, **"자식 에이전트가 성공했음"을 의미하지 않습니다**. 실패 인식 전환(`failed`/`skipped` 단계 상태)은 의도적으로 후속 단계로 연기되었습니다.
+> `done`은 "결과가 주입됨"을 의미하며, **"자식 에이전트가 성공했음"을 의미하지 않습니다**. `failed`/`skipped` 단계 상태는 존재하지 않으며, 실패 인식 처리는 단계의 선택적 `retry_policy`와 단계 판정기(`block` 판정 또는 재시도 예산 소진 시 `blocked`)에 있습니다.
 
 ### 기존 단계 호환성
 
@@ -174,13 +176,16 @@ async def taskflow_wait_all(
 ```python
 async def taskflow_resume(
     flow_id: str, child_session_key: str = "", result: str = "",
-    expected_revision: int | None = None,
+    expected_revision: int | None = None, token_usage: dict | None = None,
+    validation_criteria: str | None = None,
 ) -> str
 ```
 
 완료된 자식 세션의 결과를 플로우 상태에 주입(멱등). `{child_session_key, result, result_hash, injected_at}`를 results에 추가. 플로우가 `waiting`이었다면 `running`으로 복귀.
 
 **DAG 기장**: 매칭되는 단계를 `done`으로 마크하고 `unlock_dependents()`를 호출하여 새로 충족된 `blocked` 단계를 `ready`로 이동. 언락된 단계 id 반환. **resume은 결코 spawn하지 않음**——호출자는 `taskflow_dispatch`로 새로 준비된 단계를 명시적으로 디스패치해야 함.
+
+**단계 판정기**: 단계가 `validation_criteria`를 가질 때(`taskflow_run_task`가 설정하거나 여기서 전달), 보조 LLM 판정기(`agent/tools/taskflow/step_judge.py`, 온도 0)가 결과를 기준에 비추어 심사하고 `pass` / `retry` / `block`을 반환. `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`으로 대체 작업에 덧붙임. 예산이 소진되거나 `block` 판정이면 판정기 사유와 함께 단계를 `blocked`로 표시. 판정기에는 이 플로우의 evidence 요약이 제공되며 페일오픈 — 판정기 비활성, 모델 오류, 파싱 불가 응답은 `pass`로 강등됨.
 
 ### taskflow_set_waiting
 
@@ -242,12 +247,16 @@ async def taskflow_list(status_filter: str = "active") -> str
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 
 ```python
-async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
+async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None,
+                          todo: dict | None = None, plan_path: str | None = None,
+                          checkbox_label: str | None = None) -> str
 async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
 종단 전환. `finish`는 `summary`, `fail`은 `failure_reason`, `cancel`은 `cancel_reason`을 플로우 상태에 기록. 디스패치된 자식 세션은 계속 실행되며, 플로우가 취소되기 전까지 결과는 `taskflow_resume`으로 배달 가능.
+
+`finish`는 DONE 전환 전에 네 개의 게이트를 순서대로 통과: **A** 모든 단계가 `done` 또는 `blocked`; **B** `blocked` 단계가 없음; **C** 이 플로우의 evidence(`agent/tools/taskflow/evidence_collector.py`)에 `FAIL` 행도 `[stale]` 행도 없음; **D** `SisyphusVerifier` 통과 — 호출자가 `todo`와 `plan_path`를 모두 명시적으로 전달한 경우에만 해당하며 플로우/단계 schema 마이그레이션이 필요 없음. 모든 게이트는 페일오픈: evidence 수집기를 사용할 수 없거나 검증기가 오류를 내면 완료를 막지 않고 통과시킴.
 
 ---
 
@@ -334,6 +343,6 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 ## 알려진 제한 사항
 
-- **`done` ≠ 성공**: 단계 `done`은 "결과가 주입됨"만을 의미하며, "자식 에이전트가 성공했음"을 의미하지 않음. 단계급 `failed`/`skipped` 상태 없음. 자식 세션이 실패해도 `taskflow_resume`은 단계를 `done`으로 마크하고 후속을 언락. 실패 인식 복구를 위해 단계에 `retry_policy`를 부착: `taskflow_wait_all`은 재시도 예산이 남는 동안 종료된 자식을 재디스패치하고, 예산 소진 후 실패 노트와 함께 `done`으로 마크함.
+- **`done` ≠ 성공**: 단계 `done`은 "결과가 주입됨"만을 의미하며, "자식 에이전트가 성공했음"을 의미하지 않음. `failed`/`skipped` 단계 상태는 없으며, `validation_criteria`도 일치하는 `retry_policy`도 없는 단계는 자식이 실패해도 `done`으로 남고 후속 단계를 언락함. 실패 인식 복구를 위해서는 단계에 `retry_policy`를 부착: `taskflow_wait_all`은 재시도 예산이 남아 있는 동안 종료된 자식을 재디스패치하고, 예산 소진 후 실패 노트와 함께 `done`으로 마크함. `validation_criteria`가 있으면 판정기의 `block` 판정이나 재시도 예산 소진이 대신 단계를 `blocked`로 표시함.
 - **`taskflow_wait_all` 타임아웃은 유계 폴링**: 완료되지 않는 자식 세션이 자동으로 플로우를 실패시키지 않음. 타임아웃은 부분 보고서 반환.
 - **단계 id는 순차 할당**: 등록 시 `step-{len(steps)+1}` 할당. 단계가 동시에 추가되는 경우, id는 충돌 재시도 시 `build_state` 내에서 재계산.

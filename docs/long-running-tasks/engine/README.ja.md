@@ -80,7 +80,7 @@ blocked ──(依存満足)──▶ ready ──(ディスパッチ)──▶ 
 | `taskflow_dispatch` | 複数の準備完了ステップをオール・オア・ナッシングで一括ディスパッチ |
 | `taskflow_update_steps` | steps リストを全置換（追加/削除/並べ替え/task・depends_on の書き換え；dispatched/done の安全規則；孤児 child 警告） |
 | `taskflow_wait_all` | flow スコープの有界ポーリングでディスパッチ済みステップの確定を待つ（ポリシー付き確定ステップを自動再試行） |
-| `taskflow_resume` | 子の結果を冪等に注入し、後続をアンロックし、トークンを集計（失敗認識の再試行 + 基準エコー） |
+| `taskflow_resume` | 子の結果を冪等に注入し、後続をアンロックし、トークンを集計（失敗認識の再試行 + ステップ判定器） |
 | `taskflow_set_waiting` | 理由付きで flow を `waiting` に停める |
 | `taskflow_summary` | 読み取り専用の再読込（競合後の再読込にも使う） |
 | `taskflow_progress` | 人間可読な進捗/完了レポート |
@@ -249,10 +249,10 @@ for flow in overdue:
 
 ## ✅ 結果検証
 
-ステップは自然言語の**受け入れ基準**を持てるため、オーケストレータは子の結果を判断する具体的な根拠を得られます。両ツールが `validation_criteria` を受け取ります：
+ステップは自然言語の**受け入れ基準**を持て、両ツールが `validation_criteria` を受け取ります：
 
 ```python
-# agent/tools/taskflow/tools/taskflow_run_task.py:46
+# agent/tools/taskflow/tools/taskflow_run_task.py:40
 async def taskflow_run_task(
     flow_id: str,
     task: str,
@@ -265,29 +265,26 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` は空白除去後に非空の `validation_criteria` をステップへ保存します（`blocked` と `dispatched` の両書き込み経路）。再開時、基準は強制されるのではなくオーケストレータへ**エコー**されます：
+`taskflow_run_task` は空白除去後に非空の `validation_criteria` をステップへ保存します（`blocked` と `dispatched` の両書き込み経路）。再開時、基準を持つステップは**補助 LLM**（`agent/tools/taskflow/step_judge.py`、温度 0）によってその基準に照らして審査されます：
 
 ```python
-# taskflow_resume.py:146-157
-if step is not None and redispatched_key is None:
-    step["status"] = str(StepStatus.DONE)
-    criteria = (validation_criteria or "").strip()
-    if criteria:
-        step["validation_criteria"] = criteria
-    stored_criteria = str(step.get("validation_criteria") or "").strip()
-    if stored_criteria:
-        validation_text = (
-            f"\n  validation_criteria: {stored_criteria}"
-            f"\n  ⚠ Result needs validation against criteria"
-        )
+# agent/tools/taskflow/step_judge.py:28-31
+class StepVerdict(StrEnum):
+    PASS = "pass"
+    RETRY = "retry"
+    BLOCK = "block"
 ```
 
-ツールは決して基準を評価しません——注入された結果と並べて提示するだけであり、応答の末尾に `validation_criteria: …` と `⚠ Result needs validation against criteria` ブロックが付きます。重要なガードレールは 2 つです：
+- `pass` はステップを `done` にして後続をアンロックします。
+- `retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback`（`## Previous Attempt Feedback`）で代替タスクに追加します。予算を使い切ったステップは `blocked` になります。
+- `block` は判定器の理由とともにステップを `blocked` にします。
+
+判定器にはこのフローの evidence 要約（`agent/tools/taskflow/evidence_collector.py`）が渡され、**フェイルオープン**です：判定器の無効化、モデルエラー、解析不能な応答は `pass` に劣化します。基準を持たないステップは従来の経路のままです — `done` にされ、`validation_criteria` が保存されていれば応答末尾に `validation_criteria: …` をエコーします。重要なガードレールは 2 つです：
 
 - `taskflow_resume` に `validation_criteria` を渡すと保存値が**上書き**されます（例えば子が実際に行った内容に基づいて基準を厳しくしたり訂正したりするため）。
-- エコーはステップが実際に `done` とされる場合（`redispatched_key is None`）にのみ出ます；再試行ポリシーで再ディスパッチされたステップは基準を保存したままにし、最終的に成功した再開時にエコーを得ます。
+- 判定器はステップが実際に確定した場合（`redispatched_key is None`）にのみ動作します；再試行ポリシーで再ディスパッチされたステップは基準を保存したままにし、最終的な再開時に審査されます。
 
-判断者はオーケストレータ（メインエージェントモデル）です：子の結果を基準と比較し、そのステップを受け入れるか、再ディスパッチするか、flow を失敗させるかを決めます。自動の合否ゲートはありません。
+オーケストレータ（メインエージェントモデル）は引き続きフロー全体の判断を担いますが、基準を持つステップでは未達基準をモデルが拾う必要はもうありません：判定器がそのステップを `block` にするか、再試行予算で新しい試行に回します。
 
 ## 📊 進捗レポート
 

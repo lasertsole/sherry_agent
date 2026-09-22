@@ -44,6 +44,8 @@ TaskFlow（`agent/tools/taskflow/`）是基于 SQLite（WAL 模式）的持久�
 agent/tools/taskflow/
 ├── __init__.py              # 包导出（重导出 11 个工具）
 ├── config.py                # TaskFlowStatus、StepStatus 枚举，TERMINAL_STATUSES，TABLE_NAME
+├── step_judge.py            # StepJudge —— 辅助 LLM 判别器（pass/retry/block）
+├── evidence_collector.py    # 为判别器提示词渲染会话/流证据摘要
 ├── registry/
 │   ├── __init__.py
 │   └── store_sqlite.py      # SQLite 持久化：create/get/update，WAL，busy_timeout，
@@ -102,7 +104,7 @@ blocked → ready → dispatched → done
 | `dispatched` | 已 spawn 分离式子代理会话，`child_session_key` 已持久化 | `taskflow_resume` 注入结果         |
 | `done`       | 结果已通过 `taskflow_resume` 注入                       | （此步骤的终态）                   |
 
-> `done` 表示"已注入结果"，**不**表示"子代理成功"。故障感知转换（`failed`/`skipped` 步骤状态）刻意推迟到后续阶段。
+> `done` 表示"已注入结果"，**不**表示"子代理成功"。不存在 `failed`/`skipped` 步骤状态；故障感知处理位于步骤可选的 `retry_policy` 与步骤判别器中（`block` 判定或重试预算耗尽时标记 `blocked`）。
 
 ### 旧步骤兼容
 
@@ -174,13 +176,16 @@ async def taskflow_wait_all(
 ```python
 async def taskflow_resume(
     flow_id: str, child_session_key: str = "", result: str = "",
-    expected_revision: int | None = None,
+    expected_revision: int | None = None, token_usage: dict | None = None,
+    validation_criteria: str | None = None,
 ) -> str
 ```
 
 将已完成子代理会话的结果注入流状态（幂等）。将 `{child_session_key, result, result_hash, injected_at}` 追加到 results。如果流原为 `waiting`，恢复为 `running`。
 
 **DAG 簿记**：标记匹配步骤为 `done` 并调用 `unlock_dependents()` 将新满足的 `blocked` 步骤移至 `ready`。返回解锁的步骤 id。**resume 永不 spawn**——调用者需通过 `taskflow_dispatch` 显式派发新就绪步骤。
+
+**步骤判别器**：当步骤携带 `validation_criteria`（由 `taskflow_run_task` 设置或在此传入）时，辅助 LLM 判别器（`agent/tools/taskflow/step_judge.py`，温度 0）按标准审查结果，返回 `pass` / `retry` / `block`。`retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback` 把判别器指引附加到替换任务；预算耗尽或 `block` 判定则把步骤标记为 `blocked` 并附判别器原因。判别器会看到本流的证据摘要，且失败开放——判别器禁用、模型报错或响应无法解析时降级为 `pass`。
 
 ### taskflow_set_waiting
 
@@ -242,12 +247,16 @@ async def taskflow_list(status_filter: str = "active") -> str
 ### taskflow_finish / taskflow_fail / taskflow_cancel
 
 ```python
-async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None) -> str
+async def taskflow_finish(flow_id: str, summary: str = "", expected_revision: int | None = None,
+                          todo: dict | None = None, plan_path: str | None = None,
+                          checkbox_label: str | None = None) -> str
 async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
 终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子代理会话继续运行；在流取消前其结果仍可通过 `taskflow_resume` 投递。
+
+`finish` 在 DONE 迁移前按顺序经过四道门：**A** 每个步骤都是 `done` 或 `blocked`；**B** 没有步骤处于 `blocked`；**C** 本流的 evidence（`agent/tools/taskflow/evidence_collector.py`）不含 `FAIL` 行、也不含 `[stale]` 行；**D** `SisyphusVerifier` 通过——仅当调用方同时显式传入 `todo` 与 `plan_path`，因此无需任何流/步骤 schema 迁移。每道门都失败开放：evidence 收集器不可用或校验器报错时放行，不阻断完成。
 
 ---
 
@@ -334,6 +343,6 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ## 已知限制
 
-- **`done` ≠ 成功**：步骤 `done` 仅表示"已注入结果"，不表示"子代理成功"。无步骤级 `failed`/`skipped` 状态。即使子代理会话失败，`taskflow_resume` 仍标记步骤 `done` 并解锁后继。故障感知恢复可为步骤附加 `retry_policy`：`taskflow_wait_all` 在重试预算内会重新派发已结束的子代理，预算耗尽后以失败注记标记 `done`。
+- **`done` ≠ 成功**：步骤 `done` 仅表示"已注入结果"，不表示"子代理成功"。无步骤级 `failed`/`skipped` 状态；既无 `validation_criteria` 也无匹配 `retry_policy` 的步骤即使子代理失败也仍标记 `done` 并解锁后继。故障感知恢复可为步骤附加 `retry_policy`：`taskflow_wait_all` 在重试预算内会重新派发已结束的子代理，预算耗尽后以失败注记标记 `done`；若步骤带 `validation_criteria`，判别器的 `block` 判定或重试预算耗尽则改标记步骤为 `blocked`。
 - **`taskflow_wait_all` 超时为有界轮询**：永不完成的子代理会话不会自动使流失败。超时返回部分报告。
 - **步骤 id 为顺序分配**：注册时分配 `step-{len(steps)+1}`。如果步骤被并发追加，id 在冲突重试时由 `build_state` 重新计算。

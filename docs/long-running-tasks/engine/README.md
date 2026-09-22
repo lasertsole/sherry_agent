@@ -80,7 +80,7 @@ All tools are `async`, decorated `@tool("taskflow_…")`, tagged `metadata={"sco
 | `taskflow_dispatch` | Batch-dispatch several ready steps all-or-nothing |
 | `taskflow_update_steps` | Full-replace the steps list (add/remove/reorder/rewrite task or depends_on; dispatched/done safety rules; orphan-child warning) |
 | `taskflow_wait_all` | Flow-scoped bounded poll for dispatched steps to settle (auto-retries settled steps with a policy) |
-| `taskflow_resume` | Idempotently inject a child result, unlock dependents, aggregate tokens (failure-aware retry + criteria echo) |
+| `taskflow_resume` | Idempotently inject a child result, unlock dependents, aggregate tokens (failure-aware retry + step judge) |
 | `taskflow_set_waiting` | Park the flow in `waiting` with a reason |
 | `taskflow_summary` | Read-only re-read (also the post-conflict re-read) |
 | `taskflow_progress` | Human-readable progress/completion report |
@@ -249,10 +249,10 @@ Overdue flows are marked `failed`; already-terminal flows are excluded by the qu
 
 ## ✅ Result Validation
 
-A step can carry natural-language **acceptance criteria** so the orchestrator has something concrete to judge a child's result against. Both tools accept `validation_criteria`:
+A step can carry natural-language **acceptance criteria**, and both tools accept `validation_criteria`:
 
 ```python
-# agent/tools/taskflow/tools/taskflow_run_task.py:46
+# agent/tools/taskflow/tools/taskflow_run_task.py:40
 async def taskflow_run_task(
     flow_id: str,
     task: str,
@@ -265,29 +265,26 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task` stores a stripped non-empty `validation_criteria` on the step (both the `blocked` and the `dispatched` write paths). At resume time the criteria are **echoed** back to the orchestrator rather than enforced:
+`taskflow_run_task` stores a stripped non-empty `validation_criteria` on the step (both the `blocked` and the `dispatched` write paths). At resume time a criteria-bearing step is **judged by an auxiliary LLM** (`agent/tools/taskflow/step_judge.py`, temperature 0) against those criteria:
 
 ```python
-# taskflow_resume.py:146-157
-if step is not None and redispatched_key is None:
-    step["status"] = str(StepStatus.DONE)
-    criteria = (validation_criteria or "").strip()
-    if criteria:
-        step["validation_criteria"] = criteria
-    stored_criteria = str(step.get("validation_criteria") or "").strip()
-    if stored_criteria:
-        validation_text = (
-            f"\n  validation_criteria: {stored_criteria}"
-            f"\n  ⚠ Result needs validation against criteria"
-        )
+# agent/tools/taskflow/step_judge.py:28-31
+class StepVerdict(StrEnum):
+    PASS = "pass"
+    RETRY = "retry"
+    BLOCK = "block"
 ```
 
-The tool never evaluates the criteria — it only surfaces them alongside the injected result, and the response gains a trailing `validation_criteria: …` + `⚠ Result needs validation against criteria` block. Two guardrails matter:
+- `pass` marks the step `done` and unlocks dependents.
+- `retry` re-dispatches the step through the shared `_retry` seam, reusing the step's own `retry_count` budget (`STEP_JUDGE["max_retries"]`, default 2) and appending the judge's guidance to the replacement task via `with_judge_feedback` (`## Previous Attempt Feedback`). An exhausted budget marks the step `blocked`.
+- `block` marks the step `blocked` with the judge's reason.
+
+The judge is shown the flow's evidence summary (`agent/tools/taskflow/evidence_collector.py`) and is **fail-open**: a disabled judge, a model error, or an unparseable response degrades to `pass`. Steps without criteria keep the old path — they are marked `done`, and when `validation_criteria` was stored the response still echoes a trailing `validation_criteria: …`. Two guardrails matter:
 
 - Passing `validation_criteria` to `taskflow_resume` **overrides** the stored value (for example to tighten or correct it based on what the child actually did).
-- The echo is emitted only when the step is actually marked `done` (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and gets the echo on the eventual successful resume.
+- The judge runs only when the step is actually settled (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and is judged on the eventual resume.
 
-The orchestrator (the main-agent model) is the judge: compare the child result against the criteria, then decide to accept the step, re-dispatch, or fail the flow. There is no automatic pass/fail gate.
+The orchestrator (the main-agent model) still owns flow-level decisions, but a criteria-bearing step no longer needs the model to catch an unmet criterion: the judge can `block` it or spend the retry budget on a fresh attempt.
 
 ## 📊 Progress Report
 

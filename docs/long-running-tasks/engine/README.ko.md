@@ -80,7 +80,7 @@ blocked ──(의존 충족)──▶ ready ──(디스패치)──▶ dispa
 | `taskflow_dispatch` | 여러 준비된 단계를 전부 아니면 전무로 일괄 디스패치 |
 | `taskflow_update_steps` | 단계 목록 전체 교체(추가/삭제/재정렬/task·depends_on 재작성; dispatched/done 안전 규칙; 고아 child 경고) |
 | `taskflow_wait_all` | flow 범위 유계 폴링으로 디스패치된 단계의 정착을 대기(정책 단계 자동 재시도) |
-| `taskflow_resume` | 자식 결과를 멱등하게 주입하고 후속 단계를 언락하며 토큰을 집계(실패 인식 재시도 + 기준 에코) |
+| `taskflow_resume` | 자식 결과를 멱등하게 주입하고 후속 단계를 언락하며 토큰을 집계(실패 인식 재시도 + 단계 판정기) |
 | `taskflow_set_waiting` | 이유와 함께 flow를 `waiting`으로 파킹 |
 | `taskflow_summary` | 읽기 전용 재조회(충돌 후 재조회에도 사용) |
 | `taskflow_progress` | 사람이 읽을 수 있는 진행/완료 보고서 |
@@ -249,10 +249,10 @@ for flow in overdue:
 
 ## ✅ 결과 검증
 
-단계는 자연어 **수용 기준**을 가질 수 있어 오케스트레이터가 자식 결과를 판단할 구체적 근거를 얻습니다. 두 도구 모두 `validation_criteria`를 받습니다:
+단계는 자연어 **수용 기준**을 가질 수 있고, 두 도구 모두 `validation_criteria`를 받습니다:
 
 ```python
-# agent/tools/taskflow/tools/taskflow_run_task.py:46
+# agent/tools/taskflow/tools/taskflow_run_task.py:40
 async def taskflow_run_task(
     flow_id: str,
     task: str,
@@ -265,29 +265,26 @@ async def taskflow_run_task(
 ) -> str
 ```
 
-`taskflow_run_task`는 공백을 제거한 뒤 비어 있지 않은 `validation_criteria`를 단계에 저장합니다(`blocked`와 `dispatched` 두 쓰기 경로 모두). 재개 시점에 기준은 강제되는 대신 오케스트레이터에게 **에코**됩니다:
+`taskflow_run_task`는 공백을 제거한 뒤 비어 있지 않은 `validation_criteria`를 단계에 저장합니다(`blocked`와 `dispatched` 두 쓰기 경로 모두). 재개 시점에 기준을 가진 단계는 **보조 LLM**(`agent/tools/taskflow/step_judge.py`, 온도 0)이 그 기준에 비추어 심사합니다:
 
 ```python
-# taskflow_resume.py:146-157
-if step is not None and redispatched_key is None:
-    step["status"] = str(StepStatus.DONE)
-    criteria = (validation_criteria or "").strip()
-    if criteria:
-        step["validation_criteria"] = criteria
-    stored_criteria = str(step.get("validation_criteria") or "").strip()
-    if stored_criteria:
-        validation_text = (
-            f"\n  validation_criteria: {stored_criteria}"
-            f"\n  ⚠ Result needs validation against criteria"
-        )
+# agent/tools/taskflow/step_judge.py:28-31
+class StepVerdict(StrEnum):
+    PASS = "pass"
+    RETRY = "retry"
+    BLOCK = "block"
 ```
 
-도구는 결코 기준을 평가하지 않습니다 — 주입된 결과와 나란히 제시할 뿐이며, 응답 끝에 `validation_criteria: …`와 `⚠ Result needs validation against criteria` 블록이 붙습니다. 중요한 가드레일 두 가지:
+- `pass`는 단계를 `done`으로 표시하고 후속 단계를 언락합니다.
+- `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`(`## Previous Attempt Feedback`)으로 대체 작업에 덧붙입니다. 예산이 소진된 단계는 `blocked`로 표시됩니다.
+- `block`은 판정기 사유와 함께 단계를 `blocked`로 표시합니다.
+
+판정기에는 이 플로우의 evidence 요약(`agent/tools/taskflow/evidence_collector.py`)이 제공되며 **페일오픈**입니다: 판정기 비활성, 모델 오류, 파싱 불가 응답은 `pass`로 강등됩니다. 기준이 없는 단계는 기존 경로를 유지합니다 — `done`으로 표시되고, `validation_criteria`가 저장되어 있으면 응답 끝에 `validation_criteria: …`를 계속 에코합니다. 중요한 가드레일 두 가지:
 
 - `taskflow_resume`에 `validation_criteria`를 전달하면 저장 값이 **덮어써집니다**(예: 자식이 실제로 한 일에 따라 기준을 강화하거나 교정하기 위해).
-- 에코는 단계가 실제로 `done`으로 표시될 때(`redispatched_key is None`)에만 나옵니다. 재시도 정책으로 재디스패치된 단계는 기준을 저장한 채 두고, 최종적으로 성공한 재개에서 에코를 받습니다.
+- 판정기는 단계가 실제로 확정될 때(`redispatched_key is None`)에만 실행됩니다. 재시도 정책으로 재디스패치된 단계는 기준을 저장한 채 두고, 최종 재개 시 심사됩니다.
 
-판정자는 오케스트레이터(메인 에이전트 모델)입니다: 자식 결과를 기준과 비교한 뒤 단계를 수용할지, 재디스패치할지, flow를 실패시킬지 결정합니다. 자동 합격/불합격 게이트는 없습니다.
+오케스트레이터(메인 에이전트 모델)는 여전히 플로우 수준 결정을 담당하지만, 기준을 가진 단계는 모델이 미충족 기준을 찾아낼 필요가 없습니다: 판정기가 그 단계를 `block`하거나 재시도 예산으로 새 시도를 할 수 있습니다.
 
 ## 📊 진행 보고서
 
