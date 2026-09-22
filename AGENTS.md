@@ -83,17 +83,17 @@ User message → Robyn WS → agent.core.built_agent() graph
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
        stamped there) → detached child agents → announce pipeline → drain
 
-  completion gates (all fail-open):
+  completion gates (all always-on, all fail-open):
     · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
       (pass / retry within STEP_JUDGE["max_retries"] / block)
-    · CompletionJudge goal loop — opt-in via sessions_spawn(goal_loop, goal_max_turns)
-      + COMPLETION_JUDGE["enabled"]; continue injects a follow-up turn
-    · Evidence ledger — terminal/python_repl auto-record + file-edit stale events;
-      read side derives staleness (evidence_collector.py)
+    · CompletionJudge goal loop — every spawn, bounded by
+      COMPLETION_JUDGE["goal_max_turns"]; continue injects a follow-up turn
+    · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
+      stale events; read side derives staleness (evidence_collector.py)
     · taskflow_finish gates A–D — DAG completeness, no blocked steps, no
       FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
-    · SubagentCompletionDrainMiddleware.enforce_verification — opt-in programmatic
-      gate wired from EVIDENCE_LEDGER["enforce_on_complete"]
+    · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
+      drained completion carriers when the session lacks passing evidence
 ```
 
 ## Concurrency Lanes (`runtime/lane/`)
