@@ -45,7 +45,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **可靠投递**：结果通过 EventBus announce 流水线回传，具备幂等校验与指数退避重试
 - **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器在配置了运行超时时强制超时（默认不配置）
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
-- **验证式完成（可选）**：`sessions_spawn(goal_loop=True)` 在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由 `goal_max_turns` 限定（默认 5；需 `COMPLETION_JUDGE["enabled"]`）
+- **验证式完成**：每次 spawn 都会在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由配置的 `COMPLETION_JUDGE["goal_max_turns"]` 预算限定（默认 5）
 - **功能角色（可选）**：`sessions_spawn(functional_role=...)` 可让 worker 专业化（general / researcher / executor / reviewer）；该角色决定 LLM 层级、工具 allow-list 与子代理系统提示词段落
 - ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
 
