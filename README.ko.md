@@ -45,6 +45,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **신뢰성 있는 전달**: 결과는 멱등성 검사와 지수 백오프 재시도를 갖춘 EventBus announce 파이프라인을 통해 반환
 - **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 런 타임아웃이 설정된 경우에만 이를 강제 (기본값: 없음)
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
+- **검증된 완료(옵트인)**: `sessions_spawn(goal_loop=True)`는 자식 턴 사이에 보조 LLM 완료 판정기를 실행합니다; `continue` 판정은 판정기의 후속 프롬프트를 다음 턴으로 주입하며, `goal_max_turns`(기본 5; `COMPLETION_JUDGE["enabled"]` 필요)로 상한이 정해집니다
 - ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
 
 ### 4. 🌐 멀티채널 접근
@@ -276,7 +277,7 @@ EMA_AI_agent/
 | **요약 압축** | 컨텍스트 압축 미들웨어: 5개 트리거 지점, 4경로 오버플로 라우터, 스래싱 방지 가드 | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
 | **루프 방지** | 폭주 루프 가드, 지수 백오프 브레이커, 프로세스 크래시 게이팅 | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
 | **샌드박스** | 터미널 및 Python REPL 격리: 환경 변수 스크러빙, OS 네이티브 격리, 승인 게이트 | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **장기 실행 작업** | TaskFlow DAG 엔진, 토큰 예산, 데드라인, 턴 간 메모리 연속성 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
+| **장기 실행 작업** | TaskFlow DAG 엔진, 단계 판정기, 토큰 예산, 데드라인, 검증된 완료 게이트, 턴 간 메모리 연속성 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | 두 LLM의 128K 컨텍스트 윈도우 하한(부팅, 빌드, 스폰, env 쓰기) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | 경계별 영속화, 도구 결과·인간 메시지 축출, `read_file` 슬라이스, 오버플로 테일 클립, 요약 필터링 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
 

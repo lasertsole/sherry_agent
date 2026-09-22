@@ -45,6 +45,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **信頼性の高い配信**：結果は冪等チェックと指数バックオフリトライを備えた EventBus announce パイプラインで返却
 - **永続化レジストリ**：実行レコードは SQLite に永続化。sweeper が孤立タスクを復旧し、followup チェッカーはランタイムアウトが設定された場合のみ強制（デフォルト: なし）
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
+- **検証された完了（オプトイン）**：`sessions_spawn(goal_loop=True)` は子ターン間に補助 LLM の完了判定器を実行します；`continue` 判定は判定器のフォローアッププロンプトを次のターンとして注入し、`goal_max_turns`（既定 5；`COMPLETION_JUDGE["enabled"]` が必要）で上限が決まります
 - ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
 
 ### 4. 🌐 マルチチャンネルアクセス
@@ -276,7 +277,7 @@ EMA_AI_agent/
 | **要約圧縮** | コンテキスト圧縮ミドルウェア: 5 つのトリガーポイント、4 経路オーバーフロールーター、スラッシング防止ガード | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
 | **ループ防止** | 暴走ループのガード、指数バックオフブレーカー、プロセスクラッシュゲーティング | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
 | **サンドボックス** | ターミナルと Python REPL の隔離: 環境変数スクラビング、OS ネイティブ分離、承認ゲート | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **長時間タスク** | TaskFlow DAG エンジン、トークン予算、デッドライン、ターンをまたぐメモリ継続性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
+| **長時間タスク** | TaskFlow DAG エンジン、ステップ判定器、トークン予算、デッドライン、検証済み完了ゲート、ターンをまたぐメモリ継続性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | 両 LLM の 128K コンテキストウィンドウ下限（起動・ビルド・スポーン・env 書き込み） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | 境界ごとの永続化、ツール結果と人間メッセージの退避、`read_file` スライス、オーバーフロー・テールクリップ、要約フィルタリング | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
 

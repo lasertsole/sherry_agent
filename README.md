@@ -45,6 +45,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Reliable Delivery**: results return through an EventBus announce pipeline with idempotency checks and exponential-backoff retries
 - **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces run timeouts when configured (default: none)
 - **Swarm Mode**: batch sub-task execution with FIFO scheduling and configurable concurrency
+- **Verified completion (opt-in)**: `sessions_spawn(goal_loop=True)` runs an auxiliary-LLM completion judge between child turns; a `continue` verdict injects the judge's follow-up prompt as the next turn, bounded by `goal_max_turns` (default 5; requires `COMPLETION_JUDGE["enabled"]`)
 - ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for the full architecture_
 
 ### 4. 🌐 Multi-Channel Access
@@ -276,7 +277,7 @@ Each major subsystem has its own detailed README:
 | **Summarization** | Context compaction middleware: five trigger points, a 4-route overflow router, anti-thrash guards | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
 | **Loop Prevention** | Runaway-loop guards, exponential-backoff breakers, and process crash gating | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
 | **Sandbox** | Terminal & Python REPL confinement: env scrubbing, OS-native isolation, approval gate | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
-| **Long-Running Tasks** | TaskFlow DAG engine, token budgets, deadlines, and cross-turn memory continuity | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
+| **Long-Running Tasks** | TaskFlow DAG engine, step judge, budgets, deadlines, verified completion gates, and cross-turn memory continuity | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | Hard 128K context-window floor on both LLMs (boot, build, spawn, env write) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | Per-boundary persistence, tool-result & human-message eviction, `read_file` slice, overflow tail clip, summary filtering | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
 
