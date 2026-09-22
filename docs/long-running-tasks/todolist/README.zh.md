@@ -174,20 +174,25 @@ class TodoService:
 
 ### EvidenceLedger
 
+`agent/tools/todolist/evidence_ledger.py` 是 append-only 的 JSONL 账本（`src/data/evidence-ledger.jsonl`，每行一个 JSON 对象）。`append` + `read_all` 仍是全部存储契约；会话级视图读取同一份共享文件：
+
 ```python
 class EvidenceLedger:
     LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
-    def append(cls, entry: dict) -> None:
-        entry["timestamp"] = datetime.utcnow().isoformat()
-        with open(cls.LEDGER_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
+    def append(cls, entry: dict) -> None: ...          # 一行 JSON + UTC 时间戳
     @classmethod
-    def read_all(cls) -> list[dict]:
-        ...
+    def read_all(cls) -> list[dict]: ...
+    @classmethod
+    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
+    @classmethod
+    def read_for_session(cls, session_key: str) -> list[dict]: ...
+    @classmethod
+    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
 ```
+
+陈旧性是推导出来的、从不写入：`mark_stale_for_path` 追加一行 `{"event": "stale", "file_path": …}`，读取侧认定某条证据行陈旧，当且仅当更晚的 stale 事件命名了其 `command` 中包含的路径。`agent/tools/todolist/evidence_recorder.py` 把它接入工具（失败开放、吞掉异常）：`terminal` / `python_repl` 为识别出的验证命令追加一行（`EVIDENCE_LEDGER["auto_record"]`，默认 `True`），`write_file` / `patch_file` 为被编辑路径追加 stale 事件（`EVIDENCE_LEDGER["auto_stale"]`，默认 `True`）。`agent/tools/taskflow/evidence_collector.py` 渲染给判别器与 `taskflow_finish` 证据门查看的摘要。
 
 ### WS 推送
 

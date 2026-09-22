@@ -182,23 +182,25 @@ class TodoService:
 
 ### EvidenceLedger
 
+`agent/tools/todolist/evidence_ledger.py` is an append-only JSONL ledger (`src/data/evidence-ledger.jsonl`, one JSON object per line). `append` + `read_all` remain the whole storage contract; session-scoped views read the same shared file:
+
 ```python
 class EvidenceLedger:
     LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
-    def append(cls, entry: dict) -> None:
-        entry["timestamp"] = datetime.utcnow().isoformat()
-        with open(cls.LEDGER_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
+    def append(cls, entry: dict) -> None: ...          # one JSON line + UTC stamp
     @classmethod
-    def read_all(cls) -> list[dict]:
-        if not os.path.exists(cls.LEDGER_PATH):
-            return []
-        with open(cls.LEDGER_PATH, "r", encoding="utf-8") as f:
-            return [json.loads(line) for line in f if line.strip()]
+    def read_all(cls) -> list[dict]: ...
+    @classmethod
+    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
+    @classmethod
+    def read_for_session(cls, session_key: str) -> list[dict]: ...
+    @classmethod
+    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
 ```
+
+Staleness is derived, never stored: `mark_stale_for_path` appends a `{"event": "stale", "file_path": …}` row, and the read side treats an evidence row as stale when a later stale event names a path contained in its `command`. `agent/tools/todolist/evidence_recorder.py` wires this into the tools (fail-open, errors swallowed): `terminal` / `python_repl` append a row for recognized verification commands (`EVIDENCE_LEDGER["auto_record"]`, default `True`) and `write_file` / `patch_file` append a stale event for the edited path (`EVIDENCE_LEDGER["auto_stale"]`, default `True`). `agent/tools/taskflow/evidence_collector.py` renders the summary shown to the judges and to the `taskflow_finish` evidence gate.
 
 ### WS Push
 

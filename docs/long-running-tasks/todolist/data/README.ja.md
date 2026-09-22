@@ -73,7 +73,12 @@
 ```json
 {"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
 {"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": "src/data/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
+{"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
+
+- **自動記録**：`agent/tools/todolist/evidence_recorder.py` が `terminal` / `python_repl` の結果から認識した検証コマンドの行（`kind` + `status`、`EVIDENCE_LEDGER["auto_record"]` で制御）を追記し、`write_file` / `patch_file` の編集後に `stale` イベントを追記します（`auto_stale`）。すべての入口はフェイルオープン — 台帳書き込みがツールを壊すことはありません。
+- **staleness は導出値**：後続の `{"event": "stale"}` 行が、ある evidence 行の `command` に含まれるパスを名指しした場合にのみ、その行は stale です（`agent/tools/taskflow/evidence_collector.py`）。履歴行は決して書き換えられません。
+- **セッションビュー**：`EvidenceLedger.for_session(session_key)` / `read_for_session()` が共有ファイルを `session_id` でフィルタします；ファイル自体はリポジトリ全体で共有されたままです。
 
 ### todos.db — セッションレベル TODO ストレージ
 

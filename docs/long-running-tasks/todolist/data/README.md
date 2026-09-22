@@ -78,7 +78,12 @@ One JSON object per line, recording execution evidence per checkbox:
 ```json
 {"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
 {"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "artifact": "src/data/evidence/xxx.txt", "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
+{"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
+
+- **Auto-recording**: `agent/tools/todolist/evidence_recorder.py` appends a row for verification commands recognized in `terminal` / `python_repl` results (`kind` + `status`, gated by `EVIDENCE_LEDGER["auto_record"]`) and a `stale` event after `write_file` / `patch_file` edits (`auto_stale`). Every entry point is fail-open — a ledger write never breaks the tool.
+- **Staleness is derived**: an evidence row is stale iff a later `{"event": "stale"}` row names a path contained in its `command` (`agent/tools/taskflow/evidence_collector.py`), so the historical lines are never rewritten.
+- **Session views**: `EvidenceLedger.for_session(session_key)` / `read_for_session()` filter the shared file by `session_id`; the file itself stays repo-wide.
 
 ### todos.db — Session-Level TODO Storage
 

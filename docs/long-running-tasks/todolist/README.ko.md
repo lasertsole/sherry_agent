@@ -172,20 +172,25 @@ class TodoService:
 
 ### EvidenceLedger
 
+`agent/tools/todolist/evidence_ledger.py`는 append-only JSONL 원장(`src/data/evidence-ledger.jsonl`, 한 줄에 JSON 객체 하나)입니다. `append` + `read_all`이 저장 계약의 전부이며, 세션 범위 뷰는 같은 공유 파일을 읽습니다:
+
 ```python
 class EvidenceLedger:
     LEDGER_PATH = "src/data/evidence-ledger.jsonl"
 
     @classmethod
-    def append(cls, entry: dict) -> None:
-        entry["timestamp"] = datetime.utcnow().isoformat()
-        with open(cls.LEDGER_PATH, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
-
+    def append(cls, entry: dict) -> None: ...          # 한 줄 JSON + UTC 타임스탬프
     @classmethod
-    def read_all(cls) -> list[dict]:
-        ...
+    def read_all(cls) -> list[dict]: ...
+    @classmethod
+    def for_session(cls, session_key: str) -> SessionEvidenceLedger: ...
+    @classmethod
+    def read_for_session(cls, session_key: str) -> list[dict]: ...
+    @classmethod
+    def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
 ```
+
+staleness는 저장되지 않고 파생됩니다: `mark_stale_for_path`는 `{"event": "stale", "file_path": …}` 행을 덧붙이고, 읽기 측은 이후 stale 이벤트가 해당 evidence 행의 `command`에 포함된 경로를 지명할 때만 그 행을 stale로 봅니다. `agent/tools/todolist/evidence_recorder.py`가 이를 도구에 배선합니다(페일오픈, 예외 삼킴): `terminal` / `python_repl`은 인식된 검증 명령의 행을 덧붙이고(`EVIDENCE_LEDGER["auto_record"]`, 기본 `True`), `write_file` / `patch_file`은 편집된 경로의 stale 이벤트를 덧붙입니다(`EVIDENCE_LEDGER["auto_stale"]`, 기본 `True`). `agent/tools/taskflow/evidence_collector.py`는 판정기와 `taskflow_finish` evidence 게이트에 표시되는 요약을 렌더링합니다.
 
 ### WS 푸시
 

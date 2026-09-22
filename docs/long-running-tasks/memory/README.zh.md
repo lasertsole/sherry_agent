@@ -21,7 +21,7 @@
 
 `memory` 工具被打上 `scope="main_only"`，因此子 Agent 永远看不到它。
 
-**图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:221`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
+**图状态检查点存储。** 会话的 LangGraph 状态还会持久化到 `src/checkpoints/sqlite.db`，独立于上面两层：每次 `built_agent()` 调用都会把它剪枝为每线程最新检查点（`ThreadSafeAsyncSqliteSaver.aclean_old_checkpoints`，`agent/core.py:227`）；由于 `auto_vacuum=0`，DELETE 只释放页面而不缩小文件，因此同一调用在剪枝后立即读取 `PRAGMA freelist_count × page_size`，仅当释放的空间超过 `_VACUUM_THRESHOLD_BYTES`（10 MB，`agent/checkpointer/thread_safe_checkpointer.py`）时才执行 `VACUUM`——失败开放：VACUUM 报错只记录日志，剪枝结果不受影响。
 
 ## 🔥 压缩前的记忆落盘
 
@@ -38,7 +38,7 @@ return estimated_tokens >= MEMORY_FLUSH["soft_threshold_tokens"]   # 8_000
 
 触发时，`run_memory_flush`（异步）/ `run_memory_flush_sync` 通过注入的工厂构建模型，并使用单个纯文本抽取提示词（`_FLUSH_PROMPT`，`memory_flush.py:19`），其输出是一个以 `§` 分隔的 `Environment / Project / Decision / User / Tool` 事实列表。空结果或字面量 `(none)` 会被跳过。抽取出的文本交给 `MemoryStore.append_entries(new_entries)`（`memory.py:281`），后者按 `§` 切分，对每个候选做注入扫描，与现有集合去重，追加，并在超过 2200 字符时淘汰最旧条目，最后做一次原子写入。`append_entries` 始终写入 `MEMORY.md`。每条失败路径都返回 `False` 并被吞掉——落盘永远不会阻塞压缩。
 
-⚠️ **接线状态。** `Summarization.__init__` 接受 `memory_store` / `llm_factory`（二者默认均为 `None`，`summarization/core.py:259-260`），且仅在二者都设置时调用落盘，位置在 `_apply_compression`（`summarization/compression.py:138`）与 `_aapply_compression`（`summarization/compression.py:221`）内。当前生产实例——主 Agent `agent/core.py:198` 与子 Agent `agent/tools/subagent/spawn/core.py:847`——并**未**传入它们，因此落盘功能已实现并有测试覆盖，但在某个调用点提供 store 与形如 `factory(model=…, max_tokens=…, timeout=…)` 的工厂之前一直处于潜伏状态。
+⚠️ **接线状态。** `Summarization.__init__` 接受 `memory_store` / `llm_factory`（二者默认均为 `None`，`summarization/core.py:259-260`），且仅在二者都设置时调用落盘，位置在 `_apply_compression`（`summarization/compression.py:138`）与 `_aapply_compression`（`summarization/compression.py:221`）内。当前生产实例——主 Agent `agent/core.py:204` 与子 Agent `agent/tools/subagent/spawn/core.py:909`——并**未**传入它们，因此落盘功能已实现并有测试覆盖，但在某个调用点提供 store 与形如 `factory(model=…, max_tokens=…, timeout=…)` 的工厂之前一直处于潜伏状态。
 
 ## 🔗 摘要 ↔ TaskFlow 协调
 
@@ -57,7 +57,7 @@ if taskflow_ctx:
 `SubagentCompletionDrainMiddleware`（`agent/middlewares/subagent_completion_drain/core.py`）是排队的子 Agent 完成消息在父回合的摄入点：在 `before_model` 时，它会重新水合并排空会话的 `SteeringQueue`，注入重建好的完成载体消息。**当排空非空时**，它还会把共享记忆与父 Agent 的内存视图做一次对账：
 
 ```python
-# subagent_completion_drain/core.py:68-93
+# subagent_completion_drain/core.py:93-117
 def _backflow_shared_memory() -> None:
     from agent.tools.memory import memory_store
     memory_store.load_from_disk()
@@ -67,7 +67,7 @@ def _backflow_shared_memory() -> None:
 
 父 Agent 与子 Agent 共享**同一个进程级 `MemoryStore`**，因此子 Agent 的写入在文件层面本已可见。可能发生漂移的是父 Agent 的内存视图——实时条目，以及构建系统提示词时用的那份**冻结快照**——当进程外的写入者更新了 `MEMORY.md` / `USER.md` 时就会如此。**先重载**的顺序是关键的：若在重载前就把陈旧的内存列表持久化，会覆盖并发写入者，因此对账必须对每个目标执行先加载、后持久化。
 
-与排空一样，回流也是**失败开放**的——记忆 I/O 失败会被记录并吞掉，完成载体仍会抵达父回合。排空还会向内部完成载体追加 Sisyphus 校验提醒，提醒父 Agent：完成只是一份 `DoneClaim`，而不是已验证的结果（在把待办标记为完成之前，先用 `todoread` 校验、对照验收标准，并排查陈旧状态）。
+与排空一样，回流也是**失败开放**的——记忆 I/O 失败会被记录并吞掉，完成载体仍会抵达父回合。排空会向内部完成载体追加 Sisyphus 校验提醒，提醒父 Agent：完成只是一份 `DoneClaim`，而不是已验证的结果（在把待办标记为完成之前，先用 `todoread` 校验、对照验收标准，并排查陈旧状态）；当 `enforce_verification=True`（来自 `EVIDENCE_LEDGER["enforce_on_complete"]`）时，该提醒改由程序化门控消息替代——会话没有通过证据时追加。
 
 ## ✂️ 工具输出摘要
 

@@ -76,7 +76,12 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 ```json
 {"event": "task-started", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "tier": "LIGHT", "timestamp": "..."}
 {"event": "task-completed", "plan": "xxx", "task": "Wave 0 Checkbox 0", "session_id": "sherry:xxx", "commands": ["pytest -xvs"], "adversarial_classes": {"stale_state": "not-applicable", "dirty_worktree": "probed: git status clean"}, "cleanup": ["killed tmux session"], "timestamp": "..."}
+{"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
+
+- **自动记录**：`agent/tools/todolist/evidence_recorder.py` 为 `terminal` / `python_repl` 结果中识别出的验证命令追加一行（`kind` + `status`，受 `EVIDENCE_LEDGER["auto_record"]` 控制），并在 `write_file` / `patch_file` 编辑后追加 `stale` 事件（`auto_stale`）。所有入口都失败开放——账本写入绝不破坏工具。
+- **陈旧性为推导值**：当且仅当更晚的 `{"event": "stale"}` 行命名了某条证据行 `command` 中包含的路径时，该行才算陈旧（`agent/tools/taskflow/evidence_collector.py`），历史行永不被改写。
+- **会话视图**：`EvidenceLedger.for_session(session_key)` / `read_for_session()` 按 `session_id` 过滤共享文件；文件本身保持仓库级共享。
 
 ### todos.db — 会话级 TODO 存储
 
