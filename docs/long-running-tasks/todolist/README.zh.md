@@ -192,7 +192,7 @@ class EvidenceLedger:
     def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
 ```
 
-陈旧性是推导出来的、从不写入：`mark_stale_for_path` 追加一行 `{"event": "stale", "file_path": …}`，读取侧认定某条证据行陈旧，当且仅当更晚的 stale 事件命名了其 `command` 中包含的路径。`agent/tools/todolist/evidence_recorder.py` 把它接入工具（失败开放、吞掉异常）：`terminal` / `python_repl` 为识别出的验证命令追加一行（`EVIDENCE_LEDGER["auto_record"]`，默认 `True`），`write_file` / `patch_file` 为被编辑路径追加 stale 事件（`EVIDENCE_LEDGER["auto_stale"]`，默认 `True`）。`agent/tools/taskflow/evidence_collector.py` 渲染给判别器与 `taskflow_finish` 证据门查看的摘要。
+陈旧性是推导出来的、从不写入：`mark_stale_for_path` 追加一行 `{"event": "stale", "file_path": …}`，读取侧认定某条证据行陈旧，当且仅当更晚的 stale 事件命名了其 `command` 中包含的路径。`agent/tools/todolist/evidence_recorder.py` 把它接入工具（失败开放、吞掉异常）：`terminal` / `python_repl` 恒为识别出的验证命令追加一行（分类表位于 `EVIDENCE_LEDGER["verify_commands"]`），`write_file` / `patch_file` 恒为被编辑路径追加 stale 事件。`agent/tools/taskflow/evidence_collector.py` 渲染给判别器与 `taskflow_finish` 证据门查看的摘要。
 
 ### WS 推送
 

@@ -200,7 +200,7 @@ class EvidenceLedger:
     def mark_stale_for_path(cls, file_path: str, session_key: str | None = None) -> int: ...
 ```
 
-Staleness is derived, never stored: `mark_stale_for_path` appends a `{"event": "stale", "file_path": …}` row, and the read side treats an evidence row as stale when a later stale event names a path contained in its `command`. `agent/tools/todolist/evidence_recorder.py` wires this into the tools (fail-open, errors swallowed): `terminal` / `python_repl` append a row for recognized verification commands (`EVIDENCE_LEDGER["auto_record"]`, default `True`) and `write_file` / `patch_file` append a stale event for the edited path (`EVIDENCE_LEDGER["auto_stale"]`, default `True`). `agent/tools/taskflow/evidence_collector.py` renders the summary shown to the judges and to the `taskflow_finish` evidence gate.
+Staleness is derived, never stored: `mark_stale_for_path` appends a `{"event": "stale", "file_path": …}` row, and the read side treats an evidence row as stale when a later stale event names a path contained in its `command`. `agent/tools/todolist/evidence_recorder.py` wires this into the tools (fail-open, errors swallowed): `terminal` / `python_repl` always append a row for recognized verification commands (the taxonomy lives in `EVIDENCE_LEDGER["verify_commands"]`) and `write_file` / `patch_file` always append a stale event for the edited path. `agent/tools/taskflow/evidence_collector.py` renders the summary shown to the judges and to the `taskflow_finish` evidence gate.
 
 ### WS Push
 
