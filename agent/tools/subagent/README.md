@@ -470,7 +470,7 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 | `FunctionalRole` | Purpose | `model_tier` | Role tool list |
 |------------------|---------|--------------|----------------|
 | `general` | Default worker; inherits every tool and the depth-based LLM | `inherit` | (all tools) |
-| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` |
+| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact` |
 | `executor` | Write-capable implementation and command execution; no subagent spawn | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
 | `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` |
 

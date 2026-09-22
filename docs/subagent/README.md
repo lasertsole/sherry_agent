@@ -64,7 +64,7 @@ Built-in definitions ship inside the package, tracked and distributable, at `age
 | Role | Purpose | Effective LLM tier | Role tool set |
 |------|---------|--------------------|---------------|
 | `general` | Default worker; identity role (its package definition is never loaded) | depth role | all tools |
-| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` |
+| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact` |
 | `executor` | Write-capable implementation and command execution | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
 | `reviewer` | Read-only diff and quality audit | `auxiliary` | `read_file`, `terminal` |
 

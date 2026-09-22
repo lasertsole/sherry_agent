@@ -64,7 +64,7 @@
 | 角色 | 用途 | 生效 LLM 档位 | 角色工具集 |
 |------|------|----------------|------------|
 | `general` | 默认 worker；恒等角色（其包内定义永不被加载） | 深度角色 | 全部工具 |
-| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` |
+| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact` |
 | `executor` | 可写实现与命令执行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
 | `reviewer` | 只读的 diff 与质量审计 | `auxiliary` | `read_file`、`terminal` |
 

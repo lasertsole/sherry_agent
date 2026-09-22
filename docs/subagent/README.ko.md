@@ -64,7 +64,7 @@
 | 역할 | 용도 | 유효 LLM 티어 | 역할 도구 집합 |
 |------|------|----------------|----------------|
 | `general` | 기본 worker; 항등 역할(패키지 정의는 결코 로드되지 않음) | 깊이 역할 | 모든 도구 |
-| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` |
+| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact` |
 | `executor` | 쓰기 가능한 구현과 명령 실행 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
 | `reviewer` | 읽기 전용 diff·품질 감사 | `auxiliary` | `read_file`, `terminal` |
 

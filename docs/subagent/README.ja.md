@@ -64,7 +64,7 @@
 | ロール | 用途 | 有効 LLM ティア | ロールのツールセット |
 |--------|------|------------------|----------------------|
 | `general` | 既定 worker；恒等ロール（パッケージ定義は決して読み込まれない） | 深度ロール | 全ツール |
-| `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`terminal`、`web_search` |
+| `researcher` | 読み取り専用のコードベース・Web 調査 | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact` |
 | `executor` | 書き込み可能な実装とコマンド実行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
 | `reviewer` | 読み取り専用の diff・品質監査 | `auxiliary` | `read_file`、`terminal` |
 

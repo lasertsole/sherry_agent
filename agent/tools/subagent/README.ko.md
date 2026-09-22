@@ -472,7 +472,7 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 | `FunctionalRole` | 용도 | `model_tier` | 역할 도구 목록 |
 |------------------|------|--------------|----------------|
 | `general` | 기본 워커. 모든 도구와 depth 기반 LLM 상속 | `inherit` | (모든 도구) |
-| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` |
+| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact` |
 | `executor` | 쓰기 가능한 구현과 명령 실행. 하위 에이전트 spawn 불가 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
 | `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` |
 

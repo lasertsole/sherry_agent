@@ -476,7 +476,7 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 | `FunctionalRole` | 用途 | `model_tier` | ロールのツール一覧 |
 |------------------|------|--------------|--------------------|
 | `general` | 既定ワーカー。全ツールと depth ベースの LLM を継承 | `inherit` | （全ツール） |
-| `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` |
+| `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact` |
 | `executor` | 書き込み可能な実装とコマンド実行。サブエージェント spawn 不可 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
 | `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` |
 

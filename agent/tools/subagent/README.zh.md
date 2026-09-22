@@ -469,7 +469,7 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 | `FunctionalRole` | 用途 | `model_tier` | 角色工具列表 |
 |------------------|------|--------------|--------------|
 | `general` | 默认 worker；继承全部工具与基于 depth 的 LLM | `inherit` | （全部工具） |
-| `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` |
+| `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact` |
 | `executor` | 可写入的实现与命令执行；不允许 spawn 子代理 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
 | `reviewer` | 只读的 diff/质量审计 | `auxiliary` | `read_file`、`terminal` |
 
