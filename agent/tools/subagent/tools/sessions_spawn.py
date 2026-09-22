@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from langchain.tools import BaseTool
 
 from ..spawn import spawn_subagent_direct
+from ..spawn.privilege import check_spawn_permission
 from ..types.spawn import SpawnMode, ContextMode
 
 
@@ -109,6 +110,13 @@ class SessionsSpawnTool(BaseTool):
         # Convert string parameters to enum types
         spawn_mode = SpawnMode(mode)
         context_mode = ContextMode(context)
+
+        # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
+        # if a tool instance leaked into its toolset. Returns through the tool's
+        # existing string contract instead of raising.
+        allowed, reason = check_spawn_permission(self.session_id)
+        if not allowed:
+            return f"Subagent spawn denied: status=forbidden, error={reason}"
 
         # Build the requester session key from the current session_id
         requester_session_key = f"agent:main:session:{self.session_id}"

@@ -54,7 +54,12 @@ async def sessions_spawn_runtime_tool(
     Use for complex or time-consuming tasks that can run on their own.
     """
     from ..spawn import spawn_subagent_direct
+    from ..spawn.privilege import check_spawn_permission
     from ..types.spawn import ContextMode, SpawnMode
+
+    allowed, reason = check_spawn_permission(session_id)
+    if not allowed:
+        return f"Subagent spawn denied: status=forbidden, error={reason}"
 
     requester_session_key = _session_key(session_id)
 

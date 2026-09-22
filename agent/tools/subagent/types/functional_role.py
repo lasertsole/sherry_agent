@@ -13,7 +13,7 @@ class FunctionalRole(StrEnum):
     GENERAL: full tool access, can modify files (default fallback).
     RESEARCHER: read-only, codebase/web search, cheaper model.
     EXECUTOR: write-capable, code execution, no subagent spawn.
-    REVIEWER: read-only diff audit, quality gate enforcement.
+    REVIEWER: read-only review worker for diff audit.
     """
 
     GENERAL = "general"

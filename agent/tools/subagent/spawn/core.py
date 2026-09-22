@@ -30,7 +30,7 @@ from ..registry.read import count_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
 from ..registry.session_keys import normalize_session_key
 from ..session.cleanup import delete_subagent_session_for_cleanup
-from ..capabilities import resolve_subagent_capabilities
+from ..capabilities import can_spawn_children, resolve_subagent_capabilities
 from .depth import (
     get_subagent_depth,
     validate_spawn_depth,
@@ -63,6 +63,12 @@ from ..hooks.progress import fire_spawned_hook, fire_progress_hook, fire_ended_h
 
 # Only alphanumeric, underscore and hyphen allowed — prevents path/injection attacks via agent_id
 _VALID_AGENT_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
+
+# Tools that only a spawning role (MAIN / ORCHESTRATOR) may hold. A functional
+# role whitelist or a per-spawn extra_tools entry can name them, but the spawn
+# pipeline intersects the final allow-list with can_spawn_children(role) so a
+# LEAF can never be granted recursive spawning.
+_SPAWN_YIELD_TOOLS = ("sessions_spawn", "sessions_yield")
 
 
 def _extract_result_text(agent_result: dict[str, object] | None) -> str | None:
@@ -392,12 +398,12 @@ async def spawn_subagent_direct(
         if tool_allow:
             # Whitelist mode: deny is already empty, so grant spawn/yield by
             # adding them to the allow-list instead of removing from deny.
-            for t in ("sessions_spawn", "sessions_yield"):
+            for t in _SPAWN_YIELD_TOOLS:
                 if t not in tool_allow:
                     tool_allow.append(t)
         else:
             # Inherit mode: unblock spawn/yield by removing them from the deny list.
-            tool_deny = [t for t in tool_deny if t not in ("sessions_spawn", "sessions_yield")]
+            tool_deny = [t for t in tool_deny if t not in _SPAWN_YIELD_TOOLS]
 
     # --- Phase 8.5: Per-task tool attachment (deepagents TaskTools pattern) ---
     # extra_tools are attached on top of whatever the role already allows. In
@@ -407,6 +413,14 @@ async def spawn_subagent_direct(
     for name in extra_tool_names:
         if tool_allow and name not in tool_allow:
             tool_allow.append(name)
+
+    # --- Phase 8.6: Spawn/yield privilege intersection ---
+    # Intersect the FINAL allow-list (role whitelist + extra_tools) with
+    # can_spawn_children(role): only MAIN and ORCHESTRATOR may hold
+    # sessions_spawn / sessions_yield. In inherit mode the allow-list is empty
+    # and the deny-list already blocks them, so this is a no-op there.
+    if not can_spawn_children(role):
+        tool_allow = [t for t in tool_allow if t not in _SPAWN_YIELD_TOOLS]
 
     run = register_run(
         child_session_key=child_session_key,
