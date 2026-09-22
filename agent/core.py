@@ -31,6 +31,8 @@ from .middlewares import (
     MaxTokensBoostMiddleware,
     MessagePersistenceMiddleware,
     LLMRetryMiddleware,
+    validate_required_middleware,
+    _MAIN_REQUIRED,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
@@ -225,18 +227,23 @@ async def _build_graph(
     auxiliary_llm = build_auxiliary_llm()
     fallback_chain = build_fallback_chain()
 
+    # Assemble the pipeline, then fail fast BEFORE the expensive create_agent()
+    # build if a safety-critical middleware has been silently removed.
+    agent_middleware = _build_middlewares(
+        fallback_chain=fallback_chain,
+        auxiliary_llm=auxiliary_llm,
+        main_llm_context_window=main_llm_context_window,
+        compression_trigger_ratio=compression_trigger_ratio,
+    )
+    validate_required_middleware(agent_middleware, chain="main", entries=_MAIN_REQUIRED)
+
     # Build the agent
     compiled = create_agent(
         model=main_llm.bind(temperature=temperature),
         state_schema=StateSchema,
         checkpointer=checkpointer,
         tools=get_agent_tools(),
-        middleware=_build_middlewares(
-            fallback_chain=fallback_chain,
-            auxiliary_llm=auxiliary_llm,
-            main_llm_context_window=main_llm_context_window,
-            compression_trigger_ratio=compression_trigger_ratio,
-        ),
+        middleware=agent_middleware,
     )
     # Wrap with the pluggable graph-wrapper chain (agent/wrapper/registry.py).
     # Defaults, innermost first:

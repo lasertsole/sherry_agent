@@ -24,3 +24,20 @@ from .media_pipeline import MultimodalProcessor as MultimodalProcessor
 from .humanInTheLoop import HumanInTheLoop as HumanInTheLoop, HITLConfig as HITLConfig
 
 from . import llm_capability_cache as llm_capability_cache
+
+# Middleware scaffolding protection (P1-6). Imported LAST so every required
+# middleware class above is already bound: scaffolding.py imports the classes
+# from their concrete submodules, and re-exporting it here (rather than having
+# it import this package) keeps the dependency one-way.
+from .scaffolding import (
+    RequiredMiddlewareEntry as RequiredMiddlewareEntry,
+    ScaffoldingViolationError as ScaffoldingViolationError,
+    MAIN_REQUIRED_CLASSES as MAIN_REQUIRED_CLASSES,
+    MAIN_REQUIRED_NAMES as MAIN_REQUIRED_NAMES,
+    SUBAGENT_REQUIRED_CLASSES as SUBAGENT_REQUIRED_CLASSES,
+    SUBAGENT_REQUIRED_NAMES as SUBAGENT_REQUIRED_NAMES,
+    _MAIN_REQUIRED as _MAIN_REQUIRED,
+    _SUBAGENT_REQUIRED as _SUBAGENT_REQUIRED,
+    validate_required_middleware as validate_required_middleware,
+    verify_required_names_coverage as verify_required_names_coverage,
+)

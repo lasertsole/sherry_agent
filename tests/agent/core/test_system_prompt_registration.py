@@ -68,6 +68,10 @@ async def test_system_prompt_injection_is_outermost_wrap_layer(
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", _record_create_agent)
+    # _OTHER_MIDDLEWARE are placeholder instances, so the real-class scaffolding
+    # validator cannot run against this fake chain; its coverage lives in
+    # tests/agent/middlewares/test_scaffolding.py.
+    monkeypatch.setattr(agent_core, "validate_required_middleware", lambda *_, **__: None)
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")
     monkeypatch.setenv("AUXILIARY_LLM_MAX_TOKEN", "131072")
     monkeypatch.setattr(agent_core, "main_llm_max_tokens", 65_536)

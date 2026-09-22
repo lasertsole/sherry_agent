@@ -51,6 +51,10 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
     monkeypatch.setattr(agent_core, "build_fallback_chain", lambda: object())
     monkeypatch.setattr(agent_core, "get_agent_tools", lambda: [])
     monkeypatch.setattr(agent_core, "create_agent", lambda **_: fake_compiled_graph)
+    # The middleware below are placeholder instances, so the real-class
+    # scaffolding validator cannot run against this fake chain; its coverage
+    # lives in tests/agent/middlewares/test_scaffolding.py.
+    monkeypatch.setattr(agent_core, "validate_required_middleware", lambda *_, **__: None)
     # CI runs without .env: give the MAX_TOKEN gate a valid pair through the
     # real env vars (never by patching the guard itself).
     monkeypatch.setenv("MAIN_LLM_MAX_TOKEN", "131072")

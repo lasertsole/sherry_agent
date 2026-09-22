@@ -18,7 +18,7 @@ import re
 import uuid
 import asyncio
 from loguru import logger
-from typing import Literal
+from typing import Any, Literal
 from ..config import get_config
 from ..types.spawn import SpawnMode
 from ..types.capability import SubagentSessionRole
@@ -876,6 +876,63 @@ async def _execute_subagent(
             logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
 
 
+def _build_child_middlewares(
+    *,
+    auxiliary_llm: Any,
+    main_llm_context_window: int,
+) -> list[Any]:
+    """Assemble the child-agent middleware pipeline.
+
+    ORDER IS A CONTRACT (the subagent side of the middleware-order tests).
+    Extracted from :func:`_build_child_agent` so the scaffolding validation and
+    its drift-guard test can inspect the exact list handed to ``create_agent``.
+    """
+    from agent.middlewares import (
+        HeartbeatStaleness,
+        IterationBudget,
+        MaxTokensBoostMiddleware,
+        Summarization,
+        ToolCallNormalize,
+        ToolGuardrails,
+    )
+    from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
+    from config.features import ITERATION_BUDGET, SUMMARIZATION
+
+    return [
+        Summarization(
+            model=auxiliary_llm,
+            main_llm_context_window=main_llm_context_window,
+            trigger=[
+                ("messages", 40),
+                (
+                    "tokens",
+                    int(main_llm_context_window * SUMMARIZATION["compression_trigger_ratio"]),
+                ),
+            ],
+            keep=("messages", 10),
+        ),
+        IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
+        ToolGuardrails(),
+        # Non-streaming interception: children run via ``child_agent.ainvoke(...)``
+        # (this module's ``_execute_subagent``), so there are no intermediate tokens
+        # already emitted to any client. ``OutputRepetitionGuard`` intercepts the
+        # complete model result through ``wrap_model_call``/``_wrap_model_call_post``
+        # BEFORE it is returned to the caller — the replacement AIMessage fully
+        # overrides repetitive output prior to ``_extract_result_text``. State dedupe
+        # and escalation counters are isolated per ``child_session_key``
+        # ("agent:...:subagent:<uuid>"). No service-layer (Layer C) stream wiring is
+        # needed here; Layer C only guards the parent's relay loop.
+        OutputRepetitionGuard(),
+        # Tool-call truncation recovery: children run via ``ainvoke`` so the
+        # middleware takes its non-streaming path (no callback stripping —
+        # ``is_stream_turn`` is only set by the parent's StreamTurn loop and
+        # is keyed by the child's own session id, which never has it).
+        MaxTokensBoostMiddleware(),
+        ToolCallNormalize(),
+        HeartbeatStaleness(),
+    ]
+
+
 async def _build_child_agent(
     system_prompt: str,
     tools: list | None,
@@ -930,21 +987,11 @@ async def _build_child_agent(
     from models import build_main_llm, build_auxiliary_llm
     from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
     from config.features import (
-        ITERATION_BUDGET,
         LLM_CLIENT_DEFAULTS,
-        SUMMARIZATION,
         assert_max_token_valid,
     )
     from agent.checkpointer import build_async_sqlite_checkpointer
-    from agent.middlewares import (
-        IterationBudget,
-        ToolGuardrails,
-        ToolCallNormalize,
-        Summarization,
-        HeartbeatStaleness,
-        MaxTokensBoostMiddleware,
-    )
-    from agent.middlewares.output_repetition_guard import OutputRepetitionGuard
+    from agent.middlewares import _SUBAGENT_REQUIRED, validate_required_middleware
     from agent.tools import build_main_tools
 
     # Subagent spawn bypasses built_agent(), so child LLM construction validates
@@ -994,46 +1041,20 @@ async def _build_child_agent(
     child_checkpointer = await build_async_sqlite_checkpointer()
     await child_checkpointer.setup()
 
-    auxiliary_llm = child_llm
+    child_middleware = _build_child_middlewares(
+        auxiliary_llm=child_llm,
+        main_llm_context_window=main_llm_max_tokens,
+    )
+    # Fail fast BEFORE create_agent(): a silently dropped safety-critical child
+    # middleware must abort the spawn, not ship a weakened child.
+    validate_required_middleware(child_middleware, chain="subagent", entries=_SUBAGENT_REQUIRED)
     child_agent = create_agent(
         model=child_llm,
         system_prompt=system_prompt,
         state_schema=StateSchema,
         checkpointer=child_checkpointer,
         tools=filtered_tools,
-        middleware=[
-            Summarization(
-                model=auxiliary_llm,
-                main_llm_context_window=main_llm_max_tokens,
-                trigger=[
-                    ("messages", 40),
-                    (
-                        "tokens",
-                        int(main_llm_max_tokens * SUMMARIZATION["compression_trigger_ratio"]),
-                    ),
-                ],
-                keep=("messages", 10),
-            ),
-            IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
-            ToolGuardrails(),
-            # Non-streaming interception: children run via ``child_agent.ainvoke(...)``
-            # (this module's ``_execute_subagent``), so there are no intermediate tokens
-            # already emitted to any client. ``OutputRepetitionGuard`` intercepts the
-            # complete model result through ``wrap_model_call``/``_wrap_model_call_post``
-            # BEFORE it is returned to the caller — the replacement AIMessage fully
-            # overrides repetitive output prior to ``_extract_result_text``. State dedupe
-            # and escalation counters are isolated per ``child_session_key``
-            # ("agent:...:subagent:<uuid>"). No service-layer (Layer C) stream wiring is
-            # needed here; Layer C only guards the parent's relay loop.
-            OutputRepetitionGuard(),
-            # Tool-call truncation recovery: children run via ``ainvoke`` so the
-            # middleware takes its non-streaming path (no callback stripping —
-            # ``is_stream_turn`` is only set by the parent's StreamTurn loop and
-            # is keyed by the child's own session id, which never has it).
-            MaxTokensBoostMiddleware(),
-            ToolCallNormalize(),
-            HeartbeatStaleness(),
-        ],
+        middleware=child_middleware,
     )
 
     # Wrap with RepetitionGuardWrapper, mirroring the main agent
