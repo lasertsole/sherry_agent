@@ -296,7 +296,7 @@ class StepVerdict(StrEnum):
 - `retry` re-dispatches the step through the shared `_retry` seam, reusing the step's own `retry_count` budget (`STEP_JUDGE["max_retries"]`, default 2) and appending the judge's guidance to the replacement task via `with_judge_feedback` (`## Previous Attempt Feedback`). An exhausted budget marks the step `blocked`.
 - `block` marks the step `blocked` with the judge's reason.
 
-The judge is shown the flow's evidence summary (`agent/tools/taskflow/evidence_collector.py`) and is **fail-open**: a disabled judge, a model error, or an unparseable response degrades to `pass`. Steps without criteria keep the old path — they are marked `done`, and when `validation_criteria` was stored the response still echoes a trailing `validation_criteria: …`. Two guardrails matter:
+The judge is shown the flow's evidence summary (`agent/tools/taskflow/evidence_collector.py`) and is **fail-open**: a model error or an unparseable response degrades to `pass`. Steps without criteria keep the old path — they are marked `done`, and when `validation_criteria` was stored the response still echoes a trailing `validation_criteria: …`. Two guardrails matter:
 
 - Passing `validation_criteria` to `taskflow_resume` **overrides** the stored value (for example to tighten or correct it based on what the child actually did).
 - The judge runs only when the step is actually settled (`redispatched_key is None`); a step re-dispatched under the retry policy keeps its criteria stored and is judged on the eventual resume.

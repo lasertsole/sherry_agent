@@ -285,7 +285,7 @@ class StepVerdict(StrEnum):
 - `retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback`（`## Previous Attempt Feedback`）で代替タスクに追加します。予算を使い切ったステップは `blocked` になります。
 - `block` は判定器の理由とともにステップを `blocked` にします。
 
-判定器にはこのフローの evidence 要約（`agent/tools/taskflow/evidence_collector.py`）が渡され、**フェイルオープン**です：判定器の無効化、モデルエラー、解析不能な応答は `pass` に劣化します。基準を持たないステップは従来の経路のままです — `done` にされ、`validation_criteria` が保存されていれば応答末尾に `validation_criteria: …` をエコーします。重要なガードレールは 2 つです：
+判定器にはこのフローの evidence 要約（`agent/tools/taskflow/evidence_collector.py`）が渡され、**フェイルオープン**です：モデルエラーや解析不能な応答は `pass` に劣化します。基準を持たないステップは従来の経路のままです — `done` にされ、`validation_criteria` が保存されていれば応答末尾に `validation_criteria: …` をエコーします。重要なガードレールは 2 つです：
 
 - `taskflow_resume` に `validation_criteria` を渡すと保存値が**上書き**されます（例えば子が実際に行った内容に基づいて基準を厳しくしたり訂正したりするため）。
 - 判定器はステップが実際に確定した場合（`redispatched_key is None`）にのみ動作します；再試行ポリシーで再ディスパッチされたステップは基準を保存したままにし、最終的な再開時に審査されます。

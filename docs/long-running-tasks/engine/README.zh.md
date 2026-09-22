@@ -285,7 +285,7 @@ class StepVerdict(StrEnum):
 - `retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback`（`## Previous Attempt Feedback`）把判别器指引附加到替换任务；预算耗尽的步骤标记为 `blocked`。
 - `block` 依据判别器原因把步骤标记为 `blocked`。
 
-判别器会看到本流的证据摘要（`agent/tools/taskflow/evidence_collector.py`），且**失败开放**：判别器禁用、模型报错或响应无法解析时降级为 `pass`。没有标准的步骤仍走旧路径——直接标记 `done`，且当存有 `validation_criteria` 时响应仍会在末尾回显 `validation_criteria: …`。有两条护栏值得注意：
+判别器会看到本流的证据摘要（`agent/tools/taskflow/evidence_collector.py`），且**失败开放**：模型报错或响应无法解析时降级为 `pass`。没有标准的步骤仍走旧路径——直接标记 `done`，且当存有 `validation_criteria` 时响应仍会在末尾回显 `validation_criteria: …`。有两条护栏值得注意：
 
 - 向 `taskflow_resume` 传入 `validation_criteria` 会**覆盖**已存值（例如根据子 Agent 实际所做的工作收紧或修正它）。
 - 判别器仅在步骤真正落定（`redispatched_key is None`）时运行；在重试策略下被重新派发的步骤会保留其标准，并在最终恢复时接受判别。

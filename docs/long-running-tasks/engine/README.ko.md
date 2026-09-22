@@ -285,7 +285,7 @@ class StepVerdict(StrEnum):
 - `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`(`## Previous Attempt Feedback`)으로 대체 작업에 덧붙입니다. 예산이 소진된 단계는 `blocked`로 표시됩니다.
 - `block`은 판정기 사유와 함께 단계를 `blocked`로 표시합니다.
 
-판정기에는 이 플로우의 evidence 요약(`agent/tools/taskflow/evidence_collector.py`)이 제공되며 **페일오픈**입니다: 판정기 비활성, 모델 오류, 파싱 불가 응답은 `pass`로 강등됩니다. 기준이 없는 단계는 기존 경로를 유지합니다 — `done`으로 표시되고, `validation_criteria`가 저장되어 있으면 응답 끝에 `validation_criteria: …`를 계속 에코합니다. 중요한 가드레일 두 가지:
+판정기에는 이 플로우의 evidence 요약(`agent/tools/taskflow/evidence_collector.py`)이 제공되며 **페일오픈**입니다: 모델 오류나 파싱 불가 응답은 `pass`로 강등됩니다. 기준이 없는 단계는 기존 경로를 유지합니다 — `done`으로 표시되고, `validation_criteria`가 저장되어 있으면 응답 끝에 `validation_criteria: …`를 계속 에코합니다. 중요한 가드레일 두 가지:
 
 - `taskflow_resume`에 `validation_criteria`를 전달하면 저장 값이 **덮어써집니다**(예: 자식이 실제로 한 일에 따라 기준을 강화하거나 교정하기 위해).
 - 판정기는 단계가 실제로 확정될 때(`redispatched_key is None`)에만 실행됩니다. 재시도 정책으로 재디스패치된 단계는 기준을 저장한 채 두고, 최종 재개 시 심사됩니다.
