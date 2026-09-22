@@ -60,6 +60,18 @@ class SessionsSpawnSchema(BaseModel):
         description="Optional goal-loop turn budget override (including the first "
         "turn); defaults to the configured completion-judge budget.",
     )
+    functional_role: str | None = Field(
+        default=None,
+        description="Functional specialization of the subagent worker. "
+        "general=full access, researcher=read-only search, "
+        "executor=write+run, reviewer=read-only audit. "
+        "Omit to inherit the default role.",
+    )
+    extra_tools: list[str] | None = Field(
+        default=None,
+        description="Additional tool names to attach for this spawn only "
+        "(deepagents per-task tool pattern).",
+    )
 
 
 class SessionsSpawnTool(BaseTool):
@@ -91,6 +103,8 @@ class SessionsSpawnTool(BaseTool):
         attachments: list[AttachmentSchema] | None = None,
         goal_loop: bool = False,
         goal_max_turns: int | None = None,
+        functional_role: str | None = None,
+        extra_tools: list[str] | None = None,
     ) -> str:
         # Convert string parameters to enum types
         spawn_mode = SpawnMode(mode)
@@ -127,6 +141,8 @@ class SessionsSpawnTool(BaseTool):
             expects_completion_message=True,
             goal_loop=goal_loop,
             goal_max_turns=goal_max_turns,
+            functional_role_hint=functional_role,
+            extra_tools=extra_tools,
         )
 
         parts = [f"Subagent spawned: status={result.status}"]
