@@ -1,4 +1,4 @@
-"""T3.1: terminal / python_repl auto-record verification evidence (fail-open).
+"""Terminal / python_repl auto-record verification evidence (fail-open).
 
 Spawn points are monkeypatched so no real subprocess runs; the ledger is
 redirected into ``tmp_path`` so the repo ledger is never touched.

@@ -1,4 +1,4 @@
-"""T1.1 — StepJudge parsing, fail-open, and prompt assembly."""
+"""StepJudge parsing, fail-open, and prompt assembly."""
 
 from __future__ import annotations
 

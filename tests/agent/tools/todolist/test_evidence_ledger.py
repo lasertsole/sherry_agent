@@ -77,7 +77,7 @@ def test_append_creates_missing_parent_directory(tmp_path, monkeypatch: pytest.M
     assert len(EvidenceLedger.read_all()) == 1
 
 
-# ── T3.0: session-scoped views + stale events ───────────────────────────────
+# ── Session-scoped views + stale events ─────────────────────────────────────
 
 
 def test_read_for_session_isolates_sessions(tmp_path, monkeypatch: pytest.MonkeyPatch):

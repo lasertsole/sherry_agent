@@ -1,4 +1,4 @@
-"""T3.2: file edits append evidence stale events (append-only, fail-open)."""
+"""File edits append evidence stale events (append-only, fail-open)."""
 
 from __future__ import annotations
 

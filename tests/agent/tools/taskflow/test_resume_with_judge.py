@@ -1,4 +1,4 @@
-"""T1.2 — taskflow_resume StepJudge integration + dispatch feedback injection."""
+"""taskflow_resume StepJudge integration + dispatch feedback injection."""
 
 from __future__ import annotations
 

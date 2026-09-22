@@ -1,4 +1,4 @@
-"""T2.2 — subagent goal loop: verdicts, budget exhaustion, fail-open, pass-through."""
+"""Subagent goal loop: verdicts, budget exhaustion, fail-open, pass-through."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""T2.1 — CompletionJudge parsing, fail-open, and prompt assembly."""
+"""CompletionJudge parsing, fail-open, and prompt assembly."""
 
 from __future__ import annotations
 
