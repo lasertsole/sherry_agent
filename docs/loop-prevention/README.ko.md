@@ -190,7 +190,7 @@
 
 ## 🚦 완료 게이트: 유계 재시도와 검증된 완료
 
-루프는 *너무 이른 완료*나 *상한 없는 재시도*에서도 생깁니다. 세 개의 품질 게이트가 그 틈을 메우며 TaskFlow와 서브에이전트 수명주기에 올라탑니다. 모두 fail-open이라 판정기 부재나 읽을 수 없는 프로브가 진행을 막지 않습니다.
+루프는 *너무 이른 완료*나 *상한 없는 재시도*에서도 생깁니다. 네 개의 품질 게이트가 그 틈을 메우며 TaskFlow와 서브에이전트 수명주기에 올라탑니다. 모두 fail-open이라 판정기 부재나 읽을 수 없는 프로브가 진행을 막지 않습니다.
 
 ### 단계 수준: `StepJudge` + 유계 재시도
 
@@ -198,21 +198,21 @@
 
 - `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`(`## Previous Attempt Feedback`)으로 대체 작업에 주입합니다. 예산이 소진되면 단계는 `blocked`가 됩니다.
 - `block`은 판정기의 이유와 함께 단계를 `blocked`로 표시합니다.
-- Fail-open: 판정기 비활성, 모델 오류, 파싱 불가 응답은 `pass`로 저하됩니다.
+- Fail-open: 모델 오류, 파싱 불가 응답은 `pass`로 저하됩니다.
 
-`STEP_JUDGE`: `enabled=True`, `max_retries=2`, `max_result_chars=8000`, `evidence_aware=True`.
+`STEP_JUDGE`: `max_retries=2`, `max_result_chars=8000`, `evidence_aware=True`.
 
 ### 서브에이전트 수준: 완료 판정기 + goal loop 예산
 
 `agent/tools/subagent/spawn/completion_judge.py`는 `complete_subagent_run`이 확정하기 전에 자식 실행의 최신 응답을 심사해 `done` / `continue`를 반환합니다. `continue` 판정은 판정기의 `continuation_prompt`를 자식의 다음 인간 턴으로 주입하고, 실행은 같은 checkpoint 스레드에서 계속됩니다.
 
 - 루프는 `goal_max_turns`(첫 턴 포함)로 제한되며 `_execute_subagent`에서 계산됩니다. 예산이 소진되면 실행은 OK로 확정되고 `error="goal_loop_budget_exhausted"`를 가집니다.
-- 두 단계의 opt-in입니다. 기능 스위치 `COMPLETION_JUDGE["enabled"]` 기본값은 `False`이고, `sessions_spawn`은 `goal_loop` / `goal_max_turns`(기본 `False` / 5)를 노출합니다. 단일 턴 예산(`goal_max_turns=1`)이나 기능 비활성 시 자식은 한 번만 실행됩니다.
-- Fail-open: 판정기 비활성, 모델 오류, 파싱 불가 응답은 `done`으로 저하되므로 판정기가 서브에이전트를 루프에 가둘 수 없습니다.
+- 모든 spawn에서 실행됩니다: 완료 판정기는 항상 작동하고, `sessions_spawn`이 노출하는 것은 예산 덮어쓰기 `goal_max_turns`(기본 5)뿐입니다. 단일 턴 예산(`goal_max_turns=1`)이면 자식은 한 번만 실행됩니다.
+- Fail-open: 모델 오류, 파싱 불가 응답은 `done`으로 저하되므로 판정기가 서브에이전트를 루프에 가둘 수 없습니다.
 
 ### 파이프라인 수준: 증거 원장과 완료 게이트
 
-증거 원장은 공유되는 추가 전용 검증 추적입니다(`src/data/evidence-ledger.jsonl`, 한 줄에 JSON 객체 하나). `agent/tools/todolist/evidence_recorder.py`는 `terminal` / `python_repl`에서 인식된 검증 명령을 자동 기록하고(`auto_record`, 기본 `True`), `write_file` / `patch_file`은 편집된 경로에 `stale` 이벤트를 추가합니다(`auto_stale`, 기본 `True`). `agent/tools/taskflow/evidence_collector.py`는 읽기 시점에 스테일을 도출하고(나중의 `stale` 행이 어떤 행의 명령에 포함된 경로를 지목), 판정기에게 보여줄 요약을 렌더링합니다.
+증거 원장은 공유되는 추가 전용 검증 추적입니다(`src/data/evidence-ledger.jsonl`, 한 줄에 JSON 객체 하나). `agent/tools/todolist/evidence_recorder.py`는 `terminal` / `python_repl`에서 인식된 검증 명령을 항상 자동 기록하며(분류표는 `EVIDENCE_LEDGER["verify_commands"]`), `write_file` / `patch_file`은 편집된 경로에 `stale` 이벤트를 항상 추가합니다. `agent/tools/taskflow/evidence_collector.py`는 읽기 시점에 스테일을 도출하고(나중의 `stale` 행이 어떤 행의 명령에 포함된 경로를 지목), 판정기에게 보여줄 요약을 렌더링합니다.
 
 `taskflow_finish.py`는 DONE 전환을 네 검사로 순서대로 게이트합니다:
 
@@ -225,9 +225,9 @@
 
 Gate D는 `todo` + `plan_path` 연결이 없으면 완전히 건너뛰고, 모든 게이트는 fail-open입니다. 읽을 수 없는 원장이나 검증기 오류는 완료를 막지 않고 통과시킵니다.
 
-### 파이프라인 수준: 완료 drain 프로그램 게이트(opt-in)
+### 파이프라인 수준: 완료 drain 프로그램 게이트
 
-`SubagentCompletionDrainMiddleware.enforce_verification`은 drain된 서브에이전트 완료 캐리어의 의미를 결정합니다. 기본 `False`는 텍스트 전용 Sisyphus 리마인더를 유지하고, `True`(`EVIDENCE_LEDGER["enforce_on_complete"]`에서 배선)는 세션에 통과한 증거가 없을 때 필수 검증 메시지를 추가하는 프로그램 게이트로 전환합니다. 게이트는 fail-open이라 증거 조회가 불가능해도 턴을 막지 않습니다.
+`SubagentCompletionDrainMiddleware`는 drain된 각 완료 배치를 세션의 검증 evidence와 대조합니다: 캐리어는 그대로 주입되고, 세션에 통과 evidence가 없으면 그 뒤에 필수 검증 메시지가 덧붙습니다. 게이트는 fail-open이라 evidence 조회가 불가능해도 턴을 막지 않습니다.
 
 ## 📊 우선순위 매트릭스
 

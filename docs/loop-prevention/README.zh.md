@@ -187,7 +187,7 @@
 
 ## 🚦 完成门控：有界重试与已验证完成
 
-循环也可能来自*过早完成*或*无界重试*。三道质量门控补上了这个缺口，挂在 TaskFlow 与子 Agent 生命周期上；它们全部 fail-open，因此判别器缺失或探针不可读永远不会阻塞进展。
+循环也可能来自*过早完成*或*无界重试*。四道质量门控补上了这个缺口，挂在 TaskFlow 与子 Agent 生命周期上；它们全部 fail-open，因此判别器缺失或探针不可读永远不会阻塞进展。
 
 ### 步骤级：`StepJudge` + 有界重试
 
@@ -195,21 +195,21 @@
 
 - `retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback`（`## Previous Attempt Feedback`）把判别器的指引注入替换任务。预算耗尽则该步骤标记为 `blocked`。
 - `block` 以判别器的理由把该步骤标记为 `blocked`。
-- Fail-open：判别器关闭、模型错误或响应无法解析时降级为 `pass`。
+- Fail-open：模型错误或响应无法解析时降级为 `pass`。
 
-`STEP_JUDGE`：`enabled=True`、`max_retries=2`、`max_result_chars=8000`、`evidence_aware=True`。
+`STEP_JUDGE`：`max_retries=2`、`max_result_chars=8000`、`evidence_aware=True`。
 
 ### 子 Agent 级：完成判别器 + goal loop 预算
 
 `agent/tools/subagent/spawn/completion_judge.py` 在 `complete_subagent_run` 最终定稿前审查子运行的最新回复，返回 `done` / `continue`。`continue` 判定把判别器的 `continuation_prompt` 作为子 Agent 的下一轮人类回合注入，运行在同一 checkpoint 线程上继续。
 
 - 该循环由 `goal_max_turns`（含首轮）限定，在 `_execute_subagent` 中计数；预算耗尽时运行以 OK 定稿并带 `error="goal_loop_budget_exhausted"`。
-- 有两层 opt-in：功能开关 `COMPLETION_JUDGE["enabled"]` 默认为 `False`，且 `sessions_spawn` 暴露 `goal_loop` / `goal_max_turns`（默认 `False` / 5）。单轮预算（`goal_max_turns=1`）或功能关闭时子 Agent 只运行一次。
-- Fail-open：判别器关闭、模型错误或响应无法解析时降级为 `done`，因此判别器绝不会把子 Agent 困在循环里。
+- 它会在每次 spawn 时运行：完成判别器恒被调用，`sessions_spawn` 只暴露 `goal_max_turns`（默认 5）作为预算覆盖。单轮预算（`goal_max_turns=1`）时子 Agent 只运行一次。
+- Fail-open：模型错误或响应无法解析时降级为 `done`，因此判别器绝不会把子 Agent 困在循环里。
 
 ### 管线级：证据账本与完成门
 
-证据账本是共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`，每行一个 JSON 对象）。`agent/tools/todolist/evidence_recorder.py` 自动记录来自 `terminal` / `python_repl` 的可识别验证命令（`auto_record`，默认 `True`），且 `write_file` / `patch_file` 会为被编辑路径追加一条 `stale` 事件（`auto_stale`，默认 `True`）。`agent/tools/taskflow/evidence_collector.py` 在读取时推导陈旧性（较晚的 `stale` 行点名了某行命令中包含的路径），并渲染给判别器看的摘要。
+证据账本是共享的、只追加的验证轨迹（`src/data/evidence-ledger.jsonl`，每行一个 JSON 对象）。`agent/tools/todolist/evidence_recorder.py` 恒自动记录来自 `terminal` / `python_repl` 的可识别验证命令（分类表位于 `EVIDENCE_LEDGER["verify_commands"]`），且 `write_file` / `patch_file` 恒为被编辑路径追加一条 `stale` 事件。`agent/tools/taskflow/evidence_collector.py` 在读取时推导陈旧性（较晚的 `stale` 行点名了某行命令中包含的路径），并渲染给判别器看的摘要。
 
 `taskflow_finish.py` 以四项检查、按顺序把守 DONE 转换：
 
@@ -222,9 +222,9 @@
 
 缺少 `todo` + `plan_path` 关联时 Gate D 完全跳过；每道门都是 fail-open：账本不可读或验证器报错会放行，而不是阻塞完成。
 
-### 管线级：完成 drain 程序化门控（opt-in）
+### 管线级：完成 drain 程序化门控
 
-`SubagentCompletionDrainMiddleware.enforce_verification` 决定被 drain 的子 Agent 完成载体意味着什么。默认 `False` 保留纯文本的 Sisyphus 提醒；`True`（由 `EVIDENCE_LEDGER["enforce_on_complete"]` 接线）切换为程序化门控：当会话没有通过的证据时追加一条强制验证消息。该门是 fail-open：证据查询不可用永远不会阻塞该回合。
+`SubagentCompletionDrainMiddleware` 会把每个被 drain 的完成批次对照会话的验证证据检查：载体原样注入，当会话没有通过证据时，在它们之后追加一条强制验证消息。该门是 fail-open：证据查询不可用永远不会阻塞该回合。
 
 ## 📊 优先级矩阵
 
