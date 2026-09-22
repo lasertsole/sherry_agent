@@ -45,6 +45,12 @@ class SubagentConfig(BaseModel):
     attachments_max_file_bytes: int = 1 * 1024 * 1024  # 1 MB per file
     attachments_max_total_bytes: int = 5 * 1024 * 1024  # 5 MB total
 
+    functional_roles_enabled: bool = True
+    default_functional_role: str = "general"
+    # Built-in role definitions live in-package (agent/tools/subagent/roles/definitions/);
+    # this names the OPTIONAL untracked workspace override directory.
+    roles_override_dir_name: str = "subagent_roles"
+
     @field_validator("max_spawn_depth")
     @classmethod
     def _enforce_spawn_depth_cap(cls, v: int) -> int:
