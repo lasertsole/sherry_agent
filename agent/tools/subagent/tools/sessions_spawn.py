@@ -5,7 +5,7 @@ from langchain.tools import BaseTool
 
 from ..spawn import spawn_subagent_direct
 from ..spawn.privilege import check_spawn_permission
-from ..types.spawn import SpawnMode, ContextMode
+from ..types.spawn import SpawnMode
 
 
 class AttachmentSchema(BaseModel):
@@ -40,10 +40,6 @@ class SessionsSpawnSchema(BaseModel):
     cleanup: str = Field(
         default="delete",
         description="Cleanup policy: 'delete' (remove session after completion) or 'keep'.",
-    )
-    context: str = Field(
-        default="isolated",
-        description="Context mode: 'isolated' (clean slate) or 'fork' (inherit parent transcript).",
     )
     attachments: list[AttachmentSchema] | None = Field(
         default=None,
@@ -94,7 +90,6 @@ class SessionsSpawnTool(BaseTool):
         thinking: str | None = None,
         mode: str = "run",
         cleanup: str = "delete",
-        context: str = "isolated",
         attachments: list[AttachmentSchema] | None = None,
         goal_max_turns: int | None = None,
         functional_role: str | None = None,
@@ -102,7 +97,6 @@ class SessionsSpawnTool(BaseTool):
     ) -> str:
         # Convert string parameters to enum types
         spawn_mode = SpawnMode(mode)
-        context_mode = ContextMode(context)
 
         # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
         # if a tool instance leaked into its toolset. Returns through the tool's
@@ -130,14 +124,12 @@ class SessionsSpawnTool(BaseTool):
         result = await spawn_subagent_direct(
             task=task,
             requester_session_key=requester_session_key,
-            requester_session_id=self.session_id,
             agent_id=agent_id,
             task_name=task_name,
             label=label,
             thinking=thinking,
             spawn_mode=spawn_mode,
             cleanup=cleanup,
-            context=context_mode,
             attachments=attach_dicts,
             expects_completion_message=True,
             goal_max_turns=goal_max_turns,

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .spawn import SpawnMode, ContextMode
+from .spawn import SpawnMode
 from .capability import SubagentSessionRole, ControlScope
 from .functional_role import FunctionalRole
 
@@ -111,7 +111,6 @@ class SubagentRunRecord(BaseModel):
 
     spawn_mode: SpawnMode = SpawnMode.RUN
     cleanup: Literal["delete", "keep"] = "delete"
-    context_mode: ContextMode = ContextMode.ISOLATED
     agent_id: str = "main"
     thinking: str | None = None
 

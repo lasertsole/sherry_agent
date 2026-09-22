@@ -3,8 +3,8 @@
 This module wraps :func:`agent.tools.subagent.spawn_subagent_direct` with a
 developer-friendly synchronous entry point that:
 
-* Fills in sensible defaults (depth, concurrency, timeout, context mode all
-  fall back to :class:`~agent.tools.subagent.config.SubagentConfig`).
+* Fills in sensible defaults (depth, concurrency, and timeout all fall back to
+  :class:`~agent.tools.subagent.config.SubagentConfig`).
 * Validates ``load_skills`` against the *actual* skill set discovered by
   :func:`skills.loader.scan_skills`, warning (not failing) on unknown names,
   and refuses to inject skills whose frontmatter scope is ``main_only``
@@ -46,7 +46,7 @@ from typing import Any, Literal
 from .config import SubagentConfig, MAX_SPAWN_DEPTH_CAP, get_config
 from .registry import get_run
 from .spawn import SpawnResult, spawn_subagent_direct
-from .types import SpawnMode, ContextMode
+from .types import SpawnMode
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,6 @@ async def _dispatch_async(
     task_name: str | None,
     label: str | None,
     thinking: str | None,
-    context: ContextMode,
     run_timeout_seconds: float | None,
     output_schema: dict[str, Any] | None,
     model: str | None,
@@ -293,7 +292,6 @@ async def _dispatch_async(
             thinking=thinking,
             spawn_mode=SpawnMode.RUN,
             cleanup="delete",
-            context=context,
             run_timeout_seconds=run_timeout_seconds,
             output_schema=output_schema,
             model=model,
@@ -341,7 +339,6 @@ def delegate_task(
     max_children_per_agent: int | None = None,
     max_concurrent: int | None = None,
     run_timeout_seconds: float | None = None,
-    context_mode: ContextMode | str = ContextMode.ISOLATED,
     model_override: str | None = None,
     task_name: str | None = None,
     label: str | None = None,
@@ -381,8 +378,6 @@ def delegate_task(
             ``DeprecationWarning``).
         run_timeout_seconds: Wall-clock child timeout (falls back to
             :data:`SubagentConfig.run_timeout_seconds`). Applied per-call.
-        context_mode: :class:`ContextMode` or its string name. Only
-            ``ISOLATED`` is fully supported for direct dispatch.
         model_override: Optional LLM model override for the child.
         task_name: Optional short display name; auto-derived from *task*.
         label: Optional user-facing label.
@@ -395,9 +390,7 @@ def delegate_task(
         :meth:`DelegatedTaskHandle.result` to block for the outcome.
 
     Raises:
-        ValueError: If ``requester_session_key`` is missing or ``task`` empty,
-            or if ``context_mode`` is not ``ISOLATED`` (direct dispatch does not
-            support context forking yet).
+        ValueError: If ``requester_session_key`` is missing or ``task`` empty.
     """
     if not task or not task.strip():
         raise ValueError("delegate_task: `task` must be a non-empty string")
@@ -412,24 +405,6 @@ def delegate_task(
             stacklevel=2,
         )
 
-    # Normalize context_mode: accept ContextMode enum or "isolated"/"fork" string.
-    if isinstance(context_mode, ContextMode):
-        context = context_mode
-    else:
-        try:
-            context = ContextMode[context_mode.strip().upper()]
-        except KeyError:
-            raise ValueError(
-                f"delegate_task: unknown context_mode {context_mode!r}; "
-                f"expected one of {[m.value for m in ContextMode]}"
-            ) from None
-
-    if context != ContextMode.ISOLATED:
-        raise ValueError(
-            "delegate_task: direct dispatch currently supports only "
-            "ContextMode.ISOLATED; fork/inherited contexts require sessions_spawn."
-        )
-
     effective_task = _inject_skills(task, load_skills)
 
     dispatch_kwargs: dict[str, Any] = dict(
@@ -439,7 +414,6 @@ def delegate_task(
         task_name=task_name,
         label=label,
         thinking=thinking,
-        context=context,
         run_timeout_seconds=run_timeout_seconds,
         output_schema=output_schema,
         model=model_override,

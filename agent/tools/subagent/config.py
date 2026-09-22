@@ -2,7 +2,6 @@
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal
-from .types.spawn import ContextMode
 
 MAX_SPAWN_DEPTH_CAP: int = 2
 
@@ -22,7 +21,6 @@ class SubagentConfig(BaseModel):
     require_agent_id: bool = False
     allow_agents: list[str] = Field(default_factory=lambda: ["*"])
     default_cleanup: Literal["delete", "keep"] = "delete"
-    default_context_mode: ContextMode = ContextMode.ISOLATED
     announce_retry_max: int = 3
     announce_retry_delay_base_ms: int = 1000
     delivery_suspend_soft_cap: int = 25

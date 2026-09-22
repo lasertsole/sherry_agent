@@ -63,7 +63,7 @@ async def _poll_terminal(run_id: str, timeout_s: float):
 
 async def _run_bench() -> tuple[list[dict[str, object]], list[float]]:
     from agent.tools.subagent.spawn.core import spawn_subagent_direct
-    from agent.tools.subagent.types.spawn import ContextMode, SpawnMode
+    from agent.tools.subagent.types.spawn import SpawnMode
 
     samples: list[dict[str, object]] = []
     latencies: list[float] = []
@@ -78,7 +78,6 @@ async def _run_bench() -> tuple[list[dict[str, object]], list[float]]:
                 agent_id="main",
                 spawn_mode=SpawnMode.RUN,
                 cleanup="delete",
-                context=ContextMode.ISOLATED,
                 run_timeout_seconds=_TIMEOUT_S,
             )
             if spawn.status != "accepted" or spawn.run_id is None:

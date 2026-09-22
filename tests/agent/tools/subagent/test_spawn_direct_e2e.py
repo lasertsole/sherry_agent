@@ -12,7 +12,7 @@ import asyncio
 from loguru import logger
 
 from agent.tools.subagent.spawn.core import spawn_subagent_direct, SpawnResult
-from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
+from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.registry import get_run
 
 
@@ -83,7 +83,6 @@ async def test_spawn_direct_simple_task():
         agent_id="main",
         spawn_mode=SpawnMode.RUN,
         cleanup="delete",
-        context=ContextMode.ISOLATED,
         run_timeout_seconds=120.0,
     )
 
@@ -142,7 +141,6 @@ async def test_spawn_direct_complex_multi_step_task():
         agent_id="main",
         spawn_mode=SpawnMode.RUN,
         cleanup="delete",
-        context=ContextMode.ISOLATED,
         run_timeout_seconds=300.0,  # 5 min for complex task
     )
 
@@ -201,7 +199,6 @@ async def test_spawn_direct_custom_tools_disabled():
         agent_id="main",
         spawn_mode=SpawnMode.RUN,
         cleanup="delete",
-        context=ContextMode.ISOLATED,
         run_timeout_seconds=120.0,
     )
 
@@ -253,7 +250,6 @@ async def test_spawn_direct_concurrent_tasks():
             agent_id="main",
             spawn_mode=SpawnMode.RUN,
             cleanup="delete",
-            context=ContextMode.ISOLATED,
             run_timeout_seconds=180.0,
         )
         assert result.status == "accepted"

@@ -13,7 +13,7 @@ from ..types.registry import (
     DeliveryStatus,
     KillReconciliationState,
 )
-from ..types.spawn import SpawnMode, ContextMode
+from ..types.spawn import SpawnMode
 from ..types.capability import SubagentSessionRole, ControlScope
 from ..types.functional_role import FunctionalRole
 from ..types.lifecycle import outcome_to_ended_reason
@@ -38,7 +38,6 @@ def register_run(
     task_name: str | None = None,
     spawn_mode: SpawnMode = SpawnMode.RUN,
     cleanup: str = "delete",
-    context_mode: ContextMode = ContextMode.ISOLATED,
     agent_id: str = "main",
     thinking: str | None = None,
     depth: int = 1,
@@ -76,7 +75,6 @@ def register_run(
         task_name=task_name,
         spawn_mode=spawn_mode,
         cleanup=cleanup,
-        context_mode=context_mode,
         agent_id=agent_id,
         thinking=thinking,
         depth=depth,

@@ -45,7 +45,6 @@ async def sessions_spawn_runtime_tool(
     thinking: str | None = None,
     mode: Literal["run", "session"] = "run",
     cleanup: Literal["delete", "keep"] = "delete",
-    context: Literal["isolated", "fork"] = "isolated",
     attachments: list[dict] | None = None,
 ) -> str:
     """Spawn a subagent to execute a task in the background.
@@ -55,7 +54,7 @@ async def sessions_spawn_runtime_tool(
     """
     from ..spawn import spawn_subagent_direct
     from ..spawn.privilege import check_spawn_permission
-    from ..types.spawn import ContextMode, SpawnMode
+    from ..types.spawn import SpawnMode
 
     allowed, reason = check_spawn_permission(session_id)
     if not allowed:
@@ -64,20 +63,17 @@ async def sessions_spawn_runtime_tool(
     requester_session_key = _session_key(session_id)
 
     spawn_mode = SpawnMode(mode)
-    context_mode = ContextMode(context)
     attach_dicts = attachments or None
 
     result = await spawn_subagent_direct(
         task=task,
         requester_session_key=requester_session_key,
-        requester_session_id=session_id,
         agent_id=agent_id,
         task_name=task_name,
         label=label,
         thinking=thinking,
         spawn_mode=spawn_mode,
         cleanup=cleanup,
-        context=context_mode,
         attachments=attach_dicts,
         expects_completion_message=True,
     )

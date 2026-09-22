@@ -11,7 +11,6 @@ Usage:
 
 from .types import (
     SpawnMode,
-    ContextMode,
     ExecutionStatus,
     DeliveryStatus,
     RunOutcomeStatus,
@@ -96,7 +95,6 @@ def build_subagent_runtime_tools():
 
 __all__ = [
     "SpawnMode",
-    "ContextMode",
     "ExecutionStatus",
     "DeliveryStatus",
     "RunOutcomeStatus",

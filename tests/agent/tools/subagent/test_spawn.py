@@ -15,7 +15,6 @@ from agent.tools.subagent.spawn.inherited_tool_policy import (
     normalize_tool_denylist,
     DEFAULT_SUBAGENT_BLOCKED_TOOLS,
 )
-from agent.tools.subagent.spawn.context import prepare_spawned_context
 from agent.tools.subagent.spawn.attachments import (
     validate_attachment_name,
     sanitize_mount_path,
@@ -23,7 +22,6 @@ from agent.tools.subagent.spawn.attachments import (
     materialize_subagent_attachments,
     AttachmentError,
 )
-from agent.tools.subagent.types.spawn import ContextMode
 from agent.tools.subagent.types.capability import SubagentSessionRole
 
 
@@ -239,18 +237,6 @@ class TestInheritedToolPolicy:
         assert "sessions_spawn" not in names
         assert "sessions_yield" not in names
         assert "read" in names
-
-
-class TestSpawnContext:
-    @pytest.mark.asyncio
-    async def test_isolated(self):
-        result = await prepare_spawned_context(ContextMode.ISOLATED, None)
-        assert result == []
-
-    @pytest.mark.asyncio
-    async def test_fork_without_messages(self):
-        result = await prepare_spawned_context(ContextMode.FORK, None)
-        assert result == []
 
 
 class TestAttachmentValidation:
@@ -630,21 +616,6 @@ class TestSpawnSubagentDirect:
         assert d["error"] == "something went wrong"
         assert d["child_session_key"] is None
         assert d["run_id"] is None
-
-    @pytest.mark.asyncio
-    async def test_fork_context_mode(self):
-        from agent.tools.subagent.spawn.core import spawn_subagent_direct
-        from agent.tools.subagent.registry import get_run
-        from agent.tools.subagent.types.spawn import ContextMode
-
-        result = await spawn_subagent_direct(
-            task="Do something",
-            requester_session_key="agent:main:session:test",
-            context=ContextMode.FORK,
-        )
-        assert result.status == "accepted"
-        run = get_run(result.run_id)
-        assert run.context_mode == ContextMode.FORK
 
     @pytest.mark.asyncio
     async def test_concurrent_children_limit(self):

@@ -3,7 +3,6 @@ import pytest
 import agent.tools.subagent.delegate as delegate
 from agent.tools.subagent.delegate import DelegatedTaskHandle, delegate_task
 from agent.tools.subagent.spawn.core import SpawnResult
-from agent.tools.subagent.types.spawn import ContextMode
 
 
 # Deterministic skill dataset mirroring the conftest stub (see
@@ -89,22 +88,6 @@ class TestValidation:
         with pytest.raises(ValueError, match="requester_session_key"):
             delegate_task("do something", requester_session_key="")
 
-    def test_fork_context_mode_raises(self):
-        with pytest.raises(ValueError, match="ISOLATED"):
-            delegate_task(
-                "do something",
-                requester_session_key="agent:main:session:x",
-                context_mode="fork",
-            )
-
-    def test_unknown_context_mode_string_raises(self):
-        with pytest.raises(ValueError, match="unknown context_mode"):
-            delegate_task(
-                "do something",
-                requester_session_key="agent:main:session:x",
-                context_mode="nonsense",
-            )
-
     def test_max_spawn_depth_cap_rejected(self):
         with pytest.raises(ValueError, match="cannot exceed") as excinfo:
             delegate_task(
@@ -116,18 +99,13 @@ class TestValidation:
         # what makes the mutation-QA (deleting the cap check) turn red.
         assert type(excinfo.value) is ValueError
 
-    def test_context_mode_accepts_enum_isolated(self, monkeypatch):
-        async def _fake(*args, **kwargs):
-            return _accepted_result()
-
-        monkeypatch.setattr(delegate, "spawn_subagent_direct", _fake)
-        h = delegate_task(
-            "do something",
-            requester_session_key="agent:main:session:x",
-            context_mode=ContextMode.ISOLATED,
-            run_in_background=True,
-        )
-        assert h.status == "accepted"
+    def test_context_mode_kwarg_rejected(self):
+        with pytest.raises(TypeError, match="context_mode"):
+            delegate_task(
+                "do something",
+                requester_session_key="agent:main:session:x",
+                context_mode="isolated",
+            )
 
 
 class TestSkillInjection:

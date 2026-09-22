@@ -20,7 +20,7 @@ from agent.tools.subagent.types.registry import (
     DeliveryStatus,
     RunOutcomeStatus,
 )
-from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
+from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.types.capability import SubagentSessionRole, ControlScope
 from agent.tools.subagent.registry import clear as clear_registry, get_run
 from agent.tools.subagent.registry import memory as registry_memory
@@ -53,7 +53,6 @@ def _make_run(
         task=task,
         spawn_mode=SpawnMode.RUN,
         cleanup="delete",
-        context_mode=ContextMode.ISOLATED,
         agent_id="main",
         depth=3,
         role=SubagentSessionRole.LEAF,
@@ -102,7 +101,6 @@ async def test_execute_subagent_simple_task() -> None:
         run=run,
         system_prompt=system_prompt,
         user_message=user_message,
-        forked_messages=[],
         tools=None,  # Falls back to build_main_tools()
         timeout_seconds=120.0,
     )

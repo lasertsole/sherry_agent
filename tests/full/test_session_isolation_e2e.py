@@ -446,7 +446,7 @@ async def test_subagent_toolset_excludes_planning_families(clean_subagent_regist
     from agent.tools.subagent.spawn import core as spawn_core
     from agent.tools.subagent.spawn.core import spawn_subagent_direct
     from agent.tools.subagent.types.registry import RunOutcomeStatus
-    from agent.tools.subagent.types.spawn import ContextMode, SpawnMode
+    from agent.tools.subagent.types.spawn import SpawnMode
 
     # Positive control: the main toolset really does contain the families.
     main_names = {t.name for t in build_main_tools()}
@@ -477,7 +477,6 @@ async def test_subagent_toolset_excludes_planning_families(clean_subagent_regist
         agent_id="main",
         spawn_mode=SpawnMode.RUN,
         cleanup="delete",
-        context=ContextMode.ISOLATED,
         run_timeout_seconds=120.0,
     )
     assert result.status == "accepted", f"{result.status}: {result.error}"
@@ -501,7 +500,6 @@ async def test_subagent_toolset_excludes_planning_families(clean_subagent_regist
             agent_id="main",
             spawn_mode=SpawnMode.RUN,
             cleanup="delete",
-            context=ContextMode.ISOLATED,
             run_timeout_seconds=120.0,
         )
         assert retry.status == "accepted", f"{retry.status}: {retry.error}"

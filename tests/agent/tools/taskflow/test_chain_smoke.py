@@ -296,7 +296,6 @@ async def test_goal_loop_smoke(monkeypatch: pytest.MonkeyPatch):
         run=run,
         system_prompt="sys",
         user_message="produce the artifact",
-        forked_messages=[],
         tools=[],
         timeout_seconds=0.0,
         goal_max_turns=3,

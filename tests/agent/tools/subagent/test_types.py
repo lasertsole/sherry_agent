@@ -1,4 +1,4 @@
-from agent.tools.subagent.types.spawn import SpawnMode, ContextMode
+from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
@@ -21,10 +21,6 @@ class TestSpawnEnums:
     def test_spawn_mode_values(self):
         assert SpawnMode.RUN == "run"
         assert SpawnMode.SESSION == "session"
-
-    def test_context_mode_values(self):
-        assert ContextMode.ISOLATED == "isolated"
-        assert ContextMode.FORK == "fork"
 
 
 class TestCapabilityEnums:

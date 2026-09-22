@@ -20,7 +20,7 @@ import asyncio
 from loguru import logger
 from typing import Literal
 from ..config import get_config
-from ..types.spawn import SpawnMode, ContextMode
+from ..types.spawn import SpawnMode
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import FunctionalRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
@@ -42,7 +42,6 @@ from .task_name import normalize_subagent_task_name
 from .system_prompt import build_subagent_system_prompt
 from .initial_message import build_subagent_initial_user_message
 from .inherited_tool_policy import apply_tool_policy, DEFAULT_SUBAGENT_BLOCKED_TOOLS
-from .context import prepare_spawned_context
 from .attachments import materialize_subagent_attachments
 from .ownership import resolve_spawn_ownership
 from .accepted_note import resolve_spawn_accepted_note
@@ -200,10 +199,8 @@ async def spawn_subagent_direct(
     thinking: str | None = None,
     spawn_mode: SpawnMode = SpawnMode.RUN,
     cleanup: Literal["delete", "keep"] = "delete",
-    context: ContextMode = ContextMode.ISOLATED,
     attachments: list[dict] | None = None,
     cwd: str | None = None,
-    requester_session_id: str | None = None,
     completion_owner_key: str | None = None,
     expects_completion_message: bool = True,
     run_timeout_seconds: float | None = None,
@@ -230,10 +227,8 @@ async def spawn_subagent_direct(
         thinking: Thinking level override (e.g. "low", "medium", "high").
         spawn_mode: :attr:`SpawnMode.RUN` (fire-and-forget) or :attr:`SpawnMode.SESSION` (persistent).
         cleanup: ``"delete"`` to remove session after completion, ``"keep"`` to retain.
-        context: :attr:`ContextMode.ISOLATED` (blank slate) or :attr:`ContextMode.INHERITED` (fork parent).
         attachments: Optional list of attachment dicts to materialise into the child workspace.
         cwd: Working directory for the child; defaults to parent's cwd if ``None``.
-        requester_session_id: Optional LangGraph session id of the parent (for context forking).
         completion_owner_key: Override the session that owns the completion callback.
         expects_completion_message: Whether the parent expects a ``sessions_yield`` / ``sessions_send`` on completion.
         run_timeout_seconds: Wall-clock timeout for the sub-agent execution.
@@ -420,7 +415,6 @@ async def spawn_subagent_direct(
         task_name=normalized_task_name,
         spawn_mode=spawn_mode,
         cleanup=cleanup,
-        context_mode=context,
         agent_id=agent_id,
         thinking=thinking_resolved or thinking,
         depth=child_depth,
@@ -524,7 +518,6 @@ async def spawn_subagent_direct(
         max_depth=config.max_spawn_depth,
         is_persistent_session=spawn_mode == SpawnMode.SESSION,
     )
-    forked_messages = await prepare_spawned_context(context, requester_session_id)
     timeout_seconds = resolve_run_timeout_seconds(run_timeout_seconds)
 
     # Warn if the run already looks orphaned at creation time (e.g. parent disconnected)
@@ -548,7 +541,6 @@ async def spawn_subagent_direct(
             run=run,
             system_prompt=system_prompt,
             user_message=user_message,
-            forked_messages=forked_messages,
             tools=build_main_tools(),
             timeout_seconds=timeout_seconds,
             model_override=resolved_model,
@@ -585,7 +577,6 @@ async def _execute_subagent_with_lane(
     run: SubagentRunRecord,
     system_prompt: str,
     user_message: str,
-    forked_messages: list,
     tools: list | None,
     timeout_seconds: float,
     model_override: str | None = None,
@@ -619,7 +610,6 @@ async def _execute_subagent_with_lane(
                 run=current,
                 system_prompt=system_prompt,
                 user_message=user_message,
-                forked_messages=forked_messages,
                 tools=tools,
                 timeout_seconds=timeout_seconds,
                 model_override=model_override,
@@ -640,7 +630,6 @@ async def _execute_subagent(
     run: SubagentRunRecord,
     system_prompt: str,
     user_message: str,
-    forked_messages: list,
     tools: list | None,
     timeout_seconds: float,
     model_override: str | None = None,
@@ -668,7 +657,6 @@ async def _execute_subagent(
         run: The registry record for this spawn.
         system_prompt: System prompt injected into the child agent.
         user_message: The initial human-message containing the task.
-        forked_messages: Prior context messages forked from the parent (may be empty).
         tools: Tool list to make available; ``None`` falls back to :func:`build_main_tools`.
         timeout_seconds: Wall-clock timeout in seconds.
         model_override: LLM model name override for this child.
@@ -710,9 +698,7 @@ async def _execute_subagent(
             extra_tools=extra_tools,
         )
 
-        # Assemble the full message list: forked context + the initial user task
-        messages = list(forked_messages)
-        messages.append(HumanMessage(content=user_message))
+        messages = [HumanMessage(content=user_message)]
 
         # Build the LangGraph config dict (session, thinking tag, cwd)
         from pub.func import build_agent_config
