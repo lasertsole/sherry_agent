@@ -76,7 +76,7 @@
 {"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
 
-- **자동 기록**: `agent/tools/todolist/evidence_recorder.py`가 `terminal` / `python_repl` 결과에서 인식한 검증 명령의 행(`kind` + `status`, `EVIDENCE_LEDGER["auto_record"]`로 제어)을 덧붙이고, `write_file` / `patch_file` 편집 후 `stale` 이벤트를 덧붙입니다(`auto_stale`). 모든 진입점은 페일오픈 — 원장 쓰기가 도구를 깨뜨리지 않습니다.
+- **자동 기록**: `agent/tools/todolist/evidence_recorder.py`가 `terminal` / `python_repl` 결과에서 인식한 검증 명령의 행(`kind` + `status`; 분류표는 `EVIDENCE_LEDGER["verify_commands"]`)을 항상 덧붙이고, `write_file` / `patch_file` 편집 후 `stale` 이벤트를 덧붙입니다. 모든 진입점은 페일오픈 — 원장 쓰기가 도구를 깨뜨리지 않습니다.
 - **staleness는 파생값**: 이후의 `{"event": "stale"}` 행이 어떤 evidence 행의 `command`에 포함된 경로를 지명할 때만 그 행이 stale입니다(`agent/tools/taskflow/evidence_collector.py`). 과거 행은 결코 재작성되지 않습니다.
 - **세션 뷰**: `EvidenceLedger.for_session(session_key)` / `read_for_session()`이 공유 파일을 `session_id`로 필터링합니다; 파일 자체는 저장소 전역으로 공유됩니다.
 

@@ -79,7 +79,7 @@ Checkbox 格式的 Markdown，定义完整的 HTN 分解：
 {"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
 
-- **自动记录**：`agent/tools/todolist/evidence_recorder.py` 为 `terminal` / `python_repl` 结果中识别出的验证命令追加一行（`kind` + `status`，受 `EVIDENCE_LEDGER["auto_record"]` 控制），并在 `write_file` / `patch_file` 编辑后追加 `stale` 事件（`auto_stale`）。所有入口都失败开放——账本写入绝不破坏工具。
+- **自动记录**：`agent/tools/todolist/evidence_recorder.py` 恒为 `terminal` / `python_repl` 结果中识别出的验证命令追加一行（`kind` + `status`；分类表位于 `EVIDENCE_LEDGER["verify_commands"]`），并在 `write_file` / `patch_file` 编辑后追加 `stale` 事件。所有入口都失败开放——账本写入绝不破坏工具。
 - **陈旧性为推导值**：当且仅当更晚的 `{"event": "stale"}` 行命名了某条证据行 `command` 中包含的路径时，该行才算陈旧（`agent/tools/taskflow/evidence_collector.py`），历史行永不被改写。
 - **会话视图**：`EvidenceLedger.for_session(session_key)` / `read_for_session()` 按 `session_id` 过滤共享文件；文件本身保持仓库级共享。
 

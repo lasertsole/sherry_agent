@@ -76,7 +76,7 @@
 {"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
 
-- **自動記録**：`agent/tools/todolist/evidence_recorder.py` が `terminal` / `python_repl` の結果から認識した検証コマンドの行（`kind` + `status`、`EVIDENCE_LEDGER["auto_record"]` で制御）を追記し、`write_file` / `patch_file` の編集後に `stale` イベントを追記します（`auto_stale`）。すべての入口はフェイルオープン — 台帳書き込みがツールを壊すことはありません。
+- **自動記録**：`agent/tools/todolist/evidence_recorder.py` が `terminal` / `python_repl` の結果から認識した検証コマンドの行（`kind` + `status`、分類表は `EVIDENCE_LEDGER["verify_commands"]`）を常時追記し、`write_file` / `patch_file` の編集後に `stale` イベントを追記します。すべての入口はフェイルオープン — 台帳書き込みがツールを壊すことはありません。
 - **staleness は導出値**：後続の `{"event": "stale"}` 行が、ある evidence 行の `command` に含まれるパスを名指しした場合にのみ、その行は stale です（`agent/tools/taskflow/evidence_collector.py`）。履歴行は決して書き換えられません。
 - **セッションビュー**：`EvidenceLedger.for_session(session_key)` / `read_for_session()` が共有ファイルを `session_id` でフィルタします；ファイル自体はリポジトリ全体で共有されたままです。
 

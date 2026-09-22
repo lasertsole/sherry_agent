@@ -81,7 +81,7 @@ One JSON object per line, recording execution evidence per checkbox:
 {"event": "stale", "file_path": "agent/tools/taskflow/step_judge.py", "session_id": "sherry:xxx", "timestamp": "..."}
 ```
 
-- **Auto-recording**: `agent/tools/todolist/evidence_recorder.py` appends a row for verification commands recognized in `terminal` / `python_repl` results (`kind` + `status`, gated by `EVIDENCE_LEDGER["auto_record"]`) and a `stale` event after `write_file` / `patch_file` edits (`auto_stale`). Every entry point is fail-open — a ledger write never breaks the tool.
+- **Auto-recording**: `agent/tools/todolist/evidence_recorder.py` always appends a row for verification commands recognized in `terminal` / `python_repl` results (`kind` + `status`; the taxonomy lives in `EVIDENCE_LEDGER["verify_commands"]`) and a `stale` event after `write_file` / `patch_file` edits. Every entry point is fail-open — a ledger write never breaks the tool.
 - **Staleness is derived**: an evidence row is stale iff a later `{"event": "stale"}` row names a path contained in its `command` (`agent/tools/taskflow/evidence_collector.py`), so the historical lines are never rewritten.
 - **Session views**: `EvidenceLedger.for_session(session_key)` / `read_for_session()` filter the shared file by `session_id`; the file itself stays repo-wide.
 
