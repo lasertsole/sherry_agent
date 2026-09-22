@@ -67,7 +67,7 @@ def _backflow_shared_memory() -> None:
 
 Parent and children share **one process-wide `MemoryStore`**, so a child's writes are already file-visible. What can drift is the parent's in-memory view — the live entries plus the **frozen snapshot** the system prompt was built from — when a writer outside this process updated `MEMORY.md` / `USER.md`. The **reload-first** order is load-bearing: persisting the stale in-memory list before reloading would clobber a concurrent writer, so the reconcile must load → persist per target.
 
-Like the drain, the backflow is **fail-open** — a memory-I/O failure is logged and swallowed, and the completion carrier still reaches the parent turn. The drain appends the Sisyphus verification reminder to internal completion carriers, so the parent is reminded that a completion is a `DoneClaim`, not a verified result (verify via `todoread`, check acceptance criteria, and probe for stale state before marking a todo complete); with `enforce_verification=True` (from `EVIDENCE_LEDGER["enforce_on_complete"]`) the reminder is replaced by a programmatic gate message appended when the session has no passing evidence.
+Like the drain, the backflow is **fail-open** — a memory-I/O failure is logged and swallowed, and the completion carrier still reaches the parent turn. The drain keeps the parent honest about completions: when the session has no passing evidence, it appends a mandatory-verification gate message after the carriers, so the parent treats a completion as a `DoneClaim`, not a verified result (verify via `todoread`, check acceptance criteria, and probe for stale state before marking a todo complete).
 
 ## ✂️ Tool Output Summarization
 
