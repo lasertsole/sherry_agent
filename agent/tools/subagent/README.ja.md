@@ -2,6 +2,8 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+> 設計レイヤの姉妹編——役割軸、spawn 権限ガード、四層の完了ゲート：[docs/subagent/README.ja.md](../../../docs/subagent/README.ja.md)
+
 ## 更新ノート（2026-09-05）
 
 > サブエージェント制限を OpenClaw に整合させました（コミット `794df0e..d200beb`）:

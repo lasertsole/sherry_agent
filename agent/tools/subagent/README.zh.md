@@ -2,6 +2,8 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+> 设计层姊妹篇——角色轴、spawn 权限守卫与四层完成门禁：[docs/subagent/README.zh.md](../../../docs/subagent/README.zh.md)
+
 ## 更新记录（2026-09-05）
 
 > 子代理限制已对齐 OpenClaw（提交 `794df0e..d200beb`）：

@@ -2,6 +2,8 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+> 설계 계층 자매편——역할 축, spawn 권한 가드, 4계층 완료 게이트: [docs/subagent/README.ko.md](../../../docs/subagent/README.ko.md)
+
 ## 업데이트 노트 (2026-09-05)
 
 > 서브에이전트 제한이 OpenClaw와 정렬되었습니다 (커밋 `794df0e..d200beb`):

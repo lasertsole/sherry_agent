@@ -2,6 +2,8 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
+> Design-level companion — role axes, spawn-privilege guards, and the four-layer completion gates: [docs/subagent/README.md](../../../docs/subagent/README.md)
+
 ## Update Notes (2026-09-05)
 
 > Subagent limits aligned with OpenClaw (commits `794df0e..d200beb`):
