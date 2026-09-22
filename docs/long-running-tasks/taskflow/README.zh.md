@@ -295,6 +295,12 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ---
 
+### 合成——`aggregate_deps`
+
+向 `taskflow_run_task` 传入 `aggregate_deps=true`，即可让合成步骤在其派发任务文本后收到依赖步骤的记录结果。聚合由 `agent/tools/taskflow/tools/_shared.py::build_task_with_dep_results(step, steps, results)` 构建：按 `depends_on` 顺序，用每个依赖步骤的 `child_session_key` 在 flow 的 `{child_session_key, result, result_hash}` 台账中匹配结果，并追加到 `## Upstream Results` 标题之下。没有记录结果的依赖会写入 `no result recorded` 占位符。
+
+该标志存储在步骤上，因此 `taskflow_dispatch`、StepJudge 重试与重试策略路径都会重新推导聚合，而不会改写已存储的 `task`。默认（`aggregate_deps` 缺省或为 false）保持派发文本不变。
+
 ## 并行步骤执行
 
 两个工具支持独立步骤的并行执行：

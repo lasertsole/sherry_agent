@@ -295,6 +295,12 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 ---
 
+### 合成——`aggregate_deps`
+
+`taskflow_run_task` に `aggregate_deps=true` を渡すと、合成ステップは依存ステップの記録済み結果をディスパッチされるタスク本文へ受け取ります。集約は `agent/tools/taskflow/tools/_shared.py::build_task_with_dep_results(step, steps, results)` が構築します。`depends_on` 順に各依存ステップの `child_session_key` を flow の `{child_session_key, result, result_hash}` 台帳に照合し、`## Upstream Results` 見出しの下へ追記します。記録済み結果のない依存は `no result recorded` プレースホルダになります。
+
+フラグはステップに保存されるため、`taskflow_dispatch`、StepJudge リトライ、再試行ポリシー経路はいずれも保存済み `task` を書き換えずに集約を再導出します。既定（`aggregate_deps` が無い、または false）ではディスパッチ本文は変更されません。
+
 ## 並列ステップ実行
 
 2 つのツールが独立ステップの並列実行を可能に：

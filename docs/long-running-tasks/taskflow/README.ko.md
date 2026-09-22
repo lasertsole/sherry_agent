@@ -295,6 +295,12 @@ DAG 필드는 완전히 `state_json` 내에 존재(DB 마이그레이션 불필�
 
 ---
 
+### 합성 — `aggregate_deps`
+
+`taskflow_run_task`에 `aggregate_deps=true`를 넘기면 합성 단계가 의존성 단계의 기록된 결과를 디스패치되는 작업 텍스트 뒤에 받습니다. 집계는 `agent/tools/taskflow/tools/_shared.py::build_task_with_dep_results(step, steps, results)`가 구성합니다. `depends_on` 순서로 각 의존성 단계의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 원장과 대조해 `## Upstream Results` 제목 아래에 덧붙입니다. 기록된 결과가 없는 의존성은 `no result recorded` 자리표시자가 됩니다.
+
+플래그는 단계에 저장되므로 `taskflow_dispatch`, StepJudge 재시도, 재시도 정책 경로가 저장된 `task`를 재작성하지 않고 집계를 다시 도출합니다. 기본값(`aggregate_deps` 없음 또는 false)은 디스패치 텍스트를 변경하지 않습니다.
+
 ## 병렬 단계 실행
 
 두 도구가 독립 단계의 병렬 실행을 지원:

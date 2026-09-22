@@ -196,6 +196,10 @@
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 판정 프롬프트용 evidence 요약 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 플러그 가능한 그래프 래퍼 체인 |
 
+### 합성 집계(`aggregate_deps`)
+
+`taskflow_run_task(aggregate_deps=true)`는 의존성 결과를 `## Upstream Results` 블록으로 디스패치 작업에 덧붙이는 합성 단계를 표시합니다. `build_task_with_dep_results(step, steps, results)`는 `depends_on` 순서로 각 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조하고, 결과가 없으면 `no result recorded` 자리표시자로 폴백합니다. 집계는 재디스패치마다 안정적인 결과에서 다시 도출되므로 저장된 단계 작업은 절대 재작성되지 않습니다. 플래그를 생략하면 기존 디스패치 텍스트가 그대로 유지됩니다.
+
 ## 🧪 테스트
 
 TaskFlow 스위트는 `tests/agent/tools/taskflow/`에 있습니다(24개 `unit` 테스트 파일 + 공유 `conftest.py`):

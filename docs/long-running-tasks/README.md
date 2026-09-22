@@ -196,6 +196,17 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | judge-prompt evidence summary |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | Pluggable graph-wrapper chain |
 
+### Synthesize aggregation (`aggregate_deps`)
+
+`taskflow_run_task(aggregate_deps=true)` marks a synthesis step whose dependency
+results are appended to the dispatched task as a `## Upstream Results` block.
+`build_task_with_dep_results(step, steps, results)` matches each dependency's
+`child_session_key` against the flow's `{child_session_key, result, result_hash}`
+records (in `depends_on` order) and falls back to a `no result recorded`
+placeholder when a result is missing. The aggregation is re-derived at every
+re-dispatch from the stable results, so the stored step task is never rewritten;
+omitting the flag keeps the legacy dispatch text unchanged.
+
 ## 🧪 Testing
 
 The TaskFlow suite lives under `tests/agent/tools/taskflow/` (twenty-four `unit` test files plus a shared `conftest.py`):

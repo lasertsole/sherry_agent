@@ -295,6 +295,22 @@ A **single pass** through `steps`: moves `blocked` steps with now-satisfied depe
 
 ---
 
+### Synthesize — `aggregate_deps`
+
+Pass `aggregate_deps=true` to `taskflow_run_task` to make a synthesis step receive
+its dependency steps' recorded results appended to the dispatched task text. The
+aggregation is built by
+`agent/tools/taskflow/tools/_shared.py::build_task_with_dep_results(step, steps, results)`:
+results are matched by each dependency step's `child_session_key` against the
+flow's `{child_session_key, result, result_hash}` ledger and appended under a
+`## Upstream Results` header in `depends_on` order. A dependency without a
+recorded result yields a `no result recorded` placeholder.
+
+The flag is stored on the step, so `taskflow_dispatch`, the StepJudge retry and
+the retry-policy paths re-derive the aggregation without rewriting the stored
+`task`. The default (`aggregate_deps` absent or false) leaves the dispatched text
+unchanged.
+
 ## Parallel Step Execution
 
 Two tools enable parallel execution of independent steps:

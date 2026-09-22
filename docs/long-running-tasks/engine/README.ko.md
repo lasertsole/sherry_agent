@@ -106,6 +106,12 @@ async def taskflow_run_task(
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`(`taskflow_dispatch.py:36`)는 무엇이든 생성되기 **전에** **모든** id를 검증합니다. 단계가 `ready`이거나, `blocked`이지만 의존이 이미 충족되었으면 디스패치 가능합니다. 알 수 없는 id, 중복 id, 이미 `dispatched`/`done`인 단계는 호출 전체를 거부하며 생성이 전혀 일어나지 않습니다. 성공하면 단계는 공유 `_dispatch.dispatch_child` 시임(`_dispatch.py:10`)을 통해 순차 생성되고 **한 번의** `update_flow` 호출로 영속화됩니다. 배치 중간에 생성이 실패하면 루프가 멈추고, 이미 생성된 자식이 영속화되어 자식이 조용히 유실되지 않습니다. 오류는 실패한 step id와 디스패치된 step id를 모두 나열합니다. flow 수준 `child_session_key`는 의도적으로 건드리지 않습니다 — 각 단계 자신의 child key가 권위입니다.
 
+### 합성 — `aggregate_deps`
+
+단계는 `taskflow_run_task`에서 `aggregate_deps=true`를 지정(단계의 `aggregate_deps` 필드로 저장)해 의존성 결과 집계를 켤 수 있습니다. 디스패치 시 `_shared.build_task_with_dep_results(step, steps, results)`가 작업 텍스트 뒤에 `## Upstream Results` 블록을 덧붙입니다. `depends_on` 순서로 의존성마다 `### <dep_id>` 섹션을 만들고, 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조해 결과를 찾습니다. 기록된 결과가 없는 의존성은 예외 대신 `no result recorded` 자리표시자를 넣습니다.
+
+이 플래그는 **옵트인**입니다. 지정하지 않으면 디스패치되는 작업은 기존 일반 텍스트와 바이트 단위로 동일하며, 저장된 `step["task"]`는 절대 재작성되지 않습니다. 모든 재디스패치 경로가 안정적인 의존성 결과에서 집계를 다시 도출하므로, 배치 디스패치·StepJudge 재시도·재시도 정책 경로(`taskflow_resume` + `taskflow_wait_all`)가 모두 같은 집계 텍스트를 재현합니다.
+
 ### 업데이트 — `taskflow_update_steps` 전체 교체
 
 `taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`(`taskflow_update_steps.py:191`)는 flow의 단계 목록을 전체 교체합니다(TaskFlow의 `todowrite`에 해당): 저장되는 DAG는 전달한 목록 그대로이며, 단계 추가·삭제·재정렬·`task`/`depends_on` 재작성이 가능합니다. 안전 규칙: `step_id`는 고유해야 하고 모든 `depends_on`은 새 목록에 존재하는 id를 참조해야 합니다(자기 의존 금지). `dispatched` 단계는 `child_session_key`를 유지하며 `ready`/`blocked`로 강등할 수 없습니다. `done` 단계는 task/depends_on/status를 변경할 수 없습니다. 새 단계는 `ready`/`blocked`여야 합니다(디스패치는 `taskflow_dispatch` 경유). 종단 flow는 호출을 거부합니다. 실행 중인 `dispatched` 단계를 삭제하면 성공하지만 비차단 `Warning:`(child key 포함)을 반환합니다 — 먼저 child를 kill하거나 `taskflow_wait_all`/`taskflow_resume`으로 정착시키세요. 동시성은 동일한 낙관적 잠금을 사용하며, `expected_revision` 불일치는 최신 리비전과 함께 거부되어 재조회 후 재시도에 사용됩니다.

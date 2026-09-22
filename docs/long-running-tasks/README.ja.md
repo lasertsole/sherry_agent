@@ -196,6 +196,10 @@
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 判定プロンプト用 evidence 要約 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | プラグ可能なグラフラッパーチェーン |
 
+### 合成集約（`aggregate_deps`）
+
+`taskflow_run_task(aggregate_deps=true)` は、依存結果を `## Upstream Results` ブロックとしてディスパッチされるタスクへ追記する合成ステップを指定します。`build_task_with_dep_results(step, steps, results)` は `depends_on` 順に各依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合し、結果が無ければ `no result recorded` プレースホルダへフォールバックします。集約は再ディスパッチのたびに安定した結果から再導出されるため、保存済みステップタスクは決して書き換えられません。フラグを省略すれば従来のディスパッチ本文は不変です。
+
 ## 🧪 テスト
 
 TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個の `unit` テストファイル + 共有 `conftest.py`）：

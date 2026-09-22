@@ -106,6 +106,12 @@ async def taskflow_run_task(
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）は、何かを生成する**前に****すべての** id を検証します。ステップが `ready` であるか、`blocked` でも依存が満たされていればディスパッチ可能です。未知の id、重複 id、すでに `dispatched`/`done` のステップは、呼び出し全体を拒否し、生成を一切行いません。成功時、ステップは共有の `_dispatch.dispatch_child` シーム（`_dispatch.py:10`）を通じて順次生成され、**1 回**の `update_flow` 呼び出しで永続化されます。バッチ途中で生成が失敗するとループは停止し、すでに生成済みの子は永続化されるため、子が黙って失われることはありません。エラーは失敗した step id とディスパッチ済み step id の両方を示します。flow レベルの `child_session_key` は意図的に変更しません——各ステップ自身の child key が権威です。
 
+### 合成——`aggregate_deps`
+
+ステップは `taskflow_run_task` で `aggregate_deps=true` を指定（ステップの `aggregate_deps` フィールドとして保存）して依存結果の集約を有効化できます。ディスパッチ時に `_shared.build_task_with_dep_results(step, steps, results)` がタスク本文へ `## Upstream Results` ブロックを追記します。`depends_on` 順に依存ごとの `### <dep_id>` セクションを生成し、依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合して結果を取得します。記録済み結果のない依存は例外ではなく `no result recorded` プレースホルダを出力します。
+
+このフラグは **オプトイン**です。指定しなければディスパッチされるタスクは従来のプレーンテキストとバイト単位で同一で、保存済みの `step["task"]` は決して書き換えられません。すべての再ディスパッチ経路は安定した依存結果から集約を再導出するため、一括ディスパッチ、StepJudge リトライ、再試行ポリシー経路（`taskflow_resume` + `taskflow_wait_all`）はいずれも同じ集約テキストを再現します。
+
 ### 更新——`taskflow_update_steps` の全置換
 
 `taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`（`taskflow_update_steps.py:191`）は flow の steps リストを全置換します（TaskFlow にとっての `todowrite`）：保存される DAG は渡したリストそのものになり、ステップの追加・削除・並べ替え・`task`/`depends_on` の書き換えができます。安全規則：`step_id` は一意で、各 `depends_on` は新しいリスト内に存在する id を参照する必要があります（自己依存は禁止）。`dispatched` ステップは `child_session_key` を保持し、`ready`/`blocked` へ降格できません。`done` ステップは task/depends_on/status を変更できません。新規ステップは `ready`/`blocked` のみ（ディスパッチは `taskflow_dispatch` 経由）。終端 flow は呼び出しを拒否します。実行中の `dispatched` ステップを削除すると成功しますが、非ブロッキングの `Warning:`（child key 付き）を返します——先に child を kill するか、`taskflow_wait_all`/`taskflow_resume` で確定させてください。並行性は同じ楽観的ロックを用い、`expected_revision` の不一致は最新リビジョンとともに拒否され、再読込と再試行に使えます。

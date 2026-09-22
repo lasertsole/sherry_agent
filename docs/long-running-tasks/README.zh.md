@@ -196,6 +196,10 @@
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 判别器提示词证据摘要 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 可插拔图包装链 |
 
+### 合成聚合（`aggregate_deps`）
+
+`taskflow_run_task(aggregate_deps=true)` 标记一个合成步骤，其依赖结果会以 `## Upstream Results` 区块追加到派发任务中。`build_task_with_dep_results(step, steps, results)` 按 `depends_on` 顺序，将每个依赖的 `child_session_key` 与 flow 的 `{child_session_key, result, result_hash}` 记录匹配；结果缺失时回退为 `no result recorded` 占位符。聚合会在每次重派时从稳定结果重新推导，因此已存储的步骤任务永不被改写；省略该标志则保持旧有派发文本不变。
+
 ## 🧪 测试
 
 TaskFlow 测试位于 `tests/agent/tools/taskflow/`（二十四个 `unit` 测试文件加一个共享的 `conftest.py`）：

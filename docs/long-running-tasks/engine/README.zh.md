@@ -106,6 +106,12 @@ async def taskflow_run_task(
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")`（`taskflow_dispatch.py:36`）在生成任何子 Agent **之前**校验**每一个** id。当步骤状态为 `ready`，或 `blocked` 但依赖已满足时，它就是可派发的。未知 id、重复 id，或已经 `dispatched`/`done` 的步骤，都会整体拒绝该次调用且不产生任何派发。成功后，步骤通过共享的 `_dispatch.dispatch_child` 接缝（`_dispatch.py:10`）顺序派发，并在**一次** `update_flow` 调用中持久化。若批次中途派发失败，循环停止，已派发的子 Agent 会被持久化，确保没有子会话被静默丢弃，错误信息同时列出失败与已派发的 step id。flow 级别的 `child_session_key` 刻意不被改动——每个步骤自己的 child key 才是权威。
 
+### 合成——`aggregate_deps`
+
+步骤可在 `taskflow_run_task` 上设置 `aggregate_deps=true`（存为步骤的 `aggregate_deps` 字段）以启用依赖结果聚合。派发时 `_shared.build_task_with_dep_results(step, steps, results)` 会在任务文本后追加一个 `## Upstream Results` 区块：按 `depends_on` 顺序，为每个依赖生成一个 `### <dep_id>` 段落，并用依赖的 `child_session_key` 在 flow 的 `{child_session_key, result, result_hash}` 记录中查找其结果。没有记录结果的依赖会写入 `no result recorded` 占位符，而不是抛错。
+
+该标志为**可选加入（opt-in）**：不设置时，派发的任务与旧有纯文本逐字节一致，且已存储的 `step["task"]` 永不被改写。每条重派路径都会从稳定的依赖结果重新推导聚合，因此批量派发、StepJudge 重试以及重试策略路径（`taskflow_resume` + `taskflow_wait_all`）都会复现相同的聚合文本。
+
 ### 更新——`taskflow_update_steps` 全量替换
 
 `taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")`（`taskflow_update_steps.py:191`）全量替换 flow 的 steps 列表（对 TaskFlow 而言类似 `todowrite`）：存储的 DAG 就是你传入的列表，因此可以增、删、重排步骤，或重写其 `task`/`depends_on`。安全规则：`step_id` 必须唯一；每个 `depends_on` 必须引用新列表内存在的 id（禁止自依赖）；`dispatched` 步骤保留其 `child_session_key`，不可降级为 `ready`/`blocked`；`done` 步骤不可修改 task/depends_on/status；新增步骤必须为 `ready`/`blocked`（派发仍走 `taskflow_dispatch`）；终态 flow 拒绝该调用。删除仍在运行的 `dispatched` 步骤会成功，但返回非阻塞的 `Warning:`（含 child key）——请先 kill 该 child，或用 `taskflow_wait_all`/`taskflow_resume` 让它落定。并发沿用同一乐观锁：`expected_revision` 不匹配时返回最新 revision，供重读后重试。

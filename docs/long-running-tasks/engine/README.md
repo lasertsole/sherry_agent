@@ -106,6 +106,23 @@ async def taskflow_run_task(
 
 `taskflow_dispatch(flow_id, step_ids, expected_revision=None, session_id="")` (`taskflow_dispatch.py:36`) validates **every** id before anything spawns. An id is dispatchable when its status is `ready`, or `blocked` with dependencies already satisfied. An unknown id, a duplicate, or a step already `dispatched`/`done` rejects the whole call with zero spawns. On success the steps are spawned sequentially through the shared `_dispatch.dispatch_child` seam (`_dispatch.py:10`) and persisted in **one** `update_flow` call. If a spawn fails mid-batch the loop stops, already-spawned children are persisted so none is silently dropped, and the error names both the failed and dispatched step ids. The flow-level `child_session_key` is deliberately left untouched — per-step child keys are authoritative.
 
+### Synthesize — `aggregate_deps`
+
+A step may opt into dependency-result aggregation by setting `aggregate_deps=true`
+on `taskflow_run_task` (stored as the step's `aggregate_deps` field). At dispatch
+time `_shared.build_task_with_dep_results(step, steps, results)` appends a
+`## Upstream Results` block to the task text: one `### <dep_id>` section per
+dependency, carrying the dependency's recorded result looked up by its
+`child_session_key` against the flow's `{child_session_key, result, result_hash}`
+records, in `depends_on` order. A dependency with no recorded result contributes a
+`no result recorded` placeholder instead of raising.
+
+The flag is **opt-in**: without it the dispatched task is byte-identical to the
+legacy plain task, and the stored `step["task"]` is never rewritten. Every
+re-dispatch path re-derives the aggregation from the stable dependency results,
+so a batch dispatch, a StepJudge retry, and the retry-policy paths
+(`taskflow_resume` + `taskflow_wait_all`) all reproduce the same aggregated text.
+
 ### Update — `taskflow_update_steps` full replacement
 
 `taskflow_update_steps(flow_id, steps, expected_revision=None, session_id="")` (`taskflow_update_steps.py:191`) full-replaces the flow's steps list (like `todowrite` for TaskFlow): the stored DAG becomes exactly the list you pass, so steps can be added, removed, reordered, or have their `task`/`depends_on` rewritten. Safety rules: `step_id` must be unique and every `depends_on` must reference an id present in the new list (no self-dependency); a `dispatched` step keeps its `child_session_key` and cannot be downgraded to `ready`/`blocked`; a `done` step cannot change its task/depends_on/status; new steps must be `ready`/`blocked` (dispatch through `taskflow_dispatch`); terminal flows reject the call. Deleting a `dispatched` step whose child is still running succeeds but returns a non-blocking `Warning:` naming the child key — kill the child or settle it via `taskflow_wait_all`/`taskflow_resume`. Reconciliation uses the same optimistic lock: a mismatched `expected_revision` is rejected with the latest revision for a re-read + retry.
