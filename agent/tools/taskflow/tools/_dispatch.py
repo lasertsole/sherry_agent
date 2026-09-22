@@ -7,8 +7,16 @@ so tests can substitute the seam without touching the real pipeline.
 """
 
 
-async def dispatch_child(task: str, requester_session_key: str, label: str | None = None) -> str:
+async def dispatch_child(
+    task: str,
+    requester_session_key: str,
+    label: str | None = None,
+    functional_role: str | None = None,
+) -> str:
     """Dispatch a detached child session and return its child_session_key.
+
+    ``functional_role`` optionally selects a functional specialization
+    (researcher / executor / reviewer); ``None`` keeps the default spawn path.
 
     Raises RuntimeError unless the spawn is accepted with a child key.
     """
@@ -19,6 +27,7 @@ async def dispatch_child(task: str, requester_session_key: str, label: str | Non
         requester_session_key=requester_session_key,
         label=label,
         expects_completion_message=True,
+        functional_role_hint=functional_role,
     )
     if result.status != "accepted" or not result.child_session_key:
         raise RuntimeError(f"status={result.status} error={result.error}")
