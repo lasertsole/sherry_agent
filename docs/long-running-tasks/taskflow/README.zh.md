@@ -185,7 +185,7 @@ async def taskflow_resume(
 
 **DAG 簿记**：标记匹配步骤为 `done` 并调用 `unlock_dependents()` 将新满足的 `blocked` 步骤移至 `ready`。返回解锁的步骤 id。**resume 永不 spawn**——调用者需通过 `taskflow_dispatch` 显式派发新就绪步骤。
 
-**步骤判别器**：当步骤携带 `validation_criteria`（由 `taskflow_run_task` 设置或在此传入）时，辅助 LLM 判别器（`agent/tools/taskflow/step_judge.py`，温度 0）按标准审查结果，返回 `pass` / `retry` / `block`。`retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback` 把判别器指引附加到替换任务；预算耗尽或 `block` 判定则把步骤标记为 `blocked` 并附判别器原因。判别器会看到本流的证据摘要，且失败开放——判别器禁用、模型报错或响应无法解析时降级为 `pass`。
+**步骤判别器**：当步骤携带 `validation_criteria`（由 `taskflow_run_task` 设置或在此传入）时，辅助 LLM 判别器（`agent/tools/taskflow/step_judge.py`，温度 0）按标准审查结果，返回 `pass` / `retry` / `block`。`retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback` 把判别器指引附加到替换任务；预算耗尽或 `block` 判定则把步骤标记为 `blocked` 并附判别器原因。判别器会看到本流的证据摘要，且失败开放——模型报错或响应无法解析时降级为 `pass`。
 
 ### taskflow_set_waiting
 

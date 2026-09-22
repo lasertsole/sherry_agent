@@ -185,7 +185,7 @@ async def taskflow_resume(
 
 **DAG 記簿**：マッチするステップを `done` にマークし、`unlock_dependents()` を呼んで新たに満たされた `blocked` ステップを `ready` に移行。アンロックされたステップ id を返す。**resume は決して spawn しない**——呼び出し側は `taskflow_dispatch` で新たに準備完了したステップを明示的にディスパッチする必要がある。
 
-**ステップ判定器**：ステップが `validation_criteria` を持つ場合（`taskflow_run_task` が設定、またはここで渡す）、補助 LLM 判定器（`agent/tools/taskflow/step_judge.py`、温度 0）が結果を基準に照らして審査し、`pass` / `retry` / `block` を返す。`retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback` で代替タスクに追加する。予算を使い切るか `block` 判定の場合は、判定器の理由とともにステップを `blocked` にする。判定器にはこのフローの evidence 要約が渡され、フェイルオープンである — 判定器の無効化、モデルエラー、解析不能な応答は `pass` に劣化する。
+**ステップ判定器**：ステップが `validation_criteria` を持つ場合（`taskflow_run_task` が設定、またはここで渡す）、補助 LLM 判定器（`agent/tools/taskflow/step_judge.py`、温度 0）が結果を基準に照らして審査し、`pass` / `retry` / `block` を返す。`retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback` で代替タスクに追加する。予算を使い切るか `block` 判定の場合は、判定器の理由とともにステップを `blocked` にする。判定器にはこのフローの evidence 要約が渡され、フェイルオープンである — モデルエラーや解析不能な応答は `pass` に劣化する。
 
 ### taskflow_set_waiting
 

@@ -185,7 +185,7 @@ async def taskflow_resume(
 
 **DAG 기장**: 매칭되는 단계를 `done`으로 마크하고 `unlock_dependents()`를 호출하여 새로 충족된 `blocked` 단계를 `ready`로 이동. 언락된 단계 id 반환. **resume은 결코 spawn하지 않음**——호출자는 `taskflow_dispatch`로 새로 준비된 단계를 명시적으로 디스패치해야 함.
 
-**단계 판정기**: 단계가 `validation_criteria`를 가질 때(`taskflow_run_task`가 설정하거나 여기서 전달), 보조 LLM 판정기(`agent/tools/taskflow/step_judge.py`, 온도 0)가 결과를 기준에 비추어 심사하고 `pass` / `retry` / `block`을 반환. `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`으로 대체 작업에 덧붙임. 예산이 소진되거나 `block` 판정이면 판정기 사유와 함께 단계를 `blocked`로 표시. 판정기에는 이 플로우의 evidence 요약이 제공되며 페일오픈 — 판정기 비활성, 모델 오류, 파싱 불가 응답은 `pass`로 강등됨.
+**단계 판정기**: 단계가 `validation_criteria`를 가질 때(`taskflow_run_task`가 설정하거나 여기서 전달), 보조 LLM 판정기(`agent/tools/taskflow/step_judge.py`, 온도 0)가 결과를 기준에 비추어 심사하고 `pass` / `retry` / `block`을 반환. `retry`는 공유 `_retry` 시임을 통해 단계를 재디스패치하며, 단계 자체의 `retry_count` 예산(`STEP_JUDGE["max_retries"]`, 기본 2)을 재사용하고 판정기의 지침을 `with_judge_feedback`으로 대체 작업에 덧붙임. 예산이 소진되거나 `block` 판정이면 판정기 사유와 함께 단계를 `blocked`로 표시. 판정기에는 이 플로우의 evidence 요약이 제공되며 페일오픈 — 모델 오류, 파싱 불가 응답은 `pass`로 강등됨.
 
 ### taskflow_set_waiting
 
