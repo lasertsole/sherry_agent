@@ -27,13 +27,13 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/` | Agent core: middleware chain, tools, subagent system, checkpointer | `agent/core.py::built_agent()` |
 | `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence) | `agent/middlewares/__init__.py` |
 | `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
-| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board) | `agent/tools/taskflow/config.py` |
-| `agent/tools/todolist/` | Session-scoped todo planning layer | `agent/tools/todolist/service.py` |
-| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper) | `agent/tools/subagent/spawn/core.py` |
+| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, evidence collector) | `agent/tools/taskflow/config.py` |
+| `agent/tools/todolist/` | Session-scoped todo planning layer + append-only evidence ledger/recorder | `agent/tools/todolist/service.py` |
+| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge) | `agent/tools/subagent/spawn/core.py` |
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (40 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (45 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -70,7 +70,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     before_model tags an oversized trailing HumanMessage (full text stays in
   │     state/MesMemory) and wrap_model_call truncates only the model view)
   │
-  ├─ tools: build_main_tools() → taskflow(13) + todolist(2) + memory + subagent(7)
+  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...
   │
   ├─ graph wrappers: apply_graph_wrappers(inner)
@@ -82,6 +82,18 @@ User message → Robyn WS → agent.core.built_agent() graph
   └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
        SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
        stamped there) → detached child agents → announce pipeline → drain
+
+  completion gates (all fail-open):
+    · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
+      (pass / retry within STEP_JUDGE["max_retries"] / block)
+    · CompletionJudge goal loop — opt-in via sessions_spawn(goal_loop, goal_max_turns)
+      + COMPLETION_JUDGE["enabled"]; continue injects a follow-up turn
+    · Evidence ledger — terminal/python_repl auto-record + file-edit stale events;
+      read side derives staleness (evidence_collector.py)
+    · taskflow_finish gates A–D — DAG completeness, no blocked steps, no
+      FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
+    · SubagentCompletionDrainMiddleware.enforce_verification — opt-in programmatic
+      gate wired from EVIDENCE_LEDGER["enforce_on_complete"]
 ```
 
 ## Concurrency Lanes (`runtime/lane/`)
@@ -105,9 +117,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 21 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, ...) |
+| `config/features/agent_side/` | 26 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, ...) |
 | `config/features/infra_side/` | 19 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 40 TypedDicts + instances re-exported |
+| `config/features/__init__.py` | Aggregator — all 45 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
