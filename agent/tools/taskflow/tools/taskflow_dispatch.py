@@ -22,6 +22,7 @@ from . import _dispatch
 from ._retry import is_redispatch, normalize_policy, step_retry_count, with_judge_feedback
 from ._shared import (
     apply_dispatched_steps,
+    build_task_with_dep_results,
     deps_satisfied,
     is_terminal,
     not_found_error,
@@ -81,6 +82,7 @@ async def taskflow_dispatch(
 
     state = dict(flow["state"])
     steps = list(state.get("steps") or [])
+    results = list(state.get("results") or [])
     by_id = {s.get("step_id"): s for s in steps}
 
     # Validate the WHOLE batch first: any invalid id aborts with no spawn.
@@ -116,7 +118,7 @@ async def taskflow_dispatch(
     for sid in requested:
         step = by_id[sid]
         feedback = str(step.get("judge_feedback") or "").strip()
-        task_text = with_judge_feedback(str(step.get("task") or ""), feedback)
+        task_text = with_judge_feedback(build_task_with_dep_results(step, steps, results), feedback)
         try:
             child_key = await _dispatch.dispatch_child(
                 task=task_text,

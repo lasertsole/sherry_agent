@@ -24,7 +24,12 @@ import time
 
 from ..config import StepStatus
 from . import _dispatch
-from ._shared import requester_session_key, result_hash, update_flow_with_conflict_retry
+from ._shared import (
+    build_task_with_dep_results,
+    requester_session_key,
+    result_hash,
+    update_flow_with_conflict_retry,
+)
 
 DEFAULT_RETRY_DELAY_SECONDS = 60.0
 
@@ -252,7 +257,7 @@ def plan_settled_retries(
                     "child_session_key": child_key,
                     "retry_count": count + 1,
                     "policy": policy,
-                    "task": str(step.get("task") or ""),
+                    "task": build_task_with_dep_results(step, steps, results),
                 }
             )
         else:

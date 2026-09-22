@@ -32,6 +32,7 @@ from ._retry import (
     with_judge_feedback,
 )
 from ._shared import (
+    build_task_with_dep_results,
     conflict_error,
     is_terminal,
     not_found_error,
@@ -133,7 +134,8 @@ async def taskflow_resume(
             try:
                 redispatched_key = await spawn_replacement(
                     with_judge_feedback(
-                        str(step.get("task") or ""), str(step.get("judge_feedback") or "")
+                        build_task_with_dep_results(step, steps, results),
+                        str(step.get("judge_feedback") or ""),
                     ),
                     requester_key,
                 )
@@ -174,7 +176,10 @@ async def taskflow_resume(
                     requester_key = requester_key_for_retry(state, session_id)
                     try:
                         redispatched_key = await spawn_replacement(
-                            with_judge_feedback(str(step.get("task") or ""), judge_result.feedback),
+                            with_judge_feedback(
+                                build_task_with_dep_results(step, steps, results),
+                                judge_result.feedback,
+                            ),
                             requester_key,
                         )
                     except Exception as exc:  # tool boundary: block instead of raising

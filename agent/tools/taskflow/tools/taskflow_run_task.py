@@ -22,6 +22,7 @@ from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from . import _dispatch
 from ._retry import validate_policy
 from ._shared import (
+    build_task_with_dep_results,
     conflict_error,
     deps_satisfied,
     is_terminal,
@@ -45,6 +46,7 @@ async def taskflow_run_task(
     depends_on: list[str] | None = None,
     validation_criteria: str | None = None,
     retry_policy: dict | None = None,
+    aggregate_deps: bool = False,
     session_id: SessionId = "",
 ) -> str:
     """Register a step on the flow and dispatch it to a detached child subagent.
@@ -70,6 +72,11 @@ async def taskflow_run_task(
     taskflow_resume retries a result whose text classifies as a failure in
     retry_on (empty list = every classified failure). Repairs stop once
     retry_count reaches max_retries.
+
+    Pass aggregate_deps=True on a synthesis step to append its dependency
+    steps' recorded results to the dispatched task text. The flag is stored on
+    the step, so a later batch dispatch or retry re-derives the aggregation
+    from the (stable) dependency results without rewriting the stored task.
     """
     flow_id = (flow_id or "").strip()
     task = (task or "").strip()
@@ -90,6 +97,7 @@ async def taskflow_run_task(
 
     state = dict(flow["state"])
     steps = list(state.get("steps") or [])
+    results = list(state.get("results") or [])
     deps = list(depends_on or [])
 
     existing_ids = {step.get("step_id") for step in steps}
@@ -108,6 +116,8 @@ async def taskflow_run_task(
         candidate["validation_criteria"] = criteria
     if retry_policy is not None:
         candidate["retry_policy"] = retry_policy
+    if aggregate_deps:
+        candidate["aggregate_deps"] = True
     if not deps_satisfied(candidate, steps):
         candidate["status"] = str(StepStatus.BLOCKED)
         steps.append(candidate)
@@ -130,7 +140,9 @@ async def taskflow_run_task(
         )
 
     child_session_key = await _dispatch.dispatch_child(
-        task=task, requester_session_key=requester_key, label=label
+        task=build_task_with_dep_results(candidate, steps, results),
+        requester_session_key=requester_key,
+        label=label,
     )
     dispatched_at = time.time()
 
@@ -144,6 +156,8 @@ async def taskflow_run_task(
             dispatched["validation_criteria"] = criteria
         if retry_policy is not None:
             dispatched["retry_policy"] = retry_policy
+        if aggregate_deps:
+            dispatched["aggregate_deps"] = True
         dispatched["child_session_key"] = child_session_key
         dispatched["dispatched_at"] = dispatched_at
         fresh_steps.append(dispatched)

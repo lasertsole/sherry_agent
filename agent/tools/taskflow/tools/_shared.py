@@ -135,6 +135,41 @@ def deps_satisfied(step: dict, steps: list[dict]) -> bool:
     return True
 
 
+def build_task_with_dep_results(step: dict, steps: list[dict], results: list[dict]) -> str:
+    """Append dependency-step results to this step's task when ``aggregate_deps``.
+
+    A dependency's result is looked up by the dependency step's
+    ``child_session_key`` against the flow's recorded result entries (shape:
+    ``{child_session_key, result, result_hash}``). A dependency whose step is
+    unknown or has no recorded result contributes a ``no result recorded``
+    placeholder rather than raising. Returns the step's original task text
+    unchanged when ``aggregate_deps`` is falsy or the step has no dependencies,
+    so the default opt-out path stays byte-identical to the legacy dispatch.
+    """
+    task = str(step.get("task") or "")
+    if not step.get("aggregate_deps"):
+        return task
+    depends_on = step.get("depends_on")
+    if not depends_on:
+        return task
+    by_id = {s.get("step_id"): s for s in steps if isinstance(s, dict)}
+    results_by_key = {
+        str(record.get("child_session_key") or ""): record
+        for record in results
+        if isinstance(record, dict)
+    }
+    sections: list[str] = []
+    for dep_id in depends_on:
+        dep = by_id.get(dep_id)
+        child_key = str((dep or {}).get("child_session_key") or "")
+        record = results_by_key.get(child_key) if child_key else None
+        result_text = (
+            str(record.get("result") or "") if record is not None else "no result recorded"
+        )
+        sections.append(f"### {dep_id}\n{result_text}")
+    return f"{task}\n\n## Upstream Results\n" + "\n\n".join(sections)
+
+
 def mark_step_done(steps: list[dict], child_session_key: str) -> str | None:
     """Mark the step matching ``child_session_key`` done; return its id.
 
