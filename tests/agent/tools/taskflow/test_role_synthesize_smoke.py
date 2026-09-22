@@ -184,6 +184,10 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
         "terminal",
         "web_search",
         "python_repl",
+        "explore",
+        "callers",
+        "callees",
+        "impact",
     ]
 
 

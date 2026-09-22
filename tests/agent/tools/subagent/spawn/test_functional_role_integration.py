@@ -169,7 +169,15 @@ class TestRoleToolWhitelist:
             functional_role=FunctionalRole.RESEARCHER,
             model_tier="auxiliary",
         )
-        assert [t.name for t in _wiring["tools"]] == ["read_file", "terminal", "web_search"]
+        assert [t.name for t in _wiring["tools"]] == [
+            "read_file",
+            "terminal",
+            "web_search",
+            "explore",
+            "callers",
+            "callees",
+            "impact",
+        ]
 
     def test_executor_whitelist_excludes_spawn(self, _wiring):
         candidates = [
@@ -201,4 +209,11 @@ class TestRoleToolWhitelist:
             model_tier="auxiliary",
             extra_tools=["python_repl"],
         )
-        assert [t.name for t in _wiring["tools"]] == ["read_file", "python_repl"]
+        assert [t.name for t in _wiring["tools"]] == [
+            "read_file",
+            "python_repl",
+            "explore",
+            "callers",
+            "callees",
+            "impact",
+        ]
