@@ -231,7 +231,7 @@ TaskFlow 测试位于 `tests/agent/tools/taskflow/`（二十四个 `unit` 测试
 | `test_index_audit.py` | SQLite 索引升级路径与查询计划审计 |
 | `test_update_steps.py` | 步骤列表全量替换：增删/重写/重排与 dispatched/done 安全规则 |
 
-跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/agent/middlewares/test_completion_drain_gate.py`（可选 `enforce_verification` 程序化门控）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完成判别器与有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/todolist/test_evidence_ledger.py`（证据记录、stale 事件、账本视图）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
+跨领域测试套件：`tests/agent/middlewares/test_memory_flush.py`（落盘阈值与 `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完成排空时的记忆对账）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完成载体校验提醒）、`tests/agent/middlewares/test_completion_drain_gate.py`（无条件的程序化门控）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完成判别器与有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/todolist/test_evidence_ledger.py`（证据记录、stale 事件、账本视图）、`tests/context_engine/test_session_continuity.py`（连续性保存/提示词）、`tests/agent/middlewares/test_todo_continuation.py`（回合结束续跑）、`tests/pub/func/message/test_tool_output_prune.py`（单行摘要）、以及 `tests/workspace/test_prompt_builder_taskflow.py`（待处理 flow 的提示词注入）。
 
 用标准的 uv/pytest 工具只跑这一区块：
 
@@ -255,7 +255,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。
-- **有标准时结果校验由判别器执行。** 携带标准的步骤在恢复时由辅助 LLM 步骤判别器审查：`retry` 会在步骤自身重试预算内重新派发；`block`（或预算耗尽）会把步骤标记为 `blocked`。判别器失败开放，因此禁用/不可用时降级为 `pass`——并不存在“结果一定满足标准”的硬保证，只有在步骤被接受前的一次尽力而为判定。
+- **有标准时结果校验由判别器执行。** 携带标准的步骤在恢复时由辅助 LLM 步骤判别器审查：`retry` 会在步骤自身重试预算内重新派发；`block`（或预算耗尽）会把步骤标记为 `blocked`。判别器失败开放，因此模型报错或响应无法解析时降级为 `pass`——并不存在“结果一定满足标准”的硬保证，只有在步骤被接受前的一次尽力而为判定。
 - **重试分类基于文本。** `classify_failure` 是对结果文本的子串启发式：措辞不在模式表内的失败（或被否定措辞掩盖的真实失败）不会触发重试，而空的 `retry_on` 会重试所有可分类失败。`taskflow_wait_all` 无法对没有结果文本的死亡子 Agent 分类，因此只要预算尚存它就会消耗重试预算。
 - **`taskflow_list` 是会话作用域的。** 不存在全局跨会话面板：所有读取都在 SQL 层按所属 `session_id` 过滤，因此一个会话无法枚举另一个会话的 flow。隔离前写入的行（`session_id = ''`）对会话读取不可见，但 sweeper 的跨会话截止/空闲扫描仍能看到它们。
 - **知识存储以计划身份为键，而非计划名。** 访问由归属校验把关（`ownership.is_plan_associated()`：本会话的 `plan_ref`、todo 的 `plan_ref`，或 `session_ids` 含本会话的 boulder work），存储目录由规范化计划路径派生——`workspace/knowledge/plans/<plan_key>/`，其中 `plan_key = sha1(相对仓库根的路径)[:12]`，目录内的 `meta.json` 记录可读的 `plan_name` / `plan_ref`。**计划文件不同**的同名计划在两个会话中**物理隔离**（各自写自己的 key 目录）；通过 boulder `session_ids` 协同**同一计划文件**的会话解析出同一路径，共享同一目录。计划文件无法解析的会话写入兜底身份 `session-<sha1(session_id)[:8]>`（全 id 哈希让前 8 字符相同的会话 id 不再相撞）。旧的名称为键目录保持可读；写入总是落在 key 目录；`clear_session` 删除本会话私有身份目录，保留与其他会话共享的计划。子 Agent 边界依旧绝对——`knowledge` 是 `main_only`。
