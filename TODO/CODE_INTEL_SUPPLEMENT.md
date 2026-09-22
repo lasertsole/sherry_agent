@@ -46,7 +46,7 @@
 
 ## Phase 1A — ast-grep 结构化搜索（必选，与 Phase 1 同级）
 
-> **前置条件：subagent-role-migration Phase 1 完成。**
+> **前置条件：subagent 功能角色分工（已落地）。**
 > **定位：** 与 tree-sitter 索引（Phase 1）并列的核心代码检索层。
 > tree-sitter 做离线索引（按符号名查询），ast-grep 做即时结构化搜索
 > （"找到所有 `def $FUNC($$$):` 形式的函数定义"）。
@@ -1306,7 +1306,7 @@ def _lsp_goto_definition_tool(
 
 ## Phase 4 — 外部代码检索 subagent
 
-> **前置条件：subagent-role-migration Phase 1 + 本计划 Phase 1A 完成。**
+> **前置条件：subagent 功能角色分工（已落地）+ 本计划 Phase 1A 完成。**
 > **定位：** 对标 oh-my-openagent 的 `librarian` subagent。
 > 专门检索**外部代码库**（GitHub 仓库、npm 包、官方文档），
 > 与 Phase 1-2 的**内部**代码检索互补。
@@ -1336,7 +1336,7 @@ def _lsp_goto_definition_tool(
 ### 设计决策
 
 - **不新增工具** — librarian 复用现有的 `web_search`、`terminal`（git/gh）、`search_files`、`read_file`、`explore`
-- **新增的是 subagent 角色定义** — 在 subagent-role-migration 的 `FunctionalRole` 中定义 `RESEARCHER` 角色时，librarian 是一个预设的 RESEARCHER 实例
+- **新增的是 subagent 角色定义** — 在 `FunctionalRole` 中定义 `RESEARCHER` 角色时，librarian 是一个预设的 RESEARCHER 实例
 - **新增 `librarian` system prompt** — 类似 oh-my-openagent 的 librarian prompt，包含文档发现 → 仓库 clone → 源码搜索的工作流
 
 ### 新增文件（1 个）
@@ -1401,7 +1401,7 @@ LIBRARIAN_TOOL_DENY = [
 
 ### 注入点
 
-在 subagent-role-migration 的角色定义加载器中注册：
+在角色定义加载器中注册：
 
 ```python
 # agent/tools/subagent/spawn/role_definitions/__init__.py
@@ -1551,7 +1551,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 
 | 阶段     | 内容                                             | 预估       | 前置            |
 | -------- | ------------------------------------------------ | ---------- | --------------- |
-| 前置     | subagent-role-migration Phase 1                  | —          | —               |
+| 前置     | subagent 功能角色分工（已落地）                  | —          | —               |
 | Phase 1  | tree-sitter 符号索引 + 调用图 (原计划)           | ~15h       | 前置            |
 | Phase 1A | ast-grep 结构化搜索 + 二进制 provision (必选)    | ~13h       | 前置            |
 | Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ~16h       | Phase 1 + 1A    |
@@ -1567,7 +1567,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 ### 推荐实施顺序
 
 ```
-前置 (subagent-role-migration P1)
+前置 (subagent 功能角色分工)
   ├→ Phase 1 (tree-sitter, 15h)
   └→ Phase 1A (ast-grep + provision, 13h) ← 与 Phase 1 并行
        ├→ Phase 2S (LSP 基础设施, 16h) ← 需 Phase 1 + 1A

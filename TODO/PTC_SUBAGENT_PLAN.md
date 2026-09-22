@@ -4,9 +4,9 @@
 >
 > **核心约束：仅限 subagent 可用，main agent 无法调用。**
 >
-> **前置依赖：[`TODO/subagent-role-migration.md`](subagent-role-migration.md) Phase 1（subagent 功能角色分工）。**
-> PTC 工具仅注入 `FunctionalRole.EXECUTOR` 的 subagent，Phase 1 的 `FunctionalRole` 枚举、角色定义加载器、`spawn_subagent_direct()` 的 `functional_role_hint` 参数传递必须先完成。
-> 实施顺序：subagent-role-migration Phase 1 全部步骤 → 本计划。
+> **前置依赖：subagent 功能角色分工（`FunctionalRole`，已落地）。**
+> PTC 工具仅注入 `FunctionalRole.EXECUTOR` 的 subagent，`FunctionalRole` 枚举、角色定义加载器、`spawn_subagent_direct()` 的 `functional_role_hint` 参数传递均已具备。
+> 实施顺序：subagent 功能角色分工（已落地）→ 本计划。
 
 ---
 
@@ -90,7 +90,7 @@ PTC tool **不加入** `_MAIN_TOOLS_BUILDERS`，只在 `_build_child_agent()` �
 
 ```python
 # spawn/core.py::_build_child_agent — 仅 EXECUTOR 角色 subagent 路径
-# 前置依赖：subagent-role-migration Phase 1 已完成
+# 前置依赖：subagent 功能角色分工（已落地）
 #   functional_role 和 role_def 已在 Phase 4.5 解析完毕，作为参数传入
 base_tools = tools if tools is not None else build_main_tools()
 filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
@@ -401,7 +401,7 @@ RESTRICTED_BUILTINS = {
 
 ### 1. `agent/tools/subagent/spawn/core.py` — `_build_child_agent()` (约 line 818)
 
-> **前置依赖：** subagent-role-migration Phase 1 Step 1.4-1.5 已完成，`_build_child_agent` 签名中已增加 `functional_role` 和 `role_def` 参数。
+> **前置依赖：** subagent 功能角色分工（已落地），`_build_child_agent` 签名中已带 `functional_role` 和 `role_def` 参数。
 
 **现有代码（Phase 1 完成后）：**
 
@@ -566,7 +566,7 @@ async def test_ptc_not_in_own_whitelist():
 
 | 步骤 | 内容                                                                            | 依赖      | 预估工时 |
 | ---- | ------------------------------------------------------------------------------- | --------- | -------- |
-| 0    | **前置：完成 subagent-role-migration Phase 1 全部步骤**                         | 无        | —        |
+| 0    | **前置：subagent 功能角色分工（已落地）**                         | 无        | —        |
 | 1    | 创建 `config/features/agent_side/ptc.py` + 修改 re-exports（`__init__.py` × 2） | 步骤 0    | 0.5h     |
 | 2    | 修改 `tools_timeouts.py` 增加 `ptc_timeout_seconds`                             | 步骤 1    | 0.25h    |
 | 3    | 创建 `agent/tools/ptc/builtins.py`                                              | 无        | 0.5h     |
