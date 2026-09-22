@@ -14,6 +14,7 @@ from .registry import (
 from .lifecycle import LifecycleEndedReason, LifecycleEndedOutcome
 from .delivery import DeliveryContext
 from .capability import SubagentSessionRole, ControlScope
+from .functional_role import FunctionalRole
 from .swarm import SwarmMode, SwarmRunState, SwarmGroupConfig
 
 __all__ = [
@@ -32,6 +33,7 @@ __all__ = [
     "DeliveryContext",
     "SubagentSessionRole",
     "ControlScope",
+    "FunctionalRole",
     "SwarmMode",
     "SwarmRunState",
     "SwarmGroupConfig",

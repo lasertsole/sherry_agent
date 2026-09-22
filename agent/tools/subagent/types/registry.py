@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 from .spawn import SpawnMode, ContextMode
 from .capability import SubagentSessionRole, ControlScope
+from .functional_role import FunctionalRole
 
 
 class ExecutionStatus(StrEnum):
@@ -117,6 +118,9 @@ class SubagentRunRecord(BaseModel):
     depth: int = 1
     role: SubagentSessionRole = SubagentSessionRole.LEAF
     control_scope: ControlScope = ControlScope.NONE
+    # Functional specialization (orthogonal to depth role). Defaults to GENERAL,
+    # which is the pre-migration behavior: no LLM/tool/prompt override.
+    functional_role: FunctionalRole = FunctionalRole.GENERAL
 
     generation: int = 0
 
