@@ -294,6 +294,7 @@ Registered in the main agent after `ToolCallNormalize`, so the messages it injec
 
 - Each drained queue item is marked `CONSUMED` in the queue's SQLite store, so a carrier is injected exactly once (checkpoint persistence keeps HITL-resume replays safe).
 - Fail-open: a blank/missing `session_id`, an empty queue, or any error is swallowed (log + no-op) — the drain never breaks the parent turn, and the queue survives for retry.
+- **Opt-in programmatic gate** (`enforce_verification`, default `False`): off, each drained carrier gets the Sisyphus verification reminder; on (wired from `EVIDENCE_LEDGER["enforce_on_complete"]` in `agent/core.py`), the reminder is replaced by a programmatic gate that appends a mandatory-verification message when the session has no passing evidence (`agent/tools/taskflow/evidence_collector.py`). The lookup is fail-open either way.
 - The injected carrier is written to MesMemory with `origin='subagent_completion'` at the `after_model` boundary of the very model call it was injected into (`MessagePersistenceMiddleware`); before that boundary it lives only in the checkpoint and is not visible in the messages table.
 
 ### TaskIntentMiddleware

@@ -294,6 +294,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 排出された各キューエントリはキューの SQLite ストアで `CONSUMED` とマークされるため、キャリアは正確に 1 回だけ注入されます（チェックポイント永続化により HITL 再開リプレイも安全）。
 - Fail-open：`session_id` の欠落/空、空のキュー、あらゆる例外は握りつぶされます（ログ + no-op）— drain が親ターンを壊すことはなく、キューは再試行のために保持されます。
+- **オプトインのプログラムゲート**（`enforce_verification`、既定 `False`）：オフでは排出された各キャリアに Sisyphus 検証リマインダーが付きます；オン（`agent/core.py` が `EVIDENCE_LEDGER["enforce_on_complete"]` から配線）では、リマインダーの代わりにプログラムゲートが、セッションに合格 evidence がないとき必須検証メッセージを追記します（`agent/tools/taskflow/evidence_collector.py`）。どちらも参照はフェイルオープンです。
 - 注入されたキャリアは、それが注入されたまさにそのモデル呼び出しの `after_model` 境界で `origin='subagent_completion'` として MesMemory に書き込まれます（`MessagePersistenceMiddleware`）; その境界まではチェックポイントにのみ存在し、messages テーブルからは見えません。
 
 ### TaskIntentMiddleware
