@@ -185,6 +185,7 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 | **Spawn パラメータ** | `spawn_mode` | RUN（単発）/ SESSION（常駐） |
 | | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | ネスト深さ。MAIN / ORCHESTRATOR / LEAF |
+| | `functional_role` | 機能ロール（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）。既定は GENERAL |
 | | `generation` | steer/再起動をまたぐバージョンカウンタ |
 | **所有権** | `controller_session_key` | 制御（kill/steer/send）を許可されたセッションキー |
 | | `completion_owner_session_key` | 完了配信を所有するセッションキー |
@@ -467,6 +468,31 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 スコープ → ツールのマッピング（実行時に強制）：`subagent:spawn` → `sessions_spawn`、`subagent:kill` → `sessions_kill`、`subagent:yield` → `sessions_yield`、`subagent:send` → `sessions_send`。
 
+### 6.1 機能ロール — ロール特化ワーカー
+
+`FunctionalRole` は depth ロール（`SubagentSessionRole`）の上に重なる**直交**の特化軸です。depth ロールは spawn 権限と scope を、機能ロールは **LLM 選択・ツールポリシー・システムプロンプト内容** を司ります。
+
+| `FunctionalRole` | 用途 | `model_tier` | ロールのツール一覧 |
+|------------------|------|--------------|--------------------|
+| `general` | 既定ワーカー。全ツールと depth ベースの LLM を継承 | `inherit` | （全ツール） |
+| `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` |
+| `executor` | 書き込み可能な実装とコマンド実行。サブエージェント spawn 不可 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
+| `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` |
+
+**定義の場所。** 組み込み定義は**パッケージ内**（追跡・配布可能）の `agent/tools/subagent/roles/definitions/<name>/AGENTS.md` に同梱されます。任意のユーザー上書き（未追跡）は `workspace/subagent_roles/<name>/AGENTS.md` に置けます。解決順は **上書き → パッケージ既定 → なし** で、ディレクトリ名は `roles_override_dir_name` で設定できます。各ファイルは YAML frontmatter（`name`、`description`、`model_tier`、`tools`）と、子プロンプトに追記される markdown 本文を持ちます。`tools: inherit` は「全ツール」（`None`）に解決されます。
+
+**ローダーは fail-open。** ファイル欠落、YAML frontmatter の欠落または未終端、`tools` の不正値、読み取り不能ファイルは `None` と警告を返し、呼び出し側は `general` にフォールバックします。結果はプロセス内キャッシュ。workspace 上書きを編集したら `invalidate_role_cache()` を呼びます。
+
+**LLM 選択の優先順位：** 明示 `model_override` → ロールの `model_tier`（`main`/`auxiliary`）→ depth ロール（ORCHESTRATOR → メイン LLM、LEAF → 補助 LLM）。`general` ロールは tier を持たないため、移行前の depth 挙動は変わりません。
+
+**システムプロンプト。** 非 `general` ロールは `<ROLE>` の特化行と、定義本文を運ぶ `## Role Instructions` セクションを注入します。
+
+**ツールポリシー。** ロールの `tools` 一覧は allow-list になります（既定の deny-list はクリア）。spawn ごとの `extra_tools` はその allow-list に加わりますが、どちらも無条件の `main_only` メタデータゲートと明示 deny-list の対象です。
+
+**`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）。`goal_loop` / `goal_max_turns` は変更なしで維持されます。
+
+**設定**（`SubagentConfig`）：`functional_roles_enabled=True`、`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。`functional_role` を渡さない spawn 挙動は**バイト単位で不変**——GENERAL は恒等ロールです。
+
 ### 7. 添付ファイルシステム
 
 Spawn パイプラインは、子エージェントへのファイル添付をサポートします。
@@ -577,6 +603,8 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `attachments` | list\|None | None | ファイル添付（name, content, encoding, mount_path） |
 | `goal_loop` | bool | False | オプトインの完了判定ループ；`COMPLETION_JUDGE["enabled"]` が必要 |
 | `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
+| `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer）。None は depth ベースの挙動を維持 |
+| `extra_tools` | list[str]\|None | None | ロールの allow-list に追加で付与するツール名 |
 
 戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION モード：「Use sessions_send(sessionKey=...) to send follow-up messages」）。
 
@@ -918,6 +946,9 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `attachments_max_files` | 50 | spawn あたりの最大ファイル数 |
 | `attachments_max_file_bytes` | 1MB | 単一ファイルのサイズ上限 |
 | `attachments_max_total_bytes` | 5MB | 添付合計サイズの上限 |
+| `functional_roles_enabled` | True | spawn 時に機能ロールを解決するか |
+| `default_functional_role` | "general" | hint も agent_id 一致も解決しない場合のフォールバックロール |
+| `roles_override_dir_name` | "subagent_roles" | ユーザー別ロール上書きを置く workspace サブディレクトリ |
 
 `get_config()` で読み取り / `set_config()` で変更します。
 

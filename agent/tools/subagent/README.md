@@ -182,6 +182,7 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 | **Spawn Params** | `spawn_mode` | RUN (one-shot) / SESSION (persistent) |
 | | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | Nesting depth; MAIN / ORCHESTRATOR / LEAF |
+| | `functional_role` | Functional role (GENERAL / RESEARCHER / EXECUTOR / REVIEWER); defaults to GENERAL |
 | | `generation` | Version counter across steer/restart cycles |
 | **Ownership** | `controller_session_key` | Session allowed to control (kill/steer/send) |
 | | `completion_owner_session_key` | Session key that owns completion delivery |
@@ -461,6 +462,31 @@ Default `max_spawn_depth = 2`, forming a three-level tree: MAIN(0) → ORCHESTRA
 
 Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spawn`, `subagent:kill` → `sessions_kill`, `subagent:yield` → `sessions_yield`, `subagent:send` → `sessions_send`.
 
+### 6.1 Functional Roles — Role-Specialized Workers
+
+`FunctionalRole` is an **orthogonal** specialization axis layered on top of the depth role (`SubagentSessionRole`). The depth role still governs spawn permissions and scopes; the functional role governs **LLM choice, tool policy, and system-prompt content**.
+
+| `FunctionalRole` | Purpose | `model_tier` | Role tool list |
+|------------------|---------|--------------|----------------|
+| `general` | Default worker; inherits every tool and the depth-based LLM | `inherit` | (all tools) |
+| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` |
+| `executor` | Write-capable implementation and command execution; no subagent spawn | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
+| `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` |
+
+**Definition locations.** Built-in definitions ship **inside the package** (tracked, distributable) at `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`. An optional per-user override may be placed (untracked) at `workspace/subagent_roles/<name>/AGENTS.md`. Resolution order is **override → package default → none**; the directory name is configurable via `roles_override_dir_name`. Each file carries YAML frontmatter (`name`, `description`, `model_tier`, `tools`) plus a markdown body appended to the child prompt; `tools: inherit` resolves to "all tools" (`None`).
+
+**Loader is fail-open.** A missing file, missing or unterminated YAML frontmatter, an invalid `tools` value, or an unreadable file yields `None` plus a warning — the caller falls back to `general`. Results are cached in-process; call `invalidate_role_cache()` after editing a workspace override.
+
+**LLM selection priority:** explicit `model_override` → the role's `model_tier` (`main`/`auxiliary`) → the depth role (ORCHESTRATOR → main LLM, LEAF → auxiliary LLM). A `general` role carries no tier, so the pre-migration depth behavior is untouched.
+
+**System prompt.** A non-`general` role injects a `<ROLE>` specialization line and a `## Role Instructions` section carrying the definition body.
+
+**Tool policy.** A role's `tools` list becomes an allow-list (the default deny-list is cleared). Per-spawn `extra_tools` join that allow-list; both are still subject to the unconditional `main_only` metadata gate and any explicit deny-list.
+
+**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None). `goal_loop` / `goal_max_turns` are retained unchanged.
+
+**Configuration** (`SubagentConfig`): `functional_roles_enabled=True`, `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. With no `functional_role` passed, spawn behavior is **byte-for-byte unchanged** — GENERAL is the identity role.
+
 ### 7. Attachment System
 
 The Spawn pipeline supports passing file attachments to child agents:
@@ -570,6 +596,8 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `attachments` | list\|None | None | File attachments (name, content, encoding, mount_path) |
 | `goal_loop` | bool | False | Opt-in completion-judge loop; requires `COMPLETION_JUDGE["enabled"]` |
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
+| `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer); None keeps depth-based behavior |
+| `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION mode: "Use sessions_send(sessionKey=...) to send follow-up messages").
 
@@ -911,6 +939,9 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `attachments_max_files` | 50 | Max files per spawn |
 | `attachments_max_file_bytes` | 1MB | Max single file size |
 | `attachments_max_total_bytes` | 5MB | Max total attachment size |
+| `functional_roles_enabled` | True | Whether functional-role resolution runs on spawn |
+| `default_functional_role` | "general" | Fallback role when neither a hint nor an agent_id match resolves |
+| `roles_override_dir_name` | "subagent_roles" | Workspace subdirectory holding per-user role overrides |
 
 Access via `get_config()` / mutate via `set_config()`.
 

@@ -182,6 +182,7 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 | **Spawn 参数** | `spawn_mode` | RUN（一次性）/ SESSION（常驻） |
 | | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | 嵌套深度；MAIN / ORCHESTRATOR / LEAF |
+| | `functional_role` | 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）；默认 GENERAL |
 | | `generation` | 跨 steer/重启的版本计数器 |
 | **所有权** | `controller_session_key` | 有权控制（kill/steer/send）的会话键 |
 | | `completion_owner_session_key` | 拥有完成交付权的会话键 |
@@ -460,6 +461,31 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spawn`、`subagent:kill` → `sessions_kill`、`subagent:yield` → `sessions_yield`、`subagent:send` → `sessions_send`。
 
+### 6.1 功能角色 — 角色专业化 Worker
+
+`FunctionalRole` 是叠加在 depth 角色（`SubagentSessionRole`）之上的**正交**专业化维度。depth 角色仍然决定 spawn 权限与 scope；功能角色决定 **LLM 选择、工具策略与系统提示词内容**。
+
+| `FunctionalRole` | 用途 | `model_tier` | 角色工具列表 |
+|------------------|------|--------------|--------------|
+| `general` | 默认 worker；继承全部工具与基于 depth 的 LLM | `inherit` | （全部工具） |
+| `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` |
+| `executor` | 可写入的实现与命令执行；不允许 spawn 子代理 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
+| `reviewer` | 只读的 diff/质量审计 | `auxiliary` | `read_file`、`terminal` |
+
+**定义位置。** 内置定义随**包内**分发（纳入版本管理、可发布），位于 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`。可选的用户覆盖（不入库）放在 `workspace/subagent_roles/<name>/AGENTS.md`。解析顺序为 **覆盖 → 包内默认 → 无**；目录名可通过 `roles_override_dir_name` 配置。每个文件包含 YAML frontmatter（`name`、`description`、`model_tier`、`tools`）以及追加到子代理提示词的 markdown 正文；`tools: inherit` 解析为“全部工具”（`None`）。
+
+**加载器 fail-open。** 文件缺失、YAML frontmatter 缺失或未闭合、`tools` 取值非法或文件不可读时返回 `None` 并告警——调用方回退到 `general`。结果在进程内缓存；编辑 workspace 覆盖后调用 `invalidate_role_cache()`。
+
+**LLM 选择优先级：** 显式 `model_override` → 角色的 `model_tier`（`main`/`auxiliary`）→ depth 角色（ORCHESTRATOR → 主 LLM，LEAF → 辅助 LLM）。`general` 角色不带 tier，因此迁移前的 depth 行为不受影响。
+
+**系统提示词。** 非 `general` 角色会注入一行 `<ROLE>` 专业化说明，以及携带定义正文的 `## Role Instructions` 段落。
+
+**工具策略。** 角色的 `tools` 列表成为 allow-list（默认 deny-list 被清空）。每次 spawn 的 `extra_tools` 会并入该 allow-list；两者仍受无条件的 `main_only` 元数据门与显式 deny-list 约束。
+
+**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）。`goal_loop` / `goal_max_turns` 保持不变。
+
+**配置**（`SubagentConfig`）：`functional_roles_enabled=True`、`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。不传 `functional_role` 时，spawn 行为**逐字节不变**——GENERAL 是恒等角色。
+
 ### 7. 附件系统
 
 Spawn 管线支持向子 Agent 传递文件附件：
@@ -567,6 +593,8 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `attachments` | list\|None | None | 文件附件（name, content, encoding, mount_path） |
 | `goal_loop` | bool | False | 可选完成判别循环；需 `COMPLETION_JUDGE["enabled"]` |
 | `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
+| `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer）；None 保持基于 depth 的行为 |
+| `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
 
 返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION 模式：「Use sessions_send(sessionKey=...) to send follow-up messages」）。
 
@@ -908,6 +936,9 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `attachments_max_files` | 50 | 每次 spawn 最大文件数 |
 | `attachments_max_file_bytes` | 1MB | 单文件大小上限 |
 | `attachments_max_total_bytes` | 5MB | 附件总大小上限 |
+| `functional_roles_enabled` | True | 是否在 spawn 时解析功能角色 |
+| `default_functional_role` | "general" | hint 与 agent_id 匹配都无法解析时的回退角色 |
+| `roles_override_dir_name` | "subagent_roles" | 存放每用户角色覆盖的 workspace 子目录 |
 
 经 `get_config()` 读取 / `set_config()` 修改。
 

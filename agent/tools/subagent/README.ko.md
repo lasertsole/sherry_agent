@@ -184,6 +184,7 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 | **Spawn 파라미터** | `spawn_mode` | RUN(일회성) / SESSION(상주) |
 | | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | 중첩 깊이. MAIN / ORCHESTRATOR / LEAF |
+| | `functional_role` | 기능 역할(GENERAL / RESEARCHER / EXECUTOR / REVIEWER); 기본 GENERAL |
 | | `generation` | steer/재시작을 넘는 버전 카운터 |
 | **소유권** | `controller_session_key` | 제어(kill/steer/send)를 허가받은 세션 키 |
 | | `completion_owner_session_key` | 완료 전달을 소유하는 세션 키 |
@@ -463,6 +464,31 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 스코프 → 도구 매핑 (런타임 강제): `subagent:spawn` → `sessions_spawn`, `subagent:kill` → `sessions_kill`, `subagent:yield` → `sessions_yield`, `subagent:send` → `sessions_send`.
 
+### 6.1 기능 역할 — 역할 전문화 워커
+
+`FunctionalRole`는 depth 역할(`SubagentSessionRole`) 위에 겹치는 **직교** 전문화 축입니다. depth 역할은 spawn 권한과 scope를, 기능 역할은 **LLM 선택·도구 정책·시스템 프롬프트 내용**을 담당합니다.
+
+| `FunctionalRole` | 용도 | `model_tier` | 역할 도구 목록 |
+|------------------|------|--------------|----------------|
+| `general` | 기본 워커. 모든 도구와 depth 기반 LLM 상속 | `inherit` | (모든 도구) |
+| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` |
+| `executor` | 쓰기 가능한 구현과 명령 실행. 하위 에이전트 spawn 불가 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
+| `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` |
+
+**정의 위치.** 내장 정의는 **패키지 내부**(추적·배포 가능)의 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`에 포함됩니다. 선택적 사용자 오버레이(미추적)는 `workspace/subagent_roles/<name>/AGENTS.md`에 둘 수 있습니다. 해석 순서는 **오버레이 → 패키지 기본 → 없음**이며, 디렉터리 이름은 `roles_override_dir_name`로 설정합니다. 각 파일은 YAML frontmatter(`name`, `description`, `model_tier`, `tools`)와 자식 프롬프트에 덧붙는 markdown 본문을 가집니다. `tools: inherit`는 "모든 도구"(`None`)로 해석됩니다.
+
+**로더는 fail-open.** 파일 누락, YAML frontmatter 누락 또는 미종료, 잘못된 `tools` 값, 읽을 수 없는 파일은 `None`과 경고를 반환하고 호출자는 `general`로 폴백합니다. 결과는 프로세스 내 캐시되며, workspace 오버레이를 편집한 뒤 `invalidate_role_cache()`를 호출합니다.
+
+**LLM 선택 우선순위:** 명시적 `model_override` → 역할의 `model_tier`(`main`/`auxiliary`) → depth 역할(ORCHESTRATOR → 메인 LLM, LEAF → 보조 LLM). `general` 역할은 tier가 없어 마이그레이션 이전의 depth 동작이 그대로 유지됩니다.
+
+**시스템 프롬프트.** 비-`general` 역할은 `<ROLE>` 전문화 줄과 정의 본문을 담는 `## Role Instructions` 섹션을 주입합니다.
+
+**도구 정책.** 역할의 `tools` 목록은 allow-list가 됩니다(기본 deny-list는 비워짐). spawn별 `extra_tools`는 그 allow-list에 합류하지만, 둘 다 무조건적인 `main_only` 메타데이터 게이트와 명시적 deny-list의 적용을 받습니다.
+
+**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None). `goal_loop` / `goal_max_turns`는 변경 없이 유지됩니다.
+
+**설정**(`SubagentConfig`): `functional_roles_enabled=True`, `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. `functional_role`을 전달하지 않는 spawn 동작은 **바이트 단위로 불변** — GENERAL은 항등 역할입니다.
+
 ### 7. 첨부 파일 시스템
 
 Spawn 파이프라인은 자식 에이전트에게 파일 첨부 전달을 지원합니다.
@@ -572,6 +598,8 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `attachments` | list\|None | None | 파일 첨부 (name, content, encoding, mount_path) |
 | `goal_loop` | bool | False | 옵트인 완료 판정 루프; `COMPLETION_JUDGE["enabled"]` 필요 |
 | `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
+| `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer); None이면 depth 기반 동작 유지 |
+| `extra_tools` | list[str]\|None | None | 역할 allow-list 위에 추가로 붙는 도구 이름 |
 
 반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION 모드: "Use sessions_send(sessionKey=...) to send follow-up messages").
 
@@ -913,6 +941,9 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `attachments_max_files` | 50 | spawn당 최대 파일 수 |
 | `attachments_max_file_bytes` | 1MB | 단일 파일 크기 상한 |
 | `attachments_max_total_bytes` | 5MB | 첨부 총 크기 상한 |
+| `functional_roles_enabled` | True | spawn 시 기능 역할 해석 사용 여부 |
+| `default_functional_role` | "general" | hint와 agent_id 매칭 모두 해석하지 못할 때의 폴백 역할 |
+| `roles_override_dir_name` | "subagent_roles" | 사용자별 역할 오버레이를 담는 workspace 하위 디렉터리 |
 
 `get_config()`로 읽고 / `set_config()`로 수정합니다.
 
