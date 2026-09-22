@@ -7,7 +7,7 @@ The finish path is gated before the DONE transition:
 * Gate B — a ``blocked`` step needs intervention, not a completion record.
 * Gate C — flow-scoped evidence must be free of failing/stale rows.
 * Gate D — ``SisyphusVerifier``, only when the caller explicitly supplies the
-  linked ``todo`` + ``plan_path`` (plan option a: zero migration).
+  linked ``todo`` + ``plan_path`` (caller-supplied linkage; no schema migration).
 
 Every gate is fail-open: an unavailable evidence collector or verifier never
 blocks a finish, and a skipped Gate D is silent.
