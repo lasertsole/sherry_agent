@@ -49,12 +49,14 @@ class ModelThinkingPlan:
         model_applied: bool = False,
         initial_session_patch: dict | None = None,
         error: str | None = None,
+        model_tier: str | None = None,
     ):
         self.resolved_model = resolved_model
         self.thinking_override = thinking_override
         self.model_applied = model_applied
         self.initial_session_patch = initial_session_patch or {}
         self.error = error
+        self.model_tier = model_tier
 
 
 def resolve_model_and_thinking_plan(
@@ -62,8 +64,15 @@ def resolve_model_and_thinking_plan(
     thinking_override_raw: str | None = None,
     requester_thinking: str | None = None,
     target_agent_thinking: str | None = None,
+    model_tier: str | None = None,
 ) -> ModelThinkingPlan:
-    """Resolve the effective model and thinking level using the override hierarchy: explicit → requester → target agent default."""
+    """Resolve the effective model and thinking level using the override hierarchy: explicit → requester → target agent default.
+
+    ``model_tier`` is the functional-role hint ("main" | "auxiliary" |
+    "inherit") forwarded by the spawn pipeline so ``_build_child_agent`` can
+    pick the LLM by role instead of depth. ``None`` means no functional-role
+    override (pre-migration depth-based selection).
+    """
     from .thinking import resolve_thinking_override, resolve_initial_session_patch
 
     resolved_model = None
@@ -86,4 +95,5 @@ def resolve_model_and_thinking_plan(
         thinking_override=thinking_override,
         model_applied=model_applied,
         initial_session_patch=initial_session_patch,
+        model_tier=model_tier,
     )

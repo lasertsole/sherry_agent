@@ -15,6 +15,7 @@ from ..types.registry import (
 )
 from ..types.spawn import SpawnMode, ContextMode
 from ..types.capability import SubagentSessionRole, ControlScope
+from ..types.functional_role import FunctionalRole
 from ..types.lifecycle import outcome_to_ended_reason
 from ..config import get_config
 from . import memory
@@ -42,6 +43,7 @@ def register_run(
     thinking: str | None = None,
     depth: int = 1,
     label: str | None = None,
+    functional_role: FunctionalRole = FunctionalRole.GENERAL,
     inherited_tool_allow: list[str] | None = None,
     inherited_tool_deny: list[str] | None = None,
     scopes: list[str] | None = None,
@@ -80,6 +82,7 @@ def register_run(
         depth=depth,
         role=role,
         control_scope=control_scope,
+        functional_role=functional_role,
         generation=gen,
         controller_session_key=controller_session_key or requester_session_key,
         completion_owner_session_key=completion_owner_session_key,

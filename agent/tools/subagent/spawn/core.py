@@ -22,7 +22,9 @@ from typing import Literal
 from ..config import get_config
 from ..types.spawn import SpawnMode, ContextMode
 from ..types.capability import SubagentSessionRole
+from ..types.functional_role import FunctionalRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
+from ..roles import RoleDefinition, load_role_definition
 from ..registry import register_run, get_run, mark_run_running
 from ..registry.read import count_active_runs_readonly
 from ..registry.reconciliation import resolve_run_orphan_reason
@@ -114,6 +116,31 @@ def _extract_result_text(agent_result: dict[str, object] | None) -> str | None:
     return None
 
 
+def _resolve_functional_role(
+    hint: str | None,
+    agent_id: str,
+) -> FunctionalRole:
+    """Resolve the functional role from an explicit hint or an agent_id name match.
+
+    Priority: explicit hint → agent_id name match → GENERAL default.
+    Unknown hints and non-role agent_ids fall back to GENERAL, which leaves the
+    pre-migration behavior untouched.
+    """
+    if hint:
+        try:
+            return FunctionalRole(hint)
+        except ValueError:
+            logger.warning("Unknown functional_role hint '{}', falling back to GENERAL", hint)
+    try:
+        return FunctionalRole(agent_id)
+    except ValueError:
+        pass
+    try:
+        return FunctionalRole(get_config().default_functional_role)
+    except ValueError:
+        return FunctionalRole.GENERAL
+
+
 class SpawnResult:
     """Outcome of a spawn request — accepted, forbidden, or error.
 
@@ -180,6 +207,8 @@ async def spawn_subagent_direct(
     launch_fingerprint: str | None = None,
     goal_loop: bool = False,
     goal_max_turns: int | None = None,
+    functional_role_hint: str | None = None,
+    extra_tools: list[str] | None = None,
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
@@ -213,6 +242,9 @@ async def spawn_subagent_direct(
             single-turn behavior.
         goal_max_turns: Goal-loop turn budget override; ``None`` uses the
             configured ``COMPLETION_JUDGE["goal_max_turns"]``.
+        functional_role_hint: Functional specialization (general / researcher /
+            executor / reviewer). ``None`` keeps the pre-migration behavior.
+        extra_tools: Additional tool names to attach for this spawn only.
 
     Returns:
         A :class:`SpawnResult` with ``status="accepted"`` on success, or
@@ -286,15 +318,31 @@ async def spawn_subagent_direct(
     child_session_key = f"agent:{agent_id}:subagent:{uuid.uuid4()}"
     role, _ = resolve_subagent_capabilities(child_depth)
 
+    # --- Phase 4.5: Functional role resolution ---
+    # GENERAL is the identity role: it loads no definition, so a spawn without a
+    # functional-role hint keeps the pre-migration LLM/tool/prompt behavior.
+    functional_role = (
+        _resolve_functional_role(functional_role_hint, agent_id)
+        if config.functional_roles_enabled
+        else FunctionalRole.GENERAL
+    )
+    role_def: RoleDefinition | None = (
+        load_role_definition(functional_role)
+        if config.functional_roles_enabled and functional_role != FunctionalRole.GENERAL
+        else None
+    )
+
     # --- Phase 5: Model & thinking plan ---
     model_plan = resolve_model_and_thinking_plan(
         model_override=model,
         thinking_override_raw=thinking,
         requester_thinking=None,
         target_agent_thinking=None,
+        model_tier=role_def.model_tier if role_def else None,
     )
 
     resolved_model = model_plan.resolved_model
+    resolved_model_tier = model_plan.model_tier
     thinking_resolved = model_plan.thinking_override
 
     # --- Phase 6: Thread binding & origin routing ---
@@ -330,11 +378,35 @@ async def spawn_subagent_direct(
             attachment_prompt_suffix = mat_result.system_prompt_suffix
 
     # --- Phase 8: Tool policy & registry registration ---
-    tool_allow = []
+    tool_allow: list[str] = []
     tool_deny = list(DEFAULT_SUBAGENT_BLOCKED_TOOLS)
+
+    # Functional role drives tool policy: an explicit tool list becomes a
+    # whitelist (deny cleared, since the whitelist already restricts).
+    if role_def is not None and role_def.tools is not None:
+        tool_allow = list(role_def.tools)
+        tool_deny = []
+
+    # Depth role still controls spawn/yield.
     if role == SubagentSessionRole.ORCHESTRATOR:
-        # Orchestrators need spawn/yield to manage their own children
-        tool_deny = [t for t in tool_deny if t not in ("sessions_spawn", "sessions_yield")]
+        if tool_allow:
+            # Whitelist mode: deny is already empty, so grant spawn/yield by
+            # adding them to the allow-list instead of removing from deny.
+            for t in ("sessions_spawn", "sessions_yield"):
+                if t not in tool_allow:
+                    tool_allow.append(t)
+        else:
+            # Inherit mode: unblock spawn/yield by removing them from the deny list.
+            tool_deny = [t for t in tool_deny if t not in ("sessions_spawn", "sessions_yield")]
+
+    # --- Phase 8.5: Per-task tool attachment (deepagents TaskTools pattern) ---
+    # extra_tools are attached on top of whatever the role already allows. In
+    # whitelist mode they join the allow-list; in inherit mode the base tool set
+    # already contains them and only the deny-list applies.
+    extra_tool_names: list[str] = list(dict.fromkeys(extra_tools or []))
+    for name in extra_tool_names:
+        if tool_allow and name not in tool_allow:
+            tool_allow.append(name)
 
     run = register_run(
         child_session_key=child_session_key,
@@ -348,6 +420,7 @@ async def spawn_subagent_direct(
         thinking=thinking_resolved or thinking,
         depth=child_depth,
         label=label,
+        functional_role=functional_role,
         inherited_tool_allow=tool_allow,
         inherited_tool_deny=tool_deny,
         scopes=child_scopes,
@@ -419,6 +492,9 @@ async def spawn_subagent_direct(
     system_prompt = build_subagent_system_prompt(
         role=role,
         task=task,
+        functional_role=functional_role,
+        role_description=role_def.description if role_def else "",
+        role_prompt_body=role_def.prompt_body if role_def else "",
         requester_label=ownership.completion_requester_display_key,
         depth=child_depth,
         max_depth=config.max_spawn_depth,
@@ -471,6 +547,8 @@ async def spawn_subagent_direct(
             tools=build_main_tools(),
             timeout_seconds=timeout_seconds,
             model_override=resolved_model,
+            model_tier=resolved_model_tier,
+            extra_tools=extra_tool_names,
             output_schema=output_schema,
             goal_loop=goal_loop,
             goal_max_turns=effective_goal_max_turns,
@@ -507,6 +585,8 @@ async def _execute_subagent_with_lane(
     tools: list | None,
     timeout_seconds: float,
     model_override: str | None = None,
+    model_tier: str | None = None,
+    extra_tools: list[str] | None = None,
     output_schema: dict | None = None,
     goal_loop: bool = False,
     goal_max_turns: int = 5,
@@ -540,6 +620,8 @@ async def _execute_subagent_with_lane(
                 tools=tools,
                 timeout_seconds=timeout_seconds,
                 model_override=model_override,
+                model_tier=model_tier,
+                extra_tools=extra_tools,
                 output_schema=output_schema,
                 goal_loop=goal_loop,
                 goal_max_turns=goal_max_turns,
@@ -560,6 +642,8 @@ async def _execute_subagent(
     tools: list | None,
     timeout_seconds: float,
     model_override: str | None = None,
+    model_tier: str | None = None,
+    extra_tools: list[str] | None = None,
     output_schema: dict | None = None,
     *,
     goal_loop: bool = False,
@@ -619,7 +703,10 @@ async def _execute_subagent(
             tool_allow=run.inherited_tool_allow,
             tool_deny=effective_deny,
             role=run.role,
+            functional_role=run.functional_role,
             model_override=model_override,
+            model_tier=model_tier,
+            extra_tools=extra_tools,
         )
 
         # Assemble the full message list: forked context + the initial user task
@@ -807,17 +894,20 @@ async def _execute_subagent(
 async def _build_child_agent(
     system_prompt: str,
     tools: list | None,
-    tool_allow: list[str],
-    tool_deny: list[str],
+    tool_allow: list[str] | None,
+    tool_deny: list[str] | None,
     role: SubagentSessionRole = SubagentSessionRole.LEAF,
+    functional_role: FunctionalRole = FunctionalRole.GENERAL,
     model_override: str | None = None,
+    model_tier: str | None = None,
+    extra_tools: list[str] | None = None,
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
 
     The LLM selection logic is:
       - If *model_override* is provided, attempt to resolve it by name; on failure fall through.
-      - ORCHESTRATOR-role children get the main (larger) LLM.
-      - LEAF-role children get the auxiliary (smaller / cheaper) LLM.
+      - A non-GENERAL *functional_role* with *model_tier* "main"/"auxiliary" picks that LLM.
+      - Otherwise the depth role decides: ORCHESTRATOR gets the main LLM, LEAF the auxiliary one.
 
     Middleware stack (applied in order):
       - **Summarization** — condenses conversation when tokens/messages exceed threshold.
@@ -840,8 +930,12 @@ async def _build_child_agent(
         tool_deny: Explicit deny-list (an empty list is authoritative — it means the
             caller intentionally unblocked the defaults, e.g. ORCHESTRATOR spawn/yield;
             main_only metadata tools are dropped regardless).
-        role: :class:`SubagentSessionRole` — determines LLM selection.
+        role: :class:`SubagentSessionRole` — depth role, the fallback LLM selector.
+        functional_role: :class:`FunctionalRole` — overrides the depth role's LLM
+            when it carries a concrete ``model_tier``.
         model_override: Optional model name string to override the default LLM.
+        model_tier: Resolved functional-role LLM tier ("main" | "auxiliary").
+        extra_tools: Per-spawn tool names attached on top of the role allow-list.
 
     Returns:
         A fully-constructed LangGraph agent ready for ``ainvoke``.
@@ -878,7 +972,29 @@ async def _build_child_agent(
     assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 
     base_tools = tools if tools is not None else build_main_tools()
-    filtered_tools = apply_tool_policy(base_tools, tool_allow, tool_deny)
+
+    # Per-task extra tools attach on top of the role policy: they join the
+    # allow-list only when a whitelist is active (in inherit mode they are
+    # already part of the candidate set and only the deny-list applies). The
+    # main_only metadata gate and deny-list still apply to them.
+    effective_allow = list(tool_allow or [])
+    if extra_tools and effective_allow:
+        for name in extra_tools:
+            if name not in effective_allow:
+                effective_allow.append(name)
+
+    filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
+
+    def _select_child_llm():
+        # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
+        # the pre-migration depth-based behavior untouched.
+        if functional_role != FunctionalRole.GENERAL and model_tier == "main":
+            return build_main_llm()
+        if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
+            return build_auxiliary_llm()
+        if role == SubagentSessionRole.ORCHESTRATOR:
+            return build_main_llm()
+        return build_auxiliary_llm()
 
     if model_override:
         try:
@@ -886,14 +1002,9 @@ async def _build_child_agent(
 
             child_llm = build_llm_by_name(model_override)
         except (ImportError, AttributeError):
-            if role == SubagentSessionRole.ORCHESTRATOR:
-                child_llm = build_main_llm()
-            else:
-                child_llm = build_auxiliary_llm()
-    elif role == SubagentSessionRole.ORCHESTRATOR:
-        child_llm = build_main_llm()
+            child_llm = _select_child_llm()
     else:
-        child_llm = build_auxiliary_llm()
+        child_llm = _select_child_llm()
 
     child_checkpointer = await build_async_sqlite_checkpointer()
     await child_checkpointer.setup()
