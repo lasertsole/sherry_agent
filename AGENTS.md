@@ -29,7 +29,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
 | `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, evidence collector) | `agent/tools/taskflow/config.py` |
 | `agent/tools/todolist/` | Session-scoped todo planning layer + append-only evidence ledger/recorder | `agent/tools/todolist/service.py` |
-| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge) | `agent/tools/subagent/spawn/core.py` |
+| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles) | `agent/tools/subagent/spawn/core.py` |
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |

@@ -46,6 +46,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **영속 레지스트리**: 실행 기록을 SQLite에 저장하고, sweeper가 고아 실행을 복구하며, followup 체커는 런 타임아웃이 설정된 경우에만 이를 강제 (기본값: 없음)
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
 - **검증된 완료(옵트인)**: `sessions_spawn(goal_loop=True)`는 자식 턴 사이에 보조 LLM 완료 판정기를 실행합니다; `continue` 판정은 판정기의 후속 프롬프트를 다음 턴으로 주입하며, `goal_max_turns`(기본 5; `COMPLETION_JUDGE["enabled"]` 필요)로 상한이 정해집니다
+- **기능 역할(옵트인)**: `sessions_spawn(functional_role=...)`로 워커를 전문화(general / researcher / executor / reviewer)합니다. 역할이 LLM 계층, 도구 allow-list, 자식 시스템 프롬프트 섹션을 결정합니다
 - ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
 
 ### 4. 🌐 멀티채널 접근
