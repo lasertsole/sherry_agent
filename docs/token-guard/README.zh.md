@@ -160,8 +160,8 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | 阈值 | `config/features/agent_side/token_guard.py` | `MIN_REQUIRED_MAX_TOKEN`、`TokenGuardError`、`assert_max_token_valid` |
 | 导出 | `config/features/__init__.py` | 重新导出三个符号 |
 | 启动闸门 | `server/__main__.py:95-100` | CRITICAL 日志后 `SystemExit(1)` |
-| 构建闸门 | `agent/core.py:123` | `built_agent()` 构建前校验 |
-| 派生闸门 | `agent/tools/subagent/spawn/core.py:815` | 子 LLM 构造时校验 |
+| 构建闸门 | `agent/core.py:124` | `built_agent()` 构建前校验 |
+| 派生闸门 | `agent/tools/subagent/spawn/core.py:877` | 子 LLM 构造时校验 |
 | 写入闸门 | `server/service/env.py:157` | `write_env_file()` 写盘前拒绝 |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | 前端缓存 | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |

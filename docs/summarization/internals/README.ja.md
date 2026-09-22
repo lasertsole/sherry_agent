@@ -173,7 +173,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 登録箇所
 
 ```python
-# agent/core.py:152 — メインエージェント（Summarization は最後のミドルウェア:
+# agent/core.py:204 — メインエージェント（Summarization は最後のミドルウェア:
 # 最も内側の wrap レイヤ、LLM に最も近い）
 Summarization(
     need_update_system_prompt=True,
@@ -183,7 +183,7 @@ Summarization(
     keep=("messages", 10),
 )
 
-# agent/tools/subagent/spawn/core.py:755 — ワーカーエージェント（最初のミドルウェア）
+# agent/tools/subagent/spawn/core.py:909 — ワーカーエージェント（最初のミドルウェア）
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

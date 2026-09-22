@@ -160,8 +160,8 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | Threshold | `config/features/agent_side/token_guard.py` | `MIN_REQUIRED_MAX_TOKEN`, `TokenGuardError`, `assert_max_token_valid` |
 | Export | `config/features/__init__.py` | Re-exports the three symbols |
 | Boot gate | `server/__main__.py:95-100` | Critical log then `SystemExit(1)` |
-| Build gate | `agent/core.py:123` | `built_agent()` validates before building |
-| Spawn gate | `agent/tools/subagent/spawn/core.py:815` | Child LLM construction validates |
+| Build gate | `agent/core.py:124` | `built_agent()` validates before building |
+| Spawn gate | `agent/tools/subagent/spawn/core.py:877` | Child LLM construction validates |
 | Write gate | `server/service/env.py:157` | `write_env_file()` rejects before writing |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | Frontend cache | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |

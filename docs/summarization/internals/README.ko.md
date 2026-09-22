@@ -173,7 +173,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 등록 지점
 
 ```python
-# agent/core.py:152 — 메인 에이전트 (Summarization은 마지막 미들웨어:
+# agent/core.py:204 — 메인 에이전트 (Summarization은 마지막 미들웨어:
 # 가장 안쪽 wrap 레이어, LLM에 가장 가까움)
 Summarization(
     need_update_system_prompt=True,
@@ -183,7 +183,7 @@ Summarization(
     keep=("messages", 10),
 )
 
-# agent/tools/subagent/spawn/core.py:755 — 워커 에이전트 (첫 미들웨어)
+# agent/tools/subagent/spawn/core.py:909 — 워커 에이전트 (첫 미들웨어)
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

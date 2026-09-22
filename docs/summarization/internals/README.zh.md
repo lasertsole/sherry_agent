@@ -173,7 +173,7 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 ## 📌 注册点
 
 ```python
-# agent/core.py:152 — 主 agent（Summarization 是最后一个中间件：
+# agent/core.py:204 — 主 agent（Summarization 是最后一个中间件：
 # 最内层 wrap，离 LLM 最近）
 Summarization(
     need_update_system_prompt=True,
@@ -183,7 +183,7 @@ Summarization(
     keep=("messages", 10),
 )
 
-# agent/tools/subagent/spawn/core.py:755 — worker agent（第一个中间件）
+# agent/tools/subagent/spawn/core.py:909 — worker agent（第一个中间件）
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

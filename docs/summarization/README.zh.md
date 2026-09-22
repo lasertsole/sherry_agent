@@ -48,8 +48,8 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 注册点 | 触发条件 | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| 主 agent（`agent/core.py:198`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| Worker/子 agent（`agent/tools/subagent/spawn/core.py:847`） | `("messages", 40)` **或** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（默认） |
+| 主 agent（`agent/core.py:204`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| Worker/子 agent（`agent/tools/subagent/spawn/core.py:909`） | `("messages", 40)` **或** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（默认） |
 
 两者都传入 `main_llm_context_window=main_llm_max_tokens`（来自 `MAIN_LLM_MAX_TOKEN`）和 `keep=("messages", 10)`。
 

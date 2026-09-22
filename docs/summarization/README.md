@@ -48,8 +48,8 @@ Two registrations exist:
 
 | Site | Trigger | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| Main agent (`agent/core.py:198`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| Worker/subagent (`agent/tools/subagent/spawn/core.py:847`) | `("messages", 40)` **or** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False` (default) |
+| Main agent (`agent/core.py:204`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| Worker/subagent (`agent/tools/subagent/spawn/core.py:909`) | `("messages", 40)` **or** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False` (default) |
 
 Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`) and `keep=("messages", 10)`.
 

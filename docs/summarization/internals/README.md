@@ -173,7 +173,7 @@ Main agent only (`need_update_system_prompt=True`): after a compression the midd
 ## 📌 Registration Sites
 
 ```python
-# agent/core.py:152 — main agent (Summarization is the LAST middleware:
+# agent/core.py:204 — main agent (Summarization is the LAST middleware:
 # innermost wrap layer, closest to the LLM)
 Summarization(
     need_update_system_prompt=True,
@@ -183,7 +183,7 @@ Summarization(
     keep=("messages", 10),
 )
 
-# agent/tools/subagent/spawn/core.py:755 — worker agent (first middleware)
+# agent/tools/subagent/spawn/core.py:909 — worker agent (first middleware)
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

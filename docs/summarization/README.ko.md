@@ -48,8 +48,8 @@ AIMessage(<summary>, lc_source="summarization")
 
 | 사이트 | 트리거 | LLM | `need_update_system_prompt` |
 | :--- | :------ | :-- | :-------------------------- |
-| 메인 에이전트(`agent/core.py:198`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
-| 워커/서브에이전트(`agent/tools/subagent/spawn/core.py:847`) | `("messages", 40)` **또는** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`(기본값) |
+| 메인 에이전트(`agent/core.py:204`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
+| 워커/서브에이전트(`agent/tools/subagent/spawn/core.py:909`) | `("messages", 40)` **또는** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`(기본값) |
 
 둘 다 `main_llm_context_window=main_llm_max_tokens`(`MAIN_LLM_MAX_TOKEN`에서 유래)와 `keep=("messages", 10)`을 전달합니다.
 
