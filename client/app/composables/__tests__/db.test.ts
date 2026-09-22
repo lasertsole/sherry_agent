@@ -26,7 +26,10 @@ interface DraftsWhereResult {
   equals: (key: string) => { delete: () => Promise<number> };
 }
 
-/** Mirror of db.ts's private isValidTurnNum: only finite numbers are trusted (poisoned-cache guard). */
+/**
+ * Mirror of db.ts's private isValidTurnNum: only finite numbers are trusted (poisoned-cache guard).
+ * @param turnNum
+ */
 function isValidTurnNum(turnNum: unknown): turnNum is number {
   return typeof turnNum === 'number' && Number.isFinite(turnNum);
 }
@@ -214,7 +217,10 @@ const msg = (over: Partial<CachedMessage> = {}): CachedMessage => ({
   ...over
 });
 
-/** MessageItem-shaped fixture for DraftTurn.messages (role must be a real CHAT_ROLE value). */
+/**
+ * MessageItem-shaped fixture for DraftTurn.messages (role must be a real CHAT_ROLE value).
+ * @param over
+ */
 const msgItem = (over: Partial<MessageItem> = {}): MessageItem => ({
   session_id: 'ses_A',
   role: CHAT_ROLE.USER,
@@ -233,7 +239,6 @@ const run = (over: Partial<CachedSubagentRun> = {}): CachedSubagentRun => ({
   task_name: 'task_name',
   label: null,
   spawn_mode: null,
-  context_mode: null,
   agent_id: null,
   depth: 1,
   role: null,

@@ -188,7 +188,6 @@ export interface CachedSubagentRun {
   task_name: string | null;
   label: string | null;
   spawn_mode: string | null;
-  context_mode: string | null;
   agent_id: string | null;
   depth: number | null;
   role: string | null;
