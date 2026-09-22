@@ -70,7 +70,7 @@ def compute_summarization_defaults(max_input_tokens: int) -> dict:
 
 ### 问题
 
-Sherry 的中间件链当前为**硬编码列表**（`agent/core.py:140-234` 和 `spawn/core.py:908-939`），无排除/配置机制。但随着功能演进（如 `subagent-role-migration.md` 引入功能角色后可能按角色裁剪中间件、或用户通过配置禁用某些中间件），安全关键中间件可能被意外跳过：
+Sherry 的中间件链当前为**硬编码列表**（`agent/core.py:140-234` 和 `spawn/core.py:908-939`），无排除/配置机制。但随着功能演进（如后续按功能角色裁剪中间件、或用户通过配置禁用某些中间件），安全关键中间件可能被意外跳过：
 
 - 移除 `ToolGuardrails` → 工具调用无校验，可执行危险操作
 - 移除 `IterationBudget` → 子代理无限循环耗尽 token
@@ -213,8 +213,8 @@ _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
 )
 
 # Subagent required middleware — subset of main, no HITL/Eviction/Persistence/etc.
-# (subagent middleware chain is intentionally leaner, see subagent-role-migration.md
-# "中间件链对比" table for the full rationale)
+# (the subagent middleware chain is intentionally leaner: no HITL, eviction,
+# persistence, path guard, or LLM retry)
 _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     RequiredMiddlewareEntry(ToolGuardrails, ()),
     RequiredMiddlewareEntry(IterationBudget, ()),
@@ -678,18 +678,16 @@ class TestRoleAgnosticDesign:
         actual_main_only_names = {cls.__name__ for cls in main_only_classes}
         assert expected_main_only_names == actual_main_only_names
 
-    def test_future_functional_roles_documented(self):
-        """When functional roles are introduced (subagent-role-migration Phase 1),
-        this test verifies they do NOT change the required set.
+    def test_functional_roles_do_not_change_required_set(self):
+        """Functional roles do NOT change the subagent required-middleware set.
 
-        After Phase 1 lands, import FunctionalRole and verify:
-          for each role in FunctionalRole:
+        Roles are implemented but stay out of the middleware chain, so the
+        invariant holds for every role:
+          for role in FunctionalRole:
               get_subagent_required(role) == _SUBAGENT_REQUIRED (unchanged)
-
-        Until then, this test is a placeholder that documents the invariant.
         """
-        # Phase 1 not yet implemented — _SUBAGENT_REQUIRED is flat, not per-role.
-        # When Phase 1 lands, add:
+        # _SUBAGENT_REQUIRED is flat, not per-role.
+        # When the scaffolding lands, add:
         #   from agent.tools.subagent.types.functional_role import FunctionalRole
         #   for role in FunctionalRole:
         #       assert get_subagent_required(role) == SUBAGENT_REQUIRED_CLASSES
@@ -713,9 +711,9 @@ _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = ( ... 7 项 ... )
 
 **未来触发条件**：仅当 ORCHESTRATOR 需要额外中间件（如 `SubagentCompletionDrainMiddleware`——当前是 main-only，但如果 ORCHESTRATOR 需要感知子代完成事件）或 LEAF 需要减去某个中间件时，才需要按深度角色拆分。
 
-#### 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）— 当前不存在，预留演进
+#### 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）— 已实现，不改变中间件链
 
-功能角色在 `subagent-role-migration.md` Phase 1 中引入，但该计划**不改变中间件链**——功能角色只影响 LLM 选择（`role_def.model_tier`）、工具白名单（`role_def.tools`）和系统提示词（`role_def.prompt_body`）。所有功能角色的子代理仍获得相同的 7 个中间件。
+功能角色（`FunctionalRole`）**不改变中间件链**——功能角色只影响 LLM 选择（`role_def.model_tier`）、工具白名单（`role_def.tools`）和系统提示词（`role_def.prompt_body`）。所有功能角色的子代理仍获得相同的 7 个中间件。
 
 因此 P1-6 当前**不需要按功能角色区分** `_SUBAGENT_REQUIRED`。
 
@@ -770,15 +768,15 @@ validate_required_middleware(
 
 #### 当前实现的显式约束
 
-P1-6 当前实现中 `validate_required_middleware()` 的 `chain` 参数仅取 `"main"` 或 `"subagent"` 两个值，对应 `_MAIN_REQUIRED` 和 `_SUBAGENT_REQUIRED`。`_build_child_agent()` 中调用时**不传 depth role 或 functional role**——因为当前所有子代理共用一套必需集合，且功能角色尚未实现。
+P1-6 当前实现中 `validate_required_middleware()` 的 `chain` 参数仅取 `"main"` 或 `"subagent"` 两个值，对应 `_MAIN_REQUIRED` 和 `_SUBAGENT_REQUIRED`。`_build_child_agent()` 中调用时**不传 depth role 或 functional role**——所有子代理共用一套必需集合；功能角色已实现，但因其不改变 middleware 链，P1-6 校验仍用统一必需集合，仅当未来按角色分化中间件链时才需 `get_subagent_required(role)`。
 
-当 `subagent-role-migration.md` Phase 1 落地后，`_build_child_agent` 签名会增加 `functional_role` 参数。此时 P1-6 的校验调用**仍不需要改动**（功能角色不改变中间件链），只需在 Phase 1 集成时确认 `_build_child_agent` 传入的 `functional_role` 不影响 middleware list 即可。仅当上述"演进触发条件"满足时才需要升级为 `get_subagent_required(role)`。
+`_build_child_agent` 已带 `functional_role` 参数。P1-6 的校验调用**仍不需要改动**（功能角色不改变中间件链），`_build_child_agent` 传入的 `functional_role` 不影响 middleware list。仅当上述"演进触发条件"满足时才需要升级为 `get_subagent_required(role)`。
 
-### 与 `subagent-role-migration.md` 的交互
+### 与功能角色的交互
 
 | 场景                                                             | 影响                                                          | 处理方式                                                                                                                                                    |
 | ---------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 功能角色迁移不改变中间件链（当前 Phase 1 设计）                  | 无交互                                                        | 校验照常通过，`chain="subagent"` 即可                                                                                                                       |
+| 功能角色不改变中间件链                                            | 无交互                                                        | 校验照常通过，`chain="subagent"` 即可                                                                                                                       |
 | 未来按功能角色裁剪子代理中间件（如 REVIEWER 加 HITL）            | `_SUBAGENT_REQUIRED` 需按角色拆分                             | 演进为 `_SUBAGENT_BASELINE` + `_SUBAGENT_ROLE_OVERRIDES`（见上方"演进触发条件与路径"）                                                                      |
 | 未来按深度角色裁剪（如 ORCHESTRATOR 加 SubagentCompletionDrain） | `_SUBAGENT_REQUIRED` 需按深度拆分                             | 演进为 `_SUBAGENT_REQUIRED_BY_DEPTH: dict[SubagentSessionRole, frozenset]`，当前不需要                                                                      |
 | 未来引入 `excluded_middleware` 配置                              | 需要第一道 + 第三道防线                                       | 在 config TypedDict 中增加字段，`validate_required_middleware` 前加 `_validate_excluded_config`（deepagents 第一道），过滤后加 `_verify_coverage`（第三道） |
