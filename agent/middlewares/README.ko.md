@@ -294,7 +294,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 배출된 각 큐 항목은 큐의 SQLite 저장소에서 `CONSUMED`로 마킹되므로 캐리어는 정확히 한 번만 주입됩니다(체크포인트 영속화가 HITL 재개 리플레이의 안전성을 보장).
 - Fail-open: `session_id` 누락/빈 값, 빈 큐, 그리고 모든 오류는 삼켜집니다(로그 + no-op) — drain이 부모 턴을 깨뜨리지 않으며, 큐는 재시도를 위해 보존됩니다.
-- **옵트인 프로그램 게이트**(`enforce_verification`, 기본 `False`): 꺼져 있으면 배출된 각 캐리어에 Sisyphus 검증 리마인더가 붙습니다. 켜져 있으면(`agent/core.py`가 `EVIDENCE_LEDGER["enforce_on_complete"]`에서 배선) 리마인더 대신 프로그램 게이트가, 세션에 통과 evidence가 없을 때 필수 검증 메시지를 덧붙입니다(`agent/tools/taskflow/evidence_collector.py`). 어느 쪽이든 조회는 페일오픈입니다.
+- **프로그램 게이트(항상 켜짐)**: 배출된 각 배치는 세션의 검증 evidence와 대조됩니다(`agent/tools/taskflow/evidence_collector.py`); 세션에 통과 evidence가 없으면 캐리어 뒤에 필수 검증 메시지가 덧붙습니다 — 캐리어 자체는 그대로 주입됩니다. 조회는 페일오픈: evidence 수집기를 쓸 수 없어도 턴을 막지 않습니다.
 - 주입된 캐리어는 그것이 주입된 바로 그 모델 호출의 `after_model` 경계에서 `origin='subagent_completion'`으로 MesMemory에 기록됩니다(`MessagePersistenceMiddleware`); 그 경계 전까지는 체크포인트에만 존재하며 messages 테이블에서 보이지 않습니다.
 
 ### TaskIntentMiddleware

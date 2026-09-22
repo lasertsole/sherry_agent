@@ -293,7 +293,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 每个被取出的队列条目都会在队列的 SQLite 存储中标记为 `CONSUMED`，因此载体只会被注入一次（检查点持久化保证 HITL 恢复重放安全）。
 - Fail-open：`session_id` 缺失/为空、队列为空或任何异常都会被吞掉（记日志 + 无操作）——drain 绝不会破坏父回合，队列保留以供重试。
-- **可选程序化门控**（`enforce_verification`，默认 `False`）：关闭时每个被排出的载体获得 Sisyphus 校验提醒；开启时（由 `agent/core.py` 从 `EVIDENCE_LEDGER["enforce_on_complete"]` 接线）提醒被程序化门控取代——会话没有通过证据时追加一条强制校验消息（`agent/tools/taskflow/evidence_collector.py`）。两种情况下查询都失败开放。
+- **程序化门控（恒启用）**：每个被排出的批次都会对照会话的验证证据检查（`agent/tools/taskflow/evidence_collector.py`）；会话没有通过证据时，会在载体之后追加一条强制校验消息——载体本身原样注入。查询失败开放：证据收集器不可用时绝不阻塞该回合。
 - 注入的载体在它被注入的那次模型调用的 `after_model` 边界，以 `origin='subagent_completion'` 写入 MesMemory（`MessagePersistenceMiddleware`）；在该边界之前它只存在于检查点中，messages 表内不可见。
 
 ### TaskIntentMiddleware
