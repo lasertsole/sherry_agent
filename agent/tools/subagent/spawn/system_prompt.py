@@ -1,12 +1,16 @@
 """Build structured system prompts for sub-agents based on their role and spawn context."""
 
 from ..types.capability import SubagentSessionRole
+from ..types.functional_role import FunctionalRole
 from ..types.registry import SubagentRunRecord
 
 
 def build_subagent_system_prompt(
     role: SubagentSessionRole,
     task: str,
+    functional_role: FunctionalRole = FunctionalRole.GENERAL,
+    role_description: str = "",
+    role_prompt_body: str = "",
     requester_label: str = "parent agent",
     depth: int = 1,
     max_depth: int = 3,
@@ -15,25 +19,56 @@ def build_subagent_system_prompt(
     can_spawn: bool = False,
     is_persistent_session: bool = False,
 ) -> str:
-    """Generate a structured system prompt for a sub-agent, including role, rules, output format, and session context."""
+    """Generate a structured system prompt for a sub-agent, including role, rules, output format, and session context.
+
+    When no functional role is selected (GENERAL with no description/body),
+    the role section is byte-identical to the pre-migration prompt.
+    """
 
     sections = []
 
+    has_functional_role = (
+        functional_role != FunctionalRole.GENERAL
+        or bool(role_description)
+        or bool(role_prompt_body)
+    )
+
     # Section 1: Role
     if role == SubagentSessionRole.LEAF:
-        role_desc = (
-            "You are a LEAF worker subagent. You CANNOT spawn further subagents.\n"
-            "Execute your assigned task directly and report your results."
-        )
+        if has_functional_role:
+            role_desc = (
+                f"You are a LEAF worker subagent with the {functional_role.value.upper()} specialization.\n"
+                f"You CANNOT spawn further subagents.\n"
+            )
+            if role_description:
+                role_desc += f"{role_description}\n"
+            role_desc += "Execute your assigned task directly and report your results."
+        else:
+            role_desc = (
+                "You are a LEAF worker subagent. You CANNOT spawn further subagents.\n"
+                "Execute your assigned task directly and report your results."
+            )
     elif role == SubagentSessionRole.ORCHESTRATOR:
-        role_desc = (
-            "You are an ORCHESTRATOR subagent. You MAY spawn further subagents using the `sessions_spawn` tool.\n"
-            "Keep your children's tasks brief and focused."
-        )
+        if has_functional_role:
+            role_desc = (
+                f"You are an ORCHESTRATOR subagent with the {functional_role.value.upper()} specialization.\n"
+                f"You MAY spawn further subagents using the `sessions_spawn` tool.\n"
+            )
+            if role_description:
+                role_desc += f"{role_description}\n"
+            role_desc += "Keep your children's tasks brief and focused."
+        else:
+            role_desc = (
+                "You are an ORCHESTRATOR subagent. You MAY spawn further subagents using the `sessions_spawn` tool.\n"
+                "Keep your children's tasks brief and focused."
+            )
     else:
         role_desc = "You are a subagent executing a delegated task."
 
     sections.append(f"## Your Role\n{role_desc}")
+
+    if role_prompt_body:
+        sections.append(f"## Role Instructions\n{role_prompt_body}")
 
     # Section 2: Rules
     rules = [
