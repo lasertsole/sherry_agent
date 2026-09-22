@@ -270,6 +270,7 @@ EMA_AI_agent/
 | **経験体系** | 会話履歴を再利用可能な経験として蓄積する 4 つの抽出経路と、`skills/auto/` を保守する Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
 | **セッションメモリ** | SESSION 計画のケイパビリティ: memory flush、圧縮クールダウン、compaction lock、イベントログ、セマンティック検索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **サブエージェントシステム** | マルチレベルサブエージェントのスポーン、並列実行と結果配信 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
+| **サブエージェント設計** | 設計不変条件：二軸ロールモデル、spawn 権限ガード、四層の完了ゲート | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
 | **ミドルウェア** | エージェントライフサイクルミドルウェアパイプライン | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **チャンネル** | チャンネルインターフェースとアダプターシステム | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **デスクトップクライアント** | Tauri 2 + Nuxt 4 デスクトップ/モバイル SPA クライアント | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
