@@ -131,7 +131,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  ├── 3. Goal Loop — only when goal_loop + COMPLETION_JUDGE["enabled"] + budget > 1
+  ├── 3. Goal Loop — every spawn, while the goal_max_turns budget > 1
   │     ├── judge_completion(task, last_response, evidence) → done | continue
   │     ├── continue → inject the judge's continuation_prompt as the next
   │     │   HumanMessage on the SAME checkpoint thread; turns are counted
@@ -483,9 +483,31 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 
 **Tool policy.** A role's `tools` list becomes an allow-list (the default deny-list is cleared). Per-spawn `extra_tools` join that allow-list; both are still subject to the unconditional `main_only` metadata gate and any explicit deny-list.
 
-**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None). `goal_loop` / `goal_max_turns` are retained unchanged.
+**`sessions_spawn` parameters:** `functional_role` (str | None, default None) and `extra_tools` (list[str] | None, default None); `goal_max_turns` overrides the goal-loop budget.
 
-**Configuration** (`SubagentConfig`): `functional_roles_enabled=True`, `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. With no `functional_role` passed, spawn behavior is **byte-for-byte unchanged** — GENERAL is the identity role.
+**Configuration** (`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. Role resolution always runs on spawn; with no `functional_role` passed, spawn behavior is **byte-for-byte unchanged** — GENERAL is the identity role.
+
+### 6.2 Role Axes & Layered Completion Gates
+
+The two role axes are **orthogonal** and compose on every spawn:
+
+| Axis | Source | Drives |
+|------|--------|--------|
+| **Functional role** (`general` / `researcher` / `executor` / `reviewer`) | explicit `functional_role` hint, `agent_id` match, then `default_functional_role` | child LLM, tool allow-list, system-prompt content |
+| **Depth role** (`MAIN` / `ORCHESTRATOR` / `LEAF`) | nesting depth (`resolve_subagent_capabilities`) | spawn permission, control scope |
+
+**Spawn privilege is depth-gated.** `sessions_spawn` / `sessions_yield` belong to MAIN and ORCHESTRATOR only: the Phase 8.6 intersection in `spawn/core.py` strips them from every role for which `can_spawn_children` is false, and `spawn/privilege.py` re-validates at call time — a leaked tool instance still refuses with a `forbidden` result instead of escalating.
+
+Completion gates layer from the child run through the step to the flow, and all four are always on:
+
+| Layer | Gate | Input it needs | Fail-open behavior |
+|-------|------|----------------|--------------------|
+| Child run | completion judge + goal loop (`agent/tools/subagent/spawn/completion_judge.py`) | the task and the child's latest response; budget `COMPLETION_JUDGE["goal_max_turns"]` (default 5) | judge error → `done` |
+| Step | step judge (`agent/tools/taskflow/step_judge.py`) | the step's `validation_criteria` (no criteria → no judge call) | model error / unparseable → `pass` |
+| Flow | `taskflow_finish` gates A–D | DAG state and the flow's evidence | unreadable ledger / verifier error → pass |
+| Parent turn | completion-drain programmatic gate (`SubagentCompletionDrainMiddleware`) | the session's verification evidence | unavailable lookup → no gate |
+
+The completion judge runs on every spawn; `goal_max_turns` is its only budget knob (a budget of 1 keeps the child single-turn). The step judge equally runs for every criteria-bearing step — `validation_criteria` is its input, not a switch — and `taskflow_finish` requires the evidence gates to pass before a flow can reach DONE.
 
 ### 7. Attachment System
 
@@ -594,7 +616,6 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | File attachments (name, content, encoding, mount_path) |
-| `goal_loop` | bool | False | Opt-in completion-judge loop; requires `COMPLETION_JUDGE["enabled"]` |
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
@@ -939,7 +960,6 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `attachments_max_files` | 50 | Max files per spawn |
 | `attachments_max_file_bytes` | 1MB | Max single file size |
 | `attachments_max_total_bytes` | 5MB | Max total attachment size |
-| `functional_roles_enabled` | True | Whether functional-role resolution runs on spawn |
 | `default_functional_role` | "general" | Fallback role when neither a hint nor an agent_id match resolves |
 | `roles_override_dir_name` | "subagent_roles" | Workspace subdirectory holding per-user role overrides |
 

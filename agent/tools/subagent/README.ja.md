@@ -134,7 +134,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  ├── 3. Goal Loop — goal_loop + COMPLETION_JUDGE["enabled"] + 予算 > 1 の場合のみ
+  ├── 3. Goal Loop — すべての spawn。goal_max_turns 予算が > 1 の間実行
   │     ├── judge_completion(task, last_response, evidence) → done | continue
   │     ├── continue → 判定器の continuation_prompt を次の HumanMessage として
   │     │   同じ checkpoint スレッドに注入；ターンは goal_max_turns に
@@ -489,9 +489,31 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 **ツールポリシー。** ロールの `tools` 一覧は allow-list になります（既定の deny-list はクリア）。spawn ごとの `extra_tools` はその allow-list に加わりますが、どちらも無条件の `main_only` メタデータゲートと明示 deny-list の対象です。
 
-**`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）。`goal_loop` / `goal_max_turns` は変更なしで維持されます。
+**`sessions_spawn` パラメータ：** `functional_role`（str | None、既定 None）と `extra_tools`（list[str] | None、既定 None）；`goal_max_turns` は goal loop 予算を上書きします。
 
-**設定**（`SubagentConfig`）：`functional_roles_enabled=True`、`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。`functional_role` を渡さない spawn 挙動は**バイト単位で不変**——GENERAL は恒等ロールです。
+**設定**（`SubagentConfig`）：`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。ロール解決はすべての spawn で常時実行されます；`functional_role` を渡さない spawn 挙動は**バイト単位で不変**——GENERAL は恒等ロールです。
+
+### 6.2 ロールの二軸と層状の完了ゲート
+
+二つのロール軸は**直交**し、すべての spawn で合成されます：
+
+| 軸 | 由来 | 司るもの |
+|------|--------|--------|
+| **機能ロール**（`general` / `researcher` / `executor` / `reviewer`） | 明示 `functional_role` ヒント、`agent_id` 一致、次に `default_functional_role` | 子 LLM、ツール allow-list、システムプロンプト内容 |
+| **深度ロール**（`MAIN` / `ORCHESTRATOR` / `LEAF`） | ネスト深度（`resolve_subagent_capabilities`） | spawn 権限、control scope |
+
+**spawn 権限は深度ロールでゲートされます。** `sessions_spawn` / `sessions_yield` は MAIN と ORCHESTRATOR にのみ属します：`spawn/core.py` の Phase 8.6 交差が `can_spawn_children` が false の全ロールからこれらを剥がし、`spawn/privilege.py` が呼び出し時に再検証します——ツールインスタンスが漏れても `forbidden` を返すだけで昇格しません。
+
+完了ゲートは子実行からステップ、フローへと層をなし、四層すべてが常時有効です：
+
+| 層 | ゲート | 必要な入力 | フェイルオープン時の挙動 |
+|-------|------|----------------|--------------------|
+| 子実行 | 完了判定器 + goal loop（`agent/tools/subagent/spawn/completion_judge.py`） | タスクと子の最新応答；予算 `COMPLETION_JUDGE["goal_max_turns"]`（既定 5） | 判定器エラー → `done` |
+| ステップ | ステップ判定器（`agent/tools/taskflow/step_judge.py`） | ステップの `validation_criteria`（基準なし → 判定呼び出しなし） | モデルエラー / 解析不能 → `pass` |
+| フロー | `taskflow_finish` ゲート A–D | DAG 状態とフローの証跡 | 台帳が読めない / 検証器エラー → 通過 |
+| 親ターン | 完了 drain プログラムゲート（`SubagentCompletionDrainMiddleware`） | セッションの検証証跡 | 照会不可 → ゲートしない |
+
+完了判定器はすべての spawn で実行されます；`goal_max_turns` が唯一の予算ノブです（予算 1 なら子は単一ターンのまま）。ステップ判定器も基準を持つすべてのステップで実行されます——`validation_criteria` はスイッチではなく入力です——そして `taskflow_finish` はフローが DONE に到達する前に証跡ゲートの通過を要求します。
 
 ### 7. 添付ファイルシステム
 
@@ -601,7 +623,6 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | ファイル添付（name, content, encoding, mount_path） |
-| `goal_loop` | bool | False | オプトインの完了判定ループ；`COMPLETION_JUDGE["enabled"]` が必要 |
 | `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
 | `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer）。None は depth ベースの挙動を維持 |
 | `extra_tools` | list[str]\|None | None | ロールの allow-list に追加で付与するツール名 |
@@ -946,7 +967,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `attachments_max_files` | 50 | spawn あたりの最大ファイル数 |
 | `attachments_max_file_bytes` | 1MB | 単一ファイルのサイズ上限 |
 | `attachments_max_total_bytes` | 5MB | 添付合計サイズの上限 |
-| `functional_roles_enabled` | True | spawn 時に機能ロールを解決するか |
 | `default_functional_role` | "general" | hint も agent_id 一致も解決しない場合のフォールバックロール |
 | `roles_override_dir_name` | "subagent_roles" | ユーザー別ロール上書きを置く workspace サブディレクトリ |
 

@@ -131,7 +131,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  ├── 3. Goal Loop —— 仅当 goal_loop + COMPLETION_JUDGE["enabled"] + 预算 > 1
+  ├── 3. Goal Loop —— 每次 spawn，当 goal_max_turns 预算 > 1 时运行
   │     ├── judge_completion(task, last_response, evidence) → done | continue
   │     ├── continue → 把判别器的 continuation_prompt 作为下一条
   │     │   HumanMessage 注入同一 checkpoint 线程；轮次计入
@@ -482,9 +482,31 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 
 **工具策略。** 角色的 `tools` 列表成为 allow-list（默认 deny-list 被清空）。每次 spawn 的 `extra_tools` 会并入该 allow-list；两者仍受无条件的 `main_only` 元数据门与显式 deny-list 约束。
 
-**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）。`goal_loop` / `goal_max_turns` 保持不变。
+**`sessions_spawn` 参数：** `functional_role`（str | None，默认 None）与 `extra_tools`（list[str] | None，默认 None）；`goal_max_turns` 覆盖 goal loop 预算。
 
-**配置**（`SubagentConfig`）：`functional_roles_enabled=True`、`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。不传 `functional_role` 时，spawn 行为**逐字节不变**——GENERAL 是恒等角色。
+**配置**（`SubagentConfig`）：`default_functional_role="general"`、`roles_override_dir_name="subagent_roles"`。角色解析在每次 spawn 时恒运行；不传 `functional_role` 时，spawn 行为**逐字节不变**——GENERAL 是恒等角色。
+
+### 6.2 角色两轴与分层完成门禁
+
+两条角色轴**正交**，并在每次 spawn 时共同生效：
+
+| 轴 | 来源 | 决定 |
+|------|--------|--------|
+| **功能角色**（`general` / `researcher` / `executor` / `reviewer`） | 显式 `functional_role` 提示、`agent_id` 匹配，然后是 `default_functional_role` | 子 LLM、工具 allow-list、系统提示词内容 |
+| **深度角色**（`MAIN` / `ORCHESTRATOR` / `LEAF`） | 嵌套深度（`resolve_subagent_capabilities`） | spawn 权限、control scope |
+
+**spawn 权限由深度角色把守。** `sessions_spawn` / `sessions_yield` 只归 MAIN 与 ORCHESTRATOR：`spawn/core.py` 的 Phase 8.6 交叉会把它们从所有 `can_spawn_children` 为 false 的角色的工具集中剥掉，`spawn/privilege.py` 再在调用期校验——即使工具实例泄漏，也只会返回 `forbidden` 而不会越权。
+
+完成门禁从子运行、步骤一路分层到流程，四层全部恒启用：
+
+| 层 | 门禁 | 需要的输入 | 失败开放行为 |
+|-------|------|----------------|--------------------|
+| 子运行 | 完成判别器 + goal loop（`agent/tools/subagent/spawn/completion_judge.py`） | 任务与子代理最新回复；预算 `COMPLETION_JUDGE["goal_max_turns"]`（默认 5） | 判别器报错 → `done` |
+| 步骤 | 步骤判别器（`agent/tools/taskflow/step_judge.py`） | 步骤的 `validation_criteria`（无标准则不调用判别器） | 模型报错 / 无法解析 → `pass` |
+| 流程 | `taskflow_finish` 门 A–D | DAG 状态与流程证据 | 账本不可读 / 验证器报错 → 放行 |
+| 父回合 | 完成 drain 程序化门控（`SubagentCompletionDrainMiddleware`） | 会话的验证证据 | 查询不可用 → 不门控 |
+
+完成判别器在每次 spawn 时运行；`goal_max_turns` 是它唯一的预算旋钮（预算为 1 时子代理保持单轮）。步骤判别器同样对每个携带标准的步骤运行——`validation_criteria` 是它的输入，而不是开关——且 `taskflow_finish` 要求证据门全部通过后流程才能到达 DONE。
 
 ### 7. 附件系统
 
@@ -591,7 +613,6 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | 文件附件（name, content, encoding, mount_path） |
-| `goal_loop` | bool | False | 可选完成判别循环；需 `COMPLETION_JUDGE["enabled"]` |
 | `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
 | `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer）；None 保持基于 depth 的行为 |
 | `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
@@ -936,7 +957,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `attachments_max_files` | 50 | 每次 spawn 最大文件数 |
 | `attachments_max_file_bytes` | 1MB | 单文件大小上限 |
 | `attachments_max_total_bytes` | 5MB | 附件总大小上限 |
-| `functional_roles_enabled` | True | 是否在 spawn 时解析功能角色 |
 | `default_functional_role` | "general" | hint 与 agent_id 匹配都无法解析时的回退角色 |
 | `roles_override_dir_name` | "subagent_roles" | 存放每用户角色覆盖的 workspace 子目录 |
 

@@ -133,7 +133,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  ├── 3. Goal Loop — goal_loop + COMPLETION_JUDGE["enabled"] + 예산 > 1일 때만
+  ├── 3. Goal Loop — 모든 spawn. goal_max_turns 예산 > 1인 동안 실행
   │     ├── judge_completion(task, last_response, evidence) → done | continue
   │     ├── continue → 판정기의 continuation_prompt를 다음 HumanMessage로
   │     │   같은 checkpoint 스레드에 주입; 턴은 goal_max_turns에
@@ -485,9 +485,31 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 **도구 정책.** 역할의 `tools` 목록은 allow-list가 됩니다(기본 deny-list는 비워짐). spawn별 `extra_tools`는 그 allow-list에 합류하지만, 둘 다 무조건적인 `main_only` 메타데이터 게이트와 명시적 deny-list의 적용을 받습니다.
 
-**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None). `goal_loop` / `goal_max_turns`는 변경 없이 유지됩니다.
+**`sessions_spawn` 매개변수:** `functional_role`(str | None, 기본 None)와 `extra_tools`(list[str] | None, 기본 None); `goal_max_turns`는 goal loop 예산을 덮어씁니다.
 
-**설정**(`SubagentConfig`): `functional_roles_enabled=True`, `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. `functional_role`을 전달하지 않는 spawn 동작은 **바이트 단위로 불변** — GENERAL은 항등 역할입니다.
+**설정**(`SubagentConfig`): `default_functional_role="general"`, `roles_override_dir_name="subagent_roles"`. 역할 해석은 모든 spawn에서 항상 실행됩니다; `functional_role`을 전달하지 않는 spawn 동작은 **바이트 단위로 불변** — GENERAL은 항등 역할입니다.
+
+### 6.2 역할 두 축과 계층형 완료 게이트
+
+두 역할 축은 **직교**하며 모든 spawn에서 합성됩니다:
+
+| 축 | 출처 | 담당 |
+|------|--------|--------|
+| **기능 역할**(`general` / `researcher` / `executor` / `reviewer`) | 명시적 `functional_role` 힌트, `agent_id` 매칭, 다음 `default_functional_role` | 자식 LLM, 도구 allow-list, 시스템 프롬프트 내용 |
+| **depth 역할**(`MAIN` / `ORCHESTRATOR` / `LEAF`) | 중첩 깊이(`resolve_subagent_capabilities`) | spawn 권한, control scope |
+
+**spawn 권한은 depth 역할로 게이트됩니다.** `sessions_spawn` / `sessions_yield`는 MAIN과 ORCHESTRATOR에만 속합니다: `spawn/core.py`의 Phase 8.6 교차가 `can_spawn_children`이 false인 모든 역할에서 이들을 제거하고, `spawn/privilege.py`가 호출 시점에 재검증합니다 — 도구 인스턴스가 새더라도 `forbidden`을 반환할 뿐 권한 상승은 없습니다.
+
+완료 게이트는 자식 실행에서 단계, 플로우로 계층을 이루며 네 계층 모두 항상 켜져 있습니다:
+
+| 계층 | 게이트 | 필요한 입력 | 페일오픈 동작 |
+|-------|------|----------------|--------------------|
+| 자식 실행 | 완료 판정기 + goal loop(`agent/tools/subagent/spawn/completion_judge.py`) | 태스크와 자식의 최신 응답; 예산 `COMPLETION_JUDGE["goal_max_turns"]`(기본 5) | 판정기 오류 → `done` |
+| 단계 | 단계 판정기(`agent/tools/taskflow/step_judge.py`) | 단계의 `validation_criteria`(기준 없음 → 판정 호출 없음) | 모델 오류 / 파싱 불가 → `pass` |
+| 플로우 | `taskflow_finish` 게이트 A–D | DAG 상태와 플로우 evidence | 원장을 읽을 수 없음 / 검증기 오류 → 통과 |
+| 부모 턴 | 완료 drain 프로그램 게이트(`SubagentCompletionDrainMiddleware`) | 세션의 검증 evidence | 조회 불가 → 게이트 없음 |
+
+완료 판정기는 모든 spawn에서 실행됩니다; `goal_max_turns`가 유일한 예산 노브입니다(예산이 1이면 자식은 단일 턴). 단계 판정기 역시 기준을 가진 모든 단계에서 실행됩니다 — `validation_criteria`는 스위치가 아니라 입력입니다 — 그리고 `taskflow_finish`는 플로우가 DONE에 도달하기 전에 evidence 게이트 통과를 요구합니다.
 
 ### 7. 첨부 파일 시스템
 
@@ -596,7 +618,6 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | 파일 첨부 (name, content, encoding, mount_path) |
-| `goal_loop` | bool | False | 옵트인 완료 판정 루프; `COMPLETION_JUDGE["enabled"]` 필요 |
 | `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
 | `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer); None이면 depth 기반 동작 유지 |
 | `extra_tools` | list[str]\|None | None | 역할 allow-list 위에 추가로 붙는 도구 이름 |
@@ -941,7 +962,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `attachments_max_files` | 50 | spawn당 최대 파일 수 |
 | `attachments_max_file_bytes` | 1MB | 단일 파일 크기 상한 |
 | `attachments_max_total_bytes` | 5MB | 첨부 총 크기 상한 |
-| `functional_roles_enabled` | True | spawn 시 기능 역할 해석 사용 여부 |
 | `default_functional_role` | "general" | hint와 agent_id 매칭 모두 해석하지 못할 때의 폴백 역할 |
 | `roles_override_dir_name` | "subagent_roles" | 사용자별 역할 오버레이를 담는 workspace 하위 디렉터리 |
 
