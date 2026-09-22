@@ -87,8 +87,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   Format / What You DON'T Do / Sub-Agent Spawning (orchestrator
   │     │   only) / Session Context
   │     ├── Anti-polling rule (push-based completion)
-  │     ├── ISOLATED (empty) or FORK (parent transcript via agent.aget_state();
-  │     │   falls back to isolated on error — spawn/context.py)
+  │     ├── Independent (isolated) context: the child starts from an empty
+  │     │   message list — the parent transcript is never inherited
   │     └── build_subagent_initial_user_message(): [Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] envelope
   │
@@ -105,7 +105,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 `_execute_subagent_with_lane()` is a background asyncio Task that first waits for a SUBAGENT lane slot (over-limit runs stay PENDING while queueing), promotes the run to RUNNING inside the slot, and then hands off to `_execute_subagent()` for the child Agent's full lifecycle:
 
 ```
-_execute_subagent(run, system_prompt, user_message, forked_messages, ...)
+_execute_subagent(run, system_prompt, user_message, ...)
   │
   ├── 1. Build Child Agent (_build_child_agent)
   │     ├── build_main_tools() → apply_tool_policy() filters tools by
@@ -128,7 +128,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │
   ├── 2. Execution
   │     ├── Input: {"session_id": child_session_key, "messages":
-  │     │   forked_messages + [HumanMessage(user_message)]}
+  │     │   [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
   ├── 3. Goal Loop — every spawn, while the goal_max_turns budget > 1
@@ -180,7 +180,6 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}` (swarm: `agent:{agentId}:swarm:{group}:{uuid}`) |
 | | `requester_session_key` | Parent session key |
 | **Spawn Params** | `spawn_mode` | RUN (one-shot) / SESSION (persistent) |
-| | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | Nesting depth; MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | Functional role (GENERAL / RESEARCHER / EXECUTOR / REVIEWER); defaults to GENERAL |
 | | `generation` | Version counter across steer/restart cycles |
@@ -614,7 +613,6 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `thinking` | str\|None | None | Override thinking mode |
 | `mode` | str | "run" | "run" (one-shot) / "session" (persistent) |
 | `cleanup` | str | "delete" | "delete" / "keep" |
-| `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | File attachments (name, content, encoding, mount_path) |
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer); None keeps depth-based behavior |
@@ -746,7 +744,7 @@ Progress hooks (`hooks/progress.py`): spawned (child registered), progress (duri
 | Sandbox | No ACP port | Same-process execution; permissions controlled via tool deny lists |
 | Yield implementation | `asyncio.Event` + Registry callback (`sessions_yield` blocks with timeout) | Python has no gateway steering; Event is equivalent |
 | A2A communication | EventBus + session key routing | Reuses existing messaging mechanism |
-| Fork context | `agent.aget_state()` from the checkpointer (`prepare_spawned_context`) | No external parent_messages param needed (Decision 9) |
+| Child context | Always isolated | The child starts from an empty message list; the parent transcript is never inherited |
 | Stale-callback protection | `TerminalGenerationTracker` + generation guard + kill reconciliation | Steer/kill supersede older generations safely |
 | Blocked tools | `DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn, sessions_yield]` + unconditional main_only drop | Prevents privilege escalation; depth hard limit cannot be bypassed |
 | Attachments | Materialized to `.sherry/attachments/<uuid>/` with manifest | Untrusted-input isolation with size/count/symlink guards |
@@ -760,7 +758,7 @@ Every module in the package and its responsibility (verified against the code in
 ```
 agent/tools/subagent/
 ├── types/                     Data models & enums
-│   ├── spawn.py               SpawnMode, ContextMode enums
+│   ├── spawn.py               SpawnMode enum
 │   ├── registry.py            SubagentRunRecord + sub-state models (incl. completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version)
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           Lifecycle event enums (LifecycleEndedReason, LifecycleEndedOutcome)
@@ -806,7 +804,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       Child-agent system prompt generation (6-part structure: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
 │   ├── initial_message.py     Child-agent first user message (structured envelope: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  Tool allow/deny inheritance
-│   ├── context.py             isolated/fork context building
 │   ├── thread_binding.py      Thread-binding lifecycle management
 │   ├── runtime_isolation.py   Runtime isolation & security boundary + workspace inheritance
 │   ├── origin_routing.py      Requester origin routing resolution + fingerprint generation (build_origin_fingerprint exposed as external API)
@@ -902,7 +899,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/context.py ← spawn/initial_message.py ← spawn/task_name.py
+spawn/initial_message.py ← spawn/task_name.py
   ↑
 spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
@@ -940,7 +937,6 @@ All configuration is managed via `SubagentConfig` (Pydantic model, singleton —
 | `require_agent_id` | False | Whether agent_id is mandatory |
 | `allow_agents` | `["*"]` | Allowed agent_id whitelist |
 | `default_cleanup` | "delete" | Default cleanup policy |
-| `default_context_mode` | ISOLATED | Default context mode |
 | `announce_retry_max` | 3 | Max delivery retries per announce |
 | `announce_retry_delay_base_ms` | 1000 | Base delay for exponential retry resolution (capped 8000 ms) |
 | `delivery_suspend_soft_cap` | 25 | Soft suspension threshold (pending deliveries) |

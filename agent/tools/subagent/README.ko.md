@@ -89,8 +89,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   Format / What You DON'T Do / Sub-Agent Spawning(오케스트레이터
   │     │   전용) / Session Context
   │     ├── 폴링 방지 규칙 (푸시 기반 완료 통지)
-  │     ├── ISOLATED(빈 상태) 또는 FORK(agent.aget_state()로 부모 대화
-  │     │   기록 복제. 실패 시 isolated로 폴백 — spawn/context.py)
+  │     ├── 독립(isolated) 컨텍스트: 자식 에이전트는 빈 메시지
+  │     │   목록에서 시작 — 부모 대화 기록은 결코 상속하지 않음
   │     └── build_subagent_initial_user_message(): [Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] 봉투
   │
@@ -107,7 +107,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 `_execute_subagent_with_lane()`는 백그라운드 asyncio Task입니다: 먼저 SUBAGENT lane slot을 기다리고(초과 run은 여기서 PENDING 유지), slot 안에서 run을 RUNNING으로 승격한 뒤 `_execute_subagent()`에 위임해 자식 에이전트의 전체 라이프사이클을 실행합니다:
 
 ```
-_execute_subagent(run, system_prompt, user_message, forked_messages, ...)
+_execute_subagent(run, system_prompt, user_message, ...)
   │
   ├── 1. 자식 에이전트 구축 (_build_child_agent)
   │     ├── build_main_tools() → apply_tool_policy()가
@@ -130,7 +130,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │
   ├── 2. 실행
   │     ├── 입력: {"session_id": child_session_key, "messages":
-  │     │   forked_messages + [HumanMessage(user_message)]}
+  │     │   [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
   ├── 3. Goal Loop — 모든 spawn. goal_max_turns 예산 > 1인 동안 실행
@@ -182,7 +182,6 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}` (swarm: `agent:{agentId}:swarm:{group}:{uuid}`) |
 | | `requester_session_key` | 부모 세션 키 |
 | **Spawn 파라미터** | `spawn_mode` | RUN(일회성) / SESSION(상주) |
-| | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | 중첩 깊이. MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | 기능 역할(GENERAL / RESEARCHER / EXECUTOR / REVIEWER); 기본 GENERAL |
 | | `generation` | steer/재시작을 넘는 버전 카운터 |
@@ -616,7 +615,6 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `thinking` | str\|None | None | 사고 모드 재정의 |
 | `mode` | str | "run" | "run"(일회성) / "session"(상주) |
 | `cleanup` | str | "delete" | "delete" / "keep" |
-| `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | 파일 첨부 (name, content, encoding, mount_path) |
 | `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
 | `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer); None이면 depth 기반 동작 유지 |
@@ -748,7 +746,7 @@ Progress 훅(hooks/progress.py): spawned(자식 등록), progress(실행 중), e
 | 샌드박스 | ACP 포트 미사용 | 동일 프로세스 실행. 권한은 도구 deny 목록으로 제어 |
 | Yield 구현 | `asyncio.Event` + Registry 콜백 (`sessions_yield`는 타임아웃 블로킹) | Python에는 게이트웨이 steering이 없음. Event로 등가 구현 |
 | A2A 통신 | EventBus + 세션 키 라우팅 | 기존 메시징 메커니즘 재사용 |
-| Fork 컨텍스트 | checkpointer 경유의 `agent.aget_state()` (prepare_spawned_context) | 외부 parent_messages 파라미터 불필요 (결정 9) |
+| 자식 에이전트 컨텍스트 | 항상 독립 | 자식 에이전트는 빈 메시지 목록에서 시작. 부모 대화 기록은 결코 상속하지 않음 |
 | 낡은 콜백 방어 | `TerminalGenerationTracker` + generation 가드 + kill reconciliation | steer/kill이 구세대를 안전하게 대체 |
 | 차단 도구 | `DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn, sessions_yield]` + main_only 무조건 제외 | 권한 상승 방지. 깊이 하드 한도는 우회 불가 |
 | 첨부 | `.sherry/attachments/<uuid>/`로 실체화하고 매니페스트 생성 | 신뢰할 수 없는 입력의 격리. 크기/수량/심볼릭 링크 방어 포함 |
@@ -762,7 +760,7 @@ Progress 훅(hooks/progress.py): spawned(자식 등록), progress(실행 중), e
 ```
 agent/tools/subagent/
 ├── types/                     데이터 모델 및 열거형
-│   ├── spawn.py               SpawnMode, ContextMode 열거형
+│   ├── spawn.py               SpawnMode 열거형
 │   ├── registry.py            SubagentRunRecord 및 하위 상태 모델(completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version 포함)
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           라이프사이클 이벤트 열거형(LifecycleEndedReason, LifecycleEndedOutcome)
@@ -808,7 +806,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       자식 에이전트 system prompt 생성(6부 구성: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
 │   ├── initial_message.py     자식 에이전트의 첫 user message(구조화 봉투: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  도구 허용/차단 목록 상속
-│   ├── context.py             isolated/fork 컨텍스트 구축
 │   ├── thread_binding.py      Thread Binding 라이프사이클 관리
 │   ├── runtime_isolation.py   런타임 격리 및 보안 경계 + workspace 상속
 │   ├── origin_routing.py      요청자 오리진 라우팅 해결 + fingerprint 생성(build_origin_fingerprint를 외부 API로 노출)
@@ -904,7 +901,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/context.py ← spawn/initial_message.py ← spawn/task_name.py
+spawn/initial_message.py ← spawn/task_name.py
   ↑
 spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
@@ -942,7 +939,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `require_agent_id` | False | agent_id 필수 여부 |
 | `allow_agents` | `["*"]` | 허용 agent_id 화이트리스트 |
 | `default_cleanup` | "delete" | 기본 정리 정책 |
-| `default_context_mode` | ISOLATED | 기본 컨텍스트 모드 |
 | `announce_retry_max` | 3 | 통지당 최대 전달 재시도 |
 | `announce_retry_delay_base_ms` | 1000 | 지수 백오프 기준 지연 (상한 8000 ms) |
 | `delivery_suspend_soft_cap` | 25 | suspend 소프트 한도 (대기 전달 수) |

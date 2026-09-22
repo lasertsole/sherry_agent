@@ -90,8 +90,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   Format / What You DON'T Do / Sub-Agent Spawning（オーケスト
   │     │   レータのみ）/ Session Context
   │     ├── ポーリング防止ルール（プッシュ式の完了通知）
-  │     ├── ISOLATED（空）または FORK（agent.aget_state() で親の会話記録を
-  │     │   複製。失敗時は isolated にフォールバック — spawn/context.py）
+  │     ├── 独立（isolated）コンテキスト：子エージェントは空のメッセージ
+  │     │   リストから開始 —— 親の会話記録は決して継承しない
   │     └── build_subagent_initial_user_message()：[Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] エンベロープ
   │
@@ -108,7 +108,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 `_execute_subagent_with_lane()` はバックグラウンド asyncio Task です：まず SUBAGENT lane のスロットを待ち（超過 run はここで PENDING のまま）、スロット内で run を RUNNING に昇格させ、その後 `_execute_subagent()` に委譲して子エージェントの完全なライフサイクルを実行します：
 
 ```
-_execute_subagent(run, system_prompt, user_message, forked_messages, ...)
+_execute_subagent(run, system_prompt, user_message, ...)
   │
   ├── 1. 子エージェントの構築（_build_child_agent）
   │     ├── build_main_tools() → apply_tool_policy() が
@@ -131,7 +131,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │
   ├── 2. 実行
   │     ├── 入力：{"session_id": child_session_key, "messages":
-  │     │   forked_messages + [HumanMessage(user_message)]}
+  │     │   [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
   ├── 3. Goal Loop — すべての spawn。goal_max_turns 予算が > 1 の間実行
@@ -183,7 +183,6 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}`（swarm は `agent:{agentId}:swarm:{group}:{uuid}`） |
 | | `requester_session_key` | 親セッションキー |
 | **Spawn パラメータ** | `spawn_mode` | RUN（単発）/ SESSION（常駐） |
-| | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | ネスト深さ。MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | 機能ロール（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）。既定は GENERAL |
 | | `generation` | steer/再起動をまたぐバージョンカウンタ |
@@ -621,7 +620,6 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `thinking` | str\|None | None | 思考モードの上書き |
 | `mode` | str | "run" | "run"（単発）/ "session"（常駐） |
 | `cleanup` | str | "delete" | "delete" / "keep" |
-| `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | ファイル添付（name, content, encoding, mount_path） |
 | `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
 | `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer）。None は depth ベースの挙動を維持 |
@@ -753,7 +751,7 @@ Progress フック（hooks/progress.py）：spawned（子が登録）、progress
 | サンドボックス | ACP ポート不使用 | 同一プロセス実行。権限はツール deny リストで制御 |
 | Yield 実装 | `asyncio.Event` + Registry コールバック（`sessions_yield` はタイムアウト付きブロック） | Python にゲートウェイ steering は無し。Event で等価実装 |
 | A2A 通信 | EventBus + セッションキールーティング | 既存のメッセージ機構を再利用 |
-| Fork コンテキスト | checkpointer 経由の `agent.aget_state()`（prepare_spawned_context） | 外部 parent_messages パラメータが不要（決定 9） |
+| 子エージェントのコンテキスト | 常に独立 | 子エージェントは空のメッセージリストから開始。親の会話記録は決して継承しない |
 | 陳腐コールバック防护 | `TerminalGenerationTracker` + generation ガード + kill reconciliation | steer/kill が旧 generation を安全に取代 |
 | ブロックツール | `DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn, sessions_yield]` + main_only の無条件除外 | 権限昇格を防止。深さのハード上限は回避不可能 |
 | 添付 | `.sherry/attachments/<uuid>/` へ実体化しマニフェスト生成 | 信頼できない入力の分離。サイズ/数量/シンボリックリンク防护付き |
@@ -767,7 +765,7 @@ Progress フック（hooks/progress.py）：spawned（子が登録）、progress
 ```
 agent/tools/subagent/
 ├── types/                     データモデルと列挙型
-│   ├── spawn.py               SpawnMode, ContextMode 列挙型
+│   ├── spawn.py               SpawnMode 列挙型
 │   ├── registry.py            SubagentRunRecord とサブ状態モデル（completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version を含む）
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           ライフサイクルイベント列挙型（LifecycleEndedReason, LifecycleEndedOutcome）
@@ -813,7 +811,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       子エージェントの system prompt 生成（6 部構成：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
 │   ├── initial_message.py     子エージェントの最初の user message（構造化エンベロープ：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  ツール許可/拒否リストの継承
-│   ├── context.py             isolated/fork コンテキスト構築
 │   ├── thread_binding.py      Thread Binding ライフサイクル管理
 │   ├── runtime_isolation.py   ランタイム分離とセキュリティ境界 + workspace 継承
 │   ├── origin_routing.py      リクエスト元オリジンルーティング解決 + fingerprint 生成（build_origin_fingerprint を外部 API として公開）
@@ -909,7 +906,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/context.py ← spawn/initial_message.py ← spawn/task_name.py
+spawn/initial_message.py ← spawn/task_name.py
   ↑
 spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
@@ -947,7 +944,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `require_agent_id` | False | agent_id を必須にするか |
 | `allow_agents` | `["*"]` | 許可する agent_id ホワイトリスト |
 | `default_cleanup` | "delete" | 既定のクリーンアップポリシー |
-| `default_context_mode` | ISOLATED | 既定のコンテキストモード |
 | `announce_retry_max` | 3 | 通告あたりの最大配信リトライ |
 | `announce_retry_delay_base_ms` | 1000 | 指数バックオフの基準遅延（上限 8000 ms） |
 | `delivery_suspend_soft_cap` | 25 | suspend ソフト上限（保留配信数） |

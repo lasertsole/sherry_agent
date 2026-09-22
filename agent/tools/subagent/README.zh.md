@@ -87,8 +87,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     │   Format / What You DON'T Do / Sub-Agent Spawning（仅编排者）/
   │     │   Session Context
   │     ├── 防轮询规则（推送式完成通知）
-  │     ├── ISOLATED（空白）或 FORK（经 agent.aget_state() 复制父会话记录；
-  │     │   失败时回退 isolated — spawn/context.py）
+  │     ├── 独立（isolated）上下文：子 agent 从空消息列表开始
+  │     │   —— 永不继承父会话记录
   │     └── build_subagent_initial_user_message()：[Subagent Context] /
   │         [Subagent Task] / [Subagent Additional Context] 信封
   │
@@ -105,7 +105,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
 `_execute_subagent_with_lane()` 是后台 asyncio Task：先等待 SUBAGENT lane slot（超限 run 在此保持 PENDING），在 slot 内把 run 提升为 RUNNING，然后交给 `_execute_subagent()` 执行子 Agent 的完整生命周期：
 
 ```
-_execute_subagent(run, system_prompt, user_message, forked_messages, ...)
+_execute_subagent(run, system_prompt, user_message, ...)
   │
   ├── 1. 构建子 Agent（_build_child_agent）
   │     ├── build_main_tools() → apply_tool_policy() 按
@@ -128,7 +128,7 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │
   ├── 2. 执行
   │     ├── 输入：{"session_id": child_session_key, "messages":
-  │     │   forked_messages + [HumanMessage(user_message)]}
+  │     │   [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
   ├── 3. Goal Loop —— 每次 spawn，当 goal_max_turns 预算 > 1 时运行
@@ -180,7 +180,6 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}`（swarm 为 `agent:{agentId}:swarm:{group}:{uuid}`） |
 | | `requester_session_key` | 父会话键 |
 | **Spawn 参数** | `spawn_mode` | RUN（一次性）/ SESSION（常驻） |
-| | `context_mode` | ISOLATED / FORK |
 | | `depth` / `role` | 嵌套深度；MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）；默认 GENERAL |
 | | `generation` | 跨 steer/重启的版本计数器 |
@@ -611,7 +610,6 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `thinking` | str\|None | None | 覆盖思考模式 |
 | `mode` | str | "run" | "run"（一次性）/ "session"（常驻） |
 | `cleanup` | str | "delete" | "delete" / "keep" |
-| `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | 文件附件（name, content, encoding, mount_path） |
 | `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
 | `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer）；None 保持基于 depth 的行为 |
@@ -743,7 +741,7 @@ Progress 钩子（hooks/progress.py）：spawned（子 Agent 注册）、progres
 | 沙箱 | 不使用 ACP 端口 | 同进程执行；权限经工具 deny 列表控制 |
 | Yield 实现 | `asyncio.Event` + Registry 回调（`sessions_yield` 带超时阻塞） | Python 无网关 steering；Event 等价实现 |
 | A2A 通信 | EventBus + 会话键路由 | 复用现有消息机制 |
-| Fork 上下文 | 经 checkpointer 的 `agent.aget_state()`（prepare_spawned_context） | 无需外部 parent_messages 参数（决策 9） |
+| 子 agent 上下文 | 始终独立 | 子 agent 从空消息列表开始；永不继承父会话记录 |
 | 过期回调防护 | `TerminalGenerationTracker` + generation 守护 + kill reconciliation | steer/kill 可安全取代旧 generation |
 | 屏蔽工具 | `DEFAULT_SUBAGENT_BLOCKED_TOOLS = [sessions_spawn, sessions_yield]` + main_only 一律丢弃 | 防止提权；深度硬上限不可绕过 |
 | 附件 | 物化到 `.sherry/attachments/<uuid>/` 并生成 manifest | 不可信输入隔离，带大小/数量/符号链接防护 |
@@ -757,7 +755,7 @@ Progress 钩子（hooks/progress.py）：spawned（子 Agent 注册）、progres
 ```
 agent/tools/subagent/
 ├── types/                     数据模型与枚举定义
-│   ├── spawn.py               SpawnMode, ContextMode 枚举
+│   ├── spawn.py               SpawnMode 枚举
 │   ├── registry.py            SubagentRunRecord 及子状态模型（含 completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version）
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           生命周期事件枚举（LifecycleEndedReason, LifecycleEndedOutcome）
@@ -803,7 +801,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       子 agent system prompt 生成（6 段结构：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
 │   ├── initial_message.py     子 agent 首条 user message（结构化信封：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  工具白/黑名单继承
-│   ├── context.py             isolated/fork 上下文构建
 │   ├── thread_binding.py      Thread Binding 生命周期管理
 │   ├── runtime_isolation.py   运行时隔离与安全边界 + workspace 继承
 │   ├── origin_routing.py      请求方来源路由解析 + fingerprint 生成（build_origin_fingerprint 暴露为外部 API）
@@ -899,7 +896,7 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
   ↑                    ↑                       ↑
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
-spawn/context.py ← spawn/initial_message.py ← spawn/task_name.py
+spawn/initial_message.py ← spawn/task_name.py
   ↑
 spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
@@ -937,7 +934,6 @@ tools/* ← spawn/core.py + registry/* + announce/* + control/*
 | `require_agent_id` | False | 是否强制 agent_id |
 | `allow_agents` | `["*"]` | 允许的 agent_id 白名单 |
 | `default_cleanup` | "delete" | 默认清理策略 |
-| `default_context_mode` | ISOLATED | 默认上下文模式 |
 | `announce_retry_max` | 3 | 每次通告最大交付重试 |
 | `announce_retry_delay_base_ms` | 1000 | 指数退避基准延迟（上限 8000 ms） |
 | `delivery_suspend_soft_cap` | 25 | 挂起软上限（待交付数） |
