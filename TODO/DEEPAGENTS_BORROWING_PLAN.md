@@ -70,7 +70,7 @@ def compute_summarization_defaults(max_input_tokens: int) -> dict:
 
 ### 问题
 
-Sherry 的中间件链当前为**硬编码列表**（`agent/core.py:178-230` 和 `spawn/core.py:846-878`），无排除/配置机制。但随着功能演进（如 `subagent-role-migration.md` 引入功能角色后可能按角色裁剪中间件、或用户通过配置禁用某些中间件），安全关键中间件可能被意外跳过：
+Sherry 的中间件链当前为**硬编码列表**（`agent/core.py:140-234` 和 `spawn/core.py:908-939`），无排除/配置机制。但随着功能演进（如 `subagent-role-migration.md` 引入功能角色后可能按角色裁剪中间件、或用户通过配置禁用某些中间件），安全关键中间件可能被意外跳过：
 
 - 移除 `ToolGuardrails` → 工具调用无校验，可执行危险操作
 - 移除 `IterationBudget` → 子代理无限循环耗尽 token
@@ -199,7 +199,7 @@ class RequiredMiddlewareEntry(NamedTuple):
 
 _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     RequiredMiddlewareEntry(ToolGuardrails, ()),
-    RequiredMiddlewareEntry(HumanInTheLoop, ("HITLCore",)),
+    RequiredMiddlewareEntry(HumanInTheLoop, ()),
     RequiredMiddlewareEntry(Summarization, ()),
     RequiredMiddlewareEntry(IterationBudget, ()),
     RequiredMiddlewareEntry(MessagePersistenceMiddleware, ()),
@@ -257,7 +257,7 @@ def _format_rejection(missing_names: set[str], chain: str) -> str:
 def _extract_middleware_names(middleware_list: list) -> set[str]:
     """Extract all identifiable names from a middleware list.
 
-    Collects type(cls).__name__ and any .name / .serialized_name attributes
+    Collects type(mw).__name__ and any .name / .serialized_name attributes
     (mirrors deepagents' dual class/string matching).
     """
     names: set[str] = set()
@@ -351,7 +351,7 @@ def verify_required_names_coverage() -> None:
                 )
 ```
 
-> **注**：`_MAIN_REQUIRED` / `_SUBAGENT_REQUIRED` 的导入（`ToolGuardrails`、`HumanInTheLoop` 等）来自 `agent.middlewares` 包，在 `scaffolding.py` 顶部用延迟导入避免循环（`__init__.py` 已导出这些类）。
+> **注**：`_MAIN_REQUIRED` / `_SUBAGENT_REQUIRED` 中引用的中间件类（`ToolGuardrails`、`HumanInTheLoop` 等）在 `scaffolding.py` **模块顶部**从**具体子模块**显式导入（如 `from .tool_guardrails import ToolGuardrails`），**不是**从 `agent.middlewares` 包导入——因为 `agent/middlewares/__init__.py` 会在文件末尾 re-export `scaffolding`，若 `scaffolding` 再反向导入该包就会形成循环导入。子模块导入路径已在 `__init__.py` 中验证可用（每个中间件子包都 re-export 了自己的类）。
 
 #### 修改 `agent/middlewares/__init__.py`
 
@@ -424,7 +424,8 @@ _agent = create_agent(
 在 `create_agent(...)` 调用**之前**插入校验：
 
 ```python
-# spawn/core.py — _build_child_agent(), BEFORE create_agent(...) call (line ~879)
+# spawn/core.py — _build_child_agent(), BEFORE create_agent(...) call (line ~902;
+# _build_child_agent is defined at line 807, its create_agent(...) call at 902)
 
 from agent.middlewares import validate_required_middleware, _SUBAGENT_REQUIRED
 
@@ -503,9 +504,7 @@ class TestValidateRequiredMiddleware:
 
     def test_empty_list_raises(self):
         with pytest.raises(ScaffoldingViolationError, match="empty"):
-            validate_required_middleware([], chain="main",
-                                         required_classes=MAIN_REQUIRED_CLASSES,
-                                         required_names=MAIN_REQUIRED_NAMES)
+            validate_required_middleware([], chain="main", entries=_MAIN_REQUIRED)
 
     def test_missing_one_middleware_raises(self):
         """Remove one required middleware → should fail with its name."""
@@ -524,9 +523,7 @@ class TestValidateRequiredMiddleware:
             HeartbeatStaleness(),
         ]
         with pytest.raises(ScaffoldingViolationError, match="ToolGuardrails"):
-            validate_required_middleware(incomplete, chain="subagent",
-                                         required_classes=SUBAGENT_REQUIRED_CLASSES,
-                                         required_names=SUBAGENT_REQUIRED_NAMES)
+            validate_required_middleware(incomplete, chain="subagent", entries=_SUBAGENT_REQUIRED)
 
     def test_all_present_passes(self):
         """Full subagent chain → no exception."""
@@ -545,9 +542,7 @@ class TestValidateRequiredMiddleware:
             ToolCallNormalize(),
             HeartbeatStaleness(),
         ]
-        validate_required_middleware(full, chain="subagent",
-                                     required_classes=SUBAGENT_REQUIRED_CLASSES,
-                                     required_names=SUBAGENT_REQUIRED_NAMES)
+        validate_required_middleware(full, chain="subagent", entries=_SUBAGENT_REQUIRED)
 
     def test_subclass_does_not_satisfy_parent_requirement(self):
         """A subclass of a required middleware with a DIFFERENT class name
@@ -609,9 +604,7 @@ class TestActualChainCompliance:
             LLMRetryMiddleware(fallback_chain=None),
             Summarization(model=None),
         ]
-        validate_required_middleware(full_main, chain="main",
-                                     required_classes=MAIN_REQUIRED_CLASSES,
-                                     required_names=MAIN_REQUIRED_NAMES)
+        validate_required_middleware(full_main, chain="main", entries=_MAIN_REQUIRED)
 
     def test_subagent_middleware_list_passes(self):
         """The actual subagent middleware list (from spawn/core.py) passes validation."""
@@ -630,9 +623,7 @@ class TestActualChainCompliance:
             ToolCallNormalize(),
             HeartbeatStaleness(),
         ]
-        validate_required_middleware(full_sub, chain="subagent",
-                                     required_classes=SUBAGENT_REQUIRED_CLASSES,
-                                     required_names=SUBAGENT_REQUIRED_NAMES)
+        validate_required_middleware(full_sub, chain="subagent", entries=_SUBAGENT_REQUIRED)
 
 
 class TestRoleAgnosticDesign:
@@ -709,7 +700,7 @@ class TestRoleAgnosticDesign:
 
 #### 深度角色（MAIN / ORCHESTRATOR / LEAF）— 当前不需要区分
 
-当前代码中 `_build_child_agent()` 对 ORCHESTRATOR 和 LEAF 装配**完全相同的 7 个中间件**（`spawn/core.py:846-878`）。深度角色只影响 LLM 选择（ORCHESTRATOR→main_llm, LEAF→auxiliary_llm）、工具策略（ORCHESTRATOR 解锁 spawn/yield）和 scope 分配——**不影响中间件链**。
+当前代码中 `_build_child_agent()` 对 ORCHESTRATOR 和 LEAF 装配**完全相同的 7 个中间件**（`spawn/core.py:908-939`）。深度角色只影响 LLM 选择（ORCHESTRATOR→main_llm, LEAF→auxiliary_llm）、工具策略（ORCHESTRATOR 解锁 spawn/yield）和 scope 分配——**不影响中间件链**。
 
 因此 `_SUBAGENT_REQUIRED` 是单一集合，不按深度角色拆分：
 
@@ -766,12 +757,14 @@ def get_subagent_required(role: FunctionalRole | None) -> frozenset[type]:
 `_build_child_agent` 的校验调用改为：
 
 ```python
-required = get_subagent_required(functional_role)  # 未来形态
+# 未来形态：按角色派生的是 entry 元组；当前基线集合即 _SUBAGENT_REQUIRED。
+# 注意：若届时真正引入按角色派生，get_subagent_required() 必须返回
+# tuple[RequiredMiddlewareEntry, ...]（与 validate_required_middleware 的 entries= 对齐），
+# 而不是 frozenset[type]。
 validate_required_middleware(
     _subagent_middleware,
     chain=f"subagent:{functional_role.value if functional_role else 'default'}",
-    required_classes=required,
-    required_names=_derive_names_from_classes(required),
+    entries=_SUBAGENT_REQUIRED,
 )
 ```
 
