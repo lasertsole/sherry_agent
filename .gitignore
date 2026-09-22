@@ -46,6 +46,9 @@ sessions/**/*.md
 .idea/
 .vscode/
 
+# Code intelligence symbol index (subagent-only tree-sitter tooling)
+.codeintel/
+
 # Automated task/page snapshots (browser automation runtime state)
 tasks-*.yml
 

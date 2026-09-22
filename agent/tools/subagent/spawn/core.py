@@ -696,6 +696,7 @@ async def _execute_subagent(
             model_override=model_override,
             model_tier=model_tier,
             extra_tools=extra_tools,
+            session_id=run.child_session_key,
         )
 
         messages = [HumanMessage(content=user_message)]
@@ -943,6 +944,7 @@ async def _build_child_agent(
     model_override: str | None = None,
     model_tier: str | None = None,
     extra_tools: list[str] | None = None,
+    session_id: str = "",
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
 
@@ -978,6 +980,7 @@ async def _build_child_agent(
         model_override: Optional model name string to override the default LLM.
         model_tier: Resolved functional-role LLM tier ("main" | "auxiliary").
         extra_tools: Per-spawn tool names attached on top of the role allow-list.
+        session_id: Child session key; labels the RESEARCHER-only code-intel tools.
 
     Returns:
         A fully-constructed LangGraph agent ready for ``ainvoke``.
@@ -1017,6 +1020,15 @@ async def _build_child_agent(
 
     filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
 
+    # Code intelligence tools are RESEARCHER-only: they are injected here, after
+    # the role policy, and never added to _MAIN_TOOLS_BUILDERS, so the main agent
+    # and every other functional role cannot see them.
+    final_tools = list(filtered_tools)
+    if functional_role == FunctionalRole.RESEARCHER:
+        from agent.tools.code_intel import build_code_intel_tools
+
+        final_tools = [*filtered_tools, *build_code_intel_tools(session_id=session_id)]
+
     def _select_child_llm():
         # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
         # the pre-migration depth-based behavior untouched.
@@ -1053,7 +1065,7 @@ async def _build_child_agent(
         system_prompt=system_prompt,
         state_schema=StateSchema,
         checkpointer=child_checkpointer,
-        tools=filtered_tools,
+        tools=final_tools,
         middleware=child_middleware,
     )
 

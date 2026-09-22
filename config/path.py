@@ -61,6 +61,11 @@ SKILL_DISCOVERY_ROOTS: tuple[str, ...] = ("builtin", "auto", "plugins")
 MEMORY_INDEX_DIR = MEMORY_DIR / "index"
 KNOWLEDGE_INDEX_DIR = KNOWLEDGE_DIR / "index"
 
+# Code intelligence symbol index (subagent-only tree-sitter tooling). The
+# directory is gitignored like .codegraph/; the SQLite file inside is created
+# lazily on first index build.
+CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
+
 # i18n workspace templates (locale code -> subdirectory under WORKSPACE_TEMPLATE_DIR).
 # Kept in sync with the client locales: en (default), zh, ja, ko.
 WORKSPACE_TEMPLATE_LANGS: tuple[str, ...] = ("zh", "en", "ja", "ko")

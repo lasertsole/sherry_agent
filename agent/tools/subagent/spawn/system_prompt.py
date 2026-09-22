@@ -128,6 +128,21 @@ def build_subagent_system_prompt(
         )
         sections.append(spawn_guidance)
 
+    # Section 5.5: Code Intelligence (RESEARCHER only — matches the tool injection
+    # in spawn/core.py; other roles receive neither the tools nor this guidance).
+    if functional_role == FunctionalRole.RESEARCHER:
+        sections.append(
+            "## Code Intelligence Tools\n"
+            "You have code retrieval tools for fast repo navigation:\n"
+            "- `explore` — fuzzy intent → symbol source + call paths. USE FIRST.\n"
+            "- `callers` — who calls this symbol\n"
+            "- `callees` — what does this symbol call\n"
+            "- `impact` — blast radius of modifying a symbol\n"
+            "Workflow: explore(query) → callers(symbol) for precision → "
+            "search_files as keyword fallback.\n"
+            "Index is built on first use; subsequent queries are fast."
+        )
+
     # Section 6: Session Context
     context_lines = [
         f"  Your session key: {child_session_key}",

@@ -108,3 +108,7 @@ from .token_guard import (
     TokenGuardError as TokenGuardError,
     assert_max_token_valid as assert_max_token_valid,
 )
+from .code_intel import (
+    CodeIntelConfig as CodeIntelConfig,
+    CODE_INTEL as CODE_INTEL,
+)
