@@ -134,7 +134,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  └── 3. Finally（必ず実行）
+  ├── 3. Goal Loop — goal_loop + COMPLETION_JUDGE["enabled"] + 予算 > 1 の場合のみ
+  │     ├── judge_completion(task, last_response, evidence) → done | continue
+  │     ├── continue → 判定器の continuation_prompt を次の HumanMessage として
+  │     │   同じ checkpoint スレッドに注入；ターンは goal_max_turns に
+  │     │   カウントされる（最初のターンを含む）
+  │     └── 予算枯渇 → error="goal_loop_budget_exhausted" 付きで OK 確定
+  │
+  └── 4. Finally（必ず実行）
         ├── TimeoutError   → outcome = TIMEOUT
         ├── CancelledError → outcome = KILLED
         ├── Exception      → outcome = ERROR
@@ -568,6 +575,8 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | ファイル添付（name, content, encoding, mount_path） |
+| `goal_loop` | bool | False | オプトインの完了判定ループ；`COMPLETION_JUDGE["enabled"]` が必要 |
+| `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
 
 戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION モード：「Use sessions_send(sessionKey=...) to send follow-up messages」）。
 
@@ -761,7 +770,8 @@ agent/tools/subagent/
 │   ├── origin_routing.py      リクエスト元オリジンルーティング解決 + fingerprint 生成（build_origin_fingerprint を外部 API として公開）
 │   ├── gateway_dispatch.py    最小権限 scope 解決 + SubagentLaunchAuthorization + scope→deny マッピング
 │   ├── accepted_note.py       SpawnResult.note の内容生成
-│   └── thinking.py            thinking レベル上書き解析
+│   ├── thinking.py            thinking レベル上書き解析
+│   └── completion_judge.py    CompletionJudge — 補助 LLM の done/continue 判定（goal loop）
 │
 ├── announce/                  完了通知パイプライン
 │   ├── core.py                runAnnounceFlow() メイン調整

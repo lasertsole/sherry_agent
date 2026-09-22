@@ -133,7 +133,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  └── 3. Finally (항상 실행)
+  ├── 3. Goal Loop — goal_loop + COMPLETION_JUDGE["enabled"] + 예산 > 1일 때만
+  │     ├── judge_completion(task, last_response, evidence) → done | continue
+  │     ├── continue → 판정기의 continuation_prompt를 다음 HumanMessage로
+  │     │   같은 checkpoint 스레드에 주입; 턴은 goal_max_turns에
+  │     │   포함되어 계산(첫 턴 포함)
+  │     └── 예산 소진 → error="goal_loop_budget_exhausted"와 함께 OK 확정
+  │
+  └── 4. Finally (항상 실행)
         ├── TimeoutError   → outcome = TIMEOUT
         ├── CancelledError → outcome = KILLED
         ├── Exception      → outcome = ERROR
@@ -563,6 +570,8 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | 파일 첨부 (name, content, encoding, mount_path) |
+| `goal_loop` | bool | False | 옵트인 완료 판정 루프; `COMPLETION_JUDGE["enabled"]` 필요 |
+| `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
 
 반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION 모드: "Use sessions_send(sessionKey=...) to send follow-up messages").
 
@@ -756,7 +765,8 @@ agent/tools/subagent/
 │   ├── origin_routing.py      요청자 오리진 라우팅 해결 + fingerprint 생성(build_origin_fingerprint를 외부 API로 노출)
 │   ├── gateway_dispatch.py    최소 권한 scope 해결 + SubagentLaunchAuthorization + scope→deny 매핑
 │   ├── accepted_note.py       SpawnResult.note 내용 생성
-│   └── thinking.py            thinking 수준 재정의 파싱
+│   ├── thinking.py            thinking 수준 재정의 파싱
+│   └── completion_judge.py    CompletionJudge — 보조 LLM done/continue 판정(goal loop)
 │
 ├── announce/                  완료 알림 파이프라인
 │   ├── core.py                runAnnounceFlow() 메인 조율

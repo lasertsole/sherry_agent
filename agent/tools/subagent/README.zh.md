@@ -131,7 +131,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  └── 3. Finally（无论如何都会执行）
+  ├── 3. Goal Loop —— 仅当 goal_loop + COMPLETION_JUDGE["enabled"] + 预算 > 1
+  │     ├── judge_completion(task, last_response, evidence) → done | continue
+  │     ├── continue → 把判别器的 continuation_prompt 作为下一条
+  │     │   HumanMessage 注入同一 checkpoint 线程；轮次计入
+  │     │   goal_max_turns（含首轮）
+  │     └── 预算耗尽 → 以 OK 定稿并带 error="goal_loop_budget_exhausted"
+  │
+  └── 4. Finally（无论如何都会执行）
         ├── TimeoutError   → outcome = TIMEOUT
         ├── CancelledError → outcome = KILLED
         ├── Exception      → outcome = ERROR
@@ -558,6 +565,8 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | 文件附件（name, content, encoding, mount_path） |
+| `goal_loop` | bool | False | 可选完成判别循环；需 `COMPLETION_JUDGE["enabled"]` |
+| `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
 
 返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION 模式：「Use sessions_send(sessionKey=...) to send follow-up messages」）。
 
@@ -751,7 +760,8 @@ agent/tools/subagent/
 │   ├── origin_routing.py      请求方来源路由解析 + fingerprint 生成（build_origin_fingerprint 暴露为外部 API）
 │   ├── gateway_dispatch.py    最小权限 scope 解析 + SubagentLaunchAuthorization + scope→deny 映射
 │   ├── accepted_note.py       SpawnResult.note 内容生成
-│   └── thinking.py            thinking 级别覆盖解析
+│   ├── thinking.py            thinking 级别覆盖解析
+│   └── completion_judge.py    CompletionJudge —— 辅助 LLM 的 done/continue 判定（goal loop）
 │
 ├── announce/                  完成通知管道
 │   ├── core.py                runAnnounceFlow() 主协调

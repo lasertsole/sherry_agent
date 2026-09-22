@@ -131,7 +131,14 @@ _execute_subagent(run, system_prompt, user_message, forked_messages, ...)
   │     │   forked_messages + [HumanMessage(user_message)]}
   │     └── await asyncio.wait_for(child_agent.ainvoke(...), timeout)
   │
-  └── 3. Finally (always executed)
+  ├── 3. Goal Loop — only when goal_loop + COMPLETION_JUDGE["enabled"] + budget > 1
+  │     ├── judge_completion(task, last_response, evidence) → done | continue
+  │     ├── continue → inject the judge's continuation_prompt as the next
+  │     │   HumanMessage on the SAME checkpoint thread; turns are counted
+  │     │   against goal_max_turns (including the first)
+  │     └── budget spent → finalize OK with error="goal_loop_budget_exhausted"
+  │
+  └── 4. Finally (always executed)
         ├── TimeoutError   → outcome = TIMEOUT
         ├── CancelledError → outcome = KILLED
         ├── Exception      → outcome = ERROR
@@ -561,6 +568,8 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `context` | str | "isolated" | "isolated" / "fork" |
 | `attachments` | list\|None | None | File attachments (name, content, encoding, mount_path) |
+| `goal_loop` | bool | False | Opt-in completion-judge loop; requires `COMPLETION_JUDGE["enabled"]` |
+| `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION mode: "Use sessions_send(sessionKey=...) to send follow-up messages").
 
@@ -754,7 +763,8 @@ agent/tools/subagent/
 │   ├── origin_routing.py      Requester origin routing resolution + fingerprint generation (build_origin_fingerprint exposed as external API)
 │   ├── gateway_dispatch.py    Least-privilege scope resolution + SubagentLaunchAuthorization + scope→deny mapping
 │   ├── accepted_note.py       SpawnResult.note content generation
-│   └── thinking.py            Thinking-level override parsing
+│   ├── thinking.py            Thinking-level override parsing
+│   └── completion_judge.py    Completion judge — auxiliary-LLM done/continue verdict (goal loop)
 │
 ├── announce/                  Completion notification pipeline
 │   ├── core.py                runAnnounceFlow() main coordination
