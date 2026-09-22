@@ -34,6 +34,7 @@ from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResu
 from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
+from agent.middlewares.subagent_completion_drain import core as drain_core
 from agent.middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from agent.tools.subagent.announce import delivery as dl
 from agent.tools.subagent.announce import steering_queue as sq
@@ -377,6 +378,7 @@ def e2e_env(monkeypatch, tmp_path):
 
 
 async def test_busy_injection_reaches_next_model_call(monkeypatch, e2e_env):
+    monkeypatch.setattr(drain_core, "_completion_gate_violated", lambda _key: True)
     sid = "e2e-busy"
     e2e_env.bind_ws(sid, SyncRecordingWebSocket())
     run = register_run(
@@ -423,7 +425,8 @@ async def test_busy_injection_reaches_next_model_call(monkeypatch, e2e_env):
     ]
     assert injected, f"next model call never received the injection: {model.received!r}"
     _assert_completion_carrier(injected[0], "worker-busy", "completed", run.run_id)
-    assert str(model.received[0][-1].content).startswith("[subagent:worker-busy completed]")
+    # The always-on verification gate is appended after the carrier.
+    assert model.received[0][-1].text == drain_core._VERIFICATION_GATE_MESSAGE
 
     # The injected message persists in the parent session's checkpointer history.
     graph = await messages_mod.built_agent()

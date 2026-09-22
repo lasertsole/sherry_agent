@@ -10,9 +10,8 @@ judges one step result AFTER ``taskflow_resume`` injects it, this judge
 evaluates the whole subagent run BEFORE ``complete_subagent_run()`` finalizes it.
 
 Design principles:
-- Fail-open: any judge failure (disabled, model error, unparseable response)
-  degrades to DONE so a subagent is never trapped in the goal loop by the judge
-  itself.
+- Fail-open: any judge failure (model error, unparseable response) degrades to
+  DONE so a subagent is never trapped in the goal loop by the judge itself.
 - Auxiliary LLM at temperature 0 for deterministic verdicts.
 - Evidence-aware: the judge is shown the verification-evidence summary.
 """
@@ -27,7 +26,6 @@ from typing import NamedTuple
 import json_repair
 from loguru import logger
 
-from config.features import COMPLETION_JUDGE
 from models import build_auxiliary_llm
 
 
@@ -147,14 +145,9 @@ async def judge_completion(
 ) -> CompletionJudgeResult:
     """Judge whether a subagent run is complete.
 
-    Fail-open: any error (disabled judge, model failure, unparseable output)
-    degrades to DONE so the judge can never trap a subagent in a goal loop.
+    Fail-open: any error (model failure, unparseable output) degrades to DONE so
+    the judge can never trap a subagent in a goal loop.
     """
-    if not COMPLETION_JUDGE["enabled"]:
-        return CompletionJudgeResult(
-            CompletionVerdict.DONE, "completion judge disabled (fail-open)", ""
-        )
-
     prompt = _build_completion_prompt(
         task_text,
         (last_response or "")[:_MAX_RESPONSE_CHARS],

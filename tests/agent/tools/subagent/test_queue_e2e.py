@@ -60,6 +60,7 @@ from langgraph.checkpoint.memory import InMemorySaver
 from pydantic import Field
 
 from agent import core as agent_core
+from agent.middlewares.subagent_completion_drain import core as drain_core
 from agent.middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from agent.tools.subagent.announce import steering_queue as sq
 from agent.tools.subagent.announce.completion_message import build_completion_message
@@ -573,10 +574,11 @@ async def test_ac5_tool_park_cancel_heals(e2e_env):
     assert _text_of(h2) == "follow-up"
 
 
-async def test_ac6_cron_row_and_completion_carrier_no_cross_duplication(e2e_env):
+async def test_ac6_cron_row_and_completion_carrier_no_cross_duplication(e2e_env, monkeypatch):
     """AC-6: the cron row drains via the user-input queue while the
     subagent-completion carrier rides the drain middleware; neither store
     duplicates the other's payload."""
+    monkeypatch.setattr(drain_core, "_completion_gate_violated", lambda _key: True)
     sid = "e2e-ac6"
     e2e_env.bind_ws(sid, _RecordingSocket())
     model = _ScriptedStreamModel(
@@ -615,8 +617,10 @@ async def test_ac6_cron_row_and_completion_carrier_no_cross_duplication(e2e_env)
     # carrier HumanMessage right before that model call -- exactly once.
     assert len(model.received) == 2
     turn2 = model.received[1]
-    assert _text_of(turn2[-2]) == "cron-echo"
-    injected = turn2[-1]
+    # The always-on verification gate is appended after the carrier.
+    assert _text_of(turn2[-1]) == drain_core._VERIFICATION_GATE_MESSAGE
+    assert _text_of(turn2[-3]) == "cron-echo"
+    injected = turn2[-2]
     assert isinstance(injected, HumanMessage)
     assert "[subagent:finder completed]" in _text_of(injected)
     meta = getattr(injected, "metadata", None) or {}

@@ -47,12 +47,10 @@ def _parse_exit_code(result: str) -> int:
 def record_verification_evidence(command: str, result: str, session_id: str) -> None:
     """Append one evidence row for a recognized verification command.
 
-    Fail-open: disabled recording, an unclassified command, or any ledger
-    write error leaves the tool result untouched and only logs.
+    Fail-open: an unclassified command or any ledger write error leaves the tool
+    result untouched and only logs.
     """
     try:
-        if not EVIDENCE_LEDGER["auto_record"]:
-            return
         kind = classify_verification_command(command)
         if kind is None:
             return
@@ -71,8 +69,6 @@ def record_verification_evidence(command: str, result: str, session_id: str) -> 
 def mark_evidence_stale(file_path: str, session_id: str) -> None:
     """Append a stale event for ``file_path`` after an edit (fail-open)."""
     try:
-        if not EVIDENCE_LEDGER["auto_stale"]:
-            return
         EvidenceLedger.for_session(session_id).mark_stale_for_path(file_path)
     except Exception as exc:
         logger.warning("evidence stale mark failed: {}", exc)

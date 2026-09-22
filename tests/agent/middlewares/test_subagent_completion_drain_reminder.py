@@ -1,10 +1,10 @@
-"""Drain coverage: completion carriers get the Sisyphus verification reminder.
+"""Drain coverage: the always-on verification gate and carrier passthrough.
 
 Extends ``tests/agent/tools/subagent/test_completion_drain.py`` without
 depending on the subagent test stubs: the middleware's ``drain``/``rehydrate``
 module references are monkeypatched with fakes, so the queue plumbing stays
-untouched and only the reminder-append contract (plus fail-open behavior) is
-exercised.
+untouched and only batch assembly (carriers kept verbatim + gate appended) and
+fail-open behavior are exercised.
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ from langchain_core.messages import HumanMessage
 
 from agent.middlewares.subagent_completion_drain import core as drain_mod
 from agent.middlewares.subagent_completion_drain.core import (
-    _VERIFICATION_REMINDER,
+    _VERIFICATION_GATE_MESSAGE,
     SubagentCompletionDrainMiddleware,
 )
 from agent.tools.subagent.announce import steering_queue as sq
@@ -53,25 +53,24 @@ def patched_drain(monkeypatch: pytest.MonkeyPatch) -> dict:
 
     monkeypatch.setattr(sq, "rehydrate", _rehydrate)
     monkeypatch.setattr(sq, "drain", _drain)
-    # Memory reconcile has its own suite; this file only covers the
-    # reminder-append contract and must not touch workspace/memory/.
     monkeypatch.setattr(drain_mod, "_backflow_shared_memory", lambda: None)
+    monkeypatch.setattr(drain_mod, "_completion_gate_violated", lambda _key: True)
     return state
 
 
-def test_drained_carrier_content_ends_with_reminder(patched_drain: dict):
-    patched_drain["items"] = [SimpleNamespace(message=_carrier("report ready"))]
+def test_every_carrier_is_injected_verbatim_and_gate_appended(patched_drain: dict):
+    patched_drain["items"] = [
+        SimpleNamespace(message=_carrier("report one")),
+        SimpleNamespace(message=_carrier("report two")),
+    ]
     mw = SubagentCompletionDrainMiddleware()
 
     result = asyncio.run(mw.abefore_model({"session_id": SID}, None))
 
     assert result is not None
-    message = result["messages"][0]
-    assert message.text.startswith("report ready")
-    assert message.text.endswith(_VERIFICATION_REMINDER)
-    assert "SISYPHUS VIOLATION" in message.text
-    assert message.metadata.get("provenance") == "subagent_completion"
-    assert message.metadata.get("internal") is True
+    assert [m.text for m in result["messages"][:2]] == ["report one", "report two"]
+    assert result["messages"][2].text == _VERIFICATION_GATE_MESSAGE
+    assert result["messages"][0].metadata.get("provenance") == "subagent_completion"
 
 
 def test_non_carrier_message_is_left_unchanged(patched_drain: dict):

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from config.features import EVIDENCE_LEDGER
 from agent.tools.todolist.evidence_ledger import EvidenceLedger
 
 import agent.tools.file_tools.patch_file as patch_file
@@ -63,17 +62,6 @@ def test_patch_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
     assert stale["event"] == "stale"
     assert stale["file_path"] == "bar.py"
     assert stale["session_id"] == "s1"
-
-
-def test_auto_stale_disabled_skips(ledger_path, tmp_path, monkeypatch):
-    target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_project_path", lambda _path: target)
-    monkeypatch.setitem(EVIDENCE_LEDGER, "auto_stale", False)
-    tool = write_file.build_write_file_tool()
-
-    tool._run("foo.py", "print('x')\n", session_id="s1")
-
-    assert EvidenceLedger.read_all() == []
 
 
 def test_write_file_survives_ledger_failure(ledger_path, tmp_path, monkeypatch):

@@ -17,6 +17,7 @@ from agent.tools.subagent.spawn.completion_judge import (
     CompletionVerdict,
 )
 from agent.tools.subagent.types.registry import RunOutcomeStatus, SubagentRunRecord
+from config.features import COMPLETION_JUDGE
 
 pytestmark = [pytest.mark.unit]
 
@@ -85,7 +86,6 @@ def _install_judge(monkeypatch: pytest.MonkeyPatch, decisions: list[CompletionJu
         recorded.append((task_text, last_response))
         return next(iterator)
 
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", True)
     monkeypatch.setattr(completion_judge, "judge_completion", _fake)
     return recorded
 
@@ -98,7 +98,7 @@ def _continue(prompt: str = "keep going") -> CompletionJudgeResult:
     return CompletionJudgeResult(CompletionVerdict.CONTINUE, "more work", prompt)
 
 
-async def _run_goal(monkeypatch, run, child, *, goal_loop=True, goal_max_turns=5) -> list:
+async def _run_goal(monkeypatch, run, child, *, goal_max_turns=5) -> list:
     captured = _install_deps(monkeypatch, child)
     await spawn_core._execute_subagent(
         run=run,
@@ -107,28 +107,9 @@ async def _run_goal(monkeypatch, run, child, *, goal_loop=True, goal_max_turns=5
         forked_messages=[],
         tools=[],
         timeout_seconds=0.0,
-        goal_loop=goal_loop,
         goal_max_turns=goal_max_turns,
     )
     return captured
-
-
-@pytest.mark.asyncio
-async def test_non_goal_loop_runs_single_turn(monkeypatch: pytest.MonkeyPatch):
-    run = _make_run()
-    child = _FakeChildAgent(["only turn"])
-
-    async def _boom(*_a, **_k):
-        raise AssertionError("judge must not run without goal_loop")
-
-    monkeypatch.setattr(completion_judge, "judge_completion", _boom)
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", True)
-    captured = await _run_goal(monkeypatch, run, child, goal_loop=False)
-
-    assert len(child.inputs) == 1
-    assert captured[0][1].status == RunOutcomeStatus.OK
-    assert captured[0][1].error is None
-    assert captured[0][2] == "only turn"
 
 
 @pytest.mark.asyncio
@@ -178,22 +159,6 @@ async def test_goal_loop_budget_exhausted(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.mark.asyncio
-async def test_goal_loop_disabled_feature_is_single_turn(monkeypatch: pytest.MonkeyPatch):
-    run = _make_run()
-    child = _FakeChildAgent(["only turn"])
-
-    async def _boom(*_a, **_k):
-        raise AssertionError("judge must not run while the feature is disabled")
-
-    monkeypatch.setattr(completion_judge, "judge_completion", _boom)
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", False)
-    captured = await _run_goal(monkeypatch, run, child)
-
-    assert len(child.inputs) == 1
-    assert captured[0][1].error is None
-
-
-@pytest.mark.asyncio
 async def test_goal_loop_budget_of_one_is_single_turn(monkeypatch: pytest.MonkeyPatch):
     run = _make_run()
     child = _FakeChildAgent(["only turn"])
@@ -202,7 +167,6 @@ async def test_goal_loop_budget_of_one_is_single_turn(monkeypatch: pytest.Monkey
         raise AssertionError("judge must not run when the budget is one turn")
 
     monkeypatch.setattr(completion_judge, "judge_completion", _boom)
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", True)
     captured = await _run_goal(monkeypatch, run, child, goal_max_turns=1)
 
     assert len(child.inputs) == 1
@@ -236,13 +200,11 @@ async def test_lane_wrapper_passes_goal_params(monkeypatch: pytest.MonkeyPatch):
             forked_messages=[],
             tools=[],
             timeout_seconds=0.0,
-            goal_loop=True,
             goal_max_turns=3,
         )
     finally:
         clear_registry()
 
-    assert captured[0]["goal_loop"] is True
     assert captured[0]["goal_max_turns"] == 3
 
 
@@ -262,7 +224,6 @@ async def test_spawn_direct_passes_goal_params(monkeypatch: pytest.MonkeyPatch):
         result = await spawn_subagent_direct(
             task=_GOAL_TASK,
             requester_session_key="agent:main:session:test",
-            goal_loop=True,
             goal_max_turns=4,
         )
         await asyncio.sleep(0.01)
@@ -270,7 +231,6 @@ async def test_spawn_direct_passes_goal_params(monkeypatch: pytest.MonkeyPatch):
         clear_registry()
 
     assert result.status == "accepted"
-    assert captured[0]["goal_loop"] is True
     assert captured[0]["goal_max_turns"] == 4
 
 
@@ -285,13 +245,12 @@ async def test_spawn_direct_defaults_budget_from_config(monkeypatch: pytest.Monk
         captured.append(kwargs)
 
     monkeypatch.setattr(spawn_core, "_execute_subagent_with_lane", _fake_lane)
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "goal_max_turns", 7)
+    monkeypatch.setitem(COMPLETION_JUDGE, "goal_max_turns", 7)
     clear_registry()
     try:
         await spawn_subagent_direct(
             task=_GOAL_TASK,
             requester_session_key="agent:main:session:test",
-            goal_loop=True,
         )
         await asyncio.sleep(0.01)
     finally:
@@ -314,7 +273,6 @@ async def test_sessions_spawn_schema_forwards_goal_params(monkeypatch: pytest.Mo
     monkeypatch.setattr(sessions_spawn_module, "spawn_subagent_direct", _fake_spawn)
     tool = sessions_spawn_module.SessionsSpawnTool(session_id="s-1")
 
-    await tool._arun(task=_GOAL_TASK, goal_loop=True, goal_max_turns=3)
+    await tool._arun(task=_GOAL_TASK, goal_max_turns=3)
 
-    assert captured["goal_loop"] is True
     assert captured["goal_max_turns"] == 3

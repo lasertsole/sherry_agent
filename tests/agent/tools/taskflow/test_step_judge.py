@@ -117,20 +117,6 @@ async def test_judge_fails_open_on_unparseable_response(monkeypatch: pytest.Monk
 
 
 @pytest.mark.asyncio
-async def test_judge_disabled_short_circuits_without_llm(monkeypatch: pytest.MonkeyPatch):
-    def _build(temperature: float | None = None):
-        raise AssertionError("disabled judge must not build an LLM")
-
-    monkeypatch.setattr(step_judge, "build_auxiliary_llm", _build)
-    monkeypatch.setitem(step_judge.STEP_JUDGE, "enabled", False)
-
-    result = await judge_step_result("task", "criteria", "result")
-
-    assert result.verdict == StepVerdict.PASS
-    assert "disabled" in result.reason
-
-
-@pytest.mark.asyncio
 async def test_judge_accepts_missing_evidence_summary(monkeypatch: pytest.MonkeyPatch):
     recorder: list = []
     _install_llm(monkeypatch, '{"verdict": "pass", "reason": "ok"}', recorder)

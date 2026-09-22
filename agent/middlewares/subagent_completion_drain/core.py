@@ -38,21 +38,8 @@ from loguru import logger
 
 __all__ = ["SubagentCompletionDrainMiddleware"]
 
-# Sisyphus verification: appended to every drained subagent-completion carrier so the parent turn
-# is reminded that a completion message is a DoneClaim, not a verified result.
-_VERIFICATION_REMINDER = (
-    "\n\n[SYSTEM REMINDER] Subagent completed. "
-    "Before marking the todo as completed, you MUST:\n"
-    "1. Run todoread to check current state\n"
-    "2. Verify the work against acceptance criteria (Sisyphus contract)\n"
-    "3. Probe for stale state, dirty worktree, leftover resources\n"
-    "4. Only then mark completed via todowrite\n"
-    "Unverified completion = SISYPHUS VIOLATION = Lost progress."
-)
-
-# Opt-in programmatic gate (``enforce_verification``): appended to the drained
-# batch when the session has no passing verification evidence, replacing the
-# text reminder with a mandatory-verification instruction.
+# Always-on programmatic gate: appended to the drained batch when the session has
+# no passing verification evidence, so the parent must verify before completing.
 _VERIFICATION_GATE_MESSAGE = (
     "[GATE] Completion blocked: verification evidence missing or failing. "
     "Run verification commands (test/lint/build) before completing."
@@ -123,11 +110,8 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
 
     Registered in ``agent/core.py`` immediately AFTER ``ToolCallNormalize`` so
     the injected messages bypass the sanitize rewrite on the injection turn.
+    The programmatic verification gate is unconditional.
     """
-
-    # Optional programmatic verification gate. False (the default) preserves the
-    # text-reminder path; True is wired from EVIDENCE_LEDGER["enforce_on_complete"].
-    enforce_verification: bool = False
 
     async def abefore_model(self, state, runtime=None):
         """Drain the session queue; return ``{"messages": [...]}`` or ``None``.
@@ -156,19 +140,8 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
                 len(items),
                 key,
             )
-            # Completion carriers are DoneClaims, not verified results —
-            # append the Sisyphus reminder without mutating the shared message.
-            if not self.enforce_verification:
-                messages = []
-                for item in items:
-                    message = item.message
-                    if _is_internal_completion(message) and isinstance(message.content, str):
-                        message = message.model_copy(
-                            update={"content": message.content + _VERIFICATION_REMINDER}
-                        )
-                    messages.append(message)
-                return {"messages": messages}
-
+            # Completion carriers are DoneClaims, not verified results: when the
+            # session has no passing verification evidence, append the gate.
             messages = [item.message for item in items]
             if _completion_gate_violated(str(key)):
                 messages.append(HumanMessage(content=_VERIFICATION_GATE_MESSAGE))

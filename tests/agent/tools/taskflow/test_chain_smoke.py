@@ -282,7 +282,6 @@ async def test_goal_loop_smoke(monkeypatch: pytest.MonkeyPatch):
             '{"verdict": "done", "reason": "deliverable present"}',
         ]
     )
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", True)
     monkeypatch.setattr(completion_judge, "build_auxiliary_llm", judge_llm)
 
     run = SubagentRunRecord(
@@ -300,7 +299,6 @@ async def test_goal_loop_smoke(monkeypatch: pytest.MonkeyPatch):
         forked_messages=[],
         tools=[],
         timeout_seconds=0.0,
-        goal_loop=True,
         goal_max_turns=3,
     )
 

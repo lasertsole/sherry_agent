@@ -50,12 +50,6 @@ class SessionsSpawnSchema(BaseModel):
         description="Optional list of file attachments to pass to the subagent. "
         "Each attachment has name, content, encoding (utf8/base64), and optional mount_path.",
     )
-    goal_loop: bool = Field(
-        default=False,
-        description="When true and the completion-judge feature is enabled, an "
-        "auxiliary LLM reviews the result and the subagent continues for extra "
-        "turns until judged complete or the turn budget is spent.",
-    )
     goal_max_turns: int | None = Field(
         default=None,
         description="Optional goal-loop turn budget override (including the first "
@@ -102,7 +96,6 @@ class SessionsSpawnTool(BaseTool):
         cleanup: str = "delete",
         context: str = "isolated",
         attachments: list[AttachmentSchema] | None = None,
-        goal_loop: bool = False,
         goal_max_turns: int | None = None,
         functional_role: str | None = None,
         extra_tools: list[str] | None = None,
@@ -147,7 +140,6 @@ class SessionsSpawnTool(BaseTool):
             context=context_mode,
             attachments=attach_dicts,
             expects_completion_message=True,
-            goal_loop=goal_loop,
             goal_max_turns=goal_max_turns,
             functional_role_hint=functional_role,
             extra_tools=extra_tools,

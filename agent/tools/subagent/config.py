@@ -45,7 +45,6 @@ class SubagentConfig(BaseModel):
     attachments_max_file_bytes: int = 1 * 1024 * 1024  # 1 MB per file
     attachments_max_total_bytes: int = 5 * 1024 * 1024  # 5 MB total
 
-    functional_roles_enabled: bool = True
     default_functional_role: str = "general"
     # Built-in role definitions live in-package (agent/tools/subagent/roles/definitions/);
     # this names the OPTIONAL untracked workspace override directory.

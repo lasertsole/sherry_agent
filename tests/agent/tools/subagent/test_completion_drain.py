@@ -21,9 +21,10 @@ from agent.middlewares.output_repetition_guard.repetition_state import (
     _HISTORY_KEY,
     _REASONING_HISTORY_KEY,
 )
+from agent.middlewares.subagent_completion_drain import core as drain_mod
 from agent.middlewares.subagent_completion_drain.core import (
+    _VERIFICATION_GATE_MESSAGE,
     SubagentCompletionDrainMiddleware,
-    _VERIFICATION_REMINDER,
 )
 from agent.tools.subagent.announce import steering_queue as sq
 from agent.tools.subagent.announce.steering_queue import SteeringQueue
@@ -85,7 +86,8 @@ def isolated_queue(tmp_path, monkeypatch):
     return queue
 
 
-def test_drain_before_model_call(isolated_queue):
+def test_drain_before_model_call(isolated_queue, monkeypatch):
+    monkeypatch.setattr(drain_mod, "_completion_gate_violated", lambda _key: True)
     injected = _completion_human()
     asyncio.run(sq.enqueue_steering(SID_DRAIN, injected))
 
@@ -95,12 +97,13 @@ def test_drain_before_model_call(isolated_queue):
     result = asyncio.run(mw.abefore_model(state, None))
     assert result is not None
     msgs = result["messages"]
-    assert len(msgs) == 1
+    assert len(msgs) == 2
     assert isinstance(msgs[0], HumanMessage)
     meta = msgs[0].metadata or {}
     assert meta.get("internal") is True
     assert meta.get("provenance") == "subagent_completion"
-    assert msgs[0].text == injected.text + _VERIFICATION_REMINDER
+    assert msgs[0].text == injected.text
+    assert msgs[1].text == _VERIFICATION_GATE_MESSAGE
 
     # drain marks rows CONSUMED: no re-drain on the same session
     assert asyncio.run(mw.abefore_model(state, None)) is None
@@ -130,6 +133,7 @@ def test_internal_message_skips_guard_and_budget():
 
 
 def test_resume_drains_persisted_injection(tmp_path, monkeypatch):
+    monkeypatch.setattr(drain_mod, "_completion_gate_violated", lambda _key: True)
     db = tmp_path / "resume.db"
     monkeypatch.setitem(
         sq._QUEUE_HOLDER,
@@ -150,8 +154,9 @@ def test_resume_drains_persisted_injection(tmp_path, monkeypatch):
     mw = SubagentCompletionDrainMiddleware()
     result = asyncio.run(mw.abefore_model({"session_id": SID_RESUME}, None))
     assert result is not None
-    assert len(result["messages"]) == 1
-    assert result["messages"][0].text == "resume me" + _VERIFICATION_REMINDER
+    assert len(result["messages"]) == 2
+    assert result["messages"][0].text == "resume me"
+    assert result["messages"][1].text == _VERIFICATION_GATE_MESSAGE
 
     # consumed exactly once after resume
     assert asyncio.run(mw.abefore_model({"session_id": SID_RESUME}, None)) is None

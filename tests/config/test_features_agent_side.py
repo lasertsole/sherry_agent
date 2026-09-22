@@ -221,9 +221,6 @@ SPOT_DEFAULTS = [
             }
         ),
     ),
-    (EVIDENCE_LEDGER, "auto_record", True),
-    (EVIDENCE_LEDGER, "auto_stale", True),
-    (EVIDENCE_LEDGER, "enforce_on_complete", False),
     (
         EVIDENCE_LEDGER,
         "verify_commands",
@@ -235,11 +232,9 @@ SPOT_DEFAULTS = [
             "format": ["ruff format", "prettier", "black"],
         },
     ),
-    (STEP_JUDGE, "enabled", True),
     (STEP_JUDGE, "max_retries", 2),
     (STEP_JUDGE, "max_result_chars", 8000),
     (STEP_JUDGE, "evidence_aware", True),
-    (COMPLETION_JUDGE, "enabled", False),
     (COMPLETION_JUDGE, "goal_max_turns", 5),
 ]
 

@@ -5,8 +5,8 @@ a subagent's step result satisfies the step's ``validation_criteria`` and
 returns PASS / RETRY / BLOCK.
 
 Design principles:
-- Fail-open: any judge failure (disabled, model error, unparseable response)
-  degrades to PASS so progress is never blocked by the judge itself.
+- Fail-open: any judge failure (model error, unparseable response) degrades to
+  PASS so progress is never blocked by the judge itself.
 - Auxiliary LLM at temperature 0 for deterministic verdicts.
 - Evidence-aware: the judge is shown the verification-evidence summary.
 """
@@ -147,12 +147,9 @@ async def judge_step_result(
 ) -> JudgeResult:
     """Judge whether a subagent's step result satisfies its validation criteria.
 
-    Fail-open: any error (disabled judge, model failure, unparseable output)
-    degrades to PASS so the judge can never block progress.
+    Fail-open: any error (model failure, unparseable output) degrades to PASS so
+    the judge can never block progress.
     """
-    if not STEP_JUDGE["enabled"]:
-        return JudgeResult(StepVerdict.PASS, "step judge disabled (fail-open)", "")
-
     prompt = _build_judge_prompt(
         step_task,
         criteria,

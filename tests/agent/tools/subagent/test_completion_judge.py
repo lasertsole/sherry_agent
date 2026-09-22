@@ -30,8 +30,6 @@ class _RecordingLLM:
 
 
 def _install_llm(monkeypatch: pytest.MonkeyPatch, content: str, recorder: list) -> None:
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", True)
-
     def _build(temperature: float | None = None) -> _RecordingLLM:
         llm = _RecordingLLM(content)
         recorder.append(llm)
@@ -89,7 +87,6 @@ async def test_judge_fails_open_when_llm_unavailable(monkeypatch: pytest.MonkeyP
     def _build(temperature: float | None = None):
         raise RuntimeError("aux llm offline")
 
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", True)
     monkeypatch.setattr(completion_judge, "build_auxiliary_llm", _build)
 
     result = await judge_completion("do X", "whatever")
@@ -107,20 +104,6 @@ async def test_judge_fails_open_on_unparseable_response(monkeypatch: pytest.Monk
 
     assert result.verdict == CompletionVerdict.DONE
     assert "fail-open" in result.reason
-
-
-@pytest.mark.asyncio
-async def test_judge_disabled_short_circuits_without_llm(monkeypatch: pytest.MonkeyPatch):
-    def _build(temperature: float | None = None):
-        raise AssertionError("disabled judge must not build an LLM")
-
-    monkeypatch.setattr(completion_judge, "build_auxiliary_llm", _build)
-    monkeypatch.setitem(completion_judge.COMPLETION_JUDGE, "enabled", False)
-
-    result = await judge_completion("do X", "whatever")
-
-    assert result.verdict == CompletionVerdict.DONE
-    assert "disabled" in result.reason
 
 
 @pytest.mark.asyncio

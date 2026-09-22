@@ -211,7 +211,6 @@ async def spawn_subagent_direct(
     output_schema: dict | None = None,
     model: str | None = None,
     launch_fingerprint: str | None = None,
-    goal_loop: bool = False,
     goal_max_turns: int | None = None,
     functional_role_hint: str | None = None,
     extra_tools: list[str] | None = None,
@@ -242,12 +241,10 @@ async def spawn_subagent_direct(
         output_schema: JSON Schema dict — child output will be validated against it.
         model: Override the LLM model name for this child.
         launch_fingerprint: Deduplication fingerprint for swarm launches.
-        goal_loop: When True (and the completion-judge feature is enabled), an
-            auxiliary LLM reviews each turn and the child continues until judged
-            complete or the turn budget is spent. Opt-in: False preserves the
-            single-turn behavior.
         goal_max_turns: Goal-loop turn budget override; ``None`` uses the
-            configured ``COMPLETION_JUDGE["goal_max_turns"]``.
+            configured ``COMPLETION_JUDGE["goal_max_turns"]``. The completion
+            judge reviews every turn and the child continues until judged
+            complete or the budget is spent.
         functional_role_hint: Functional specialization (general / researcher /
             executor / reviewer). ``None`` keeps the pre-migration behavior.
         extra_tools: Additional tool names to attach for this spawn only.
@@ -327,15 +324,9 @@ async def spawn_subagent_direct(
     # --- Phase 4.5: Functional role resolution ---
     # GENERAL is the identity role: it loads no definition, so a spawn without a
     # functional-role hint keeps the pre-migration LLM/tool/prompt behavior.
-    functional_role = (
-        _resolve_functional_role(functional_role_hint, agent_id)
-        if config.functional_roles_enabled
-        else FunctionalRole.GENERAL
-    )
+    functional_role = _resolve_functional_role(functional_role_hint, agent_id)
     role_def: RoleDefinition | None = (
-        load_role_definition(functional_role)
-        if config.functional_roles_enabled and functional_role != FunctionalRole.GENERAL
-        else None
+        load_role_definition(functional_role) if functional_role != FunctionalRole.GENERAL else None
     )
 
     # --- Phase 5: Model & thinking plan ---
@@ -564,7 +555,6 @@ async def spawn_subagent_direct(
             model_tier=resolved_model_tier,
             extra_tools=extra_tool_names,
             output_schema=output_schema,
-            goal_loop=goal_loop,
             goal_max_turns=effective_goal_max_turns,
         )
     )
@@ -602,7 +592,6 @@ async def _execute_subagent_with_lane(
     model_tier: str | None = None,
     extra_tools: list[str] | None = None,
     output_schema: dict | None = None,
-    goal_loop: bool = False,
     goal_max_turns: int = 5,
 ) -> None:
     """Wait for a SUBAGENT lane slot, promote PENDING → RUNNING inside it, then execute.
@@ -637,7 +626,6 @@ async def _execute_subagent_with_lane(
                 model_tier=model_tier,
                 extra_tools=extra_tools,
                 output_schema=output_schema,
-                goal_loop=goal_loop,
                 goal_max_turns=goal_max_turns,
             )
     finally:
@@ -660,7 +648,6 @@ async def _execute_subagent(
     extra_tools: list[str] | None = None,
     output_schema: dict | None = None,
     *,
-    goal_loop: bool = False,
     goal_max_turns: int = 5,
 ) -> None:
     """Run a sub-agent to completion, handling timeouts, cancellation, and lifecycle cleanup.
@@ -671,6 +658,7 @@ async def _execute_subagent(
       3. Invokes the agent with the assembled messages under a wall-clock timeout.
       4. (goal loop) Reviews each turn with the completion judge; CONTINUE injects a
          continuation prompt and runs another turn until DONE or the budget is spent.
+         Runs for every spawn whose budget exceeds one turn.
       5. Validates structured output (if an output_schema was provided).
       6. On failure (timeout / kill / error), applies a configurable grace period
          to allow in-flight completion messages to arrive before finalizing.
@@ -685,7 +673,6 @@ async def _execute_subagent(
         timeout_seconds: Wall-clock timeout in seconds.
         model_override: LLM model name override for this child.
         output_schema: Optional JSON Schema for structured output validation.
-        goal_loop: Enable the completion-judge goal loop (requires the feature enabled).
         goal_max_turns: Goal-loop turn budget including the first turn.
     """
     from langchain_core.messages import HumanMessage
@@ -775,9 +762,7 @@ async def _execute_subagent(
         # Goal loop: the completion judge reviews every turn; CONTINUE injects its
         # continuation prompt as the next human turn until DONE or the budget is
         # spent. Fail-open (judge errors => DONE) so it cannot trap the subagent.
-        from config.features import COMPLETION_JUDGE
-
-        if goal_loop and COMPLETION_JUDGE["enabled"] and goal_max_turns > 1:
+        if goal_max_turns > 1:
             from agent.tools.taskflow.evidence_collector import collect_evidence_summary
 
             from .completion_judge import CompletionVerdict, judge_completion

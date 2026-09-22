@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import pytest
 
-from config.features import EVIDENCE_LEDGER
 from agent.tools.pub_base.sandbox import SandboxPolicy
 from agent.tools.todolist import evidence_recorder
 from agent.tools.todolist.evidence_ledger import EvidenceLedger
@@ -81,14 +80,6 @@ def test_record_parses_repl_subprocess_exit_code(ledger_path):
 
 def test_unclassified_command_is_not_recorded(ledger_path):
     evidence_recorder.record_verification_evidence("ls -la", "a b c", "s1")
-
-    assert EvidenceLedger.read_all() == []
-
-
-def test_auto_record_disabled_skips(ledger_path, monkeypatch):
-    monkeypatch.setitem(EVIDENCE_LEDGER, "auto_record", False)
-
-    evidence_recorder.record_verification_evidence("pytest -q", "ok", "s1")
 
     assert EvidenceLedger.read_all() == []
 
