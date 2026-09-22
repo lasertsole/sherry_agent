@@ -24,9 +24,13 @@ getTaskSummary).
 
 - `taskflow_create(flow_id, description, initial_state)`: create a flow with
   initial revision=1 and status running.
-- `taskflow_run_task(flow_id, task, label, depends_on, expected_revision)`:
+- `taskflow_run_task(flow_id, task, label, depends_on, expected_revision,
+  validation_criteria, retry_policy)`:
   register a step and dispatch a detached subagent session (through the existing
-  spawn entry); `child_session_key` is persisted. `depends_on` is a list of
+  spawn entry); `child_session_key` is persisted. `validation_criteria` records
+  natural-language acceptance criteria on the step (the step judge uses them at
+  resume); `retry_policy` opts the step into failure-aware re-dispatch by
+  `taskflow_wait_all`. `depends_on` is a list of
   prerequisite step ids (e.g. `["step-1"]`): while dependencies are unmet the
   step is recorded as `blocked` and is not dispatched; once every dependency is
   `done` it is dispatched immediately and recorded as `dispatched`. When the
@@ -60,11 +64,22 @@ getTaskSummary).
   `taskflow_resume` for each completed child session.
 - `taskflow_set_waiting(flow_id, wait_reason, expected_revision)`: set the flow
   to waiting and record the wait reason.
-- `taskflow_resume(flow_id, child_session_key, result, expected_revision)`:
+- `taskflow_resume(flow_id, child_session_key, result, expected_revision,
+  token_usage, validation_criteria)`:
   inject the child-session result into the flow state and return to running.
   Idempotent: resuming again with the same (child_session_key, result) does not
-  inject a second time, and the revision does not change.
-- `taskflow_finish(flow_id, summary, expected_revision)`: mark done (terminal).
+  inject a second time, and the revision does not change. When the step carries
+  `validation_criteria`, an auxiliary-LLM step judge reviews the result and
+  returns pass / retry / block: `retry` re-dispatches the step within its own
+  retry budget (`STEP_JUDGE["max_retries"]`, default 2) with the judge's
+  guidance appended to the replacement task, and `block` (or an exhausted
+  budget) marks the step `blocked`. The judge is fail-open — when it is
+  disabled or unavailable the step is marked `done`.
+- `taskflow_finish(flow_id, summary, expected_revision, todo, plan_path,
+  checkbox_label)`: mark done (terminal). Gated, fail-open: every step must be
+  `done` or `blocked`, no step may be `blocked`, the flow's evidence must have
+  no failing/stale row, and — only when you pass the linked `todo` +
+  `plan_path` — `SisyphusVerifier` must pass.
 - `taskflow_fail(flow_id, reason, expected_revision)`: mark failed (terminal).
 - `taskflow_cancel(flow_id, reason, expected_revision)`: cancel the flow (terminal).
 - `taskflow_summary(flow_id)`: read-only readback of status, revision,
@@ -81,8 +96,8 @@ getTaskSummary).
   positive-integer `token_budget`, rejected for terminal flows. When
   `taskflow_resume` receives `token_usage`, the child session's token usage and
   estimated cost accumulate onto the flow.
-- `taskflow_list(status_filter)`: read-only cross-session board listing **all**
-  TaskFlows in the registry (not limited to the current session/channel).
+- `taskflow_list(status_filter)`: read-only board of **this session's**
+  TaskFlows (every read filters the owning `session_id` in SQL).
   `status_filter` takes `"active"` (default, running+waiting), `"all"`
   (including terminal), or a concrete status name
   (`running`/`waiting`/`done`/`failed`/`cancelled`). Each row: flow_id, status,
@@ -167,10 +182,11 @@ non-blocking warning — kill the child or settle it (`taskflow_wait_all` /
 ## Known limitations
 
 - A step being `done` only means "the result has been injected"; it does **not**
-  mean the child session succeeded. At this stage there is no step-level
-  `failed` / `skipped` status, and unlock/retry is not failure-aware: even if the
-  child session fails, its `taskflow_resume` still marks the step `done` and
-  unlocks successor steps. A failure-aware retry strategy is a later gap item
-  (see gap #8) and is out of scope for this stage.
+  mean the child session succeeded. There is no step-level `failed` / `skipped`
+  status: a step with neither `validation_criteria` nor a matching
+  `retry_policy` still lands `done` and unlocks successors even after a failed
+  child. Failure-aware handling is opt-in — `retry_policy` re-dispatches
+  through `taskflow_wait_all`, and `validation_criteria` runs the step judge,
+  which can mark the step `blocked`.
 - `taskflow_wait_all` only performs bounded polling; a timeout returns a partial
   report. A child session that never settles will not automatically fail the flow.
