@@ -167,6 +167,7 @@ class CodeIndexer:
                 dirnames[:] = [
                     d for d in dirnames if d not in prune and not should_skip_dir(Path(dirpath) / d)
                 ]
+                dirnames.sort()  # os.walk order is filesystem-dependent; index deterministically
                 for filename in sorted(filenames):
                     if stop:
                         break
