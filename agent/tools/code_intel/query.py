@@ -243,7 +243,7 @@ class CodeQuery:
                 return ExploreResult(
                     query=query,
                     suggestion=(
-                        "No symbol matched. Fall back to `search_files` (regex) or refine the query."
+                        "No symbol matched. Fall back to `terminal` (rg/grep) or refine the query."
                     ),
                 )
             entries = []

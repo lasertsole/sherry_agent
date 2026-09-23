@@ -126,7 +126,7 @@ def test_empty_index_degrades_with_actionable_message(
     result = engine.search("anything", empty)
 
     assert result.degraded is not None
-    assert "search_files" in result.degraded or "explore" in result.degraded
+    assert "terminal" in result.degraded or "explore" in result.degraded
 
 
 def test_dimension_mismatch_degrades(

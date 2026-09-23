@@ -155,10 +155,10 @@ def build_subagent_system_prompt(
             "- `lsp_status` — honest availability of every configured language server "
             "(available / not_installed); starts nothing\n"
             "Workflow: explore(query) → lsp_find_references / callers for precision → "
-            "search_files as keyword fallback.\n"
+            "terminal (rg/grep) as keyword fallback.\n"
             "Index is built on first use; subsequent queries are fast. LSP servers "
             "start on demand and are reaped when idle; if a server is missing you get "
-            "an install hint and the explore/search_files fallback."
+            "an install hint and the explore/terminal fallback."
         )
 
     # Section 6: Session Context

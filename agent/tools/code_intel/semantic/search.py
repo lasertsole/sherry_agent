@@ -46,7 +46,7 @@ _LOAD_SQL = """
 _DEGRADED_NO_INDEX = (
     "No code embeddings are indexed yet. Build the index first with "
     "`explore` (or retry semantic_code_search once the embedding model is "
-    "available); fall back to `search_files` / `explore` for keyword search."
+    "available); fall back to `terminal` / `explore` for keyword search."
 )
 _EMPTY_QUERY_MESSAGE = "empty query — provide a concept, symbol name, or natural-language intent"
 

@@ -114,7 +114,7 @@ class TestA1WhitelistIntersection:
             ("researcher", ["read_file", "terminal", "web_search"]),
             ("executor", ["read_file", "write_file", "patch_file", "terminal", "python_repl"]),
             ("reviewer", ["read_file", "terminal"]),
-            ("librarian", ["read_file", "terminal", "web_search", "search_files"]),
+            ("librarian", ["read_file", "terminal", "web_search"]),
         ],
     )
     def test_builtin_roles_leaf_whitelist_unchanged(

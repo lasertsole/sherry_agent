@@ -70,7 +70,7 @@ class TestSpawnFunctionalRole:
         run = _captured_lane[-1]["run"]
         assert run.functional_role is FunctionalRole.LIBRARIAN
         assert _captured_lane[-1]["model_tier"] == "auxiliary"
-        assert run.inherited_tool_allow == ["read_file", "terminal", "web_search", "search_files"]
+        assert run.inherited_tool_allow == ["read_file", "terminal", "web_search"]
 
     def test_agent_id_librarian_resolves_at_resolver_level(self):
         from agent.tools.subagent.spawn.core import _resolve_functional_role
@@ -208,13 +208,12 @@ class TestRoleToolWhitelist:
             _StubTool("read_file"),
             _StubTool("terminal"),
             _StubTool("web_search"),
-            _StubTool("search_files"),
             _StubTool("write_file"),
             _StubTool("sessions_spawn"),
         ]
         _build(
             tools=candidates,
-            tool_allow=["read_file", "terminal", "web_search", "search_files"],
+            tool_allow=["read_file", "terminal", "web_search"],
             tool_deny=[],
             role=SubagentSessionRole.LEAF,
             functional_role=FunctionalRole.LIBRARIAN,
@@ -224,7 +223,6 @@ class TestRoleToolWhitelist:
             "read_file",
             "terminal",
             "web_search",
-            "search_files",
             "explore",
             "callers",
             "callees",

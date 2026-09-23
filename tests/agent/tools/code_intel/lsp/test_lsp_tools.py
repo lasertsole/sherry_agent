@@ -100,7 +100,7 @@ class TestFailOpen:
             _tools()["lsp_goto_definition"]._run(str(fixture_repo / "m.py"), 5, 12)
         )
         assert payload["available"] is False
-        assert "explore" in payload["error"] and "search_files" in payload["error"]
+        assert "explore" in payload["error"] and "terminal" in payload["error"]
 
     def test_invalid_direction_is_reported(self, point_to_fake, fixture_repo: Path) -> None:
         point_to_fake("python")

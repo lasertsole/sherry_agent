@@ -122,7 +122,7 @@ class ExploreTool(_CodeIntelTool):
         "Find code related to a concept, function name, or natural language query. "
         "Returns source code plus immediate callers/callees for the most relevant symbols. "
         "Use FIRST when you need to understand how something works, where it is defined, or "
-        "what calls it. Falls back to search_files when no symbol matches. "
+        "what calls it. Falls back to terminal when no symbol matches. "
         'Example: explore("database connection pooling")'
     )
     args_schema: type[BaseModel] = ExploreInput

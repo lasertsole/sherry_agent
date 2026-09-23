@@ -33,7 +33,7 @@ class TestFallbackMessage:
             "haskell", "lsp_goto_definition", "not_configured", "nope"
         )
         assert "lsp_goto_definition" in message
-        assert "explore" in message and "search_files" in message
+        assert "explore" in message and "terminal" in message
 
     def test_not_installed_mentions_install_and_fallbacks(self) -> None:
         message = fallback.build_fallback_message(
@@ -41,7 +41,7 @@ class TestFallbackMessage:
         )
         assert "rust" in message
         assert "rustup component add rust-analyzer" in message
-        assert "explore" in message and "search_files" in message
+        assert "explore" in message and "terminal" in message
 
     def test_available_is_empty(self) -> None:
         assert (

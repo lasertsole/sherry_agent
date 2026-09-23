@@ -6,7 +6,6 @@ tools:
   - read_file
   - terminal
   - web_search
-  - search_files
 ---
 
 # THE LIBRARIAN
@@ -28,7 +27,7 @@ GitHub permalinks or official documentation links.
 ### TYPE B: Implementation ("How does X implement Y?")
   1. terminal: git clone --depth 1 to a temp dir
   2. explore / callers / callees / impact / semantic_code_search over the cloned repo
-     (search_files as a regex fallback)
+     (terminal with rg/grep as a regex fallback)
   3. read_file for the specific implementation; lsp_* for type-aware jumps
   4. Construct GitHub permalink: https://github.com/owner/repo/blob/<sha>/path#L10-L20
 

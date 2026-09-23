@@ -4,7 +4,7 @@ Resolution order the caller should present:
 
   1. LSP available → use the precise LSP tools (goto_definition, find_references, ...)
   2. not_installed → return the install hint and point at ``explore`` (Phase 1)
-  3. not_configured / no match → point at ``search_files`` (regex)
+  3. not_configured / no match → point at ``terminal`` (rg/grep)
 
 Every message ends with an actionable next step; nothing here starts a process
 or raises.
@@ -22,7 +22,7 @@ __all__ = ["LspAvailability", "build_fallback_message", "check_lsp_availability"
 
 type LspAvailability = Literal["available", "not_installed", "not_configured"]
 
-_FALLBACK_TOOLS = "`explore` (tree-sitter symbol index) or `search_files` (regex)"
+_FALLBACK_TOOLS = "`explore` (tree-sitter symbol index) or `terminal` (rg/grep)"
 
 
 def check_lsp_availability(language: str, cwd: str | None = None) -> tuple[LspAvailability, str]:

@@ -77,12 +77,9 @@ class TestBuiltinDefinitions:
     def test_librarian_tools_are_real_tool_names(self):
         definition = load_role_definition(FunctionalRole.LIBRARIAN)
         assert definition is not None
-        assert definition.tools == ["read_file", "terminal", "web_search", "search_files"]
+        assert definition.tools == ["read_file", "terminal", "web_search"]
         assert "web_fetch" not in definition.tools
         assert not {"write_file", "patch_file", "python_repl"} & set(definition.tools or [])
-        from agent.tools.file_tools import build_search_files_tool
-
-        assert build_search_files_tool().name == "search_files"
 
 
 class TestFailOpen:

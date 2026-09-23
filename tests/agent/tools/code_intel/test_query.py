@@ -26,11 +26,11 @@ def test_explore_fuzzy_match(query: CodeQuery, sample_repo: Path) -> None:
     assert any(entry.symbol.name in {"top_func", "topFunc", "TopFunc"} for entry in result.entries)
 
 
-def test_explore_empty_result_suggests_search_files(query: CodeQuery, sample_repo: Path) -> None:
+def test_explore_empty_result_suggests_terminal(query: CodeQuery, sample_repo: Path) -> None:
     result = query.explore("zzz_missing_symbol_zzz", sample_repo)
     assert not result.found
     assert result.suggestion is not None
-    assert "search_files" in result.suggestion
+    assert "terminal" in result.suggestion
 
 
 def test_explore_includes_callers_and_callees(query: CodeQuery, sample_repo: Path) -> None:
