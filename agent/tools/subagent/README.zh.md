@@ -58,8 +58,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── 运行时隔离：跨运行时 spawn 会被拒绝
   │
   ├── 2. 所有权与能力解析（Ownership & Capability Resolution）
-  │     ├── resolve_spawn_ownership()：controller / thread-binding /
-  │     │   completion-owner 会话键（spawn/ownership.py）
+  │     ├── resolve_spawn_ownership()：controller / completion-owner
+  │     │   会话键（spawn/ownership.py）
   │     └── resolve_subagent_capabilities(depth, max_depth)：
   │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │           depth ≥ max → LEAF/NONE（capabilities/core.py）
@@ -68,9 +68,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── thinking 优先级：显式指定 → 请求方 → 目标 Agent 默认
   │     └── 超时：每次 spawn 可覆盖，否则用 run_timeout_seconds（0 = 无超时）
   │
-  ├── 4. 线程绑定与来源路由（Thread Binding & Origin Routing）
-  │     ├── 仅 SESSION 模式：bind_thread_for_subagent_spawn() 创建频道线程
-  │     │   （thread:subagent:{uuid}；空闲 5 分钟，最长 24 小时）
+  ├── 4. 来源路由（Origin Routing）
   │     └── resolve_requester_origin_for_child()：频道 / 账号元数据
   │
   ├── 5. 附件物化（Attachment Materialization，见 §7）
@@ -78,8 +76,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 6. 运行注册（Run Registration）
   │     ├── child_session_key = agent:{agent_id}:subagent:{uuid}
   │     ├── register_run()：SubagentRunRecord（execution=RUNNING、
-  │     │   delivery=RUN 模式为 PENDING / SESSION 模式为 NOT_REQUIRED）
-  │     │   写入内存 dict + SQLite（upsert_run_sync）
+  │     │   delivery=PENDING）写入内存 dict + SQLite（upsert_run_sync）
   │     └── TerminalGenerationTracker.register_expected(run_id, generation)
   │
   ├── 7. Swarm 分组预留（如适用）：reserve_swarm_run()
@@ -181,8 +178,7 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 | | `task_run_id` | 跨 steer/重启保持稳定的 ID |
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}`（swarm 为 `agent:{agentId}:swarm:{group}:{uuid}`） |
 | | `requester_session_key` | 父会话键 |
-| **Spawn 参数** | `spawn_mode` | RUN（一次性）/ SESSION（常驻） |
-| | `depth` / `role` | 嵌套深度；MAIN / ORCHESTRATOR / LEAF |
+| **Spawn 参数** | `depth` / `role` | 嵌套深度；MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN）；默认 GENERAL |
 | | `generation` | 跨 steer/重启的版本计数器 |
 | **所有权** | `controller_session_key` | 有权控制（kill/steer/send）的会话键 |
@@ -222,8 +218,6 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 #### 2. CompletionDeliveryState — 交付状态机
 
 ```
-    not_required ──(SESSION 模式跳过)──► delivered
-
     pending ──► in_progress ──► delivered
                     │
                     ├──(瞬时失败)──► in_progress（重试，退避）
@@ -233,7 +227,7 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
                     └──(硬上限)──► suspended ──(过期)──► discarded
 ```
 
-- `not_required`：SESSION 模式无需交付
+- `not_required`：该运行无需交付
 - `pending → in_progress → delivered`：正常交付路径
 - `failed`：重试耗尽——达到 `max_announce_retry_count`（10 次）或超过 24 小时硬过期即 discarded
 - `suspended`：重试后待交付数超过软上限（25）时，或直接超过硬上限（50）时挂起；过期挂起由 Sweeper 按请求方类型收尾（cron 2 小时 / subagent 6 小时 / interactive 24 小时）
@@ -246,11 +240,11 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 ```
 
 - `resolve_deferred_cleanup_decision()`（registry/cleanup.py）决定是否删除会话：
-  - cleanup=`keep` 或 SESSION 模式 → 永不自动清理
+  - cleanup=`keep` → 永不自动清理
   - 交付已到 DELIVERED / DISCARDED / NOT_REQUIRED → 立即清理
   - 存在活跃后代 → 延迟（`defer_descendants`，5 秒 → 10 秒重试）
   - FAILED/SUSPENDED 超出重试上限 → `give_up_max_retries`；超过硬过期 → `give_up_hard_expiry`
-- 会话删除经 EventBus：`InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`；生命周期钩子仅对 SESSION 模式触发
+- 会话删除经 EventBus：`InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`
 - 附件清理使用 `safe_remove_attachments_dir()`，带符号链接穿越防护
 - `SettleWakeBatch`（registry/settle_wake.py）在所有后代都 settle 后唤醒 yield 暂停的父 Agent；其状态持久化到 `settle_wake_state` 表以支持崩溃恢复
 
@@ -613,14 +607,13 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `label` | str\|None | None | 展示标签 |
 | `agent_id` | str | "main" | 目标 Agent ID |
 | `thinking` | str\|None | None | 覆盖思考模式 |
-| `mode` | str | "run" | "run"（一次性）/ "session"（常驻） |
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | 文件附件（name, content, encoding, mount_path） |
 | `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
 | `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer / librarian）；None 保持基于 depth 的行为 |
 | `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
 
-返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION 模式：「Use sessions_send(sessionKey=...) to send follow-up messages」）。
+返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 
 #### sessions_yield — 暂停等待
 
@@ -760,7 +753,6 @@ Progress 钩子（hooks/progress.py）：spawned（子 Agent 注册）、progres
 ```
 agent/tools/subagent/
 ├── types/                     数据模型与枚举定义
-│   ├── spawn.py               SpawnMode 枚举
 │   ├── registry.py            SubagentRunRecord 及子状态模型（含 completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version）
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           生命周期事件枚举（LifecycleEndedReason, LifecycleEndedOutcome）
@@ -806,7 +798,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       子 agent system prompt 生成（6 段结构：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
 │   ├── initial_message.py     子 agent 首条 user message（结构化信封：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  工具白/黑名单继承
-│   ├── thread_binding.py      Thread Binding 生命周期管理
 │   ├── runtime_isolation.py   运行时隔离与安全边界 + workspace 继承
 │   ├── origin_routing.py      请求方来源路由解析 + fingerprint 生成（build_origin_fingerprint 暴露为外部 API）
 │   ├── gateway_dispatch.py    最小权限 scope 解析 + SubagentLaunchAuthorization + scope→deny 映射
@@ -902,8 +893,6 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
 spawn/initial_message.py ← spawn/task_name.py
-  ↑
-spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 

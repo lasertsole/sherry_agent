@@ -58,8 +58,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── runtime isolation: cross-runtime spawn rejected
   │
   ├── 2. Ownership & Capability Resolution
-  │     ├── resolve_spawn_ownership(): controller / thread-binding /
-  │     │   completion-owner session keys (spawn/ownership.py)
+  │     ├── resolve_spawn_ownership(): controller / completion-owner
+  │     │   session keys (spawn/ownership.py)
   │     └── resolve_subagent_capabilities(depth, max_depth):
   │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │           depth ≥ max → LEAF/NONE (capabilities/core.py)
@@ -68,9 +68,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── thinking precedence: explicit → requester → target agent default
   │     └── timeout: per-spawn override or run_timeout_seconds (0 = no timeout)
   │
-  ├── 4. Thread Binding & Origin Routing
-  │     ├── SESSION mode only: bind_thread_for_subagent_spawn() creates a
-  │     │   channel thread (thread:subagent:{uuid}; idle 5 min, max age 24 h)
+  ├── 4. Origin Routing
   │     └── resolve_requester_origin_for_child(): channel/account metadata
   │
   ├── 5. Attachment Materialization (see §7)
@@ -78,8 +76,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 6. Run Registration
   │     ├── child_session_key = agent:{agent_id}:subagent:{uuid}
   │     ├── register_run(): SubagentRunRecord (execution=RUNNING,
-  │     │   delivery=PENDING for RUN / NOT_REQUIRED for SESSION)
-  │     │   into memory dict + SQLite (upsert_run_sync)
+  │     │   delivery=PENDING) into memory dict + SQLite (upsert_run_sync)
   │     └── TerminalGenerationTracker.register_expected(run_id, generation)
   │
   ├── 7. Swarm Group Reservation (if applicable): reserve_swarm_run()
@@ -181,8 +178,7 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 | | `task_run_id` | Stable ID across steer/restart |
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}` (swarm: `agent:{agentId}:swarm:{group}:{uuid}`) |
 | | `requester_session_key` | Parent session key |
-| **Spawn Params** | `spawn_mode` | RUN (one-shot) / SESSION (persistent) |
-| | `depth` / `role` | Nesting depth; MAIN / ORCHESTRATOR / LEAF |
+| **Spawn Params** | `depth` / `role` | Nesting depth; MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | Functional role (GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN); defaults to GENERAL |
 | | `generation` | Version counter across steer/restart cycles |
 | **Ownership** | `controller_session_key` | Session allowed to control (kill/steer/send) |
@@ -222,8 +218,6 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 #### 2. CompletionDeliveryState — Delivery State Machine
 
 ```
-    not_required ──(SESSION mode skip)──► delivered
-
     pending ──► in_progress ──► delivered
                     │
                     ├──(transient failure)──► in_progress (retry, backoff)
@@ -233,7 +227,7 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
                     └──(hard cap exceeded)──► suspended ──(expired)──► discarded
 ```
 
-- `not_required`: SESSION mode doesn't require delivery
+- `not_required`: delivery is not required for this run
 - `pending → in_progress → delivered`: Normal delivery path
 - `failed`: retries exhausted — ≥ `max_announce_retry_count` (10) attempts or past the 24 h hard expiry → discarded
 - `suspended`: soft cap (25 pending) exceeded after retries, or hard cap (50) hit immediately; expired suspensions are finalized by the sweeper per requester type (cron 2 h / subagent 6 h / interactive 24 h)
@@ -246,11 +240,11 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 ```
 
 - `resolve_deferred_cleanup_decision()` (registry/cleanup.py) decides whether to delete the session:
-  - cleanup=`keep` or SESSION mode → never auto-cleanup
+  - cleanup=`keep` → never auto-cleanup
   - delivery reached DELIVERED / DISCARDED / NOT_REQUIRED → cleanup now
   - active descendants exist → defer (`defer_descendants`, retried 5 s → 10 s)
   - FAILED/SUSPENDED beyond max retries → `give_up_max_retries`; past hard expiry → `give_up_hard_expiry`
-- Session deletion goes through EventBus: `InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`; lifecycle hooks only fire for SESSION mode
+- Session deletion goes through EventBus: `InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`
 - Attachment cleanup uses `safe_remove_attachments_dir()` with symlink traversal protection
 - `SettleWakeBatch` (registry/settle_wake.py) wakes yield-paused parents once ALL descendants have settled; its state is persisted to the `settle_wake_state` SQLite table for crash recovery
 
@@ -616,14 +610,13 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `label` | str\|None | None | Display label |
 | `agent_id` | str | "main" | Target Agent ID |
 | `thinking` | str\|None | None | Override thinking mode |
-| `mode` | str | "run" | "run" (one-shot) / "session" (persistent) |
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | File attachments (name, content, encoding, mount_path) |
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
 | `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer / librarian); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
 
-Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION mode: "Use sessions_send(sessionKey=...) to send follow-up messages").
+Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 
 #### sessions_yield — Pause & Wait
 
@@ -763,7 +756,6 @@ Every module in the package and its responsibility (verified against the code in
 ```
 agent/tools/subagent/
 ├── types/                     Data models & enums
-│   ├── spawn.py               SpawnMode enum
 │   ├── registry.py            SubagentRunRecord + sub-state models (incl. completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version)
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           Lifecycle event enums (LifecycleEndedReason, LifecycleEndedOutcome)
@@ -809,7 +801,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       Child-agent system prompt generation (6-part structure: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
 │   ├── initial_message.py     Child-agent first user message (structured envelope: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  Tool allow/deny inheritance
-│   ├── thread_binding.py      Thread-binding lifecycle management
 │   ├── runtime_isolation.py   Runtime isolation & security boundary + workspace inheritance
 │   ├── origin_routing.py      Requester origin routing resolution + fingerprint generation (build_origin_fingerprint exposed as external API)
 │   ├── gateway_dispatch.py    Least-privilege scope resolution + SubagentLaunchAuthorization + scope→deny mapping
@@ -905,8 +896,6 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
 spawn/initial_message.py ← spawn/task_name.py
-  ↑
-spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 

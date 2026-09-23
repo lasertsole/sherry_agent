@@ -59,8 +59,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── 런타임 격리: 런타임을 넘나드는 spawn은 거부됨
   │
   ├── 2. 소유권 및 능력 해석 (Ownership & Capability Resolution)
-  │     ├── resolve_spawn_ownership(): controller / thread-binding /
-  │     │   completion-owner 세션 키 (spawn/ownership.py)
+  │     ├── resolve_spawn_ownership(): controller / completion-owner
+  │     │   세션 키 (spawn/ownership.py)
   │     └── resolve_subagent_capabilities(depth, max_depth):
   │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │           depth ≥ max → LEAF/NONE (capabilities/core.py)
@@ -70,9 +70,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── thinking 우선순위: 명시 지정 → 요청자 → 대상 에이전트 기본값
   │     └── 타임아웃: spawn별 재정의 가능, 없으면 run_timeout_seconds(0 = 타임아웃 없음)
   │
-  ├── 4. 스레드 바인딩 및 원본 라우팅 (Thread Binding & Origin Routing)
-  │     ├── SESSION 모드 전용: bind_thread_for_subagent_spawn()이 채널
-  │     │   스레드 생성 (thread:subagent:{uuid}; 유휴 5분, 최대 24시간)
+  ├── 4. 원본 라우팅 (Origin Routing)
   │     └── resolve_requester_origin_for_child(): 채널 / 계정 메타데이터
   │
   ├── 5. 첨부 파일 실체화 (Attachment Materialization, §7 참조)
@@ -80,8 +78,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 6. 런 등록 (Run Registration)
   │     ├── child_session_key = agent:{agent_id}:subagent:{uuid}
   │     ├── register_run(): SubagentRunRecord (execution=RUNNING,
-  │     │   delivery=RUN은 PENDING / SESSION은 NOT_REQUIRED)를
-  │     │   메모리 dict + SQLite에 기록 (upsert_run_sync)
+  │     │   delivery=PENDING)를 메모리 dict + SQLite에 기록 (upsert_run_sync)
   │     └── TerminalGenerationTracker.register_expected(run_id, generation)
   │
   ├── 7. Swarm 그룹 예약 (해당 시): reserve_swarm_run()
@@ -183,8 +180,7 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 | | `task_run_id` | steer/재시작을 넘어 안정적인 ID |
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}` (swarm: `agent:{agentId}:swarm:{group}:{uuid}`) |
 | | `requester_session_key` | 부모 세션 키 |
-| **Spawn 파라미터** | `spawn_mode` | RUN(일회성) / SESSION(상주) |
-| | `depth` / `role` | 중첩 깊이. MAIN / ORCHESTRATOR / LEAF |
+| **Spawn 파라미터** | `depth` / `role` | 중첩 깊이. MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | 기능 역할(GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN); 기본 GENERAL |
 | | `generation` | steer/재시작을 넘는 버전 카운터 |
 | **소유권** | `controller_session_key` | 제어(kill/steer/send)를 허가받은 세션 키 |
@@ -224,8 +220,6 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 #### 2. CompletionDeliveryState — 전달 상태 머신
 
 ```
-    not_required ──(SESSION 모드 생략)──► delivered
-
     pending ──► in_progress ──► delivered
                     │
                     ├──(일시적 실패)──► in_progress (재시도, 백오프)
@@ -235,7 +229,7 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
                     └──(하드 한도)──► suspended ──(만료)──► discarded
 ```
 
-- `not_required`: SESSION 모드는 전달 불필요
+- `not_required`: 이 실행은 전달 불필요
 - `pending → in_progress → delivered`: 정상 전달 경로
 - `failed`: 재시도 소진 — `max_announce_retry_count`(10회) 도달 또는 24시간 하드 만료 초과 시 discarded
 - `suspended`: 재시도 후 대기 전달 수가 소프트 한도(25)를 초과하거나, 하드 한도(50)를 즉시 초과하면 일시 중단. 만료된 suspend는 Sweeper가 요청자 유형별로 수습 (cron 2시간 / subagent 6시간 / interactive 24시간)
@@ -248,11 +242,11 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 ```
 
 - `resolve_deferred_cleanup_decision()` (registry/cleanup.py)이 세션 삭제 여부를 결정합니다:
-  - cleanup=`keep` 또는 SESSION 모드 → 자동 정리하지 않음
+  - cleanup=`keep` → 자동 정리하지 않음
   - 전달이 DELIVERED / DISCARDED / NOT_REQUIRED에 도달 → 즉시 정리
   - 활성 자손 존재 → 연기 (`defer_descendants`, 5초 → 10초 재시도)
   - FAILED/SUSPENDED가 재시도 한도 초과 → `give_up_max_retries`. 하드 만료 초과 → `give_up_hard_expiry`
-- 세션 삭제는 EventBus 경유: `InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`. 라이프사이클 훅은 SESSION 모드에서만 발화
+- 세션 삭제는 EventBus 경유: `InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`
 - 첨부 정리는 `safe_remove_attachments_dir()`를 사용하며, 심볼릭 링크 경유의 디렉터리 트래버설을 방어합니다
 - `SettleWakeBatch` (registry/settle_wake.py)는 모든 자손이 settle된 시점에 yield로 일시 중단된 부모를 깨웁니다. 상태는 `settle_wake_state` 테이블에 영속화되어 크래시 복구를 지원합니다
 
@@ -618,14 +612,13 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `label` | str\|None | None | 표시 라벨 |
 | `agent_id` | str | "main" | 대상 에이전트 ID |
 | `thinking` | str\|None | None | 사고 모드 재정의 |
-| `mode` | str | "run" | "run"(일회성) / "session"(상주) |
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | 파일 첨부 (name, content, encoding, mount_path) |
 | `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
 | `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer / librarian); None이면 depth 기반 동작 유지 |
 | `extra_tools` | list[str]\|None | None | 역할 allow-list 위에 추가로 붙는 도구 이름 |
 
-반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION 모드: "Use sessions_send(sessionKey=...) to send follow-up messages").
+반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.").
 
 #### sessions_yield — 일시 중단 및 대기
 
@@ -765,7 +758,6 @@ Progress 훅(hooks/progress.py): spawned(자식 등록), progress(실행 중), e
 ```
 agent/tools/subagent/
 ├── types/                     데이터 모델 및 열거형
-│   ├── spawn.py               SpawnMode 열거형
 │   ├── registry.py            SubagentRunRecord 및 하위 상태 모델(completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version 포함)
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           라이프사이클 이벤트 열거형(LifecycleEndedReason, LifecycleEndedOutcome)
@@ -811,7 +803,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       자식 에이전트 system prompt 생성(6부 구성: Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context)
 │   ├── initial_message.py     자식 에이전트의 첫 user message(구조화 봉투: [Subagent Context] / [Subagent Task] / [Subagent Additional Context])
 │   ├── inherited_tool_policy.py  도구 허용/차단 목록 상속
-│   ├── thread_binding.py      Thread Binding 라이프사이클 관리
 │   ├── runtime_isolation.py   런타임 격리 및 보안 경계 + workspace 상속
 │   ├── origin_routing.py      요청자 오리진 라우팅 해결 + fingerprint 생성(build_origin_fingerprint를 외부 API로 노출)
 │   ├── gateway_dispatch.py    최소 권한 scope 해결 + SubagentLaunchAuthorization + scope→deny 매핑
@@ -907,8 +898,6 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
 spawn/initial_message.py ← spawn/task_name.py
-  ↑
-spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 

@@ -59,8 +59,8 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     └── ランタイム分離：ランタイムをまたぐ spawn は拒否
   │
   ├── 2. 所有権と能力の解決（Ownership & Capability Resolution）
-  │     ├── resolve_spawn_ownership()：controller / thread-binding /
-  │     │   completion-owner セッションキー（spawn/ownership.py）
+  │     ├── resolve_spawn_ownership()：controller / completion-owner
+  │     │   セッションキー（spawn/ownership.py）
   │     └── resolve_subagent_capabilities(depth, max_depth)：
   │           depth 0 → MAIN/CHILDREN · 0<depth<max → ORCHESTRATOR/CHILDREN
   │           depth ≥ max → LEAF/NONE（capabilities/core.py）
@@ -70,10 +70,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   │     ├── thinking の優先順位：明示指定 → リクエスタ → 対象エージェントの既定
   │     └── タイムアウト：spawn ごとの上書き、なければ run_timeout_seconds（0 = タイムアウトなし）
   │
-  ├── 4. スレッドバインディングとオリジンルーティング（Thread Binding &
-  │     Origin Routing）
-  │     ├── SESSION モードのみ：bind_thread_for_subagent_spawn() がチャネル
-  │     │   スレッドを作成（thread:subagent:{uuid}；アイドル 5 分、最長 24 時間）
+  ├── 4. オリジンルーティング（Origin Routing）
   │     └── resolve_requester_origin_for_child()：チャネル / アカウントメタデータ
   │
   ├── 5. 添付ファイルの実体化（Attachment Materialization、§7 参照）
@@ -81,8 +78,7 @@ spawn_subagent_direct(task, requester_session_key, agent_id, mode, ...)
   ├── 6. ラン登録（Run Registration）
   │     ├── child_session_key = agent:{agent_id}:subagent:{uuid}
   │     ├── register_run()：SubagentRunRecord（execution=RUNNING、
-  │     │   delivery=RUN なら PENDING / SESSION なら NOT_REQUIRED）を
-  │     │   メモリ dict + SQLite に書き込み（upsert_run_sync）
+  │     │   delivery=PENDING）をメモリ dict + SQLite に書き込み（upsert_run_sync）
   │     └── TerminalGenerationTracker.register_expected(run_id, generation)
   │
   ├── 7. Swarm グループ予約（該当時）：reserve_swarm_run()
@@ -184,8 +180,7 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 | | `task_run_id` | steer/再起動をまたいで安定する ID |
 | | `child_session_key` | `agent:{agentId}:subagent:{uuid}`（swarm は `agent:{agentId}:swarm:{group}:{uuid}`） |
 | | `requester_session_key` | 親セッションキー |
-| **Spawn パラメータ** | `spawn_mode` | RUN（単発）/ SESSION（常駐） |
-| | `depth` / `role` | ネスト深さ。MAIN / ORCHESTRATOR / LEAF |
+| **Spawn パラメータ** | `depth` / `role` | ネスト深さ。MAIN / ORCHESTRATOR / LEAF |
 | | `functional_role` | 機能ロール（GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN）。既定は GENERAL |
 | | `generation` | steer/再起動をまたぐバージョンカウンタ |
 | **所有権** | `controller_session_key` | 制御（kill/steer/send）を許可されたセッションキー |
@@ -225,8 +220,6 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 #### 2. CompletionDeliveryState — 配信状態マシン
 
 ```
-    not_required ──(SESSION モードはスキップ)──► delivered
-
     pending ──► in_progress ──► delivered
                     │
                     ├──(一時的失敗)──► in_progress（リトライ、バックオフ）
@@ -236,7 +229,7 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
                     └──(ハード上限)──► suspended ──(期限切れ)──► discarded
 ```
 
-- `not_required`：SESSION モードは配信不要
+- `not_required`：この実行は配信不要
 - `pending → in_progress → delivered`：通常の配信パス
 - `failed`：リトライ尽き — `max_announce_retry_count`（10 回）到達または 24 時間のハード期限超過で discarded
 - `suspended`：リトライ後も保留配信数がソフト上限（25）超過、またはハード上限（50）を即時超過で一時停止。期限切れの suspend は Sweeper がリクエスタ種別ごとに収束（cron 2 時間 / subagent 6 時間 / interactive 24 時間）
@@ -249,11 +242,11 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 ```
 
 - `resolve_deferred_cleanup_decision()`（registry/cleanup.py）がセッション削除の要否を判定します：
-  - cleanup=`keep` または SESSION モード → 自動クリーンアップしない
+  - cleanup=`keep` → 自動クリーンアップしない
   - 配信が DELIVERED / DISCARDED / NOT_REQUIRED 到達 → 即時クリーンアップ
   - アクティブな子孫が存在 → 遅延（`defer_descendants`、5 秒 → 10 秒でリトライ）
   - FAILED/SUSPENDED がリトライ上限超過 → `give_up_max_retries`。ハード期限超過 → `give_up_hard_expiry`
-- セッション削除は EventBus 経由：`InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`。ライフサイクルフックは SESSION モードのみ発火
+- セッション削除は EventBus 経由：`InboundMessage(sender_id="subagent_cleanup", content="__session_delete__", metadata.injected_event="session_delete", delete_transcript=True)`
 - 添付クリーンアップは `safe_remove_attachments_dir()` を使用し、シンボリックリンク経由のディレクトリトラバーサルを防护
 - `SettleWakeBatch`（registry/settle_wake.py）はすべての子孫が settle した時点で yield 一時停止中の親を起こします。状態は `settle_wake_state` テーブルに永続化され、クラッシュ復旧に対応します
 
@@ -623,14 +616,13 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `label` | str\|None | None | 表示ラベル |
 | `agent_id` | str | "main" | 対象エージェント ID |
 | `thinking` | str\|None | None | 思考モードの上書き |
-| `mode` | str | "run" | "run"（単発）/ "session"（常駐） |
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | ファイル添付（name, content, encoding, mount_path） |
 | `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
 | `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer / librarian）。None は depth ベースの挙動を維持 |
 | `extra_tools` | list[str]\|None | None | ロールの allow-list に追加で付与するツール名 |
 
-戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION モード：「Use sessions_send(sessionKey=...) to send follow-up messages」）。
+戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」）。
 
 #### sessions_yield — 一時停止と待機
 
@@ -770,7 +762,6 @@ Progress フック（hooks/progress.py）：spawned（子が登録）、progress
 ```
 agent/tools/subagent/
 ├── types/                     データモデルと列挙型
-│   ├── spawn.py               SpawnMode 列挙型
 │   ├── registry.py            SubagentRunRecord とサブ状態モデル（completion_owner_session_key / output_schema / scopes / spawned_by / spawned_cwd / inherited_tool_policy_version を含む）
 │   ├── swarm.py               SwarmMode, SwarmRunState, SwarmGroupConfig
 │   ├── lifecycle.py           ライフサイクルイベント列挙型（LifecycleEndedReason, LifecycleEndedOutcome）
@@ -816,7 +807,6 @@ agent/tools/subagent/
 │   ├── system_prompt.py       子エージェントの system prompt 生成（6 部構成：Your Role / Rules / Output Format / What You DON'T Do / Sub-Agent Spawning / Session Context）
 │   ├── initial_message.py     子エージェントの最初の user message（構造化エンベロープ：[Subagent Context] / [Subagent Task] / [Subagent Additional Context]）
 │   ├── inherited_tool_policy.py  ツール許可/拒否リストの継承
-│   ├── thread_binding.py      Thread Binding ライフサイクル管理
 │   ├── runtime_isolation.py   ランタイム分離とセキュリティ境界 + workspace 継承
 │   ├── origin_routing.py      リクエスト元オリジンルーティング解決 + fingerprint 生成（build_origin_fingerprint を外部 API として公開）
 │   ├── gateway_dispatch.py    最小権限 scope 解決 + SubagentLaunchAuthorization + scope→deny マッピング
@@ -912,8 +902,6 @@ spawn/plan.py    spawn/ownership.py      spawn/system_prompt.py
 spawn/inherited_tool_policy.py          spawn/attachments.py
   ↑                                            ↑
 spawn/initial_message.py ← spawn/task_name.py
-  ↑
-spawn/thread_binding.py ← spawn/runtime_isolation.py
   ↑
 spawn/origin_routing.py ← spawn/gateway_dispatch.py
 
