@@ -469,10 +469,12 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 
 | `FunctionalRole` | Purpose | `model_tier` | Role tool list |
 |------------------|---------|--------------|----------------|
-| `general` | Default worker; inherits every tool and the depth-based LLM | `inherit` | (all tools) |
-| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact` |
-| `executor` | Write-capable implementation and command execution; no subagent spawn | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
-| `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` |
+| `general` | Default worker; inherits every tool and the depth-based LLM | `inherit` | (all tools) + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `executor` | Write-capable implementation and command execution; no subagent spawn | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+
+**ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite` — a core capability mirroring oh-my-openagent's globally registered ast-grep server. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` remain `researcher`-only, because they need the symbol index.
 
 **Definition locations.** Built-in definitions ship **inside the package** (tracked, distributable) at `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`. An optional per-user override may be placed (untracked) at `workspace/subagent_roles/<name>/AGENTS.md`. Resolution order is **override → package default → none**; the directory name is configurable via `roles_override_dir_name`. Each file carries YAML frontmatter (`name`, `description`, `model_tier`, `tools`) plus a markdown body appended to the child prompt; `tools: inherit` resolves to "all tools" (`None`).
 

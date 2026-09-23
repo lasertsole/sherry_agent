@@ -17,7 +17,7 @@
 ## 目录
 
 1. [缺口总览](#缺口总览)
-2. [Phase 1A — ast-grep 结构化搜索（必选，与 Phase 1 同级）](#phase-1a--ast-grep-结构化搜索必选与-phase-1-同级)
+2. [Phase 1A — ast-grep 结构化搜索（已落地）](#phase-1a--ast-grep-结构化搜索已落地)
 3. [Phase 2S — LSP 二进制发现与自动安装（替代原 Phase 2）](#phase-2s--lsp-二进制发现与自动安装替代原-phase-2)
 4. [Phase 2X — LSP 语言与工具扩展](#phase-2x--lsp-语言与工具扩展)
 5. [Phase 4 — 外部代码检索 subagent](#phase-4--外部代码检索-subagent)
@@ -36,7 +36,7 @@
 | 1   | LSP 二进制发现（repo-local → PATH → 安装提示）               | `server-installation.ts` (218 行)                                       | Phase 2S         |
 | 2   | LSP 自动安装 + 安装提示 + 用户决策                           | `server-definitions.ts` + `install-decision.ts`                         | Phase 2S         |
 | 3   | LSP fallback 策略（缺失时降级到 tree-sitter / search_files） | `server-resolution.ts` not_installed 状态                               | Phase 2S         |
-| 4   | ast-grep 结构化搜索/重写                                     | `ast-grep-mcp/` (25 语言, 5 级 strictness)                              | Phase 1A（必选） |
+| 4   | ast-grep 结构化搜索/重写                                     | `ast-grep-mcp/` (25 语言, 5 级 strictness)                              | Phase 1A（已落地） |
 | 5   | LSP 语言覆盖（4 → 12+）                                      | `BUILTIN_SERVERS` (40+ 语言)                                            | Phase 2X         |
 | 6   | LSP 工具覆盖（4 → 8）                                        | symbols/goto-def/refs/rename/diagnostics/format/status/install-decision | Phase 2X         |
 | 7   | 外部代码检索（GitHub/npm/docs）                              | `librarian` subagent                                                    | Phase 4          |
@@ -44,705 +44,44 @@
 
 ---
 
-## Phase 1A — ast-grep 结构化搜索（必选，与 Phase 1 同级）
-
-> **前置条件：subagent 功能角色分工（已落地）。**
-> **定位：** 与 tree-sitter 索引（Phase 1）并列的核心代码检索层。
-> tree-sitter 做离线索引（按符号名查询），ast-grep 做即时结构化搜索
-> （"找到所有 `def $FUNC($$$):` 形式的函数定义"）。
->
-> **对标依据：** oh-my-openagent 中 ast-grep 是无条件注册的核心组件
-> （`component-list.ts:34` 硬编码 `createAstGrepComponent()`），
-> MCP 服务器 `enabled: true, lifecycle: "lazy"`，与 LSP daemon 并列。
-> 本计划将其定位为**必选阶段**，与 Phase 1 同级，不可跳过。
-
-### 为什么不用 tree-sitter 查询代替 ast-grep
-
-tree-sitter query DSL 面向**提取**（从已知文件提取符号），
-ast-grep 面向**搜索**（跨文件树匹配 AST 模式 + 元变量捕获）。
-两者互补：tree-sitter 做离线索引，ast-grep 做即时结构化搜索。
-
-### 为什么不用 pip 包 `ast-grep-python` 代替直接二进制 provision
-
-oh-my-openagent 不依赖任何 pip/npm 包捆绑的二进制，而是：
-
-1. 从 GitHub releases 下载 pinned 版本（0.43.0）的预编译二进制
-2. SHA-256 校验下载内容
-3. 写入 `~/.omo/runtime/ast-grep/<platform-arch>/sg`
-4. 每次使用前跑 `--version` 探针验证二进制可用
-
-本计划采用相同策略，不依赖 `ast-grep-python` pip 包（该包捆绑的二进制
-可能版本滞后、平台覆盖不全、且无法 pin 版本）。
-
-### 依赖
-
-```toml
-# pyproject.toml — 不新增 pip 依赖
-# ast-grep 二进制通过 provisioner 从 GitHub releases 下载，SHA-256 验证
-```
-
-### 二进制发现与自动 provision（5 层）
-
-```
-┌─ ast-grep 二进制发现层 ────────────────────────────────────────────────┐
-│                                                                        │
-│  resolve_sg_binary() — 5 层探测，每层跑 --version 探针                   │
-│  ├─ 1. 环境变量覆盖 (SHERRY_SG_PATH)                                   │
-│  ├─ 2. sherry runtime 目录 (~/.sherry/runtime/ast-grep/<slug>/sg)      │
-│  ├─ 3. skill bin cache (skills/ast-grep/bin/sg)                         │
-│  ├─ 4. PATH 查找 (ast-grep / sg 命令，含 Windows PATHEXT)              │
-│  └─ 5. Homebrew / Linuxbrew 前缀 (/opt/homebrew/bin, /usr/local/bin)   │
-│                                                                        │
-│  所有层均未命中 → provision_sg_binary()                                │
-│  ├─ 从 GitHub releases 下载 pinned 版本 (0.43.0)                       │
-│  ├─ SHA-256 校验（6 平台 × 校验值硬编码）                              │
-│  ├─ 解压 ZIP → 提取 sg/ast-grep 二进制                                 │
-│  └─ 写入 ~/.sherry/runtime/ast-grep/<slug>/sg (chmod 755)              │
-│                                                                        │
-│  安装脚本 (install.sh / install.ps1) — 7 路 fallback                   │
-│  brew → npm → cargo → pip → nix → mise → GitHub tarball               │
-└────────────────────────────────────────────────────────────────────────┘
-```
-
-### 新增文件（7 个）
-
-#### 1. `config/features/agent_side/ast_grep.py`
-
-```python
-"""ast-grep structural search configuration."""
-
-from typing import TypedDict
-
-
-class AstGrepConfig(TypedDict):
-    """Configuration for ast-grep structural search tools."""
-    ast_grep_max_matches: int
-    ast_grep_max_pattern_bytes: int
-    ast_grep_timeout_ms: int
-    ast_grep_max_paths: int
-    ast_grep_supported_languages: list[str]
-    ast_grep_strictness_default: str  # cst | smart | ast | relaxed | signature
-    # ── 二进制 provision ──
-    ast_grep_pinned_version: str
-    ast_grep_runtime_dir: str  # ~/.sherry/runtime/ast-grep
-    ast_grep_path_env_key: str  # SHERRY_SG_PATH
-    ast_grep_provision_timeout_s: float
-    ast_grep_version_probe_timeout_ms: int
-    ast_grep_release_assets: dict  # slug → {url, sha256}
-
-
-AST_GREP: AstGrepConfig = {
-    "ast_grep_max_matches": 50,
-    "ast_grep_max_pattern_bytes": 16384,
-    "ast_grep_timeout_ms": 30000,
-    "ast_grep_max_paths": 64,
-    "ast_grep_supported_languages": [
-        "python", "typescript", "tsx", "javascript", "rust", "go",
-        "c", "cpp", "csharp", "java", "ruby", "html", "css", "json",
-        "yaml", "bash", "lua", "swift", "kotlin", "scala",
-        "php", "elixir", "haskell", "solidity",
-    ],
-    "ast_grep_strictness_default": "smart",
-    # ── 二进制 provision ──
-    "ast_grep_pinned_version": "0.43.0",
-    "ast_grep_runtime_dir": "",  # 运行时填充为 ~/.sherry/runtime/ast-grep
-    "ast_grep_path_env_key": "SHERRY_SG_PATH",
-    "ast_grep_provision_timeout_s": 60.0,
-    "ast_grep_version_probe_timeout_ms": 5000,
-    # GitHub release assets — 6 平台 × SHA-256（参考 oh-my-openagent sg-manifest.ts）
-    "ast_grep_release_assets": {
-        "darwin-arm64": {
-            "url": "https://github.com/ast-grep/ast-grep/releases/download/0.43.0/app-aarch64-apple-darwin.zip",
-            "sha256": "8c847d0a29aa4b3101b3361e0b3ee7fb53c7e497adc9ed1afc9615538cd40782",
-        },
-        "darwin-x64": {
-            "url": "https://github.com/ast-grep/ast-grep/releases/download/0.43.0/app-x86_64-apple-darwin.zip",
-            "sha256": "6d703090b106747b2f56086b6ccc7e798fe78bcae70257aa20519b220153555b",
-        },
-        "linux-arm64": {
-            "url": "https://github.com/ast-grep/ast-grep/releases/download/0.43.0/app-aarch64-unknown-linux-gnu.zip",
-            "sha256": "e706846148493967f3ab8011334817edd86ce5acbec10718b2a7b40799c640ff",
-        },
-        "linux-x64": {
-            "url": "https://github.com/ast-grep/ast-grep/releases/download/0.43.0/app-x86_64-unknown-linux-gnu.zip",
-            "sha256": "a26253a9c821d935f7e383e40f0de7c2ca62a4121de1f73a6d81ec32eae631e0",
-        },
-        "win32-arm64": {
-            "url": "https://github.com/ast-grep/ast-grep/releases/download/0.43.0/app-aarch64-pc-windows-msvc.zip",
-            "sha256": "a519fdd90324bf6858fde2d3feb2b862d67b834dc11af8f5b6c2c8143ab6a6c5",
-        },
-        "win32-x64": {
-            "url": "https://github.com/ast-grep/ast-grep/releases/download/0.43.0/app-x86_64-pc-windows-msvc.zip",
-            "sha256": "a4febbc8c48671e5729d85e29e4ebe5a051b7250d19545bca18e725ccf40ef61",
-        },
-    },
-}
-```
-
-#### 2. `agent/tools/code_intel/ast_grep/__init__.py`
-
-```python
-"""ast-grep structural search — all subagents (core component)."""
-
-from .runner import build_ast_grep_tools
-
-__all__ = ["build_ast_grep_tools"]
-```
-
-#### 3. `agent/tools/code_intel/ast_grep/resolver.py` — 5 层二进制发现
-
-```python
-"""ast-grep binary resolution — 5-tier discovery with --version probe.
-
-Probing order (mirrors oh-my-openagent sg-resolver.ts + sg-candidates.ts):
-  1. Env override (SHERRY_SG_PATH)
-  2. sherry runtime (~/.sherry/runtime/ast-grep/<slug>/sg)
-  3. skill bin cache (skills/ast-grep/bin/sg)
-  4. PATH lookup (ast-grep / sg, with Windows PATHEXT)
-  5. Homebrew / Linuxbrew prefixes
-
-Every candidate must be a non-empty regular file AND pass a 5s --version
-probe whose output contains 'ast-grep'; a candidate that fails for any
-reason is rejected and resolution continues to the next tier.
-"""
-
-from __future__ import annotations
-
-import hashlib
-import os
-import subprocess
-import sys
-from pathlib import Path
-
-from config.features import AST_GREP
-from config.path import ROOT_DIR
-
-_resolution_cache: str | None = None
-
-
-def _binary_name(platform: str) -> str:
-    return "sg.exe" if platform == "win32" else "sg"
-
-
-def _ast_grep_binary_name(platform: str) -> str:
-    return "ast-grep.exe" if platform == "win32" else "ast-grep"
-
-
-def _runtime_slug() -> str:
-    platform = sys.platform
-    arch = os.environ.get("SHERRY_ARCH") or os.arch if hasattr(os, "arch") else ""
-    # Fallback to platform.machine()
-    if not arch:
-        import platform as pf
-        arch = pf.machine()
-    arch_norm = "arm64" if arch in ("arm64", "aarch64") else "x64"
-    plat_norm = "win32" if platform == "win32" else ("darwin" if platform == "darwin" else "linux")
-    return f"{plat_norm}-{arch_norm}"
-
-
-def _executable_suffixes() -> list[str]:
-    if sys.platform != "win32":
-        return [""]
-    pathext = os.environ.get("PATHEXT", "")
-    suffixes = [e.lower() for e in pathext.split(";") if e]
-    return list(dict.fromkeys(["", *suffixes, ".exe", ".cmd", ".bat"]))
-
-
-def _probe_version(binary_path: str) -> bool:
-    """Run --version, return True if output contains 'ast-grep'."""
-    try:
-        result = subprocess.run(
-            [binary_path, "--version"],
-            capture_output=True, text=True,
-            timeout=AST_GREP["ast_grep_version_probe_timeout_ms"] / 1000,
-        )
-        return "ast-grep" in (result.stdout + result.stderr).lower()
-    except Exception:
-        return False
-
-
-def _candidate_exists(path: str) -> bool:
-    p = Path(path)
-    if not p.exists():
-        return False
-    try:
-        return p.is_file() and p.stat().st_size > 0
-    except OSError:
-        return False
-
-
-def _accepts(binary_path: str) -> bool:
-    return _candidate_exists(binary_path) and _probe_version(binary_path)
-
-
-def _env_override_candidates() -> list[str]:
-    key = AST_GREP["ast_grep_path_env_key"]
-    val = os.environ.get(key, "").strip()
-    return [val] if val else []
-
-
-def _runtime_candidates() -> list[str]:
-    import os
-    home = Path.home()
-    slug = _runtime_slug()
-    name = _binary_name(sys.platform)
-    runtime_dir = AST_GREP["ast_grep_runtime_dir"] or str(home / ".sherry" / "runtime" / "ast-grep" / slug)
-    return [str(Path(runtime_dir) / name)]
-
-
-def _skill_bin_candidates() -> list[str]:
-    from config.path import ROOT_DIR
-    names = [_ast_grep_binary_name(sys.platform), _binary_name(sys.platform)]
-    bin_dir = ROOT_DIR / "skills" / "ast-grep" / "bin"
-    return [str(bin_dir / n) for n in names]
-
-
-def _path_candidates() -> list[str]:
-    """Find ast-grep / sg on PATH."""
-    names = [_ast_grep_binary_name(sys.platform), _binary_name(sys.platform)]
-    found = []
-    for name in names:
-        path = _which(name)
-        if path:
-            found.append(path)
-    return found
-
-
-def _which(command: str) -> str | None:
-    """Cross-platform which(1)."""
-    suffixes = _executable_suffixes()
-    path_env = os.environ.get("PATH") or os.environ.get("Path") or ""
-    for entry in path_env.split(os.pathsep):
-        if not entry:
-            continue
-        for suffix in suffixes:
-            candidate = Path(entry) / (command + suffix)
-            if candidate.exists():
-                return str(candidate)
-    return None
-
-
-def _homebrew_candidates() -> list[str]:
-    if sys.platform == "darwin":
-        prefixes = ["/opt/homebrew/bin", "/usr/local/bin"]
-    elif sys.platform == "linux":
-        prefixes = ["/home/linuxbrew/.linuxbrew/bin", "/usr/local/bin"]
-    else:
-        return []
-    names = [_ast_grep_binary_name(sys.platform), _binary_name(sys.platform)]
-    return [str(Path(p) / n) for p in prefixes for n in names]
-
-
-def _first_accepted(candidates: list[str]) -> str | None:
-    for c in candidates:
-        if _accepts(c):
-            return c
-    return None
-
-
-def resolve_sg_binary() -> str | None:
-    """Resolve ast-grep binary across 5 tiers, or None if not found.
-
-    Results cached per-process.
-    """
-    global _resolution_cache
-    if _resolution_cache is not None and _candidate_exists(_resolution_cache):
-        return _resolution_cache
-
-    all_candidates: list[str] = []
-    all_candidates.extend(_env_override_candidates())
-    all_candidates.extend(_runtime_candidates())
-    all_candidates.extend(_skill_bin_candidates())
-    # PATH tier
-    all_candidates.extend(_path_candidates())
-    # Homebrew tier
-    all_candidates.extend(_homebrew_candidates())
-
-    result = _first_accepted(all_candidates)
-    if result:
-        _resolution_cache = result
-    return result
-
-
-def _clear_cache_for_tests() -> None:
-    global _resolution_cache
-    _resolution_cache = None
-```
-
-#### 4. `agent/tools/code_intel/ast_grep/provisioner.py` — SHA-256 验证下载
-
-```python
-"""ast-grep binary auto-provisioning — SHA-256 verified GitHub download.
-
-Mirrors oh-my-openagent sg-provisioner.ts:
-  1. Download pinned release ZIP from GitHub
-  2. SHA-256 verify the archive
-  3. Extract standalone sg/ast-grep binary from ZIP
-  4. Write to ~/.sherry/runtime/ast-grep/<slug>/sg (chmod 755)
-"""
-
-from __future__ import annotations
-
-import hashlib
-import io
-import os
-import sys
-import zipfile
-from pathlib import Path
-
-from loguru import logger
-
-from config.features import AST_GREP
-from .resolver import _runtime_slug, _binary_name, resolve_sg_binary, _clear_cache_for_tests
-
-
-def _sha256(data: bytes) -> str:
-    return hashlib.sha256(data).digest().hex()
-
-
-def _download(url: str, timeout_s: float) -> bytes:
-    """Download URL content, return bytes."""
-    import urllib.request
-    req = urllib.request.Request(url, headers={"User-Agent": "sherry-agent"})
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        return resp.read()
-
-
-def _extract_binary(zip_bytes: bytes, platform: str) -> bytes:
-    """Extract sg/ast-grep binary from ZIP archive."""
-    suffix = ".exe" if platform == "win32" else ""
-    preferred_names = [f"ast-grep{suffix}", f"sg{suffix}"]
-
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
-        for name in zf.namelist():
-            basename = name.split("/")[-1]
-            if basename in preferred_names:
-                return zf.read(name)
-    raise FileNotFoundError(f"No standalone {' or '.join(preferred_names)} binary in ZIP")
-
-
-def provision_sg_binary() -> str | None:
-    """Download, verify, and install the pinned ast-grep binary.
-
-    Returns binary path on success, None on failure.
-    """
-    slug = _runtime_slug()
-    asset = AST_GREP["ast_grep_release_assets"].get(slug)
-    if not asset:
-        logger.error("ast-grep {} has no release asset for {}", AST_GREP["ast_grep_pinned_version"], slug)
-        return None
-
-    home = Path.home()
-    runtime_dir = Path(AST_GREP["ast_grep_runtime_dir"] or str(home / ".sherry" / "runtime" / "ast-grep" / slug))
-    binary_name = _binary_name(sys.platform)
-    destination = runtime_dir / binary_name
-
-    try:
-        runtime_dir.mkdir(parents=True, exist_ok=True)
-    except OSError as e:
-        logger.error("Cannot create ast-grep runtime dir {}: {}", runtime_dir, e)
-        return None
-
-    try:
-        archive = _download(asset["url"], AST_GREP["ast_grep_provision_timeout_s"])
-    except Exception as e:
-        logger.error("Failed to download ast-grep {}: {}", AST_GREP["ast_grep_pinned_version"], e)
-        return None
-
-    actual_sha = _sha256(archive)
-    if actual_sha != asset["sha256"]:
-        logger.error(
-            "ast-grep checksum mismatch: expected {}, got {}",
-            asset["sha256"][:16], actual_sha[:16],
-        )
-        return None
-
-    try:
-        binary_bytes = _extract_binary(archive, sys.platform)
-    except (FileNotFoundError, zipfile.BadZipFile) as e:
-        logger.error("Failed to extract ast-grep binary: {}", e)
-        return None
-
-    try:
-        destination.write_bytes(binary_bytes)
-        if sys.platform != "win32":
-            os.chmod(destination, 0o755)
-    except OSError as e:
-        logger.error("Failed to write ast-grep binary to {}: {}", destination, e)
-        return None
-
-    logger.info("ast-grep {} provisioned to {}", AST_GREP["ast_grep_pinned_version"], destination)
-    _clear_cache_for_tests()
-    return str(destination)
-```
-
-#### 5. `agent/tools/code_intel/ast_grep/install_hints.py` — 安装提示
-
-```python
-"""ast-grep install hints — returned to caller when binary not found.
-
-Mirrors oh-my-openagent sg-install-hints.ts.
-"""
-
-import sys
-
-_SHERRY_PROVISION_HINT = "Start a sherry session so the bundled ast-grep provisions the pinned runtime automatically"
-_ENV_OVERRIDE_HINT = "Or point SHERRY_SG_PATH at an existing ast-grep binary"
-
-_DARWIN_HINTS = [
-    "brew install ast-grep",
-    "npm install -g @ast-grep/cli",
-    "cargo install ast-grep --locked",
-]
-
-_LINUX_HINTS = [
-    "npm install -g @ast-grep/cli",
-    "cargo install ast-grep --locked",
-    "brew install ast-grep  # linuxbrew",
-]
-
-_WIN32_HINTS = [
-    "scoop install main/ast-grep",
-    "winget install ast-grep",
-    "choco install ast-grep",
-    "npm install -g @ast-grep/cli",
-]
-
-
-def sg_install_hints(platform: str = sys.platform) -> list[str]:
-    if platform == "darwin":
-        base = _DARWIN_HINTS
-    elif platform == "win32":
-        base = _WIN32_HINTS
-    else:
-        base = _LINUX_HINTS
-    return [*base, _SHERRY_PROVISION_HINT, _ENV_OVERRIDE_HINT]
-
-
-def sg_binary_not_found_message(platform: str = sys.platform) -> str:
-    return (
-        f"ast-grep binary not found for {platform}: no candidate passed the "
-        f"--version probe across the env override, sherry runtime, skill bin "
-        f"cache, PATH, or Homebrew prefixes."
-    )
-```
-
-#### 6. `agent/tools/code_intel/ast_grep/runner.py` — 工具实现
-
-```python
-"""ast-grep runner: structural search + rewrite via sg CLI subprocess.
-
-Tools are injected into ALL subagents (core component, not RESEARCHER-only).
-Mirrors oh-my-openagent ast-grep-mcp/src/tools/search.ts + rewrite.ts.
-"""
-
-import json
-import subprocess
-import sys
-from pathlib import Path
-
-from langchain_core.tools import BaseTool, tool
-from pydantic import BaseModel, Field
-
-from config.features import AST_GREP
-from .resolver import resolve_sg_binary
-from .provisioner import provision_sg_binary
-from .install_hints import sg_install_hints, sg_binary_not_found_message
-
-
-class SgSearchInput(BaseModel):
-    pattern: str = Field(description="AST pattern (code, not regex). Must parse as one AST node.")
-    language: str = Field(description="Language of the pattern.")
-    paths: list[str] = Field(description="Root paths to search (1-64).")
-    globs: list[str] | None = Field(None, description="File glob filters.")
-    strictness: str | None = Field(None, description="cst | smart | ast | relaxed | signature")
-    max_matches: int | None = Field(None, description="Max results (default 50)")
-
-
-class SgRewriteInput(BaseModel):
-    pattern: str = Field(description="AST pattern to match.")
-    rewrite: str = Field(description="Replacement pattern (can use $VAR from pattern).")
-    language: str = Field(description="Language.")
-    paths: list[str] = Field(description="Root paths.")
-    dry_run: bool = Field(True, description="Preview only (default true). Set false to apply.")
-
-
-def _ensure_binary() -> str | None:
-    """Resolve or provision the ast-grep binary."""
-    binary = resolve_sg_binary()
-    if binary:
-        return binary
-    # Try auto-provision
-    return provision_sg_binary()
-
-
-def _build_search_args(
-    pattern: str, language: str, paths: list[str],
-    globs: list[str] | None, strictness: str | None,
-) -> list[str]:
-    args = ["run", "-p", pattern, "--lang", language, "--json=stream"]
-    args += ["--strictness", strictness or AST_GREP["ast_grep_strictness_default"]]
-    if globs:
-        for g in globs:
-            args += ["--globs", g]
-    args += paths
-    return args
-
-
-def _run_sg(binary: str, args: list[str], workdir: str, timeout_ms: int) -> dict:
-    try:
-        proc = subprocess.run(
-            [binary, *args],
-            capture_output=True, text=True, cwd=workdir,
-            timeout=timeout_ms / 1000,
-        )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"ast-grep timed out after {timeout_ms}ms"}
-    except FileNotFoundError:
-        return {"ok": False, "error": "ast-grep binary not found"}
-
-    if proc.returncode != 0 and not proc.stdout:
-        return {"ok": False, "error": proc.stderr.strip()}
-
-    records = []
-    for line in proc.stdout.strip().splitlines():
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
-            continue
-    return {"ok": True, "matches": records}
-
-
-@tool("ast_grep_search", args_schema=SgSearchInput)
-def _ast_grep_search_tool(
-    pattern: str,
-    language: str,
-    paths: list[str],
-    globs: list[str] | None = None,
-    strictness: str | None = None,
-    max_matches: int | None = None,
-    session_id: str = "",
-) -> str:
-    """Structural code search with ast-grep. Pattern is code, not regex.
-    $NAME matches one node, $$$NAME matches zero-or-more nodes.
-    Example: ast_grep_search(pattern="def $FUNC($$$): $$$BODY", language="python", paths=["src/"])"""
-    binary = _ensure_binary()
-    if not binary:
-        hints = sg_install_hints()
-        return json.dumps({
-            "error": sg_binary_not_found_message(),
-            "install_hints": hints,
-        }, ensure_ascii=False)
-
-    result = _run_sg(
-        binary,
-        _build_search_args(pattern, language, paths, globs, strictness),
-        workdir=paths[0],
-        timeout_ms=AST_GREP["ast_grep_timeout_ms"],
-    )
-    if not result["ok"]:
-        return f"Search failed: {result['error']}"
-    matches = result["matches"][: max_matches or AST_GREP["ast_grep_max_matches"]]
-    return json.dumps({"matches": matches, "count": len(matches)}, ensure_ascii=False)
-
-
-@tool("ast_grep_rewrite", args_schema=SgRewriteInput)
-def _ast_grep_rewrite_tool(
-    pattern: str,
-    rewrite: str,
-    language: str,
-    paths: list[str],
-    dry_run: bool = True,
-    session_id: str = "",
-) -> str:
-    """Structural code rewrite with ast-grep. Use $VAR from pattern in rewrite.
-    dry_run=true (default) previews; set false to apply.
-    Example: ast_grep_rewrite(pattern="print($MSG)", rewrite="logger.info($MSG)", language="python", paths=["src/"])"""
-    binary = _ensure_binary()
-    if not binary:
-        hints = sg_install_hints()
-        return json.dumps({
-            "error": sg_binary_not_found_message(),
-            "install_hints": hints,
-        }, ensure_ascii=False)
-
-    args = ["run", "-p", pattern, "-r", rewrite, "--lang", language, "--json=stream"]
-    if dry_run:
-        args.append("--dry-run")
-    args += paths
-
-    result = _run_sg(binary, args, workdir=paths[0], timeout_ms=AST_GREP["ast_grep_timeout_ms"])
-    if not result["ok"]:
-        return f"Rewrite failed: {result['error']}"
-    return json.dumps({
-        "changes": result["matches"],
-        "applied": not dry_run,
-        "count": len(result["matches"]),
-    }, ensure_ascii=False)
-
-
-def build_ast_grep_tools(session_id: str) -> list[BaseTool]:
-    """Build ast-grep tools — injected into ALL subagents (core component)."""
-    return [_ast_grep_search_tool, _ast_grep_rewrite_tool]
-```
-
-#### 7. `skills/ast-grep/install.sh` + `install.ps1` — 安装脚本
-
-> 参照 oh-my-openagent `shared-skills/skills/ast-grep/install.sh`（286 行），
-> 7 路包管理器 fallback + GitHub tarball 下载。
-> 此处不展开完整脚本，结构与 omo 的 install.sh 完全一致：
-> brew → npm → cargo → pip → nix → mise → GitHub release tarball。
-
-### 注入点
-
-**所有 subagent 均注入**（对标 oh-my-openagent 全局 MCP server）：
-
-在原计划 `spawn/core.py::_build_child_agent()` 中，ast-grep 工具的注入
-**不限于 RESEARCHER 角色**，而是所有 functional_role 均可使用：
-
-```python
-# spawn/core.py — 所有 subagent 均注入 ast-grep（核心组件）
-from agent.tools.code_intel.ast_grep import build_ast_grep_tools
-
-ast_grep_tools = build_ast_grep_tools(session_id=run.child_session_key)
-
-if functional_role == FunctionalRole.RESEARCHER:
-    from agent.tools.code_intel import build_code_intel_tools
-    code_intel_tools = build_code_intel_tools(session_id=run.child_session_key)
-    final_tools = [*filtered_tools, *code_intel_tools, *ast_grep_tools]
-else:
-    # 非 RESEARCHER 角色：注入 ast-grep（结构化搜索/重写是通用能力）
-    final_tools = [*filtered_tools, *ast_grep_tools]
-```
-
-> **设计决策：** oh-my-openagent 中 ast-grep 是全局 MCP server，所有 agent
-> 均可访问。sherry 中同样将其注入所有 subagent，不限制为 RESEARCHER。
-> tree-sitter explore/callers/callees/impact 仍为 RESEARCHER-only（需要索引上下文），
-> 但 ast-grep 的结构化搜索/重写是通用的代码操作能力。
-
-### 工具
-
-| 工具               | 说明                                          | 参考                                                |
-| ------------------ | --------------------------------------------- | --------------------------------------------------- |
-| `ast_grep_search`  | 结构化模式搜索（25 语言, 元变量, strictness） | oh-my-openagent `ast-grep-mcp/src/tools/search.ts`  |
-| `ast_grep_rewrite` | 结构化模式重写（dry_run 默认预览）            | oh-my-openagent `ast-grep-mcp/src/tools/rewrite.ts` |
-
-### 工期
-
-| 步骤     | 内容                                                     | 预估     |
-| -------- | -------------------------------------------------------- | -------- |
-| 1        | `config/features/agent_side/ast_grep.py` + re-exports    | 0.5h     |
-| 2        | `agent/tools/code_intel/ast_grep/resolver.py`            | 3h       |
-| 3        | `agent/tools/code_intel/ast_grep/provisioner.py`         | 2h       |
-| 4        | `agent/tools/code_intel/ast_grep/install_hints.py`       | 0.5h     |
-| 5        | `agent/tools/code_intel/ast_grep/runner.py`              | 2h       |
-| 6        | `skills/ast-grep/install.sh` + `install.ps1`             | 1h       |
-| 7        | 修改 `spawn/core.py` 注入 ast_grep 工具（所有 subagent） | 0.5h     |
-| 8        | 测试（5 文件）                                           | 3h       |
-| 9        | ruff + basedpyright + pytest                             | 0.5h     |
-| **小计** |                                                          | **~13h** |
-
----
+## Phase 1A — ast-grep 结构化搜索（已落地）
+
+> **状态：已落地。** 本节只保留落点、与提案的差异、实测摘要与平台覆盖；
+> 规格细节已随实现移除。
+
+### 落点
+
+- `config/features/agent_side/ast_grep.py`：`AstGrepConfig` TypedDict + `AST_GREP` 实例，经
+  `agent_side/__init__.py` 与 `config/features/__init__.py` **双级 re-export**。
+- `agent/tools/code_intel/ast_grep/`：`resolver.py`（5 层发现：env → runtime → skill-bin →
+  PATH → Homebrew，每层跑 `--version` 探针）、`provisioner.py`（SHA-256 校验的 GitHub
+  release 下载 + stdlib `zipfile` 解压）、`install_hints.py`、`runner.py`
+  （`ast_grep_search` / `ast_grep_rewrite`）、`__init__.py`。
+- `skills/ast-grep/install.sh` + `install.ps1`：7 路包管理器 fallback
+  （brew → npm → cargo → pip → nix → mise → GitHub ZIP）。
+- `agent/tools/subagent/spawn/core.py::_build_child_agent()`：**所有 functional_role 的
+  subagent 均注入** ast-grep；`ast_grep_*` 从不进入 `_MAIN_TOOLS_BUILDERS`，main agent 不可见。
+- `.gitignore` 加 `skills/ast-grep/bin/`；运行时二进制写入
+  `~/.sherry/runtime/ast-grep/<slug>/sg`，**不入库**。
+
+### 与提案的差异
+
+- **提取真实二进制而非 `sg` 启动器**：0.43.0 的 release ZIP 同时含 51 MB 的 `ast-grep`
+  真二进制与约 440 KB 的 `sg` 启动器；启动器按自身路径 re-exec，在受限 PRoot 沙箱中失败。
+  provisioner 因此**始终优先提取 `ast-grep`**，再以 resolver 期望的 `sg` 名写入运行时目录。
+- **rewrite 语义修正**：`sg run` 没有 `--dry-run` 选项。dry-run 用 `--json=stream`
+  （只预览、不写盘，且与 `-U` 互斥）；apply 用 `--update-all`，其 "Applied N changes"
+  输出走 **stderr**（解析 stdout + stderr 两路）。
+- **路径安全自持**：子代理中间件链不注册 `PathGuard`，`runner.py` 因此自行用
+  `resolve_project_path`（生产）/ `SHERRY_SG_ROOT`（沙箱）校验每条路径；遍历或越界一律拒绝，
+  `dry_run=False` 也只能写项目根内。
+- **未改 `spawn/system_prompt.py`**：提案文件清单列了「追加 ast-grep 使用指导」，实际未做
+  （工具描述已自解释），属有意省略。
+- **实测摘要与平台覆盖**：release 无 checksums 资产，故 6 平台 SHA-256 均由**官方 release
+  资产实际下载后计算**，6 个值全部验证（darwin/win32/linux × arm64/x64）。本机平台为
+  **linux-arm64**（非提案假定的 x86_64）。实测 linux-arm64 归档摘要
+  `e706846148493967f3ab8011334817edd86ce5acbec10718b2a7b40799c640ff`（与配置一致）；
+  provision 实测 2.7 s，产出 51,531,936 B / 0755 的 `sg`。
 
 ## Phase 2S — LSP 二进制发现与自动安装（替代原 Phase 2）
 
@@ -1553,7 +892,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 | -------- | ------------------------------------------------ | ---------- | --------------- |
 | 前置     | subagent 功能角色分工（已落地）                  | —          | —               |
 | Phase 1  | tree-sitter 符号索引 + 调用图 (原计划)           | ~15h       | 前置            |
-| Phase 1A | ast-grep 结构化搜索 + 二进制 provision (必选)    | ~13h       | 前置            |
+| Phase 1A | ast-grep 结构化搜索 + 二进制 provision (已落地)  | —          | 前置            |
 | Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ~16h       | Phase 1 + 1A    |
 | Phase 2X | LSP 语言 + 工具扩展 (新增)                       | ~7h        | Phase 2S        |
 | Phase 3  | Embedding 语义搜索 (原计划)                      | ~8h        | Phase 1         |
@@ -1569,7 +908,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 ```
 前置 (subagent 功能角色分工)
   ├→ Phase 1 (tree-sitter, 15h)
-  └→ Phase 1A (ast-grep + provision, 13h) ← 与 Phase 1 并行
+  └→ Phase 1A (ast-grep + provision) ← 已落地，与 Phase 1 并行
        ├→ Phase 2S (LSP 基础设施, 16h) ← 需 Phase 1 + 1A
        │    └→ Phase 2X (LSP 扩展, 7h)
        ├→ Phase 3 (Embedding, 8h) ← 可与 Phase 2S 并行
@@ -1581,22 +920,24 @@ asyncio.create_task(start_index_watcher(stop_event))
 
 ## 修改文件清单（新增）
 
-### Phase 1A 修改（7 个）
+### Phase 1A 修改（已落地）
 
-| 文件                                               | 修改                                    |
-| -------------------------------------------------- | --------------------------------------- |
-| `config/features/agent_side/ast_grep.py`           | 新建（含 provision 配置）               |
-| `config/features/agent_side/__init__.py`           | re-export `AST_GREP` / `AstGrepConfig`  |
-| `config/features/__init__.py`                      | 顶层 re-export                          |
-| `agent/tools/code_intel/ast_grep/__init__.py`      | 新建                                    |
-| `agent/tools/code_intel/ast_grep/resolver.py`      | 新建 — 5 层二进制发现                   |
-| `agent/tools/code_intel/ast_grep/provisioner.py`   | 新建 — SHA-256 验证下载                 |
-| `agent/tools/code_intel/ast_grep/install_hints.py` | 新建 — 安装提示                         |
-| `agent/tools/code_intel/ast_grep/runner.py`        | 新建 — 工具实现                         |
-| `skills/ast-grep/install.sh`                       | 新建 — POSIX 安装脚本（7 路 fallback）  |
-| `skills/ast-grep/install.ps1`                      | 新建 — Windows 安装脚本                 |
-| `agent/tools/subagent/spawn/core.py`               | 注入 ast_grep 工具（**所有 subagent**） |
-| `agent/tools/subagent/spawn/system_prompt.py`      | 追加 ast-grep 使用指导                  |
+| 文件                                               | 修改                                          |
+| -------------------------------------------------- | --------------------------------------------- |
+| `config/features/agent_side/ast_grep.py`           | 新建（含 6 平台 SHA-256 provision 配置）      |
+| `config/features/agent_side/__init__.py`           | re-export `AST_GREP` / `AstGrepConfig`        |
+| `config/features/__init__.py`                      | 顶层 re-export                                |
+| `agent/tools/code_intel/ast_grep/__init__.py`      | 新建                                          |
+| `agent/tools/code_intel/ast_grep/resolver.py`      | 新建 — 5 层二进制发现 + `--version` 探针      |
+| `agent/tools/code_intel/ast_grep/provisioner.py`   | 新建 — SHA-256 校验下载 + 提取真二进制        |
+| `agent/tools/code_intel/ast_grep/install_hints.py` | 新建 — 安装提示                               |
+| `agent/tools/code_intel/ast_grep/runner.py`        | 新建 — `ast_grep_search` / `ast_grep_rewrite` |
+| `skills/ast-grep/install.sh`                       | 新建 — POSIX 安装脚本（7 路 fallback）        |
+| `skills/ast-grep/install.ps1`                      | 新建 — Windows 安装脚本                       |
+| `agent/tools/subagent/spawn/core.py`               | 注入 ast_grep（**所有 subagent**）            |
+| `.gitignore`                                       | 加 `skills/ast-grep/bin/`                     |
+
+> 提案清单中的 `agent/tools/subagent/spawn/system_prompt.py` 改动未执行（见「与提案的差异」）。
 
 ### Phase 2S 修改（5 个）
 
@@ -1647,9 +988,11 @@ asyncio.create_task(start_index_watcher(stop_event))
 
 | 文件                                                        | 阶段 | 标记          | 覆盖点                                                                                  |
 | ----------------------------------------------------------- | ---- | ------------- | --------------------------------------------------------------------------------------- |
-| `tests/agent/tools/code_intel/ast_grep/test_resolver.py`    | P1A  | `unit`        | 5 层发现（env/runtime/skill-bin/PATH/homebrew）、--version 探针、缓存命中、Windows 后缀 |
-| `tests/agent/tools/code_intel/ast_grep/test_provisioner.py` | P1A  | `unit`        | SHA-256 校验、ZIP 解压、6 平台 asset、下载失败/校验失败/写入失败                        |
-| `tests/agent/tools/code_intel/ast_grep/test_runner.py`      | P1A  | `unit`        | sg 子进程调用、pattern 解析、元变量匹配、dry_run rewrite、超时、binary 未找到 fallback  |
+| `tests/agent/tools/code_intel/ast_grep/test_resolver.py`      | P1A  | `unit`   | 5 层发现（env/runtime/skill-bin/PATH/homebrew）、--version 探针、缓存、Windows 后缀       |
+| `tests/agent/tools/code_intel/ast_grep/test_provisioner.py`   | P1A  | `unit`   | SHA-256 校验、优先提取 `ast-grep`、6 平台 asset、下载/校验/超时/解压失败                   |
+| `tests/agent/tools/code_intel/ast_grep/test_install_hints.py` | P1A  | `unit`   | 平台安装提示、config 双级 re-export、TypedDict 键一致                                     |
+| `tests/agent/tools/code_intel/ast_grep/test_runner.py`        | P1A  | `unit`   | sg 子进程、JSON 解析、退出码、超时、dry_run/apply rewrite、路径安全、SHERRY_SG_PATH       |
+| `tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py`  | P1A  | `module` | 四个 functional_role 均获 ast-grep、main 不可见、假下载器 hermetic e2e（search+rewrite）  |
 | `tests/agent/tools/code_intel/lsp/test_resolver.py`         | P2S  | `unit`        | 三层发现（显式路径/repo-local/PATH）、缓存命中、Windows 后缀、marker-gated bin 目录     |
 | `tests/agent/tools/code_intel/lsp/test_installer.py`        | P2S  | `unit`        | 自动安装命令执行、超时、returncode、安装后重发现、auto_install=False 拒绝               |
 | `tests/agent/tools/code_intel/lsp/test_fallback.py`         | P2S  | `unit`        | available/not_installed/not_configured 三态、fallback 消息格式、语言检测                |
@@ -1661,60 +1004,6 @@ asyncio.create_task(start_index_watcher(stop_event))
 ### 关键测试用例
 
 ```python
-# test_resolver.py
-def test_resolve_env_override():
-    """SHERRY_SG_PATH 环境变量指向的路径优先于其他层。"""
-
-def test_resolve_runtime_dir():
-    """~/.sherry/runtime/ast-grep/<slug>/sg 被探测。"""
-
-def test_resolve_skill_bin():
-    """skills/ast-grep/bin/sg 被探测。"""
-
-def test_resolve_from_path():
-    """PATH 上的 ast-grep / sg 被发现。"""
-
-def test_resolve_homebrew():
-    """Homebrew 前缀目录被探测。"""
-
-def test_version_probe_rejects_impostor():
-    """--version 输出不含 'ast-grep' 的二进制被拒绝。"""
-
-def test_resolve_not_found():
-    """所有层均未命中时返回 None。"""
-
-def test_resolve_cache_hit():
-    """相同参数的第二次调用命中缓存。"""
-
-# test_provisioner.py
-def test_sha256_mismatch_rejected():
-    """下载内容 SHA-256 不匹配时返回 None。"""
-
-def test_zip_extraction():
-    """从 ZIP 中正确提取 sg/ast-grep 二进制。"""
-
-def test_download_failure():
-    """下载失败时返回 None，不崩溃。"""
-
-def test_write_permission():
-    """写入 ~/.sherry/runtime/ 失败时返回 None。"""
-
-def test_provision_then_resolve():
-    """provision 后 resolve_sg_binary() 能发现新二进制。"""
-
-# test_runner.py
-def test_search_success():
-    """正常 pattern 返回匹配结果。"""
-
-def test_search_binary_not_found():
-    """二进制未找到时返回安装提示。"""
-
-def test_rewrite_dry_run():
-    """dry_run=True 时不修改文件。"""
-
-def test_rewrite_apply():
-    """dry_run=False 时实际修改文件。"""
-
 # test_resolver.py (LSP)
 def test_resolve_local_venv_bin():
     """pyproject.toml 存在时 .venv/bin 被探测。"""

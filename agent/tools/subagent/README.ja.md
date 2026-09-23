@@ -475,10 +475,12 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 | `FunctionalRole` | 用途 | `model_tier` | ロールのツール一覧 |
 |------------------|------|--------------|--------------------|
-| `general` | 既定ワーカー。全ツールと depth ベースの LLM を継承 | `inherit` | （全ツール） |
-| `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact` |
-| `executor` | 書き込み可能な実装とコマンド実行。サブエージェント spawn 不可 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
-| `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` |
+| `general` | 既定ワーカー。全ツールと depth ベースの LLM を継承 | `inherit` | （全ツール）+ ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 書き込み可能な実装とコマンド実行。サブエージェント spawn 不可 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+
+**ast-grep は全ロール共通、コードインテリジェンスは違う。** すべての機能ロール（`general` を含む）は ast-grep の構造検索/リライト `ast_grep_search`、`ast_grep_rewrite` も受け取ります。これは oh-my-openagent のグローバル登録 ast-grep サーバーに対応する中核機能です。tree-sitter のコードインテリジェンス `explore` / `callers` / `callees` / `impact` はシンボル索引を要するため、引き続き `researcher` 専用です。
 
 **定義の場所。** 組み込み定義は**パッケージ内**（追跡・配布可能）の `agent/tools/subagent/roles/definitions/<name>/AGENTS.md` に同梱されます。任意のユーザー上書き（未追跡）は `workspace/subagent_roles/<name>/AGENTS.md` に置けます。解決順は **上書き → パッケージ既定 → なし** で、ディレクトリ名は `roles_override_dir_name` で設定できます。各ファイルは YAML frontmatter（`name`、`description`、`model_tier`、`tools`）と、子プロンプトに追記される markdown 本文を持ちます。`tools: inherit` は「全ツール」（`None`）に解決されます。
 

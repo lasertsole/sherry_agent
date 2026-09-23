@@ -468,10 +468,12 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 
 | `FunctionalRole` | 用途 | `model_tier` | 角色工具列表 |
 |------------------|------|--------------|--------------|
-| `general` | 默认 worker；继承全部工具与基于 depth 的 LLM | `inherit` | （全部工具） |
-| `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact` |
-| `executor` | 可写入的实现与命令执行；不允许 spawn 子代理 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` |
-| `reviewer` | 只读的 diff/质量审计 | `auxiliary` | `read_file`、`terminal` |
+| `general` | 默认 worker；继承全部工具与基于 depth 的 LLM | `inherit` | （全部工具）+ ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `executor` | 可写入的实现与命令执行；不允许 spawn 子代理 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `reviewer` | 只读的 diff/质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+
+**ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite` —— 这是对标 oh-my-openagent 全局注册 ast-grep 服务器的核心能力。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` 仍为 `researcher` 专属，因为它们需要符号索引。
 
 **定义位置。** 内置定义随**包内**分发（纳入版本管理、可发布），位于 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`。可选的用户覆盖（不入库）放在 `workspace/subagent_roles/<name>/AGENTS.md`。解析顺序为 **覆盖 → 包内默认 → 无**；目录名可通过 `roles_override_dir_name` 配置。每个文件包含 YAML frontmatter（`name`、`description`、`model_tier`、`tools`）以及追加到子代理提示词的 markdown 正文；`tools: inherit` 解析为“全部工具”（`None`）。
 

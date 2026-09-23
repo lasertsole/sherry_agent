@@ -471,10 +471,12 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 | `FunctionalRole` | 용도 | `model_tier` | 역할 도구 목록 |
 |------------------|------|--------------|----------------|
-| `general` | 기본 워커. 모든 도구와 depth 기반 LLM 상속 | `inherit` | (모든 도구) |
-| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact` |
-| `executor` | 쓰기 가능한 구현과 명령 실행. 하위 에이전트 spawn 불가 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` |
-| `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` |
+| `general` | 기본 워커. 모든 도구와 depth 기반 LLM 상속 | `inherit` | (모든 도구) + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `executor` | 쓰기 가능한 구현과 명령 실행. 하위 에이전트 spawn 불가 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+
+**ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. 이는 oh-my-openagent의 전역 등록 ast-grep 서버에 대응하는 핵심 기능입니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact`는 심볼 인덱스가 필요하므로 계속 `researcher` 전용입니다.
 
 **정의 위치.** 내장 정의는 **패키지 내부**(추적·배포 가능)의 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`에 포함됩니다. 선택적 사용자 오버레이(미추적)는 `workspace/subagent_roles/<name>/AGENTS.md`에 둘 수 있습니다. 해석 순서는 **오버레이 → 패키지 기본 → 없음**이며, 디렉터리 이름은 `roles_override_dir_name`로 설정합니다. 각 파일은 YAML frontmatter(`name`, `description`, `model_tier`, `tools`)와 자식 프롬프트에 덧붙는 markdown 본문을 가집니다. `tools: inherit`는 "모든 도구"(`None`)로 해석됩니다.
 
