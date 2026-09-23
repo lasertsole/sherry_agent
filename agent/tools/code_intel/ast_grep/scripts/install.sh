@@ -2,7 +2,7 @@
 # ast-grep installer — 7-way package-manager fallback + pinned GitHub tarball.
 #
 # Usage:
-#   bash skills/ast-grep/install.sh [--prefix <dir>] [--version <x.y.z>]
+#   bash agent/tools/code_intel/ast_grep/scripts/install.sh [--prefix <dir>] [--version <x.y.z>]
 #
 # The GitHub fallback downloads the pinned release, verifies its SHA-256 against
 # the manifest baked in config/features/agent_side/ast_grep.py (when python3 is
