@@ -156,11 +156,13 @@ def _captured_lane(monkeypatch):
 class TestLibrarianSpawnE2E:
     def test_librarian_spawn_end_to_end(self, _leaf_depth, _captured_lane) -> None:
         async def _spawn():
-            return await spawn_core.spawn_subagent_direct(
+            result = await spawn_core.spawn_subagent_direct(
                 task="How does library X implement Y?",
                 requester_session_key="agent:main:session:test",
                 functional_role_hint="librarian",
             )
+            await asyncio.sleep(0.01)
+            return result
 
         result = asyncio.run(_spawn())
         assert result.status == "accepted", result.error
