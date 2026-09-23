@@ -1027,7 +1027,16 @@ async def _build_child_agent(
     if functional_role == FunctionalRole.RESEARCHER:
         from agent.tools.code_intel import build_code_intel_tools
 
-        final_tools = [*filtered_tools, *build_code_intel_tools(session_id=session_id)]
+        final_tools = [*final_tools, *build_code_intel_tools(session_id=session_id)]
+
+    # ast-grep structural search/rewrite is a core component available to EVERY
+    # functional role (not RESEARCHER-only), mirroring oh-my-openagent's globally
+    # registered ast-grep MCP server. It is never added to _MAIN_TOOLS_BUILDERS,
+    # so the main agent cannot see it; the builder is fail-open (a missing
+    # binary degrades to an actionable install-hint tool result, never a crash).
+    from agent.tools.code_intel.ast_grep import build_ast_grep_tools
+
+    final_tools = [*final_tools, *build_ast_grep_tools(session_id=session_id)]
 
     def _select_child_llm():
         # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
