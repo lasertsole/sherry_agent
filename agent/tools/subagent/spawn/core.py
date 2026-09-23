@@ -21,7 +21,7 @@ from loguru import logger
 from typing import Any, Literal
 from ..config import get_config
 from ..types.capability import SubagentSessionRole
-from ..types.functional_role import CODE_INTEL_ROLES, FunctionalRole
+from ..types.functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
 from ..roles import RoleDefinition, load_role_definition
 from ..registry import register_run, get_run, mark_run_running
@@ -1009,6 +1009,20 @@ async def _build_child_agent(
     from agent.tools.code_intel.ast_grep import build_ast_grep_tools
 
     final_tools = [*final_tools, *build_ast_grep_tools(session_id=session_id)]
+
+    # Programmatic Tool Calling is EXECUTOR-only (PTC_ROLES) — the same single
+    # named source that spawn/system_prompt.py reads. Injected after the role
+    # policy and never added to _MAIN_TOOLS_BUILDERS, so the main agent and
+    # every other functional role cannot see it. The tool's own whitelist is
+    # intersected with filtered_tools, so it can call only real executor tools
+    # and can never recurse into execute_code.
+    if functional_role in PTC_ROLES:
+        from agent.tools.ptc import build_ptc_tool
+
+        final_tools = [
+            *final_tools,
+            build_ptc_tool(available_tools=filtered_tools, session_id=session_id),
+        ]
 
     def _select_child_llm():
         # Functional-role tier wins over the depth role; GENERAL (no tier) keeps

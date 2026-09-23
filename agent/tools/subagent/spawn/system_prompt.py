@@ -1,7 +1,7 @@
 """Build structured system prompts for sub-agents based on their role and spawn context."""
 
 from ..types.capability import SubagentSessionRole
-from ..types.functional_role import CODE_INTEL_ROLES, FunctionalRole
+from ..types.functional_role import CODE_INTEL_ROLES, PTC_ROLES, FunctionalRole
 from ..types.registry import SubagentRunRecord
 
 
@@ -158,6 +158,25 @@ def build_subagent_system_prompt(
             "Index is built on first use; subsequent queries are fast. LSP servers "
             "start on demand and are reaped when idle; if a server is missing you get "
             "an install hint and the explore/terminal fallback."
+        )
+
+    # Section 5.6: Programmatic Tool Calling (PTC_ROLES only — matches the
+    # execute_code injection in spawn/core.py; other roles receive neither the
+    # tool nor this guidance).
+    if functional_role in PTC_ROLES:
+        sections.append(
+            "## Programmatic Tool Calling (execute_code)\n"
+            "You have an `execute_code` tool that runs a Python script with "
+            "synchronous access to your tools via `from sherry_tools import ...`.\n"
+            "Use it when:\n"
+            "- You need 3+ tool calls with processing logic between them\n"
+            "- You must filter/reduce large tool outputs before they enter your context\n"
+            "- You need conditional branching or loops over tool calls\n"
+            "Do NOT use it for a single tool call, tasks that need complex reasoning "
+            "over the full result, or interactive user input.\n"
+            "The script runs in an isolated child process with restricted builtins "
+            "(no `open`, no arbitrary imports) and a hard tool-call budget. "
+            "Print your final result to stdout."
         )
 
     # Section 6: Session Context

@@ -30,3 +30,9 @@ class FunctionalRole(StrEnum):
 CODE_INTEL_ROLES: frozenset[FunctionalRole] = frozenset(
     {FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN}
 )
+
+#: Roles that get the Programmatic Tool Calling ``execute_code`` tool. EXECUTOR
+#: only — it is the sole write-capable code-execution role. Both the tool
+#: injection (spawn/core.py) and the prompt guidance (spawn/system_prompt.py)
+#: read this single set, so the tool face and its prompt section cannot drift.
+PTC_ROLES: frozenset[FunctionalRole] = frozenset({FunctionalRole.EXECUTOR})
