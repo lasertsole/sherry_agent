@@ -7,7 +7,11 @@
 #
 # Required repo secret:  MAIN_LLM_API_KEY
 # Optional repo secrets: MAIN_LLM_PROVIDER, MAIN_LLM_NAME, MAIN_LLM_API_BASE,
-#                        MAIN_LLM_MAX_TOKEN, TAVILY_API_KEY, AUXILIARY_LLM_*
+#                        MAIN_LLM_MAX_TOKEN, TAVILY_API_KEY, AUXILIARY_LLM_*,
+#                        REASONER_LLM_*
+# Secret names mirror the environment keys the code actually reads: the
+# auxiliary model name is AUXILIARY_LLM_API_NAME (not AUXILIARY_LLM_NAME), and
+# the reasoner is configured through REASONER_LLM_* (see models/LLMs/).
 # Only non-empty secrets are exported (empty-string env can shadow config
 # defaults); provider defaults from .env.example apply otherwise.
 
@@ -53,12 +57,18 @@ jobs:
           MAIN_LLM_MAX_TOKEN: ${{ secrets.MAIN_LLM_MAX_TOKEN }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
           AUXILIARY_LLM_PROVIDER: ${{ secrets.AUXILIARY_LLM_PROVIDER }}
-          AUXILIARY_LLM_NAME: ${{ secrets.AUXILIARY_LLM_NAME }}
+          AUXILIARY_LLM_API_NAME: ${{ secrets.AUXILIARY_LLM_API_NAME }}
           AUXILIARY_LLM_API_BASE: ${{ secrets.AUXILIARY_LLM_API_BASE }}
           AUXILIARY_LLM_API_KEY: ${{ secrets.AUXILIARY_LLM_API_KEY }}
+          AUXILIARY_LLM_MAX_TOKEN: ${{ secrets.AUXILIARY_LLM_MAX_TOKEN }}
+          REASONER_LLM_PROVIDER: ${{ secrets.REASONER_LLM_PROVIDER }}
+          REASONER_LLM_NAME: ${{ secrets.REASONER_LLM_NAME }}
+          REASONER_LLM_API_BASE: ${{ secrets.REASONER_LLM_API_BASE }}
+          REASONER_LLM_API_KEY: ${{ secrets.REASONER_LLM_API_KEY }}
+          REASONER_LLM_MAX_TOKEN: ${{ secrets.REASONER_LLM_MAX_TOKEN }}
         run: |
           have_key=0
-          for v in MAIN_LLM_PROVIDER MAIN_LLM_NAME MAIN_LLM_API_BASE MAIN_LLM_API_KEY MAIN_LLM_MAX_TOKEN TAVILY_API_KEY AUXILIARY_LLM_PROVIDER AUXILIARY_LLM_NAME AUXILIARY_LLM_API_BASE AUXILIARY_LLM_API_KEY; do
+          for v in MAIN_LLM_PROVIDER MAIN_LLM_NAME MAIN_LLM_API_BASE MAIN_LLM_API_KEY MAIN_LLM_MAX_TOKEN TAVILY_API_KEY AUXILIARY_LLM_PROVIDER AUXILIARY_LLM_API_NAME AUXILIARY_LLM_API_BASE AUXILIARY_LLM_API_KEY AUXILIARY_LLM_MAX_TOKEN REASONER_LLM_PROVIDER REASONER_LLM_NAME REASONER_LLM_API_BASE REASONER_LLM_API_KEY REASONER_LLM_MAX_TOKEN; do
             val="${!v}"
             if [ -n "$val" ]; then
               echo "$v=$val" >> "$GITHUB_ENV"
