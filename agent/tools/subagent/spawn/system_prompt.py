@@ -1,7 +1,7 @@
 """Build structured system prompts for sub-agents based on their role and spawn context."""
 
 from ..types.capability import SubagentSessionRole
-from ..types.functional_role import FunctionalRole
+from ..types.functional_role import CODE_INTEL_ROLES, FunctionalRole
 from ..types.registry import SubagentRunRecord
 
 
@@ -128,9 +128,10 @@ def build_subagent_system_prompt(
         )
         sections.append(spawn_guidance)
 
-    # Section 5.5: Code Intelligence (RESEARCHER only — matches the tool injection
-    # in spawn/core.py; other roles receive neither the tools nor this guidance).
-    if functional_role == FunctionalRole.RESEARCHER:
+    # Section 5.5: Code Intelligence (CODE_INTEL_ROLES only — matches the tool
+    # injection in spawn/core.py; other roles receive neither the tools nor this
+    # guidance).
+    if functional_role in CODE_INTEL_ROLES:
         sections.append(
             "## Code Intelligence Tools\n"
             "You have code retrieval tools for fast repo navigation:\n"

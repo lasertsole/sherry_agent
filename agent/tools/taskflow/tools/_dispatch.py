@@ -16,7 +16,8 @@ async def dispatch_child(
     """Dispatch a detached child session and return its child_session_key.
 
     ``functional_role`` optionally selects a functional specialization
-    (researcher / executor / reviewer); ``None`` keeps the default spawn path.
+    (general / researcher / executor / reviewer / librarian); ``None`` keeps the
+    default spawn path.
 
     Raises RuntimeError unless the spawn is accepted with a child key.
     """

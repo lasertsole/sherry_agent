@@ -22,7 +22,7 @@ from typing import Any, Literal
 from ..config import get_config
 from ..types.spawn import SpawnMode
 from ..types.capability import SubagentSessionRole
-from ..types.functional_role import FunctionalRole
+from ..types.functional_role import CODE_INTEL_ROLES, FunctionalRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
 from ..roles import RoleDefinition, load_role_definition
 from ..registry import register_run, get_run, mark_run_running
@@ -241,7 +241,7 @@ async def spawn_subagent_direct(
             judge reviews every turn and the child continues until judged
             complete or the budget is spent.
         functional_role_hint: Functional specialization (general / researcher /
-            executor / reviewer). ``None`` keeps the pre-migration behavior.
+            executor / reviewer / librarian). ``None`` keeps the pre-migration behavior.
         extra_tools: Additional tool names to attach for this spawn only.
 
     Returns:
@@ -1020,11 +1020,12 @@ async def _build_child_agent(
 
     filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
 
-    # Code intelligence tools are RESEARCHER-only: they are injected here, after
-    # the role policy, and never added to _MAIN_TOOLS_BUILDERS, so the main agent
-    # and every other functional role cannot see them.
+    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher + librarian):
+    # they are injected here, after the role policy, and never added to
+    # _MAIN_TOOLS_BUILDERS, so the main agent and every other functional role
+    # cannot see them.
     final_tools = list(filtered_tools)
-    if functional_role == FunctionalRole.RESEARCHER:
+    if functional_role in CODE_INTEL_ROLES:
         from agent.tools.code_intel import build_code_intel_tools
         from agent.tools.code_intel.lsp import build_lsp_tools
 

@@ -55,7 +55,8 @@ class SessionsSpawnSchema(BaseModel):
         default=None,
         description="Functional specialization of the subagent worker. "
         "general=full access, researcher=read-only search, "
-        "executor=write+run, reviewer=read-only audit. "
+        "executor=write+run, reviewer=read-only audit, "
+        "librarian=read-only external codebase retrieval. "
         "Omit to inherit the default role.",
     )
     extra_tools: list[str] | None = Field(
