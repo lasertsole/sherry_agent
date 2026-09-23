@@ -382,7 +382,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数�
 
 ### 実 LLM e2e テスト（`llm_e2e` marker）
 
-`tests/agent/tools/subagent/` の 2 つのテストファイル（`test_real_e2e.py`、`test_spawn_direct_e2e.py`）にある 3 つのテストが**実 LLM API** を呼び出します。これらは：
+`tests/agent/tools/subagent/` の 4 つのテストファイル（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`）にある 7 つのテストが**実 LLM API** を呼び出します。これらは：
 
 - **既定で選択解除**され（`-m "not llm_e2e"`、`pyproject.toml` の addopts と runner の両方で設定）、
 - `@pytest.mark.timeout` の予算（pytest-timeout）で制限され：単純テスト 300 秒、同時テスト 600 秒、

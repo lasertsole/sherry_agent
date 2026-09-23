@@ -382,7 +382,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数�
 
 ### 真实 LLM e2e 测试（`llm_e2e` marker）
 
-`tests/agent/tools/subagent/` 中的两个测试文件（`test_real_e2e.py`、`test_spawn_direct_e2e.py`）包含三个会调用**真实 LLM API** 的测试。它们：
+`tests/agent/tools/subagent/` 中的四个测试文件（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`）包含七个会调用**真实 LLM API** 的测试。它们：
 
 - **默认被取消选择**（`-m "not llm_e2e"`，同时写在 `pyproject.toml` addopts 与 runner 中），
 - 受 `@pytest.mark.timeout` 预算约束（pytest-timeout）：简单测试 300 秒，并发测试 600 秒，

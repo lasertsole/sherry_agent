@@ -382,7 +382,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pyt
 
 ### 실제 LLM e2e 테스트(`llm_e2e` marker)
 
-`tests/agent/tools/subagent/`의 두 테스트 파일(`test_real_e2e.py`, `test_spawn_direct_e2e.py`)에 있는 세 개의 테스트가 **실제 LLM API**를 호출합니다. 이들은:
+`tests/agent/tools/subagent/`의 네 테스트 파일(`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`)에 있는 일곱 개의 테스트가 **실제 LLM API**를 호출합니다. 이들은:
 
 - **기본적으로 선택 해제**되며(`-m "not llm_e2e"`, `pyproject.toml` addopts와 runner 양쪽에 설정),
 - `@pytest.mark.timeout` 예산(pytest-timeout)으로 제한됩니다: 단순 테스트 300초, 동시 테스트 600초,

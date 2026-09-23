@@ -382,7 +382,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # args after `--` are fo
 
 ### Real-LLM e2e tests (`llm_e2e` marker)
 
-Three tests in `tests/agent/tools/subagent/` (`test_real_e2e.py`, `test_spawn_direct_e2e.py`) call **real LLM APIs**. They are:
+Seven tests across four files in `tests/agent/tools/subagent/` (`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`) call **real LLM APIs**. They are:
 
 - **deselected by default** (`-m "not llm_e2e"` — set both in `pyproject.toml` addopts and by the runner),
 - bounded by `@pytest.mark.timeout` budgets (pytest-timeout): 300 s per simple test, 600 s for the concurrent test,
