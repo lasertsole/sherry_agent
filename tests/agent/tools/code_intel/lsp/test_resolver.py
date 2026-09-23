@@ -198,6 +198,68 @@ class TestInstallHints:
         assert "haskell" in resolver.get_install_hint("haskell")
 
 
+_NEW_LANGUAGES = ["cpp", "java", "ruby", "bash", "vue", "yaml"]
+_NPM_LANGUAGES = ["bash", "vue", "yaml"]
+
+
+class TestPhase2XLanguages:
+    def test_supported_servers_carry_language_id(self) -> None:
+        for language, spec in LSP["lsp_supported_servers"].items():
+            assert spec["language_id"], language
+            assert spec["command"], language
+            assert spec["extensions"], language
+
+    @pytest.mark.parametrize("language", _NEW_LANGUAGES)
+    def test_new_language_resolves_from_path(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, language: str
+    ) -> None:
+        command = LSP["lsp_supported_servers"][language]["command"][0]
+        bindir = tmp_path / language
+        binary = _make_executable(bindir / command)
+        monkeypatch.setattr(resolver, "_resolve_local", lambda *a, **k: None)
+        monkeypatch.setattr(resolver, "runtime_dir", lambda: Path("/nonexistent-lsp-runtime"))
+        monkeypatch.setattr(resolver, "_homebrew_dirs", lambda: [])
+        monkeypatch.setenv("PATH", str(bindir))
+        assert resolver.resolve_lsp_server(language, str(tmp_path)) == str(binary)
+
+    @pytest.mark.parametrize("language", _NEW_LANGUAGES)
+    def test_new_language_not_installed(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, language: str
+    ) -> None:
+        _neutralize(monkeypatch)
+        assert resolver.resolve_lsp_server(language, str(tmp_path)) is None
+
+    @pytest.mark.parametrize("language", _NPM_LANGUAGES)
+    def test_node_bin_requires_package_json(self, tmp_path: Path, language: str) -> None:
+        suffixes = resolver._executable_suffixes()
+        command = LSP["lsp_supported_servers"][language]["command"][0]
+        project = tmp_path / language
+        binary = _make_executable(project / "node_modules" / ".bin" / command)
+        assert resolver._resolve_local(command, str(project), suffixes, language) is None
+        (project / "package.json").write_text("{}", encoding="utf-8")
+        assert resolver._resolve_local(command, str(project), suffixes, language) == str(binary)
+
+    def test_ruby_bin_requires_gemfile(self, tmp_path: Path) -> None:
+        suffixes = resolver._executable_suffixes()
+        project = tmp_path / "rb"
+        binary = _make_executable(project / "bin" / "ruby-lsp")
+        assert resolver._resolve_local("ruby-lsp", str(project), suffixes, "ruby") is None
+        (project / "Gemfile").write_text("source 'https://rubygems.org'\n", encoding="utf-8")
+        assert resolver._resolve_local("ruby-lsp", str(project), suffixes, "ruby") == str(binary)
+
+    def test_cpp_and_java_have_no_repo_local_rule(self) -> None:
+        rules = LSP["lsp_repo_local_bin_rules"]
+        assert "cpp" not in rules and "java" not in rules
+
+    def test_new_language_install_hints(self) -> None:
+        assert "clangd.llvm.org" in resolver.get_install_hint("cpp")
+        assert "ruby-lsp" in resolver.get_install_hint("ruby")
+        assert "bash-language-server" in resolver.get_install_hint("bash")
+        assert resolver.get_local_install_hint("ruby") == "bundle add ruby-lsp"
+        assert resolver.get_local_install_hint("bash") is not None
+        assert resolver.get_local_install_hint("cpp") is None
+
+
 class TestConfigSurface:
     def test_double_re_export_identical(self) -> None:
         from config.features import LSP as TOP
@@ -214,6 +276,17 @@ class TestConfigSurface:
         assert LSP["lsp_request_timeout_s"] == 10.0
         assert LSP["lsp_server_start_timeout_s"] == 15.0
         assert LSP["lsp_auto_install"] is False
-        assert set(LSP["lsp_enabled_languages"]) == {"python", "typescript", "rust", "go"}
+        assert set(LSP["lsp_enabled_languages"]) == {
+            "python",
+            "typescript",
+            "rust",
+            "go",
+            "cpp",
+            "java",
+            "ruby",
+            "bash",
+            "vue",
+            "yaml",
+        }
         assert LSP["lsp_max_concurrent_servers"] >= 1
         assert LSP["lsp_idle_shutdown_s"] > 0

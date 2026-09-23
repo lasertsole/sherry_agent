@@ -20,6 +20,7 @@ from config.features import LSP
 
 # A minimal, deterministic LSP server. ``FAKE_LSP_MODE`` selects:
 #   ok (default) | slow (never answer requests → client timeout) | error (answer with an error)
+#   noformat (formatting returns null) | nodiag (didOpen publishes no diagnostics)
 FAKE_LSP_SERVER = r"""#!/usr/bin/env python3
 import json
 import os
@@ -76,16 +77,33 @@ while True:
     elif method == "shutdown":
         result(mid, None)
     elif method == "textDocument/didOpen":
-        uri = msg["params"]["textDocument"]["uri"]
-        send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
-              "params": {"uri": uri,
-                         "diagnostics": [{"message": "fake diagnostic", "severity": 1}]}})
+        if MODE != "nodiag":
+            uri = msg["params"]["textDocument"]["uri"]
+            send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics",
+                  "params": {"uri": uri,
+                             "diagnostics": [{"message": "fake diagnostic", "severity": 1,
+                                              "source": "fake", "code": "F001"}]}})
     elif mid is None:
         pass
     elif MODE == "slow":
         pass
     elif MODE == "error":
         send({"jsonrpc": "2.0", "id": mid, "error": {"code": -32601, "message": "fake error"}})
+    elif method == "textDocument/rename":
+        uri = msg["params"]["textDocument"]["uri"]
+        new_name = msg["params"].get("newName", "renamed")
+        result(mid, {"changes": {uri: [
+            {"range": {"start": {"line": 0, "character": 4},
+                       "end": {"line": 0, "character": 10}}, "newText": new_name},
+            {"range": {"start": {"line": 4, "character": 11},
+                       "end": {"line": 4, "character": 17}}, "newText": new_name},
+        ]}})
+    elif method in ("textDocument/formatting", "textDocument/rangeFormatting"):
+        if MODE == "noformat":
+            result(mid, None)
+        else:
+            result(mid, [{"range": {"start": {"line": 0, "character": 0},
+                                    "end": {"line": 0, "character": 0}}, "newText": "# fmt\n"}])
     elif method == "textDocument/definition":
         result(mid, [{"uri": msg["params"]["textDocument"]["uri"], "range": fakerange()}])
     elif method == "textDocument/references":
@@ -123,6 +141,12 @@ _EXTENSIONS = {
     "typescript": ".ts",
     "rust": ".rs",
     "go": ".go",
+    "cpp": ".cpp",
+    "java": ".java",
+    "ruby": ".rb",
+    "bash": ".sh",
+    "vue": ".vue",
+    "yaml": ".yaml",
 }
 
 
@@ -150,7 +174,10 @@ def point_to_fake(monkeypatch: pytest.MonkeyPatch, fake_lsp_server: Path) -> Cal
     """Return a function that rewires the LSP config to the fake server."""
 
     def _point(language: str = "python") -> Path:
-        monkeypatch.setitem(LSP, _SERVER_FIELDS[language], str(fake_lsp_server))
+        field = _SERVER_FIELDS.get(language)
+        if field:
+            monkeypatch.setitem(LSP, field, str(fake_lsp_server))
+        spec = LSP["lsp_supported_servers"].get(language, {})
         monkeypatch.setitem(
             LSP["lsp_supported_servers"],
             language,
@@ -158,6 +185,7 @@ def point_to_fake(monkeypatch: pytest.MonkeyPatch, fake_lsp_server: Path) -> Cal
                 "command": [str(fake_lsp_server), "--stdio"],
                 "extensions": [_EXTENSIONS[language]],
                 "local_install": None,
+                "language_id": spec.get("language_id", language),
             },
         )
         resolver_mod._clear_cache_for_tests()

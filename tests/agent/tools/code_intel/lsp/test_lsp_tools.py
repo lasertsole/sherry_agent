@@ -132,12 +132,16 @@ class TestFailOpen:
 
 
 class TestToolSurface:
-    def test_builder_returns_four_researcher_tools(self) -> None:
+    def test_builder_returns_eight_researcher_tools(self) -> None:
         tools = build_lsp_tools("sess")
         assert [tool.name for tool in tools] == [
             "lsp_goto_definition",
             "lsp_find_references",
             "lsp_workspace_symbol",
             "lsp_call_hierarchy",
+            "lsp_rename",
+            "lsp_diagnostics",
+            "lsp_format",
+            "lsp_status",
         ]
         assert all(tool.metadata["scope"] == "researcher_only" for tool in tools)

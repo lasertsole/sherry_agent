@@ -181,6 +181,10 @@ class TestRoleToolWhitelist:
             "lsp_find_references",
             "lsp_workspace_symbol",
             "lsp_call_hierarchy",
+            "lsp_rename",
+            "lsp_diagnostics",
+            "lsp_format",
+            "lsp_status",
             "ast_grep_search",
             "ast_grep_rewrite",
         ]
@@ -226,6 +230,10 @@ class TestRoleToolWhitelist:
             "lsp_find_references",
             "lsp_workspace_symbol",
             "lsp_call_hierarchy",
+            "lsp_rename",
+            "lsp_diagnostics",
+            "lsp_format",
+            "lsp_status",
             "ast_grep_search",
             "ast_grep_rewrite",
         ]

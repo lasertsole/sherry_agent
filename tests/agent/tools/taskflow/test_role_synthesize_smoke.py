@@ -192,6 +192,10 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
         "lsp_find_references",
         "lsp_workspace_symbol",
         "lsp_call_hierarchy",
+        "lsp_rename",
+        "lsp_diagnostics",
+        "lsp_format",
+        "lsp_status",
         "ast_grep_search",
         "ast_grep_rewrite",
     ]
