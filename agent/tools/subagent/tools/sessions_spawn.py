@@ -5,7 +5,6 @@ from langchain.tools import BaseTool
 
 from ..spawn import spawn_subagent_direct
 from ..spawn.privilege import check_spawn_permission
-from ..types.spawn import SpawnMode
 
 
 class AttachmentSchema(BaseModel):
@@ -33,10 +32,6 @@ class SessionsSpawnSchema(BaseModel):
         default="main", description="Target agent ID to spawn. Defaults to 'main'."
     )
     thinking: str | None = Field(default=None, description="Optional thinking level override.")
-    mode: str = Field(
-        default="run",
-        description="Spawn mode: 'run' (ephemeral one-shot) or 'session' (persistent).",
-    )
     cleanup: str = Field(
         default="delete",
         description="Cleanup policy: 'delete' (remove session after completion) or 'keep'.",
@@ -89,16 +84,12 @@ class SessionsSpawnTool(BaseTool):
         label: str | None = None,
         agent_id: str = "main",
         thinking: str | None = None,
-        mode: str = "run",
         cleanup: str = "delete",
         attachments: list[AttachmentSchema] | None = None,
         goal_max_turns: int | None = None,
         functional_role: str | None = None,
         extra_tools: list[str] | None = None,
     ) -> str:
-        # Convert string parameters to enum types
-        spawn_mode = SpawnMode(mode)
-
         # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
         # if a tool instance leaked into its toolset. Returns through the tool's
         # existing string contract instead of raising.
@@ -129,7 +120,6 @@ class SessionsSpawnTool(BaseTool):
             task_name=task_name,
             label=label,
             thinking=thinking,
-            spawn_mode=spawn_mode,
             cleanup=cleanup,
             attachments=attach_dicts,
             expects_completion_message=True,

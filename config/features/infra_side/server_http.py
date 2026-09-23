@@ -78,7 +78,6 @@ SERVER_HTTP: ServerHttpConfig = {
         "task",
         "task_name",
         "label",
-        "spawn_mode",
         "agent_id",
         "depth",
         "role",

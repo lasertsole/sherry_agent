@@ -238,7 +238,6 @@ const run = (over: Partial<CachedSubagentRun> = {}): CachedSubagentRun => ({
   task: 'task',
   task_name: 'task_name',
   label: null,
-  spawn_mode: null,
   agent_id: null,
   depth: 1,
   role: null,

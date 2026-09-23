@@ -20,7 +20,6 @@ from agent.tools.subagent.types.registry import (
     DeliveryStatus,
     RunOutcomeStatus,
 )
-from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.types.capability import SubagentSessionRole, ControlScope
 from agent.tools.subagent.registry import clear as clear_registry, get_run
 from agent.tools.subagent.registry import memory as registry_memory
@@ -51,7 +50,6 @@ def _make_run(
         child_session_key=csk,
         requester_session_key=rsk,
         task=task,
-        spawn_mode=SpawnMode.RUN,
         cleanup="delete",
         agent_id="main",
         depth=3,

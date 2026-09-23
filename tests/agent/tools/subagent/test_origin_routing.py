@@ -14,7 +14,6 @@ class TestChildSessionOrigin:
         origin = ChildSessionOrigin()
         assert origin.channel is None
         assert origin.account_id is None
-        assert origin.thread_id is None
         assert origin.group_space is None
         assert origin.member_role_ids == []
 
@@ -22,7 +21,6 @@ class TestChildSessionOrigin:
         origin = ChildSessionOrigin(
             channel="ch1",
             account_id="acc1",
-            thread_id="thr1",
             group_space="grp1",
         )
         assert origin.channel == "ch1"

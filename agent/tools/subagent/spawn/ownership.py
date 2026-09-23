@@ -1,4 +1,4 @@
-"""Ownership resolution for sub-agents — which session controls state, thread binding, and completion delivery.
+"""Ownership resolution for sub-agents — which session controls state and completion delivery.
 
 When a parent session proxies a spawn request, the completion owner may differ
 from the controller session.
@@ -8,10 +8,9 @@ from pydantic import BaseModel
 
 
 class SubagentSpawnOwnership(BaseModel):
-    """Resolved ownership triple: controller, thread-binding requester, and completion delivery target."""
+    """Resolved ownership: controller and completion delivery target."""
 
     controller_session_key: str
-    thread_binding_requester_session_key: str
     completion_requester_session_key: str
     completion_requester_display_key: str
 
@@ -35,7 +34,7 @@ def resolve_spawn_ownership(
     completion_owner_key: str | None = None,
     alias: str = "agent:main:session:default",
 ) -> SubagentSpawnOwnership:
-    """Resolve ownership for a sub-agent: controller, thread-binding, and completion delivery keys.
+    """Resolve ownership for a sub-agent: controller and completion delivery keys.
 
     When requester_session_key contains the main agent identifier without an
     explicit session segment, normalizes it to the canonical alias. Supports
@@ -65,7 +64,6 @@ def resolve_spawn_ownership(
 
     return SubagentSpawnOwnership(
         controller_session_key=controller_session_key,
-        thread_binding_requester_session_key=controller_session_key,
         completion_requester_session_key=completion_requester_session_key,
         completion_requester_display_key=completion_requester_display_key,
     )

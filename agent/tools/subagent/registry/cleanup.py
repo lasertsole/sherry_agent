@@ -5,14 +5,11 @@ Implements a 3-way branching strategy: defer-descendants / give-up / cleanup.
 
 import time
 from ..types.registry import SubagentRunRecord, DeliveryStatus, ExecutionStatus
-from ..types.spawn import SpawnMode
 from ..config import get_config
 
 
 def resolve_cleanup_completion_reason(run: SubagentRunRecord) -> str | None:
     """Return a cleanup reason string if the run's delivery reached a terminal state, else None."""
-    if run.spawn_mode == SpawnMode.SESSION:
-        return None
     if run.delivery.status == DeliveryStatus.DELIVERED:
         return "delivered"
     if run.delivery.status == DeliveryStatus.DISCARDED:
@@ -30,9 +27,6 @@ def resolve_deferred_cleanup_decision(run: SubagentRunRecord) -> tuple[bool, str
     """
     if run.cleanup == "keep":
         return False, "cleanup=keep"
-
-    if run.spawn_mode == SpawnMode.SESSION:
-        return False, "session_mode"
 
     reason = resolve_cleanup_completion_reason(run)
     if reason is not None:

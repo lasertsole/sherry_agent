@@ -64,7 +64,6 @@ def _accepted_result():
         child_session_key="agent:main:subagent:abc",
         run_id="run-123",
         task_name="demo_task",
-        mode=None,
         note="accepted",
     )
 
@@ -204,11 +203,10 @@ class TestDispatchModes:
         assert h.child_session_key == "agent:main:subagent:abc"
         assert h.background is True
 
-    def test_blocking_spawn_uses_run_mode(self, monkeypatch):
+    def test_blocking_spawn_forwards_default_cleanup(self, monkeypatch):
         seen = {}
 
         async def _fake(*args, **kwargs):
-            seen["spawn_mode"] = kwargs.get("spawn_mode")
             seen["cleanup"] = kwargs.get("cleanup")
             return _accepted_result()
 
@@ -222,7 +220,6 @@ class TestDispatchModes:
             run_in_background=False,
         )
         assert h.accepted
-        assert seen["spawn_mode"].value == "run"
         assert seen["cleanup"] == "delete"
 
     def test_per_call_overrides_restored(self, monkeypatch):

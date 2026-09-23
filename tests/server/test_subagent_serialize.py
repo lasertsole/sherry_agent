@@ -30,7 +30,7 @@ class _FakeRunRecord(BaseModel):
 
 class TestSharedSerialization:
     def test_public_fields_tuple_shape(self):
-        assert len(PUBLIC_FIELDS) == 19
+        assert len(PUBLIC_FIELDS) == 18
         assert "run_id" in PUBLIC_FIELDS
         assert "execution" in PUBLIC_FIELDS
         assert "delivery" in PUBLIC_FIELDS

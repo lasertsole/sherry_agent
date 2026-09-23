@@ -24,7 +24,6 @@ export interface SubagentRun {
   task: string;
   task_name?: string | null;
   label?: string | null;
-  spawn_mode?: string;
   agent_id?: string;
   depth?: number;
   role?: string;

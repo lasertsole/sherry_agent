@@ -17,7 +17,6 @@ def build_subagent_system_prompt(
     child_session_key: str = "",
     requester_session_key: str = "",
     can_spawn: bool = False,
-    is_persistent_session: bool = False,
 ) -> str:
     """Generate a structured system prompt for a sub-agent, including role, rules, output format, and session context.
 
@@ -167,10 +166,6 @@ def build_subagent_system_prompt(
         f"  Parent session: {requester_session_key}",
         f"  Depth: {depth} / {max_depth}",
     ]
-    if is_persistent_session:
-        context_lines.append(
-            "  This is a PERSISTENT session — it will remain active after your task."
-        )
     sections.append("## Session Context\n" + "\n".join(context_lines))
 
     return "\n\n".join(sections)

@@ -46,7 +46,6 @@ from typing import Any, Literal
 from .config import SubagentConfig, MAX_SPAWN_DEPTH_CAP, get_config
 from .registry import get_run
 from .spawn import SpawnResult, spawn_subagent_direct
-from .types import SpawnMode
 
 logger = logging.getLogger(__name__)
 
@@ -290,7 +289,6 @@ async def _dispatch_async(
             task_name=task_name,
             label=label,
             thinking=thinking,
-            spawn_mode=SpawnMode.RUN,
             cleanup="delete",
             run_timeout_seconds=run_timeout_seconds,
             output_schema=output_schema,

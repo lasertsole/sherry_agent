@@ -5,7 +5,6 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from .spawn import SpawnMode
 from .capability import SubagentSessionRole, ControlScope
 from .functional_role import FunctionalRole
 
@@ -80,16 +79,6 @@ class CompletionDeliveryState(BaseModel):
     announced_at: float | None = None
 
 
-class ThreadBindingInfo(BaseModel):
-    """Metadata for a SESSION-mode sub-agent bound to a conversation thread."""
-
-    thread_id: str
-    bound_at: float = 0.0
-    idle_timeout_ms: int = 300000
-    max_age_ms: int = 86400000
-    delivery_origin: str | None = None
-
-
 class KillReconciliationState(BaseModel):
     """Snapshot of execution/delivery state taken at kill time, used for graceful reconciliation."""
 
@@ -109,7 +98,6 @@ class SubagentRunRecord(BaseModel):
     task: str
     task_name: str | None = None
 
-    spawn_mode: SpawnMode = SpawnMode.RUN
     cleanup: Literal["delete", "keep"] = "delete"
     agent_id: str = "main"
     thinking: str | None = None
@@ -140,8 +128,6 @@ class SubagentRunRecord(BaseModel):
 
     aborted_last_run: bool = False
     recovery_attempts_persisted: int = 0
-    thread_id: str | None = None
-    thread_binding_info: ThreadBindingInfo | None = None
 
     swarm_group_id: str | None = None
     swarm_run_state: str | None = None

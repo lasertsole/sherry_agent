@@ -11,8 +11,6 @@ class SubagentInfraConfig(TypedDict):
     pending_injections_busy_timeout_ms: int
     sessions_yield_default_timeout_seconds: float
     sessions_send_timeout_seconds: float
-    thread_binding_idle_timeout_ms: int
-    thread_binding_max_age_ms: int
     delivery_mirror_max: int
     delivery_transient_retry_delays_ms: list[int]
     delivery_compaction_retry_delays_ms: list[int]
@@ -34,8 +32,6 @@ SUBAGENT_INFRA: SubagentInfraConfig = {
     "pending_injections_busy_timeout_ms": 5000,
     "sessions_yield_default_timeout_seconds": 300.0,
     "sessions_send_timeout_seconds": 30.0,
-    "thread_binding_idle_timeout_ms": 300000,
-    "thread_binding_max_age_ms": 86400000,
     "delivery_mirror_max": 5000,
     "delivery_transient_retry_delays_ms": [5000, 10000, 20000],
     "delivery_compaction_retry_delays_ms": [1000, 2000, 4000, 8000],

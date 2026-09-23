@@ -1,6 +1,5 @@
 """Types sub-package: all data models and enum definitions for the subagent system."""
 
-from .spawn import SpawnMode
 from .registry import (
     ExecutionStatus,
     DeliveryStatus,
@@ -18,7 +17,6 @@ from .functional_role import CODE_INTEL_ROLES, FunctionalRole
 from .swarm import SwarmMode, SwarmRunState, SwarmGroupConfig
 
 __all__ = [
-    "SpawnMode",
     "ExecutionStatus",
     "DeliveryStatus",
     "RunOutcomeStatus",

@@ -1,14 +1,13 @@
-"""Requester-origin routing — resolves channel, account, and thread context for a child session."""
+"""Requester-origin routing — resolves channel and account context for a child session."""
 
 from pydantic import BaseModel
 
 
 class ChildSessionOrigin(BaseModel):
-    """Origin metadata extracted from the requester's session key: channel, account, thread, and group space."""
+    """Origin metadata extracted from the requester's session key: channel, account, and group space."""
 
     channel: str | None = None
     account_id: str | None = None
-    thread_id: str | None = None
     group_space: str | None = None
     member_role_ids: list[str] = []
 
@@ -36,8 +35,6 @@ def build_origin_fingerprint(origin: ChildSessionOrigin) -> str:
         parts.append(f"ch:{origin.channel}")
     if origin.account_id:
         parts.append(f"acc:{origin.account_id}")
-    if origin.thread_id:
-        parts.append(f"tid:{origin.thread_id}")
     if origin.group_space:
         parts.append(f"gs:{origin.group_space}")
     return "|".join(parts)

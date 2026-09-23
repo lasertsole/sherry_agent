@@ -15,7 +15,6 @@ from agent.tools.subagent.types.registry import (
     RunOutcomeStatus,
     KillReconciliationState,
 )
-from agent.tools.subagent.types.spawn import SpawnMode
 
 
 def _make_run(**overrides) -> SubagentRunRecord:
@@ -115,16 +114,12 @@ class TestShouldRetainAttachments:
         run = _make_run(cleanup="keep")
         assert _should_retain_attachments(run) is True
 
-    def test_session_mode(self):
-        run = _make_run(spawn_mode=SpawnMode.SESSION)
-        assert _should_retain_attachments(run) is True
-
-    def test_delete_run_mode(self):
-        run = _make_run(cleanup="delete", spawn_mode=SpawnMode.RUN)
+    def test_delete_no_retain(self):
+        run = _make_run(cleanup="delete")
         assert _should_retain_attachments(run) is False
 
     def test_keep_takes_precedence(self):
-        run = _make_run(cleanup="keep", spawn_mode=SpawnMode.RUN)
+        run = _make_run(cleanup="keep")
         assert _should_retain_attachments(run) is True
 
 

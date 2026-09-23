@@ -7,7 +7,6 @@ from agent.tools.subagent.registry.run_manager import (
 )
 from agent.tools.subagent.registry.memory import get, clear
 from agent.tools.subagent.types.registry import ExecutionStatus, RunOutcome, RunOutcomeStatus
-from agent.tools.subagent.types.spawn import SpawnMode
 
 
 pytestmark = [pytest.mark.unit]
@@ -72,26 +71,15 @@ class TestRegisterRun:
 
         assert run.role == SubagentSessionRole.LEAF
 
-    def test_session_mode_delivery_not_required(self):
+    def test_registration_always_requires_completion(self):
         run = register_run(
             child_session_key="agent:main:subagent:abc",
             requester_session_key="agent:main:session:p1",
             task="test",
-            spawn_mode=SpawnMode.SESSION,
         )
         from agent.tools.subagent.types.registry import DeliveryStatus
 
-        assert run.delivery.status == DeliveryStatus.NOT_REQUIRED
-
-    def test_run_mode_delivery_pending(self):
-        run = register_run(
-            child_session_key="agent:main:subagent:abc",
-            requester_session_key="agent:main:session:p1",
-            task="test",
-            spawn_mode=SpawnMode.RUN,
-        )
-        from agent.tools.subagent.types.registry import DeliveryStatus
-
+        assert run.completion.required is True
         assert run.delivery.status == DeliveryStatus.PENDING
 
 

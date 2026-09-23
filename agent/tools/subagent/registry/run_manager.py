@@ -13,7 +13,6 @@ from ..types.registry import (
     DeliveryStatus,
     KillReconciliationState,
 )
-from ..types.spawn import SpawnMode
 from ..types.capability import SubagentSessionRole, ControlScope
 from ..types.functional_role import FunctionalRole
 from ..types.lifecycle import outcome_to_ended_reason
@@ -36,7 +35,6 @@ def register_run(
     requester_session_key: str,
     task: str,
     task_name: str | None = None,
-    spawn_mode: SpawnMode = SpawnMode.RUN,
     cleanup: str = "delete",
     agent_id: str = "main",
     thinking: str | None = None,
@@ -59,7 +57,7 @@ def register_run(
     """Register a new sub-agent run in memory and SQLite with the given parameters."""
     config = get_config()
     role, control_scope = _resolve_role(depth, config.max_spawn_depth)
-    completion_required = spawn_mode == SpawnMode.RUN
+    completion_required = True
 
     run_id = str(uuid.uuid4())
     from .generation import next_subagent_run_generation
@@ -73,7 +71,6 @@ def register_run(
         requester_session_key=requester_session_key,
         task=task,
         task_name=task_name,
-        spawn_mode=spawn_mode,
         cleanup=cleanup,
         agent_id=agent_id,
         thinking=thinking,

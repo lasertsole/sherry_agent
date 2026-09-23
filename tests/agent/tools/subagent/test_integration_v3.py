@@ -2,7 +2,6 @@
 
 Tests end-to-end flows that span multiple modules:
 - Swarm collect → spawn → complete → announce
-- Thread binding → spawn → cleanup
 - Kill arbitration → lifecycle → announce suppression
 - Terminal generation guard → lifecycle → settle-wake
 - Delivery dual-path routing
@@ -23,9 +22,7 @@ from agent.tools.subagent.types.registry import (
     RunOutcome,
     RunOutcomeStatus,
     KillReconciliationState,
-    ThreadBindingInfo,
 )
-from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.types.capability import SubagentSessionRole
 from agent.tools.subagent.registry.memory import set_run, clear
 from agent.tools.subagent.registry.terminal_gen import TerminalGenerationTracker
@@ -37,10 +34,6 @@ from agent.tools.subagent.swarm.collector import (
     activate_swarm_run,
     complete_swarm_run,
     build_structured_output_prompt,
-)
-from agent.tools.subagent.spawn.thread_binding import (
-    bind_thread_for_subagent_spawn,
-    resolve_thread_binding_policy,
 )
 from agent.tools.subagent.spawn.runtime_isolation import (
     resolve_runtime_isolation,
@@ -139,59 +132,6 @@ class TestSwarmCollectFullFlow:
         assert "result" in prompt
 
 
-class TestThreadBindingSpawnIntegration:
-    """Phase 2: Thread binding → spawn policy → info propagation."""
-
-    def test_session_mode_creates_binding(self):
-        result = resolve_thread_binding_policy(
-            agent_id="main",
-            spawn_mode=SpawnMode.SESSION,
-            child_session_key="agent:main:subagent:child1",
-        )
-        assert result.bound is True
-        assert result.binding_info is not None
-        assert result.binding_info.delivery_origin == "agent:main:subagent:child1"
-
-    def test_binding_info_stored_in_record(self):
-        result = bind_thread_for_subagent_spawn("agent:main:subagent:child1")
-        info = result.binding_info
-        from agent.tools.subagent.types.registry import (
-            ThreadBindingInfo as RegistryThreadBindingInfo,
-        )
-
-        registry_info = RegistryThreadBindingInfo(
-            thread_id=info.thread_id,
-            bound_at=info.bound_at,
-            idle_timeout_ms=info.idle_timeout_ms,
-            delivery_origin=info.delivery_origin,
-        )
-        run = SubagentRunRecord(
-            run_id="r1",
-            child_session_key="agent:main:subagent:child1",
-            requester_session_key="agent:main:session:p1",
-            task="test",
-            thread_binding_info=registry_info,
-        )
-        assert run.thread_binding_info is not None
-        assert run.thread_binding_info.thread_id == info.thread_id
-
-    def test_run_mode_no_binding(self):
-        result = resolve_thread_binding_policy(
-            agent_id="main",
-            spawn_mode=SpawnMode.RUN,
-            child_session_key="agent:main:subagent:child1",
-        )
-        assert result.bound is False
-        run = SubagentRunRecord(
-            run_id="r1",
-            child_session_key="agent:main:subagent:child1",
-            requester_session_key="agent:main:session:p1",
-            task="test",
-            thread_binding_info=None,
-        )
-        assert run.thread_binding_info is None
-
-
 class TestGenerationGuardLifecycle:
     """Phase 3: Terminal generation guard + kill arbitration + settle-wake."""
 
@@ -281,23 +221,12 @@ class TestGenerationGuardLifecycle:
         )
         assert _should_retain_attachments(run_keep) is True
 
-        run_session = SubagentRunRecord(
-            run_id="r2",
-            child_session_key="child",
-            requester_session_key="parent",
-            task="test",
-            spawn_mode=SpawnMode.SESSION,
-            cleanup="delete",
-        )
-        assert _should_retain_attachments(run_session) is True
-
         run_delete = SubagentRunRecord(
             run_id="r3",
             child_session_key="child",
             requester_session_key="parent",
             task="test",
             cleanup="delete",
-            spawn_mode=SpawnMode.RUN,
         )
         assert _should_retain_attachments(run_delete) is False
 
@@ -529,18 +458,6 @@ class TestSwarmRecordFields:
         )
         assert run.swarm_group_id == "g1"
         assert run.swarm_run_state == "active"
-
-    def test_thread_binding_info_field(self):
-        info = ThreadBindingInfo(thread_id="t1", delivery_origin="origin")
-        run = SubagentRunRecord(
-            run_id="r1",
-            child_session_key="child",
-            requester_session_key="parent",
-            task="test",
-            thread_binding_info=info,
-        )
-        assert run.thread_binding_info is not None
-        assert run.thread_binding_info.thread_id == "t1"
 
     def test_suppress_completion_delivery_field(self):
         run = SubagentRunRecord(

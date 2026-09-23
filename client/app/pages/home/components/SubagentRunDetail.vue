@@ -62,12 +62,6 @@
             <span class="shrink-0 text-gray-400 dark:text-gray-500">{{ t('taskDetail.delivery') }}</span>
             <span class="text-gray-800 dark:text-gray-200 text-right">{{ deliveryLabel }}</span>
           </div>
-          <div
-            v-if="run.spawn_mode"
-            class="flex justify-between gap-4">
-            <span class="shrink-0 text-gray-400 dark:text-gray-500">{{ t('taskDetail.spawnMode') }}</span>
-            <span class="text-gray-800 dark:text-gray-200 text-right">{{ run.spawn_mode }}</span>
-          </div>
           <div class="flex justify-between gap-4">
             <span class="shrink-0 text-gray-400 dark:text-gray-500">{{ t('taskDetail.parentSession') }}</span>
             <span
@@ -248,7 +242,6 @@ function formatTime(ms: number | null | undefined): string {
       "parentSession": "调用方 Session",
       "placeholder": "点击上方树状图中的节点查看任务详情",
       "resultText": "返回内容",
-      "spawnMode": "生成方式",
       "startedAt": "开始时间",
       "status": "状态",
       "steerAction": "发送并继续",
@@ -274,7 +267,6 @@ function formatTime(ms: number | null | undefined): string {
       "parentSession": "Parent Session",
       "placeholder": "Click a node in the tree above to view task details",
       "resultText": "Result",
-      "spawnMode": "Spawn Mode",
       "startedAt": "Started At",
       "status": "Status",
       "steerAction": "Send & Continue",
@@ -300,7 +292,6 @@ function formatTime(ms: number | null | undefined): string {
       "parentSession": "親セッション",
       "placeholder": "上のツリーでノードをクリックするとタスク詳細を表示します",
       "resultText": "結果",
-      "spawnMode": "生成モード",
       "startedAt": "開始時刻",
       "status": "ステータス",
       "steerAction": "送信して続行",
@@ -326,7 +317,6 @@ function formatTime(ms: number | null | undefined): string {
       "parentSession": "상위 세션",
       "placeholder": "위 트리에서 노드를 클릭하면 작업 세부정보를 확인할 수 있습니다",
       "resultText": "결과",
-      "spawnMode": "생성 모드",
       "startedAt": "시작 시간",
       "status": "상태",
       "steerAction": "보내고 계속하기",

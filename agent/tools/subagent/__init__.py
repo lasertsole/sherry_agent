@@ -10,7 +10,6 @@ Usage:
 """
 
 from .types import (
-    SpawnMode,
     ExecutionStatus,
     DeliveryStatus,
     RunOutcomeStatus,
@@ -94,7 +93,6 @@ def build_subagent_runtime_tools():
 
 
 __all__ = [
-    "SpawnMode",
     "ExecutionStatus",
     "DeliveryStatus",
     "RunOutcomeStatus",

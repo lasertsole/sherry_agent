@@ -4,7 +4,7 @@ Pipeline overview:
     1. Input validation (task, agent_id, depth, concurrency, runtime isolation, cwd)
     2. Ownership & capability resolution
     3. Model & thinking plan selection
-    4. Thread binding & origin routing
+    4. Origin routing
     5. Attachment materialization
     6. Registry registration (with terminal-gen tracking for orphan detection)
     7. Swarm group reservation (if applicable)
@@ -20,7 +20,6 @@ import asyncio
 from loguru import logger
 from typing import Any, Literal
 from ..config import get_config
-from ..types.spawn import SpawnMode
 from ..types.capability import SubagentSessionRole
 from ..types.functional_role import CODE_INTEL_ROLES, FunctionalRole
 from ..types.registry import SubagentRunRecord, RunOutcome, RunOutcomeStatus, ExecutionStatus
@@ -45,11 +44,6 @@ from .inherited_tool_policy import apply_tool_policy, DEFAULT_SUBAGENT_BLOCKED_T
 from .attachments import materialize_subagent_attachments
 from .ownership import resolve_spawn_ownership
 from .accepted_note import resolve_spawn_accepted_note
-from .thread_binding import (
-    resolve_thread_binding_policy,
-    unbind_thread_on_cleanup,
-    refresh_thread_binding,
-)
 from .runtime_isolation import (
     resolve_runtime_isolation,
     validate_runtime_isolation,
@@ -155,7 +149,6 @@ class SpawnResult:
         run_id: Registry run identifier (set on accepted)
         error: Human-readable error message (set on forbidden/error)
         task_name: Normalised task name
-        mode: The :class:`SpawnMode` used
         note: Optional human-readable note (e.g. accepted confirmation text)
     """
 
@@ -166,7 +159,6 @@ class SpawnResult:
         run_id: str | None = None,
         error: str | None = None,
         task_name: str | None = None,
-        mode: SpawnMode | None = None,
         note: str | None = None,
     ):
         self.status = status
@@ -174,7 +166,6 @@ class SpawnResult:
         self.run_id = run_id
         self.error = error
         self.task_name = task_name
-        self.mode = mode
         self.note = note
 
     def to_dict(self) -> dict:
@@ -185,7 +176,6 @@ class SpawnResult:
             "run_id": self.run_id,
             "error": self.error,
             "task_name": self.task_name,
-            "mode": self.mode.value if self.mode else None,
             "note": self.note,
         }
 
@@ -197,7 +187,6 @@ async def spawn_subagent_direct(
     task_name: str | None = None,
     label: str | None = None,
     thinking: str | None = None,
-    spawn_mode: SpawnMode = SpawnMode.RUN,
     cleanup: Literal["delete", "keep"] = "delete",
     attachments: list[dict] | None = None,
     cwd: str | None = None,
@@ -225,7 +214,6 @@ async def spawn_subagent_direct(
         task_name: Short display name; auto-derived from *task* if omitted.
         label: Optional user-facing label.
         thinking: Thinking level override (e.g. "low", "medium", "high").
-        spawn_mode: :attr:`SpawnMode.RUN` (fire-and-forget) or :attr:`SpawnMode.SESSION` (persistent).
         cleanup: ``"delete"`` to remove session after completion, ``"keep"`` to retain.
         attachments: Optional list of attachment dicts to materialise into the child workspace.
         cwd: Working directory for the child; defaults to parent's cwd if ``None``.
@@ -337,12 +325,9 @@ async def spawn_subagent_direct(
     resolved_model_tier = model_plan.model_tier
     thinking_resolved = model_plan.thinking_override
 
-    # --- Phase 6: Thread binding & origin routing ---
+    # --- Phase 6: Origin routing ---
     child_origin = resolve_requester_origin_for_child(requester_session_key, agent_id=agent_id)
     child_scopes = resolve_least_privilege_scopes(agent_id, role)
-
-    thread_binding = resolve_thread_binding_policy(agent_id, spawn_mode, child_session_key)
-    thread_id = thread_binding.thread_id
 
     # --- Phase 7: Attachment materialization ---
     attachments_dir = None
@@ -360,9 +345,7 @@ async def spawn_subagent_direct(
             max_total_bytes=config.attachments_max_total_bytes,
         )
         if mat_result.status == "error":
-            await _rollback_spawn(
-                child_session_key, spawn_mode, None, attachments_dir, attachments_root_dir
-            )
+            await _rollback_spawn(child_session_key, None, attachments_dir, attachments_root_dir)
             return SpawnResult(status="error", error=mat_result.error)
         if mat_result.status == "ok" and mat_result.abs_dir:
             attachments_dir = mat_result.abs_dir
@@ -413,7 +396,6 @@ async def spawn_subagent_direct(
         requester_session_key=ownership.completion_requester_session_key,
         task=task,
         task_name=normalized_task_name,
-        spawn_mode=spawn_mode,
         cleanup=cleanup,
         agent_id=agent_id,
         thinking=thinking_resolved or thinking,
@@ -431,8 +413,7 @@ async def spawn_subagent_direct(
         spawned_by=requester_session_key,
         spawned_cwd=cwd,
         expects_completion_message=expects_completion_message,
-        wake_on_descendant_settle=spawn_mode
-        == SpawnMode.RUN,  # RUN mode: auto-resume parent when child tree settles
+        wake_on_descendant_settle=True,  # auto-resume parent when child tree settles
     )
 
     # Track the expected terminal generation so orphan detection can notice if the run stalls
@@ -466,12 +447,6 @@ async def spawn_subagent_direct(
             )
             run = get_run(run.run_id) or run  # refresh local reference after in-place update
 
-    # Persist thread-binding metadata onto the run record
-    if thread_id:
-        from ..registry.memory import update as update_run
-
-        update_run(run.run_id, thread_id=thread_id)
-
     if child_origin.channel or child_origin.account_id:
         from ..registry.memory import update as update_run
 
@@ -500,7 +475,6 @@ async def spawn_subagent_direct(
         child_session_key=child_session_key,
         requester_session_key=ownership.controller_session_key,
         can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
-        is_persistent_session=spawn_mode == SpawnMode.SESSION,
     )
 
     # Append attachment-aware and schema-constraint suffixes to the system prompt
@@ -516,7 +490,6 @@ async def spawn_subagent_direct(
         task,
         depth=child_depth,
         max_depth=config.max_spawn_depth,
-        is_persistent_session=spawn_mode == SpawnMode.SESSION,
     )
     timeout_seconds = resolve_run_timeout_seconds(run_timeout_seconds)
 
@@ -561,14 +534,13 @@ async def spawn_subagent_direct(
     except Exception as e:
         logger.debug("fire_spawned_hook error for run {}: {}", run.run_id, e)
 
-    accepted_note = resolve_spawn_accepted_note(spawn_mode, requester_session_key)
+    accepted_note = resolve_spawn_accepted_note(requester_session_key)
 
     return SpawnResult(
         status="accepted",
         child_session_key=child_session_key,
         run_id=run.run_id,
         task_name=normalized_task_name,
-        mode=spawn_mode,
         note=accepted_note,
     )
 
@@ -787,9 +759,6 @@ async def _execute_subagent(
                     "Structured output validation failed for run {}: {}", run.run_id, err
                 )
 
-        if run.thread_binding_info and run.thread_binding_info.thread_id:
-            refresh_thread_binding(run.thread_binding_info.thread_id)
-
     # --- Exception handling: map failures to RunOutcome statuses ---
     except TimeoutError:
         outcome = RunOutcome(
@@ -828,9 +797,6 @@ async def _execute_subagent(
         from ..registry import remove_task
 
         remove_task(run.run_id)
-
-        if run.thread_binding_info and run.thread_binding_info.thread_id:
-            unbind_thread_on_cleanup(run.thread_binding_info.thread_id)
 
         try:
             await fire_progress_hook(run, "execution completed")
@@ -1107,7 +1073,6 @@ async def _build_child_agent(
 
 async def _rollback_spawn(
     child_session_key: str,
-    spawn_mode: SpawnMode,
     run_id: str | None,
     attachments_dir: str | None,
     attachments_root_dir: str | None,
@@ -1121,7 +1086,6 @@ async def _rollback_spawn(
 
     Args:
         child_session_key: Session key of the failed child.
-        spawn_mode: The spawn mode that was attempted.
         run_id: Run identifier if registration succeeded before the failure.
         attachments_dir: Absolute path to the attachments directory (if created).
         attachments_root_dir: Root directory under which attachments live.
@@ -1131,7 +1095,7 @@ async def _rollback_spawn(
 
         safe_remove_attachments_dir(attachments_dir, attachments_root_dir)
 
-    await delete_subagent_session_for_cleanup(child_session_key, spawn_mode)
+    await delete_subagent_session_for_cleanup(child_session_key)
 
     if run_id:
         from ..registry import remove_run as _remove_run

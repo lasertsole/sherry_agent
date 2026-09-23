@@ -255,8 +255,8 @@ async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
             logger.error("Announce flow failed for run {}: {}", run.run_id, e)
     elif _should_notify_failure(run):
         # (Q3) additive failure trigger: runs that skip the announce gate
-        # entirely (e.g. SESSION mode — completion not required) would otherwise
-        # end silently; notify the requester's WS session via the third path.
+        # entirely (completion not required) would otherwise end silently;
+        # notify the requester's WS session via the third path.
         from ..announce.delivery import route_subagent_failure_notification
 
         try:
@@ -317,7 +317,7 @@ async def _finalize_cleanup(run: SubagentRunRecord, reason: str) -> None:
 
         from ..session.cleanup import delete_subagent_session_for_cleanup
 
-        await delete_subagent_session_for_cleanup(run.child_session_key, run.spawn_mode)
+        await delete_subagent_session_for_cleanup(run.child_session_key)
 
     from ..registry import update_run
 
@@ -354,9 +354,9 @@ def _should_suspend_pending_final_delivery(run: SubagentRunRecord) -> bool:
 
 def _should_notify_failure(run: SubagentRunRecord) -> bool:
     """(Q3): True for failed/interrupted terminal runs whose completion never
-    reaches the announce gate (completion not required, e.g. SESSION mode) — they
-    would otherwise end silently. Deliberate suppressions are respected: the
-    elif chain only reaches this check when no suppression branch matched.
+    reaches the announce gate (completion not required) — they would otherwise
+    end silently. Deliberate suppressions are respected: the elif chain only
+    reaches this check when no suppression branch matched.
     """
     if run.suppress_announce_reason or run.suppress_completion_delivery:
         return False
@@ -404,12 +404,10 @@ def _schedule_deferred_cleanup_resume(run: SubagentRunRecord, delay_seconds: flo
 
 
 def _should_retain_attachments(run: SubagentRunRecord) -> bool:
-    """Return True if attachments should be kept (keep-cleanup, session mode, or explicit retain flag)."""
+    """Return True if attachments should be kept (keep-cleanup or explicit retain flag)."""
     if run.retain_attachments_on_keep:
         return True
     if run.cleanup == "keep":
-        return True
-    if run.spawn_mode.value == "session":
         return True
     return False
 

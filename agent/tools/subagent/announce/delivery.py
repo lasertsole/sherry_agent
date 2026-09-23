@@ -250,7 +250,7 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
 async def route_subagent_failure_notification(run: SubagentRunRecord) -> None:
     """(Q3) failure trigger for runs that never enter the standard announce flow.
 
-    SESSION-mode runs (completion not required) skip the announce gate in
+    Runs with completion not required skip the announce gate in
     registry/lifecycle.py entirely; this routes their failure outcome through
     the same third path so the requester's WS session still receives
     ``[subagent:{name} failed]``. Best-effort: exceptions are log-only.

@@ -249,13 +249,11 @@ def _install_sandboxed_dispatch() -> tuple[types.ModuleType, object]:
         task: str, requester_session_key: str, label: str | None = None
     ) -> str:
         from agent.tools.subagent.spawn.core import spawn_subagent_direct
-        from agent.tools.subagent.types.spawn import SpawnMode
 
         result = await spawn_subagent_direct(
             task=task,
             requester_session_key=requester_session_key,
             label=label,
-            spawn_mode=SpawnMode.RUN,
             cleanup="keep",
             expects_completion_message=False,
             run_timeout_seconds=_TIMEOUT_S,

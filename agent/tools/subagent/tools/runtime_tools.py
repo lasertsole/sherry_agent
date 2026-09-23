@@ -43,7 +43,6 @@ async def sessions_spawn_runtime_tool(
     label: str | None = None,
     agent_id: str = "main",
     thinking: str | None = None,
-    mode: Literal["run", "session"] = "run",
     cleanup: Literal["delete", "keep"] = "delete",
     attachments: list[dict] | None = None,
 ) -> str:
@@ -54,7 +53,6 @@ async def sessions_spawn_runtime_tool(
     """
     from ..spawn import spawn_subagent_direct
     from ..spawn.privilege import check_spawn_permission
-    from ..types.spawn import SpawnMode
 
     allowed, reason = check_spawn_permission(session_id)
     if not allowed:
@@ -62,7 +60,6 @@ async def sessions_spawn_runtime_tool(
 
     requester_session_key = _session_key(session_id)
 
-    spawn_mode = SpawnMode(mode)
     attach_dicts = attachments or None
 
     result = await spawn_subagent_direct(
@@ -72,7 +69,6 @@ async def sessions_spawn_runtime_tool(
         task_name=task_name,
         label=label,
         thinking=thinking,
-        spawn_mode=spawn_mode,
         cleanup=cleanup,
         attachments=attach_dicts,
         expects_completion_message=True,

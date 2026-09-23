@@ -16,7 +16,6 @@ from agent.tools.subagent.types.registry import (
     CompletionDeliveryState,
 )
 from agent.tools.subagent.types.lifecycle import LifecycleEndedReason
-from agent.tools.subagent.types.spawn import SpawnMode
 
 
 import pytest
@@ -87,16 +86,6 @@ class TestCompletion:
 
 
 class TestCleanup:
-    def test_session_mode_no_cleanup(self):
-        run = SubagentRunRecord(
-            run_id="r1",
-            child_session_key="c",
-            requester_session_key="p",
-            task="t",
-            spawn_mode=SpawnMode.SESSION,
-        )
-        assert resolve_cleanup_completion_reason(run) is None
-
     def test_delivered_cleanup(self):
         run = SubagentRunRecord(
             run_id="r1",

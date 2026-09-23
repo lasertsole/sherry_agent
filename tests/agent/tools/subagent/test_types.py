@@ -1,4 +1,3 @@
-from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.types.registry import (
     SubagentRunRecord,
     ExecutionState,
@@ -15,12 +14,6 @@ from agent.tools.subagent.types.capability import SubagentSessionRole, ControlSc
 import pytest
 
 pytestmark = [pytest.mark.unit]
-
-
-class TestSpawnEnums:
-    def test_spawn_mode_values(self):
-        assert SpawnMode.RUN == "run"
-        assert SpawnMode.SESSION == "session"
 
 
 class TestCapabilityEnums:
@@ -107,7 +100,6 @@ class TestSubagentRunRecord:
             task="Do something",
         )
         assert r.run_id == "test-1"
-        assert r.spawn_mode == SpawnMode.RUN
         assert r.depth == 1
         assert r.role == SubagentSessionRole.LEAF
         assert r.execution.status == ExecutionStatus.RUNNING
@@ -121,7 +113,6 @@ class TestSubagentRunRecord:
             requester_session_key="agent:main:session:parent",
             task="Complex task",
             task_name="my_task",
-            spawn_mode=SpawnMode.SESSION,
             cleanup="keep",
             depth=2,
             role=SubagentSessionRole.ORCHESTRATOR,
@@ -129,7 +120,6 @@ class TestSubagentRunRecord:
             inherited_tool_deny=["delegate_task"],
         )
         assert r.task_name == "my_task"
-        assert r.spawn_mode == SpawnMode.SESSION
         assert r.cleanup == "keep"
         assert r.depth == 2
         assert r.role == SubagentSessionRole.ORCHESTRATOR

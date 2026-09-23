@@ -16,7 +16,6 @@ import pytest
 from loguru import logger
 
 from agent.tools.subagent.spawn.core import spawn_subagent_direct, SpawnResult
-from agent.tools.subagent.types.spawn import SpawnMode
 from agent.tools.subagent.registry import get_run
 
 pytestmark = [pytest.mark.integration]
@@ -88,7 +87,6 @@ async def test_researcher_subagent_invokes_explore(fixture_repo: Path) -> None:
         task=task,
         requester_session_key=requester_key,
         agent_id="main",
-        spawn_mode=SpawnMode.RUN,
         cleanup="delete",
         run_timeout_seconds=180.0,
         functional_role_hint="researcher",

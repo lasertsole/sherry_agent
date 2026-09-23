@@ -29,7 +29,6 @@ function makeRun(overrides: Partial<Omit<SubagentRun, 'run_id'>> & { run_id: str
     task: '',
     task_name: undefined,
     label: undefined,
-    spawn_mode: undefined,
     agent_id: undefined,
     depth: 1,
     execution: { status: 'DONE', started_at: null, ended_at: null, outcome: { status: 'OK', error: null } },
