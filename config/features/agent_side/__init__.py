@@ -112,6 +112,10 @@ from .code_intel import (
     CodeIntelConfig as CodeIntelConfig,
     CODE_INTEL as CODE_INTEL,
 )
+from .code_intel_semantic import (
+    CodeIntelSemanticConfig as CodeIntelSemanticConfig,
+    CODE_INTEL_SEMANTIC as CODE_INTEL_SEMANTIC,
+)
 from .ast_grep import (
     AstGrepConfig as AstGrepConfig,
     AST_GREP as AST_GREP,
