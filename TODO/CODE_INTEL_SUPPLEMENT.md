@@ -1,16 +1,15 @@
 # 代码检索框架 — 补充计划
 
 > 基于 oh-my-openagent-dev 五层 LSP 安装基础设施和 ast-grep MCP 的深度调研，
-> 补充 [`CODE_INTEL_SUBAGENT_PLAN.md`](CODE_INTEL_SUBAGENT_PLAN.md) 的五个缺口：
-> LSP 二进制发现与自动安装、ast-grep 结构化搜索、LSP 语言/工具扩展、
+> 承载代码检索框架的缺口补强与收尾：LSP 二进制发现与自动安装、
+> ast-grep 结构化搜索、LSP 语言/工具扩展、Embedding 语义搜索、
 > 文件事件自动同步、外部代码检索 subagent。
 >
-> **本文件是对原计划的修订与补充，不替代原计划。**
-> 实施时原计划的 Phase 1 不变；Phase 2 由本文件 Phase 2S 替代；
-> 新增 Phase 1A（必选，与 Phase 1 同级）、Phase 4 为独立阶段。
+> **本文件是代码检索框架的唯一在册计划。** Phase 1 / 1A / 2S / 2X / 3 已落地，
+> 落点、与提案的差异与测试矩阵并入各「已落地」节；Phase 2 由本文件 Phase 2S 承载，
+> Phase 4 / 5 为后续独立阶段。
 >
-> **进度：Phase 1A / 2S / 2X 已落地（Phase 2S 同时承载原计划 Phase 2）；
-> Phase 3 / 4 / 5 待派工。**
+> **进度：Phase 1 / 1A / 2S / 2X / 3 已落地；Phase 4 / 5 待派工。**
 >
 > **ast-grep 是核心必选组件**（对标 oh-my-openagent，在该项目中 ast-grep
 > 与 LSP daemon 并列为无条件注册的核心组件，非 opt-in）。
@@ -23,12 +22,13 @@
 2. [Phase 1A — ast-grep 结构化搜索（已落地）](#phase-1a--ast-grep-结构化搜索已落地)
 3. [Phase 2S — LSP 二进制发现与自动安装（已落地，替代原 Phase 2）](#phase-2s--lsp-二进制发现与自动安装已落地替代原-phase-2)
 4. [Phase 2X — LSP 语言与工具扩展（已落地）](#phase-2x--lsp-语言与工具扩展已落地)
-5. [Phase 4 — 外部代码检索 subagent](#phase-4--外部代码检索-subagent)
-6. [Phase 5 — 文件事件自动同步（可选）](#phase-5--文件事件自动同步可选)
-7. [修订后的总工期](#修订后的总工期)
-8. [修改文件清单（新增）](#修改文件清单新增)
-9. [测试计划（补充）](#测试计划补充)
-10. [安全清单（补充）](#安全清单补充)
+5. [Phase 3 — Embedding 语义搜索（已落地）](#phase-3--embedding-语义搜索已落地)
+6. [Phase 4 — 外部代码检索 subagent](#phase-4--外部代码检索-subagent)
+7. [Phase 5 — 文件事件自动同步（可选）](#phase-5--文件事件自动同步可选)
+8. [修订后的总工期](#修订后的总工期)
+9. [修改文件清单（新增）](#修改文件清单新增)
+10. [测试计划（补充）](#测试计划补充)
+11. [安全清单（补充）](#安全清单补充)
 
 ---
 
@@ -44,6 +44,7 @@
 | 6   | LSP 工具覆盖（4 → 8）                                        | symbols/goto-def/refs/rename/diagnostics/format/status/install-decision | Phase 2X（已落地） |
 | 7   | 外部代码检索（GitHub/npm/docs）                              | `librarian` subagent                                                    | Phase 4          |
 | 8   | 文件事件自动同步                                             | CodeGraph 2s debounce 文件监听                                          | Phase 5 (可选)   |
+| 9   | Embedding 语义搜索（概念 → 代码块）                          | CodeGraph 语义检索 / `semantic_code_search`                             | Phase 3（已落地） |
 
 ---
 
@@ -267,6 +268,81 @@
   `lsp_rename` 真实 WorkspaceEdit 预览（不改文件）、`lsp_status` 如实列出 + 进程回收。
 - `test_lsp_e2e.py`（module，扩展）— 8 工具共享一个惰性服务器 + 多语言双服务器惰性启动。
 - `test_role_isolation.py` / `test_lsp_tools.py`（module/integration）— 工具面 4 → 8 同步。
+
+---
+
+## Phase 3 — Embedding 语义搜索（已落地）
+
+> **状态：已落地。** 本节承接原计划 Phase 3 并记录落点、与提案的差异、实测可用性与测试；
+> 工具面新增 `semantic_code_search`，仍为 **RESEARCHER 专属**。
+
+### 落点
+
+- `config/features/agent_side/code_intel_semantic.py`：`CodeIntelSemanticConfig` +
+  `CODE_INTEL_SEMANTIC` 实例（`model` / `default_top_k` / `max_top_k` / `candidate_pool` /
+  `batch_size` / `max_chunks` / `max_chunks_per_file` / `max_chunk_chars`），经
+  `agent_side/__init__.py` 与 `config/features/__init__.py` **双级 re-export**。
+- `agent/tools/code_intel/semantic/chunker.py`：按 Phase 1 symbol 表分块
+  （function/method/class）；每块 = 符号源码 + 文件路径 + 行号 + 符号名 + kind；
+  纯函数、无磁盘/DB。
+- `agent/tools/code_intel/semantic/indexer.py`：`SemanticIndexer.build()`——先复用
+  `CodeIndexer` 刷新符号索引，删除孤儿 embedding（文件重索引后符号 id 变化），
+  再只对缺失向量的符号分批 embed；`code_embeddings` 表（BLOB，复用
+  `context_engine` 的 `array.array("d")` 打包）含 `model` / `dim` / `chunk_text` /
+  `created_at` 列 + `idx_code_emb_symbol` 索引。
+- `agent/tools/code_intel/semantic/search.py`：`SemanticSearch.search()`——自愈式增量刷新 →
+  `embed_query` → 纯 Python cosine 排序 → 现有 reranker 重排 → top-K；`semantic_code_search`
+  LangChain 工具亦在此。
+- `agent/tools/code_intel/tools.py::build_code_intel_tools()`：追加 `semantic_code_search`，
+  仍仅由 `spawn/core.py::_build_child_agent()` 在 `FunctionalRole.RESEARCHER` 时注入
+  （`_MAIN_TOOLS_BUILDERS` 不可见）。
+- `agent/tools/subagent/spawn/system_prompt.py`：RESEARCHER 段追加 `semantic_code_search` 指导。
+
+### 与提案的差异
+
+- **嵌入模型复用而非新增**：直接用现有 `models/embed_model/core.py::build_embed_model()`
+  （本地 bge-m3 GGUF / 远端 API，由既有 `EMBEDDING_*` 决定），**不引入任何新 provider /
+  环境变量 / 开关**。
+- **存储/相似度复用既有模式**：BLOB 用 `array.array("d").tobytes()`（同
+  `context_engine/embeddings/store.py`），相似度用纯 Python cosine（不新增 numpy 依赖）；
+  schema 按提案落地（`symbol_id` PK、`embedding` BLOB、`model`、`dim`、`chunk_text`、
+  `created_at` + `idx_code_emb_symbol`）。
+- **增量不依赖 symbol id 稳定**：Phase 1 重索引文件会重建符号行（新 id），旧 embedding
+  因此变为孤儿，由 `DELETE ... WHERE symbol_id NOT IN (SELECT id FROM symbols)` 清除；
+  未变文件的行保留，二次 build 不再 embed（实测 `embedded=0`）。
+- **模型/维度一致性明确处理**：模型名变化 → 全表 purge 重建；维度冲突 → purge 后**重启本轮**
+  重新嵌入全部符号（不留混合维度）；搜索期维度不符 → 明确 `degraded`（拒绝混用，不静默出垃圾）。
+- **reranker 始终尝试、fail-open**：不设开关。reranker 不可用（如云端未配置 API）时保持
+  cosine 顺序并在结果里如实标 `reranked=false`（本机实测即为该路径）。
+- **分批 + 有上限 + 逐批释放**：`batch_size` / `max_chunks` / `max_chunks_per_file` /
+  `max_chunk_chars` 全部有界；每批 embed 后写库并释放向量，峰值内存由一批决定。
+- **无 LLM、无网络（本地模式）**：仅 parse + 读取 + 向量化 + SQLite。
+
+### 实测可用性
+
+- 本机 `EMBEDDING_MODEL_LOCAL=true`，`bge-m3-q8_0.gguf`（634 MB）已在位；真实嵌入冒烟通过
+  （fixture 仓库 `indexed=23`，concept query 命中 `helper` / `top_func`），进程峰值 RSS
+  约 **1.85 GB**（模型加载前 0.60 GB → 加载并嵌入后 1.85 GB）。
+- 本机 reranker 为云端模式但 `RERANKER_API_BASE` / `RERANKER_API_KEY` 为空 → 构造即失败，
+  如实降级为 cosine 顺序（`reranked=false`），符合 fail-open 设计。
+- CI 的 llm-e2e 作业以 `--no-install-package llama-cpp-python` 同步，本地嵌入运行时缺失；
+  真实嵌入冒烟测试以「运行时 + 权重在位」为前提，缺失即 **skip**（不下载、不失败）。
+
+### 测试
+
+`tests/agent/tools/code_intel/semantic/`：
+
+- `test_chunker.py`（unit）— 分块 header/边界/截断、空文件、kind 过滤、snippet 回退。
+- `test_indexer.py`（unit）— 增量二次索引、变更文件重嵌、删除孤儿、模型/维度重建、坏块
+  fail-open、`max_chunks` 截断、`batch_size`、语法错误文件跳过。
+- `test_search.py`（unit）— cosine 排序、top-K 夹取、reranker 重排与降级、空查询/空索引/
+  维度不符/查询嵌入失败降级、编辑后自愈。
+- `test_semantic_e2e.py`（module）— 假嵌入 + 假 reranker 的 build→search 全链路（工具层）。
+- `test_semantic_smoke.py`（integration）— 真实 bge-m3：build → concept search
+  （运行时/权重缺失则 skip）。
+- 既有 `test_tools.py`、`test_integration.py`（角色隔离三方向）、
+  `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、
+  `tests/agent/tools/taskflow/test_role_synthesize_smoke.py` 的工具面 exact-list 已同步。
 
 ---
 
@@ -522,7 +598,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 | Phase 1A | ast-grep 结构化搜索 + 二进制 provision (已落地)  | —          | 前置            |
 | Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ✅ 已落地   | Phase 1 + 1A    |
 | Phase 2X | LSP 语言 + 工具扩展 (新增)                       | ✅ 已落地   | Phase 2S        |
-| Phase 3  | Embedding 语义搜索 (原计划)                      | ~8h        | Phase 1         |
+| Phase 3  | Embedding 语义搜索 (原计划)                      | ✅ 已落地   | Phase 1         |
 | Phase 4  | 外部代码检索 subagent (新增)                     | ~2.5h      | Phase 1A + 前置 |
 | Phase 5  | 文件事件自动同步 (可选, 新增)                    | ~4h        | Phase 1         |
 | **合计** |                                                  | **~65.5h** |                 |
@@ -530,7 +606,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 > 原计划 ~34h → 修订后 ~65.5h（规划期估算）。增量 ~31.5h 主要来自 ast-grep 二进制 provision
 > 基础设施（Phase 1A, +13h）和 LSP 基础设施（Phase 2S, +5h vs 原 Phase 2 的 ~11h → ~16h）。
 >
-> Phase 1A / 2S / 2X **已落地**；剩余 Phase 3 / 4 / 5 待派工。
+> Phase 1 / 1A / 2S / 2X / 3 **已落地**；剩余 Phase 4 / 5 待派工。
 
 ### 推荐实施顺序
 
@@ -540,7 +616,7 @@ asyncio.create_task(start_index_watcher(stop_event))
   └→ Phase 1A (ast-grep + provision) ← 已落地，与 Phase 1 并行
        ├→ Phase 2S (LSP 基础设施, 16h) ← ✅ 已落地（需 Phase 1 + 1A）
         │    └→ Phase 2X (LSP 扩展, 7h) ← ✅ 已落地
-       ├→ Phase 3 (Embedding, 8h) ← 可与 Phase 2S 并行
+       ├→ Phase 3 (Embedding, 8h) ← ✅ 已落地
        └→ Phase 4 (librarian, 2.5h) ← 可与 Phase 2S 并行
             Phase 5 (file watcher, 4h) ← 可选，最后
 ```
@@ -602,6 +678,21 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `tests/agent/tools/code_intel/lsp/{conftest,test_resolver,test_lsp_tools,test_lsp_e2e,test_lsp_smoke,test_role_isolation}.py` | 扩展/同步 |
 | `docs/subagent/README{,4}` + `agent/tools/subagent/README{,4}` | researcher 工具面 4 → 8（四语一致） |
 
+### Phase 3 修改（已落地：新建 5 + 修改 6）
+
+| 文件                                                        | 修改                                                         |
+| ----------------------------------------------------------- | ------------------------------------------------------------ |
+| `config/features/agent_side/code_intel_semantic.py`         | 新建 — `CodeIntelSemanticConfig` + `CODE_INTEL_SEMANTIC`      |
+| `config/features/agent_side/__init__.py`                    | re-export `CODE_INTEL_SEMANTIC` / `CodeIntelSemanticConfig`   |
+| `config/features/__init__.py`                               | 顶层 re-export                                               |
+| `agent/tools/code_intel/semantic/__init__.py`               | 新建 — 模块导出                                              |
+| `agent/tools/code_intel/semantic/chunker.py`                | 新建 — 按符号分块                                            |
+| `agent/tools/code_intel/semantic/indexer.py`                | 新建 — 增量嵌入 + `code_embeddings` 存储 + 模型/维度一致性   |
+| `agent/tools/code_intel/semantic/search.py`                 | 新建 — cosine + reranker 重排 + `semantic_code_search` 工具  |
+| `agent/tools/code_intel/tools.py`                           | `build_code_intel_tools` 追加 semantic（仍 RESEARCHER 专属） |
+| `agent/tools/subagent/spawn/system_prompt.py`               | RESEARCHER 段追加 `semantic_code_search` 指导                |
+| `docs/subagent/README{,4}` + `agent/tools/subagent/README{,4}` | researcher 工具面 +`semantic_code_search`（四语一致）        |
+
 ### Phase 4 修改（2 个）
 
 | 文件                                                       | 修改           |
@@ -646,6 +737,13 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`        | P2S ✅ | `integration` | 真实 basedpyright：definition / references / diagnostics + 进程回收                       |
 | `tests/agent/tools/code_intel/lsp/test_protocol.py`         | P2X ✅ | `unit`        | 10 语言 extension → language → languageId、diagnostics、WorkspaceEdit 归一化             |
 | `tests/agent/tools/code_intel/lsp/test_lsp_extended.py`     | P2X ✅ | `integration` | lsp_rename / lsp_diagnostics / lsp_format / lsp_status                                  |
+| `tests/agent/tools/code_intel/semantic/test_chunker.py`     | P3 ✅ | `unit`        | 分块 header/边界/截断、空文件、kind 过滤、snippet 回退                                  |
+| `tests/agent/tools/code_intel/semantic/test_indexer.py`     | P3 ✅ | `unit`        | 增量二次索引、变更重嵌、删除孤儿、模型/维度重建、坏块 fail-open、max_chunks、batch_size  |
+| `tests/agent/tools/code_intel/semantic/test_search.py`      | P3 ✅ | `unit`        | cosine 排序、top-K 夹取、reranker 重排/降级、空查询/空索引/维度不符/嵌入失败降级、自愈  |
+| `tests/agent/tools/code_intel/semantic/test_semantic_e2e.py`| P3 ✅ | `module`      | 假嵌入 + 假 reranker 的 build→search 全链路（工具层）                                   |
+| `tests/agent/tools/code_intel/semantic/test_semantic_smoke.py` | P3 ✅ | `integration` | 真实 bge-m3：build → concept search（运行时/权重缺失则 skip）                        |
+| `tests/agent/tools/code_intel/test_tools.py`（+ semantic）  | P3 ✅ | `unit`        | 5 工具 exact-list、scope metadata、session_id、args schema                              |
+| `tests/agent/tools/code_intel/test_integration.py`（+ semantic） | P3 ✅ | `module`  | 角色隔离三方向（main / 非 RESEARCHER / RESEARCHER 含 semantic_code_search）             |
 | `tests/agent/tools/subagent/test_librarian_role.py`         | P4   | `integration` | librarian 角色定义加载、工具权限正确（有 explore/无 write）                             |
 | `tests/agent/tools/code_intel/test_watcher.py`              | P5   | `integration` | 文件变更触发重索引、debounce 2s、prune_dirs 排除                                        |
 
@@ -693,7 +791,7 @@ manager 惰性/并发/空闲、4 工具降级、角色隔离、真实冒烟）�
 | `agent/tools/web_search.py`             | `build_web_search_tool()` — librarian 复用                         |
 | `agent/tools/terminal.py`               | terminal 工具 — librarian git/gh 操作复用                          |
 | `agent/tools/file_tools/read_file.py`   | `build_read_file_tool()` — librarian 源码读取复用                  |
-| `context_engine/embeddings/store.py`    | Embedding BLOB 存储（Phase 3 复用，原计划已有）                    |
+| `context_engine/embeddings/store.py`    | Embedding BLOB 存储模式（Phase 3 复用：`array.array("d")` 打包）    |
 | `config/path.py` `CODE_INTEL_DIR`       | ast-grep 第 3 层 bin 缓存路径基础 (`CODE_INTEL_DIR/ast-grep/bin`)  |
 
 ### 外部参考
