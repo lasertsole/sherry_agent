@@ -118,7 +118,7 @@ Discovery mirrors the ast-grep tiers with a marker-gated twist: an explicit abso
 
 A language server is a heavy resident subprocess, so the process-level manager bounds it: servers start lazily on the first request for a `(language, cwd)`, at most `lsp_max_concurrent_servers` (2) live at once with least-recently-used eviction, an idle sweeper reaps servers unused for `lsp_idle_shutdown_s` (300 s), and `shutdown_all` runs from an `atexit` hook — a client never leaves an orphan. Each client frames JSON-RPC with `Content-Length`, dispatches responses on a reader thread, answers server-to-client requests with an empty result, bounds every wait by a timeout, caps opened files at 32 (closing the oldest), and refuses files over 1 MB.
 
-Availability is a three-state report: `available`, `not_installed` (configured but no binary passed discovery — an install hint and the local-install command are returned), or `not_configured` (language not in `lsp_enabled_languages`). Every unavailable path returns the tool name, the install hint, and a fallback to `explore` or `search_files`. Auto-install is off by default (`lsp_auto_install=False`); when enabled it executes only the allow-listed command for the requested language, with a 60 s timeout and a scrubbed environment.
+Availability is a three-state report: `available`, `not_installed` (configured but no binary passed discovery — an install hint and the local-install command are returned), or `not_configured` (language not in `lsp_enabled_languages`). Every unavailable path returns the tool name, the install hint, and a fallback to `explore` or `terminal` (rg/grep). Auto-install is off by default (`lsp_auto_install=False`); when enabled it executes only the allow-listed command for the requested language, with a 60 s timeout and a scrubbed environment.
 
 ## 🧠 Layer 4: Semantic Code Search
 
@@ -179,18 +179,19 @@ The other three engines on the same host:
 | ast-grep | available from the provisioned runtime tier (`ast-grep 0.43.0`) | a basic structural search returns real matches |
 | Semantic search | local `bge-m3` backend available | the real-embedding smoke returns a relevant symbol for a concept query |
 
-Any machine that lacks these capabilities degrades instead of failing: an unresolved ast-grep triggers the verified auto-provision path, and an unavailable embedding backend makes `semantic_code_search` return a `degraded` message pointing back at `explore` and `search_files`.
+Any machine that lacks these capabilities degrades instead of failing: an unresolved ast-grep triggers the verified auto-provision path, and an unavailable embedding backend makes `semantic_code_search` return a `degraded` message pointing back at `explore` and `terminal`.
 
 ## ⚠️ Limitations & Failure Modes
 
 - **The index is caller-triggered and self-healed.** There is no background indexer: the first query builds the index, and every query refreshes it incrementally. A large repository pays the build on its first call, bounded by the file and time caps (`truncated` is reported).
+- **File-event auto-sync is not adopted.** Semantic search already self-heals the index on every query and the index rebuilds on demand, so a resident file-watcher would add process overhead for a marginal gain.
 - **Syntax-error, oversized, and unknown-extension files are skipped**, each with an `index_meta` row recording the reason; they are never partially indexed.
 - **Embedding batches reload the model.** Each `embed_documents` call loads the backend (the local GGUF loader is invoked per batch), so batching trades load time against peak memory; the per-build and per-file caps keep this bounded.
 - **An unconfigured reranker only costs ranking quality.** Without one, results stay in cosine order and the payload says `reranked=false`; with one, a reranker failure also falls back to cosine order.
 - **ast-grep's first use downloads the binary.** The provision path is bounded by a 60 s timeout and refuses to install on a checksum mismatch; on an offline or asset-less platform the tool returns install hints instead.
 - **LSP servers are heavy.** The manager caps them at 2 concurrent, reaps after 300 s idle, and evicts the least-recently-used server; the first request for a language pays the server start, and `lsp_diagnostics` may return `timed_out` when a server publishes nothing within its window.
 - **This host's LSP coverage is partial.** Only `python` and `typescript` are discoverable; `rust` resolves but cannot start without its toolchain component; the other seven languages need an install. Auto-install is off by default, so a missing server never triggers a package-manager run.
-- **`search_files` is not registered in `_MAIN_TOOLS_BUILDERS`.** The librarian definition lists it and the LSP fallback text mentions it, but the builder is absent from the candidate set, so the librarian's real retrieval path is `terminal` plus `explore` (and the other code-intel tools).
+- **The librarian tool face is `read_file` / `terminal` / `web_search` plus the code-intel suite.** It does not include `search_files` — that builder is absent from `_MAIN_TOOLS_BUILDERS`, so external-repo keyword retrieval runs through `terminal` (rg/grep) and `explore`.
 - **Writes are two-step by design.** `ast_grep_rewrite`, `lsp_rename`, and `lsp_format` only write when explicitly asked to; their previews are the safe default, and applied edits are still containment-checked.
 
 ## 🗺️ Test Map

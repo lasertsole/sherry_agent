@@ -118,7 +118,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 
 语言服务器是重型常驻子进程，因此进程级管理器对其施加约束：服务器在首次请求某个 `(language, cwd)` 时惰性启动，同时存活的最多 `lsp_max_concurrent_servers`（2）个，超出时淘汰最久未使用者；空闲清扫线程回收超过 `lsp_idle_shutdown_s`（300 秒）未使用的服务器；`shutdown_all` 由 `atexit` 钩子执行——客户端绝不留下孤儿进程。每个客户端用 `Content-Length` 分帧 JSON-RPC，在读线程上分发响应，对服务器到客户端的请求回以空结果，所有等待都有超时，打开文件上限 32（关闭最旧者），并拒绝超过 1 MB 的文件。
 
-可用性是三态报告：`available`、`not_installed`（已配置但没有二进制通过发现——返回安装提示与本地安装命令）、`not_configured`（语言不在 `lsp_enabled_languages` 中）。每条不可用路径都会返回工具名、安装提示，以及回退到 `explore` 或 `search_files` 的建议。自动安装默认关闭（`lsp_auto_install=False`）；启用后也只执行目标语言的白名单命令，并受 60 秒超时与擦洗环境约束。
+可用性是三态报告：`available`、`not_installed`（已配置但没有二进制通过发现——返回安装提示与本地安装命令）、`not_configured`（语言不在 `lsp_enabled_languages` 中）。每条不可用路径都会返回工具名、安装提示，以及回退到 `explore` 或 `terminal`（rg/grep）的建议。自动安装默认关闭（`lsp_auto_install=False`）；启用后也只执行目标语言的白名单命令，并受 60 秒超时与擦洗环境约束。
 
 ## 🧠 第 4 层：语义代码搜索
 
@@ -179,18 +179,19 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | ast-grep | 可从预置运行时层使用（`ast-grep 0.43.0`） | 基础结构搜索返回真实匹配 |
 | 语义搜索 | 本地 `bge-m3` 后端可用 | 真实嵌入冒烟为概念查询返回相关符号 |
 
-缺少这些能力的机器会降级而非失败：ast-grep 未解析时触发带校验的自动预置路径，嵌入后端不可用时 `semantic_code_search` 返回 `degraded` 消息并指回 `explore` 与 `search_files`。
+缺少这些能力的机器会降级而非失败：ast-grep 未解析时触发带校验的自动预置路径，嵌入后端不可用时 `semantic_code_search` 返回 `degraded` 消息并指回 `explore` 与 `terminal`。
 
 ## ⚠️ 限制与失败模式
 
 - **索引由调用触发并自愈。** 没有后台索引器：首次查询构建索引，此后每次查询增量刷新。大仓库在第一次调用时承担构建成本，受文件与时间上限约束（会报告 `truncated`）。
+- **文件事件自动同步未采纳。** 语义检索已在每次查询时自愈刷新索引，索引也按需重建，因此常驻的文件监听只会带来进程开销而收益边际。
 - **语法错误、超大与未知扩展名的文件会被跳过**，各写入一条记录原因的 `index_meta` 行；它们绝不会被部分索引。
 - **嵌入批次会重复加载模型。** 每次 `embed_documents` 调用都会加载后端（本地 GGUF 加载器按批调用），因此批大小是在加载时间与峰值内存之间取舍；单次构建与单文件上限使这一点保持有界。
 - **未配置重排器只损失排序质量。** 没有重排器时结果保持余弦顺序，载荷中 `reranked=false`；配置了重排器但调用失败时同样回退到余弦顺序。
 - **ast-grep 首次使用需要下载二进制。** 预置路径受 60 秒超时约束，校验和不匹配时拒绝安装；离线或该平台没有资产时，工具改为返回安装提示。
 - **LSP 服务器很重。** 管理器限制最多 2 个并发、空闲 300 秒后回收，并淘汰最久未使用者；某种语言的首次请求要支付服务器启动成本，而服务器在窗口内没有任何发布时 `lsp_diagnostics` 可能返回 `timed_out`。
 - **本机的 LSP 覆盖不完整。** 只有 `python` 与 `typescript` 可被发现；`rust` 能解析但缺少工具链组件无法启动；其余七种语言需要安装。自动安装默认关闭，因此缺失服务器绝不会触发包管理器运行。
-- **`search_files` 未注册进 `_MAIN_TOOLS_BUILDERS`。** librarian 定义中列出了它、LSP 回退文案也提到了它，但该构建器不在候选集合中，因此 librarian 的真实检索路径是 `terminal` 加 `explore`（以及其余 code-intel 工具）。
+- **librarian 的工具面是 `read_file` / `terminal` / `web_search` 加 code-intel 套件。** 它不含 `search_files` —— 该构建器不在 `_MAIN_TOOLS_BUILDERS` 中，因此外部仓库的关键词检索走 `terminal`（rg/grep）与 `explore`。
 - **写入按设计分两步。** `ast_grep_rewrite`、`lsp_rename` 与 `lsp_format` 只有在被明确要求时才写入；预览是安全默认，已应用的编辑仍会经过容器校验。
 
 ## 🗺️ 测试地图
