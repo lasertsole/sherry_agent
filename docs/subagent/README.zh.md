@@ -64,11 +64,11 @@
 | 角色 | 用途 | 生效 LLM 档位 | 角色工具集 |
 |------|------|----------------|------------|
 | `general` | 默认 worker；恒等角色（其包内定义永不被加载） | 深度角色 | 全部工具 + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
-| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `researcher` | 只读的代码库与网络调研 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `executor` | 可写实现与命令执行 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 只读的 diff 与质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 
-**ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite`。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` 仍为 `researcher` 专属，因为它们需要符号索引。
+**ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite`。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` 仍为 `researcher` 专属，因为它们需要符号索引。LSP 工具 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` 同样为 `researcher` 专属：它们需要运行中的语言服务器，由子代理按需惰性启动、空闲时自动关停。
 
 ### 🛡️ 失败开放加载器
 

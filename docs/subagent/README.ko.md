@@ -64,11 +64,11 @@
 | 역할 | 용도 | 유효 LLM 티어 | 역할 도구 집합 |
 |------|------|----------------|----------------|
 | `general` | 기본 worker; 항등 역할(패키지 정의는 결코 로드되지 않음) | 깊이 역할 | 모든 도구 + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | 읽기 전용 코드베이스·웹 조사 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `executor` | 쓰기 가능한 구현과 명령 실행 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | 읽기 전용 diff·품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
-**ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact`는 심볼 인덱스가 필요하므로 계속 `researcher` 전용입니다.
+**ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact`는 심볼 인덱스가 필요하므로 계속 `researcher` 전용입니다. LSP 도구 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` 역시 같은 이유로 `researcher` 전용이며, 실행 중인 언어 서버가 필요하여 하위 에이전트가 필요할 때 지연 시작하고 유휴 시 자동 종료합니다.
 
 ### 🛡️ 페일오픈 로더
 

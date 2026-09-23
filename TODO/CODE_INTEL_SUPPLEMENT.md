@@ -9,6 +9,9 @@
 > 实施时原计划的 Phase 1 不变；Phase 2 由本文件 Phase 2S 替代；
 > 新增 Phase 1A（必选，与 Phase 1 同级）、Phase 4 为独立阶段。
 >
+> **进度：Phase 1A 与 Phase 2S 已落地（Phase 2S 同时承载原计划 Phase 2）；
+> Phase 2X / 3 / 4 / 5 待派工。**
+>
 > **ast-grep 是核心必选组件**（对标 oh-my-openagent，在该项目中 ast-grep
 > 与 LSP daemon 并列为无条件注册的核心组件，非 opt-in）。
 
@@ -18,7 +21,7 @@
 
 1. [缺口总览](#缺口总览)
 2. [Phase 1A — ast-grep 结构化搜索（已落地）](#phase-1a--ast-grep-结构化搜索已落地)
-3. [Phase 2S — LSP 二进制发现与自动安装（替代原 Phase 2）](#phase-2s--lsp-二进制发现与自动安装替代原-phase-2)
+3. [Phase 2S — LSP 二进制发现与自动安装（已落地，替代原 Phase 2）](#phase-2s--lsp-二进制发现与自动安装已落地替代原-phase-2)
 4. [Phase 2X — LSP 语言与工具扩展](#phase-2x--lsp-语言与工具扩展)
 5. [Phase 4 — 外部代码检索 subagent](#phase-4--外部代码检索-subagent)
 6. [Phase 5 — 文件事件自动同步（可选）](#phase-5--文件事件自动同步可选)
@@ -33,9 +36,9 @@
 
 | #   | 缺口                                                         | oh-my-openagent 对标                                                    | 本计划阶段       |
 | --- | ------------------------------------------------------------ | ----------------------------------------------------------------------- | ---------------- |
-| 1   | LSP 二进制发现（repo-local → PATH → 安装提示）               | `server-installation.ts` (218 行)                                       | Phase 2S         |
-| 2   | LSP 自动安装 + 安装提示 + 用户决策                           | `server-definitions.ts` + `install-decision.ts`                         | Phase 2S         |
-| 3   | LSP fallback 策略（缺失时降级到 tree-sitter / search_files） | `server-resolution.ts` not_installed 状态                               | Phase 2S         |
+| 1   | LSP 二进制发现（repo-local → PATH → 安装提示）               | `server-installation.ts` (218 行)                                       | Phase 2S（已落地） |
+| 2   | LSP 自动安装 + 安装提示 + 用户决策                           | `server-definitions.ts` + `install-decision.ts`                         | Phase 2S（已落地） |
+| 3   | LSP fallback 策略（缺失时降级到 tree-sitter / search_files） | `server-resolution.ts` not_installed 状态                               | Phase 2S（已落地） |
 | 4   | ast-grep 结构化搜索/重写                                     | `ast-grep-mcp/` (25 语言, 5 级 strictness)                              | Phase 1A（已落地） |
 | 5   | LSP 语言覆盖（4 → 12+）                                      | `BUILTIN_SERVERS` (40+ 语言)                                            | Phase 2X         |
 | 6   | LSP 工具覆盖（4 → 8）                                        | symbols/goto-def/refs/rename/diagnostics/format/status/install-decision | Phase 2X         |
@@ -83,516 +86,90 @@
   `e706846148493967f3ab8011334817edd86ce5acbec10718b2a7b40799c640ff`（与配置一致）；
   provision 实测 2.7 s，产出 51,531,936 B / 0755 的 `sg`。
 
-## Phase 2S — LSP 二进制发现与自动安装（替代原 Phase 2）
-
-> **前置条件：Phase 1 + Phase 1A 完成。**
-> **替代原计划 Phase 2。** 原计划的 4 个 LSP 工具保留不变，
-> 本阶段补充原计划完全缺失的 LSP 服务器发现、安装、fallback 基础设施。
-
-### 架构
-
-```
-┌─ LSP 服务器发现层 ──────────────────────────────────────────────┐
-│                                                                  │
-│  resolve_lsp_server(language, cwd)                               │
-│  ├─ 1. 显式路径（LSP_*_SERVER 配置为绝对路径）                    │
-│  ├─ 2. repo-local 二进制（.venv/bin, node_modules/.bin, ...）     │
-│  │     └─ marker-gated: package.json / pyproject.toml / go.mod   │
-│  ├─ 3. PATH 查找（含 Windows PATHEXT 后缀匹配）                   │
-│  └─ 4. not_installed → 返回安装提示 + fallback 信号               │
-│                                                                  │
-│  install_lsp_server(language)                                     │
-│  ├─ 查 AUTO_INSTALLABLE_SERVERS 获取安装命令                      │
-│  ├─ 执行安装（subprocess, 超时 60s, 日志捕获）                     │
-│  └─ 安装后重新 resolve_lsp_server                                  │
-│                                                                  │
-│  LSP fallback 链                                                  │
-│  ├─ LSP 可用 → lsp_goto_definition / lsp_find_references          │
-│  ├─ LSP 不可用 → tree-sitter explore (Phase 1)                    │
-│  └─ tree-sitter 无匹配 → search_files (regex grep)                │
-└──────────────────────────────────────────────────────────────────┘
-```
-
-### 新增文件（4 个）
-
-#### 1. `config/features/agent_side/lsp.py`（扩展原计划的 LspConfig）
-
-```python
-"""LSP server configuration — binary paths, timeouts, install hints."""
-
-from typing import TypedDict
-
-
-class LspConfig(TypedDict):
-    """Configuration for LSP tools and server provisioning."""
-    # 原计划字段（保留）
-    lsp_python_server: str
-    lsp_typescript_server: str
-    lsp_rust_server: str
-    lsp_go_server: str
-    lsp_request_timeout_s: float
-    lsp_server_start_timeout_s: float
-    lsp_enabled_languages: list[str]
-    # ── 补充字段 ──
-    lsp_install_timeout_s: float           # 自动安装超时（默认 60）
-    lsp_auto_install: bool                 # 是否允许自动安装（默认 False，需用户授权）
-    lsp_resolve_cache_enabled: bool        # 二进制发现缓存（默认 True）
-    lsp_repo_local_bin_rules: dict         # marker → bin_dirs 映射
-    lsp_supported_servers: dict            # 语言 → server 配置
-    lsp_install_hints: dict                # 语言 → 安装提示文本
-    lsp_auto_install_commands: dict        # 语言 → 安装命令列表
-
-
-LSP: LspConfig = {
-    # 原计划字段（保留）
-    "lsp_python_server": "basedpyright-langserver",
-    "lsp_typescript_server": "typescript-language-server",
-    "lsp_rust_server": "rust-analyzer",
-    "lsp_go_server": "gopls",
-    "lsp_request_timeout_s": 10.0,
-    "lsp_server_start_timeout_s": 15.0,
-    "lsp_enabled_languages": ["python", "typescript", "rust", "go"],
-    # ── 补充字段 ──
-    "lsp_install_timeout_s": 60.0,
-    "lsp_auto_install": False,
-    "lsp_resolve_cache_enabled": True,
-    # repo-local bin 目录发现规则（参考 oh-my-openagent server-installation.ts）
-    # marker 文件存在时才信任对应的 bin 目录
-    "lsp_repo_local_bin_rules": {
-        "python": {
-            "markers": [
-                "pyproject.toml", "requirements.txt", "setup.py",
-                "setup.cfg", "pyrightconfig.json",
-            ],
-            "bin_dirs": [".venv/bin", ".venv/Scripts", "venv/bin", "venv/Scripts"],
-        },
-        "typescript": {
-            "markers": [
-                "package.json", "bun.lock", "package-lock.json",
-                "yarn.lock", "pnpm-lock.yaml",
-            ],
-            "bin_dirs": ["node_modules/.bin"],
-        },
-        "rust": {
-            "markers": ["Cargo.toml"],
-            "bin_dirs": ["target/debug", "target/release"],
-        },
-        "go": {
-            "markers": ["go.mod", "go.sum", "go.work"],
-            "bin_dirs": ["bin"],
-        },
-    },
-    # 语言 → LSP server 命令 + 文件扩展名
-    "lsp_supported_servers": {
-        "python": {
-            "command": ["basedpyright-langserver", "--stdio"],
-            "extensions": [".py", ".pyi"],
-            "local_install": "uv add --dev basedpyright",
-        },
-        "typescript": {
-            "command": ["typescript-language-server", "--stdio"],
-            "extensions": [".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"],
-            "local_install": "bun add -d typescript-language-server typescript",
-        },
-        "rust": {
-            "command": ["rust-analyzer"],
-            "extensions": [".rs"],
-            "local_install": None,  # 工具链级，无项目级安装
-        },
-        "go": {
-            "command": ["gopls"],
-            "extensions": [".go"],
-            "local_install": None,
-        },
-    },
-    # 安装提示（not_installed 时返回给 subagent / 用户）
-    "lsp_install_hints": {
-        "python": "pip install basedpyright",
-        "typescript": "npm install -g typescript-language-server typescript",
-        "rust": "rustup component add rust-analyzer",
-        "go": "go install golang.org/x/tools/gopls@latest",
-    },
-    # 自动安装命令（lsp_auto_install=True 且用户授权时执行）
-    "lsp_auto_install_commands": {
-        "python": ["pip", "install", "basedpyright"],
-        "typescript": ["npm", "install", "-g", "typescript-language-server", "typescript"],
-        "go": ["go", "install", "golang.org/x/tools/gopls@latest"],
-        # rust-analyzer 经由 rustup，不走 pip/npm，不列入自动安装
-    },
-}
-```
-
-**遵循约定：** 一个 TypedDict + 一个实例，re-export via `__init__.py`。
-
-#### 2. `agent/tools/code_intel/lsp/resolver.py` — 二进制发现
-
-```python
-"""LSP server binary resolution — multi-layer discovery with caching.
-
-Probing order (mirrors oh-my-openagent server-installation.ts):
-  1. Explicit path (config value is absolute) → validate exists
-  2. Repo-local bin dirs (marker-gated: pyproject.toml → .venv/bin, package.json → node_modules/.bin)
-  3. PATH lookup (with Windows PATHEXT suffixes)
-  4. None → not_installed (caller returns install hint + fallback)
-
-Results cached per-process, keyed by (cwd, command, platform).
-"""
-
-from __future__ import annotations
-
-import os
-import sys
-from pathlib import Path
-from typing import Literal
-
-from config.features import LSP
-
-_resolution_cache: dict[str, str | None] = {}
-
-
-def _executable_suffixes() -> list[str]:
-    """Platform-appropriate executable suffixes."""
-    if sys.platform != "win32":
-        return [""]
-    pathext = os.environ.get("PATHEXT", "")
-    suffixes = [e.lower() for e in pathext.split(";") if e]
-    return list(dict.fromkeys(["", *suffixes, ".exe", ".cmd", ".bat"]))
-
-
-def _probe(directory: str, command: str, suffixes: list[str]) -> str | None:
-    for suffix in suffixes:
-        candidate = Path(directory) / (command + suffix)
-        if candidate.exists():
-            return str(candidate)
-    return None
-
-
-def _resolve_local(
-    command: str, cwd: str, suffixes: list[str], language: str
-) -> str | None:
-    """Walk up from cwd, checking marker-gated bin dirs."""
-    rules = LSP["lsp_repo_local_bin_rules"].get(language, {})
-    markers = rules.get("markers", [])
-    bin_dirs = rules.get("bin_dirs", [])
-
-    current = Path(cwd).resolve()
-    while True:
-        # Check if any marker exists at this level
-        if any((current / m).exists() for m in markers):
-            for bin_dir in bin_dirs:
-                found = _probe(str(current / bin_dir), command, suffixes)
-                if found:
-                    return found
-
-        # Stop at repo root
-        if (current / ".git").exists():
-            return None
-
-        parent = current.parent
-        if parent == current:
-            return None
-        current = parent
-
-
-def _resolve_from_path(command: str, suffixes: list[str]) -> str | None:
-    path_env = os.environ.get("PATH") or os.environ.get("Path") or ""
-    for entry in path_env.split(os.pathsep):
-        if not entry:
-            continue
-        found = _probe(entry, command, suffixes)
-        if found:
-            return found
-    return None
-
-
-def resolve_lsp_server(language: str, cwd: str | None = None) -> str | None:
-    """Resolve LSP server binary path, or None if not installed.
-
-    Args:
-        language: One of LSP["lsp_enabled_languages"].
-        cwd: Working directory for repo-local resolution.
-
-    Returns:
-        Absolute binary path, or None.
-    """
-    server_config = LSP["lsp_supported_servers"].get(language)
-    if not server_config:
-        return None
-    command = server_config["command"][0]
-    work_dir = cwd or os.getcwd()
-
-    if not LSP["lsp_resolve_cache_enabled"]:
-        return _resolve_uncached(command, work_dir, language)
-
-    cache_key = f"{work_dir}:{command}:{sys.platform}"
-    if cache_key in _resolution_cache:
-        return _resolution_cache[cache_key]
-
-    result = _resolve_uncached(command, work_dir, language)
-    _resolution_cache[cache_key] = result
-    return result
-
-
-def _resolve_uncached(command: str, work_dir: str, language: str) -> str | None:
-    suffixes = _executable_suffixes()
-
-    # 1. Explicit absolute path
-    if os.path.isabs(command):
-        return command if Path(command).exists() else None
-
-    # 2. Repo-local bin dirs (marker-gated)
-    local = _resolve_local(command, work_dir, suffixes, language)
-    if local:
-        return local
-
-    # 3. PATH
-    return _resolve_from_path(command, suffixes)
-
-
-def get_install_hint(language: str) -> str:
-    """Return human-readable install hint for a language's LSP server."""
-    return LSP["lsp_install_hints"].get(
-        language, f"Install the LSP server for {language} and ensure it's in PATH."
-    )
-
-
-def get_local_install_hint(language: str) -> str | None:
-    """Return repo-local install command (devDependency), or None."""
-    server = LSP["lsp_supported_servers"].get(language, {})
-    return server.get("local_install")
-
-
-def _reset_cache_for_tests() -> None:
-    _resolution_cache.clear()
-```
-
-#### 3. `agent/tools/code_intel/lsp/installer.py` — 自动安装
-
-```python
-"""LSP server auto-install — subprocess execution with timeout + log capture."""
-
-from __future__ import annotations
-
-import subprocess
-import sys
-from pathlib import Path
-
-from loguru import logger
-
-from config.features import LSP
-from agent.tools.pub_base.env_scrub import scrub_env
-from .resolver import resolve_lsp_server, get_install_hint
-
-
-def install_lsp_server(language: str, cwd: str | None = None) -> dict:
-    """Install an LSP server for the given language.
-
-    Returns:
-        {"ok": bool, "binary_path": str | None, "message": str}
-    """
-    if not LSP["lsp_auto_install"]:
-        hint = get_install_hint(language)
-        return {
-            "ok": False,
-            "binary_path": None,
-            "message": f"Auto-install disabled. Install manually: {hint}",
-        }
-
-    command = LSP["lsp_auto_install_commands"].get(language)
-    if not command:
-        hint = get_install_hint(language)
-        return {
-            "ok": False,
-            "binary_path": None,
-            "message": f"No auto-install command for {language}. Install manually: {hint}",
-        }
-
-    timeout = LSP["lsp_install_timeout_s"]
-    env = scrub_env(os.environ.copy())
-
-    try:
-        proc = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=cwd or os.getcwd(),
-            env=env,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "ok": False,
-            "binary_path": None,
-            "message": f"Install timed out after {timeout}s: {' '.join(command)}",
-        }
-    except FileNotFoundError:
-        return {
-            "ok": False,
-            "binary_path": None,
-            "message": f"Install tool not found: {command[0]}. Is it on PATH?",
-        }
-
-    if proc.returncode != 0:
-        return {
-            "ok": False,
-            "binary_path": None,
-            "message": f"Install failed (exit {proc.returncode}): {proc.stderr[:500]}",
-        }
-
-    logger.info("LSP server installed for {}: {}", language, " ".join(command))
-
-    # Re-resolve after install
-    binary_path = resolve_lsp_server(language, cwd)
-    # Clear cache so re-resolution sees the new binary
-    from .resolver import _reset_cache_for_tests
-    _reset_cache_for_tests()
-    binary_path = resolve_lsp_server(language, cwd)
-
-    return {
-        "ok": binary_path is not None,
-        "binary_path": binary_path,
-        "message": f"Installed {language} LSP server" if binary_path else "Install ran but binary not found on PATH",
-    }
-```
-
-#### 4. `agent/tools/code_intel/lsp/fallback.py` — fallback 链
-
-```python
-"""LSP fallback chain — graceful degradation when LSP is unavailable.
-
-Resolution order:
-  1. LSP server available → use LSP tools (goto_definition, find_references, ...)
-  2. LSP not installed → return install hint + suggest tree-sitter explore (Phase 1)
-  3. tree-sitter no match → suggest search_files (regex grep)
-"""
-
-from __future__ import annotations
-
-from typing import Literal
-
-from .resolver import resolve_lsp_server, get_install_hint, get_local_install_hint
-
-
-type LspAvailability = Literal["available", "not_installed", "not_configured"]
-
-
-def check_lsp_availability(language: str, cwd: str | None = None) -> tuple[LspAvailability, str]:
-    """Check if LSP is available for a language.
-
-    Returns:
-        (status, message)
-        - ("available", binary_path)
-        - ("not_installed", install_hint)
-        - ("not_configured", "Language {language} not in enabled list")
-    """
-    from config.features import LSP as LSP_CONFIG
-
-    if language not in LSP_CONFIG["lsp_enabled_languages"]:
-        return "not_configured", f"Language '{language}' not in LSP enabled list: {LSP_CONFIG['lsp_enabled_languages']}"
-
-    binary = resolve_lsp_server(language, cwd)
-    if binary:
-        return "available", binary
-
-    hint = get_install_hint(language)
-    local_hint = get_local_install_hint(language)
-    if local_hint:
-        hint = f"{hint} (project-local: {local_hint})"
-    return "not_installed", hint
-
-
-def build_fallback_message(
-    language: str,
-    requested_tool: str,
-    availability: LspAvailability,
-    message: str,
-) -> str:
-    """Build a user-facing message when LSP is unavailable.
-
-    Suggests the fallback path:
-      LSP unavailable → try explore (tree-sitter) → try search_files
-    """
-    if availability == "not_configured":
-        return (
-            f"{requested_tool}: {message}. "
-            f"Fallback: use `explore` (tree-sitter symbol index) or `search_files` (regex)."
-        )
-    if availability == "not_installed":
-        return (
-            f"{requested_tool}: LSP server for {language} is not installed. "
-            f"Install: {message}. "
-            f"Fallback: use `explore` (tree-sitter) or `search_files` (regex) for now."
-        )
-    return ""
-```
-
-### 原计划 Phase 2 文件（保留不变）
-
-原计划的以下文件保留，但需修改 `client.py` 以使用 `resolver.py` 发现的二进制路径：
-
-| 文件                                     | 修改                                                                                        |
-| ---------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `agent/tools/code_intel/lsp/protocol.py` | 不变                                                                                        |
-| `agent/tools/code_intel/lsp/client.py`   | 启动前调用 `resolve_lsp_server()` 发现二进制；not_installed 时调用 `fallback.py`            |
-| `agent/tools/code_intel/lsp/tools.py`    | 每个工具调用前检查 `check_lsp_availability()`，not_installed 时返回安装提示 + fallback 建议 |
-
-### `client.py` 修改要点
-
-```python
-# 原计划 client.py 直接用 config 中的 server 名启动子进程
-# 修改后：先 resolve_lsp_server() 发现二进制，再启动
-
-from .resolver import resolve_lsp_server, check_lsp_availability
-from .fallback import build_fallback_message
-
-class LSPClient:
-    def __init__(self, language: str, cwd: str):
-        self._language = language
-        self._cwd = cwd
-        self._process: asyncio.subprocess.Process | None = None
-
-    async def start(self) -> str | None:
-        """Start LSP server. Returns error message (None = success)."""
-        availability, msg = check_lsp_availability(self._language, self._cwd)
-        if availability != "available":
-            return build_fallback_message(
-                self._language, "lsp_start", availability, msg
-            )
-        # resolve_lsp_server 返回绝对路径
-        binary_path = msg  # "available" 状态下 msg = binary path
-        server_config = LSP["lsp_supported_servers"][self._language]
-        command = [binary_path, *server_config["command"][1:]]
-
-        env = scrub_env(os.environ.copy())
-        self._process = await asyncio.create_subprocess_exec(
-            *command,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            cwd=self._cwd,
-        )
-        ...
-```
-
-### `tools.py` 修改要点
-
-```python
-# 每个工具在执行 LSP 请求前检查可用性
-
-@tool("lsp_goto_definition")
-def _lsp_goto_definition_tool(
-    file_path: str, line: int, character: int, session_id: str = ""
-) -> str:
-    """Jump to the definition of a symbol."""
-    language = _detect_language(file_path)
-    availability, msg = check_lsp_availability(language)
-    if availability != "available":
-        return build_fallback_message(
-            language, "lsp_goto_definition", availability, msg
-        )
-    # ... proceed with LSP request ...
-```
+## Phase 2S — LSP 二进制发现与自动安装（已落地，替代原 Phase 2）
+
+> **状态：已落地。** 本节只保留落点、与提案的差异、实测摘要与实际支持的语言服务器/发现矩阵；
+> 规格细节已随实现移除。原计划 Phase 2 的 4 个 LSP 工具按原设计保留，并已随本阶段落地。
+
+### 落点
+
+- `config/features/agent_side/lsp.py`：`LspConfig` TypedDict + `LSP` 实例（原计划 7 字段 +
+  2S 补充 7 字段 + 资源约束 5 字段），经 `agent_side/__init__.py` 与
+  `config/features/__init__.py` **双级 re-export**。
+- `agent/tools/code_intel/lsp/protocol.py`：URI/Position/Range 原语 + `detect_language`。
+- `agent/tools/code_intel/lsp/resolver.py`：5 层发现（显式配置 → repo-local（marker-gated）→
+  `~/.sherry/runtime/lsp/<slug>` → `PATH` → Homebrew 前缀），每进程缓存 +
+  `_clear_cache_for_tests`。
+- `agent/tools/code_intel/lsp/installer.py`：白名单命令自动安装（超时 60s；
+  `lsp_auto_install` 默认 False），安装后清缓存重发现。
+- `agent/tools/code_intel/lsp/fallback.py`：`check_lsp_availability`
+  （available / not_installed / not_configured 三态）+ `build_fallback_message`。
+- `agent/tools/code_intel/lsp/client.py`：stdio JSON-RPC 客户端（initialize 握手 / didOpen /
+  请求 / 超时 / publishDiagnostics / shutdown；读取线程按 id 分发响应）。
+- `agent/tools/code_intel/lsp/manager.py`：进程级管理器——**按需启动 + 并发上限（LRU 淘汰）+
+  空闲自动关停 + 显式/`atexit` shutdown，绝不留孤儿**（J10 资源约束的实现载体）。
+- `agent/tools/code_intel/lsp/tools.py`：4 个 researcher 专属工具
+  `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` /
+  `lsp_call_hierarchy`；每次执行前 `check_lsp_availability`，缺失/启动失败/超时一律 fail-open
+  返回安装提示 + fallback 建议。
+- 注入点 `agent/tools/subagent/spawn/core.py::_build_child_agent()`：**仅
+  `FunctionalRole.RESEARCHER`**；`lsp_*` 永不进入 `_MAIN_TOOLS_BUILDERS`。
+  `spawn/system_prompt.py` 的 RESEARCHER 段追加 LSP 工具指导。
+
+### 与提案的差异
+
+- **新增 `manager.py`（提案未列）**：语言服务器是重型常驻子进程。提案只在 client 内提到
+  “超时 + 进程清理、按 session 隔离（subagent 结束时 shutdown）”；实现把资源约束集中到进程级
+  管理器：按需启动、并发上限、空闲关停、显式/atexit 兜底。客户端按 `(language, cwd)` 进程级
+  共享，而非 per-session——2S 的 `LSPClient(language, cwd)` 签名本身无 session_id。
+- **发现层 3 → 5 层**：提案为显式 / repo-local / PATH；实现沿用 1A 范式补
+  `~/.sherry/runtime/lsp/<slug>` 与 Homebrew 前缀。
+- **不做 `--version` 探针**：与 ast-grep 不同，LSP 服务器无法可靠探针——
+  `basedpyright-langserver --version` 直接抛错退出。解析层只做文件存在性判断；损坏但存在的
+  二进制（如悬空 rustup 代理）在 initialize 握手阶段被发现并 fail-open 降级。
+- **显式绝对路径缺失不短路**：提案在绝对路径不存在时直接返回 `None`；实现继续尝试更低层
+  （fail-open 更彻底）。
+- **安装不做摘要校验**：LSP 经包管理器安装，无下载归档，故不涉及 1A 的 SHA-256 校验；其余安全项
+  （命令白名单、默认关闭、60s 超时、`scrub_env`）照做。
+
+### 实际支持的语言服务器与发现矩阵
+
+| 语言 | 服务器 | 本机发现结果 | 状态 |
+| ---- | ------ | ------------ | ---- |
+| python | `basedpyright-langserver` | `<repo>/.venv/bin`（repo-local，`pyproject.toml` marker） | ✅ 真实冒烟通过（definition / references / diagnostics） |
+| typescript | `typescript-language-server` | `PATH`（`/usr/bin/typescript-language-server`） | 二进制存在（未做真实冒烟） |
+| rust | `rust-analyzer` | `PATH`（`~/.cargo/bin/rust-analyzer`，rustup 代理） | ⚠️ 代理存在但工具链组件缺失，握手 fail-open 降级 |
+| go | `gopls` | 未发现 | ❌ 需安装 |
+
+**发现矩阵**（层 → 规则 → 命中示例）：
+
+| 层 | 规则 | 命中示例 |
+| -- | ---- | -------- |
+| 1 显式配置 | `lsp_*_server` / `command[0]` 为绝对路径 | 测试注入的假服务器 |
+| 2 repo-local | marker-gated：`pyproject.toml`→`.venv/bin`、`package.json`→`node_modules/.bin`、`Cargo.toml`→`target/{debug,release}`、`go.mod`→`bin`（向上走到 repo root） | 本仓库 python（`.venv/bin`） |
+| 3 Sherry runtime | `~/.sherry/runtime/lsp/<slug>`（`SHERRY_LSP_RUNTIME_DIR` 覆盖） | 用户手动放置 |
+| 4 PATH | 含 Windows `PATHEXT` 后缀匹配 | typescript / rust |
+| 5 Homebrew | `/opt/homebrew/bin`、`/usr/local/bin`、`/home/linuxbrew/.linuxbrew/bin` | macOS / linuxbrew |
+
+### 测试
+
+`tests/agent/tools/code_intel/lsp/`：
+
+- `test_resolver.py`（unit）— 5 层命中/未命中、marker-gating、缓存开关、Windows 后缀、
+  安装提示、config 双级 re-export。
+- `test_installer.py`（unit）— auto_install 关闭、无命令、超时、缺工具、非零退出、成功后重发现、
+  env 清洗。
+- `test_fallback.py`（unit）— 三态 + fallback 消息格式。
+- `test_client.py`（unit）— 握手、定义请求、didOpen/diagnostics、超时、错误响应、
+  shutdown/force_kill 进程回收。
+- `test_manager.py`（unit）— 惰性启动、复用、并发上限 LRU 淘汰、空闲关停、shutdown_all、无孤儿。
+- `test_lsp_tools.py`（integration）— 4 工具端到端 + 路径安全 +
+  not_installed/error/timeout 降级。
+- `test_role_isolation.py`（module）— main 不可见、general/executor/reviewer 不含、
+  researcher 含 LSP + code_intel + ast-grep。
+- `test_lsp_e2e.py`（module）— 假服务器 hermetic e2e：4 工具共享一个惰性启动的服务器，结束回收。
+- `test_lsp_smoke.py`（integration）— **真实 `basedpyright-langserver`** 冒烟：
+  definition / references / diagnostics + 进程回收。
 
 ---
 
@@ -893,15 +470,17 @@ asyncio.create_task(start_index_watcher(stop_event))
 | 前置     | subagent 功能角色分工（已落地）                  | —          | —               |
 | Phase 1  | tree-sitter 符号索引 + 调用图 (原计划)           | ~15h       | 前置            |
 | Phase 1A | ast-grep 结构化搜索 + 二进制 provision (已落地)  | —          | 前置            |
-| Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ~16h       | Phase 1 + 1A    |
+| Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ✅ 已落地   | Phase 1 + 1A    |
 | Phase 2X | LSP 语言 + 工具扩展 (新增)                       | ~7h        | Phase 2S        |
 | Phase 3  | Embedding 语义搜索 (原计划)                      | ~8h        | Phase 1         |
 | Phase 4  | 外部代码检索 subagent (新增)                     | ~2.5h      | Phase 1A + 前置 |
 | Phase 5  | 文件事件自动同步 (可选, 新增)                    | ~4h        | Phase 1         |
 | **合计** |                                                  | **~65.5h** |                 |
 
-> 原计划 ~34h → 修订后 ~65.5h。增量 ~31.5h 主要来自 ast-grep 二进制 provision
+> 原计划 ~34h → 修订后 ~65.5h（规划期估算）。增量 ~31.5h 主要来自 ast-grep 二进制 provision
 > 基础设施（Phase 1A, +13h）和 LSP 基础设施（Phase 2S, +5h vs 原 Phase 2 的 ~11h → ~16h）。
+>
+> Phase 1A 与 Phase 2S **已落地**；剩余 Phase 2X / 3 / 4 / 5 待派工。
 
 ### 推荐实施顺序
 
@@ -909,7 +488,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 前置 (subagent 功能角色分工)
   ├→ Phase 1 (tree-sitter, 15h)
   └→ Phase 1A (ast-grep + provision) ← 已落地，与 Phase 1 并行
-       ├→ Phase 2S (LSP 基础设施, 16h) ← 需 Phase 1 + 1A
+       ├→ Phase 2S (LSP 基础设施, 16h) ← ✅ 已落地（需 Phase 1 + 1A）
        │    └→ Phase 2X (LSP 扩展, 7h)
        ├→ Phase 3 (Embedding, 8h) ← 可与 Phase 2S 并行
        └→ Phase 4 (librarian, 2.5h) ← 可与 Phase 2S 并行
@@ -939,16 +518,23 @@ asyncio.create_task(start_index_watcher(stop_event))
 
 > 提案清单中的 `agent/tools/subagent/spawn/system_prompt.py` 改动未执行（见「与提案的差异」）。
 
-### Phase 2S 修改（5 个）
+### Phase 2S 修改（已落地：新建 9 + 修改 4）
 
-| 文件                                      | 修改                               |
-| ----------------------------------------- | ---------------------------------- |
-| `config/features/agent_side/lsp.py`       | 扩展 LspConfig（+7 字段 + 3 dict） |
-| `agent/tools/code_intel/lsp/resolver.py`  | 新建 — 二进制发现                  |
-| `agent/tools/code_intel/lsp/installer.py` | 新建 — 自动安装                    |
-| `agent/tools/code_intel/lsp/fallback.py`  | 新建 — fallback 链                 |
-| `agent/tools/code_intel/lsp/client.py`    | 修改 — 用 resolver 发现二进制      |
-| `agent/tools/code_intel/lsp/tools.py`     | 修改 — 每个工具调用前检查可用性    |
+| 文件                                            | 修改                                                              |
+| ----------------------------------------------- | ----------------------------------------------------------------- |
+| `config/features/agent_side/lsp.py`             | 新建 — `LspConfig`（原计划 7 字段 + 2S 7 字段 + 资源约束 5 字段） |
+| `config/features/agent_side/__init__.py`        | re-export `LSP` / `LspConfig`                                     |
+| `config/features/__init__.py`                   | 顶层 re-export                                                    |
+| `agent/tools/code_intel/lsp/__init__.py`        | 新建 — 模块导出                                                   |
+| `agent/tools/code_intel/lsp/protocol.py`        | 新建 — URI/Position/Range + `detect_language`                     |
+| `agent/tools/code_intel/lsp/resolver.py`        | 新建 — 5 层二进制发现 + 每进程缓存                                |
+| `agent/tools/code_intel/lsp/installer.py`       | 新建 — 白名单自动安装                                             |
+| `agent/tools/code_intel/lsp/fallback.py`        | 新建 — 可用性检查 + fallback 链                                   |
+| `agent/tools/code_intel/lsp/client.py`          | 新建 — LSP JSON-RPC stdio 客户端                                  |
+| `agent/tools/code_intel/lsp/manager.py`         | 新建 — 进程级管理（按需/并发上限/空闲关停/atexit）               |
+| `agent/tools/code_intel/lsp/tools.py`           | 新建 — 4 个 researcher 工具                                       |
+| `agent/tools/subagent/spawn/core.py`            | 仅 RESEARCHER 注入 4 个 LSP 工具                                  |
+| `agent/tools/subagent/spawn/system_prompt.py`   | RESEARCHER 段追加 LSP 指导                                        |
 
 ### Phase 2X 修改（2 个）
 
@@ -993,56 +579,24 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `tests/agent/tools/code_intel/ast_grep/test_install_hints.py` | P1A  | `unit`   | 平台安装提示、config 双级 re-export、TypedDict 键一致                                     |
 | `tests/agent/tools/code_intel/ast_grep/test_runner.py`        | P1A  | `unit`   | sg 子进程、JSON 解析、退出码、超时、dry_run/apply rewrite、路径安全、SHERRY_SG_PATH       |
 | `tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py`  | P1A  | `module` | 四个 functional_role 均获 ast-grep、main 不可见、假下载器 hermetic e2e（search+rewrite）  |
-| `tests/agent/tools/code_intel/lsp/test_resolver.py`         | P2S  | `unit`        | 三层发现（显式路径/repo-local/PATH）、缓存命中、Windows 后缀、marker-gated bin 目录     |
-| `tests/agent/tools/code_intel/lsp/test_installer.py`        | P2S  | `unit`        | 自动安装命令执行、超时、returncode、安装后重发现、auto_install=False 拒绝               |
-| `tests/agent/tools/code_intel/lsp/test_fallback.py`         | P2S  | `unit`        | available/not_installed/not_configured 三态、fallback 消息格式、语言检测                |
-| `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`        | P2S  | `integration` | 4 LSP 工具端到端 + not_installed fallback 路径                                          |
+| `tests/agent/tools/code_intel/lsp/test_resolver.py`         | P2S ✅ | `unit`        | 5 层发现、marker-gating、缓存开关、Windows 后缀、安装提示、config 双级 re-export          |
+| `tests/agent/tools/code_intel/lsp/test_installer.py`        | P2S ✅ | `unit`        | 自动安装命令、超时、缺工具、returncode、成功后重发现、env 清洗、auto_install=False 拒绝   |
+| `tests/agent/tools/code_intel/lsp/test_fallback.py`         | P2S ✅ | `unit`        | available/not_installed/not_configured 三态、fallback 消息格式                            |
+| `tests/agent/tools/code_intel/lsp/test_client.py`           | P2S ✅ | `unit`        | JSON-RPC 握手、请求/响应、超时、错误响应、didOpen/diagnostics、进程回收                   |
+| `tests/agent/tools/code_intel/lsp/test_manager.py`          | P2S ✅ | `unit`        | 惰性启动、复用、并发上限 LRU 淘汰、空闲关停、shutdown_all、无孤儿                         |
+| `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`        | P2S ✅ | `integration` | 4 LSP 工具端到端 + 路径安全 + not_installed/error/timeout 降级路径                        |
+| `tests/agent/tools/code_intel/lsp/test_role_isolation.py`   | P2S ✅ | `module`      | 角色隔离三方向（main / 非 RESEARCHER / RESEARCHER）                                       |
+| `tests/agent/tools/code_intel/lsp/test_lsp_e2e.py`          | P2S ✅ | `module`      | hermetic e2e：4 工具共享惰性服务器 + 进程回收                                             |
+| `tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`        | P2S ✅ | `integration` | 真实 basedpyright：definition / references / diagnostics + 进程回收                       |
 | `tests/agent/tools/code_intel/lsp/test_lsp_extended.py`     | P2X  | `integration` | lsp_rename / lsp_diagnostics / lsp_format / lsp_status                                  |
 | `tests/agent/tools/subagent/test_librarian_role.py`         | P4   | `integration` | librarian 角色定义加载、工具权限正确（有 explore/无 write）                             |
 | `tests/agent/tools/code_intel/test_watcher.py`              | P5   | `integration` | 文件变更触发重索引、debounce 2s、prune_dirs 排除                                        |
 
 ### 关键测试用例
 
-```python
-# test_resolver.py (LSP)
-def test_resolve_local_venv_bin():
-    """pyproject.toml 存在时 .venv/bin 被探测。"""
-
-def test_resolve_local_node_modules():
-    """package.json 存在时 node_modules/.bin 被探测。"""
-
-def test_resolve_from_path():
-    """PATH 上的二进制被发现。"""
-
-def test_resolve_not_installed():
-    """二进制不存在时返回 None。"""
-
-def test_resolve_cache_hit():
-    """相同参数的第二次调用命中缓存，不重复探测文件系统。"""
-
-def test_marker_gate():
-    """无 marker 文件时 bin 目录不被信任。"""
-
-# test_installer.py (LSP)
-def test_auto_install_disabled():
-    """lsp_auto_install=False 时返回安装提示而非执行安装。"""
-
-def test_auto_install_timeout():
-    """安装超时返回明确错误。"""
-
-def test_auto_install_success():
-    """安装成功后 resolve_lsp_server 能发现新二进制。"""
-
-# test_fallback.py (LSP)
-def test_not_installed_returns_hint():
-    """LSP 未安装时返回安装提示 + fallback 建议。"""
-
-def test_not_configured_returns_list():
-    """语言不在 enabled list 时返回 not_configured。"""
-
-def test_available_returns_binary():
-    """LSP 已安装时返回 available + binary path。"""
-```
+LSP 关键用例已随实现落地，规格样例已退役；覆盖点见上表与 Phase 2S 节「测试」清单
+（发现层矩阵、marker-gating、缓存、安装、三态 fallback、client 握手/超时/回收、
+manager 惰性/并发/空闲、4 工具降级、角色隔离、真实冒烟）。
 
 ---
 
@@ -1054,11 +608,12 @@ def test_available_returns_binary():
 | **ast-grep 二进制版本锁定**                | pinned 0.43.0，不从 PATH 接受任意版本，--version 探针验证          | P1A  |
 | **ast-grep 子进程隔离**                    | sg CLI 通过 subprocess.run 启动，有超时（30s），不继承敏感环境变量 | P1A  |
 | **ast-grep rewrite dry_run**               | 默认 dry_run=True，必须显式设置 false 才修改文件                   | P1A  |
-| **LSP 子进程环境清洗**                     | LSP server 子进程环境经 `scrub_env()` 清洗，不泄漏 API keys        | P2S  |
-| **LSP 自动安装用户授权**                   | `lsp_auto_install` 默认 False，需用户在配置中显式开启              | P2S  |
-| **LSP 安装命令白名单**                     | 仅 `lsp_auto_install_commands` 中列出的命令可执行，不接受任意命令  | P2S  |
-| **LSP 安装超时**                           | 60s 超时，防止安装命令挂起                                         | P2S  |
-| **LSP 二进制路径可信**                     | resolve_local 仅在 marker 文件存在时信任 bin 目录，防止目录注入    | P2S  |
+| **LSP 子进程环境清洗**                     | LSP server 子进程环境经 `scrub_env()` 清洗，不泄漏 API keys        | P2S（已落地） |
+| **LSP 自动安装用户授权**                   | `lsp_auto_install` 默认 False，需用户在配置中显式开启              | P2S（已落地） |
+| **LSP 安装命令白名单**                     | 仅 `lsp_auto_install_commands` 中列出的命令可执行，不接受任意命令  | P2S（已落地） |
+| **LSP 安装超时**                           | 60s 超时，防止安装命令挂起                                         | P2S（已落地） |
+| **LSP 二进制路径可信**                     | resolve_local 仅在 marker 文件存在时信任 bin 目录，防止目录注入    | P2S（已落地） |
+| **LSP 进程回收（J10）**                    | 按需启动 + 并发上限 + 空闲自动关停 + 显式/atexit shutdown，无孤儿  | P2S（已落地） |
 | **文件监听排除敏感目录**                   | watcher 排除 prune_dirs（.git, .venv, node_modules, ...）          | P5   |
 | **文件监听仅触发索引**                     | watcher 不执行代码，仅 parse + 写 SQLite                           | P5   |
 | **librarian 临时仓库清理**                 | clone 到 temp 目录，subagent 结束时清理                            | P4   |

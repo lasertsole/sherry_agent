@@ -6,9 +6,9 @@
 >
 > **前置依赖：subagent 功能角色分工（`FunctionalRole`，已落地）。**
 > 代码检索工具仅注入 `FunctionalRole.RESEARCHER` 的 subagent，`FunctionalRole` 枚举、角色定义加载器、`spawn_subagent_direct()` 的 `functional_role_hint` 参数传递均已具备。
-> 实施顺序：subagent 功能角色分工（已落地）→ 本计划 Phase 1（**✅ 已落地**）→ Phase 2（**由 SUPPLEMENT 的 Phase 2S 替代**）→ Phase 3。
+> 实施顺序：subagent 功能角色分工（已落地）→ 本计划 Phase 1（**✅ 已落地**）→ Phase 2（**✅ 已落地，由 SUPPLEMENT 的 Phase 2S 承载**）→ Phase 3。
 >
-> **实施策略：Phase 1 已落地并评估；P2/P3 待单独派工。**
+> **实施策略：Phase 1 / 1A / 2S 已落地；Phase 2X / 3 / 4 / 5 待单独派工。**
 
 ---
 
@@ -17,7 +17,7 @@
 1. [架构概览](#架构概览)
 2. [设计决策](#设计决策)
 3. [Phase 1 — AST 符号索引 + 调用图](#phase-1--ast-符号索引--调用图) — ✅ 已落地
-4. [Phase 2 — LSP 精确检索](#phase-2--lsp-精确检索) — 由 SUPPLEMENT 的 2S 替代
+4. [Phase 2 — LSP 精确检索](#phase-2--lsp-精确检索) — ✅ 已落地（由 SUPPLEMENT 的 Phase 2S 承载）
 5. [Phase 3 — Embedding 语义搜索](#phase-3--embedding-语义搜索)
 6. [修改文件](#修改文件)
 7. [测试计划](#测试计划)
@@ -163,80 +163,17 @@ Phase 1 首批支持四种语言：
 
 ## Phase 2 — LSP 精确检索
 
-> **本阶段由 [`CODE_INTEL_SUPPLEMENT.md`](CODE_INTEL_SUPPLEMENT.md) 的 Phase 2S 替代**（LSP 二进制发现 / 自动安装 / fallback 基础设施）；原计划的 4 个 LSP 工具保留不变。
+> **状态：已落地，由 [`CODE_INTEL_SUPPLEMENT.md`](CODE_INTEL_SUPPLEMENT.md) 的 Phase 2S
+> 承载并实现。** 原计划本节列出的 5 个新文件（`config/features/agent_side/lsp.py`、
+> `lsp/__init__.py`、`lsp/protocol.py`、`lsp/client.py`、`lsp/tools.py`）与 4 个 LSP 工具
+> **按原设计保留并已落地**；2S 在此基础上补齐了二进制发现 / 自动安装 / fallback / 进程级资源管理
+> （`resolver.py`、`installer.py`、`fallback.py`、`manager.py`）。落点、与提案的差异、实际支持的
+> 语言服务器与发现矩阵、测试清单见该文件 Phase 2S 节。
 >
-> **前置条件：Phase 1 完成且评估通过（Phase 1 已落地）。**
+> 4 个工具仍为 **RESEARCHER 专属**：仅 `_build_child_agent()` 注入，
+> `_MAIN_TOOLS_BUILDERS` 不可见。
 
-### 架构
-
-```
-┌─ Subagent 进程 ──────────────────────────────────────┐
-│                                                       │
-│  lsp_goto_definition ─┐                               │
-│  lsp_find_references  ├─→ LSPClient ──→ stdio ──→ LSP Server
-│  lsp_workspace_symbol │     (JSON-RPC)                  │
-│  lsp_call_hierarchy  ─┘                               │
-│                                                       │
-│  LSPClient:                                           │
-│  ├─ 启动 LSP server 子进程                             │
-│  ├─ initialize / initialized 握手                      │
-│  ├─ textDocument/didOpen 通知                          │
-│  ├─ 请求/响应 JSON-RPC over stdio                      │
-│  ├─ 超时 + 进程清理                                     │
-│  └─ 按 session 隔离（subagent 结束时 shutdown）         │
-└───────────────────────────────────────────────────────┘
-```
-
-### LSP 服务器配置
-
-| 语言          | LSP Server                   | 安装状态                         |
-| ------------- | ---------------------------- | -------------------------------- |
-| Python        | `basedpyright-langserver`    | 已安装（`basedpyright>=1.40.0`） |
-| TypeScript/JS | `typescript-language-server` | 需安装                           |
-| Rust          | `rust-analyzer`              | 需安装                           |
-| Go            | `gopls`                      | 需安装                           |
-
-### 新增文件（5 个）
-
-| 文件                                     | 作用                                                          |
-| ---------------------------------------- | ------------------------------------------------------------- |
-| `config/features/agent_side/lsp.py`      | LSP 配置 TypedDict（server 路径、超时、启用语言）             |
-| `agent/tools/code_intel/lsp/__init__.py` | 模块导出                                                      |
-| `agent/tools/code_intel/lsp/protocol.py` | LSP 协议数据结构（Position/Range/Location/SymbolInfo）        |
-| `agent/tools/code_intel/lsp/client.py`   | LSP JSON-RPC 客户端（stdio 传输，initialize/didOpen/request） |
-| `agent/tools/code_intel/lsp/tools.py`    | 4 个 LSP LangChain 工具                                       |
-
-### 工具
-
-| 工具                   | LSP 方法                                                                                            | 输入                        | 说明           |
-| ---------------------- | --------------------------------------------------------------------------------------------------- | --------------------------- | -------------- |
-| `lsp_goto_definition`  | `textDocument/definition`                                                                           | file, line, char            | 跳转到符号定义 |
-| `lsp_find_references`  | `textDocument/references`                                                                           | file, line, char            | 查找所有引用   |
-| `lsp_workspace_symbol` | `workspace/symbol`                                                                                  | query (模糊字符串)          | 工作区符号搜索 |
-| `lsp_call_hierarchy`   | `textDocument/prepareCallHierarchy` + `callHierarchy/incomingCalls` + `callHierarchy/outgoingCalls` | file, line, char, direction | 调用层级       |
-
-### 配置
-
-```python
-class LspConfig(TypedDict):
-    lsp_python_server: str          # "basedpyright-langserver"
-    lsp_typescript_server: str      # "typescript-language-server"
-    lsp_rust_server: str            # "rust-analyzer"
-    lsp_go_server: str              # "gopls"
-    lsp_request_timeout_s: float    # 单请求超时 (默认 10)
-    lsp_server_start_timeout_s: float  # 服务器启动超时 (默认 15)
-    lsp_enabled_languages: list[str]  # ["python", "typescript", "rust", "go"]
-
-LSP: LspConfig = {
-    "lsp_python_server": "basedpyright-langserver",
-    "lsp_typescript_server": "typescript-language-server",
-    "lsp_rust_server": "rust-analyzer",
-    "lsp_go_server": "gopls",
-    "lsp_request_timeout_s": 10.0,
-    "lsp_server_start_timeout_s": 15.0,
-    "lsp_enabled_languages": ["python", "typescript", "rust", "go"],
-}
-```
+（详细规格已随实现退役，历史实现见 git 记录。）
 
 ---
 
@@ -333,10 +270,16 @@ Examples: 'database connection pooling', 'error handling for websockets',
 > 3. `config/features/agent_side/__init__.py` — re-export `CodeIntelConfig` / `CODE_INTEL`。
 > 4. `config/features/__init__.py` — 顶层 re-export 同两项。
 
-### Phase 2 修改（2 个）
+### Phase 2 修改（2 个）— ✅ 已落地
 
 - `config/features/agent_side/__init__.py` — re-export `LSP` / `LspConfig`
 - `config/features/__init__.py` — 顶层 re-export
+- `agent/tools/subagent/spawn/core.py` — 仅 RESEARCHER 注入 4 个 LSP 工具
+- `agent/tools/subagent/spawn/system_prompt.py` — RESEARCHER 段追加 LSP 指导
+
+> 另新建 9 个文件（`config/features/agent_side/lsp.py` 及 `agent/tools/code_intel/lsp/`
+  下 `__init__` / `protocol` / `resolver` / `installer` / `fallback` / `client` / `manager` /
+  `tools`）；完整清单见 SUPPLEMENT 的 Phase 2S 节。
 
 ### Phase 3 修改（1 个）
 
@@ -370,11 +313,18 @@ CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
 | `tests/agent/tools/code_intel/test_integration.py`             | P1 ✅ | `module`    | 角色隔离三方向（main / 非 RESEARCHER / RESEARCHER）                                                       |
 | `tests/agent/tools/code_intel/test_e2e.py`                     | P1 ✅ | `module`    | hermetic e2e：4 语言 fixture 工程 + explore/callers/callees/impact + DB 复用                              |
 | `tests/agent/tools/subagent/test_code_intel_researcher_e2e.py` | P1 ✅ | `llm_e2e`   | 真实 LLM：RESEARCHER 子代理实际调用 `explore`（CI 手动 llm-e2e 作业）                                     |
-| `tests/agent/tools/code_intel/test_lsp_client.py`              | P2    | `unit`      | JSON-RPC 握手、请求/响应、超时、进程清理、didOpen 通知                                                    |
-| `tests/agent/tools/code_intel/test_lsp_tools.py`               | P2    | `integration` | 4 个 LSP 工具端到端（需 LSP server 可用，skip if not）                                                  |
+| `tests/agent/tools/code_intel/lsp/test_client.py`              | P2 ✅ | `unit`      | JSON-RPC 握手、请求/响应、超时、错误响应、didOpen/diagnostics、进程回收                                   |
+| `tests/agent/tools/code_intel/lsp/test_resolver.py`            | P2 ✅ | `unit`      | 5 层发现、marker-gating、缓存、Windows 后缀、安装提示、config 双级 re-export                              |
+| `tests/agent/tools/code_intel/lsp/test_installer.py`           | P2 ✅ | `unit`      | 自动安装命令、超时、缺工具、returncode、成功后重发现、env 清洗、auto_install=False 拒绝                   |
+| `tests/agent/tools/code_intel/lsp/test_fallback.py`            | P2 ✅ | `unit`      | available/not_installed/not_configured 三态、fallback 消息格式                                            |
+| `tests/agent/tools/code_intel/lsp/test_manager.py`             | P2 ✅ | `unit`      | 惰性启动、复用、并发上限 LRU 淘汰、空闲关停、shutdown_all、无孤儿                                         |
+| `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`           | P2 ✅ | `integration` | 4 个 LSP 工具端到端 + 路径安全 + not_installed/error/timeout 降级                                        |
+| `tests/agent/tools/code_intel/lsp/test_role_isolation.py`      | P2 ✅ | `module`    | 角色隔离三方向（main / 非 RESEARCHER / RESEARCHER）                                                       |
+| `tests/agent/tools/code_intel/lsp/test_lsp_e2e.py`             | P2 ✅ | `module`    | hermetic e2e：4 工具共享惰性服务器 + 进程回收                                                             |
+| `tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`           | P2 ✅ | `integration` | 真实 basedpyright：definition / references / diagnostics + 进程回收                                       |
 | `tests/agent/tools/code_intel/test_semantic.py`                | P3    | `integration` | 分块、embedding 存储、cosine 搜索、reranker 重排（需 embed model 可用）                                 |
 
-> Phase 1 的关键用例已全部落地（见上表与 `tests/agent/tools/code_intel/`）；P2/P3 用例待派工。
+> Phase 1 / Phase 2 的关键用例已全部落地（见上表与 `tests/agent/tools/code_intel/`）；P2X/P3 用例待派工。
 
 ---
 
@@ -384,7 +334,7 @@ CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
 
 依赖、`config/path.py`、`.gitignore`、config + 两级 re-export、5 个实现文件、RESEARCHER 注入点、P1 测试（含 hermetic e2e）与 `ruff` / `basedpyright` / `pytest` 门禁均已完成。
 
-### Phase 2（约 13h） — Phase 1 评估通过后
+### Phase 2（约 13h） — ✅ 已落地（由 SUPPLEMENT 的 Phase 2S 承载）
 
 | 步骤        | 内容                                                                  | 依赖 | 预估     |
 | ----------- | --------------------------------------------------------------------- | ---- | -------- |
@@ -414,7 +364,7 @@ CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
 | 阶段     | 预估     |
 | -------- | -------- |
 | Phase 1  | ✅ 已落地 |
-| Phase 2  | ~11h     |
+| Phase 2  | ✅ 已落地 |
 | Phase 3  | ~8h      |
 | **合计** | **~34h** |
 
@@ -431,8 +381,8 @@ CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
 | **文件遍历限制**         | `os.walk` + `should_skip_dir` + 配置 `prune_dirs`，并受 `max_files` / 超时约束                | `indexer.py`                |
 | **查询限制**             | explore 最大返回 N 个符号（默认 10），源码截断（默认 8000 chars）                            | `query.py`                  |
 | **调用图深度**           | impact 遍历有深度限制（默认 3 层）                                                           | `query.py`                  |
-| **LSP 进程隔离**         | subagent session 结束时 shutdown + kill LSP 进程                                             | P2 `client.py`              |
-| **LSP 超时**             | 单请求超时（默认 10s），服务器启动超时（默认 15s）                                           | P2 `client.py`              |
+| **LSP 进程隔离**         | 进程级 manager：按需启动 + 并发上限 + 空闲关停 + 显式/atexit shutdown，绝不留孤儿            | ✅ `client.py` / `manager.py` |
+| **LSP 超时**             | 单请求超时（默认 10s），服务器启动超时（默认 15s），安装超时 60s                             | ✅ `client.py` / `installer.py` |
 | **embedding 存储**       | BLOB 序列化，不泄漏敏感路径                                                                  | P3 `indexer.py`             |
 | **无网络调用**           | tree-sitter 索引纯本地，不发起网络请求                                                       | `indexer.py`                |
 | **无代码执行**           | 索引仅 parse + 读文件，不执行任何代码                                                        | `indexer.py`                |

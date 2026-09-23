@@ -64,11 +64,11 @@ Built-in definitions ship inside the package, tracked and distributable, at `age
 | Role | Purpose | Effective LLM tier | Role tool set |
 |------|---------|--------------------|---------------|
 | `general` | Default worker; identity role (its package definition is never loaded) | depth role | all tools + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
-| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `researcher` | Read-only codebase and web research | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `executor` | Write-capable implementation and command execution | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | Read-only diff and quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
-**ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite`. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` remain `researcher`-only, because they need the symbol index.
+**ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite`. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` remain `researcher`-only, because they need the symbol index. The LSP tools `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` are `researcher`-only for the same reason: they need a running language server, which the child starts lazily and stops when idle.
 
 ### 🛡️ Fail-Open Loader
 
