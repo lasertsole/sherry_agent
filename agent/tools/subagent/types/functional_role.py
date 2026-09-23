@@ -14,9 +14,19 @@ class FunctionalRole(StrEnum):
     RESEARCHER: read-only, codebase/web search, cheaper model.
     EXECUTOR: write-capable, code execution, no subagent spawn.
     REVIEWER: read-only review worker for diff audit.
+    LIBRARIAN: read-only external codebase retrieval (clone/index/search).
     """
 
     GENERAL = "general"
     RESEARCHER = "researcher"
     EXECUTOR = "executor"
     REVIEWER = "reviewer"
+    LIBRARIAN = "librarian"
+
+
+#: Roles that get the tree-sitter code-intel suite and the eight LSP tools.
+#: Both spawn/core.py injection and spawn/system_prompt.py guidance read this
+#: single set, so the tool face and its prompt section cannot drift apart.
+CODE_INTEL_ROLES: frozenset[FunctionalRole] = frozenset(
+    {FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN}
+)
