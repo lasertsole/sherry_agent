@@ -116,3 +116,7 @@ from .ast_grep import (
     AstGrepConfig as AstGrepConfig,
     AST_GREP as AST_GREP,
 )
+from .lsp import (
+    LSP as LSP,
+    LspConfig as LspConfig,
+)
