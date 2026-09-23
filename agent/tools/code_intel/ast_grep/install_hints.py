@@ -50,6 +50,6 @@ def sg_binary_not_found_message(platform: str = sys.platform) -> str:
     """Return the human-readable "binary unavailable" message."""
     return (
         f"ast-grep binary not found for {platform}: no candidate passed the "
-        f"--version probe across the env override, sherry runtime, skill bin "
-        f"cache, PATH, or Homebrew prefixes."
+        f"--version probe across the env override, sherry runtime, code-intel "
+        f"bin cache, PATH, or Homebrew prefixes."
     )

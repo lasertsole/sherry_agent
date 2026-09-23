@@ -31,7 +31,7 @@ def _clean_resolver(monkeypatch: pytest.MonkeyPatch):
 def _neutralize_all_tiers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(resolver, "_env_override_candidates", list)
     monkeypatch.setattr(resolver, "_runtime_candidates", list)
-    monkeypatch.setattr(resolver, "_skill_bin_candidates", list)
+    monkeypatch.setattr(resolver, "_code_intel_bin_candidates", list)
     monkeypatch.setattr(resolver, "_path_candidates", list)
     monkeypatch.setattr(resolver, "_homebrew_candidates", list)
 
@@ -85,7 +85,7 @@ class TestCandidateExistsAndProbe:
 class TestTierHitAndMiss:
     def test_env_override_tier(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(resolver, "_runtime_candidates", list)
-        monkeypatch.setattr(resolver, "_skill_bin_candidates", list)
+        monkeypatch.setattr(resolver, "_code_intel_bin_candidates", list)
         monkeypatch.setattr(resolver, "_path_candidates", list)
         monkeypatch.setattr(resolver, "_homebrew_candidates", list)
         binary = _make_executable(tmp_path / "sg")
@@ -94,26 +94,26 @@ class TestTierHitAndMiss:
 
     def test_runtime_tier(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(resolver, "_env_override_candidates", list)
-        monkeypatch.setattr(resolver, "_skill_bin_candidates", list)
+        monkeypatch.setattr(resolver, "_code_intel_bin_candidates", list)
         monkeypatch.setattr(resolver, "_path_candidates", list)
         monkeypatch.setattr(resolver, "_homebrew_candidates", list)
         monkeypatch.setattr(resolver, "runtime_dir", lambda: tmp_path)
         binary = _make_executable(tmp_path / "sg")
         assert resolver.resolve_sg_binary() == str(binary)
 
-    def test_skill_bin_tier(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_code_intel_bin_tier(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(resolver, "_env_override_candidates", list)
         monkeypatch.setattr(resolver, "_runtime_candidates", list)
         monkeypatch.setattr(resolver, "_path_candidates", list)
         monkeypatch.setattr(resolver, "_homebrew_candidates", list)
-        monkeypatch.setattr(resolver, "ROOT_DIR", tmp_path)
-        binary = _make_executable(tmp_path / "skills" / "ast-grep" / "bin" / "sg")
+        monkeypatch.setattr(resolver, "CODE_INTEL_DIR", tmp_path)
+        binary = _make_executable(tmp_path / "ast-grep" / "bin" / "sg")
         assert resolver.resolve_sg_binary() == str(binary)
 
     def test_path_tier(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(resolver, "_env_override_candidates", list)
         monkeypatch.setattr(resolver, "_runtime_candidates", list)
-        monkeypatch.setattr(resolver, "_skill_bin_candidates", list)
+        monkeypatch.setattr(resolver, "_code_intel_bin_candidates", list)
         monkeypatch.setattr(resolver, "_homebrew_candidates", list)
         bindir = tmp_path / "bin"
         binary = _make_executable(bindir / "ast-grep")
@@ -142,7 +142,7 @@ class TestTierHitAndMiss:
 class TestCaching:
     def test_resolution_is_cached(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(resolver, "_runtime_candidates", list)
-        monkeypatch.setattr(resolver, "_skill_bin_candidates", list)
+        monkeypatch.setattr(resolver, "_code_intel_bin_candidates", list)
         monkeypatch.setattr(resolver, "_path_candidates", list)
         monkeypatch.setattr(resolver, "_homebrew_candidates", list)
         binary = _make_executable(tmp_path / "sg")

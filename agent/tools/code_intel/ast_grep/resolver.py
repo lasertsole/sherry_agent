@@ -4,7 +4,7 @@ Probing order (mirrors oh-my-openagent's sg-resolver.ts + sg-candidates.ts):
 
   1. Env override (``SHERRY_SG_PATH``)
   2. sherry runtime (``~/.sherry/runtime/ast-grep/<slug>/sg``)
-  3. skill bin cache (``skills/ast-grep/bin/sg``)
+  3. code-intel bin cache (``CODE_INTEL_DIR/ast-grep/bin/sg``)
   4. PATH lookup (``ast-grep`` / ``sg``, with Windows ``PATHEXT``)
   5. Homebrew / Linuxbrew prefixes
 
@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 from config.features import AST_GREP
-from config.path import ROOT_DIR
+from config.path import CODE_INTEL_DIR
 
 _resolution_cache: str | None = None
 
@@ -110,9 +110,9 @@ def _runtime_candidates() -> list[str]:
     return [str(runtime_dir() / _binary_name())]
 
 
-def _skill_bin_candidates() -> list[str]:
-    """Tier 3: the in-repo skill bin cache (gitignored)."""
-    bin_dir = ROOT_DIR / "skills" / "ast-grep" / "bin"
+def _code_intel_bin_candidates() -> list[str]:
+    """Tier 3: the in-repo code-intel bin cache (gitignored)."""
+    bin_dir = CODE_INTEL_DIR / "ast-grep" / "bin"
     return [
         str(bin_dir / _ast_grep_binary_name()),
         str(bin_dir / _binary_name()),
@@ -163,7 +163,7 @@ def tier_candidates() -> list[tuple[str, list[str]]]:
     return [
         ("env_override", _env_override_candidates()),
         ("runtime", _runtime_candidates()),
-        ("skill_bin", _skill_bin_candidates()),
+        ("code_intel_bin", _code_intel_bin_candidates()),
         ("path", _path_candidates()),
         ("homebrew", _homebrew_candidates()),
     ]

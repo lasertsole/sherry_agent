@@ -49,9 +49,6 @@ sessions/**/*.md
 # Code intelligence symbol index (subagent-only tree-sitter tooling)
 .codeintel/
 
-# ast-grep skill-local binary cache — downloaded per machine, never committed
-skills/ast-grep/bin/
-
 # Automated task/page snapshots (browser automation runtime state)
 tasks-*.yml
 
