@@ -177,6 +177,8 @@ class TestRoleToolWhitelist:
             "callers",
             "callees",
             "impact",
+            "ast_grep_search",
+            "ast_grep_rewrite",
         ]
 
     def test_executor_whitelist_excludes_spawn(self, _wiring):
@@ -216,4 +218,6 @@ class TestRoleToolWhitelist:
             "callers",
             "callees",
             "impact",
+            "ast_grep_search",
+            "ast_grep_rewrite",
         ]

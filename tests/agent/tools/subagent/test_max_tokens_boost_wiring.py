@@ -120,4 +120,8 @@ def test_child_agent_drops_main_only_planning_tools(_wiring):
         )
     )
 
-    assert [t.name for t in _wiring["tools"]] == ["read_file"]
+    assert [t.name for t in _wiring["tools"]] == [
+        "read_file",
+        "ast_grep_search",
+        "ast_grep_rewrite",
+    ]
