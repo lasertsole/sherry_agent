@@ -1026,8 +1026,13 @@ async def _build_child_agent(
     final_tools = list(filtered_tools)
     if functional_role == FunctionalRole.RESEARCHER:
         from agent.tools.code_intel import build_code_intel_tools
+        from agent.tools.code_intel.lsp import build_lsp_tools
 
-        final_tools = [*final_tools, *build_code_intel_tools(session_id=session_id)]
+        final_tools = [
+            *final_tools,
+            *build_code_intel_tools(session_id=session_id),
+            *build_lsp_tools(session_id=session_id),
+        ]
 
     # ast-grep structural search/rewrite is a core component available to EVERY
     # functional role (not RESEARCHER-only), mirroring oh-my-openagent's globally

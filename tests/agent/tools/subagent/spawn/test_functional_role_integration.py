@@ -177,6 +177,10 @@ class TestRoleToolWhitelist:
             "callers",
             "callees",
             "impact",
+            "lsp_goto_definition",
+            "lsp_find_references",
+            "lsp_workspace_symbol",
+            "lsp_call_hierarchy",
             "ast_grep_search",
             "ast_grep_rewrite",
         ]
@@ -218,6 +222,10 @@ class TestRoleToolWhitelist:
             "callers",
             "callees",
             "impact",
+            "lsp_goto_definition",
+            "lsp_find_references",
+            "lsp_workspace_symbol",
+            "lsp_call_hierarchy",
             "ast_grep_search",
             "ast_grep_rewrite",
         ]

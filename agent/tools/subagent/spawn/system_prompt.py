@@ -138,9 +138,15 @@ def build_subagent_system_prompt(
             "- `callers` — who calls this symbol\n"
             "- `callees` — what does this symbol call\n"
             "- `impact` — blast radius of modifying a symbol\n"
-            "Workflow: explore(query) → callers(symbol) for precision → "
+            "- `lsp_goto_definition` / `lsp_find_references` — precise, type-aware "
+            "jump/refs via the language server (1-based line/character)\n"
+            "- `lsp_workspace_symbol` — fuzzy workspace symbol search\n"
+            "- `lsp_call_hierarchy` — callers (incoming) / callees (outgoing) of a symbol\n"
+            "Workflow: explore(query) → lsp_find_references / callers for precision → "
             "search_files as keyword fallback.\n"
-            "Index is built on first use; subsequent queries are fast."
+            "Index is built on first use; subsequent queries are fast. LSP servers "
+            "start on demand and are reaped when idle; if a server is missing you get "
+            "an install hint and the explore/search_files fallback."
         )
 
     # Section 6: Session Context
