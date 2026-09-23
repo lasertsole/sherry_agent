@@ -12,6 +12,7 @@ class ToolsTimeoutsConfig(TypedDict):
     web_search_retry_max_attempts: int
     terminal_timeout_seconds: int
     python_repl_timeout_seconds: int
+    ptc_timeout_seconds: int
     sandbox_bwrap_probe_timeout_seconds: int
     message_search_max_session_chars: int
     message_search_checkpoint_fallback_enabled: bool
@@ -42,6 +43,7 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "web_search_retry_max_attempts": 3,
     "terminal_timeout_seconds": 30,
     "python_repl_timeout_seconds": 30,
+    "ptc_timeout_seconds": 120,
     "sandbox_bwrap_probe_timeout_seconds": 3,
     "message_search_max_session_chars": 100_000,
     "message_search_checkpoint_fallback_enabled": True,

@@ -47,6 +47,8 @@ from config.features.agent_side import (
     MemoryToolConfig,
     ModelBackendConfig,
     NudgeConfig,
+    PTC,
+    PtcConfig,
     ReasoningBudgetConfig,
     RepetitionGuardConfig,
     StepJudgeConfig,
@@ -90,6 +92,7 @@ INSTANCE_TYPED_DICT_PAIRS = [
     (EVIDENCE_LEDGER, EvidenceLedgerConfig),
     (STEP_JUDGE, StepJudgeConfig),
     (COMPLETION_JUDGE, CompletionJudgeConfig),
+    (PTC, PtcConfig),
 ]
 
 _PAIR_IDS = [typed_dict.__name__ for _, typed_dict in INSTANCE_TYPED_DICT_PAIRS]
@@ -165,6 +168,7 @@ SPOT_DEFAULTS = [
     (TOOLS_TIMEOUTS, "web_search_timeout_seconds", 15),
     (TOOLS_TIMEOUTS, "terminal_timeout_seconds", 30),
     (TOOLS_TIMEOUTS, "python_repl_timeout_seconds", 30),
+    (TOOLS_TIMEOUTS, "ptc_timeout_seconds", 120),
     (TOOLS_TIMEOUTS, "message_search_max_session_chars", 100_000),
     (TOOLS_TIMEOUTS, "skill_manage_max_skill_file_bytes", 1_048_576),
     (TOOLS_TIMEOUTS, "file_tools_search_max_context", 5),
@@ -236,6 +240,15 @@ SPOT_DEFAULTS = [
     (STEP_JUDGE, "max_result_chars", 8000),
     (STEP_JUDGE, "evidence_aware", True),
     (COMPLETION_JUDGE, "goal_max_turns", 5),
+    (PTC, "ptc_timeout_seconds", 120),
+    (PTC, "ptc_max_tool_calls", 50),
+    (PTC, "ptc_max_stdout_bytes", 50_000),
+    (PTC, "ptc_max_stderr_bytes", 10_000),
+    (
+        PTC,
+        "ptc_allowed_tools",
+        ["read_file", "write_file", "patch_file", "terminal", "search_files", "web_search"],
+    ),
 ]
 
 _SPOT_IDS = [f"{key}={expected!r}" for _, key, expected in SPOT_DEFAULTS]
