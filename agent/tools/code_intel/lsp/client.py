@@ -18,7 +18,7 @@ import time
 from pathlib import Path
 from typing import IO
 
-from .protocol import path_to_uri, to_position
+from .protocol import language_id, path_to_uri, to_position
 
 __all__ = ["LSPClient"]
 
@@ -31,6 +31,9 @@ _CLIENT_CAPABILITIES: dict = {
         "references": {},
         "callHierarchy": {},
         "publishDiagnostics": {},
+        "rename": {"prepareSupport": False},
+        "formatting": {},
+        "rangeFormatting": {},
     },
     "workspace": {"symbol": {}},
 }
@@ -238,7 +241,7 @@ class LSPClient:
             {
                 "textDocument": {
                     "uri": uri,
-                    "languageId": self.language,
+                    "languageId": language_id(self.language),
                     "version": 1,
                     "text": raw.decode("utf-8", "replace"),
                 }
@@ -267,6 +270,13 @@ class LSPClient:
                     return list(self._diagnostics[uri])
             time.sleep(0.05)
         return []
+
+    def cached_diagnostics(self, uri: str) -> list | None:
+        """Return the last published diagnostics for *uri*, or ``None`` if none arrived."""
+        with self._state_lock:
+            if uri not in self._diagnostics:
+                return None
+            return list(self._diagnostics[uri])
 
     # ── internals ────────────────────────────────────────────────────────────
 

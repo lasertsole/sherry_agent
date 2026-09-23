@@ -1,7 +1,8 @@
 """LangChain tool wrappers for LSP precise retrieval — RESEARCHER only.
 
-The four tools (``lsp_goto_definition`` / ``lsp_find_references`` /
-``lsp_workspace_symbol`` / ``lsp_call_hierarchy``) are never registered in
+The eight tools (``lsp_goto_definition`` / ``lsp_find_references`` /
+``lsp_workspace_symbol`` / ``lsp_call_hierarchy`` / ``lsp_rename`` /
+``lsp_diagnostics`` / ``lsp_format`` / ``lsp_status``) are never registered in
 ``_MAIN_TOOLS_BUILDERS``; ``agent/tools/subagent/spawn/core.py`` injects them into
 a child agent only when its functional role is RESEARCHER.
 
@@ -32,7 +33,18 @@ from config.features import LSP
 from .client import LSPClient
 from .fallback import LspAvailability, build_fallback_message, check_lsp_availability
 from .manager import get_manager
-from .protocol import detect_language, format_location, format_range, format_symbol
+from .protocol import (
+    detect_language,
+    format_diagnostic,
+    format_location,
+    format_range,
+    format_symbol,
+    format_text_edit,
+    language_id,
+    normalize_workspace_edit,
+    path_to_uri,
+    to_position,
+)
 
 _SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
 _ROOT_ENV_KEY = "SHERRY_LSP_ROOT"
@@ -167,6 +179,40 @@ class CallHierarchyInput(BaseModel):
     line: int = Field(description="1-based line number of the symbol.")
     character: int = Field(description="1-based column of the symbol.")
     direction: str = Field("incoming", description="'incoming' (callers) or 'outgoing' (callees).")
+
+
+class RenameInput(BaseModel):
+    """Input for ``lsp_rename``."""
+
+    file_path: str = Field(description="File containing the symbol.")
+    line: int = Field(description="1-based line number of the symbol.")
+    character: int = Field(description="1-based column of the symbol.")
+    new_name: str = Field(description="New name for the symbol.")
+    dry_run: bool = Field(True, description="Preview only (default true); set false to apply.")
+
+
+class DiagnosticsInput(BaseModel):
+    """Input for ``lsp_diagnostics``."""
+
+    file_path: str = Field(description="File to collect diagnostics for.")
+    timeout_s: float | None = Field(
+        None, description="Seconds to wait for the async publishDiagnostics notification."
+    )
+
+
+class FormatInput(BaseModel):
+    """Input for ``lsp_format``."""
+
+    file_path: str = Field(description="File to format.")
+    start_line: int | None = Field(None, description="1-based range start line (optional).")
+    start_character: int | None = Field(None, description="1-based range start column (optional).")
+    end_line: int | None = Field(None, description="1-based range end line (optional).")
+    end_character: int | None = Field(None, description="1-based range end column (optional).")
+    write: bool = Field(False, description="Preview only (default false); set true to write.")
+
+
+class StatusInput(BaseModel):
+    """Input for ``lsp_status`` — takes no arguments."""
 
 
 # ── tools ────────────────────────────────────────────────────────────────────
@@ -353,7 +399,324 @@ class LspCallHierarchyTool(_LspTool):
         return self._json({"direction": normalized, "calls": formatted, "count": len(formatted)})
 
 
+class LspRenameTool(_LspTool):
+    """Rename a symbol across the workspace (preview by default)."""
+
+    name: str = "lsp_rename"
+    description: str = (
+        "Rename a symbol across the workspace via the language server. dry_run=true "
+        "(default) PREVIEWS the resulting WorkspaceEdit and writes nothing; set "
+        "dry_run=false to apply the edits inside the project. line/character are 1-based. "
+        'Example: lsp_rename("agent/core.py", 42, 5, "run_agent", dry_run=true)'
+    )
+    args_schema: type[BaseModel] = RenameInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(
+        self,
+        file_path: str,
+        line: int,
+        character: int,
+        new_name: str,
+        dry_run: bool = True,
+    ) -> str:
+        if not new_name or not new_name.strip():
+            return self._json({"error": "new_name must be a non-empty string", "available": True})
+        resolved, error = _resolve_file(file_path)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert resolved is not None
+        language, error = self._resolve_language("", str(resolved))
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert language is not None
+
+        availability, message = check_lsp_availability(language, _lsp_cwd())
+        if availability != "available":
+            return self._unavailable(language, availability, message)
+        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        if client is None:
+            return self._unavailable(language, "not_installed", error)
+
+        open_error = self._open(client, str(resolved))
+        if open_error is not None:
+            return self._json({"error": open_error, "available": True})
+        params = client.position_params(str(resolved), line, character)
+        params["newName"] = new_name
+        result, error = self._result(client, "textDocument/rename", params)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+
+        renames = normalize_workspace_edit(result)
+        edit_count = sum(len(group["edits"]) for group in renames)
+        payload: dict[str, Any] = {
+            "renames": renames,
+            "count": len(renames),
+            "edit_count": edit_count,
+            "applied": False,
+        }
+        if dry_run:
+            payload["note"] = "Preview only; pass dry_run=false to apply these edits."
+            return self._json(payload)
+
+        payload.update(_apply_workspace_edit(renames))
+        payload["applied"] = True
+        return self._json(payload)
+
+
+class LspDiagnosticsTool(_LspTool):
+    """Collect a file's published diagnostics (errors / warnings)."""
+
+    name: str = "lsp_diagnostics"
+    description: str = (
+        "Get the language server's diagnostics (errors/warnings) for a file. "
+        "Diagnostics are delivered asynchronously, so the tool opens the file and "
+        "waits for the server's publishDiagnostics notification. Returns severity, "
+        "message, and 1-based range per diagnostic. "
+        'Example: lsp_diagnostics("agent/core.py")'
+    )
+    args_schema: type[BaseModel] = DiagnosticsInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, file_path: str, timeout_s: float | None = None) -> str:
+        resolved, error = _resolve_file(file_path)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert resolved is not None
+        language, error = self._resolve_language("", str(resolved))
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert language is not None
+
+        availability, message = check_lsp_availability(language, _lsp_cwd())
+        if availability != "available":
+            return self._unavailable(language, availability, message)
+        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        if client is None:
+            return self._unavailable(language, "not_installed", error)
+
+        open_error = self._open(client, str(resolved))
+        if open_error is not None:
+            return self._json({"error": open_error, "available": True})
+        uri = path_to_uri(str(resolved))
+        window = timeout_s if timeout_s is not None else LSP["lsp_diagnostics_timeout_s"]
+        client.wait_diagnostics(uri, window)
+        cached = client.cached_diagnostics(uri)
+        raw = cached or []
+        diagnostics = [item for d in raw if (item := format_diagnostic(d)) is not None]
+        summary = {"error": 0, "warning": 0, "information": 0, "hint": 0, "unknown": 0}
+        for item in diagnostics:
+            summary[item["severity"]] = summary.get(item["severity"], 0) + 1
+        return self._json(
+            {
+                "diagnostics": diagnostics,
+                "count": len(diagnostics),
+                "summary": summary,
+                "timed_out": cached is None,
+            }
+        )
+
+
+class LspFormatTool(_LspTool):
+    """Format a file (or range) via the language server; preview by default."""
+
+    name: str = "lsp_format"
+    description: str = (
+        "Format a file via the language server (textDocument/formatting, or "
+        "rangeFormatting when a 1-based range is given). write=false (default) "
+        "PREVIEWS the edits; set write=true to apply them. If the server does not "
+        "support formatting the result reports supported=false — it never claims a "
+        "file was formatted when it was not. "
+        'Example: lsp_format("agent/core.py", write=false)'
+    )
+    args_schema: type[BaseModel] = FormatInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(
+        self,
+        file_path: str,
+        start_line: int | None = None,
+        start_character: int | None = None,
+        end_line: int | None = None,
+        end_character: int | None = None,
+        write: bool = False,
+    ) -> str:
+        resolved, error = _resolve_file(file_path)
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert resolved is not None
+        language, error = self._resolve_language("", str(resolved))
+        if error is not None:
+            return self._json({"error": error, "available": True})
+        assert language is not None
+
+        availability, message = check_lsp_availability(language, _lsp_cwd())
+        if availability != "available":
+            return self._unavailable(language, availability, message)
+        client, error = get_manager().acquire(language, _lsp_cwd(), message)
+        if client is None:
+            return self._unavailable(language, "not_installed", error)
+
+        open_error = self._open(client, str(resolved))
+        if open_error is not None:
+            return self._json({"error": open_error, "available": True})
+
+        range_args = (start_line, start_character, end_line, end_character)
+        options = {"tabSize": 4, "insertSpaces": True}
+        if all(value is not None for value in range_args):
+            method = "textDocument/rangeFormatting"
+            params: dict[str, Any] = {
+                "textDocument": {"uri": path_to_uri(str(resolved))},
+                "options": options,
+                "range": {
+                    "start": to_position(start_line, start_character),
+                    "end": to_position(end_line, end_character),
+                },
+            }
+        else:
+            method = "textDocument/formatting"
+            params = {"textDocument": {"uri": path_to_uri(str(resolved))}, "options": options}
+
+        result, error = self._result(client, method, params)
+        if error is not None:
+            return self._json(
+                {"supported": False, "applied": False, "available": True, "message": error}
+            )
+        if result is None:
+            return self._json(
+                {
+                    "supported": False,
+                    "applied": False,
+                    "available": True,
+                    "message": f"{language} language server does not support formatting",
+                }
+            )
+
+        raw_edits = result if isinstance(result, list) else []
+        edits = [item for e in raw_edits if (item := format_text_edit(e)) is not None]
+        payload: dict[str, Any] = {
+            "supported": True,
+            "method": method,
+            "edits": edits,
+            "count": len(edits),
+            "applied": False,
+        }
+        if not write:
+            payload["note"] = "Preview only; pass write=true to apply these edits."
+            return self._json(payload)
+
+        count, error = _apply_text_edits(resolved, edits)
+        if error is not None:
+            payload["error"] = error
+            return self._json(payload)
+        payload.update({"applied": True, "applied_edits": count, "file": str(resolved)})
+        return self._json(payload)
+
+
+class LspStatusTool(_LspTool):
+    """Report every configured / installed / active language server."""
+
+    name: str = "lsp_status"
+    description: str = (
+        "List every configured LSP language server with its honest status: "
+        "'available' (binary found), 'not_installed' (configured but the binary is "
+        "missing), or 'not_configured', plus the resolved binary or install hint and "
+        "whether a server is currently running. No language server is started by this "
+        "tool. Example: lsp_status()"
+    )
+    args_schema: type[BaseModel] = StatusInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self) -> str:
+        cwd = _lsp_cwd()
+        active = get_manager().stats()
+        active_languages = {entry["language"] for entry in active if entry.get("alive")}
+        servers: list[dict] = []
+        summary = {"available": 0, "not_installed": 0, "not_configured": 0}
+        for language, spec in LSP["lsp_supported_servers"].items():
+            availability, message = check_lsp_availability(language, cwd)
+            summary[availability] = summary.get(availability, 0) + 1
+            entry: dict[str, Any] = {
+                "language": language,
+                "server": spec["command"][0],
+                "language_id": language_id(language),
+                "status": availability,
+                "active": language in active_languages,
+            }
+            if availability == "available":
+                entry["binary"] = message
+            else:
+                entry["install_hint"] = message
+            servers.append(entry)
+        return self._json(
+            {
+                "servers": servers,
+                "count": len(servers),
+                "summary": summary,
+                "active_servers": active,
+            }
+        )
+
+
 # ── result formatting ────────────────────────────────────────────────────────
+
+
+def _line_offsets(text: str) -> list[int]:
+    offsets = [0]
+    for line in text.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    return offsets
+
+
+def _apply_text_edits(path: Path, edits: list[dict]) -> tuple[int, str | None]:
+    """Apply 1-based-range ``TextEdit``s to *path*; returns ``(count, error)``."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return 0, f"cannot read {path}: {exc}"
+
+    offsets = _line_offsets(text)
+    spans: list[tuple[int, int, str]] = []
+    for edit in edits:
+        rng = edit.get("range") or {}
+        start = _offset(offsets, len(text), rng.get("start_line"), rng.get("start_character"))
+        end = _offset(offsets, len(text), rng.get("end_line"), rng.get("end_character"))
+        spans.append((start, end, edit.get("new_text", "")))
+
+    for start, end, replacement in sorted(spans, key=lambda span: span[0], reverse=True):
+        text = f"{text[:start]}{replacement}{text[end:]}"
+
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        return 0, f"cannot write {path}: {exc}"
+    return len(spans), None
+
+
+def _offset(offsets: list[int], text_len: int, line: int | None, character: int | None) -> int:
+    if line is None:
+        return text_len
+    base = offsets[line - 1] if 0 < line <= len(offsets) else text_len
+    return min(base + max((character or 1) - 1, 0), text_len)
+
+
+def _apply_workspace_edit(groups: list[dict]) -> dict:
+    """Apply grouped WorkspaceEdit entries, honoring the project-root path gate."""
+    applied = 0
+    files_written: list[str] = []
+    skipped: list[dict] = []
+    for group in groups:
+        resolved, error = _resolve_file(group.get("path", ""))
+        if error is not None or resolved is None:
+            skipped.append({"path": group.get("path"), "reason": error or "unresolved"})
+            continue
+        count, error = _apply_text_edits(resolved, group.get("edits", []))
+        if error is not None:
+            skipped.append({"path": group.get("path"), "reason": error})
+            continue
+        applied += count
+        files_written.append(str(resolved))
+    return {"applied_edits": applied, "files_written": files_written, "skipped": skipped}
 
 
 def _as_locations(result: Any) -> list[dict]:
@@ -391,13 +754,17 @@ def _format_calls(calls: Any, direction: str) -> list[dict]:
 
 
 def build_lsp_tools(session_id: str) -> list[BaseTool]:
-    """Build the four RESEARCHER-only LSP tools (never raise; fail-open)."""
+    """Build the eight RESEARCHER-only LSP tools (never raise; fail-open)."""
     try:
         return [
             LspGotoDefinitionTool(session_id=session_id),
             LspFindReferencesTool(session_id=session_id),
             LspWorkspaceSymbolTool(session_id=session_id),
             LspCallHierarchyTool(session_id=session_id),
+            LspRenameTool(session_id=session_id),
+            LspDiagnosticsTool(session_id=session_id),
+            LspFormatTool(session_id=session_id),
+            LspStatusTool(session_id=session_id),
         ]
     except Exception:  # noqa: BLE001 - a broken tool build must not abort a spawn
         logger.warning("lsp: tool build failed; continuing without LSP tools", exc_info=True)
