@@ -185,7 +185,7 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
 | | `requester_session_key` | 부모 세션 키 |
 | **Spawn 파라미터** | `spawn_mode` | RUN(일회성) / SESSION(상주) |
 | | `depth` / `role` | 중첩 깊이. MAIN / ORCHESTRATOR / LEAF |
-| | `functional_role` | 기능 역할(GENERAL / RESEARCHER / EXECUTOR / REVIEWER); 기본 GENERAL |
+| | `functional_role` | 기능 역할(GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN); 기본 GENERAL |
 | | `generation` | steer/재시작을 넘는 버전 카운터 |
 | **소유권** | `controller_session_key` | 제어(kill/steer/send)를 허가받은 세션 키 |
 | | `completion_owner_session_key` | 완료 전달을 소유하는 세션 키 |
@@ -475,8 +475,9 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 | `researcher` | 읽기 전용 코드베이스/웹 조사. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `executor` | 쓰기 가능한 구현과 명령 실행. 하위 에이전트 spawn 불가 | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | 읽기 전용 diff/품질 감사 | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `librarian` | 읽기 전용 외부 코드베이스 검색. 더 저렴한 모델 | `auxiliary` | `read_file`, `terminal`, `web_search`, `search_files` + 코드 인텔리전스 `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
-**ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. 이는 oh-my-openagent의 전역 등록 ast-grep 서버에 대응하는 핵심 기능입니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact` / `semantic_code_search`는 심볼 인덱스가 필요하므로 계속 `researcher` 전용입니다(`semantic_code_search`는 그 인덱스에 대한 임베딩 기반 개념 검색입니다). LSP 도구 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 역시 같은 이유로 `researcher` 전용이며, 실행 중인 언어 서버가 필요하여 하위 에이전트가 필요할 때 지연 시작하고 유휴 시 자동 종료합니다. `lsp_rename`과 `lsp_format`은 기본적으로 미리보기만 하고, `lsp_diagnostics`는 비동기 진단 알림을 기다리며, `lsp_status`는 아무것도 시작하지 않고 가용성만 보고합니다.
+**ast-grep은 전 역할 공통, 코드 인텔리전스는 아니다.** 모든 기능 역할(`general` 포함)은 ast-grep 구조 검색/재작성 도구 `ast_grep_search`, `ast_grep_rewrite`도 함께 받습니다. 이는 oh-my-openagent의 전역 등록 ast-grep 서버에 대응하는 핵심 기능입니다. tree-sitter 코드 인텔리전스 `explore` / `callers` / `callees` / `impact` / `semantic_code_search`는 심볼 인덱스가 필요하므로 `researcher`와 `librarian` 두 코드 검색 역할에 주어집니다(`semantic_code_search`는 그 인덱스에 대한 임베딩 기반 개념 검색입니다). LSP 도구 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 역시 같은 이유로 이 두 역할에 주어지며, 실행 중인 언어 서버가 필요하여 하위 에이전트가 필요할 때 지연 시작하고 유휴 시 자동 종료합니다. `lsp_rename`과 `lsp_format`은 기본적으로 미리보기만 하고, `lsp_diagnostics`는 비동기 진단 알림을 기다리며, `lsp_status`는 아무것도 시작하지 않고 가용성만 보고합니다.
 
 **정의 위치.** 내장 정의는 **패키지 내부**(추적·배포 가능)의 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`에 포함됩니다. 선택적 사용자 오버레이(미추적)는 `workspace/subagent_roles/<name>/AGENTS.md`에 둘 수 있습니다. 해석 순서는 **오버레이 → 패키지 기본 → 없음**이며, 디렉터리 이름은 `roles_override_dir_name`로 설정합니다. 각 파일은 YAML frontmatter(`name`, `description`, `model_tier`, `tools`)와 자식 프롬프트에 덧붙는 markdown 본문을 가집니다. `tools: inherit`는 "모든 도구"(`None`)로 해석됩니다.
 
@@ -498,7 +499,7 @@ depth N:  LEAF (depth == max_spawn_depth) → control_scope = NONE
 
 | 축 | 출처 | 담당 |
 |------|--------|--------|
-| **기능 역할**(`general` / `researcher` / `executor` / `reviewer`) | 명시적 `functional_role` 힌트, `agent_id` 매칭, 다음 `default_functional_role` | 자식 LLM, 도구 allow-list, 시스템 프롬프트 내용 |
+| **기능 역할**(`general` / `researcher` / `executor` / `reviewer` / `librarian`) | 명시적 `functional_role` 힌트, `agent_id` 매칭, 다음 `default_functional_role` | 자식 LLM, 도구 allow-list, 시스템 프롬프트 내용 |
 | **depth 역할**(`MAIN` / `ORCHESTRATOR` / `LEAF`) | 중첩 깊이(`resolve_subagent_capabilities`) | spawn 권한, control scope |
 
 **spawn 권한은 depth 역할로 게이트됩니다.** `sessions_spawn` / `sessions_yield`는 MAIN과 ORCHESTRATOR에만 속합니다: `spawn/core.py`의 Phase 8.6 교차가 `can_spawn_children`이 false인 모든 역할에서 이들을 제거하고, `spawn/privilege.py`가 호출 시점에 재검증합니다 — 도구 인스턴스가 새더라도 `forbidden`을 반환할 뿐 권한 상승은 없습니다.
@@ -621,7 +622,7 @@ followup/core.py — sweeper_interval_seconds × 2(기본 120초) 주기 루프
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | 파일 첨부 (name, content, encoding, mount_path) |
 | `goal_max_turns` | int\|None | None | goal loop 턴 예산 덮어쓰기(None이면 `COMPLETION_JUDGE["goal_max_turns"]`, 기본 5) |
-| `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer); None이면 depth 기반 동작 유지 |
+| `functional_role` | str\|None | None | 기능 전문화(general / researcher / executor / reviewer / librarian); None이면 depth 기반 동작 유지 |
 | `extra_tools` | list[str]\|None | None | 역할 allow-list 위에 추가로 붙는 도구 이름 |
 
 반환값: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 및 수락 안내("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION 모드: "Use sessions_send(sessionKey=...) to send follow-up messages").

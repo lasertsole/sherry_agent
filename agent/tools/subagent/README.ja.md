@@ -186,7 +186,7 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
 | | `requester_session_key` | 親セッションキー |
 | **Spawn パラメータ** | `spawn_mode` | RUN（単発）/ SESSION（常駐） |
 | | `depth` / `role` | ネスト深さ。MAIN / ORCHESTRATOR / LEAF |
-| | `functional_role` | 機能ロール（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）。既定は GENERAL |
+| | `functional_role` | 機能ロール（GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN）。既定は GENERAL |
 | | `generation` | steer/再起動をまたぐバージョンカウンタ |
 | **所有権** | `controller_session_key` | 制御（kill/steer/send）を許可されたセッションキー |
 | | `completion_owner_session_key` | 完了配信を所有するセッションキー |
@@ -479,8 +479,9 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 | `researcher` | 読み取り専用のコードベース/Web 調査。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `executor` | 書き込み可能な実装とコマンド実行。サブエージェント spawn 不可 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 読み取り専用の diff/品質監査 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `librarian` | 読み取り専用の外部コードベース検索。より安価なモデル | `auxiliary` | `read_file`、`terminal`、`web_search`、`search_files` + コードインテリジェンス `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 
-**ast-grep は全ロール共通、コードインテリジェンスは違う。** すべての機能ロール（`general` を含む）は ast-grep の構造検索/リライト `ast_grep_search`、`ast_grep_rewrite` も受け取ります。これは oh-my-openagent のグローバル登録 ast-grep サーバーに対応する中核機能です。tree-sitter のコードインテリジェンス `explore` / `callers` / `callees` / `impact` / `semantic_code_search` はシンボル索引を要するため、引き続き `researcher` 専用です（`semantic_code_search` はその索引に対する埋め込みベースの概念検索です）。LSP ツール `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` も同じく `researcher` 専用で、実行中の言語サーバーを必要とし、子エージェントが必要時に遅延起動しアイドル時に自動停止します。`lsp_rename` と `lsp_format` は既定でプレビューのみ、`lsp_diagnostics` は非同期の診断通知を待ち、`lsp_status` は何も起動せず可用性のみを報告します。
+**ast-grep は全ロール共通、コードインテリジェンスは違う。** すべての機能ロール（`general` を含む）は ast-grep の構造検索/リライト `ast_grep_search`、`ast_grep_rewrite` も受け取ります。これは oh-my-openagent のグローバル登録 ast-grep サーバーに対応する中核機能です。tree-sitter のコードインテリジェンス `explore` / `callers` / `callees` / `impact` / `semantic_code_search` はシンボル索引を要するため、`researcher` と `librarian` の二つのコード検索ロールに与えられます（`semantic_code_search` はその索引に対する埋め込みベースの概念検索です）。LSP ツール `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` も同じくこの二つのロールに与えられ、実行中の言語サーバーを必要とし、子エージェントが必要時に遅延起動しアイドル時に自動停止します。`lsp_rename` と `lsp_format` は既定でプレビューのみ、`lsp_diagnostics` は非同期の診断通知を待ち、`lsp_status` は何も起動せず可用性のみを報告します。
 
 **定義の場所。** 組み込み定義は**パッケージ内**（追跡・配布可能）の `agent/tools/subagent/roles/definitions/<name>/AGENTS.md` に同梱されます。任意のユーザー上書き（未追跡）は `workspace/subagent_roles/<name>/AGENTS.md` に置けます。解決順は **上書き → パッケージ既定 → なし** で、ディレクトリ名は `roles_override_dir_name` で設定できます。各ファイルは YAML frontmatter（`name`、`description`、`model_tier`、`tools`）と、子プロンプトに追記される markdown 本文を持ちます。`tools: inherit` は「全ツール」（`None`）に解決されます。
 
@@ -502,7 +503,7 @@ depth N:  LEAF（depth == max_spawn_depth）→ control_scope = NONE
 
 | 軸 | 由来 | 司るもの |
 |------|--------|--------|
-| **機能ロール**（`general` / `researcher` / `executor` / `reviewer`） | 明示 `functional_role` ヒント、`agent_id` 一致、次に `default_functional_role` | 子 LLM、ツール allow-list、システムプロンプト内容 |
+| **機能ロール**（`general` / `researcher` / `executor` / `reviewer` / `librarian`） | 明示 `functional_role` ヒント、`agent_id` 一致、次に `default_functional_role` | 子 LLM、ツール allow-list、システムプロンプト内容 |
 | **深度ロール**（`MAIN` / `ORCHESTRATOR` / `LEAF`） | ネスト深度（`resolve_subagent_capabilities`） | spawn 権限、control scope |
 
 **spawn 権限は深度ロールでゲートされます。** `sessions_spawn` / `sessions_yield` は MAIN と ORCHESTRATOR にのみ属します：`spawn/core.py` の Phase 8.6 交差が `can_spawn_children` が false の全ロールからこれらを剥がし、`spawn/privilege.py` が呼び出し時に再検証します——ツールインスタンスが漏れても `forbidden` を返すだけで昇格しません。
@@ -626,7 +627,7 @@ followup/core.py — sweeper_interval_seconds × 2（既定 120 秒）周期の�
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | ファイル添付（name, content, encoding, mount_path） |
 | `goal_max_turns` | int\|None | None | goal loop ターン予算の上書き（None は `COMPLETION_JUDGE["goal_max_turns"]`、既定 5） |
-| `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer）。None は depth ベースの挙動を維持 |
+| `functional_role` | str\|None | None | 機能特化（general / researcher / executor / reviewer / librarian）。None は depth ベースの挙動を維持 |
 | `extra_tools` | list[str]\|None | None | ロールの allow-list に追加で付与するツール名 |
 
 戻り値：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` と受諾ノート（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION モード：「Use sessions_send(sessionKey=...) to send follow-up messages」）。

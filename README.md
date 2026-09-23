@@ -46,7 +46,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Durable Registry**: run records persisted to SQLite; a sweeper recovers orphaned runs and a followup checker enforces run timeouts when configured (default: none)
 - **Swarm Mode**: batch sub-task execution with FIFO scheduling and configurable concurrency
 - **Verified completion**: every spawn runs an auxiliary-LLM completion judge between child turns; a `continue` verdict injects the judge's follow-up prompt as the next turn, bounded by the configured `COMPLETION_JUDGE["goal_max_turns"]` budget (default 5)
-- **Functional Roles (opt-in)**: `sessions_spawn(functional_role=...)` specializes a worker (general / researcher / executor / reviewer); the role drives the LLM tier, the tool allow-list, and the child's system-prompt sections
+- **Functional Roles (opt-in)**: `sessions_spawn(functional_role=...)` specializes a worker (general / researcher / executor / reviewer / librarian); the role drives the LLM tier, the tool allow-list, and the child's system-prompt sections
 - ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for the full architecture_
 
 ### 4. 🌐 Multi-Channel Access

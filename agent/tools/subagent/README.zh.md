@@ -183,7 +183,7 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
 | | `requester_session_key` | 父会话键 |
 | **Spawn 参数** | `spawn_mode` | RUN（一次性）/ SESSION（常驻） |
 | | `depth` / `role` | 嵌套深度；MAIN / ORCHESTRATOR / LEAF |
-| | `functional_role` | 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER）；默认 GENERAL |
+| | `functional_role` | 功能角色（GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN）；默认 GENERAL |
 | | `generation` | 跨 steer/重启的版本计数器 |
 | **所有权** | `controller_session_key` | 有权控制（kill/steer/send）的会话键 |
 | | `completion_owner_session_key` | 拥有完成交付权的会话键 |
@@ -472,8 +472,9 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 | `researcher` | 只读的代码库/网络研究，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `executor` | 可写入的实现与命令执行；不允许 spawn 子代理 | `auxiliary` | `read_file`、`write_file`、`patch_file`、`terminal`、`python_repl` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 | `reviewer` | 只读的 diff/质量审计 | `auxiliary` | `read_file`、`terminal` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
+| `librarian` | 只读的外部代码库检索，使用更便宜的模型 | `auxiliary` | `read_file`、`terminal`、`web_search`、`search_files` + 代码智能 `explore`、`callers`、`callees`、`impact`、`semantic_code_search` + LSP `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` + ast-grep `ast_grep_search`、`ast_grep_rewrite` |
 
-**ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite` —— 这是对标 oh-my-openagent 全局注册 ast-grep 服务器的核心能力。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` / `semantic_code_search` 仍为 `researcher` 专属，因为它们需要符号索引；`semantic_code_search` 是基于该索引的 embedding 概念搜索。LSP 工具 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 同样为 `researcher` 专属：它们需要运行中的语言服务器，由子代理按需惰性启动、空闲时自动关停。`lsp_rename` 与 `lsp_format` 默认仅预览，`lsp_diagnostics` 会等待异步诊断通知，`lsp_status` 只报告可用性、不启动任何服务器。
+**ast-grep 是通用能力，代码智能不是。** 每个功能角色（包括 `general`）都会额外获得 ast-grep 结构化搜索/重写工具 `ast_grep_search`、`ast_grep_rewrite` —— 这是对标 oh-my-openagent 全局注册 ast-grep 服务器的核心能力。tree-sitter 代码智能工具 `explore` / `callers` / `callees` / `impact` / `semantic_code_search` 归 `researcher` 与 `librarian` 这两个代码检索角色所有，因为它们需要符号索引；`semantic_code_search` 是基于该索引的 embedding 概念搜索。LSP 工具 `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` 同样归这两个角色：它们需要运行中的语言服务器，由子代理按需惰性启动、空闲时自动关停。`lsp_rename` 与 `lsp_format` 默认仅预览，`lsp_diagnostics` 会等待异步诊断通知，`lsp_status` 只报告可用性、不启动任何服务器。
 
 **定义位置。** 内置定义随**包内**分发（纳入版本管理、可发布），位于 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`。可选的用户覆盖（不入库）放在 `workspace/subagent_roles/<name>/AGENTS.md`。解析顺序为 **覆盖 → 包内默认 → 无**；目录名可通过 `roles_override_dir_name` 配置。每个文件包含 YAML frontmatter（`name`、`description`、`model_tier`、`tools`）以及追加到子代理提示词的 markdown 正文；`tools: inherit` 解析为“全部工具”（`None`）。
 
@@ -495,7 +496,7 @@ Scope → 工具映射（运行时强制）：`subagent:spawn` → `sessions_spa
 
 | 轴 | 来源 | 决定 |
 |------|--------|--------|
-| **功能角色**（`general` / `researcher` / `executor` / `reviewer`） | 显式 `functional_role` 提示、`agent_id` 匹配，然后是 `default_functional_role` | 子 LLM、工具 allow-list、系统提示词内容 |
+| **功能角色**（`general` / `researcher` / `executor` / `reviewer` / `librarian`） | 显式 `functional_role` 提示、`agent_id` 匹配，然后是 `default_functional_role` | 子 LLM、工具 allow-list、系统提示词内容 |
 | **深度角色**（`MAIN` / `ORCHESTRATOR` / `LEAF`） | 嵌套深度（`resolve_subagent_capabilities`） | spawn 权限、control scope |
 
 **spawn 权限由深度角色把守。** `sessions_spawn` / `sessions_yield` 只归 MAIN 与 ORCHESTRATOR：`spawn/core.py` 的 Phase 8.6 交叉会把它们从所有 `can_spawn_children` 为 false 的角色的工具集中剥掉，`spawn/privilege.py` 再在调用期校验——即使工具实例泄漏，也只会返回 `forbidden` 而不会越权。
@@ -616,7 +617,7 @@ followup/core.py — 以 sweeper_interval_seconds × 2（默认 120 秒）为周
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | 文件附件（name, content, encoding, mount_path） |
 | `goal_max_turns` | int\|None | None | goal loop 轮次预算覆盖（None 时用 `COMPLETION_JUDGE["goal_max_turns"]`，默认 5） |
-| `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer）；None 保持基于 depth 的行为 |
+| `functional_role` | str\|None | None | 功能专业化（general / researcher / executor / reviewer / librarian）；None 保持基于 depth 的行为 |
 | `extra_tools` | list[str]\|None | None | 在角色 allow-list 之上附加的工具名 |
 
 返回：`Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` 及接受提示（「DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion.」/ SESSION 模式：「Use sessions_send(sessionKey=...) to send follow-up messages」）。

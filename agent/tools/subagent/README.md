@@ -183,7 +183,7 @@ The Registry is the state hub of the entire system, managing the lifecycle of al
 | | `requester_session_key` | Parent session key |
 | **Spawn Params** | `spawn_mode` | RUN (one-shot) / SESSION (persistent) |
 | | `depth` / `role` | Nesting depth; MAIN / ORCHESTRATOR / LEAF |
-| | `functional_role` | Functional role (GENERAL / RESEARCHER / EXECUTOR / REVIEWER); defaults to GENERAL |
+| | `functional_role` | Functional role (GENERAL / RESEARCHER / EXECUTOR / REVIEWER / LIBRARIAN); defaults to GENERAL |
 | | `generation` | Version counter across steer/restart cycles |
 | **Ownership** | `controller_session_key` | Session allowed to control (kill/steer/send) |
 | | `completion_owner_session_key` | Session key that owns completion delivery |
@@ -473,8 +473,9 @@ Scope → tool mapping (runtime enforcement): `subagent:spawn` → `sessions_spa
 | `researcher` | Read-only codebase/web research on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `executor` | Write-capable implementation and command execution; no subagent spawn | `auxiliary` | `read_file`, `write_file`, `patch_file`, `terminal`, `python_repl` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 | `reviewer` | Read-only diff/quality audit | `auxiliary` | `read_file`, `terminal` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
+| `librarian` | Read-only external codebase retrieval on a cheaper model | `auxiliary` | `read_file`, `terminal`, `web_search`, `search_files` + code-intel `explore`, `callers`, `callees`, `impact`, `semantic_code_search` + LSP `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` + ast-grep `ast_grep_search`, `ast_grep_rewrite` |
 
-**ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite` — a core capability mirroring oh-my-openagent's globally registered ast-grep server. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` / `semantic_code_search` remain `researcher`-only, because they need the symbol index; `semantic_code_search` is the embedding-backed concept search over that index. The LSP tools `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` are `researcher`-only for the same reason: they need a running language server, which the child starts lazily and stops when idle. `lsp_rename` and `lsp_format` preview by default, `lsp_diagnostics` waits for the asynchronous diagnostics notification, and `lsp_status` reports availability without starting anything.
+**ast-grep is universal; code-intel is not.** Every functional role (including `general`) additionally receives the ast-grep structural search/rewrite tools `ast_grep_search` and `ast_grep_rewrite` — a core capability mirroring oh-my-openagent's globally registered ast-grep server. The tree-sitter code-intel tools `explore` / `callers` / `callees` / `impact` / `semantic_code_search` go to the two code-intel roles, `researcher` and `librarian`, because they need the symbol index; `semantic_code_search` is the embedding-backed concept search over that index. The LSP tools `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` / `lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status` reach the same two roles for the same reason: they need a running language server, which the child starts lazily and stops when idle. `lsp_rename` and `lsp_format` preview by default, `lsp_diagnostics` waits for the asynchronous diagnostics notification, and `lsp_status` reports availability without starting anything.
 
 **Definition locations.** Built-in definitions ship **inside the package** (tracked, distributable) at `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`. An optional per-user override may be placed (untracked) at `workspace/subagent_roles/<name>/AGENTS.md`. Resolution order is **override → package default → none**; the directory name is configurable via `roles_override_dir_name`. Each file carries YAML frontmatter (`name`, `description`, `model_tier`, `tools`) plus a markdown body appended to the child prompt; `tools: inherit` resolves to "all tools" (`None`).
 
@@ -496,7 +497,7 @@ The two role axes are **orthogonal** and compose on every spawn:
 
 | Axis | Source | Drives |
 |------|--------|--------|
-| **Functional role** (`general` / `researcher` / `executor` / `reviewer`) | explicit `functional_role` hint, `agent_id` match, then `default_functional_role` | child LLM, tool allow-list, system-prompt content |
+| **Functional role** (`general` / `researcher` / `executor` / `reviewer` / `librarian`) | explicit `functional_role` hint, `agent_id` match, then `default_functional_role` | child LLM, tool allow-list, system-prompt content |
 | **Depth role** (`MAIN` / `ORCHESTRATOR` / `LEAF`) | nesting depth (`resolve_subagent_capabilities`) | spawn permission, control scope |
 
 **Spawn privilege is depth-gated.** `sessions_spawn` / `sessions_yield` belong to MAIN and ORCHESTRATOR only: the Phase 8.6 intersection in `spawn/core.py` strips them from every role for which `can_spawn_children` is false, and `spawn/privilege.py` re-validates at call time — a leaked tool instance still refuses with a `forbidden` result instead of escalating.
@@ -619,7 +620,7 @@ All seven tools are built by builders in `tools/`. `build_subagent_runtime_tools
 | `cleanup` | str | "delete" | "delete" / "keep" |
 | `attachments` | list\|None | None | File attachments (name, content, encoding, mount_path) |
 | `goal_max_turns` | int\|None | None | Goal-loop turn budget override (None uses `COMPLETION_JUDGE["goal_max_turns"]`, default 5) |
-| `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer); None keeps depth-based behavior |
+| `functional_role` | str\|None | None | Functional specialization (general / researcher / executor / reviewer / librarian); None keeps depth-based behavior |
 | `extra_tools` | list[str]\|None | None | Extra tool names attached on top of the role allow-list |
 
 Returns: `Subagent spawned: status={status}, run_id={id}, session_key={key}, task_name={name}` plus an acceptance note ("DO NOT poll for results — the result will be delivered to you automatically when complete. Use sessions_yield() to wait for completion." / SESSION mode: "Use sessions_send(sessionKey=...) to send follow-up messages").

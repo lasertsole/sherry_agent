@@ -5,11 +5,11 @@
 > ast-grep 结构化搜索、LSP 语言/工具扩展、Embedding 语义搜索、
 > 文件事件自动同步、外部代码检索 subagent。
 >
-> **本文件是代码检索框架的唯一在册计划。** Phase 1 / 1A / 2S / 2X / 3 已落地，
+> **本文件是代码检索框架的唯一在册计划。** Phase 1 / 1A / 2S / 2X / 3 / 4 已落地，
 > 落点、与提案的差异与测试矩阵并入各「已落地」节；Phase 2 由本文件 Phase 2S 承载，
-> Phase 4 / 5 为后续独立阶段。
+> Phase 5 为后续独立阶段。
 >
-> **进度：Phase 1 / 1A / 2S / 2X / 3 已落地；Phase 4 / 5 待派工。**
+> **进度：Phase 1 / 1A / 2S / 2X / 3 / 4 已落地；Phase 5 待派工。**
 >
 > **ast-grep 是核心必选组件**（对标 oh-my-openagent，在该项目中 ast-grep
 > 与 LSP daemon 并列为无条件注册的核心组件，非 opt-in）。
@@ -23,7 +23,7 @@
 3. [Phase 2S — LSP 二进制发现与自动安装（已落地，替代原 Phase 2）](#phase-2s--lsp-二进制发现与自动安装已落地替代原-phase-2)
 4. [Phase 2X — LSP 语言与工具扩展（已落地）](#phase-2x--lsp-语言与工具扩展已落地)
 5. [Phase 3 — Embedding 语义搜索（已落地）](#phase-3--embedding-语义搜索已落地)
-6. [Phase 4 — 外部代码检索 subagent](#phase-4--外部代码检索-subagent)
+6. [Phase 4 — 外部代码检索 subagent（已落地）](#phase-4--外部代码检索-subagent已落地)
 7. [Phase 5 — 文件事件自动同步（可选）](#phase-5--文件事件自动同步可选)
 8. [修订后的总工期](#修订后的总工期)
 9. [修改文件清单（新增）](#修改文件清单新增)
@@ -42,7 +42,7 @@
 | 4   | ast-grep 结构化搜索/重写                                     | `ast-grep-mcp/` (25 语言, 5 级 strictness)                              | Phase 1A（已落地） |
 | 5   | LSP 语言覆盖（4 → 10）                                       | `BUILTIN_SERVERS` (40+ 语言)                                            | Phase 2X（已落地） |
 | 6   | LSP 工具覆盖（4 → 8）                                        | symbols/goto-def/refs/rename/diagnostics/format/status/install-decision | Phase 2X（已落地） |
-| 7   | 外部代码检索（GitHub/npm/docs）                              | `librarian` subagent                                                    | Phase 4          |
+| 7   | 外部代码检索（GitHub/npm/docs）                              | `librarian` subagent                                                    | Phase 4（已落地） |
 | 8   | 文件事件自动同步                                             | CodeGraph 2s debounce 文件监听                                          | Phase 5 (可选)   |
 | 9   | Embedding 语义搜索（概念 → 代码块）                          | CodeGraph 语义检索 / `semantic_code_search`                             | Phase 3（已落地） |
 
@@ -167,7 +167,7 @@
 - `test_lsp_tools.py`（integration）— 4 工具端到端 + 路径安全 +
   not_installed/error/timeout 降级。
 - `test_role_isolation.py`（module）— main 不可见、general/executor/reviewer 不含、
-  researcher 含 LSP + code_intel + ast-grep。
+  researcher 与 librarian 含 LSP + code_intel + ast-grep。
 - `test_lsp_e2e.py`（module）— 假服务器 hermetic e2e：4 工具共享一个惰性启动的服务器，结束回收。
 - `test_lsp_smoke.py`（integration）— **真实 `basedpyright-langserver`** 冒烟：
   definition / references / diagnostics + 进程回收。
@@ -346,128 +346,77 @@
 
 ---
 
-## Phase 4 — 外部代码检索 subagent
+## Phase 4 — 外部代码检索 subagent（已落地）
 
-> **前置条件：subagent 功能角色分工（已落地）+ 本计划 Phase 1A 完成。**
-> **定位：** 对标 oh-my-openagent 的 `librarian` subagent。
-> 专门检索**外部代码库**（GitHub 仓库、npm 包、官方文档），
-> 与 Phase 1-2 的**内部**代码检索互补。
+> **状态：已落地。** 本节只保留落点、与提案的差异（含三处规格修正）、实测工具面与测试；
+> 规格细节已随实现移除。librarian 对标 oh-my-openagent 的 librarian subagent，
+> 专门检索**外部代码库**（GitHub 仓库、文档），与 Phase 1-2 的**内部**代码检索互补。
 
-### 架构
+### 落点
 
-```
-┌─ Librarian Subagent（RESEARCHER 角色，只读）──────────────────────┐
-│                                                                    │
-│  输入：用户问"某库怎么用？" / "某库怎么实现的？"                     │
-│                                                                    │
-│  工具链（复用现有 + 新增）：                                         │
-│  ├─ web_search          已有 — 搜索官方文档 URL                      │
-│  ├─ web_fetch           已有 — 抓取文档页面                           │
-│  ├─ terminal (git/gh)   已有 — clone repo, git blame, gh search      │
-│  ├─ search_files        已有 — 搜索 clone 下来的仓库                  │
-│  ├─ read_file           已有 — 读取 clone 的源码                     │
-│  └─ explore (Phase 1)   已有 — tree-sitter 索引 clone 的仓库         │
-│                                                                    │
-│  输出：                                                              │
-│  ├─ 概念问题 → 官方文档摘要 + 链接                                   │
-│  ├─ 实现问题 → 源码引用 + GitHub permalink                          │
-│  └─ 上下文问题 → 相关 issues/PRs                                    │
-└────────────────────────────────────────────────────────────────────┘
-```
+- `agent/tools/subagent/types/functional_role.py`：`FunctionalRole` 新增第 5 个成员
+  `LIBRARIAN = "librarian"`；新增单一命名来源
+  `CODE_INTEL_ROLES = frozenset({RESEARCHER, LIBRARIAN})`。
+- `agent/tools/subagent/roles/definitions/librarian/AGENTS.md`：新建 librarian 角色定义
+  （frontmatter `name` / `description` / `model_tier: auxiliary` / `tools` + "THE LIBRARIAN" prompt body）。
+- `agent/tools/subagent/spawn/core.py`：code-intel + LSP 注入条件由 `== RESEARCHER` 改为
+  `in CODE_INTEL_ROLES`（单一来源，同时覆盖 researcher 与 librarian）。
+- `agent/tools/subagent/spawn/system_prompt.py`：`## Code Intelligence Tools` 指引段同步改用
+  `CODE_INTEL_ROLES`，工具面与提示词段不会漂移。
+- `agent/tools/subagent/tools/sessions_spawn.py`：`functional_role` 描述补 librarian。
+- 测试：`tests/agent/tools/subagent/test_librarian_role.py`（新建）、`roles/test_loader.py`、
+  `types/test_functional_role.py`、`spawn/test_functional_role_integration.py`、
+  `tests/agent/tools/code_intel/test_integration.py`、
+  `tests/agent/tools/code_intel/lsp/test_role_isolation.py`、
+  `tests/agent/tools/code_intel/ast_grep/test_ast_grep_e2e.py`、
+  `tests/agent/tools/subagent/test_spawn_privilege_guard.py`（4→5 角色期望同步）。
 
-### 设计决策
+### 与提案的差异（三处规格修正 + 工具面）
 
-- **不新增工具** — librarian 复用现有的 `web_search`、`terminal`（git/gh）、`search_files`、`read_file`、`explore`
-- **新增的是 subagent 角色定义** — 在 `FunctionalRole` 中定义 `RESEARCHER` 角色时，librarian 是一个预设的 RESEARCHER 实例
-- **新增 `librarian` system prompt** — 类似 oh-my-openagent 的 librarian prompt，包含文档发现 → 仓库 clone → 源码搜索的工作流
+- **① 删除 `web_fetch`**：提案把 `web_fetch` 标为“已有”，但仓库从未暴露该工具
+  （`agent/tools/web_search.py` 只暴露 `web_search`，其结果自带页面内容摘要）。文档抓取改由
+  `web_search` 承担；librarian prompt 的 TYPE A 第 2 步改成用 `web_search` 检索具体文档页。
+- **② 落点改为 `roles/definitions/librarian/AGENTS.md`**：提案的
+  `agent/tools/subagent/spawn/role_definitions/librarian.py` 路径已随角色迁移失效；现行角色定义
+  加载器只认 `agent/tools/subagent/roles/definitions/<name>/AGENTS.md`（+ workspace 覆盖
+  `workspace/subagent_roles/librarian/AGENTS.md`，gitignored）。
+- **③ `FunctionalRole` 加第 5 个成员**：提案假定 `agent_id="librarian"` 会被 spawn 解析，但
+  `_resolve_functional_role()` 走 `FunctionalRole(agent_id)`，`librarian` 非枚举成员会 `ValueError`
+  退回 `default_functional_role`。加 `LIBRARIAN` 成员后该路径自然解析（零机制成本）。
+  **注**：全量 spawn 仍受 `runtime_isolation` 约束——`agent_id` 只能取 `main`/`subagent`，故选择
+  librarian 的受支持入口是 `sessions_spawn(functional_role="librarian")` 提示；`agent_id`→角色
+  解析在 resolver 层由测试锁住。
+- **librarian 是代码检索角色**：与 researcher 一样拿到**完整** code-intel 套件——
+  `explore` / `callers` / `callees` / `impact` / `semantic_code_search` + 8 个 LSP 工具 + ast-grep
+  （ast-grep 本就是全角色注入）。角色白名单 `read_file` / `terminal` / `web_search` / `search_files`
+  只读；无 write/patch/python_repl，无 spawn/yield/send。
+- **不新增工具**：librarian 复用现有工具，新增的只是一个角色定义 + 一个枚举成员。
+- **`search_files` 说明**：它是真实存在的工具构建器
+  （`agent/tools/file_tools/search_files.py`，`name="search_files"`），但**未登记进
+  `_MAIN_TOOLS_BUILDERS`**（既有现状）；因此 librarian 的该白名单项在候选集里解析为空，
+  clone 后仓库检索实际由 `terminal`（rg/grep）与 code-intel `explore` 承担。此项不在本阶段改动之列
+  （改主工具集会影响 main 与其它角色）。
 
-### 新增文件（1 个）
+### 工具面（librarian）
 
-#### `agent/tools/subagent/spawn/role_definitions/librarian.py`
+`read_file` / `terminal` / `web_search` / `search_files`（角色白名单）
++ `explore` / `callers` / `callees` / `impact` / `semantic_code_search`
++ `lsp_goto_definition` / `lsp_find_references` / `lsp_workspace_symbol` / `lsp_call_hierarchy` /
+`lsp_rename` / `lsp_diagnostics` / `lsp_format` / `lsp_status`
++ `ast_grep_search` / `ast_grep_rewrite`。
+与 researcher 的 code-intel/LSP 面逐项一致（角色白名单不同）。
 
-```python
-"""Librarian subagent role definition — external codebase retrieval.
+### 测试
 
-Registered as a RESEARCHER-role subagent preset. The spawn system resolves
-this definition when `agent_id="librarian"` is passed to sessions_spawn.
-"""
-
-from __future__ import annotations
-
-LIBRARIAN_SYSTEM_PROMPT = """\
-# THE LIBRARIAN
-
-You are a specialized open-source codebase understanding agent.
-
-## Your Mission
-
-Answer questions about external libraries by finding EVIDENCE with
-GitHub permalinks or official documentation links.
-
-## Workflow
-
-### TYPE A: Conceptual ("How do I use X?")
-  1. web_search("library official documentation")
-  2. web_fetch(specific doc page)
-  3. Summarize with version-aware links
-
-### TYPE B: Implementation ("How does X implement Y?")
-  1. terminal: git clone --depth 1 to temp dir
-  2. explore or search_files in cloned repo
-  3. read_file for specific implementation
-  4. Construct GitHub permalink: https://github.com/owner/repo/blob/<sha>/path#L10-L20
-
-### TYPE C: Context ("Why was X changed?")
-  1. terminal: gh search issues/prs
-  2. terminal: git log --oneline -- path
-  3. terminal: git blame -L start,end path
-
-## Rules
-- ALWAYS cite with permalinks (include commit SHA)
-- Use --depth 1 for clones unless history is needed
-- Clean up temp clones when done
-- Read-only: never modify files in the target repo
-"""
-
-LIBRARIAN_TOOL_ALLOW = [
-    "web_search", "web_fetch", "terminal", "read_file",
-    "search_files", "explore", "callers", "callees", "impact",
-    "ast_grep_search",
-]
-
-LIBRARIAN_TOOL_DENY = [
-    "write", "edit", "patch_file", "task", "call_omo_agent",
-    "sessions_spawn", "sessions_yield", "sessions_send",
-]
-```
-
-### 注入点
-
-在角色定义加载器中注册：
-
-```python
-# agent/tools/subagent/spawn/role_definitions/__init__.py
-from .librarian import LIBRARIAN_SYSTEM_PROMPT, LIBRARIAN_TOOL_ALLOW, LIBRARIAN_TOOL_DENY
-
-ROLE_DEFINITIONS: dict[str, RoleDefinition] = {
-    # ... existing roles ...
-    "librarian": RoleDefinition(
-        system_prompt=LIBRARIAN_SYSTEM_PROMPT,
-        tool_allow=LIBRARIAN_TOOL_ALLOW,
-        tool_deny=LIBRARIAN_TOOL_DENY,
-        functional_role=FunctionalRole.RESEARCHER,
-    ),
-}
-```
-
-### 工期
-
-| 步骤     | 内容                                           | 预估      |
-| -------- | ---------------------------------------------- | --------- |
-| 1        | `role_definitions/librarian.py`                | 1h        |
-| 2        | 注册到角色定义加载器                           | 0.3h      |
-| 3        | 测试（spawn librarian subagent, 验证工具权限） | 1h        |
-| **小计** |                                                | **~2.5h** |
+- `tests/agent/tools/subagent/test_librarian_role.py`（integration）— librarian 解析（hint + agent_id
+  resolver 层）、system prompt 注入 THE LIBRARIAN + Code Intelligence 指引、child 工具面含完整
+  code-intel、hermetic spawn e2e。
+- `roles/test_loader.py` — librarian 定义加载 / workspace 覆盖 / 坏 frontmatter fail-open /
+  tools 真实性（含 `web_fetch` 缺席断言）。
+- `types/test_functional_role.py` — 5 成员 + `CODE_INTEL_ROLES`。
+- `spawn/test_functional_role_integration.py`、`code_intel/test_integration.py`、
+  `code_intel/lsp/test_role_isolation.py`、`code_intel/ast_grep/test_ast_grep_e2e.py`、
+  `test_spawn_privilege_guard.py` — 四向 + main 角色隔离与新期望同步。
 
 ---
 
@@ -599,14 +548,14 @@ asyncio.create_task(start_index_watcher(stop_event))
 | Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ✅ 已落地   | Phase 1 + 1A    |
 | Phase 2X | LSP 语言 + 工具扩展 (新增)                       | ✅ 已落地   | Phase 2S        |
 | Phase 3  | Embedding 语义搜索 (原计划)                      | ✅ 已落地   | Phase 1         |
-| Phase 4  | 外部代码检索 subagent (新增)                     | ~2.5h      | Phase 1A + 前置 |
+| Phase 4  | 外部代码检索 subagent (新增)                     | ✅ 已落地   | Phase 1A + 前置 |
 | Phase 5  | 文件事件自动同步 (可选, 新增)                    | ~4h        | Phase 1         |
 | **合计** |                                                  | **~65.5h** |                 |
 
 > 原计划 ~34h → 修订后 ~65.5h（规划期估算）。增量 ~31.5h 主要来自 ast-grep 二进制 provision
 > 基础设施（Phase 1A, +13h）和 LSP 基础设施（Phase 2S, +5h vs 原 Phase 2 的 ~11h → ~16h）。
 >
-> Phase 1 / 1A / 2S / 2X / 3 **已落地**；剩余 Phase 4 / 5 待派工。
+> Phase 1 / 1A / 2S / 2X / 3 / 4 **已落地**；剩余 Phase 5 待派工。
 
 ### 推荐实施顺序
 
@@ -617,7 +566,7 @@ asyncio.create_task(start_index_watcher(stop_event))
        ├→ Phase 2S (LSP 基础设施, 16h) ← ✅ 已落地（需 Phase 1 + 1A）
         │    └→ Phase 2X (LSP 扩展, 7h) ← ✅ 已落地
        ├→ Phase 3 (Embedding, 8h) ← ✅ 已落地
-       └→ Phase 4 (librarian, 2.5h) ← 可与 Phase 2S 并行
+       └→ Phase 4 (librarian, 2.5h) ← ✅ 已落地（可与 Phase 2S 并行）
             Phase 5 (file watcher, 4h) ← 可选，最后
 ```
 
@@ -693,12 +642,22 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `agent/tools/subagent/spawn/system_prompt.py`               | RESEARCHER 段追加 `semantic_code_search` 指导                |
 | `docs/subagent/README{,4}` + `agent/tools/subagent/README{,4}` | researcher 工具面 +`semantic_code_search`（四语一致）        |
 
-### Phase 4 修改（2 个）
+### Phase 4 修改（已落地：新增 2 + 修改 5 + 测试 8 + 文档 8）
 
-| 文件                                                       | 修改           |
-| ---------------------------------------------------------- | -------------- |
-| `agent/tools/subagent/spawn/role_definitions/librarian.py` | 新建           |
-| `agent/tools/subagent/spawn/role_definitions/__init__.py`  | 注册 librarian |
+| 文件                                                          | 修改                                                         |
+| ------------------------------------------------------------- | ------------------------------------------------------------ |
+| `agent/tools/subagent/roles/definitions/librarian/AGENTS.md`  | 新建 — librarian 角色定义（frontmatter + THE LIBRARIAN prompt） |
+| `tests/agent/tools/subagent/test_librarian_role.py`           | 新建 — 解析 / prompt / 工具面 / hermetic e2e                  |
+| `agent/tools/subagent/types/functional_role.py`               | +`LIBRARIAN` 成员 + `CODE_INTEL_ROLES` 单一来源                |
+| `agent/tools/subagent/types/__init__.py`                      | re-export `CODE_INTEL_ROLES`                                  |
+| `agent/tools/subagent/spawn/core.py`                          | 注入条件 `== RESEARCHER` → `in CODE_INTEL_ROLES`             |
+| `agent/tools/subagent/spawn/system_prompt.py`                 | code-intel 指引段改用 `CODE_INTEL_ROLES`                     |
+| `agent/tools/subagent/tools/sessions_spawn.py`                | `functional_role` 描述补 librarian                            |
+| `roles/test_loader.py`、`types/test_functional_role.py`、`spawn/test_functional_role_integration.py`、`test_spawn_privilege_guard.py`、`tests/agent/tools/code_intel/{test_integration,lsp/test_role_isolation,ast_grep/test_ast_grep_e2e}.py` | 4→5 角色期望同步 + librarian 隔离断言 |
+| `docs/subagent/README{,4}` + `agent/tools/subagent/README{,4}` + 根 `README{,4}` | librarian 角色行 / 枚举 / paragraph（四语一致） |
+
+> 提案清单中的 `agent/tools/subagent/spawn/role_definitions/{librarian.py,__init__.py}`（已失效路径）
+> 未执行；现行落点见「落点」与 Phase 4 节「与提案的差异」。
 
 ### Phase 5 修改（3 个）
 
@@ -744,7 +703,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `tests/agent/tools/code_intel/semantic/test_semantic_smoke.py` | P3 ✅ | `integration` | 真实 bge-m3：build → concept search（运行时/权重缺失则 skip）                        |
 | `tests/agent/tools/code_intel/test_tools.py`（+ semantic）  | P3 ✅ | `unit`        | 5 工具 exact-list、scope metadata、session_id、args schema                              |
 | `tests/agent/tools/code_intel/test_integration.py`（+ semantic） | P3 ✅ | `module`  | 角色隔离三方向（main / 非 RESEARCHER / RESEARCHER 含 semantic_code_search）             |
-| `tests/agent/tools/subagent/test_librarian_role.py`         | P4   | `integration` | librarian 角色定义加载、工具权限正确（有 explore/无 write）                             |
+| `tests/agent/tools/subagent/test_librarian_role.py`         | P4 ✅ | `integration` | librarian 角色定义加载、工具权限正确（有 explore/无 write）                             |
 | `tests/agent/tools/code_intel/test_watcher.py`              | P5   | `integration` | 文件变更触发重索引、debounce 2s、prune_dirs 排除                                        |
 
 ### 关键测试用例
@@ -774,9 +733,9 @@ manager 惰性/并发/空闲、4 工具降级、角色隔离、真实冒烟）�
 | **LSP status 只读聚合**                    | `lsp_status` 不启动任何服务器，仅聚合解析三态与活跃快照            | P2X（已落地） |
 | **文件监听排除敏感目录**                   | watcher 排除 prune_dirs（.git, .venv, node_modules, ...）          | P5   |
 | **文件监听仅触发索引**                     | watcher 不执行代码，仅 parse + 写 SQLite                           | P5   |
-| **librarian 临时仓库清理**                 | clone 到 temp 目录，subagent 结束时清理                            | P4   |
-| **librarian 只读约束**                     | tool_deny 包含 write/edit/patch_file，无法修改文件                 | P4   |
-| **librarian 无 spawn 权限**                | tool_deny 包含 sessions_spawn/yield/send，无法创建子 subagent      | P4   |
+| **librarian 临时仓库清理**                 | clone 到 temp 目录，subagent 结束时清理（prompt 约束）             | P4（已落地） |
+| **librarian 只读约束**                     | 角色 `tools` 白名单仅 read_file/terminal/web_search/search_files，无 write/patch/python_repl | P4（已落地） |
+| **librarian 无 spawn 权限**                | 白名单无 sessions_spawn/yield/send；深度角色门禁照常生效           | P4（已落地） |
 
 ---
 
