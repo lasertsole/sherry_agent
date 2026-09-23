@@ -34,9 +34,10 @@ class TestBuiltinDefinitions:
         assert get_roles_dir().is_dir()
         assert get_roles_dir().name == "definitions"
 
-    def test_all_four_roles_load(self):
+    def test_all_roles_load(self):
         defs = load_all_role_definitions()
         assert set(defs) == set(FunctionalRole)
+        assert len(defs) == 5
 
     def test_researcher_frontmatter_parsed(self):
         definition = load_role_definition(FunctionalRole.RESEARCHER)
@@ -66,6 +67,23 @@ class TestBuiltinDefinitions:
         assert definition is not None
         assert "REVIEWER subagent worker" in definition.prompt_body
 
+    def test_librarian_frontmatter_parsed(self):
+        definition = load_role_definition(FunctionalRole.LIBRARIAN)
+        assert definition is not None
+        assert definition.description.startswith("External codebase retrieval")
+        assert definition.model_tier == "auxiliary"
+        assert "THE LIBRARIAN" in definition.prompt_body
+
+    def test_librarian_tools_are_real_tool_names(self):
+        definition = load_role_definition(FunctionalRole.LIBRARIAN)
+        assert definition is not None
+        assert definition.tools == ["read_file", "terminal", "web_search", "search_files"]
+        assert "web_fetch" not in definition.tools
+        assert not {"write_file", "patch_file", "python_repl"} & set(definition.tools or [])
+        from agent.tools.file_tools import build_search_files_tool
+
+        assert build_search_files_tool().name == "search_files"
+
 
 class TestFailOpen:
     def test_missing_definition_returns_none(self, monkeypatch, tmp_path):
@@ -77,6 +95,11 @@ class TestFailOpen:
         _write_override(tmp_path, "researcher", "no frontmatter at all")
         monkeypatch.setattr(loader, "WORKSPACE_DIR", tmp_path)
         assert load_role_definition(FunctionalRole.RESEARCHER) is None
+
+    def test_librarian_malformed_frontmatter_returns_none(self, monkeypatch, tmp_path):
+        _write_override(tmp_path, "librarian", "no frontmatter at all")
+        monkeypatch.setattr(loader, "WORKSPACE_DIR", tmp_path)
+        assert load_role_definition(FunctionalRole.LIBRARIAN) is None
 
     def test_malformed_tools_returns_none(self, monkeypatch, tmp_path):
         _write_override(
@@ -114,6 +137,21 @@ class TestWorkspaceOverride:
         assert definition.model_tier == "main"
         assert definition.tools == ["read_file"]
         assert definition.prompt_body == "CUSTOM BODY"
+
+    def test_librarian_override_wins_over_package_default(self, monkeypatch, tmp_path):
+        _write_override(
+            tmp_path,
+            "librarian",
+            "---\nname: librarian\ndescription: Custom librarian\n"
+            "model_tier: main\ntools:\n  - read_file\n---\nCUSTOM LIBRARIAN BODY\n",
+        )
+        monkeypatch.setattr(loader, "WORKSPACE_DIR", tmp_path)
+        definition = load_role_definition(FunctionalRole.LIBRARIAN)
+        assert definition is not None
+        assert definition.description == "Custom librarian"
+        assert definition.model_tier == "main"
+        assert definition.tools == ["read_file"]
+        assert definition.prompt_body == "CUSTOM LIBRARIAN BODY"
 
 
 class TestCache:

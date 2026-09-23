@@ -114,6 +114,7 @@ class TestA1WhitelistIntersection:
             ("researcher", ["read_file", "terminal", "web_search"]),
             ("executor", ["read_file", "write_file", "patch_file", "terminal", "python_repl"]),
             ("reviewer", ["read_file", "terminal"]),
+            ("librarian", ["read_file", "terminal", "web_search", "search_files"]),
         ],
     )
     def test_builtin_roles_leaf_whitelist_unchanged(
@@ -137,7 +138,7 @@ class TestA1WhitelistIntersection:
         assert run.inherited_tool_allow == []
         assert run.inherited_tool_deny == ["sessions_spawn", "sessions_yield"]
 
-    @pytest.mark.parametrize("hint", ["researcher", "executor", "reviewer"])
+    @pytest.mark.parametrize("hint", ["researcher", "executor", "reviewer", "librarian"])
     def test_builtin_roles_orchestrator_keep_spawn(self, monkeypatch, _captured_lane, hint):
         monkeypatch.setattr(get_config(), "max_spawn_depth", 2)
 

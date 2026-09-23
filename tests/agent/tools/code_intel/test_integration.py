@@ -96,6 +96,21 @@ class TestResearcherGetsCodeIntel:
         assert "read_file" in names
 
 
+class TestLibrarianGetsCodeIntel:
+    def test_librarian_child_gets_all_code_intel_tools(self, _wiring: dict) -> None:
+        _build(
+            tools=[_StubTool("read_file"), _StubTool("terminal")],
+            tool_allow=["read_file", "terminal", "web_search", "search_files"],
+            tool_deny=[],
+            functional_role=_role("librarian"),
+            model_tier="auxiliary",
+        )
+        names = _tool_names(_wiring)
+        assert CODE_INTEL_NAMES <= names
+        assert SEMANTIC_NAMES <= names
+        assert "read_file" in names
+
+
 class TestOtherRolesHaveNoCodeIntel:
     def test_executor_child_has_no_code_intel(self, _wiring: dict) -> None:
         _build(

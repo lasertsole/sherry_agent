@@ -105,6 +105,21 @@ class TestResearcherGetsLsp:
         assert AST_GREP_NAMES <= names
 
 
+class TestLibrarianGetsLsp:
+    def test_librarian_child_gets_lsp_code_intel_and_ast_grep(self, _wiring: dict) -> None:
+        _build(
+            tools=[_StubTool("read_file"), _StubTool("terminal")],
+            tool_allow=["read_file", "terminal", "web_search", "search_files"],
+            tool_deny=[],
+            functional_role=_role("librarian"),
+            model_tier="auxiliary",
+        )
+        names = _tool_names(_wiring)
+        assert LSP_NAMES <= names
+        assert CODE_INTEL_NAMES <= names
+        assert AST_GREP_NAMES <= names
+
+
 class TestOtherRolesHaveNoLsp:
     @pytest.mark.parametrize("role_name", ["general", "executor", "reviewer"])
     def test_non_researcher_child_has_no_lsp(self, _wiring: dict, role_name: str) -> None:

@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.tools.subagent.types import FunctionalRole, SubagentRunRecord
+from agent.tools.subagent.types import CODE_INTEL_ROLES, FunctionalRole, SubagentRunRecord
 
 pytestmark = [pytest.mark.unit]
 
@@ -13,14 +13,29 @@ class TestFunctionalRoleEnum:
         assert FunctionalRole.RESEARCHER == "researcher"
         assert FunctionalRole.EXECUTOR == "executor"
         assert FunctionalRole.REVIEWER == "reviewer"
+        assert FunctionalRole.LIBRARIAN == "librarian"
+
+    def test_five_members(self):
+        assert len(FunctionalRole) == 5
 
     def test_value_lookup(self):
         assert FunctionalRole("researcher") is FunctionalRole.RESEARCHER
         assert FunctionalRole("executor") is FunctionalRole.EXECUTOR
+        assert FunctionalRole("librarian") is FunctionalRole.LIBRARIAN
 
     def test_unknown_value_raises(self):
         with pytest.raises(ValueError):
             FunctionalRole("wizard")
+
+
+class TestCodeIntelRoles:
+    def test_exactly_researcher_and_librarian(self):
+        assert CODE_INTEL_ROLES == {FunctionalRole.RESEARCHER, FunctionalRole.LIBRARIAN}
+
+    def test_excludes_the_other_three_roles(self):
+        assert FunctionalRole.GENERAL not in CODE_INTEL_ROLES
+        assert FunctionalRole.EXECUTOR not in CODE_INTEL_ROLES
+        assert FunctionalRole.REVIEWER not in CODE_INTEL_ROLES
 
 
 class TestRunRecordFunctionalRole:

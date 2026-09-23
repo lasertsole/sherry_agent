@@ -64,6 +64,19 @@ class TestSpawnFunctionalRole:
         assert _captured_lane[-1]["model_tier"] == "auxiliary"
         assert run.inherited_tool_allow == ["read_file", "terminal", "web_search"]
 
+    def test_librarian_record_llm_tier_and_whitelist(self, _leaf_depth, _captured_lane):
+        result = asyncio.run(_spawn(_captured_lane, functional_role_hint="librarian"))
+        assert result.status == "accepted"
+        run = _captured_lane[-1]["run"]
+        assert run.functional_role is FunctionalRole.LIBRARIAN
+        assert _captured_lane[-1]["model_tier"] == "auxiliary"
+        assert run.inherited_tool_allow == ["read_file", "terminal", "web_search", "search_files"]
+
+    def test_agent_id_librarian_resolves_at_resolver_level(self):
+        from agent.tools.subagent.spawn.core import _resolve_functional_role
+
+        assert _resolve_functional_role(None, "librarian") is FunctionalRole.LIBRARIAN
+
     def test_executor_whitelist_has_write_but_no_spawn(self, _leaf_depth, _captured_lane):
         asyncio.run(_spawn(_captured_lane, functional_role_hint="executor"))
         run = _captured_lane[-1]["run"]
@@ -173,6 +186,45 @@ class TestRoleToolWhitelist:
             "read_file",
             "terminal",
             "web_search",
+            "explore",
+            "callers",
+            "callees",
+            "impact",
+            "semantic_code_search",
+            "lsp_goto_definition",
+            "lsp_find_references",
+            "lsp_workspace_symbol",
+            "lsp_call_hierarchy",
+            "lsp_rename",
+            "lsp_diagnostics",
+            "lsp_format",
+            "lsp_status",
+            "ast_grep_search",
+            "ast_grep_rewrite",
+        ]
+
+    def test_librarian_whitelist_gets_full_code_intel_surface(self, _wiring):
+        candidates = [
+            _StubTool("read_file"),
+            _StubTool("terminal"),
+            _StubTool("web_search"),
+            _StubTool("search_files"),
+            _StubTool("write_file"),
+            _StubTool("sessions_spawn"),
+        ]
+        _build(
+            tools=candidates,
+            tool_allow=["read_file", "terminal", "web_search", "search_files"],
+            tool_deny=[],
+            role=SubagentSessionRole.LEAF,
+            functional_role=FunctionalRole.LIBRARIAN,
+            model_tier="auxiliary",
+        )
+        assert [t.name for t in _wiring["tools"]] == [
+            "read_file",
+            "terminal",
+            "web_search",
+            "search_files",
             "explore",
             "callers",
             "callees",

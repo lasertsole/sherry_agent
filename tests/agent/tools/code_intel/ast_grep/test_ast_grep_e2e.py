@@ -114,8 +114,10 @@ def _role(value: str):
 
 
 class TestEveryRoleGetsAstGrep:
-    @pytest.mark.parametrize("role_name", ["general", "researcher", "executor", "reviewer"])
-    def test_all_four_functional_roles_get_ast_grep(self, _wiring: dict, role_name: str) -> None:
+    @pytest.mark.parametrize(
+        "role_name", ["general", "researcher", "executor", "reviewer", "librarian"]
+    )
+    def test_all_functional_roles_get_ast_grep(self, _wiring: dict, role_name: str) -> None:
         _build(
             tools=[_StubTool("read_file")],
             tool_allow=[],
