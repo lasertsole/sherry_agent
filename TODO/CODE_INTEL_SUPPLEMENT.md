@@ -56,16 +56,16 @@
 
 - `config/features/agent_side/ast_grep.py`：`AstGrepConfig` TypedDict + `AST_GREP` 实例，经
   `agent_side/__init__.py` 与 `config/features/__init__.py` **双级 re-export**。
-- `agent/tools/code_intel/ast_grep/`：`resolver.py`（5 层发现：env → runtime → skill-bin →
+- `agent/tools/code_intel/ast_grep/`：`resolver.py`（5 层发现：env → runtime → code-intel bin →
   PATH → Homebrew，每层跑 `--version` 探针）、`provisioner.py`（SHA-256 校验的 GitHub
   release 下载 + stdlib `zipfile` 解压）、`install_hints.py`、`runner.py`
   （`ast_grep_search` / `ast_grep_rewrite`）、`__init__.py`。
-- `skills/ast-grep/install.sh` + `install.ps1`：7 路包管理器 fallback
+- `agent/tools/code_intel/ast_grep/scripts/install.sh` + `install.ps1`：7 路包管理器 fallback
   （brew → npm → cargo → pip → nix → mise → GitHub ZIP）。
 - `agent/tools/subagent/spawn/core.py::_build_child_agent()`：**所有 functional_role 的
   subagent 均注入** ast-grep；`ast_grep_*` 从不进入 `_MAIN_TOOLS_BUILDERS`，main agent 不可见。
-- `.gitignore` 加 `skills/ast-grep/bin/`；运行时二进制写入
-  `~/.sherry/runtime/ast-grep/<slug>/sg`，**不入库**。
+- `.codeintel/`（gitignored）承载第 3 层 bin 缓存（`CODE_INTEL_DIR/ast-grep/bin`）；运行时二进制
+  写入 `~/.sherry/runtime/ast-grep/<slug>/sg`，**均不入库**。
 
 ### 与提案的差异
 
@@ -561,10 +561,10 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `agent/tools/code_intel/ast_grep/provisioner.py`   | 新建 — SHA-256 校验下载 + 提取真二进制        |
 | `agent/tools/code_intel/ast_grep/install_hints.py` | 新建 — 安装提示                               |
 | `agent/tools/code_intel/ast_grep/runner.py`        | 新建 — `ast_grep_search` / `ast_grep_rewrite` |
-| `skills/ast-grep/install.sh`                       | 新建 — POSIX 安装脚本（7 路 fallback）        |
-| `skills/ast-grep/install.ps1`                      | 新建 — Windows 安装脚本                       |
+| `agent/tools/code_intel/ast_grep/scripts/install.sh`  | 新建 — POSIX 安装脚本（7 路 fallback）        |
+| `agent/tools/code_intel/ast_grep/scripts/install.ps1` | 新建 — Windows 安装脚本                       |
 | `agent/tools/subagent/spawn/core.py`               | 注入 ast_grep（**所有 subagent**）            |
-| `.gitignore`                                       | 加 `skills/ast-grep/bin/`                     |
+| `.gitignore`                                       | 无 ast-grep 专属条；`.codeintel/` 已覆盖 第 3 层缓存 |
 
 > 提案清单中的 `agent/tools/subagent/spawn/system_prompt.py` 改动未执行（见「与提案的差异」）。
 
@@ -630,7 +630,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 
 | 文件                                                        | 阶段 | 标记          | 覆盖点                                                                                  |
 | ----------------------------------------------------------- | ---- | ------------- | --------------------------------------------------------------------------------------- |
-| `tests/agent/tools/code_intel/ast_grep/test_resolver.py`      | P1A  | `unit`   | 5 层发现（env/runtime/skill-bin/PATH/homebrew）、--version 探针、缓存、Windows 后缀       |
+| `tests/agent/tools/code_intel/ast_grep/test_resolver.py`      | P1A  | `unit`   | 5 层发现（env/runtime/code-intel-bin/PATH/homebrew）、--version 探针、缓存、Windows 后缀   |
 | `tests/agent/tools/code_intel/ast_grep/test_provisioner.py`   | P1A  | `unit`   | SHA-256 校验、优先提取 `ast-grep`、6 平台 asset、下载/校验/超时/解压失败                   |
 | `tests/agent/tools/code_intel/ast_grep/test_install_hints.py` | P1A  | `unit`   | 平台安装提示、config 双级 re-export、TypedDict 键一致                                     |
 | `tests/agent/tools/code_intel/ast_grep/test_runner.py`        | P1A  | `unit`   | sg 子进程、JSON 解析、退出码、超时、dry_run/apply rewrite、路径安全、SHERRY_SG_PATH       |
@@ -694,7 +694,7 @@ manager 惰性/并发/空闲、4 工具降级、角色隔离、真实冒烟）�
 | `agent/tools/terminal.py`               | terminal 工具 — librarian git/gh 操作复用                          |
 | `agent/tools/file_tools/read_file.py`   | `build_read_file_tool()` — librarian 源码读取复用                  |
 | `context_engine/embeddings/store.py`    | Embedding BLOB 存储（Phase 3 复用，原计划已有）                    |
-| `config/path.py` `ROOT_DIR`             | ast-grep skill bin cache 路径基础 (`ROOT_DIR/skills/ast-grep/bin`) |
+| `config/path.py` `CODE_INTEL_DIR`       | ast-grep 第 3 层 bin 缓存路径基础 (`CODE_INTEL_DIR/ast-grep/bin`)  |
 
 ### 外部参考
 
