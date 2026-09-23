@@ -271,6 +271,7 @@ EMA_AI_agent/
 | **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
 | **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
+| **Code Intel** | 面向 code-intel 角色的四层代码检索：tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
 | **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **桌面客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
