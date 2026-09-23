@@ -11,6 +11,7 @@ import pytest
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
 CODE_INTEL_NAMES = {"explore", "callers", "callees", "impact"}
+SEMANTIC_NAMES = {"semantic_code_search"}
 
 
 class _StubTool:
@@ -73,9 +74,15 @@ class TestMainAgentHasNoCodeIntel:
         source = Path(agent_tools.__file__).read_text(encoding="utf-8")
         assert "code_intel" not in source
 
+    def test_agent_tools_package_never_mentions_semantic_search(self) -> None:
+        import agent.tools as agent_tools
+
+        source = Path(agent_tools.__file__).read_text(encoding="utf-8")
+        assert "semantic_code_search" not in source
+
 
 class TestResearcherGetsCodeIntel:
-    def test_researcher_child_gets_all_four_tools(self, _wiring: dict) -> None:
+    def test_researcher_child_gets_all_code_intel_tools(self, _wiring: dict) -> None:
         _build(
             tools=[_StubTool("read_file")],
             tool_allow=["read_file"],
@@ -85,6 +92,7 @@ class TestResearcherGetsCodeIntel:
         )
         names = _tool_names(_wiring)
         assert CODE_INTEL_NAMES <= names
+        assert SEMANTIC_NAMES <= names
         assert "read_file" in names
 
 
@@ -97,7 +105,9 @@ class TestOtherRolesHaveNoCodeIntel:
             functional_role=_role("executor"),
             model_tier="auxiliary",
         )
-        assert not (CODE_INTEL_NAMES & _tool_names(_wiring))
+        names = _tool_names(_wiring)
+        assert not (CODE_INTEL_NAMES & names)
+        assert not (SEMANTIC_NAMES & names)
 
     def test_reviewer_child_has_no_code_intel(self, _wiring: dict) -> None:
         _build(
@@ -107,7 +117,9 @@ class TestOtherRolesHaveNoCodeIntel:
             functional_role=_role("reviewer"),
             model_tier="auxiliary",
         )
-        assert not (CODE_INTEL_NAMES & _tool_names(_wiring))
+        names = _tool_names(_wiring)
+        assert not (CODE_INTEL_NAMES & names)
+        assert not (SEMANTIC_NAMES & names)
 
     def test_general_child_has_no_code_intel(self, _wiring: dict) -> None:
         _build(
@@ -116,7 +128,9 @@ class TestOtherRolesHaveNoCodeIntel:
             tool_deny=[],
             functional_role=_role("general"),
         )
-        assert not (CODE_INTEL_NAMES & _tool_names(_wiring))
+        names = _tool_names(_wiring)
+        assert not (CODE_INTEL_NAMES & names)
+        assert not (SEMANTIC_NAMES & names)
 
 
 def _researcher():

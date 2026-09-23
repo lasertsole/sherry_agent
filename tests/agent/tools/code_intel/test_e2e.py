@@ -19,7 +19,7 @@ def test_fixture_repo_explore_callers_callees_impact(
     tools = build_code_intel_tools(
         "e2e", config=intel_config, root=sample_repo, db_path=str(index_db)
     )
-    explore, callers_tool, callees_tool, impact_tool = tools
+    explore, callers_tool, callees_tool, impact_tool = tools[:4]
 
     explore_payload = json.loads(explore._run(query="top_func"))
     assert explore_payload["count"] >= 1

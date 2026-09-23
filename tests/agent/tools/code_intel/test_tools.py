@@ -22,7 +22,13 @@ def tools(sample_repo: Path, index_db: Path, intel_config: CodeIntelConfig) -> l
 
 
 def test_tool_names_and_scope_metadata(tools: list) -> None:
-    assert [tool.name for tool in tools] == ["explore", "callers", "callees", "impact"]
+    assert [tool.name for tool in tools] == [
+        "explore",
+        "callers",
+        "callees",
+        "impact",
+        "semantic_code_search",
+    ]
     for tool in tools:
         assert tool.metadata["scope"] == "researcher_only"
         assert tool.description
@@ -72,3 +78,4 @@ def test_args_schemas(tools: list) -> None:
     assert "symbol" in tools[1].args_schema.model_fields
     assert "symbol" in tools[2].args_schema.model_fields
     assert "symbol" in tools[3].args_schema.model_fields
+    assert set(tools[4].args_schema.model_fields) == {"query", "top_k"}
