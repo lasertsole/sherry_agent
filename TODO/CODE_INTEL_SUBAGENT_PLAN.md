@@ -8,7 +8,7 @@
 > 代码检索工具仅注入 `FunctionalRole.RESEARCHER` 的 subagent，`FunctionalRole` 枚举、角色定义加载器、`spawn_subagent_direct()` 的 `functional_role_hint` 参数传递均已具备。
 > 实施顺序：subagent 功能角色分工（已落地）→ 本计划 Phase 1（**✅ 已落地**）→ Phase 2（**✅ 已落地，由 SUPPLEMENT 的 Phase 2S 承载**）→ Phase 3。
 >
-> **实施策略：Phase 1 / 1A / 2S 已落地；Phase 2X / 3 / 4 / 5 待单独派工。**
+> **实施策略：Phase 1 / 1A / 2S / 2X 已落地；Phase 3 / 4 / 5 待单独派工。**
 
 ---
 
@@ -172,6 +172,9 @@ Phase 1 首批支持四种语言：
 >
 > 4 个工具仍为 **RESEARCHER 专属**：仅 `_build_child_agent()` 注入，
 > `_MAIN_TOOLS_BUILDERS` 不可见。
+>
+> Phase 2X 在此基础上把工具面扩到 **8 个**（+`lsp_rename` / `lsp_diagnostics` /
+> `lsp_format` / `lsp_status`）、语言面从 4 扩到 **10**；落点与真实覆盖见该文件的 Phase 2X 节。
 
 （详细规格已随实现退役，历史实现见 git 记录。）
 

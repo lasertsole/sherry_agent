@@ -9,8 +9,8 @@
 > 实施时原计划的 Phase 1 不变；Phase 2 由本文件 Phase 2S 替代；
 > 新增 Phase 1A（必选，与 Phase 1 同级）、Phase 4 为独立阶段。
 >
-> **进度：Phase 1A 与 Phase 2S 已落地（Phase 2S 同时承载原计划 Phase 2）；
-> Phase 2X / 3 / 4 / 5 待派工。**
+> **进度：Phase 1A / 2S / 2X 已落地（Phase 2S 同时承载原计划 Phase 2）；
+> Phase 3 / 4 / 5 待派工。**
 >
 > **ast-grep 是核心必选组件**（对标 oh-my-openagent，在该项目中 ast-grep
 > 与 LSP daemon 并列为无条件注册的核心组件，非 opt-in）。
@@ -22,7 +22,7 @@
 1. [缺口总览](#缺口总览)
 2. [Phase 1A — ast-grep 结构化搜索（已落地）](#phase-1a--ast-grep-结构化搜索已落地)
 3. [Phase 2S — LSP 二进制发现与自动安装（已落地，替代原 Phase 2）](#phase-2s--lsp-二进制发现与自动安装已落地替代原-phase-2)
-4. [Phase 2X — LSP 语言与工具扩展](#phase-2x--lsp-语言与工具扩展)
+4. [Phase 2X — LSP 语言与工具扩展（已落地）](#phase-2x--lsp-语言与工具扩展已落地)
 5. [Phase 4 — 外部代码检索 subagent](#phase-4--外部代码检索-subagent)
 6. [Phase 5 — 文件事件自动同步（可选）](#phase-5--文件事件自动同步可选)
 7. [修订后的总工期](#修订后的总工期)
@@ -40,8 +40,8 @@
 | 2   | LSP 自动安装 + 安装提示 + 用户决策                           | `server-definitions.ts` + `install-decision.ts`                         | Phase 2S（已落地） |
 | 3   | LSP fallback 策略（缺失时降级到 tree-sitter / search_files） | `server-resolution.ts` not_installed 状态                               | Phase 2S（已落地） |
 | 4   | ast-grep 结构化搜索/重写                                     | `ast-grep-mcp/` (25 语言, 5 级 strictness)                              | Phase 1A（已落地） |
-| 5   | LSP 语言覆盖（4 → 12+）                                      | `BUILTIN_SERVERS` (40+ 语言)                                            | Phase 2X         |
-| 6   | LSP 工具覆盖（4 → 8）                                        | symbols/goto-def/refs/rename/diagnostics/format/status/install-decision | Phase 2X         |
+| 5   | LSP 语言覆盖（4 → 10）                                       | `BUILTIN_SERVERS` (40+ 语言)                                            | Phase 2X（已落地） |
+| 6   | LSP 工具覆盖（4 → 8）                                        | symbols/goto-def/refs/rename/diagnostics/format/status/install-decision | Phase 2X（已落地） |
 | 7   | 外部代码检索（GitHub/npm/docs）                              | `librarian` subagent                                                    | Phase 4          |
 | 8   | 文件事件自动同步                                             | CodeGraph 2s debounce 文件监听                                          | Phase 5 (可选)   |
 
@@ -173,50 +173,100 @@
 
 ---
 
-## Phase 2X — LSP 语言与工具扩展
+## Phase 2X — LSP 语言与工具扩展（已落地）
 
-> **前置条件：Phase 2S 完成。**
-> **目标：** 将 LSP 覆盖从 4 语言 + 4 工具扩展到 12+ 语言 + 8 工具。
+> **状态：已落地。** 本节只保留落点、与提案的差异、实际语言/工具矩阵与本机真实覆盖情况；
+> 规格细节已随实现移除。原计划 Phase 2 的 4 个 LSP 工具在 2S 已落地，本节补齐 4 个新工具。
+> **覆盖规模：** 4 语言 + 4 工具 → **10 语言 + 8 工具**（提案标题写“12+”，但其自带新增表只列 6 个
+> 语言，实际即 10；两者差异以表为准，如实记录）。
 
-### 新增语言
+### 落点
 
-在 `LSP["lsp_supported_servers"]` 中追加：
+- `config/features/agent_side/lsp.py`：`lsp_supported_servers` 追加 6 语言（cpp/java/ruby/bash/
+  vue/yaml），`lsp_enabled_languages` 4 → 10，`lsp_install_hints` / `lsp_auto_install_commands`
+  同步；`LspServerSpec` 新增 `language_id` 字段；新增 `lsp_diagnostics_timeout_s`；
+  repo-local marker 规则补 ruby/bash/vue/yaml。
+- `agent/tools/code_intel/lsp/protocol.py`：新增 `language_id`（config key → 协议 languageId）、
+  `format_diagnostic`、`format_text_edit`、`normalize_workspace_edit`。
+- `agent/tools/code_intel/lsp/client.py`：`didOpen` 发送协议 `languageId`；client capabilities
+  广告 `rename` / `formatting` / `rangeFormatting`；新增 `cached_diagnostics`（不阻塞读取）。
+- `agent/tools/code_intel/lsp/tools.py`：新增 `lsp_rename` / `lsp_diagnostics` / `lsp_format` /
+  `lsp_status`，`build_lsp_tools` 返回 8 个 researcher 工具；新增 WorkspaceEdit/TextEdit 应用器
+  （默认预览，落盘走既有项目根路径闸）。
+- `agent/tools/code_intel/lsp/__init__.py`：导出新工具与协议原语。
+- `agent/tools/subagent/spawn/system_prompt.py`：RESEARCHER 段追加 4 个新工具指导。
+- `agent/tools/subagent/spawn/core.py`：无需改动（`build_lsp_tools` 返回集自动扩到 8；注释同步）。
+- 测试：`tests/agent/tools/code_intel/lsp/test_protocol.py`（新建 unit）、`test_lsp_extended.py`
+  （新建 integration）、`test_lsp_smoke.py`（追加真实工具冒烟）、`test_lsp_e2e.py`（扩到 8 工具 +
+  多语言惰性启动）、`conftest.py`（假服务器支持 rename/formatting/nodiag）。
 
-| 语言  | LSP Server             | 安装命令                                              | 文件扩展名                 |
-| ----- | ---------------------- | ----------------------------------------------------- | -------------------------- |
-| C/C++ | `clangd`               | `See https://clangd.llvm.org/installation`            | `.c .cpp .cc .cxx .h .hpp` |
-| Java  | `jdtls`                | `See https://github.com/eclipse-jdtls/eclipse.jdt.ls` | `.java`                    |
-| Ruby  | `ruby-lsp`             | `gem install ruby-lsp`                                | `.rb .rake`                |
-| Bash  | `bash-language-server` | `npm install -g bash-language-server`                 | `.sh .bash .zsh`           |
-| Vue   | `vue-language-server`  | `npm install -g @vue/language-server`                 | `.vue`                     |
-| YAML  | `yaml-language-server` | `npm install -g yaml-language-server`                 | `.yaml .yml`               |
+### 与提案的差异
 
-> **设计约束：** 不预装所有 LSP server。`lsp_enabled_languages` 由用户配置控制，
-> 默认仅启用已安装的语言。`resolve_lsp_server()` 发现二进制存在时自动启用。
+- **配置键 ≠ 协议 languageId**：提案把“扩展名 → 语言”当作一步；实现区分服务器选择句柄与协议
+  标识（Bash 配置为 `bash`、协议须为 `shellscript`），在 `LspServerSpec` 显式携带 `language_id`，
+  `protocol.language_id()` 读取并逐语言断言。这是本阶段最易错处。
+- **`lsp_format` 方法双路**：整文件走 `textDocument/formatting`，仅当传入 1-based range 时走提案
+  指定的 `textDocument/rangeFormatting`；服务器返回 null/error 时如实报 `supported=false`，绝不
+  伪造“已格式化”。
+- **rename/format 默认预览**：`lsp_rename` 默认 `dry_run=true`、`lsp_format` 默认 `write=false`，
+  与 ast-grep rewrite 的 dry_run 一致；只有显式开启才落盘，且每条 edit 的文件路径都过
+  `resolve_project_path` / `SHERRY_LSP_ROOT` 闸，越界路径记入 `skipped`。
+- **diagnostics 是异步通知**：`lsp_diagnostics` 打开文件后按 `lsp_diagnostics_timeout_s` 等待
+  `publishDiagnostics`，再读缓存；超时如实返回 `timed_out=true`（`cached_diagnostics()` 区分
+  “空诊断”与“未到达”）。
+- **`lsp_status` 不启动服务器**：仅聚合 resolver 三态 + manager 活跃快照，逐语言给
+  `available`/`not_installed`/`not_configured`；本机未装的 6 个语言如实标 `not_installed`。
+- **enabled list 语义**：`lsp_enabled_languages` 4 → 10，但它仍是“愿望清单”而非预装步骤——
+  是否可用完全由 `resolve_lsp_server()` 发现二进制决定（未预装任何 server）。cpp/java 无
+  project-local bin 目录，故不设 repo-local 规则，只走 explicit/runtime/PATH/Homebrew。
 
-### 新增工具
+### 实际语言与工具矩阵
 
-| 工具              | LSP 方法                          | 说明                                    | 优先级 |
-| ----------------- | --------------------------------- | --------------------------------------- | ------ |
-| `lsp_rename`      | `textDocument/rename`             | 跨工作区符号重命名                      | P1     |
-| `lsp_diagnostics` | `textDocument/publishDiagnostics` | 实时诊断（错误/警告）                   | P1     |
-| `lsp_format`      | `textDocument/rangeFormatting`    | 代码格式化                              | P2     |
-| `lsp_status`      | — (内部聚合)                      | 列出所有已配置/已安装/活跃的 LSP 服务器 | P2     |
+| 语言 | 服务器 | 扩展名 | 协议 languageId | 本机发现结果 | 状态 |
+| ---- | ------ | ------ | --------------- | ------------ | ---- |
+| python | `basedpyright-langserver` | `.py .pyi` | `python` | `<repo>/.venv/bin` | ✅ 真实冒烟（definition/references/diagnostics/rename/status） |
+| typescript | `typescript-language-server` | `.ts .tsx .js .jsx .mjs .cjs .mts .cts` | `typescript` | `PATH` `/usr/bin` | 二进制存在（未做真实冒烟） |
+| rust | `rust-analyzer` | `.rs` | `rust` | `PATH`（rustup 代理） | ⚠️ 代理存在但组件缺失，握手 fail-open |
+| go | `gopls` | `.go` | `go` | 未发现 | ❌ 需安装 |
+| cpp | `clangd` | `.c .cpp .cc .cxx .h .hpp` | `cpp` | 未发现 | ❌ 需安装 |
+| java | `jdtls` | `.java` | `java` | 未发现 | ❌ 需安装 |
+| ruby | `ruby-lsp` | `.rb .rake` | `ruby` | 未发现 | ❌ 需安装 |
+| bash | `bash-language-server` | `.sh .bash .zsh` | `shellscript` | 未发现 | ❌ 需安装 |
+| vue | `vue-language-server` | `.vue` | `vue` | 未发现 | ❌ 需安装 |
+| yaml | `yaml-language-server` | `.yaml .yml` | `yaml` | 未发现 | ❌ 需安装 |
 
-> `lsp_rename` 和 `lsp_diagnostics` 是代码编辑中最常用的 LSP 功能，
-> 缺少它们意味着 subagent 无法完成"重构前检查"和"重命名"工作流。
+**工具矩阵（8，全部 RESEARCHER-only）：**
 
-### 工期
+| 工具 | LSP 方法 | 真实（basedpyright）验证 | 假服务器覆盖 |
+| ---- | -------- | ------------------------ | ------------ |
+| `lsp_goto_definition` | `textDocument/definition` | ✅ 真实冒烟 | fake |
+| `lsp_find_references` | `textDocument/references` | ✅ 真实冒烟 | fake |
+| `lsp_workspace_symbol` | `workspace/symbol` | —（仅 fake，basedpyright 未做） | fake |
+| `lsp_call_hierarchy` | `callHierarchy/*` | —（仅 fake） | fake |
+| `lsp_rename` | `textDocument/rename` | ✅ 真实冒烟（返回真实 WorkspaceEdit，预览不改文件） | fake（含 apply + 路径闸） |
+| `lsp_diagnostics` | `textDocument/publishDiagnostics` | ✅ 真实冒烟（坏文件返回真实诊断） | fake（含超时窗口） |
+| `lsp_format` | `textDocument/formatting` + `rangeFormatting` | ❌ 仅 unsupported 路径可测（basedpyright 不支持格式化，返回 error/null） | fake（supported/unsupported/write/range） |
+| `lsp_status` | —（内部聚合） | ✅ 真实冒烟（10 语言如实列状态，不启动服务器） | fake（三态 + 门控） |
 
-| 步骤     | 内容                                                                             | 预估    |
-| -------- | -------------------------------------------------------------------------------- | ------- |
-| 1        | 扩展 `lsp_supported_servers` / `lsp_install_hints` / `lsp_auto_install_commands` | 0.5h    |
-| 2        | `lsp/protocol.py` 追加 rename / diagnostics 数据结构                             | 1h      |
-| 3        | `lsp/tools.py` 追加 4 个工具                                                     | 3h      |
-| 4        | 修改 `spawn/core.py` + `system_prompt.py`（注入新工具）                          | 0.3h    |
-| 5        | 测试                                                                             | 2h      |
-| 6        | ruff + basedpyright + pytest                                                     | 0.5h    |
-| **小计** |                                                                                  | **~7h** |
+**本机真实覆盖诚实标注：** python 工具的 definition/references/diagnostics/rename/status 有真实
+`basedpyright-langserver` 冒烟；`lsp_format` **没有**真实成功冒烟（basedpyright 不支持格式化，
+只覆盖了 unsupported 分支）；workspace_symbol/call_hierarchy 沿用 2S 的 fake 覆盖。其余 9 个语言
+本机均未安装，只有 resolver 层断言（各有安装提示）。
+
+### 测试
+
+`tests/agent/tools/code_intel/lsp/`：
+
+- `test_protocol.py`（unit，新建）— 10 语言 extension → language → languageId 逐语言断言、
+  diagnostics severity/range、WorkspaceEdit（changes / documentChanges）归一化。
+- `test_resolver.py`（unit，扩展）— 新增 6 语言的 PATH/显式发现、marker-gated repo-local
+  （bash/vue/yaml/ruby）、安装提示、enabled 集合 4 → 10。
+- `test_lsp_extended.py`（integration，新建）— rename 预览/apply/空名/未装/路径闸、diagnostics
+  聚合与超时、format 预览/写入/不支持/range、status 三态与门控。
+- `test_lsp_smoke.py`（integration，扩展）— **真实 basedpyright**：`lsp_diagnostics` 真实诊断、
+  `lsp_rename` 真实 WorkspaceEdit 预览（不改文件）、`lsp_status` 如实列出 + 进程回收。
+- `test_lsp_e2e.py`（module，扩展）— 8 工具共享一个惰性服务器 + 多语言双服务器惰性启动。
+- `test_role_isolation.py` / `test_lsp_tools.py`（module/integration）— 工具面 4 → 8 同步。
 
 ---
 
@@ -471,7 +521,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 | Phase 1  | tree-sitter 符号索引 + 调用图 (原计划)           | ~15h       | 前置            |
 | Phase 1A | ast-grep 结构化搜索 + 二进制 provision (已落地)  | —          | 前置            |
 | Phase 2S | LSP 二进制发现 + 自动安装 + fallback (替代原 P2) | ✅ 已落地   | Phase 1 + 1A    |
-| Phase 2X | LSP 语言 + 工具扩展 (新增)                       | ~7h        | Phase 2S        |
+| Phase 2X | LSP 语言 + 工具扩展 (新增)                       | ✅ 已落地   | Phase 2S        |
 | Phase 3  | Embedding 语义搜索 (原计划)                      | ~8h        | Phase 1         |
 | Phase 4  | 外部代码检索 subagent (新增)                     | ~2.5h      | Phase 1A + 前置 |
 | Phase 5  | 文件事件自动同步 (可选, 新增)                    | ~4h        | Phase 1         |
@@ -480,7 +530,7 @@ asyncio.create_task(start_index_watcher(stop_event))
 > 原计划 ~34h → 修订后 ~65.5h（规划期估算）。增量 ~31.5h 主要来自 ast-grep 二进制 provision
 > 基础设施（Phase 1A, +13h）和 LSP 基础设施（Phase 2S, +5h vs 原 Phase 2 的 ~11h → ~16h）。
 >
-> Phase 1A 与 Phase 2S **已落地**；剩余 Phase 2X / 3 / 4 / 5 待派工。
+> Phase 1A / 2S / 2X **已落地**；剩余 Phase 3 / 4 / 5 待派工。
 
 ### 推荐实施顺序
 
@@ -489,7 +539,7 @@ asyncio.create_task(start_index_watcher(stop_event))
   ├→ Phase 1 (tree-sitter, 15h)
   └→ Phase 1A (ast-grep + provision) ← 已落地，与 Phase 1 并行
        ├→ Phase 2S (LSP 基础设施, 16h) ← ✅ 已落地（需 Phase 1 + 1A）
-       │    └→ Phase 2X (LSP 扩展, 7h)
+        │    └→ Phase 2X (LSP 扩展, 7h) ← ✅ 已落地
        ├→ Phase 3 (Embedding, 8h) ← 可与 Phase 2S 并行
        └→ Phase 4 (librarian, 2.5h) ← 可与 Phase 2S 并行
             Phase 5 (file watcher, 4h) ← 可选，最后
@@ -536,15 +586,21 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `agent/tools/subagent/spawn/core.py`            | 仅 RESEARCHER 注入 4 个 LSP 工具                                  |
 | `agent/tools/subagent/spawn/system_prompt.py`   | RESEARCHER 段追加 LSP 指导                                        |
 
-### Phase 2X 修改（2 个）
+### Phase 2X 修改（已落地）
 
-| 文件                                          | 修改                                   |
-| --------------------------------------------- | -------------------------------------- |
-| `config/features/agent_side/lsp.py`           | 扩展 `lsp_supported_servers` (+6 语言) |
-| `agent/tools/code_intel/lsp/protocol.py`      | 追加 rename/diagnostics 数据结构       |
-| `agent/tools/code_intel/lsp/tools.py`         | 追加 4 个工具                          |
-| `agent/tools/subagent/spawn/core.py`          | 注入新工具                             |
-| `agent/tools/subagent/spawn/system_prompt.py` | 追加 LSP 工具指导                      |
+| 文件                                                   | 修改                                                                 |
+| ------------------------------------------------------ | -------------------------------------------------------------------- |
+| `config/features/agent_side/lsp.py`                    | +6 语言、`language_id` 字段、`lsp_diagnostics_timeout_s`、enabled 4→10、安装提示/自动安装、repo-local 规则 |
+| `agent/tools/code_intel/lsp/protocol.py`               | `language_id` / `format_diagnostic` / `format_text_edit` / `normalize_workspace_edit` |
+| `agent/tools/code_intel/lsp/client.py`                 | 发协议 `languageId`、广告 rename/formatting、`cached_diagnostics`    |
+| `agent/tools/code_intel/lsp/tools.py`                  | +`lsp_rename`/`lsp_diagnostics`/`lsp_format`/`lsp_status` + edit 应用器 |
+| `agent/tools/code_intel/lsp/__init__.py`               | 导出新工具与协议原语                                                 |
+| `agent/tools/subagent/spawn/core.py`                   | 注释同步（`build_lsp_tools` 返回集自动扩到 8）                       |
+| `agent/tools/subagent/spawn/system_prompt.py`          | RESEARCHER 段追加 4 工具指导                                         |
+| `tests/agent/tools/code_intel/lsp/test_protocol.py`    | 新建 unit                                                            |
+| `tests/agent/tools/code_intel/lsp/test_lsp_extended.py`| 新建 integration                                                     |
+| `tests/agent/tools/code_intel/lsp/{conftest,test_resolver,test_lsp_tools,test_lsp_e2e,test_lsp_smoke,test_role_isolation}.py` | 扩展/同步 |
+| `docs/subagent/README{,4}` + `agent/tools/subagent/README{,4}` | researcher 工具面 4 → 8（四语一致） |
 
 ### Phase 4 修改（2 个）
 
@@ -588,7 +644,8 @@ asyncio.create_task(start_index_watcher(stop_event))
 | `tests/agent/tools/code_intel/lsp/test_role_isolation.py`   | P2S ✅ | `module`      | 角色隔离三方向（main / 非 RESEARCHER / RESEARCHER）                                       |
 | `tests/agent/tools/code_intel/lsp/test_lsp_e2e.py`          | P2S ✅ | `module`      | hermetic e2e：4 工具共享惰性服务器 + 进程回收                                             |
 | `tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`        | P2S ✅ | `integration` | 真实 basedpyright：definition / references / diagnostics + 进程回收                       |
-| `tests/agent/tools/code_intel/lsp/test_lsp_extended.py`     | P2X  | `integration` | lsp_rename / lsp_diagnostics / lsp_format / lsp_status                                  |
+| `tests/agent/tools/code_intel/lsp/test_protocol.py`         | P2X ✅ | `unit`        | 10 语言 extension → language → languageId、diagnostics、WorkspaceEdit 归一化             |
+| `tests/agent/tools/code_intel/lsp/test_lsp_extended.py`     | P2X ✅ | `integration` | lsp_rename / lsp_diagnostics / lsp_format / lsp_status                                  |
 | `tests/agent/tools/subagent/test_librarian_role.py`         | P4   | `integration` | librarian 角色定义加载、工具权限正确（有 explore/无 write）                             |
 | `tests/agent/tools/code_intel/test_watcher.py`              | P5   | `integration` | 文件变更触发重索引、debounce 2s、prune_dirs 排除                                        |
 
@@ -614,6 +671,9 @@ manager 惰性/并发/空闲、4 工具降级、角色隔离、真实冒烟）�
 | **LSP 安装超时**                           | 60s 超时，防止安装命令挂起                                         | P2S（已落地） |
 | **LSP 二进制路径可信**                     | resolve_local 仅在 marker 文件存在时信任 bin 目录，防止目录注入    | P2S（已落地） |
 | **LSP 进程回收（J10）**                    | 按需启动 + 并发上限 + 空闲自动关停 + 显式/atexit shutdown，无孤儿  | P2S（已落地） |
+| **LSP rename/format 默认预览**             | `lsp_rename` dry_run=true、`lsp_format` write=false；仅显式开启才写盘，且每条 edit 过项目根路径闸 | P2X（已落地） |
+| **LSP format 不伪造成功**                  | 服务器不支持格式化（返回 null/error）时如实返回 `supported=false` + 原因，不报“已格式化” | P2X（已落地） |
+| **LSP status 只读聚合**                    | `lsp_status` 不启动任何服务器，仅聚合解析三态与活跃快照            | P2X（已落地） |
 | **文件监听排除敏感目录**                   | watcher 排除 prune_dirs（.git, .venv, node_modules, ...）          | P5   |
 | **文件监听仅触发索引**                     | watcher 不执行代码，仅 parse + 写 SQLite                           | P5   |
 | **librarian 临时仓库清理**                 | clone 到 temp 目录，subagent 结束时清理                            | P4   |
