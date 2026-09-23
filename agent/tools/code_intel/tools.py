@@ -1,11 +1,15 @@
 """LangChain tool wrappers for the code intelligence index — RESEARCHER only.
 
-The four tools (``explore`` / ``callers`` / ``callees`` / ``impact``) are never
-registered in ``_MAIN_TOOLS_BUILDERS``; ``agent/tools/subagent/spawn/core.py``
-injects them into a child agent only when its functional role is RESEARCHER.
-Each carries ``metadata={"scope": "researcher_only"}`` so the tag is visible to
-policy layers, and the ``sh``-style outputs are JSON strings, matching the rest
-of the tool surface.
+The five tools (``explore`` / ``callers`` / ``callees`` / ``impact`` /
+``semantic_code_search``) are never registered in ``_MAIN_TOOLS_BUILDERS``;
+``agent/tools/subagent/spawn/core.py`` injects them into a child agent only when
+its functional role is RESEARCHER. Each carries
+``metadata={"scope": "researcher_only"}`` so the tag is visible to policy
+layers, and the outputs are JSON strings, matching the rest of the tool surface.
+
+``semantic_code_search`` is Phase 3: an embedding-backed, concept-level search
+over the same symbol table. It is fail-open — an unavailable embedding model or
+reranker degrades the result instead of failing the call.
 """
 
 from __future__ import annotations
@@ -20,10 +24,16 @@ from langchain_core.tools import BaseTool
 from loguru import logger
 from pydantic import BaseModel, Field, PrivateAttr
 
-from config.features.agent_side import CODE_INTEL, CodeIntelConfig
+from config.features.agent_side import (
+    CODE_INTEL,
+    CODE_INTEL_SEMANTIC,
+    CodeIntelConfig,
+    CodeIntelSemanticConfig,
+)
 from config.path import CODE_INTEL_DIR
 
 from .query import CalleeInfo, CallerInfo, CodeQuery, ExploreResult, ImpactResult
+from .semantic import SemanticCodeSearchTool, SemanticSearch
 
 _ROOT_ENV_KEY = "SHERRY_CODE_INTEL_ROOT"
 _DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
@@ -258,24 +268,42 @@ def build_code_intel_tools(
     session_id: str,
     *,
     config: CodeIntelConfig | None = None,
+    semantic_config: CodeIntelSemanticConfig | None = None,
     root: Path | None = None,
     db_path: str | None = None,
+    embed_model: object | None = None,
+    reranker: object | None = None,
 ) -> list[BaseTool]:
-    """Build the four RESEARCHER-only code intelligence tools.
+    """Build the five RESEARCHER-only code intelligence tools.
 
     Optional overrides exist for tests; production callers pass only
-    ``session_id`` and resolve the root from the process environment.
+    ``session_id`` and resolve the root from the process environment. The
+    semantic tool's model/reranker are injected (tests) or resolved lazily from
+    the existing ``models`` wrappers on first use.
     """
     cfg = config or CODE_INTEL
+    resolved_db = db_path or _resolve_db_path(cfg)
     try:
-        engine = CodeQuery(db_path or _resolve_db_path(cfg), cfg)
+        engine = CodeQuery(resolved_db, cfg)
     except Exception as exc:  # noqa: BLE001 - missing tooling must not break a spawn
         logger.warning("code_intel: tools unavailable: {}", exc)
         return []
     resolved_root = Path(root).resolve() if root is not None else _resolve_root()
-    return [
+    tools: list[BaseTool] = [
         ExploreTool(engine, cfg, resolved_root, session_id),
         CallersTool(engine, cfg, resolved_root, session_id),
         CalleesTool(engine, cfg, resolved_root, session_id),
         ImpactTool(engine, cfg, resolved_root, session_id),
     ]
+    try:
+        semantic = SemanticSearch(
+            resolved_db,
+            cfg,
+            semantic_config or CODE_INTEL_SEMANTIC,
+            embed_model=embed_model,
+            reranker=reranker,
+        )
+        tools.append(SemanticCodeSearchTool(semantic, resolved_root, session_id))
+    except Exception as exc:  # noqa: BLE001 - semantic layer is additive, never fatal
+        logger.warning("code_intel: semantic search unavailable: {}", exc)
+    return tools
