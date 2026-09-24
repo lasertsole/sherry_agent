@@ -15,8 +15,10 @@ __pycache__
 # models/
 model_weight/
 
-# Runtime data (src/, temp/, cron) — regenerated every run, never commit
-src/
+# Runtime data (src/, temp/, cron) — regenerated every run, never commit.
+# /src/ is anchored to the repo root: an unanchored `src/` also swallowed
+# client/src-tauri/src/, dropping the Tauri Rust sources from the repo.
+/src/
 # root temp/ — scratch/evidence dir, root only (cf. /workspace/ below)
 /temp/
 cron_jobs.json
