@@ -15,6 +15,11 @@ Safety invariants:
 - The child starts in its own process group; on timeout the whole group is
   SIGKILLed, so no orphan process (or grandchild) survives.
 - stdout/stderr are truncated to the configured byte caps.
+- The child argv is wrapped by the OS-native sandbox backend (the same
+  ``pub_base/sandbox.py`` backends ``terminal`` and ``python_repl`` use) when a
+  backend is available: ``required`` unavailable ⇒ the run is refused
+  (fail-closed); ``auto`` unavailable ⇒ one loguru warning then an unsandboxed
+  degrade; ``off`` ⇒ no wrap.
 """
 
 from __future__ import annotations
@@ -35,6 +40,7 @@ from loguru import logger
 
 from config.path import ROOT_DIR
 from agent.tools.pub_base.env_scrub import scrub_env
+from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 
 from .builtins import render_allowed_modules, render_restricted_builtins
 from .rpc_server import PtcRpcServer
@@ -42,6 +48,44 @@ from .stub_generator import PTC_RPC_TOKEN_ENV, generate_stub, tool_specs_from_ba
 
 #: Prefix for the per-call temporary directory (also used by orphan checks).
 PTC_TMP_PREFIX = "sherry_ptc_"
+
+
+class PtcSandboxUnavailableError(RuntimeError):
+    """``SANDBOX_POLICY=required`` and no OS backend: refuse the run."""
+
+
+def _resolve_sandboxed_argv(
+    argv: list[str], env: dict[str, str]
+) -> tuple[list[str], dict[str, str]]:
+    """Wrap ``argv`` with the OS-native backend per the ``SANDBOX_POLICY`` mapping.
+
+    PTC never runs in the main session and exposes no ``sandbox`` bypass flag,
+    so it always requests sandboxing — identical to a ``sandbox=True`` call:
+
+    - ``off`` → no wrap, backend never probed.
+    - ``auto`` → a usable backend wraps the argv; an unavailable one degrades to
+      the direct unsandboxed spawn with exactly one loguru warning.
+    - ``required`` → a usable backend wraps the argv; an unavailable one raises
+      :class:`PtcSandboxUnavailableError` so the run is refused (fail-closed).
+    """
+    policy = read_policy()
+    if policy is SandboxPolicy.OFF:
+        return argv, env
+    try:
+        backend = get_backend(policy)
+    except RuntimeError as exc:
+        raise PtcSandboxUnavailableError(
+            "execute_code refused: SANDBOX_POLICY=required but no OS sandbox backend is "
+            f"available ({exc}). Install bubblewrap (Linux) or use macOS Seatbelt, or set "
+            "SANDBOX_POLICY=auto to allow the unsandboxed degrade path."
+        ) from exc
+    if backend is None:
+        logger.warning(
+            "execute_code: sandbox requested but no backend available "
+            f"(policy={policy.value}) — degrading to unsandboxed execution"
+        )
+        return argv, env
+    return backend.wrap(argv, env)
 
 
 _SCRIPT_TEMPLATE = """\
@@ -219,8 +263,14 @@ async def run_ptc(
         env = build_child_env(tmpdir, token)
         serve_thread.start()
 
+        argv: list[str] = [sys.executable, script_path]
+        try:
+            argv, env = _resolve_sandboxed_argv(argv, env)
+        except PtcSandboxUnavailableError as exc:
+            return _result("sandbox_unavailable", "", str(exc), -1, 0)
+
         proc = subprocess.Popen(  # noqa: S603 - argv is fully controlled
-            [sys.executable, script_path],
+            argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
