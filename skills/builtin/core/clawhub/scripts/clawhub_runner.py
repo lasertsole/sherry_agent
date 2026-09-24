@@ -17,10 +17,15 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
+from agent.tools.pub_base.env_scrub import scrub_env
 from config import ROOT_DIR, PLUGIN_SKILLS_DIR, SKILLS_STATE_FILE
 from loguru import logger
 from pydantic import validate_call
 from runtime import hooks
+
+#: Pinned clawhub package spec — never float to @latest;
+#: bump deliberately and re-vet the new release.
+_CLAWHUB_SPEC = "clawhub@0.23.3"
 
 #: Commands that can write third-party skills into ``skills/plugins/``.
 _MUTATING_COMMANDS = {"install", "update"}
@@ -225,7 +230,12 @@ def run_clawhub_command(command: list[str]) -> dict[str, Any]:
     # Resolve {{ROOT_DIR}} in all arguments
     resolved = [_resolve_workdir(arg) for arg in command]
 
-    cmd = ["npx", "--yes", "clawhub@latest"] + resolved
+    # Supply-chain pinning: the package is pinned to an exact version (a
+    # floating `@latest` re-resolves on every run, so a registry compromise
+    # executes attacker code on this host), and the child env is scrubbed so
+    # API keys never leak into npm/node processes (same contract as
+    # terminal.py).
+    cmd = ["npx", "--yes", _CLAWHUB_SPEC] + resolved
 
     try:
         result = subprocess.run(
@@ -234,6 +244,7 @@ def run_clawhub_command(command: list[str]) -> dict[str, Any]:
             text=True,
             encoding="utf-8",
             timeout=120,
+            env=scrub_env(),
         )
         success = result.returncode == 0
         payload: dict[str, Any] = {

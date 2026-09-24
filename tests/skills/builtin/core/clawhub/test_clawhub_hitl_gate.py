@@ -220,4 +220,6 @@ class TestClawhubGraphGate:
         graph.invoke(Command(resume={"decisions": [{"type": "approve"}]}), config)
 
         assert len(npx_calls) == 1, "approved call must run npx exactly once"
-        assert npx_calls[0][:3] == ["npx", "--yes", "clawhub@latest"]
+        # The runner pins the package spec; the gate test tracks
+        # the constant so a deliberate version bump does not silently break it.
+        assert npx_calls[0][:3] == ["npx", "--yes", clawhub_runner._CLAWHUB_SPEC]
