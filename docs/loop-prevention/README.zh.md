@@ -11,7 +11,7 @@
 1. **只降级，绝不崩溃。** 防护永远不会拖垮进程：后台服务*停止*，回合*优雅结束*，启动门控把进程*收缩*到纯 HTTP 模式。
 2. **永远留一个逃生口。** 每个熔断器都有成文的手动重置方式（REST 端点、删除状态文件、或重启进程）。
 
-**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/stream_repetition_guard_wrapper.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
+**事实来源：** `agent/middlewares/tool_guardrails/core.py`、`agent/middlewares/iteration_budget/core.py`、`agent/middlewares/max_tokens_boost/core.py`、`agent/middlewares/output_repetition_guard/core.py`、`agent/wrapper/repetition_guard.py`、`agent/middlewares/heartbeat_staleness/core.py`、`agent/middlewares/subagent_completion_drain/core.py`、`agent/tools/subagent/announce/delivery.py`、`agent/tools/subagent/announce/idempotency.py`、`runtime/process/periodic_backoff.py`、`runtime/process/crash_loop_breaker.py`、`skills/builtin/core/cron/scripts/base.py`、`skills/builtin/core/heartbeat/scripts/base.py`、`agent/tools/subagent/registry/sweeper.py`、`server/__main__.py`、`server/trigger/http/cron.py`、`server/trigger/__init__.py`、`server/trigger/channels/core.py`、`pub/func/message/overflow_clip.py`。
 
 ## 🎯 总览与威胁模型
 
