@@ -3,14 +3,5 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": ["main"],
-  "permissions": [
-    "core:default",
-    "shell:allow-spawn",
-    "shell:allow-execute",
-    "shell:allow-stdin-write",
-    "shell:allow-kill",
-    "notification:default",
-    "global-shortcut:default",
-    "window-state:default"
-  ]
+  "permissions": ["core:default", "notification:default", "global-shortcut:default", "window-state:default"]
 }
