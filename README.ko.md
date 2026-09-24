@@ -272,6 +272,7 @@ EMA_AI_agent/
 | **서브에이전트 시스템** | 멀티레벨 서브에이전트 스폰, 병렬 실행 및 결과 전달 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
 | **서브에이전트 설계** | 설계 불변식: 두 역할 축 모델, spawn 권한 가드, 4계층 완료 게이트 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
 | **Code Intel** | code-intel 역할을 위한 4계층 코드 검색: tree-sitter 심볼 인덱스, ast-grep 구조 검색, LSP 정밀 검색, 시맨틱 검색 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
+| **프로그래매틱 도구 호출** | EXECUTOR 전용 `execute_code`: Python 스크립트 하나를 별도 자식 프로세스에서 실행하고 loopback TCP RPC 브리지로 실제 도구를 호출하며, 제한된 builtins와 스크립트별 예산을 적용 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
 | **미들웨어** | 에이전트 라이프사이클 미들웨어 파이프라인 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
 | **채널** | 채널 인터페이스 및 어댑터 시스템 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
 | **데스크톱 클라이언트** | Tauri 2 + Nuxt 4 데스크톱/모바일 SPA 클라이언트 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
