@@ -36,7 +36,14 @@ async def read_skill_handler(request, path_params):
     from config import ROOT_DIR
 
     skill_path = path_params["skill_path"]
-    full_path = ROOT_DIR / skill_path
+    # Path-traversal guard: resolve and confine to ROOT_DIR before touching
+    # the filesystem — `skill_path` is a URL wildcard, so a raw join would
+    # allow `../../.env`. A traversal attempt is answered with the same 404
+    # as a missing file so the endpoint does not leak which paths exist.
+    full_path = (ROOT_DIR / skill_path).resolve()
+    if not full_path.is_relative_to(ROOT_DIR.resolve()):
+        logger.warning(f"Skill file path escaped ROOT_DIR: {skill_path}")
+        return {"error": "Skill file not found"}, {}, 404
     if not full_path.exists() or not full_path.is_file():
         logger.warning(f"Skill file not found: {skill_path}")
         return {"error": "Skill file not found"}, {}, 404
