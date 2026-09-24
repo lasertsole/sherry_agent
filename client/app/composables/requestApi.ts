@@ -16,6 +16,34 @@ interface Params {
 }
 
 /**
+ * In-memory token.
+ *
+ * The token previously lived in `localStorage`, where any XSS payload could
+ * read it persistently. It is now held only in module scope: it survives SPA
+ * navigation, dies with the tab, and is wiped by the legacy cleanup below.
+ * Transport stays the same custom `token` header so the backend contract is
+ * unchanged; httpOnly-cookie issuance lands with the auth middleware (P1, audit #3).
+ */
+let memoryToken: string | null = null;
+
+/** One-time removal of the legacy localStorage token left by older builds. */
+function purgeLegacyToken(): void {
+  try {
+    localStorage.removeItem('token');
+  } catch {
+    // Storage unavailable (privacy mode / Tauri restriction) — nothing to purge.
+  }
+}
+
+let legacyTokenPurged = false;
+
+function consumeLegacyToken(): void {
+  if (legacyTokenPurged) return;
+  legacyTokenPurged = true;
+  purgeLegacyToken();
+}
+
+/**
  * Replace path variables
  *
  * @param { NitroFetchRequest } url Request path
@@ -172,9 +200,9 @@ async function requestBaseApi<T = Response>({
         }
 
         if (import.meta.client) {
-          const token = localStorage.getItem('token');
-          if (token) {
-            options.headers.set('token', token);
+          consumeLegacyToken();
+          if (memoryToken) {
+            options.headers.set('token', memoryToken);
           }
         }
       },
@@ -197,10 +225,10 @@ async function requestBaseApi<T = Response>({
         networkFailed = false;
         httpFailed = false;
         if (import.meta.client) {
-          // If the response contains a token, update the local token
+          // If the response issues a token, hold it in memory only (never persisted).
           const token: string | null = response.headers.get('token');
           if (token) {
-            localStorage.setItem('token', token);
+            memoryToken = token;
           }
         }
       },
@@ -358,9 +386,9 @@ export async function fetchApiRaw(options: RawFetchOptions): Promise<globalThis.
   const headers = new Headers();
   if (options.contentType) headers.set('Content-Type', options.contentType);
   if (import.meta.client) {
-    const token = localStorage.getItem('token');
-    if (token) {
-      headers.set('token', token);
+    consumeLegacyToken();
+    if (memoryToken) {
+      headers.set('token', memoryToken);
     }
   }
   return fetch(`${API_BASE_URL}${options.url}`, {
