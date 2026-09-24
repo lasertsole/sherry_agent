@@ -108,7 +108,7 @@ HumanInTheLoop
 
 | 메서드 | 설명 |
 |---|---|
-| `report_task_failure(task_id, session_id)` | 작업 실패를 등록합니다. `TriageStatus`(`NEW`, `ACKNOWLEDGED` 또는 `RESOLVED`)를 반환합니다. 실패 횟수가 설정된 `recurrence_limit`을 초과하면 `RecurrenceLimitError`를 발생시킵니다. |
+| `report_task_failure(task_id, session_id)` | 작업 실패를 등록합니다. `TriageStatus`(실패 횟수가 설정된 `kanban_recurrence_limit`에 도달하면 `TRIAGE`, 그렇지 않으면 `BLOCKED`)를 반환합니다. 예외는 발생하지 않습니다. |
 | `resolve_triage(task_id, session_id)` | 트리아지된 작업을 해결됨으로 표시합니다. |
 
 ### 6. 스마트 승인
@@ -205,12 +205,12 @@ LLM 출력 → after_model
 
 | 필드 | 유형 | 기본값 | 설명 |
 |---|---|---|---|
-| `mode` | `ApprovalMode` | `STRICT` | `STRICT`, `SMART` 또는 `DISABLED` |
+| `mode` | `ApprovalMode` | `SMART` | `SMART`, `MANUAL` 또는 `OFF` |
 | `interrupted_tools` | `dict[str, bool \| dict]` | `{}` | `interrupt_on` 설정에 의해 게이팅되는 도구 이름. 각 항목은 부울(기본 허용 결정 `["approve", "edit", "reject"]`) 또는 `allowed_decisions`와 선택적 `description` 콜러블이 있는 dict일 수 있습니다. |
 | `interrupt_on` | deprecated | — | `interrupted_tools`로 대체됨. |
 | `write_approval_memory` | `bool` | `False` | `WriteApprovalGate`를 통해 메모리 쓰기를 게이팅합니다. |
-| `description_prefix` | `str` | `"Agent wants to"` | 사람이 읽을 수 있는 작업 설명의 접두사. |
-| `kanban_recurrence_limit` | `int` | `5` | KanbanTriage에서 `RecurrenceLimitError` 이전의 최대 실패 횟수. |
+| `description_prefix` | `str` | `"Action requires human approval"` | 사람이 읽을 수 있는 작업 설명의 접두사. |
+| `kanban_recurrence_limit` | `int` | `3` | `TriageStatus.TRIAGE`로 승격되기 전까지의 실패 횟수. |
 
 ### 예시
 
@@ -263,7 +263,7 @@ middleware.register_approval_hook(log_approval)
 ## 파일 구조
 
 ```
-agent/middlewares/HumanInTheLoop/
+agent/middlewares/humanInTheLoop/
 ├── __init__.py        # 공개 내보내기
 ├── types.py           # 열거형, 데이터클래스, 설정, 스텁
 ├── approval_scope.py  # 오퍼레이터 ContextVar + 헤드리스 턴 판정

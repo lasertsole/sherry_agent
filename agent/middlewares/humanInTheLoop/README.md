@@ -108,7 +108,7 @@ Tracks task failures for kanban-style triage escalation:
 
 | Method | Description |
 |---|---|
-| `report_task_failure(task_id, session_id)` | Register a task failure. Returns `TriageStatus` (`NEW`, `ACKNOWLEDGED`, or `RESOLVED`). Raises `RecurrenceLimitError` if the failure count exceeds the configured `recurrence_limit`. |
+| `report_task_failure(task_id, session_id)` | Register a task failure. Returns `TriageStatus` (`TRIAGE` once the failure count reaches the configured `kanban_recurrence_limit`, otherwise `BLOCKED`); no exception is raised. |
 | `resolve_triage(task_id, session_id)` | Mark a triaged task as resolved. |
 
 ### 6. Smart Approval
@@ -205,12 +205,12 @@ All configuration is passed through the `HITLConfig` dataclass (defined in `type
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `mode` | `ApprovalMode` | `STRICT` | `STRICT`, `SMART`, or `DISABLED` |
+| `mode` | `ApprovalMode` | `SMART` | `SMART`, `MANUAL`, or `OFF` |
 | `interrupted_tools` | `dict[str, bool \| dict]` | `{}` | Tool names gated by `interrupt_on` config. Each entry can be a boolean (default allowed decisions `["approve", "edit", "reject"]`) or a dict with `allowed_decisions` and optional `description` callable. |
 | `interrupt_on` | deprecated | — | Replaced by `interrupted_tools`. |
 | `write_approval_memory` | `bool` | `False` | Gate memory writes through `WriteApprovalGate`. |
-| `description_prefix` | `str` | `"Agent wants to"` | Prefix for human-readable action descriptions. |
-| `kanban_recurrence_limit` | `int` | `5` | Max failures before `RecurrenceLimitError` in KanbanTriage. |
+| `description_prefix` | `str` | `"Action requires human approval"` | Prefix for human-readable action descriptions. |
+| `kanban_recurrence_limit` | `int` | `3` | Failure count before escalation to `TriageStatus.TRIAGE`. |
 
 ### Example
 
@@ -263,7 +263,7 @@ Tool-approval decisions are persisted to a JSON file so they survive process res
 ## File Layout
 
 ```
-agent/middlewares/HumanInTheLoop/
+agent/middlewares/humanInTheLoop/
 ├── __init__.py        # Public exports
 ├── types.py           # Enums, dataclasses, config, stubs
 ├── approval_scope.py  # Operator ContextVar + headless-turn resolution

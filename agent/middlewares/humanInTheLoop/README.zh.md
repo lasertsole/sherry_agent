@@ -108,7 +108,7 @@ HumanInTheLoop
 
 | 方法 | 描述 |
 |---|---|
-| `report_task_failure(task_id, session_id)` | 注册任务故障。返回 `TriageStatus`（`NEW`、`ACKNOWLEDGED` 或 `RESOLVED`）。如果故障次数超过配置的 `recurrence_limit`，则抛出 `RecurrenceLimitError`。 |
+| `report_task_failure(task_id, session_id)` | 注册任务故障。返回 `TriageStatus`（故障次数达到配置的 `kanban_recurrence_limit` 时为 `TRIAGE`，否则为 `BLOCKED`）；不抛出异常。 |
 | `resolve_triage(task_id, session_id)` | 将已分类的任务标记为已解决。 |
 
 ### 6. 智能审批
@@ -205,12 +205,12 @@ LLM 输出 → after_model
 
 | 字段 | 类型 | 默认值 | 描述 |
 |---|---|---|---|
-| `mode` | `ApprovalMode` | `STRICT` | `STRICT`、`SMART` 或 `DISABLED` |
+| `mode` | `ApprovalMode` | `SMART` | `SMART`、`MANUAL` 或 `OFF` |
 | `interrupted_tools` | `dict[str, bool \| dict]` | `{}` | 通过 `interrupt_on` 配置门控的工具名称。每个条目可以是布尔值（默认允许决策 `["approve", "edit", "reject"]`）或包含 `allowed_decisions` 和可选的 `description` 可调用对象的字典。 |
 | `interrupt_on` | 已弃用 | — | 已被 `interrupted_tools` 替代。 |
 | `write_approval_memory` | `bool` | `False` | 通过 `WriteApprovalGate` 门控内存写入。 |
-| `description_prefix` | `str` | `"Agent wants to"` | 人类可读操作描述的前缀。 |
-| `kanban_recurrence_limit` | `int` | `5` | `KanbanTriage` 中触发 `RecurrenceLimitError` 的最大故障次数。 |
+| `description_prefix` | `str` | `"Action requires human approval"` | 人类可读操作描述的前缀。 |
+| `kanban_recurrence_limit` | `int` | `3` | 升级到 `TriageStatus.TRIAGE` 之前的故障次数。 |
 
 ### 示例
 
@@ -263,7 +263,7 @@ middleware.register_approval_hook(log_approval)
 ## 文件结构
 
 ```
-agent/middlewares/HumanInTheLoop/
+agent/middlewares/humanInTheLoop/
 ├── __init__.py        # 公开导出
 ├── types.py           # 枚举、数据类、配置、存根
 ├── approval_scope.py  # 操作员 ContextVar + 无人轮次判定
