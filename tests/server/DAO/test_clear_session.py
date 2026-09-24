@@ -109,3 +109,26 @@ async def test_clear_session_purges_session_private_plan_knowledge(
 
     assert (knowledge_root / identity_1.key).exists() is False
     assert (knowledge_root / identity_2.key / "plan-summary.json").is_file()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "evil_sid", ["../../workspace", "../workspace", "a/b", "a\\b", "..", ".", ""]
+)
+async def test_clear_session_rejects_unsafe_session_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evil_sid: str
+):
+    """A traversal session_id must never reach ``shutil.rmtree``."""
+    from server.DAO import messages as dao
+
+    _isolate_dao(monkeypatch, tmp_path)
+
+    # A decoy the traversal would have destroyed if the guard were missing.
+    victim = tmp_path / "workspace"
+    victim.mkdir()
+
+    with pytest.raises(ValueError, match="invalid session_id"):
+        await dao.clear_session(evil_sid)
+
+    assert victim.is_dir()
+    assert list((tmp_path / "sessions").glob("*")) == []

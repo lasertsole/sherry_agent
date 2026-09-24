@@ -2,6 +2,8 @@ from typing import cast
 
 from config.features import SERVER_HTTP
 from loguru import logger
+from pub.func.validator import is_safe_session_id
+
 from server.trigger.core import app
 from server.service import (
     clear_session,
@@ -30,6 +32,11 @@ async def clear_session_handler(request):
     request_json = request.json()
 
     session_id: str | None = request_json.get("session_id", None)
+    # Traversal guard: session_id reaches Path joins + shutil.rmtree in the
+    # DAO — a value like "../../workspace" must be rejected before any store
+    # is touched.
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
     logger.info(f"Clearing session: session_id={session_id}")
     await clear_session(session_id=cast("str", session_id))
     logger.info(f"Session cleared: session_id={session_id}")

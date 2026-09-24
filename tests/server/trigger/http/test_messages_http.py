@@ -66,3 +66,51 @@ def test_turn_page_size_at_cap_allowed(monkeypatch):
     )
 
     assert calls == [("s1", "1", "200", "1")]
+
+
+class _FakeJsonRequest:
+    def __init__(self, payload: dict):
+        self._payload = payload
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def _stub_clear_session(calls: list):
+    async def _stub(**kwargs):
+        calls.append(kwargs)
+
+    return _stub
+
+
+def test_clear_session_rejects_traversal_session_id(monkeypatch):
+    """The traversal id dies at the boundary; the DAO is never called."""
+    calls: list = []
+    monkeypatch.setattr(messages_http, "clear_session", _stub_clear_session(calls))
+
+    response = asyncio.run(
+        messages_http.clear_session_handler(_FakeJsonRequest({"session_id": "../../workspace"}))
+    )
+
+    assert calls == []
+    assert int(response.status_code) == 500
+    assert "invalid session_id" in response.description
+
+
+def test_clear_session_rejects_none_session_id(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(messages_http, "clear_session", _stub_clear_session(calls))
+
+    response = asyncio.run(messages_http.clear_session_handler(_FakeJsonRequest({})))
+
+    assert calls == []
+    assert int(response.status_code) == 500
+
+
+def test_clear_session_passes_valid_session_id(monkeypatch):
+    calls: list = []
+    monkeypatch.setattr(messages_http, "clear_session", _stub_clear_session(calls))
+
+    asyncio.run(messages_http.clear_session_handler(_FakeJsonRequest({"session_id": "s1"})))
+
+    assert calls == [{"session_id": "s1"}]

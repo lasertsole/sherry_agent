@@ -1,6 +1,9 @@
 import shutil
 from pathlib import Path
+
 from loguru import logger
+from pub.func.validator import is_safe_session_id
+
 from config import SESSIONS_DIR
 from runtime import clear_all_register_sessions
 from agent.checkpointer.async_sqlite_checkpointer import delete_thread_history
@@ -30,7 +33,14 @@ async def clear_session(session_id: str) -> None:
          with another session through boulder ``session_ids`` are retained).
       6. The in-memory session state via ``clear_all_register_sessions``.
       7. The session's variables from the ``state_register_db`` SQLite store.
+
+    Raises:
+        ValueError: If ``session_id`` is not a single safe path segment
+            (the purge reaches ``shutil.rmtree``, so a traversal
+            id must never get past this boundary).
     """
+    if not is_safe_session_id(session_id):
+        raise ValueError(f"invalid session_id: {session_id!r}")
     # (0) Session continuity: persist the tail state before deletion.
     try:
         from context_engine.session_continuity import auto_save_on_session_end
