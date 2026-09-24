@@ -8,13 +8,18 @@ blocks the parent's async work.
 
 Protocol (one JSON object per line)::
 
-    request  {"tool": "read_file", "args": {"file_path": "x"}}
+    request  {"tool": "read_file", "args": {"file_path": "x"}, "token": "<one-time token>"}
     response {"ok": true,  "result": ...}
     response {"ok": false, "error": "..."}
 
 Safety invariants:
 
 - Binds ``127.0.0.1`` only; an explicit ``0.0.0.0`` / ``::`` host is refused.
+- When a per-run ``token`` is configured, every request frame must carry it
+  (the child reads it from ``SHERRY_PTC_RPC_TOKEN`` in its own environment). A
+  missing or wrong token makes the server drop the connection immediately,
+  without sending a response, so a stray local process cannot learn whether
+  the guess was close. Comparisons are constant-time.
 - Every dispatched tool runs with the child's ``session_id`` in the runnable
   config, so tools resolve their caller against the child session — the
   parent session is never exposed.
@@ -25,6 +30,7 @@ Safety invariants:
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import socket
 import threading
@@ -58,6 +64,7 @@ class PtcRpcServer:
         *,
         host: str = "127.0.0.1",
         tool_call_timeout: float = 120.0,
+        token: str | None = None,
     ) -> None:
         if host in _FORBIDDEN_HOSTS:
             raise ValueError(f"PTC RPC must bind loopback only; refusing host {host!r}")
@@ -67,6 +74,10 @@ class PtcRpcServer:
         self._session_id = session_id
         self._host = host
         self._tool_call_timeout = tool_call_timeout
+        # One-time, in-memory token. The runner always supplies a fresh value;
+        # ``None`` disables authentication and exists only for lower-level unit
+        # tests that exercise the protocol without the runner's handshake.
+        self._token = token
 
         self._sock: socket.socket | None = None
         self._stop = threading.Event()
@@ -157,18 +168,36 @@ class PtcRpcServer:
             while b"\n" in buffer:
                 line, buffer = buffer.split(b"\n", 1)
                 response = self._handle_line(line)
+                if response is None:
+                    # Auth rejection: drop the connection without a response so
+                    # a stray local client learns nothing from the failure.
+                    return
                 try:
                     conn.sendall((json.dumps(response) + "\n").encode("utf-8"))
                 except OSError:
                     return
 
-    def _handle_line(self, line: bytes) -> dict[str, Any]:
+    def _authenticated(self, token: object) -> bool:
+        """Constant-time check of the per-run token (no token ⇒ open)."""
+        if self._token is None:
+            return True
+        if not isinstance(token, str) or not hmac.compare_digest(token, self._token):
+            logger.warning("PTC RPC rejected a connection with a missing or invalid token")
+            return False
+        return True
+
+    def _handle_line(self, line: bytes) -> dict[str, Any] | None:
+        """Parse and dispatch one request; ``None`` means "reject and close"."""
         try:
             request = json.loads(line.decode("utf-8"))
+            if not isinstance(request, dict):
+                raise TypeError("payload must be an object")
             tool_name = request["tool"]
             args = request.get("args") or {}
         except (json.JSONDecodeError, KeyError, TypeError, UnicodeDecodeError) as exc:
             return {"ok": False, "error": f"invalid request: {exc}"}
+        if not self._authenticated(request.get("token")):
+            return None
         if not isinstance(tool_name, str) or not isinstance(args, dict):
             return {"ok": False, "error": "invalid request: tool must be str, args must be object"}
         try:

@@ -8,7 +8,10 @@ scrubbed environment, then capture and truncate its output.
 Safety invariants:
 
 - The child gets ``env=scrub_env()`` (no ``*_KEY`` / ``*_TOKEN`` / secrets) plus
-  only ``PYTHONPATH=<tmpdir>`` so ``import sherry_tools`` resolves.
+  only ``PYTHONPATH=<tmpdir>`` and a one-time RPC token. The token is generated
+  per run (``secrets.token_urlsafe``), lives only in memory, and is passed to
+  the child through the ``SHERRY_PTC_RPC_TOKEN`` environment variable — never
+  written to ``sherry_tools.py`` or any other file.
 - The child starts in its own process group; on timeout the whole group is
   SIGKILLed, so no orphan process (or grandchild) survives.
 - stdout/stderr are truncated to the configured byte caps.
@@ -19,6 +22,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
 import shutil
 import signal
 import subprocess  # noqa: S404 - intentional isolated child spawn
@@ -34,10 +38,11 @@ from agent.tools.pub_base.env_scrub import scrub_env
 
 from .builtins import render_allowed_modules, render_restricted_builtins
 from .rpc_server import PtcRpcServer
-from .stub_generator import generate_stub, tool_specs_from_base_tools
+from .stub_generator import PTC_RPC_TOKEN_ENV, generate_stub, tool_specs_from_base_tools
 
 #: Prefix for the per-call temporary directory (also used by orphan checks).
 PTC_TMP_PREFIX = "sherry_ptc_"
+
 
 _SCRIPT_TEMPLATE = """\
 import json
@@ -99,11 +104,12 @@ def build_child_script(user_code: str) -> str:
     )
 
 
-def build_child_env(tmpdir: str) -> dict[str, str]:
-    """Build the scrubbed child environment with the stub directory on PYTHONPATH."""
+def build_child_env(tmpdir: str, token: str) -> dict[str, str]:
+    """Build the scrubbed child environment: stub dir on PYTHONPATH + RPC token."""
     env = scrub_env()
     env["PYTHONPATH"] = tmpdir
     env["PYTHONUNBUFFERED"] = "1"
+    env[PTC_RPC_TOKEN_ENV] = token
     return env
 
 
@@ -187,12 +193,14 @@ async def run_ptc(
     timeout = int(config["ptc_timeout_seconds"])
 
     loop = asyncio.get_running_loop()
+    token = secrets.token_urlsafe(32)
     server = PtcRpcServer(
         tools_map,
         loop,
         int(config["ptc_max_tool_calls"]),
         session_id,
         tool_call_timeout=float(timeout),
+        token=token,
     )
     host, port = server.start()
 
@@ -208,7 +216,7 @@ async def run_ptc(
         with open(script_path, "w", encoding="utf-8") as fh:
             fh.write(build_child_script(code))
 
-        env = build_child_env(tmpdir)
+        env = build_child_env(tmpdir, token)
         serve_thread.start()
 
         proc = subprocess.Popen(  # noqa: S603 - argv is fully controlled

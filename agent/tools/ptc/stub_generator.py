@@ -11,6 +11,12 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+#: Child-process environment variable carrying the one-time RPC token. The
+#: runner sets it per invocation; the generated stub reads it and sends it on
+#: the first (only) frame of each connection. The token VALUE is never written
+#: into ``sherry_tools.py`` — only this variable name is.
+PTC_RPC_TOKEN_ENV = "SHERRY_PTC_RPC_TOKEN"
+
 
 @dataclass(frozen=True)
 class ToolStub:
@@ -89,7 +95,16 @@ _RPC_PORT = __RPC_PORT__
 
 def _rpc_call(tool_name, args):
     """Send one RPC request and block for its response."""
-    payload = json.dumps({"tool": tool_name, "args": args}, ensure_ascii=False) + "\\n"
+    import os
+
+    payload = json.dumps(
+        {
+            "tool": tool_name,
+            "args": args,
+            "token": os.environ.get("__RPC_TOKEN_ENV__", ""),
+        },
+        ensure_ascii=False,
+    ) + "\\n"
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     try:
         sock.connect((_RPC_HOST, _RPC_PORT))
@@ -149,5 +164,6 @@ def generate_stub(host: str, port: int, stubs: list[ToolStub]) -> str:
     return (
         _STUB_TEMPLATE.replace("__RPC_HOST__", host)
         .replace("__RPC_PORT__", str(port))
+        .replace("__RPC_TOKEN_ENV__", PTC_RPC_TOKEN_ENV)
         .replace("__WRAPPERS__", wrappers)
     )
