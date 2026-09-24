@@ -70,6 +70,8 @@ Order is the spec: `(deny file-write*)` under `(allow default)` means "everythin
 - `BwrapBackend.probe()`: a 3-second smoke run of `bwrap --ro-bind / / --proc /proc --dev /dev true`. Mere existence of the binary is not enough; on Ubuntu 24.04+ an AppArmor unprivileged-userns restriction can kill every bwrap at uid-map time, so a real smoke run is the only honest check.
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")` only; sbpl offers no exit-code based smoke probe.
 
+**PTC reuses this backend.** `execute_code` (Programmatic Tool Calling) exposes no `sandbox` flag, so it behaves like a `sandbox=True` call under every policy: a usable backend wraps `[sys.executable, script_path]`; `SANDBOX_POLICY=required` with no backend returns a `status: "sandbox_unavailable"` envelope without spawning; `auto` logs exactly one warning and degrades to an unsandboxed run. One honest caveat: `--unshare-all` also unshares the network namespace, so the PTC child's loopback RPC bridge to the parent may be unreachable under a real bwrap (unverified on a real Linux machine). See the [PTC page](../../ptc/README.md).
+
 ### 3. Dangerous-command gate (terminal only)
 
 `DANGEROUS_COMMAND_REGEX` is a blacklist of 6 alternative patterns, matched with `re.IGNORECASE` against the `" && "`-joined command string, before any spawn:
@@ -182,3 +184,4 @@ Notes:
 
 - `auto` + `True` + available backend behaves like cell 1: sandboxed via the backend wrap.
 - The caller-scope guard is a tool-layer check that runs before policy handling: any non-main scope (`subagent`, `background`) requesting `sandbox=False` is hard-rejected with a `ToolException` under every policy, because no approval interrupt exists in those graphs. Cell 4's interrupt therefore only fires for main-scope calls.
+- **PTC (`execute_code`)** is not shown as its own row because it exposes no `sandbox` flag: every run behaves like the `sandbox=True` column. `required` + no backend returns `sandbox_unavailable` (the cell-2 analog, refused before any spawn); `auto` + no backend degrades with one warning (the cell-5 analog); `off` never wraps.

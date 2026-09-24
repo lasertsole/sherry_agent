@@ -70,6 +70,8 @@ bwrap
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true`를 3초 타임아웃으로 스모크 실행. 바이너리 존재만으로는 부족합니다. Ubuntu 24.04+의 AppArmor 비특권 user namespace 제한은 uid-map 단계에서 모든 bwrap을 죽일 수 있으므로, 실제 스모크 실행만이 정직한 확인입니다.
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")`만 확인. sbpl에는 종료 코드 기반 스모크 프로브가 없습니다.
 
+**PTC는 이 백엔드를 재사용합니다.** `execute_code`(프로그래매틱 도구 호출)는 `sandbox` 플래그가 없으므로 모든 정책에서 `sandbox=True` 호출처럼 동작합니다: 쓸 수 있는 백엔드는 `[sys.executable, script_path]`를 감싸고, `SANDBOX_POLICY=required`인데 백엔드가 없으면 spawn하지 않고 `status: "sandbox_unavailable"` 엔벨로프를 반환하며, `auto`는 정확히 한 줄의 경고를 남기고 샌드박스 없이 강등합니다. 정직한 주의 하나: `--unshare-all`은 네트워크 네임스페이스도 비공유로 만들므로, 실제 bwrap 아래에서 PTC 자식에서 부모로 가는 loopback RPC 브리지는 도달 불가일 수 있습니다(실제 Linux 머신에서 미검증). [PTC 페이지](../../ptc/README.ko.md)를 보십시오.
+
 ### 3. 위험 명령 게이트 (terminal 전용)
 
 `DANGEROUS_COMMAND_REGEX`는 6개 대안 패턴의 블랙리스트 정규식이고, `" && "`로 연결한 전체 명령 문자열에 대해 `re.IGNORECASE`로 매칭하며, 어떤 생성보다 먼저 실행됩니다:
@@ -182,3 +184,4 @@ bwrap
 
 - `auto` + `True` + 백엔드 가능은 1번 칸과 같습니다: 백엔드 래프 안에서 실행.
 - 호출자 범위 가드는 정책 처리 전에 도는 도구 계층 검사입니다: 메인이 아닌 범위(`subagent`, `background`)의 `sandbox=False` 요청은 모든 정책에서 `ToolException`으로 강제 거부됩니다. 그 그래프에는 승인 인터럽트가 존재하지 않기 때문입니다. 따라서 4번 칸의 인터럽트는 메인 범위 호출에만 발생합니다.
+- **PTC(`execute_code`)** 는 `sandbox` 플래그가 없어 별도 행으로 두지 않습니다: 모든 실행이 `sandbox=True` 열과 같습니다. `required` + 백엔드 없음은 `sandbox_unavailable`을 반환하고(2번 칸 상당, spawn 전 거부), `auto` + 백엔드 없음은 경고 한 번과 함께 강등하며(5번 칸 상당), `off`는 결코 감싸지 않습니다.

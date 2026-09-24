@@ -1,12 +1,12 @@
-# 🛡️ ツールサンドボックス: terminal と python_repl
+# 🛡️ ツールサンドボックス: terminal、python_repl、PTC
 
 [English](README.md) · [中文](README.zh.md) · [한국어](README.ko.md) · **日本語**
 
-> エージェントがモデル発のコマンドをどう制約するか: すべての子プロセス生成時に環境変数を無条件に洗浄し、利用可能なら OS ネイティブのサンドボックスで包み、意図的なバイパスには人間の承認ゲートを置きます。
+> エージェントがモデル発のコード実行をどう制約するか: すべての子プロセス生成時に環境変数を無条件に洗浄し、利用可能なら OS ネイティブのサンドボックスで包み、意図的なバイパスには人間の承認ゲートを置きます。
 
-2つのツールがモデルにあなたのマシン上でのコード実行を許しています: `terminal`(シェルコマンド)と `python_repl`(子プロセス内の Python)。幻覚やプロンプトインジェクションによる1つのコマンドが、環境変数から API キーを読み取ったり、プロジェクト外に書き込んだり、他のプロセスに触れたりできてしまいます。サンドボックス層はこの3つすべてを制限します。
+3つのツールがモデルにあなたのマシン上でのコード実行を許しています: `terminal`(シェルコマンド)、`python_repl`(子プロセス内の Python)、そして PTC の `execute_code`(RPC ブリッジ経由で実ツールを呼べる、子プロセス内のより長い Python スクリプト)です。幻覚やプロンプトインジェクションによる1つのコマンドが、環境変数から API キーを読み取ったり、プロジェクト外に書き込んだり、他のプロセスに触れたりできてしまいます。サンドボックス層はこの3つすべてを制限します。
 
-事実の基準(source of truth): `agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal.py`、`agent/tools/python_repl.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
+事実の基準(source of truth): `agent/tools/pub_base/env_scrub.py`、`agent/tools/pub_base/sandbox.py`、`agent/tools/pub_base/sandbox_bwrap.py`、`agent/tools/pub_base/sandbox_seatbelt.py`、`agent/tools/pub_base/path_utils.py`、`agent/tools/file_tools/`、`agent/tools/terminal.py`、`agent/tools/python_repl.py`、`agent/tools/ptc/runner.py`、`agent/middlewares/humanInTheLoop/`、`agent/middlewares/path_guard/`。
 
 ## 目次
 
@@ -29,12 +29,14 @@
 | **ファイルツールのパス引数** | ツール呼び出しが `read_file` にトラバーサルやハード拒否パスを要求 | §5 外部パスゲート + §6 3つの構造ゲート + §7 `PathGuard`(外部パスは依然 HITL 経由) |
 | **プロセス / セッションスコープ** | 子が名前空間を共有し、親より長く生き残り得る | L2 `--unshare-all`、`--die-with-parent` |
 | **意図的なバイパス** | モデルが `sandbox=False` を要求 | 人間の承認ゲート (HITL) |
+| **プログラム的ツール呼び出し (PTC)** | 生成された `execute_code` 子スクリプトが実ツールを呼び、ファイルシステムに直接到達し得る | L1 環境変数洗浄 + L2 OS サンドボックスラップ(`terminal` / `python_repl` と同じバックエンド)+ 制限付き builtins + インポート許可リスト |
 
 2つの層と1つのゲート — それに加えてファイルツール独自のパス防御スタック:
 
 - **L1. 環境変数洗浄**(`scrub_env`): 無条件、すべての生成時点で実行。人間が `sandbox=False` を承認した場合でも例外なし。
 - **L2. OS ネイティブサンドボックス**: Linux は bubblewrap、macOS は Seatbelt — 書き込み封じ込めに加えて機密パスのリードシールド([§2](isolation/README.ja.md#2-os-ネイティブサンドボックスバックエンド-l2)参照)。Windows には OS バックエンドがありません([正直な制限事項](#️-正直な制限事項)参照)。
 - **人間の承認ゲート**: `sandbox=False` によるバイパスはメインセッションでのみ可能で、HITL インタラプトを通ります。
+- **PTC (`execute_code`)**: executor 専用で `sandbox` フラグを持たないため、常にサンドボックスを要求します — 子 argv は同じ L2 バックエンドで包まれます。`SANDBOX_POLICY=required` は実行を拒否し、`auto` はちょうど1件の警告とともに降格します([分離 §2](isolation/README.ja.md#2-os-ネイティブサンドボックスバックエンド-l2)参照)。
 - **ファイルツールのパスゲート**([分離 §5–§7](isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)): `resolve_project_path()` の3つの構造ゲートと `O_NOFOLLOW` I/O、仮想パス描画、検索コンテインメント、6段階の外部パス承認フロー、そして `PathGuard` ミドルウェアのスクリーニング。
 
 ## ⚙️ 実装とアーキテクチャ
@@ -66,16 +68,17 @@
 
 ### ツール統合
 
-`SafeShellTool`(名前 `terminal`)と `TimedPythonREPLTool`(名前 `python_repl`)はどちらも LLM から見えるツール呼び出しスキーマに `sandbox: bool = True` パラメータを露出しており、モデルが呼び出しごとに選択します。
+`SafeShellTool`(名前 `terminal`)と `TimedPythonREPLTool`(名前 `python_repl`)はどちらも LLM から見えるツール呼び出しスキーマに `sandbox: bool = True` パラメータを露出しており、モデルが呼び出しごとに選択します。PTC の `ExecuteCodeTool`(名前 `execute_code`)には `sandbox` パラメータが一切ありません — executor 専用で、常にサンドボックスを要求します。
 
-- **サンドボックス経路**: terminal は `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True` と意味的に同一)、python_repl は `backend.wrap([sys.executable, "-c", script], env)` を使います。包まれた argv は list として exec され、シェル kwargs は一切ありません。
+- **サンドボックス経路**: terminal は `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True` と意味的に同一)、python_repl は `backend.wrap([sys.executable, "-c", script], env)`、PTC の子は `backend.wrap([sys.executable, script_path], env)` を使います。包まれた argv は list として exec され、シェル kwargs は一切ありません。
 - **フォールバック経路(Windows / バックエンドなし)**: terminal はコマンドを `" && "` で連結して `shell=True` で起動し、python_repl は `[sys.executable, "-c", script]` を list として起動します。Windows には OS サンドボックスバックエンドが**ありません**。
-- **すべての経路で無条件**: `env=scrub_env()` と `cwd=str(ROOT_DIR)`(cwd 固定)。両ツールとも30秒のタイムアウト(`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`)を強制し、期限切れで子を kill します。
-- **エラーの表面化**: `REQUIRED` でバックエンドがない場合、terminal は `RuntimeError` を `ToolException` に包み(`handle_tool_error=True` がそのまま表面化)、python_repl は生の `RuntimeError` をそのまま投げます。
+- **すべての経路で無条件**: `env=scrub_env()` と `cwd=str(ROOT_DIR)`(cwd 固定)。両ツールとも30秒のタイムアウト(`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`)を強制し、期限切れで子を kill します。PTC は自前の `ptc_timeout_seconds` を強制し、子のプロセスグループへ SIGKILL します。
+- **エラーの表面化**: `REQUIRED` でバックエンドがない場合、terminal は `RuntimeError` を `ToolException` に包み(`handle_tool_error=True` がそのまま表面化)、python_repl は生の `RuntimeError` をそのまま投げ、PTC は何も spawn する前に `status: "sandbox_unavailable"` エンベロープを返します。
 - **降格警告**: この呼び出しがサンドボックスを望んでいたのにバックエンドがなく、ポリシーが `off` でない場合、ツール層はちょうど1件の loguru 警告を記録してからサンドボックスなしで実行します:
 
   - `terminal: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed shell execution`
   - `python_repl: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
+  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
 
 ## 🛠️ 設定と使い方
 
@@ -123,6 +126,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19テスト、サンドボックス強化前の HITL / terminal レガシー動作を固定 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17テスト、バイパス承認フロー、YOLO 素通し、スコープスタンピング |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` スタンピング |
+| `tests/agent/tools/ptc/test_rpc_auth.py` / `test_sandbox_integration.py` / `test_runner_hardening.py` | PTC RPC ワンタイムトークン握手、PTC サンドボックスポリシーマッピング、runner のトークンライフサイクルとバックエンドラップ |
 
 マトリクステストは `subprocess.Popen` をグローバルにパッチし、ツールモジュールの継ぎ目で `get_backend` をスタブし、環境変数で `SANDBOX_POLICY` を設定して、実際の `read_policy` が各セルで走るようにしています。
 
@@ -132,6 +136,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **Windows には OS サンドボックスバックエンドがありません。** そこの防御は環境変数洗浄 + cwd 固定 + 危険コマンド正規表現 + 機密ファイル正規表現 + HITL ゲートです。プロジェクトルート外へのファイル書き込みを防ぐ仕組みはなく、**読み取り保護も利用できません**: OS バックエンドが無ければリードシールドも無く、アプリ層の正規表現が唯一の読み取りゲートです。
 - **機密ファイル正規表現は緩和であり、障壁ではありません。** リテラルなコマンド形状にしかマッチせず、`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、変数、グロブは層の設計上迂回できます。バックエンドが存在する場合の実際の読み取り障壁は OS リードシールドです。
 - **`python_repl` には機密ファイル正規表現がありません。** terminal 専用ゲート([分離 §3](isolation/README.ja.md#3-危険コマンドゲート-terminal-のみ))はそれをカバーしません。代わりにラッパースクリプトがビルトインを制限します(安全なサブセットは `open` / `__import__` を含みません) — 別の、より狭い制御です。
+- **PTC は同じバックエンドの注意点を継承します。** `execute_code` は使えるバックエンドがあるとき L2 バックエンドで子を包むようになりましたが、`SANDBOX_POLICY=auto`(デフォルト)で使えるバックエンドがないホストでは1件の警告の後にサンドボックスなしで実行され、bwrap 構築の `--unshare-all` はネットワーク名前空間も非共有化するため、実際の bwrap の下で loopback RPC ブリッジが到達可能かは未検証です。PTC のワンタイム RPC トークンとその `/proc/<pid>/environ` 残余は [PTC ページ](../ptc/README.ja.md)に記しています。
 - **降格経路は設計どおりサンドボックスなしで実行されます。** `auto` + バックエンドなし = 警告1件を記録してから普段どおりサンドボックスなしで実行。これは意図された「可用性優先」の選択で、逆が必要なら `SANDBOX_POLICY=required` を選んでください。
 - **環境変数洗浄は名前ベースです。** ブロック対象の部分文字列を1つも含まない名前(かつ拒否リストにない名前)で保存されたシークレットはそのまま通ります。値のスキャンも動的シークレット検出もなく、それは意図的なものです。
 - **ネットワークサンドボックス、seccomp、AppArmor プロファイルは主張も設定もしていません。** 分離は [分離 §2](isolation/README.ja.md#2-os-ネイティブサンドボックスバックエンド-l2) に示した bwrap / Seatbelt の構築そのものだけです。

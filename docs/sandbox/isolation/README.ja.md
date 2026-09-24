@@ -70,6 +70,8 @@ bwrap
 - `BwrapBackend.probe()`: `bwrap --ro-bind / / --proc /proc --dev /dev true` を3秒のタイムアウトでスモーク実行。バイナリの存在だけでは不十分です。Ubuntu 24.04+ の AppArmor 非特権 user namespace 制限は uid-map 段階ですべての bwrap を殺せます。だからこそ実際のスモーク実行だけが誠実な確認です。
 - `SeatbeltBackend.probe()`: `shutil.which("sandbox-exec")` のみ。sbpl には終了コードベースのスモークプローブがありません。
 
+**PTC はこのバックエンドを再利用します。** `execute_code`(プログラム的ツール呼び出し)は `sandbox` フラグを持たないため、どのポリシーでも `sandbox=True` 呼び出しと同様に振る舞います: 使えるバックエンドは `[sys.executable, script_path]` を包み、`SANDBOX_POLICY=required` でバックエンドが無い場合は spawn せずに `status: "sandbox_unavailable"` エンベロープを返し、`auto` はちょうど1件の警告を記録してサンドボックスなし実行へ降格します。正直な注意が1つ: `--unshare-all` はネットワーク名前空間も非共有化するため、実際の bwrap の下で PTC 子から親への loopback RPC ブリッジは到達不能になり得ます(実機の Linux では未検証)。[PTC ページ](../../ptc/README.ja.md)を参照してください。
+
 ### 3. 危険コマンドゲート (terminal のみ)
 
 `DANGEROUS_COMMAND_REGEX` は6つの選択肢パターンからなるブラックリスト正規表現で、`" && "` で連結した完全なコマンド文字列に対して `re.IGNORECASE` でマッチし、どの生成よりも先に実行されます:
@@ -182,3 +184,4 @@ bwrap
 
 - `auto` + `True` + バックエンド利用可能はセル1と同じです: バックエンドラップ内で実行。
 - 呼び出し元スコープのガードはポリシー処理の前に走るツール層の検査です: メイン以外のスコープ(`subagent`、`background`)からの `sandbox=False` 要求は、すべてのポリシーで `ToolException` として強制拒否されます。それらのグラフには承認インタラプトが存在しないためです。したがってセル4のインタラプトはメインスコープの呼び出しにだけ発生します。
+- **PTC (`execute_code`)** は `sandbox` フラグを持たないため独立した行にしていません: どの実行も `sandbox=True` 列と同じ振る舞いです。`required` + バックエンドなしは `sandbox_unavailable` を返し(セル2相当、spawn 前に拒否)、`auto` + バックエンドなしは警告1件とともに降格し(セル5相当)、`off` は決して包みません。

@@ -1,12 +1,12 @@
-# 🛡️ 도구 샌드박스: terminal과 python_repl
+# 🛡️ 도구 샌드박스: terminal, python_repl, PTC
 
 [English](README.md) · [中文](README.zh.md) · **한국어** · [日本語](README.ja.md)
 
-> 에이전트가 모델이 시작한 명령을 어떻게 구속하는지: 모든 자식 프로세스 생성 시점에 환경 변수를 무조건 세척하고, 가능하면 OS 네이티브 샌드박스로 감싸며, 의도적인 우회에는 사람의 승인 게이트를 둡니다.
+> 에이전트가 모델이 시작한 코드 실행을 어떻게 구속하는지: 모든 자식 프로세스 생성 시점에 환경 변수를 무조건 세척하고, 가능하면 OS 네이티브 샌드박스로 감싸며, 의도적인 우회에는 사람의 승인 게이트를 둡니다.
 
-두 도구가 모델이 여러분의 머신에서 코드를 실행하게 합니다: `terminal`(셸 명령)과 `python_repl`(자식 프로세스 안의 Python). 환각되거나 주입된 명령 하나가 환경 변수에서 API 키를 읽거나, 프로젝트 밖에 파일을 쓰거나, 다른 프로세스를 건드릴 수 있습니다. 샌드박스 계층은 이 세 가지를 모두 제한합니다.
+세 도구가 모델이 여러분의 머신에서 코드를 실행하게 합니다: `terminal`(셸 명령), `python_repl`(자식 프로세스 안의 Python), 그리고 PTC의 `execute_code`(RPC 브리지로 실제 도구를 호출할 수 있는, 자식 프로세스 안의 더 긴 Python 스크립트)입니다. 환각되거나 주입된 명령 하나가 환경 변수에서 API 키를 읽거나, 프로젝트 밖에 파일을 쓰거나, 다른 프로세스를 건드릴 수 있습니다. 샌드박스 계층은 이 세 가지를 모두 제한합니다.
 
-사실의 기준(source of truth): `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
+사실의 기준(source of truth): `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sandbox.py`, `agent/tools/pub_base/sandbox_bwrap.py`, `agent/tools/pub_base/sandbox_seatbelt.py`, `agent/tools/pub_base/path_utils.py`, `agent/tools/file_tools/`, `agent/tools/terminal.py`, `agent/tools/python_repl.py`, `agent/tools/ptc/runner.py`, `agent/middlewares/humanInTheLoop/`, `agent/middlewares/path_guard/`.
 
 ## 목차
 
@@ -29,12 +29,14 @@
 | **파일 도구 경로 인자** | 도구 호출이 `read_file`에 트래버설 또는 하드 거부 경로를 요청 | §5 외부 경로 게이트 + §6 세 개의 구조적 게이트 + §7 `PathGuard`(외부 경로는 여전히 HITL 경유) |
 | **프로세스 / 세션 범위** | 자식이 네임스페이스를 공유하고 부모보다 오래 살 수 있음 | L2 `--unshare-all`, `--die-with-parent` |
 | **의도적 우회** | 모델이 `sandbox=False`를 요청 | 사람 승인 게이트 (HITL) |
+| **프로그래매틱 도구 호출 (PTC)** | 생성된 `execute_code` 자식 스크립트가 실제 도구를 호출해 파일시스템에 직접 닿을 수 있음 | L1 환경 변수 세척 + L2 OS 샌드박스 래핑(`terminal` / `python_repl`과 같은 백엔드) + 제한 builtins + 임포트 허용 목록 |
 
 두 계층과 하나의 게이트 — 여기에 파일 도구만의 경로 방어 스택이 더해집니다:
 
 - **L1. 환경 변수 세척**(`scrub_env`): 무조건, 모든 생성 시점에서 실행. 사람이 `sandbox=False`를 승인한 경우에도 예외 없음.
 - **L2. OS 네이티브 샌드박스**: Linux는 bubblewrap, macOS는 Seatbelt — 쓰기 봉쇄에 더해 민감 경로 리드 실드([§2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2) 참조). Windows에는 OS 백엔드가 없음([정직한 한계 고지](#️-정직한-한계-고지) 참조).
 - **사람 승인 게이트**: `sandbox=False` 우회는 메인 세션에서만 가능하며 HITL 인터럽트를 거칩니다.
+- **PTC(`execute_code`)**: executor 전용이고 `sandbox` 플래그가 없으므로 항상 샌드박스를 요청합니다 — 자식 argv는 같은 L2 백엔드로 감싸집니다. `SANDBOX_POLICY=required`는 실행을 거부하고, `auto`는 정확히 한 번의 경고와 함께 강등합니다([격리 §2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2) 참조).
 - **파일 도구 경로 게이트**([격리 §5–§7](isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)): `resolve_project_path()`의 세 개의 구조적 게이트와 `O_NOFOLLOW` I/O, 가상 경로 렌더링, 검색 컨테인먼트, 6단계 외부 경로 승인 흐름, 그리고 `PathGuard` 미들웨어 스크리닝.
 
 ## ⚙️ 구현과 아키텍처
@@ -66,16 +68,17 @@
 
 ### 도구 통합
 
-`SafeShellTool`(이름 `terminal`)과 `TimedPythonREPLTool`(이름 `python_repl`)은 모두 LLM이 보는 도구 호출 스키마에 `sandbox: bool = True` 파라미터를 노출하므로, 모델이 호출마다 선택합니다.
+`SafeShellTool`(이름 `terminal`)과 `TimedPythonREPLTool`(이름 `python_repl`)은 모두 LLM이 보는 도구 호출 스키마에 `sandbox: bool = True` 파라미터를 노출하므로, 모델이 호출마다 선택합니다. PTC의 `ExecuteCodeTool`(이름 `execute_code`)에는 `sandbox` 파라미터가 전혀 없습니다 — executor 전용이며 항상 샌드박스를 요청합니다.
 
-- **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True`와 의미적으로 동일), python_repl은 `backend.wrap([sys.executable, "-c", script], env)`를 씁니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다.
+- **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True`와 의미적으로 동일), python_repl은 `backend.wrap([sys.executable, "-c", script], env)`, PTC 자식은 `backend.wrap([sys.executable, script_path], env)`를 씁니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다.
 - **폴백 경로(Windows / 백엔드 없음)**: terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**.
-- **모든 경로에서 무조건**: `env=scrub_env()`와 `cwd=str(ROOT_DIR)`(cwd 고정). 두 도구 모두 30초 타임아웃(`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`)을 강제하고 만료 시 자식을 죽입니다.
-- **오류 표면화**: `REQUIRED`인데 백엔드가 없으면 terminal은 `RuntimeError`를 `ToolException`으로 감싸고(`handle_tool_error=True`가 그대로 표면화), python_repl은 원시 `RuntimeError`를 그대로 던집니다.
+- **모든 경로에서 무조건**: `env=scrub_env()`와 `cwd=str(ROOT_DIR)`(cwd 고정). 두 도구 모두 30초 타임아웃(`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`)을 강제하고 만료 시 자식을 죽입니다. PTC는 자체 `ptc_timeout_seconds`를 강제하고 자식의 프로세스 그룹에 SIGKILL합니다.
+- **오류 표면화**: `REQUIRED`인데 백엔드가 없으면 terminal은 `RuntimeError`를 `ToolException`으로 감싸고(`handle_tool_error=True`가 그대로 표면화), python_repl은 원시 `RuntimeError`를 그대로 던지며, PTC는 아무것도 spawn하기 전에 `status: "sandbox_unavailable"` 엔벨로프를 반환합니다.
 - **강등 경고**: 이번 호출이 샌드박스를 원했는데 백엔드가 없고 정책이 `off`가 아니면, 도구 계층이 정확히 한 줄의 loguru 경고를 남긴 뒤 샌드박스 없이 실행합니다:
 
   - `terminal: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed shell execution`
   - `python_repl: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
+  - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
 
 ## 🛠️ 설정과 사용법
 
@@ -123,6 +126,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_characterization.py` | 19개 테스트, 샌드박스 강화 이전의 HITL / terminal 레거시 동작 고정 |
 | `tests/agent/middlewares/humanInTheLoop/test_hitl_sandbox_bypass.py` | 17개 테스트, 우회 승인 흐름, YOLO 통과, 범위 스탬핑 |
 | `tests/agent/tools/subagent/test_inherited_tool_policy.py` | `caller_scope="subagent"` 스탬핑 |
+| `tests/agent/tools/ptc/test_rpc_auth.py` / `test_sandbox_integration.py` / `test_runner_hardening.py` | PTC RPC 일회용 토큰 핸드셰이크, PTC 샌드박스 정책 매핑, runner 토큰 수명주기와 백엔드 래핑 |
 
 매트릭스 테스트는 `subprocess.Popen`을 전역으로 패치하고, 도구 모듈 경계에서 `get_backend`를 스텁하며, 환경 변수로 `SANDBOX_POLICY`를 설정해 실제 `read_policy`가 매 칸에서 실행되게 합니다.
 
@@ -132,6 +136,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **Windows에는 OS 샌드박스 백엔드가 없습니다.** 그곳의 방어는 환경 변수 세척 + cwd 고정 + 위험 명령 정규식 + 민감 파일 정규식 + HITL 게이트입니다. 프로젝트 루트 밖의 파일 쓰기를 막는 장치는 없고, **읽기 보호도 사용할 수 없습니다**: OS 백엔드가 없으면 리드 실드도 없고, 애플리케이션 계층 정규식이 유일한 읽기 게이트입니다.
 - **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭, 히어도큐먼트는 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
 - **`python_repl`에는 민감 파일 정규식이 없습니다.** terminal 전용 게이트([격리 §3](isolation/README.ko.md#3-위험-명령-게이트-terminal-전용))가 그것을 덮지 않습니다. 대신 래퍼 스크립트가 빌트인을 제한합니다(안전한 부분집합은 `open` / `__import__`를 생략) — 다르고 더 좁은 통제입니다.
+- **PTC는 같은 백엔드의 주의점을 물려받습니다.** `execute_code`는 이제 쓸 수 있는 백엔드가 있으면 L2 백엔드로 자식을 감싸지만, `SANDBOX_POLICY=auto`(기본)이고 쓸 수 있는 백엔드가 없는 호스트에서는 경고 한 줄 뒤에 샌드박스 없이 실행되며, bwrap 구성의 `--unshare-all`은 네트워크 네임스페이스도 비공유로 만듭니다 — 실제 bwrap 아래에서 loopback RPC 브리지가 도달 가능한지는 미검증입니다. PTC의 일회용 RPC 토큰과 그 `/proc/<pid>/environ` 잔여 위험은 [PTC 페이지](../ptc/README.ko.md)에 적었습니다.
 - **강등 경로는 설계대로 샌드박스 없이 실행됩니다.** `auto` + 백엔드 없음 = 경고 한 줄 기록 후 평소처럼 샌드박스 없이 실행. 이것은 의도된 "가용성 우선" 선택이며, 반대가 필요하면 `SANDBOX_POLICY=required`를 고르세요.
 - **환경 변수 세척은 이름 기반입니다.** 차단 부분 문자열이 하나도 없는 이름(그리고 거부 목록에 없는 이름)으로 저장된 시크릿은 그대로 통과합니다. 값 스캔도 동적 시크릿 탐지도 없으며, 이는 의도된 것입니다.
 - **네트워크 샌드박싱, seccomp, AppArmor 프로파일은 주장하지도 구성하지도 않았습니다.** 격리는 [격리 §2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2)에 보여준 bwrap / Seatbelt 구성 정확히 그것뿐입니다.

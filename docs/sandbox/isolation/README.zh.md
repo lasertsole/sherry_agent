@@ -70,6 +70,8 @@ bwrap
 - `BwrapBackend.probe()`：以 3 秒超时冒烟运行 `bwrap --ro-bind / / --proc /proc --dev /dev true`。二进制存在并不代表可用；Ubuntu 24.04+ 的 AppArmor 非特权 user namespace 限制可以在 uid-map 阶段杀死所有 bwrap，所以真实的冒烟运行才是诚实的检查。
 - `SeatbeltBackend.probe()`：仅 `shutil.which("sandbox-exec")`；sbpl 没有基于退出码的冒烟探测可用。
 
+**PTC 复用这套后端。** `execute_code`（程序化工具调用）不暴露 `sandbox` 开关，因此在任何策略下都表现得像 `sandbox=True` 调用：后端可用时包装 `[sys.executable, script_path]`；`SANDBOX_POLICY=required` 且无后端时返回 `status: "sandbox_unavailable"` 信封且不派生子进程；`auto` 记录恰好一条警告后降级为无沙箱运行。一个诚实的提醒：`--unshare-all` 同时隔离网络命名空间，因此在真实 bwrap 下 PTC 子进程到父进程的 loopback RPC 桥可能不可达（未在真实 Linux 机器上验证）。见 [PTC 页](../../ptc/README.zh.md)。
+
 ### 3. 危险命令拦截（仅 terminal）
 
 `DANGEROUS_COMMAND_REGEX` 是含 6 个分支的黑名单正则，以 `re.IGNORECASE` 匹配用 `" && "` 拼接后的完整命令串，在任何子进程创建之前执行：
@@ -182,3 +184,4 @@ bwrap
 
 - `auto` + `True` + 后端可用的行为与第 1 格相同：经后端包装执行。
 - 调用方作用域守卫是策略处理之前的工具层检查：任何非主会话作用域（`subagent`、`background`）请求 `sandbox=False` 都会在所有策略下被 `ToolException` 硬拒，因为那些图里不存在审批中断。因此第 4 格的中断只对主会话调用触发。
+- **PTC（`execute_code`）** 不单列一行，因为它不暴露 `sandbox` 开关：每次运行都等同于 `sandbox=True` 列。`required` + 无后端返回 `sandbox_unavailable`（第 2 格的同类：派生之前即拒绝）；`auto` + 无后端降级并恰好一条警告（第 5 格的同类）；`off` 从不包装。
