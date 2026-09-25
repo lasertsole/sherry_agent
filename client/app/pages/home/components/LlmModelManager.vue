@@ -52,7 +52,7 @@
         v-if="selected"
         class="flex flex-col gap-2">
         <div
-          v-for="key in props.keys"
+          v-for="key in paramKeys"
           :key="key"
           class="flex flex-col gap-1">
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ key }}</span>
@@ -134,8 +134,10 @@ let flashTimer: ReturnType<typeof setTimeout> | null = null;
 /** Synthetic id of the built-in local-model entry (never persisted as a profile). */
 const LOCAL_ENTRY_ID = 'builtin:local';
 
-/** The group's local-model flag key (undefined for groups without one). */
 const localFlagKey = computed(() => props.keys.find(k => k.endsWith('_MODEL_LOCAL')));
+
+/** Parameter keys shown as inputs: the local flag never is (it is derived on apply). */
+const paramKeys = computed(() => props.keys.filter(k => k !== localFlagKey.value));
 
 /**
  * The built-in "local model" entry: the group's live `.env` parameters with the
@@ -259,7 +261,12 @@ const saveProfile = () => {
 /** Ask the parent to write the draft into `.env` (parent marks it active on success). */
 const applyProfile = () => {
   if (!selected.value) return;
-  emit('apply', { id: selected.value.id, params: { ...draft.value } });
+  const params: Record<string, string> = { ...draft.value };
+  // The local flag is derived from WHICH entry is applied, never typed: the
+  // built-in local entry turns it on, any saved profile turns it off.
+  const flagKey = localFlagKey.value;
+  if (flagKey) params[flagKey] = isLocalEntrySelected.value ? 'true' : 'false';
+  emit('apply', { id: selected.value.id, params });
 };
 
 onBeforeUnmount(() => {

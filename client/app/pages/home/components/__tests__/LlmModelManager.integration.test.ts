@@ -206,10 +206,12 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
     await wrapper.findAll('[role="button"]')[0]!.trigger('click'); // select the local entry
 
-    // parameters are rendered but disabled (read-only)
+    // parameters are rendered but disabled (read-only) — and never include the
+    // local flag input (it is derived from which entry is applied)
     const inputs = wrapper.findAll('input.inp');
-    expect(inputs).toHaveLength(LOCAL_KEYS.length);
+    expect(inputs).toHaveLength(LOCAL_KEYS.length - 1);
     expect(inputs.every(i => i.attributes('disabled') !== undefined)).toBe(true);
+    expect(inputs.some(i => (i.attributes('value') ?? '') === 'false')).toBe(false);
     // 应用 present, 保存 absent
     const labels = wrapper.findAll('button.btn').map(b => b.text());
     expect(labels).toContain('应用');
@@ -230,6 +232,25 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const payload = wrapper.emitted('apply')![0]![0] as { id: string; params: Record<string, string> };
     expect(payload.id).toBe('builtin:local');
     expect(payload.params.EMBEDDING_MODEL_LOCAL).toBe('true');
+    expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
+  });
+
+  it('applying a saved profile forces the local flag to false', async () => {
+    const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const LOCAL_VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'true',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    // the stored profile even CLAIMS local=true; the applied entry decides otherwise
+    makeStore([{ id: 'e1', label: 'remote', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
+    // no flag input anywhere
+    expect(wrapper.findAll('input.inp')).toHaveLength(1);
+    const applyButton = wrapper.findAll('button.btn').find(b => b.text() === '应用');
+    await applyButton!.trigger('click');
+    const payload = wrapper.emitted('apply')![0]![0] as { id: string; params: Record<string, string> };
+    expect(payload.id).toBe('e1');
+    expect(payload.params.EMBEDDING_MODEL_LOCAL).toBe('false');
     expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
   });
 
