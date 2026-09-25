@@ -6,32 +6,20 @@
       {{ t('thinkingToggle.label') }}
     </span>
 
-    <!-- Switch models: on/off ToggleSwitch -->
-    <ToggleSwitch
-      v-if="store.mode === 'on_off'"
-      v-model="boolChecked"
-      @value-change="handleSwitch">
-      <template #handle="{ checked: on }">
-        <i :class="['!text-xs pi pi-bolt', on ? '!text-theme-main' : '!text-gray-400']"></i>
-      </template>
-    </ToggleSwitch>
-
-    <!-- Always-think models: collapsed level picker — the trigger shows only
-         the current selection; clicking opens the 低/高/最高 list -->
-    <template v-else>
-      <Button
-        variant="text"
-        size="small"
-        :label="currentLevelLabel"
-        icon="pi pi-angle-down"
-        icon-pos="right"
-        :aria-label="t('thinkingToggle.a11y')"
-        @click="toggleMenu" />
-      <Menu
-        ref="levelMenu"
-        :model="levelItems"
-        popup />
-    </template>
+    <!-- Collapsed picker for both modes: the trigger shows only the current
+         selection (开启/关闭, or 低/高/最高); clicking opens the list. -->
+    <Button
+      variant="text"
+      size="small"
+      :label="triggerLabel"
+      icon="pi pi-angle-down"
+      icon-pos="right"
+      :aria-label="t('thinkingToggle.a11y')"
+      @click="toggleMenu" />
+    <Menu
+      ref="thinkMenu"
+      :model="menuItems"
+      popup />
 
     <!-- Mobile fallback: single button cycling the next state -->
     <button
@@ -56,36 +44,48 @@ const store = useThinkingStore();
 
 const levels: Array<'low' | 'high' | 'max'> = ['low', 'high', 'max'];
 
-/** Popup list of the three levels (opened by the collapsed trigger). */
-const levelMenu = ref();
+/** Popup list of the current mode's options, opened by the collapsed trigger. */
+const thinkMenu = ref();
 
-/** Local mirror of the store value (kept in sync for the switch binding). */
-const boolChecked = ref(false);
-const currentLevel = computed(() => {
-  const v = store.current(props.sessionId);
-  return v === 'low' || v === 'high' || v === 'max' ? v : 'high';
-});
-const currentLevelLabel = computed(() => t(`thinkingToggle.${currentLevel.value}`));
-/** Menu items: the current level carries a check marker. */
-const levelItems = computed(() =>
-  levels.map(lvl => ({
-    label: t(`thinkingToggle.${lvl}`),
-    icon: currentLevel.value === lvl ? 'pi pi-check' : undefined,
-    command: () => handleLevel(lvl)
-  }))
+/** Current value of the session's thinking control (bool for on_off, level for levels). */
+const currentValue = computed(() => store.current(props.sessionId));
+const currentLevel = computed(() =>
+  currentValue.value === 'low' || currentValue.value === 'high' || currentValue.value === 'max'
+    ? currentValue.value
+    : 'high'
 );
+const thinkingOn = computed(() => currentValue.value === true);
+
+/**
+ * Trigger text: the selected option only (the list stays hidden until clicked),
+ * mirroring the level picker for switch-style models.
+ */
+const triggerLabel = computed(() =>
+  store.mode === 'levels'
+    ? t(`thinkingToggle.${currentLevel.value}`)
+    : t(`thinkingToggle.${thinkingOn.value ? 'on' : 'off'}`)
+);
+
+/** Menu items for the active mode; the current option carries a check marker. */
+const menuItems = computed(() => {
+  if (store.mode === 'levels') {
+    return levels.map(lvl => ({
+      label: t(`thinkingToggle.${lvl}`),
+      icon: currentLevel.value === lvl ? 'pi pi-check' : undefined,
+      command: () => handleLevel(lvl)
+    }));
+  }
+  return ([true, false] as const).map(enabled => ({
+    label: t(`thinkingToggle.${enabled ? 'on' : 'off'}`),
+    icon: thinkingOn.value === enabled ? 'pi pi-check' : undefined,
+    command: () => handleOnOff(enabled)
+  }));
+});
+
 const active = computed(() => {
   if (store.mode === 'levels') return true; // always-think models are always on
-  return store.current(props.sessionId) === true;
+  return thinkingOn.value;
 });
-
-watch(
-  () => store.current(props.sessionId),
-  value => {
-    boolChecked.value = value === true;
-  },
-  { immediate: true }
-);
 
 /** Hydrate on first mount and whenever the session changes. */
 watch(
@@ -97,15 +97,13 @@ watch(
 );
 
 /**
- * Push a switch change to the store (which persists to the backend).
+ * Enable/disable thinking (switch-style models).
  * Blocked while the session is streaming — the model variant must never
  * change mid-turn.
- * @param value ToggleSwitch emits a boolean.
+ * @param enabled
  */
-const handleSwitch = (value: string | boolean) => {
+const handleOnOff = (enabled: boolean) => {
   if (props.streaming) return;
-  const enabled = value === true || value === 'true';
-  boolChecked.value = enabled;
   store.setValue(props.sessionId, enabled);
 };
 
@@ -119,13 +117,13 @@ const handleLevel = (lvl: 'low' | 'high' | 'max') => {
 };
 
 /**
- * Open the level popup. Blocked while the session is streaming — the model
+ * Open the options popup. Blocked while the session is streaming — the model
  * variant must never change mid-turn.
  * @param event
  */
 const toggleMenu = (event: Event) => {
   if (props.streaming) return;
-  levelMenu.value?.toggle(event);
+  thinkMenu.value?.toggle(event);
 };
 
 /**
@@ -138,7 +136,7 @@ const cycleMobile = () => {
     store.setValue(props.sessionId, next);
     return;
   }
-  store.setValue(props.sessionId, store.current(props.sessionId) !== true);
+  store.setValue(props.sessionId, !thinkingOn.value);
 };
 </script>
 
@@ -150,7 +148,9 @@ const cycleMobile = () => {
       "a11y": "控制模型思考能力",
       "low": "低",
       "high": "高",
-      "max": "最高"
+      "max": "最高",
+      "on": "开启",
+      "off": "关闭"
     }
   },
   "en": {
@@ -159,7 +159,9 @@ const cycleMobile = () => {
       "a11y": "Toggle model thinking",
       "low": "Low",
       "high": "High",
-      "max": "Max"
+      "max": "Max",
+      "on": "On",
+      "off": "Off"
     }
   },
   "ja": {
@@ -168,7 +170,9 @@ const cycleMobile = () => {
       "a11y": "モデルの思考モードを切り替え",
       "low": "低",
       "high": "高",
-      "max": "最大"
+      "max": "最大",
+      "on": "オン",
+      "off": "オフ"
     }
   },
   "ko": {
@@ -177,7 +181,9 @@ const cycleMobile = () => {
       "a11y": "모델 생각 모드 전환",
       "low": "낮음",
       "high": "높음",
-      "max": "최대"
+      "max": "최대",
+      "on": "켜기",
+      "off": "끄기"
     }
   }
 }
