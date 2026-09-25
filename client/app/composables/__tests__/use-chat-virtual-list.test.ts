@@ -97,6 +97,38 @@ describe('useChatVirtualList', () => {
     expect(vm.rows.map(r => r.key)).toEqual(['g-1', 'g-2']);
   });
 
+  it('fires onReachTop once per top crossing and re-arms after leaving', async () => {
+    const reached: number[] = [];
+    const scoped = mount(
+      defineComponent({
+        props: {
+          groups: { type: Array as () => MessageItem[][], default: () => [] },
+          messages: { type: Array as () => MessageItem[], default: () => [] }
+        },
+        setup(props) {
+          return {
+            ...useChatVirtualList(
+              () => props.groups,
+              () => props.messages,
+              { onReachTop: () => reached.push(Date.now()) }
+            )
+          };
+        },
+        template: `<div ref="scrollContainerRef" @scroll="onScroll"></div>`
+      })
+    );
+    const el = (scoped.vm as unknown as { scrollContainerRef: HTMLElement }).scrollContainerRef;
+    setGeometry(el, 5000, 500, 0); // at the top
+    await scoped.trigger('scroll');
+    await scoped.trigger('scroll'); // still at the top: no duplicate fire
+    expect(reached).toHaveLength(1);
+    setGeometry(el, 5000, 500, 400); // left the trigger zone: re-arm
+    await scoped.trigger('scroll');
+    setGeometry(el, 5000, 500, 0); // top again: fires
+    await scoped.trigger('scroll');
+    expect(reached).toHaveLength(2);
+  });
+
   it('always scrolls to the end when a USER message is appended', async () => {
     const spy = vi.spyOn(vm.virtualizer, 'scrollToEnd');
     await wrapper.setProps({ messages: [msg({ id: 1, role: CHAT_ROLE.USER })] });

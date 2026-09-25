@@ -28,6 +28,9 @@ export const NEAR_BOTTOM_THRESHOLD = 80;
 /** First-render height guess per turn group; corrected by real measurement */
 const GROUP_ESTIMATE_PX = 160;
 
+/** Distance from the top (px) that triggers the older-history request */
+const TOP_TRIGGER_PX = 120;
+
 /** One virtual row: a whole turn group with a stable identity key. */
 export interface ChatVirtualRow {
   /**
@@ -47,12 +50,22 @@ export interface ChatVirtualRow {
 export const buildChatVirtualRows = (groups: MessageItem[][]): ChatVirtualRow[] =>
   groups.map(group => ({ key: `g-${group[0]?.id ?? 'empty'}`, group }));
 
+export interface ChatVirtualListOptions {
+  /** Called when the viewport crosses the top trigger (re-arms after leaving). */
+  onReachTop?: () => void;
+}
+
 /**
  * Create the virtual list controller for the chat message list.
  * @param groups Getter returning the turn groups in render order.
  * @param messages Getter returning the raw message list (apps detect user appends).
+ * @param options Optional top-reach hook for scroll-up history pagination.
  */
-export function useChatVirtualList(groups: () => MessageItem[][], messages: () => MessageItem[] | undefined) {
+export function useChatVirtualList(
+  groups: () => MessageItem[][],
+  messages: () => MessageItem[] | undefined,
+  options: ChatVirtualListOptions = {}
+) {
   /** Chat list scroll container (the outermost overflow-auto div) */
   const scrollContainerRef = useTemplateRef<HTMLDivElement>('scrollContainerRef');
 
@@ -100,6 +113,31 @@ export function useChatVirtualList(groups: () => MessageItem[][], messages: () =
     showScrollBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight > NEAR_BOTTOM_THRESHOLD;
   };
 
+  /** Re-arm latch: one top-reach callback per crossing, not per scroll event. */
+  let topArmed = true;
+
+  /**
+   * Container scroll handler: keeps the bottom button in sync and fires the
+   * top-reach hook once per crossing (pulling up loads older history).
+   */
+  const onScroll = () => {
+    updateScrollBottomBtn();
+    if (!options.onReachTop) return;
+    const el = scrollContainerRef.value;
+    if (!el) return;
+    if (el.scrollTop <= TOP_TRIGGER_PX) {
+      if (topArmed) {
+        topArmed = false;
+        options.onReachTop();
+      }
+    } else {
+      // Re-arm as soon as the viewport leaves the trigger zone: the prepend
+      // compensation below lands just above TOP_TRIGGER_PX, so a continued
+      // pull-up must be able to fetch the next page.
+      topArmed = true;
+    }
+  };
+
   /** Snap the live DOM to the bottom (clamped to the current spacer height). */
   const snapToBottom = () => {
     const el = scrollContainerRef.value;
@@ -124,6 +162,46 @@ export function useChatVirtualList(groups: () => MessageItem[][], messages: () =
       });
     });
   };
+
+  /**
+   * Reading-position stability across prepends.
+   *
+   * `anchorTo: 'end'` pins the BOTTOM edge: when older history is prepended,
+   * the content under the viewport would slide down by the prepended height.
+   * A key change on the FIRST row means exactly that (appends never touch
+   * row 0), so compensate the scroll offset once the new rows are laid out —
+   * the same "keep what you were reading in place" rule chat clients use.
+   */
+  watch(
+    () => rows.value[0]?.key,
+    (newKey, oldKey) => {
+      if (!oldKey || !newKey || oldKey === newKey) return;
+      const el = scrollContainerRef.value;
+      if (!el) return;
+      const heightBefore = el.scrollHeight;
+      nextTick(() => {
+        // The prepended rows are measured by the ResizeObserver a few frames
+        // after they render, so wait for the spacer height to settle before
+        // applying the delta — a single rAF lands too early and reads the
+        // still-unchanged height.
+        let last = el.scrollHeight;
+        let attempts = 0;
+        const settle = () => {
+          const height = el.scrollHeight;
+          if (height !== last && attempts < 6) {
+            last = height;
+            attempts += 1;
+            requestAnimationFrame(settle);
+            return;
+          }
+          const delta = height - heightBefore;
+          if (delta > 0) el.scrollTop += delta;
+          updateScrollBottomBtn();
+        };
+        requestAnimationFrame(settle);
+      });
+    }
+  );
 
   /**
    * Follow strategy on list changes: a newly appended USER message always
@@ -153,6 +231,7 @@ export function useChatVirtualList(groups: () => MessageItem[][], messages: () =
     rowGroup,
     showScrollBottom,
     scrollToBottom,
-    updateScrollBottomBtn
+    updateScrollBottomBtn,
+    onScroll
   };
 }

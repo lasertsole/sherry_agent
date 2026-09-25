@@ -150,6 +150,56 @@ function mergeDedup(cached: CachedMessage[], fetched: CachedMessage[]): CachedMe
 }
 
 /**
+ * Fetch one page of OLDER history for scroll-up pagination.
+ *
+ * Distinct from `get_history_by_turn_page`, whose `min_turn_num` resolves to
+ * the local cache's MAX turn (an incremental-refresh contract that can never
+ * reach older turns). The server pages BACKWARD FROM THE NEWEST TURN
+ * (`page = 1` is the newest window; `min_turn_num` is only a lower clamp), so
+ * this asks for the page whose window covers the turns just below
+ * `before_turn` and returns only rows strictly older than it.
+ *
+ * @param session_id Session ID
+ * @param before_turn Exclusive upper bound: fetch turns strictly below this number.
+ * @param newest_turn The newest loaded turn (the server counts pages from it).
+ * @param turn_page_size Turns per page (clamped to 1-200, mirroring the server cap).
+ * @returns `{ rows, exhausted }` — rows ascending by turn ([] when the session
+ *          start was reached), or `null` when the request FAILED (retryable;
+ *          never treat a failure as "no more history").
+ */
+export async function get_older_history_page(
+  session_id: string,
+  before_turn: number,
+  newest_turn: number,
+  turn_page_size: number
+): Promise<{ rows: CachedMessage[]; exhausted: boolean } | null> {
+  const size = Math.min(Math.max(turn_page_size, 1), MAX_TURN_PAGE_SIZE);
+  // The page whose window ends at (or just above) `before_turn - 1` while
+  // covering it: floor keeps the window's tail overlapping the loaded range,
+  // so no turn can fall into a gap between pages.
+  const page = Math.max(Math.floor((newest_turn - before_turn + 1) / size), 0) + 1;
+  try {
+    const res = await fetchApi<CachedMessage[] | Response<CachedMessage[]>>({
+      url: '/get_history_by_turn_page',
+      opts: { session_id, min_turn_num: 1, turn_page_size: size, turn_page_num: page },
+      method: 'get'
+    });
+    if (res === null) return null;
+    const fetched: CachedMessage[] = Array.isArray(res) ? res : res.data || [];
+    const older = fetched.filter(m => m.turn_num > 0 && m.turn_num < before_turn);
+    if (!older.length) return { rows: [], exhausted: true };
+    await cacheMessages(older);
+    const turns = new Set(older.map(m => m.turn_num));
+    return {
+      rows: older.sort((a, b) => a.turn_num - b.turn_num || a.id - b.id),
+      exhausted: turns.size < size || Math.min(...turns) <= 1
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Clear session history
  * @param session_id Session ID
  * @returns {Promise<boolean>} Returns true when cleared successfully

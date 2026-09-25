@@ -212,3 +212,27 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     expect(wrapper.html()).toContain('bg-[#2563EB]');
   });
 });
+
+describe('ChatBox scroll-up history hooks (integration, backend mocked)', () => {
+  it('shows the older-history loading pill only while a page request runs', async () => {
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })], loadingOlder: true }
+    });
+    expect(wrapper.text()).toContain('正在加载更早的消息');
+
+    await wrapper.setProps({ loadingOlder: false });
+    expect(wrapper.text()).not.toContain('正在加载更早的消息');
+  });
+
+  it('emits reach-top when the list is scrolled to the top', async () => {
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 1, role: CHAT_ROLE.USER, content: 'hi' })] }
+    });
+    const el = wrapper.find('.overflow-auto').element as HTMLElement;
+    Object.defineProperty(el, 'scrollHeight', { value: 5000, configurable: true });
+    Object.defineProperty(el, 'clientHeight', { value: 500, configurable: true });
+    el.scrollTop = 0;
+    await wrapper.find('.overflow-auto').trigger('scroll');
+    expect(wrapper.emitted('reach-top')).toHaveLength(1);
+  });
+});

@@ -8,7 +8,7 @@
     <div
       ref="scrollContainerRef"
       class="flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
-      @scroll="updateScrollBottomBtn">
+      @scroll="onScroll">
       <!-- Virtualized window: positioned rows inside a spacer of the measured
            total height. `measureElement` re-measures on resize, so expandable
            tool cards / thinking blocks keep the scroll geometry correct. -->
@@ -157,6 +157,20 @@
       </div>
     </div>
 
+    <!-- Older-history loading pill: overlays the top of the list while a scroll-up page request runs -->
+    <Transition name="fade">
+      <div
+        v-if="loadingOlder"
+        class="pointer-events-none absolute top-3 left-0 right-0 z-10 flex justify-center">
+        <span
+          class="flex items-center gap-2 rounded-full bg-black/40 px-3 py-1 text-xs text-white backdrop-blur-sm dark:bg-white/20">
+          <i
+            class="pi pi-spin pi-spinner text-[10px]"
+            aria-hidden="true"></i>
+          {{ t('chatBox.loadingOlder') }}
+        </span>
+      </div>
+    </Transition>
     <!-- Scroll to bottom: floats at the bottom center of the chat list; appears only when the
          scroll position is more than 80px (NEAR_BOTTOM_THRESHOLD) from the bottom; translucent +
          frosted glass; clicking scrolls back to the very bottom (the subsequent scroll event
@@ -195,6 +209,8 @@ import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
 const { t } = useI18n();
 
 interface Props {
+  /** Scroll-up history request in flight (shows the top loading pill). */
+  loadingOlder?: boolean;
   messages: MessageItem[] | undefined;
   /** User avatar URL (returned by the server) */
   userAvatar?: string;
@@ -210,7 +226,8 @@ const props = withDefaults(defineProps<Props>(), {
   userAvatar: '',
   aiAvatar: '',
   userName: '',
-  aiName: ''
+  aiName: '',
+  loadingOlder: false
 });
 
 /** User display name: falls back to the i18n default when the prop is empty */
@@ -223,6 +240,8 @@ const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName')
  * @param message
  */
 const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(message.content);
+
+const emit = defineEmits<{ (e: 'reach-top'): void }>();
 
 // View-model: turn grouping, scroll, media URL resolution, card expansion, copy
 const { isConsecutive, turnGroups, turnSpacingClass, regularMessages, backgroundCarriers } = useChatTurnGroups(
@@ -237,10 +256,11 @@ const {
   rowGroup,
   showScrollBottom,
   scrollToBottom,
-  updateScrollBottomBtn
+  onScroll
 } = useChatVirtualList(
   () => turnGroups.value,
-  () => props.messages
+  () => props.messages,
+  { onReachTop: () => emit('reach-top') }
 );
 const { failedImageSources, onImageError } = useChatMedia();
 const { copiedMessageId, canCopyMessage, copyMessage } = useMessageCopy();
@@ -281,6 +301,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "modelMeta": "输入 {input} · 输出 {output} tokens",
       "userInputMeta": "≈ {n} tokens",
       "scrollBottom": "回到最底部",
+      "loadingOlder": "正在加载更早的消息",
       "thinking": "思考过程",
       "toolArgs": "调用参数",
       "toolNoOutput": "无输出",
@@ -297,6 +318,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "modelMeta": "{input} in · {output} out tokens",
       "userInputMeta": "≈ {n} tokens",
       "scrollBottom": "Scroll to bottom",
+      "loadingOlder": "Loading earlier messages",
       "thinking": "Thinking",
       "toolArgs": "Arguments",
       "toolNoOutput": "No output",
@@ -313,6 +335,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "modelMeta": "入力 {input} · 出力 {output} tokens",
       "userInputMeta": "≈ {n} トークン",
       "scrollBottom": "最下部へ戻る",
+      "loadingOlder": "以前のメッセージを読み込み中",
       "thinking": "思考",
       "toolArgs": "引数",
       "toolNoOutput": "出力なし",
@@ -329,6 +352,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "modelMeta": "입력 {input} · 출력 {output} tokens",
       "userInputMeta": "≈ {n} 토큰",
       "scrollBottom": "맨 아래로",
+      "loadingOlder": "이전 메시지 불러오는 중",
       "thinking": "생각",
       "toolArgs": "인자",
       "toolNoOutput": "출력 없음",

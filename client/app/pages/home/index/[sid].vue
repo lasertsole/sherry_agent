@@ -32,7 +32,9 @@
           :user-avatar="characterInfo.userAvatar"
           :ai-avatar="characterInfo.aiAvatar"
           :user-name="characterInfo.userName"
-          :ai-name="characterInfo.aiName" />
+          :ai-name="characterInfo.aiName"
+          :loading-older="loadingOlder"
+          @reach-top="loadOlderHistory" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -481,6 +483,21 @@ const draft = ref('');
 const { characterInfo, ensureSessionCharacter, loadSessionHistory } = useSessionLifecycle(chatMessages);
 
 const drafts = useDraftPersistence(chatMessages);
+
+// Scroll-up pagination: pulling to the top fetches the next older turn window
+// and prepends it; the virtualizer's end anchoring keeps the viewport stable.
+const { loadingOlder, loadOlder: loadOlderHistory } = useChatOlderHistory({
+  sessionId: () => mySid,
+  messages: () => chatMessages.value,
+  prepend: rows => {
+    const known = new Set(chatMessages.value.map(m => m.id));
+    const fresh = rows.filter(m => !known.has(m.id));
+    if (!fresh.length) return;
+    // Rows are older than everything loaded (ascending), so a head-insert
+    // preserves the list's ascending turn order.
+    chatMessages.value = [...fresh, ...chatMessages.value];
+  }
+});
 
 const chunks = useStreamChunks(chatMessages, drafts.allocateTempId, drafts);
 
