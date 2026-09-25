@@ -19,16 +19,25 @@
       class="grid gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
       <!-- Left column: model list + add button -->
       <div class="flex flex-col gap-2">
-        <Button
-          :label="t('config.llm.add')"
-          icon="pi pi-plus"
-          size="small"
-          severity="secondary"
-          outlined
-          class="w-full"
-          :disabled="atCapacity"
-          :title="atCapacity ? t('config.llm.maxModels', { max: MAX_PROFILES_PER_GROUP }) : ''"
-          @click="addModel" />
+        <!-- Saved-model budget: only the stored (non-local) entries count against
+             the cap, so the counter sits next to the button it disables. -->
+        <div class="flex items-center gap-2">
+          <Button
+            :label="t('config.llm.add')"
+            icon="pi pi-plus"
+            size="small"
+            severity="secondary"
+            outlined
+            class="flex-1"
+            :disabled="atCapacity"
+            :title="atCapacity ? t('config.llm.maxModels', { max: MAX_PROFILES_PER_GROUP }) : ''"
+            @click="addModel" />
+          <span
+            class="shrink-0 font-mono text-xs"
+            :class="atCapacity ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500 dark:text-gray-400'">
+            {{ t('config.llm.count', { n: profiles.length, max: MAX_PROFILES_PER_GROUP }) }}
+          </span>
+        </div>
 
         <p
           v-if="profiles.length === 0"

@@ -96,6 +96,7 @@
   "config": {
     "llm": {
       "add": "모델 추가",
+      "count": "{n} / {max}",
       "save": "저장",
       "apply": "적용",
       "saved": "저장됨",

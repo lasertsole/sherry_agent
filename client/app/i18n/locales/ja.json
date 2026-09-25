@@ -96,6 +96,7 @@
   "config": {
     "llm": {
       "add": "モデルを追加",
+      "count": "{n} / {max}",
       "save": "保存",
       "apply": "適用",
       "saved": "保存しました",

@@ -96,6 +96,7 @@
   "config": {
     "llm": {
       "add": "添加模型",
+      "count": "{n} / {max}",
       "save": "保存",
       "apply": "应用",
       "saved": "已保存",

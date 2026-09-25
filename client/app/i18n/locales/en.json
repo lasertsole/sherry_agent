@@ -96,6 +96,7 @@
   "config": {
     "llm": {
       "add": "Add model",
+      "count": "{n} / {max}",
       "save": "Save",
       "apply": "Apply",
       "saved": "Saved",

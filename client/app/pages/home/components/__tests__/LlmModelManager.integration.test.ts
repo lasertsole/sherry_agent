@@ -283,6 +283,8 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     // storage cap enforced through the store, not just the button
     expect(storeApi.trimGroup).toHaveBeenCalledWith('TTI');
     expect(buttonFor(wrapper, '添加模型')!.attributes('disabled')).toBeDefined();
+    // the budget readout counts the saved entries against the cap
+    expect(wrapper.text()).toContain(`${MAX_PROFILES_PER_GROUP} / ${MAX_PROFILES_PER_GROUP}`);
   });
 
   it('keeps 添加模型 enabled below the cap', async () => {
@@ -290,6 +292,22 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
     await expand(wrapper);
     expect(buttonFor(wrapper, '添加模型')!.attributes('disabled')).toBeUndefined();
+    expect(wrapper.text()).toContain(`1 / ${MAX_PROFILES_PER_GROUP}`);
+  });
+
+  it('counts only the saved entries, never the built-in local one', async () => {
+    const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const LOCAL_VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
+    await expand(wrapper);
+    // 1 saved profile + the pinned local entry rendered, counter still 1
+    expect(rowFor(wrapper, '本地模型')).toBeTruthy();
+    expect(rowFor(wrapper, 'bge-m3')).toBeTruthy();
+    expect(wrapper.text()).toContain(`1 / ${MAX_PROFILES_PER_GROUP}`);
   });
 
   it('delete removes the profile and auto-applies the PREVIOUS entry', async () => {
