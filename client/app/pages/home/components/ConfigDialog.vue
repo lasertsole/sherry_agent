@@ -211,26 +211,36 @@
                     {{ t('config.env.maxTokenHint') }}
                   </p>
                 </div>
-                <div
+                <template
                   v-for="group in envGroups"
-                  :key="group.name"
-                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
-                  <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                    {{ group.name }}
-                  </p>
+                  :key="group.name">
+                  <!-- MAIN_LLM: model-profile manager (list + parameters + save/apply) -->
+                  <LlmModelManager
+                    v-if="group.name === 'MAIN_LLM'"
+                    :keys="group.entries.map(e => e.key)"
+                    :values="mainLlmValues"
+                    :group-title="t('config.llm.models') + ' · ' + group.name"
+                    @apply="applyModelProfile" />
                   <div
-                    v-for="entry in group.entries"
-                    :key="entry.key"
-                    class="flex flex-col gap-1">
-                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
-                    <InputText
-                      v-model="entry.value"
-                      :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
-                      class="w-full font-mono text-xs"
-                      autocomplete="off"
-                      spellcheck="false" />
+                    v-else
+                    class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+                    <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                      {{ group.name }}
+                    </p>
+                    <div
+                      v-for="entry in group.entries"
+                      :key="entry.key"
+                      class="flex flex-col gap-1">
+                      <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                      <InputText
+                        v-model="entry.value"
+                        :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                        class="w-full font-mono text-xs"
+                        autocomplete="off"
+                        spellcheck="false" />
+                    </div>
                   </div>
-                </div>
+                </template>
               </template>
             </div>
           </TabPanel>
@@ -307,6 +317,7 @@ import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { EnvGroup } from '@/composables/env';
+import LlmModelManager from './LlmModelManager.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { logUtil } from '~/utils/log';
@@ -343,6 +354,42 @@ const envLoaded = ref(false);
 const envHasChanges = computed(() =>
   envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
 );
+
+// ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
+const llmProfiles = useLlmProfilesStore();
+
+/** Live .env values of the MAIN_LLM group (seed + active-inference input). */
+const mainLlmValues = computed<Record<string, string>>(() => {
+  const values: Record<string, string> = {};
+  const group = envGroups.value.find(g => g.name === 'MAIN_LLM');
+  for (const entry of group?.entries ?? []) values[entry.key] = entry.value;
+  return values;
+});
+
+/**
+ * Apply a model profile: write its MAIN_LLM_* parameters into .env through the
+ * existing write path, then sync the tab's draft/snapshot so the env diff stays
+ * clean. The green dot follows only a SUCCESSFUL write.
+ * @param payload
+ * @param payload.id
+ * @param payload.params
+ */
+const applyModelProfile = async (payload: { id: string; params: Record<string, string> }) => {
+  const ok = await writeEnvConfig(payload.params);
+  if (!ok) {
+    envLoadError.value = t('config.env.saveFailed');
+    return;
+  }
+  envLoadError.value = '';
+  const group = envGroups.value.find(g => g.name === 'MAIN_LLM');
+  for (const entry of group?.entries ?? []) {
+    if (entry.key in payload.params) entry.value = payload.params[entry.key]!;
+  }
+  for (const [key, value] of Object.entries(payload.params)) {
+    originalEnvValues.value[key] = value;
+  }
+  llmProfiles.setActive(payload.id);
+};
 
 /** Whether the env tab exposes either MAX_TOKEN key (drives the 128K threshold banner) */
 const hasMaxTokenKeys = computed(() =>

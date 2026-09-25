@@ -94,6 +94,17 @@
     "collapse": "Collapse plan"
   },
   "config": {
+    "llm": {
+      "add": "Add model",
+      "save": "Save",
+      "apply": "Apply",
+      "saved": "Saved",
+      "applied": "Applied to .env",
+      "empty": "No models yet — click “Add model”",
+      "unnamed": "Unnamed model",
+      "models": "Models",
+      "hint": "“Save” updates this list only; “Apply” writes .env and marks the entry with a green dot."
+    },
     "save": "Save",
     "cancel": "Cancel",
     "language": {

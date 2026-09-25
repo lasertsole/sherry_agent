@@ -229,3 +229,17 @@ vi.mock('@tanstack/vue-virtual', async () => {
     }
   };
 });
+
+// `useLlmProfilesStore` is consumed by ConfigDialog / LlmModelManager as a Nuxt
+// auto-imported store; bare Vitest mounts have no Nuxt store auto-import, so a
+// no-op default keeps those mounts working. Suites that assert profile
+// behaviour override this with their own `vi.stubGlobal` in `beforeEach`.
+vi.stubGlobal('useLlmProfilesStore', () => ({
+  profiles: [],
+  activeId: null,
+  add: () => 'test-profile',
+  update: () => {},
+  remove: () => {},
+  setActive: () => {},
+  byId: () => undefined
+}));
