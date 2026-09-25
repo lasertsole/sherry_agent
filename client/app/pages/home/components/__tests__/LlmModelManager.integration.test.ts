@@ -64,9 +64,10 @@ const stubs = {
     template: '<button class="btn" @click="$emit(\'click\')">{{ label }}</button>'
   },
   InputText: {
-    props: ['modelValue'],
+    props: ['modelValue', 'disabled'],
     emits: ['update:modelValue'],
-    template: '<input class="inp" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+    template:
+      '<input class="inp" :value="modelValue" :disabled="disabled" @input="$emit(\'update:modelValue\', $event.target.value)" />'
   }
 };
 
@@ -100,9 +101,12 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
       'ITTT'
     );
     const wrapper = mountPanel('ITTT', ITTT_KEYS, ITTT_VALUES);
-    const dots = wrapper.findAll('[data-active]');
-    expect(dots[1]!.attributes('data-active')).toBe('true');
-    expect(dots[0]!.attributes('data-active')).toBe('false');
+    // ITTT has a local flag, so the list also carries the pinned built-in entry:
+    // address the profile rows by label instead of by position.
+    const rows = wrapper.findAll('[role="button"]');
+    const rowFor = (label: string) => rows.find(r => r.text().includes(label))!;
+    expect(rowFor('current').find('[data-active]').attributes('data-active')).toBe('true');
+    expect(rowFor('other').find('[data-active]').attributes('data-active')).toBe('false');
   });
 
   it('shows the add button and an empty hint without profiles', () => {
@@ -175,6 +179,69 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(emitted).toHaveLength(1);
     expect(emitted![0]![0]).toMatchObject({ id: 'p1' });
     expect((emitted![0]![0] as { params: Record<string, string> }).params.MAIN_LLM_NAME).toBe('glm-4.7');
+  });
+
+  it('pins a built-in local-model entry above the saved profiles', () => {
+    const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_MODEL_PROVIDER', 'EMBEDDING_API_NAME'];
+    const LOCAL_VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_MODEL_PROVIDER: 'openai',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
+    const rows = wrapper.findAll('[role="button"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.text()).toContain('本地模型');
+    expect(rows[1]!.text()).toContain('emb');
+  });
+
+  it('the local entry shows the group parameters read-only, with 应用 but no 保存', async () => {
+    const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const LOCAL_VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
+    await wrapper.findAll('[role="button"]')[0]!.trigger('click'); // select the local entry
+
+    // parameters are rendered but disabled (read-only)
+    const inputs = wrapper.findAll('input.inp');
+    expect(inputs).toHaveLength(LOCAL_KEYS.length);
+    expect(inputs.every(i => i.attributes('disabled') !== undefined)).toBe(true);
+    // 应用 present, 保存 absent
+    const labels = wrapper.findAll('button.btn').map(b => b.text());
+    expect(labels).toContain('应用');
+    expect(labels).not.toContain('保存');
+  });
+
+  it('applying the local entry emits the group params with the flag forced on', async () => {
+    const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const LOCAL_VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
+    await wrapper.findAll('[role="button"]')[0]!.trigger('click');
+    const applyButton = wrapper.findAll('button.btn').find(b => b.text() === '应用');
+    await applyButton!.trigger('click');
+    const payload = wrapper.emitted('apply')![0]![0] as { id: string; params: Record<string, string> };
+    expect(payload.id).toBe('builtin:local');
+    expect(payload.params.EMBEDDING_MODEL_LOCAL).toBe('true');
+    expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
+  });
+
+  it('renders no local entry for a group without a local flag', () => {
+    makeStore([{ id: 't1', label: 'tti', params: { TTI_API_NAME: 'tti' } }], 't1', 'TTI');
+    const wrapper = mountPanel('TTI', ['TTI_MODEL_PROVIDER', 'TTI_API_NAME'], {
+      TTI_MODEL_PROVIDER: 'openai',
+      TTI_API_NAME: 'tti'
+    });
+    const rows = wrapper.findAll('[role="button"]');
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.text()).toContain('tti');
   });
 
   it('switching the selected model reloads the parameter draft', async () => {

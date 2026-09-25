@@ -103,6 +103,7 @@
       "empty": "No models yet — click “Add model”",
       "unnamed": "Unnamed model",
       "models": "Models",
+      "localModel": "Local model",
       "hint": "“Save” updates this list only; “Apply” writes .env and marks the entry with a green dot."
     },
     "save": "Save",

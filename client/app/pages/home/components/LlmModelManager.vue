@@ -17,31 +17,33 @@
           @click="addModel" />
 
         <p
-          v-if="profiles.length === 0"
+          v-if="listEntries.length === 0"
           class="m-0 text-xs text-gray-400 dark:text-gray-500">
           {{ t('config.llm.empty') }}
         </p>
 
+        <!-- `listEntries` = the built-in local-model entry pinned above the user
+             profiles, then the saved profiles themselves. -->
         <div
-          v-for="profile in profiles"
-          :key="profile.id"
+          v-for="entry in listEntries"
+          :key="entry.id"
           role="button"
           tabindex="0"
           :class="[
             'flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs cursor-pointer transition-colors',
-            profile.id === selectedId
+            entry.id === selectedId
               ? 'border-theme-main bg-blue-50 dark:bg-blue-900/20'
               : 'border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40'
           ]"
-          @click="selectModel(profile.id)"
-          @keydown.enter.prevent="selectModel(profile.id)"
-          @keydown.space.prevent="selectModel(profile.id)">
+          @click="selectModel(entry.id)"
+          @keydown.enter.prevent="selectModel(entry.id)"
+          @keydown.space.prevent="selectModel(entry.id)">
           <span
             class="h-2 w-2 shrink-0 rounded-full"
-            :class="isActive(profile) ? 'bg-emerald-500' : 'bg-transparent'"
-            :title="isActive(profile) ? t('config.llm.applied') : ''"
-            :data-active="isActive(profile) ? 'true' : 'false'"></span>
-          <span class="min-w-0 flex-1 truncate">{{ profile.label }}</span>
+            :class="isActive(entry) ? 'bg-emerald-500' : 'bg-transparent'"
+            :title="isActive(entry) ? t('config.llm.applied') : ''"
+            :data-active="isActive(entry) ? 'true' : 'false'"></span>
+          <span class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
         </div>
       </div>
 
@@ -56,13 +58,16 @@
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ key }}</span>
           <InputText
             v-model="draft[key]"
-            class="w-full font-mono text-xs"
+            :disabled="isLocalEntrySelected"
+            class="w-full font-mono text-xs disabled:opacity-60"
             autocomplete="off"
             spellcheck="false" />
         </div>
 
         <div class="mt-1 flex items-center gap-2">
+          <!-- The built-in local entry is read-only: it can be applied, never saved. -->
           <Button
+            v-if="!isLocalEntrySelected"
             :label="t('config.llm.save')"
             icon="pi pi-save"
             size="small"
@@ -126,7 +131,42 @@ const draft = ref<Record<string, string>>({});
 const flash = ref('');
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
-const selected = computed(() => store.byId(props.group, selectedId.value));
+/** Synthetic id of the built-in local-model entry (never persisted as a profile). */
+const LOCAL_ENTRY_ID = 'builtin:local';
+
+/** The group's local-model flag key (undefined for groups without one). */
+const localFlagKey = computed(() => props.keys.find(k => k.endsWith('_MODEL_LOCAL')));
+
+/**
+ * The built-in "local model" entry: the group's live `.env` parameters with the
+ * local flag forced on. Read-only in the UI (disabled inputs, no 保存) but
+ * applicable like any other model; absent for groups without a local flag.
+ */
+const localEntry = computed(() => {
+  const key = localFlagKey.value;
+  if (!key) return null;
+  const params: Record<string, string> = {};
+  for (const k of props.keys) params[k] = props.values[k] ?? '';
+  params[key] = 'true';
+  return { id: LOCAL_ENTRY_ID, label: t('config.llm.localModel'), params };
+});
+
+/** Left-column rows: the built-in local entry first, then the saved profiles. */
+const listEntries = computed(() => {
+  const entries: Array<{ id: string; label: string; params: Record<string, string> }> = [
+    ...profiles.value.map(p => ({ id: p.id, label: p.label, params: p.params }))
+  ];
+  if (localEntry.value) entries.unshift(localEntry.value);
+  return entries;
+});
+
+/** Whether the built-in local entry is the one being viewed. */
+const isLocalEntrySelected = computed(() => selectedId.value === LOCAL_ENTRY_ID);
+
+/** The viewed entry: a saved profile, or the built-in local model. */
+const selected = computed(() =>
+  isLocalEntrySelected.value ? localEntry.value : store.byId(props.group, selectedId.value)
+);
 
 /** The provider key of this group (any `*_PROVIDER` variant, e.g. `ITTT_model_PROVIDER`). */
 const providerKey = computed(() => props.keys.find(k => k.endsWith('_PROVIDER')) ?? '');
@@ -143,6 +183,12 @@ const nameKey = computed(
  */
 const isActive = (profile: { id: string; params: Record<string, string> }): boolean => {
   if (store.activeIdFor(props.group) === profile.id) return true;
+  // Built-in local entry: with no marker, it is the active one when `.env`
+  // already runs this group in local mode.
+  if (profile.id === LOCAL_ENTRY_ID) {
+    const key = localFlagKey.value;
+    return store.activeIdFor(props.group) === null && !!key && (props.values[key] ?? '').toLowerCase() === 'true';
+  }
   // No marker yet (fresh browser): fall back to comparing with the live .env,
   // so the dot is honest instead of absent until the first apply.
   if (store.activeIdFor(props.group) !== null) return false;
@@ -158,6 +204,14 @@ const syncDraft = () => {
   for (const key of props.keys) next[key] = profile?.params[key] ?? props.values[key] ?? '';
   draft.value = next;
 };
+// Keep the built-in entry's read-only display in sync with the live `.env`.
+watch(
+  () => props.values,
+  () => {
+    if (isLocalEntrySelected.value) syncDraft();
+  },
+  { deep: true }
+);
 
 watch(selectedId, syncDraft);
 watch(() => props.keys.join('|'), syncDraft);
@@ -193,9 +247,9 @@ const selectModel = (id: string) => {
 
 /** Persist the edited parameters into the selected profile (client-side only). */
 const saveProfile = () => {
-  if (!selected.value) return;
+  if (!selected.value || isLocalEntrySelected.value) return; // built-in entry is not saveable
   const params: Record<string, string> = { ...draft.value };
-  store.update(props.group, selected.value.id, {
+  store.update(props.group, selected.value!.id, {
     label: params[nameKey.value] || selected.value.label,
     params
   });
