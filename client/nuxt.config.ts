@@ -59,8 +59,9 @@ export default defineNuxtConfig({
     envPrefix: ['VITE_', 'TAURI_'],
     plugins: [tailwindcss()],
     server: {
-      // Tauri requires a consistent port
-      host: '0.0.0.0',
+      // Tauri requires a consistent port; bind to loopback only so LAN
+      // devices cannot reach the dev server
+      host: 'localhost',
       port: 3000,
       strictPort: true
     }
