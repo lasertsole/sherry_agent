@@ -16,8 +16,12 @@ import type { Config } from 'dompurify';
  *    WHOLE_DOCUMENT must never be enabled (it would wrap the output in <html><body>,
  *    breaking fragment semantics).
  *  - The style attribute must be allowed: markdown-it's GFM table alignment is
- *    implemented via style="text-align:…" on th/td; the attribute value itself is
- *    still sanitized by DOMPurify.
+ *    implemented via style="text-align:…" on th/td. DOMPurify 3.x hard-exempts
+ *    style from its URI gate (URI_SAFE_ATTRIBUTES default) and no longer accepts
+ *    a URI_SAFE_ATTRIBUTES config override, so the style-value URL gate lives in
+ *    the v-safe-html directive's uponSanitizeAttribute hook, judging values
+ *    against SAFE_STYLE_VALUE_REGEXP (below): only a whole-value alignment
+ *    declaration survives — url()-bearing or unknown declarations are dropped.
  *  - ALLOW_DATA_ATTR: false — data-* attributes in raw HTML are stripped without
  *    exception.
  */
@@ -71,3 +75,12 @@ export const chatPurifyConfig: Config = {
   ],
   ALLOW_DATA_ATTR: false
 };
+
+/**
+ * Whole-value gate for style attribute values (enforced by the
+ * uponSanitizeAttribute hook in the v-safe-html directive — DOMPurify 3.x
+ * hard-exempts style from its own URI gate and provides no config override).
+ * A prefix match would admit `text-align:center;background:url(…)`, so only a
+ * lone alignment declaration passes: no fetch-capable CSS can ever survive.
+ */
+export const SAFE_STYLE_VALUE_REGEXP = /^text-align\s*:\s*(?:left|center|right)\s*;?\s*$/i;

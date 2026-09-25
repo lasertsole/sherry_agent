@@ -12,7 +12,10 @@ import { createVNode } from 'vue';
 import type { ComponentPublicInstance, DirectiveBinding, VNode } from 'vue';
 import { vSafeHtml, safeMarkdownHtml } from '../safeHtml';
 
-/** Constructs a minimal usable DirectiveBinding (for tests) */
+/**
+ * Constructs a minimal usable DirectiveBinding (for tests)
+ * @param value
+ */
 const makeBinding = (value: string | null | undefined): DirectiveBinding<string | null | undefined> => ({
   // No real component instance exists in unit tests; the hooks only read
   // (el, binding), so an empty stub fills the required `instance` slot.
@@ -97,6 +100,34 @@ describe('safeMarkdownHtml — 合法 markdown 渲染不被误伤', () => {
     const html = safeMarkdownHtml(md);
     expect(html).toContain('text-align:center');
     expect(html).toContain('text-align:right');
+  });
+
+  it('style 值走 URL 门：非对齐声明与拼接尾巴整值拒绝', () => {
+    // 必须用真实表格上下文：裸 <td> 会被 HTML 解析器整体丢弃，测不到 style 门
+    const color = safeMarkdownHtml('<table><tr><th style="color:red">h</th></tr></table>');
+    expect(color).not.toContain('color');
+
+    // 整值匹配：text-align 前缀合法 + 尾部拼 url() 必须整值拒绝，而非前缀保留
+    const appended = safeMarkdownHtml(
+      '<table><tr><th style="text-align:center;background:url(https://evil.example/x)">h</th></tr></table>'
+    );
+    expect(appended).not.toContain('url(');
+    expect(appended).not.toContain('text-align');
+  });
+
+  it('URL 门：javascript:/data: 的 href 被剥除；img 的 data: 属 DOMPurify 媒体豁免', () => {
+    const html = safeMarkdownHtml(
+      '<a href="javascript:alert(1)">x</a>' +
+        '<a href="data:text/html,evil">y</a>' +
+        '<img src="data:image/png;base64,AAAA" alt="ok">'
+    );
+    expect(html).not.toContain('javascript:');
+    // <a> 不在 DATA_URI_TAGS 豁免名单内，data: href 必须走 URI 门被剥除
+    expect(html).not.toContain('href="data:');
+    // DOMPurify 对媒体标签（img 等）的 data: src 有专门的存活豁免（惰性媒体，
+    // 非注入向量）——钉死为文档化行为，防止误判为泄漏
+    expect(html).toContain('src="data:image/png');
+    expect(html).toContain('x');
   });
 
   it('白名单外的行内标签（如 <b>）被移除但文本保留', () => {

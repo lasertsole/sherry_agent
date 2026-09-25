@@ -1,7 +1,7 @@
 import type { DirectiveBinding, ObjectDirective } from 'vue';
 import DOMPurify from 'dompurify';
 import MarkdownIt from 'markdown-it';
-import { chatPurifyConfig } from '@/constants/security';
+import { chatPurifyConfig, SAFE_STYLE_VALUE_REGEXP } from '@/constants/security';
 import { logUtil } from '~/utils/log';
 
 /**
@@ -37,6 +37,16 @@ DOMPurify.addHook('afterSanitizeAttributes', node => {
   const el = node as Element | null;
   if (el && el.tagName === 'A') {
     el.setAttribute('rel', 'noopener noreferrer');
+  }
+});
+
+// Sanitize-time hook: DOMPurify hard-exempts style from its URI gate and offers
+// no config override in 3.x, so the style-value URL gate is enforced here — a
+// style value survives only as a whole-value alignment declaration
+// (SAFE_STYLE_VALUE_REGEXP); url()-bearing or unknown declarations are dropped.
+DOMPurify.addHook('uponSanitizeAttribute', (_node, data) => {
+  if (data.attrName === 'style' && !SAFE_STYLE_VALUE_REGEXP.test(data.attrValue ?? '')) {
+    data.keepAttr = false;
   }
 });
 
