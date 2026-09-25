@@ -107,7 +107,9 @@
       "requiredMissing": "プロバイダーとモデル API 名は必須です",
       "deleteConfirm": "モデル「{name}」を削除しますか？",
       "localModel": "ローカルモデル",
-      "localUnused": "ローカルでは未使用"
+      "localUnused": "ローカルでは未使用",
+      "expand": "展開",
+      "collapse": "折りたたむ"
     },
     "save": "保存",
     "cancel": "キャンセル",

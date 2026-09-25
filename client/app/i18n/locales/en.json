@@ -107,7 +107,9 @@
       "requiredMissing": "Provider and model API name are required",
       "deleteConfirm": "Delete model “{name}”?",
       "localModel": "Local model",
-      "localUnused": "Unused in local mode"
+      "localUnused": "Unused in local mode",
+      "expand": "Expand",
+      "collapse": "Collapse"
     },
     "save": "Save",
     "cancel": "Cancel",

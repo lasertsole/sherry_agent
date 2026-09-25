@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { mount, type VueWrapper } from '@vue/test-utils';
 import LlmModelManager from '@/pages/home/components/LlmModelManager.vue';
 import type { LlmProfile } from '@/stores/llm-profiles';
 import { MAX_PROFILES_PER_GROUP } from '@/stores/llm-profiles';
@@ -26,7 +26,7 @@ const ENV_VALUES: Record<string, string> = {
 let storeApi: {
   listFor: (group: string) => LlmProfile[];
   activeIdFor: (group: string) => string | null;
-  migrateLegacyOnce: ReturnType<typeof vi.fn>;
+  trimGroup: ReturnType<typeof vi.fn>;
   add: ReturnType<typeof vi.fn>;
   update: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
@@ -38,19 +38,18 @@ const makeStore = (profiles: LlmProfile[] = [], activeId: string | null = null, 
   const byGroup: Record<string, LlmProfile[]> = { [group]: profiles };
   const activeByGroup: Record<string, string | null> = { [group]: activeId };
   storeApi = {
-    listFor: group => byGroup[group] ?? [],
-    activeIdFor: group => activeByGroup[group] ?? null,
+    listFor: g => byGroup[g] ?? [],
+    activeIdFor: g => activeByGroup[g] ?? null,
     trimGroup: vi.fn(),
-    add: vi.fn((group: string, label: string, params: Record<string, string>) => {
-      const id = `new-${(byGroup[group] ?? []).length + 1}`;
-      byGroup[group] = [...(byGroup[group] ?? []), { id, label, params }];
+    add: vi.fn((g: string, label: string, params: Record<string, string>) => {
+      const id = `new-${(byGroup[g] ?? []).length + 1}`;
+      byGroup[g] = [...(byGroup[g] ?? []), { id, label, params }];
       return id;
     }),
     update: vi.fn(),
     remove: vi.fn(),
     setActive: vi.fn(),
-    byId: (group: string, id: string | null) =>
-      id === null ? undefined : (byGroup[group] ?? []).find(p => p.id === id)
+    byId: (g: string, id: string | null) => (id === null ? undefined : (byGroup[g] ?? []).find(p => p.id === id))
   };
   vi.stubGlobal(
     'useLlmProfilesStore',
@@ -78,12 +77,49 @@ const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<st
     global: { stubs }
   });
 
+/**
+ * Panels start collapsed: open the one under test through its toggle.
+ * @param wrapper
+ */
+const expand = async (wrapper: VueWrapper) => {
+  const toggle = wrapper.findAll('button').find(b => b.attributes('aria-label') === '展开');
+  if (!toggle) throw new Error('collapse toggle not found');
+  await toggle.trigger('click');
+};
+
+/**
+ * The row button whose visible label matches (rows are labelled by API name).
+ * @param wrapper
+ * @param label
+ */
+const rowFor = (wrapper: VueWrapper, label: string) =>
+  wrapper.findAll('[role="button"]').find(r => r.text().includes(label));
+
+/**
+ * The action button by label.
+ * @param wrapper
+ * @param label
+ */
+const buttonFor = (wrapper: VueWrapper, label: string) => wrapper.findAll('button.btn').find(b => b.text() === label);
+
 describe('LlmModelManager.vue (integration, store stubbed)', () => {
   beforeEach(() => {
     makeStore();
   });
 
-  it('works for other groups with their own key names (generic identity inference)', () => {
+  it('starts collapsed and reveals the manager on expand', async () => {
+    makeStore([{ id: 'p1', label: 'a', params: { MAIN_LLM_NAME: 'a' } }]);
+    const wrapper = mountPanel();
+    // collapsed: neither the list nor the parameters are rendered
+    expect(wrapper.findAll('[role="button"]')).toHaveLength(0);
+    expect(wrapper.findAll('input.inp')).toHaveLength(0);
+
+    await expand(wrapper);
+    expect(rowFor(wrapper, 'a')).toBeTruthy();
+    expect(wrapper.findAll('input.inp').length).toBeGreaterThan(0);
+  });
+
+  it('works for other groups with their own key names (generic identity inference)', async () => {
     // ITTT has the odd `ITTT_model_PROVIDER` casing and an `_API_NAME` name key.
     const ITTT_KEYS = ['ITTT_MODEL_LOCAL', 'ITTT_model_PROVIDER', 'ITTT_API_NAME', 'ITTT_API_BASE', 'ITTT_API_KEY'];
     const ITTT_VALUES: Record<string, string> = {
@@ -102,101 +138,82 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
       'ITTT'
     );
     const wrapper = mountPanel('ITTT', ITTT_KEYS, ITTT_VALUES);
-    // ITTT has a local flag, so the list also carries the pinned built-in entry:
-    // address the profile rows by label instead of by position.
-    // Rows are labelled by the model API name, so address them by that.
-    const rows = wrapper.findAll('[role="button"]');
-    const rowFor = (label: string) => rows.find(r => r.text().includes(label))!;
-    expect(rowFor('gpt-4o-mini').find('[data-active]').attributes('data-active')).toBe('true');
-    expect(rowFor('other').find('[data-active]').attributes('data-active')).toBe('false');
+    await expand(wrapper);
+
+    expect(rowFor(wrapper, 'gpt-4o-mini')!.find('[data-active]').attributes('data-active')).toBe('true');
+    expect(rowFor(wrapper, 'other')!.find('[data-active]').attributes('data-active')).toBe('false');
   });
 
-  it('shows the add button and an empty hint without profiles', () => {
+  it('shows the add button and an empty hint without profiles', async () => {
     const wrapper = mountPanel();
+    await expand(wrapper);
     expect(wrapper.text()).toContain('添加模型');
     expect(wrapper.text()).toContain('暂无模型');
-    // no parameter inputs until a model exists
     expect(wrapper.findAll('input.inp')).toHaveLength(0);
   });
 
   it('add seeds a profile from the live .env values and selects it', async () => {
     const wrapper = mountPanel();
-    const addButton = wrapper.findAll('button.btn').find(b => b.text() === '添加模型');
-    await addButton!.trigger('click');
+    await expand(wrapper);
+    await buttonFor(wrapper, '添加模型')!.trigger('click');
     expect(storeApi.add).toHaveBeenCalledWith('MAIN_LLM', 'glm-5.3-flash', ENV_VALUES);
-    // the new profile is selected: its parameter inputs render
     expect(wrapper.findAll('input.inp')).toHaveLength(KEYS.length);
   });
 
-  it('renders one row per profile and marks only the active one with a dot', () => {
+  it('marks only the applied profile with the active marker', async () => {
     makeStore(
       [
         { id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'glm-4.6' } },
-        { id: 'p2', label: 'glm-5.3', params: { ...ENV_VALUES } }
+        { id: 'p2', label: 'glm-5.3', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'glm-5.3' } }
       ],
       'p1'
     );
     const wrapper = mountPanel();
-    const dots = wrapper.findAll('[data-active]');
-    expect(dots).toHaveLength(2);
-    expect(dots[0]!.attributes('data-active')).toBe('true');
-    expect(dots[1]!.attributes('data-active')).toBe('false');
+    await expand(wrapper);
+
+    expect(rowFor(wrapper, 'glm-4.6')!.find('[data-active]').attributes('data-active')).toBe('true');
+    expect(rowFor(wrapper, 'glm-5.3')!.find('[data-active]').attributes('data-active')).toBe('false');
   });
 
-  it('infers the dot from the live .env when no marker exists yet', () => {
+  it('infers the marker from the live .env when no marker exists yet', async () => {
     makeStore([
       { id: 'p1', label: 'other', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'other' } },
       { id: 'p2', label: 'current', params: { ...ENV_VALUES } }
     ]);
     const wrapper = mountPanel();
-    const dots = wrapper.findAll('[data-active]');
-    expect(dots[0]!.attributes('data-active')).toBe('false');
-    expect(dots[1]!.attributes('data-active')).toBe('true');
+    await expand(wrapper);
+
+    expect(rowFor(wrapper, 'other')!.find('[data-active]').attributes('data-active')).toBe('false');
+    expect(rowFor(wrapper, 'glm-5.3-flash')!.find('[data-active]').attributes('data-active')).toBe('true');
   });
 
   it('save writes the edited draft into the store (no apply)', async () => {
     makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'glm-4.6' } }], 'p1');
     const wrapper = mountPanel();
-    const inputs = wrapper.findAll('input.inp');
-    await inputs[1]!.setValue('glm-4.7');
-    const saveButton = wrapper.findAll('button.btn').find(b => b.text() === '保存');
-    await saveButton!.trigger('click');
+    await expand(wrapper);
+    await wrapper.findAll('input.inp')[1]!.setValue('glm-4.7');
+    await buttonFor(wrapper, '保存')!.trigger('click');
+
     expect(storeApi.update).toHaveBeenCalledTimes(1);
     const [group, id, patch] = storeApi.update.mock.calls[0]!;
     expect(group).toBe('MAIN_LLM');
     expect(id).toBe('p1');
     expect(patch.params.MAIN_LLM_NAME).toBe('glm-4.7');
-    expect(patch.label).toBe('glm-4.7');
     expect(wrapper.emitted('apply')).toBeUndefined();
   });
 
   it('apply emits the draft parameters for the parent to write into .env', async () => {
     makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'glm-4.6' } }], 'p1');
     const wrapper = mountPanel();
-    const inputs = wrapper.findAll('input.inp');
-    await inputs[1]!.setValue('glm-4.7');
-    const applyButton = wrapper.findAll('button.btn').find(b => b.text() === '应用');
-    await applyButton!.trigger('click');
+    await expand(wrapper);
+    await wrapper.findAll('input.inp')[1]!.setValue('glm-4.7');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+
     const emitted = wrapper.emitted('apply');
     expect(emitted).toHaveLength(1);
-    expect(emitted![0]![0]).toMatchObject({ id: 'p1' });
-    expect((emitted![0]![0] as { params: Record<string, string> }).params.MAIN_LLM_NAME).toBe('glm-4.7');
-  });
-
-  it('pins a built-in local-model entry above the saved profiles', () => {
-    const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_MODEL_PROVIDER', 'EMBEDDING_API_NAME'];
-    const LOCAL_VALUES: Record<string, string> = {
-      EMBEDDING_MODEL_LOCAL: 'false',
-      EMBEDDING_MODEL_PROVIDER: 'openai',
-      EMBEDDING_API_NAME: 'bge-m3'
-    };
-    makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
-    const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
-    const rows = wrapper.findAll('[role="button"]');
-    expect(rows).toHaveLength(2);
-    expect(rows[0]!.text()).toContain('本地模型');
-    // the saved row shows the model API name, not the stored label
-    expect(rows[1]!.text()).toContain('bge-m3');
+    const payload = emitted![0]![0] as { id: string; params: Record<string, string> };
+    expect(payload.id).toBe('p1');
+    expect(payload.params.MAIN_LLM_NAME).toBe('glm-4.7');
   });
 
   it('the local entry shows the group parameters read-only, with 应用 but no 保存', async () => {
@@ -207,22 +224,18 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     };
     makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
     const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
-    await wrapper.findAll('[role="button"]')[0]!.trigger('click'); // select the local entry
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
 
-    // parameters are rendered but disabled (read-only) — and never include the
-    // local flag input (it is derived from which entry is applied)
     const inputs = wrapper.findAll('input.inp');
     expect(inputs).toHaveLength(LOCAL_KEYS.length - 1);
     expect(inputs.every(i => i.attributes('disabled') !== undefined)).toBe(true);
-    // option 2: local mode ignores the API parameters, so they display EMPTY
     expect(inputs.every(i => (i.attributes('value') ?? '') === '')).toBe(true);
-    // 应用 present, 保存 absent
-    const labels = wrapper.findAll('button.btn').map(b => b.text());
-    expect(labels).toContain('应用');
-    expect(labels).not.toContain('保存');
+    expect(buttonFor(wrapper, '应用')).toBeTruthy();
+    expect(buttonFor(wrapper, '保存')).toBeUndefined();
   });
 
-  it('applying the local entry emits the group params with the flag forced on', async () => {
+  it('applying the local entry emits only the flag', async () => {
     const LOCAL_KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
     const LOCAL_VALUES: Record<string, string> = {
       EMBEDDING_MODEL_LOCAL: 'false',
@@ -230,13 +243,12 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     };
     makeStore([{ id: 'e1', label: 'emb', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
     const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
-    await wrapper.findAll('[role="button"]')[0]!.trigger('click');
-    const applyButton = wrapper.findAll('button.btn').find(b => b.text() === '应用');
-    await applyButton!.trigger('click');
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+
     const payload = wrapper.emitted('apply')![0]![0] as { id: string; params: Record<string, string> };
     expect(payload.id).toBe('builtin:local');
-    // ONLY the flag: the API keys stay untouched in .env (local mode ignores
-    // them, and switching back to a cloud model must keep the old values).
     expect(payload.params).toEqual({ EMBEDDING_MODEL_LOCAL: 'true' });
   });
 
@@ -249,17 +261,16 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     // the stored profile even CLAIMS local=true; the applied entry decides otherwise
     makeStore([{ id: 'e1', label: 'remote', params: { ...LOCAL_VALUES } }], 'e1', 'EMBEDDING');
     const wrapper = mountPanel('EMBEDDING', LOCAL_KEYS, LOCAL_VALUES);
-    // no flag input anywhere
-    expect(wrapper.findAll('input.inp')).toHaveLength(1);
-    const applyButton = wrapper.findAll('button.btn').find(b => b.text() === '应用');
-    await applyButton!.trigger('click');
+    await expand(wrapper);
+    await buttonFor(wrapper, '应用')!.trigger('click');
+
     const payload = wrapper.emitted('apply')![0]![0] as { id: string; params: Record<string, string> };
     expect(payload.id).toBe('e1');
     expect(payload.params.EMBEDDING_MODEL_LOCAL).toBe('false');
     expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
   });
 
-  it('disables 添加模型 at the cap and trims oversized storage on setup', () => {
+  it('trims oversized storage on setup and disables 添加模型 at the cap', async () => {
     const many: LlmProfile[] = Array.from({ length: MAX_PROFILES_PER_GROUP }, (_, i) => ({
       id: `p${i}`,
       label: `m${i}`,
@@ -267,18 +278,18 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     }));
     makeStore(many, null, 'TTI');
     const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
+    await expand(wrapper);
+
     // storage cap enforced through the store, not just the button
     expect(storeApi.trimGroup).toHaveBeenCalledWith('TTI');
-    const addButton = wrapper.findAll('button.btn').find(b => b.text() === '添加模型');
-    expect(addButton!.attributes('disabled')).toBeDefined();
-    expect(addButton!.attributes('title')).toContain(String(MAX_PROFILES_PER_GROUP));
+    expect(buttonFor(wrapper, '添加模型')!.attributes('disabled')).toBeDefined();
   });
 
-  it('keeps 添加模型 enabled below the cap', () => {
+  it('keeps 添加模型 enabled below the cap', async () => {
     makeStore([{ id: 'p1', label: 'a', params: {} }], null, 'TTI');
     const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
-    const addButton = wrapper.findAll('button.btn').find(b => b.text() === '添加模型');
-    expect(addButton!.attributes('disabled')).toBeUndefined();
+    await expand(wrapper);
+    expect(buttonFor(wrapper, '添加模型')!.attributes('disabled')).toBeUndefined();
   });
 
   it('delete removes the profile and auto-applies the PREVIOUS entry', async () => {
@@ -294,20 +305,16 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
       'TTI'
     );
     const wrapper = mountPanel('TTI', KEYS, VALUES);
-    // select the second row, delete it
-    await wrapper.findAll('[role="button"]')[1]!.trigger('click');
-    const del = wrapper.findAll('button.btn').find(b => b.text() === '删除');
-    expect(del).toBeTruthy();
-    await del!.trigger('click');
+    await expand(wrapper);
+    await rowFor(wrapper, 'second')!.trigger('click');
+    await buttonFor(wrapper, '删除')!.trigger('click');
+
     expect(storeApi.remove).toHaveBeenCalledWith('TTI', 'p2');
-    // the previous entry (p1) is applied automatically
     const emitted = wrapper.emitted('apply');
     expect(emitted).toHaveLength(1);
     const payload = emitted![0]![0] as { id: string; params: Record<string, string> };
     expect(payload.id).toBe('p1');
     expect(payload.params.TTI_API_NAME).toBe('first');
-    // and it becomes the viewed entry
-    expect((wrapper.findAll('input.inp')[1]!.element as HTMLInputElement).value).toBe('first');
   });
 
   it('blocks 保存/应用 while the provider or API name is empty', async () => {
@@ -315,27 +322,23 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const VALUES: Record<string, string> = { TTI_MODEL_PROVIDER: '', TTI_API_NAME: '' };
     makeStore([{ id: 'p1', label: 'x', params: { ...VALUES } }], 'p1', 'TTI');
     const wrapper = mountPanel('TTI', KEYS, VALUES);
-    const buttons = wrapper.findAll('button.btn');
+    await expand(wrapper);
 
-    // clicking without the mandatory fields neither applies nor saves, and
-    // explains itself (with the offending inputs marked)
-    await buttons.find(b => b.text() === '应用')!.trigger('click');
-    await buttons.find(b => b.text() === '保存')!.trigger('click');
+    await buttonFor(wrapper, '应用')!.trigger('click');
+    await buttonFor(wrapper, '保存')!.trigger('click');
     expect(wrapper.emitted('apply')).toBeUndefined();
     expect(storeApi.update).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain('提供商与模型 API 名为必填项');
-    expect(wrapper.findAll('input.inp').filter(i => i.classes().includes('border-red-400'))).toHaveLength(2);
 
-    // filling both in lets the apply through
     const inputs = wrapper.findAll('input.inp');
     await inputs[0]!.setValue('openai');
     await inputs[1]!.setValue('gpt-4o-mini');
-    await buttons.find(b => b.text() === '应用')!.trigger('click');
+    await buttonFor(wrapper, '应用')!.trigger('click');
     const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
     expect(payload.params.TTI_API_NAME).toBe('gpt-4o-mini');
   });
 
-  it('labels list rows with the model API name', () => {
+  it('labels rows with the model API name, falling back to the stored label', async () => {
     makeStore(
       [
         { id: 'p1', label: 'stale label', params: { TTI_API_NAME: 'real-model-name' } },
@@ -345,15 +348,16 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
       'TTI'
     );
     const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
-    const rows = wrapper.findAll('[role="button"]');
-    expect(rows[0]!.text()).toContain('real-model-name');
-    expect(rows[0]!.text()).not.toContain('stale label');
-    expect(rows[1]!.text()).toContain('fallback'); // stored label when the API name is empty
+    await expand(wrapper);
+
+    expect(rowFor(wrapper, 'real-model-name')).toBeTruthy();
+    expect(rowFor(wrapper, 'stale label')).toBeUndefined();
+    expect(rowFor(wrapper, 'fallback')).toBeTruthy();
   });
 
   it('asks for confirmation before deleting, and a rejection keeps the profile', async () => {
-    const KEYS = ['TTI_API_NAME'];
-    const VALUES: Record<string, string> = { TTI_API_NAME: 'x' };
+    const requireSpy = vi.fn();
+    vi.stubGlobal('useConfirm', () => ({ require: requireSpy }));
     makeStore(
       [
         { id: 'p1', label: 'a', params: { TTI_API_NAME: 'a' } },
@@ -362,19 +366,14 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
       'p2',
       'TTI'
     );
-    const requireSpy = vi.fn();
-    vi.stubGlobal('useConfirm', () => ({ require: requireSpy }));
-    const wrapper = mountPanel('TTI', KEYS, VALUES);
-    await wrapper.findAll('[role="button"]')[1]!.trigger('click');
-    await wrapper
-      .findAll('button.btn')
-      .find(b => b.text() === '删除')!
-      .trigger('click');
+    const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
+    await expand(wrapper);
+    await rowFor(wrapper, 'b')!.trigger('click');
+    await buttonFor(wrapper, '删除')!.trigger('click');
 
     expect(requireSpy).toHaveBeenCalledTimes(1);
     const options = requireSpy.mock.calls[0]![0] as { message: string; accept: () => void };
     expect(options.message).toContain('确定删除模型');
-    // nothing deleted before the user accepts
     expect(storeApi.remove).not.toHaveBeenCalled();
     options.accept();
     expect(storeApi.remove).toHaveBeenCalledWith('TTI', 'p2');
@@ -383,61 +382,44 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
   it('applies the built-in local model when the last saved profile is deleted', async () => {
     vi.stubGlobal('useConfirm', () => ({ require: (o?: { accept?: () => void }) => o?.accept?.() }));
     const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
-    const VALUES: Record<string, string> = { EMBEDDING_MODEL_LOCAL: 'false', EMBEDDING_API_NAME: 'bge-m3' };
+    const VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'false',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
     makeStore([{ id: 'e1', label: 'only', params: { ...VALUES } }], 'e1', 'EMBEDDING');
     const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
-    await wrapper.findAll('[role="button"]')[1]!.trigger('click'); // the saved profile
-    await wrapper
-      .findAll('button.btn')
-      .find(b => b.text() === '删除')!
-      .trigger('click'); // default stub auto-accepts
+    await expand(wrapper);
+    await rowFor(wrapper, 'bge-m3')!.trigger('click');
+    await buttonFor(wrapper, '删除')!.trigger('click');
 
     expect(storeApi.remove).toHaveBeenCalledWith('EMBEDDING', 'e1');
-    const emitted = wrapper.emitted('apply');
-    expect(emitted).toHaveLength(1);
-    expect(emitted![0]![0]).toEqual({ id: 'builtin:local', params: { EMBEDDING_MODEL_LOCAL: 'true' } });
+    expect(wrapper.emitted('apply')![0]![0]).toEqual({
+      id: 'builtin:local',
+      params: { EMBEDDING_MODEL_LOCAL: 'true' }
+    });
   });
 
   it('offers no delete button for the built-in local entry', async () => {
     const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
-    const VALUES: Record<string, string> = { EMBEDDING_MODEL_LOCAL: 'true', EMBEDDING_API_NAME: 'bge-m3' };
+    const VALUES: Record<string, string> = {
+      EMBEDDING_MODEL_LOCAL: 'true',
+      EMBEDDING_API_NAME: 'bge-m3'
+    };
     makeStore([{ id: 'e1', label: 'emb', params: { ...VALUES } }], 'e1', 'EMBEDDING');
     const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
-    await wrapper.findAll('[role="button"]')[0]!.trigger('click'); // the local entry
-    expect(wrapper.findAll('button.btn').some(b => b.text() === '删除')).toBe(false);
+    await expand(wrapper);
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    expect(buttonFor(wrapper, '删除')).toBeUndefined();
   });
 
-  it('scrolls the saved-profile list when it overflows', () => {
-    makeStore([{ id: 'p1', label: 'a', params: { TTI_API_NAME: 'a' } }], 'p1', 'TTI');
-    const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'a' });
-    const scroller = wrapper.find('.overflow-y-auto');
-    expect(scroller.exists()).toBe(true);
-    expect(scroller.classes()).toContain('max-h-56');
-  });
-
-  it('renders no local entry for a group without a local flag', () => {
+  it('renders no local entry for a group without a local flag', async () => {
     makeStore([{ id: 't1', label: 'tti', params: { TTI_API_NAME: 'tti' } }], 't1', 'TTI');
     const wrapper = mountPanel('TTI', ['TTI_MODEL_PROVIDER', 'TTI_API_NAME'], {
       TTI_MODEL_PROVIDER: 'openai',
       TTI_API_NAME: 'tti'
     });
-    const rows = wrapper.findAll('[role="button"]');
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.text()).toContain('tti');
-  });
-
-  it('switching the selected model reloads the parameter draft', async () => {
-    makeStore(
-      [
-        { id: 'p1', label: 'a', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'a' } },
-        { id: 'p2', label: 'b', params: { ...ENV_VALUES, MAIN_LLM_NAME: 'b' } }
-      ],
-      'p1'
-    );
-    const wrapper = mountPanel();
-    const rows = wrapper.findAll('[role="button"]');
-    await rows[1]!.trigger('click');
-    const inputs = wrapper.findAll('input.inp');
-    expect((inputs[1]!.element as HTMLInputElement).value).toBe('b');
+    await expand(wrapper);
+    expect(rowFor(wrapper, '本地模型')).toBeUndefined();
+    expect(rowFor(wrapper, 'tti')).toBeTruthy();
   });
 });

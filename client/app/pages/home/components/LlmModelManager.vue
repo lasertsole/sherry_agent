@@ -1,10 +1,22 @@
 <template>
   <div class="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800">
-    <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
-      {{ groupTitle }}
-    </p>
+    <!-- Group header doubles as the collapse toggle; panels start collapsed
+         so a long model list does not push the other groups off screen. -->
+    <button
+      type="button"
+      class="flex w-full cursor-pointer items-center gap-2 text-left"
+      :aria-expanded="!collapsed"
+      :aria-label="collapsed ? t('config.llm.expand') : t('config.llm.collapse')"
+      @click="collapsed = !collapsed">
+      <i
+        :class="['pi text-xs text-gray-400', collapsed ? 'pi-chevron-right' : 'pi-chevron-down']"
+        aria-hidden="true"></i>
+      <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">{{ groupTitle }}</span>
+    </button>
 
-    <div class="grid gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
+    <div
+      v-if="!collapsed"
+      class="grid gap-4 md:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
       <!-- Left column: model list + add button -->
       <div class="flex flex-col gap-2">
         <Button
@@ -136,6 +148,9 @@ const { t } = useI18n();
 const confirm = useConfirm();
 /** Client-side model profiles (persisted, per group). */
 const store = useLlmProfilesStore();
+
+/** Collapsed by default; the header toggles it. */
+const collapsed = ref(true);
 
 /** Profiles of this group (reactive). */
 const profiles = computed(() => store.listFor(props.group));
@@ -418,9 +433,7 @@ onBeforeUnmount(() => {
         "saved": "已保存",
         "applied": "已应用到 .env",
         "empty": "暂无模型，点击“添加模型”创建",
-        "unnamed": "未命名模型",
-        "models": "模型列表",
-        "hint": "“保存”仅更新本列表；“应用”会写入 .env 并在左侧标记绿点。"
+        "unnamed": "未命名模型"
       }
     }
   },
@@ -433,9 +446,7 @@ onBeforeUnmount(() => {
         "saved": "Saved",
         "applied": "Applied to .env",
         "empty": "No models yet — click “Add model”",
-        "unnamed": "Unnamed model",
-        "models": "Models",
-        "hint": "“Save” updates this list only; “Apply” writes .env and marks the entry with a green dot."
+        "unnamed": "Unnamed model"
       }
     }
   },
@@ -448,9 +459,7 @@ onBeforeUnmount(() => {
         "saved": "保存しました",
         "applied": ".env に適用済み",
         "empty": "モデルがありません。「モデルを追加」をクリック",
-        "unnamed": "名称未設定のモデル",
-        "models": "モデル一覧",
-        "hint": "「保存」はこの一覧のみ更新します。「適用」は .env に書き込み、左側に緑のドットを付けます。"
+        "unnamed": "名称未設定のモデル"
       }
     }
   },
@@ -463,9 +472,7 @@ onBeforeUnmount(() => {
         "saved": "저장됨",
         "applied": ".env에 적용됨",
         "empty": "모델이 없습니다. “모델 추가”를 클릭하세요",
-        "unnamed": "이름 없는 모델",
-        "models": "모델 목록",
-        "hint": "“저장”은 이 목록만 갱신합니다. “적용”은 .env에 기록하고 왼쪽에 초록 점을 표시합니다."
+        "unnamed": "이름 없는 모델"
       }
     }
   }

@@ -107,7 +107,9 @@
       "requiredMissing": "提供商与模型 API 名为必填项",
       "deleteConfirm": "确定删除模型“{name}”？",
       "localModel": "本地模型",
-      "localUnused": "本地模式不使用"
+      "localUnused": "本地模式不使用",
+      "expand": "展开",
+      "collapse": "收起"
     },
     "save": "保存",
     "cancel": "取消",

@@ -107,7 +107,9 @@
       "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
       "deleteConfirm": "모델 “{name}”을(를) 삭제할까요?",
       "localModel": "로컬 모델",
-      "localUnused": "로컬 모드에서 미사용"
+      "localUnused": "로컬 모드에서 미사용",
+      "expand": "펼치기",
+      "collapse": "접기"
     },
     "save": "저장",
     "cancel": "취소",
