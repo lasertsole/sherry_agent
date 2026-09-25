@@ -190,3 +190,42 @@ class FakeWebSocket {
   }
 }
 (globalThis as any).WebSocket = FakeWebSocket;
+
+// `@tanstack/vue-virtual` measures real layout, which happy-dom does not
+// provide: the scroll container reports a 0px viewport, so the virtualizer
+// would window out EVERY row and component tests would render empty lists.
+// Stub the adapter with a passthrough that renders all rows (start = index *
+// 100) while keeping the reactive surface (count/getItemKey getters are read
+// per call, so list updates still flow). The real windowing/anchoring behavior
+// is covered in the browser e2e, not here.
+vi.mock('@tanstack/vue-virtual', async () => {
+  const { shallowRef } = await import('vue');
+  return {
+    useVirtualizer: (options: unknown) => {
+      const read = (): Record<string, any> => {
+        const value = options as any;
+        return typeof value === 'function' ? (value() as any) : (value?.value ?? value);
+      };
+      return shallowRef({
+        getVirtualItems: () => {
+          const opts = read() ?? {};
+          const count = Number(opts.count ?? 0);
+          return Array.from({ length: count }, (_, index) => ({
+            index,
+            key: opts.getItemKey?.(index) ?? String(index),
+            start: index * 100,
+            size: 100,
+            end: (index + 1) * 100,
+            lane: 0
+          }));
+        },
+        getTotalSize: () => Number(read()?.count ?? 0) * 100,
+        measureElement: () => {},
+        measure: () => {},
+        isAtEnd: () => true,
+        scrollToEnd: () => {},
+        scrollToOffset: () => {}
+      });
+    }
+  };
+});

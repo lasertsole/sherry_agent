@@ -21,6 +21,7 @@
     "@nuxtjs/i18n": "10.6.0",
     "@pinia/nuxt": "^1.0.2",
     "@primevue/themes": "^4.5.0",
+    "@tanstack/vue-virtual": "^3.13.39",
     "@tauri-apps/api": "^2.11.1",
     "@types/lodash-es": "^4.17.12",
     "cropperjs": "^1.6.2",

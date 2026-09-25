@@ -7,131 +7,151 @@
          scrollbar states (e.g. empty state "start a new conversation" → messages accumulate) -->
     <div
       ref="scrollContainerRef"
-      class="flex flex-col gap-6 flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
+      class="flex-1 min-h-0 border-b border-solid border-gray-light dark:border-gray-dark overflow-auto px-6 py-4 [scrollbar-gutter:stable]"
       @scroll="updateScrollBottomBtn">
+      <!-- Virtualized window: positioned rows inside a spacer of the measured
+           total height. `measureElement` re-measures on resize, so expandable
+           tool cards / thinking blocks keep the scroll geometry correct. -->
       <div
-        v-for="group in turnGroups"
-        :key="group[0]?.id"
-        :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(group) }]">
-        <!-- Background-task completion carrier (USER row whose backend origin="subagent_completion"):
-               rendered as a centered, muted system card OUTSIDE the user bubble flow — the carrier
-               announces a background subagent completion, it is not something the user said. The
-               first line "[subagent:<name> <status>]" is self-describing and shown verbatim (no
-               parsing). USER rows always form singleton turn groups (see turnGroups), so a group
-               holding a carrier holds nothing else and the two loops below never interleave. -->
+        class="relative w-full"
+        :style="{ height: `${totalSize}px` }">
         <div
-          v-for="carrier in backgroundCarriers(group)"
-          :key="carrier.id"
-          class="background-task-card mx-auto flex w-full max-w-2xl flex-col items-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-4 py-3 text-center dark:border-gray-700 dark:bg-gray-800/30">
-          <span class="flex items-center gap-1.5 text-xs font-medium tracking-wide text-[#9CA3AF] dark:text-[#6B7280]">
-            <span
-              aria-hidden="true"
-              class="pi pi-server text-[10px]"></span>
-            {{ t('chat.backgroundMessage') }}
-          </span>
-          <!-- Carrier body: verbatim plain text ({{ }} interpolation, no markdown round-trip);
-                 whitespace preserved so the self-describing first line keeps its own line -->
+          v-for="vRow in virtualRows"
+          :key="String(vRow.key)"
+          :ref="el => virtualizer.measureElement(el as HTMLElement)"
+          :data-index="vRow.index"
+          :class="['absolute left-0 top-0 w-full', vRow.index < rows.length - 1 ? 'pb-6' : '']"
+          :style="{ transform: `translateY(${vRow.start}px)` }">
           <div
-            class="w-full whitespace-pre-wrap break-words text-left text-sm leading-relaxed text-gray-500 dark:text-gray-400">
-            {{ carrier.content }}
-          </div>
-        </div>
-        <div
-          v-for="message in regularMessages(group)"
-          :key="message.id"
-          :class="[
-            'flex justify-start gap-3 min-w-0',
-            { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
-            { 'text-left': message.role === CHAT_ROLE.AI }
-          ]">
-          <ChatMessageAvatar
-            :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
-            :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName"
-            :hidden="isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL" />
-          <!-- Message body -->
-          <div
-            :class="[
-              'flex flex-col max-w-[calc(100%_-_52px)] min-w-0',
-              message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start'
-            ]">
-            <!-- User/AI timestamp -->
+            v-if="rowGroup(vRow.index).length"
+            :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(rowGroup(vRow.index)) }]">
+            <!-- Background-task completion carrier (USER row whose backend origin="subagent_completion"):
+                 rendered as a centered, muted system card OUTSIDE the user bubble flow — the carrier
+                 announces a background subagent completion, it is not something the user said. The
+                 first line "[subagent:<name> <status>]" is self-describing and shown verbatim (no
+                 parsing). USER rows always form singleton turn groups (see turnGroups), so a group
+                 holding a carrier holds nothing else and the two loops below never interleave. -->
             <div
-              v-if="message.role !== CHAT_ROLE.TOOL"
+              v-for="carrier in backgroundCarriers(rowGroup(vRow.index))"
+              :key="carrier.id"
+              class="background-task-card mx-auto flex w-full max-w-2xl flex-col items-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-4 py-3 text-center dark:border-gray-700 dark:bg-gray-800/30">
+              <span
+                class="flex items-center gap-1.5 text-xs font-medium tracking-wide text-[#9CA3AF] dark:text-[#6B7280]">
+                <span
+                  aria-hidden="true"
+                  class="pi pi-server text-[10px]"></span>
+                {{ t('chat.backgroundMessage') }}
+              </span>
+              <!-- Carrier body: verbatim plain text ({{ }} interpolation, no markdown round-trip);
+                   whitespace preserved so the self-describing first line keeps its own line -->
+              <div
+                class="w-full whitespace-pre-wrap break-words text-left text-sm leading-relaxed text-gray-500 dark:text-gray-400">
+                {{ carrier.content }}
+              </div>
+            </div>
+            <div
+              v-for="message in regularMessages(rowGroup(vRow.index))"
+              :key="message.id"
               :class="[
-                'flex items-center gap-2 mb-1',
-                { 'text-right justify-end': message.role === CHAT_ROLE.USER },
+                'flex justify-start gap-3 min-w-0',
+                { 'flex-row-reverse text-right': message.role === CHAT_ROLE.USER },
                 { 'text-left': message.role === CHAT_ROLE.AI }
               ]">
-              <span class="text-sm font-semibold text-[#111827] dark:text-[#E5E7EB]">{{
-                message.role === CHAT_ROLE.AI ? resolvedAiName : resolvedUserName
-              }}</span>
-              <span class="text-xs font-normal text-[#6B7280] dark:text-[#9CA3AF]">{{
-                formatCompactTimeString(message.timestamp)
-              }}</span>
+              <ChatMessageAvatar
+                :src="message.role === CHAT_ROLE.USER ? userAvatar : aiAvatar"
+                :alt="message.role === CHAT_ROLE.USER ? resolvedUserName : resolvedAiName"
+                :hidden="isConsecutive(message.id) || message.role === CHAT_ROLE.TOOL" />
+              <!-- Message body -->
+              <div
+                :class="[
+                  'flex flex-col max-w-[calc(100%_-_52px)] min-w-0',
+                  message.role === CHAT_ROLE.USER ? 'items-end' : 'items-start'
+                ]">
+                <!-- User/AI timestamp -->
+                <div
+                  v-if="message.role !== CHAT_ROLE.TOOL"
+                  :class="[
+                    'flex items-center gap-2 mb-1',
+                    { 'text-right justify-end': message.role === CHAT_ROLE.USER },
+                    { 'text-left': message.role === CHAT_ROLE.AI }
+                  ]">
+                  <span class="text-sm font-semibold text-[#111827] dark:text-[#E5E7EB]">{{
+                    message.role === CHAT_ROLE.AI ? resolvedAiName : resolvedUserName
+                  }}</span>
+                  <span class="text-xs font-normal text-[#6B7280] dark:text-[#9CA3AF]">{{
+                    formatCompactTimeString(message.timestamp)
+                  }}</span>
+                </div>
+                <!-- Model thinking/reasoning block (collapsible): rendered only for AI messages that contain reasoning -->
+                <ChatThinkingBlock
+                  v-if="message.role === CHAT_ROLE.AI && message.reasoning"
+                  :reasoning="message.reasoning ?? ''"
+                  :expanded="expandedThinking.has(message.id)"
+                  :consecutive="isConsecutive(message.id)"
+                  :label="t('chatBox.thinking')"
+                  @toggle="toggleThinking(message.id)" />
+                <!-- Tool call card -->
+                <ChatToolCard
+                  v-if="message.role === CHAT_ROLE.TOOL"
+                  :message="message"
+                  :expanded="expandedToolCards.has(message.id)"
+                  :expandable="isToolMessage(message)"
+                  :args-label="t('chatBox.toolArgs')"
+                  :result-label="t('chatBox.toolResult')"
+                  :running-label="t('chatBox.toolRunning')"
+                  :no-output-label="t('chatBox.toolNoOutput')"
+                  @toggle="toggleToolCard(message.id)" />
+                <!-- Conversation content bubble -->
+                <div
+                  v-else
+                  :class="[
+                    'relative group w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
+                    message.role === CHAT_ROLE.USER
+                      ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
+                      : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
+                    { 'rounded-xl': isConsecutive(message.id) }
+                  ]">
+                  <ChatCopyButton
+                    v-if="canCopyMessage(message)"
+                    :copied="copiedMessageId === message.id"
+                    :is-user="message.role === CHAT_ROLE.USER"
+                    :copy-label="t('chatBox.copy')"
+                    :copied-label="t('chatBox.copied')"
+                    @copy="copyMessage(message)" />
+                  <!-- The v-safe-html directive handles markdown rendering + DOMPurify allowlist
+                   sanitization internally (app/directives/safeHtml.ts) -->
+                  <div v-safe-html="message.content"></div>
+                  <ChatMediaAttachments
+                    :message="message"
+                    :failed-sources="failedImageSources"
+                    :preview-label="t('a11y.previewImage')"
+                    :load-failed-label="t('chatBox.imageLoadFailed')"
+                    :image-error-handler="onImageError" />
+                </div>
+                <!-- Content token estimate under the user bubble (local heuristic, ≈ marks it apart
+                 from the AI bubble's exact provider accounting) -->
+                <div
+                  v-if="message.role === CHAT_ROLE.USER && userTokenEstimate(message) > 0"
+                  class="mt-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
+                  {{ t('chatBox.userInputMeta', { n: userTokenEstimate(message) }) }}
+                </div>
+                <!-- Model metadata (model name + token usage; shown only for AI messages when the fields exist) -->
+                <ChatModelMeta
+                  v-if="
+                    message.role === CHAT_ROLE.AI &&
+                    (message.modelName || message.inputTokens !== undefined || message.outputTokens !== undefined)
+                  "
+                  :model-name="message.modelName"
+                  :input-tokens="message.inputTokens"
+                  :output-tokens="message.outputTokens"
+                  :text="
+                    t('chatBox.modelMeta', {
+                      input: message.inputTokens ?? 0,
+                      output: message.outputTokens ?? 0
+                    })
+                  " />
+              </div>
             </div>
-            <!-- Model thinking/reasoning block (collapsible): rendered only for AI messages that contain reasoning -->
-            <ChatThinkingBlock
-              v-if="message.role === CHAT_ROLE.AI && message.reasoning"
-              :reasoning="message.reasoning ?? ''"
-              :expanded="expandedThinking.has(message.id)"
-              :consecutive="isConsecutive(message.id)"
-              :label="t('chatBox.thinking')"
-              @toggle="toggleThinking(message.id)" />
-            <!-- Tool call card -->
-            <ChatToolCard
-              v-if="message.role === CHAT_ROLE.TOOL"
-              :message="message"
-              :expanded="expandedToolCards.has(message.id)"
-              :expandable="isToolMessage(message)"
-              :args-label="t('chatBox.toolArgs')"
-              :result-label="t('chatBox.toolResult')"
-              :running-label="t('chatBox.toolRunning')"
-              :no-output-label="t('chatBox.toolNoOutput')"
-              @toggle="toggleToolCard(message.id)" />
-            <!-- Conversation content bubble -->
-            <div
-              v-else
-              :class="[
-                'relative group w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
-                message.role === CHAT_ROLE.USER
-                  ? 'bg-[#2563EB] text-[#FFFFFF] rounded-s-xl rounded-ee-xl dark:bg-[#3B82F6]' /* Right-side bubble: blue, with custom bottom-left/bottom-right corner radii */
-                  : 'bg-white text-gray-900 rounded-e-xl rounded-es-xl border border-gray-100' /* Left-side bubble: white */,
-                { 'rounded-xl': isConsecutive(message.id) }
-              ]">
-              <ChatCopyButton
-                v-if="canCopyMessage(message)"
-                :copied="copiedMessageId === message.id"
-                :is-user="message.role === CHAT_ROLE.USER"
-                :copy-label="t('chatBox.copy')"
-                :copied-label="t('chatBox.copied')"
-                @copy="copyMessage(message)" />
-              <!-- The v-safe-html directive handles markdown rendering + DOMPurify allowlist
-               sanitization internally (app/directives/safeHtml.ts) -->
-              <div v-safe-html="message.content"></div>
-              <ChatMediaAttachments
-                :message="message"
-                :failed-sources="failedImageSources"
-                :preview-label="t('a11y.previewImage')"
-                :load-failed-label="t('chatBox.imageLoadFailed')"
-                :image-error-handler="onImageError" />
-            </div>
-            <!-- Content token estimate under the user bubble (local heuristic, ≈ marks it apart
-             from the AI bubble's exact provider accounting) -->
-            <div
-              v-if="message.role === CHAT_ROLE.USER && userTokenEstimate(message) > 0"
-              class="mt-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
-              {{ t('chatBox.userInputMeta', { n: userTokenEstimate(message) }) }}
-            </div>
-            <!-- Model metadata (model name + token usage; shown only for AI messages when the fields exist) -->
-            <ChatModelMeta
-              v-if="
-                message.role === CHAT_ROLE.AI &&
-                (message.modelName || message.inputTokens !== undefined || message.outputTokens !== undefined)
-              "
-              :model-name="message.modelName"
-              :input-tokens="message.inputTokens"
-              :output-tokens="message.outputTokens"
-              :text="t('chatBox.modelMeta', { input: message.inputTokens ?? 0, output: message.outputTokens ?? 0 })" />
           </div>
         </div>
       </div>
@@ -208,7 +228,18 @@ const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(m
 const { isConsecutive, turnGroups, turnSpacingClass, regularMessages, backgroundCarriers } = useChatTurnGroups(
   () => props.messages
 );
-const { scrollContainerRef, showScrollBottom, scrollToBottom, updateScrollBottomBtn } = useChatScroll(
+const {
+  scrollContainerRef,
+  rows,
+  virtualRows,
+  virtualizer,
+  totalSize,
+  rowGroup,
+  showScrollBottom,
+  scrollToBottom,
+  updateScrollBottomBtn
+} = useChatVirtualList(
+  () => turnGroups.value,
   () => props.messages
 );
 const { failedImageSources, onImageError } = useChatMedia();
