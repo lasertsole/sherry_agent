@@ -104,14 +104,19 @@ beforeEach(() => {
 });
 
 describe('ConfigDialog per-area saving', () => {
-  it('has no shared footer: nothing to 取消 and every area saves on its own', async () => {
-    const { wrapper } = await mountWithEnvTab();
-    // The old footer carried the only 取消 button; per-area saving removed it.
-    const cancelButtons = wrapper.findAll('button').filter(b => b.text() === '取消');
-    expect(cancelButtons).toHaveLength(0);
-    // handleSave is now the env-area handler used by the `other` group's own
-    // button (the model groups' 保存/应用 live inside their panels).
+  it('hides the footer on the env tab (each item saves on its own) but keeps it elsewhere', async () => {
+    const { wrapper, vm } = await mountWithEnvTab();
+    // Env tab: no footer 保存/取消 — the other group's own button and the
+    // model panels' 保存/应用 replace them.
+    expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(0);
+    // handleSave is the env-area handler behind that other-group button.
     expect(typeof (wrapper.vm as unknown as { handleSave?: unknown }).handleSave).toBe('function');
+
+    // Character tab: the shared footer is back.
+    vm.activeTab = 0;
+    await flushPromises();
+    expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(1);
+    expect(wrapper.findAll('button').filter(b => b.text() === '保存')).toHaveLength(1);
   });
 });
 

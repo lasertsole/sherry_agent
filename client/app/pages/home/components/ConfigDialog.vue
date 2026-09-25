@@ -102,15 +102,6 @@
                   </div>
                 </div>
               </div>
-              <div class="mt-2 flex justify-start">
-                <Button
-                  :label="t('config.save')"
-                  icon="pi pi-save"
-                  size="small"
-                  :loading="saving"
-                  :disabled="!charCanSave"
-                  @click="saveLocalSettings" />
-              </div>
             </div>
           </TabPanel>
           <TabPanel
@@ -188,14 +179,6 @@
                   {{ t('config.background.opacityHint') }}
                 </p>
               </div>
-            </div>
-            <div class="mt-3 flex justify-start">
-              <Button
-                :label="t('config.save')"
-                icon="pi pi-save"
-                size="small"
-                :loading="saving"
-                @click="saveLocalSettings" />
             </div>
           </TabPanel>
 
@@ -308,21 +291,29 @@
                     autocomplete="off"
                     spellcheck="false" />
                 </div>
-                <div class="mt-1 flex justify-start">
-                  <Button
-                    :label="t('config.save')"
-                    icon="pi pi-save"
-                    size="small"
-                    :loading="saving"
-                    :disabled="!sherryHasChanges"
-                    @click="saveSherry" />
-                </div>
               </template>
             </div>
           </TabPanel>
         </TabView>
       </template>
     </div>
+    <template #footer>
+      <div
+        v-if="activeTab !== 2"
+        class="flex gap-2 justify-end">
+        <Button
+          :label="t('config.cancel')"
+          icon="pi pi-times"
+          severity="secondary"
+          @click="visible = false" />
+        <Button
+          :label="t('config.save')"
+          icon="pi pi-check"
+          :loading="saving"
+          :disabled="!canSave"
+          @click="saveDialogSettings" />
+      </div>
+    </template>
   </Dialog>
 
   <AvatarCropDialog
@@ -592,14 +583,22 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
     reader.readAsDataURL(file);
   });
 
-/** Character tab: both names must be non-empty before saving. */
-const charCanSave = computed(
-  () =>
-    !loading.value &&
-    !saving.value &&
-    charUser.value.name.trim().length > 0 &&
-    charAssistant.value.name.trim().length > 0
-);
+/**
+ * Footer save availability. The footer is hidden on the env tab (every item
+ * there saves/applies on its own), so only the character / background /
+ * sherry tabs reach this.
+ */
+const canSave = computed(() => {
+  if (loading.value || saving.value) return false;
+  // Sherry config: saveable only when there are changes.
+  if (activeTab.value === 3) return sherryHasChanges.value;
+  // Character config: both character names must be non-empty.
+  if (activeTab.value === 0) {
+    return charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
+  }
+  // Background: nothing extra to validate.
+  return true;
+});
 
 // ── Image crop handling (reuses AvatarCropDialog: avatars 1:1, background adapted to the screen) ──
 // After an image is selected, the crop dialog opens: avatars are forced to a 1:1 square (512×512);
@@ -778,10 +777,37 @@ const loadContent = async () => {
 };
 
 /**
- * Local (Dexie) settings of the character and background tabs. Each tab saves
- * on its own now — the dialog has no shared footer any more.
+ * Footer handler (character / background / sherry tabs): writes the local
+ * Dexie settings and the sherry.jsonc diff, then closes the dialog. The env
+ * tab has no footer — every item there saves/applies on its own.
  */
-const saveLocalSettings = async () => {
+/**
+ * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
+ * The model groups carry their own 保存/应用 inside the panel, so the env tab
+ * needs no footer button at all.
+ */
+const handleSave = async () => {
+  if (loading.value || saving.value) return;
+  saving.value = true;
+  try {
+    if (!envHasChanges.value) return;
+    const ok = await persistEnvChanges();
+    if (!ok) {
+      // persistEnvChanges may already have set a specific validation error
+      // (MAX_TOKEN guard); only fall back to the generic save-failed message.
+      if (!envLoadError.value) envLoadError.value = t('config.env.saveFailed');
+      return;
+    }
+    invalidateModelConfigCache();
+    emits('saved');
+  } catch (e) {
+    logUtil.e('[ConfigDialog] Failed to save env config:', e);
+  } finally {
+    saving.value = false;
+  }
+};
+
+const saveDialogSettings = async () => {
   if (loading.value || saving.value) return;
   saving.value = true;
   try {
@@ -823,58 +849,20 @@ const saveLocalSettings = async () => {
       originalBackgroundUrl.value = backgroundUrl.value;
     }
 
-    // The dialog stays open: each area saves on its own; the parent refreshes
-    // the character display from the freshly written profile.
-    emits('saved');
-  } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to save local settings:', e);
-  } finally {
-    saving.value = false;
-  }
-};
-
-/**
- * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
- * The model groups carry their own 保存/应用 inside the panel.
- */
-const handleSave = async () => {
-  if (loading.value || saving.value) return;
-  saving.value = true;
-  try {
-    if (!envHasChanges.value) return;
-    const ok = await persistEnvChanges();
-    if (!ok) {
-      // persistEnvChanges may already have set a specific validation error
-      // (MAX_TOKEN guard); only fall back to the generic save-failed message.
-      if (!envLoadError.value) envLoadError.value = t('config.env.saveFailed');
-      return;
+    // Sherry config: same contract as the env tab — abort on save failure
+    // without closing the dialog.
+    if (activeTab.value === 3 && sherryHasChanges.value) {
+      const ok = await persistSherryChanges();
+      if (!ok) {
+        sherryLoadError.value = t('config.sherry.saveFailed');
+        return;
+      }
     }
-    invalidateModelConfigCache();
-    emits('saved');
-  } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to save env config:', e);
-  } finally {
-    saving.value = false;
-  }
-};
 
-/**
- * Sherry tab (``sherry.jsonc``): same contract as the env tab — abort on save
- * failure without closing the dialog.
- */
-const saveSherry = async () => {
-  if (loading.value || saving.value) return;
-  saving.value = true;
-  try {
-    if (!sherryHasChanges.value) return;
-    const ok = await persistSherryChanges();
-    if (!ok) {
-      sherryLoadError.value = t('config.sherry.saveFailed');
-      return;
-    }
     emits('saved');
+    visible.value = false;
   } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to save sherry config:', e);
+    logUtil.e('[ConfigDialog] Failed to save settings:', e);
   } finally {
     saving.value = false;
   }
