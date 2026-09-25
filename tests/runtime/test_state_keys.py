@@ -26,6 +26,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "LLM_CONTENT_FILTER_TERMINATED": "llm_content_filter_terminated",
     "LLM_PARTIAL_STREAM_STUB": "llm_partial_stream_stub",
     "LLM_PARTIAL_STREAM_CAUSE": "llm_partial_stream_cause",
+    "LLM_THINKING_ENABLED": "llm_thinking_enabled",
     "MULTIMODAL_TRYING_NATIVE": "_multimodal_trying_native",
     "MULTIMODAL_NATIVE_MODEL": "_multimodal_native_model",
     "HEARTBEAT_ITER": "heartbeat_iter",

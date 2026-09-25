@@ -32,6 +32,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard 与 RepetitionGuardWrapper](#outputrepetitionguard-与-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [共享状态系统](#共享状态系统)
@@ -98,6 +99,9 @@ middleware = [
     TaskIntentMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
+    # per-session thinking toggle (client switch → /sessions/thinking):
+    # swaps request.model for the thinking on/off or low/high/max variant
+    ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     # after_model 节点按注册逆序执行：紧跟 HITL 注册，即为模型产出后
@@ -569,6 +573,32 @@ checkpointer，且 IterationBudget 每个外层模型调用只计 1 次。
   环境变量 / 8192 默认值），因此第一层 boost base 已经从膨胀后的输出上限起步。
 - **服务层诊断：** 流失败时，`server/service/stream_diag.py` 统计块数/字节数与
   首块耗时，并把摘要附加到重新抛出的异常上——是对上述中间件级恢复的补充观测。
+
+### ThinkingControlMiddleware
+
+**模块：** `agent/middlewares/thinking_control/core.py` · **类：** `ThinkingControlMiddleware(AgentMiddleware)`
+**钩子：** `wrap_model_call` / `awrap_model_call`
+
+按会话的思考能力控制。客户端工具栏控件（`PUT /sessions/thinking`）把按会话
+的标志写入状态寄存器；本中间件在每次模型调用时读取该标志（仅读内存寄存器
+——事件循环上无阻塞 I/O），当用户做出过显式选择时，把 `request.model` 换成
+`build_main_llm(thinking=..., thinking_level=...)` 构建的对应客户端变体：
+
+- 布尔标志 → 思考开/关变体；未设置时请求原样通过（沿用
+  `MAIN_LLM_ENABLE_THINKING` 环境变量默认值）；
+- `"low"` / `"high"` / `"max"` → 显式档位，用于"始终思考"、控制形态是选择器
+  而非开关的模型（`thinking_control_mode()` 对 glm-5 系列报告 `"levels"`，
+  其余为 `"on_off"`）。
+
+关闭阶梯：服务端默认开启思考的网关需要显式 disable 载荷，但"始终思考"模型
+（glm-5 系列，2026-09 实测：glm-5.3-flash 以错误码 1210 拒绝 `disabled`——
+"该模型始终思考，不支持关闭思考"）根本无法关闭思考。命中该拒绝时，关闭请求
+以最低思考档（`low`）重试一次，并进程内缓存该已习得能力，后续关闭调用直接
+跳过失败档。变体构建失败开放（沿用环境默认模型），变体按状态缓存在调用循环上。
+
+写入路径（`server/service/session_settings_service.py`）在会话有回合进行中时
+拒绝修改（`detect_state` 信号 + 输入队列活跃行，持队列的会话锁），保证进行中
+的回合不会中途切换模型变体。
 
 ### OutputRepetitionGuard 与 RepetitionGuardWrapper
 

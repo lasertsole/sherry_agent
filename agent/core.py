@@ -37,6 +37,7 @@ from .middlewares import (
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
+from .middlewares.thinking_control import ThinkingControlMiddleware
 from .middlewares.todo_continuation import TodoContinuationEnforcer
 from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
@@ -144,6 +145,7 @@ def _build_middlewares(
     auxiliary_llm: Any,
     main_llm_context_window: int,
     compression_trigger_ratio: float,
+    temperature: float | None = None,
 ) -> list[Any]:
     """Assemble the middleware pipeline.
 
@@ -184,6 +186,11 @@ def _build_middlewares(
         TaskIntentMiddleware(),
         OutputRepetitionGuard(),
         MaxTokensBoostMiddleware(),
+        # Per-session thinking toggle: swaps the per-call model for the
+        # thinking on/off variant when the client flag is set (inner relative
+        # to MaxTokensBoost — the boost retries must re-apply on top of the
+        # swapped model, and this layer only ever changes request.model).
+        ThinkingControlMiddleware(temperature=temperature),
         HeartbeatStaleness(),
         HumanInTheLoop(HITLConfig()),
         # Registered directly after HITL so its after_model node runs
@@ -234,6 +241,7 @@ async def _build_graph(
         auxiliary_llm=auxiliary_llm,
         main_llm_context_window=main_llm_context_window,
         compression_trigger_ratio=compression_trigger_ratio,
+        temperature=temperature,
     )
     validate_required_middleware(agent_middleware, chain="main", entries=_MAIN_REQUIRED)
 

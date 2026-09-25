@@ -9,6 +9,9 @@ from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.LLMs.reasoning_openai import ReasoningChatOpenAI
 from models.LLMs.reasoning_payload import (
     build_reasoning_kwargs,
+    build_thinking_floor_kwargs,
+    build_thinking_level_kwargs,
+    build_thinking_off_kwargs,
     get_thinking_budget,
     is_zhipu_reasoning_model,
 )
@@ -82,6 +85,12 @@ model_config: dict[str, Any] = ModelEnvBuilder(
         "profile": {"max_input_tokens": max_tokens},  # Set model context window size
     }
 )
+# Pristine snapshot of the client config BEFORE the reasoning payload and the
+# thinking budget are merged in. Per-session thinking variants rebuild from
+# this copy (build_main_llm(thinking=...)), so flipping the switch can both
+# add and remove the provider's reasoning keys without leaking the previous
+# variant's payload into the next one.
+_pristine_config: dict[str, Any] = dict(model_config)
 # Map the universal switch to the provider-correct reasoning payload. Returns
 # {} (no-op) for providers/models that don't accept one, so it never crashes.
 model_config.update(
@@ -96,8 +105,51 @@ apply_thinking_budget(model_config, model_provider, api_name, enable_thinking)
 model_config = clean_client_kwargs(model_config)
 
 
-def _build_inner_chat_model():
-    """Construct the inner chat model for ``build_main_llm``.
+def _variant_client_config(
+    *,
+    enabled: bool,
+    level: str | None = None,
+    thinking_floor: bool = False,
+) -> dict[str, Any]:
+    """Client config for a forced thinking state, env-independent.
+
+    Rebuilt from the pristine pre-reasoning snapshot so toggling is symmetric:
+    enabling adds the provider payload + budget headroom, disabling restores
+    the exact config the process would have had with the switch off.
+
+    * ``level`` pins an explicit thinking level (low/high/max) for always-think
+      models whose toggle is a selector rather than a switch.
+    * ``thinking_floor`` only matters with ``enabled=False``: for always-think
+      models that reject the disable payload, it swaps in the minimum thinking
+      level instead (the closest possible approximation of "off").
+    """
+    cfg = dict(_pristine_config)
+    if level is not None:
+        cfg.update(build_thinking_level_kwargs(model_provider, api_name, level))
+        apply_thinking_budget(cfg, model_provider, api_name, True)
+    elif enabled:
+        cfg.update(
+            build_reasoning_kwargs(
+                provider=model_provider,
+                model_name=api_name,
+                enabled=True,
+                reasoning_effort=reasoning_effort,
+            )
+        )
+        apply_thinking_budget(cfg, model_provider, api_name, True)
+    elif thinking_floor:
+        cfg.update(build_thinking_floor_kwargs(model_provider, api_name))
+        apply_thinking_budget(cfg, model_provider, api_name, True)
+    else:
+        # Gateways whose server default is thinking ON (GLM) need an explicit
+        # disable payload; an absent param would leave them reasoning.
+        cfg.update(build_thinking_off_kwargs(model_provider, api_name))
+        apply_thinking_budget(cfg, model_provider, api_name, False)
+    return clean_client_kwargs(cfg)
+
+
+def _build_inner_chat_model_from(config: dict[str, Any]):
+    """Construct an inner chat model from an explicit client config.
 
     GLM (Zhipu bigmodel) via the generic ``openai`` provider must use
     ``ReasoningChatOpenAI``: vanilla ``ChatOpenAI`` drops ``delta.reasoning_content``
@@ -107,12 +159,23 @@ def _build_inner_chat_model():
     single source of truth.
     """
     if model_provider == "openai" and api_name and is_zhipu_reasoning_model(api_name):
-        kwargs = {k: v for k, v in model_config.items() if k != "model_provider"}
+        kwargs = {k: v for k, v in config.items() if k != "model_provider"}
         return ReasoningChatOpenAI(**kwargs)
-    return init_chat_model(**model_config)
+    return init_chat_model(**config)
 
 
-def build_main_llm(temperature: float | None = None):
+def _build_inner_chat_model():
+    """Construct the inner chat model for ``build_main_llm``."""
+    return _build_inner_chat_model_from(model_config)
+
+
+def build_main_llm(
+    temperature: float | None = None,
+    *,
+    thinking: bool | None = None,
+    thinking_level: str | None = None,
+    thinking_floor: bool = False,
+):
     """Create a fresh LLM instance bound to the current event loop.
 
     The module-level ``main_llm`` singleton is created at import time on the
@@ -125,9 +188,27 @@ def build_main_llm(temperature: float | None = None):
     Call this factory from any async context (e.g. the subagent daemon
     thread) to get a fresh instance whose transport pool is correctly
     bound to the *current* event loop.
+
+    ``thinking`` forces the reasoning payload for THIS instance regardless of
+    the ``MAIN_LLM_ENABLE_THINKING`` env default: ``True``/``False`` build the
+    thinking-on/off client variant (same provider dispatch, symmetric on/off
+    configs), ``None`` keeps the env-derived default. Used by the per-session
+    thinking toggle (ThinkingControlMiddleware). With ``thinking=False`` and
+    ``thinking_floor=True`` the variant carries the MINIMUM thinking level for
+    always-think models that reject the disable payload. ``thinking_level``
+    pins an explicit low/high/max level instead (level selector models).
     """
-    model = _build_inner_chat_model()
-    model = NormalizingChatModel(inner=model)
+    if thinking is None and thinking_level is None:
+        inner = _build_inner_chat_model()
+    else:
+        inner = _build_inner_chat_model_from(
+            _variant_client_config(
+                enabled=bool(thinking),
+                level=thinking_level,
+                thinking_floor=thinking_floor,
+            )
+        )
+    model = NormalizingChatModel(inner=inner)
     if temperature is not None:
         model = model.bind(temperature=temperature)
     return model

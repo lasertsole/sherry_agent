@@ -28,6 +28,7 @@ EXPECTED_ORDER = [
     "TaskIntentMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
+    "ThinkingControlMiddleware",
     "HeartbeatStaleness",
     "HumanInTheLoop",
     "MessagePersistenceMiddleware",

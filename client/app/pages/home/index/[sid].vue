@@ -171,6 +171,12 @@
                   size="small"
                   variant="text" />
               </div>
+              <!-- Per-session model thinking control (right side of the media toolbar); locked while a turn streams -->
+              <ThinkingToggle
+                v-if="mySid"
+                class="ml-auto"
+                :session-id="mySid"
+                :streaming="isSending" />
               <!-- Hidden image file input: triggered by the toolbar image button via triggerImagePicker() -->
               <input
                 ref="imageFileInputRef"
@@ -349,6 +355,7 @@ import { tools } from '../config';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
+import ThinkingToggle from '../components/ThinkingToggle.vue';
 import { useTodoStore } from '~/stores/todo';
 
 // Image preview

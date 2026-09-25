@@ -57,7 +57,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
   │    → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7)
-  │    → OutputRepetitionGuard → MaxTokensBoost → HeartbeatStaleness → HITL → MessagePersistence
+  │    → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL → MessagePersistence
   │    → LLMRetry → Summarization → TodoContinuationEnforcer(E3)
   │    (MessagePersistence flushes tool results the moment they return via
   │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
@@ -69,6 +69,10 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     reaches state; read_file results are sliced, never offloaded. Its
   │     before_model tags an oversized trailing HumanMessage (full text stays in
   │     state/MesMemory) and wrap_model_call truncates only the model view)
+  │    ThinkingControl: per-session thinking toggle (client switch →
+  │     PUT /sessions/thinking → state register); swaps request.model for the
+  │     thinking on/off variant built by build_main_llm(thinking=...) when the
+  │     session carries an explicit LLM_THINKING_ENABLED flag, else env default
   │
   ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
   │         + file_tools + web_search + terminal + python_repl + question + ...

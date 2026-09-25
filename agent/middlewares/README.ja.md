@@ -32,6 +32,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard と RepetitionGuardWrapper](#outputrepetitionguard-と-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [共有状態システム](#共有状態システム)
@@ -98,6 +99,9 @@ middleware = [
     TaskIntentMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
+    # per-session thinking toggle (client switch → /sessions/thinking):
+    # swaps request.model for the thinking on/off or low/high/max variant
+    ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     # after_model ノードは登録逆順に走る: HITL の直後に登録することで、
@@ -576,6 +580,39 @@ checkpointer に書き込まれることはなく、IterationBudget は外側の
 - **サービス層の診断：** ストリーム失敗時、`server/service/stream_diag.py` が
   チャンク数/バイト数と初回チャンクまでの時間を計上し、再スローされる例外に
   サマリを添付します — 上記のミドルウェアレベル復旧を補う可観測性です。
+
+### ThinkingControlMiddleware
+
+**モジュール：** `agent/middlewares/thinking_control/core.py` · **クラス：** `ThinkingControlMiddleware(AgentMiddleware)`
+**フック：** `wrap_model_call` / `awrap_model_call`
+
+セッション単位の思考制御。クライアントのツールバーコントロール（`PUT
+/sessions/thinking`）はセッションごとのフラグを状態レジスタに永続化します。
+本ミドルウェアは毎回のモデル呼び出しでそのフラグを（メモリレジスタのみから
+——イベントループ上でブロッキング I/O は行わない）読み、ユーザーが明示的に
+選択していれば `request.model` を
+`build_main_llm(thinking=..., thinking_level=...)` が構築した対応クライアント
+変数へ差し替えます：
+
+- 真偽値フラグ → 思考オン/オフ変数。未設定ならリクエストはそのまま通過し、
+  `MAIN_LLM_ENABLE_THINKING` 環境変数のデフォルトが適用されます；
+- `"low"` / `"high"` / `"max"` → 常時思考モデル（スイッチではなくセレクタ）向けの
+  明示レベル。`thinking_control_mode()` は glm-5 系列に `"levels"`、それ以外に
+  `"on_off"` を報告します。
+
+無効化ラダー：サーバ側デフォルトが思考オンのゲートウェイには明示的な disable
+ペイロードが必要ですが、常時思考モデル（glm-5 系列、2026-09 実測：
+glm-5.3-flash はエラーコード 1210「该模型始终思考，不支持关闭思考」で
+`disabled` を拒否）は思考を無効化できません。その拒否時、オフ要求は最低思考
+レベル（`low`）で一度だけ再試行され、学習済み capability はプロセス内に
+キャッシュされるため、以降のオフ呼び出しは失敗ラングをスキップします。変数
+の構築はフェイルオープン（環境既定モデルを使用）、変数は呼び出しループ上で
+状態ごとにキャッシュされます。
+
+書き込みパス（`server/service/session_settings_service.py`）は、セッションに
+進行中のターンがある間の変更を拒否します（`detect_state` シグナル＋入力キューの
+ライブ行、キューのセッションロック下）。進行中のターンが途中でモデル変数を
+切り替えることはありません。
 
 ### OutputRepetitionGuard と RepetitionGuardWrapper
 

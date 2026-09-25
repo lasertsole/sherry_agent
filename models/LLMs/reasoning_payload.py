@@ -78,6 +78,14 @@ _DEFAULT_NON_ANTHROPIC_BUDGET = REASONING_BUDGET["non_anthropic_default_thinking
 
 _VALID_REASONING_EFFORTS = ("low", "medium", "high")
 
+# Thinking levels exposed by always-think gateways (glm-5 series et al).
+_VALID_LEVELS = ("low", "high", "max")
+
+# Zhipu GLM series that ALWAYS think and only accept a level (low/high/max),
+# never the enabled/disabled switch. Verified live 2026-09: glm-5.3-flash
+# rejects ``disabled`` with error code 1210.
+_ALWAYS_THINK_PREFIXES = ("glm-5",)
+
 
 def is_openai_reasoning_model(model_name: str) -> bool:
     """Return True iff ``model_name`` accepts the ``reasoning_effort`` param.
@@ -136,6 +144,9 @@ class _NoOpStrategy:
     def thinking_budget(self, model_name: str | None) -> int:
         return 0
 
+    def disable(self, model_name: str | None) -> dict[str, Any]:
+        return {}
+
 
 class _DeepSeekStrategy:
     """DeepSeek V3.2+ chat API: thinking carried via ``extra_body``."""
@@ -145,6 +156,9 @@ class _DeepSeekStrategy:
 
     def thinking_budget(self, model_name: str | None) -> int:
         return _DEFAULT_NON_ANTHROPIC_BUDGET
+
+    def disable(self, model_name: str | None) -> dict[str, Any]:
+        return {"extra_body": {"thinking": {"type": "disabled"}}}
 
 
 class _AnthropicStrategy:
@@ -165,13 +179,20 @@ class _AnthropicStrategy:
             return _DEFAULT_ANTHROPIC_BUDGET
         return 0
 
+    def disable(self, model_name: str | None) -> dict[str, Any]:
+        # Anthropic reasoning defaults to OFF: an absent ``thinking`` param
+        # already disables it; sending an explicit disable block is not
+        # supported by the API.
+        return {}
+
 
 class _OpenAICompatibleStrategy:
     """``reasoning_effort`` on OpenAI-compatible gateways (o-series / gpt-5).
 
     Zhipu GLM through the bigmodel v4 API is the exception: it takes the
     DeepSeek-style request-body ``thinking`` key instead, and only for the
-    thinking-capable GLM series.
+    thinking-capable GLM series — whose SERVER-SIDE default is thinking ON,
+    so forcing it off requires the explicit ``disabled`` payload.
     """
 
     def build(self, model_name: str | None, reasoning_effort: str | None) -> dict[str, Any]:
@@ -189,6 +210,13 @@ class _OpenAICompatibleStrategy:
         ):
             return _DEFAULT_NON_ANTHROPIC_BUDGET
         return 0
+
+    def disable(self, model_name: str | None) -> dict[str, Any]:
+        if model_name and is_zhipu_reasoning_model(model_name):
+            return {"extra_body": {"thinking": {"type": "disabled"}}}
+        # o-series / gpt-5 have no documented off switch for reasoning_effort;
+        # an absent param keeps the gateway default (best effort).
+        return {}
 
 
 _NOOP_STRATEGY = _NoOpStrategy()
@@ -253,9 +281,98 @@ def build_reasoning_kwargs(
     return _strategy_for(provider.strip().lower()).build(model_name, reasoning_effort)
 
 
+def build_thinking_off_kwargs(provider: str | None, model_name: str | None) -> dict[str, Any]:
+    """Return kwargs that explicitly DISABLE thinking for the provider/model.
+
+    Needed for gateways whose server-side default is thinking ON (Zhipu GLM
+    glm-4.5+): an absent param would leave the server default in charge, so
+    the forced-off variant must send ``{"thinking": {"type": "disabled"}}``.
+    Providers that default to OFF (Anthropic, o-series) get ``{}`` — the same
+    never-crash contract as :func:`build_reasoning_kwargs`.
+    """
+    if not provider:
+        return {}
+    return _strategy_for(provider.strip().lower()).disable(model_name)
+
+
+def build_thinking_floor_kwargs(provider: str | None, model_name: str | None) -> dict[str, Any]:
+    """Return kwargs for the MINIMUM thinking level of always-think models.
+
+    Some gateways (e.g. ``glm-5`` series, verified live 2026-09: glm-5.3-flash
+    rejects ``disabled`` with error code 1210 "该模型始终思考，不支持关闭思考")
+    cannot turn thinking off at all and only accept a level (low / high / max).
+    For those the forced-off toggle maps to the lowest level — the closest
+    possible approximation. Providers with a real off switch get ``{}``.
+    """
+    if not provider or not model_name:
+        return {}
+    name = model_name.lower()
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    if name.startswith(_ZHIPU_REASONING_PREFIXES):
+        return {"extra_body": {"thinking": {"type": "low"}}}
+    return {}
+
+
+def build_thinking_level_kwargs(
+    provider: str | None, model_name: str | None, level: str
+) -> dict[str, Any]:
+    """Return kwargs that pin thinking to an explicit LEVEL (low / high / max).
+
+    For always-think models (e.g. ``glm-5`` series) the toggle is a level
+    selector rather than an on/off switch. OpenAI reasoning models map the
+    level onto ``reasoning_effort`` (``max`` collapses to ``high``); unknown
+    providers get ``{}`` — the never-crash contract.
+    """
+    if level not in _VALID_LEVELS:
+        return {}
+    if not provider or not model_name:
+        return {}
+    name = model_name.lower()
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    if provider.strip().lower() in _OPENAI_COMPATIBLE and name.startswith(
+        _ZHIPU_REASONING_PREFIXES
+    ):
+        return {"extra_body": {"thinking": {"type": level}}}
+    if provider.strip().lower() in _OPENAI_COMPATIBLE and is_openai_reasoning_model(model_name):
+        return {"reasoning_effort": "high" if level == "max" else level}
+    return {}
+
+
+def thinking_control_mode(provider: str | None, model_name: str | None) -> str:
+    """How this model's thinking is controlled: ``"on_off"`` or ``"levels"``.
+
+    ``levels`` marks always-think models that reject the disable payload and
+    only accept a thinking level (verified live 2026-09: glm-5.3-flash, error
+    code 1210 "该模型始终思考，不支持关闭思考；请使用 low、high 或 max"). The
+    client renders a 低/高/最高 selector for them instead of a switch.
+    """
+    if not provider or not model_name:
+        return "on_off"
+    name = model_name.lower()
+    if "/" in name:
+        name = name.rsplit("/", 1)[-1]
+    if provider.strip().lower() in _OPENAI_COMPATIBLE and name.startswith(_ALWAYS_THINK_PREFIXES):
+        return "levels"
+    return "on_off"
+
+
+def is_thinking_disable_rejection(exc: BaseException) -> bool:
+    """True when a gateway rejected the thinking-off payload for an
+    always-thinks model (the "use low/high/max instead" 400 family)."""
+    text = str(exc)
+    return ("不支持关闭思考" in text) or ("始终思考" in text)
+
+
 __all__ = [
     "build_reasoning_kwargs",
+    "build_thinking_floor_kwargs",
+    "build_thinking_level_kwargs",
+    "build_thinking_off_kwargs",
     "get_thinking_budget",
     "is_openai_reasoning_model",
+    "is_thinking_disable_rejection",
     "is_zhipu_reasoning_model",
+    "thinking_control_mode",
 ]

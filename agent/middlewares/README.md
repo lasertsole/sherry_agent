@@ -32,6 +32,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard & RepetitionGuardWrapper](#outputrepetitionguard--repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [Shared State System](#shared-state-system)
@@ -98,6 +99,9 @@ middleware = [
     TaskIntentMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
+    # per-session thinking toggle (client switch → /sessions/thinking):
+    # swaps request.model for the thinking on/off or low/high/max variant
+    ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     # after_model nodes run in reverse registration order: registered right
@@ -577,6 +581,38 @@ and the IterationBudget is charged once per outer model call.
   `server/service/stream_diag.py` counts chunks/bytes and time-to-first-chunk
   and appends the summary to the re-raised exception — complementary
   observability to the middleware-level recovery above.
+
+### ThinkingControlMiddleware
+
+**Module:** `agent/middlewares/thinking_control/core.py` · **Class:** `ThinkingControlMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call`
+
+Per-session thinking control. The client's toolbar control (`PUT
+/sessions/thinking`) persists a per-session flag in the state registers; on
+every model call this middleware reads the flag (mem-only — no blocking I/O on
+the event loop) and, when the user made an explicit choice, swaps
+`request.model` for the matching client variant built by
+`build_main_llm(thinking=..., thinking_level=...)`:
+
+- boolean flag → thinking on/off variant; an unset flag passes the request
+  through untouched (the `MAIN_LLM_ENABLE_THINKING` env default applies);
+- `"low"` / `"high"` / `"max"` → an explicit level for always-think models
+  whose control is a selector rather than a switch (`thinking_control_mode()`
+  reports `"levels"` for the glm-5 series, `"on_off"` otherwise).
+
+Disable ladder: gateways whose server default is thinking ON need an explicit
+disable payload, but ALWAYS-THINK models (glm-5 series, verified live
+2026-09: glm-5.3-flash rejects `disabled` with error code 1210
+"该模型始终思考，不支持关闭思考") cannot turn thinking off. On that rejection
+the off request is retried once with the minimum thinking level (`low`) and
+the learned capability is cached for the process, so later off calls skip the
+failed rung. Variant builds fail open (env-default model) and variants are
+cached per state on the calling loop.
+
+The write path (`server/service/session_settings_service.py`) rejects changes
+while the session has a turn in progress (`detect_state` signals plus live
+input-queue rows, under the queue's per-session lock) so a running turn never
+switches model variants mid-flight.
 
 ### OutputRepetitionGuard & RepetitionGuardWrapper
 

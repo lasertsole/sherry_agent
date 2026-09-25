@@ -32,6 +32,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [LLMRetryMiddleware](#llmretrymiddleware)
   - [Summarization](#summarization)
   - [MaxTokensBoostMiddleware](#maxtokensboostmiddleware)
+  - [ThinkingControlMiddleware](#thinkingcontrolmiddleware)
   - [OutputRepetitionGuard와 RepetitionGuardWrapper](#outputrepetitionguard와-repetitionguardwrapper)
   - [ContextLimitGuardWrapper](#contextlimitguardwrapper)
 - [공유 상태 시스템](#공유-상태-시스템)
@@ -98,6 +99,9 @@ middleware = [
     TaskIntentMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
+    # per-session thinking toggle (client switch → /sessions/thinking):
+    # swaps request.model for the thinking on/off or low/high/max variant
+    ThinkingControlMiddleware(temperature=temperature),
     HeartbeatStaleness(),
     HumanInTheLoop(HITLConfig()),
     # after_model 노드는 등록 역순으로 실행됩니다: HITL 바로 뒤에 등록하면
@@ -576,6 +580,36 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 - **서비스 계층 진단:** 스트림 실패 시 `server/service/stream_diag.py`가
   청크/바이트 수와 첫 청크까지의 시간을 집계해 재발생되는 예외에 요약을 덧붙입니다 —
   위의 미들웨어 수준 복구를 보완하는 관측성입니다.
+
+### ThinkingControlMiddleware
+
+**모듈:** `agent/middlewares/thinking_control/core.py` · **클래스:** `ThinkingControlMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call`
+
+세션별 사고(thinking) 제어. 클라이언트 툴바 컨트롤(`PUT /sessions/thinking`)은
+세션별 플래그를 상태 레지스터에 기록합니다. 본 미들웨어는 매 모델 호출마다 그
+플래그를 (메모리 레지스터에서만 — 이벤트 루프 위에서 블로킹 I/O 없음) 읽고,
+사용자가 명시적으로 선택한 경우 `request.model`을
+`build_main_llm(thinking=..., thinking_level=...)`이 만든 대응 클라이언트
+변형으로 교체합니다:
+
+- 불리언 플래그 → 사고 온/오프 변형. 설정이 없으면 요청은 그대로 통과하며
+  `MAIN_LLM_ENABLE_THINKING` 환경변수 기본값이 적용됩니다;
+- `"low"` / `"high"` / `"max"` → 항상 사고하는 모델(스위치가 아닌 셀렉터)을 위한
+  명시적 레벨. `thinking_control_mode()`는 glm-5 시리즈에 `"levels"`, 그 외에는
+  `"on_off"`를 보고합니다.
+
+비활성화 사다리: 서버 기본값이 사고 켜짐인 게이트웨이에는 명시적 disable
+페이로드가 필요하지만, 항상 사고하는 모델(glm-5 시리즈, 2026-09 실측:
+glm-5.3-flash는 오류 코드 1210「该模型始终思考，不支持关闭思考」로 `disabled`를
+거부)은 사고를 끌 수 없습니다. 그 거부 시 오프 요청은 최소 사고 레벨(`low`)로
+한 번 재시도되고, 학습된 capability는 프로세스 내에 캐시되어 이후 오프 호출은
+실패한 단계를 건너뜁니다. 변형 구축은 페일오픈(환경 기본 모델 사용)이며 변형은
+호출 루프에서 상태별로 캐시됩니다.
+
+쓰기 경로(`server/service/session_settings_service.py`)는 세션에 진행 중인
+턴이 있을 때 변경을 거부합니다(`detect_state` 신호 + 입력 큐의 라이브 행,
+큐의 세션 잠금 하). 진행 중인 턴이 도중에 모델 변형을 바꾸는 일이 없습니다.
 
 ### OutputRepetitionGuard와 RepetitionGuardWrapper
 

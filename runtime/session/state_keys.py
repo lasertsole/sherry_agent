@@ -27,6 +27,10 @@ class StateKey(StrEnum):
     LLM_PARTIAL_STREAM_STUB = "llm_partial_stream_stub"
     LLM_PARTIAL_STREAM_CAUSE = "llm_partial_stream_cause"
 
+    # Per-session thinking/reasoning toggle (client UI → /sessions/thinking).
+    # bool when the user made an explicit choice; absent = env default.
+    LLM_THINKING_ENABLED = "llm_thinking_enabled"
+
     MULTIMODAL_TRYING_NATIVE = "_multimodal_trying_native"
     MULTIMODAL_NATIVE_MODEL = "_multimodal_native_model"
 

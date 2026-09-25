@@ -200,3 +200,47 @@ export async function getHistory(sessionId: string, lastTurnCount: number = 10):
     method: 'get'
   });
 }
+
+/**
+ * Thinking control payload shapes. `mode: "on_off"` models use the boolean
+ * switch; `mode: "levels"` models are always-think gateways whose control is
+ * a 低/高/最高 selector (`level: "low" | "high" | "max"`).
+ */
+export type ThinkingMode = 'on_off' | 'levels';
+export type ThinkingValue = boolean | 'low' | 'high' | 'max';
+
+export interface ThinkingState {
+  mode: ThinkingMode;
+  enabled: boolean | null;
+  level: 'low' | 'high' | 'max' | null;
+}
+
+/**
+ * Read the session's explicit thinking choice and the model's control mode.
+ *
+ * @param sessionId Session whose flag should be read.
+ * @returns The current state; null fields = never set, the backend's
+ *          MAIN_LLM_ENABLE_THINKING env default applies.
+ */
+export async function fetchThinkingState(sessionId: string): Promise<ThinkingState> {
+  const res = await fetchApiPayload<ThinkingState & { success?: boolean }>({
+    url: '/sessions/thinking',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return { mode: res.mode ?? 'on_off', enabled: res.enabled ?? null, level: res.level ?? null };
+}
+
+/**
+ * Persist the session's explicit thinking choice.
+ *
+ * @param sessionId Session whose flag should be written.
+ * @param value Boolean for on_off models; 'low' | 'high' | 'max' for level models.
+ */
+export async function setThinkingValue(sessionId: string, value: ThinkingValue): Promise<void> {
+  await fetchApi({
+    url: '/sessions/thinking',
+    opts: { session_id: sessionId, value },
+    method: 'put'
+  });
+}
