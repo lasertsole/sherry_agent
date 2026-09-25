@@ -132,35 +132,36 @@ export const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
 };
 
 /**
- * Turn-level input-token map for USER bubbles.
- *
- * `input_tokens` is a property of the TURN (the model request) and is
- * persisted on the turn's AI row; the user wants it displayed under the user
- * bubble that triggered the reply. Pair each AI message carrying a token
- * count with the nearest preceding USER message of the SAME turn — skipping
- * `subagent_completion` carrier rows (USER-role system cards that must never
- * receive the count). Batch turns (several user sends collapsed into one
- * turn) therefore mark only the trailing user bubble, the one immediately
- * preceding the reply.
- *
- * @param rows Chat message items in conversation order.
- * @returns Map of user-message id → turn input tokens.
+ * CJK-aware estimate of the tokens a piece of text costs — the same heuristic
+ * as the backend's ``pub/func/estimate_tokens.py::estimate_text_tokens``:
+ * CJK characters count at 1 token per 2 chars, everything else at 1 per 4.
+ * The constants mirror ``TOKEN_ESTIMATION`` (config/features/agent_side/
+ * token_estimation.py) — the Python file is the source of truth; keep the two
+ * in sync. An ESTIMATE, never the provider's ground truth.
  */
-export const buildUserInputTokenMap = (rows: MessageItem[]): Map<number, number> => {
-  const map = new Map<number, number>();
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]!;
-    if (row.role !== CHAT_ROLE.AI || row.inputTokens === undefined) continue;
-    for (let j = i - 1; j >= 0; j--) {
-      const prev = rows[j]!;
-      if (prev.turn_num !== row.turn_num) break;
-      // Skip only subagent-completion carriers (USER-role system cards);
-      // normal user rows carry origin="user" and MUST still pair.
-      if (prev.role === CHAT_ROLE.USER && prev.origin !== 'subagent_completion') {
-        map.set(prev.id, row.inputTokens);
-        break;
-      }
-    }
+const CHARS_PER_TOKEN = 4;
+const CHARS_PER_TOKEN_CJK = 2;
+
+const isCjkCodepoint = (cp: number): boolean =>
+  (0x4e00 <= cp && cp <= 0x9fff) || // CJK Unified Ideographs
+  (0x3400 <= cp && cp <= 0x4dbf) || // CJK Extension A
+  (0x20000 <= cp && cp <= 0x2a6df) || // CJK Extension B
+  (0x3000 <= cp && cp <= 0x303f) || // CJK Symbols
+  (0x3040 <= cp && cp <= 0x309f) || // Hiragana
+  (0x30a0 <= cp && cp <= 0x30ff) || // Katakana
+  (0xac00 <= cp && cp <= 0xd7af); // Hangul Syllables
+
+/**
+ * Estimate the token count of a user message's typed content.
+ * @param content Raw message text (markdown source, pre-render).
+ * @returns The estimated token count (0 for empty content).
+ */
+export const estimateTextTokens = (content: string): number => {
+  if (!content) return 0;
+  let cjk = 0;
+  for (const ch of content) {
+    if (isCjkCodepoint(ch.codePointAt(0) ?? 0)) cjk++;
   }
-  return map;
+  const nonCjk = content.length - cjk;
+  return Math.floor(cjk / CHARS_PER_TOKEN_CJK) + Math.floor(nonCjk / CHARS_PER_TOKEN);
 };
