@@ -17,13 +17,13 @@
           @click="addModel" />
 
         <p
-          v-if="store.profiles.length === 0"
+          v-if="profiles.length === 0"
           class="m-0 text-xs text-gray-400 dark:text-gray-500">
           {{ t('config.llm.empty') }}
         </p>
 
         <div
-          v-for="profile in store.profiles"
+          v-for="profile in profiles"
           :key="profile.id"
           role="button"
           tabindex="0"
@@ -96,7 +96,9 @@
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
-  /** MAIN_LLM_* keys present in `.env` (the editable parameter set). */
+  /** Env group this panel manages (e.g. `MAIN_LLM`, `TTI`). */
+  group: string;
+  /** Keys of that group present in `.env` (the editable parameter set). */
   keys: string[];
   /** Live `.env` values for those keys (used to seed new profiles / infer the applied one). */
   values: Record<string, string>;
@@ -110,33 +112,43 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
-/** Client-side model profiles (persisted). */
+/** Client-side model profiles (persisted, per group). */
 const store = useLlmProfilesStore();
 
+/** Profiles of this group (reactive). */
+const profiles = computed(() => store.listFor(props.group));
+
 /** Currently selected profile id (the right column edits this one). */
-const selectedId = ref<string | null>(store.profiles[0]?.id ?? null);
+const selectedId = ref<string | null>(profiles.value[0]?.id ?? null);
 /** Working copy of the selected profile's parameters. */
 const draft = ref<Record<string, string>>({});
 /** Transient "saved" confirmation text. */
 const flash = ref('');
 let flashTimer: ReturnType<typeof setTimeout> | null = null;
 
-const selected = computed(() => store.byId(selectedId.value));
+const selected = computed(() => store.byId(props.group, selectedId.value));
+
+/** The provider key of this group (any `*_PROVIDER` variant, e.g. `ITTT_model_PROVIDER`). */
+const providerKey = computed(() => props.keys.find(k => k.endsWith('_PROVIDER')) ?? '');
+/** The model-name key of this group (`*_API_NAME` wins over `*_NAME`). */
+const nameKey = computed(
+  () => props.keys.find(k => k.endsWith('_API_NAME')) ?? props.keys.find(k => k.endsWith('_NAME')) ?? ''
+);
 
 /**
- * True when the profile is the one applied to `.env`.
+ * True when the profile is the one applied to `.env` for this group.
  * @param profile
  * @param profile.id
  * @param profile.params
  */
 const isActive = (profile: { id: string; params: Record<string, string> }): boolean => {
-  if (store.activeId === profile.id) return true;
+  if (store.activeIdFor(props.group) === profile.id) return true;
   // No marker yet (fresh browser): fall back to comparing with the live .env,
   // so the dot is honest instead of absent until the first apply.
-  if (store.activeId !== null) return false;
-  const name = profile.params.MAIN_LLM_NAME ?? '';
-  const provider = profile.params.MAIN_LLM_PROVIDER ?? '';
-  return !!name && name === props.values.MAIN_LLM_NAME && (!provider || provider === props.values.MAIN_LLM_PROVIDER);
+  if (store.activeIdFor(props.group) !== null) return false;
+  const name = profile.params[nameKey.value] ?? '';
+  const provider = profile.params[providerKey.value] ?? '';
+  return !!name && name === props.values[nameKey.value] && (!provider || provider === props.values[providerKey.value]);
 };
 
 /** Load the selected profile's parameters into the draft (missing keys fall back to .env). */
@@ -165,8 +177,8 @@ const showFlash = (text: string) => {
 const addModel = () => {
   const params: Record<string, string> = {};
   for (const key of props.keys) params[key] = props.values[key] ?? '';
-  const label = params.MAIN_LLM_NAME || t('config.llm.unnamed');
-  const id = store.add(label, params);
+  const label = params[nameKey.value] || t('config.llm.unnamed');
+  const id = store.add(props.group, label, params);
   selectedId.value = id;
   showFlash('');
 };
@@ -183,7 +195,10 @@ const selectModel = (id: string) => {
 const saveProfile = () => {
   if (!selected.value) return;
   const params: Record<string, string> = { ...draft.value };
-  store.update(selected.value.id, { label: params.MAIN_LLM_NAME || selected.value.label, params });
+  store.update(props.group, selected.value.id, {
+    label: params[nameKey.value] || selected.value.label,
+    params
+  });
   showFlash(t('config.llm.saved'));
 };
 

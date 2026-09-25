@@ -1,91 +1,123 @@
 import { defineStore } from 'pinia';
 
 /**
- * MAIN_LLM model profiles for the environment-config panel.
+ * Per-group model profiles for the environment-config panel.
  *
- * The `.env` file holds ONE active MAIN_LLM_* set, so multiple models are a
- * client-side concept: each profile stores a named parameter set, "save"
- * persists the edited parameters, and "apply" writes the profile into `.env`
- * (through the dialog's existing PUT /env flow) and marks it active.
- *
- * Persisted to localStorage (same pinia-plugin-persistedstate pattern as the
- * UI store) so the list and the active marker survive reloads; the active
- * marker is re-derived against the live `.env` values by the panel, so a
- * manually edited .env always wins over a stale marker.
+ * Every model family in `.env` (MAIN_LLM / REASONER_LLM / AUXILIARY_LLM /
+ * ITTT / VTTT / TTI / RERANKER / EMBEDDING / STT) holds ONE active key set, so
+ * multiple models per family are a client-side concept: each profile stores a
+ * named parameter set for its group, "save" persists the edited parameters,
+ * and "apply" writes the profile into `.env` (through the dialog's existing
+ * PUT /env flow) and marks it active for that group.
  */
 export interface LlmProfile {
   /** Stable local id. */
   id: string;
-  /** Display name (seeded from MAIN_LLM_NAME at creation). */
+  /** Display name (seeded from the group's name key at creation). */
   label: string;
-  /** MAIN_LLM_* key → value. Only keys present in `.env` are ever stored/applied. */
+  /** Group key → value (e.g. `MAIN_LLM_NAME` → `glm-4.6`). Only keys present in `.env` are stored/applied. */
   params: Record<string, string>;
 }
 
 export const useLlmProfilesStore = defineStore(
   'llmProfiles',
   () => {
-    /** Saved model profiles, in insertion order. */
-    const profiles = ref<LlmProfile[]>([]);
-    /** Id of the profile last applied to `.env` (null until one is applied). */
-    const activeId = ref<string | null>(null);
+    /** Group name → profiles, in insertion order. */
+    const byGroup = ref<Record<string, LlmProfile[]>>({});
+    /** Group name → id of the profile last applied to `.env`. */
+    const activeByGroup = ref<Record<string, string | null>>({});
+    /**
+     * Profiles of one group ([] when the group has none).
+     * @param group
+     */
+    const listFor = (group: string): LlmProfile[] => byGroup.value[group] ?? [];
 
     /**
-     * Append a profile and return its id.
-     * @param label Display name.
-     * @param params MAIN_LLM_* parameter set.
+     * Active profile id of one group (null when none applied).
+     * @param group
      */
-    const add = (label: string, params: Record<string, string>): string => {
+    const activeIdFor = (group: string): string | null => activeByGroup.value[group] ?? null;
+
+    /**
+     * Append a profile to a group and return its id.
+     * @param group Group name (e.g. `MAIN_LLM`).
+     * @param label Display name.
+     * @param params Parameter set for the group.
+     */
+    const add = (group: string, label: string, params: Record<string, string>): string => {
       const id =
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
           : `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-      profiles.value = [...profiles.value, { id, label, params: { ...params } }];
+      byGroup.value = {
+        ...byGroup.value,
+        [group]: [...listFor(group), { id, label, params: { ...params } }]
+      };
       return id;
     };
 
     /**
-     * Replace a profile's name and/or parameter set.
+     * Replace a profile's name and/or parameter set within its group.
+     * @param group
      * @param id
      * @param patch
      */
-    const update = (id: string, patch: Partial<Omit<LlmProfile, 'id'>>): void => {
-      profiles.value = profiles.value.map(p =>
-        p.id === id ? { ...p, ...patch, params: patch.params ? { ...patch.params } : p.params } : p
-      );
+    const update = (group: string, id: string, patch: Partial<Omit<LlmProfile, 'id'>>): void => {
+      byGroup.value = {
+        ...byGroup.value,
+        [group]: listFor(group).map(p =>
+          p.id === id ? { ...p, ...patch, params: patch.params ? { ...patch.params } : p.params } : p
+        )
+      };
     };
 
     /**
-     * Remove a profile (clears the active marker when it pointed at it).
+     * Remove a profile from its group (clears the group's active marker when it pointed there).
+     * @param group
      * @param id
      */
-    const remove = (id: string): void => {
-      profiles.value = profiles.value.filter(p => p.id !== id);
-      if (activeId.value === id) activeId.value = null;
+    const remove = (group: string, id: string): void => {
+      byGroup.value = { ...byGroup.value, [group]: listFor(group).filter(p => p.id !== id) };
+      if (activeIdFor(group) === id) {
+        activeByGroup.value = { ...activeByGroup.value, [group]: null };
+      }
     };
 
     /**
-     * Mark a profile as the one applied to `.env`.
+     * Mark a profile as the one applied to `.env` for its group.
+     * @param group
      * @param id
      */
-    const setActive = (id: string | null): void => {
-      activeId.value = id;
+    const setActive = (group: string, id: string | null): void => {
+      activeByGroup.value = { ...activeByGroup.value, [group]: id };
     };
 
     /**
-     * Look a profile up by id.
+     * Look a profile up by id within a group.
+     * @param group
      * @param id
      */
-    const byId = (id: string | null): LlmProfile | undefined =>
-      id === null ? undefined : profiles.value.find(p => p.id === id);
+    const byId = (group: string, id: string | null): LlmProfile | undefined =>
+      id === null ? undefined : listFor(group).find(p => p.id === id);
 
-    /** Test seam: drop all client-side profiles and the active marker. */
+    /** Test seam: drop all client-side profiles and active markers. */
     const _resetForTest = (): void => {
-      profiles.value = [];
-      activeId.value = null;
+      byGroup.value = {};
+      activeByGroup.value = {};
     };
 
-    return { profiles, activeId, add, update, remove, setActive, byId, _resetForTest };
+    return {
+      byGroup,
+      activeByGroup,
+      listFor,
+      activeIdFor,
+      add,
+      update,
+      remove,
+      setActive,
+      byId,
+      _resetForTest
+    };
   },
-  { persist: { pick: ['profiles', 'activeId'] } }
+  { persist: { pick: ['byGroup', 'activeByGroup'] } }
 );

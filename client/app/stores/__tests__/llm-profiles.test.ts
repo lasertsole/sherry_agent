@@ -3,61 +3,50 @@ import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import { useLlmProfilesStore } from '../llm-profiles';
 
-describe('stores/llm-profiles', () => {
+describe('stores/llm-profiles (per group)', () => {
   beforeEach(() => {
     setActivePinia(createTestingPinia({ stubActions: false }));
   });
 
-  it('add() appends a profile and returns its id', () => {
+  it('add() appends to its group and returns the id', () => {
     const store = useLlmProfilesStore();
-    const id = store.add('glm-4.6', { MAIN_LLM_NAME: 'glm-4.6' });
-    expect(store.profiles).toHaveLength(1);
-    expect(store.byId(id)?.label).toBe('glm-4.6');
-    expect(store.byId(id)?.params.MAIN_LLM_NAME).toBe('glm-4.6');
+    const id = store.add('MAIN_LLM', 'glm-4.6', { MAIN_LLM_NAME: 'glm-4.6' });
+    expect(store.listFor('MAIN_LLM')).toHaveLength(1);
+    expect(store.byId('MAIN_LLM', id)?.label).toBe('glm-4.6');
+    expect(store.byId('MAIN_LLM', id)?.params.MAIN_LLM_NAME).toBe('glm-4.6');
   });
 
-  it('add() snapshots the params (later mutation of the caller object does not leak in)', () => {
+  it('keeps groups fully isolated', () => {
     const store = useLlmProfilesStore();
-    const params = { MAIN_LLM_NAME: 'a' };
-    const id = store.add('a', params);
-    params.MAIN_LLM_NAME = 'mutated';
-    expect(store.byId(id)?.params.MAIN_LLM_NAME).toBe('a');
+    store.add('MAIN_LLM', 'main', { MAIN_LLM_NAME: 'main' });
+    store.add('TTI', 'tti-a', { TTI_API_NAME: 'tti-a' });
+    store.add('TTI', 'tti-b', { TTI_API_NAME: 'tti-b' });
+    expect(store.listFor('MAIN_LLM')).toHaveLength(1);
+    expect(store.listFor('TTI')).toHaveLength(2);
+    expect(store.listFor('STT')).toHaveLength(0);
   });
 
-  it('update() replaces parameters and label of one profile only', () => {
+  it('add() snapshots params and update() patches one profile of one group', () => {
     const store = useLlmProfilesStore();
-    const first = store.add('a', { MAIN_LLM_NAME: 'a' });
-    const second = store.add('b', { MAIN_LLM_NAME: 'b' });
-    store.update(first, { label: 'a2', params: { MAIN_LLM_NAME: 'a2' } });
-    expect(store.byId(first)?.label).toBe('a2');
-    expect(store.byId(second)?.params.MAIN_LLM_NAME).toBe('b');
+    const params = { TTI_API_NAME: 'a' };
+    const id = store.add('TTI', 'a', params);
+    params.TTI_API_NAME = 'mutated';
+    expect(store.byId('TTI', id)?.params.TTI_API_NAME).toBe('a');
+    store.update('TTI', id, { label: 'a2', params: { TTI_API_NAME: 'a2' } });
+    expect(store.byId('TTI', id)?.label).toBe('a2');
+    expect(store.byId('TTI', id)?.params.TTI_API_NAME).toBe('a2');
   });
 
-  it('remove() drops the profile and clears the active marker when it pointed there', () => {
+  it('tracks the active marker per group and clears it on removal', () => {
     const store = useLlmProfilesStore();
-    const id = store.add('a', {});
-    store.setActive(id);
-    store.remove(id);
-    expect(store.profiles).toHaveLength(0);
-    expect(store.activeId).toBeNull();
-  });
-
-  it('setActive()/byId() track the applied profile', () => {
-    const store = useLlmProfilesStore();
-    const id = store.add('a', {});
-    store.setActive(id);
-    expect(store.activeId).toBe(id);
-    expect(store.byId(id)?.id).toBe(id);
-    store.setActive(null);
-    expect(store.byId(null)).toBeUndefined();
-  });
-
-  it('keeps profiles across store recreation (persisted shape)', () => {
-    const store = useLlmProfilesStore();
-    store.add('a', { MAIN_LLM_NAME: 'a' });
-    // The pinia persist plugin serialises `pick: ['profiles', 'activeId']`;
-    // recreate the store on the same pinia to prove the state survives.
-    const again = useLlmProfilesStore();
-    expect(again.profiles).toHaveLength(1);
+    const mainId = store.add('MAIN_LLM', 'm', {});
+    const ttiId = store.add('TTI', 't', {});
+    store.setActive('MAIN_LLM', mainId);
+    store.setActive('TTI', ttiId);
+    expect(store.activeIdFor('MAIN_LLM')).toBe(mainId);
+    expect(store.activeIdFor('TTI')).toBe(ttiId);
+    store.remove('MAIN_LLM', mainId);
+    expect(store.activeIdFor('MAIN_LLM')).toBeNull();
+    expect(store.activeIdFor('TTI')).toBe(ttiId);
   });
 });

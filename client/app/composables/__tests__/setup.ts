@@ -235,8 +235,10 @@ vi.mock('@tanstack/vue-virtual', async () => {
 // no-op default keeps those mounts working. Suites that assert profile
 // behaviour override this with their own `vi.stubGlobal` in `beforeEach`.
 vi.stubGlobal('useLlmProfilesStore', () => ({
-  profiles: [],
-  activeId: null,
+  byGroup: {},
+  activeByGroup: {},
+  listFor: () => [],
+  activeIdFor: () => null,
   add: () => 'test-profile',
   update: () => {},
   remove: () => {},

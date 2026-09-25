@@ -21,31 +21,35 @@ const ENV_VALUES: Record<string, string> = {
   MAIN_LLM_ENABLE_THINKING: 'true'
 };
 
-/** Fake profiles store mirroring the real one's surface. */
+/** Fake (per-group) profiles store mirroring the real one's surface. */
 let storeApi: {
-  profiles: LlmProfile[];
-  activeId: string | null;
+  listFor: (group: string) => LlmProfile[];
+  activeIdFor: (group: string) => string | null;
+  migrateLegacyOnce: ReturnType<typeof vi.fn>;
   add: ReturnType<typeof vi.fn>;
   update: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
   setActive: ReturnType<typeof vi.fn>;
-  byId: (id: string | null) => LlmProfile | undefined;
+  byId: (group: string, id: string | null) => LlmProfile | undefined;
 };
 
-const makeStore = (profiles: LlmProfile[] = [], activeId: string | null = null) => {
+const makeStore = (profiles: LlmProfile[] = [], activeId: string | null = null, group = 'MAIN_LLM') => {
+  const byGroup: Record<string, LlmProfile[]> = { [group]: profiles };
+  const activeByGroup: Record<string, string | null> = { [group]: activeId };
   storeApi = {
-    profiles,
-    activeId,
-    add: vi.fn((label: string, params: Record<string, string>) => {
-      const id = `new-${profiles.length + 1}`;
-      profiles = [...profiles, { id, label, params }];
-      storeApi.profiles = profiles;
+    listFor: group => byGroup[group] ?? [],
+    activeIdFor: group => activeByGroup[group] ?? null,
+    migrateLegacyOnce: vi.fn(),
+    add: vi.fn((group: string, label: string, params: Record<string, string>) => {
+      const id = `new-${(byGroup[group] ?? []).length + 1}`;
+      byGroup[group] = [...(byGroup[group] ?? []), { id, label, params }];
       return id;
     }),
     update: vi.fn(),
     remove: vi.fn(),
     setActive: vi.fn(),
-    byId: (id: string | null) => (id === null ? undefined : profiles.find(p => p.id === id))
+    byId: (group: string, id: string | null) =>
+      id === null ? undefined : (byGroup[group] ?? []).find(p => p.id === id)
   };
   vi.stubGlobal(
     'useLlmProfilesStore',
@@ -66,15 +70,39 @@ const stubs = {
   }
 };
 
-const mountPanel = () =>
+const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<string, string> = ENV_VALUES) =>
   mount(LlmModelManager, {
-    props: { keys: KEYS, values: ENV_VALUES, groupTitle: '模型列表 · MAIN_LLM' },
+    props: { group, keys, values, groupTitle: `模型列表 · ${group}` },
     global: { stubs }
   });
 
 describe('LlmModelManager.vue (integration, store stubbed)', () => {
   beforeEach(() => {
     makeStore();
+  });
+
+  it('works for other groups with their own key names (generic identity inference)', () => {
+    // ITTT has the odd `ITTT_model_PROVIDER` casing and an `_API_NAME` name key.
+    const ITTT_KEYS = ['ITTT_MODEL_LOCAL', 'ITTT_model_PROVIDER', 'ITTT_API_NAME', 'ITTT_API_BASE', 'ITTT_API_KEY'];
+    const ITTT_VALUES: Record<string, string> = {
+      ITTT_MODEL_LOCAL: 'false',
+      ITTT_model_PROVIDER: 'openai',
+      ITTT_API_NAME: 'gpt-4o-mini',
+      ITTT_API_BASE: 'https://example.invalid/v1',
+      ITTT_API_KEY: 'sk-ittt'
+    };
+    makeStore(
+      [
+        { id: 't1', label: 'other', params: { ...ITTT_VALUES, ITTT_API_NAME: 'other' } },
+        { id: 't2', label: 'current', params: { ...ITTT_VALUES } }
+      ],
+      null,
+      'ITTT'
+    );
+    const wrapper = mountPanel('ITTT', ITTT_KEYS, ITTT_VALUES);
+    const dots = wrapper.findAll('[data-active]');
+    expect(dots[1]!.attributes('data-active')).toBe('true');
+    expect(dots[0]!.attributes('data-active')).toBe('false');
   });
 
   it('shows the add button and an empty hint without profiles', () => {
@@ -89,7 +117,7 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const wrapper = mountPanel();
     const addButton = wrapper.findAll('button.btn').find(b => b.text() === '添加模型');
     await addButton!.trigger('click');
-    expect(storeApi.add).toHaveBeenCalledWith('glm-5.3-flash', ENV_VALUES);
+    expect(storeApi.add).toHaveBeenCalledWith('MAIN_LLM', 'glm-5.3-flash', ENV_VALUES);
     // the new profile is selected: its parameter inputs render
     expect(wrapper.findAll('input.inp')).toHaveLength(KEYS.length);
   });
@@ -128,7 +156,8 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const saveButton = wrapper.findAll('button.btn').find(b => b.text() === '保存');
     await saveButton!.trigger('click');
     expect(storeApi.update).toHaveBeenCalledTimes(1);
-    const [id, patch] = storeApi.update.mock.calls[0]!;
+    const [group, id, patch] = storeApi.update.mock.calls[0]!;
+    expect(group).toBe('MAIN_LLM');
     expect(id).toBe('p1');
     expect(patch.params.MAIN_LLM_NAME).toBe('glm-4.7');
     expect(patch.label).toBe('glm-4.7');

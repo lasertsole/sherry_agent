@@ -214,13 +214,15 @@
                 <template
                   v-for="group in envGroups"
                   :key="group.name">
-                  <!-- MAIN_LLM: model-profile manager (list + parameters + save/apply) -->
+                  <!-- Model groups: profile manager (list + parameters + save/apply);
+                       the catch-all "other" group (non-model keys) stays a plain key/value card. -->
                   <LlmModelManager
-                    v-if="group.name === 'MAIN_LLM'"
+                    v-if="group.name !== 'other'"
+                    :group="group.name"
                     :keys="group.entries.map(e => e.key)"
-                    :values="mainLlmValues"
+                    :values="groupValues[group.name] ?? {}"
                     :group-title="t('config.llm.models') + ' · ' + group.name"
-                    @apply="applyModelProfile" />
+                    @apply="payload => applyModelProfile(group.name, payload)" />
                   <div
                     v-else
                     class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
@@ -358,37 +360,41 @@ const envHasChanges = computed(() =>
 // ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
 const llmProfiles = useLlmProfilesStore();
 
-/** Live .env values of the MAIN_LLM group (seed + active-inference input). */
-const mainLlmValues = computed<Record<string, string>>(() => {
-  const values: Record<string, string> = {};
-  const group = envGroups.value.find(g => g.name === 'MAIN_LLM');
-  for (const entry of group?.entries ?? []) values[entry.key] = entry.value;
-  return values;
+/** Live .env values per group (seed + active-inference input for the panels). */
+const groupValues = computed<Record<string, Record<string, string>>>(() => {
+  const all: Record<string, Record<string, string>> = {};
+  for (const group of envGroups.value) {
+    const values: Record<string, string> = {};
+    for (const entry of group.entries) values[entry.key] = entry.value;
+    all[group.name] = values;
+  }
+  return all;
 });
 
 /**
  * Apply a model profile: write its MAIN_LLM_* parameters into .env through the
  * existing write path, then sync the tab's draft/snapshot so the env diff stays
  * clean. The green dot follows only a SUCCESSFUL write.
+ * @param groupName
  * @param payload
  * @param payload.id
  * @param payload.params
  */
-const applyModelProfile = async (payload: { id: string; params: Record<string, string> }) => {
+const applyModelProfile = async (groupName: string, payload: { id: string; params: Record<string, string> }) => {
   const ok = await writeEnvConfig(payload.params);
   if (!ok) {
     envLoadError.value = t('config.env.saveFailed');
     return;
   }
   envLoadError.value = '';
-  const group = envGroups.value.find(g => g.name === 'MAIN_LLM');
+  const group = envGroups.value.find(g => g.name === groupName);
   for (const entry of group?.entries ?? []) {
     if (entry.key in payload.params) entry.value = payload.params[entry.key]!;
   }
   for (const [key, value] of Object.entries(payload.params)) {
     originalEnvValues.value[key] = value;
   }
-  llmProfiles.setActive(payload.id);
+  llmProfiles.setActive(groupName, payload.id);
 };
 
 /** Whether the env tab exposes either MAX_TOKEN key (drives the 128K threshold banner) */
