@@ -104,6 +104,8 @@
       "unnamed": "이름 없는 모델",
       "delete": "삭제",
       "maxModels": "그룹당 최대 {max}개 모델",
+      "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
+      "deleteConfirm": "모델 “{name}”을(를) 삭제할까요?",
       "localModel": "로컬 모델",
       "localUnused": "로컬 모드에서 미사용"
     },

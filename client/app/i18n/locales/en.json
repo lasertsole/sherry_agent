@@ -104,6 +104,8 @@
       "unnamed": "Unnamed model",
       "delete": "Delete",
       "maxModels": "Up to {max} models per group",
+      "requiredMissing": "Provider and model API name are required",
+      "deleteConfirm": "Delete model “{name}”?",
       "localModel": "Local model",
       "localUnused": "Unused in local mode"
     },

@@ -104,6 +104,8 @@
       "unnamed": "名称未設定のモデル",
       "delete": "削除",
       "maxModels": "1グループにつき最大 {max} モデル",
+      "requiredMissing": "プロバイダーとモデル API 名は必須です",
+      "deleteConfirm": "モデル「{name}」を削除しますか？",
       "localModel": "ローカルモデル",
       "localUnused": "ローカルでは未使用"
     },

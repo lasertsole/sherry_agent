@@ -104,9 +104,10 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const wrapper = mountPanel('ITTT', ITTT_KEYS, ITTT_VALUES);
     // ITTT has a local flag, so the list also carries the pinned built-in entry:
     // address the profile rows by label instead of by position.
+    // Rows are labelled by the model API name, so address them by that.
     const rows = wrapper.findAll('[role="button"]');
     const rowFor = (label: string) => rows.find(r => r.text().includes(label))!;
-    expect(rowFor('current').find('[data-active]').attributes('data-active')).toBe('true');
+    expect(rowFor('gpt-4o-mini').find('[data-active]').attributes('data-active')).toBe('true');
     expect(rowFor('other').find('[data-active]').attributes('data-active')).toBe('false');
   });
 
@@ -194,7 +195,8 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const rows = wrapper.findAll('[role="button"]');
     expect(rows).toHaveLength(2);
     expect(rows[0]!.text()).toContain('本地模型');
-    expect(rows[1]!.text()).toContain('emb');
+    // the saved row shows the model API name, not the stored label
+    expect(rows[1]!.text()).toContain('bge-m3');
   });
 
   it('the local entry shows the group parameters read-only, with 应用 but no 保存', async () => {
@@ -280,6 +282,7 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
   });
 
   it('delete removes the profile and auto-applies the PREVIOUS entry', async () => {
+    vi.stubGlobal('useConfirm', () => ({ require: (o?: { accept?: () => void }) => o?.accept?.() }));
     const KEYS = ['TTI_MODEL_PROVIDER', 'TTI_API_NAME'];
     const VALUES: Record<string, string> = { TTI_MODEL_PROVIDER: 'openai', TTI_API_NAME: 'tti' };
     makeStore(
@@ -305,6 +308,94 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(payload.params.TTI_API_NAME).toBe('first');
     // and it becomes the viewed entry
     expect((wrapper.findAll('input.inp')[1]!.element as HTMLInputElement).value).toBe('first');
+  });
+
+  it('blocks 保存/应用 while the provider or API name is empty', async () => {
+    const KEYS = ['TTI_MODEL_PROVIDER', 'TTI_API_NAME'];
+    const VALUES: Record<string, string> = { TTI_MODEL_PROVIDER: '', TTI_API_NAME: '' };
+    makeStore([{ id: 'p1', label: 'x', params: { ...VALUES } }], 'p1', 'TTI');
+    const wrapper = mountPanel('TTI', KEYS, VALUES);
+    const buttons = wrapper.findAll('button.btn');
+
+    // clicking without the mandatory fields neither applies nor saves, and
+    // explains itself (with the offending inputs marked)
+    await buttons.find(b => b.text() === '应用')!.trigger('click');
+    await buttons.find(b => b.text() === '保存')!.trigger('click');
+    expect(wrapper.emitted('apply')).toBeUndefined();
+    expect(storeApi.update).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain('提供商与模型 API 名为必填项');
+    expect(wrapper.findAll('input.inp').filter(i => i.classes().includes('border-red-400'))).toHaveLength(2);
+
+    // filling both in lets the apply through
+    const inputs = wrapper.findAll('input.inp');
+    await inputs[0]!.setValue('openai');
+    await inputs[1]!.setValue('gpt-4o-mini');
+    await buttons.find(b => b.text() === '应用')!.trigger('click');
+    const payload = wrapper.emitted('apply')![0]![0] as { params: Record<string, string> };
+    expect(payload.params.TTI_API_NAME).toBe('gpt-4o-mini');
+  });
+
+  it('labels list rows with the model API name', () => {
+    makeStore(
+      [
+        { id: 'p1', label: 'stale label', params: { TTI_API_NAME: 'real-model-name' } },
+        { id: 'p2', label: 'fallback', params: { TTI_API_NAME: '' } }
+      ],
+      'p1',
+      'TTI'
+    );
+    const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
+    const rows = wrapper.findAll('[role="button"]');
+    expect(rows[0]!.text()).toContain('real-model-name');
+    expect(rows[0]!.text()).not.toContain('stale label');
+    expect(rows[1]!.text()).toContain('fallback'); // stored label when the API name is empty
+  });
+
+  it('asks for confirmation before deleting, and a rejection keeps the profile', async () => {
+    const KEYS = ['TTI_API_NAME'];
+    const VALUES: Record<string, string> = { TTI_API_NAME: 'x' };
+    makeStore(
+      [
+        { id: 'p1', label: 'a', params: { TTI_API_NAME: 'a' } },
+        { id: 'p2', label: 'b', params: { TTI_API_NAME: 'b' } }
+      ],
+      'p2',
+      'TTI'
+    );
+    const requireSpy = vi.fn();
+    vi.stubGlobal('useConfirm', () => ({ require: requireSpy }));
+    const wrapper = mountPanel('TTI', KEYS, VALUES);
+    await wrapper.findAll('[role="button"]')[1]!.trigger('click');
+    await wrapper
+      .findAll('button.btn')
+      .find(b => b.text() === '删除')!
+      .trigger('click');
+
+    expect(requireSpy).toHaveBeenCalledTimes(1);
+    const options = requireSpy.mock.calls[0]![0] as { message: string; accept: () => void };
+    expect(options.message).toContain('确定删除模型');
+    // nothing deleted before the user accepts
+    expect(storeApi.remove).not.toHaveBeenCalled();
+    options.accept();
+    expect(storeApi.remove).toHaveBeenCalledWith('TTI', 'p2');
+  });
+
+  it('applies the built-in local model when the last saved profile is deleted', async () => {
+    vi.stubGlobal('useConfirm', () => ({ require: (o?: { accept?: () => void }) => o?.accept?.() }));
+    const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const VALUES: Record<string, string> = { EMBEDDING_MODEL_LOCAL: 'false', EMBEDDING_API_NAME: 'bge-m3' };
+    makeStore([{ id: 'e1', label: 'only', params: { ...VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
+    await wrapper.findAll('[role="button"]')[1]!.trigger('click'); // the saved profile
+    await wrapper
+      .findAll('button.btn')
+      .find(b => b.text() === '删除')!
+      .trigger('click'); // default stub auto-accepts
+
+    expect(storeApi.remove).toHaveBeenCalledWith('EMBEDDING', 'e1');
+    const emitted = wrapper.emitted('apply');
+    expect(emitted).toHaveLength(1);
+    expect(emitted![0]![0]).toEqual({ id: 'builtin:local', params: { EMBEDDING_MODEL_LOCAL: 'true' } });
   });
 
   it('offers no delete button for the built-in local entry', async () => {

@@ -34,12 +34,12 @@
           @select="selectModel(localEntry.id)" />
         <div class="flex max-h-56 flex-col gap-2 overflow-y-auto">
           <LlmProfileRow
-            v-for="profile in profiles"
-            :key="profile.id"
-            :entry="profile"
-            :selected="profile.id === selectedId"
-            :active="isActive(profile)"
-            @select="selectModel(profile.id)" />
+            v-for="row in profileRows"
+            :key="row.id"
+            :entry="row"
+            :selected="row.id === selectedId"
+            :active="isActive(row)"
+            @select="selectModel(row.id)" />
         </div>
       </div>
 
@@ -56,7 +56,12 @@
             v-model="draft[key]"
             :disabled="isLocalEntrySelected"
             :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
-            class="w-full font-mono text-xs disabled:opacity-60"
+            :class="[
+              'w-full font-mono text-xs disabled:opacity-60',
+              missingRequired && (key === providerKey || key === nameKey) && !(draft[key] ?? '').trim()
+                ? 'border-red-400'
+                : ''
+            ]"
             autocomplete="off"
             spellcheck="false" />
         </div>
@@ -88,7 +93,10 @@
             @click="deleteSelected" />
           <span
             v-if="flash"
-            class="text-xs text-emerald-600 dark:text-emerald-400">
+            :class="[
+              'text-xs',
+              flashError ? 'text-red-600 dark:text-red-400' : 'text-emerald-600 dark:text-emerald-400'
+            ]">
             {{ flash }}
           </span>
         </div>
@@ -124,6 +132,8 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+/** Global confirmation-dialog service (ConfirmDialog is mounted in app.vue). */
+const confirm = useConfirm();
 /** Client-side model profiles (persisted, per group). */
 const store = useLlmProfilesStore();
 
@@ -133,6 +143,18 @@ const profiles = computed(() => store.listFor(props.group));
 // Stored data may exceed the cap (older payloads / hand-edited storage):
 // trim once on panel setup, by creation time, keeping the oldest entries.
 store.trimGroup(props.group);
+
+/**
+ * Provider and model-API-name are mandatory: an empty one cannot be saved or
+ * applied (the backend cannot build a client from it). The built-in local
+ * entry is exempt — it carries no API parameters by design.
+ */
+const missingRequired = computed<boolean>(() => {
+  if (!selected.value || isLocalEntrySelected.value) return false;
+  return props.keys.some(
+    key => (key === providerKey.value || key === nameKey.value) && !(draft.value[key] ?? '').trim()
+  );
+});
 
 /** At the per-group cap: the add button is disabled (and `add` refuses). */
 const atCapacity = computed(() => profiles.value.length >= MAX_PROFILES_PER_GROUP);
@@ -173,12 +195,22 @@ const localEntry = computed(() => {
 
 /** Left-column rows: the built-in local entry first, then the saved profiles. */
 const listEntries = computed(() => {
+  // Rows are labelled by the model's API name (what the backend actually
+  // calls); the stored label is only a fallback for entries whose API name is
+  // still empty.
   const entries: Array<{ id: string; label: string; params: Record<string, string> }> = [
-    ...profiles.value.map(p => ({ id: p.id, label: p.label, params: p.params }))
+    ...profiles.value.map(p => ({
+      id: p.id,
+      label: p.params[nameKey.value] || p.label || t('config.llm.unnamed'),
+      params: p.params
+    }))
   ];
   if (localEntry.value) entries.unshift(localEntry.value);
   return entries;
 });
+
+/** Saved-profile rows (listEntries without the pinned built-in entry). */
+const profileRows = computed(() => listEntries.value.filter(e => e.id !== LOCAL_ENTRY_ID));
 
 /** Whether the built-in local entry is the one being viewed. */
 const isLocalEntrySelected = computed(() => selectedId.value === LOCAL_ENTRY_ID);
@@ -241,10 +273,23 @@ syncDraft();
  * Show a transient inline confirmation.
  * @param text
  */
-const showFlash = (text: string) => {
+const flashError = ref(false);
+/**
+ * Show a transient inline confirmation / error.
+ * @param text
+ * @param isError Render in red and keep it a little longer.
+ */
+const showFlash = (text: string, isError = false) => {
   flash.value = text;
+  flashError.value = isError;
   if (flashTimer) clearTimeout(flashTimer);
-  flashTimer = setTimeout(() => (flash.value = ''), 2000);
+  flashTimer = setTimeout(
+    () => {
+      flash.value = '';
+      flashError.value = false;
+    },
+    isError ? 3000 : 2000
+  );
 };
 
 /** Create a profile seeded from the live `.env` values and select it. */
@@ -269,6 +314,10 @@ const selectModel = (id: string) => {
 /** Persist the edited parameters into the selected profile (client-side only). */
 const saveProfile = () => {
   if (!selected.value || isLocalEntrySelected.value) return; // built-in entry is not saveable
+  if (missingRequired.value) {
+    showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
   const params: Record<string, string> = { ...draft.value };
   store.update(props.group, selected.value!.id, {
     label: params[nameKey.value] || selected.value.label,
@@ -298,23 +347,49 @@ const payloadFor = (entry: { id: string; params: Record<string, string> }): Reco
  * applied automatically (falling back to the first survivor when the deleted
  * row was the topmost), so the group always keeps an applied model.
  */
-const deleteSelected = () => {
+const performDelete = () => {
   const entry = selected.value;
   if (!entry || isLocalEntrySelected.value) return;
   const order = listEntries.value;
   const index = order.findIndex(e => e.id === entry.id);
   const fallback = order[index - 1] ?? order[index + 1] ?? null;
   store.remove(props.group, entry.id);
-  if (!fallback) {
-    selectedId.value = null;
+  if (fallback) {
+    selectedId.value = fallback.id;
+    emit('apply', { id: fallback.id, params: payloadFor(fallback) });
     return;
   }
-  selectedId.value = fallback.id;
-  emit('apply', { id: fallback.id, params: payloadFor(fallback) });
+  // No saved profile left: fall back to the built-in local model when the
+  // group has one, so the group is never left without an applied model.
+  if (localEntry.value) {
+    selectedId.value = localEntry.value.id;
+    emit('apply', { id: localEntry.value.id, params: payloadFor(localEntry.value) });
+    return;
+  }
+  selectedId.value = null;
+};
+
+/** Delete asks for confirmation first (global ConfirmDialog via useConfirm). */
+const deleteSelected = () => {
+  const entry = selected.value;
+  if (!entry || isLocalEntrySelected.value) return;
+  // Ask with the row's DISPLAY label (the model API name), matching the list.
+  const displayName = profileRows.value.find(row => row.id === entry.id)?.label ?? entry.label;
+  confirm.require({
+    header: t('common.confirmDelete'),
+    message: t('config.llm.deleteConfirm', { name: displayName }),
+    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
+    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
+    accept: performDelete
+  });
 };
 
 const applyProfile = () => {
   if (!selected.value) return;
+  if (missingRequired.value) {
+    showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
   const flagKey = localFlagKey.value;
   // The built-in local entry needs NO API parameters (the backend ignores them
   // in local mode): apply writes only the flag, leaving the group's other keys
