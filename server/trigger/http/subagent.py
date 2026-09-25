@@ -108,7 +108,12 @@ async def get_subagent_runs_handler(request):
         runs = [root] + descendants
 
     elif not session_id:
-        raise ValueError("session_id is required")
+        # Neither a run nor a session was named: a client contract error, not a
+        # server fault. Answer with the same structured 400 the POST/DELETE
+        # handlers use instead of raising — a raise lands in the global handler
+        # as a 500 with a full traceback in the error log.
+        logger.info("GET /subagents/runs rejected: session_id is required")
+        return _bad_request("session_id is required")
 
     elif scope == "controller":
         runs = list_runs_for_controller_readonly(session_id)

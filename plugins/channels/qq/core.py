@@ -253,7 +253,9 @@ class QQChannel(BaseChannel):
                 return
 
         if not self.config.app_id or not self.config.secret:
-            logger.error("QQ app_id and secret not configured")
+            # An optional channel being unconfigured is normal startup state, not
+            # a failure: keep it visible without spending an ERROR line on it.
+            logger.warning("QQ app_id and secret not configured; QQ channel disabled")
             return
 
         self._running = True

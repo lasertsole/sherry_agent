@@ -181,9 +181,14 @@ if __name__ == "__main__":
     app.config.workers = 1
 
     # Configuring Static File Directory Hosting
+    # `static/` is a build artifact and absent in a fresh checkout, where Robyn
+    # logs `[ERROR] Specified path is not a directory` and skips the mount —
+    # create it first, like the /images directory below.
+    static_dir = STATIC_DIR.absolute()
+    static_dir.mkdir(parents=True, exist_ok=True)
     app.serve_directory(
         route="/static",  # URL prefix accessed by the client.
-        directory_path=os.path.join(os.getcwd(), STATIC_DIR.absolute().as_posix()),
+        directory_path=static_dir.as_posix(),
     )
 
     # Ensure the /images upload directory exists before serving it statically.
