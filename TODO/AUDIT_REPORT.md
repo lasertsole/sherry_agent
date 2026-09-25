@@ -5,9 +5,10 @@
 **审计日期**：2026-08-24（第一轮）/ 2026-09-04（第二轮）/ 2026-09-14（第三轮全栈重审）
 **更新日期**：2026-09-14 — 全栈重审后合并所有未修复条目，新增前端审计和代码质量审计，编号连续重排。
 **核实记录**：2026-09-15 — 逐条对照源码复核当前全部条目（以“修复后应存在的守卫/改写/调用”为模式做全仓 grep，关键文件精读）：**零删除**，56 条经核实全部仍未修复。
-**本报告只保留未修复项；编号已于 2026-09-15、2026-09-24、2026-09-25 三轮重排（旧编号作废）**。此前已修复移除 19 项（旧编号 19、20、27、38、44、45、48、50、51、53、57、58、59、61、63、68、70、73、75），不再占用编号；旧→新对照见文末「编号对照（旧 → 新）」。
+**本报告只保留未修复项；编号已于 2026-09-15、2026-09-24、2026-09-25（两轮）共四轮重排（旧编号作废）**。此前已修复移除 19 项（旧编号 19、20、27、38、44、45、48、50、51、53、57、58、59、61、63、68、70、73、75），不再占用编号；旧→新对照见文末「编号对照（旧 → 新）」。
 **2026-09-24**：P0 五项（#1、#3、#16、#17、#18）修复完成并从本报告移除，剩余 51 条重排为连续编号 1-51（对照规则见文末「编号对照」）；全仓代码注释与测试中的 `audit #N` 引用同步改写（移除项改为直接命名威胁，保留项更新为新编号）。
 **2026-09-25**：三项（#38 DOMPurify style 注入、#48 JSON 深拷贝、#49 dev server 绑定）修复完成并从本报告移除，剩余 48 条重排为连续编号 1-48（对照规则见文末「编号对照」）；本轮落码未引入编号引用，无外部漂移。
+**2026-09-25（第二轮）**：一项（#11 `summarization` — `awrap_model_call` 异步路径同步 SQLite + 文件 I/O）修复完成并从本报告移除，剩余 47 条重排为连续编号 1-47（#12-#48 各减 1，对照规则见文末「编号对照」）；本轮落码未引入编号引用，无外部漂移。
 
 ---
 
@@ -126,16 +127,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：改 `aiosqlite` 或在异步路径中用 `asyncio.to_thread` 包装。
 - **状态**：未修复。
 
-## 11. `summarization/core.py` — `awrap_model_call` 异步路径中的同步 SQLite + 文件 I/O
-
-**文件**：`agent/middlewares/summarization/core.py:1517,1526,1976-1979`
-
-- `_build_summary_prompt`（async 路径调用）→ `taskflow_store.get_active_flows_sync()`（同步 SQLite）+ `get_tiered_store().read_facts()`（同步文件 I/O）。
-- `_aapply_compression_under_lock`（async）→ `memory_store.load_from_disk()`（文件 I/O）+ `build_system_prompt()`（含 `state_register_db` 同步 SQLite）+ `state_register_db.set_state()`（同步 SQLite）。
-- **修复**：同 #10。
-- **状态**：未修复。
-
-## 12. `WsTurnExecutor.execute` — 被取消时不取消 child 任务
+## 11. `WsTurnExecutor.execute` — 被取消时不取消 child 任务
 
 **文件**：`server/service/turn_runner.py:298-314`
 
@@ -143,7 +135,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：在 re-raise 路径前加 `child.cancel()`。
 - **状态**：未修复。
 
-## 13. `compaction_lock.py` — 异步 `acquire()` 中的同步 SQLite
+## 12. `compaction_lock.py` — 异步 `acquire()` 中的同步 SQLite
 
 **文件**：`agent/middlewares/summarization/compaction_lock.py:87-106`
 
@@ -151,7 +143,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：迁移到 `aiosqlite` 或用 `asyncio.to_thread` 包装。
 - **状态**：未修复。
 
-## 14. `context_engine/embeddings/search.py` — 异步路径中的同步 SQLite + 阻塞 I/O
+## 13. `context_engine/embeddings/search.py` — 异步路径中的同步 SQLite + 阻塞 I/O
 
 **文件**：`context_engine/embeddings/search.py:23-28`
 
@@ -160,7 +152,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：用 `asyncio.to_thread` 包装或迁移到异步 HTTP 客户端。
 - **状态**：新发现。
 
-## 15. `context_engine/session_continuity.py` — 异步路径中的同步 SQLite
+## 14. `context_engine/session_continuity.py` — 异步路径中的同步 SQLite
 
 **文件**：`context_engine/session_continuity.py:130,153`
 
@@ -168,7 +160,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：`await asyncio.to_thread(...)` 包装。
 - **状态**：新发现。
 
-## 16. `context_engine/curator/orchestrator.py` — 异步路径中调用同步 `llm.invoke()`
+## 15. `context_engine/curator/orchestrator.py` — 异步路径中调用同步 `llm.invoke()`
 
 **文件**：`context_engine/curator/orchestrator.py:96`
 
@@ -176,7 +168,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：改用 `await llm.ainvoke()` 或包装 `asyncio.to_thread`。
 - **状态**：新发现。
 
-## 17. `agent/tools/message_search.py` — `asyncio.run()` 在工具中
+## 16. `agent/tools/message_search.py` — `asyncio.run()` 在工具中
 
 **文件**：`agent/tools/message_search.py:487`
 
@@ -184,7 +176,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：提供 async 版本或用 `run_async` 模式。
 - **状态**：新发现。
 
-## 18. `models/reranker_model/core.py` — `verify=False` 全局禁用 TLS
+## 17. `models/reranker_model/core.py` — `verify=False` 全局禁用 TLS
 
 **文件**：`models/reranker_model/core.py:573,623,679`；`models/embed_model/core.py:51,128`
 
@@ -193,7 +185,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：移除 `verify=False`，改为配置项；移除全局 `disable_warnings`。
 - **状态**：新发现。
 
-## 19. 子代理 child checkpointer 连接泄漏
+## 18. 子代理 child checkpointer 连接泄漏
 
 **文件**：`agent/tools/subagent/spawn/core.py:773-774`
 
@@ -201,7 +193,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：在 child agent 执行完成后 `await child_checkpointer.aclose()`。
 - **状态**：新发现。
 
-## 20. 技能上传/切换端点零测试覆盖
+## 19. 技能上传/切换端点零测试覆盖
 
 **文件**：`server/trigger/http/skills/lifecycle.py`（242 行代码）
 
@@ -209,7 +201,7 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 - **修复**：编写覆盖路径遍历、安全扫描门控、状态文件原子性的集成测试。
 - **状态**：新发现。
 
-## 21. CI 无 SAST/依赖漏洞扫描
+## 20. CI 无 SAST/依赖漏洞扫描
 
 **文件**：`.github/workflows/ci.yml`
 
@@ -221,20 +213,20 @@ with urllib.request.urlopen(req, timeout=30) as resp:
 
 # 🟡 中（Medium）— 代码质量 / 架构 / 正确性
 
-## 22. `bus/core.py` 单一全局队列，无按渠道路由
+## 21. `bus/core.py` 单一全局队列，无按渠道路由
 
 - `MessageBus` 一个入站 + 一个出站 `asyncio.Queue`，所有渠道共享。高并发多渠道时是瓶颈且无法按渠道背压。
 - `channels/manager.py:111` `_consume_loop` 对每条出站消息遍历所有已配置渠道，而非仅发送到目标渠道。
 - **状态**：未修复。有界队列已添加，但路由问题仍在。
 
-## 23. 未鉴权日志文件读取
+## 22. 未鉴权日志文件读取
 
 **文件**：`server/trigger/http/logs.py:170-198` — `GET /logs?path=...`
 
 - 路径经 `LOG_DIR` 校验（受控，已修复路径穿越），但端点未鉴权，日志可能含密钥。
 - **状态**：路径穿越已修复，未鉴权仍在。
 
-## 24. 知识图谱遍历参数无上限
+## 23. 知识图谱遍历参数无上限
 
 **文件**：`server/trigger/http/knowledge_graph.py:146,150`
 
@@ -245,14 +237,14 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 
 - **状态**：未修复。
 
-## 25. `interrupt_marker` — 异步函数中调用同步 SQLite
+## 24. `interrupt_marker` — 异步函数中调用同步 SQLite
 
 **文件**：`server/service/interrupt_marker.py:242`
 
 - **修复**：`await asyncio.to_thread(store_core.get_messages_by_lastest_n_turns, ...)`。
 - **状态**：未修复。
 
-## 26. `steering_queue` — 异步方法中使用 `threading.Lock`
+## 25. `steering_queue` — 异步方法中使用 `threading.Lock`
 
 **文件**：`agent/tools/subagent/announce/steering_queue.py:119,136,338`
 
@@ -260,14 +252,14 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - **修复**：改 `asyncio.Lock`。
 - **状态**：未修复。
 
-## 27. `run_async` — 从运行中的事件循环调用时 `future.result()` 阻塞
+## 26. `run_async` — 从运行中的事件循环调用时 `future.result()` 阻塞
 
 **文件**：`pub/func/run_async.py:77-114`
 
 - **修复**：确保所有 `run_async` 调用方不在事件循环线程上，或提供 `await` 版本。
 - **状态**：未修复。有改进（timeout 后取消 pending tasks + shutdown pool），但阻塞本身仍在。
 
-## 28. `list_descendant_runs` — O(N*D) BFS 重复全量扫描
+## 27. `list_descendant_runs` — O(N*D) BFS 重复全量扫描
 
 **文件**：`agent/tools/subagent/registry/queries.py:12-26`
 
@@ -275,7 +267,7 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - **修复**：先调用 `build_read_index()`（已存在）构建 requester→runs 索引。
 - **状态**：未修复。
 
-## 29. swarm 计数器 — `all_runs()` 全量扫描在 pump_lane 循环中
+## 28. swarm 计数器 — `all_runs()` 全量扫描在 pump_lane 循环中
 
 **文件**：`agent/tools/subagent/swarm/collector.py:329-356,212-228`
 
@@ -283,7 +275,7 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - **修复**：维护 per-group 增量计数器。
 - **状态**：未修复。
 
-## 30. `StateRegisterDB` — 每次操作新建 SQLite 连接
+## 29. `StateRegisterDB` — 每次操作新建 SQLite 连接
 
 **文件**：`runtime/session/state_register.py:150-247`
 
@@ -292,42 +284,42 @@ max_nodes = max(1, int(query.get("max_nodes", 1000)))  # 仅最小值
 - **修复**：复用模块级连接（加锁）或使用 `aiosqlite`。
 - **状态**：未修复。
 
-## 31. `ContextEpoch` 连接泄漏
+## 30. `ContextEpoch` 连接泄漏
 
 **文件**：`runtime/session/state_register.py:300`
 
 - `prepare()` 方法内联 `sqlite3.connect(self._db.db_path)` 但未关闭——其他方法（280, 334, 348）用了 `with` 上下文管理器，此方法没有。
 - **状态**：新发现。
 
-## 32. `agent/tools/subagent/registry/memory.py` — `_runs` 字典无界增长
+## 31. `agent/tools/subagent/registry/memory.py` — `_runs` 字典无界增长
 
 **文件**：`agent/tools/subagent/registry/memory.py:6-7`
 
 - `_runs: dict[str, SubagentRunRecord] = {}` 终端 run 记录从不自动驱逐。sweeper 持久化到磁盘但不修剪内存字典。`clear()` 存在但仅在显式调用时执行。
 - **状态**：新发现。
 
-## 33. `agent/middlewares/summarization/core.py` — `_RESTORED_COOLDOWN_SESSIONS` 无界增长
+## 32. `agent/middlewares/summarization/core.py` — `_RESTORED_COOLDOWN_SESSIONS` 无界增长
 
 **文件**：`agent/middlewares/summarization/core.py:128`
 
 - `_RESTORED_COOLDOWN_SESSIONS: set[str] = set()` — sessions 被添加但从不移除。
 - **状态**：新发现。
 
-## 34. `agent/tools/subagent/orphan/recovery.py` — `recovery_attempts_persisted` 无界增长
+## 33. `agent/tools/subagent/orphan/recovery.py` — `recovery_attempts_persisted` 无界增长
 
 **文件**：`agent/tools/subagent/orphan/recovery.py:25,29`
 
 - `_recovery_tasks` 和 `recovery_attempts_persisted` 字典无界增长，`cancel_recovery` 可能不被所有 run 调用。
 - **状态**：新发现。
 
-## 35. `agent/tools/subagent/registry/settle_wake.py` — 异步路径中的同步 SQLite
+## 34. `agent/tools/subagent/registry/settle_wake.py` — 异步路径中的同步 SQLite
 
 **文件**：`agent/tools/subagent/registry/settle_wake.py:103`
 
 - `retire_after_settle`（async）调用 `_persist_state()` → `save_settle_wake_state()`（同步 sqlite3）。
 - **状态**：新发现。
 
-## 36. `config/schema.py` 从 `models/` 导入 — 违反架构规则
+## 35. `config/schema.py` 从 `models/` 导入 — 违反架构规则
 
 **文件**：`config/schema.py:185,260`
 
@@ -340,35 +332,35 @@ from models.providers.registry import find_by_name
 - **修复**：将 provider 匹配逻辑移到 models 层或新建 resolver 层。
 - **状态**：新发现。
 
-## 37. `context_engine/events/store.py` — `__import__()` 反模式 + `db: Any` 类型
+## 36. `context_engine/events/store.py` — `__import__()` 反模式 + `db: Any` 类型
 
 **文件**：`context_engine/events/store.py:17,19-23,39`
 
 - 使用 `__import__()` 做延迟导入而非正常 import 语句。`db: Any = None` 参数未类型化。
 - **状态**：新发现。
 
-## 38. `runtime/process/crash_loop_breaker.py` — 配置在导入时读取
+## 37. `runtime/process/crash_loop_breaker.py` — 配置在导入时读取
 
 **文件**：`runtime/process/crash_loop_breaker.py:35-39`
 
 - `WINDOW_S`、`TRIP_THRESHOLD`、`RETENTION_S` 在模块级读取配置，运行时配置变更不会生效。
 - **状态**：新发现。
 
-## 39. `models/LLMs/main_llm.py` — 环境变量在导入时读取
+## 38. `models/LLMs/main_llm.py` — 环境变量在导入时读取
 
 **文件**：`models/LLMs/main_llm.py:17-22,64-88`
 
 - 环境变量在模块导入时读取。`model_config` 是模块级可变 dict，被 `apply_thinking_budget()` 修改——非线程安全。`int(os.getenv(...))` 无 try/except。
 - **状态**：新发现。
 
-## 40. `context_engine/embeddings/indexer.py` — 硬编码模型常量
+## 39. `context_engine/embeddings/indexer.py` — 硬编码模型常量
 
 **文件**：`context_engine/embeddings/indexer.py:10-12`
 
 - `_EMBED_MODEL_NAME = "bge-m3"`、`_EMBED_DIM = 1024`、`_BATCH_SIZE = 32` — 不可配置。
 - **状态**：新发现。
 
-## 41. Windows 上 sandbox 降级为无沙箱
+## 40. Windows 上 sandbox 降级为无沙箱
 
 **文件**：`agent/tools/pub_base/sandbox.py`
 
@@ -376,7 +368,7 @@ from models.providers.registry import find_by_name
 - Windows 部署完全依赖正则黑名单和 builtins 限制（可被反射绕过：`().__class__.__bases__[0].__subclasses__()`）。
 - **状态**：新发现。
 
-## 42. 全局异常处理器暴露 `str(error)`
+## 41. 全局异常处理器暴露 `str(error)`
 
 **文件**：`server/trigger/core.py:36`；`server/trigger/http/knowledge_graph.py:205`；`server/trigger/http/stats.py:126`；`server/trigger/http/curator.py:41,136`
 
@@ -387,14 +379,14 @@ from models.providers.registry import find_by_name
 
 # 🟢 低（Low）— 小问题 / 清理
 
-## 43. `sender_task.cancel()` 未 `await`（2 处）
+## 42. `sender_task.cancel()` 未 `await`（2 处）
 
 **文件**：`server/trigger/ws/subagent_ws.py:175`、`server/trigger/ws/logs.py:144`
 
 - **修复**：`sender_task.cancel(); await asyncio.wait_for(sender_task, timeout=1.0)`。
 - **状态**：未修复。
 
-## 44. Channel 线程事件循环未关闭
+## 43. Channel 线程事件循环未关闭
 
 **文件**：`server/trigger/channels/core.py:330-342`
 
@@ -402,7 +394,7 @@ from models.providers.registry import find_by_name
 - **修复**：在 `_run()` 的 `finally` 块中加 `event_loop.close()`。
 - **状态**：未修复。
 
-## 45. `threading.Lock` 在异步调用链中使用（3 处）
+## 44. `threading.Lock` 在异步调用链中使用（3 处）
 
 **文件**：
 
@@ -412,14 +404,14 @@ from models.providers.registry import find_by_name
 - 锁持有时间极短，实际阻塞风险低但技术上是 `threading.Lock` 在异步调用链中。
 - **状态**：未修复。
 
-## 46. `delegate_task` — `asyncio.run()` 未检查运行中的事件循环
+## 45. `delegate_task` — `asyncio.run()` 未检查运行中的事件循环
 
 **文件**：`agent/tools/subagent/delegate.py:439`
 
 - 从异步上下文调用会抛 `RuntimeError`。作为 sync 工具入口点，在 thread pool 中执行时安全，但是脆弱的隐式假设。
 - **状态**：未修复。
 
-## 47. 缺失 `__init__.py`
+## 46. 缺失 `__init__.py`
 
 **文件**：
 
@@ -427,7 +419,7 @@ from models.providers.registry import find_by_name
 - `plugins/channels/qq/` — 有 .py 文件但无 `__init__.py`
 - **状态**：新发现。
 
-## 48. `evals/nudge_extraction/suite.py` 加载 `.env` 到 eval 环境
+## 47. `evals/nudge_extraction/suite.py` 加载 `.env` 到 eval 环境
 
 **文件**：`evals/nudge_extraction/suite.py:528-529`
 
@@ -547,21 +539,21 @@ from models.providers.registry import find_by_name
 
 ## P1 — 尽快修复
 
-- **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #3-#6、#23、#42。
+- **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #3-#6、#22、#41。
 - **#1** `delegate.py` `time.sleep` 阻塞事件循环（提供 `result_async`）
 - **#8** 内网 IP 黑名单（SSRF 防护）
-- **#12** `execute` 取消 child 任务
-- **#20** 为技能上传/切换端点编写测试
-- **#21** CI 添加 SAST/依赖漏洞扫描
-- **#36** `config/schema.py` 从 models 导入违规
+- **#11** `execute` 取消 child 任务
+- **#19** 为技能上传/切换端点编写测试
+- **#20** CI 添加 SAST/依赖漏洞扫描
+- **#35** `config/schema.py` 从 models 导入违规
 
 ## P2 — 计划修复
 
-- **异步/阻塞收口**：#2 store 迁移 `aiosqlite`、#9-#11 media_pipeline/summarization/StateRegisterDB 阻塞 I/O 移 `to_thread`、#13 compaction_lock、#14-#16 embeddings/session_continuity/curator 异步路径阻塞
-- **资源泄漏**：#19 child checkpointer、#32-#34 无界增长的全局变量
-- **性能**：#28-#29 冗余扫描与计数、#30 连接风暴收口
+- **异步/阻塞收口**：#2 store 迁移 `aiosqlite`、#9-#10 media_pipeline/StateRegisterDB 阻塞 I/O 移 `to_thread`、#12 compaction_lock、#13-#15 embeddings/session_continuity/curator 异步路径阻塞
+- **资源泄漏**：#18 child checkpointer、#31-#33 无界增长的全局变量
+- **性能**：#27-#28 冗余扫描与计数、#29 连接风暴收口
 - **fail-open 与确认闸门**：#7-② 重审扫描器故障放行策略、#7-③ 为高风险工具增加首次调用确认闸门、#7-① 技能描述 XML 转义
-- **#18** 移除 `verify=False` 和全局 `disable_warnings`
+- **#17** 移除 `verify=False` 和全局 `disable_warnings`
 
 ## P3 — 低优先级清理
 
@@ -569,10 +561,10 @@ from models.providers.registry import find_by_name
 - **类型注解**：292 个函数缺少返回类型，149 处 `Any`（agent/）
 - **错误处理统一**：64 处 `except Exception:` 至少添加日志
 - **全局状态治理**：52 处模块级可变变量评估封装
-- **#22** bus 单队列路由
-- **#24** 知识图谱遍历参数钳制
-- **#41** Windows sandbox 策略
-- **#43-#48** 逐项修复低优先级项
+- **#21** bus 单队列路由
+- **#23** 知识图谱遍历参数钳制
+- **#40** Windows sandbox 策略
+- **#42-#47** 逐项修复低优先级项
 - 修复后重新审计，确认以上各域闭合
 
 ---
@@ -584,6 +576,8 @@ from models.providers.registry import find_by_name
 > 2026-09-24 重排：#1、#3、#16、#17、#18 修复完成后移除，剩余 51 条重排为连续编号 1-51（#2→#1；#4-#15 各减 2；#19-#56 各减 5）。上表「新编号」列为 2026-09-15 编号，映射到现编号按上述规则；5 个移除编号不再占用。本轮同步清理了全仓 `audit #N` 注释与测试引用（移除项改写为直接命名威胁，保留项更新为新编号）。
 >
 > 2026-09-25 重排：#38、#48、#49 修复完成后移除，剩余 48 条重排为连续编号 1-48（#39-#47 各减 1；#50-#51 各减 3）。上表「新编号」列仍为 2026-09-15 编号，映射到现编号按 2026-09-24 注与本次规则复合计算。
+>
+> 2026-09-25 第二轮重排：#11（summarization — awrap_model_call 异步路径同步 SQLite + 文件 I/O）修复完成后移除，剩余 47 条重排为连续编号 1-47（#12-#48 各减 1）。上表「新编号」列仍为 2026-09-15 编号，映射到现编号按前述各注与本次规则复合计算。
 
 | 旧编号 | 新编号 | 条目 | 本轮核实 |
 | ------ | ------ | ---- | -------- |
