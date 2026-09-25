@@ -73,7 +73,7 @@ const stubs = {
 
 const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<string, string> = ENV_VALUES) =>
   mount(LlmModelManager, {
-    props: { group, keys, values, groupTitle: `模型列表 · ${group}` },
+    props: { group, keys, values, groupTitle: group },
     global: { stubs }
   });
 

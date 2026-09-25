@@ -221,7 +221,7 @@
                     :group="group.name"
                     :keys="group.entries.map(e => e.key)"
                     :values="groupValues[group.name] ?? {}"
-                    :group-title="t('config.llm.models') + ' · ' + group.name"
+                    :group-title="group.name"
                     @apply="payload => applyModelProfile(group.name, payload)" />
                   <div
                     v-else

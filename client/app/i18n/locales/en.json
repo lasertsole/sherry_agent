@@ -102,7 +102,6 @@
       "applied": "Applied to .env",
       "empty": "No models yet — click “Add model”",
       "unnamed": "Unnamed model",
-      "models": "Models",
       "localModel": "Local model",
       "localUnused": "Unused in local mode"
     },

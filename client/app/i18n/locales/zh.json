@@ -102,7 +102,6 @@
       "applied": "已应用到 .env",
       "empty": "暂无模型，点击“添加模型”创建",
       "unnamed": "未命名模型",
-      "models": "模型列表",
       "localModel": "本地模型",
       "localUnused": "本地模式不使用"
     },

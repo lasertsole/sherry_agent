@@ -102,7 +102,6 @@
       "applied": ".env に適用済み",
       "empty": "モデルがありません。「モデルを追加」をクリック",
       "unnamed": "名称未設定のモデル",
-      "models": "モデル一覧",
       "localModel": "ローカルモデル",
       "localUnused": "ローカルでは未使用"
     },
