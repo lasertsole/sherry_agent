@@ -18,6 +18,7 @@
  *
  * @module composables/use-chat-virtual-list
  */
+import { onActivated, onDeactivated } from 'vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import type { MessageItem } from '~/pages/home/type';
 import { CHAT_ROLE } from '~/types/chat-role';
@@ -107,10 +108,21 @@ export function useChatVirtualList(
    * internal offset: the virtualizer's tracked offset lags a frame behind a
    * programmatic scroll, which left the button stale.
    */
+  // Continuously-tracked pin state / offset (consumed by the KeepAlive hooks
+  // below): reading them at deactivation time is unreliable because the
+  // container may already be detached — 0/0/0 metrics read as "pinned".
+  let pinnedRecently = true;
+  let ongoingScrollTop = 0;
+
   const updateScrollBottomBtn = () => {
     const el = scrollContainerRef.value;
     if (!el) return;
-    showScrollBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight > NEAR_BOTTOM_THRESHOLD;
+    const away = el.scrollHeight - el.scrollTop - el.clientHeight;
+    showScrollBottom.value = away > NEAR_BOTTOM_THRESHOLD;
+    if (el.scrollHeight > el.clientHeight + 1) {
+      pinnedRecently = away <= NEAR_BOTTOM_THRESHOLD;
+      ongoingScrollTop = el.scrollTop;
+    }
   };
 
   /** Re-arm latch: one top-reach callback per crossing, not per scroll event. */
@@ -154,12 +166,30 @@ export function useChatVirtualList(
    */
   const scrollToBottom = () => {
     nextTick(() => {
+      const el = scrollContainerRef.value;
+      if (!el) return;
       virtualizer.value.scrollToEnd();
       snapToBottom();
-      requestAnimationFrame(() => {
+      // Keep re-pinning until the spacer height stops changing: rows that were
+      // never rendered before (a fresh session, a KeepAlive reactivation) only
+      // get their REAL heights measured a few frames after they enter the
+      // window, and each growth would otherwise leave the tail just above the
+      // true bottom.
+      let last = el.scrollHeight;
+      let attempts = 0;
+      const settle = () => {
+        virtualizer.value.scrollToEnd();
+        const height = el.scrollHeight;
+        if (height !== last && attempts < 8) {
+          last = height;
+          attempts += 1;
+          requestAnimationFrame(settle);
+          return;
+        }
         snapToBottom();
         updateScrollBottomBtn();
-      });
+      };
+      requestAnimationFrame(settle);
     });
   };
 
@@ -210,17 +240,85 @@ export function useChatVirtualList(
    * streaming must not yank the view down while the user reviews history.
    */
   watch(messages, (msgs, oldMsgs) => {
-    const added = (msgs ?? []).slice(oldMsgs?.length ?? 0);
+    if (restoringPosition) return; // an activation restore owns the offset
+    // Judge growth by IDENTITY, not by array-length slicing: a history reload
+    // merges cached older rows into the HEAD, which right-shifts every
+    // existing row — a length slice would read the shifted tail as "new
+    // messages" and yank a reader up the history to the bottom.
+    const prevIds = new Set((oldMsgs ?? []).map(m => m.id));
+    const added = (msgs ?? []).filter(m => !prevIds.has(m.id));
+    const prevTailId = oldMsgs?.length ? oldMsgs[oldMsgs.length - 1]!.id : null;
+    const newTailId = msgs?.length ? msgs[msgs.length - 1]!.id : null;
+    // Only a genuine TAIL append (a send, including the very first message of
+    // an empty session) may force a follow; a head prepend keeps the reader
+    // where they are (the prepend compensation handles the viewport there).
+    const appendedAtTail = newTailId !== null && prevTailId !== newTailId;
     // The watch flushes pre-DOM-update, so this reads the PRE-change geometry.
     const el = scrollContainerRef.value;
-    const wasNearBottom = !el || el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_THRESHOLD;
-    if (added.some(m => m.role === CHAT_ROLE.USER) || wasNearBottom) {
+    // A degenerate viewport (content not measured yet, e.g. just re-attached
+    // by KeepAlive) must not read as "near the bottom" and force a follow.
+    const measured = !!el && el.scrollHeight > el.clientHeight + 1;
+    const wasNearBottom =
+      !el || (measured && el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_THRESHOLD);
+    if ((appendedAtTail && added.some(m => m.role === CHAT_ROLE.USER)) || wasNearBottom) {
       scrollToBottom();
     }
   });
 
   // After the component mounts (first page open), scroll to the end so the latest messages are visible
   onMounted(() => scrollToBottom());
+
+  /**
+   * KeepAlive lifecycle: pages are cached per session, and detaching the DOM
+   * zeroes the container's scrollTop. For a virtual list the height lives in
+   * the virtualizer, so nothing can recover the position on re-show — the
+   * list would look empty until the first scroll event re-measures it.
+   *
+   * Deactivation records the PIN STATE (near the bottom or reading history):
+   * a pinned list re-pins to the newest messages on activation (the chat
+   * convention, and exact regardless of re-measurement), while a reader deep
+   * in history keeps their pixel offset, re-applied until the re-measure
+   * settles. Outside KeepAlive both hooks are no-ops.
+   */
+  /** While true, the follow watch must not fight the activation restore. */
+  let restoringPosition = false;
+  // No deactivation capture is needed: `pinnedRecently` / `ongoingScrollTop`
+  // are maintained by every scroll event while the list is visible.
+  onDeactivated(() => {});
+  onActivated(() => {
+    nextTick(() => {
+      const el = scrollContainerRef.value;
+      if (!el) return;
+      virtualizer.value.measure();
+      if (pinnedRecently) {
+        scrollToBottom();
+        return;
+      }
+      const lastScrollTop = ongoingScrollTop;
+      restoringPosition = true;
+      if (lastScrollTop > 0) el.scrollTop = lastScrollTop;
+      updateScrollBottomBtn();
+      // Keep re-applying the offset until the re-measure settles: rows that
+      // were never rendered before activation get their real heights a few
+      // frames in, and each growth shifts what sits under the viewport.
+      let last = el.scrollHeight;
+      let attempts = 0;
+      const settle = () => {
+        const height = el.scrollHeight;
+        if (height !== last && attempts < 8) {
+          last = height;
+          attempts += 1;
+          if (lastScrollTop > 0) el.scrollTop = lastScrollTop;
+          requestAnimationFrame(settle);
+          return;
+        }
+        if (lastScrollTop > 0) el.scrollTop = lastScrollTop;
+        updateScrollBottomBtn();
+        restoringPosition = false;
+      };
+      requestAnimationFrame(settle);
+    });
+  });
 
   return {
     scrollContainerRef,
