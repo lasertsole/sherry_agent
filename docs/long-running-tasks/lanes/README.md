@@ -47,10 +47,11 @@ Because a queued child still occupies an admission slot, the registry counting f
 | **Kill** | PENDING runs are listable/killable (`list_killable_children`); `cancel_task()` cancels the lane waiter and `CancelledError` propagates out of `Lane.acquire()` without consuming or leaking a permit |
 | **Steer** | Rejected — `steer_subagent_run()` only accepts RUNNING/INTERRUPTED; a steered restart re-enters the lane as PENDING and is promoted inside its slot |
 | **Sweeper / orphan recovery** | `is_live_unended_run()` includes PENDING, so a PENDING run whose task is gone is an orphan; `evaluate_recovery_gate()` classifies it `"wedged"` and `_recovery_loop()` finalizes it directly as `TERMINAL` with `ended_reason="pending_orphaned"` (outcome `TIMEOUT`, error `"pending orphaned"`) and runs the announce flow |
+| **Restart / restore** | `restore_runs_from_disk()` (`registry/state.py`) finalizes every PENDING run restored from SQLite as `TERMINAL` / `pending_orphaned` at startup — silently, without the announce flow (parent sessions belong to the previous process lifetime); only a same-lifetime lost task reaches the sweeper's orphan recovery |
 | **Yield** | `sessions_yield` counts PENDING children as active and `wake_yield_if_all_children_settled` only wakes the parent once none remain; the yield timeout covers the lane wait and returns normally on expiry |
 | **Accounting / listing** | `control/list.py` and `runtime_tools.py` render PENDING children alongside RUNNING/INTERRUPTED |
 
-A sweeper scan skips a PENDING run while its lane task still exists (the process is simply queueing); only a lost task (process restart) makes it an orphan.
+A sweeper scan skips a PENDING run while its lane task still exists (the process is simply queueing); only a lost task makes it an orphan — and PENDING leftovers from a previous process never reach it, because restore finalizes them at startup.
 
 ### Drain mode & shutdown
 
@@ -94,7 +95,8 @@ At exit, the same seam flips drain mode (`set_draining(True)`) and runs a **boun
 | `agent/tools/subagent/tools/sessions_send.py` | NESTED lane around the reply turn |
 | `server/service/input_queue_service.py` | MAIN lane around `_run_executor` |
 | `agent/tools/subagent/orphan/recovery.py` | `pending_orphaned` finalize for PENDING orphans |
-| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | Lane test suite |
+| `agent/tools/subagent/registry/state.py` | restore-time `pending_orphaned` finalize for restart leftovers |
+| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending,registry_restore}.py` · `tests/server/trigger/http/test_lane_api.py` | Lane test suite |
 
 ### Implementation notes
 

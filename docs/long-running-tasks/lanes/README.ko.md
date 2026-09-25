@@ -47,10 +47,11 @@ LANE_SYSTEM: LaneSystemConfig = {
 | **Kill** | PENDING run은 목록화/kill 가능(`list_killable_children`); `cancel_task()`가 레인 대기자를 취소하고 `CancelledError`는 permit을 소비하거나 누수하지 않고 `Lane.acquire()`를 빠져나갑니다 |
 | **Steer** | 거부——`steer_subagent_run()`은 RUNNING/INTERRUPTED만 받습니다; steer로 재시작된 run은 PENDING으로 레인에 다시 들어가 자기 슬롯 안에서 승격됩니다 |
 | **Sweeper / 고아 복구** | `is_live_unended_run()`이 PENDING을 포함하므로 task를 잃은 PENDING run은 고아입니다; `evaluate_recovery_gate()`는 `"wedged"`로 분류하고 `_recovery_loop()`는 `ended_reason="pending_orphaned"`(outcome `TIMEOUT`, error `"pending orphaned"`)로 곧바로 `TERMINAL` 처리한 뒤 announce 흐름을 실행합니다 |
+| **재시작 / 복원** | `restore_runs_from_disk()`(`registry/state.py`)는 시작 시 SQLite에서 복원한 모든 PENDING run을 `TERMINAL` / `pending_orphaned`로 확정합니다 —— 조용히 수행되며 announce 흐름은 실행하지 않습니다(부모 세션은 이전 프로세스 생존 기간의 것입니다); 동일 프로세스 생존 기간 내에 task를 잃은 경우만 sweeper의 고아 복구에 들어갑니다 |
 | **Yield** | `sessions_yield`는 PENDING 자식을 활성으로 세고, `wake_yield_if_all_children_settled`는 전부 끝나야 부모를 깨웁니다; yield 타임아웃은 레인 대기를 포함하고 만료 시 정상 반환합니다 |
 | **계수 / 목록** | `control/list.py`와 `runtime_tools.py`는 PENDING 자식을 RUNNING/INTERRUPTED와 함께 표시합니다 |
 
-PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이 건너뜁니다(프로세스가 그저 대기 중일 뿐); task 상실(프로세스 재시작)만이 고아로 만듭니다.
+PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이 건너뜁니다(프로세스가 그저 대기 중일 뿐); task 상실만이 고아로 만듭니다 —— 이전 프로세스가 남긴 PENDING은 시작 복원에서 확정되므로 sweeper에 도달하지 않습니다.
 
 ### Drain 모드와 종료
 
@@ -94,7 +95,8 @@ PENDING run의 레인 task가 아직 존재하는 동안에는 sweeper 스캔이
 | `agent/tools/subagent/tools/sessions_send.py` | 응답 턴을 감싸는 NESTED 레인 |
 | `server/service/input_queue_service.py` | `_run_executor`를 감싸는 MAIN 레인 |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 고아의 `pending_orphaned` 확정 |
-| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | 레인 테스트 스위트 |
+| `agent/tools/subagent/registry/state.py` | 재시작 잔여 PENDING의 복원 시 `pending_orphaned` 확정 |
+| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending,registry_restore}.py` · `tests/server/trigger/http/test_lane_api.py` | 레인 테스트 스위트 |
 
 ### 구현 트레이드오프
 

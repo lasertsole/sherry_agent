@@ -47,10 +47,11 @@ LANE_SYSTEM: LaneSystemConfig = {
 | **Kill** | PENDING run 可列出、可 kill（`list_killable_children`）；`cancel_task()` 取消 lane 等待者，`CancelledError` 从 `Lane.acquire()` 传出，既不消耗也不泄漏 permit |
 | **Steer** | 拒绝——`steer_subagent_run()` 只接受 RUNNING/INTERRUPTED；被 steer 重启的 run 以 PENDING 重新进入 lane，并在自己的 slot 内被提升 |
 | **Sweeper / 孤儿恢复** | `is_live_unended_run()` 包含 PENDING，因此 task 已消失的 PENDING run 是孤儿；`evaluate_recovery_gate()` 将其判为 `"wedged"`，`_recovery_loop()` 直接把它终结为 `TERMINAL`，`ended_reason="pending_orphaned"`（outcome `TIMEOUT`、error `"pending orphaned"`），并运行 announce 流程 |
+| **重启 / 恢复** | `restore_runs_from_disk()`（`registry/state.py`）在启动时即把从 SQLite 恢复的全部 PENDING run 终结为 `TERMINAL` / `pending_orphaned` —— 静默执行，不运行 announce 流程（父会话属于上一个进程生命周期）；只有当前进程内丢失的 task 才会进入 sweeper 的孤儿恢复 |
 | **Yield** | `sessions_yield` 把 PENDING child 计为活跃，`wake_yield_if_all_children_settled` 只有在全部结束才唤醒父级；yield 超时涵盖 lane 等待，到期后正常返回 |
 | **计数 / 列表** | `control/list.py` 与 `runtime_tools.py` 把 PENDING child 与 RUNNING/INTERRUPTED 一起呈现 |
 
-只要 PENDING run 的 lane task 仍存在，sweeper 扫描就会跳过它（进程只是在排队）；只有 task 丢失（进程重启）才会使其成为孤儿。
+只要 PENDING run 的 lane task 仍存在，sweeper 扫描就会跳过它（进程只是在排队）；只有 task 丢失才会使其成为孤儿 —— 而上一个进程遗留的 PENDING 在启动恢复时即被终结，不会到达 sweeper。
 
 ### Drain 模式与关闭
 
@@ -94,7 +95,8 @@ LANE_SYSTEM: LaneSystemConfig = {
 | `agent/tools/subagent/tools/sessions_send.py` | 回复 turn 外层的 NESTED lane |
 | `server/service/input_queue_service.py` | `_run_executor` 外层的 MAIN lane |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤儿的 `pending_orphaned` 终结 |
-| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | Lane 测试套件 |
+| `agent/tools/subagent/registry/state.py` | 重启遗留 PENDING 的恢复时 `pending_orphaned` 终结 |
+| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending,registry_restore}.py` · `tests/server/trigger/http/test_lane_api.py` | Lane 测试套件 |
 
 ### 实现取舍
 

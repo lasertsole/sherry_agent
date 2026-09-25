@@ -581,6 +581,8 @@ sweeper_interval_seconds，默认 60 秒）
      （最多 3 次）+ run_subagent_announce_flow()
 ```
 
+启动恢复会先一步处理重启场景：`registry/state.py` 在恢复时即把从 SQLite 恢复的全部 PENDING run 终结为 TERMINAL/`pending_orphaned` —— 静默执行，不逐条 announce（父会话属于上一个进程生命周期）。上文的延迟恢复路径只处理当前进程生命周期内丢失 lane task 的 PENDING run。
+
 对账标准（registry/helpers.py）：TERMINAL/TIMEOUT 的 run 在运行时长 ≥ 1 小时，或超过 stale 阈值（`stale_unended_threshold_seconds` = 7200 秒）时被重分类为 `orphaned`。去重：每个 `run_id` 最多被调度恢复一次。
 
 #### Followup（超时检查）

@@ -586,6 +586,8 @@ registry/sweeper.py — backoff.current_interval을 sleep하는 루프
      (최대 3회) + run_subagent_announce_flow()
 ```
 
+시작 복원이 재시작 케이스를 먼저 처리합니다: `registry/state.py`는 SQLite에서 복원한 모든 PENDING run을 복원 시점에 TERMINAL/`pending_orphaned`로 확정합니다 —— 조용히 수행되며 run별 announce는 하지 않습니다(부모 세션은 이전 프로세스 생존 기간의 것입니다). 위의 지연 경로가 다루는 것은 현재 프로세스 생존 기간 내에 레인 task를 잃은 PENDING run뿐입니다.
+
 대조 기준 (registry/helpers.py): TERMINAL/TIMEOUT run은 경과 시간 ≥ 1시간이거나 stale 임계값(`stale_unended_threshold_seconds` = 7200초)을 초과하면 `orphaned`로 재분류됩니다. 중복 제거: 각 `run_id`는 복구 대상으로 최대 1회만 스케줄됩니다.
 
 #### Followup (타임아웃 체커)

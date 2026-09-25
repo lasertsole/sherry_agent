@@ -590,6 +590,8 @@ registry/sweeper.py — backoff.current_interval を sleep するループ
      （最大 3 回）+ run_subagent_announce_flow()
 ```
 
+起動時の復元が再起動ケースを先に処理します：`registry/state.py` は SQLite から復元した全 PENDING run を復元時に TERMINAL/`pending_orphaned` として確定します —— 静かに実行され、run ごとの announce は行いません（親セッションは前のプロセス生存期間のものです）。上記の遅延パスが扱うのは、現在のプロセス生存期間内でレーン task を失った PENDING run のみです。
+
 照合基準（registry/helpers.py）：TERMINAL/TIMEOUT の run は、経過時間 ≥ 1 時間、または stale 閾値（`stale_unended_threshold_seconds` = 7200 秒）超過で `orphaned` に再分類されます。重複排除：各 `run_id` は最大 1 回しかリカバリ対象にスケジュールされません。
 
 #### Followup（タイムアウトチェッカー）

@@ -584,6 +584,8 @@ For each orphaned run (live but no active task, or aborted_last_run):
      (max 3 attempts) + run_subagent_announce_flow()
 ```
 
+Startup restore short-circuits the restart case: `registry/state.py` finalizes every PENDING run restored from SQLite as TERMINAL/`pending_orphaned` at restore time — silently, with no per-run announce (the parent session belongs to the previous process lifetime). The delayed path above only sees PENDING runs that lost their lane task within the current process lifetime.
+
 Reconciliation criteria (registry/helpers.py): a TERMINAL/TIMEOUT run is reclassified as `orphaned` when elapsed ≥ 1 h or when it exceeds the stale threshold (`stale_unended_threshold_seconds` = 7200 s). Deduplication: each `run_id` is scheduled for recovery at most once.
 
 #### Followup (Timeout Checker)

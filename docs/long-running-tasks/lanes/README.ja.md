@@ -47,10 +47,11 @@ LANE_SYSTEM: LaneSystemConfig = {
 | **Kill** | PENDING run は一覧・kill 可能（`list_killable_children`）；`cancel_task()` がレーン待機をキャンセルし、`CancelledError` は permit を消費も漏洩もせず `Lane.acquire()` から伝播します |
 | **Steer** | 拒否——`steer_subagent_run()` は RUNNING/INTERRUPTED のみ受理；steer で再起動された run は PENDING としてレーンに再入し、自分のスロット内で昇格します |
 | **Sweeper / 孤児回復** | `is_live_unended_run()` は PENDING を含むため、task を失った PENDING run は孤児です；`evaluate_recovery_gate()` は `"wedged"` と判定し、`_recovery_loop()` は `ended_reason="pending_orphaned"`（outcome `TIMEOUT`、error `"pending orphaned"`）で直接 `TERMINAL` に確定し、announce フローを実行します |
+| **再起動 / 復元** | `restore_runs_from_disk()`（`registry/state.py`）は起動時に SQLite から復元した全 PENDING run を `TERMINAL` / `pending_orphaned` として確定します —— 静かに実行され、announce フローは実行しません（親セッションは前のプロセス生存期間のものです）；同一プロセス生存期間内で task を失った場合のみ sweeper の孤児回復に入ります |
 | **Yield** | `sessions_yield` は PENDING の子をアクティブとして数え、`wake_yield_if_all_children_settled` は全部が終わって初めて親を起こします；yield タイムアウトはレーン待ちを含み、期限切れ時は正常に戻ります |
 | **計数 / 一覧** | `control/list.py` と `runtime_tools.py` は PENDING の子を RUNNING/INTERRUPTED と一緒に表示します |
 
-PENDING run のレーン task がまだ存在する間、sweeper スキャンはそれをスキップします（プロセスは単にキューイングしているだけです）；task の消失（プロセス再起動）だけが孤児化の原因です。
+PENDING run のレーン task がまだ存在する間、sweeper スキャンはそれをスキップします（プロセスは単にキューイングしているだけです）；task の消失だけが孤児化の原因です —— 前のプロセスが遺した PENDING は起動時の復元で確定されるため、sweeper には届きません。
 
 ### Drain モードとシャットダウン
 
@@ -94,7 +95,8 @@ PENDING run のレーン task がまだ存在する間、sweeper スキャンは
 | `agent/tools/subagent/tools/sessions_send.py` | 返信ターンを包む NESTED レーン |
 | `server/service/input_queue_service.py` | `_run_executor` を包む MAIN レーン |
 | `agent/tools/subagent/orphan/recovery.py` | PENDING 孤児の `pending_orphaned` 確定 |
-| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending}.py` · `tests/server/trigger/http/test_lane_api.py` | レーンテストスイート |
+| `agent/tools/subagent/registry/state.py` | 再起動残留 PENDING の復元時 `pending_orphaned` 確定 |
+| `tests/runtime/lane/` · `tests/server/service/test_main_lane.py` · `tests/agent/tools/subagent/test_{spawn_lane_integration,kill_pending,steer_lane,sweeper_pending,sessions_yield_pending,registry_restore}.py` · `tests/server/trigger/http/test_lane_api.py` | レーンテストスイート |
 
 ### 実装上のトレードオフ
 
