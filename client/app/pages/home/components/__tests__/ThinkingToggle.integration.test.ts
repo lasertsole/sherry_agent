@@ -25,13 +25,29 @@ beforeEach(() => {
   );
 });
 
+// Menu popup stub: renders its model items only while "opened"; toggle()
+// flips it — mirroring PrimeVue Menu's popup surface.
+const MenuStub = {
+  name: 'Menu',
+  props: ['model', 'popup'],
+  data: () => ({ opened: false }),
+  methods: {
+    toggle() {
+      this.opened = !this.opened;
+    }
+  },
+  template: `<div v-if="opened" class="menu-stub"><button v-for="i in model" :key="i.label" class="lvl" @click="i.command()"><i v-if="i.icon" :class="i.icon"></i>{{ i.label }}</button></div>`
+};
+
 const stubs = {
   ToggleSwitch: { template: '<span class="ts"></span>' },
   Button: {
-    props: ['label', 'variant'],
+    props: ['label', 'variant', 'icon', 'iconPos'],
     emits: ['click'],
-    template: '<button class="lvl" @click="$emit(\'click\')">{{ label }}</button>'
-  }
+    template:
+      '<button class="trigger" @click="$emit(\'click\', $event)">{{ label }}<i v-if="icon" :class="icon"></i></button>'
+  },
+  Menu: MenuStub
 };
 
 describe('ThinkingToggle.vue (integration, store mocked)', () => {
@@ -43,24 +59,28 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
     expect(storeApi.hydrate).toHaveBeenCalledWith('sid-1');
     expect(wrapper.find('.ml-auto').exists()).toBe(true);
     expect(wrapper.text()).toContain('思考');
-    // on_off mode renders the ToggleSwitch stub, not the level selector
+    // on_off mode renders the ToggleSwitch stub, not the level picker
     expect(wrapper.find('.ts').exists()).toBe(true);
-    expect(wrapper.findAll('button.lvl').length).toBe(0);
+    expect(wrapper.find('.trigger').exists()).toBe(false);
   });
 
-  it('renders the 低/高/最高 selector for always-think models', async () => {
+  it('collapsed picker shows only the current level until clicked', async () => {
     storeApi.mode = 'levels';
     storeApi.current.mockReturnValue('high');
     const wrapper = mount(ThinkingToggle, {
       props: { sessionId: 'sid-1' },
       global: { stubs }
     });
+    // collapsed: exactly one trigger showing the current selection, no list
+    expect(wrapper.findAll('button.lvl').length).toBe(0);
+    expect(wrapper.find('button.trigger').text()).toBe('高');
+    // click opens the list
+    await wrapper.find('button.trigger').trigger('click');
     const labels = wrapper.findAll('button.lvl').map(b => b.text());
     expect(labels).toEqual(['低', '高', '最高']);
-    // the active level renders with the primary variant
-    const active = wrapper.findAll('button.lvl').find(b => b.text() === '高');
-    expect(active?.attributes('variant')).toBeUndefined(); // prop, not attr
-    expect(wrapper.props('sessionId')).toBe('sid-1');
+    // the current level carries the check icon
+    const activeItem = wrapper.findAll('button.lvl').find(b => b.text() === '高');
+    expect(activeItem?.find('i').classes()).toContain('pi-check');
   });
 
   it('pushes level selections through store.setValue', async () => {
@@ -70,12 +90,13 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
       props: { sessionId: 'sid-1' },
       global: { stubs }
     });
+    await wrapper.find('button.trigger').trigger('click');
     const low = wrapper.findAll('button.lvl').find(b => b.text() === '低');
     await low!.trigger('click');
     expect(storeApi.setValue).toHaveBeenCalledWith('sid-1', 'low');
   });
 
-  it('blocks changes while the session is streaming', async () => {
+  it('blocks opening the popup while the session is streaming', async () => {
     storeApi.mode = 'levels';
     storeApi.current.mockReturnValue('high');
     const wrapper = mount(ThinkingToggle, {
@@ -83,8 +104,8 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
       global: { stubs }
     });
     expect(wrapper.find('.pointer-events-none').exists()).toBe(true);
-    const low = wrapper.findAll('button.lvl').find(b => b.text() === '低');
-    await low!.trigger('click');
+    await wrapper.find('button.trigger').trigger('click');
+    expect(wrapper.findAll('button.lvl').length).toBe(0);
     expect(storeApi.setValue).not.toHaveBeenCalled();
   });
 

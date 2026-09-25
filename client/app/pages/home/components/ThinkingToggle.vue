@@ -16,18 +16,22 @@
       </template>
     </ToggleSwitch>
 
-    <!-- Always-think models: 低 / 高 / 最高 level selector -->
-    <div
-      v-else
-      class="flex items-center gap-1">
+    <!-- Always-think models: collapsed level picker — the trigger shows only
+         the current selection; clicking opens the 低/高/最高 list -->
+    <template v-else>
       <Button
-        v-for="lvl in levels"
-        :key="lvl"
-        :label="t(`thinkingToggle.${lvl}`)"
+        variant="text"
         size="small"
-        :variant="currentLevel === lvl ? 'primary' : 'text'"
-        @click="handleLevel(lvl)" />
-    </div>
+        :label="currentLevelLabel"
+        icon="pi pi-angle-down"
+        icon-pos="right"
+        :aria-label="t('thinkingToggle.a11y')"
+        @click="toggleMenu" />
+      <Menu
+        ref="levelMenu"
+        :model="levelItems"
+        popup />
+    </template>
 
     <!-- Mobile fallback: single button cycling the next state -->
     <button
@@ -52,12 +56,24 @@ const store = useThinkingStore();
 
 const levels: Array<'low' | 'high' | 'max'> = ['low', 'high', 'max'];
 
+/** Popup list of the three levels (opened by the collapsed trigger). */
+const levelMenu = ref();
+
 /** Local mirror of the store value (kept in sync for the switch binding). */
 const boolChecked = ref(false);
 const currentLevel = computed(() => {
   const v = store.current(props.sessionId);
   return v === 'low' || v === 'high' || v === 'max' ? v : 'high';
 });
+const currentLevelLabel = computed(() => t(`thinkingToggle.${currentLevel.value}`));
+/** Menu items: the current level carries a check marker. */
+const levelItems = computed(() =>
+  levels.map(lvl => ({
+    label: t(`thinkingToggle.${lvl}`),
+    icon: currentLevel.value === lvl ? 'pi pi-check' : undefined,
+    command: () => handleLevel(lvl)
+  }))
+);
 const active = computed(() => {
   if (store.mode === 'levels') return true; // always-think models are always on
   return store.current(props.sessionId) === true;
@@ -100,6 +116,16 @@ const handleSwitch = (value: string | boolean) => {
 const handleLevel = (lvl: 'low' | 'high' | 'max') => {
   if (props.streaming) return;
   store.setValue(props.sessionId, lvl);
+};
+
+/**
+ * Open the level popup. Blocked while the session is streaming — the model
+ * variant must never change mid-turn.
+ * @param event
+ */
+const toggleMenu = (event: Event) => {
+  if (props.streaming) return;
+  levelMenu.value?.toggle(event);
 };
 
 /**
@@ -148,7 +174,7 @@ const cycleMobile = () => {
   "ko": {
     "thinkingToggle": {
       "label": "생각",
-      "a11y": "모델思考 모드 전환",
+      "a11y": "모델 생각 모드 전환",
       "low": "낮음",
       "high": "높음",
       "max": "최대"
