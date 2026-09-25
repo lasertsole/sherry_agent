@@ -1,7 +1,6 @@
 import os
 import sys
 import time
-import nest_asyncio
 from typing import Any
 from pathlib import Path
 from loguru import logger
@@ -9,14 +8,17 @@ from config import MODELS_DIR, SRC_DIR
 from raganything import RAGAnything, RAGAnythingConfig
 from raganything.parser import Parser, register_parser
 from .ensure_mineru_models import ensure_mineru_models
+from .loop_patch import enable_nested_event_loops
 
 _project_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 
-# Work around errors caused by the same event loop being reused across event loops
-nest_asyncio.apply()
+# The vendored sync shims (run_until_complete) need a re-entrant loop; uvloop
+# (Robyn's server loop) cannot be patched, and the server only ever awaits the
+# coroutine APIs, so this is best-effort rather than fatal.
+enable_nested_event_loops()
 
 os.environ["HF_HUB_OFFLINE"] = "0"
 os.environ["TRANSFORMERS_OFFLINE"] = "0"
