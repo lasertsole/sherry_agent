@@ -92,22 +92,39 @@
             severity="secondary"
             @click="clearFilters" />
         </div>
-        <!-- Records list -->
-        <div class="flex flex-col overflow-auto flex-1 gap-3">
+        <!-- Records list: windowed (only the visible band of session cards is
+             mounted), so a long session history no longer costs a card per entry.
+             NOT a flex container: a flex parent shrinks the spacer below its
+             declared height and the scroll range collapses to the rendered band. -->
+        <div
+          ref="sessionsScrollRef"
+          class="overflow-auto flex-1">
           <div
             v-if="filteredHistoryList.length === 0"
             class="flex items-center justify-center h-full w-full text-[#868686]">
             {{ hasActiveFilters ? t('history.noSearchResults') : t('history.noSessions') }}
           </div>
-          <HistoryItem
-            v-for="item in filteredHistoryList"
-            :key="item.id"
-            :history-record="item"
-            :is-active="currentSessionId === item.id"
-            @choose-session="handleToggleSession"
-            @delete-session="handleDeleteSession"
-            @rename-session="handleRenameSession"
-            v-model:selectedList="selectedSessionIds" />
+          <div
+            v-else
+            class="relative w-full shrink-0"
+            :style="{ height: `${sessionTotalSize}px` }">
+            <div
+              v-for="vRow in sessionVirtualRows"
+              :key="String(vRow.key)"
+              :ref="el => sessionVirtualizer.measureElement(el as HTMLElement)"
+              :data-index="vRow.index"
+              :class="['absolute left-0 top-0 w-full', vRow.index < sessionRows.length - 1 ? 'pb-3' : '']"
+              :style="{ transform: `translateY(${vRow.start}px)` }">
+              <HistoryItem
+                v-if="sessionRowAt(vRow.index)"
+                :history-record="sessionRowAt(vRow.index)!.item"
+                :is-active="currentSessionId === sessionRowAt(vRow.index)!.item.id"
+                @choose-session="handleToggleSession"
+                @delete-session="handleDeleteSession"
+                @rename-session="handleRenameSession"
+                v-model:selectedList="selectedSessionIds" />
+            </div>
+          </div>
         </div>
         <div class="h-17 flex items-center justify-between">
           <div class="flex items-center justify-center gap-1">
@@ -129,7 +146,13 @@
 
       <!-- ===== Background Tasks Tab ===== -->
       <template v-else>
-        <div class="flex flex-col overflow-auto flex-1 gap-2">
+        <!-- Windowed task list: calling-session headers and run cards are flattened
+             into one row stream so a registry with thousands of runs renders only
+             the visible band. Same "not a flex container" rule as the session list:
+             the spacer must keep its layout height or the scroll range truncates. -->
+        <div
+          ref="tasksScrollRef"
+          class="overflow-auto flex-1">
           <div
             v-if="taskLoading"
             class="flex items-center justify-center h-full w-full text-[#868686]">
@@ -140,68 +163,80 @@
             class="flex items-center justify-center h-full w-full text-[#868686]">
             {{ t('sidebar.noTasks') }}
           </div>
-          <template
+          <div
             v-else
-            v-for="group in groupedRootTaskRuns"
-            :key="group.sessionId">
+            class="relative w-full shrink-0"
+            :style="{ height: `${taskTotalSize}px` }">
             <div
-              class="flex items-center gap-2 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#868686]">
-              <span class="flex-none text-[#b0b0b0]">{{ t('sidebar.callingSession') }}:</span>
-              <span class="truncate break-all">{{ group.sessionId }}</span>
-              <span class="ml-auto flex-none text-[#868686]">({{ group.runs.length }})</span>
-            </div>
-            <div
-              v-for="run in group.runs"
-              :key="run.run_id"
-              class="p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white dark:bg-[#2a2a36]/[0.6] dark:border-[#555] flex flex-col gap-1.5 md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]"
-              :class="{ 'text-theme-main bg-[#c1d6e5]!': focusedRunId === run.run_id }"
-              role="button"
-              tabindex="0"
-              @click="showTasksView(run)"
-              @keydown.enter.prevent="showTasksView(run)"
-              @keydown.space.prevent="showTasksView(run)">
-              <div class="flex items-center gap-2">
-                <Checkbox
-                  :model-value="selectedRunIds.has(run.run_id)"
-                  binary
-                  class="flex-none"
-                  @update:model-value="handleToggleTask(run.run_id)"
-                  @click.stop />
-                <span
-                  v-if="statusLabel(run) !== t('sidebar.statusUnknown')"
-                  class="ml-auto flex-none inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full leading-none"
-                  :class="badgeClass(run)">
-                  <i
-                    v-if="isRunning(run)"
-                    class="pi pi-spin pi-spinner text-[10px]" />
-                  {{ statusLabel(run) }}
-                </span>
+              v-for="vRow in taskVirtualRows"
+              :key="String(vRow.key)"
+              :ref="el => taskVirtualizer.measureElement(el as HTMLElement)"
+              :data-index="vRow.index"
+              :class="['absolute left-0 top-0 w-full', vRow.index < taskRows.length - 1 ? 'pb-2' : '']"
+              :style="{ transform: `translateY(${vRow.start}px)` }">
+              <!-- Calling-session header -->
+              <div
+                v-if="taskRowAt(vRow.index)?.kind === 'header'"
+                class="flex items-center gap-2 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#868686]">
+                <span class="flex-none text-[#b0b0b0]">{{ t('sidebar.callingSession') }}:</span>
+                <span class="truncate break-all">{{ taskRowAt(vRow.index)!.sessionId }}</span>
+                <span class="ml-auto flex-none text-[#868686]">({{ taskRowAt(vRow.index)!.runCount }})</span>
               </div>
-              <div class="text-[13px] leading-snug line-clamp-2 break-words">
-                {{ run.label || run.task_name || '-' }}
-              </div>
-              <div class="flex justify-between items-center gap-2 text-[11px] leading-snug text-[#868686] break-all">
-                <div class="min-w-0">
-                  <span class="text-[#b0b0b0]">{{ t('sidebar.startTime') }}: </span
-                  >{{ formatTime(run.execution.started_at) }}
-                  <span class="mx-1.5 text-[#b0b0b0]">/</span>
-                  <span class="text-[#b0b0b0]">{{ t('sidebar.endTime') }}: </span
-                  >{{ formatTime(run.execution.ended_at) }}
+              <!-- Run card -->
+              <div
+                v-else-if="taskRowAt(vRow.index)?.run"
+                class="p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white dark:bg-[#2a2a36]/[0.6] dark:border-[#555] flex flex-col gap-1.5 md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]"
+                :class="{ 'text-theme-main bg-[#c1d6e5]!': focusedRunId === taskRowAt(vRow.index)!.run!.run_id }"
+                role="button"
+                tabindex="0"
+                @click="showTasksView(taskRowAt(vRow.index)!.run!)"
+                @keydown.enter.prevent="showTasksView(taskRowAt(vRow.index)!.run!)"
+                @keydown.space.prevent="showTasksView(taskRowAt(vRow.index)!.run!)">
+                <div class="flex items-center gap-2">
+                  <Checkbox
+                    :model-value="selectedRunIds.has(taskRowAt(vRow.index)!.run!.run_id)"
+                    binary
+                    class="flex-none"
+                    @update:model-value="handleToggleTask(taskRowAt(vRow.index)!.run!.run_id)"
+                    @click.stop />
+                  <span
+                    v-if="statusLabel(taskRowAt(vRow.index)!.run!) !== t('sidebar.statusUnknown')"
+                    class="ml-auto flex-none inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full leading-none"
+                    :class="badgeClass(taskRowAt(vRow.index)!.run!)">
+                    <i
+                      v-if="isRunning(taskRowAt(vRow.index)!.run!)"
+                      class="pi pi-spin pi-spinner text-[10px]" />
+                    {{ statusLabel(taskRowAt(vRow.index)!.run!) }}
+                  </span>
                 </div>
-                <!-- Single delete: trash icon (reuses the session box pattern), deletes this task and its entire subtree -->
-                <button
-                  type="button"
-                  class="shrink-0 cursor-pointer text-theme-main hover:text-red-500"
-                  :aria-label="t('sidebar.taskDelete')"
-                  :title="t('sidebar.taskDelete')"
-                  @click.stop="handleDeleteTask(run)">
-                  <i
-                    class="pi"
-                    :class="deletingRunIds.has(run.run_id) ? 'pi-spin pi-spinner' : 'pi-trash'" />
-                </button>
+                <div class="text-[13px] leading-snug line-clamp-2 break-words">
+                  {{ taskRowAt(vRow.index)!.run!.label || taskRowAt(vRow.index)!.run!.task_name || '-' }}
+                </div>
+                <div class="flex justify-between items-center gap-2 text-[11px] leading-snug text-[#868686] break-all">
+                  <div class="min-w-0">
+                    <span class="text-[#b0b0b0]">{{ t('sidebar.startTime') }}: </span
+                    >{{ formatTime(taskRowAt(vRow.index)!.run!.execution.started_at) }}
+                    <span class="mx-1.5 text-[#b0b0b0]">/</span>
+                    <span class="text-[#b0b0b0]">{{ t('sidebar.endTime') }}: </span
+                    >{{ formatTime(taskRowAt(vRow.index)!.run!.execution.ended_at) }}
+                  </div>
+                  <!-- Single delete: trash icon (reuses the session box pattern), deletes this task and its entire subtree -->
+                  <button
+                    type="button"
+                    class="shrink-0 cursor-pointer text-theme-main hover:text-red-500"
+                    :aria-label="t('sidebar.taskDelete')"
+                    :title="t('sidebar.taskDelete')"
+                    @click.stop="handleDeleteTask(taskRowAt(vRow.index)!.run!)">
+                    <i
+                      class="pi"
+                      :class="
+                        deletingRunIds.has(taskRowAt(vRow.index)!.run!.run_id) ? 'pi-spin pi-spinner' : 'pi-trash'
+                      " />
+                  </button>
+                </div>
               </div>
             </div>
-          </template>
+          </div>
         </div>
         <div
           v-if="rootTaskRuns.length > 0"
@@ -285,6 +320,8 @@ import { computed, onMounted, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
 import type { SubagentRun } from '@/composables/bridge';
+// `useVirtualRows` and the row builders come from Nuxt's composable
+// auto-import (a value import of `@/composables/**` is lint-restricted).
 import dayjs from 'dayjs';
 import { isValidSessionTitle } from '@/common/utils';
 
@@ -348,6 +385,51 @@ const dateRange = ref<Date[] | null>(null);
  * When both conditions are disabled, return historyList as-is (same reference, avoid unnecessary array reconstruction).
  */
 const filteredHistoryList = computed(() => filterSessions(historyList.value, searchKeyword.value, dateRange.value));
+
+/* ------------------------------------------------------------------ */
+/* Windowed lists (sessions / background tasks)                        */
+/* ------------------------------------------------------------------ */
+/** Sessions list scroll container (only mounted while the sessions tab is active) */
+const sessionsScrollRef = useTemplateRef<HTMLDivElement>('sessionsScrollRef');
+/** Background-tasks list scroll container (only mounted while the tasks tab is active) */
+const tasksScrollRef = useTemplateRef<HTMLDivElement>('tasksScrollRef');
+
+/** Virtual rows for the (filtered) session list. */
+const sessionRows = computed(() => buildSessionRows(filteredHistoryList.value));
+const {
+  virtualizer: sessionVirtualizer,
+  virtualRows: sessionVirtualRows,
+  totalSize: sessionTotalSize,
+  rowAt: sessionRowAt
+} = useVirtualRows(
+  sessionsScrollRef,
+  () => sessionRows.value,
+  () => SESSION_ROW_ESTIMATE_PX
+);
+
+/** Virtual rows for the task tab: calling-session headers + run cards, flattened. */
+const taskRows = computed(() => buildTaskRows(groupedRootTaskRuns.value));
+const {
+  virtualizer: taskVirtualizer,
+  virtualRows: taskVirtualRows,
+  totalSize: taskTotalSize,
+  rowAt: taskRowAt,
+  remeasure: remeasureTasks
+} = useVirtualRows(
+  tasksScrollRef,
+  () => taskRows.value,
+  index => taskRowEstimate(taskRows.value, index)
+);
+
+/**
+ * Back to the top whenever the session filter changes: the window is derived
+ * from the scroll offset, so keeping the old offset after narrowing the list
+ * would show an arbitrary slice of the new results.
+ */
+watch([searchKeyword, dateRange], () => {
+  const el = sessionsScrollRef.value;
+  if (el) el.scrollTop = 0;
+});
 
 /** Whether any filter condition is active (controls 'Clear Filters' button and empty state text) */
 const hasActiveFilters = computed(() => {
@@ -660,6 +742,9 @@ const switchTab = (tab: 'sessions' | 'tasks') => {
   if (tab === 'tasks') {
     setTasksTabActive(true);
     void loadTaskRuns();
+    // The tasks container only mounts now: measure it against the real viewport
+    // instead of the null element the virtualizer saw while the tab was hidden.
+    remeasureTasks();
   } else {
     setTasksTabActive(false);
   }
