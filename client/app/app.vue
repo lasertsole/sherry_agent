@@ -22,7 +22,7 @@
     <div
       v-if="showConnectionBanner"
       class="conn-banner"
-      :class="{ 'conn-banner--warn': isOnline !== false && backendStatus === 'down' }"
+      :class="{ 'conn-banner--warn': bannerState === 'backend-down' }"
       role="status"
       aria-live="polite">
       {{ connectionBannerText }}
@@ -85,15 +85,14 @@ useErrorCaptured();
 
 // Network / backend connectivity monitoring (isOnline, backendStatus, startConnectionWatch, etc.).
 const connectionStore = useConnectionStore();
-const { isOnline, backendStatus } = storeToRefs(connectionStore);
+const { bannerState } = storeToRefs(connectionStore);
 const startConnectionWatch = connectionStore.startConnectionWatch;
 
-// Connection status banner: shown only when the browser is offline or the backend is unreachable.
-const showConnectionBanner = computed(() => {
-  return isOnline.value === false || backendStatus.value === 'down';
-});
+// Connection status banner: the store derives it from both signals, preferring
+// live WS evidence over the (unreliable under embedded webviews) navigator hint.
+const showConnectionBanner = computed(() => bannerState.value !== 'hidden');
 const connectionBannerText = computed(() => {
-  if (isOnline.value === false) return t('connection.offline');
+  if (bannerState.value === 'offline') return t('connection.offline');
   return t('connection.backendDown');
 });
 

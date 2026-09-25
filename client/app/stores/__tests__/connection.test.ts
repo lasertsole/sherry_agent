@@ -229,3 +229,31 @@ describe('stores/connection 连通性监控（事件驱动）', () => {
     expect(mockUseWs).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('connection bannerState', () => {
+  const mount = (isOnline: boolean, backendStatus: 'unknown' | 'ok' | 'down') => {
+    setActivePinia(createTestingPinia({ stubActions: false }));
+    const store = useConnectionStore();
+    store._resetStateForTest();
+    store.isOnline = isOnline;
+    store.backendStatus = backendStatus;
+    return store;
+  };
+
+  it('hides the banner while the WS heartbeat confirms the backend (offline hint ignored)', () => {
+    // Embedded webviews can report navigator.onLine === false while the app is
+    // fully reachable; live evidence must win.
+    expect(mount(false, 'ok').bannerState).toBe('hidden');
+    expect(mount(true, 'ok').bannerState).toBe('hidden');
+  });
+
+  it('shows the red offline banner only without positive evidence', () => {
+    expect(mount(false, 'down').bannerState).toBe('offline');
+    expect(mount(false, 'unknown').bannerState).toBe('offline');
+  });
+
+  it('shows the amber backend banner when the browser is online but the backend is down', () => {
+    expect(mount(true, 'down').bannerState).toBe('backend-down');
+    expect(mount(true, 'unknown').bannerState).toBe('hidden');
+  });
+});

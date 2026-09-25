@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { isClient } from '~/utils/client';
 import { safeT } from '~/utils/i18n';
 
@@ -109,6 +109,23 @@ export const useConnectionStore = defineStore('connection', () => {
   }
 
   /**
+   * Banner state for the global connectivity banner.
+   *
+   * Live evidence beats the browser hint: `navigator.onLine` is unreliable in
+   * embedded webviews (it can report offline while the app is fully reachable),
+   * so a live WS heartbeat (`backendStatus === 'ok'`) suppresses the banner
+   * entirely. Only with no positive evidence does an offline browser hint
+   * show the red "network lost" bar; a reachable browser with a dead backend
+   * shows the amber "backend unreachable" bar.
+   */
+  const bannerState = computed<'hidden' | 'offline' | 'backend-down'>(() => {
+    if (backendStatus.value === 'ok') return 'hidden';
+    if (isOnline.value === false) return 'offline';
+    if (backendStatus.value === 'down') return 'backend-down';
+    return 'hidden';
+  });
+
+  /**
    * Manually re-sync connectivity state once (no network requests).
    *
    * Purely local sync: copy navigator.onLine into isOnline, then read the live readyState of the
@@ -201,6 +218,7 @@ export const useConnectionStore = defineStore('connection', () => {
   return {
     isOnline,
     backendStatus,
+    bannerState,
     startConnectionWatch,
     stopConnectionWatch,
     checkConnectivity,
