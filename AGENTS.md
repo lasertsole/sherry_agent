@@ -18,6 +18,7 @@ uv run --no-sync lint-imports                        # import-linter contract ch
 uv run --with ruff ruff check . && uv run --with ruff ruff format --check .  # lint + format
 uv run --no-sync basedpyright agent/                 # type check
 cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # frontend tests
+./scripts/verify_feature.sh                         # one-shot feature verification (client typecheck/unit/integration/dpdm + repo pytest gate + docs gates; --quick for client-only)
 ```
 
 ## Directory Structure
