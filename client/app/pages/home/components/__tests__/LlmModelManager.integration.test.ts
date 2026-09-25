@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount } from '@vue/test-utils';
 import LlmModelManager from '@/pages/home/components/LlmModelManager.vue';
 import type { LlmProfile } from '@/stores/llm-profiles';
+import { MAX_PROFILES_PER_GROUP } from '@/stores/llm-profiles';
 
 const KEYS = [
   'MAIN_LLM_PROVIDER',
@@ -39,7 +40,7 @@ const makeStore = (profiles: LlmProfile[] = [], activeId: string | null = null, 
   storeApi = {
     listFor: group => byGroup[group] ?? [],
     activeIdFor: group => activeByGroup[group] ?? null,
-    migrateLegacyOnce: vi.fn(),
+    trimGroup: vi.fn(),
     add: vi.fn((group: string, label: string, params: Record<string, string>) => {
       const id = `new-${(byGroup[group] ?? []).length + 1}`;
       byGroup[group] = [...(byGroup[group] ?? []), { id, label, params }];
@@ -59,9 +60,9 @@ const makeStore = (profiles: LlmProfile[] = [], activeId: string | null = null, 
 
 const stubs = {
   Button: {
-    props: ['label'],
+    props: ['label', 'disabled', 'title'],
     emits: ['click'],
-    template: '<button class="btn" @click="$emit(\'click\')">{{ label }}</button>'
+    template: '<button class="btn" :disabled="disabled" :title="title" @click="$emit(\'click\')">{{ label }}</button>'
   },
   InputText: {
     props: ['modelValue', 'disabled'],
@@ -254,6 +255,28 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(payload.id).toBe('e1');
     expect(payload.params.EMBEDDING_MODEL_LOCAL).toBe('false');
     expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
+  });
+
+  it('disables 添加模型 at the cap and trims oversized storage on setup', () => {
+    const many: LlmProfile[] = Array.from({ length: MAX_PROFILES_PER_GROUP }, (_, i) => ({
+      id: `p${i}`,
+      label: `m${i}`,
+      params: { TTI_API_NAME: `m${i}` }
+    }));
+    makeStore(many, null, 'TTI');
+    const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
+    // storage cap enforced through the store, not just the button
+    expect(storeApi.trimGroup).toHaveBeenCalledWith('TTI');
+    const addButton = wrapper.findAll('button.btn').find(b => b.text() === '添加模型');
+    expect(addButton!.attributes('disabled')).toBeDefined();
+    expect(addButton!.attributes('title')).toContain(String(MAX_PROFILES_PER_GROUP));
+  });
+
+  it('keeps 添加模型 enabled below the cap', () => {
+    makeStore([{ id: 'p1', label: 'a', params: {} }], null, 'TTI');
+    const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'x' });
+    const addButton = wrapper.findAll('button.btn').find(b => b.text() === '添加模型');
+    expect(addButton!.attributes('disabled')).toBeUndefined();
   });
 
   it('delete removes the profile and auto-applies the PREVIOUS entry', async () => {

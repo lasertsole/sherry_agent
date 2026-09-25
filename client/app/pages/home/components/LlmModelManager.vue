@@ -14,6 +14,8 @@
           severity="secondary"
           outlined
           class="w-full"
+          :disabled="atCapacity"
+          :title="atCapacity ? t('config.llm.maxModels', { max: MAX_PROFILES_PER_GROUP }) : ''"
           @click="addModel" />
 
         <p
@@ -103,6 +105,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import LlmProfileRow from './LlmProfileRow.vue';
+import { MAX_PROFILES_PER_GROUP } from '~/stores/llm-profiles';
 
 const props = defineProps<{
   /** Env group this panel manages (e.g. `MAIN_LLM`, `TTI`). */
@@ -126,6 +129,13 @@ const store = useLlmProfilesStore();
 
 /** Profiles of this group (reactive). */
 const profiles = computed(() => store.listFor(props.group));
+
+// Stored data may exceed the cap (older payloads / hand-edited storage):
+// trim once on panel setup, by creation time, keeping the oldest entries.
+store.trimGroup(props.group);
+
+/** At the per-group cap: the add button is disabled (and `add` refuses). */
+const atCapacity = computed(() => profiles.value.length >= MAX_PROFILES_PER_GROUP);
 
 /** Currently selected profile id (the right column edits this one). */
 const selectedId = ref<string | null>(profiles.value[0]?.id ?? null);
@@ -243,6 +253,7 @@ const addModel = () => {
   for (const key of props.keys) params[key] = props.values[key] ?? '';
   const label = params[nameKey.value] || t('config.llm.unnamed');
   const id = store.add(props.group, label, params);
+  if (id === null) return; // cap reached between render and click
   selectedId.value = id;
   showFlash('');
 };

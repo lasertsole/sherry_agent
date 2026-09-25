@@ -103,6 +103,7 @@
       "empty": "모델이 없습니다. “모델 추가”를 클릭하세요",
       "unnamed": "이름 없는 모델",
       "delete": "삭제",
+      "maxModels": "그룹당 최대 {max}개 모델",
       "localModel": "로컬 모델",
       "localUnused": "로컬 모드에서 미사용"
     },

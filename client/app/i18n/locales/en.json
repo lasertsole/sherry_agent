@@ -103,6 +103,7 @@
       "empty": "No models yet — click “Add model”",
       "unnamed": "Unnamed model",
       "delete": "Delete",
+      "maxModels": "Up to {max} models per group",
       "localModel": "Local model",
       "localUnused": "Unused in local mode"
     },

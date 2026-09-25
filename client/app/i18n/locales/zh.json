@@ -103,6 +103,7 @@
       "empty": "暂无模型，点击“添加模型”创建",
       "unnamed": "未命名模型",
       "delete": "删除",
+      "maxModels": "每个分组最多 {max} 个模型",
       "localModel": "本地模型",
       "localUnused": "本地模式不使用"
     },

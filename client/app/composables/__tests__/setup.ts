@@ -239,6 +239,7 @@ vi.stubGlobal('useLlmProfilesStore', () => ({
   activeByGroup: {},
   listFor: () => [],
   activeIdFor: () => null,
+  trimGroup: () => 0,
   add: () => 'test-profile',
   update: () => {},
   remove: () => {},

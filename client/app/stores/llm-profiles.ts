@@ -17,7 +17,16 @@ export interface LlmProfile {
   label: string;
   /** Group key → value (e.g. `MAIN_LLM_NAME` → `glm-4.6`). Only keys present in `.env` are stored/applied. */
   params: Record<string, string>;
+  /**
+   * Creation time (epoch ms) — the ordering key for the per-group cap. Older
+   * payloads lack it; those entries fall back to their array index, which is
+   * also creation order because `add` appends.
+   */
+  createdAt?: number;
 }
+
+/** Maximum saved models per group (the built-in local entry does not count). */
+export const MAX_PROFILES_PER_GROUP = 15;
 
 export const useLlmProfilesStore = defineStore(
   'llmProfiles',
@@ -44,16 +53,48 @@ export const useLlmProfilesStore = defineStore(
      * @param label Display name.
      * @param params Parameter set for the group.
      */
-    const add = (group: string, label: string, params: Record<string, string>): string => {
+    const add = (group: string, label: string, params: Record<string, string>): string | null => {
+      // Hard cap at the data layer too: the UI disables the button, but a
+      // racing click (or a direct store call) must never exceed the limit.
+      if (listFor(group).length >= MAX_PROFILES_PER_GROUP) return null;
       const id =
         typeof crypto !== 'undefined' && 'randomUUID' in crypto
           ? crypto.randomUUID()
           : `p-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
       byGroup.value = {
         ...byGroup.value,
-        [group]: [...listFor(group), { id, label, params: { ...params } }]
+        [group]: [...listFor(group), { id, label, params: { ...params }, createdAt: Date.now() }]
       };
       return id;
+    };
+
+    /**
+     * Enforce the per-group cap on already-stored data (older payloads or a
+     * hand-edited localStorage can exceed it). Truncation is by CREATION TIME:
+     * the oldest `MAX_PROFILES_PER_GROUP` survive and the newest overflow is
+     * dropped, from both the reactive list and the persisted state (the
+     * persistence plugin writes whenever this method changes the state).
+     * @param group
+     * @returns Number of dropped profiles (0 when nothing had to go).
+     */
+    const trimGroup = (group: string): number => {
+      const list = listFor(group);
+      if (list.length <= MAX_PROFILES_PER_GROUP) return 0;
+      const ordered = list
+        .map((profile, index) => ({ profile, rank: profile.createdAt ?? index }))
+        .sort((a, b) => a.rank - b.rank);
+      const kept = ordered.slice(0, MAX_PROFILES_PER_GROUP).map(entry => entry.profile);
+      const dropped = ordered.slice(MAX_PROFILES_PER_GROUP);
+      byGroup.value = { ...byGroup.value, [group]: kept };
+      // Never leave the active marker pointing at a dropped profile.
+      const droppedIds = new Set(dropped.map(entry => entry.profile.id));
+      if (droppedIds.has(activeIdFor(group) ?? '')) {
+        activeByGroup.value = {
+          ...activeByGroup.value,
+          [group]: kept[kept.length - 1]?.id ?? null
+        };
+      }
+      return dropped.length;
     };
 
     /**
@@ -112,6 +153,7 @@ export const useLlmProfilesStore = defineStore(
       listFor,
       activeIdFor,
       add,
+      trimGroup,
       update,
       remove,
       setActive,
