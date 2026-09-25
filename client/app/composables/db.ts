@@ -1,4 +1,5 @@
 import Dexie, { type IndexableType, type Table } from 'dexie';
+import { toRaw } from 'vue';
 import type { MessageItem } from '@/pages/home/type';
 
 /** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
@@ -491,12 +492,13 @@ export async function clearSessionTitleOverride(id: string): Promise<void> {
  */
 export async function saveDraftTurn(draft: DraftTurn): Promise<void> {
   // Deep copy: callers pass elements straight from Vue reactive refs; after ref unwrapping they
-  // are reactive Proxies (including nested images/audios/videos/toolArgs), and Dexie put() would
-  // throw DataCloneError during IndexedDB structured clone → the draft write fails.
-  // MessageItem only contains JSON-compatible fields (no Date/Function/Blob), so a full JSON
-  // round-trip deep copy is the safest; it also prevents later streaming mutations from
-  // polluting the already-persisted draft.
-  await db.drafts.put(JSON.parse(JSON.stringify(draft)) as DraftTurn);
+  // are reactive Proxies (including nested images/audios/videos/toolArgs). The structured-clone
+  // serializer REJECTS Proxies with DataCloneError (it does not read through them), so toRaw()
+  // unwraps the reactive proxy first — reactivity wraps lazily, so the raw target's nested
+  // objects are already raw. MessageItem only contains clone-unsupported-free, JSON-compatible
+  // fields (no Date/Function/Blob), so structuredClone deep-copies the whole tree; it also
+  // prevents later streaming mutations from polluting the already-persisted draft.
+  await db.drafts.put(structuredClone(toRaw(draft)));
 }
 
 /**
