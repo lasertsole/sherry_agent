@@ -130,3 +130,37 @@ export const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
     };
   });
 };
+
+/**
+ * Turn-level input-token map for USER bubbles.
+ *
+ * `input_tokens` is a property of the TURN (the model request) and is
+ * persisted on the turn's AI row; the user wants it displayed under the user
+ * bubble that triggered the reply. Pair each AI message carrying a token
+ * count with the nearest preceding USER message of the SAME turn — skipping
+ * `subagent_completion` carrier rows (USER-role system cards that must never
+ * receive the count). Batch turns (several user sends collapsed into one
+ * turn) therefore mark only the trailing user bubble, the one immediately
+ * preceding the reply.
+ *
+ * @param rows Chat message items in conversation order.
+ * @returns Map of user-message id → turn input tokens.
+ */
+export const buildUserInputTokenMap = (rows: MessageItem[]): Map<number, number> => {
+  const map = new Map<number, number>();
+  for (let i = 0; i < rows.length; i++) {
+    const row = rows[i]!;
+    if (row.role !== CHAT_ROLE.AI || row.inputTokens === undefined) continue;
+    for (let j = i - 1; j >= 0; j--) {
+      const prev = rows[j]!;
+      if (prev.turn_num !== row.turn_num) break;
+      // Skip only subagent-completion carriers (USER-role system cards);
+      // normal user rows carry origin="user" and MUST still pair.
+      if (prev.role === CHAT_ROLE.USER && prev.origin !== 'subagent_completion') {
+        map.set(prev.id, row.inputTokens);
+        break;
+      }
+    }
+  }
+  return map;
+};

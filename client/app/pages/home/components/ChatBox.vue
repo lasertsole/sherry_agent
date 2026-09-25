@@ -115,6 +115,12 @@
                 :load-failed-label="t('chatBox.imageLoadFailed')"
                 :image-error-handler="onImageError" />
             </div>
+            <!-- Turn input-token count under the user bubble (paired from the turn's AI row) -->
+            <div
+              v-if="message.role === CHAT_ROLE.USER && userInputTokensById.has(message.id)"
+              class="mt-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
+              {{ t('chatBox.userInputMeta', { input: userInputTokensById.get(message.id) }) }}
+            </div>
             <!-- Model metadata (model name + token usage; shown only for AI messages when the fields exist) -->
             <ChatModelMeta
               v-if="
@@ -191,6 +197,10 @@ const resolvedUserName = computed(() => props.userName || t('chatBox.defaultUser
 /** AI display name: falls back to the i18n default when the prop is empty */
 const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName'));
 
+/** Turn input-token counts shown under the user bubble that triggered the reply
+ * (the count lives on the turn's persisted AI row; pairing skips carrier rows). */
+const userInputTokensById = computed(() => buildUserInputTokenMap(props.messages ?? []));
+
 // View-model: turn grouping, scroll, media URL resolution, card expansion, copy
 const { isConsecutive, turnGroups, turnSpacingClass, regularMessages, backgroundCarriers } = useChatTurnGroups(
   () => props.messages
@@ -235,6 +245,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "defaultUserName": "我",
       "imageLoadFailed": "图片加载失败",
       "modelMeta": "输入 {input} · 输出 {output} tokens",
+      "userInputMeta": "输入 {input} tokens",
       "scrollBottom": "回到最底部",
       "thinking": "思考过程",
       "toolArgs": "调用参数",
@@ -250,6 +261,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "defaultUserName": "Me",
       "imageLoadFailed": "Image load failed",
       "modelMeta": "{input} in · {output} out tokens",
+      "userInputMeta": "Input {input} tokens",
       "scrollBottom": "Scroll to bottom",
       "thinking": "Thinking",
       "toolArgs": "Arguments",
@@ -265,6 +277,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "defaultUserName": "わたし",
       "imageLoadFailed": "画像の読み込みに失敗しました",
       "modelMeta": "入力 {input} · 出力 {output} tokens",
+      "userInputMeta": "入力 {input} トークン",
       "scrollBottom": "最下部へ戻る",
       "thinking": "思考",
       "toolArgs": "引数",
@@ -280,6 +293,7 @@ const isToolMessage = (message: MessageItem): boolean => {
       "defaultUserName": "나",
       "imageLoadFailed": "이미지 로드 실패",
       "modelMeta": "입력 {input} · 출력 {output} tokens",
+      "userInputMeta": "입력 {input} 토큰",
       "scrollBottom": "맨 아래로",
       "thinking": "생각",
       "toolArgs": "인자",
