@@ -5,8 +5,9 @@
 **审计日期**：2026-08-24（第一轮）/ 2026-09-04（第二轮）/ 2026-09-14（第三轮全栈重审）
 **更新日期**：2026-09-14 — 全栈重审后合并所有未修复条目，新增前端审计和代码质量审计，编号连续重排。
 **核实记录**：2026-09-15 — 逐条对照源码复核当前全部条目（以“修复后应存在的守卫/改写/调用”为模式做全仓 grep，关键文件精读）：**零删除**，56 条经核实全部仍未修复。
-**本报告只保留未修复项；编号已于 2026-09-15、2026-09-24 两轮重排（旧编号作废）**。此前已修复移除 19 项（旧编号 19、20、27、38、44、45、48、50、51、53、57、58、59、61、63、68、70、73、75），不再占用编号；旧→新对照见文末「编号对照（旧 → 新）」。
+**本报告只保留未修复项；编号已于 2026-09-15、2026-09-24、2026-09-25 三轮重排（旧编号作废）**。此前已修复移除 19 项（旧编号 19、20、27、38、44、45、48、50、51、53、57、58、59、61、63、68、70、73、75），不再占用编号；旧→新对照见文末「编号对照（旧 → 新）」。
 **2026-09-24**：P0 五项（#1、#3、#16、#17、#18）修复完成并从本报告移除，剩余 51 条重排为连续编号 1-51（对照规则见文末「编号对照」）；全仓代码注释与测试中的 `audit #N` 引用同步改写（移除项改为直接命名威胁，保留项更新为新编号）。
+**2026-09-25**：三项（#38 DOMPurify style 注入、#48 JSON 深拷贝、#49 dev server 绑定）修复完成并从本报告移除，剩余 48 条重排为连续编号 1-48（对照规则见文末「编号对照」）；本轮落码未引入编号引用，无外部漂移。
 
 ---
 
@@ -346,36 +347,28 @@ from models.providers.registry import find_by_name
 - 使用 `__import__()` 做延迟导入而非正常 import 语句。`db: Any = None` 参数未类型化。
 - **状态**：新发现。
 
-## 38. 前端 DOMPurify 允许 `style` 属性
-
-**文件**：`client/app/constants/security.ts:68`
-
-- DOMPurify 配置允许 `style` 属性，可被用于 CSS 注入攻击（如 `background: url(...)` 发起外部请求）。
-- **修复**：如不需要 GFM 表格对齐，移除 `style`；或添加 `ALLOWED_URI_REGEXP` 限制 URL 模式。
-- **状态**：新发现。
-
-## 39. `runtime/process/crash_loop_breaker.py` — 配置在导入时读取
+## 38. `runtime/process/crash_loop_breaker.py` — 配置在导入时读取
 
 **文件**：`runtime/process/crash_loop_breaker.py:35-39`
 
 - `WINDOW_S`、`TRIP_THRESHOLD`、`RETENTION_S` 在模块级读取配置，运行时配置变更不会生效。
 - **状态**：新发现。
 
-## 40. `models/LLMs/main_llm.py` — 环境变量在导入时读取
+## 39. `models/LLMs/main_llm.py` — 环境变量在导入时读取
 
 **文件**：`models/LLMs/main_llm.py:17-22,64-88`
 
 - 环境变量在模块导入时读取。`model_config` 是模块级可变 dict，被 `apply_thinking_budget()` 修改——非线程安全。`int(os.getenv(...))` 无 try/except。
 - **状态**：新发现。
 
-## 41. `context_engine/embeddings/indexer.py` — 硬编码模型常量
+## 40. `context_engine/embeddings/indexer.py` — 硬编码模型常量
 
 **文件**：`context_engine/embeddings/indexer.py:10-12`
 
 - `_EMBED_MODEL_NAME = "bge-m3"`、`_EMBED_DIM = 1024`、`_BATCH_SIZE = 32` — 不可配置。
 - **状态**：新发现。
 
-## 42. Windows 上 sandbox 降级为无沙箱
+## 41. Windows 上 sandbox 降级为无沙箱
 
 **文件**：`agent/tools/pub_base/sandbox.py`
 
@@ -383,7 +376,7 @@ from models.providers.registry import find_by_name
 - Windows 部署完全依赖正则黑名单和 builtins 限制（可被反射绕过：`().__class__.__bases__[0].__subclasses__()`）。
 - **状态**：新发现。
 
-## 43. 全局异常处理器暴露 `str(error)`
+## 42. 全局异常处理器暴露 `str(error)`
 
 **文件**：`server/trigger/core.py:36`；`server/trigger/http/knowledge_graph.py:205`；`server/trigger/http/stats.py:126`；`server/trigger/http/curator.py:41,136`
 
@@ -394,14 +387,14 @@ from models.providers.registry import find_by_name
 
 # 🟢 低（Low）— 小问题 / 清理
 
-## 44. `sender_task.cancel()` 未 `await`（2 处）
+## 43. `sender_task.cancel()` 未 `await`（2 处）
 
 **文件**：`server/trigger/ws/subagent_ws.py:175`、`server/trigger/ws/logs.py:144`
 
 - **修复**：`sender_task.cancel(); await asyncio.wait_for(sender_task, timeout=1.0)`。
 - **状态**：未修复。
 
-## 45. Channel 线程事件循环未关闭
+## 44. Channel 线程事件循环未关闭
 
 **文件**：`server/trigger/channels/core.py:330-342`
 
@@ -409,7 +402,7 @@ from models.providers.registry import find_by_name
 - **修复**：在 `_run()` 的 `finally` 块中加 `event_loop.close()`。
 - **状态**：未修复。
 
-## 46. `threading.Lock` 在异步调用链中使用（3 处）
+## 45. `threading.Lock` 在异步调用链中使用（3 处）
 
 **文件**：
 
@@ -419,29 +412,14 @@ from models.providers.registry import find_by_name
 - 锁持有时间极短，实际阻塞风险低但技术上是 `threading.Lock` 在异步调用链中。
 - **状态**：未修复。
 
-## 47. `delegate_task` — `asyncio.run()` 未检查运行中的事件循环
+## 46. `delegate_task` — `asyncio.run()` 未检查运行中的事件循环
 
 **文件**：`agent/tools/subagent/delegate.py:439`
 
 - 从异步上下文调用会抛 `RuntimeError`。作为 sync 工具入口点，在 thread pool 中执行时安全，但是脆弱的隐式假设。
 - **状态**：未修复。
 
-## 48. 前端 `JSON.parse(JSON.stringify())` 深拷贝
-
-**文件**：`client/app/composables/db.ts:501`
-
-- 对于大量消息的 turn，每次状态变更都全量序列化/反序列化。
-- **修复**：使用 `structuredClone`（更快）。
-- **状态**：新发现。
-
-## 49. 前端 dev server 绑定 `0.0.0.0`
-
-**文件**：`client/nuxt.config.ts:62-64`
-
-- `server.host: '0.0.0.0'` — 局域网内其他设备可访问 dev server。
-- **状态**：新发现。
-
-## 50. 缺失 `__init__.py`
+## 47. 缺失 `__init__.py`
 
 **文件**：
 
@@ -449,7 +427,7 @@ from models.providers.registry import find_by_name
 - `plugins/channels/qq/` — 有 .py 文件但无 `__init__.py`
 - **状态**：新发现。
 
-## 51. `evals/nudge_extraction/suite.py` 加载 `.env` 到 eval 环境
+## 48. `evals/nudge_extraction/suite.py` 加载 `.env` 到 eval 环境
 
 **文件**：`evals/nudge_extraction/suite.py:528-529`
 
@@ -532,12 +510,8 @@ from models.providers.registry import find_by_name
 - **WS 重连防风暴**：superseded-socket guard + 指数退避
 - **组件级错误捕获**：`useErrorCaptured` 组合式函数
 
-## 前端待修复项（已在上方编号）
+## 前端待修复项
 
-- #38 DOMPurify 允许 `style` 属性
-- #48 `JSON.parse(JSON.stringify())` 深拷贝
-- #49 dev server 绑定 `0.0.0.0`
-- Tauri Rust 源文件均为 0 字节（仅脚手架，无实际实现）
 - `@nuxtjs/i18n` 精确锁定版本（非范围）
 - `nuxt.config.ts` 无 HTTP 安全头
 
@@ -573,7 +547,7 @@ from models.providers.registry import find_by_name
 
 ## P1 — 尽快修复
 
-- **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #3-#6、#23、#43。
+- **加认证**：`server/trigger/core.py` 加 token/API-key 中间件并作用于所有路由与 WebSocket，去掉通配 CORS。覆盖 #3-#6、#23、#42。
 - **#1** `delegate.py` `time.sleep` 阻塞事件循环（提供 `result_async`）
 - **#8** 内网 IP 黑名单（SSRF 防护）
 - **#12** `execute` 取消 child 任务
@@ -587,7 +561,6 @@ from models.providers.registry import find_by_name
 - **资源泄漏**：#19 child checkpointer、#32-#34 无界增长的全局变量
 - **性能**：#28-#29 冗余扫描与计数、#30 连接风暴收口
 - **fail-open 与确认闸门**：#7-② 重审扫描器故障放行策略、#7-③ 为高风险工具增加首次调用确认闸门、#7-① 技能描述 XML 转义
-- **前端**：#38 DOMPurify
 - **#18** 移除 `verify=False` 和全局 `disable_warnings`
 
 ## P3 — 低优先级清理
@@ -598,8 +571,8 @@ from models.providers.registry import find_by_name
 - **全局状态治理**：52 处模块级可变变量评估封装
 - **#22** bus 单队列路由
 - **#24** 知识图谱遍历参数钳制
-- **#42** Windows sandbox 策略
-- **#44-#47、#48、#49-#50、#51** 逐项修复低优先级项
+- **#41** Windows sandbox 策略
+- **#43-#48** 逐项修复低优先级项
 - 修复后重新审计，确认以上各域闭合
 
 ---
@@ -609,6 +582,8 @@ from models.providers.registry import find_by_name
 > 2026-09-15 重排：左列为重排前的旧编号（中间空缺为更早轮次已修复移除的编号），右列为重排后的连续编号。本轮核实结果为**零删除**，全部 56 条均为保留项。
 >
 > 2026-09-24 重排：#1、#3、#16、#17、#18 修复完成后移除，剩余 51 条重排为连续编号 1-51（#2→#1；#4-#15 各减 2；#19-#56 各减 5）。上表「新编号」列为 2026-09-15 编号，映射到现编号按上述规则；5 个移除编号不再占用。本轮同步清理了全仓 `audit #N` 注释与测试引用（移除项改写为直接命名威胁，保留项更新为新编号）。
+>
+> 2026-09-25 重排：#38、#48、#49 修复完成后移除，剩余 48 条重排为连续编号 1-48（#39-#47 各减 1；#50-#51 各减 3）。上表「新编号」列仍为 2026-09-15 编号，映射到现编号按 2026-09-24 注与本次规则复合计算。
 
 | 旧编号 | 新编号 | 条目 | 本轮核实 |
 | ------ | ------ | ---- | -------- |
