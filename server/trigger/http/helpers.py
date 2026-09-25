@@ -42,3 +42,39 @@ def read_body(request) -> dict | None:
     except Exception:
         return None
     return body if isinstance(body, dict) else None
+
+
+def query_int(
+    query,
+    key: str,
+    default: int,
+    *,
+    minimum: int | None = None,
+    maximum: int | None = None,
+) -> int:
+    """
+    Read an integer query parameter, clamped to the given bounds.
+
+    Robyn's ``QueryParams.get`` casts its default argument to ``str`` and raises
+    ``TypeError`` for anything else, so the obvious ``int(q.get(key, 500))`` form
+    always raised and the surrounding ``except`` quietly produced the fallback —
+    the parameter was accepted but never honored (`/knowledge-graph` max_depth /
+    max_nodes, `/logs` lines). Pass the fallback as the string it really is and
+    convert here.
+
+    @param query Robyn ``request.query_params`` (or an equivalent mapping).
+    @param key Parameter name.
+    @param default Value used when the parameter is missing or unparsable.
+    @param minimum Optional inclusive lower bound.
+    @param maximum Optional inclusive upper bound.
+    @returns The parsed (and clamped) integer.
+    """
+    try:
+        value = int(query.get(key, str(default)))
+    except (TypeError, ValueError):
+        value = default
+    if minimum is not None:
+        value = max(minimum, value)
+    if maximum is not None:
+        value = min(maximum, value)
+    return value

@@ -22,6 +22,7 @@ from loguru import logger
 from robyn import Response
 
 from server.trigger.core import app
+from server.trigger.http.helpers import query_int
 
 # File extensions accepted for knowledge-graph ingestion.
 # RAG-Anything (mineru/fallback_txt parsers) natively supports these.
@@ -69,14 +70,14 @@ async def knowledge_graph_upload_handler(request):
             name = Path(str(filename).replace("\\", "/")).name
             if not name or name in (".", ".."):
                 results.append({"name": str(filename), "ok": False, "error": "Invalid file name"})
-                logger.warning("Knowledge-graph upload rejected invalid file name: %s", filename)
+                logger.warning("Knowledge-graph upload rejected invalid file name: {}", filename)
                 continue
             ext = Path(name).suffix.lower()
             if ext not in _ALLOWED_EXT:
                 results.append(
                     {"name": name, "ok": False, "error": f"Unsupported file type '{ext}'"}
                 )
-                logger.warning("Knowledge-graph upload rejected unsupported type: %s", name)
+                logger.warning("Knowledge-graph upload rejected unsupported type: {}", name)
                 continue
 
             # Stage the uploaded bytes to a unique temp location.
@@ -102,9 +103,9 @@ async def knowledge_graph_upload_handler(request):
 
                 await file_index(str(staged), classify_folder="uploads")
                 results.append({"name": name, "ok": True, "error": None})
-                logger.info("Knowledge-graph upload ingested: %s", name)
+                logger.info("Knowledge-graph upload ingested: {}", name)
             except Exception as e:  # noqa: BLE001 - surface any backend failure cleanly
-                logger.exception("Knowledge-graph ingestion failed for %s", name)
+                logger.exception("Knowledge-graph ingestion failed for: {}", name)
                 results.append({"name": name, "ok": False, "error": str(e)})
             finally:
                 # Best-effort cleanup of the staged temp file.
@@ -147,14 +148,8 @@ async def knowledge_graph_handler(request):
     query = request.query_params
 
     node_label = query.get("node_label", "*")
-    try:
-        max_depth = max(0, int(query.get("max_depth", 3)))
-    except (TypeError, ValueError):
-        max_depth = 3
-    try:
-        max_nodes = max(1, int(query.get("max_nodes", 1000)))
-    except (TypeError, ValueError):
-        max_nodes = 1000
+    max_depth = query_int(query, "max_depth", 3, minimum=0)
+    max_nodes = query_int(query, "max_nodes", 1000, minimum=1)
 
     try:
         from skills.builtin.core.multimodal_rag.scripts.graph_rag import get_lightrag
@@ -186,8 +181,8 @@ async def knowledge_graph_handler(request):
         ]
 
         logger.info(
-            "Served knowledge graph: node_label=%s, max_depth=%s, max_nodes=%s, "
-            "nodes=%d, edges=%d, truncated=%s",
+            "Served knowledge graph: node_label={}, max_depth={}, max_nodes={}, "
+            "nodes={}, edges={}, truncated={}",
             node_label,
             max_depth,
             max_nodes,

@@ -6,6 +6,8 @@ These tests exercise the pure helper functions directly (no Robyn server is star
     - _tail_lines: efficient trailing-line reads (empty, small, large, boundary)
 """
 
+import asyncio
+import json
 import os
 import pytest
 from pathlib import Path
@@ -271,3 +273,47 @@ class TestLogSinkSerialization:
         assert obj["data"]["level"] == "INFO"
         assert obj["data"]["message"] == "hello world"
         assert obj["data"]["line"] == 42
+
+
+# ---------------------------------------------------------------------------
+# /logs handler — the `lines` query parameter
+# ---------------------------------------------------------------------------
+
+
+class _FakeRequest:
+    def __init__(self, query_params: dict | None = None):
+        self.query_params = query_params or {}
+
+
+class TestLogTailHandlerLinesParam:
+    """`lines` used to be read as ``int(query.get("lines", 500))``.
+
+    Robyn casts a query default to ``str`` and raises ``TypeError`` for an int
+    default, so the parameter was silently ignored and every request returned
+    the 500-line fallback. The handler reads it through ``query_int`` now.
+    """
+
+    @pytest.fixture
+    def sandbox_log(self, tmp_path: Path, monkeypatch):
+        d = tmp_path / "output"
+        d.mkdir(parents=True)
+        log_file = d / "info" / "info_2024-01-01_1234.log"
+        _write(log_file, "".join(f"line{i}\n" for i in range(1, 11)))
+        monkeypatch.setattr(logs, "LOG_DIR", d)
+        return log_file
+
+    def test_requested_line_count_is_honored(self, sandbox_log: Path):
+        response = asyncio.run(
+            logs.read_log_tail_handler(_FakeRequest({"path": str(sandbox_log), "lines": "3"}))
+        )
+        body = json.loads(response.description)
+        assert body["success"] is True
+        assert body["lines"] == 3
+        assert body["content"].splitlines() == ["line8", "line9", "line10"]
+
+    def test_unparsable_count_falls_back_to_the_default(self, sandbox_log: Path):
+        response = asyncio.run(
+            logs.read_log_tail_handler(_FakeRequest({"path": str(sandbox_log), "lines": "many"}))
+        )
+        body = json.loads(response.description)
+        assert body["lines"] == 500

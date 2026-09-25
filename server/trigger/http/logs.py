@@ -5,6 +5,7 @@ from collections import deque
 from pathlib import Path
 from loguru import logger
 from server.trigger.core import app
+from server.trigger.http.helpers import query_int
 from config import ROOT_DIR
 
 # Directory where loguru writes its output files (see logs/logger.py).
@@ -180,11 +181,7 @@ async def read_log_tail_handler(request):
     """
     query = request.query_params or {}
     raw_path = query.get("path", "")
-    try:
-        lines = int(query.get("lines", 500))
-    except (TypeError, ValueError):
-        lines = 500
-    lines = max(1, min(lines, 5000))
+    lines = query_int(query, "lines", 500, minimum=1, maximum=5000)
 
     resolved = _resolve_log_path(raw_path)
     if resolved is None:
