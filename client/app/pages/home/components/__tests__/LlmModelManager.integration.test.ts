@@ -211,7 +211,8 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     const inputs = wrapper.findAll('input.inp');
     expect(inputs).toHaveLength(LOCAL_KEYS.length - 1);
     expect(inputs.every(i => i.attributes('disabled') !== undefined)).toBe(true);
-    expect(inputs.some(i => (i.attributes('value') ?? '') === 'false')).toBe(false);
+    // option 2: local mode ignores the API parameters, so they display EMPTY
+    expect(inputs.every(i => (i.attributes('value') ?? '') === '')).toBe(true);
     // 应用 present, 保存 absent
     const labels = wrapper.findAll('button.btn').map(b => b.text());
     expect(labels).toContain('应用');
@@ -231,8 +232,9 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     await applyButton!.trigger('click');
     const payload = wrapper.emitted('apply')![0]![0] as { id: string; params: Record<string, string> };
     expect(payload.id).toBe('builtin:local');
-    expect(payload.params.EMBEDDING_MODEL_LOCAL).toBe('true');
-    expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
+    // ONLY the flag: the API keys stay untouched in .env (local mode ignores
+    // them, and switching back to a cloud model must keep the old values).
+    expect(payload.params).toEqual({ EMBEDDING_MODEL_LOCAL: 'true' });
   });
 
   it('applying a saved profile forces the local flag to false', async () => {

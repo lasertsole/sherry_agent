@@ -59,6 +59,7 @@
           <InputText
             v-model="draft[key]"
             :disabled="isLocalEntrySelected"
+            :placeholder="isLocalEntrySelected ? t('config.llm.localUnused') : ''"
             class="w-full font-mono text-xs disabled:opacity-60"
             autocomplete="off"
             spellcheck="false" />
@@ -147,9 +148,13 @@ const paramKeys = computed(() => props.keys.filter(k => k !== localFlagKey.value
 const localEntry = computed(() => {
   const key = localFlagKey.value;
   if (!key) return null;
+  // The API parameters are UNUSED in local mode (the backend runs its bundled
+  // model and never reads them), so the entry shows them empty instead of
+  // mirroring the remote values; applying writes ONLY the flag and leaves the
+  // group's other keys untouched, so switching back to a cloud model keeps the
+  // original configuration.
   const params: Record<string, string> = {};
-  for (const k of props.keys) params[k] = props.values[k] ?? '';
-  params[key] = 'true';
+  for (const k of props.keys) params[k] = k === key ? 'true' : '';
   return { id: LOCAL_ENTRY_ID, label: t('config.llm.localModel'), params };
 });
 
@@ -261,11 +266,18 @@ const saveProfile = () => {
 /** Ask the parent to write the draft into `.env` (parent marks it active on success). */
 const applyProfile = () => {
   if (!selected.value) return;
-  const params: Record<string, string> = { ...draft.value };
-  // The local flag is derived from WHICH entry is applied, never typed: the
-  // built-in local entry turns it on, any saved profile turns it off.
   const flagKey = localFlagKey.value;
-  if (flagKey) params[flagKey] = isLocalEntrySelected.value ? 'true' : 'false';
+  // The built-in local entry needs NO API parameters (the backend ignores them
+  // in local mode): apply writes only the flag, leaving the group's other keys
+  // in `.env` untouched. A saved profile carries its parameters and turns the
+  // flag off — the applied entry decides the flag, it is never typed.
+  const params: Record<string, string> = isLocalEntrySelected.value
+    ? flagKey
+      ? { [flagKey]: 'true' }
+      : {}
+    : flagKey
+      ? { ...draft.value, [flagKey]: 'false' }
+      : { ...draft.value };
   emit('apply', { id: selected.value.id, params });
 };
 
