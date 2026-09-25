@@ -256,6 +256,51 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(payload.params.EMBEDDING_API_NAME).toBe('bge-m3');
   });
 
+  it('delete removes the profile and auto-applies the PREVIOUS entry', async () => {
+    const KEYS = ['TTI_MODEL_PROVIDER', 'TTI_API_NAME'];
+    const VALUES: Record<string, string> = { TTI_MODEL_PROVIDER: 'openai', TTI_API_NAME: 'tti' };
+    makeStore(
+      [
+        { id: 'p1', label: 'first', params: { ...VALUES, TTI_API_NAME: 'first' } },
+        { id: 'p2', label: 'second', params: { ...VALUES, TTI_API_NAME: 'second' } }
+      ],
+      'p2',
+      'TTI'
+    );
+    const wrapper = mountPanel('TTI', KEYS, VALUES);
+    // select the second row, delete it
+    await wrapper.findAll('[role="button"]')[1]!.trigger('click');
+    const del = wrapper.findAll('button.btn').find(b => b.text() === '删除');
+    expect(del).toBeTruthy();
+    await del!.trigger('click');
+    expect(storeApi.remove).toHaveBeenCalledWith('TTI', 'p2');
+    // the previous entry (p1) is applied automatically
+    const emitted = wrapper.emitted('apply');
+    expect(emitted).toHaveLength(1);
+    const payload = emitted![0]![0] as { id: string; params: Record<string, string> };
+    expect(payload.id).toBe('p1');
+    expect(payload.params.TTI_API_NAME).toBe('first');
+    // and it becomes the viewed entry
+    expect((wrapper.findAll('input.inp')[1]!.element as HTMLInputElement).value).toBe('first');
+  });
+
+  it('offers no delete button for the built-in local entry', async () => {
+    const KEYS = ['EMBEDDING_MODEL_LOCAL', 'EMBEDDING_API_NAME'];
+    const VALUES: Record<string, string> = { EMBEDDING_MODEL_LOCAL: 'true', EMBEDDING_API_NAME: 'bge-m3' };
+    makeStore([{ id: 'e1', label: 'emb', params: { ...VALUES } }], 'e1', 'EMBEDDING');
+    const wrapper = mountPanel('EMBEDDING', KEYS, VALUES);
+    await wrapper.findAll('[role="button"]')[0]!.trigger('click'); // the local entry
+    expect(wrapper.findAll('button.btn').some(b => b.text() === '删除')).toBe(false);
+  });
+
+  it('scrolls the saved-profile list when it overflows', () => {
+    makeStore([{ id: 'p1', label: 'a', params: { TTI_API_NAME: 'a' } }], 'p1', 'TTI');
+    const wrapper = mountPanel('TTI', ['TTI_API_NAME'], { TTI_API_NAME: 'a' });
+    const scroller = wrapper.find('.overflow-y-auto');
+    expect(scroller.exists()).toBe(true);
+    expect(scroller.classes()).toContain('max-h-56');
+  });
+
   it('renders no local entry for a group without a local flag', () => {
     makeStore([{ id: 't1', label: 'tti', params: { TTI_API_NAME: 'tti' } }], 't1', 'TTI');
     const wrapper = mountPanel('TTI', ['TTI_MODEL_PROVIDER', 'TTI_API_NAME'], {

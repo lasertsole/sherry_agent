@@ -17,33 +17,27 @@
           @click="addModel" />
 
         <p
-          v-if="listEntries.length === 0"
+          v-if="profiles.length === 0"
           class="m-0 text-xs text-gray-400 dark:text-gray-500">
           {{ t('config.llm.empty') }}
         </p>
 
-        <!-- `listEntries` = the built-in local-model entry pinned above the user
-             profiles, then the saved profiles themselves. -->
-        <div
-          v-for="entry in listEntries"
-          :key="entry.id"
-          role="button"
-          tabindex="0"
-          :class="[
-            'flex items-center gap-2 rounded-md border px-2 py-1.5 text-xs cursor-pointer transition-colors',
-            entry.id === selectedId
-              ? 'border-theme-main bg-blue-50 dark:bg-blue-900/20'
-              : 'border-gray-100 dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800/40'
-          ]"
-          @click="selectModel(entry.id)"
-          @keydown.enter.prevent="selectModel(entry.id)"
-          @keydown.space.prevent="selectModel(entry.id)">
-          <span
-            class="h-2 w-2 shrink-0 rounded-full"
-            :class="isActive(entry) ? 'bg-emerald-500' : 'bg-transparent'"
-            :title="isActive(entry) ? t('config.llm.applied') : ''"
-            :data-active="isActive(entry) ? 'true' : 'false'"></span>
-          <span class="min-w-0 flex-1 truncate">{{ entry.label }}</span>
+        <!-- Built-in local entry stays PINNED above the scroll area; the saved
+             profiles below scroll once they outgrow the box. -->
+        <LlmProfileRow
+          v-if="localEntry"
+          :entry="localEntry"
+          :selected="localEntry.id === selectedId"
+          :active="isActive(localEntry)"
+          @select="selectModel(localEntry.id)" />
+        <div class="flex max-h-56 flex-col gap-2 overflow-y-auto">
+          <LlmProfileRow
+            v-for="profile in profiles"
+            :key="profile.id"
+            :entry="profile"
+            :selected="profile.id === selectedId"
+            :active="isActive(profile)"
+            @select="selectModel(profile.id)" />
         </div>
       </div>
 
@@ -79,6 +73,17 @@
             icon="pi pi-check"
             size="small"
             @click="applyProfile" />
+          <!-- Delete stays in the same action row; the built-in local entry and
+               the empty selection have nothing to delete. -->
+          <Button
+            v-if="!isLocalEntrySelected && selected"
+            :label="t('config.llm.delete')"
+            icon="pi pi-trash"
+            size="small"
+            severity="danger"
+            text
+            class="ml-auto"
+            @click="deleteSelected" />
           <span
             v-if="flash"
             class="text-xs text-emerald-600 dark:text-emerald-400">
@@ -97,6 +102,7 @@
 
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
+import LlmProfileRow from './LlmProfileRow.vue';
 
 const props = defineProps<{
   /** Env group this panel manages (e.g. `MAIN_LLM`, `TTI`). */
@@ -261,20 +267,52 @@ const saveProfile = () => {
 };
 
 /** Ask the parent to write the draft into `.env` (parent marks it active on success). */
+/**
+ * Apply payload for an entry: the built-in local entry writes only the flag on,
+ * a saved profile writes its parameters with the flag off.
+ * @param entry
+ * @param entry.id
+ * @param entry.params
+ */
+const payloadFor = (entry: { id: string; params: Record<string, string> }): Record<string, string> => {
+  const flagKey = localFlagKey.value;
+  if (entry.id === LOCAL_ENTRY_ID) return flagKey ? { [flagKey]: 'true' } : {};
+  const params: Record<string, string> = { ...entry.params };
+  if (flagKey) params[flagKey] = 'false';
+  return params;
+};
+
+/**
+ * Delete the selected saved profile. When entries remain, the PREVIOUS one is
+ * applied automatically (falling back to the first survivor when the deleted
+ * row was the topmost), so the group always keeps an applied model.
+ */
+const deleteSelected = () => {
+  const entry = selected.value;
+  if (!entry || isLocalEntrySelected.value) return;
+  const order = listEntries.value;
+  const index = order.findIndex(e => e.id === entry.id);
+  const fallback = order[index - 1] ?? order[index + 1] ?? null;
+  store.remove(props.group, entry.id);
+  if (!fallback) {
+    selectedId.value = null;
+    return;
+  }
+  selectedId.value = fallback.id;
+  emit('apply', { id: fallback.id, params: payloadFor(fallback) });
+};
+
 const applyProfile = () => {
   if (!selected.value) return;
   const flagKey = localFlagKey.value;
   // The built-in local entry needs NO API parameters (the backend ignores them
   // in local mode): apply writes only the flag, leaving the group's other keys
-  // in `.env` untouched. A saved profile carries its parameters and turns the
-  // flag off — the applied entry decides the flag, it is never typed.
+  // in `.env` untouched. A saved profile applies what is on screen (its draft)
+  // with the flag turned off — the applied entry decides the flag, never a
+  // typed value.
   const params: Record<string, string> = isLocalEntrySelected.value
-    ? flagKey
-      ? { [flagKey]: 'true' }
-      : {}
-    : flagKey
-      ? { ...draft.value, [flagKey]: 'false' }
-      : { ...draft.value };
+    ? payloadFor(selected.value)
+    : { ...draft.value, ...(flagKey ? { [flagKey]: 'false' } : {}) };
   emit('apply', { id: selected.value.id, params });
 };
 
