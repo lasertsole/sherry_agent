@@ -85,9 +85,6 @@
             {{ flash }}
           </span>
         </div>
-        <p class="m-0 text-xs text-gray-400 dark:text-gray-500">
-          {{ t('config.llm.hint') }}
-        </p>
       </div>
       <div
         v-else

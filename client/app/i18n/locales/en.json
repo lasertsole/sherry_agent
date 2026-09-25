@@ -104,8 +104,7 @@
       "unnamed": "Unnamed model",
       "models": "Models",
       "localModel": "Local model",
-      "localUnused": "Unused in local mode",
-      "hint": "“Save” updates this list only; “Apply” writes .env and marks the entry with a green dot."
+      "localUnused": "Unused in local mode"
     },
     "save": "Save",
     "cancel": "Cancel",
