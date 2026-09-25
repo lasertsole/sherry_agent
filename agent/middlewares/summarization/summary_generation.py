@@ -11,6 +11,7 @@ provided by ``summarization.core.Summarization``.
 # cohesive generation unit; splitting the templates from the ladder would
 # scatter a single contract across modules.
 
+import asyncio
 import json
 import re
 from collections.abc import Sequence
@@ -757,6 +758,9 @@ class SummaryGenerationMixin:
     async def _acreate_summary(
         self, messages_to_summarize: list[AnyMessage], session_id: str = ""
     ) -> SummaryDoc | str:
+        """Async twin of _create_summary; runs on the event loop, so the
+        blocking prompt builders (taskflow / plan SQLite reads) and the
+        store-reading finalizer are offloaded with ``asyncio.to_thread``."""
         if not messages_to_summarize:
             return "No previous conversation history."
 
@@ -770,27 +774,41 @@ class SummaryGenerationMixin:
         config = {"metadata": {"lc_source": _SUMMARY_LC_SOURCE}}
         runnable = self._structured_runnable()
         if runnable is not None:
-            prompt = self._build_structured_summary_prompt(
-                serialized, previous_doc, previous_summary, session_id=session_id
+            prompt = await asyncio.to_thread(
+                self._build_structured_summary_prompt,
+                serialized,
+                previous_doc,
+                previous_summary,
+                session_id=session_id,
             )
             try:
                 doc = await runnable.ainvoke(prompt, config=config)
                 if not isinstance(doc, SummaryDoc):
                     doc = SummaryDoc.model_validate(doc)
-                return self._finalize_summary_doc(
-                    doc, messages_to_summarize, previous_doc, session_id=session_id
+                return await asyncio.to_thread(
+                    self._finalize_summary_doc,
+                    doc,
+                    messages_to_summarize,
+                    previous_doc,
+                    session_id=session_id,
                 )
             except Exception as e:
                 logger.warning("Structured summary failed ({}) - retrying via json_repair", e)
             try:
                 doc = await self._async_json_repair_doc(prompt, config)
-                return self._finalize_summary_doc(
-                    doc, messages_to_summarize, previous_doc, session_id=session_id
+                return await asyncio.to_thread(
+                    self._finalize_summary_doc,
+                    doc,
+                    messages_to_summarize,
+                    previous_doc,
+                    session_id=session_id,
                 )
             except Exception as e:
                 logger.error("json_repair summary failed ({}) - using the free-form path", e)
 
-        prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
+        prompt = await asyncio.to_thread(
+            self._build_summary_prompt, serialized, previous_summary, session_id=session_id
+        )
         try:
             response = await self._model.ainvoke(prompt, config=config)
             summary = response.text.strip()

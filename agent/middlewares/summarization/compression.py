@@ -12,6 +12,7 @@ semantics.
 # them; splitting the pipeline from the application would scatter the
 # compression contract.
 
+import asyncio
 import re
 from typing import Any, cast
 
@@ -195,6 +196,13 @@ class CompressionMixin:
         request: ModelRequest[ContextT],
         session_id: str,
     ) -> ModelRequest[ContextT]:
+        """Async twin of the under-lock pipeline; runs on the event loop.
+
+        Every blocking call below (media-offload file writes, compression
+        bookkeeping SQLite, memory reload + prompt rebuild, prompt persistence)
+        is offloaded with ``asyncio.to_thread`` — none may run on the loop
+        thread.
+        """
         original_messages: list[AnyMessage] = request.state.get("messages", [])
         recovery_ctx = self._capture_recovery_context(original_messages, session_id)
 
@@ -212,7 +220,9 @@ class CompressionMixin:
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
-                messages_to_summarize = offload_inline_media(messages_to_summarize, session_id)
+                messages_to_summarize = await asyncio.to_thread(
+                    offload_inline_media, messages_to_summarize, session_id
+                )
 
                 self._fire_compression_nudges(session_id, original_messages, messages_to_summarize)
 
@@ -256,15 +266,17 @@ class CompressionMixin:
         if recovery_ctx:
             final_messages = self._inject_recovery_context(final_messages, recovery_ctx, session_id)
 
-        self._record_compression(session_id, original_messages, final_messages, strategy_used)
+        await asyncio.to_thread(
+            self._record_compression, session_id, original_messages, final_messages, strategy_used
+        )
         self._compaction_just_happened = True
         self._compress_last_turn = False
         state_register_mem.set_state(session_id, _LAST_USER_QUESTION_KEY, "")
 
         system_prompt: str | None = None
         if self._need_update_system_prompt:
-            system_prompt = self._rebuild_system_prompt(session_id)
-            self._persist_system_prompt(session_id, system_prompt)
+            system_prompt = await asyncio.to_thread(self._rebuild_system_prompt, session_id)
+            await asyncio.to_thread(self._persist_system_prompt, session_id, system_prompt)
 
         override_kwargs: dict[str, Any] = {
             "messages": cast("list[AnyMessage]", final_messages),

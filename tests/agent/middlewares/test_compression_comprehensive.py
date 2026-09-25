@@ -16,13 +16,20 @@ does not break before implementation.
 
 import asyncio
 import contextlib
+import threading
 import uuid
 
 import pytest
 from loguru import logger
 from types import SimpleNamespace
 
-from langchain_core.messages import AIMessage, HumanMessage, RemoveMessage, ToolMessage
+from langchain_core.messages import (
+    AIMessage,
+    HumanMessage,
+    RemoveMessage,
+    SystemMessage,
+    ToolMessage,
+)
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from langchain.agents.middleware import (
     ExtendedModelResponse,
@@ -1602,6 +1609,104 @@ class TestSummaryMessageFiltering:
         pair = mw._build_new_messages("MARK-HUMAN-BODY")
         assert pair[0].additional_kwargs.get("lc_source") == "summarization"
         assert pair[1].additional_kwargs.get("lc_source") == "summarization"
+
+
+# ======================================================================
+# the async compression path must not block the event loop
+# ======================================================================
+
+
+def long_conversation_messages(turns=160):
+    """~19k estimated tokens: total exceeds the preserve budget (10.4k) so
+    _determine_cutoff drops the oldest turns and the LLM-summary branch runs."""
+    messages = []
+    for i in range(turns):
+        messages.append(HumanMessage(content=f"question {i}: " + "q" * 60))
+        messages.append(AIMessage(content=f"answer {i}: " + "a" * 400))
+    return messages
+
+
+class TestAsyncPathOffloadsBlockingStores:
+    """awrap_model_call's async compression path runs on the event loop, so
+    every sync SQLite / file-I/O store call it reaches must be offloaded with
+    asyncio.to_thread. Each blocking seam is spied with its executing thread;
+    all of them must fire on a worker thread."""
+
+    def test_aapply_compression_blocking_stores_run_off_loop(self, sid, monkeypatch):
+        import agent.middlewares.summarization.compression as compression_module
+        import agent.tools.memory as memory_module
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store_sqlite
+        from runtime import state_register_db
+
+        loop_tid = threading.get_ident()
+        seen: dict[str, int] = {}
+
+        def spy(name, original=None):
+            def call(*args, **kwargs):
+                seen.setdefault(name, threading.get_ident())
+                if original is not None:
+                    return original(*args, **kwargs)
+                return None
+
+            return call
+
+        mw = make_middleware(need_update_system_prompt=True)
+        monkeypatch.setattr(
+            compression_module,
+            "offload_inline_media",
+            spy("offload_inline_media", compression_module.offload_inline_media),
+        )
+        monkeypatch.setattr(
+            mw, "_record_compression", spy("_record_compression", mw._record_compression)
+        )
+        monkeypatch.setattr(memory_module.memory_store, "load_from_disk", spy("load_from_disk"))
+        monkeypatch.setattr(
+            summarization_module,
+            "build_system_prompt",
+            spy("build_system_prompt", lambda session_id="": "REBUILT-SYSTEM-PROMPT"),
+        )
+        monkeypatch.setattr(state_register_db, "set_state", spy("state_register_db.set_state"))
+        monkeypatch.setattr(
+            taskflow_store_sqlite,
+            "get_active_flows_sync",
+            spy("get_active_flows_sync", lambda session_id: []),
+        )
+        monkeypatch.setattr(
+            summarization_module,
+            "resolve_active_plan",
+            spy("resolve_active_plan", lambda session_id: None),
+        )
+        # fire-and-forget background work, not part of this contract
+        monkeypatch.setattr(
+            summarization_module, "_schedule_compression_nudges", lambda *a, **k: None
+        )
+        monkeypatch.setattr(
+            summarization_module, "_schedule_compression_todo_update", lambda *a, **k: None
+        )
+
+        messages = long_conversation_messages()
+        request = make_request(messages, session_id=sid)
+        result = asyncio.run(mw._aapply_compression(request, sid))
+
+        expected = {
+            "offload_inline_media",
+            "_record_compression",
+            "load_from_disk",
+            "build_system_prompt",
+            "state_register_db.set_state",
+            "get_active_flows_sync",
+            "resolve_active_plan",
+        }
+        missing = expected - seen.keys()
+        assert not missing, f"blocking seams never fired: {missing}"
+        for name in sorted(expected):
+            assert seen[name] != loop_tid, f"{name} ran on the event loop thread"
+
+        # behavior parity: the offload must not change the compression result
+        assert isinstance(result.system_message, SystemMessage)
+        assert result.system_message.content == "REBUILT-SYSTEM-PROMPT"
+        assert len(result.messages) < len(messages)
+        assert result.messages[0].additional_kwargs.get("lc_source") == "summarization"
 
 
 if __name__ == "__main__":
