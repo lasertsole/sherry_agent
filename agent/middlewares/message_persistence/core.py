@@ -34,6 +34,7 @@ batch skips without writing or raising; a writer failure is logged and NOT
 tombstoned, so the same messages are retried at the next boundary.
 """
 
+import asyncio
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, override
 
@@ -169,17 +170,25 @@ class MessagePersistenceMiddleware(AgentMiddleware):
     async def _persist_async(
         self, session_id: str, messages: list[BaseMessage], source: str
     ) -> None:
-        """Async twin of :meth:`_persist_sync`."""
+        """Async twin of :meth:`_persist_sync` (the production path).
+
+        The blocking store I/O around the batch write — the watermark SELECT in
+        :func:`_collect_candidates` and the watermark UPDATE — runs on worker
+        threads so the event loop never executes SQLite; the batch write itself
+        already offloads inside :func:`add_messages`.
+        """
         try:
-            batch = _collect_candidates(session_id, messages)
+            batch = await asyncio.to_thread(_collect_candidates, session_id, messages)
             if not batch:
                 return
             prepared = _prepare_batch(batch)
             if not prepared:
                 return
             await add_messages(session_id, prepared)
-            mark_message_ids_persisted(
-                session_id, [_watermark_key(message) for message, _ in batch]
+            await asyncio.to_thread(
+                mark_message_ids_persisted,
+                session_id,
+                [_watermark_key(message) for message, _ in batch],
             )
             logger.debug(
                 "message persistence: wrote {} messages at {} for {}",

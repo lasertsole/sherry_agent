@@ -132,3 +132,30 @@ async def test_clear_session_rejects_unsafe_session_id(
 
     assert victim.is_dir()
     assert list((tmp_path / "sessions").glob("*")) == []
+
+
+@pytest.mark.asyncio
+async def test_clear_session_offloads_the_store_delete(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """The bulk message-store DELETE is blocking SQLite: it must run off-loop."""
+    from server.DAO import messages as dao
+
+    _isolate_dao(monkeypatch, tmp_path)
+
+    observed: dict = {}
+
+    def probe(session_id: str) -> int:
+        try:
+            asyncio.get_running_loop()
+            observed["off_loop"] = False
+        except RuntimeError:
+            observed["off_loop"] = True
+        observed["session_id"] = session_id
+        return 0
+
+    monkeypatch.setattr("context_engine.delete_messages_by_session", probe)
+
+    await dao.clear_session("sess-1")
+
+    assert observed == {"off_loop": True, "session_id": "sess-1"}

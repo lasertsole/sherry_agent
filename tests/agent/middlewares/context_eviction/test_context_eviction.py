@@ -18,6 +18,7 @@ Locked invariants:
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
 from typing import Any
@@ -391,3 +392,36 @@ class TestReadFileSlice:
         assert "Re-read it from the start in chunks" in clipped
         assert clipped.count("Output was truncated due to eviction threshold") == 1
         assert clipped.count("the file is unchanged on disk") == 1
+
+
+class TestAsyncWrapOffload:
+    """``awrap_tool_call`` runs the rewrite on a worker thread.
+
+    The rewrite performs eviction-file reads/writes plus the shared-watermark
+    UPDATE, so the async twin must not execute it on the event loop thread.
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_wrap_offloads_the_rewrite(
+        self, isolated_db, isolated_sessions, sid, monkeypatch
+    ):
+        eviction = ContextEvictionMiddleware()
+        observed: dict[str, bool] = {}
+        original_apply = ContextEvictionMiddleware._apply
+
+        def probe(self, request, response):
+            try:
+                asyncio.get_running_loop()
+                observed["off_loop"] = False
+            except RuntimeError:
+                observed["off_loop"] = True
+            return original_apply(self, request, response)
+
+        monkeypatch.setattr(ContextEvictionMiddleware, "_apply", probe)
+
+        response = await eviction.awrap_tool_call(
+            _request(sid), _async_handler(_big_tool_message(msg_id="t1"))
+        )
+
+        assert observed["off_loop"] is True
+        assert response.content.startswith("[evicted to: ")

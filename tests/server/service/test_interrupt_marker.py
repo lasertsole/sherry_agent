@@ -28,6 +28,7 @@ sqlite3 connection monkeypatched over ``context_engine.store.core._db``, and a
 real ``UserInputQueue`` on a tmp SQLite file.
 """
 
+import asyncio
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
@@ -473,3 +474,35 @@ async def test_best_effort_never_raises_on_internal_failures(
     )
     msgs = await _state_messages(graph, _config())
     assert len(_markers(msgs)) == 1, "marker written before the cleanup failure"
+
+
+async def test_mesmemory_dedupe_read_runs_off_the_event_loop(
+    queue: UserInputQueue, mes_db: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+):
+    """The dedupe scan is blocking SQLite: it must run on a worker thread.
+
+    Pins the offload — the write beside it already offloads inside
+    ``add_messages``; before the fix the scan ran on the event loop.
+    """
+    model = RecordingFakeChatModel(response_text="R1")
+    graph = _build_graph(model)
+    await graph.aupdate_state(_config(), {"messages": [HumanMessage("Q1")]})
+
+    observed: dict[str, Any] = {}
+    real_read = mes_store_core.get_messages_by_lastest_n_turns
+
+    def probe(*args, **kwargs):
+        try:
+            asyncio.get_running_loop()
+            observed["off_loop"] = False
+        except RuntimeError:
+            observed["off_loop"] = True
+        return real_read(*args, **kwargs)
+
+    monkeypatch.setattr(mes_store_core, "get_messages_by_lastest_n_turns", probe)
+
+    await write_interrupted_marker(
+        SESSION_ID, _config(), "partial", "cancelled", graph=graph, queue=queue
+    )
+
+    assert observed["off_loop"] is True

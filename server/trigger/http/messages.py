@@ -1,3 +1,4 @@
+import asyncio
 from typing import cast
 
 from config.features import SERVER_HTTP
@@ -76,7 +77,10 @@ async def get_history_by_turn_page(request):
     if not turn_page_num:
         raise ValueError("turn_page_num is required")
 
-    return _get_history_by_turn_page(session_id, min_turn_num, turn_page_size, turn_page_num)
+    # The store read is blocking SQLite: keep it off the event loop thread.
+    return await asyncio.to_thread(
+        _get_history_by_turn_page, session_id, min_turn_num, turn_page_size, turn_page_num
+    )
 
 
 @app.get("/get_pending_interrupt")

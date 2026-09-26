@@ -114,3 +114,31 @@ def test_clear_session_passes_valid_session_id(monkeypatch):
     asyncio.run(messages_http.clear_session_handler(_FakeJsonRequest({"session_id": "s1"})))
 
     assert calls == [{"session_id": "s1"}]
+
+
+def test_history_read_runs_off_the_event_loop(monkeypatch):
+    """The store read is blocking SQLite: the handler must offload it."""
+    observed: dict = {}
+
+    def probe(*args):
+        try:
+            asyncio.get_running_loop()
+            observed["off_loop"] = False
+        except RuntimeError:
+            observed["off_loop"] = True
+        observed["args"] = args
+        return []
+
+    monkeypatch.setattr(messages_http, "_get_history_by_turn_page", probe)
+
+    _call_handler(
+        {
+            "session_id": "s1",
+            "min_turn_num": "1",
+            "turn_page_size": "20",
+            "turn_page_num": "1",
+        }
+    )
+
+    assert observed["off_loop"] is True
+    assert observed["args"] == ("s1", "1", "20", "1")

@@ -47,6 +47,8 @@ persistence): child transcripts keep their full tool results.
 
 from __future__ import annotations
 
+import asyncio
+
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
@@ -171,8 +173,14 @@ class ContextEvictionMiddleware(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        """Async twin of :meth:`wrap_tool_call`."""
-        return self._apply(request, await handler(request))
+        """Async twin of :meth:`wrap_tool_call`.
+
+        The rewrite itself is pure sync work — eviction file reads/writes plus
+        the shared-watermark UPDATE — so it runs on a worker thread to keep the
+        event loop free of file and SQLite I/O.
+        """
+        response = await handler(request)
+        return await asyncio.to_thread(self._apply, request, response)
 
     def _apply(self, request: ToolCallRequest, response: Any) -> Any:
         if not self._enabled:

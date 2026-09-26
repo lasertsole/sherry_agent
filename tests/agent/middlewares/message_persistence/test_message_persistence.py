@@ -21,6 +21,8 @@ Coverage:
 
 from __future__ import annotations
 
+import asyncio
+
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
@@ -263,3 +265,52 @@ class TestFilterSemantics:
 
         assert _contents(sid) == []
         assert _row_count(sid) == 0
+
+
+class TestAsyncPathOffload:
+    """The async persist path keeps store I/O off the event loop thread.
+
+    The watermark SELECT (inside ``_collect_candidates``) and the watermark
+    UPDATE are blocking SQLite; both must run on a worker thread — like the
+    batch write, which offloads inside ``add_messages``.
+    """
+
+    @pytest.mark.asyncio
+    async def test_async_boundary_offloads_store_calls(self, isolated_db, monkeypatch):
+        observed: dict[str, bool] = {}
+
+        def _off_loop() -> bool:
+            try:
+                asyncio.get_running_loop()
+                return False
+            except RuntimeError:
+                return True
+
+        def spy_filter(session_id, keys):
+            observed["filter_off_loop"] = _off_loop()
+            return set()
+
+        def spy_mark(session_id, keys):
+            observed["mark_off_loop"] = _off_loop()
+
+        # The batch write itself offloads inside ``add_messages`` — probe the
+        # function that must run on the worker thread, not the awaiting coro.
+        real_persist = store_core._persist_batch
+
+        def probe_persist(session_id, pending):
+            observed["persist_off_loop"] = _off_loop()
+            return real_persist(session_id, pending)
+
+        monkeypatch.setattr(mp_core, "filter_persisted_message_ids", spy_filter)
+        monkeypatch.setattr(mp_core, "mark_message_ids_persisted", spy_mark)
+        monkeypatch.setattr(store_core, "_persist_batch", probe_persist)
+
+        await MessagePersistenceMiddleware().aafter_model(
+            _state("offload-sess", _one_round()), None
+        )
+
+        assert observed == {
+            "filter_off_loop": True,
+            "mark_off_loop": True,
+            "persist_off_loop": True,
+        }

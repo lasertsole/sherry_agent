@@ -1,3 +1,4 @@
+import asyncio
 import shutil
 from pathlib import Path
 
@@ -49,10 +50,12 @@ async def clear_session(session_id: str) -> None:
     except Exception:  # noqa: S110 - non-critical: must not block session cleanup
         pass
 
-    # (1) Context engine mes_memory store — messages for this session.
+    # (1) Context engine mes_memory store — messages for this session. The bulk
+    # DELETE is blocking SQLite, so it runs on a worker thread (audit-hygiene:
+    # no store I/O on the event loop).
     from context_engine import delete_messages_by_session
 
-    deleted = delete_messages_by_session(session_id=session_id)
+    deleted = await asyncio.to_thread(delete_messages_by_session, session_id=session_id)
     logger.debug(f"Cleared {deleted} mes_memory message row(s) for session_id={session_id}")
 
     # (2) Session-scoped planning stores — todos + task flows.

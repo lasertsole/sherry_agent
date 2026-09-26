@@ -241,7 +241,11 @@ async def _persist_to_mesmemory(
 
     prefix = _MESMEMORY_PREFIX_TEMPLATE.format(reason=reason)
     try:
-        rows = store_core.get_messages_by_lastest_n_turns(session_id, last_n=2)
+        # Offload the dedupe scan: it is blocking SQLite on the event loop
+        # thread (the write below already offloads inside ``add_messages``).
+        rows = await asyncio.to_thread(
+            store_core.get_messages_by_lastest_n_turns, session_id, last_n=2
+        )
     except Exception as e:  # noqa: BLE001 - read failure must not abort the dual-write
         logger.warning(
             "interrupt_marker: MesMemory dedupe scan failed (writing anyway): "
