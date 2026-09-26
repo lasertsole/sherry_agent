@@ -1,5 +1,6 @@
 """Swarm scheduler: reserve, activate, complete, structured-output prompt, and validation."""
 
+import asyncio
 import time
 import json
 from loguru import logger
@@ -103,8 +104,16 @@ async def reserve_swarm_run(
     return updated
 
 
-async def activate_swarm_run(run_id: str) -> SubagentRunRecord | None:
-    """Transition a RESERVED swarm run to ACTIVE, respecting the group's concurrency cap."""
+async def activate_swarm_run(
+    run_id: str, *, budget_checked: bool = False
+) -> SubagentRunRecord | None:
+    """Transition a RESERVED swarm run to ACTIVE, respecting the group's concurrency cap.
+
+    ``budget_checked=True`` is pump-internal (see :func:`_pump_lane`): the
+    caller holds the group's pump lock and spends a budget derived from one
+    authoritative count, so this call skips its own registry scan — and its
+    follow-up pump (the caller's loop keeps filling instead).
+    """
     run = get_run(run_id)
     if run is None:
         return None
@@ -121,15 +130,16 @@ async def activate_swarm_run(run_id: str) -> SubagentRunRecord | None:
     if config is None:
         return None
 
-    active_count = _count_active_swarm_runs(group_id)
-    if active_count >= config.max_concurrent:
-        logger.info(
-            "activate_swarm_run: group {} at max concurrent ({}/{}), queued",
-            group_id,
-            active_count,
-            config.max_concurrent,
-        )
-        return run
+    if not budget_checked:
+        active_count = _count_active_swarm_runs(group_id)
+        if active_count >= config.max_concurrent:
+            logger.info(
+                "activate_swarm_run: group {} at max concurrent ({}/{}), queued",
+                group_id,
+                active_count,
+                config.max_concurrent,
+            )
+            return run
 
     updated = run.model_copy(
         update={
@@ -163,7 +173,8 @@ async def activate_swarm_run(run_id: str) -> SubagentRunRecord | None:
             }
         )
         set_run(failed)
-        await _activate_next_in_group(group_id)
+        if not budget_checked:
+            await _activate_next_in_group(group_id)
         return failed
 
     return updated
@@ -212,22 +223,53 @@ async def _activate_next_in_group(group_id: str) -> None:
     await _pump_lane(group_id)
 
 
+# Per-group pump locks (lazily created on the pumping event loop): the lock
+# holder spends a budget derived from one registry scan, so concurrent pumps
+# for the same group serialize instead of each admitting against a stale count.
+# ``asyncio.Lock`` is event-loop-bound, so each entry carries the loop it was
+# created on and is replaced when the pump runs on a different loop.
+_group_pump_locks: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Lock]] = {}
+
+
+def _pump_lock(group_id: str) -> asyncio.Lock:
+    """Return the group's pump lock for the current event loop."""
+    loop = asyncio.get_running_loop()
+    entry = _group_pump_locks.get(group_id)
+    if entry is None or entry[0] is not loop:
+        lock = asyncio.Lock()
+        _group_pump_locks[group_id] = (loop, lock)
+        return lock
+    return entry[1]
+
+
 async def _pump_lane(group_id: str) -> None:
-    """Fill available concurrency slots by activating queued runs from the FIFO."""
+    """Fill available concurrency slots by activating queued runs from the FIFO.
+
+    One authoritative count per pass, spent as a local budget while the group's
+    pump lock is held. Admission is the only path into ACTIVE (the state writes
+    are funneled through :func:`activate_swarm_run`), so a concurrent completion
+    can only free slots — never add them — which makes the single scan a valid
+    upper bound. Every admission therefore costs no extra registry scan (the
+    previous implementation scanned the whole registry once per activation), and
+    two overlapping pumps for the same group cannot each spend a stale budget.
+    """
     config = _group_configs.get(group_id)
     if config is None:
         return
-    active_count = _count_active_swarm_runs(group_id)
-    while active_count < config.max_concurrent:
-        fifo = get_fifo()
-        next_run_id = await fifo.dequeue(group_id)
-        if next_run_id is None:
-            break
-        activated = await activate_swarm_run(next_run_id)
-        if activated is None or activated.swarm_run_state == SwarmRunState.FAILED.value:
-            active_count = _count_active_swarm_runs(group_id)
-            continue
-        active_count += 1
+    async with _pump_lock(group_id):
+        budget = config.max_concurrent - _count_active_swarm_runs(group_id)
+        while budget > 0:
+            fifo = get_fifo()
+            next_run_id = await fifo.dequeue(group_id)
+            if next_run_id is None:
+                break
+            activated = await activate_swarm_run(next_run_id, budget_checked=True)
+            if activated is None or activated.swarm_run_state == SwarmRunState.FAILED.value:
+                # Refresh from the registry: the dequeue may have raced a
+                # concurrent transition that freed (or consumed) a slot.
+                budget = config.max_concurrent - _count_active_swarm_runs(group_id)
+                continue
+            budget -= 1
 
 
 def build_structured_output_prompt(output_schema: dict | None) -> str:
@@ -335,13 +377,19 @@ def _count_swarm_runs_by_group(group_id: str) -> int:
 
 
 def _count_active_swarm_runs(group_id: str) -> int:
-    """Count currently running/interrupted runs in a swarm group."""
+    """Count currently running/interrupted runs in a swarm group.
+
+    Hot path (called per lane pump): the enum/tuple lookups are hoisted out of
+    the loop so the per-record cost is two comparisons.
+    """
+    active_state = SwarmRunState.ACTIVE.value
+    counted_statuses = (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
     return sum(
         1
         for r in all_runs()
         if r.swarm_group_id == group_id
-        and r.swarm_run_state == SwarmRunState.ACTIVE.value
-        and r.execution.status in (ExecutionStatus.RUNNING, ExecutionStatus.INTERRUPTED)
+        and r.swarm_run_state == active_state
+        and r.execution.status in counted_statuses
     )
 
 

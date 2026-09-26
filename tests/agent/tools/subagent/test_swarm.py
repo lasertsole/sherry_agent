@@ -193,6 +193,79 @@ class TestActivateSwarmRun:
         assert activated2.run_id == run.run_id
 
 
+class TestPumpLaneScanBudget:
+    """The lane pump spends one authoritative count per pass.
+
+    Admissions after the first must not re-scan the whole registry (the
+    per-activation scan was the audit's O(queued x N) finding), while the
+    group's ``max_concurrent`` cap stays exact — including when two pumps for
+    the same group overlap.
+    """
+
+    @pytest.mark.asyncio
+    async def test_pump_scans_the_registry_once_per_pass(self, monkeypatch):
+        from agent.tools.subagent.swarm import collector as c
+        from agent.tools.subagent.registry import all_runs
+
+        configure_swarm_group(
+            SwarmGroupConfig(group_id="g1", max_concurrent=1, max_children_per_group=10)
+        )
+        for i in range(5):
+            await reserve_swarm_run("g1", f"task{i}", "agent:main:session:p1")
+
+        queued = [
+            r.run_id
+            for r in all_runs()
+            if r.swarm_group_id == "g1" and r.swarm_run_state == SwarmRunState.RESERVED.value
+        ]
+        assert len(queued) == 4  # the reservations admitted one against the cap
+
+        # Raise the cap, then pump: four admissions against one scan.
+        configure_swarm_group(
+            SwarmGroupConfig(group_id="g1", max_concurrent=5, max_children_per_group=10)
+        )
+        calls = {"n": 0}
+        real_count = c._count_active_swarm_runs
+
+        def counting(group_id: str) -> int:
+            calls["n"] += 1
+            return real_count(group_id)
+
+        monkeypatch.setattr(c, "_count_active_swarm_runs", counting)
+
+        await c._pump_lane("g1")
+
+        active = [
+            r
+            for r in all_runs()
+            if r.swarm_group_id == "g1" and r.swarm_run_state == SwarmRunState.ACTIVE.value
+        ]
+        assert len(active) == 5
+        assert calls["n"] == 1
+
+    @pytest.mark.asyncio
+    async def test_concurrent_pumps_never_exceed_the_cap(self):
+        import asyncio
+
+        from agent.tools.subagent.swarm import collector as c
+        from agent.tools.subagent.registry import all_runs
+
+        configure_swarm_group(
+            SwarmGroupConfig(group_id="g1", max_concurrent=2, max_children_per_group=10)
+        )
+        for i in range(4):
+            await reserve_swarm_run("g1", f"task{i}", "agent:main:session:p1")
+
+        await asyncio.gather(c._pump_lane("g1"), c._pump_lane("g1"))
+
+        active = [
+            r
+            for r in all_runs()
+            if r.swarm_group_id == "g1" and r.swarm_run_state == SwarmRunState.ACTIVE.value
+        ]
+        assert len(active) == 2
+
+
 class TestCompleteSwarmRun:
     @pytest.mark.asyncio
     async def test_complete_ok(self):

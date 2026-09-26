@@ -10,7 +10,13 @@ def list_runs_for_requester(requester_session_key: str) -> list[SubagentRunRecor
 
 
 def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
-    """BFS-collect all descendant runs rooted at the given requester session key."""
+    """BFS-collect all descendant runs rooted at the given requester session key.
+
+    Builds the requester → runs index once and walks that, so the cost is one
+    registry pass plus the BFS — the previous implementation re-scanned every
+    run record (``memory.values()``) once per expanded node (O(N*D)).
+    """
+    index = build_read_index()
     result: list[SubagentRunRecord] = []
     queue = [requester_session_key]
     visited: set[str] = set()
@@ -19,8 +25,7 @@ def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
         if current in visited:
             continue
         visited.add(current)
-        children = [run for run in memory.values() if run.requester_session_key == current]
-        for child in children:
+        for child in index.get(current, ()):
             result.append(child)
             queue.append(child.child_session_key)
     return result

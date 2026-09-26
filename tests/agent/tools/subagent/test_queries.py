@@ -72,6 +72,34 @@ class TestQueries:
         assert get_run_by_child_session_key("nonexistent") is None
 
 
+def test_list_descendant_runs_scans_the_registry_once(monkeypatch):
+    """The BFS builds the requester index from ONE registry pass.
+
+    The previous implementation re-scanned every run record once per expanded
+    node (O(N*D)); with three levels the old code called ``memory.values()``
+    four times (root pop + three child pops), the index-based walk once.
+    """
+    _make_run("r1", "root", child_key="child1")
+    _make_run("r2", "child1", child_key="child2")
+    _make_run("r3", "child2", child_key="child3")
+
+    from agent.tools.subagent.registry import memory as memory_module
+
+    calls = {"n": 0}
+    real_values = memory_module.values
+
+    def counting_values():
+        calls["n"] += 1
+        return real_values()
+
+    monkeypatch.setattr(memory_module, "values", counting_values)
+
+    result = list_descendant_runs("root")
+
+    assert len(result) == 3
+    assert calls["n"] == 1
+
+
 def test_count_all_active_runs_global():
     from agent.tools.subagent.registry import (  # package-root import also proves re-export
         register_run,
