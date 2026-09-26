@@ -26,6 +26,10 @@ _recovery_tasks: dict[str, asyncio.Task] = {}
 _MAX_RECOVERY_ATTEMPTS = SUBAGENT_INFRA["orphan_max_recovery_attempts"]
 # 24 hours — runs older than this are considered permanently stuck
 _WEDGED_AGE_SECONDS = SUBAGENT_INFRA["orphan_wedged_age_seconds"]
+# Process-local attempt cache, mirrored into each run record by
+# ``_persist_recovery_attempt``. Bounded structurally: ``_recovery_loop``
+# drops the entry once the run is gone or terminal, so it only ever holds runs
+# that can still be scheduled again.
 recovery_attempts_persisted: dict[str, int] = {}
 
 
@@ -48,70 +52,80 @@ async def schedule_orphan_recovery(run_id: str, delay_seconds: float | None = No
 
 
 async def _recovery_loop(run_id: str, delay_seconds: float) -> None:
-    """Wait, then evaluate the recovery gate and either resume or finalize the run."""
-    await asyncio.sleep(delay_seconds)
+    """Wait, then evaluate the recovery gate and either resume or finalize the run.
 
-    run = get_run(run_id)
-    if run is None:
-        return
+    The ``finally`` is the single cleanup point for this task: the entry always
+    leaves ``_recovery_tasks`` (early returns and unexpected errors included),
+    and the attempt counter is dropped once the run is gone or terminal — a
+    terminal run can never be scheduled again, so keeping its counter (and the
+    task entry) would grow both dicts with every run ever scheduled. Runs that
+    are still live keep their counter, so the max-attempts gate is unchanged.
+    """
+    try:
+        await asyncio.sleep(delay_seconds)
 
-    if not is_live_unended_run(run):
-        return
-
-    gate_result = evaluate_recovery_gate(run)
-    if gate_result == "wedged":
-        logger.warning("Run {} is wedged, forcing terminal", run_id)
-        from ..registry.memory import update as update_run
-
-        if run.execution.status == ExecutionStatus.PENDING:
-            # PENDING runs never started, so there is no context to resume.
-            # A PENDING orphan lost its task (process restart): finalize it.
-            from ..types.registry import ExecutionState
-
-            updated = run.model_copy(
-                update={
-                    "execution": ExecutionState(
-                        status=ExecutionStatus.TERMINAL,
-                        started_at=None,
-                        ended_at=time.monotonic(),
-                        outcome=RunOutcome(
-                            status=RunOutcomeStatus.TIMEOUT, error="pending orphaned"
-                        ),
-                    ),
-                    "ended_reason": "pending_orphaned",
-                }
-            )
-            set_run(updated)
-            await run_subagent_announce_flow(updated)
-            _recovery_tasks.pop(run_id, None)
+        run = get_run(run_id)
+        if run is None:
             return
 
-        update_run(run_id, ended_reason="wedged_recovery")
-        updated = reconcile_orphaned_run(run)
-        if updated is not None:
-            set_run(updated)
-            await run_subagent_announce_flow(updated)
+        if not is_live_unended_run(run):
+            return
+
+        gate_result = evaluate_recovery_gate(run)
+        if gate_result == "wedged":
+            logger.warning("Run {} is wedged, forcing terminal", run_id)
+            from ..registry.memory import update as update_run
+
+            if run.execution.status == ExecutionStatus.PENDING:
+                # PENDING runs never started, so there is no context to resume.
+                # A PENDING orphan lost its task (process restart): finalize it.
+                from ..types.registry import ExecutionState
+
+                updated = run.model_copy(
+                    update={
+                        "execution": ExecutionState(
+                            status=ExecutionStatus.TERMINAL,
+                            started_at=None,
+                            ended_at=time.monotonic(),
+                            outcome=RunOutcome(
+                                status=RunOutcomeStatus.TIMEOUT, error="pending orphaned"
+                            ),
+                        ),
+                        "ended_reason": "pending_orphaned",
+                    }
+                )
+                set_run(updated)
+                await run_subagent_announce_flow(updated)
+                return
+
+            update_run(run_id, ended_reason="wedged_recovery")
+            updated = reconcile_orphaned_run(run)
+            if updated is not None:
+                set_run(updated)
+                await run_subagent_announce_flow(updated)
+            return
+
+        if gate_result == "aborted_last_run":
+            logger.info("Run {} has abortedLastRun flag, attempting resume", run_id)
+
+        recovery_attempts_persisted[run_id] = recovery_attempts_persisted.get(run_id, 0) + 1
+        _persist_recovery_attempt(run_id)
+
+        logger.info(
+            "Attempting orphan recovery for run {} (attempt {})",
+            run_id,
+            recovery_attempts_persisted.get(run_id, 0),
+        )
+
+        if await _attempt_resume(run):
+            logger.info("Orphan recovery resume succeeded for run {}", run_id)
+        else:
+            updated = await finalize_interrupted_run_with_retry(run.run_id)
+    finally:
         _recovery_tasks.pop(run_id, None)
-        return
-
-    if gate_result == "aborted_last_run":
-        logger.info("Run {} has abortedLastRun flag, attempting resume", run_id)
-
-    recovery_attempts_persisted[run_id] = recovery_attempts_persisted.get(run_id, 0) + 1
-    _persist_recovery_attempt(run_id)
-
-    logger.info(
-        "Attempting orphan recovery for run {} (attempt {})",
-        run_id,
-        recovery_attempts_persisted.get(run_id, 0),
-    )
-
-    if await _attempt_resume(run):
-        logger.info("Orphan recovery resume succeeded for run {}", run_id)
-    else:
-        updated = await finalize_interrupted_run_with_retry(run.run_id)
-
-    _recovery_tasks.pop(run_id, None)
+        run = get_run(run_id)
+        if run is None or run.execution.status == ExecutionStatus.TERMINAL:
+            recovery_attempts_persisted.pop(run_id, None)
 
 
 def evaluate_recovery_gate(run: SubagentRunRecord) -> str:

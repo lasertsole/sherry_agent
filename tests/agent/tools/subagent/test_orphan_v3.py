@@ -166,3 +166,62 @@ class TestFinalizeInterruptedRunWithRetry:
     async def test_nonexistent_run(self):
         result = await finalize_interrupted_run_with_retry("nonexistent", max_attempts=1)
         assert result is None
+
+
+class TestRecoveryBookkeeping:
+    """Neither recovery dict may outlive its run.
+
+    The task entry must leave ``_recovery_tasks`` on EVERY exit path (the
+    early returns for a vanished/non-live run previously leaked a finished
+    task), and the attempt counter is dropped once the run is gone or
+    terminal — only runs that can still be scheduled again keep theirs.
+    """
+
+    @pytest.mark.asyncio
+    async def test_gone_run_leaves_no_task_or_counter_entry(self):
+        from agent.tools.subagent.orphan import recovery as rec
+
+        await rec.schedule_orphan_recovery("ghost", delay_seconds=0)
+        await rec._recovery_tasks["ghost"]
+
+        assert "ghost" not in rec._recovery_tasks
+        assert "ghost" not in rec.recovery_attempts_persisted
+
+    @pytest.mark.asyncio
+    async def test_terminal_run_drops_its_counter(self):
+        from agent.tools.subagent.orphan import recovery as rec
+
+        set_run(_make_run(execution=ExecutionState(status=ExecutionStatus.TERMINAL)))
+        rec.recovery_attempts_persisted["r1"] = 2
+
+        await rec.schedule_orphan_recovery("r1", delay_seconds=0)
+        await rec._recovery_tasks["r1"]
+
+        assert "r1" not in rec._recovery_tasks
+        assert "r1" not in rec.recovery_attempts_persisted
+
+    @pytest.mark.asyncio
+    async def test_still_live_run_keeps_its_counter(self, monkeypatch):
+        """A resumed-but-still-live run keeps the counter that gates rescheduling."""
+        import time
+
+        from agent.tools.subagent.orphan import recovery as rec
+
+        set_run(
+            _make_run(
+                execution=ExecutionState(
+                    status=ExecutionStatus.INTERRUPTED, started_at=time.monotonic()
+                )
+            )
+        )
+
+        async def _fake_resume(_run) -> bool:
+            return True
+
+        monkeypatch.setattr(rec, "_attempt_resume", _fake_resume)
+
+        await rec.schedule_orphan_recovery("r1", delay_seconds=0)
+        await rec._recovery_tasks["r1"]
+
+        assert rec.recovery_attempts_persisted.get("r1") == 1
+        assert "r1" not in rec._recovery_tasks
