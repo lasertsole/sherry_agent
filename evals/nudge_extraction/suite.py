@@ -472,13 +472,35 @@ async def _run_checks(session_id: str, results_dir: Path, sandbox: EvalSandbox) 
     }
 
 
+def _eval_env_path() -> Path:
+    """Eval-local env file (suite-local by design).
+
+    The production ``.env`` at the repo root is deliberately NOT consulted: an
+    eval run must not silently gain access to live API keys. Provide
+    ``MAIN_LLM_API_KEY`` / ``AUXILIARY_LLM_API_KEY`` either through the process
+    environment or this file; otherwise the suite skips itself.
+    """
+    return Path(__file__).resolve().parent / ".env"
+
+
+def _load_eval_env() -> Path:
+    """Load the eval-local env file (no-op when absent); returns its path.
+
+    ``override=False`` keeps the process environment authoritative so CI can
+    inject keys without editing files.
+    """
+    from dotenv import load_dotenv
+
+    eval_env = _eval_env_path()
+    load_dotenv(eval_env, override=False)
+    return eval_env
+
+
 def main() -> None:
     """Run the nudge-extraction eval under the sandbox and write the report."""
     faulthandler.dump_traceback_later(900, exit=True)
 
-    from dotenv import load_dotenv
-
-    load_dotenv(REPO_ROOT / ".env", override=False)
+    _load_eval_env()
 
     run_id = time.strftime("%Y%m%d_%H%M%S")
     results_dir = REPO_ROOT / "evals" / "results" / _SUITE / run_id
