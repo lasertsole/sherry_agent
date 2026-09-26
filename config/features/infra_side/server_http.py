@@ -91,10 +91,14 @@ SERVER_HTTP: ServerHttpConfig = {
         "completion",
         "delivery",
     ),
+    # Display order of the environment-config groups (GET /env): the tuple order
+    # wins, so it must stay in step with the block order of .env / .env.example —
+    # the chat model first, then the auxiliary model it delegates simple work to,
+    # then the reasoner.
     "env_group_prefixes": (
         "MAIN_LLM_",
-        "REASONER_LLM_",
         "AUXILIARY_LLM_",
+        "REASONER_LLM_",
         "ITTT_",
         "VTTT_",
         "TTI_",

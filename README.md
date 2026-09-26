@@ -309,8 +309,8 @@ cp .env.example .env
 | `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | Primary chat model (must support JSON output and tool calling); `MAIN_LLM_MAX_TOKEN` must be >= 131072 (128K) |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | Universal reasoning switch, mapped per provider (DeepSeek / OpenAI / GLM / Anthropic) |
 | `TAVILY_API_KEY` | ✅ for web search | Enables the web search tool |
-| `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 131072 (128K) |
+| `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector security scanner switch (on by default); LLM semantic analysis is opt-in (off by default) and requires a provider supporting json_schema structured output |
