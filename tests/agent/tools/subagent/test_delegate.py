@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 
 import agent.tools.subagent.delegate as delegate
@@ -324,3 +326,29 @@ class TestHandleHelpers:
         result_text, err = delegate._terminal_text("run-x")
         assert result_text is None
         assert err == "boom"
+
+
+class TestLoopGuard:
+    """delegate_task owns its own event loop (asyncio.run / run_until_complete on
+    a fresh loop), so calling it from a running-loop thread must fail loudly and
+    name the async alternative instead of surfacing a cryptic asyncio error."""
+
+    def test_called_from_running_loop_raises_with_alternative(self):
+        async def _call():
+            delegate_task(
+                "do something",
+                requester_session_key="agent:main:session:x",
+                run_in_background=True,
+            )
+
+        with pytest.raises(RuntimeError, match="spawn_subagent_direct|to_thread"):
+            asyncio.run(_call())
+
+    def test_guard_fires_before_validation(self):
+        # The loop check precedes argument validation: an invalid task from a
+        # loop thread still reports the loop violation, not the task error.
+        async def _call():
+            delegate_task("", requester_session_key="")
+
+        with pytest.raises(RuntimeError, match="running event loop"):
+            asyncio.run(_call())

@@ -6,6 +6,8 @@ read-only query wrappers. It also supports deleting a run's entire subtree
 (root + all descendants), purging both the in-memory registry and SQLite.
 """
 
+import asyncio
+
 from loguru import logger
 
 from server.trigger.core import app
@@ -162,6 +164,9 @@ async def post_subagent_run_handler(request):
         - 500: delegate_task raised (validation/auth failure).
 
     Notes:
+        - delegate_task is a sync API that owns its own event loop, so it is
+          offloaded to a worker thread (``asyncio.to_thread``); calling it on
+          the handler's loop thread would raise immediately.
         - WS broadcast to the front-end is handled automatically by the
           ``register_spawned_hook`` / ``register_ended_hook`` hooks that the
           spawn pipeline fires; this endpoint does NOT need an explicit push.
@@ -192,7 +197,8 @@ async def post_subagent_run_handler(request):
         run_timeout_seconds = float(run_timeout_seconds)
 
     try:
-        handle = delegate_task(
+        handle = await asyncio.to_thread(
+            delegate_task,
             task=task,
             requester_session_key=requester_session_key,
             agent_id=body.get("agent_id") or "subagent",

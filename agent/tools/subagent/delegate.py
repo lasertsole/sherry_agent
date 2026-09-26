@@ -389,7 +389,26 @@ def delegate_task(
 
     Raises:
         ValueError: If ``requester_session_key`` is missing or ``task`` empty.
+        RuntimeError: If called from a running event loop thread — both dispatch
+            paths below own a transient loop and Python refuses to start one
+            while another is running in the same thread. Await
+            :func:`spawn_subagent_direct` directly, or offload this call to a
+            worker thread (``asyncio.to_thread``).
     """
+    # Loop-thread guard (loud contract check): without it the failure surfaces
+    # as a cryptic RuntimeError from deep inside asyncio.run/run_until_complete.
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        pass
+    else:
+        raise RuntimeError(
+            "delegate_task() is a synchronous API that runs its own event loop; "
+            "it must not be called from a running event loop thread — await "
+            "spawn_subagent_direct() directly, or offload delegate_task to a "
+            "worker thread (asyncio.to_thread)"
+        )
+
     if not task or not task.strip():
         raise ValueError("delegate_task: `task` must be a non-empty string")
     if not requester_session_key:

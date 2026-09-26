@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,6 +25,14 @@ pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 class _FakeRequest:
     def __init__(self, query_params: dict | None = None):
         self.query_params = query_params or {}
+
+
+class _FakeBodyRequest:
+    def __init__(self, body: dict):
+        self._body = body
+
+    def json(self) -> dict:
+        return self._body
 
 
 def _payload(response) -> dict:
@@ -72,3 +82,48 @@ def test_controller_scope_reads_the_controller_view(monkeypatch):
     assert seen == ["default"]
     assert int(response.status_code) == 200
     assert _payload(response) == {"runs": []}
+
+
+def test_post_handler_rejects_missing_task_as_structured_400():
+    response = asyncio.run(
+        subagent_http.post_subagent_run_handler(_FakeBodyRequest({"session_id": "s"}))
+    )
+    assert response.status_code == 400
+    assert _payload(response)["success"] is False
+
+
+def test_post_handler_dispatches_off_the_event_loop(monkeypatch):
+    """POST /subagents/runs must run the sync delegate_task on a worker thread.
+
+    delegate_task owns its own event loop (asyncio.run / run_until_complete on a
+    fresh loop); called directly on the handler's loop thread it would always
+    raise RuntimeError (→ 500) — regression coverage for the to_thread offload.
+    """
+    calls: dict = {}
+
+    def fake_delegate_task(**kwargs):
+        try:
+            asyncio.get_running_loop()
+            calls["off_loop"] = False
+        except RuntimeError:
+            calls["off_loop"] = True
+        calls["thread"] = threading.current_thread()
+        calls["kwargs"] = kwargs
+        return SimpleNamespace(
+            accepted=True, run_id="run-1", to_dict=lambda: {"status": "accepted"}
+        )
+
+    monkeypatch.setattr(subagent_http, "delegate_task", fake_delegate_task)
+    monkeypatch.setattr(subagent_http, "get_run", lambda run_id: None)
+
+    response = asyncio.run(
+        subagent_http.post_subagent_run_handler(
+            _FakeBodyRequest({"task": "demo task", "session_id": "agent:main:session:s"})
+        )
+    )
+
+    assert int(response.status_code) == 200
+    assert _payload(response) == {"handle": {"status": "accepted"}}
+    assert calls["off_loop"] is True
+    assert calls["thread"] is not threading.main_thread()
+    assert calls["kwargs"]["requester_session_key"] == "agent:main:session:s"
