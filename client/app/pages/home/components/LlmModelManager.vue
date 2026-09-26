@@ -73,6 +73,14 @@
           :key="key"
           class="flex flex-col gap-1">
           <span class="text-xs text-gray-500 dark:text-gray-400">{{ key }}</span>
+          <!-- 128K floor, shown on the input it constrains instead of once at the
+               top of the tab; hidden for the built-in local entry, whose budget the
+               backend never reads. -->
+          <p
+            v-if="guardedTokenKey(key) && !isLocalEntrySelected"
+            class="m-0 text-xs text-amber-600 dark:text-amber-400">
+            {{ t('config.env.maxTokenHint') }}
+          </p>
           <InputText
             v-model="draft[key]"
             :disabled="isLocalEntrySelected"
@@ -134,6 +142,7 @@
 <script setup lang="ts">
 import { useI18n } from 'vue-i18n';
 import LlmProfileRow from './LlmProfileRow.vue';
+import { MAX_TOKEN_GUARD_KEYS } from '@/constants/env';
 import { MAX_PROFILES_PER_GROUP } from '~/stores/llm-profiles';
 
 const props = defineProps<{
@@ -198,6 +207,14 @@ const localFlagKey = computed(() => props.keys.find(k => k.endsWith('_MODEL_LOCA
 
 /** Parameter keys shown as inputs: the local flag never is (it is derived on apply). */
 const paramKeys = computed(() => props.keys.filter(k => k !== localFlagKey.value));
+
+/**
+ * Whether a parameter carries the 128K context-window floor the backend refuses
+ * to start below (only MAIN_LLM / AUXILIARY_LLM are guarded, not every
+ * `*_MAX_TOKEN` key — the hint must not cry wolf on the free ones).
+ * @param key
+ */
+const guardedTokenKey = (key: string): boolean => (MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key);
 
 /**
  * The built-in "local model" entry: the group's live `.env` parameters with the

@@ -102,6 +102,12 @@ const rowFor = (wrapper: VueWrapper, label: string) =>
  */
 const buttonFor = (wrapper: VueWrapper, label: string) => wrapper.findAll('button.btn').find(b => b.text() === label);
 
+/**
+ * Number of 128K-floor hints rendered in the panel (one per guarded input).
+ * @param wrapper
+ */
+const countHints = (wrapper: VueWrapper) => (wrapper.text().match(/必须 >= 131072/g) ?? []).length;
+
 describe('LlmModelManager.vue (integration, store stubbed)', () => {
   beforeEach(() => {
     makeStore();
@@ -439,5 +445,44 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     await expand(wrapper);
     expect(rowFor(wrapper, '本地模型')).toBeUndefined();
     expect(rowFor(wrapper, 'tti')).toBeTruthy();
+  });
+
+  it('warns about the 128K floor on MAIN_LLM_MAX_TOKEN, and only there', async () => {
+    const KEYS = ['MAIN_LLM_PROVIDER', 'MAIN_LLM_MAX_TOKEN', 'REASONER_LLM_MAX_TOKEN'];
+    const VALUES: Record<string, string> = {
+      MAIN_LLM_PROVIDER: 'deepseek',
+      MAIN_LLM_MAX_TOKEN: '131072',
+      REASONER_LLM_MAX_TOKEN: '100000'
+    };
+    makeStore([{ id: 'p1', label: 'm', params: { ...VALUES } }], 'p1');
+    const wrapper = mountPanel('MAIN_LLM', KEYS, VALUES);
+    await expand(wrapper);
+
+    // One guarded key in this panel → exactly one hint, and the free
+    // REASONER_LLM_MAX_TOKEN (deliberately below 128K) must not carry it.
+    expect(countHints(wrapper)).toBe(1);
+    const tokenBlock = wrapper
+      .findAll('div')
+      .find(d => d.find('span').exists() && d.find('span').text() === 'MAIN_LLM_MAX_TOKEN');
+    expect(tokenBlock?.text()).toContain('必须 >= 131072 (128K)');
+    const freeBlock = wrapper
+      .findAll('div')
+      .find(d => d.find('span').exists() && d.find('span').text() === 'REASONER_LLM_MAX_TOKEN');
+    expect(freeBlock?.text()).not.toContain('131072 (128K)');
+  });
+
+  it('hides the 128K warning for the built-in local entry (its budget is unused)', async () => {
+    const KEYS = ['AUXILIARY_LLM_MODEL_LOCAL', 'AUXILIARY_LLM_MAX_TOKEN'];
+    const VALUES: Record<string, string> = {
+      AUXILIARY_LLM_MODEL_LOCAL: 'true',
+      AUXILIARY_LLM_MAX_TOKEN: '131072'
+    };
+    makeStore([{ id: 'a1', label: 'aux', params: { ...VALUES } }], 'a1', 'AUXILIARY_LLM');
+    const wrapper = mountPanel('AUXILIARY_LLM', KEYS, VALUES);
+    await expand(wrapper);
+    expect(countHints(wrapper)).toBe(1);
+
+    await rowFor(wrapper, '本地模型')!.trigger('click');
+    expect(countHints(wrapper)).toBe(0);
   });
 });

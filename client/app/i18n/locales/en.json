@@ -119,6 +119,9 @@
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
+    },
+    "env": {
+      "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
     }
   }
 }

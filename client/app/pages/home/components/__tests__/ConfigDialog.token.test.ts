@@ -121,10 +121,12 @@ describe('ConfigDialog per-area saving', () => {
 });
 
 describe('ConfigDialog MAX_TOKEN guard', () => {
-  it('shows the 128K hint banner when a _MAX_TOKEN key is present', async () => {
+  it('keeps the 128K rule off the tab header (it sits on the guarded inputs)', async () => {
     const { wrapper } = await mountWithEnvTab();
 
-    expect(wrapper.text()).toContain('必须 >= 131072 (128K)');
+    // The tab no longer repeats the rule as a banner above every group; the
+    // hint is rendered per guarded input by LlmModelManager.
+    expect(wrapper.find('.border-amber-300').exists()).toBe(false);
   });
 
   it('rejects a sub-128K value with the key-specific error and writes nothing', async () => {
