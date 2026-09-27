@@ -105,6 +105,49 @@ apply_thinking_budget(model_config, model_provider, api_name, enable_thinking)
 model_config = clean_client_kwargs(model_config)
 
 
+def _reasoning_for_state(
+    *,
+    provider: str | None,
+    model_name: str | None,
+    thinking: bool | None,
+    thinking_level: str | None,
+    thinking_floor: bool,
+) -> tuple[dict[str, Any], bool]:
+    """Provider-correct reasoning kwargs for one forced thinking state.
+
+    Returns ``(kwargs, budget_enabled)``: the caller merges the kwargs into the
+    client config and inflates ``max_tokens`` when the second value is true.
+    ``thinking is None`` with no level keeps the env default
+    (``MAIN_LLM_ENABLE_THINKING``), mirroring the module-init path; every other
+    combination forces that state (same dispatch as the per-session toggle).
+    """
+    if thinking_level is not None:
+        return build_thinking_level_kwargs(provider, model_name, thinking_level), True
+    if thinking is True:
+        return (
+            build_reasoning_kwargs(
+                provider=provider,
+                model_name=model_name,
+                enabled=True,
+                reasoning_effort=reasoning_effort,
+            ),
+            True,
+        )
+    if thinking is False:
+        if thinking_floor:
+            return build_thinking_floor_kwargs(provider, model_name), True
+        return build_thinking_off_kwargs(provider, model_name), False
+    return (
+        build_reasoning_kwargs(
+            provider=provider,
+            model_name=model_name,
+            enabled=enable_thinking,
+            reasoning_effort=reasoning_effort,
+        ),
+        enable_thinking,
+    )
+
+
 def _variant_client_config(
     *,
     enabled: bool,
@@ -124,31 +167,24 @@ def _variant_client_config(
       level instead (the closest possible approximation of "off").
     """
     cfg = dict(_pristine_config)
-    if level is not None:
-        cfg.update(build_thinking_level_kwargs(model_provider, api_name, level))
-        apply_thinking_budget(cfg, model_provider, api_name, True)
-    elif enabled:
-        cfg.update(
-            build_reasoning_kwargs(
-                provider=model_provider,
-                model_name=api_name,
-                enabled=True,
-                reasoning_effort=reasoning_effort,
-            )
-        )
-        apply_thinking_budget(cfg, model_provider, api_name, True)
-    elif thinking_floor:
-        cfg.update(build_thinking_floor_kwargs(model_provider, api_name))
-        apply_thinking_budget(cfg, model_provider, api_name, True)
-    else:
-        # Gateways whose server default is thinking ON (GLM) need an explicit
-        # disable payload; an absent param would leave them reasoning.
-        cfg.update(build_thinking_off_kwargs(model_provider, api_name))
-        apply_thinking_budget(cfg, model_provider, api_name, False)
+    reasoning, budget_enabled = _reasoning_for_state(
+        provider=model_provider,
+        model_name=api_name,
+        thinking=None if level is not None else enabled,
+        thinking_level=level,
+        thinking_floor=thinking_floor,
+    )
+    cfg.update(reasoning)
+    apply_thinking_budget(cfg, model_provider, api_name, budget_enabled)
     return clean_client_kwargs(cfg)
 
 
-def _build_inner_chat_model_from(config: dict[str, Any]):
+def _build_inner_chat_model_from(
+    config: dict[str, Any],
+    *,
+    provider: str | None = None,
+    model_name: str | None = None,
+):
     """Construct an inner chat model from an explicit client config.
 
     GLM (Zhipu bigmodel) via the generic ``openai`` provider must use
@@ -157,8 +193,18 @@ def _build_inner_chat_model_from(config: dict[str, Any]):
     silently kills the whole reasoning pipeline even when the thinking payload
     is sent correctly. For every other provider ``init_chat_model`` stays the
     single source of truth.
+
+    ``provider``/``model_name`` default to the module-level env identity; a
+    per-session model override passes its own pair so the reasoning-capable
+    client class is chosen for THAT model, not the env one.
     """
-    if model_provider == "openai" and api_name and is_zhipu_reasoning_model(api_name):
+    effective_provider = model_provider if provider is None else provider
+    effective_model = api_name if model_name is None else model_name
+    if (
+        effective_provider == "openai"
+        and effective_model
+        and is_zhipu_reasoning_model(effective_model)
+    ):
         kwargs = {k: v for k, v in config.items() if k != "model_provider"}
         return ReasoningChatOpenAI(**kwargs)
     return init_chat_model(**config)
@@ -212,6 +258,92 @@ def build_main_llm(
     if temperature is not None:
         model = model.bind(temperature=temperature)
     return model
+
+
+def _profile_client_config(
+    *,
+    provider: str | None,
+    model: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    thinking: bool | None = None,
+    thinking_level: str | None = None,
+    thinking_floor: bool = False,
+) -> dict[str, Any]:
+    """Client config for an explicit model identity (session override).
+
+    Provider/model replace the env identity; a missing provider or credential
+    falls back to the ``MAIN_LLM_*`` env value, so an override that only names
+    a different model keeps the configured gateway and key. Thinking handling
+    mirrors the env path via :func:`_reasoning_for_state`.
+    """
+    effective_provider = provider or model_provider
+    config: dict[str, Any] = clean_client_kwargs(
+        {
+            "model_provider": effective_provider,
+            "model": model,
+            "api_key": api_key if api_key is not None else os.getenv("MAIN_LLM_API_KEY"),
+            "base_url": base_url if base_url is not None else os.getenv("MAIN_LLM_API_BASE"),
+            "temperature": 0,
+            "max_retries": LLM_CLIENT_DEFAULTS["main_max_retries"],
+            "timeout": LLM_CLIENT_DEFAULTS["main_timeout"],
+            "stream_chunk_timeout": LLM_CLIENT_DEFAULTS["main_stream_chunk_timeout"],
+            "profile": {"max_input_tokens": max_tokens},
+        }
+    )
+    reasoning, budget_enabled = _reasoning_for_state(
+        provider=effective_provider,
+        model_name=model,
+        thinking=thinking,
+        thinking_level=thinking_level,
+        thinking_floor=thinking_floor,
+    )
+    config.update(reasoning)
+    apply_thinking_budget(config, effective_provider, model, budget_enabled)
+    return config
+
+
+def build_main_llm_for_profile(
+    *,
+    provider: str | None,
+    model: str,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    temperature: float | None = None,
+    thinking: bool | None = None,
+    thinking_level: str | None = None,
+    thinking_floor: bool = False,
+):
+    """Build a main-LLM instance for an explicit identity (session override).
+
+    Same contract as :func:`build_main_llm` — a fresh instance bound to the
+    calling loop, wrapped in ``NormalizingChatModel``, optionally temperature-
+    bound — but provider/model/credentials come from the caller (the client's
+    env-config profile) instead of the ``MAIN_LLM_*`` env vars. Missing
+    credentials fall back to the env values, so an override that only changes
+    the model name keeps the configured gateway and key.
+
+    Thinking handling mirrors the env path: ``thinking``/``thinking_level``/
+    ``thinking_floor`` force that state for THIS model, ``None`` keeps the
+    ``MAIN_LLM_ENABLE_THINKING`` default. The context window
+    (``profile.max_input_tokens``) stays the env's ``MAIN_LLM_MAX_TOKEN``: the
+    token guard reads that process-wide value, it is not a per-profile knob.
+    """
+    effective_provider = provider or model_provider
+    config = _profile_client_config(
+        provider=provider,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        thinking=thinking,
+        thinking_level=thinking_level,
+        thinking_floor=thinking_floor,
+    )
+    inner = _build_inner_chat_model_from(config, provider=effective_provider, model_name=model)
+    model_obj = NormalizingChatModel(inner=inner)
+    if temperature is not None:
+        model_obj = model_obj.bind(temperature=temperature)
+    return model_obj
 
 
 def build_fallback_chain():

@@ -49,6 +49,7 @@ from server.service.input_queue_service import (
     origin_for_source,
     route_for,
 )
+from server.service.session_settings_service import promote_pending_settings
 from server.service.stream_driver import StreamDriver
 from server.utils.ws_helpers import send_ws_json
 from pub.types.message import MultiModalMessage
@@ -231,7 +232,24 @@ async def on_turn_finished(
     sequence) means the completion cannot be attributed to a row (auto-turn,
     cancelled turn, resume turn): nothing is marked and the drain defers while
     a foreign CLAIMED row exists.
+
+    Parked control choices (thinking / main model, see
+    ``session_settings_service``) are promoted here — before the drain kick, so
+    the very next turn already runs on them. A HITL wait is NOT a turn end: the
+    suspended graph resumes the same turn, so the promotion happens on its
+    completion instead.
     """
+    if not is_hitl_pending(session_id):
+        try:
+            promoted = await promote_pending_settings(session_id)
+        except Exception as e:  # pragma: no cover - promotion must never break the turn
+            logger.warning(f"TurnRunner: pending control promotion failed for {session_id}: {e}")
+        else:
+            if promoted:
+                logger.info(
+                    f"TurnRunner: promoted parked control choice(s) for {session_id}: {promoted}"
+                )
+
     normalized: list[str] | None
     if claim_row_ids is None:
         normalized = None

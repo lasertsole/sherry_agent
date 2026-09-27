@@ -144,6 +144,23 @@ def test_build_failure_fails_open(sid, monkeypatch):
     assert all(m is request.model for m in seen)
 
 
+def test_parked_choice_does_not_affect_the_running_turn(sid, fake_build, fake_profile_build):
+    """A mid-turn switch parks under the *_pending keys; the live keys rule.
+
+    The middleware reads the live values only, so the running turn keeps its
+    model/variant until turn_runner promotes the parked choice.
+    """
+    state_register_mem.set_state(sid, "llm_thinking_enabled_pending", {"value": True})
+    state_register_mem.set_state(sid, "llm_main_model_pending", {"value": _PROFILE})
+    mw = ThinkingControlMiddleware()
+    request = _make_request()
+
+    _, _, seen = _run(mw, request)
+
+    assert all(m is request.model for m in seen), "parked choices must not swap mid-turn"
+    assert fake_build == [] and fake_profile_build == []
+
+
 def test_no_session_id_passthrough():
     mw = ThinkingControlMiddleware()
     request = ModelRequest(model=_FakeModel("base"), messages=[], state={})
@@ -189,3 +206,157 @@ def test_non_disable_errors_propagate(sid):
     with pytest.raises(RuntimeError, match="network down"):
         mw.wrap_model_call(request, boom)
     assert mw._off_floor_learned is False
+
+
+# ----------------------------------------------------------------------
+# per-session main-model override (PUT /sessions/model)
+# ----------------------------------------------------------------------
+
+_MODEL_KEY = "llm_main_model"
+_PROFILE = {
+    "id": "p1",
+    "label": "Kimi K2",
+    "provider": "openai",
+    "model": "kimi-k2",
+    "base_url": "https://api.moonshot.cn/v1",
+    "api_key": "sk-kimi",
+}
+
+
+@pytest.fixture
+def fake_profile_build(monkeypatch):
+    """Stub build_main_llm_for_profile so no real LLM client is constructed."""
+    calls: list[dict] = []
+
+    def _fake_build(
+        *,
+        provider=None,
+        model,
+        api_key=None,
+        base_url=None,
+        temperature=None,
+        thinking=None,
+        thinking_level=None,
+        thinking_floor=False,
+    ):
+        calls.append(
+            {
+                "provider": provider,
+                "model": model,
+                "api_key": api_key,
+                "base_url": base_url,
+                "temperature": temperature,
+                "thinking": thinking,
+                "level": thinking_level,
+                "floor": thinking_floor,
+            }
+        )
+        suffix = (
+            f"level:{thinking_level}"
+            if thinking_level
+            else f"thinking={thinking}(floor={thinking_floor})"
+        )
+        return _FakeModel(f"profile:{model}|{suffix}")
+
+    monkeypatch.setattr(models, "build_main_llm_for_profile", _fake_build)
+    return calls
+
+
+class TestModelOverride:
+    """The session's profile descriptor swaps the model on both wrap paths."""
+
+    def test_override_swaps_via_the_profile_builder(self, sid, fake_profile_build):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        mw = ThinkingControlMiddleware()
+
+        _, _, seen = _run(mw, _make_request())
+
+        assert all(m.tag.startswith("profile:kimi-k2|") for m in seen)
+        call = fake_profile_build[-1]
+        assert call["provider"] == "openai"
+        assert call["base_url"] == "https://api.moonshot.cn/v1"
+        assert call["api_key"] == "sk-kimi"
+
+    def test_override_alone_keeps_the_env_thinking_default(self, sid, fake_profile_build):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        mw = ThinkingControlMiddleware()
+
+        _run(mw, _make_request())
+
+        call = fake_profile_build[-1]
+        assert call["thinking"] is None
+        assert call["level"] is None and call["floor"] is False
+
+    def test_override_composes_with_the_thinking_choice(self, sid, fake_profile_build):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        state_register_mem.set_state(sid, _FLAG_KEY, "max")
+        mw = ThinkingControlMiddleware()
+
+        _, _, seen = _run(mw, _make_request())
+
+        assert all(m.tag == "profile:kimi-k2|level:max" for m in seen)
+
+    def test_variant_cache_is_keyed_by_the_profile_configuration(self, sid, fake_profile_build):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        mw = ThinkingControlMiddleware()
+        request = _make_request()
+
+        _run(mw, request)
+        _run(mw, request)
+        assert len(fake_profile_build) == 1, "one client per (thinking, profile) pair"
+
+        # A different credential for the same model must build a NEW client.
+        state_register_mem.set_state(sid, _MODEL_KEY, {**_PROFILE, "api_key": "sk-other"})
+        _run(mw, request)
+        assert len(fake_profile_build) == 2
+
+    def test_malformed_override_is_ignored(self, sid, fake_profile_build):
+        for junk in ("kimi-k2", {}, {"label": "no model"}, 42, [1]):
+            state_register_mem.set_state(sid, _MODEL_KEY, junk)
+            mw = ThinkingControlMiddleware()
+            request = _make_request()
+            _, _, seen = _run(mw, request)
+            assert all(m is request.model for m in seen), junk
+        assert fake_profile_build == []
+
+    def test_clearing_the_override_returns_to_the_env_model(self, sid, fake_profile_build):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        mw = ThinkingControlMiddleware()
+        _run(mw, _make_request())
+
+        state_register_mem.delete_state(sid, _MODEL_KEY)
+        request = _make_request()
+        _, _, seen = _run(mw, request)
+
+        assert all(m is request.model for m in seen)
+
+    def test_profile_build_failure_fails_open(self, sid, monkeypatch):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+
+        def _boom(**kwargs):
+            raise RuntimeError("gateway unreachable")
+
+        monkeypatch.setattr(models, "build_main_llm_for_profile", _boom)
+        mw = ThinkingControlMiddleware()
+        request = _make_request()
+
+        _, _, seen = _run(mw, request)
+
+        assert all(m is request.model for m in seen)
+
+    def test_disable_rejection_retry_keeps_the_override(self, sid, fake_profile_build):
+        state_register_mem.set_state(sid, _MODEL_KEY, _PROFILE)
+        state_register_mem.set_state(sid, _FLAG_KEY, False)
+        mw = ThinkingControlMiddleware()
+        request = _make_request()
+
+        def failing_then_recording(r):
+            if r.model.tag == "profile:kimi-k2|thinking=False(floor=False)":
+                raise _AlwaysThinkRejectionError()
+            return ("ok", r.model.tag)
+
+        out = mw.wrap_model_call(request, failing_then_recording)
+
+        assert out == ("ok", "profile:kimi-k2|thinking=False(floor=True)")
+        assert fake_profile_build[-1]["model"] == "kimi-k2"
+        assert fake_profile_build[-1]["floor"] is True

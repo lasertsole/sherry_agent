@@ -184,6 +184,49 @@ async def test_on_turn_finished_marks_claimed_row_and_drains_one_queued(env):
 
 
 @pytest.mark.asyncio
+async def test_on_turn_finished_promotes_parked_control_choices(env, monkeypatch):
+    """A mid-turn control change lands on the next turn (promoted at turn end)."""
+    from server.service import session_settings_service as settings
+
+    tr, store, registry = env.tr, env.store, env.registry
+    monkeypatch.setattr(tr, "is_hitl_pending", lambda session_id: False)
+    promoted: list[str] = []
+
+    async def _promote(session_id: str) -> list[str]:
+        promoted.append(session_id)
+        return ["llm_thinking_enabled"]
+
+    monkeypatch.setattr(tr, "promote_pending_settings", _promote)
+    r0 = await store.insert_claimed("s1", _payload("first"), "user")
+    registry.register("ws", RecordingExecutor())
+
+    await tr.on_turn_finished("s1", claim_row_ids=r0.id)
+
+    assert promoted == ["s1"], "the parked choice must be promoted when the turn ends"
+    assert settings is not None
+
+
+@pytest.mark.asyncio
+async def test_hitl_wait_does_not_promote_parked_choices(env, monkeypatch):
+    """A HITL suspension resumes the SAME turn: the park waits for its end."""
+    tr, store, registry = env.tr, env.store, env.registry
+    monkeypatch.setattr(tr, "is_hitl_pending", lambda session_id: True)
+    promoted: list[str] = []
+
+    async def _promote(session_id: str) -> list[str]:
+        promoted.append(session_id)
+        return ["llm_thinking_enabled"]
+
+    monkeypatch.setattr(tr, "promote_pending_settings", _promote)
+    r0 = await store.insert_claimed("s1", _payload("first"), "user")
+    registry.register("ws", RecordingExecutor())
+
+    await tr.on_turn_finished("s1", claim_row_ids=r0.id)
+
+    assert promoted == []
+
+
+@pytest.mark.asyncio
 async def test_drain_executes_queued_rows_in_fifo_order(env):
     tr, store, registry = env.tr, env.store, env.registry
     rows = [await _enqueue(store, "s1", text) for text in ("a", "b", "c")]

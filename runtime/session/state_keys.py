@@ -30,6 +30,18 @@ class StateKey(StrEnum):
     # Per-session thinking/reasoning toggle (client UI → /sessions/thinking).
     # bool when the user made an explicit choice; absent = env default.
     LLM_THINKING_ENABLED = "llm_thinking_enabled"
+    # Choice made while a turn was running: parked here so the in-flight turn
+    # keeps its variant, then promoted to the live key when the turn ends.
+    LLM_THINKING_ENABLED_PENDING = "llm_thinking_enabled_pending"
+
+    # Per-session main-model override (client UI → /sessions/model): the
+    # profile descriptor {id, label, provider, model, base_url, api_key} the
+    # session runs on, or absent = follow the env-configured main LLM. The
+    # agent-side middleware reads it on every model call, so a change applies
+    # from the next turn (writes land here directly when the session is idle).
+    LLM_MAIN_MODEL = "llm_main_model"
+    # Model choice made mid-turn: parked (same semantics as the thinking twin).
+    LLM_MAIN_MODEL_PENDING = "llm_main_model_pending"
 
     MULTIMODAL_TRYING_NATIVE = "_multimodal_trying_native"
     MULTIMODAL_NATIVE_MODEL = "_multimodal_native_model"

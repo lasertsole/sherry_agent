@@ -3,6 +3,7 @@ from typing import Any
 
 _MODULE_MAP = {
     "build_main_llm": ".LLMs",
+    "build_main_llm_for_profile": ".LLMs",
     "build_reasoner_model": ".LLMs",
     "build_auxiliary_llm": ".LLMs",
     "NormalizingChatModel": ".LLMs",

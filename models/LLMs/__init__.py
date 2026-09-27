@@ -4,6 +4,7 @@ from typing import Any
 _MODULE_MAP = {
     "ReasoningChatOpenAI": ".reasoning_openai",
     "build_main_llm": ".main_llm",
+    "build_main_llm_for_profile": ".main_llm",
     "build_reasoner_model": ".reasoner_llm",
     "build_auxiliary_llm": ".auxiliary_llm",
     "NormalizingChatModel": ".reasoning_normalizer",
