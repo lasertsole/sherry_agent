@@ -21,7 +21,7 @@ from skills.builtin.core.cron.scripts import cron_service, CronSchedule
 # =============================================================================
 # Serialization helpers
 #
-# Audit 2.1.6: the implementations live in server/trigger/http/helpers.py;
+# The implementations live in server/trigger/http/helpers.py;
 # the original private names are kept as aliases so call sites are unchanged.
 # =============================================================================
 

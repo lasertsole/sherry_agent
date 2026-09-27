@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.6 — shared HTTP response helpers (server/trigger/http/helpers.py).
+"""TDD tests for the shared HTTP response helpers (server/trigger/http/helpers.py).
 
 Pins the exact responses the former per-module copies produced, and that the
 endpoint modules still expose them under their original private names.

@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.3 — shared ``StreamDriver`` (server/service/stream_driver.py).
+"""TDD tests for the shared ``StreamDriver`` (server/service/stream_driver.py).
 
 Pins the turn-driving frame contract the three sites (agent WS ``_run_stream``,
 ``WsTurnExecutor._drive``, auto-turn ``_drive_turn``) used to duplicate:

@@ -28,7 +28,7 @@ SILENT_REPLY_TOKEN = (
 
 # Strong references for fire-and-forget wake checks: without them the event
 # loop may GC the task mid-flight, and a task exception would be reported as
-# "never retrieved" at GC time instead of reaching the log (audit #44).
+# "never retrieved" at GC time instead of reaching the log.
 _background_tasks: set[asyncio.Task[None]] = set()
 
 

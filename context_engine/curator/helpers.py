@@ -70,7 +70,7 @@ def _skill_dir(name: str) -> Path | None:
     lookup misses nested skills, so we walk ``**/SKILL.md`` and match by parent dir
     name (mirrors ``skill_manage._find_skill``).
 
-    Canonical implementation (audit 3.1.3): ``curator.usage._skill_dir`` and
+    Canonical implementation: ``curator.usage._skill_dir`` and
     ``curator.orchestrator._resolve_skill_dir`` are aliases of this function.
     """
     from context_engine.curator.constants import AUTO_SKILLS_DIR

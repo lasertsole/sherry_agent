@@ -33,7 +33,7 @@ async def delete_thread_history(session_id: str) -> None:
 
     # async with guarantees the connection (and its file handle) is closed on
     # both success and failure paths — without it, every clear_session call
-    # leaked one connection (audit #10). Uncommitted work is rolled back on close.
+    # leaked one connection. Uncommitted work is rolled back on close.
     async with aiosqlite.connect(sqlite_file_path, check_same_thread=False) as _conn:
         await _conn.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
         await _conn.execute("DELETE FROM writes WHERE thread_id = ?", (thread_id,))

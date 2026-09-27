@@ -80,7 +80,7 @@ class TestSubPaths:
     def test_interpreter_path(self):
         from config.path import INTERPRETER_PATH
 
-        # Audit #32: the constant must track the interpreter actually running
+        # The constant must track the interpreter actually running
         # this process (cross-platform by construction: Windows Scripts/,
         # POSIX bin/, conda, system python) instead of a Windows-only venv
         # layout. The old constant pointed at a file that never existed on

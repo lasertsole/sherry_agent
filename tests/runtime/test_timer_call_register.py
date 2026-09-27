@@ -28,7 +28,7 @@ pytestmark = [pytest.mark.module]
 
 
 class TestTimerCallRegister:
-    """Test the countdown timer register (audit #8: per-generation task names)."""
+    """Test the countdown timer register (per-generation task names)."""
 
     @pytest.fixture
     def reg(self) -> Generator[TimerCallRegister]:
@@ -118,7 +118,7 @@ class TestTimerCallRegister:
     def test_unregister_nonexistent(self, reg: TimerCallRegister):
         assert reg.unregister("s1", "missing") is False
 
-    # --- reset_timer (audit #8 core) ---
+    # --- reset_timer (core) ---
 
     def test_reset_cancels_old_generation_task(self, reg: TimerCallRegister):
         cb = MagicMock()
@@ -131,7 +131,7 @@ class TestTimerCallRegister:
 
         # Old generation is gone, exactly one live task remains
         live = self._wait_live(reg, "s1", "t1")
-        # New generation got a FRESH unique name — never reusable (audit #8)
+        # New generation got a FRESH unique name — never reusable
         assert live[0].get_name() != old_name
         assert live[0].get_name() == reg.session_id_to_timers["s1"]["t1"].task_name
 

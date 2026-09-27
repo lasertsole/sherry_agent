@@ -104,7 +104,7 @@ def build_auxiliary_llm(temperature: float | None = None):
         _HF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"  # noqa: N806
 
         def _resolve_model_path() -> str:
-            # Shared resolver (audit 1.1.3); hf_hub_download(local_files_only=True)
+            # Shared resolver; hf_hub_download(local_files_only=True)
             # does NOT work with local_dir — go straight to remote download.
             from models.utils import resolve_gguf_path
 
@@ -115,7 +115,7 @@ def build_auxiliary_llm(temperature: float | None = None):
         class LocalLlamaChatModel(LocalLlamaChatBase):
             """Auxiliary variant: plain Llama client + reasoning extraction.
 
-            Common lifecycle/fields live on LocalLlamaChatBase (audit 1.1.1);
+            Common lifecycle/fields live on LocalLlamaChatBase;
             tool binding and structured output are delegated to the
             prompt-injection adapters in local_adapters.py.
             """

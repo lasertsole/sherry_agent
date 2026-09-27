@@ -108,7 +108,7 @@ CREATE TABLE IF NOT EXISTS messages (
     tool_status   TEXT,               -- Tool execution status (default "success")
     tool_name     TEXT,               -- Tool name
     timestamp     TEXT NOT NULL,      -- Timestamp YYYYMMDDHHmmss (shared by the whole batch)
-    ts_ms         INTEGER NOT NULL,   -- Epoch-ms ordering key, strictly increasing per turn (audit #21)
+    ts_ms         INTEGER NOT NULL,   -- Epoch-ms ordering key, strictly increasing per turn
     finish_reason TEXT,               -- AI response finish reason
     reasoning     TEXT,               -- Chain-of-thought (additional_kwargs["reasoning_content"])
     reasoning_content TEXT,           -- Reasoning process

@@ -1,4 +1,4 @@
-"""Shared tool helper utilities (audit 1.1.7)."""
+"""Shared tool helper utilities."""
 
 import json
 

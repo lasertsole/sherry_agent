@@ -119,7 +119,7 @@ class TestCallbackExecutor:
         assert "a" in order
         assert "b_end" in order
 
-    # --- timeout timer lifecycle (audit #7) ---
+    # --- timeout timer lifecycle ---
 
     def _pending_timers(self, executor):
         """Non-cancelled handles still pending on the background loop."""
@@ -127,7 +127,7 @@ class TestCallbackExecutor:
 
     def test_completed_run_coroutine_leaves_no_pending_timer(self, executor):
         """A fire-and-forget callback that finishes early must not leave its
-        timeout timer pending until the full 3600s (audit #7)."""
+        timeout timer pending until the full 3600s."""
         results = []
 
         async def work():
@@ -142,7 +142,7 @@ class TestCallbackExecutor:
 
     def test_completed_create_task_leaves_no_pending_timer(self, executor):
         """A create_task coroutine that finishes early must not leave its
-        timeout timer pending until the full 3600s (audit #7)."""
+        timeout timer pending until the full 3600s."""
         done = executor.create_task(asyncio.sleep(0.05), name="quick", timeout=3600)
         done.wait(timeout=2.0)
         time.sleep(0.3)  # let the loop compact the cancelled timer handle

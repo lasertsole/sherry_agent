@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.1 — shared stream-dispatch engine
+"""TDD tests for the shared stream-dispatch engine
 (server/service/stream_dispatch.py + the _GenerateTurn/_ResumeTurn wiring in
 server/service/messages.py).
 

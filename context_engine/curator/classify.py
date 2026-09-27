@@ -7,7 +7,7 @@ from context_engine.curator.helpers import _needle_in_path_component
 def _parse_skill_manage_args(
     tool_calls: list[dict[str, Any]] | None, *, keep_raw_on_error: bool = False
 ) -> list[dict[str, Any]]:
-    """Parse the ``arguments`` of every ``skill_manage`` tool call (audit 3.1.6).
+    """Parse the ``arguments`` of every ``skill_manage`` tool call.
 
     Shared by :func:`_classify_removed_skills` (which keeps unparseable string
     payloads as ``{"_raw": ...}`` so the raw text stays searchable as

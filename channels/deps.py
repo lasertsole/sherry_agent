@@ -1,4 +1,4 @@
-"""Shared channel-plugin dependency installation (audit 3.1.4).
+"""Shared channel-plugin dependency installation.
 
 ``channels/registry.py::_ensure_deps`` and
 ``plugins/channels/qq/core.py::_install_deps`` previously duplicated the same

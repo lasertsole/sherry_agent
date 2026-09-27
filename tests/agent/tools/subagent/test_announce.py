@@ -114,7 +114,7 @@ def _wake_run() -> SubagentRunRecord:
 
 
 class TestDescendantWakeBackgroundTask:
-    """Audit #44: the fire-and-forget wake check must be tracked and never drop exceptions."""
+    """the fire-and-forget wake check must be tracked and never drop exceptions."""
 
     @pytest.mark.asyncio
     async def test_scheduled_check_is_tracked_and_removed_on_cancel(self):

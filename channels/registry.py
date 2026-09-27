@@ -26,8 +26,7 @@ def _ensure_deps(plugin_dir: Path, plugin_name: str) -> bool:
     Uses *uv* when available (consistent with the project toolchain), otherwise
     falls back to ``python -m pip``.  Installation is idempotent -- already
     satisfied packages are skipped by pip/uv.  The subprocess mechanics are
-    shared with the QQ plugin via :func:`channels.deps.install_requirements`
-    (audit 3.1.4).
+    shared with the QQ plugin via :func:`channels.deps.install_requirements`.
 
     Returns ``True`` if deps are ready (or no requirements.txt found).
     """

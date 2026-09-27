@@ -1,4 +1,4 @@
-"""TDD tests for audit 3.1.5 — shared JSON-column decode helper
+"""TDD tests for the shared JSON-column decode helper
 (context_engine/store/core.py::_decode_json_columns).
 
 Pins the decode block both paginated/turn-scoped readers used to duplicate:

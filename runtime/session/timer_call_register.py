@@ -37,7 +37,7 @@ class TimerCallRegister(SessionRegister):
         self._executor = CallbackExecutor(name="timer-register-loop")
         # Guards session_id_to_timers: register/unregister/reset_timer/
         # clear_session and the _run_timer cleanup all read-then-delete the
-        # same entries; unlocked, the loser raises KeyError (audit #13).
+        # same entries; unlocked, the loser raises KeyError.
         self._timers_lock = threading.Lock()
 
         self._initialized = True
@@ -79,7 +79,7 @@ class TimerCallRegister(SessionRegister):
                 return False
 
             timer = Timer(minutes=minutes, callback=callback, args=args)
-            # Unique per-generation task name (audit #8): cancel_task matches by
+            # Unique per-generation task name: cancel_task matches by
             # name and stops at the first hit, so a reusable name could hit the
             # wrong generation when several same-named tasks coexist transiently
             # (reset/unregister+register while the loop is busy) — cancelling the
@@ -206,7 +206,7 @@ class TimerCallRegister(SessionRegister):
 
             new_timer = Timer(minutes=minutes, callback=callback, args=args)
             # Fresh unique task name for the new generation — see register()
-            # (audit #8): the old generation's cancel must never hit this task.
+            #: the old generation's cancel must never hit this task.
             task_name = f"timer_{session_id}_{name}_{uuid.uuid4().hex[:8]}"
             new_timer.task_name = task_name
             timers[name] = new_timer

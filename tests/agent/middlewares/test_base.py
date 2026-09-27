@@ -1,13 +1,13 @@
-"""TDD tests for `agent/middlewares/base.py` shared helpers (audit 1.1.8/1.1.9/1.1.10).
+"""TDD tests for `agent/middlewares/base.py` shared helpers (/1.1.9/1.1.10).
 
 * ``require_session_id`` — deduplicates the 7 per-middleware session-id
   extraction variants while preserving each caller's exact error message.
 * ``args_hash`` — deduplicates the HITL/guardrails argument-hash copies
-  (audit 1.1.8): md5 of ``json.dumps(args, sort_keys=True, default=str)``
+ : md5 of ``json.dumps(args, sort_keys=True, default=str)``
   with a ``str(args)`` fallback.
 * ``BeforeAgentHooksMixin`` / ``AfterAgentHooksMixin`` — auto-bridge for
   middlewares implementing sync ``_before_agent_impl`` /
-  ``_after_agent_impl`` (audit 1.1.9); the four langchain hooks delegate to
+  ``_after_agent_impl``; the four langchain hooks delegate to
   the impls and return None.
 """
 

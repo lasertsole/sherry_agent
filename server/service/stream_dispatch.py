@@ -1,4 +1,4 @@
-"""Shared stream-dispatch engine for ``async_generate`` / ``resume_agent`` (audit 2.1.1).
+"""Shared stream-dispatch engine for ``async_generate`` / ``resume_agent``.
 
 ``server/service/messages.py`` carried two nearly identical copies of the
 ``stream_mode=["messages", "updates"]`` dispatch loop — updates-mode tool

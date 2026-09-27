@@ -17,7 +17,7 @@ class CallbackExecutor:
         self._start_event = threading.Event()
         self._name = name
         # First use must spawn exactly ONE loop thread; loop reads are
-        # ordered via _start_event (audit #13).
+        # ordered via _start_event.
         self._ensure_lock = threading.Lock()
 
     def _run_loop(self):
@@ -53,7 +53,7 @@ class CallbackExecutor:
         background loop via call_later; if the callback does not complete
         within the given time its task is cancelled.  The TimerHandle is
         released as soon as the task completes, so a callback that finishes
-        early leaves no pending timeout timer behind (audit #7).
+        early leaves no pending timeout timer behind.
         """
         loop = self.loop
 
@@ -71,7 +71,7 @@ class CallbackExecutor:
             # Release the timer as soon as the task ends (completion,
             # cancellation or error) — cancelling an already-fired handle is
             # a safe no-op.  Without this, every finished callback left a
-            # live 3600s timer + closure pending on the loop (audit #7).
+            # live 3600s timer + closure pending on the loop.
             task.add_done_callback(lambda _t: timer.cancel())
 
         loop.call_soon_threadsafe(_schedule, *())
@@ -84,7 +84,7 @@ class CallbackExecutor:
         background loop via call_later; if the coroutine does not complete
         within the given time its task is cancelled.  The TimerHandle is
         released as soon as the task completes, so a task that finishes
-        early leaves no pending timeout timer behind (audit #7).
+        early leaves no pending timeout timer behind.
         """
         loop = self.loop
         done = threading.Event()
@@ -103,7 +103,7 @@ class CallbackExecutor:
             # Release the timer as soon as the task ends (completion,
             # cancellation or error) — cancelling an already-fired handle is
             # a safe no-op.  Without this, every finished task left a live
-            # 3600s timer + closure pending on the loop (audit #7).
+            # 3600s timer + closure pending on the loop.
             task.add_done_callback(lambda _t: timer.cancel())
 
         loop.call_soon_threadsafe(_schedule, *())

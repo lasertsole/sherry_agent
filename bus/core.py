@@ -17,7 +17,7 @@ class MessageBus:
 
     Both queues are bounded (``BUS_QUEUE_MAXSIZE`` by default): when a queue
     is full, ``publish_inbound`` / ``publish_outbound`` await free space
-    instead of letting memory grow without limit (audit #11). The producer
+    instead of letting memory grow without limit. The producer
     is backpressured — messages are delayed, never silently dropped — so
     ``asyncio.QueueFull`` cannot surface through this API. Bounded waits are
     preferred over drop-on-full because inbound carries user messages and

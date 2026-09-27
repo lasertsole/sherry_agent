@@ -112,10 +112,10 @@ class TestMessageBus:
         await asyncio.wait_for(task, timeout=1.0)
         assert results == ["arrived"]
 
-    # --- Bounded queues / backpressure (audit #11) ---
+    # --- Bounded queues / backpressure ---
 
     async def test_queues_bounded_by_default(self, bus):
-        """Both queues carry BUS_QUEUE_MAXSIZE by default (audit #11)."""
+        """Both queues carry BUS_QUEUE_MAXSIZE by default."""
         assert bus.inbound.maxsize == BUS_QUEUE_MAXSIZE
         assert bus.outbound.maxsize == BUS_QUEUE_MAXSIZE
 

@@ -1,7 +1,7 @@
 """Module tests for agent/checkpointer/async_sqlite_checkpointer.py.
 
 Focus: delete_thread_history must never leak its aiosqlite connection
-(audit #10) and must delete rows for exactly the target thread.
+ and must delete rows for exactly the target thread.
 """
 
 import sqlite3
@@ -67,7 +67,7 @@ class TestDeleteThreadHistory:
         return created
 
     async def test_connection_closed_after_delete(self, fake_connect):
-        """Success path: the connection must be closed (audit #10 leak regression)."""
+        """Success path: the connection must be closed (leak regression)."""
         await delete_thread_history("session_abc")
 
         assert len(fake_connect) == 1
@@ -142,7 +142,7 @@ class TestDeleteThreadHistory:
 
 @pytest.mark.asyncio
 class TestThreadSafeSaverAclose:
-    """Audit #63: the saver owns its aiosqlite connection and releases it idempotently."""
+    """the saver owns its aiosqlite connection and releases it idempotently."""
 
     async def test_aclose_closes_connection_and_is_idempotent(self, tmp_path, monkeypatch):
         import agent.checkpointer.async_sqlite_checkpointer as mod

@@ -1,4 +1,4 @@
-"""Repository for the ``messages``-table read queries (audit #8).
+"""Repository for the ``messages``-table read queries.
 
 The two history readers in :mod:`context_engine.store.core`
 (``get_turns_by_turn_num_scope`` and ``get_history_by_turn_page``) built the

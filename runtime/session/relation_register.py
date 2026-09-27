@@ -10,7 +10,7 @@ class RelationManager(SessionRegister):
             return
 
         # One lock for all five mappings: every register/unregister updates
-        # TWO dicts, and a torn pair breaks reverse lookups (audit #13).
+        # TWO dicts, and a torn pair breaks reverse lookups.
         # RLock: clear_session re-enters it via unregister_* helpers.
         self._rm_lock = threading.RLock()
 

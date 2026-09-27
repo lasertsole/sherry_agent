@@ -1,4 +1,4 @@
-"""Shared read/validate/write file-store template (audit 2.1.7).
+"""Shared read/validate/write file-store template.
 
 Three UI-editable text file stores previously implemented the same
 ``read_*_file()`` (iterate allowed names, read what exists) and

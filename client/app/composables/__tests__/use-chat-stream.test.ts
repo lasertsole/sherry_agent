@@ -222,9 +222,10 @@ describe('useChatStream queue badges', () => {
     const rows = harness.chatMessages.value;
     // Both queued user messages are unified onto the earliest member's turn (2),
     // matching the single turn the backend persists the batch as.
-    expect(
-      rows.filter(m => m.role === CHAT_ROLE.USER && m.turn_num === 2).map(m => m.content)
-    ).toEqual(['second', 'third']);
+    expect(rows.filter(m => m.role === CHAT_ROLE.USER && m.turn_num === 2).map(m => m.content)).toEqual([
+      'second',
+      'third'
+    ]);
     // Exactly ONE AI placeholder for the batch, at the unified turn, after both users.
     const ais = rows.filter(m => m.role === CHAT_ROLE.AI && m.turn_num === 2);
     expect(ais).toHaveLength(1);

@@ -12,12 +12,12 @@ from .content_codec import decode_content
 from .store import get_db, get_messages_by_lastest_n_turns
 
 
-# Lazy shared connection; created on first DB access, not at import (audit #14).
+# Lazy shared connection; created on first DB access, not at import.
 _db: sqlite3.Connection | None = None
 _lock = threading.Lock()
 _CONTENT_JSON_PREFIX = "\x00json:"
 
-# FTS5 MATCH cost caps (audit #20). Measured on a 50k-row table: a 20k-term
+# FTS5 MATCH cost caps. Measured on a 50k-row table: a 20k-term
 # OR chain costs ~1s of parse/eval per query, 100k terms ~49s. SQLite offers
 # no per-query limit that reaches the FTS5 parser (EXPR_DEPTH and
 # LIKE_PATTERN_LENGTH leave MATCH unchanged; LENGTH is connection-global and
@@ -104,7 +104,7 @@ def _sanitize_fts5_query(query: str) -> str:
       matches them as exact phrases instead of splitting on the
       hyphen/dot (e.g. ``chat-send``, ``P2.2``, ``my-app.config.ts``)
     - Cap input size: token count, per-token length, wildcard terms
-      (audit #20 — bounds MATCH parse/eval cost)
+      (bounds MATCH parse/eval cost)
     """
     tokens = query.split()[:_MAX_QUERY_TOKENS]
     wildcard_seen = 0
@@ -232,7 +232,7 @@ class _TrigramStrategy(_SearchStrategy):
             try:
                 tri_cursor = _shared_db().execute(tri_sql, tri_params)
             except sqlite3.OperationalError as exc:
-                # Fail-open, but never silent (audit #61): a genuine FTS/schema
+                # Fail-open, but never silent: a genuine FTS/schema
                 # fault must be visible. Only the query length is logged — the
                 # user's text never reaches the log.
                 logger.warning(
@@ -422,7 +422,7 @@ def _attach_search_context(matches: list[dict[str, Any]], session_id: str) -> No
                 preview = ""
             matches[r["ord"]]["context"].append({"role": r["role"], "content": preview[:200]})
     except Exception as exc:
-        # Fail-open, but never silent (audit #61): a broken context query must
+        # Fail-open, but never silent: a broken context query must
         # be visible. Session id + match count only — no message content.
         logger.warning(
             "Search context attach failed (fail-open -> empty contexts): session_id={}, "
@@ -494,7 +494,7 @@ async def search_messages_async(
     """Async entrypoint: runs the blocking FTS5/LIKE search in an executor thread.
 
     The threading.Lock and sqlite3 I/O then live on a worker thread, so the
-    event loop stays responsive (audit #14).
+    event loop stays responsive.
     """
     return await asyncio.to_thread(
         search_messages,

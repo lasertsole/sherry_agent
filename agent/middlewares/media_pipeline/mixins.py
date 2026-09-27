@@ -1,4 +1,4 @@
-"""Mixin classes for agent middlewares (audit 1.1.9)."""
+"""Mixin classes for agent middlewares."""
 
 from typing import Any
 

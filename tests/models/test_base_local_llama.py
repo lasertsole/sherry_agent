@@ -1,4 +1,4 @@
-"""TDD tests for audit 1.1.1-1.1.3 — LocalLlamaChatModel Template Method.
+"""TDD tests for LocalLlamaChatModel Template Method.
 
 Creates ``models/LLMs/base_local_llama.py`` with:
 

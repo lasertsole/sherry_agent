@@ -1,4 +1,4 @@
-"""Deferred-cleanup shutdown tests (audit #45).
+"""Deferred-cleanup shutdown tests.
 
 Locks the contract of ``shutdown_deferred_cleanup``: every pending timer is
 cancelled and awaited, the registry is drained, repeat calls are no-ops, and

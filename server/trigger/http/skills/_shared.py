@@ -101,7 +101,7 @@ def _read_skills_state() -> dict[str, dict[str, bool]]:
 def _write_skills_state(state: dict[str, dict[str, bool]]) -> None:
     """Write the skills state file atomically (temp file + os.replace).
 
-    Audit 2.1.8: delegates to the shared
+    Delegates to the shared
     :func:`server.utils.atomic_io.atomic_write_text` (temp cleanup on failure
     is handled inside the helper; the exception still propagates).
     """

@@ -94,7 +94,7 @@ Each yielded item is a dict ``{"type": <str>, "content": <str>}`` where
 Callers that only need the plain text (e.g. channel consumers) can
 join ``chunk["content"]`` for every item.
 
-Audit 2.1.1: ``async_generate`` and ``resume_agent`` share the
+``async_generate`` and ``resume_agent`` share the
 ``stream_mode=["messages", "updates"]`` dispatch loop via the
 :class:`~server.service.stream_dispatch.StreamTurn` Template Method in
 ``server/service/stream_dispatch.py`` (which also owns the pending tool-args

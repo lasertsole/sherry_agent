@@ -1,4 +1,4 @@
-"""Template Method base for local GGUF chat models (audit 1.1.1-1.1.3).
+"""Template Method base for local GGUF chat models.
 
 ``LocalLlamaChatBase`` owns the common pydantic fields, client lifecycle,
 ``_generate`` skeleton and identifying params; ``LocalMultimodalLlamaChatBase``

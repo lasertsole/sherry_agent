@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.2 — shared ``send_ws_json`` (server/utils/ws_helpers.py).
+"""TDD tests for the shared ``send_ws_json`` (server/utils/ws_helpers.py).
 
 Pins the exact contract the three former private ``_send_ws`` copies had:
 - ``None`` socket → no-op (frames are skippable);

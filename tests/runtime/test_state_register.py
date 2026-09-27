@@ -131,7 +131,7 @@ class TestStateRegisterMeM:
 
 
 class TestStateRegisterDBFailures:
-    """Audit #68: DB faults are logged and distinguishable from "no data"."""
+    """DB faults are logged and distinguishable from "no data"."""
 
     @pytest.fixture
     def db_reg(self, tmp_path, monkeypatch):

@@ -9,7 +9,7 @@ from config.features import MES_MEMORY
 
 _db_path: Path = SRC_DIR / "store/mes_memory/mes_memory.db"
 _db: sqlite3.Connection | None = None
-# Guards singleton creation (audit #15: unlocked double-check leaked connections).
+# Guards singleton creation (unlocked double-check leaked connections).
 _db_lock = threading.Lock()
 
 # Busy-wait budget before "database is locked"; 1.0s starved under contention.

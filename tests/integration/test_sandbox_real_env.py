@@ -1,4 +1,4 @@
-"""Real-environment integration tests for the OS sandbox backends (audit 1-D).
+"""Real-environment integration tests for the OS sandbox backends.
 
 Unlike the construction-only unit tests (which inspect the argv returned by
 ``wrap``), these tests EXECUTE a real ``bwrap`` / ``sandbox-exec`` and assert

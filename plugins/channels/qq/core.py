@@ -74,7 +74,7 @@ def _install_deps() -> bool:
 
     Uses ``uv`` when available (consistent with the project toolchain),
     otherwise falls back to ``sys.executable -m pip`` (shared subprocess
-    mechanics via :func:`channels.deps.install_requirements`, audit 3.1.4).
+    mechanics via :func:`channels.deps.install_requirements`).
     Installation is idempotent -- already-satisfied packages are skipped.
     Returns ``True`` once the dependencies are importable, ``False`` otherwise.
 

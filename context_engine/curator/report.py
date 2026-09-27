@@ -16,7 +16,7 @@ from context_engine.curator.classify import (
 def _compute_diff(
     *, before_names: set[str], after_report: list[dict[str, Any]]
 ) -> tuple[set[str], list[str], list[str]]:
-    """Compute the shared before/after skill-name diff (audit 3.1.2).
+    """Compute the shared before/after skill-name diff.
 
     Returns ``(after_names, removed, added)`` with ``removed``/``added``
     sorted — previously computed independently by :func:`_build_rename_summary`
@@ -38,7 +38,7 @@ def _classify_archived(
     tool_calls: list[dict[str, Any]],
     llm_final: str,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Run the shared removed-skill classification pipeline (audit 3.1.2).
+    """Run the shared removed-skill classification pipeline.
 
     Heuristic tool-call audit + model structured block + absorbed_into
     declarations, reconciled — the exact pipeline both report builders used.

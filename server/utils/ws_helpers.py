@@ -1,4 +1,4 @@
-"""Shared best-effort WebSocket frame send (audit 2.1.2).
+"""Shared best-effort WebSocket frame send.
 
 Three modules previously carried a private ``_send_ws`` with the same
 contract — ``server/trigger/ws/messages.py``, ``server/service/turn_runner.py``

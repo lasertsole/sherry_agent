@@ -630,7 +630,7 @@ class TestJsonEncodedContent:
 
 
 # ============================================================================
-# Audit #61: fail-open paths must log instead of swallowing silently
+# Fail-open paths must log instead of swallowing silently
 # ============================================================================
 
 

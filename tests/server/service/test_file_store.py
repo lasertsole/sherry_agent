@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.7 — shared ``FileStore`` template
+"""TDD tests for the shared ``FileStore`` template
 (server/service/file_store.py) wired into workplace/memory/heartbeat.
 
 Pins the shared read/validate/write semantics the three services used to

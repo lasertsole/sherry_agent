@@ -35,7 +35,7 @@ _HTTP_TIMEOUT: float = SKILLS_TOOLING["speech_http_timeout_seconds"]
 # Where ``main`` lives, so the daemon can be (re)spawned from anywhere.
 _IMPORT_FN = "skills.builtin.core.speech_to_text.scripts.server"
 # INTERPRETER_PATH is the interpreter actually running this process
-# (config/path.py, audit #32) — it exists by definition on every platform, so
+# (config/path.py) — it exists by definition on every platform, so
 # the old exists()-probe fallback (which pointed at a file that never existed
 # on Windows — venvs ship python.exe — nor on POSIX — bin/ layout) is gone.
 _INTERPRETER = Path(INTERPRETER_PATH).as_posix()

@@ -1,4 +1,4 @@
-"""Shared atomic file-write helper (audit 2.1.8).
+"""Shared atomic file-write helper.
 
 Four server modules previously implemented the same "tempfile in the target's
 directory + ``os.replace``" write pattern (channel config, SkillSpector scan

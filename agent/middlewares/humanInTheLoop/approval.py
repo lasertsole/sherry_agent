@@ -22,7 +22,7 @@ from .approval_scope import current_operator
 from .approval_store import ApprovalVerdict, ToolApprovalStore
 from .detection import detect_hardline_command, detect_dangerous_command
 
-# Use shared args_hash from middlewares.base (audit 1.1.8)
+# Use shared args_hash from middlewares.base
 from agent.middlewares.base import args_hash
 
 
@@ -81,7 +81,7 @@ def _extract_pattern(command: str) -> str:
     return f"{parts[0]}*" if parts else command
 
 
-# Use shared args_hash from middlewares.base (audit 1.1.8)
+# Use shared args_hash from middlewares.base
 _args_hash = args_hash
 
 

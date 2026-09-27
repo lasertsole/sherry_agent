@@ -1,4 +1,4 @@
-"""Schema descriptor utilities (audit 1.1.5).
+"""Schema descriptor utilities.
 
 langchain_core defines ``tool_call_schema`` as a bare instance ``@property``,
 so class-level access (``MyTool.tool_call_schema``) would return the bare

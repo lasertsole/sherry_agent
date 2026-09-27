@@ -7,7 +7,7 @@ from loguru import logger
 class SessionRegister(ABC):
     _instances = {}
     # RLock: clear_all_register_sessions re-enters it via subclass().__new__.
-    # Guards singleton creation and registry scans (audit #13).
+    # Guards singleton creation and registry scans.
     _registry_lock = threading.RLock()
 
     def __new__(cls, *args, **kwargs):

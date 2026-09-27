@@ -9,9 +9,9 @@ client. The HTTP ``GET /subagents/runs`` endpoint provides the initial /
 gap-fill snapshot; this push channel keeps the UI live between fetches.
 
 The push machinery (subscriber set, bounded per-websocket deques, sender
-task, handler skeleton) is shared with logs.py via WSPushChannel (audit
-2.1.4); run-record serialization is shared with server/trigger/http/subagent.py
-via server.trigger.subagent_serialize (audit 2.1.5).
+task, handler skeleton) is shared with logs.py via WSPushChannel;
+run-record serialization is shared with server/trigger/http/subagent.py
+via server.trigger.subagent_serialize.
 
 The hook registrars are idempotent and the subscriber set is guarded by a
 ``threading.Lock`` because hooks (event-loop / task threads) and the handler
@@ -25,7 +25,7 @@ from loguru import logger
 
 from server.trigger.core import app
 
-# noqa: F401 -- re-export contract asserted by test_subagent_serialize (audit 2.1.5)
+# noqa: F401 -- re-export contract asserted by test_subagent_serialize
 from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS  # noqa: F401
 from server.trigger.subagent_serialize import serialize_run as _serialize_run
 from server.trigger.ws.push_channel import WSPushChannel
@@ -33,7 +33,7 @@ from robyn import WebSocketAdapter
 
 from agent.tools.subagent.hooks import register_spawned_hook, register_ended_hook
 
-# Audit 2.1.5: _PUBLIC_FIELDS / _serialize_run are imported from the shared
+# _PUBLIC_FIELDS / _serialize_run are imported from the shared
 # server.trigger.subagent_serialize module (aliases keep call sites unchanged).
 
 # Idempotency guard: hooks must only be registered once even if this module is

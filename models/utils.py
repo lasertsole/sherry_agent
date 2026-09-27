@@ -1,4 +1,4 @@
-"""Shared utilities for the models/ packages (audit 1.1 dedup)."""
+"""Shared utilities for the models/ packages (dedup)."""
 
 import re
 import threading
@@ -74,7 +74,7 @@ def resolve_gguf_path(
 ) -> str:
     """Resolve a GGUF weight path: local hit -> fallback copy -> HF download.
 
-    Shared by auxiliary_llm / ITTT_model / VTTT_model (audit 1.1.3). The
+    Shared by auxiliary_llm / ITTT_model / VTTT_model. The
     per-model modules keep thin wrappers passing their own closure constants.
 
     Args:

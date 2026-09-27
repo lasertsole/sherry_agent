@@ -32,5 +32,4 @@ skills/plugins/
 models/*/model_weight/
 
 # Local docs / scratch
-AUDIT_REPORT.md
 *.log

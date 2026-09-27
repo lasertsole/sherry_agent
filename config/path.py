@@ -17,7 +17,7 @@ ENV_PATH = ROOT_DIR / ".env"
 # read from the .env file (idempotent; existing environment variables win).
 load_dotenv(ENV_PATH, override=False)
 
-# The interpreter actually running this process (audit #32). Under every
+# The interpreter actually running this process. Under every
 # supported launch mode (./start.sh or `uv run python -m server`) this IS the
 # project venv's python — on any platform (Windows ``Scripts\``, POSIX
 # ``bin/``, conda, pyenv, system python), with no hardcoded venv layout.

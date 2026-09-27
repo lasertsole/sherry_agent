@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.8 — shared ``atomic_write_text`` (server/utils/atomic_io.py).
+"""TDD tests for the shared ``atomic_write_text`` (server/utils/atomic_io.py).
 
 Pins the atomic-write contract the channel-config / scan-cache / skills-state
 writers shared: tempfile in the target's directory + ``os.replace``, parent

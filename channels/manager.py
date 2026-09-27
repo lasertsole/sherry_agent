@@ -163,7 +163,7 @@ class ChannelManager:
     def start_service(self) -> None:
         """Schedule all channels and the dispatcher on the event loop, then return.
 
-        Non-blocking (audit #16): the calling thread is never parked here —
+        Non-blocking: the calling thread is never parked here —
         the caller owns running ``self._event_loop`` (``run_forever()``).
         """
         if self._started:
@@ -295,7 +295,7 @@ _channel_manager: ChannelManager | None = None
 
 
 def get_channel_manager() -> ChannelManager:
-    """Lazy singleton accessor (audit #16: no instantiation at import time)."""
+    """Lazy singleton accessor (no instantiation at import time)."""
     global _channel_manager
     if _channel_manager is None:
         _channel_manager = ChannelManager()

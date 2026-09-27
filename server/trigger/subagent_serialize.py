@@ -1,4 +1,4 @@
-"""Shared SubagentRunRecord wire serialization (audit 2.1.5).
+"""Shared SubagentRunRecord wire serialization.
 
 ``server/trigger/http/subagent.py`` and ``server/trigger/ws/subagent_ws.py``
 previously carried identical ``_PUBLIC_FIELDS`` tuples and ``_serialize_run``

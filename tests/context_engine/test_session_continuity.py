@@ -185,7 +185,7 @@ class TestContinuityPrompt:
         assert session_continuity.build_continuity_prompt("sess-new") == ""
 
     def test_continuity_prompt_failure_logs_warning(self, continuity_dir, monkeypatch):
-        """Audit #61: the fail-open path stays "" but emits a warning."""
+        """the fail-open path stays "" but emits a warning."""
         from context_engine import session_continuity
 
         def _boom(session_id):

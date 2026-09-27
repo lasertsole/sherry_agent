@@ -1,4 +1,4 @@
-"""TDD tests for audit 3.1.2 / 3.1.3 / 3.1.6 / 3.1.7 — curator shared helpers
+"""TDD tests for curator shared helpers
 (_compute_diff + _classify_archived in report.py, canonical _skill_dir in
 helpers.py, _parse_skill_manage_args in classify.py, generic config getter in
 config.py).

@@ -23,7 +23,7 @@ def _load_channel_config() -> dict:
 def _save_channel_config(config_path: Path, data: dict) -> bool:
     """Atomically persist channel config.json. Returns False on any failure.
 
-    Audit 2.1.8: delegates to the shared :func:`server.utils.atomic_io.atomic_write_text`
+    Delegates to the shared :func:`server.utils.atomic_io.atomic_write_text`
     (tempfile in the same directory + ``os.replace`` + fsync, so a
     failed/interrupted write never leaves a truncated config behind).
     """

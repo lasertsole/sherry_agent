@@ -84,7 +84,7 @@ def _compute_next_run(
 
     For ``every`` schedules, ``anchor_ms`` pins the interval grid to the
     slot the job just consumed, so the job's own duration never pushes the
-    schedule out (audit #22: fixed-phase intervals). Without an anchor the
+    schedule out (fixed-phase intervals). Without an anchor the
     grid starts at ``now_ms`` (first schedule).
     """
     if schedule.kind == "at":
@@ -285,7 +285,7 @@ class CronService:
         """Recompute next run times for all enabled jobs.
 
         ``every`` jobs keep a still-future persisted slot: the interval grid
-        anchored at the last scheduled run survives restarts (audit #22).
+        anchored at the last scheduled run survives restarts.
         Slots that are missing or already past are re-anchored from now.
         """
         if not self._store:
@@ -388,7 +388,7 @@ class CronService:
                 job.enabled = False
                 job.state.next_run_at_ms = None
         else:
-            # Re-anchor to the slot just consumed (audit #22): the grid phase
+            # Re-anchor to the slot just consumed: the grid phase
             # survives job duration; manual runs consume the pending slot.
             job.state.next_run_at_ms = _compute_next_run(
                 job.schedule, _now_ms(), anchor_ms=job.state.next_run_at_ms

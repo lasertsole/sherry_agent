@@ -64,7 +64,7 @@ def get_websocket_by_session_id(session_id: str) -> Any:
 async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
     """Best-effort WS delivery; the socket may be gone at any moment.
 
-    Audit 2.1.2: delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
+    Delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
     (the auto-turn path historically serialized with ``ensure_ascii=False``).
     """
     await send_ws_json(
@@ -166,7 +166,7 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
 async def _drive_turn(bare: str, injection: HumanMessage) -> None:
     """Consume the async_generate generator and forward the shared StreamDriver frames.
 
-    Audit 2.1.3: the loop itself is the shared :class:`StreamDriver` template;
+    The loop itself is the shared :class:`StreamDriver` template;
     ``_AutoTurnStreamDriver`` carries this site's knobs.
     """
     # (subagent-origin-tagging): extract the carrier metadata BEFORE the

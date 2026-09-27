@@ -27,6 +27,20 @@ def _small_limit(monkeypatch):
     monkeypatch.setitem(MEDIA_PIPELINE, "max_media_bytes", LIMIT)
 
 
+@pytest.fixture(autouse=True)
+def _public_dns(monkeypatch):
+    """Keep the SSRF guard hermetic: every host resolves to a public address.
+
+    The media pipeline resolves each remote host before fetching (public-url
+    guard); unit tests must not depend on real DNS, so ``example.com`` answers
+    with a documentation-range address here.
+    """
+    from pub.func.validator import public_url as guard_mod
+
+    infos = [(2, 1, 6, "", ("93.184.216.34", 0))]
+    monkeypatch.setattr(guard_mod.socket, "getaddrinfo", lambda *args, **kwargs: infos)
+
+
 @pytest.fixture()
 def src_dir(tmp_path, monkeypatch):
     path = tmp_path / "src"

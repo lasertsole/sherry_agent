@@ -10,8 +10,8 @@ from robyn import WebSocketAdapter
 # Real-time log streaming over WebSocket.
 #
 # The push machinery (subscriber set, bounded per-websocket deques, sender
-# task, handler skeleton) is shared with subagent_ws.py via WSPushChannel
-# (audit 2.1.4). What remains here is logs-specific: the frame serializer and
+# task, handler skeleton) is shared with subagent_ws.py via WSPushChannel.
+# What remains here is logs-specific: the frame serializer and
 # the loguru sink registration.
 #
 # Design decision (send mechanism):

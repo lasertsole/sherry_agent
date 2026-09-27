@@ -1,4 +1,4 @@
-"""TDD tests for audit 1.1.5/1.1.6/1.1.7 shared pub_base utilities.
+"""TDD tests for the shared pub_base utilities.
 
 * 1.1.5 ``class_or_instance_schema(parent_cls)`` — descriptor factory letting
   ``tool_call_schema`` be read from class AND instance (replaces the two

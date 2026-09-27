@@ -1,4 +1,4 @@
-"""Shared WS stream driver for turn generators (audit 2.1.3).
+"""Shared WS stream driver for turn generators.
 
 Three sites drive an ``async_generate``-style chunk stream and forward the
 same WS frame contract — the agent WS handler's ``_run_stream``

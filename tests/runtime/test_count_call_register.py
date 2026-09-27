@@ -131,10 +131,10 @@ class TestCountCallRegister:
         # Should not raise
         assert reg.increase("s1", "counter") is True
 
-    # --- concurrency / atomicity (audit #9) ---
+    # --- concurrency / atomicity ---
 
     def test_increase_concurrent_no_lost_counts(self, reg):
-        """Parallel increase() calls must not lose increments (audit #9 RMW race).
+        """Parallel increase() calls must not lose increments (RMW race).
 
         8 threads x 250 increments on threshold=10 -> exactly 200 callback
         fires and a final counter of 0. Without the lock, the read-modify-write
@@ -169,7 +169,7 @@ class TestCountCallRegister:
         assert reg.session_id_to_counter["s1"]["counter"] == total % 10
 
     def test_increase_overflow_carried_not_discarded(self, reg):
-        """Hitting the threshold must carry the overshoot, not hard-reset to 0 (audit #9).
+        """Hitting the threshold must carry the overshoot, not hard-reset to 0.
 
         The public API keeps the counter below threshold, so a counter past
         the threshold is injected directly (legacy state / defensive path).

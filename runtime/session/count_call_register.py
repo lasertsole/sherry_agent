@@ -63,7 +63,7 @@ class CountCallRegister(SessionRegister):
 
         # Same lock as increase()/reset_count(): an unlocked writer here could
         # interleave with a locked increase() between its counter check and
-        # trigger fetch and crash it with KeyError (audit #13).
+        # trigger fetch and crash it with KeyError.
         with self._lock:
             if name in self.session_id_to_counter.setdefault(session_id, {}):
                 logger.debug(f"{name} is already registered for session {session_id}")
@@ -95,7 +95,7 @@ class CountCallRegister(SessionRegister):
         Unregister a counter
         """
         # Lock pairs the counter/trigger deletions and keeps them from tearing
-        # a concurrent locked increase() (audit #13).
+        # a concurrent locked increase().
         with self._lock:
             if name not in self.session_id_to_counter.setdefault(session_id, {}):
                 logger.error(f"{name} is not registered for session {session_id}")
@@ -123,7 +123,7 @@ class CountCallRegister(SessionRegister):
 
             # Read-modify-write is atomic under the lock: without it, two
             # threads can read the same value, both increment, and one
-            # update is silently lost (audit #9).
+            # update is silently lost.
             now_counter: int = counters[name] + 1
 
             trigger: Trigger = self.session_id_to_trigger.setdefault(session_id, {})[name]
@@ -132,7 +132,7 @@ class CountCallRegister(SessionRegister):
             if now_counter >= threshold:
                 # Carry the overshoot into the next cycle instead of
                 # hard-resetting to 0, which would silently discard it
-                # (audit #9: count=5, threshold=3 -> keep 2, not 0).
+                # (count=5, threshold=3 -> keep 2, not 0).
                 now_counter %= threshold
                 pending = (trigger.callback, trigger.args)
 

@@ -12,7 +12,7 @@ from loguru import logger
 
 from server.trigger.core import app
 
-# noqa: F401 -- re-export contract asserted by test_subagent_serialize (audit 2.1.5)
+# noqa: F401 -- re-export contract asserted by test_subagent_serialize
 from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS  # noqa: F401
 from server.trigger.subagent_serialize import serialize_run as _serialize_run
 
@@ -31,14 +31,14 @@ from agent.tools.subagent.registry.helpers import safe_remove_attachments_dir
 from agent.tools.subagent.control.steer import steer_subagent_run
 from agent.tools.subagent import delegate_task
 
-# Audit 2.1.5: _PUBLIC_FIELDS / _serialize_run are imported from the shared
+# _PUBLIC_FIELDS / _serialize_run are imported from the shared
 # server.trigger.subagent_serialize module (aliases keep call sites unchanged).
 
 
 # =============================================================================
 # Response helpers (mirrors cron.py)
 #
-# Audit 2.1.6: the implementations live in server/trigger/http/helpers.py;
+# The implementations live in server/trigger/http/helpers.py;
 # the original private names are kept as aliases so call sites are unchanged.
 # =============================================================================
 

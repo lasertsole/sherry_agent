@@ -308,7 +308,8 @@ def _isolate_summarization_durable_state(monkeypatch: pytest.MonkeyPatch) -> Ite
     monkeypatch.setattr(summarization_module, "state_register_db", _InMemoryStateRegisterDB())
     for session_id in _SPIKE_SESSION_IDS:
         state_register_mem.clear_session(session_id)
-        summarization_module._RESTORED_COOLDOWN_SESSIONS.discard(session_id)
+        # Bounded OrderedDict since the P2 #32 fix: drop the entry if present.
+        summarization_module._RESTORED_COOLDOWN_SESSIONS.pop(session_id, None)
     yield
     for session_id in _SPIKE_SESSION_IDS:
         state_register_mem.clear_session(session_id)

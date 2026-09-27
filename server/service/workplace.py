@@ -16,7 +16,7 @@ EDITABLE_SYSTEM_FILE_NAMES = [name for name in ALL_SYSTEM_FILE_NAMES if name != 
 
 
 class _WorkplaceFileStore(FileStore):
-    """Persona/system prompt files at workspace/ root (audit 2.1.7 template)."""
+    """Persona/system prompt files at workspace/ root (template)."""
 
     def __init__(self) -> None:
         self.file_names = list(EDITABLE_SYSTEM_FILE_NAMES)

@@ -11,7 +11,7 @@ MEMORY_SYSTEM_FILE_NAMES: list[str] = SERVER_HTTP["memory_system_file_names"]
 
 
 class _MemoryFileStore(FileStore):
-    """Long-term memory files at workspace/memory/ (audit 2.1.7 template).
+    """Long-term memory files at workspace/memory/ (template).
 
     Writes merge into the current files and write everything back WITHOUT
     re-validating existing content (the original ``write_memory_files``

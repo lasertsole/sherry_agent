@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.5 — shared SubagentRunRecord serialization
+"""TDD tests for the shared SubagentRunRecord serialization
 (server/trigger/subagent_serialize.py).
 
 Pins: the public-field tuple is identical across the HTTP and WS consumers,

@@ -1,4 +1,4 @@
-"""TDD tests for audit #14 in ``context_engine/store/core.py``: lazy connection.
+"""TDD tests for the lazy connection in ``context_engine/store/core.py``.
 
 The store CRUD module previously executed ``_db = get_db()`` at import time, so
 importing it opened the SQLite connection as a side effect. Contract pinned

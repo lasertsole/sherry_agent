@@ -4,7 +4,7 @@ from config import SKILLS_DIR
 from loguru import logger
 from runtime import hooks
 
-# One-directional dependency (audit #18): the loader owns read_skills_snapshot
+# One-directional dependency: the loader owns read_skills_snapshot
 # (its only consumer) and must not import this module back.
 from .loader import read_skills_snapshot as read_skills_snapshot
 from .loader import scan_skills as scan_skills

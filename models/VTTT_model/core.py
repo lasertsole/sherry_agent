@@ -127,7 +127,7 @@ else:
 
     class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
         """VTTT variant: delegates conversion/resolution to this module's
-        closures; lifecycle/fields live on the multimodal base (audit 1.1.1)."""
+        closures; lifecycle/fields live on the multimodal base."""
 
         n_ctx: int = 8192
 

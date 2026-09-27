@@ -1,6 +1,6 @@
-"""Regression tests for atomic turn assignment in ``add_messages`` (audit #5).
+"""Regression tests for atomic turn assignment in ``add_messages``.
 
-Audit #5: ``add_messages`` read ``MAX(turn_num)`` outside any lock/transaction
+``add_messages`` read ``MAX(turn_num)`` outside any lock/transaction
 and then inserted with ``turn = max + 1``. Two concurrent calls for the same
 session could both observe the same MAX and silently merge two turns into one
 (duplicated ``turn_num`` — corrupted history ordering and pagination).
@@ -64,7 +64,7 @@ def store_db(monkeypatch, tmp_path) -> Generator[sqlite3.Connection]:
 
 
 class TestConcurrentTurnAssignment:
-    """The audit #5 regression: concurrent same-session writers."""
+    """The turn-assignment regression: concurrent same-session writers."""
 
     def test_concurrent_add_messages_assign_distinct_turn_nums(self, store_db, monkeypatch):
         """Two concurrent ``add_messages`` calls on one session must not share a turn.

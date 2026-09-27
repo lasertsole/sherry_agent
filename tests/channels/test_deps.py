@@ -1,4 +1,4 @@
-"""TDD tests for audit 3.1.4 — shared channel dependency installer
+"""TDD tests for the shared channel dependency installer
 (channels/deps.py) wired into channels/registry.py and plugins/channels/qq.
 
 Pins the install flow both callers used to duplicate: uv preferred, pip

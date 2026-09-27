@@ -1,4 +1,4 @@
-"""Sandbox guard mixin (audit 1.1.6)."""
+"""Sandbox guard mixin."""
 
 from langchain_core.tools import ToolException
 

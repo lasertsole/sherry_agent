@@ -132,8 +132,8 @@ else:
     # ------------------------------------------------------------------
 
     class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
-        """ITTT variant: the shared multimodal conversion lives on the base
-        (audit 5.2); only model resolution is module-specific."""
+        """ITTT variant: the shared multimodal conversion lives on the base;
+        only model resolution is module-specific."""
 
         n_ctx: int = 8192
 

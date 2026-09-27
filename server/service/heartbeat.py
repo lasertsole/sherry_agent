@@ -223,7 +223,7 @@ def heartbeat_content_length(content: str) -> int:
 
 
 class _HeartbeatFileStore(FileStore):
-    """The single heartbeat file (audit 2.1.7 template).
+    """The single heartbeat file (template).
 
     The length budget counts task text only (``heartbeat_content_length``),
     not the raw content length.
