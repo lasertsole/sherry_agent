@@ -33,6 +33,7 @@ through the lazy :func:`_get_active_tasks` seam; all queue access goes through
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import uuid
 from typing import Any
@@ -180,7 +181,7 @@ def register_default_ws_executor() -> None:
 async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
     """Send a JSON frame, tolerating a missing socket (frames are skippable).
 
-    Audit 2.1.2: delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
+    Delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
     (original log wording preserved via ``warn_prefix``).
     """
     await send_ws_json(websocket, payload, warn_prefix="TurnRunner: ws send failed")
@@ -401,7 +402,9 @@ class WsTurnExecutor(BatchTurnExecutor):
       child task registered in the WS module's ``_active_tasks`` so ``stop`` /
       ``detect_state`` see it. A cancelled child sends the "stopped" frame and
       its CLAIMED rows are marked VOIDED (freeing their client_msg_id dedup
-      keys) — a cancelled row is never left CLAIMED.
+      keys) — a cancelled row is never left CLAIMED. Cancelling the executor
+      itself cancels the child first and awaits its shutdown, so no turn
+      outlives its executor.
     - Its finally always calls :func:`on_turn_finished`, which also drains any
       rows queued while this turn was running.
     """
@@ -439,12 +442,24 @@ class WsTurnExecutor(BatchTurnExecutor):
             try:
                 await child
             except asyncio.CancelledError:
-                # Child was cancelled (stop): "stopped" already sent; its
-                # CLAIMED rows must never be left CLAIMED (that keeps the
-                # client_msg_id dedup key busy) — VOID them so the drain moves on.
-                await self._void_claimed_rows(queue, claim_row_ids)
                 current = asyncio.current_task()
-                if current is not None and current.cancelling():
+                our_cancel = current is not None and current.cancelling() > 0
+                if our_cancel:
+                    # WE are the one being cancelled (shutdown / outer kill),
+                    # not the child: awaiting it only delivers the cancellation
+                    # here, so without an explicit cancel the turn would keep
+                    # streaming in the background. Cancel it and let its own
+                    # shutdown (the stopped frame) finish first — any child
+                    # failure while shutting down must not mask our cancellation.
+                    child.cancel()
+                    with contextlib.suppress(asyncio.CancelledError, Exception):
+                        await child
+                # A cancelled row must never be left CLAIMED: that keeps its
+                # client_msg_id dedup key busy and makes every later drain for
+                # the session defer. VOID it so the drain moves on — the child
+                # has already sent "stopped" in both branches.
+                await self._void_claimed_rows(queue, claim_row_ids)
+                if our_cancel:
                     raise
                 return
             completed = True
@@ -513,7 +528,7 @@ class WsTurnExecutor(BatchTurnExecutor):
     ) -> None:
         """Drive ONE generation for the whole batch (runs as the child task).
 
-        Audit 2.1.3: the loop itself is the shared :class:`StreamDriver`
+        The loop itself is the shared :class:`StreamDriver`
         template; ``_WsTurnStreamDriver`` carries this site's knobs plus the
         turn identity so ``turn_started`` is emitted once before any chunk.
         Cleanup lives in :meth:`execute_batch`'s finally, so ``on_finish`` is a

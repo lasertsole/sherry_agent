@@ -15,8 +15,9 @@ Contract under test (server/service/turn_runner.py, does not exist yet — RED):
   drain task per session.
 - WsTurnExecutor: adopts the live inline turn's task when present, otherwise
   drives async_generate itself; forwards chunk/done frames to the session
-  socket; sets hitl_pending on hitl_request; a cancelled child keeps the row
-  CLAIMED and lets the drain continue FIFO.
+  socket; sets hitl_pending on hitl_request; a cancelled child leaves the drain
+  FIFO-clean by VOIDing its row; cancelling the EXECUTOR cancels the driven
+  child first so no turn outlives its executor.
 - Seams (patch points): ``iqs.get_default_queue``, ``turn_runner.get_registry``,
   ``turn_runner.get_websocket_by_session_id``, ``turn_runner._get_active_tasks``,
   ``turn_runner.async_generate``, ``turn_runner.get_pending_interrupt``,
@@ -25,6 +26,7 @@ Contract under test (server/service/turn_runner.py, does not exist yet — RED):
 """
 
 import asyncio
+import contextlib
 import json
 import sqlite3
 from pathlib import Path
@@ -642,3 +644,49 @@ async def test_ws_executor_resolves_own_claimed_row_when_queued_row_predates_dis
     assert _status_of(store, older.id) == "QUEUED", (
         "the older QUEUED row belongs to the drain — it must not be touched here"
     )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_the_executor_cancels_the_driven_child(env, monkeypatch):
+    """Cancelling the EXECUTOR must cancel the driven child and void its row.
+
+    ``await child`` only delivers our cancellation to the executor — without an
+    explicit child cancel the turn kept streaming in the background, and the
+    CLAIMED row stayed behind (every later drain for the session defers on it).
+    """
+    tr, store, sockets = env.tr, env.store, env.sockets
+    sockets["s1"] = FakeSocket()
+    await _enqueue(store, "s1", "long turn")
+    claimed = await store.claim_batch("s1", 1)
+    row = claimed[0]
+
+    started = asyncio.Event()
+    child_cancelled = asyncio.Event()
+
+    async def _on_cancel():
+        child_cancelled.set()
+
+    monkeypatch.setattr(
+        tr,
+        "async_generate_multi",
+        _fake_generate_multi_factory(
+            [], started=started, block=asyncio.Event(), on_cancel=_on_cancel
+        ),
+    )
+
+    batch = [
+        tr.TurnInput(
+            message="long turn", source="user", message_id=row.client_msg_id, claim_row_id=row.id
+        )
+    ]
+    driving = asyncio.create_task(tr.WsTurnExecutor().execute_batch("s1", batch, None))
+    await asyncio.wait_for(started.wait(), timeout=5)
+
+    driving.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await driving
+
+    assert driving.cancelled()
+    assert child_cancelled.is_set(), "the driven child must be cancelled with its executor"
+    assert _status_of(store, row.id) == "VOIDED", "a cancelled row must never stay CLAIMED"
+    assert env.active_tasks == {}, "the child task must be unregistered"
