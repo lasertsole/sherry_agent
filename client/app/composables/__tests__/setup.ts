@@ -143,7 +143,11 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
   params: {} as Record<string, string>,
   query: {} as Record<string, string>
 }));
-(globalThis as any).useLocalePath = vi.fn((to?: unknown) => (typeof to === 'string' ? to : '/'));
+// Nuxt's `useLocalePath()` itself RETURNS the path-building function
+// (`const localePath = useLocalePath(); localePath('/home')`), so the stub has
+// to return a callable — a direct `(to) => path` would make every caller throw
+// "localePath is not a function" as soon as it pushes a route.
+(globalThis as any).useLocalePath = vi.fn(() => (to?: unknown) => (typeof to === 'string' ? to : '/'));
 
 // Pinia auto-import used by `home/index.vue` (:307, :310) to destructure the
 // UI store. Faithful to Pinia's contract: state keys become refs bound to the
@@ -246,3 +250,54 @@ vi.stubGlobal('useLlmProfilesStore', () => ({
   setActive: () => {},
   byId: () => undefined
 }));
+
+// `useThinkingStore` / `useSessionModelStore` back the toolbar's per-session
+// controls (thinking toggle, main-model picker) as Nuxt auto-imported stores.
+// The default stubs keep `home/index/[sid].vue` mountable without hydrating;
+// suites that assert control behaviour override them in their own `beforeEach`.
+vi.stubGlobal('useThinkingStore', () =>
+  Vue.reactive({
+    mode: 'on_off',
+    bySession: {},
+    pendingBySession: {},
+    current: () => false,
+    hydrate: async () => {},
+    isPending: () => false,
+    setValue: async () => {}
+  })
+);
+
+vi.stubGlobal('useSessionModelStore', () =>
+  Vue.reactive({
+    bySession: {},
+    overrideBySession: {},
+    pendingBySession: {},
+    envModel: { provider: null, model: null },
+    currentId: () => 'env',
+    hydrate: async () => {},
+    isPending: () => false,
+    select: async () => {}
+  })
+);
+
+// `useRightSidebarStore` backs the home shell's collapsible right sidebar
+// (log-viewer / statistics tabs) as a Nuxt auto-imported store. The default
+// stub keeps `home/index.vue` mountable; suites that assert the tab strip
+// override it with their own `vi.stubGlobal` in `beforeEach`.
+// `reactive` mirrors Pinia's contract: state refs are auto-unwrapped on access
+// (`store.tabs.find(...)`, not `store.tabs.value.find(...)`).
+vi.stubGlobal('useRightSidebarStore', () =>
+  Vue.reactive({
+    collapsed: true,
+    tabs: [],
+    activeTabId: null,
+    width: 420,
+    toggle: () => {},
+    expand: () => {},
+    setWidth: () => {},
+    fitToViewport: () => {},
+    openTab: () => 'test-tab',
+    activateTab: () => {},
+    closeTab: () => {}
+  })
+);
