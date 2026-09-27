@@ -13,6 +13,7 @@ Every function here is fail-open: a storage or lookup failure degrades to
 ``None`` / ``""`` / ``[]`` and never breaks the caller.
 """
 
+import asyncio
 import json
 import time
 from pathlib import Path
@@ -137,7 +138,7 @@ def build_continuity_prompt(session_id: str) -> str:
         )
         return "\n".join(parts)
     except Exception as e:
-        # Fail-open, but never silent (audit #61): a broken lookup must be
+        # Fail-open, but never silent: a broken lookup must be
         # visible. Session id only — no conversation content.
         logger.warning("Failed to build continuity prompt for session {}: {}", session_id, e)
         return ""
@@ -154,9 +155,9 @@ async def auto_save_on_session_end(session_id: str) -> None:
 
         channel_id, chat_id = _get_channel_chat_for_session(session_id)
 
-        # Synchronous store read: the SQLite store is stdlib sqlite3 and the
-        # latest-turns helper is not awaitable.
-        messages = get_messages_by_lastest_n_turns(session_id, last_n=3)
+        # The store is stdlib sqlite3 and the helper is not awaitable, so run it
+        # in a worker thread instead of blocking the loop.
+        messages = await asyncio.to_thread(get_messages_by_lastest_n_turns, session_id, 3)
 
         # Find the last AI reply (rows come back newest turn first).
         last_ai: str | None = None

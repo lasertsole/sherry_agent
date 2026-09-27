@@ -2,11 +2,16 @@
 
 Used by ``models/embed_model/core.py`` and ``models/reranker_model/core.py``.
 Both call sites post
-JSON to an OpenAI-compatible endpoint with a Bearer token and ``verify=False``;
-this client centralises that protocol **without** changing their per-request
-semantics — no retry is added (neither call site retried), ``verify=False`` is
-preserved, and the caller-supplied timeout is passed through unchanged
-(``None`` keeps requests' default, i.e. no timeout).
+JSON to an OpenAI-compatible endpoint with a Bearer token; this client
+centralises that protocol **without** changing their per-request semantics —
+no retry is added (neither call site retried) and the caller-supplied timeout
+is passed through unchanged (``None`` keeps requests' default, i.e. no
+timeout).
+
+TLS verification is ON by default and only skips when the operator sets
+``SHERRY_HTTP_VERIFY_TLS=0`` (see ``config.features.HTTP_CLIENT``): the
+previous unconditional ``verify=False`` made every cloud call silently
+MITM-able, including the ones carrying API keys.
 """
 
 from __future__ import annotations
@@ -14,6 +19,17 @@ from __future__ import annotations
 from typing import Any
 
 import requests
+
+from config.features import HTTP_CLIENT
+
+
+def verify_tls() -> bool:
+    """Whether outbound model requests verify TLS certificates.
+
+    Read at call time so a ``.env`` change applies without a rebuild.
+    @returns True unless the operator disabled verification.
+    """
+    return bool(HTTP_CLIENT["verify_tls"])
 
 
 class OpenAICompatibleClient:
@@ -39,7 +55,7 @@ class OpenAICompatibleClient:
             f"{self._api_base}{path}",
             headers=self._headers,
             json=payload,
-            verify=False,
+            verify=verify_tls(),
             timeout=timeout,
         )
         resp.raise_for_status()

@@ -1,7 +1,7 @@
 """Tests for the shared OpenAI-compatible HTTP client.
 
 The adapter must be behavior-identical to the inline ``requests.post(...)``
-calls it replaced: Bearer auth, JSON body, ``verify=False``, caller-supplied
+calls it replaced: Bearer auth, JSON body, the TLS verification policy, caller-supplied
 timeout (``None`` = no timeout), ``raise_for_status`` on non-2xx, and NO retry.
 """
 
@@ -12,6 +12,8 @@ import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import pytest
+
+from config.features import HTTP_CLIENT
 import requests
 
 from models.http_client import OpenAICompatibleClient
@@ -104,11 +106,30 @@ class TestRequestShape:
 
         client.post_json("/rerank", {"a": 1}, timeout=30)
         assert captured["timeout"] == 30
-        assert captured["verify"] is False
+        assert captured["verify"] is True, "TLS verification must be ON by default"
         assert captured["json"] == {"a": 1}
 
         client.post_json("/rerank", {"a": 1})
         assert captured["timeout"] is None
+
+    def test_tls_verification_follows_the_operator_switch(self, stub_server, monkeypatch):
+        """Only ``SHERRY_HTTP_VERIFY_TLS=0`` may disable certificate checks."""
+        server, _handler = stub_server
+        captured: dict = {}
+
+        def fake_post(url, **kwargs):
+            captured.update(kwargs)
+            return _FakeResponse()
+
+        monkeypatch.setattr("models.http_client.requests.post", fake_post)
+        monkeypatch.setitem(HTTP_CLIENT, "verify_tls", 0)
+
+        OpenAICompatibleClient(_base_url(server), "k").post_json("/rerank", {})
+        assert captured["verify"] is False
+
+        monkeypatch.setitem(HTTP_CLIENT, "verify_tls", 1)
+        OpenAICompatibleClient(_base_url(server), "k").post_json("/rerank", {})
+        assert captured["verify"] is True
 
 
 class _FakeResponse:

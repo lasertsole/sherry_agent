@@ -11,6 +11,10 @@ from .bus import (
     BusConfig as BusConfig,
     BUS as BUS,
 )
+from .http_client import (
+    HttpClientConfig as HttpClientConfig,
+    HTTP_CLIENT as HTTP_CLIENT,
+)
 from .http_upload import (
     HttpUploadConfig as HttpUploadConfig,
     HTTP_UPLOAD as HTTP_UPLOAD,

@@ -6,6 +6,7 @@ from typing import TypedDict
 class SubagentInfraConfig(TypedDict):
     """Scattered subagent infrastructure tunables (outside SubagentConfig)."""
 
+    registry_max_retained_runs: int
     registry_store_busy_timeout_ms: int
     registry_init_wait_timeout_s: float
     pending_injections_busy_timeout_ms: int
@@ -27,6 +28,10 @@ class SubagentInfraConfig(TypedDict):
 
 
 SUBAGENT_INFRA: SubagentInfraConfig = {
+    # In-memory run records: the sweeper persists terminal runs to SQLite, so
+    # the dict only has to hold the working set; readers that miss fall back to
+    # disk. Keeps a long-lived process bounded (the dev DB holds ~7.8k runs).
+    "registry_max_retained_runs": 2000,
     "registry_store_busy_timeout_ms": 5000,
     "registry_init_wait_timeout_s": 10.0,
     "pending_injections_busy_timeout_ms": 5000,

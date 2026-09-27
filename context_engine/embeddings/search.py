@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from typing import Any
 
 import numpy as np
@@ -20,12 +22,15 @@ async def semantic_search(
     if not query.strip():
         return []
 
-    index_pending_messages(session_id)
-    candidates = load_all_embeddings(session_id)
+    # Both helpers hit SQLite synchronously (stdlib sqlite3) and the embedder
+    # may post to a remote endpoint: none of that belongs on the event loop.
+    await asyncio.to_thread(index_pending_messages, session_id)
+    candidates = await asyncio.to_thread(load_all_embeddings, session_id)
     if not candidates:
         return []
 
-    query_vector = np.asarray(_get_embed_fn()([query])[0], dtype=np.float32)
+    embed_fn = _get_embed_fn()
+    query_vector = np.asarray((await asyncio.to_thread(embed_fn, [query]))[0], dtype=np.float32)
     scored: list[tuple[float, dict[str, Any]]] = []
     for candidate in candidates:
         vector = np.asarray(candidate["embedding"], dtype=np.float32)

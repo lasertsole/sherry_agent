@@ -655,6 +655,9 @@ async def _execute_subagent(
     # Optimistic default — overridden by the appropriate exception handler below
     result_text: str | None = None
     outcome = RunOutcome(status=RunOutcomeStatus.OK)
+    # Bound before the try so the cleanup below can always see it, even when
+    # _build_child_agent itself raised (e.g. a missing required middleware).
+    child_agent = None
 
     try:
         # Build the child LangGraph agent with scoped tools
@@ -771,6 +774,17 @@ async def _execute_subagent(
 
     # --- Lifecycle cleanup (always runs, even on cancellation) ---
     finally:
+        # Close the child's aiosqlite checkpointer: every spawn opened one and
+        # nothing released it, so a busy swarm leaked connections until GC. The
+        # compiled graph carries the reference, so the builder's signature (a
+        # documented monkeypatch seam) stays unchanged.
+        child_checkpointer = getattr(child_agent, "checkpointer", None)
+        if child_checkpointer is not None:
+            try:
+                await child_checkpointer.aclose()
+            except Exception:
+                logger.exception("Failed to close child checkpointer for {}", run.run_id)
+
         # Release this child's per-session OutputRepetitionGuard state. The guard
         # writes its top-level keys (output_repetition_history, ..._halted, etc.)
         # into ``state_register_mem`` under the child's unique session key. If we

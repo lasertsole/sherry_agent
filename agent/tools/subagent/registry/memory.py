@@ -1,10 +1,50 @@
-"""Thread-safe in-memory store for SubagentRunRecord instances using a dict with lock-based access."""
+"""Thread-safe in-memory store for SubagentRunRecord instances using a dict with lock-based access.
+
+The dict holds the *live* view of every run this process knows about, so
+terminal records are evicted once the cache outgrows :data:`_MAX_RETAINED_RUNS`
+(oldest first; the sweeper has already persisted them to SQLite, and readers
+that miss fall back to the disk registry). Without the cap a long-lived process
+grows the dict without bound: the dev database held ~7.8k runs.
+"""
 
 import threading
+from collections import OrderedDict
+
+from config.features import SUBAGENT_INFRA
 from ..types.registry import SubagentRunRecord
 
+# threading.Lock is the correct primitive here (not asyncio.Lock): the registry
+# is touched from the event loop AND from sweeper/persist threads, and every
+# critical section below is sync and never awaits — asyncio.Lock is loop-bound,
+# not thread-safe, and unusable from these sync accessors.
 _lock = threading.Lock()
-_runs: dict[str, SubagentRunRecord] = {}
+#: Insertion-ordered so the eviction pass can drop the oldest terminal runs.
+_runs: "OrderedDict[str, SubagentRunRecord]" = OrderedDict()
+#: Upper bound on retained records (config-driven).
+_MAX_RETAINED_RUNS: int = SUBAGENT_INFRA["registry_max_retained_runs"]
+
+
+def _is_terminal(run: SubagentRunRecord) -> bool:
+    """Whether the run reached a final state (safe to evict from memory)."""
+    status = getattr(getattr(run, "execution", None), "status", None)
+    return str(getattr(status, "value", status) or "").upper() in {
+        "COMPLETED",
+        "FAILED",
+        "TIMEOUT",
+        "CANCELLED",
+        "STOPPED",
+    }
+
+
+def _evict_overflow() -> None:
+    """Drop the oldest terminal records until the dict fits the cap (lock held)."""
+    if len(_runs) <= _MAX_RETAINED_RUNS:
+        return
+    for run_id in list(_runs.keys()):
+        if len(_runs) <= _MAX_RETAINED_RUNS:
+            break
+        if _is_terminal(_runs[run_id]):
+            del _runs[run_id]
 
 
 def get(run_id: str) -> SubagentRunRecord | None:
@@ -17,6 +57,8 @@ def set_run(run: SubagentRunRecord) -> None:
     """Insert or replace a run record keyed by run_id."""
     with _lock:
         _runs[run.run_id] = run
+        _runs.move_to_end(run.run_id)
+        _evict_overflow()
 
 
 def delete(run_id: str) -> SubagentRunRecord | None:

@@ -97,17 +97,20 @@ class CompactionLock:
         holder = self._new_holder()
         deadline = time.monotonic() + timeout_s
         while True:
-            if self._try_acquire(session_id, holder):
+            # _try_acquire/_release/_current_holder each open SQLite and run
+            # statements: offload them so a contended lock cannot stall the loop.
+            if await asyncio.to_thread(self._try_acquire, session_id, holder):
                 logger.debug("compaction lock acquired: session={} holder={}", session_id, holder)
                 try:
                     yield
                 finally:
-                    self._release(session_id, holder)
+                    await asyncio.to_thread(self._release, session_id, holder)
                 return
             if time.monotonic() >= deadline:
+                current = await asyncio.to_thread(self._current_holder, session_id)
                 raise CompactionLockError(
                     f"compaction lock not acquired within {timeout_s}s: "
-                    f"session={session_id}, holder={self._current_holder(session_id)}"
+                    f"session={session_id}, holder={current}"
                 )
             await asyncio.sleep(_ACQUIRE_POLL_S)
 

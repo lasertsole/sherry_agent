@@ -25,6 +25,7 @@ from .approval_scope import NO_OPERATOR_MESSAGE
 from .approval_store import ApprovalVerdict
 from .detection import detect_clawhub_command
 from .types import (
+    HITL_CONFIRMED_TOOLS_KEY,
     ApprovalDecision,
     ApprovalMode,
     ApprovalResult,
@@ -278,6 +279,99 @@ class MemoryWriteApprovalHandler(ToolApprovalHandler):
         return False
 
 
+class FirstCallConfirmationHandler(ToolApprovalHandler):
+    """High-risk tools: confirm the FIRST use per session, then pass through.
+
+    Covers the side-effecting tools no other handler intercepts (file
+    mutations — see ``first_call_confirmation_tools``); ``terminal`` /
+    ``python_repl`` keep their own command and sandbox-bypass gates, and
+    memory/skill writes keep the write gate.
+
+    Scope rules, mirroring the rest of the HITL layer:
+
+    * interactive turns only — a turn with no operator in scope (cron,
+      heartbeat, subagent completion carrier) is left to its existing policy,
+      because there is nobody to answer the prompt;
+    * YOLO mode bypasses the gate like every other approval;
+    * the decision is remembered per session (``HITL_CONFIRMED_TOOLS``), so a
+      long session asks once per tool, not once per call — the gate closes the
+      "agent silently starts mutating files" gap without becoming a per-call
+      tax. A rejection is NOT remembered: the next call asks again.
+    """
+
+    def matches(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
+        mw = ctx.mw
+        tool_name: str = tool_call.get("name", "")
+        if not mw.config.first_call_confirmation_enabled:
+            return False
+        if tool_name not in mw.config.first_call_confirmation_tools:
+            return False
+        if is_yolo_mode(mw.config, ctx.session_id):
+            return False
+        if mw._turn_operator(ctx.state) is None:
+            return False
+        return tool_name not in _confirmed_tools(mw, ctx.session_id)
+
+    def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
+        mw = ctx.mw
+        tool_name: str = tool_call.get("name", "")
+        tool_args: dict[str, Any] = tool_call.get("args", {})
+        action_request = ActionRequest(
+            name=tool_name,
+            args=tool_args,
+            description=(
+                f"First use of '{tool_name}' in this session: it changes files on "
+                "disk. Approving allows this and later calls to it."
+            ),
+        )
+        review_config = ReviewConfig(
+            action_name=tool_name,
+            allowed_decisions=["approve", "reject"],
+        )
+        try:
+            hitl_response = interrupt(
+                HITLRequest(
+                    action_requests=[action_request],
+                    review_configs=[review_config],
+                )
+            )
+            decisions = hitl_response.get("decisions", [])
+            decision_type = decisions[0]["type"] if decisions else ""
+            if decision_type == "yolo":
+                set_session_yolo(ctx.session_id)
+                ctx.outcome.approve(tool_call)
+                return True
+            if decision_type == "approve":
+                _mark_confirmed(mw, ctx.session_id, tool_name)
+                ctx.outcome.approve(tool_call)
+                return True
+            message = (
+                (decisions[0].get("message") or "Rejected by user") if decisions else "No decision"
+            )
+            ctx.outcome.deny(tool_call, tool_name, _deny_content(f"User denied: {message}"))
+            return True
+        except GraphInterrupt:
+            # Real HITL interrupt: let LangGraph persist it so the frontend
+            # approval dialog can fire. Do NOT swallow it.
+            raise
+        except Exception:
+            ctx.outcome.deny(tool_call, tool_name, f"Approval interrupt failed. {BLOCKED_MESSAGE}")
+            return True
+
+
+def _confirmed_tools(mw: HumanInTheLoop, session_id: str) -> set[str]:
+    """Tools already confirmed by a human in this session."""
+    stored = mw._get_state(session_id, HITL_CONFIRMED_TOOLS_KEY, []) or []
+    return {str(name) for name in stored} if isinstance(stored, (list, set, tuple)) else set()
+
+
+def _mark_confirmed(mw: HumanInTheLoop, session_id: str, tool_name: str) -> None:
+    """Remember that *tool_name* was confirmed for this session."""
+    confirmed = _confirmed_tools(mw, session_id)
+    confirmed.add(tool_name)
+    mw._set_state(session_id, HITL_CONFIRMED_TOOLS_KEY, sorted(confirmed))
+
+
 class InterruptOnApprovalHandler(ToolApprovalHandler):
     """Configured ``interrupt_on`` tools: interrupt with per-tool allowed
     decisions (approve / edit / reject)."""
@@ -401,6 +495,7 @@ class ApprovalHandlerRegistry:
                 TerminalApprovalHandler(),
                 SandboxBypassApprovalHandler(),
                 MemoryWriteApprovalHandler(),
+                FirstCallConfirmationHandler(),
                 InterruptOnApprovalHandler(),
                 PluginToolApprovalHandler(),
             )

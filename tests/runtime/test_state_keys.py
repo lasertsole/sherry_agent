@@ -63,6 +63,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "HITL_PERMANENT": "hitl:permanent",
     "HITL_SESSION_APPROVED": "hitl:session_approved",
     "HITL_SESSION_YOLO": "hitl:session_yolo",
+    "HITL_CONFIRMED_TOOLS": "hitl:confirmed_tools",
     "HITL_TURN_INTERRUPTED": "hitl:turn_interrupted",
     "EXTERNAL_PATH_YOLO": "external_path_yolo",
     "EXTERNAL_PATH_ALLOWLIST": "external_path_allowlist",

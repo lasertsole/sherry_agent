@@ -8,6 +8,8 @@ and rehydrates them on first access in a new process.
 import uuid
 from types import SimpleNamespace
 
+from collections import OrderedDict
+
 import pytest
 
 from langchain.agents.middleware import ModelRequest
@@ -63,7 +65,7 @@ def sid():
 def fake_db(monkeypatch):
     db = _FakeStateDB()
     monkeypatch.setattr(summarization_module, "state_register_db", db)
-    monkeypatch.setattr(summarization_module, "_RESTORED_COOLDOWN_SESSIONS", set())
+    monkeypatch.setattr(summarization_module, "_RESTORED_COOLDOWN_SESSIONS", OrderedDict())
     return db
 
 
@@ -183,7 +185,7 @@ def test_restart_rehydrates_cooldown_rounds(fake_db, sid):
     mw._record_compaction_bookkeeping(sid)
     state_register_mem.clear_session(sid)
     monkey_restore = summarization_module._RESTORED_COOLDOWN_SESSIONS
-    monkey_restore.discard(sid)
+    monkey_restore.pop(sid, None)
 
     # When the new process rehydrates on first access.
     mw._maybe_restore_cooldown_state(sid)
@@ -203,7 +205,7 @@ def test_exhausted_cooldown_rehydrates_as_inactive(fake_db, sid):
     state_register_mem.set_state(sid, _COOLDOWN_ROUNDS_KEY, 0)
     mw._persist_cooldown_state(sid)
     state_register_mem.clear_session(sid)
-    summarization_module._RESTORED_COOLDOWN_SESSIONS.discard(sid)
+    summarization_module._RESTORED_COOLDOWN_SESSIONS.pop(sid, None)
 
     # When the new process rehydrates.
     mw._maybe_restore_cooldown_state(sid)

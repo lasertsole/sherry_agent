@@ -1,6 +1,5 @@
 import sys
 import math
-import urllib3
 from pathlib import Path
 from loguru import logger
 from models.utils import read_env_file_value as _read_dotenv
@@ -47,7 +46,6 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
             "EMBEDDING_MODEL_PROVIDER is empty — remote embedding requires model provider (e.g. openai)"
         )
 
-    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     return (
         "remote",
         False,

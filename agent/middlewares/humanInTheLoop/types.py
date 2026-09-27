@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from config.features import HITL_DEFAULTS
 from runtime.session.state_keys import StateKey
 
 # Session-scoped bypass-all flag in state_register_mem (cleared with the
@@ -24,6 +25,7 @@ SESSION_YOLO_KEY = StateKey.HITL_SESSION_YOLO
 HITL_PERMANENT_KEY = StateKey.HITL_PERMANENT
 HITL_SESSION_APPROVED_KEY = StateKey.HITL_SESSION_APPROVED
 HITL_TURN_INTERRUPTED_KEY = StateKey.HITL_TURN_INTERRUPTED
+HITL_CONFIRMED_TOOLS_KEY = StateKey.HITL_CONFIRMED_TOOLS
 
 BLOCKED_MESSAGE = (
     "The user has NOT consented to this action. "
@@ -108,6 +110,11 @@ class TriageStatus(StrEnum):
 
 
 BLOCK_RECURRENCE_LIMIT = 3
+
+# First-call confirmation gate defaults live in the feature config
+# (``HITL_DEFAULTS``) so an operator tunes the guarded tool list in one place.
+FIRST_CALL_CONFIRMATION_ENABLED: bool = HITL_DEFAULTS["first_call_confirmation_enabled"]
+FIRST_CALL_CONFIRMATION_TOOLS: tuple[str, ...] = HITL_DEFAULTS["first_call_confirmation_tools"]
 
 
 class SmartApprovalResult(StrEnum):
@@ -212,6 +219,8 @@ class HITLConfig:
         smart_approval_llm: Optional LLM instance for smart command assessment.
         interrupted_tools: Mapping of tool_name → config for interrupt-on-use.
         description_prefix: Prefix for auto-generated interrupt descriptions.
+        first_call_confirmation_enabled: Gate the first use of a listed tool.
+        first_call_confirmation_tools: Tool names covered by that gate.
     """
 
     mode: ApprovalMode = ApprovalMode.SMART
@@ -227,3 +236,5 @@ class HITLConfig:
     smart_approval_llm: Any | None = None
     interrupted_tools: dict[str, bool | InterruptOnConfig] = field(default_factory=dict)
     description_prefix: str = "Action requires human approval"
+    first_call_confirmation_enabled: bool = FIRST_CALL_CONFIRMATION_ENABLED
+    first_call_confirmation_tools: tuple[str, ...] = FIRST_CALL_CONFIRMATION_TOOLS

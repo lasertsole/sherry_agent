@@ -9,7 +9,7 @@ from .core import SessionRegister
 
 
 def _log_state_db_failure(operation: str, exc: BaseException, **context: object) -> None:
-    """Classify a swallowed StateRegisterDB failure for observability (audit #68).
+    """Classify a swallowed StateRegisterDB failure for observability.
 
     The fail-safe contract is unchanged — callers still receive the method's
     default value. What changes is that a real fault is no longer confusable
@@ -72,7 +72,7 @@ class StateRegisterMeM(SessionRegister):
     def get_all_states(self, session_id: str) -> dict[str, Any]:
         try:
             with self._lock:
-                # Snapshot: caller mutations must not reach shared state (audit #13).
+                # Snapshot: caller mutations must not reach shared state.
                 return dict(self._states.get(session_id, {}))
         except Exception:
             logger.exception(f"get_all_states failed: session_id={session_id}")
@@ -153,13 +153,25 @@ class StateRegisterDB(SessionRegister):
                 except sqlite3.Error:  # noqa: S110
                     pass
             self._conn: sqlite3.Connection | None = None
+            self._conn_path: Path | None = None
             self.db_path: Path = db_path
         self._conn_lock = getattr(self, "_conn_lock", threading.RLock())
 
     def _init_db(self) -> sqlite3.Connection:
-        """Create the schema on first use and return the shared connection."""
-        if self._conn is not None:
+        """Create the schema on first use and return the shared connection.
+
+        A connection is only reused while it belongs to the current
+        :attr:`db_path`: re-pointing the register (tests, a runtime
+        reconfigure) closes the stale handle instead of serving the wrong file.
+        """
+        if self._conn is not None and self._conn_path == self.db_path:
             return self._conn
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except sqlite3.Error:  # noqa: S110 - a dead handle is not an error here
+                pass
+            self._conn = None
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(self.db_path, check_same_thread=False, isolation_level=None)
         try:
@@ -186,6 +198,7 @@ class StateRegisterDB(SessionRegister):
             conn.close()
             raise
         self._conn = conn
+        self._conn_path = self.db_path
         return conn
 
     def ensure_initialized(self) -> sqlite3.Connection:
@@ -352,8 +365,10 @@ class ContextEpoch:
         """Load the epoch and decide: ok | reconcile | replace."""
         import json
 
+        # Reuse the register's shared connection: the previous inline
+        # sqlite3.connect() leaked a handle on every epoch check.
         row = (
-            sqlite3.connect(self._db.db_path)
+            self._db.ensure_initialized()
             .execute(
                 "SELECT baseline, snapshot, baseline_seq FROM context_epoch WHERE session_id = ?",
                 (session_id,),

@@ -14,6 +14,8 @@ class HitlDefaultsConfig(TypedDict):
     default_destructive_slash_confirm: bool
     default_description_prefix: str
     yolo_deny_paths: list[str]
+    first_call_confirmation_enabled: bool
+    first_call_confirmation_tools: tuple[str, ...]
 
 
 HITL_DEFAULTS: HitlDefaultsConfig = {
@@ -24,6 +26,16 @@ HITL_DEFAULTS: HitlDefaultsConfig = {
     "default_mcp_reload_confirm": True,
     "default_destructive_slash_confirm": True,
     "default_description_prefix": "Action requires human approval",
+    # First-call confirmation gate: the first use of a listed tool in a session
+    # asks the human once (approve/reject); later calls pass. It covers the
+    # side-effecting tools no other gate intercepts (file mutations) —
+    # `terminal` / `python_repl` keep their own command and sandbox-bypass
+    # gates, and memory/skill writes keep the write gate. Only interactive
+    # turns are gated: a turn with no operator in scope (cron, heartbeat,
+    # subagent carrier) follows its existing policy, since nobody is present
+    # to answer.
+    "first_call_confirmation_enabled": True,
+    "first_call_confirmation_tools": ("write_file", "edit_file"),
     # Security floor for external path access: these paths stay denied even
     # when YOLO is on, the session allowlist matches, or a subagent inherits
     # its parent's authorization. `~` is expanded at check time; a trailing

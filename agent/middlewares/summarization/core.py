@@ -13,6 +13,7 @@ module-level names below are re-exported from the mixin modules so existing
 ``from agent.middlewares.summarization.core import ...`` imports keep working.
 """
 
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
@@ -101,8 +102,10 @@ _COOLDOWN_PERSIST_KEYS: tuple[str, ...] = (
 
 # Sessions already rehydrated in THIS process. A restart resets this set,
 # which is exactly the "first access for this session in a new process"
-# condition the restore guard needs.
-_RESTORED_COOLDOWN_SESSIONS: set[str] = set()
+# condition the restore guard needs. Bounded: the guard only has to remember
+# recent sessions, and an unbounded set grows for the life of the process.
+_RESTORED_COOLDOWN_SESSIONS: "OrderedDict[str, None]" = OrderedDict()
+_RESTORED_COOLDOWN_MAX = 512
 
 
 def _rearm_task_intent_after_compact(session_id: str) -> None:
@@ -369,8 +372,11 @@ class Summarization(
 
     def _maybe_restore_cooldown_state(self, session_id: str) -> None:
         if session_id in _RESTORED_COOLDOWN_SESSIONS:
+            _RESTORED_COOLDOWN_SESSIONS.move_to_end(session_id)
             return
-        _RESTORED_COOLDOWN_SESSIONS.add(session_id)
+        _RESTORED_COOLDOWN_SESSIONS[session_id] = None
+        while len(_RESTORED_COOLDOWN_SESSIONS) > _RESTORED_COOLDOWN_MAX:
+            _RESTORED_COOLDOWN_SESSIONS.popitem(last=False)
         self._restore_cooldown_state(session_id)
 
     # ------------------------------------------------------------------

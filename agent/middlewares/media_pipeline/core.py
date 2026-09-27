@@ -1,3 +1,4 @@
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
@@ -279,7 +280,10 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
     @override
     async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         logger.debug("{} abefore_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
+        # The impl downloads media (urlopen), decodes images and writes files;
+        # run it off the loop so one large upload cannot stall every other
+        # session's stream.
+        await asyncio.to_thread(self._before_agent_impl, state)
         return None
 
     # ------------------------------------------------------------------
@@ -315,5 +319,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
     @override
     async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
         logger.debug("{} aafter_agent hook fired", type(self).__name__)
-        self._after_agent_impl(state)
+        # Cache cleanup walks the media directories (iterdir/unlink); keep that
+        # filesystem work off the event loop like the before hook.
+        await asyncio.to_thread(self._after_agent_impl, state)
         return None

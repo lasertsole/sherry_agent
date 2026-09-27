@@ -19,6 +19,7 @@ The WS push is fail-open: no registered websocket, or a failed ``send_text``,
 is logged and swallowed; it never rolls back or masks a successful persistence.
 """
 
+import asyncio
 import json
 
 from loguru import logger
@@ -210,7 +211,11 @@ class TodoService:
         if plan_ref:
             from runtime import state_register_db
 
-            state_register_db.set_state(session_id, _PLAN_REF_STATE_KEY, plan_ref)
+            # SQLite write on an async path: keep the (sub-millisecond but
+            # fsync-bound) statement off the event loop.
+            await asyncio.to_thread(
+                state_register_db.set_state, session_id, _PLAN_REF_STATE_KEY, plan_ref
+            )
         latest = await store.get_todos(session_id)
         await _push_todo_update(session_id, latest)
         return latest

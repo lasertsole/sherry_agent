@@ -73,6 +73,8 @@ class StateKey(StrEnum):
     HITL_SESSION_APPROVED = "hitl:session_approved"
     HITL_SESSION_YOLO = "hitl:session_yolo"
     HITL_TURN_INTERRUPTED = "hitl:turn_interrupted"
+    #: Tools a human already confirmed once in this session (first-call gate).
+    HITL_CONFIRMED_TOOLS = "hitl:confirmed_tools"
 
     EXTERNAL_PATH_YOLO = "external_path_yolo"
     EXTERNAL_PATH_ALLOWLIST = "external_path_allowlist"
