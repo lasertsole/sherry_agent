@@ -20,6 +20,7 @@ from loguru import logger
 
 from config.features import MEDIA_PIPELINE
 from pub.func import is_url
+from pub.func.validator import is_public_url
 
 # Magic byte signatures → file extension
 # Ordered by specificity (more bytes = earlier check)
@@ -137,8 +138,20 @@ def _download_url_to_temp(
     fast path; the capped read is authoritative, so a wrong header cannot force
     an oversized write.
 
+    A URL whose host resolves to a private/loopback/link-local address is
+    refused before any request goes out (SSRF guard), and the refusal is
+    recorded as a model-visible skipped notice.
+
     Returns the persistent media/ path (posix-style) on success, or None on failure.
     """
+    if not is_public_url(url):
+        paths.skipped.append(
+            f"[Uploaded media] A remote {kind} URL was skipped: it points to a "
+            "private, loopback or otherwise non-public address. It was not "
+            "fetched and was not sent to the model."
+        )
+        return None
+
     limit = _max_media_bytes()
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (EMA_AI_agent)"})
@@ -238,8 +251,8 @@ class MediaItemHandler(abc.ABC):
 
 
 class ImageUrlHandler(MediaItemHandler):
-    """image_url items: remote URLs pass through; data:/base64 payloads are
-    decoded with PIL and saved to mutil_temp + media."""
+    """image_url items: remote URLs pass through (public hosts only); data:/base64
+    payloads are decoded with PIL and saved to mutil_temp + media."""
 
     def process(
         self, item: dict[str, Any], session_id: str, paths: MediaPaths, src_dir: Path
@@ -248,6 +261,16 @@ class ImageUrlHandler(MediaItemHandler):
 
         # Check if it's a URL (exclude data: scheme, which is a base64-embedded image)
         if is_url(url) and not url.startswith("data:"):
+            if not is_public_url(url):
+                # The URL is handed to the model provider, which fetches it: a
+                # private target would leak internal responses through the
+                # model, so refuse it with a model-visible notice.
+                paths.skipped.append(
+                    "[Uploaded media] A remote image URL was skipped: it points to a "
+                    "private, loopback or otherwise non-public address. It was not "
+                    "sent to the model."
+                )
+                return
             paths.image_hints.append(url)
             return
 
