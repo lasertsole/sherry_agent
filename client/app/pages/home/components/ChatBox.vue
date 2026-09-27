@@ -157,6 +157,13 @@
       </div>
     </div>
 
+    <!-- Turn scrubber: jump straight to any of the most recent user messages.
+         Absolutely positioned, so it never takes part in the list's layout. -->
+    <ChatTurnScrubber
+      :marks="turnMarks"
+      :active-index="activeMarkIndex"
+      @jump="scrollToRow" />
+
     <!-- Older-history loading pill: overlays the top of the list while a scroll-up page request runs -->
     <Transition name="fade">
       <div
@@ -205,6 +212,7 @@ import ChatToolCard from '@/components/chat/ChatToolCard.vue';
 import ChatCopyButton from '@/components/chat/ChatCopyButton.vue';
 import ChatMediaAttachments from '@/components/chat/ChatMediaAttachments.vue';
 import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
+import ChatTurnScrubber from './ChatTurnScrubber.vue';
 
 const { t } = useI18n();
 
@@ -255,7 +263,10 @@ const {
   totalSize,
   rowGroup,
   showScrollBottom,
+  turnMarks,
+  activeMarkIndex,
   scrollToBottom,
+  scrollToRow,
   onScroll
 } = useChatVirtualList(
   () => turnGroups.value,

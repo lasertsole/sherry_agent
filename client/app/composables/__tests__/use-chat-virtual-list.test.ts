@@ -3,7 +3,12 @@ import { defineComponent, nextTick } from 'vue';
 import { mount, type VueWrapper } from '@vue/test-utils';
 import type { MessageItem } from '@/pages/home/type';
 import { CHAT_ROLE } from '@/types/chat-role';
-import { buildChatVirtualRows, useChatVirtualList } from '../use-chat-virtual-list';
+import {
+  buildChatVirtualRows,
+  buildTurnMarks,
+  TURN_SCRUBBER_LIMIT,
+  useChatVirtualList
+} from '../use-chat-virtual-list';
 
 const msg = (over: Partial<MessageItem>): MessageItem => ({
   session_id: 'default',
@@ -38,6 +43,42 @@ describe('buildChatVirtualRows', () => {
   });
 });
 
+describe('buildTurnMarks', () => {
+  const rows = (groups: MessageItem[][]) => buildChatVirtualRows(groups);
+
+  it('marks every user turn and skips AI-only groups', () => {
+    const marks = buildTurnMarks(
+      rows([
+        [msg({ id: 1, role: CHAT_ROLE.USER, turn_num: 1, content: '  第一条   消息  ' })],
+        [msg({ id: 2, role: CHAT_ROLE.AI, turn_num: 1, content: '答' })],
+        [msg({ id: 3, role: CHAT_ROLE.USER, turn_num: 2, content: '第二条' })]
+      ])
+    );
+
+    expect(marks.map(m => m.rowIndex)).toEqual([0, 2]);
+    expect(marks.map(m => m.turn)).toEqual([1, 2]);
+    // The preview is collapsed to one line for the tooltip.
+    expect(marks[0]!.preview).toBe('第一条 消息');
+  });
+
+  it('skips background-task carriers (USER rows that are not the user speaking)', () => {
+    const carrier = msg({ id: 4, role: CHAT_ROLE.USER, turn_num: 3, origin: 'subagent_completion' });
+    expect(buildTurnMarks(rows([[carrier]]))).toEqual([]);
+  });
+
+  it('keeps only the newest TURN_SCRUBBER_LIMIT marks', () => {
+    const groups = Array.from({ length: TURN_SCRUBBER_LIMIT + 5 }, (_, i) => [
+      msg({ id: i + 1, role: CHAT_ROLE.USER, turn_num: i + 1, content: `第 ${i + 1} 条` })
+    ]);
+
+    const marks = buildTurnMarks(rows(groups));
+
+    expect(marks).toHaveLength(TURN_SCRUBBER_LIMIT);
+    expect(marks[0]!.turn).toBe(6);
+    expect(marks.at(-1)!.turn).toBe(TURN_SCRUBBER_LIMIT + 5);
+  });
+});
+
 /**
  * Force deterministic geometry on the happy-dom element.
  * @param el
@@ -57,7 +98,11 @@ type ListVm = {
   virtualRows: Array<{ index: number; key: string }>;
   totalSize: number;
   rows: Array<{ key: string }>;
-  virtualizer: { scrollToEnd: () => void; isAtEnd: () => boolean };
+  scrollOffset: number;
+  activeMarkIndex: number | null;
+  turnMarks: Array<{ rowIndex: number; turn: number; preview: string }>;
+  virtualizer: { scrollToEnd: () => void; isAtEnd: () => boolean; scrollToIndex: (i: number, o?: unknown) => void };
+  scrollToRow: (index: number) => void;
   updateScrollBottomBtn: () => void;
 };
 
@@ -127,6 +172,34 @@ describe('useChatVirtualList', () => {
     setGeometry(el, 5000, 500, 0); // top again: fires
     await scoped.trigger('scroll');
     expect(reached).toHaveLength(2);
+  });
+
+  it('jumps to a row through the virtualizer with a top alignment', async () => {
+    const spy = vi.spyOn(vm.virtualizer, 'scrollToIndex').mockImplementation(() => {});
+    (vm as unknown as { scrollToRow: (index: number) => void }).scrollToRow(3);
+    await nextTick();
+
+    expect(spy).toHaveBeenCalledWith(3, { align: 'start' });
+  });
+
+  it('reports no active mark while the list is empty', () => {
+    expect(vm.activeMarkIndex).toBeNull();
+    expect(vm.turnMarks).toEqual([]);
+  });
+
+  it('marks the newest turn while pinned to the bottom, not the row at the top edge', async () => {
+    const groups = [
+      [msg({ id: 1, role: CHAT_ROLE.USER, turn_num: 1 })],
+      [msg({ id: 2, role: CHAT_ROLE.AI, turn_num: 1 })],
+      [msg({ id: 3, role: CHAT_ROLE.USER, turn_num: 2 })],
+      [msg({ id: 4, role: CHAT_ROLE.AI, turn_num: 2 })]
+    ];
+    await wrapper.setProps({ groups });
+
+    // The stub's isAtEnd() reports "pinned": the reader is on the newest turn even
+    // though the viewport top still sits inside the previous one.
+    expect(vm.turnMarks.map(m => m.turn)).toEqual([1, 2]);
+    expect(vm.activeMarkIndex).toBe(1);
   });
 
   it('always scrolls to the end when a USER message is appended', async () => {

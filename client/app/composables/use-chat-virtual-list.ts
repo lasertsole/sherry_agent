@@ -51,6 +51,49 @@ export interface ChatVirtualRow {
 export const buildChatVirtualRows = (groups: MessageItem[][]): ChatVirtualRow[] =>
   groups.map(group => ({ key: `g-${group[0]?.id ?? 'empty'}`, group }));
 
+/**
+ * One mark of the turn scrubber: a user message the reader can jump to.
+ */
+export interface ChatTurnMark {
+  /** Virtual row index of the turn group (what `scrollToIndex` takes). */
+  rowIndex: number;
+  /** Conversation turn number (shown in the label). */
+  turn: number;
+  /** One-line snippet of the message, for the hover tooltip. */
+  preview: string;
+}
+
+/** How many of the most recent user turns the scrubber offers. */
+export const TURN_SCRUBBER_LIMIT = 20;
+
+/** Snippet length of a mark's preview (keeps the tooltip to one line). */
+const MARK_PREVIEW_CHARS = 60;
+
+/**
+ * Derive the scrubber marks from the virtual rows: one per USER-origin turn
+ * group (a USER row always starts its own group), keeping only the most recent
+ * `limit` of them.
+ * @param rows Virtual rows in render order.
+ * @param limit Maximum number of marks (the newest ones win).
+ * @returns Marks in render order.
+ */
+export const buildTurnMarks = (rows: ChatVirtualRow[], limit = TURN_SCRUBBER_LIMIT): ChatTurnMark[] => {
+  const marks: ChatTurnMark[] = [];
+  rows.forEach((row, rowIndex) => {
+    const first = row.group[0];
+    // USER rows always open their group; background-task carriers are USER rows too
+    // but are system cards, not something the user said, so they get no mark.
+    if (!first || first.role !== CHAT_ROLE.USER) return;
+    if (first.origin && first.origin !== 'user') return;
+    marks.push({
+      rowIndex,
+      turn: first.turn_num,
+      preview: first.content.trim().replace(/\s+/g, ' ').slice(0, MARK_PREVIEW_CHARS)
+    });
+  });
+  return marks.slice(-limit);
+};
+
 export interface ChatVirtualListOptions {
   /** Called when the viewport crosses the top trigger (re-arms after leaving). */
   onReachTop?: () => void;
@@ -102,6 +145,9 @@ export function useChatVirtualList(
   /** "Scroll to bottom" floating button visibility (hidden while pinned at the end) */
   const showScrollBottom = ref(false);
 
+  /** Live scroll offset (px) of the container: drives the scrubber's active mark. */
+  const scrollOffset = ref(0);
+
   /**
    * Sync the button visibility on scroll, measured from the LIVE DOM
    * (`scrollHeight - scrollTop - clientHeight`) rather than the virtualizer's
@@ -117,6 +163,7 @@ export function useChatVirtualList(
   const updateScrollBottomBtn = () => {
     const el = scrollContainerRef.value;
     if (!el) return;
+    scrollOffset.value = el.scrollTop;
     const away = el.scrollHeight - el.scrollTop - el.clientHeight;
     showScrollBottom.value = away > NEAR_BOTTOM_THRESHOLD;
     if (el.scrollHeight > el.clientHeight + 1) {
@@ -187,6 +234,65 @@ export function useChatVirtualList(
           return;
         }
         snapToBottom();
+        updateScrollBottomBtn();
+      };
+      requestAnimationFrame(settle);
+    });
+  };
+
+  /** Scrubber marks: one per user turn in the loaded window. */
+  const turnMarks = computed<ChatTurnMark[]>(() => buildTurnMarks(rows.value));
+
+  /**
+   * Index (into `turnMarks`) of the turn being read — what the scrubber highlights.
+   *
+   * Two rules, because the row at the viewport's top edge is not the answer on its
+   * own: pinned to the bottom the reader is on the newest turn even though its own
+   * row (and the reply above it) still fills the viewport; anywhere else it is the
+   * newest turn whose row starts at or above that edge, so reading a turn's long
+   * reply keeps that turn marked.
+   */
+  const activeMarkIndex = computed<number | null>(() => {
+    const marks = turnMarks.value;
+    if (!marks.length) return null;
+    if (virtualizer.value.isAtEnd()) return marks.length - 1;
+    const top = scrollOffset.value;
+    const items = virtualizer.value.getVirtualItems();
+    if (!items.length) return null;
+    const edgeRow = (items.find(item => item.start + item.size > top + 1) ?? items[items.length - 1])?.index;
+    if (edgeRow == null) return null;
+    let active = 0;
+    for (let i = 0; i < marks.length; i += 1) {
+      if (marks[i]!.rowIndex <= edgeRow) active = i;
+      else break;
+    }
+    return active;
+  });
+
+  /**
+   * Scroll a virtual row to the top of the viewport (the scrubber's jump).
+   *
+   * Same two-pass settle as `scrollToBottom`: the rows between the current
+   * window and the target have never been rendered, so the first pass lands on
+   * estimated heights — the rAF re-apply corrects it as they get measured.
+   * @param rowIndex Virtual row index to align with the viewport top.
+   */
+  const scrollToRow = (rowIndex: number) => {
+    nextTick(() => {
+      const el = scrollContainerRef.value;
+      if (!el) return;
+      virtualizer.value.scrollToIndex(rowIndex, { align: 'start' });
+      let last = el.scrollHeight;
+      let attempts = 0;
+      const settle = () => {
+        virtualizer.value.scrollToIndex(rowIndex, { align: 'start' });
+        const height = el.scrollHeight;
+        if (height !== last && attempts < 8) {
+          last = height;
+          attempts += 1;
+          requestAnimationFrame(settle);
+          return;
+        }
         updateScrollBottomBtn();
       };
       requestAnimationFrame(settle);
@@ -328,7 +434,11 @@ export function useChatVirtualList(
     totalSize,
     rowGroup,
     showScrollBottom,
+    scrollOffset,
+    turnMarks,
+    activeMarkIndex,
     scrollToBottom,
+    scrollToRow,
     updateScrollBottomBtn,
     onScroll
   };

@@ -228,7 +228,9 @@ vi.mock('@tanstack/vue-virtual', async () => {
         measure: () => {},
         isAtEnd: () => true,
         scrollToEnd: () => {},
-        scrollToOffset: () => {}
+        scrollToOffset: () => {},
+        // The turn scrubber jumps through this one: keep it a spy-able no-op.
+        scrollToIndex: () => {}
       });
     }
   };

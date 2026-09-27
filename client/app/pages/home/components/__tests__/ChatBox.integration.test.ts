@@ -167,6 +167,36 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
 /** Realistic carrier content (matches agent/tools/subagent/announce/completion_message.py format) */
 const CARRIER = '[subagent:研究员 done]\n后台检索已完成，结果已送达主会话。';
 
+describe('ChatBox turn scrubber (integration, backend mocked)', () => {
+  it('offers one jump mark per user turn, capped at the scrubber limit', () => {
+    const messages = Array.from({ length: 25 }, (_, i) => [
+      base({ id: i * 2 + 1, role: CHAT_ROLE.USER, turn_num: i + 1, content: `第 ${i + 1} 条` }),
+      base({ id: i * 2 + 2, role: CHAT_ROLE.AI, turn_num: i + 1, content: '答' })
+    ]).flat();
+
+    const wrapper = mount(ChatBox, { props: { messages } });
+
+    const marks = wrapper.findAll('nav[aria-label="历史消息穿梭器"] button');
+    expect(marks).toHaveLength(20);
+    // The newest turns win: the oldest five are not offered.
+    expect(marks[0]!.attributes('aria-label')).toBe('跳到第 6 轮');
+    expect(marks.at(-1)!.attributes('aria-label')).toBe('跳到第 25 轮');
+  });
+
+  it('does not render the scrubber for a single-turn session', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, turn_num: 1, content: 'hi' }),
+          base({ id: 2, role: CHAT_ROLE.AI, turn_num: 1, content: 'hello' })
+        ]
+      }
+    });
+
+    expect(wrapper.find('nav[aria-label="历史消息穿梭器"]').exists()).toBe(false);
+  });
+});
+
 describe('ChatBox background-task system card (integration, backend mocked)', () => {
   it('renders a USER message with origin as a centered muted system card, not a user bubble', () => {
     const wrapper = mount(ChatBox, {
