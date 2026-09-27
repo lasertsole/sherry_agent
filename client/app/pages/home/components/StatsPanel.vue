@@ -2,7 +2,6 @@
 {
   "en": {
     "stats": {
-      "title": "Statistics",
       "loading": "Loading…",
       "empty": "No token usage data",
       "loadError": "Failed to load",
@@ -16,7 +15,6 @@
   },
   "ja": {
     "stats": {
-      "title": "統計",
       "loading": "読み込み中…",
       "empty": "トークン使用量データがありません",
       "loadError": "読み込みに失敗しました",
@@ -30,7 +28,6 @@
   },
   "ko": {
     "stats": {
-      "title": "통계",
       "loading": "불러오는 중…",
       "empty": "토큰 사용량 데이터가 없습니다",
       "loadError": "불러오기 실패",
@@ -44,7 +41,6 @@
   },
   "zh": {
     "stats": {
-      "title": "统计",
       "loading": "加载中…",
       "empty": "暂无 Token 用量数据",
       "loadError": "加载失败",
@@ -60,14 +56,8 @@
 </i18n>
 
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('stats.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[min(95vw,1200px)]"
-    @show="loadStats"
-    @hide="onHide">
+  <!-- Right-sidebar tab body: mounted with the tab, which drives the load. -->
+  <div class="flex flex-col gap-3 h-full min-h-0">
     <div class="flex flex-col gap-3">
       <!-- Range switch + refresh -->
       <div class="shrink-0 flex items-center justify-center gap-2">
@@ -136,25 +126,17 @@
         </div>
       </div>
     </div>
-  </Dialog>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, watch, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { G2Spec } from '@antv/g2';
 import GChart from './GChart.vue';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
-
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
 
 /** Per-day per-model token usage from the backend (snake_case kept as-is) */
 interface BackendModelUsage {
@@ -419,13 +401,6 @@ watch(selectedRange, () => {
   loadStats();
 });
 
-/** Reset state after the dialog closes */
-const onHide = () => {
-  loading.value = false;
-  empty.value = false;
-  error.value = false;
-  days.value = [];
-  selectedRange.value = 'week';
-  chartMode.value = 'value';
-};
+// The tab's lifetime drives the load.
+onMounted(loadStats);
 </script>

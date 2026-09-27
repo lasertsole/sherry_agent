@@ -1,23 +1,23 @@
 /**
  * Home-shell dialog registry + toolbar command registry.
  *
- * The shell used to dispatch its toolbar with an 11-case `switch` over
- * `handleOperate` while each dialog had its own `showXxxDialog` ref. Both are
- * now data: `HOME_DIALOG_IDS` lists every dialog the shell owns (fed to
+ * `HOME_DIALOG_IDS` lists every dialog the shell owns (fed to
  * `useDialogManager`), and `HOME_TOOLBAR_EVENTS` + `buildHomeToolbarCommands`
  * map a toolbar event to the command it runs.
+ *
+ * ``logs`` / ``stats`` / ``knowledgeGraph`` are not dialogs: their commands
+ * open a tab in the collapsible right sidebar, so a viewer stays open next to
+ * the chat.
  */
 
 /** Dialog ids owned by the home shell. */
 export const HOME_DIALOG_IDS = [
   'skills',
-  'stats',
   'systemConfig',
   'persona',
   'memory',
   'heartbeat',
   'cron',
-  'logs',
   'notification',
   'extend'
 ] as const;
@@ -48,12 +48,12 @@ export const HOME_TOOLBAR_EVENTS = [
 /** One toolbar event of the home shell. */
 export type HomeToolbarEvent = (typeof HOME_TOOLBAR_EVENTS)[number];
 
-/** What a toolbar command may do: open a dialog or navigate. */
+/** What a toolbar command may do: open a dialog or open a right-sidebar tab. */
 export interface HomeToolbarContext {
   /** Open the given dialog (from `useDialogManager`). */
   openDialog: (id: HomeDialogId) => void;
-  /** Navigate to the standalone knowledge-graph page. */
-  navigateToKnowledgeGraph: () => void;
+  /** Open a right-sidebar tab: the log viewer, the statistics charts, the knowledge graph. */
+  openRightTab: (kind: 'logs' | 'stats' | 'knowledgeGraph') => void;
 }
 
 /**
@@ -67,14 +67,14 @@ export interface HomeToolbarContext {
 export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<string, () => void> {
   const commands: Record<HomeToolbarEvent, () => void> = {
     skills: () => context.openDialog('skills'),
-    knowledgeGraph: () => context.navigateToKnowledgeGraph(),
-    stats: () => context.openDialog('stats'),
+    knowledgeGraph: () => context.openRightTab('knowledgeGraph'),
+    stats: () => context.openRightTab('stats'),
     systemConfig: () => context.openDialog('systemConfig'),
     persona: () => context.openDialog('persona'),
     memory: () => context.openDialog('memory'),
     heartbeat: () => context.openDialog('heartbeat'),
     cron: () => context.openDialog('cron'),
-    logs: () => context.openDialog('logs'),
+    logs: () => context.openRightTab('logs'),
     notification: () => context.openDialog('notification'),
     extend: () => context.openDialog('extend')
   };

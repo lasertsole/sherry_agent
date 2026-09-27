@@ -2,7 +2,6 @@
 {
   "en": {
     "logs": {
-      "title": "Log Viewer",
       "tabs": {
         "frontend": "Client",
         "backend": "Server"
@@ -29,7 +28,6 @@
   },
   "ja": {
     "logs": {
-      "title": "ログビューア",
       "tabs": {
         "frontend": "クライアント",
         "backend": "サーバー"
@@ -56,7 +54,6 @@
   },
   "ko": {
     "logs": {
-      "title": "로그 뷰어",
       "tabs": {
         "frontend": "클라이언트",
         "backend": "서버"
@@ -83,7 +80,6 @@
   },
   "zh": {
     "logs": {
-      "title": "日志查看",
       "tabs": {
         "frontend": "客户端",
         "backend": "服务端"
@@ -112,14 +108,10 @@
 </i18n>
 
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('logs.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[1100px]"
-    @show="onShow"
-    @hide="onHide">
+  <!-- Right-sidebar tab body: mounted and unmounted with the tab, which drives the
+       subscription lifecycle (the inner 前端/后端 tabs stay here; the sidebar owns
+       only the outer tab strip). -->
+  <div class="flex flex-col h-full min-h-0">
     <TabView v-model:activeIndex="activeTab">
       <!-- ===== Frontend logs Tab ===== -->
       <TabPanel
@@ -358,25 +350,17 @@
         </div>
       </TabPanel>
     </TabView>
-  </Dialog>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, nextTick, onBeforeUnmount } from 'vue';
+import { ref, computed, nextTick, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { LogFileInfo, LogStreamFrame } from '@/composables/bridge';
 import type { ClientLogBucket, ClientLogEntry, ClientLogType } from '@/composables/clientLog';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
-
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
 
 const activeTab = ref(0);
 
@@ -392,8 +376,8 @@ const MAX_LINES = 5000;
 /* ==================== Frontend logs (clientLog composable: history + live) ==================== */
 
 // The browser console capture is installed by the `client-log` Nuxt plugin at startup,
-// not here: this dialog is lazily loaded on first open, so installing capture in its setup
-// would lose every log emitted before the user ever opens the Log Viewer.
+// not here: this panel is lazily loaded when its tab is first added, so installing capture
+// in its setup would lose every log emitted before the user ever opens the Log Viewer.
 
 const frontendLines = ref<ClientLogEntry[]>([]);
 const logTypes = ref<ClientLogType[]>([]); // fixed order all/log/error
@@ -428,7 +412,7 @@ const entryMatchesSelectedType = (entry: ClientLogEntry): boolean =>
   selectedType.value === 'all' || typeOfEntry(entry) === selectedType.value;
 
 /**
- * Live-append new frontend logs while the dialog is open (only when the "today" bucket is selected, live is enabled, and the type matches).
+ * Live-append new frontend logs while the tab is mounted (only when the "today" bucket is selected, live is enabled, and the type matches).
  * @param entry
  */
 const handleFrontendEntry = (entry: ClientLogEntry) => {
@@ -446,7 +430,7 @@ const loadTypeList = async () => {
     logTypes.value = infos.map(i => i.type);
     await onTypeChange(selectedType.value);
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to load client log types:', e);
+    logUtil.e('[LogsPanel] Failed to load client log types:', e);
     logTypes.value = ['all', 'log', 'error'];
     frontendLines.value = [];
   } finally {
@@ -471,7 +455,7 @@ const loadBucketsForType = async (type: ClientLogType) => {
       frontendLines.value = [];
     }
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to load client log buckets:', e);
+    logUtil.e('[LogsPanel] Failed to load client log buckets:', e);
     frontendLines.value = [];
   } finally {
     loadingBucketContent.value = false;
@@ -487,7 +471,7 @@ const loadBucketContent = async () => {
     frontendLines.value = await readClientLogBucket(bucket, MAX_LINES);
     scrollFrontendToBottom();
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to read client log bucket:', e);
+    logUtil.e('[LogsPanel] Failed to read client log bucket:', e);
     frontendLines.value = [];
   } finally {
     loadingBucketContent.value = false;
@@ -542,7 +526,7 @@ const clearFrontend = async () => {
   try {
     await clearClientLogs();
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to clear client log history:', e);
+    logUtil.e('[LogsPanel] Failed to clear client log history:', e);
   }
   if (typeof window !== 'undefined' && window.console && typeof window.console.clear === 'function') {
     window.console.clear();
@@ -748,7 +732,7 @@ const loadServerBucketsForType = async (type: ClientLogType) => {
       lines.value = [];
     }
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to build server log buckets:', e);
+    logUtil.e('[LogsPanel] Failed to build server log buckets:', e);
     lines.value = [];
   } finally {
     loadingFiles.value = false;
@@ -824,7 +808,7 @@ const loadFileList = async () => {
     logFiles.value = resp.files ?? [];
     await loadServerBucketsForType(serverSelectedType.value);
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to load log files:', e);
+    logUtil.e('[LogsPanel] Failed to load log files:', e);
     lines.value = [];
   } finally {
     loadingFiles.value = false;
@@ -848,7 +832,7 @@ const loadContent = async () => {
       lines.value = [];
     }
   } catch (e) {
-    logUtil.e('[LogsDialog] Failed to read log file:', e);
+    logUtil.e('[LogsPanel] Failed to read log file:', e);
     lines.value = [];
   } finally {
     loadingContent.value = false;
@@ -895,7 +879,7 @@ const startLive = () => {
       }
     },
     e => {
-      logUtil.e('[LogsDialog] Log stream error:', e);
+      logUtil.e('[LogsPanel] Log stream error:', e);
       wsStatus.value = 'idle';
     }
   );
@@ -914,16 +898,16 @@ const clearBackend = () => {
   lines.value = [];
 };
 
-/** Dialog opened: load the frontend bucket history + the backend file list */
-const onShow = () => {
+/** Tab mounted: load the frontend bucket history + the backend file list */
+const activate = () => {
   userScrolledUp = false;
   frontendUserScrolledUp = false;
   loadTypeList();
   loadFileList();
 };
 
-/** Dialog closed: cancel the frontend live subscription, stop the live stream, and reset state (frontend history is kept for the next viewing) */
-const onHide = () => {
+/** Tab unmounted: cancel the frontend live subscription, stop the live stream, and reset state (frontend history is kept for the next viewing) */
+const deactivate = () => {
   teardownFrontend();
   frontendLive.value = false;
   stopLive();
@@ -941,9 +925,7 @@ const onHide = () => {
   frontendUserScrolledUp = false;
 };
 
-// Cancel the frontend subscription and clean up the WebSocket when the component unmounts
-onBeforeUnmount(() => {
-  teardownFrontend();
-  stopLive();
-});
+// The tab's lifetime drives the subscription lifecycle.
+onMounted(activate);
+onBeforeUnmount(deactivate);
 </script>

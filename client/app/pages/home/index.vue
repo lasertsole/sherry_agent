@@ -104,6 +104,15 @@
               :aria-label="t('toolbar.settingsMenu')"
               variant="text"
               @click="isSettingsMenuOpen = true" />
+            <!-- Right sidebar toggle: mirrors the left sidebar's collapse button,
+                 sitting at the far right of the toolbar (the sidebar it controls
+                 is the rightmost region of the shell). -->
+            <Button
+              :icon="isRightSidebarCollapsed ? 'pi pi-angle-double-left' : 'pi pi-angle-double-right'"
+              :title="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+              :aria-label="isRightSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+              variant="text"
+              @click="toggleRightSidebar" />
           </div>
         </div>
       </div>
@@ -123,7 +132,7 @@
             :key="tool.event"
             type="button"
             class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
-            :title="t(tool.title)"
+            :title="t(tool.title ?? tool.toolName)"
             @click="handleMenuSelect(tool.event)">
             <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
             <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
@@ -137,17 +146,22 @@
            least-recently-visited slot by LRU, preventing unbounded growth from deleted inactive
            sessions (their page-key is no longer referenced by the route, but the slot still
            lingers in memory). -->
-      <div class="flex-1 min-h-0">
-        <NuxtPage
-          :page-key="resolvePageKey"
-          :keepalive="{ max: KEEP_ALIVE_MAX }" />
+      <div class="flex flex-1 min-h-0">
+        <div class="flex-1 min-w-0 min-h-0">
+          <NuxtPage
+            :page-key="resolvePageKey"
+            :keepalive="{ max: KEEP_ALIVE_MAX }" />
+        </div>
+        <!-- Collapsible right sidebar (log viewer / statistics tabs); it lives in the
+             shell, outside the KeepAlive'd session page, so its tabs survive switches. -->
+        <RightSidebar />
       </div>
 
       <!-- Dialogs are lazily loaded (defineAsyncComponent below): `v-if` is what makes the
            laziness real — an async component that is always rendered would fetch its chunk as
            soon as this page mounts. Each dialog reloads its data from @show/@hide or on mount,
            so mounting on open (and unmounting on close) preserves the visible behavior while
-           keeping the dialog + its heavy deps (e.g. @antv/g2 via StatsDialog) out of the
+           keeping the dialog + its heavy deps (e.g. @antv/g2 via StatsPanel) out of the
            initial page chunk. NotificationDialog is the one exception: its ws:notification
            subscription and unread badge must stay live while the dialog is closed, so it stays
            permanently mounted (async chunk still loaded off the critical path). -->
@@ -156,11 +170,6 @@
       <SkillsDialog
         v-if="dialogs.visible.skills"
         v-model="dialogs.visible.skills" />
-
-      <!-- Statistics dialog -->
-      <StatsDialog
-        v-if="dialogs.visible.stats"
-        v-model="dialogs.visible.stats" />
 
       <!-- System config dialog -->
       <ConfigDialog
@@ -188,11 +197,6 @@
         v-if="dialogs.visible.cron"
         v-model="dialogs.visible.cron" />
 
-      <!-- Logs dialog -->
-      <LogsDialog
-        v-if="dialogs.visible.logs"
-        v-model="dialogs.visible.logs" />
-
       <!-- Notification dialog (listens to ws:notification, merges consecutive identical
          notifications, reports the unread count via changed) -->
       <NotificationDialog
@@ -216,6 +220,7 @@ useErrorCaptured();
 
 // components
 import SessionSidebar from './components/SessionSidebar.vue';
+import RightSidebar from './components/RightSidebar.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
 import AsyncChunkFallback from '@/components/AsyncChunkFallback.vue';
@@ -231,7 +236,7 @@ import { buildHomeToolbarCommands, HOME_DIALOG_IDS } from './dialogs';
  * Wrap a dialog `import()` in an async component.
  *
  * Dialogs are code-split so their own module graph (and heavy deps such as
- * @antv/g2 for StatsDialog) is not part of the initial `/home` chunk. The
+ * @antv/g2 for StatsPanel) is not part of the initial `/home` chunk. The
  * `loadingComponent` covers the first-open chunk fetch; `delay: 150` avoids a
  * spinner flash on fast (cached) loads.
  * @param loader Dynamic import of the dialog SFC
@@ -240,13 +245,11 @@ const lazyDialog = (loader: () => Promise<{ default: Component }>) =>
   defineAsyncComponent({ loader, loadingComponent: AsyncChunkFallback, delay: 150 });
 
 const SkillsDialog = lazyDialog(() => import('./components/SkillsDialog.vue'));
-const StatsDialog = lazyDialog(() => import('./components/StatsDialog.vue'));
 const ConfigDialog = lazyDialog(() => import('./components/ConfigDialog.vue'));
 const PersonaDialog = lazyDialog(() => import('./components/PersonaDialog.vue'));
 const MemoryDialog = lazyDialog(() => import('./components/MemoryDialog.vue'));
 const HeartbeatDialog = lazyDialog(() => import('./components/HeartbeatDialog.vue'));
 const CronDialog = lazyDialog(() => import('./components/CronDialog.vue'));
-const LogsDialog = lazyDialog(() => import('./components/LogsDialog.vue'));
 const ExtendDialog = lazyDialog(() => import('./components/ExtendDialog.vue'));
 const NotificationDialog = lazyDialog(() => import('./components/NotificationDialog.vue'));
 
@@ -301,9 +304,6 @@ function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
   const pref = useCookie('i18n_redirected');
   pref.value = code;
 }
-const router = useRouter();
-const localePath = useLocalePath();
-
 /**
  * KeepAlive cache slot cap (LRU).
  *
@@ -336,12 +336,12 @@ const resolvePageKey = (route: { path: string; params: Record<string, unknown> }
 const dialogs = useDialogManager(HOME_DIALOG_IDS);
 
 /**
- * Toolbar command registry: event → command (dialogs + the knowledge-graph route).
- * `handleOperate` is now a lookup, so a new toolbar entry only needs a registry row.
+ * Toolbar command registry: event → command (dialogs + right-sidebar tabs).
+ * `handleOperate` is a lookup, so a new toolbar entry only needs a registry row.
  */
 const toolbarCommands = buildHomeToolbarCommands({
   openDialog: dialogs.open,
-  navigateToKnowledgeGraph: () => router.push(localePath('/knowledge-graph'))
+  openRightTab: kind => rightSidebarStore.openTab(kind)
 });
 
 /** Notification badge unread count (reported by NotificationDialog) */
@@ -354,6 +354,10 @@ const { settingsMenuOpen: isSettingsMenuOpen } = storeToRefs(uiStore);
 
 /** Whether the left history sidebar is collapsed (expanded by default; persisted to localStorage and restored after refresh) */
 const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
+
+/** Right sidebar (log viewer / statistics / knowledge-graph tabs): collapse flag + tab actions */
+const rightSidebarStore = useRightSidebarStore();
+const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);
 
 /**
  * Callback after system config is saved: the current session keeps its already-locked old
@@ -383,9 +387,8 @@ const handleOperate = (type: string, event: string) => {
 
 /**
  * Settings menu (nine-grid) item click handler: first triggers the corresponding tool event,
- * then collapses the menu.
- * knowledgeGraph is a route jump while the rest are dialogs; both uniformly reuse
- * handleOperate's event dispatch.
+ * then collapses the menu. Events reach dialogs and right-sidebar tabs through the same
+ * handleOperate dispatch.
  * @param event
  */
 const handleMenuSelect = (event: string) => {
@@ -394,6 +397,10 @@ const handleMenuSelect = (event: string) => {
 };
 
 /** Collapse/expand the left history sidebar */
+const toggleRightSidebar = () => {
+  rightSidebarStore.toggle();
+};
+
 const toggleSidebar = () => {
   isSidebarCollapsed.value = !isSidebarCollapsed.value;
 };

@@ -5,48 +5,62 @@ import { buildHomeToolbarCommands, HOME_DIALOG_IDS, HOME_TOOLBAR_EVENTS, type Ho
 /** Every toolbar event that must open a dialog, and the dialog it must open. */
 const DIALOG_EVENTS: ReadonlyArray<[string, HomeDialogId]> = [
   ['skills', 'skills'],
-  ['stats', 'stats'],
   ['systemConfig', 'systemConfig'],
   ['persona', 'persona'],
   ['memory', 'memory'],
   ['heartbeat', 'heartbeat'],
   ['cron', 'cron'],
-  ['logs', 'logs'],
   ['notification', 'notification'],
   ['extend', 'extend']
 ];
 
+/** Events that open a right-sidebar tab instead of a dialog or a page. */
+const RIGHT_TAB_EVENTS: ReadonlyArray<[string, 'logs' | 'stats' | 'knowledgeGraph']> = [
+  ['logs', 'logs'],
+  ['stats', 'stats'],
+  ['knowledgeGraph', 'knowledgeGraph']
+];
+
 function buildCommands() {
-  return buildHomeToolbarCommands({ openDialog: vi.fn(), navigateToKnowledgeGraph: vi.fn() });
+  return buildHomeToolbarCommands({
+    openDialog: vi.fn(),
+    openRightTab: vi.fn()
+  });
 }
 
 describe('buildHomeToolbarCommands', () => {
   it('routes every dialog event to its own dialog', () => {
     const openDialog = vi.fn();
-    const navigateToKnowledgeGraph = vi.fn();
-    const commands = buildHomeToolbarCommands({ openDialog, navigateToKnowledgeGraph });
+    const openRightTab = vi.fn();
+    const commands = buildHomeToolbarCommands({ openDialog, openRightTab });
 
     for (const [event, dialog] of DIALOG_EVENTS) {
       openDialog.mockClear();
-      navigateToKnowledgeGraph.mockClear();
+      openRightTab.mockClear();
 
       commands[event]?.();
 
       expect(openDialog).toHaveBeenCalledTimes(1);
       expect(openDialog).toHaveBeenCalledWith(dialog);
-      expect(navigateToKnowledgeGraph).not.toHaveBeenCalled();
+      expect(openRightTab).not.toHaveBeenCalled();
     }
   });
 
-  it('routes knowledgeGraph to the route navigation instead of a dialog', () => {
+  it('routes logs, stats and knowledgeGraph to right-sidebar tabs instead of dialogs', () => {
     const openDialog = vi.fn();
-    const navigateToKnowledgeGraph = vi.fn();
-    const commands = buildHomeToolbarCommands({ openDialog, navigateToKnowledgeGraph });
+    const openRightTab = vi.fn();
+    const commands = buildHomeToolbarCommands({ openDialog, openRightTab });
 
-    commands.knowledgeGraph?.();
+    for (const [event, kind] of RIGHT_TAB_EVENTS) {
+      openDialog.mockClear();
+      openRightTab.mockClear();
 
-    expect(navigateToKnowledgeGraph).toHaveBeenCalledTimes(1);
-    expect(openDialog).not.toHaveBeenCalled();
+      commands[event]?.();
+
+      expect(openRightTab).toHaveBeenCalledTimes(1);
+      expect(openRightTab).toHaveBeenCalledWith(kind);
+      expect(openDialog).not.toHaveBeenCalled();
+    }
   });
 
   it('registers exactly the toolbar event vocabulary', () => {
@@ -63,6 +77,9 @@ describe('buildHomeToolbarCommands', () => {
 
   it('maps every dialog event to a registered dialog id', () => {
     for (const [, dialog] of DIALOG_EVENTS) expect(HOME_DIALOG_IDS).toContain(dialog);
+    // The tab events must NOT be dialogs any more (no dead registry rows).
+    for (const [, kind] of RIGHT_TAB_EVENTS) expect(HOME_DIALOG_IDS).not.toContain(kind);
+    // The knowledge graph is not a route any more either: nothing to navigate to.
   });
 
   it('is a no-op registry entry for an unknown event', () => {

@@ -2,7 +2,6 @@
 {
   "en": {
     "knowledgeGraph": {
-      "back": "Back",
       "placeholder": "Knowledge Graph feature under development…",
       "loading": "Loading…",
       "empty": "No knowledge graph data",
@@ -21,14 +20,10 @@
       "nodeSourceId": "Source ID",
       "nodeProperties": "Properties",
       "nodeNeighbors": "Connected nodes"
-    },
-    "toolbar": {
-      "knowledgeGraph": "Knowledge Graph"
     }
   },
   "ja": {
     "knowledgeGraph": {
-      "back": "戻る",
       "placeholder": "ナレッジグラフ機能は開発中です…",
       "loading": "読み込み中…",
       "empty": "ナレッジグラフのデータがありません",
@@ -47,14 +42,10 @@
       "nodeSourceId": "ソースID",
       "nodeProperties": "プロパティ",
       "nodeNeighbors": "接続ノード"
-    },
-    "toolbar": {
-      "knowledgeGraph": "ナレッジグラフ"
     }
   },
   "ko": {
     "knowledgeGraph": {
-      "back": "뒤로",
       "placeholder": "지식 그래프 기능 개발 중…",
       "loading": "불러오는 중…",
       "empty": "지식 그래프 데이터가 없습니다",
@@ -73,14 +64,10 @@
       "nodeSourceId": "소스 ID",
       "nodeProperties": "속성",
       "nodeNeighbors": "연결된 노드"
-    },
-    "toolbar": {
-      "knowledgeGraph": "지식 그래프"
     }
   },
   "zh": {
     "knowledgeGraph": {
-      "back": "返回",
       "placeholder": "知识图谱功能开发中…",
       "loading": "加载中…",
       "empty": "暂无知识图谱数据",
@@ -99,28 +86,18 @@
       "nodeSourceId": "来源ID",
       "nodeProperties": "属性",
       "nodeNeighbors": "关联节点"
-    },
-    "toolbar": {
-      "knowledgeGraph": "知识图谱"
     }
   }
 }
 </i18n>
 
 <template>
+  <!-- Right-sidebar tab body: the sidebar owns the tab label and the close button,
+       so only the graph's own actions live in this bar. -->
   <div class="flex flex-col h-full bg-[#f8f9fa] dark:bg-[#131619]">
-    <!-- Top title bar -->
+    <!-- Action bar: upload / refresh -->
     <div
-      class="shrink-0 h-14 flex items-center gap-3 px-4 border-b border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21]">
-      <Button
-        icon="pi pi-arrow-left"
-        text
-        rounded
-        :aria-label="t('knowledgeGraph.back')"
-        @click="goBack" />
-      <span class="text-base font-semibold text-gray-900 dark:text-gray-100">
-        {{ t('toolbar.knowledgeGraph') }}
-      </span>
+      class="shrink-0 h-11 flex items-center gap-2 px-3 border-b border-solid border-gray-light dark:border-gray-dark bg-white dark:bg-[#1a1d21]">
       <div class="ml-auto flex items-center gap-2">
         <Button
           icon="pi pi-upload"
@@ -296,7 +273,7 @@
 </template>
 
 <script lang="ts" setup>
-// Page-level error capture: runtime errors from all descendant components on this page
+// Panel-level error capture: runtime errors from all descendant components here
 // (G6 graph container / node detail panel, etc.)
 // → logUtil logging + global toast; returning false stops further upward propagation
 // (factory function pattern from 03-errorCapturedFactoryFunction.md)
@@ -309,12 +286,6 @@ import type { GraphData, IElementEvent, NodeData, EdgeData } from '@antv/g6';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
-const localePath = useLocalePath();
-const router = useRouter();
-
-const goBack = () => {
-  router.push(localePath('/home'));
-};
 
 /** Backend knowledge graph node */
 interface BackendNode {

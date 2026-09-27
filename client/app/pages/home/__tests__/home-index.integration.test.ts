@@ -8,7 +8,7 @@ import { useSubagentStore } from '@/stores/subagent';
 import type { SubagentRun } from '@/composables/bridge';
 
 // This mock is scoped to this file: only here does the mounted home page graph
-// reach LogsDialog's onMounted, which installs the console capture.
+// reach the log panel's onMounted, which installs the console capture.
 // clientLog.ts's console.* capture self-feeds in happy-dom: pushEntry -> Dexie
 // add() rejects (no IndexedDB) -> the persistence-failure handler calls
 // console.warn -> the capture re-captures that -> pushEntry again... This
@@ -57,7 +57,13 @@ const primevueStub = {
     emits: ['update:modelValue'],
     template: '<button class="cb" @click="$emit(\'update:modelValue\', !modelValue)">C</button>'
   },
-  Button: { props: ['label'], template: '<button class="btn"><slot /><span>{{ label }}</span></button>' },
+  // `title` / `icon` are passed through so the toolbar rows can be identified
+  // by their accessible label (the real PrimeVue Button renders both).
+  Button: {
+    props: ['label', 'title', 'ariaLabel', 'icon'],
+    template:
+      '<button class="btn" :title="title || ariaLabel"><i :class="icon"></i><slot /><span>{{ label }}</span></button>'
+  },
   Menu: { template: '<div class="mnu"></div>', methods: { toggle() {} } },
   ToggleSwitch: { template: '<span class="ts"></span>' },
   ChatInputBox: { template: '<div class="cib"></div>' }
@@ -82,7 +88,14 @@ const seededFetchApi = vi.hoisted(() =>
   )
 );
 
-vi.mock('@/composables/requestApi', () => ({ fetchApi: seededFetchApi }));
+// `ensureGatewayToken` / `withGatewayToken` are imported directly (not through
+// auto-imports) by the WS bridges the mounted children reach, so the module
+// mock has to carry them too — otherwise those imports resolve to undefined.
+vi.mock('@/composables/requestApi', () => ({
+  fetchApi: seededFetchApi,
+  ensureGatewayToken: vi.fn(async () => 'test-token'),
+  withGatewayToken: (url: string) => url
+}));
 
 // Children are real components whose heavy deps
 // (PrimeVue/markdown) are stubbed above; the real get_history_by_turn_page
@@ -110,6 +123,16 @@ describe('home/index.vue (integration, backend mocked)', () => {
     expect(wrapper.text()).toContain('第一次对话');
     // Branding present in the sidebar LOGO area.
     expect(wrapper.text()).toContain('🍊橘雪莉');
+  });
+
+  it('puts the right-sidebar toggle to the right of the settings menu button', () => {
+    const wrapper = mountHome();
+    const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+
+    // The two right-most entries of the toolbar: the nine-grid settings menu,
+    // then the toggle for the sidebar whose panel is the right-most region.
+    expect(titles.at(-2)).toBe('菜单');
+    expect(['展开侧边栏', '折叠侧边栏']).toContain(titles.at(-1));
   });
 
   it('renders the full-select checkbox group', () => {

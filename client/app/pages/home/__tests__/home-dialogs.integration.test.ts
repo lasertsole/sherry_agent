@@ -25,8 +25,29 @@ const uiState = reactive({
 });
 vi.stubGlobal('useUiStore', () => uiState);
 
+// Right sidebar (log viewer / statistics tabs): real store shape, spy actions so
+// the command wiring can be asserted without rendering the panels.
+const rightSidebarState = reactive({
+  collapsed: ref(true),
+  tabs: ref<Array<{ id: string; kind: string }>>([]),
+  activeTabId: ref<string | null>(null),
+  width: ref(420),
+  setWidth: () => {},
+  fitToViewport: () => {},
+  toggle: () => {
+    rightSidebarState.collapsed = !rightSidebarState.collapsed;
+  },
+  expand: () => {
+    rightSidebarState.collapsed = false;
+  },
+  openTab: vi.fn((kind: string) => `tab-${kind}`),
+  activateTab: () => {},
+  closeTab: () => {}
+});
+vi.stubGlobal('useRightSidebarStore', () => rightSidebarState);
+
 // Same worker-starvation guard as home-index.integration.test.ts: mounting the
-// shell reaches LogsDialog's module graph, whose clientLog capture self-feeds
+// shell reaches the log panel's module graph, whose clientLog capture self-feeds
 // under happy-dom (no IndexedDB). Keep the real module but never install it.
 vi.mock('@/composables/clientLog', async importOriginal => {
   const actual = await importOriginal<typeof import('@/composables/clientLog')>();
@@ -75,7 +96,6 @@ const { dialogStub } = vi.hoisted(() => ({
 }));
 
 vi.mock('@/pages/home/components/SkillsDialog.vue', () => ({ __esModule: true, default: dialogStub('skills-dialog') }));
-vi.mock('@/pages/home/components/StatsDialog.vue', () => ({ __esModule: true, default: dialogStub('stats-dialog') }));
 vi.mock('@/pages/home/components/ConfigDialog.vue', () => ({ __esModule: true, default: dialogStub('config-dialog') }));
 vi.mock('@/pages/home/components/PersonaDialog.vue', () => ({
   __esModule: true,
@@ -87,7 +107,6 @@ vi.mock('@/pages/home/components/HeartbeatDialog.vue', () => ({
   default: dialogStub('heartbeat-dialog')
 }));
 vi.mock('@/pages/home/components/CronDialog.vue', () => ({ __esModule: true, default: dialogStub('cron-dialog') }));
-vi.mock('@/pages/home/components/LogsDialog.vue', () => ({ __esModule: true, default: dialogStub('logs-dialog') }));
 vi.mock('@/pages/home/components/ExtendDialog.vue', () => ({ __esModule: true, default: dialogStub('extend-dialog') }));
 vi.mock('@/pages/home/components/NotificationDialog.vue', () => ({
   __esModule: true,
@@ -99,7 +118,13 @@ const seededFetchApi = vi.hoisted(() =>
     opts?.url === '/sessions' ? [{ session_id: 's1', last_time: '20260617104200', title: '第一次对话' }] : []
   )
 );
-vi.mock('@/composables/requestApi', () => ({ fetchApi: seededFetchApi }));
+// The mounted dialogs reach the WS bridges, which import these two directly,
+// so the module mock must carry them (see home-index.integration.test.ts).
+vi.mock('@/composables/requestApi', () => ({
+  fetchApi: seededFetchApi,
+  ensureGatewayToken: vi.fn(async () => 'test-token'),
+  withGatewayToken: (url: string) => url
+}));
 
 const primevueStub = {
   Checkbox: {
@@ -158,14 +183,32 @@ describe('home/index.vue dialog registry (integration, backend mocked)', () => {
     expect(wrapper.find('[data-test="notification-dialog"]').attributes('data-open')).toBe('true');
   });
 
-  it('opens the logs dialog from the top-bar history command', async () => {
+  it('opens a logs tab (not a dialog) from the top-bar history command', async () => {
+    rightSidebarState.openTab.mockClear();
     const wrapper = mountHome();
     await flushPromises();
 
     await clickIconButton(wrapper, 'pi pi-history');
 
-    expect(wrapper.find('[data-test="logs-dialog"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="logs-dialog"]').attributes('data-open')).toBe('true');
+    expect(rightSidebarState.openTab).toHaveBeenCalledWith('logs');
+    // No dialog by that name exists any more.
+    expect(wrapper.find('[data-test="logs-dialog"]').exists()).toBe(false);
+  });
+
+  it('opens a stats tab (not a dialog) from the nine-grid statistics tile', async () => {
+    rightSidebarState.openTab.mockClear();
+    const wrapper = mountHome();
+    await flushPromises();
+
+    await clickIconButton(wrapper, 'pi pi-bars');
+    const statsEntry = wrapper.findAll('.dlg button').find(b => b.find('i.pi-chart-bar').exists());
+    expect(statsEntry, 'nine-grid statistics entry').toBeTruthy();
+
+    await statsEntry!.trigger('click');
+    await flushPromises();
+
+    expect(rightSidebarState.openTab).toHaveBeenCalledWith('stats');
+    expect(wrapper.find('[data-test="stats-dialog"]').exists()).toBe(false);
   });
 
   it('opens the dialog registered for a nine-grid tool', async () => {
