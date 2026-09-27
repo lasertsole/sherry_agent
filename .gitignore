@@ -1,7 +1,11 @@
 # Tools
 .playwright-mcp
-# OpenCode AI tool config — local dev-tool, kept out of the repo
+# AI tool configs — local dev-tools, kept out of the repo
 opencode.json
+# ZCode (this agent's own client): its ignore file and workspace state are
+# per-machine dev-tool data, never project source.
+.zcodeignore
+.zcode/
 # CodeGraph MCP index (@colbymchenry/codegraph) — regenerated, never commit
 .codegraph/
 # RAGAS eval artifacts (evals/evals.py) — per-run reports, never commit
@@ -12,6 +16,7 @@ evals/results/
 __pycache__
 .env
 .env.bak
+sherry.jsonc.bak
 # models/
 model_weight/
 
