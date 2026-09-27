@@ -1,11 +1,8 @@
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('config.persona.title')"
-    :modal="true"
-    :closable="true"
-    class="persona-dialog w-[95vw] md:w-[1280px]"
-    @show="onDialogShow">
+  <!-- Right-sidebar tab body: mounted/unmounted with the tab, which drives the load
+       (the sidebar owns the tab label and the close button). The two columns below
+       stay md:flex-row and stack when the panel is narrow. -->
+  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
     <div class="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
       <!-- Left column: existing 3-tab persona editor + save-preset action -->
       <div class="flex min-w-0 min-h-0 flex-1 flex-col gap-3">
@@ -172,24 +169,18 @@
         </div>
       </template>
     </Dialog>
-  </Dialog>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { PersonaPreset } from '@/composables/db';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n({ useScope: 'local' });
 
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
+const emits = defineEmits<{ saved: [] }>();
 
 const MAX_CHARS = 2000;
 
@@ -248,13 +239,10 @@ const onDialogShow = () => {
   activeDefault.value = true;
   showNameDialog.value = false;
   presetName.value = '';
-  nameError.value = '';
 };
 
-// If the main dialog is closed while the name dialog is open, close the latter too.
-watch(visible, v => {
-  if (!v) showNameDialog.value = false;
-});
+// The panel's mount lifetime drives the load (replaces the dialog's @show).
+onMounted(onDialogShow);
 
 const loadContent = async () => {
   loading.value = true;
@@ -276,7 +264,7 @@ const loadContent = async () => {
     editContent.value = { ...content };
     originalContent.value = { ...content };
   } catch (e) {
-    logUtil.e('[PersonaDialog] Failed to load content:', e);
+    logUtil.e('[PersonaPanel] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -320,7 +308,7 @@ const restoreDefault = async (tab: PersonaTab) => {
     const content = await readSystemPromptTemplate(locale.value);
     editContent.value[tab.key] = content[tab.file] ?? '';
   } catch (e) {
-    logUtil.e('[PersonaDialog] Failed to restore default:', e);
+    logUtil.e('[PersonaPanel] Failed to restore default:', e);
   } finally {
     restoring.value = false;
   }
@@ -336,7 +324,7 @@ const selectDefault = async () => {
     editingPresetId.value = null;
     activeDefault.value = true;
   } catch (e) {
-    logUtil.e('[PersonaDialog] Failed to load persona template:', e);
+    logUtil.e('[PersonaPanel] Failed to load persona template:', e);
   } finally {
     restoring.value = false;
   }
@@ -464,13 +452,12 @@ const handleApply = async () => {
     const written = await readSystemPrompt();
     const verified = !!written && tabs.every(tab => written[tab.file] === snapshot[tab.file]);
     if (!verified) {
-      throw new Error('[PersonaDialog] applied content verification failed');
+      throw new Error('[PersonaPanel] applied content verification failed');
     }
     emits('saved');
-    visible.value = false;
     toastSuccess(t('config.persona.preset.toast.applySuccess'));
   } catch (e) {
-    logUtil.e('[PersonaDialog] Failed to apply persona:', e);
+    logUtil.e('[PersonaPanel] Failed to apply persona:', e);
     toastError(t('config.persona.preset.toast.applyFailed'));
   } finally {
     applying.value = false;
@@ -483,7 +470,6 @@ const handleApply = async () => {
   "zh": {
     "config": {
       "persona": {
-        "title": "AI人格",
         "restoreDefault": "恢复默认",
         "preset": {
           "title": "预设人格",
@@ -528,7 +514,6 @@ const handleApply = async () => {
   "en": {
     "config": {
       "persona": {
-        "title": "AI Persona",
         "restoreDefault": "Restore Default",
         "preset": {
           "title": "Preset Personas",
@@ -573,7 +558,6 @@ const handleApply = async () => {
   "ja": {
     "config": {
       "persona": {
-        "title": "AI人格",
         "restoreDefault": "デフォルトに戻す",
         "preset": {
           "title": "プリセット人格",
@@ -618,7 +602,6 @@ const handleApply = async () => {
   "ko": {
     "config": {
       "persona": {
-        "title": "AI 페르소나",
         "restoreDefault": "기본값 복원",
         "preset": {
           "title": "프리셋 페르소나",
@@ -664,11 +647,9 @@ const handleApply = async () => {
 </i18n>
 
 <style scoped>
-/* 让对话框内容区成为 flex 列容器：根布局用 flex-1 精确填充内容区高度，
+/* 让面板内容区成为 flex 列容器：根布局用 flex-1 精确填充内容区高度，
    内部 flex 链（TabView → panels → panel → textarea）自适应伸缩，
-   避免 72vh 等固定高度把内容区撑出垂直滚动条。
-   Dialog 被 Teleport 到 <body>，scoped 的选择器（依赖 data-v 祖先）匹配不到
-   .p-dialog-content，所以用非 scoped 规则 + 唯一标记类 .persona-dialog 精准锁定。 */
+   避免 72vh 等固定高度把内容区撑出垂直滚动条。 */
 :deep(.p-tabview-panels) {
   display: flex;
   flex-direction: column;
@@ -680,21 +661,5 @@ const handleApply = async () => {
   display: flex;
   flex: 1 1 0%;
   min-height: 0;
-}
-</style>
-
-<style>
-.persona-dialog > .p-dialog-content {
-  display: flex;
-  flex-direction: column;
-}
-
-/* 让对话框填满可用高度（PrimeVue 默认 max-height:90% 但高度内容驱动，
-   不撑满的话 textarea 固有高度(rows)决定大小）。窗口高度 >=600px 时撑满 90vh，
-   低于 600px 保持内容驱动，避免极端小窗下各区域被过度压缩。 */
-@media (min-height: 600px) {
-  .persona-dialog {
-    height: 90vh;
-  }
 }
 </style>

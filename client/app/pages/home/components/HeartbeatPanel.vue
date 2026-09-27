@@ -1,12 +1,10 @@
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('config.heartbeat.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[1100px]"
-    @show="loadContent">
-    <div class="flex flex-col gap-3">
+  <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
+       tab label and the close button), so the mount drives the load. -->
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+    <!-- Form body scrolls on its own; the save action below stays pinned to the
+         bottom-right of the panel. -->
+    <div class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3">
       <div
         v-if="loading"
         class="flex items-center justify-center py-8">
@@ -122,22 +120,17 @@
         </div>
       </template>
     </div>
-    <template #footer>
-      <div class="flex gap-2 justify-end">
-        <Button
-          :label="t('config.cancel')"
-          icon="pi pi-times"
-          severity="secondary"
-          @click="visible = false" />
-        <Button
-          :label="t('config.save')"
-          icon="pi pi-check"
-          :loading="saving"
-          :disabled="!canSave"
-          @click="handleSave" />
-      </div>
-    </template>
-  </Dialog>
+
+    <!-- The removed dialog footer's save action; closing is the sidebar tab's × now. -->
+    <div class="shrink-0 flex gap-2 justify-end">
+      <Button
+        :label="t('config.save')"
+        icon="pi pi-check"
+        :loading="saving"
+        :disabled="!canSave"
+        @click="handleSave" />
+    </div>
+  </div>
 </template>
 
 <script lang="ts" setup>
@@ -148,13 +141,7 @@ import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
+const emits = defineEmits<{ saved: [] }>();
 
 // Task-content character budget (active + completed task texts only).
 // The three structural headings (`# Heartbeat Tasks`, `## Active Tasks`,
@@ -307,7 +294,7 @@ const loadContent = async () => {
       completed: [...parsed.completed]
     };
   } catch (e) {
-    logUtil.e('[HeartbeatDialog] Failed to load content:', e);
+    logUtil.e('[HeartbeatPanel] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -315,7 +302,7 @@ const loadContent = async () => {
 
 // The heartbeat backend executes tasks offline and pushes a `heartbeat:updated`
 // event over the shared WebSocket (session `default`) whenever the heartbeat
-// file changes (e.g. an active task moves to `## Completed`). While this dialog
+// file changes (e.g. an active task moves to `## Completed`). While this panel
 // is mounted, refresh live so the Completed section stays in sync without a
 // manual reload.
 type WsFrame = { event?: string; content?: unknown };
@@ -362,13 +349,22 @@ const handleSave = async () => {
   try {
     await writeHeartbeat({ 'HEARTBEAT.md': serialize() });
     emits('saved');
-    visible.value = false;
+    // The panel stays mounted after a save (it used to close), so the saved
+    // regions become the dirty baseline for the next one.
+    originalSnapshot.value = {
+      header: header.value,
+      active: [...activeTasks.value],
+      completed: [...completedTasks.value]
+    };
   } catch (e) {
-    logUtil.e('[HeartbeatDialog] Failed to save:', e);
+    logUtil.e('[HeartbeatPanel] Failed to save:', e);
   } finally {
     saving.value = false;
   }
 };
+
+// The tab's lifetime drives the load.
+onMounted(loadContent);
 </script>
 
 <i18n lang="json">
@@ -376,7 +372,6 @@ const handleSave = async () => {
   "zh": {
     "config": {
       "heartbeat": {
-        "title": "心跳任务",
         "addTask": "添加任务",
         "effectiveHint": "此文件每30分钟被检查一次。请在下方添加希望 Agent 定期处理的任务。若仅剩标题/注释（没有任务），则将跳过心跳。",
         "activeEmpty": "暂无活动任务。请在下方添加新任务。",
@@ -390,7 +385,6 @@ const handleSave = async () => {
   "en": {
     "config": {
       "heartbeat": {
-        "title": "Heartbeat Tasks",
         "addTask": "Add task",
         "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
         "activeEmpty": "No active tasks. Add new tasks below.",
@@ -404,7 +398,6 @@ const handleSave = async () => {
   "ja": {
     "config": {
       "heartbeat": {
-        "title": "ハートビートタスク",
         "addTask": "タスクを追加",
         "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
         "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
@@ -418,7 +411,6 @@ const handleSave = async () => {
   "ko": {
     "config": {
       "heartbeat": {
-        "title": "하트비트 작업",
         "addTask": "작업 추가",
         "effectiveHint": "이 파일은 30분마다 확인됩니다. 에이전트가 주기적으로 처리하길 원하는 작업을 아래에 추가하세요. 헤더/주석만 남고 작업이 없으면 하트비트를 건너뜁니다.",
         "activeEmpty": "활성 작업이 없습니다. 아래에서 새 작업을 추가하세요.",

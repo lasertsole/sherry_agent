@@ -1,7 +1,8 @@
 /**
- * Integration tests for the ConfigDialog MAX_TOKEN guard (backend mocked).
+ * Integration tests for the ConfigPanel MAX_TOKEN guard (backend mocked).
  *
- * Mounts the real ConfigDialog with the env transport mocked: a sub-128K token
+ * Mounts the real ConfigPanel (the system-config right-sidebar tab) with the env
+ * transport mocked: a sub-128K token
  * value must be rejected BEFORE any PUT (specific error shown, nothing written),
  * while a valid value is persisted and the model-config cache is invalidated.
  */
@@ -10,7 +11,7 @@ import { mount, flushPromises } from '@vue/test-utils';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
 import type { EnvConfigPayload, EnvGroup } from '@/composables/env';
-import ConfigDialog from '@/pages/home/components/ConfigDialog.vue';
+import ConfigPanel from '@/pages/home/components/ConfigPanel.vue';
 
 const envState = vi.hoisted(() => {
   const groups: EnvGroup[] = [
@@ -63,7 +64,7 @@ const primevueStubs = {
   ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="ps"></div>' }
 };
 
-interface ConfigDialogVm {
+interface ConfigPanelVm {
   activeTab: number;
   envGroups: EnvGroup[];
   envLoadError: string;
@@ -72,7 +73,7 @@ interface ConfigDialogVm {
 
 const MAIN_TOKEN_KEY = 'MAIN_LLM_MAX_TOKEN';
 
-function tokenEntry(vm: ConfigDialogVm) {
+function tokenEntry(vm: ConfigPanelVm) {
   const entry = vm.envGroups.flatMap(group => group.entries).find(e => e.key === MAIN_TOKEN_KEY);
   if (!entry) throw new Error(`${MAIN_TOKEN_KEY} entry not loaded`);
   return entry;
@@ -80,11 +81,11 @@ function tokenEntry(vm: ConfigDialogVm) {
 
 /** Mount the dialog and load the env tab through the real watch + loader path. */
 async function mountWithEnvTab() {
-  const wrapper = mount(ConfigDialog, {
+  const wrapper = mount(ConfigPanel, {
     props: { modelValue: true },
     global: { stubs: primevueStubs }
   });
-  const vm = wrapper.vm as unknown as ConfigDialogVm;
+  const vm = wrapper.vm as unknown as ConfigPanelVm;
 
   vm.activeTab = 2;
   await flushPromises();
@@ -98,12 +99,12 @@ beforeEach(() => {
   readEnvConfigMock.mockClear();
   writeEnvConfigMock.mockClear();
   invalidateModelConfigCacheMock.mockClear();
-  // Real stores (chat background) are consumed by ConfigDialog; actions are
+  // Real stores (chat background) are consumed by ConfigPanel; actions are
   // stubbed so saving never touches Dexie.
   setActivePinia(createTestingPinia());
 });
 
-describe('ConfigDialog per-area saving', () => {
+describe('ConfigPanel per-area saving', () => {
   it('hides the footer on the env tab (each item saves on its own) but keeps it elsewhere', async () => {
     const { wrapper, vm } = await mountWithEnvTab();
     // Env tab: no footer 保存/取消 — the other group's own button and the
@@ -120,7 +121,7 @@ describe('ConfigDialog per-area saving', () => {
   });
 });
 
-describe('ConfigDialog MAX_TOKEN guard', () => {
+describe('ConfigPanel MAX_TOKEN guard', () => {
   it('keeps the 128K rule off the tab header (it sits on the guarded inputs)', async () => {
     const { wrapper } = await mountWithEnvTab();
 

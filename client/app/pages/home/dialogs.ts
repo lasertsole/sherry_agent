@@ -1,35 +1,31 @@
+import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
+
 /**
  * Home-shell dialog registry + toolbar command registry.
  *
- * `HOME_DIALOG_IDS` lists every dialog the shell owns (fed to
- * `useDialogManager`), and `HOME_TOOLBAR_EVENTS` + `buildHomeToolbarCommands`
+ * `HOME_DIALOG_IDS` lists every dialog the shell still owns (fed to
+ * `useDialogManager`) and `HOME_TOOLBAR_EVENTS` + `buildHomeToolbarCommands`
  * map a toolbar event to the command it runs.
  *
- * ``logs`` / ``stats`` / ``knowledgeGraph`` are not dialogs: their commands
- * open a tab in the collapsible right sidebar, so a viewer stays open next to
- * the chat.
+ * The notification list is the only dialog left: its ws subscription and unread
+ * badge stay live while the dialog is closed, so it cannot be a lazily mounted
+ * tab. Every other entry — the log viewer, the statistics charts, the knowledge
+ * graph and the skill / system-config / persona / memory / heartbeat / cron /
+ * extend editors — opens a tab in the collapsible right sidebar, so a tool
+ * stays open next to the chat.
  */
 
 /** Dialog ids owned by the home shell. */
-export const HOME_DIALOG_IDS = [
-  'skills',
-  'systemConfig',
-  'persona',
-  'memory',
-  'heartbeat',
-  'cron',
-  'notification',
-  'extend'
-] as const;
+export const HOME_DIALOG_IDS = ['notification'] as const;
 
 /** One dialog id of the home shell. */
 export type HomeDialogId = (typeof HOME_DIALOG_IDS)[number];
 
 /**
  * Toolbar event vocabulary: every `headerTools` entry (the nine-grid, see
- * ./config.ts) plus the two top-bar-only buttons (`logs`, `notification`).
- * The unit test pins this list against `headerTools` so a new tool entry
- * without a command fails there.
+ * ./config.ts) plus the one top-bar-only button (`notification`, whose unread
+ * badge has to stay live). The unit test pins this list against `headerTools`
+ * so a new tool entry without a command fails there.
  */
 export const HOME_TOOLBAR_EVENTS = [
   'skills',
@@ -52,8 +48,8 @@ export type HomeToolbarEvent = (typeof HOME_TOOLBAR_EVENTS)[number];
 export interface HomeToolbarContext {
   /** Open the given dialog (from `useDialogManager`). */
   openDialog: (id: HomeDialogId) => void;
-  /** Open a right-sidebar tab: the log viewer, the statistics charts, the knowledge graph. */
-  openRightTab: (kind: 'logs' | 'stats' | 'knowledgeGraph') => void;
+  /** Open a right-sidebar tab for the given panel kind. */
+  openRightTab: (kind: RightSidebarPanelKind) => void;
 }
 
 /**
@@ -66,17 +62,17 @@ export interface HomeToolbarContext {
  */
 export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<string, () => void> {
   const commands: Record<HomeToolbarEvent, () => void> = {
-    skills: () => context.openDialog('skills'),
+    skills: () => context.openRightTab('skills'),
     knowledgeGraph: () => context.openRightTab('knowledgeGraph'),
     stats: () => context.openRightTab('stats'),
-    systemConfig: () => context.openDialog('systemConfig'),
-    persona: () => context.openDialog('persona'),
-    memory: () => context.openDialog('memory'),
-    heartbeat: () => context.openDialog('heartbeat'),
-    cron: () => context.openDialog('cron'),
+    systemConfig: () => context.openRightTab('systemConfig'),
+    persona: () => context.openRightTab('persona'),
+    memory: () => context.openRightTab('memory'),
+    heartbeat: () => context.openRightTab('heartbeat'),
+    cron: () => context.openRightTab('cron'),
     logs: () => context.openRightTab('logs'),
     notification: () => context.openDialog('notification'),
-    extend: () => context.openDialog('extend')
+    extend: () => context.openRightTab('extend')
   };
   return commands;
 }

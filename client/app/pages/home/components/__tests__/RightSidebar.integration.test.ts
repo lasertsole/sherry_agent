@@ -61,6 +61,38 @@ vi.mock('@/pages/home/components/KnowledgeGraphPanel.vue', () => ({
   __esModule: true,
   default: { name: 'KgPanelStub', template: '<div data-test="kg-panel">kg</div>' }
 }));
+vi.mock('@/pages/home/components/SkillsPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'SkillsPanelStub', emits: ['saved'], template: '<div data-test="skills-panel">skills</div>' }
+}));
+vi.mock('@/pages/home/components/ConfigPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'ConfigPanelStub', emits: ['saved'], template: '<div data-test="config-panel">config</div>' }
+}));
+vi.mock('@/pages/home/components/PersonaPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'PersonaPanelStub', emits: ['saved'], template: '<div data-test="persona-panel">persona</div>' }
+}));
+vi.mock('@/pages/home/components/MemoryPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'MemoryPanelStub', emits: ['saved'], template: '<div data-test="memory-panel">memory</div>' }
+}));
+vi.mock('@/pages/home/components/HeartbeatPanel.vue', () => ({
+  __esModule: true,
+  default: {
+    name: 'HeartbeatPanelStub',
+    emits: ['saved'],
+    template: '<div data-test="heartbeat-panel">heartbeat</div>'
+  }
+}));
+vi.mock('@/pages/home/components/CronPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'CronPanelStub', emits: ['saved'], template: '<div data-test="cron-panel">cron</div>' }
+}));
+vi.mock('@/pages/home/components/ExtendPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'ExtendPanelStub', emits: ['saved'], template: '<div data-test="extend-panel">extend</div>' }
+}));
 
 const stubs = {
   Button: {
@@ -182,6 +214,33 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(mountSidebar().text()).toContain('从菜单或工具栏添加');
   });
 
+  it('labels every tool tab from the same kind vocabulary', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'skills-1', kind: 'skills' },
+      { id: 'systemConfig-1', kind: 'systemConfig' },
+      { id: 'cron-1', kind: 'cron' }
+    ];
+    sidebarApi.activeTabId = 'skills-1';
+    const wrapper = mountSidebar();
+
+    expect(wrapper.findAll('button.group').map(b => b.text())).toEqual(['技能', '系统配置', '定时任务']);
+    await flushPromises();
+    expect(wrapper.find('[data-test="skills-panel"]').exists()).toBe(true);
+  });
+
+  it('relays a panel save to the shell', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [{ id: 'systemConfig-1', kind: 'systemConfig' }];
+    sidebarApi.activeTabId = 'systemConfig-1';
+    const wrapper = mountSidebar();
+    await flushPromises();
+
+    // The shell re-reads the session's character snapshot on this event.
+    wrapper.findComponent({ name: 'ConfigPanelStub' }).vm.$emit('saved');
+    expect(wrapper.emitted('saved')).toHaveLength(1);
+  });
+
   it('renders the knowledge-graph panel for its tab', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [{ id: 'kg-1', kind: 'knowledgeGraph' }];
@@ -206,6 +265,21 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(style).toContain(`min-height: ${RIGHT_SIDEBAR_PANEL_MIN_HEIGHT}px`);
   });
 
+  it('marks the edge as draggable so the affordance is visible', () => {
+    sidebarApi.collapsed = false;
+    const wrapper = mountSidebar();
+
+    const handle = wrapper.find('[role="separator"]');
+    // A bare edge reads as a border: the grip pill, the resize cursor and the
+    // tooltip are what tell the user the panel can be dragged.
+    expect(handle.classes()).toContain('cursor-col-resize');
+    expect(handle.attributes('title')).toBe('拖动调整宽度');
+    const grip = handle.find('span');
+    expect(grip.exists()).toBe(true);
+    expect(grip.classes()).toContain('bg-gray-400/70');
+    expect(grip.classes()).toContain('group-hover:bg-gray-400');
+  });
+
   it('widens while the handle is dragged left and stops on pointerup', async () => {
     sidebarApi.collapsed = false;
     const wrapper = mountSidebar();
@@ -217,6 +291,10 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     await handle.trigger('pointerdown', { clientX: 800 });
     window.dispatchEvent(new MouseEvent('pointermove', { clientX: 700 }));
     expect(sidebarApi.setWidth).toHaveBeenLastCalledWith(520, VIEWPORT_WIDTH);
+
+    // While dragging the grip highlights (mode-independent grey: the theme
+    // accent is white in dark mode and vanished over a light panel).
+    expect(handle.find('span').classes()).toContain('bg-gray-500');
 
     window.dispatchEvent(new MouseEvent('pointerup'));
     sidebarApi.setWidth.mockClear();

@@ -2,7 +2,6 @@
 {
   "en": {
     "skills": {
-      "title": "Skill Manager",
       "empty": "No skills in this category",
       "noFiles": "No files",
       "selectHint": "Select a skill on the left to view details",
@@ -49,7 +48,6 @@
   },
   "ja": {
     "skills": {
-      "title": "スキル管理",
       "empty": "このカテゴリにはスキルがありません",
       "noFiles": "ファイルがありません",
       "selectHint": "左側のスキルを選択して詳細を表示",
@@ -96,7 +94,6 @@
   },
   "ko": {
     "skills": {
-      "title": "스킬 관리",
       "empty": "이 카테고리에 스킬이 없습니다",
       "noFiles": "파일이 없습니다",
       "selectHint": "왼쪽에서 스킬을 선택해 세부 정보를 확인하세요",
@@ -143,7 +140,6 @@
   },
   "zh": {
     "skills": {
-      "title": "技能管理",
       "empty": "该分类下暂无技能",
       "noFiles": "暂无文件",
       "selectHint": "请选择左侧技能查看详情",
@@ -192,14 +188,9 @@
 </i18n>
 
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('skills.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[1600px]"
-    @show="loadSkills"
-    @hide="onHide">
+  <!-- Right-sidebar tab body: mounted with the tab (load, onMounted) and unmounted
+       with it (state reset, onBeforeUnmount); the sidebar owns the tab strip. -->
+  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
     <div class="flex flex-col gap-3">
       <div
         v-if="loading"
@@ -519,25 +510,17 @@
           @click="performDelete" />
       </div>
     </Dialog>
-  </Dialog>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
 import type { SkillInfo, SkillDetail, SkillFileNode } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
-
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
 
 const categories = [
   { key: 'builtin' as const, i18nKey: 'skills.tabs.builtin' },
@@ -712,7 +695,7 @@ const loadSkills = async () => {
     // Refresh curator settings (interval override + last maintenance) alongside skills.
     await loadCuratorSettings();
   } catch (e) {
-    logUtil.e('[SkillsDialog] Failed to load skills:', e);
+    logUtil.e('[SkillsPanel] Failed to load skills:', e);
   } finally {
     loading.value = false;
   }
@@ -731,7 +714,7 @@ const loadCuratorSettings = async () => {
       intervalError.value = true;
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Failed to load curator settings:', e);
+    logUtil.e('[SkillsPanel] Failed to load curator settings:', e);
     intervalMessage.value = t('skills.tabs.autoMaintenanceLoadFailed');
     intervalError.value = true;
   }
@@ -758,7 +741,7 @@ const onAutoIntervalChange = async (event: { value: number | null; originalEvent
       intervalError.value = true;
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Failed to update curator interval:', e);
+    logUtil.e('[SkillsPanel] Failed to update curator interval:', e);
     intervalMessage.value = t('skills.tabs.autoMaintenanceSaveFailed');
     intervalError.value = true;
   } finally {
@@ -789,7 +772,7 @@ const handleUpload = async (event: Event) => {
       uploadError.value = resp.message || t('skills.uploadFailed');
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Upload failed:', e);
+    logUtil.e('[SkillsPanel] Upload failed:', e);
     uploadError.value = t('skills.uploadFailed');
   } finally {
     uploading.value = false;
@@ -810,7 +793,7 @@ const toggleActive = async (skill: SkillInfo & { active?: boolean }, value: bool
       toggleError.value = resp.message || t('skills.toggleFailed');
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Toggle failed:', e);
+    logUtil.e('[SkillsPanel] Toggle failed:', e);
     skill.active = prev;
     toggleError.value = t('skills.toggleFailed');
   } finally {
@@ -834,7 +817,7 @@ const togglePin = async (skill: SkillInfo, current: boolean) => {
       toggleError.value = resp.message || t('skills.toggleFailed');
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Pin toggle failed:', e);
+    logUtil.e('[SkillsPanel] Pin toggle failed:', e);
     skill.pinned = prev;
     toggleError.value = t('skills.toggleFailed');
   } finally {
@@ -870,7 +853,7 @@ const performDelete = async () => {
       deleteError.value = resp.message || t('skills.tabs.deleteFailed');
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Delete skill failed:', e);
+    logUtil.e('[SkillsPanel] Delete skill failed:', e);
     deleteError.value = t('skills.tabs.deleteFailed');
   } finally {
     deleteSaving.value = false;
@@ -890,7 +873,7 @@ const selectSkill = async (skill: SkillInfo) => {
     const rootMd = detail.files?.find(f => f.path === 'SKILL.md') ?? null;
     selectedFile.value = rootMd ?? null;
   } catch (e) {
-    logUtil.e('[SkillsDialog] Failed to read skill:', e);
+    logUtil.e('[SkillsPanel] Failed to read skill:', e);
   } finally {
     detailLoading.value = false;
   }
@@ -911,7 +894,7 @@ const runCurator = async () => {
       curatorError.value = resp.error || t('skills.tabs.curatorFailed');
     }
   } catch (e) {
-    logUtil.e('[SkillsDialog] Curator run failed:', e);
+    logUtil.e('[SkillsPanel] Curator run failed:', e);
     curatorError.value = t('skills.tabs.curatorFailed');
   } finally {
     curatorRunning.value = false;
@@ -943,4 +926,8 @@ const onHide = () => {
   deleteSaving.value = false;
   deleteError.value = '';
 };
+
+// The tab's lifetime drives the load; unmounting resets the panel's state.
+onMounted(loadSkills);
+onBeforeUnmount(onHide);
 </script>

@@ -2,7 +2,6 @@
 {
   "en": {
     "extend": {
-      "title": "Extend",
       "empty": "Nothing here yet",
       "channelHint": "Channel data source API is under planning",
       "enabled": "Enabled",
@@ -16,7 +15,6 @@
   },
   "ja": {
     "extend": {
-      "title": "拡張",
       "empty": "まだコンテンツがありません",
       "channelHint": "チャンネルのデータソース API は計画中です",
       "enabled": "有効",
@@ -30,7 +28,6 @@
   },
   "ko": {
     "extend": {
-      "title": "확장",
       "empty": "아직 내용이 없습니다",
       "channelHint": "채널 데이터 소스 API는 계획 중입니다",
       "enabled": "활성화",
@@ -44,7 +41,6 @@
   },
   "zh": {
     "extend": {
-      "title": "扩展",
       "empty": "暂无内容",
       "channelHint": "频道数据源接口待规划",
       "enabled": "启用",
@@ -60,12 +56,9 @@
 </i18n>
 
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('extend.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[800px]">
+  <!-- Right-sidebar tab body: mounted with the tab, which drives the load
+       (the sidebar owns the tab label and the close button). -->
+  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
     <TabView v-model:activeIndex="activeTab">
       <!-- ===== Channels tab ===== -->
       <TabPanel
@@ -155,25 +148,17 @@
       v-model="showSettings"
       :channel="selectedChannel"
       @saved="loadChannels" />
-  </Dialog>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed, onMounted } from 'vue';
+import { ref, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ChannelInfo } from '@/composables/bridge';
 import ChannelSettingsDialog from './ChannelSettingsDialog.vue';
 import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
-
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
 
 /** Currently active tab (0=channels, 1=MCP) */
 const activeTab = ref(0);
@@ -200,7 +185,7 @@ const loadChannels = async () => {
     const resp = await listChannels();
     channels.value = resp.channels ?? [];
   } catch (e) {
-    logUtil.e('[ExtendDialog] Failed to load channels:', e);
+    logUtil.e('[ExtendPanel] Failed to load channels:', e);
   } finally {
     loading.value = false;
   }

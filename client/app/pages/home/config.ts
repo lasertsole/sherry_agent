@@ -45,6 +45,13 @@ export const headerTools: Tool[] = [
     label: 'toolbar.stats'
   },
   {
+    toolName: 'toolbar.logs',
+    icon: 'pi pi-history',
+    title: 'toolbar.logs',
+    event: 'logs',
+    label: 'toolbar.logs'
+  },
+  {
     toolName: 'toolbar.systemConfig',
     icon: 'pi pi-sliders-h',
     title: 'toolbar.systemConfig',

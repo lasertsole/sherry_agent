@@ -1,107 +1,98 @@
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('config.memory.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[1100px]"
-    @show="loadContent">
-    <div class="flex flex-col gap-3">
-      <div
-        v-if="loading"
-        class="flex items-center justify-center py-8">
-        <ProgressSpinner style="width: 2rem; height: 2rem" />
-      </div>
-      <template v-else>
-        <TabView v-model:activeIndex="activeTab">
-          <TabPanel
-            v-for="tab in tabs"
-            :key="tab.file"
-            :value="tab.file"
-            :header="t(tab.i18nKey)">
-            <div class="flex flex-col gap-2">
-              <div class="flex items-center justify-between">
-                <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(tab.i18nDescKey) }}</span>
-                <span
-                  :class="[
-                    'text-xs',
-                    joinedLength(tab.file) > MAX_CHARS
-                      ? 'text-red-500'
-                      : joinedLength(tab.file) > MAX_CHARS * 0.9
-                        ? 'text-orange-500'
-                        : 'text-gray-400'
-                  ]">
-                  {{ joinedLength(tab.file) }} / {{ MAX_CHARS }}
-                </span>
-              </div>
-
-              <div class="text-xs text-yellow-500 dark:text-yellow-400">
-                {{ t('config.memory.effectiveHint') }}
-              </div>
-
-              <div
-                v-if="!entries(tab.file).length"
-                class="text-sm text-gray-400 dark:text-gray-500 pb-2">
-                {{ t('config.memory.empty') }}
-              </div>
-
-              <div
-                v-for="(entry, idx) in entries(tab.file)"
-                :key="idx"
-                class="flex flex-col gap-1 rounded-lg border border-gray-200 dark:border-gray-700 p-2">
-                <div class="flex items-center justify-between">
-                  <span class="text-xs text-gray-400 dark:text-gray-500">
-                    #{{ idx + 1 }} · {{ entryLength(tab.file, idx) }} chars
-                  </span>
-                  <Button
-                    icon="pi pi-trash"
-                    text
-                    severity="danger"
-                    :aria-label="t('config.memory.deleteEntry')"
-                    class="!w-8 !h-8 !p-0"
-                    @click="removeEntry(tab.file, idx)" />
-                </div>
-                <Textarea
-                  :model-value="entries(tab.file)[idx]"
-                  rows="3"
-                  class="w-full font-mono text-sm"
-                  autoResize
-                  style="min-height: 4.5rem; max-height: 24rem"
-                  @update:model-value="setEntry(tab.file, idx, $event)" />
-              </div>
-
-              <Button
-                :label="t('config.memory.addEntry')"
-                icon="pi pi-plus"
-                text
-                severity="secondary"
-                class="self-start"
-                @click="addEntry(tab.file)" />
-            </div>
-          </TabPanel>
-        </TabView>
-      </template>
+  <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
+       tab label and the close button), so the mount drives the load. -->
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+    <div
+      v-if="loading"
+      class="flex items-center justify-center py-8">
+      <ProgressSpinner style="width: 2rem; height: 2rem" />
     </div>
-    <template #footer>
-      <div class="flex gap-2 justify-end">
-        <Button
-          :label="t('config.cancel')"
-          icon="pi pi-times"
-          severity="secondary"
-          @click="visible = false" />
-        <Button
-          :label="t('config.save')"
-          icon="pi pi-check"
-          :loading="saving"
-          :disabled="!canSave"
-          @click="handleSave" />
-      </div>
+    <template v-else>
+      <TabView
+        v-model:activeIndex="activeTab"
+        class="flex-1 min-h-0">
+        <TabPanel
+          v-for="tab in tabs"
+          :key="tab.file"
+          :value="tab.file"
+          :header="t(tab.i18nKey)">
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-gray-500 dark:text-gray-400">{{ t(tab.i18nDescKey) }}</span>
+              <span
+                :class="[
+                  'text-xs',
+                  joinedLength(tab.file) > MAX_CHARS
+                    ? 'text-red-500'
+                    : joinedLength(tab.file) > MAX_CHARS * 0.9
+                      ? 'text-orange-500'
+                      : 'text-gray-400'
+                ]">
+                {{ joinedLength(tab.file) }} / {{ MAX_CHARS }}
+              </span>
+            </div>
+
+            <div class="text-xs text-yellow-500 dark:text-yellow-400">
+              {{ t('config.memory.effectiveHint') }}
+            </div>
+
+            <div
+              v-if="!entries(tab.file).length"
+              class="text-sm text-gray-400 dark:text-gray-500 pb-2">
+              {{ t('config.memory.empty') }}
+            </div>
+
+            <div
+              v-for="(entry, idx) in entries(tab.file)"
+              :key="idx"
+              class="flex flex-col gap-1 rounded-lg border border-gray-200 dark:border-gray-700 p-2">
+              <div class="flex items-center justify-between">
+                <span class="text-xs text-gray-400 dark:text-gray-500">
+                  #{{ idx + 1 }} · {{ entryLength(tab.file, idx) }} chars
+                </span>
+                <Button
+                  icon="pi pi-trash"
+                  text
+                  severity="danger"
+                  :aria-label="t('config.memory.deleteEntry')"
+                  class="!w-8 !h-8 !p-0"
+                  @click="removeEntry(tab.file, idx)" />
+              </div>
+              <Textarea
+                :model-value="entries(tab.file)[idx]"
+                rows="3"
+                class="w-full font-mono text-sm"
+                autoResize
+                style="min-height: 4.5rem; max-height: 24rem"
+                @update:model-value="setEntry(tab.file, idx, $event)" />
+            </div>
+
+            <Button
+              :label="t('config.memory.addEntry')"
+              icon="pi pi-plus"
+              text
+              severity="secondary"
+              class="self-start"
+              @click="addEntry(tab.file)" />
+          </div>
+        </TabPanel>
+      </TabView>
     </template>
-  </Dialog>
+    <!-- The removed dialog footer's save action; closing is the sidebar tab's × now.
+         Pinned to the panel's bottom-right: the tab body above it is what scrolls. -->
+    <div class="shrink-0 flex gap-2 justify-end">
+      <Button
+        :label="t('config.save')"
+        icon="pi pi-check"
+        :loading="saving"
+        :disabled="!canSave"
+        @click="handleSave" />
+    </div>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { logUtil } from '~/utils/log';
 
@@ -140,13 +131,7 @@ function joinFileBody(file: string, entries: string[]): string {
 
 const { t } = useI18n({ useScope: 'local' });
 
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
+const emits = defineEmits<{ saved: [] }>();
 
 // Whole-file character budget. Mirrors server/service/memory.py write_memory_files,
 // which rejects len(content) > 8_000 on the joined raw file.
@@ -246,7 +231,7 @@ const loadContent = async () => {
       ...Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, [...v]]))
     };
   } catch (e) {
-    logUtil.e('[MemoryDialog] Failed to load content:', e);
+    logUtil.e('[MemoryPanel] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -285,13 +270,20 @@ const handleSave = async () => {
       await writeMemory(changed);
     }
     emits('saved');
-    visible.value = false;
+    // The panel stays mounted after a save (it used to close), so the saved
+    // entries become the dirty baseline for the next one.
+    originalEntries.value = {
+      ...Object.fromEntries(Object.entries(editEntries.value).map(([k, v]) => [k, [...v]]))
+    };
   } catch (e) {
-    logUtil.e('[MemoryDialog] Failed to save:', e);
+    logUtil.e('[MemoryPanel] Failed to save:', e);
   } finally {
     saving.value = false;
   }
 };
+
+// The tab's lifetime drives the load.
+onMounted(loadContent);
 </script>
 
 <i18n lang="json">
@@ -299,7 +291,6 @@ const handleSave = async () => {
   "zh": {
     "config": {
       "memory": {
-        "title": "记忆",
         "addEntry": "添加条目",
         "deleteEntry": "删除条目",
         "empty": "暂无条目，请在下方添加。",
@@ -318,7 +309,6 @@ const handleSave = async () => {
   "en": {
     "config": {
       "memory": {
-        "title": "Memory",
         "addEntry": "Add entry",
         "deleteEntry": "Delete entry",
         "empty": "No entries yet. Add one below.",
@@ -337,7 +327,6 @@ const handleSave = async () => {
   "ja": {
     "config": {
       "memory": {
-        "title": "記憶",
         "addEntry": "項目を追加",
         "deleteEntry": "項目を削除",
         "empty": "項目はまだありません。下から追加してください。",
@@ -356,7 +345,6 @@ const handleSave = async () => {
   "ko": {
     "config": {
       "memory": {
-        "title": "메모리",
         "addEntry": "항목 추가",
         "deleteEntry": "항목 삭제",
         "empty": "항목이 없습니다. 아래에서 추가하세요.",
@@ -374,3 +362,28 @@ const handleSave = async () => {
   }
 }
 </i18n>
+
+<style scoped>
+/* The tab strip keeps its height and the tab body scrolls inside it, so the save
+   action below stays pinned at the bottom-right of the panel instead of scrolling
+   away with a long form. */
+:deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* This PrimeVue version renders the strip as .p-tabview-tablist-container
+   (there is no .p-tabview-nav): keep it at its own height so the panels area
+   below is the only thing that scrolls. */
+:deep(.p-tabview-tablist-container) {
+  flex-shrink: 0;
+}
+
+:deep(.p-tabview-panels) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+</style>

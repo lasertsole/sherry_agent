@@ -27,8 +27,11 @@
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
            stays in the top-left corner of the session area so it can be expanded again). -->
+      <!-- `@container` + the @max-[620px] variants below: the toolbar's own width is the
+           middle column's width, so when the two sidebars squeeze it the theme switch and
+           the language picker drop out instead of wrapping the button row. -->
       <div
-        class="flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
+        class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- Left: collapse/expand the history sidebar -->
         <Button
           :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
@@ -37,9 +40,10 @@
           variant="text"
           class="text-theme-main"
           @click="toggleSidebar" />
-        <!-- Right: original function button area -->
+        <!-- Right: original function button area (the theme switch and the language
+             picker are the first to go when the column gets narrow) -->
         <div class="flex items-center gap-3">
-          <ModeSwitch />
+          <span class="@max-[620px]:hidden"><ModeSwitch /></span>
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
             <!-- Language switcher: moved from System Config > Language Settings to the top
                  toolbar; reads/writes the vue-i18n locale directly.
@@ -50,7 +54,7 @@
               :options="languageOptions"
               option-label="name"
               option-value="code"
-              class="w-40"
+              class="@max-[620px]:hidden! w-40"
               size="small"
               :aria-label="t('a11y.language')"
               @update:model-value="onLanguageChange">
@@ -88,13 +92,6 @@
                 {{ notificationUnread > 99 ? '99+' : notificationUnread }}
               </span>
             </div>
-            <!-- Logs entry: kept in the top bar (no matching nine-grid icon; not merged into the settings menu) -->
-            <Button
-              icon="pi pi-history"
-              :title="t('toolbar.logs')"
-              :aria-label="t('toolbar.logs')"
-              variant="text"
-              @click="handleOperate('headerBar', 'logs')" />
             <!-- Settings menu entry: the three-bars button. All other functions
                  (Skills / Knowledge Graph / System Config / Extend) have been moved from the top
                  bar into the large dialog nine-grid that this button pops open. -->
@@ -152,62 +149,28 @@
             :page-key="resolvePageKey"
             :keepalive="{ max: KEEP_ALIVE_MAX }" />
         </div>
-        <!-- Collapsible right sidebar (log viewer / statistics tabs); it lives in the
-             shell, outside the KeepAlive'd session page, so its tabs survive switches. -->
-        <RightSidebar />
       </div>
-
-      <!-- Dialogs are lazily loaded (defineAsyncComponent below): `v-if` is what makes the
-           laziness real — an async component that is always rendered would fetch its chunk as
-           soon as this page mounts. Each dialog reloads its data from @show/@hide or on mount,
-           so mounting on open (and unmounting on close) preserves the visible behavior while
-           keeping the dialog + its heavy deps (e.g. @antv/g2 via StatsPanel) out of the
-           initial page chunk. NotificationDialog is the one exception: its ws:notification
-           subscription and unread badge must stay live while the dialog is closed, so it stays
-           permanently mounted (async chunk still loaded off the critical path). -->
-
-      <!-- Skills dialog -->
-      <SkillsDialog
-        v-if="dialogs.visible.skills"
-        v-model="dialogs.visible.skills" />
-
-      <!-- System config dialog -->
-      <ConfigDialog
-        v-if="dialogs.visible.systemConfig"
-        v-model="dialogs.visible.systemConfig"
-        @saved="loadCharacter" />
-
-      <!-- AI persona dialog -->
-      <PersonaDialog
-        v-if="dialogs.visible.persona"
-        v-model="dialogs.visible.persona" />
-
-      <!-- Memory dialog -->
-      <MemoryDialog
-        v-if="dialogs.visible.memory"
-        v-model="dialogs.visible.memory" />
-
-      <!-- Heartbeat tasks dialog -->
-      <HeartbeatDialog
-        v-if="dialogs.visible.heartbeat"
-        v-model="dialogs.visible.heartbeat" />
-
-      <!-- Cron (scheduled tasks) dialog -->
-      <CronDialog
-        v-if="dialogs.visible.cron"
-        v-model="dialogs.visible.cron" />
-
-      <!-- Notification dialog (listens to ws:notification, merges consecutive identical
-         notifications, reports the unread count via changed) -->
-      <NotificationDialog
-        v-model="dialogs.visible.notification"
-        @changed="(n: number) => (notificationUnread = n)" />
-
-      <!-- Extend dialog (integrations / mcp) -->
-      <ExtendDialog
-        v-if="dialogs.visible.extend"
-        v-model="dialogs.visible.extend" />
     </div>
+
+    <!-- Collapsible right sidebar (viewer + tool tabs). It is a full-height column of
+         the shell row, exactly like the left session sidebar, so opening it narrows the
+         toolbar above the session area instead of sliding in under it — and, living
+         outside the KeepAlive'd session page, its tabs survive session switches. -->
+    <RightSidebar @saved="loadCharacter" />
+
+    <!-- Dialogs are lazily loaded (defineAsyncComponent below): `v-if` is what makes the
+         laziness real — an async component that is always rendered would fetch its chunk as
+         soon as this page mounts. NotificationDialog is mounted permanently instead: its
+         ws:notification subscription and unread badge must stay live while the dialog is
+         closed, so the async chunk is still loaded off the critical path but the component
+         never unmounts. Every other toolbar / settings-menu entry is a right-sidebar tab
+         (see dialogs.ts), so those panels mount and unmount with their tab. -->
+
+    <!-- Notification dialog (listens to ws:notification, merges consecutive identical
+       notifications, reports the unread count via changed) -->
+    <NotificationDialog
+      v-model="dialogs.visible.notification"
+      @changed="(n: number) => (notificationUnread = n)" />
   </div>
 </template>
 
@@ -235,22 +198,15 @@ import { buildHomeToolbarCommands, HOME_DIALOG_IDS } from './dialogs';
 /**
  * Wrap a dialog `import()` in an async component.
  *
- * Dialogs are code-split so their own module graph (and heavy deps such as
- * @antv/g2 for StatsPanel) is not part of the initial `/home` chunk. The
- * `loadingComponent` covers the first-open chunk fetch; `delay: 150` avoids a
- * spinner flash on fast (cached) loads.
+ * The remaining dialog (the notification list) is code-split so its module
+ * graph is not part of the initial `/home` chunk. The `loadingComponent`
+ * covers the first-open chunk fetch; `delay: 150` avoids a spinner flash on
+ * fast (cached) loads.
  * @param loader Dynamic import of the dialog SFC
  */
 const lazyDialog = (loader: () => Promise<{ default: Component }>) =>
   defineAsyncComponent({ loader, loadingComponent: AsyncChunkFallback, delay: 150 });
 
-const SkillsDialog = lazyDialog(() => import('./components/SkillsDialog.vue'));
-const ConfigDialog = lazyDialog(() => import('./components/ConfigDialog.vue'));
-const PersonaDialog = lazyDialog(() => import('./components/PersonaDialog.vue'));
-const MemoryDialog = lazyDialog(() => import('./components/MemoryDialog.vue'));
-const HeartbeatDialog = lazyDialog(() => import('./components/HeartbeatDialog.vue'));
-const CronDialog = lazyDialog(() => import('./components/CronDialog.vue'));
-const ExtendDialog = lazyDialog(() => import('./components/ExtendDialog.vue'));
 const NotificationDialog = lazyDialog(() => import('./components/NotificationDialog.vue'));
 
 const { t, locale, setLocale } = useI18n();
@@ -355,7 +311,7 @@ const { settingsMenuOpen: isSettingsMenuOpen } = storeToRefs(uiStore);
 /** Whether the left history sidebar is collapsed (expanded by default; persisted to localStorage and restored after refresh) */
 const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
-/** Right sidebar (log viewer / statistics / knowledge-graph tabs): collapse flag + tab actions */
+/** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);
 

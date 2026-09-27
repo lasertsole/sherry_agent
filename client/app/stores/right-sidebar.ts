@@ -1,7 +1,38 @@
 import { defineStore } from 'pinia';
 
-/** Panel kinds the right sidebar can host as tabs. */
-export type RightSidebarPanelKind = 'logs' | 'stats' | 'knowledgeGraph';
+/**
+ * Panel kinds the right sidebar can host as tabs: the three viewers plus every
+ * settings-menu entry, so a tool stays open next to the chat.
+ */
+export type RightSidebarPanelKind =
+  | 'logs'
+  | 'stats'
+  | 'knowledgeGraph'
+  | 'skills'
+  | 'systemConfig'
+  | 'persona'
+  | 'memory'
+  | 'heartbeat'
+  | 'cron'
+  | 'extend';
+
+/**
+ * Width an editor panel is opened with when the sidebar is narrower: those
+ * bodies were built as 800-1600px modals, so the default 420 leaves them
+ * single-column and cramped. Still inside the allowed band and still draggable.
+ */
+export const RIGHT_SIDEBAR_WIDE_PANEL_WIDTH = 640;
+
+/** Kinds whose body is a full editor rather than a viewer. */
+const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
+  'skills',
+  'systemConfig',
+  'persona',
+  'memory',
+  'heartbeat',
+  'cron',
+  'extend'
+]);
 
 /** Narrowest usable sidebar (below this the panels get unusable). */
 export const RIGHT_SIDEBAR_MIN_WIDTH = 280;
@@ -91,7 +122,8 @@ export const useRightSidebarStore = defineStore(
     /**
      * Add a tab of the given kind, activate it and expand the sidebar.
      * Always a NEW tab (and a fresh panel instance) so the same panel can be
-     * opened twice — e.g. one log view per source.
+     * opened twice — e.g. one log view per source. An editor kind also widens
+     * the sidebar up to its usable floor (never narrows it).
      * @param kind Panel kind to add.
      * @returns The new tab id.
      */
@@ -100,6 +132,7 @@ export const useRightSidebarStore = defineStore(
       tabs.value = [...tabs.value, { id, kind }];
       activeTabId.value = id;
       expand();
+      if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));
       return id;
     }
 

@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { reactive, ref } from 'vue';
 import homeIndex from '@/pages/home/index.vue';
+import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 
 // The shared setup shim exposes the UI store as a plain reactive object, but
 // Pinia's real storeToRefs only surfaces ref/reactive entries — so
@@ -83,9 +84,11 @@ vi.mock('@/composables/db', async importOriginal => {
   };
 });
 
-// The dialogs are the heavy leaves (PrimeVue + @antv/g2 + cropperjs). Replace each
-// lazy dialog module with an inert stub so this suite exercises the shell's registry
-// wiring, not the dialog internals: a rendered stub proves the dialog was opened.
+// The notification list is the shell's only remaining dialog (PrimeVue + its ws
+// subscription). Replace that lazy module with an inert stub so this suite exercises
+// the shell's registry wiring, not the dialog internals: a rendered stub proves the
+// dialog was opened. The tool panels are lazily imported by RightSidebar and are not
+// rendered here, because this suite's store double never adds a tab to the strip.
 const { dialogStub } = vi.hoisted(() => ({
   dialogStub: (tag: string) => ({
     name: `stub-${tag}`,
@@ -95,19 +98,6 @@ const { dialogStub } = vi.hoisted(() => ({
   })
 }));
 
-vi.mock('@/pages/home/components/SkillsDialog.vue', () => ({ __esModule: true, default: dialogStub('skills-dialog') }));
-vi.mock('@/pages/home/components/ConfigDialog.vue', () => ({ __esModule: true, default: dialogStub('config-dialog') }));
-vi.mock('@/pages/home/components/PersonaDialog.vue', () => ({
-  __esModule: true,
-  default: dialogStub('persona-dialog')
-}));
-vi.mock('@/pages/home/components/MemoryDialog.vue', () => ({ __esModule: true, default: dialogStub('memory-dialog') }));
-vi.mock('@/pages/home/components/HeartbeatDialog.vue', () => ({
-  __esModule: true,
-  default: dialogStub('heartbeat-dialog')
-}));
-vi.mock('@/pages/home/components/CronDialog.vue', () => ({ __esModule: true, default: dialogStub('cron-dialog') }));
-vi.mock('@/pages/home/components/ExtendDialog.vue', () => ({ __esModule: true, default: dialogStub('extend-dialog') }));
 vi.mock('@/pages/home/components/NotificationDialog.vue', () => ({
   __esModule: true,
   default: dialogStub('notification-dialog')
@@ -165,9 +155,10 @@ async function clickIconButton(wrapper: ReturnType<typeof mountHome>, icon: stri
   await flushPromises();
 }
 
-describe('home/index.vue dialog registry (integration, backend mocked)', () => {
+describe('home/index.vue toolbar registry (integration, backend mocked)', () => {
   beforeEach(() => {
     seededFetchApi.mockClear();
+    rightSidebarState.openTab.mockClear();
     uiState.settingsMenuOpen = false;
     uiState.sidebarCollapsed = false;
   });
@@ -183,49 +174,83 @@ describe('home/index.vue dialog registry (integration, backend mocked)', () => {
     expect(wrapper.find('[data-test="notification-dialog"]').attributes('data-open')).toBe('true');
   });
 
-  it('opens a logs tab (not a dialog) from the top-bar history command', async () => {
-    rightSidebarState.openTab.mockClear();
+  it('drops the theme switch and the language picker when the middle column is squeezed', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    await clickIconButton(wrapper, 'pi pi-history');
-
-    expect(rightSidebarState.openTab).toHaveBeenCalledWith('logs');
-    // No dialog by that name exists any more.
-    expect(wrapper.find('[data-test="logs-dialog"]').exists()).toBe(false);
+    // Pure CSS: the toolbar is a size container, so the two secondary controls hide
+    // by their own width — no resize observer, and it reacts to both sidebar drags.
+    expect(wrapper.find('.\\@container').exists()).toBe(true);
+    // The theme switch is wrapped (its own root is a fragment, so it cannot inherit the
+    // class) …
+    const themeGuard = wrapper.find('.\\@max-\\[620px\\]\\:hidden');
+    expect(themeGuard.findComponent(ModeSwitch).exists()).toBe(true);
+    // … and the language picker carries the guard with the important modifier, because
+    // its own `display` comes from PrimeVue's sheet (same idiom as `text-4xl!`).
+    const pickerGuard = wrapper.findAll('.\\@max-\\[620px\\]\\:hidden\\!');
+    expect(pickerGuard.length).toBe(1);
+    expect(pickerGuard[0]!.element.tagName.toLowerCase()).toBe('select');
   });
 
-  it('opens a stats tab (not a dialog) from the nine-grid statistics tile', async () => {
-    rightSidebarState.openTab.mockClear();
+  it('keeps the log viewer out of the top bar (it is a nine-grid entry)', async () => {
+    const wrapper = mountHome();
+    await flushPromises();
+
+    const topBarIcons = wrapper.findAllComponents({ name: 'Button' }).map(b => b.props('icon'));
+    expect(topBarIcons).not.toContain('pi pi-history');
+  });
+
+  it('opens a right-sidebar tab for every nine-grid entry', async () => {
+    // Every settings-menu tile, in registry order: icon → panel kind.
+    const entries: ReadonlyArray<[string, string]> = [
+      ['pi pi-bolt', 'skills'],
+      ['pi pi-sitemap', 'knowledgeGraph'],
+      ['pi pi-chart-bar', 'stats'],
+      ['pi pi-history', 'logs'],
+      ['pi pi-sliders-h', 'systemConfig'],
+      ['pi pi-user', 'persona'],
+      ['pi pi-database', 'memory'],
+      ['pi pi-heart', 'heartbeat'],
+      ['pi pi-clock', 'cron'],
+      ['puzzle-icon', 'extend']
+    ];
+    const wrapper = mountHome();
+    await flushPromises();
+
+    for (const [icon, kind] of entries) {
+      rightSidebarState.openTab.mockClear();
+
+      await clickIconButton(wrapper, 'pi pi-bars');
+      const entry = wrapper.findAll('.dlg button').find(b => b.find(`i.${icon.split(' ').join('.')}`).exists());
+      expect(entry, `nine-grid entry ${icon}`).toBeTruthy();
+      await entry!.trigger('click');
+      await flushPromises();
+
+      expect(rightSidebarState.openTab).toHaveBeenCalledWith(kind);
+      // The tool tiles never open a dialog any more.
+      expect(wrapper.find(`[data-test="${kind}-dialog"]`).exists()).toBe(false);
+    }
+  });
+
+  it('mounts no tool dialog at all: the notification list is the only one left', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
     await clickIconButton(wrapper, 'pi pi-bars');
-    const statsEntry = wrapper.findAll('.dlg button').find(b => b.find('i.pi-chart-bar').exists());
-    expect(statsEntry, 'nine-grid statistics entry').toBeTruthy();
 
-    await statsEntry!.trigger('click');
-    await flushPromises();
-
-    expect(rightSidebarState.openTab).toHaveBeenCalledWith('stats');
-    expect(wrapper.find('[data-test="stats-dialog"]').exists()).toBe(false);
+    const rendered = wrapper.findAll('[data-test$="-dialog"]').map(n => n.attributes('data-test'));
+    expect(rendered).not.toContain('skills-dialog');
+    expect(rendered).not.toContain('config-dialog');
+    expect(rendered).not.toContain('persona-dialog');
+    expect(rendered).not.toContain('memory-dialog');
+    expect(rendered).not.toContain('heartbeat-dialog');
+    expect(rendered).not.toContain('cron-dialog');
+    expect(rendered).not.toContain('extend-dialog');
+    expect(rendered).not.toContain('stats-dialog');
+    expect(rendered).not.toContain('logs-dialog');
   });
 
-  it('opens the dialog registered for a nine-grid tool', async () => {
-    const wrapper = mountHome();
-    await flushPromises();
-
-    await clickIconButton(wrapper, 'pi pi-bars');
-    const skillsEntry = wrapper.findAll('.dlg button').find(b => b.find('i.pi-bolt').exists());
-    expect(skillsEntry, 'nine-grid skills entry').toBeTruthy();
-
-    await skillsEntry!.trigger('click');
-    await flushPromises();
-
-    expect(wrapper.find('[data-test="skills-dialog"]').attributes('data-open')).toBe('true');
-  });
-
-  it('closes a dialog through its own update:modelValue (v-model close path)', async () => {
+  it('closes the notification dialog through its own update:modelValue (v-model close path)', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
@@ -235,16 +260,5 @@ describe('home/index.vue dialog registry (integration, backend mocked)', () => {
     await flushPromises();
 
     expect(wrapper.find('[data-test="notification-dialog"]').attributes('data-open')).toBe('false');
-  });
-
-  it('keeps every other dialog closed when one opens', async () => {
-    const wrapper = mountHome();
-    await flushPromises();
-
-    await clickIconButton(wrapper, 'pi pi-bell');
-
-    for (const tag of ['skills', 'stats', 'config', 'persona', 'memory', 'heartbeat', 'cron', 'logs', 'extend']) {
-      expect(wrapper.find(`[data-test="${tag}-dialog"]`).exists(), `${tag} dialog`).toBe(false);
-    }
   });
 });

@@ -1,246 +1,241 @@
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('config.cron.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[820px]"
-    @show="loadJobs">
-    <div class="flex flex-col gap-3">
+  <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
+       tab label and the close button), so the mount drives the load. The add/edit
+       form stays a dialog: it is an overlay, not part of the panel body. -->
+  <div class="flex flex-col gap-3 h-full min-h-0 overflow-y-auto p-4">
+    <div
+      v-if="loading"
+      class="flex items-center justify-center py-8">
+      <ProgressSpinner style="width: 2rem; height: 2rem" />
+    </div>
+    <template v-else>
+      <!-- Empty state -->
       <div
-        v-if="loading"
-        class="flex items-center justify-center py-8">
-        <ProgressSpinner style="width: 2rem; height: 2rem" />
+        v-if="!jobs.length"
+        class="text-sm text-gray-400 dark:text-gray-500 pb-1">
+        {{ t('config.cron.empty') }}
       </div>
-      <template v-else>
-        <!-- Empty state -->
+
+      <!-- Add / New job (always visible, even when list is empty) -->
+      <div class="flex justify-end">
+        <Button
+          :label="t('config.cron.addJob')"
+          icon="pi pi-plus"
+          severity="secondary"
+          outlined
+          size="small"
+          @click="openNewJob" />
+      </div>
+
+      <!-- Job list -->
+      <div class="flex flex-col gap-2">
         <div
-          v-if="!jobs.length"
-          class="text-sm text-gray-400 dark:text-gray-500 pb-1">
-          {{ t('config.cron.empty') }}
-        </div>
-
-        <!-- Add / New job (always visible, even when list is empty) -->
-        <div class="flex justify-end">
-          <Button
-            :label="t('config.cron.addJob')"
-            icon="pi pi-plus"
-            severity="secondary"
-            outlined
-            size="small"
-            @click="openNewJob" />
-        </div>
-
-        <!-- Job list -->
-        <div class="flex flex-col gap-2">
-          <div
-            v-for="job in jobs"
-            :key="job.id"
-            class="flex flex-col gap-1 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
-            <div class="flex items-center justify-between gap-2">
-              <div class="flex items-center gap-2 min-w-0">
-                <ToggleSwitch
-                  :modelValue="job.enabled"
-                  :disabled="busyToggleIds.has(job.id)"
-                  @change="toggleJob(job)" />
-                <span class="font-semibold text-sm truncate">{{ job.name }}</span>
-              </div>
-              <div class="flex items-center gap-1 shrink-0">
-                <Button
-                  :label="t('config.cron.run')"
-                  icon="pi pi-play"
-                  size="small"
-                  severity="success"
-                  text
-                  v-debounce:click.500="() => runJob(job)" />
-                <Button
-                  :label="t('config.cron.edit')"
-                  icon="pi pi-pencil"
-                  size="small"
-                  severity="secondary"
-                  text
-                  @click="openEditJob(job)" />
-                <Button
-                  :label="t('config.cron.delete')"
-                  icon="pi pi-trash"
-                  size="small"
-                  severity="danger"
-                  text
-                  v-debounce:click.500="() => removeJob(job)" />
-              </div>
+          v-for="job in jobs"
+          :key="job.id"
+          class="flex flex-col gap-1 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 min-w-0">
+              <ToggleSwitch
+                :modelValue="job.enabled"
+                :disabled="busyToggleIds.has(job.id)"
+                @change="toggleJob(job)" />
+              <span class="font-semibold text-sm truncate">{{ job.name }}</span>
             </div>
-            <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
-              <div class="font-mono">{{ describeSchedule(job) }}</div>
-              <div class="truncate">{{ job.payload.message }}</div>
-              <div
-                v-if="job.state?.nextRunAtMs"
-                class="text-gray-400 dark:text-gray-500">
-                {{ t('config.cron.nextRun') }}: {{ formatTime(job.state.nextRunAtMs) }}
-              </div>
-              <div
-                v-if="job.state?.lastStatus"
-                class="text-gray-400 dark:text-gray-500">
-                {{ t('config.cron.lastStatus') }}: {{ job.state.lastStatus }}
-                <span
-                  v-if="job.state.lastError"
-                  class="ml-1 text-red-500 dark:text-red-400"
-                  >{{ job.state.lastError }}</span
-                >
-              </div>
+            <div class="flex items-center gap-1 shrink-0">
+              <Button
+                :label="t('config.cron.run')"
+                icon="pi pi-play"
+                size="small"
+                severity="success"
+                text
+                v-debounce:click.500="() => runJob(job)" />
+              <Button
+                :label="t('config.cron.edit')"
+                icon="pi pi-pencil"
+                size="small"
+                severity="secondary"
+                text
+                @click="openEditJob(job)" />
+              <Button
+                :label="t('config.cron.delete')"
+                icon="pi pi-trash"
+                size="small"
+                severity="danger"
+                text
+                v-debounce:click.500="() => removeJob(job)" />
+            </div>
+          </div>
+          <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
+            <div class="font-mono">{{ describeSchedule(job) }}</div>
+            <div class="truncate">{{ job.payload.message }}</div>
+            <div
+              v-if="job.state?.nextRunAtMs"
+              class="text-gray-400 dark:text-gray-500">
+              {{ t('config.cron.nextRun') }}: {{ formatTime(job.state.nextRunAtMs) }}
+            </div>
+            <div
+              v-if="job.state?.lastStatus"
+              class="text-gray-400 dark:text-gray-500">
+              {{ t('config.cron.lastStatus') }}: {{ job.state.lastStatus }}
+              <span
+                v-if="job.state.lastError"
+                class="ml-1 text-red-500 dark:text-red-400"
+                >{{ job.state.lastError }}</span
+              >
             </div>
           </div>
         </div>
-      </template>
-    </div>
-  </Dialog>
-
-  <!-- Add/Edit job dialog -->
-  <Dialog
-    v-model:visible="editing"
-    :header="editingId ? t('config.cron.editTitle') : t('config.cron.addTitle')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[640px]">
-    <div class="flex flex-col gap-3">
-      <div class="flex flex-col gap-1">
-        <label class="text-sm">{{ t('config.cron.name') }}</label>
-        <InputText
-          v-model="form.name"
-          class="w-full"
-          :placeholder="t('config.cron.namePlaceholder')" />
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label class="text-sm">{{ t('config.cron.scheduleType') }}</label>
-        <div class="flex gap-2">
-          <SelectButton
-            v-model="form.scheduleType"
-            :options="scheduleTypeOptions"
-            optionLabel="label"
-            optionValue="value"
-            class="w-full" />
-        </div>
-      </div>
-
-      <!-- Schedule-specific fields -->
-      <div
-        v-if="form.scheduleType === 'at'"
-        class="flex flex-col gap-1">
-        <label class="text-sm">{{ t('config.cron.atTime') }}</label>
-        <Calendar
-          v-model="form.atDate"
-          showTime
-          hourFormat="24"
-          fluid
-          class="w-full" />
-      </div>
-
-      <div
-        v-else-if="form.scheduleType === 'every'"
-        class="flex flex-col gap-1">
-        <label class="text-sm">{{ t('config.cron.everyInterval') }}</label>
-        <div class="flex items-center gap-2">
-          <InputNumber
-            v-model="form.everyValue"
-            :min="1"
-            class="w-32"
-            :placeholder="t('config.cron.intervalValue')" />
-          <Select
-            v-model="form.everyUnit"
-            :options="everyUnitOptions"
-            optionLabel="label"
-            optionValue="value"
-            class="w-40" />
-        </div>
-        <small
-          v-if="everyBelowFloor"
-          class="text-red-500 dark:text-red-400">
-          {{ t('config.cron.intervalTooSmall') }}
-        </small>
-      </div>
-
-      <div
-        v-else
-        class="flex flex-col gap-1">
-        <label class="text-sm">{{ t('config.cron.cronExpr') }}</label>
-        <InputText
-          v-model="form.expr"
-          class="w-full font-mono"
-          placeholder="*/5 * * * *" />
-      </div>
-
-      <div class="flex flex-col gap-1">
-        <label class="text-sm">{{ t('config.cron.message') }}</label>
-        <Textarea
-          v-model="form.message"
-          class="w-full font-mono text-sm"
-          rows="3"
-          autoResize
-          :placeholder="t('config.cron.messagePlaceholder')" />
-      </div>
-
-      <div class="flex items-center gap-2">
-        <Checkbox
-          v-model="form.deliver"
-          :binary="true"
-          inputId="cron-deliver" />
-        <label
-          for="cron-deliver"
-          class="text-sm"
-          >{{ t('config.cron.deliver') }}</label
-        >
-      </div>
-
-      <template v-if="form.deliver">
-        <div class="flex flex-col gap-1">
-          <label class="text-sm">{{ t('config.cron.channel') }}</label>
-          <InputText
-            v-model="form.channel"
-            class="w-full"
-            :placeholder="t('config.cron.channelPlaceholder')" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label class="text-sm">{{ t('config.cron.to') }}</label>
-          <InputText
-            v-model="form.to"
-            class="w-full"
-            :placeholder="t('config.cron.toPlaceholder')" />
-        </div>
-      </template>
-
-      <div class="flex items-center gap-2">
-        <Checkbox
-          v-model="form.deleteAfterRun"
-          :binary="true"
-          inputId="cron-delete-after-run" />
-        <label
-          for="cron-delete-after-run"
-          class="text-sm"
-          >{{ t('config.cron.deleteAfterRun') }}</label
-        >
-      </div>
-    </div>
-
-    <template #footer>
-      <div class="flex gap-2 justify-end">
-        <Button
-          :label="t('config.cancel')"
-          icon="pi pi-times"
-          severity="secondary"
-          @click="cancelEdit" />
-        <Button
-          :label="t('config.save')"
-          icon="pi pi-check"
-          :loading="saving"
-          :disabled="!canSaveEdit"
-          @click="handleSaveJob" />
       </div>
     </template>
-  </Dialog>
+
+    <!-- Add/Edit job dialog -->
+    <Dialog
+      v-model:visible="editing"
+      :header="editingId ? t('config.cron.editTitle') : t('config.cron.addTitle')"
+      :modal="true"
+      :closable="true"
+      class="w-[95vw] md:w-[640px]">
+      <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.name') }}</label>
+          <InputText
+            v-model="form.name"
+            class="w-full"
+            :placeholder="t('config.cron.namePlaceholder')" />
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.scheduleType') }}</label>
+          <div class="flex gap-2">
+            <SelectButton
+              v-model="form.scheduleType"
+              :options="scheduleTypeOptions"
+              optionLabel="label"
+              optionValue="value"
+              class="w-full" />
+          </div>
+        </div>
+
+        <!-- Schedule-specific fields -->
+        <div
+          v-if="form.scheduleType === 'at'"
+          class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.atTime') }}</label>
+          <Calendar
+            v-model="form.atDate"
+            showTime
+            hourFormat="24"
+            fluid
+            class="w-full" />
+        </div>
+
+        <div
+          v-else-if="form.scheduleType === 'every'"
+          class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.everyInterval') }}</label>
+          <div class="flex items-center gap-2">
+            <InputNumber
+              v-model="form.everyValue"
+              :min="1"
+              class="w-32"
+              :placeholder="t('config.cron.intervalValue')" />
+            <Select
+              v-model="form.everyUnit"
+              :options="everyUnitOptions"
+              optionLabel="label"
+              optionValue="value"
+              class="w-40" />
+          </div>
+          <small
+            v-if="everyBelowFloor"
+            class="text-red-500 dark:text-red-400">
+            {{ t('config.cron.intervalTooSmall') }}
+          </small>
+        </div>
+
+        <div
+          v-else
+          class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.cronExpr') }}</label>
+          <InputText
+            v-model="form.expr"
+            class="w-full font-mono"
+            placeholder="*/5 * * * *" />
+        </div>
+
+        <div class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.message') }}</label>
+          <Textarea
+            v-model="form.message"
+            class="w-full font-mono text-sm"
+            rows="3"
+            autoResize
+            :placeholder="t('config.cron.messagePlaceholder')" />
+        </div>
+
+        <div class="flex items-center gap-2">
+          <Checkbox
+            v-model="form.deliver"
+            :binary="true"
+            inputId="cron-deliver" />
+          <label
+            for="cron-deliver"
+            class="text-sm"
+            >{{ t('config.cron.deliver') }}</label
+          >
+        </div>
+
+        <template v-if="form.deliver">
+          <div class="flex flex-col gap-1">
+            <label class="text-sm">{{ t('config.cron.channel') }}</label>
+            <InputText
+              v-model="form.channel"
+              class="w-full"
+              :placeholder="t('config.cron.channelPlaceholder')" />
+          </div>
+          <div class="flex flex-col gap-1">
+            <label class="text-sm">{{ t('config.cron.to') }}</label>
+            <InputText
+              v-model="form.to"
+              class="w-full"
+              :placeholder="t('config.cron.toPlaceholder')" />
+          </div>
+        </template>
+
+        <div class="flex items-center gap-2">
+          <Checkbox
+            v-model="form.deleteAfterRun"
+            :binary="true"
+            inputId="cron-delete-after-run" />
+          <label
+            for="cron-delete-after-run"
+            class="text-sm"
+            >{{ t('config.cron.deleteAfterRun') }}</label
+          >
+        </div>
+      </div>
+
+      <template #footer>
+        <div class="flex gap-2 justify-end">
+          <Button
+            :label="t('config.cancel')"
+            icon="pi pi-times"
+            severity="secondary"
+            @click="cancelEdit" />
+          <Button
+            :label="t('config.save')"
+            icon="pi pi-check"
+            :loading="saving"
+            :disabled="!canSaveEdit"
+            @click="handleSaveJob" />
+        </div>
+      </template>
+    </Dialog>
+  </div>
 </template>
 
 <script lang="ts" setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { CronJob, CronSchedule } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
@@ -263,14 +258,6 @@ const { t } = useI18n({ useScope: 'local' });
  * @param named
  */
 const tr: ScheduleTranslator = (key, named) => t(key, named);
-
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
 
 const loading = ref(false);
 const saving = ref(false);
@@ -439,7 +426,7 @@ async function handleSaveJob() {
     editingId.value = null;
     await loadJobs();
   } catch (e) {
-    logUtil.e('[CronDialog] Failed to save job:', e);
+    logUtil.e('[CronPanel] Failed to save job:', e);
   } finally {
     saving.value = false;
   }
@@ -453,7 +440,7 @@ async function toggleJob(job: CronJob) {
     await enableCronJob(job.id, !job.enabled);
     await loadJobs();
   } catch (e) {
-    logUtil.e('[CronDialog] Failed to toggle job:', e);
+    logUtil.e('[CronPanel] Failed to toggle job:', e);
   } finally {
     busyToggleIds.value = new Set(busyToggleIds.value);
     busyToggleIds.value.delete(job.id);
@@ -465,7 +452,7 @@ async function runJob(job: CronJob) {
     await runCronJob(job.id, true);
     await loadJobs();
   } catch (e) {
-    logUtil.e('[CronDialog] Failed to run job:', e);
+    logUtil.e('[CronPanel] Failed to run job:', e);
   }
 }
 
@@ -474,7 +461,7 @@ async function removeJob(job: CronJob) {
     await deleteCronJob(job.id);
     await loadJobs();
   } catch (e) {
-    logUtil.e('[CronDialog] Failed to delete job:', e);
+    logUtil.e('[CronPanel] Failed to delete job:', e);
   }
 }
 
@@ -493,12 +480,15 @@ async function loadJobs() {
     const data = await listCronJobs(true);
     jobs.value = data.jobs ?? [];
   } catch (e) {
-    logUtil.e('[CronDialog] Failed to load jobs:', e);
+    logUtil.e('[CronPanel] Failed to load jobs:', e);
     jobs.value = [];
   } finally {
     loading.value = false;
   }
 }
+
+// The tab's lifetime drives the load.
+onMounted(loadJobs);
 </script>
 
 <i18n lang="json">
@@ -506,7 +496,6 @@ async function loadJobs() {
   "zh": {
     "config": {
       "cron": {
-        "title": "定时任务",
         "addJob": "新建任务",
         "empty": "暂无定时任务。点击「新建任务」添加。",
         "run": "运行",
@@ -547,7 +536,6 @@ async function loadJobs() {
   "en": {
     "config": {
       "cron": {
-        "title": "Cron Tasks",
         "addJob": "New task",
         "empty": "No cron tasks yet. Click \"New task\" to add one.",
         "run": "Run",
@@ -588,7 +576,6 @@ async function loadJobs() {
   "ja": {
     "config": {
       "cron": {
-        "title": "クーロンタスク",
         "addJob": "新規タスク",
         "empty": "クーロンタスクはまだありません。「新規タスク」をクリックして追加してください。",
         "run": "実行",
@@ -629,7 +616,6 @@ async function loadJobs() {
   "ko": {
     "config": {
       "cron": {
-        "title": "크론 작업",
         "addJob": "새 작업",
         "empty": "크론 작업이 없습니다. \"새 작업\"을 클릭하여 추가하세요.",
         "run": "실행",

@@ -1,322 +1,315 @@
 <template>
-  <Dialog
-    v-model:visible="visible"
-    :header="t('config.title')"
-    :modal="true"
-    :closable="true"
-    class="w-[95vw] md:w-[1100px]"
-    @show="loadContent"
-    @hide="onHide">
-    <div class="flex flex-col gap-3">
-      <div
-        v-if="loading"
-        class="flex items-center justify-center py-8">
-        <ProgressSpinner style="width: 2rem; height: 2rem" />
-      </div>
-      <template v-else>
-        <TabView v-model:activeIndex="activeTab">
-          <TabPanel
-            value="character"
-            :header="t('config.tabs.character')">
-            <div class="flex flex-col gap-5">
-              <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
+  <!-- Right-sidebar tab body: mounted and unmounted with its tab, which drives
+       loadContent / onHide; the sidebar owns the tab label and its close button. -->
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+    <div
+      v-if="loading"
+      class="flex items-center justify-center py-8">
+      <ProgressSpinner style="width: 2rem; height: 2rem" />
+    </div>
+    <template v-else>
+      <TabView
+        v-model:activeIndex="activeTab"
+        class="flex-1 min-h-0">
+        <TabPanel
+          value="character"
+          :header="t('config.tabs.character')">
+          <div class="flex flex-col gap-5">
+            <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
 
-              <!-- AI role configuration -->
-              <div class="flex flex-col gap-2">
-                <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{
-                  t('config.role.assistant')
-                }}</span>
-                <div class="flex items-center gap-3">
-                  <img
-                    v-if="charAssistant.avatar"
-                    :src="assistantAvatarUrl"
-                    alt="assistant avatar"
-                    class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                  <div
-                    v-else
-                    class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                    <i class="pi pi-user" />
-                  </div>
-                  <div class="flex flex-col gap-2 flex-1">
-                    <InputText
-                      v-model="charAssistant.name"
-                      :placeholder="t('config.role.aiName')"
-                      class="w-full" />
-                    <FileUpload
-                      mode="basic"
-                      :choose-label="t('config.uploadAvatar')"
-                      accept="image/*"
-                      customUpload
-                      :auto="false"
-                      @select="onAssistAvatarSelect">
-                      <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
-                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
-                      <template #filelabel="{ files }">
-                        <span class="text-xs text-gray-400">
-                          {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
-                        </span>
-                      </template>
-                    </FileUpload>
-                  </div>
-                </div>
-              </div>
-
-              <Divider />
-
-              <!-- User role configuration -->
-              <div class="flex flex-col gap-2">
-                <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{
-                  t('config.role.userRole')
-                }}</span>
-                <div class="flex items-center gap-3">
-                  <img
-                    v-if="charUser.avatar"
-                    :src="userAvatarUrl"
-                    alt="user avatar"
-                    class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                  <div
-                    v-else
-                    class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                    <i class="pi pi-user" />
-                  </div>
-                  <div class="flex flex-col gap-2 flex-1">
-                    <InputText
-                      v-model="charUser.name"
-                      :placeholder="t('config.role.userName')"
-                      class="w-full" />
-                    <FileUpload
-                      mode="basic"
-                      :choose-label="t('config.uploadAvatar')"
-                      accept="image/*"
-                      customUpload
-                      :auto="false"
-                      @select="onUserAvatarSelect">
-                      <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
-                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
-                      <template #filelabel="{ files }">
-                        <span class="text-xs text-gray-400">
-                          {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
-                        </span>
-                      </template>
-                    </FileUpload>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </TabPanel>
-          <TabPanel
-            value="background"
-            :header="t('config.background.title')">
-            <div class="flex flex-col gap-5">
-              <!-- Background image: shown in both light/dark themes; the slider below controls the themed overlay (light=white / dark=black) -->
-              <div class="flex items-center justify-between gap-3">
-                <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
-                  {{ t('config.background.bothThemes') }}
-                </p>
-                <Button
-                  v-if="backgroundUrl"
-                  :label="t('config.background.clear')"
-                  icon="pi pi-times"
-                  severity="secondary"
-                  size="small"
-                  @click="backgroundUrl = ''" />
-              </div>
-
-              <!-- Background preview: displayed at the window's aspect ratio; scrolls inside the container when the browser window is too short; a themed overlay is stacked on top to preview the slider effect in real time -->
-              <div
-                v-if="backgroundUrl"
-                class="relative w-full rounded-lg border border-solid border-gray-300 dark:border-gray-700 overflow-y-auto"
-                :style="{ aspectRatio: String(backgroundAspect), maxHeight: '60vh' }">
-                <img
-                  :src="backgroundUrl"
-                  alt="chat background"
-                  class="w-full h-full object-cover" />
-                <div
-                  class="absolute inset-0 pointer-events-none"
-                  :style="backgroundPreviewOverlayStyle" />
-              </div>
-              <div
-                v-else
-                class="w-full rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-gray-400"
-                :style="{ aspectRatio: String(backgroundAspect) }">
-                <i class="pi pi-image mr-2" />
-                <span class="text-sm">{{ t('config.background.title') }}</span>
-              </div>
-
+            <!-- AI role configuration -->
+            <div class="flex flex-col gap-2">
+              <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('config.role.assistant') }}</span>
               <div class="flex items-center gap-3">
-                <FileUpload
-                  mode="basic"
-                  :choose-label="t('config.background.upload')"
-                  accept="image/*"
-                  customUpload
-                  :auto="false"
-                  @select="onBackgroundSelect">
-                  <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
-                       replaced with localized text: file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to choose an image -->
-                  <template #filelabel="{ files }">
-                    <span class="text-xs text-gray-400">
-                      {{ fileLabelText(Array.isArray(files) ? files : []) }}
-                    </span>
-                  </template>
-                </FileUpload>
-              </div>
-
-              <!-- Overlay opacity: light theme=white overlay / dark theme=black overlay; the further left, the clearer the photo; the further right, the more it fades until fully covered by pure white/black -->
-              <div
-                v-if="backgroundUrl"
-                class="flex flex-col gap-2">
-                <label class="text-sm font-medium text-[#111827] dark:text-[#E5E7EB]">
-                  {{ t('config.background.opacity') }}
-                  <span class="ml-1 text-xs text-gray-400">({{ backgroundOpacityValue }})</span>
-                </label>
-                <Slider
-                  v-model="backgroundOpacityValue"
-                  :min="0"
-                  :max="100"
-                  :step="5"
-                  class="w-full" />
-                <p class="m-0 text-xs text-gray-400">
-                  {{ t('config.background.opacityHint') }}
-                </p>
+                <img
+                  v-if="charAssistant.avatar"
+                  :src="assistantAvatarUrl"
+                  alt="assistant avatar"
+                  class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
+                <div
+                  v-else
+                  class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
+                  <i class="pi pi-user" />
+                </div>
+                <div class="flex flex-col gap-2 flex-1">
+                  <InputText
+                    v-model="charAssistant.name"
+                    :placeholder="t('config.role.aiName')"
+                    class="w-full" />
+                  <FileUpload
+                    mode="basic"
+                    :choose-label="t('config.uploadAvatar')"
+                    accept="image/*"
+                    customUpload
+                    :auto="false"
+                    @select="onAssistAvatarSelect">
+                    <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
+                    <template #filelabel="{ files }">
+                      <span class="text-xs text-gray-400">
+                        {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                      </span>
+                    </template>
+                  </FileUpload>
+                </div>
               </div>
             </div>
-          </TabPanel>
 
-          <!-- Env config tab: reads/edits the project root .env, grouped by prefix; only existing keys can be modified.
+            <Divider />
+
+            <!-- User role configuration -->
+            <div class="flex flex-col gap-2">
+              <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('config.role.userRole') }}</span>
+              <div class="flex items-center gap-3">
+                <img
+                  v-if="charUser.avatar"
+                  :src="userAvatarUrl"
+                  alt="user avatar"
+                  class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
+                <div
+                  v-else
+                  class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
+                  <i class="pi pi-user" />
+                </div>
+                <div class="flex flex-col gap-2 flex-1">
+                  <InputText
+                    v-model="charUser.name"
+                    :placeholder="t('config.role.userName')"
+                    class="w-full" />
+                  <FileUpload
+                    mode="basic"
+                    :choose-label="t('config.uploadAvatar')"
+                    accept="image/*"
+                    customUpload
+                    :auto="false"
+                    @select="onUserAvatarSelect">
+                    <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
+                    <template #filelabel="{ files }">
+                      <span class="text-xs text-gray-400">
+                        {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                      </span>
+                    </template>
+                  </FileUpload>
+                </div>
+              </div>
+            </div>
+          </div>
+        </TabPanel>
+        <TabPanel
+          value="background"
+          :header="t('config.background.title')">
+          <div class="flex flex-col gap-5">
+            <!-- Background image: shown in both light/dark themes; the slider below controls the themed overlay (light=white / dark=black) -->
+            <div class="flex items-center justify-between gap-3">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.background.bothThemes') }}
+              </p>
+              <Button
+                v-if="backgroundUrl"
+                :label="t('config.background.clear')"
+                icon="pi pi-times"
+                severity="secondary"
+                size="small"
+                @click="backgroundUrl = ''" />
+            </div>
+
+            <!-- Background preview: displayed at the window's aspect ratio; scrolls inside the container when the browser window is too short; a themed overlay is stacked on top to preview the slider effect in real time -->
+            <div
+              v-if="backgroundUrl"
+              class="relative w-full rounded-lg border border-solid border-gray-300 dark:border-gray-700 overflow-y-auto"
+              :style="{ aspectRatio: String(backgroundAspect), maxHeight: '60vh' }">
+              <img
+                :src="backgroundUrl"
+                alt="chat background"
+                class="w-full h-full object-cover" />
+              <div
+                class="absolute inset-0 pointer-events-none"
+                :style="backgroundPreviewOverlayStyle" />
+            </div>
+            <div
+              v-else
+              class="w-full rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-gray-400"
+              :style="{ aspectRatio: String(backgroundAspect) }">
+              <i class="pi pi-image mr-2" />
+              <span class="text-sm">{{ t('config.background.title') }}</span>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <FileUpload
+                mode="basic"
+                :choose-label="t('config.background.upload')"
+                accept="image/*"
+                customUpload
+                :auto="false"
+                @select="onBackgroundSelect">
+                <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                       replaced with localized text: file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to choose an image -->
+                <template #filelabel="{ files }">
+                  <span class="text-xs text-gray-400">
+                    {{ fileLabelText(Array.isArray(files) ? files : []) }}
+                  </span>
+                </template>
+              </FileUpload>
+            </div>
+
+            <!-- Overlay opacity: light theme=white overlay / dark theme=black overlay; the further left, the clearer the photo; the further right, the more it fades until fully covered by pure white/black -->
+            <div
+              v-if="backgroundUrl"
+              class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-[#111827] dark:text-[#E5E7EB]">
+                {{ t('config.background.opacity') }}
+                <span class="ml-1 text-xs text-gray-400">({{ backgroundOpacityValue }})</span>
+              </label>
+              <Slider
+                v-model="backgroundOpacityValue"
+                :min="0"
+                :max="100"
+                :step="5"
+                class="w-full" />
+              <p class="m-0 text-xs text-gray-400">
+                {{ t('config.background.opacityHint') }}
+              </p>
+            </div>
+          </div>
+        </TabPanel>
+
+        <!-- Env config tab: reads/edits the project root .env, grouped by prefix; only existing keys can be modified.
                Loading is driven by the setup-scoped watch below (@show runs in an event context where
                getCurrentInstance() is null, so Nuxt useFetch never actually sends the request) -->
-          <TabPanel
-            value="env"
-            :header="t('config.tabs.env')">
-            <div class="flex flex-col gap-4">
-              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
-                {{ t('config.env.restartHint') }}
-              </p>
+        <TabPanel
+          value="env"
+          :header="t('config.tabs.env')">
+          <div class="flex flex-col gap-4">
+            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('config.env.restartHint') }}
+            </p>
 
-              <div
-                v-if="envLoadError"
-                class="flex">
-                <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
-              </div>
-
-              <template v-else-if="envGroups.length === 0">
-                <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
-              </template>
-
-              <template v-else>
-                <template
-                  v-for="group in envGroups"
-                  :key="group.name">
-                  <!-- Model groups: profile manager (list + parameters + save/apply);
-                       the catch-all "other" group (non-model keys) stays a plain key/value card. -->
-                  <LlmModelManager
-                    v-if="group.name !== 'other'"
-                    :group="group.name"
-                    :keys="group.entries.map(e => e.key)"
-                    :values="groupValues[group.name] ?? {}"
-                    :group-title="group.name"
-                    @apply="payload => applyModelProfile(group.name, payload)" />
-                  <div
-                    v-else
-                    class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
-                    <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                      {{ group.name }}
-                    </p>
-                    <div
-                      v-for="entry in group.entries"
-                      :key="entry.key"
-                      class="flex flex-col gap-1">
-                      <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
-                      <InputText
-                        v-model="entry.value"
-                        :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
-                        class="w-full font-mono text-xs"
-                        autocomplete="off"
-                        spellcheck="false" />
-                    </div>
-                    <!-- Non-model keys save on their own (the model groups carry
-                         their own 保存/应用 inside the panel). -->
-                    <div class="mt-1 flex justify-start">
-                      <Button
-                        :label="t('config.save')"
-                        icon="pi pi-save"
-                        size="small"
-                        :loading="saving"
-                        :disabled="!envHasChanges"
-                        @click="handleSave" />
-                    </div>
-                  </div>
-                </template>
-              </template>
+            <div
+              v-if="envLoadError"
+              class="flex">
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
             </div>
-          </TabPanel>
 
-          <!-- Sherry config tab: reads/edits the project root sherry.jsonc (app-level settings
-               split out of .env). Same lazy-load + snapshot/diff save flow as the env tab. -->
-          <TabPanel
-            value="sherry"
-            :header="t('config.tabs.sherry')">
-            <div class="flex flex-col gap-4">
-              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
-                {{ t('config.sherry.restartHint') }}
-              </p>
+            <template v-else-if="envGroups.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
+            </template>
 
-              <div
-                v-if="sherryLoadError"
-                class="flex">
-                <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
-              </div>
-
-              <template v-else-if="sherryEntries.length === 0">
-                <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
-              </template>
-
-              <template v-else>
+            <template v-else>
+              <template
+                v-for="group in envGroups"
+                :key="group.name">
+                <!-- Model groups: profile manager (list + parameters + save/apply);
+                       the catch-all "other" group (non-model keys) stays a plain key/value card. -->
+                <LlmModelManager
+                  v-if="group.name !== 'other'"
+                  :group="group.name"
+                  :keys="group.entries.map(e => e.key)"
+                  :values="groupValues[group.name] ?? {}"
+                  :group-title="group.name"
+                  @apply="payload => applyModelProfile(group.name, payload)" />
                 <div
-                  v-for="entry in sherryEntries"
-                  :key="entry.key"
-                  class="flex flex-col gap-1">
-                  <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
-                  <InputText
-                    v-model="entry.value"
-                    :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
-                    class="w-full font-mono text-xs"
-                    autocomplete="off"
-                    spellcheck="false" />
+                  v-else
+                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+                  <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    {{ group.name }}
+                  </p>
+                  <div
+                    v-for="entry in group.entries"
+                    :key="entry.key"
+                    class="flex flex-col gap-1">
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                    <InputText
+                      v-model="entry.value"
+                      :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                      class="w-full font-mono text-xs"
+                      autocomplete="off"
+                      spellcheck="false" />
+                  </div>
+                  <!-- Non-model keys save on their own (the model groups carry
+                         their own 保存/应用 inside the panel). -->
+                  <div class="mt-1 flex justify-start">
+                    <Button
+                      :label="t('config.save')"
+                      icon="pi pi-save"
+                      size="small"
+                      :loading="saving"
+                      :disabled="!envHasChanges"
+                      @click="handleSave" />
+                  </div>
                 </div>
               </template>
-            </div>
-          </TabPanel>
-        </TabView>
-      </template>
-    </div>
-    <template #footer>
-      <div
-        v-if="activeTab !== 2"
-        class="flex gap-2 justify-end">
-        <Button
-          :label="t('config.cancel')"
-          icon="pi pi-times"
-          severity="secondary"
-          @click="visible = false" />
-        <Button
-          :label="t('config.save')"
-          icon="pi pi-check"
-          :loading="saving"
-          :disabled="!canSave"
-          @click="saveDialogSettings" />
-      </div>
-    </template>
-  </Dialog>
+            </template>
+          </div>
+        </TabPanel>
 
-  <AvatarCropDialog
-    v-model="cropVisible"
-    :src="cropSource"
-    :aspect-ratio="cropAspectRatio"
-    :output-width="cropOutput.width"
-    :output-height="cropOutput.height"
-    :header="cropVisible ? cropTitle : ''"
-    @cropped="onCropConfirmed" />
+        <!-- Sherry config tab: reads/edits the project root sherry.jsonc (app-level settings
+               split out of .env). Same lazy-load + snapshot/diff save flow as the env tab. -->
+        <TabPanel
+          value="sherry"
+          :header="t('config.tabs.sherry')">
+          <div class="flex flex-col gap-4">
+            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('config.sherry.restartHint') }}
+            </p>
+
+            <div
+              v-if="sherryLoadError"
+              class="flex">
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
+            </div>
+
+            <template v-else-if="sherryEntries.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
+            </template>
+
+            <template v-else>
+              <div
+                v-for="entry in sherryEntries"
+                :key="entry.key"
+                class="flex flex-col gap-1">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                <InputText
+                  v-model="entry.value"
+                  :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
+                  class="w-full font-mono text-xs"
+                  autocomplete="off"
+                  spellcheck="false" />
+              </div>
+            </template>
+          </div>
+        </TabPanel>
+      </TabView>
+    </template>
+
+    <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
+         scrolls), and only the character / background / sherry tabs use it — every
+         env item saves or applies on its own inside its own group card. -->
+    <div
+      v-if="activeTab !== 2"
+      class="shrink-0 flex gap-2 justify-end">
+      <Button
+        :label="t('config.cancel')"
+        icon="pi pi-times"
+        severity="secondary"
+        @click="onHide" />
+      <Button
+        :label="t('config.save')"
+        icon="pi pi-check"
+        :loading="saving"
+        :disabled="!canSave"
+        @click="saveDialogSettings" />
+    </div>
+
+    <AvatarCropDialog
+      v-model="cropVisible"
+      :src="cropSource"
+      :aspect-ratio="cropAspectRatio"
+      :output-width="cropOutput.width"
+      :output-height="cropOutput.height"
+      :header="cropVisible ? cropTitle : ''"
+      @cropped="onCropConfirmed" />
+  </div>
 </template>
 
 <script lang="ts" setup>
@@ -338,13 +331,7 @@ const setBackground = chatBackgroundStore.setBackground;
 
 const { t } = useI18n({ useScope: 'local' });
 
-const props = defineProps<{ modelValue: boolean }>();
-const emits = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [] }>();
-
-const visible = computed({
-  get: () => props.modelValue,
-  set: v => emits('update:modelValue', v)
-});
+const emits = defineEmits<{ saved: [] }>();
 
 const activeTab = ref(0);
 const loading = ref(false);
@@ -418,7 +405,7 @@ const loadEnvConfig = async () => {
     }
     originalEnvValues.value = snap;
   } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to load env config:', e);
+    logUtil.e('[ConfigPanel] Failed to load env config:', e);
     envLoadError.value = t('config.env.loadError');
     envLoaded.value = false;
   }
@@ -489,7 +476,7 @@ const loadSherryConfig = async () => {
     for (const e of sherryEntries.value) snap[e.key] = e.value;
     originalSherryValues.value = snap;
   } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to load sherry config:', e);
+    logUtil.e('[ConfigPanel] Failed to load sherry config:', e);
     sherryLoadError.value = t('config.sherry.loadError');
     sherryLoaded.value = false;
   }
@@ -523,15 +510,15 @@ const resetSherryState = () => {
 // non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
 // in pure SPA mode and data stayed undefined forever → the || { groups: [] } fallback kicked in and rendered
 // the misleading "No .env file found" message.
-// Instead, dialog visibility + the env tab (activeTab===2) are now watched in setup scope; the callback runs
+// Instead, the env tab (activeTab===2) is watched in setup scope; the callback runs
 // in a setup context where getCurrentInstance() stays alive → useFetch actually issues GET /env and loads the real .env groups.
 watch(
-  [() => props.modelValue, activeTab],
-  ([dialogVisible, tab]) => {
-    if (dialogVisible && tab === 2) void loadEnvConfig();
-    if (dialogVisible && tab === 3) void loadSherryConfig();
+  activeTab,
+  tab => {
+    if (tab === 2) void loadEnvConfig();
+    if (tab === 3) void loadSherryConfig();
   },
-  // The dialog goes hidden→visible via v-model, so no immediate trigger is needed; resetEnvState already resets envLoaded on hide
+  // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
   { flush: 'post' }
 );
 
@@ -644,7 +631,7 @@ const openCrop = async (target: 'user' | 'assistant' | 'background', file: File)
     cropSource.value = await readFileAsDataUrl(file);
     cropVisible.value = true;
   } catch (e) {
-    logUtil.e('[ConfigDialog] Image read failed:', e);
+    logUtil.e('[ConfigPanel] Image read failed:', e);
   }
 };
 
@@ -757,7 +744,7 @@ const loadContent = async () => {
     originalBackgroundUrl.value = bgConfig.backgroundUrl;
     backgroundOpacityValue.value = bgConfig.backgroundOpacity;
   } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to load content:', e);
+    logUtil.e('[ConfigPanel] Failed to load content:', e);
   } finally {
     loading.value = false;
   }
@@ -788,7 +775,7 @@ const handleSave = async () => {
     invalidateModelConfigCache();
     emits('saved');
   } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to save env config:', e);
+    logUtil.e('[ConfigPanel] Failed to save env config:', e);
   } finally {
     saving.value = false;
   }
@@ -847,9 +834,8 @@ const saveDialogSettings = async () => {
     }
 
     emits('saved');
-    visible.value = false;
   } catch (e) {
-    logUtil.e('[ConfigDialog] Failed to save settings:', e);
+    logUtil.e('[ConfigPanel] Failed to save settings:', e);
   } finally {
     saving.value = false;
   }
@@ -862,13 +848,16 @@ const onHide = () => {
   resetEnvState();
   resetSherryState();
 };
+
+// The tab's lifetime drives the load and the reset (the dialog's @show/@hide).
+onMounted(loadContent);
+onBeforeUnmount(onHide);
 </script>
 
 <i18n lang="json">
 {
   "zh": {
     "config": {
-      "title": "系统配置",
       "uploadAvatar": "上传头像",
       "role": {
         "assistant": "AI 角色",
@@ -914,7 +903,6 @@ const onHide = () => {
   },
   "en": {
     "config": {
-      "title": "System Config",
       "uploadAvatar": "Upload Avatar",
       "role": {
         "assistant": "AI Role",
@@ -960,7 +948,6 @@ const onHide = () => {
   },
   "ja": {
     "config": {
-      "title": "システム設定",
       "uploadAvatar": "アバターをアップロード",
       "role": {
         "assistant": "AI ロール",
@@ -1006,7 +993,6 @@ const onHide = () => {
   },
   "ko": {
     "config": {
-      "title": "시스템 설정",
       "uploadAvatar": "아바타 업로드",
       "role": {
         "assistant": "AI 역할",
@@ -1052,3 +1038,28 @@ const onHide = () => {
   }
 }
 </i18n>
+
+<style scoped>
+/* The tab strip keeps its height and the tab body scrolls inside it, so the
+   save / cancel row below stays pinned at the bottom-right of the panel instead
+   of scrolling away with a long form. */
+:deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* This PrimeVue version renders the strip as .p-tabview-tablist-container
+   (there is no .p-tabview-nav): keep it at its own height so the panels area
+   below is the only thing that scrolls. */
+:deep(.p-tabview-tablist-container) {
+  flex-shrink: 0;
+}
+
+:deep(.p-tabview-panels) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+</style>
