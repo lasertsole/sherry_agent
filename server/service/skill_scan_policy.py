@@ -49,13 +49,26 @@ def build_reject_message(result: ScanResult) -> str | None:
     ------
     * ``DO_NOT_INSTALL`` (scanner available) -> reject (fail-closed).
     * ``CAUTION`` / ``SAFE`` -> allow (return ``None``).
-    * ``UNAVAILABLE`` (scanner not installed / errored) -> allow; this is a
-      dev-convenience gate, and the app must keep working when the scanner is
-      absent.
+    * ``UNAVAILABLE`` because the scanner is switched off
+      (``SKILL_SCANNER_ENABLED=0``) -> allow: an explicit operator choice to run
+      without scan verdicts.
+    * ``UNAVAILABLE`` although the scanner is enabled (binary missing, error,
+      timeout) -> reject (fail-closed). Accepting third-party code whenever the
+      scanner is broken turns one broken dependency into an open upload path;
+      the message names both ways out.
     """
     if result.is_unavailable:
-        logger.warning("Skill security scanner unavailable; allowing upload without scan verdict")
-        return None
+        if result.disabled_by_config:
+            logger.warning("Skill security scanner disabled by config; uploading without a verdict")
+            return None
+        logger.warning(
+            "Skill security scanner is enabled but unavailable; rejecting upload (fail-closed)"
+        )
+        return (
+            "Skill rejected: the security scanner is enabled but could not run "
+            "(skillspector CLI / python API missing, error or timeout). Install it, or set "
+            "SKILL_SCANNER_ENABLED=0 to accept unscanned skills."
+        )
     if result.is_do_not_install:
         score = result.risk_score if result.risk_score is not None else 0
         findings = result.findings or []

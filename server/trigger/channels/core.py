@@ -393,6 +393,13 @@ def _run() -> None:
         event_loop.run_forever()
     except Exception:
         logger.exception("Channel event loop crashed")
+    finally:
+        # Mirror the cron service thread: leaving the loop unclosed leaks its
+        # selector/handles for the process lifetime.
+        try:
+            event_loop.close()
+        except Exception:
+            logger.exception("Failed to close the channel event loop")
 
 
 _channel_thread: Thread | None = None

@@ -59,6 +59,12 @@ class ScanResult:
     #: Backend that produced this result ("cli", "python", or None).
     backend: str | None = None
 
+    #: True when the scan was skipped because the scanner is switched off by
+    #: configuration (``SKILL_SCANNER_ENABLED=0``) rather than because it failed
+    #: to run. Only meaningful together with :attr:`is_unavailable`; the scan
+    #: policy allows the former and fails closed on the latter.
+    disabled_by_config: bool = False
+
     @property
     def is_unavailable(self) -> bool:
         return self.status is ScanStatus.UNAVAILABLE
@@ -88,6 +94,7 @@ class ScanResult:
                 else self.risk_severity
             ),
             "backend": self.backend,
+            "disabled_by_config": self.disabled_by_config,
             "findings": [f.to_dict() for f in self.findings],
         }
 

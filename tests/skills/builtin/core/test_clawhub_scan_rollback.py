@@ -173,13 +173,35 @@ class TestScanPluginSkills:
         assert summary["caution"] == 0
         assert (plugins_dir / "good_skill").is_dir()
 
-    def test_unavailable_fails_open_and_keeps_skill(self, clamp_globals):
+    def test_unavailable_while_enabled_rolls_back(self, clamp_globals):
+        # Fail-closed: an enabled scanner that cannot run must not leave
+        # unscanned third-party code installed.
         plugins_dir, _state_file = clamp_globals
         _make_skill(plugins_dir, "inconclusive_skill")
         unavailable = SimpleNamespace(
             is_unavailable=True,
             is_do_not_install=False,
             is_caution=False,
+            disabled_by_config=False,
+            risk_score=None,
+            risk_recommendation=None,
+        )
+        with _patch_scanner(unavailable):
+            summary = clawhub_runner._scan_plugin_skills()
+
+        assert summary["scanned"] == 0
+        assert summary["rolled_back"] == 1
+        assert not (plugins_dir / "inconclusive_skill").exists()
+
+    def test_unavailable_because_disabled_keeps_skill(self, clamp_globals):
+        # An explicit operator opt-out (SKILL_SCANNER_ENABLED=0) still installs.
+        plugins_dir, _state_file = clamp_globals
+        _make_skill(plugins_dir, "opted_out_skill")
+        unavailable = SimpleNamespace(
+            is_unavailable=True,
+            is_do_not_install=False,
+            is_caution=False,
+            disabled_by_config=True,
             risk_score=None,
             risk_recommendation=None,
         )
@@ -188,7 +210,8 @@ class TestScanPluginSkills:
 
         assert summary["scanned"] == 0
         assert summary["skipped"] == 1
-        assert (plugins_dir / "inconclusive_skill").is_dir()
+        assert summary["rolled_back"] == 0
+        assert (plugins_dir / "opted_out_skill").is_dir()
 
     def test_scan_error_fails_open(self, clamp_globals):
         plugins_dir, _state_file = clamp_globals

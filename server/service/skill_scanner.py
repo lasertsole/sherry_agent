@@ -294,8 +294,16 @@ def scan_skill(path: str | os.PathLike[str]) -> ScanResult:
 
     backend = _resolve_backend()
     if backend is None:
-        logger.debug(
-            "SkillScanner unavailable (neither CLI nor python API present); skipping scan for {}",
+        # Distinguish "switched off on purpose" from "should have run but could
+        # not": the scan policy allows the former and rejects third-party
+        # uploads on the latter (fail closed).
+        if not _ENABLED_ENV:
+            logger.debug("SkillScanner disabled by config; skipping scan for {}", p)
+            return _unavailable(disabled_by_config=True)
+        logger.warning(
+            "SkillScanner enabled but no backend is available (neither the "
+            "skillspector CLI nor the python API); uploads stay unscanned at the "
+            "policy's discretion for {}",
             p,
         )
         return _unavailable()

@@ -9,8 +9,9 @@ required. They exercise:
 * Python-API fallback when the CLI errors;
 * graceful degradation to UNAVAILABLE when no backend exists;
 * the scan_skill() file-vs-directory path normalisation;
-* the _scanner_reject_message() policy (fail-closed on DO_NOT_INSTALL,
-  allow on CAUTION/SAFE/UNAVAILABLE).
+* the _scanner_reject_message() policy (fail-closed on DO_NOT_INSTALL and on a
+  scanner that is enabled but cannot run; allow on CAUTION/SAFE and on an
+  explicitly disabled scanner).
 """
 
 from pathlib import Path
@@ -319,8 +320,18 @@ class TestRejectMessagePolicy:
         result = _scanned("SAFE", score=5)
         assert build_reject_message(result) is None
 
-    def test_unavailable_allows(self):
-        result = ScanResult(status=ScanStatus.UNAVAILABLE)
+    def test_unavailable_while_enabled_rejects(self):
+        # A scanner that is enabled but cannot run must fail CLOSED: otherwise a
+        # broken/missing dependency silently becomes an open upload path.
+        result = ScanResult(status=ScanStatus.UNAVAILABLE, backend=None)
+        msg = build_reject_message(result)
+        assert msg is not None
+        assert "fail" in msg.lower() or "could not run" in msg
+        assert "SKILL_SCANNER_ENABLED=0" in msg
+
+    def test_unavailable_because_disabled_allows(self):
+        # An explicit operator opt-out still uploads (verdicts waived on purpose).
+        result = ScanResult(status=ScanStatus.UNAVAILABLE, disabled_by_config=True)
         assert build_reject_message(result) is None
 
 

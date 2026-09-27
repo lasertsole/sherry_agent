@@ -4,6 +4,7 @@ import json
 import yaml
 from pathlib import Path
 from typing import Any
+from xml.sax.saxutils import escape as _xml_escape
 from loguru import logger
 from config import (
     ROOT_DIR,
@@ -12,6 +13,20 @@ from config import (
     SKILL_DISCOVERY_ROOTS,
     is_allowed_skill_path,
 )
+
+
+def _xml_text(value: Any) -> str:
+    """Escape a value for the ``<available_skills>`` prompt block.
+
+    ``name`` and ``description`` come from SKILL.md frontmatter, which is
+    untrusted for third-party (uploaded / clawhub) skills: without escaping, a
+    description containing ``</description></skill>`` closes the tags and lets
+    the skill inject arbitrary instructions into the system prompt.
+
+    @param value Raw frontmatter value (usually a string).
+    @returns The escaped text, safe to embed between XML tags.
+    """
+    return _xml_escape(str(value if value is not None else ""))
 
 
 def parse_frontmatter(text: str) -> dict[str, Any]:
@@ -55,7 +70,7 @@ def read_skills_snapshot() -> list[dict[str, str]] | None:
 
     Returns None when the snapshot file does not exist. Lives on the loader
     (its only consumer is scan_skills) so skills_snapshot can depend on the
-    loader one-directionally instead of forming an import cycle (audit #18).
+    loader one-directionally instead of forming an import cycle.
     """
     file_path = SKILLS_DIR / "skills_snapshot.json"
     if not file_path.exists():
@@ -187,8 +202,8 @@ def get_skills_text(
     lines = ["<available_skills>"]
     for s in final_skills:
         lines.append("  <skill>")
-        lines.append(f"    <name>{s['name']}</name>")
-        lines.append(f"    <description>{s['description']}</description>")
+        lines.append(f"    <name>{_xml_text(s['name'])}</name>")
+        lines.append(f"    <description>{_xml_text(s['description'])}</description>")
         lines.append("  </skill>")
     lines.append("</available_skills>")
     return "\n".join(lines)

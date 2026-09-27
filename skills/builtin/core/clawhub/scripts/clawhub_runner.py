@@ -107,16 +107,48 @@ def _remove_tree(path: Path) -> None:
             ) from None
 
 
+def _rollback_skill(skill_root: Path, name: str, reason: str) -> bool:
+    """Delete an installed third-party skill and its state entry.
+
+    Shared by both rollback verdicts (``DO_NOT_INSTALL`` and a scanner that is
+    enabled but cannot run), so the two paths cannot drift apart.
+
+    @param skill_root Skill directory under ``skills/plugins/``.
+    @param name Skill name as recorded in ``.state.json``.
+    @param reason Short human-readable cause used in the log line.
+    @returns True when the skill was removed (and its state entry pruned).
+    """
+    logger.warning(f"Rolling back skill '{name}' installed via clawhub: {reason}")
+    try:
+        _remove_tree(skill_root)
+    except Exception as exc:  # noqa: BLE001 - removal must not crash the command
+        logger.error(f"Failed to roll back skill '{name}' ({reason}): {exc}")
+        return False
+    # Drop the state entry so the skill cannot be toggled active later.
+    state = _read_state()
+    if name in state:
+        del state[name]
+        try:
+            _write_state(state)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(f"Failed to prune state for rolled-back skill '{name}': {exc}")
+    logger.info(f"Rolled back skill '{name}' downloaded via clawhub ({reason}).")
+    return True
+
+
 def _scan_plugin_skills() -> dict[str, Any]:
     """Scan third-party skills in ``skills/plugins/`` and roll back dangerous ones.
 
     A skill whose ScanResult is ``DO_NOT_INSTALL`` is deleted from disk and its
     entry dropped from ``.state.json`` so it can never be activated. ``CAUTION``
-    skills are kept but logged. If the scanner hooks are unavailable/error the
-    scan is skipped with a warning (fail-open) — matching the upload path's
-    rule that a missing scanner must not break the app. The hooks are
-    registered by the server assembly; a missing hook is treated exactly as the
-    pre-hooks ``ImportError`` was (both names came from one import statement).
+    skills are kept but logged. The scanner verdicts follow the same policy as
+    the upload gate: a scanner that is ENABLED but cannot run also rolls the
+    skill back (fail-closed), because silently keeping unscanned third-party
+    code turns one broken dependency into an open install path; a scanner
+    switched off on purpose (``SKILL_SCANNER_ENABLED=0``) keeps the skill with a
+    warning. The hooks are registered by the server assembly; a missing hook is
+    treated exactly as the pre-hooks ``ImportError`` was (both names came from
+    one import statement).
 
     Returns a summary dict (``scanned``, ``rolled_back``, ``caution``, ``skipped``)
     describing the outcome, for surfaced in the clawhub command's return payload.
@@ -154,11 +186,18 @@ def _scan_plugin_skills() -> dict[str, Any]:
             continue
 
         if scan_result.is_unavailable:
-            logger.warning(
-                f"Skill security scanner unavailable; keeping '{name}' from clawhub "
-                "without a scan verdict (fail-open)."
-            )
-            summary["skipped"] += 1
+            if scan_result.disabled_by_config:
+                logger.warning(
+                    f"Skill security scanner disabled by config; keeping '{name}' from "
+                    "clawhub without a scan verdict (operator opt-out)."
+                )
+                summary["skipped"] += 1
+                continue
+            # Enabled but unusable: fail closed, exactly like DO_NOT_INSTALL.
+            if _rollback_skill(skill_root, name, "scanner enabled but unavailable"):
+                summary["rolled_back"] += 1
+            else:
+                summary["skipped"] += 1
             continue
 
         summary["scanned"] += 1
@@ -169,22 +208,10 @@ def _scan_plugin_skills() -> dict[str, Any]:
                 f"security scanner (risk_score={scan_result.risk_score}); rolling back. "
                 f"Reason: {reject}"
             )
-            try:
-                _remove_tree(skill_root)
-            except Exception as exc:  # noqa: BLE001 - removal must not crash
-                logger.error(f"Failed to roll back skill '{name}' after DO_NOT_INSTALL: {exc}")
+            if _rollback_skill(skill_root, name, "DO_NOT_INSTALL"):
+                summary["rolled_back"] += 1
+            else:
                 summary["skipped"] += 1
-                continue
-            # Drop the state entry so the skill cannot be toggled active later.
-            state = _read_state()
-            if name in state:
-                del state[name]
-                try:
-                    _write_state(state)
-                except Exception as exc:  # noqa: BLE001
-                    logger.error(f"Failed to prune state for rolled-back skill '{name}': {exc}")
-            summary["rolled_back"] += 1
-            logger.info(f"Rolled back skill '{name}' downloaded via clawhub (DO_NOT_INSTALL).")
         elif scan_result.is_caution:
             summary["caution"] += 1
             logger.warning(

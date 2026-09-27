@@ -112,8 +112,12 @@ def _cli_timeout() -> int:
         return _CLI_TIMEOUT
 
 
-def _unavailable(backend: str | None = None) -> ScanResult:
-    return ScanResult(status=ScanStatus.UNAVAILABLE, backend=backend)
+def _unavailable(backend: str | None = None, *, disabled_by_config: bool = False) -> ScanResult:
+    return ScanResult(
+        status=ScanStatus.UNAVAILABLE,
+        backend=backend,
+        disabled_by_config=disabled_by_config,
+    )
 
 
 def _run_cli(path: Path) -> ScanResult:
