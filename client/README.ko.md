@@ -116,41 +116,50 @@ client/
 │   ├── layouts/default.vue        # 기본 레이아웃 — 풀뷰 래퍼
 │   ├── pages/
 │   │   ├── index.vue              # ChatInputBox 렌더링(루트 / 는 routeRules에 의해 /home으로 301 리다이렉트)
-│   │   ├── knowledge-graph/
-│   │   │   └── index.vue          # 지식 그래프 뷰어(@antv/g6, 문서 업로드, 개발 중)
 │   │   └── home/
 │   │       ├── index.vue          # 메인 채팅 셸 — SessionSidebar + 툴바 + 중첩 NuxtPage
-│   │       ├── config.ts          # 툴바(이미지/오디오/비디오 업로드)와 헤더 도구 정의
+│   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
 │   │       ├── index/tasks/[sid].vue  # 독립형 백그라운드 작업 페이지(/home/tasks/{sid})
-│   │       └── components/        # 20개 페이지 컴포넌트:
-│   │           ├── ChatBox.vue            # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
-│   │           ├── SessionSidebar.vue     # 세션 목록 사이드바(생성/이름 변경/필터)
-│   │           ├── HistoryItem.vue        # 사이드바 히스토리 세션 항목
-│   │           ├── ModeSwitch.vue         # 다크/라이트 전환(PrimeVue ToggleSwitch)
-│   │           ├── ExtendDialog.vue       # "Extend" 대화상자
-│   │           ├── ConfigDialog.vue       # 시스템 설정(.env 편집기, 배경, 언어, ...)
-│   │           ├── PersonaDialog.vue      # 시스템 프롬프트 / 페르소나 편집기
-│   │           ├── MemoryDialog.vue       # 장기 메모리 편집기(workspace/memory/*)
-│   │           ├── HeartbeatDialog.vue    # HEARTBEAT.md 편집기
-│   │           ├── CronDialog.vue         # cron 작업 관리(/cron)
-│   │           ├── SkillsDialog.vue       # 스킬 매니저(목록/업로드/토글/고정/삭제/curator)
+│   │       └── components/        # 27 개의 페이지 컴포넌트:
+│   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
+│   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
+│   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(환경 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
+│   │           ├── MediaMenu.vue              # 입력 도구 모음의 미디어 드롭다운(이미지 / 오디오 / 비디오)
+│   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
+│   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
+│   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
+│   │           ├── ExtendDialog.vue           # "Extend" 대화상자
+│   │           ├── ConfigDialog.vue           # 시스템 설정(.env 편집기, 배경, 언어, ...)
+│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가, ConfigDialog용)
+│   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
+│   │           ├── PersonaDialog.vue          # 시스템 프롬프트 / 페르소나 편집기
+│   │           ├── MemoryDialog.vue           # 장기 메모리 편집기(workspace/memory/*)
+│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md 편집기
+│   │           ├── CronDialog.vue             # cron 작업 관리(/cron)
+│   │           ├── SkillsDialog.vue           # 스킬 매니저(목록/업로드/토글/고정/삭제/curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
-│   │           ├── LogsDialog.vue         # 로그 뷰어(서버 로그 + 클라이언트 로그, 실시간 스트림)
-│   │           ├── NotificationDialog.vue # 서버 푸시 알림 목록
-│   │           ├── StatsDialog.vue        # 사용 통계(@antv/g2, GChart.vue 경유)
-│   │           ├── GChart.vue             # @antv/g2 차트 래퍼
-│   │           ├── SubagentTasksView.vue  # 백그라운드 작업 뷰(목록/상세/플로우 그래프)
-│   │           ├── SubagentRunDetail.vue  # 단일 서브에이전트 실행 상세
-│   │           ├── SubagentFlowGraph.vue  # 서브에이전트 실행 트리 그래프(@antv/g6)
-│   │           └── AvatarCropDialog.vue   # 아바타 업로드 + 크롭(cropperjs)
+│   │           ├── NotificationDialog.vue     # 서버 푸시 알림 목록
+│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 탭 패널(로그 / 통계 / 지식 그래프)
+│   │           ├── LogsPanel.vue              # 로그 보기 탭(서버 로그 + 클라이언트 로그, 실시간 스트림)
+│   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
+│   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)
+│   │           ├── GChart.vue                 # @antv/g2 차트 래퍼
+│   │           ├── SubagentTasksView.vue      # 백그라운드 작업 뷰(목록/상세/플로우 그래프)
+│   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
+│   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
+│   │           └── AvatarCropDialog.vue       # 아바타 업로드 + 크롭(cropperjs)
 │   ├── stores/                    # Pinia 스토어
-│   │   ├── ui.ts                  # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)
-│   │   ├── subagent.ts            # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
-│   │   ├── todo.ts                # 세션 계획(todo) 목록 + 독 표시 여부
-│   │   ├── connection.ts          # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast
-│   │   └── chat-background.ts     # 전역 채팅 배경 이미지(Dexie 영속화)
+│   │   ├── ui.ts               # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)
+│   │   ├── subagent.ts         # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
+│   │   ├── todo.ts             # 세션 계획(todo) 목록 + 독 표시 여부
+│   │   ├── right-sidebar.ts    # 오른쪽 사이드바(접힘 / 너비 영속화, 열린 탭 종류)
+│   │   ├── thinking.ts         # 세션별 사고 토글 / 레벨(다음 턴부터 적용)
+│   │   ├── session-model.ts    # 세션별 메인 모델 오버라이드(다음 턴부터 적용)
+│   │   ├── llm-profiles.ts     # 환경 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
+│   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast
+│   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API 응답 타입 정의
@@ -220,7 +229,6 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
   └─ NuxtLayout(layouts/default.vue)
        └─ NuxtPage
             ├─ /            → /home으로 301 리다이렉트(routeRules)
-            ├─ /knowledge-graph  (knowledge-graph/index.vue, @antv/g6)
             └─ /home(home/index.vue: SessionSidebar + 툴바)
                  └─ NuxtPage(page-key = route.params.sid, KeepAlive)
                       ├─ /home/{sid}       (index/[sid].vue — 채팅 + HITL 카드)
@@ -317,7 +325,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`)
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
 - **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 

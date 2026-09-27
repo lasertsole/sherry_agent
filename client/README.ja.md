@@ -116,41 +116,50 @@ client/
 │   ├── layouts/default.vue        # デフォルトレイアウト — フルビューのラッパー
 │   ├── pages/
 │   │   ├── index.vue              # ChatInputBox を描画（ルート / は routeRules により /home へ 301 リダイレクト）
-│   │   ├── knowledge-graph/
-│   │   │   └── index.vue          # ナレッジグラフビューアー（@antv/g6、ドキュメントアップロード、開発中）
 │   │   └── home/
 │   │       ├── index.vue          # メインチャットシェル — SessionSidebar + ツールバー + ネストされた NuxtPage
-│   │       ├── config.ts          # ツールバー（画像/音声/動画アップロード）とヘッダーツール定義
+│   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
 │   │       ├── index/tasks/[sid].vue  # スタンドアロンのバックグラウンドタスクページ（/home/tasks/{sid}）
-│   │       └── components/        # 20 のページコンポーネント：
-│   │           ├── ChatBox.vue            # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
-│   │           ├── SessionSidebar.vue     # セッションリストサイドバー（作成/リネーム/フィルタ）
-│   │           ├── HistoryItem.vue        # サイドバーの履歴セッション項目
-│   │           ├── ModeSwitch.vue         # ダーク/ライト切替（PrimeVue ToggleSwitch）
-│   │           ├── ExtendDialog.vue       # "Extend" ダイアログ
-│   │           ├── ConfigDialog.vue       # システム設定（.env エディター、背景、言語、...）
-│   │           ├── PersonaDialog.vue      # システムプロンプト / ペルソナエディター
-│   │           ├── MemoryDialog.vue       # 長期メモリエディター（workspace/memory/*）
-│   │           ├── HeartbeatDialog.vue    # HEARTBEAT.md エディター
-│   │           ├── CronDialog.vue         # cron ジョブ管理（/cron）
-│   │           ├── SkillsDialog.vue       # スキルマネージャー（一覧/アップロード/切替/ピン/削除/curator）
+│   │       └── components/        # 27 のページコンポーネント：
+│   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
+│   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグルまたは 低/高/最高 ピッカー、次ターンから有効）
+│   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（環境設定 MAIN_LLM プロファイル、次ターンから有効）
+│   │           ├── MediaMenu.vue              # 入力ツールバーのメディア ドロップダウン（画像 / 音声 / 動画）
+│   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
+│   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
+│   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
+│   │           ├── ExtendDialog.vue           # "Extend" ダイアログ
+│   │           ├── ConfigDialog.vue           # システム設定（.env エディター、背景、言語、...）
+│   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加、ConfigDialog 用）
+│   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
+│   │           ├── PersonaDialog.vue          # システムプロンプト / ペルソナエディター
+│   │           ├── MemoryDialog.vue           # 長期メモリエディター（workspace/memory/*）
+│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md エディター
+│   │           ├── CronDialog.vue             # cron ジョブ管理（/cron）
+│   │           ├── SkillsDialog.vue           # スキルマネージャー（一覧/アップロード/切替/ピン/削除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
-│   │           ├── LogsDialog.vue         # ログビューアー（サーバーログ + クライアントログ、ライブストリーム）
-│   │           ├── NotificationDialog.vue # サーバー push 通知リスト
-│   │           ├── StatsDialog.vue        # 利用統計（@antv/g2、GChart.vue 経由）
-│   │           ├── GChart.vue             # @antv/g2 チャートラッパー
-│   │           ├── SubagentTasksView.vue  # バックグラウンドタスクビュー（一覧/詳細/フローグラフ）
-│   │           ├── SubagentRunDetail.vue  # 単一サブエージェント実行の詳細
-│   │           ├── SubagentFlowGraph.vue  # サブエージェント実行ツリーグラフ（@antv/g6）
-│   │           └── AvatarCropDialog.vue   # アバターアップロード + 切り抜き（cropperjs）
+│   │           ├── NotificationDialog.vue     # サーバー push 通知リスト
+│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— タブ式パネル（ログ / 統計 / ナレッジグラフ）
+│   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）
+│   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
+│   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
+│   │           ├── GChart.vue                 # @antv/g2 チャートラッパー
+│   │           ├── SubagentTasksView.vue      # バックグラウンドタスクビュー（一覧/詳細/フローグラフ）
+│   │           ├── SubagentRunDetail.vue      # 単一サブエージェント実行の詳細
+│   │           ├── SubagentFlowGraph.vue      # サブエージェント実行ツリーグラフ（@antv/g6）
+│   │           └── AvatarCropDialog.vue       # アバターアップロード + 切り抜き（cropperjs）
 │   ├── stores/                    # Pinia ストア
-│   │   ├── ui.ts                  # UI 状態（sidebarCollapsed / todoDockCollapsed を localStorage に永続化）
-│   │   ├── subagent.ts            # バックグラウンドタスク状態（実行 / ツリー / 選択）+ 派生ビュー
-│   │   ├── todo.ts                # セッション計画（todo）リスト + ドック表示可否
-│   │   ├── connection.ts          # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast
-│   │   └── chat-background.ts     # グローバルチャット背景画像（Dexie 永続化）
+│   │   ├── ui.ts               # UI 状態（sidebarCollapsed / todoDockCollapsed を localStorage に永続化）
+│   │   ├── subagent.ts         # バックグラウンドタスク状態（実行 / ツリー / 選択）+ 派生ビュー
+│   │   ├── todo.ts             # セッション計画（todo）リスト + ドック表示可否
+│   │   ├── right-sidebar.ts    # 右サイドバー（折りたたみ / 幅を永続化、開いているタブ種別）
+│   │   ├── thinking.ts         # セッション単位の思考トグル / レベル（次ターンから有効）
+│   │   ├── session-model.ts    # セッション単位のメインモデル上書き（次ターンから有効）
+│   │   ├── llm-profiles.ts     # 環境設定（MAIN_LLM グループ）のモデルプロファイル、ピッカー用
+│   │   ├── connection.ts       # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast
+│   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、...
 │       ├── response.d.ts          # API レスポンス型定義
@@ -220,7 +229,6 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
   └─ NuxtLayout（layouts/default.vue）
        └─ NuxtPage
             ├─ /            → 301 リダイレクトで /home へ（routeRules）
-            ├─ /knowledge-graph  （knowledge-graph/index.vue、@antv/g6）
             └─ /home（home/index.vue：SessionSidebar + ツールバー）
                  └─ NuxtPage（page-key = route.params.sid、KeepAlive）
                       ├─ /home/{sid}       （index/[sid].vue — チャット + HITL カード）
@@ -317,7 +325,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 
 ### 状態とイベント
 
-- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）
+- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）
 - **mitt イベントバス**：WS イベント、ストリーム再接続イベント、セッションストリーム中断（`session:abort-stream`）、コンポーネント間通知
 - **connection ストア**（`stores/connection.ts`）：`/sessions/ws` ハートビートとブラウザの online/offline イベントを監視；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
 

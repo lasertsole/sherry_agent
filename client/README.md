@@ -115,41 +115,50 @@ client/
 │   ├── layouts/default.vue        # Default layout — full-view wrapper
 │   ├── pages/
 │   │   ├── index.vue              # Renders ChatInputBox (route / redirects to /home via routeRules)
-│   │   ├── knowledge-graph/
-│   │   │   └── index.vue          # Knowledge graph viewer (@antv/g6, doc upload, under development)
 │   │   └── home/
 │   │       ├── index.vue          # Main chat shell — SessionSidebar + toolbar + nested NuxtPage
-│   │       ├── config.ts          # Toolbar (image/audio/video upload) & header tool definitions
+│   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
 │   │       ├── index/tasks/[sid].vue  # Standalone background-tasks page (/home/tasks/{sid})
-│   │       └── components/        # 20 page components:
-│   │           ├── ChatBox.vue            # Message list (markdown-it + DOMPurify, media via /media)
-│   │           ├── SessionSidebar.vue     # Session list sidebar (create/rename/filter sessions)
-│   │           ├── HistoryItem.vue        # Sidebar history session item
-│   │           ├── ModeSwitch.vue         # Dark/Light toggle (PrimeVue ToggleSwitch)
-│   │           ├── ExtendDialog.vue       # "Extend" dialog
-│   │           ├── ConfigDialog.vue       # System config (.env editor, background, language, ...)
-│   │           ├── PersonaDialog.vue      # System prompt / persona editor
-│   │           ├── MemoryDialog.vue       # Long-term memory editor (workspace/memory/*)
-│   │           ├── HeartbeatDialog.vue    # HEARTBEAT.md editor
-│   │           ├── CronDialog.vue         # Cron job management (/cron)
-│   │           ├── SkillsDialog.vue       # Skill manager (list/upload/toggle/pin/delete/curator)
+│   │       └── components/        # 27 page components:
+│   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
+│   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
+│   │           ├── SessionModelPicker.vue     # Per-session main-model picker (env-config MAIN_LLM profiles, effective next turn)
+│   │           ├── MediaMenu.vue              # Collapsed media dropdown of the input toolbar (image / audio / video)
+│   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
+│   │           ├── HistoryItem.vue            # Sidebar history session item
+│   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
+│   │           ├── ExtendDialog.vue           # "Extend" dialog
+│   │           ├── ConfigDialog.vue           # System config (.env editor, background, language, ...)
+│   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add, used by ConfigDialog)
+│   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
+│   │           ├── PersonaDialog.vue          # System prompt / persona editor
+│   │           ├── MemoryDialog.vue           # Long-term memory editor (workspace/memory/*)
+│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md editor
+│   │           ├── CronDialog.vue             # Cron job management (/cron)
+│   │           ├── SkillsDialog.vue           # Skill manager (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
-│   │           ├── LogsDialog.vue         # Log viewer (server logs + client logs, live stream)
-│   │           ├── NotificationDialog.vue # Server-push notification list
-│   │           ├── StatsDialog.vue        # Usage statistics (@antv/g2 via GChart.vue)
-│   │           ├── GChart.vue             # @antv/g2 chart wrapper
-│   │           ├── SubagentTasksView.vue  # Background tasks view (list/detail/flow graph)
-│   │           ├── SubagentRunDetail.vue  # Single subagent run detail
-│   │           ├── SubagentFlowGraph.vue  # Subagent run tree graph (@antv/g6)
-│   │           └── AvatarCropDialog.vue   # Avatar upload + crop (cropperjs)
+│   │           ├── NotificationDialog.vue     # Server-push notification list
+│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels (log viewer / statistics / knowledge graph)
+│   │           ├── LogsPanel.vue              # Log-viewer tab (server logs + client logs, live stream)
+│   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
+│   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)
+│   │           ├── GChart.vue                 # @antv/g2 chart wrapper
+│   │           ├── SubagentTasksView.vue      # Background tasks view (list/detail/flow graph)
+│   │           ├── SubagentRunDetail.vue      # Single subagent run detail
+│   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
+│   │           └── AvatarCropDialog.vue       # Avatar upload + crop (cropperjs)
 │   ├── stores/                    # Pinia stores
-│   │   ├── ui.ts                  # UI state (sidebarCollapsed / todoDockCollapsed persisted to localStorage)
-│   │   ├── subagent.ts            # Background-task state (runs / tree / selection) + derived views
-│   │   ├── todo.ts                # Session plan (todo) list + dock visibility
-│   │   ├── connection.ts          # Backend connectivity (isOnline / backendStatus) + deduped toasts
-│   │   └── chat-background.ts     # Global chat background image (Dexie-persisted)
+│   │   ├── ui.ts               # UI state (sidebarCollapsed / todoDockCollapsed persisted to localStorage)
+│   │   ├── subagent.ts         # Background-task state (runs / tree / selection) + derived views
+│   │   ├── todo.ts             # Session plan (todo) list + dock visibility
+│   │   ├── right-sidebar.ts    # Right sidebar (collapsed / width persisted, open tab kinds)
+│   │   ├── thinking.ts         # Per-session thinking toggle / level (effective next turn)
+│   │   ├── session-model.ts    # Per-session main-model override (effective next turn)
+│   │   ├── llm-profiles.ts     # Model profiles from the env config (MAIN_LLM group), for the pickers
+│   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts
+│   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API response type definitions
@@ -220,7 +229,6 @@ app.vue (root: toast layer, connection banner, locale restore)
   └─ NuxtLayout (layouts/default.vue)
        └─ NuxtPage
             ├─ /            → 301 redirect to /home (routeRules)
-            ├─ /knowledge-graph  (knowledge-graph/index.vue, @antv/g6)
             └─ /home (home/index.vue: SessionSidebar + toolbar)
                  └─ NuxtPage (page-key = route.params.sid, KeepAlive)
                       ├─ /home/{sid}       (index/[sid].vue — chat + HITL card)
@@ -317,7 +325,7 @@ A 300+ line SCSS mixin library providing utilities for layout, shapes, scrollbar
 
 ### State & Events
 
-- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`)
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
 - **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 

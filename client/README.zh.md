@@ -116,41 +116,50 @@ client/
 │   ├── layouts/default.vue        # 默认布局 —— 全屏视图容器
 │   ├── pages/
 │   │   ├── index.vue              # 渲染 ChatInputBox（路由 / 经 routeRules 301 重定向到 /home）
-│   │   ├── knowledge-graph/
-│   │   │   └── index.vue          # 知识图谱查看器（@antv/g6、文档上传、开发中）
 │   │   └── home/
 │   │       ├── index.vue          # 主聊天外壳 —— SessionSidebar + 工具栏 + 嵌套 NuxtPage
-│   │       ├── config.ts          # 工具栏（图片/音频/视频上传）与头部工具定义
+│   │       ├── config.ts          # 多媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
 │   │       ├── index/tasks/[sid].vue  # 独立后台任务页（/home/tasks/{sid}）
-│   │       └── components/        # 20 个页面组件：
-│   │           ├── ChatBox.vue            # 消息列表（markdown-it + DOMPurify，媒体经 /media）
-│   │           ├── SessionSidebar.vue     # 会话列表侧边栏（新建/重命名/过滤会话）
-│   │           ├── HistoryItem.vue        # 侧边栏历史会话条目
-│   │           ├── ModeSwitch.vue         # 深色/浅色切换（PrimeVue ToggleSwitch）
-│   │           ├── ExtendDialog.vue       # "Extend" 对话框
-│   │           ├── ConfigDialog.vue       # 系统配置（.env 编辑器、背景、语言、……）
-│   │           ├── PersonaDialog.vue      # 系统提示词 / 人格编辑器
-│   │           ├── MemoryDialog.vue       # 长期记忆编辑器（workspace/memory/*）
-│   │           ├── HeartbeatDialog.vue    # HEARTBEAT.md 编辑器
-│   │           ├── CronDialog.vue         # 定时任务管理（/cron）
-│   │           ├── SkillsDialog.vue       # 技能管理器（列表/上传/启停/置顶/删除/curator）
+│   │       └── components/        # 27 个页面组件：
+│   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
+│   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关或 低/高/最高 选择器，下一轮生效）
+│   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（环境配置 MAIN_LLM 档案，下一轮生效）
+│   │           ├── MediaMenu.vue              # 输入栏的多媒体下拉（图片 / 音频 / 视频）
+│   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
+│   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
+│   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
+│   │           ├── ExtendDialog.vue           # "Extend" 对话框
+│   │           ├── ConfigDialog.vue           # 系统配置（.env 编辑器、背景、语言、……）
+│   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增，供 ConfigDialog 使用）
+│   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
+│   │           ├── PersonaDialog.vue          # 系统提示词 / 人格编辑器
+│   │           ├── MemoryDialog.vue           # 长期记忆编辑器（workspace/memory/*）
+│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md 编辑器
+│   │           ├── CronDialog.vue             # 定时任务管理（/cron）
+│   │           ├── SkillsDialog.vue           # 技能管理器（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
-│   │           ├── LogsDialog.vue         # 日志查看器（服务端日志 + 客户端日志，实时流）
-│   │           ├── NotificationDialog.vue # 服务端推送通知列表
-│   │           ├── StatsDialog.vue        # 使用统计（@antv/g2，经 GChart.vue）
-│   │           ├── GChart.vue             # @antv/g2 图表封装
-│   │           ├── SubagentTasksView.vue  # 后台任务视图（列表/详情/流程图）
-│   │           ├── SubagentRunDetail.vue  # 单个子智能体运行详情
-│   │           ├── SubagentFlowGraph.vue  # 子智能体运行树图（@antv/g6）
-│   │           └── AvatarCropDialog.vue   # 头像上传 + 裁剪（cropperjs）
+│   │           ├── NotificationDialog.vue     # 服务端推送通知列表
+│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 多标签面板（日志查看 / 统计 / 知识图谱）
+│   │           ├── LogsPanel.vue              # 日志查看标签页（服务端日志 + 客户端日志，实时流）
+│   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
+│   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）
+│   │           ├── GChart.vue                 # @antv/g2 图表封装
+│   │           ├── SubagentTasksView.vue      # 后台任务视图（列表/详情/流程图）
+│   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
+│   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
+│   │           └── AvatarCropDialog.vue       # 头像上传 + 裁剪（cropperjs）
 │   ├── stores/                    # Pinia stores
-│   │   ├── ui.ts                  # UI 状态（sidebarCollapsed / todoDockCollapsed 持久化到 localStorage）
-│   │   ├── subagent.ts            # 后台任务状态（运行 / 树 / 选择）+ 派生视图
-│   │   ├── todo.ts                # 会话计划（todo）列表 + 停靠可见性
-│   │   ├── connection.ts          # 后端连通性（isOnline / backendStatus）+ 去重 Toast
-│   │   └── chat-background.ts     # 全局聊天背景图片（Dexie 持久化）
+│   │   ├── ui.ts               # UI 状态（sidebarCollapsed / todoDockCollapsed 持久化到 localStorage）
+│   │   ├── subagent.ts         # 后台任务状态（运行 / 树 / 选择）+ 派生视图
+│   │   ├── todo.ts             # 会话计划（todo）列表 + 停靠可见性
+│   │   ├── right-sidebar.ts    # 右侧栏（折叠状态 / 宽度持久化、已打开的标签类型）
+│   │   ├── thinking.ts         # 会话级思考开关 / 档位（下一轮生效）
+│   │   ├── session-model.ts    # 会话级主模型覆盖（下一轮生效）
+│   │   ├── llm-profiles.ts     # 环境配置（MAIN_LLM 分组）的模型档案，供选择器使用
+│   │   ├── connection.ts       # 后端连通性（isOnline / backendStatus）+ 去重 Toast
+│   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、……
 │       ├── response.d.ts          # API 响应类型定义
@@ -220,7 +229,6 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
   └─ NuxtLayout（layouts/default.vue）
        └─ NuxtPage
             ├─ /            → 301 重定向到 /home（routeRules）
-            ├─ /knowledge-graph  （knowledge-graph/index.vue，@antv/g6）
             └─ /home（home/index.vue：SessionSidebar + 工具栏）
                  └─ NuxtPage（page-key = route.params.sid，KeepAlive）
                       ├─ /home/{sid}       （index/[sid].vue —— 聊天 + HITL 卡片）
@@ -317,7 +325,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
 ### 状态与事件
 
-- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）
+- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）
 - **mitt 事件总线**：WS 事件、流重连事件、会话流中断（`session:abort-stream`）、跨组件通知
 - **connection store**（`stores/connection.ts`）：监听 `/sessions/ws` 心跳与浏览器 online/offline 事件；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
 
