@@ -33,9 +33,10 @@ HITL_DEFAULTS: HitlDefaultsConfig = {
     # gates, and memory/skill writes keep the write gate. Only interactive
     # turns are gated: a turn with no operator in scope (cron, heartbeat,
     # subagent carrier) follows its existing policy, since nobody is present
-    # to answer.
+    # to answer. Under the strict "confirm before changes" access mode the
+    # remembered confirmation is ignored and every call asks.
     "first_call_confirmation_enabled": True,
-    "first_call_confirmation_tools": ("write_file", "edit_file"),
+    "first_call_confirmation_tools": ("write_file", "patch_file"),
     # Security floor for external path access: these paths stay denied even
     # when YOLO is on, the session allowlist matches, or a subagent inherits
     # its parent's authorization. `~` is expanded at check time; a trailing

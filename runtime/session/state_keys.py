@@ -84,6 +84,9 @@ class StateKey(StrEnum):
     HITL_PERMANENT = "hitl:permanent"
     HITL_SESSION_APPROVED = "hitl:session_approved"
     HITL_SESSION_YOLO = "hitl:session_yolo"
+    #: Strict access mode: every command / file change asks (mutually exclusive
+    #: with :attr:`HITL_SESSION_YOLO`).
+    HITL_SESSION_CONFIRM_ALL = "hitl:session_confirm_all"
     HITL_TURN_INTERRUPTED = "hitl:turn_interrupted"
     #: Tools a human already confirmed once in this session (first-call gate).
     HITL_CONFIRMED_TOOLS = "hitl:confirmed_tools"

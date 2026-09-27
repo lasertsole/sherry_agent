@@ -20,7 +20,7 @@ from collections.abc import Sequence
 from langchain_core.messages import ToolCall, ToolMessage
 from langgraph.errors import GraphInterrupt
 
-from .approval import is_yolo_mode, set_session_yolo
+from .approval import is_confirm_all_mode, is_yolo_mode, set_session_yolo
 from .approval_scope import NO_OPERATOR_MESSAGE
 from .approval_store import ApprovalVerdict
 from .detection import detect_clawhub_command
@@ -152,8 +152,14 @@ class TerminalApprovalHandler(ToolApprovalHandler):
         # must not bypass the gate.
         clawhub_tag = detect_clawhub_command(command)
 
-        # Smart approval (layer 6)
-        if not result.approved and mw.config.mode == ApprovalMode.SMART and not clawhub_tag:
+        # Smart approval (layer 6) — never in confirm-all mode: an LLM verdict
+        # must not answer a gate the user asked to answer personally.
+        if (
+            not result.approved
+            and mw.config.mode == ApprovalMode.SMART
+            and not clawhub_tag
+            and not is_confirm_all_mode(mw.config, ctx.session_id)
+        ):
             smart = mw.approval.smart_approve(command)
             if smart == SmartApprovalResult.APPROVE:
                 ctx.outcome.approve(tool_call)
@@ -171,7 +177,11 @@ class TerminalApprovalHandler(ToolApprovalHandler):
             description = (
                 f"clawhub remote npm execution ({clawhub_tag}): {command}"
                 if clawhub_tag
-                else f"Dangerous command: {command}"
+                else (
+                    f"Confirm-all mode: approval needed before running: {command}"
+                    if is_confirm_all_mode(mw.config, ctx.session_id)
+                    else f"Dangerous command: {command}"
+                )
             )
             action_request = ActionRequest(
                 name=tool_name,
@@ -297,6 +307,9 @@ class FirstCallConfirmationHandler(ToolApprovalHandler):
       long session asks once per tool, not once per call — the gate closes the
       "agent silently starts mutating files" gap without becoming a per-call
       tax. A rejection is NOT remembered: the next call asks again.
+    * confirm-all mode ignores that memory: every change asks. Nothing is
+      remembered in that mode either, so leaving it restores the ask-once
+      behaviour for whatever comes next.
     """
 
     def matches(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
@@ -310,18 +323,26 @@ class FirstCallConfirmationHandler(ToolApprovalHandler):
             return False
         if mw._turn_operator(ctx.state) is None:
             return False
+        if is_confirm_all_mode(mw.config, ctx.session_id):
+            return True
         return tool_name not in _confirmed_tools(mw, ctx.session_id)
 
     def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
         mw = ctx.mw
         tool_name: str = tool_call.get("name", "")
         tool_args: dict[str, Any] = tool_call.get("args", {})
+        strict = is_confirm_all_mode(mw.config, ctx.session_id)
         action_request = ActionRequest(
             name=tool_name,
             args=tool_args,
             description=(
-                f"First use of '{tool_name}' in this session: it changes files on "
-                "disk. Approving allows this and later calls to it."
+                f"Confirm-all mode: '{tool_name}' changes files on disk and every "
+                "change needs approval."
+                if strict
+                else (
+                    f"First use of '{tool_name}' in this session: it changes files on "
+                    "disk. Approving allows this and later calls to it."
+                )
             ),
         )
         review_config = ReviewConfig(
@@ -342,7 +363,8 @@ class FirstCallConfirmationHandler(ToolApprovalHandler):
                 ctx.outcome.approve(tool_call)
                 return True
             if decision_type == "approve":
-                _mark_confirmed(mw, ctx.session_id, tool_name)
+                if not strict:
+                    _mark_confirmed(mw, ctx.session_id, tool_name)
                 ctx.outcome.approve(tool_call)
                 return True
             message = (

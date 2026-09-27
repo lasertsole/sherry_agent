@@ -14,6 +14,7 @@ from .types import (
     HITLConfig,
     SmartApprovalResult,
     SESSION_YOLO_KEY,
+    SESSION_CONFIRM_ALL_KEY,
     HITL_PERMANENT_KEY,
     HITL_SESSION_APPROVED_KEY,
     BLOCKED_MESSAGE,
@@ -51,8 +52,52 @@ def is_yolo_mode(config: HITLConfig, session_id: str | None = None) -> bool:
 
 
 def set_session_yolo(session_id: str) -> None:
-    """Activate session-scoped YOLO for *session_id* (bypass subsequent approval gates)."""
+    """Activate session-scoped YOLO for *session_id* (bypass subsequent approval gates).
+
+    The strict flag is dropped in the same write: the two are the opposite ends of
+    one setting, and a session that answered a card with "always allow" must not
+    keep asking afterwards.
+    """
     _set_state(session_id, SESSION_YOLO_KEY, True)
+    _set_state(session_id, SESSION_CONFIRM_ALL_KEY, False)
+
+
+def clear_session_yolo(session_id: str) -> None:
+    """Drop the session-scoped YOLO flag (back to the normal approval gates).
+
+    The counterpart of :func:`set_session_yolo`, used by the toolbar's access-mode
+    control: switching back to the default mode must survive the session's own
+    earlier "always allow" answer.
+    """
+    _set_state(session_id, SESSION_YOLO_KEY, False)
+
+
+def set_session_confirm_all(session_id: str) -> None:
+    """Activate session-scoped STRICT approval: every command and every file
+    change asks, no matter how ordinary.
+
+    YOLO is dropped in the same write (see :func:`set_session_yolo`).
+    """
+    _set_state(session_id, SESSION_CONFIRM_ALL_KEY, True)
+    _set_state(session_id, SESSION_YOLO_KEY, False)
+
+
+def clear_session_confirm_all(session_id: str) -> None:
+    """Drop the strict flag (back to the normal approval gates)."""
+    _set_state(session_id, SESSION_CONFIRM_ALL_KEY, False)
+
+
+def is_confirm_all_mode(config: HITLConfig, session_id: str | None = None) -> bool:
+    """Check whether the session runs in strict ("confirm before changes") mode.
+
+    YOLO wins when both somehow read as set: a bypass-all session is never asked,
+    so the strict gate must not fire behind it.
+    """
+    if not session_id:
+        return False
+    if not _get_state(session_id, SESSION_CONFIRM_ALL_KEY, False):
+        return False
+    return not is_yolo_mode(config, session_id)
 
 
 def _is_yolo_active(config: HITLConfig, session_id: str | None = None) -> bool:
@@ -102,9 +147,10 @@ class ApprovalPipeline:
     1. Hardline blocklist — unconditional deny
     2. User-configured deny rules (glob patterns)
     3. YOLO mode bypass — skip all checks
-    4. Permanent allowlist — cross-session approved patterns
-    5. Session allowlist — per-session approved patterns
-    6. Dangerous pattern detection — escalate dangerous commands to human approval
+    4. Confirm-all (strict) mode — every command asks, allowlists included
+    5. Permanent allowlist — cross-session approved patterns
+    6. Session allowlist — per-session approved patterns
+    7. Dangerous pattern detection — escalate dangerous commands to human approval
 
     The pipeline is called from :class:`~agent.middlewares.humanInTheLoop.core.HumanInTheLoop`
     middleware. After a human decision, :meth:`_apply_decision` persists the choice
@@ -146,8 +192,10 @@ class ApprovalPipeline:
 
         Returns:
             :class:`ApprovalResult` — ``approved=True`` if the command passes all layers,
-            ``approved=False`` (with ``decision=DENY``) if blocked before dangerous detection,
-            or ``approved=False`` (with ``decision=None``) if escalated for human approval.
+            ``approved=False`` (with ``decision=DENY``) if blocked by the hardline
+            blocklist / a deny rule, or ``approved=False`` (with ``decision=None``) if
+            escalated for human approval (a dangerous pattern, or any command at all
+            while the session runs in confirm-all mode).
         """
         # Layer 1: Hardline blocklist
         hardline = detect_hardline_command(command)
@@ -181,7 +229,20 @@ class ApprovalPipeline:
             self._fire_hooks(session_id, result)
             return result
 
-        # Layer 4: Permanent allowlist
+        # Layer 4: Confirm-all (strict) mode
+        if is_confirm_all_mode(self.config, session_id):
+            dangerous = detect_dangerous_command(command)
+            tags = ", ".join(tag for _, tag in dangerous) or "no dangerous pattern"
+            result = ApprovalResult(
+                approved=False,
+                decision=None,
+                reason=f"Confirm-all mode: every command needs approval ({tags}).",
+                pattern_key=dangerous[0][1] if dangerous else "confirm_all",
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        # Layer 5: Permanent allowlist
         permanent: list[str] = _get_state(session_id, HITL_PERMANENT_KEY, [])
         import fnmatch
 
@@ -195,7 +256,7 @@ class ApprovalPipeline:
                 self._fire_hooks(session_id, result)
                 return result
 
-        # Layer 5: Session allowlist
+        # Layer 6: Session allowlist
         session_list: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
         for pattern_str in session_list:
             if fnmatch.fnmatch(command, pattern_str):
@@ -207,7 +268,7 @@ class ApprovalPipeline:
                 self._fire_hooks(session_id, result)
                 return result
 
-        # Layer 5: Dangerous pattern detection
+        # Layer 7: Dangerous pattern detection
         dangerous = detect_dangerous_command(command)
         if not dangerous:
             result = ApprovalResult(

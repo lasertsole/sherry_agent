@@ -22,6 +22,9 @@ from runtime.session.state_keys import StateKey
 # session) — distinct from the persistent external-path YOLO in
 # state_register_db (see agent/tools/pub_base/path_utils.py).
 SESSION_YOLO_KEY = StateKey.HITL_SESSION_YOLO
+#: Session-scoped STRICT flag: every command asks, and the file-mutation tools
+#: ask on every call instead of once. Mutually exclusive with the YOLO flag.
+SESSION_CONFIRM_ALL_KEY = StateKey.HITL_SESSION_CONFIRM_ALL
 HITL_PERMANENT_KEY = StateKey.HITL_PERMANENT
 HITL_SESSION_APPROVED_KEY = StateKey.HITL_SESSION_APPROVED
 HITL_TURN_INTERRUPTED_KEY = StateKey.HITL_TURN_INTERRUPTED
