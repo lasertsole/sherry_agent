@@ -59,7 +59,11 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
     });
     expect(storeApi.hydrate).toHaveBeenCalledWith('sid-1');
     expect(wrapper.find('.ml-auto').exists()).toBe(true);
-    expect(wrapper.text()).toContain('思考');
+    // The label is a brain glyph now (a custom CSS-mask icon: PrimeIcons 8 has no
+    // brain, so `pi-brain` would have rendered nothing), and the word is gone from
+    // the i18n block.
+    expect(wrapper.find('i.brain-icon').exists()).toBe(true);
+    expect(wrapper.text()).not.toContain('思考');
     // on_off mode is a picker too (not a switch): the trigger names the current
     // state and the option list stays hidden until it is clicked.
     expect(wrapper.findAll('button.lvl').length).toBe(0);

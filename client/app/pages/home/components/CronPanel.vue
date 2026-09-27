@@ -2,91 +2,95 @@
   <!-- Right-sidebar tab body: mounted and unmounted with its tab (the sidebar owns the
        tab label and the close button), so the mount drives the load. The add/edit
        form stays a dialog: it is an overlay, not part of the panel body. -->
-  <div class="flex flex-col gap-3 h-full min-h-0 overflow-y-auto p-4">
-    <div
-      v-if="loading"
-      class="flex items-center justify-center py-8">
-      <ProgressSpinner style="width: 2rem; height: 2rem" />
-    </div>
-    <template v-else>
-      <!-- Empty state -->
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+    <!-- Body scrolls on its own; the action row below stays pinned to the
+         panel's bottom-right (the dialog it opens is unaffected). -->
+    <div class="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto">
       <div
-        v-if="!jobs.length"
-        class="text-sm text-gray-400 dark:text-gray-500 pb-1">
-        {{ t('config.cron.empty') }}
+        v-if="loading"
+        class="flex items-center justify-center py-8">
+        <ProgressSpinner style="width: 2rem; height: 2rem" />
       </div>
-
-      <!-- Add / New job (always visible, even when list is empty) -->
-      <div class="flex justify-end">
-        <Button
-          :label="t('config.cron.addJob')"
-          icon="pi pi-plus"
-          severity="secondary"
-          outlined
-          size="small"
-          @click="openNewJob" />
-      </div>
-
-      <!-- Job list -->
-      <div class="flex flex-col gap-2">
+      <template v-else>
+        <!-- Empty state -->
         <div
-          v-for="job in jobs"
-          :key="job.id"
-          class="flex flex-col gap-1 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2 min-w-0">
-              <ToggleSwitch
-                :modelValue="job.enabled"
-                :disabled="busyToggleIds.has(job.id)"
-                @change="toggleJob(job)" />
-              <span class="font-semibold text-sm truncate">{{ job.name }}</span>
+          v-if="!jobs.length"
+          class="text-sm text-gray-400 dark:text-gray-500 pb-1">
+          {{ t('config.cron.empty') }}
+        </div>
+
+        <!-- Job list -->
+        <div class="flex flex-col gap-2">
+          <div
+            v-for="job in jobs"
+            :key="job.id"
+            class="flex flex-col gap-1 border border-gray-200 dark:border-gray-700 rounded-lg px-3 py-2">
+            <div class="flex items-center justify-between gap-2">
+              <div class="flex items-center gap-2 min-w-0">
+                <ToggleSwitch
+                  :modelValue="job.enabled"
+                  :disabled="busyToggleIds.has(job.id)"
+                  @change="toggleJob(job)" />
+                <span class="font-semibold text-sm truncate">{{ job.name }}</span>
+              </div>
+              <div class="flex items-center gap-1 shrink-0">
+                <Button
+                  :label="t('config.cron.run')"
+                  icon="pi pi-play"
+                  size="small"
+                  severity="success"
+                  text
+                  v-debounce:click.500="() => runJob(job)" />
+                <Button
+                  :label="t('config.cron.edit')"
+                  icon="pi pi-pencil"
+                  size="small"
+                  severity="secondary"
+                  text
+                  @click="openEditJob(job)" />
+                <Button
+                  :label="t('config.cron.delete')"
+                  icon="pi pi-trash"
+                  size="small"
+                  severity="danger"
+                  text
+                  v-debounce:click.500="() => removeJob(job)" />
+              </div>
             </div>
-            <div class="flex items-center gap-1 shrink-0">
-              <Button
-                :label="t('config.cron.run')"
-                icon="pi pi-play"
-                size="small"
-                severity="success"
-                text
-                v-debounce:click.500="() => runJob(job)" />
-              <Button
-                :label="t('config.cron.edit')"
-                icon="pi pi-pencil"
-                size="small"
-                severity="secondary"
-                text
-                @click="openEditJob(job)" />
-              <Button
-                :label="t('config.cron.delete')"
-                icon="pi pi-trash"
-                size="small"
-                severity="danger"
-                text
-                v-debounce:click.500="() => removeJob(job)" />
-            </div>
-          </div>
-          <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
-            <div class="font-mono">{{ describeSchedule(job) }}</div>
-            <div class="truncate">{{ job.payload.message }}</div>
-            <div
-              v-if="job.state?.nextRunAtMs"
-              class="text-gray-400 dark:text-gray-500">
-              {{ t('config.cron.nextRun') }}: {{ formatTime(job.state.nextRunAtMs) }}
-            </div>
-            <div
-              v-if="job.state?.lastStatus"
-              class="text-gray-400 dark:text-gray-500">
-              {{ t('config.cron.lastStatus') }}: {{ job.state.lastStatus }}
-              <span
-                v-if="job.state.lastError"
-                class="ml-1 text-red-500 dark:text-red-400"
-                >{{ job.state.lastError }}</span
-              >
+            <div class="flex flex-col gap-0.5 text-xs text-gray-500 dark:text-gray-400">
+              <div class="font-mono">{{ describeSchedule(job) }}</div>
+              <div class="truncate">{{ job.payload.message }}</div>
+              <div
+                v-if="job.state?.nextRunAtMs"
+                class="text-gray-400 dark:text-gray-500">
+                {{ t('config.cron.nextRun') }}: {{ formatTime(job.state.nextRunAtMs) }}
+              </div>
+              <div
+                v-if="job.state?.lastStatus"
+                class="text-gray-400 dark:text-gray-500">
+                {{ t('config.cron.lastStatus') }}: {{ job.state.lastStatus }}
+                <span
+                  v-if="job.state.lastError"
+                  class="ml-1 text-red-500 dark:text-red-400"
+                  >{{ job.state.lastError }}</span
+                >
+              </div>
             </div>
           </div>
         </div>
-      </div>
-    </template>
+      </template>
+    </div>
+
+    <!-- Action row: pinned to the panel's bottom-right. -->
+    <div class="shrink-0 flex justify-end">
+      <Button
+        :label="t('config.cron.addJob')"
+        icon="pi pi-plus"
+        severity="secondary"
+        outlined
+        size="small"
+        @click="openNewJob" />
+    </div>
 
     <!-- Add/Edit job dialog -->
     <Dialog

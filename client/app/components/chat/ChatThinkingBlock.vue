@@ -10,7 +10,7 @@
           : 'bg-gray-50/60 dark:bg-gray-800/30 border-gray-100 dark:border-gray-700/60 text-[#6B7280] dark:text-[#9CA3AF]'
       ]"
       @click="$emit('toggle')">
-      <span class="pi pi-brain text-xs"></span>
+      <span class="brain-icon text-xs"></span>
       <span>{{ label }}</span>
       <span
         :class="[

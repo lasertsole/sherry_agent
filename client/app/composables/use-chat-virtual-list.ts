@@ -54,6 +54,33 @@ export const buildChatVirtualRows = (groups: MessageItem[][]): ChatVirtualRow[] 
 /**
  * One mark of the turn scrubber: a user message the reader can jump to.
  */
+/**
+ * Loaded rows kept in memory. Rows are turn groups (a turn is one or two rows:
+ * the user message, then its reply), so this is roughly 200 turns — the oldest
+ * rows above the viewport are released past it and paged in again on the way
+ * back up (the Dexie cache and the server still hold them).
+ */
+export const MAX_LOADED_ROWS = 400;
+
+/**
+ * How many leading rows may be released.
+ *
+ * Only rows entirely above the viewport qualify — `newHeadStart` is where the
+ * first row that would be kept begins, so a value at or above the viewport top
+ * means everything before it is out of sight — and never more than the cap
+ * allows.
+ * @param rowCount Rows currently loaded.
+ * @param newHeadStart Offset of the first row that would be kept.
+ * @param scrollTop Viewport top offset.
+ * @param cap Maximum rows to keep.
+ * @returns Number of leading rows to release (0 when nothing is safely out of view).
+ */
+export const headRowsToRelease = (rowCount: number, newHeadStart: number, scrollTop: number, cap: number): number => {
+  const surplus = rowCount - cap;
+  if (surplus <= 0) return 0;
+  return newHeadStart <= scrollTop ? surplus : 0;
+};
+
 export interface ChatTurnMark {
   /** Virtual row index of the turn group (what `scrollToIndex` takes). */
   rowIndex: number;
@@ -63,21 +90,20 @@ export interface ChatTurnMark {
   preview: string;
 }
 
-/** How many of the most recent user turns the scrubber offers. */
-export const TURN_SCRUBBER_LIMIT = 20;
+/** How many marks the scrubber shows at once (the rest are reached with its arrows). */
+export const TURN_SCRUBBER_PAGE_SIZE = 20;
 
 /** Snippet length of a mark's preview (keeps the tooltip to one line). */
 const MARK_PREVIEW_CHARS = 60;
 
 /**
  * Derive the scrubber marks from the virtual rows: one per USER-origin turn
- * group (a USER row always starts its own group), keeping only the most recent
- * `limit` of them.
+ * group (a USER row always starts its own group). The scrubber pages through
+ * them TURN_SCRUBBER_PAGE_SIZE at a time, so every loaded turn is reachable.
  * @param rows Virtual rows in render order.
- * @param limit Maximum number of marks (the newest ones win).
  * @returns Marks in render order.
  */
-export const buildTurnMarks = (rows: ChatVirtualRow[], limit = TURN_SCRUBBER_LIMIT): ChatTurnMark[] => {
+export const buildTurnMarks = (rows: ChatVirtualRow[]): ChatTurnMark[] => {
   const marks: ChatTurnMark[] = [];
   rows.forEach((row, rowIndex) => {
     const first = row.group[0];
@@ -91,12 +117,16 @@ export const buildTurnMarks = (rows: ChatVirtualRow[], limit = TURN_SCRUBBER_LIM
       preview: first.content.trim().replace(/\s+/g, ' ').slice(0, MARK_PREVIEW_CHARS)
     });
   });
-  return marks.slice(-limit);
+  return marks;
 };
 
 export interface ChatVirtualListOptions {
   /** Called when the viewport crosses the top trigger (re-arms after leaving). */
   onReachTop?: () => void;
+  /** Loaded-row ceiling before the oldest out-of-view rows are released. */
+  maxLoadedRows?: number;
+  /** Called with the ids of the oldest rows that left memory, so the caller can drop them. */
+  onReleaseHead?: (messageIds: number[]) => void;
 }
 
 /**
@@ -176,11 +206,36 @@ export function useChatVirtualList(
   let topArmed = true;
 
   /**
+   * Message ids of the oldest rows to release, when the loaded window is over
+   * the cap and those rows sit entirely above the viewport.
+   * @returns Ids to drop (empty when nothing may go).
+   */
+  const headRowsToReleaseMessageIds = (): number[] => {
+    const cap = Math.max(1, options.maxLoadedRows ?? MAX_LOADED_ROWS);
+    const surplus = rows.value.length - cap;
+    if (surplus <= 0) return [];
+    // A reader pinned to the newest messages keeps their window: releasing the head
+    // under them would move what they are watching. The cap applies to the window a
+    // reader builds up by pulling up through history.
+    if (virtualizer.value.isAtEnd()) return [];
+    const el = scrollContainerRef.value;
+    if (!el) return [];
+    const newHeadStart = virtualizer.value.getOffsetForIndex(surplus, 'start')?.[0];
+    if (newHeadStart == null) return [];
+    if (headRowsToRelease(rows.value.length, newHeadStart, el.scrollTop, cap) === 0) return [];
+    return rows.value.slice(0, surplus).flatMap(row => row.group.map(message => message.id));
+  };
+
+  /**
    * Container scroll handler: keeps the bottom button in sync and fires the
-   * top-reach hook once per crossing (pulling up loads older history).
+   * top-reach hook once per crossing (pulling up loads older history). It also
+   * reports the rows that may leave memory, which the caller applies to its
+   * message list.
    */
   const onScroll = () => {
     updateScrollBottomBtn();
+    const releasable = headRowsToReleaseMessageIds();
+    if (releasable.length) options.onReleaseHead?.(releasable);
     if (!options.onReachTop) return;
     const el = scrollContainerRef.value;
     if (!el) return;
@@ -306,7 +361,9 @@ export function useChatVirtualList(
    * the content under the viewport would slide down by the prepended height.
    * A key change on the FIRST row means exactly that (appends never touch
    * row 0), so compensate the scroll offset once the new rows are laid out —
-   * the same "keep what you were reading in place" rule chat clients use.
+   * the same "keep what you were reading in place" rule chat clients use. A
+   * NEGATIVE delta is the mirror case (the head was released to stay under the
+   * memory cap): the offset shrinks with it so the reader does not jump.
    */
   watch(
     () => rows.value[0]?.key,
@@ -331,7 +388,7 @@ export function useChatVirtualList(
             return;
           }
           const delta = height - heightBefore;
-          if (delta > 0) el.scrollTop += delta;
+          if (delta !== 0) el.scrollTop = Math.max(0, el.scrollTop + delta);
           updateScrollBottomBtn();
         };
         requestAnimationFrame(settle);
@@ -439,6 +496,7 @@ export function useChatVirtualList(
     activeMarkIndex,
     scrollToBottom,
     scrollToRow,
+    headRowsToReleaseMessageIds,
     updateScrollBottomBtn,
     onScroll
   };

@@ -25,7 +25,9 @@ const state = vi.hoisted(() => ({
     appendStreamChunk: vi.fn(),
     markRunningToolsFailed: vi.fn()
   },
-  stop: vi.fn()
+  stop: vi.fn(),
+  /** Access-mode store slice: "approve all" must move the toolbar control. */
+  markYolo: vi.fn()
 }));
 
 /** Build one `useHitlApproval` instance with inert collaborators. */
@@ -72,6 +74,7 @@ describe('useHitlApproval decision forwarding', () => {
   beforeEach(() => {
     state.sent.length = 0;
     vi.clearAllMocks();
+    vi.stubGlobal('useAccessModeStore', () => ({ markYolo: state.markYolo }));
   });
 
   it.each(['approve', 'approve_dir', 'yolo', 'reject'] as const)(
@@ -111,5 +114,24 @@ describe('useHitlApproval decision forwarding', () => {
     hitl.handleHitlDecision('reject');
 
     expect(state.chunks.markRunningToolsFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('mirrors "approve all" into the access-mode control', () => {
+    const { hitl } = makeHarness();
+
+    hitl.handleHitlDecision('yolo');
+
+    // The resumed turn sets the bypass flag server-side; the shield follows now.
+    expect(state.markYolo).toHaveBeenCalledWith('s1');
+  });
+
+  it('leaves the access-mode control alone for every other decision', () => {
+    const { hitl } = makeHarness();
+
+    hitl.handleHitlDecision('approve');
+    hitl.handleHitlDecision('approve_dir');
+    hitl.handleHitlDecision('reject');
+
+    expect(state.markYolo).not.toHaveBeenCalled();
   });
 });

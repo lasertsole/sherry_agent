@@ -102,5 +102,13 @@ export function useChatOlderHistory(options: OlderHistoryOptions) {
     }
   };
 
-  return { loadingOlder, exhausted, oldestTurn, loadOlder };
+  /**
+   * Allow paging again: the loaded head was released (memory cap), so the turns
+   * that were dropped are fetchable history once more.
+   */
+  const resetExhausted = (): void => {
+    exhausted.value = false;
+  };
+
+  return { loadingOlder, exhausted, oldestTurn, loadOlder, resetExhausted };
 }

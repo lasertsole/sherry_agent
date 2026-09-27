@@ -10,6 +10,22 @@ dayjs.extend(customParseFormat);
  * @param format The desired output format, e.g. 'YYYY-MM-DD HH:mm:ss'
  * @returns The formatted time string, or an empty string when the input is invalid
  */
+/**
+ * Elapsed time since a start timestamp (epoch ms), as `mm:ss` or `h:mm:ss`.
+ * The ticking value comes from the caller (it re-renders on its own interval).
+ * @param startedAtMs Epoch milliseconds, or null/undefined when it never started.
+ * @param nowMs Current time in epoch milliseconds.
+ */
+export function formatElapsed(startedAtMs: number | null | undefined, nowMs: number): string {
+  if (startedAtMs == null || Number.isNaN(Number(startedAtMs))) return '--:--';
+  const seconds = Math.max(0, Math.floor((nowMs - Number(startedAtMs)) / 1000));
+  const s = seconds % 60;
+  const m = Math.floor(seconds / 60) % 60;
+  const h = Math.floor(seconds / 3600);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+}
+
 export const formatCompactTimeString = (timeStr: string | number, format: string = 'YYYY-MM-DD HH:mm'): string => {
   if (!timeStr) return '';
 

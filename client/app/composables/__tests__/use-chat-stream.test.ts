@@ -36,6 +36,7 @@ interface CapturedSend {
 }
 
 const state = vi.hoisted(() => ({
+  markRunningToolsFailed: vi.fn(),
   sends: [] as CapturedSend[]
 }));
 
@@ -115,7 +116,7 @@ function makeHarness(): Harness {
       untrackDraftTurn: vi.fn(),
       isDraftTurnActive: () => false
     },
-    chunks: { appendStreamChunk, markRunningToolsFailed: vi.fn() },
+    chunks: { appendStreamChunk, markRunningToolsFailed: state.markRunningToolsFailed },
     hitl: {
       handleHitlRequest: vi.fn(),
       abortResume: vi.fn(),
@@ -131,12 +132,14 @@ function makeHarness(): Harness {
     chatMessages,
     isSending,
     streamingTurn,
-    appendStreamChunk
+    appendStreamChunk,
+    markRunningToolsFailed: state.markRunningToolsFailed
   };
 }
 
 beforeEach(() => {
   state.sends = [];
+  state.markRunningToolsFailed.mockClear();
 });
 
 describe('useChatStream queue badges', () => {
@@ -179,6 +182,26 @@ describe('useChatStream queue badges', () => {
     expect(harness.stream.queueBadge.value).toEqual({ position: 1, queueSize: 1 });
     expect(harness.streamingTurn.value).toBe(1);
     expect(harness.appendStreamChunk).toHaveBeenCalledWith('s1', 'still running', 'text', 1, undefined);
+  });
+
+  it('closes still-running tool cards when the turn finishes', () => {
+    const harness = makeHarness();
+    harness.streamingTurn.value = 4;
+
+    harness.stream.handleSocketDone({ modelName: 'stub', inputTokens: 1, outputTokens: 1 });
+
+    // The graph stopped streaming, so a card without a result never finished:
+    // leaving it spinning would keep the toolbar's running-command entry alive.
+    expect(harness.markRunningToolsFailed).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a stray done frame when no turn is being tracked', () => {
+    const harness = makeHarness();
+    harness.streamingTurn.value = null;
+
+    harness.stream.handleSocketDone();
+
+    expect(harness.markRunningToolsFailed).not.toHaveBeenCalled();
   });
 
   it('turn_started clears the member badges and moves streamingTurn to the trailing turn', async () => {

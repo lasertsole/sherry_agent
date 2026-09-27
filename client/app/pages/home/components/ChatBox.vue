@@ -96,14 +96,17 @@
                   :message="message"
                   :expanded="expandedToolCards.has(message.id)"
                   :expandable="isToolMessage(message)"
+                  :highlighted="focusedMessageId === message.id"
                   :args-label="t('chatBox.toolArgs')"
                   :result-label="t('chatBox.toolResult')"
                   :running-label="t('chatBox.toolRunning')"
                   :no-output-label="t('chatBox.toolNoOutput')"
                   @toggle="toggleToolCard(message.id)" />
-                <!-- Conversation content bubble -->
+                <!-- Conversation content bubble: skipped when the message has nothing to
+                     put in it — an AI turn that only produced reasoning keeps its thinking
+                     block and metadata, but must not leave an empty white box behind. -->
                 <div
-                  v-else
+                  v-else-if="hasBubbleBody(message)"
                   :class="[
                     'relative group w-fit p-3 text-sm font-normal leading-relaxed shadow-sm break-words transition-colors duration-200',
                     message.role === CHAT_ROLE.USER
@@ -249,7 +252,10 @@ const resolvedAiName = computed(() => props.aiName || t('chatBox.defaultAiName')
  */
 const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(message.content);
 
-const emit = defineEmits<{ (e: 'reach-top'): void }>();
+const emit = defineEmits<{
+  (e: 'reach-top'): void;
+  (e: 'release-head', messageIds: number[]): void;
+}>();
 
 // View-model: turn grouping, scroll, media URL resolution, card expansion, copy
 const { isConsecutive, turnGroups, turnSpacingClass, regularMessages, backgroundCarriers } = useChatTurnGroups(
@@ -271,11 +277,28 @@ const {
 } = useChatVirtualList(
   () => turnGroups.value,
   () => props.messages,
-  { onReachTop: () => emit('reach-top') }
+  {
+    onReachTop: () => emit('reach-top'),
+    // Memory cap: the oldest out-of-view rows are handed to the page, which drops
+    // them from the in-memory history (paging refills them if the reader returns).
+    onReleaseHead: messageIds => emit('release-head', messageIds)
+  }
 );
 const { failedImageSources, onImageError } = useChatMedia();
 const { copiedMessageId, canCopyMessage, copyMessage } = useMessageCopy();
 const { expandedToolCards, expandedThinking, toggleToolCard, toggleThinking } = useChatCardExpansion();
+
+/**
+ * Whether the bubble has anything to draw: text, or media attachments (a user
+ * message can be attachment-only). Reasoning lives in its own block, so a
+ * reasoning-only turn renders no bubble at all.
+ * @param message
+ */
+const hasBubbleBody = (message: MessageItem): boolean =>
+  message.content.trim().length > 0 ||
+  messageImages(message).length > 0 ||
+  messageAudios(message).length > 0 ||
+  messageVideos(message).length > 0;
 
 /**
  * Whether this message is a tool call card (tool cards are always expandable; live args/progress can be viewed even while running)
@@ -284,6 +307,35 @@ const { expandedToolCards, expandedThinking, toggleToolCard, toggleThinking } = 
 const isToolMessage = (message: MessageItem): boolean => {
   return message.role === CHAT_ROLE.TOOL && !!message.toolName;
 };
+
+/** Message id briefly ringed after a jump into the list (null when idle). */
+const focusedMessageId = ref<number | null>(null);
+let focusTimer: ReturnType<typeof setTimeout> | undefined;
+
+/**
+ * Bring one message into view (the toolbar's running-command entry jumps here:
+ * a command's terminal output lives in its tool card, so the card is expanded
+ * and briefly ringed instead of opening another panel).
+ *
+ * A message that is not in the loaded window is left alone — the caller only
+ * ever passes an id of a row it just read from this session's message list.
+ * @param messageId Client message id of the TOOL row.
+ */
+const scrollToMessage = (messageId: number): void => {
+  const index = rows.value.findIndex(row => row.group.some(message => message.id === messageId));
+  if (index < 0) return;
+  expandedToolCards.add(messageId);
+  scrollToRow(index);
+  focusedMessageId.value = messageId;
+  clearTimeout(focusTimer);
+  focusTimer = setTimeout(() => {
+    focusedMessageId.value = null;
+  }, 2400);
+};
+
+onBeforeUnmount(() => clearTimeout(focusTimer));
+
+defineExpose({ scrollToMessage });
 </script>
 
 <style scoped>

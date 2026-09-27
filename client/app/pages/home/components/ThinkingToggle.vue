@@ -1,21 +1,27 @@
 <template>
   <div class="ml-auto flex items-center gap-2 pl-2">
-    <span class="hidden md:inline text-xs text-gray-500 dark:text-gray-400 select-none">
-      {{ t('thinkingToggle.label') }}
-    </span>
+    <!-- Glyph + trigger are one visual unit (a word-sized gap would read as two
+         separate controls), so they sit in their own tighter row. -->
+    <div class="flex items-center gap-0.5">
+      <!-- The control's name is a brain glyph rather than a word: the trigger next
+           to it already says ON/OFF (or 低/高/最高), so a second word only adds noise. -->
+      <i
+        class="hidden md:inline brain-icon text-sm text-gray-500 dark:text-gray-400"
+        aria-hidden="true"></i>
 
-    <!-- Collapsed picker for both modes: the trigger shows only the current
-         selection (开启/关闭, or 低/高/最高); clicking opens the list. Switching
-         is allowed at any moment — a mid-turn choice is parked (clock icon) and
-         lands on the next turn. -->
-    <Button
-      variant="text"
-      size="small"
-      :label="triggerLabel"
-      icon="pi pi-angle-down"
-      icon-pos="right"
-      :aria-label="t('thinkingToggle.a11y')"
-      @click="toggleMenu" />
+      <!-- Collapsed picker for both modes: the trigger shows only the current
+           selection (开启/关闭, or 低/高/最高); clicking opens the list. Switching
+           is allowed at any moment — a mid-turn choice is parked (clock icon) and
+           lands on the next turn. -->
+      <Button
+        variant="text"
+        size="small"
+        :label="triggerLabel"
+        icon="pi pi-angle-down"
+        icon-pos="right"
+        :aria-label="t('thinkingToggle.a11y')"
+        @click="toggleMenu" />
+    </div>
     <i
       v-if="pending"
       class="pi pi-clock text-xs text-theme-main"
@@ -31,9 +37,9 @@
       type="button"
       class="block sm:hidden cursor-pointer"
       :aria-label="t('thinkingToggle.a11y')"
-      :title="t('thinkingToggle.label')"
+      :title="t('thinkingToggle.a11y')"
       @click="cycleMobile">
-      <i :class="['pi pi-bolt text-sm', active ? 'text-theme-main' : 'text-gray-400']"></i>
+      <i :class="['brain-icon text-sm', active ? 'text-theme-main' : 'text-gray-400']"></i>
     </button>
   </div>
 </template>
@@ -149,7 +155,6 @@ const cycleMobile = () => {
 {
   "zh": {
     "thinkingToggle": {
-      "label": "思考",
       "a11y": "控制模型思考能力",
       "pending": "下一轮生效",
       "low": "低",
@@ -161,7 +166,6 @@ const cycleMobile = () => {
   },
   "en": {
     "thinkingToggle": {
-      "label": "Thinking",
       "a11y": "Toggle model thinking",
       "pending": "Applies next turn",
       "low": "Low",
@@ -173,7 +177,6 @@ const cycleMobile = () => {
   },
   "ja": {
     "thinkingToggle": {
-      "label": "思考",
       "a11y": "モデルの思考モードを切り替え",
       "pending": "次のターンで反映",
       "low": "低",
@@ -185,7 +188,6 @@ const cycleMobile = () => {
   },
   "ko": {
     "thinkingToggle": {
-      "label": "생각",
       "a11y": "모델 생각 모드 전환",
       "pending": "다음 턴에 적용",
       "low": "낮음",

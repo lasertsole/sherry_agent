@@ -1,6 +1,8 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { mount } from '@vue/test-utils';
 import ChatTurnScrubber from '@/pages/home/components/ChatTurnScrubber.vue';
+import { TURN_SCRUBBER_PAGE_SIZE } from '@/composables/use-chat-virtual-list';
 
 /**
  * Marks as ChatBox derives them: render order, one per recent user message.
@@ -78,5 +80,58 @@ describe('ChatTurnScrubber.vue (integration)', () => {
     await wrapper.findAll('button')[2]!.trigger('click');
 
     expect(wrapper.emitted('jump')).toEqual([[9]]);
+  });
+
+  it('draws one page of marks and pages through the rest with the arrows', async () => {
+    const marks = Array.from({ length: TURN_SCRUBBER_PAGE_SIZE + 6 }, (_, i) => mark(i * 2, i + 1));
+    const wrapper = mountScrubber(marks);
+
+    const arrows = () => wrapper.findAll('button').filter(b => (b.attributes('aria-label') || '').startsWith('更'));
+    const bars = () => wrapper.findAll('button').filter(b => (b.attributes('aria-label') || '').startsWith('跳到'));
+    expect(bars()).toHaveLength(TURN_SCRUBBER_PAGE_SIZE);
+
+    const [older, newer] = arrows();
+    expect(older!.attributes('disabled')).toBeDefined(); // first page
+    await newer!.trigger('click');
+
+    // The second page holds the remaining marks, and the newest page disables "newer".
+    expect(bars()).toHaveLength(6);
+    expect(bars()[0]!.attributes('aria-label')).toBe(`跳到第 ${TURN_SCRUBBER_PAGE_SIZE + 1} 轮`);
+    expect(arrows()[1]!.attributes('disabled')).toBeDefined();
+
+    await arrows()[0]!.trigger('click');
+    expect(bars()[0]!.attributes('aria-label')).toBe('跳到第 1 轮');
+  });
+
+  it('follows the turn being read onto its page', async () => {
+    const marks = Array.from({ length: TURN_SCRUBBER_PAGE_SIZE + 3 }, (_, i) => mark(i * 2, i + 1));
+    const wrapper = mountScrubber(marks, 0);
+    const barLabels = () =>
+      wrapper
+        .findAll('button')
+        .filter(b => (b.attributes('aria-label') || '').startsWith('跳到'))
+        .map(b => b.attributes('aria-label'));
+
+    expect(barLabels()[0]).toBe('跳到第 1 轮');
+
+    // Reading a turn from the second page brings that page into view.
+    await wrapper.setProps({ activeIndex: TURN_SCRUBBER_PAGE_SIZE + 1 });
+    expect(barLabels()[0]).toBe(`跳到第 ${TURN_SCRUBBER_PAGE_SIZE + 1} 轮`);
+  });
+
+  it('hides its own scrollbar when the rail outgrows its cap', () => {
+    // A full page of marks can be taller than the rail's 72% cap on a short
+    // window; the rail then scrolls, and its scrollbar would sit on top of the
+    // chat text — the rail carries the class whose rules hide it.
+    const wrapper = mountScrubber([mark(0, 1), mark(2, 2)]);
+
+    const rail = wrapper.find('nav');
+    expect(rail.classes()).toContain('scrubber-rail');
+    expect(rail.classes()).toContain('overflow-y-auto');
+    // The hiding rules live in the SFC's own styles (scoped), so the class must
+    // not be a no-op: the source defines both the standard and the WebKit rule.
+    const source = readFileSync('app/pages/home/components/ChatTurnScrubber.vue', 'utf8');
+    expect(source).toContain('scrollbar-width: none');
+    expect(source).toContain('.scrubber-rail::-webkit-scrollbar');
   });
 });

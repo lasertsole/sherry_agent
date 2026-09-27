@@ -1,7 +1,8 @@
 <template>
   <!-- Tool call card -->
   <div
-    class="flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto">
+    class="flex flex-col gap-2 w-full px-3 py-2 rounded-lg border border-solid border-gray-200 dark:border-gray-600 bg-gray-50 dark:bg-gray-800/60 text-sm text-gray-600 dark:text-gray-300 overflow-x-auto"
+    :class="highlighted ? 'ring-2 ring-theme-main/50 transition-shadow' : ''">
     <button
       type="button"
       class="flex items-center gap-2 w-full text-left cursor-pointer select-none"
@@ -65,6 +66,8 @@ interface Props {
   expanded: boolean;
   /** Whether the card is expandable (has a tool name) */
   expandable: boolean;
+  /** Whether the card was just jumped to (draws a transient ring) */
+  highlighted?: boolean;
   /** Localized "Arguments" label */
   argsLabel: string;
   /** Localized "Result" label */

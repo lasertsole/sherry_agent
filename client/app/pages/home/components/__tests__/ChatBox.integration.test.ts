@@ -1,7 +1,8 @@
 import { describe, it, expect } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { mount, flushPromises } from '@vue/test-utils';
 import ChatBox from '@/pages/home/components/ChatBox.vue';
 import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
+import { TURN_SCRUBBER_PAGE_SIZE } from '@/composables/use-chat-virtual-list';
 import { useImagePreview } from '@/composables/useImagePreview';
 
 const base = (over: Partial<MessageItem>): MessageItem => ({
@@ -70,6 +71,45 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     expect(wrapper.text()).toContain('执行中…');
   });
 
+  it('reveals a tool card on demand for the toolbar\u2019s running-command entry', async () => {
+    // The toolbar entry hands a running command's message id to this method: the
+    // card is where the command's terminal output streams, so it must expand and
+    // be ringed briefly (collapsed by default).
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.AI, content: 'running it' }),
+          base({
+            id: 2,
+            role: CHAT_ROLE.TOOL,
+            content: '',
+            toolName: 'terminal',
+            toolStatus: 'running',
+            toolArgs: { command: 'npm run build' }
+          })
+        ]
+      }
+    });
+    expect(wrapper.find('.ring-theme-main\\/50').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain('npm run build');
+
+    (wrapper.vm as unknown as { scrollToMessage: (id: number) => void }).scrollToMessage(2);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('npm run build');
+    expect(wrapper.find('.ring-theme-main\\/50').exists()).toBe(true);
+  });
+
+  it('ignores a message id that is not in the loaded window', async () => {
+    const wrapper = mount(ChatBox, { props: { messages: [base({ id: 1, content: 'hi' })] } });
+
+    (wrapper.vm as unknown as { scrollToMessage: (id: number) => void }).scrollToMessage(999);
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('hi');
+    expect(wrapper.find('.ring-theme-main\\/50').exists()).toBe(false);
+  });
+
   it('strips <script> tags from user content via markdown-it + DOMPurify', () => {
     const wrapper = mount(ChatBox, {
       props: {
@@ -101,6 +141,47 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
     // first avatar visible, second hidden (previous message shares the role)
     expect(avatars[0].classes()).not.toContain('hidden');
     expect(avatars[1].classes()).toContain('hidden');
+    // The hidden slot keeps its 40px but goes fully transparent: the placeholder disc
+    // would otherwise show as an empty grey circle next to every consecutive message.
+    const slots = wrapper.findAll('div[class*="w-10"][class*="rounded-full"]');
+    expect(slots[0]!.classes()).toContain('bg-gray-100');
+    expect(slots[1]!.classes()).toContain('opacity-0');
+    expect(slots[1]!.classes()).not.toContain('bg-gray-100');
+    expect(slots[1]!.attributes('aria-hidden')).toBe('true');
+    expect(slots[0]!.attributes('aria-hidden')).toBeUndefined();
+    // Layout is untouched: both slots still measure the same width.
+    expect(slots[1]!.classes()).toContain('w-10');
+  });
+
+  it('renders no empty bubble for a reasoning-only AI turn', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({ id: 1, role: CHAT_ROLE.USER, content: '第11轮' }),
+          base({ id: 2, role: CHAT_ROLE.AI, content: '   ', reasoning: '先想一下……' })
+        ]
+      }
+    });
+
+    // The thinking block is the only body of that turn: no white content bubble
+    // (`w-fit` + `text-gray-900` is the AI bubble's signature), and the user bubble
+    // next to it is untouched.
+    expect(wrapper.text()).toContain('思考过程');
+    expect(wrapper.findAll('.w-fit.text-gray-900')).toHaveLength(0);
+    expect(wrapper.findAll('.w-fit')).toHaveLength(2); // thinking block + user bubble
+    expect(wrapper.text()).toContain('第11轮');
+  });
+
+  it('keeps the bubble for an attachment-only message', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 1, role: CHAT_ROLE.USER, content: '', images: ['a.png'] })]
+      }
+    });
+
+    // The bubble survives for its attachment (no thinking block on it).
+    expect(wrapper.findAll('.w-fit')).toHaveLength(1);
+    expect(wrapper.find('img').exists()).toBe(true);
   });
 
   it('shows empty state when no messages', () => {
@@ -168,7 +249,7 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
 const CARRIER = '[subagent:研究员 done]\n后台检索已完成，结果已送达主会话。';
 
 describe('ChatBox turn scrubber (integration, backend mocked)', () => {
-  it('offers one jump mark per user turn, capped at the scrubber limit', () => {
+  it('offers a page of marks and pages through the rest of the session', () => {
     const messages = Array.from({ length: 25 }, (_, i) => [
       base({ id: i * 2 + 1, role: CHAT_ROLE.USER, turn_num: i + 1, content: `第 ${i + 1} 条` }),
       base({ id: i * 2 + 2, role: CHAT_ROLE.AI, turn_num: i + 1, content: '答' })
@@ -176,11 +257,15 @@ describe('ChatBox turn scrubber (integration, backend mocked)', () => {
 
     const wrapper = mount(ChatBox, { props: { messages } });
 
-    const marks = wrapper.findAll('nav[aria-label="历史消息穿梭器"] button');
-    expect(marks).toHaveLength(20);
-    // The newest turns win: the oldest five are not offered.
-    expect(marks[0]!.attributes('aria-label')).toBe('跳到第 6 轮');
-    expect(marks.at(-1)!.attributes('aria-label')).toBe('跳到第 25 轮');
+    // 25 turns, one page of 20 drawn (plus the two page arrows).
+    const arrows = wrapper.findAll('[aria-label="更新的消息"]');
+    expect(arrows).toHaveLength(1);
+    // The bars carry `.group`; the page arrows do not.
+    const marks = wrapper.findAll('nav[aria-label="历史消息穿梭器"] button.group');
+    expect(marks).toHaveLength(TURN_SCRUBBER_PAGE_SIZE);
+    expect(marks[0]!.attributes('aria-label')).toBe('跳到第 1 轮');
+    // The arrows reach the rest of the session.
+    expect(wrapper.find('[aria-label="更早的消息"]').attributes('disabled')).toBeDefined();
   });
 
   it('does not render the scrubber for a single-turn session', () => {

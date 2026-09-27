@@ -130,6 +130,13 @@ export function useHitlApproval(deps: HitlApprovalDeps) {
     // Resume over the persistent socket — no new connection, no socket close.
     socket.sendHitlResponse({ decision, message });
 
+    // "Approve all" turns the session into full access on the backend (the
+    // resumed turn sets the bypass flag); the toolbar control mirrors it now so
+    // the shield never disagrees with what the backend will do.
+    if (decision === 'yolo') {
+      useAccessModeStore().markYolo(sid);
+    }
+
     // This approval has been answered; collapse the card (it pops up again if the agent pauses once more during the resume)
     hitlRequest.value = null;
   };

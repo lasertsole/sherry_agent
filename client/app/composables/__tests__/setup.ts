@@ -224,6 +224,8 @@ vi.mock('@tanstack/vue-virtual', async () => {
           }));
         },
         getTotalSize: () => Number(read()?.count ?? 0) * 100,
+        // Offset of a row in the same space as `getVirtualItems().start`.
+        getOffsetForIndex: (index: number) => [index * 100, 'start'] as const,
         measureElement: () => {},
         measure: () => {},
         isAtEnd: () => true,
@@ -279,6 +281,41 @@ vi.stubGlobal('useSessionModelStore', () =>
     hydrate: async () => {},
     isPending: () => false,
     select: async () => {}
+  })
+);
+
+// `useContextUsageStore` backs the toolbar's context-window ring: no numbers
+// until a test drives it.
+vi.stubGlobal('useContextUsageStore', () =>
+  Vue.reactive({ bySession: {}, usageFor: () => null, refresh: async () => {} })
+);
+
+// `useAccessModeStore` backs the toolbar's access-mode shield: the default
+// (auto-edit) until a test drives it.
+vi.stubGlobal('useAccessModeStore', () =>
+  Vue.reactive({
+    bySession: {},
+    modeFor: () => 'auto_edit',
+    hydrate: async () => {},
+    select: async () => {},
+    markYolo: () => {}
+  })
+);
+
+// `useRunningCommandsStore` / `useSubagentStore` back the toolbar's terminal
+// entry and its right-sidebar tab (running tool calls + background runs). The
+// defaults keep the session page mountable with nothing running.
+vi.stubGlobal('useRunningCommandsStore', () => Vue.reactive({ commands: [], sync: () => {} }));
+
+vi.stubGlobal('useSubagentStore', () =>
+  Vue.reactive({
+    taskRuns: [],
+    allTaskRuns: [],
+    taskLoading: false,
+    focusedRunId: undefined,
+    selectedRunId: undefined,
+    expandedRunId: undefined,
+    isRunning: () => false
   })
 );
 

@@ -328,6 +328,11 @@ export function useChatStream(deps: ChatStreamDeps) {
   const handleSocketDone = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => {
     const turn = streamingTurn.value;
     if (turn === null) return;
+    // The graph stopped streaming, so every tool card still spinning never got
+    // its result: close them out (the same marking the abort/error paths use).
+    // A paused-for-approval turn sends `hitl_request` INSTEAD of `done`, so its
+    // card keeps spinning while the human decides, as intended.
+    chunks.markRunningToolsFailed();
     if (hitl.isResumeTurn(turn)) {
       hitl.onTurnFinished(turn);
       streamingTurn.value = null;
