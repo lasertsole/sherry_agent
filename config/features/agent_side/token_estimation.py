@@ -8,6 +8,12 @@ class TokenEstimationConfig(TypedDict):
 
     chars_per_token: int
     chars_per_token_cjk: int
+    # Ratio for JSON wire payloads (tool schemas are the big one): repeated
+    # structural keys (``"description"``, ``"type": "string"``, ...) collapse
+    # into single BPE tokens, so a schema serializes to fewer tokens per
+    # character than prose — measuring it with ``chars_per_token`` overshoots
+    # by roughly a factor of two against provider-reported prompt sizes.
+    chars_per_token_json: int
     # Fixed per-block costs for a multimodal content list. A base64 / ``data:``
     # payload must never be counted as text: 5 MB of base64 is ~1.25M "tokens"
     # at ``chars_per_token=4``, which would fire compression on a single image.
@@ -20,6 +26,7 @@ class TokenEstimationConfig(TypedDict):
 TOKEN_ESTIMATION: TokenEstimationConfig = {
     "chars_per_token": 4,
     "chars_per_token_cjk": 2,
+    "chars_per_token_json": 7,
     # 85 is the fixed cost ``langchain_core.count_tokens_approximately`` uses
     # per image block (OpenAI's low-resolution image token cost).
     "tokens_per_image_block": 85,

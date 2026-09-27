@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 from config.features import TOKEN_ESTIMATION
 from pub.func.estimate_tokens import (
+    estimate_json_tokens,
     estimate_messages_tokens,
     estimate_msg_tokens,
     estimate_text_tokens,
@@ -25,8 +26,26 @@ pytestmark = [pytest.mark.unit]
 
 CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
 CHARS_PER_TOKEN_CJK = TOKEN_ESTIMATION["chars_per_token_cjk"]
+CHARS_PER_TOKEN_JSON = TOKEN_ESTIMATION["chars_per_token_json"]
 
 _USAGE_500 = {"input_tokens": 500, "output_tokens": 5, "total_tokens": 505}
+
+
+class TestJsonEstimate:
+    """``estimate_json_tokens``: wire-shaped JSON counts cheaper than prose."""
+
+    def test_uses_the_json_ratio(self):
+        payload = "x" * (CHARS_PER_TOKEN_JSON * 10)
+
+        assert estimate_json_tokens(payload) == 10
+
+    def test_is_cheaper_than_the_prose_estimate(self):
+        payload = '{"description": "a rather long tool description", "type": "string"}'
+
+        assert estimate_json_tokens(payload) < estimate_text_tokens(payload)
+
+    def test_empty_input_is_zero(self):
+        assert estimate_json_tokens("") == 0
 
 
 class TestEstimateTextTokens:

@@ -72,6 +72,7 @@ EXPECTED_MESSAGE_COLUMNS = frozenset(
         "model_name",
         "input_tokens",
         "output_tokens",
+        "cache_read_tokens",
         "origin",
         "reasoning_tokens",
         "idempotency_key",

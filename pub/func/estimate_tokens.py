@@ -62,6 +62,9 @@ TOKENS_PER_IMAGE_BLOCK = TOKEN_ESTIMATION["tokens_per_image_block"]
 TOKENS_PER_AUDIO_BLOCK = TOKEN_ESTIMATION["tokens_per_audio_block"]
 TOKENS_PER_VIDEO_BLOCK = TOKEN_ESTIMATION["tokens_per_video_block"]
 TOKENS_PER_UNKNOWN_BLOCK = TOKEN_ESTIMATION["tokens_per_unknown_block"]
+# Structured (JSON) payloads tokenize cheaper than prose per character: see the
+# constant's comment in config/features/agent_side/token_estimation.py.
+CHARS_PER_TOKEN_JSON = TOKEN_ESTIMATION["chars_per_token_json"]
 
 # Declared content-block types per media family. ``image`` / ``audio`` /
 # ``video`` are the LangChain shapes; the ``*_url`` / ``*_bytes`` names are the
@@ -75,6 +78,26 @@ _FAMILY_TOKENS = {
     "audio": TOKENS_PER_AUDIO_BLOCK,
     "video": TOKENS_PER_VIDEO_BLOCK,
 }
+
+
+def estimate_json_tokens(text: str) -> int:
+    """Estimate the token cost of a serialized JSON payload.
+
+    Same contract as :func:`estimate_text_tokens` but for wire-shaped JSON
+    (tool schemas, tool arguments): the repeated structural keys make these
+    payloads tokenize at roughly ``chars_per_token_json`` characters per token,
+    so prose ratios overshoot them — which matters when the estimate is
+    subtracted from a provider-reported prompt.
+
+    Args:
+        text: Serialized JSON.
+
+    Returns:
+        Estimated token count (at least 0).
+    """
+    if not text:
+        return 0
+    return max(len(text) // CHARS_PER_TOKEN_JSON, 0)
 
 
 def estimate_text_tokens(text: str) -> int:

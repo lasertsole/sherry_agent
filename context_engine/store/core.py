@@ -46,6 +46,31 @@ _turn_stamp_lock = threading.Lock()
 _last_turn_ms: int | None = None
 
 
+def _cache_read_tokens_from_usage(response_metadata: dict[str, Any]) -> int | None:
+    """Cached-prompt tokens from the provider's raw usage payload.
+
+    langchain only normalizes the OpenAI shape (``prompt_tokens_details`` →
+    ``input_token_details.cache_read``); DeepSeek reports
+    ``prompt_cache_hit_tokens`` and Anthropic ``cache_read_input_tokens``, both of
+    which survive verbatim in ``response_metadata["token_usage"]`` (the SDK keeps
+    unknown fields). Returns None when no provider field carries the value.
+    """
+    usage = response_metadata.get("token_usage") or response_metadata.get("usage") or {}
+    if not isinstance(usage, dict):
+        return None
+    nested = usage.get("prompt_tokens_details")
+    candidates = [
+        usage.get("prompt_cache_hit_tokens"),  # DeepSeek
+        usage.get("cache_read_input_tokens"),  # Anthropic
+        nested.get("cached_tokens") if isinstance(nested, dict) else None,  # OpenAI
+        usage.get("cached_tokens"),  # flat variant
+    ]
+    for value in candidates:
+        if value is not None:
+            return int(value)
+    return None
+
+
 def _as_str_list(value: Any) -> list[str]:
     return [str(p) for p in value] if isinstance(value, list) else []
 
@@ -94,6 +119,7 @@ class AIMessageRowBuilder(MessageRowBuilder):
         input_tokens: int | None = None
         output_tokens: int | None = None
         reasoning_tokens: int | None = None
+        cache_read_tokens: int | None = None
         if usage_metadata:
             if usage_metadata.get("input_tokens") is not None:
                 input_tokens = int(usage_metadata["input_tokens"])
@@ -102,6 +128,17 @@ class AIMessageRowBuilder(MessageRowBuilder):
             _details = usage_metadata.get("output_token_details") or {}
             if _details.get("reasoning_tokens") is not None:
                 reasoning_tokens = int(_details["reasoning_tokens"])
+            # Cached-prompt tokens (DeepSeek prompt_cache_hit_tokens, OpenAI
+            # prompt_tokens_details.cached_tokens, ...) — langchain normalizes
+            # them under input_token_details.cache_read. The usage panel divides
+            # the session's sum by its input total for the cache hit rate.
+            _in_details = usage_metadata.get("input_token_details") or {}
+            if _in_details.get("cache_read") is not None:
+                cache_read_tokens = int(_in_details["cache_read"])
+        if cache_read_tokens is None:
+            # Providers whose cache accounting langchain does not normalize
+            # (DeepSeek / Anthropic) still report it in the raw usage payload.
+            cache_read_tokens = _cache_read_tokens_from_usage(response_metadata)
 
         # Persist the chain-of-thought so the client can re-render the
         # collapsible thinking bubble after a reload. Reasoning models
@@ -138,6 +175,7 @@ class AIMessageRowBuilder(MessageRowBuilder):
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
+            "cache_read_tokens": cache_read_tokens,
             "origin": None,
         }
 
@@ -198,6 +236,7 @@ class HumanMessageRowBuilder(MessageRowBuilder):
             "input_tokens": None,
             "output_tokens": None,
             "reasoning_tokens": None,
+            "cache_read_tokens": None,
             "origin": origin,
         }
 
@@ -226,6 +265,7 @@ class ToolMessageRowBuilder(MessageRowBuilder):
             "input_tokens": None,
             "output_tokens": None,
             "reasoning_tokens": None,
+            "cache_read_tokens": None,
             "origin": None,
         }
 
@@ -387,6 +427,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
                     input_tokens,
                     output_tokens,
                     reasoning_tokens,
+                    cache_read_tokens,
                     origin,
                     idempotency_key,
                     context_eligible,
@@ -412,6 +453,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
                     :input_tokens,
                     :output_tokens,
                     :reasoning_tokens,
+                    :cache_read_tokens,
                     :origin,
                     :idempotency_key,
                     :context_eligible,
