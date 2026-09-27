@@ -28,16 +28,6 @@ interface Params {
 let memoryToken: string | null = null;
 
 /**
- * The gateway token currently held in memory (null before first contact).
- *
- * WebSocket transports cannot read response headers, so they append this value
- * as the `?token=` query parameter (see {@link withGatewayToken}).
- */
-export function getGatewayToken(): string | null {
-  return memoryToken;
-}
-
-/**
  * Make sure a gateway token is held in memory; returns it (or null when the
  * backend is unreachable).
  *
