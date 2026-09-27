@@ -11,6 +11,8 @@ import server.trigger.http.curator
 import server.trigger.http.channels
 import server.trigger.http.knowledge_graph
 import server.trigger.http.stats
+import server.trigger.http.context_usage
+import server.trigger.http.access_mode
 import server.trigger.http.env
 import server.trigger.http.sherry_config
 import server.trigger.http.memory
