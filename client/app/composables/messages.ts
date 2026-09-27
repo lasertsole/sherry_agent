@@ -29,7 +29,7 @@ function isJsonObject(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Runtime guard for the pending-interrupt payload (audit #51 style).
+ * Runtime guard for the pending-interrupt payload (style).
  *
  * The server answers with the interrupt object itself, the legacy `{ data }`
  * envelope, or the literal text `"None"` (Python None) when nothing is pending.
@@ -117,7 +117,7 @@ export async function get_history_by_turn_page(
       },
       method: 'get'
     });
-    // null = request failed (audit #53): fall back to the local cache, same as the catch below.
+    // null = request failed: fall back to the local cache, same as the catch below.
     if (res === null) return cached;
 
     // The server's /get_history_by_turn_page directly returns an array of message rows
@@ -232,7 +232,7 @@ export async function getSessionList(): Promise<SessionRecord[]> {
       url: '/sessions',
       method: 'get'
     });
-    // null = the request failed (audit #53): same fallback as the catch below.
+    // null = the request failed: same fallback as the catch below.
     if (res === null) return [];
     // The server's /sessions directly returns an array, not a { data: [...] } wrapper object.
     // Compatibility handling here: if the response itself is an array, use it directly;

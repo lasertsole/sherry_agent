@@ -204,7 +204,7 @@ describe('reconnect storm guards', () => {
 });
 
 /* ---------------------------------------------------------------------------
- * Reconnect-timer ownership (audit #50)
+ * Reconnect-timer ownership
  *
  * The 5s auto-reconnect setTimeout handle must be stored so that an explicit
  * close (or an explicit new connect) cancels it — otherwise a manual teardown

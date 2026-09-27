@@ -5,7 +5,7 @@
  * deliver `null`, a number, a string or an array where every consumer expects
  * an object (`data.event`, `data.content`, `data.data`, ...). Rejecting
  * non-object frames here keeps the `as T` assertions inside the callers honest
- * (audit #51).
+ *.
  * @param value Parsed JSON value
  */
 export function isWsObjectFrame(value: unknown): value is Record<string, unknown> {

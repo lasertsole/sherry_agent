@@ -58,7 +58,7 @@ registerToastApi(useToast());
  * Without this, the sockets' 5s auto-reconnect timers outlive the app: after a manual close
  * or a page teardown a pending reconnect would still open a fresh socket. `closeWs` /
  * `closeSubagentWs` clear their reconnect timers, so calling them here ends the reconnect
- * loops (audit #70).
+ * loops.
  */
 function closeWsSingletons() {
   closeWs();

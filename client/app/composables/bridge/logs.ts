@@ -5,6 +5,7 @@
  */
 import { teardownWebSocket } from './transport';
 import { WS_BASE_URL } from '../env';
+import { ensureGatewayToken, withGatewayToken } from '../requestApi';
 import { createWsMessageHandler } from '../ws-message';
 
 /** Log level severity, matching the backend log format. */
@@ -85,7 +86,11 @@ export function openLogStream(
   onFrame: (frame: LogStreamFrame) => void,
   onError?: (e: string) => void
 ): { close: () => void } {
-  const url = `${WS_BASE_URL}/logs/ws`;
+  // WebSockets cannot read response headers: bootstrap the gateway token so
+  // the handshake can carry it as ?token= (the backend closes token-less
+  // sockets — see server/trigger/auth.py).
+  void ensureGatewayToken();
+  const url = withGatewayToken(`${WS_BASE_URL}/logs/ws`);
 
   let socket: WebSocket | null = null;
   let closed = false;

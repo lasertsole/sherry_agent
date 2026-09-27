@@ -22,9 +22,57 @@ interface Params {
  * read it persistently. It is now held only in module scope: it survives SPA
  * navigation, dies with the tab, and is wiped by the legacy cleanup below.
  * Transport stays the same custom `token` header so the backend contract is
- * unchanged; httpOnly-cookie issuance lands with the auth middleware (P1, audit #3).
+ * unchanged; the gateway issues the token (server/trigger/auth.py) and it is
+ * held in memory only (never persisted).
  */
 let memoryToken: string | null = null;
+
+/**
+ * The gateway token currently held in memory (null before first contact).
+ *
+ * WebSocket transports cannot read response headers, so they append this value
+ * as the `?token=` query parameter (see {@link withGatewayToken}).
+ */
+export function getGatewayToken(): string | null {
+  return memoryToken;
+}
+
+/**
+ * Make sure a gateway token is held in memory; returns it (or null when the
+ * backend is unreachable).
+ *
+ * The token normally arrives on any HTTP response header, so this is only
+ * needed by transports that must decide BEFORE their first request — the
+ * WebSocket handshakes. Failures are non-fatal by design: the caller opens the
+ * socket anyway, the backend refuses a token-less handshake, and the channel's
+ * reconnect backoff retries once the token has landed.
+ */
+export async function ensureGatewayToken(): Promise<string | null> {
+  if (memoryToken) return memoryToken;
+  try {
+    const response = await fetch(`${API_BASE_URL}/auth/token`);
+    const headerToken = response.headers.get('token');
+    const body: unknown = await response.json().catch(() => null);
+    const bodyToken = (body as { token?: unknown } | null)?.token;
+    memoryToken = headerToken || (typeof bodyToken === 'string' ? bodyToken : null);
+  } catch {
+    // Offline / backend down: leave the token unset — the WS reconnect path
+    // retries, and every HTTP response re-issues the header.
+  }
+  return memoryToken;
+}
+
+/**
+ * Append the gateway token to a WebSocket URL when one is held.
+ *
+ * Token-less URLs are returned unchanged: tests and pre-bootstrap connects keep
+ * their plain form, and the backend's refusal is handled by the reconnect path.
+ * @param url The transport URL (with or without an existing query string).
+ */
+export function withGatewayToken(url: string): string {
+  if (!memoryToken) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(memoryToken)}`;
+}
 
 /** One-time removal of the legacy localStorage token left by older builds. */
 function purgeLegacyToken(): void {
@@ -75,7 +123,7 @@ const replacePathVariables = (url: NitroFetchRequest, params: Record<string, unk
 };
 
 /**
- * Narrow payload guard for a resolved API response (audit #51).
+ * Narrow payload guard for a resolved API response.
  *
  * The backend answers with a JSON object/array, or — on legacy endpoints such as
  * `/get_pending_interrupt` — a bare `text/plain` string (e.g. `"None"`). Any
@@ -243,7 +291,7 @@ async function requestBaseApi<T = Response>({
       }
     });
 
-    // Runtime boundary check (audit #51): reject payloads that cannot satisfy
+    // Runtime boundary check: reject payloads that cannot satisfy
     // the Response contract before callers consume them.
     data = isApiPayload<T>(raw) ? raw : null;
     if (data === null) {
@@ -251,7 +299,7 @@ async function requestBaseApi<T = Response>({
       logUtil.e(`[requestApi] Unexpected response payload from ${String(requestURL)}:`, raw);
     }
   } catch (error) {
-    // No longer swallowed (audit #53): a failure that is neither a network error
+    // No longer swallowed: a failure that is neither a network error
     // nor a 4xx/5xx (interceptor throw, unparsable body, abort) is recorded and
     // logged here, then reported through the same single-toast path below. The
     // caller still receives null (null = request failed; a Response whose `data`

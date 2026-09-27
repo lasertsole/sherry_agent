@@ -95,7 +95,9 @@ export function useWs(options?: { onReconnect?: () => void }): {
   });
 
   const channel = new WsConnection({
-    url: `${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`,
+    // Resolved per connect: the gateway token may only arrive after this
+    // channel is constructed, and a reconnect must carry the fresh value.
+    url: () => withGatewayToken(`${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`),
     reconnectDelayMs: RECONNECT_DELAY_MS,
     heartbeat: {
       intervalMs: HEARTBEAT_INTERVAL_MS,
@@ -130,6 +132,10 @@ export function useWs(options?: { onReconnect?: () => void }): {
   });
 
   sessionChannel = channel;
+  // The WebSocket handshake must carry the gateway token; kick the
+  // bootstrap now so the first attempt has it (a miss just costs one
+  // reconnect: the URL is re-resolved per attempt).
+  void ensureGatewayToken();
   channel.connect();
   ws.value = channel.socket;
 
@@ -205,7 +211,7 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
   subagentChannel?.dispose();
 
   const channel = new WsConnection({
-    url: `${WS_BASE_URL}/subagents/ws`,
+    url: () => withGatewayToken(`${WS_BASE_URL}/subagents/ws`),
     reconnectDelayMs: RECONNECT_DELAY_MS,
     onOpen: () => {
       isConnected.value = true;

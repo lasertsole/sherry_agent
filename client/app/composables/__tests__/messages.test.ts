@@ -19,7 +19,13 @@ vi.mock('../db', () => dbMock);
 
 const fetchApiMock = vi.hoisted(() => vi.fn());
 
-vi.mock('../requestApi', () => ({ fetchApi: fetchApiMock }));
+vi.mock('../requestApi', () => ({
+  fetchApi: fetchApiMock,
+  // Gateway-token helpers (the agent socket appends ?token= to its URL). The
+  // doubles keep tests deterministic: no token, URLs unchanged.
+  ensureGatewayToken: async () => null,
+  withGatewayToken: (url: string) => url
+}));
 
 import { get_history_by_turn_page, clearSession, getPendingInterrupt, postAgentStream } from '../messages';
 import { closeAllAgentSockets } from '../bridge/agent-socket';

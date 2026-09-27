@@ -140,7 +140,7 @@ describe('fetchApi payload typing', () => {
   }, 15000);
 });
 
-describe('fetchApi response payload validation (audit #51)', () => {
+describe('fetchApi response payload validation', () => {
   it('returns object and array payloads unchanged', async () => {
     stubFetch({ code: 200, data: [1, 2, 3] });
     await expect(fetchApi({ url: '/items', method: 'get' })).resolves.toEqual({

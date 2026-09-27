@@ -5,7 +5,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../requestApi', () => ({
-  fetchApi: mocks.fetchApi
+  fetchApi: mocks.fetchApi,
+  // Gateway-token helpers (the agent socket appends ?token= to its URL). The
+  // doubles keep tests deterministic: no token, URLs unchanged.
+  ensureGatewayToken: async () => null,
+  withGatewayToken: (url: string) => url
 }));
 
 import * as bridge from '../bridge';

@@ -39,8 +39,14 @@ export interface WsHeartbeat {
 
 /** Per-connection behavior and channel-specific state. */
 export interface WsConnectionOptions {
-  /** Socket URL. */
-  url: string;
+  /**
+   * Socket URL, or a resolver evaluated at every connect attempt.
+   *
+   * The thunk form lets a channel append credentials that may have arrived
+   * after construction (see `withGatewayToken`): a reconnect then carries the
+   * fresh value instead of replaying a stale URL.
+   */
+  url: string | (() => string);
   /** Fixed delay before an unexpected close reconnects (ms). */
   reconnectDelayMs: number;
   /** Extra work on open (after the socket slot is current and the heartbeat is armed). */
@@ -107,7 +113,8 @@ export class WsConnection {
       this.socketInstance = null;
     }
 
-    const socket = new WebSocket(this.options.url);
+    const resolvedUrl = typeof this.options.url === 'function' ? this.options.url() : this.options.url;
+    const socket = new WebSocket(resolvedUrl);
     this.socketInstance = socket;
 
     socket.onopen = () => {

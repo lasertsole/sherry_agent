@@ -14,7 +14,11 @@ vi.mock('../requestApi', () => ({
   // Raw-response transport used by bridge/upload + bridge/health. Delegate to
   // the global fetch double so the existing "stub fetch" setup keeps working
   // unchanged.
-  fetchApiRaw: (options: unknown) => (globalThis.fetch as unknown as (init: unknown) => Promise<unknown>)(options)
+  fetchApiRaw: (options: unknown) => (globalThis.fetch as unknown as (init: unknown) => Promise<unknown>)(options),
+  // Gateway-token helpers (the agent socket appends ?token= to its URL). The
+  // doubles keep tests deterministic: no token, URLs unchanged.
+  ensureGatewayToken: async () => null,
+  withGatewayToken: (url: string) => url
 }));
 
 import * as bridge from '../bridge';

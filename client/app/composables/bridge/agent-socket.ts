@@ -27,6 +27,7 @@ import type { AgentSocket, AgentSocketHandlers } from './agent-socket-types';
 import { teardownWebSocket } from './transport';
 import { emit } from '../mitt';
 import { WS_BASE_URL } from '../env';
+import { ensureGatewayToken, withGatewayToken } from '../requestApi';
 import { OutboundQueue } from './agent-socket-queue';
 import { PendingSendRegistry, type PendingSend } from './agent-socket-pending';
 import { decideReconnect, ReconnectTimer } from './agent-socket-reconnect';
@@ -217,7 +218,8 @@ class SessionAgentSocket implements AgentSocket {
     if (this.disposed) return;
     let ws: WebSocket;
     try {
-      ws = new WebSocket(`${WS_BASE_URL}/sessions/agent/ws`);
+      void ensureGatewayToken();
+      ws = new WebSocket(withGatewayToken(`${WS_BASE_URL}/sessions/agent/ws`));
     } catch {
       this.handleConnectionLoss();
       return;

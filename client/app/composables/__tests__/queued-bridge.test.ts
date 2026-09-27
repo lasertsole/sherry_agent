@@ -9,7 +9,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('../requestApi', () => ({
-  fetchApi: mocks.fetchApi
+  fetchApi: mocks.fetchApi,
+  // Gateway-token helpers (the agent socket appends ?token= to its URL). The
+  // doubles keep tests deterministic: no token, URLs unchanged.
+  ensureGatewayToken: async () => null,
+  withGatewayToken: (url: string) => url
 }));
 
 import * as bridge from '../bridge';
@@ -103,7 +107,12 @@ async function awaitSocket(): Promise<FakeWebSocket> {
   return ws;
 }
 
-/** Plan-fixed queued frame contract (backend Task 7 implements the same shape). */
+/**
+ * Plan-fixed queued frame contract (backend Task 7 implements the same shape).
+ * @param sessionId
+ * @param position
+ * @param queueSize
+ */
 function queuedFrame(sessionId = 's1', position = 2, queueSize = 5): object {
   return { event: 'queued', session_id: sessionId, position, queue_size: queueSize, message_id: 'msg-42' };
 }
