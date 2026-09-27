@@ -46,7 +46,7 @@ export async function readEnvConfig(): Promise<EnvConfigPayload> {
   // called from a live setup context (getCurrentInstance() != null). Calling it
   // from an event handler (e.g. PrimeVue TabPanel `@show`) yields `data ===
   // undefined` without any network round-trip. The caller MUST trigger this
-  // from setup scope (see ConfigDialog.vue's setup-context watch), otherwise the
+  // from setup scope (see ConfigPanel.vue's setup-context watch), otherwise the
   // `|| { groups: [] }` fallback below misleads the user into thinking the
   // `.env` file is missing.
   const res = await fetchApi<EnvConfigPayload>({

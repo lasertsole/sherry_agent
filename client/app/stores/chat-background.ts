@@ -14,7 +14,7 @@ import { logUtil } from '~/utils/log';
  * - `loadBackground()`: idempotent; the first call reads from Dexie and fills the
  *   store state (called from components in onMounted).
  * - `setBackground(url, opacity)`: updates the store state synchronously +
- *   persists to Dexie; called by ConfigDialog on save (after writing, every component
+ *   persists to Dexie; called by ConfigPanel on save (after writing, every component
  *   sharing the singleton reacts immediately, no refresh needed). Passing an empty
  *   string clears the background.
  * - `chatBackgroundStyle`: reactive style object; returns a background-image in

@@ -1,7 +1,7 @@
 /**
- * Cron schedule form <-> wire conversions (CronDialog).
+ * Cron schedule form <-> wire conversions (CronPanel).
  *
- * Extracted from `CronDialog.vue` so the three previously switch-driven mappings
+ * Extracted from `CronPanel.vue` so the three previously switch-driven mappings
  * are table-driven and unit-testable. Every branch keeps its exact former output
  * (including the `default` fallbacks), pinned by `utils/__tests__/cron-schedule.test.ts`.
  *

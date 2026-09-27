@@ -3,7 +3,7 @@
  *
  * Used by:
  *  - use-chat-stream.ts (toast on send when config is invalid)
- *  - ConfigDialog.vue (invalidate cache after env save)
+ *  - ConfigPanel.vue (invalidate cache after env save)
  */
 
 export interface ModelConfig {
@@ -57,7 +57,7 @@ export async function getModelConfigCached(): Promise<ModelConfig> {
 }
 
 /**
- * Invalidate the cache. Called after ConfigDialog saves env changes
+ * Invalidate the cache. Called after ConfigPanel saves env changes
  * so the next getModelConfigCached() refetches from the backend.
  */
 export function invalidateModelConfigCache(): void {

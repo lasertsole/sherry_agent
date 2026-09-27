@@ -4,7 +4,7 @@
 
 > How the agent enforces a hard 128K context-window floor on both LLMs: one shared predicate raises at four enforcement points (server boot, graph build, subagent spawn, and `.env` write), the frontend warns before it blocks, and `GET /model-config` exposes the live verdict.
 
-Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigDialog.vue`, plus `.env.example`. Every line number and constant in this document was verified against that code.
+Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, plus `.env.example`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -133,7 +133,7 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` shape and `valid` for both-at-minimum, main-below, aux-unset, main-unset |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | fetch cache-busting, fetch-once cache, refetch after invalidate, default-invalid fallback |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend` warns only when invalid; silent when valid and on fetch failure |
-| `client/app/pages/home/components/__tests__/ConfigDialog.token.test.ts` | Vitest | Banner and pre-save rejection; a valid value persists and invalidates the cache |
+| `client/app/pages/home/components/__tests__/ConfigPanel.token.test.ts` | Vitest | Banner and pre-save rejection; a valid value persists and invalidates the cache |
 
 ```bash
 # Python (unit + integration)
@@ -141,7 +141,7 @@ uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent
   tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
-cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.token
+cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token
 ```
 
 ## ⚠️ Limitations & Non-goals
@@ -166,5 +166,5 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | Frontend cache | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
 | Frontend warn | `client/app/composables/use-chat-stream.ts:435` | Non-blocking toast on send |
-| Frontend dialog | `client/app/pages/home/components/ConfigDialog.vue` | Banner, pre-save validation, cache invalidation |
+| Frontend panel | `client/app/pages/home/components/ConfigPanel.vue` | Banner, pre-save validation, cache invalidation |
 | Defaults | `.env.example:8,59` | Both keys ship at `131072` |

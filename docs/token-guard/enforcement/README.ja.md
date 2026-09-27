@@ -136,7 +136,7 @@ HTTP ハンドラーはそれを `{"success": False}` に変換してクライ�
 
 - `fetchModelConfig()` はキャッシュ破壊用の `_ts` クエリパラメータを付けて `GET /model-config` を呼び、空の本文をデフォルト無効オブジェクトに置き換えます。
 - `getModelConfigCached()` は一度だけ取得してモジュール全体でキャッシュします。取得失敗時はデフォルト無効オブジェクト（`valid: false`）をキャッシュするので、バックエンドの一時的な不調が送信経路を壊すことはありません。
-- `invalidateModelConfigCache()` はキャッシュを消します。`ConfigDialog` が環境保存の成功後に呼ぶので、次の `getModelConfigCached()` は再取得します。
+- `invalidateModelConfigCache()` はキャッシュを消します。`ConfigPanel` が環境保存の成功後に呼ぶので、次の `getModelConfigCached()` は再取得します。
 
 ```ts
 function invalidModelConfig(): ModelConfig {
@@ -159,7 +159,7 @@ if (!cfg.valid) {
 
 ### 環境タブのバナーと保存前検証
 
-`client/app/pages/home/components/ConfigDialog.vue`:
+`client/app/pages/home/components/ConfigPanel.vue`:
 
 - 環境タブが `*_MAX_TOKEN` キーを一つでも公開すると（`hasMaxTokenKeys`、344 行目）、琥珀色のバナーが `config.env.maxTokenHint`（211 行目）を描画します。
 - 保存時に `persistEnvChanges()` が両方のトークンキーを事前検証します（379 行目から 389 行目）。非整数または `131072` 未満の値は `config.env.maxTokenError` を設定して `false` を返すので、PUT は決して送られません:
@@ -186,5 +186,5 @@ for (const [key, value] of Object.entries(changes)) {
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | toast のタイトル |
 | `chat.tokenGuard.detail` | 同上のロケールファイル | toast の本文（システム設定 → 環境設定 を指す） |
-| `config.env.maxTokenHint` | `ConfigDialog.vue` の `<i18n>` ブロック | 琥珀色バナーの文言 |
-| `config.env.maxTokenError` | `ConfigDialog.vue` の `<i18n>` ブロック | 保存前拒否メッセージ。`{key}` が問題の変数名に展開される |
+| `config.env.maxTokenHint` | `ConfigPanel.vue` の `<i18n>` ブロック | 琥珀色バナーの文言 |
+| `config.env.maxTokenError` | `ConfigPanel.vue` の `<i18n>` ブロック | 保存前拒否メッセージ。`{key}` が問題の変数名に展開される |

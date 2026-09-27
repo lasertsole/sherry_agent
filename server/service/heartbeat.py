@@ -205,7 +205,7 @@ def heartbeat_content_length(content: str) -> int:
       - blank lines
       - the `- ` list-item marker prefixes
 
-    Mirrors the client-side counter in HeartbeatDialog.vue (totalLength).
+    Mirrors the client-side counter in HeartbeatPanel.vue (totalLength).
     """
     total = 0
     for line in content.splitlines():

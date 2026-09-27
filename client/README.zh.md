@@ -130,18 +130,18 @@ client/
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
-│   │           ├── ExtendDialog.vue           # "Extend" 对话框
-│   │           ├── ConfigDialog.vue           # 系统配置（.env 编辑器、背景、语言、……）
-│   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增，供 ConfigDialog 使用）
+│   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
+│   │           ├── ConfigPanel.vue            # 系统配置标签页（.env 编辑、背景、语言等）
+│   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增，供 ConfigPanel 使用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
-│   │           ├── PersonaDialog.vue          # 系统提示词 / 人格编辑器
-│   │           ├── MemoryDialog.vue           # 长期记忆编辑器（workspace/memory/*）
-│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md 编辑器
-│   │           ├── CronDialog.vue             # 定时任务管理（/cron）
-│   │           ├── SkillsDialog.vue           # 技能管理器（列表/上传/启停/置顶/删除/curator）
+│   │           ├── PersonaPanel.vue           # 系统提示词 / AI人格标签页
+│   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
+│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页
+│   │           ├── CronPanel.vue              # 定时任务标签页（/cron）
+│   │           ├── SkillsPanel.vue            # 技能管理标签页（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationDialog.vue     # 服务端推送通知列表
-│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 多标签面板（日志查看 / 统计 / 知识图谱）
+│   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
 │   │           ├── LogsPanel.vue              # 日志查看标签页（服务端日志 + 客户端日志，实时流）
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）

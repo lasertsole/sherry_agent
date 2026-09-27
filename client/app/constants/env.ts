@@ -5,8 +5,8 @@
  * The 128K floor is enforced in three places, all reading these values so the
  * hint, the client-side pre-check, and the backend stay in step:
  *  - the inline hint above each guarded input (`LlmModelManager.vue`);
- *  - the pre-PUT guard in `ConfigDialog.vue::persistEnvChanges` (the dialog
- *    editor for the `other` group);
+ *  - the pre-PUT guard in `ConfigPanel.vue::persistEnvChanges` (the right-sidebar
+ *    tab that edits the `other` group);
  *  - the backend's own `write_env_file` guard
  *    (`server/service/env.py::TOKEN_KEYS` / `MIN_REQUIRED_MAX_TOKEN`), which is
  *    authoritative — a save that slips past the client is still refused.

@@ -136,7 +136,7 @@ HTTP 핸들러는 이를 `{"success": False}`로 바꿔 클라이언트에 반�
 
 - `fetchModelConfig()`는 캐시 무효화용 `_ts` 쿼리 파라미터를 붙여 `GET /model-config`를 호출하고, 빈 본문을 기본 무효 객체로 대체합니다.
 - `getModelConfigCached()`는 한 번만 조회해 모듈 전역에 캐시합니다. 조회 실패 시 기본 무효 객체(`valid: false`)를 캐시하므로, 백엔드의 일시적 문제가 전송 경로를 깨뜨리는 일은 없습니다.
-- `invalidateModelConfigCache()`는 캐시를 비웁니다. `ConfigDialog`가 환경 저장 성공 후 이를 호출하므로, 다음 `getModelConfigCached()`는 다시 조회합니다.
+- `invalidateModelConfigCache()`는 캐시를 비웁니다. `ConfigPanel`가 환경 저장 성공 후 이를 호출하므로, 다음 `getModelConfigCached()`는 다시 조회합니다.
 
 ```ts
 function invalidModelConfig(): ModelConfig {
@@ -159,7 +159,7 @@ if (!cfg.valid) {
 
 ### 환경 탭 배너와 저장 전 검증
 
-`client/app/pages/home/components/ConfigDialog.vue`:
+`client/app/pages/home/components/ConfigPanel.vue`:
 
 - 환경 탭이 `*_MAX_TOKEN` 키를 하나라도 노출하면(`hasMaxTokenKeys`, 344행) 호박색 배너가 `config.env.maxTokenHint`(211행)를 렌더링합니다.
 - 저장 시 `persistEnvChanges()`가 두 토큰 키를 사전 검증합니다(379행부터 389행). 비정수 또는 `131072` 미만 값은 `config.env.maxTokenError`를 설정하고 `false`를 반환하므로, PUT은 결코 전송되지 않습니다:
@@ -186,5 +186,5 @@ for (const [key, value] of Object.entries(changes)) {
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | toast 제목 |
 | `chat.tokenGuard.detail` | 같은 로케일 파일 | toast 본문(시스템 설정 → 환경 설정을 가리킴) |
-| `config.env.maxTokenHint` | `ConfigDialog.vue`의 `<i18n>` 블록 | 호박색 배너 문구 |
-| `config.env.maxTokenError` | `ConfigDialog.vue`의 `<i18n>` 블록 | 저장 전 거부 메시지. `{key}`가 문제 변수명으로 보간됨 |
+| `config.env.maxTokenHint` | `ConfigPanel.vue`의 `<i18n>` 블록 | 호박색 배너 문구 |
+| `config.env.maxTokenError` | `ConfigPanel.vue`의 `<i18n>` 블록 | 저장 전 거부 메시지. `{key}`가 문제 변수명으로 보간됨 |

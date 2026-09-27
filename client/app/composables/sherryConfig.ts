@@ -17,7 +17,7 @@ export interface SherryConfigPayload {
  * Caller-context requirement: identical to `readEnvConfig` — `fetchApi` is
  * built on Nuxt's `useFetch` with `server:true`, which only issues a real
  * request from a live setup context. The caller MUST trigger this from setup
- * scope (see ConfigDialog.vue's setup-context watch).
+ * scope (see ConfigPanel.vue's setup-context watch).
  */
 export async function readSherryConfig(): Promise<SherryConfigPayload> {
   const res = await fetchApi<SherryConfigPayload>({

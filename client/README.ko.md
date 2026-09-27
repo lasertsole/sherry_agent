@@ -130,18 +130,18 @@ client/
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
-│   │           ├── ExtendDialog.vue           # "Extend" 대화상자
-│   │           ├── ConfigDialog.vue           # 시스템 설정(.env 편집기, 배경, 언어, ...)
-│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가, ConfigDialog용)
+│   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
+│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(.env 편집, 배경, 언어 등)
+│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가, ConfigPanel용)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
-│   │           ├── PersonaDialog.vue          # 시스템 프롬프트 / 페르소나 편집기
-│   │           ├── MemoryDialog.vue           # 장기 메모리 편집기(workspace/memory/*)
-│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md 편집기
-│   │           ├── CronDialog.vue             # cron 작업 관리(/cron)
-│   │           ├── SkillsDialog.vue           # 스킬 매니저(목록/업로드/토글/고정/삭제/curator)
+│   │           ├── PersonaPanel.vue           # 시스템 프롬프트 / 페르소나 탭
+│   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
+│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭
+│   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
+│   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationDialog.vue     # 서버 푸시 알림 목록
-│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 탭 패널(로그 / 통계 / 지식 그래프)
+│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
 │   │           ├── LogsPanel.vue              # 로그 보기 탭(서버 로그 + 클라이언트 로그, 실시간 스트림)
 │   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
 │   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)

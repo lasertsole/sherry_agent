@@ -4,7 +4,7 @@
 
 > エージェントが両方の LLM に 128K コンテキストウィンドウの下限をどう強制するか: 共有の述語が 4 つの適用ポイントで例外を投げ（サーバー起動、グラフ構築、サブエージェントのスポーン、`.env` 書き込み）、フロントエンドはブロックする前に警告し、`GET /model-config` が現在の判定を公開します。
 
-事実の出典: `config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigDialog.vue`、そして `.env.example`。本文書中のすべての行番号と定数は、そのコードに照らして検証済みです。
+事実の出典: `config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、そして `.env.example`。本文書中のすべての行番号と定数は、そのコードに照らして検証済みです。
 
 ## 目次
 
@@ -133,7 +133,7 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` の形状と `valid`: 両方最小、メイン未満、補助未設定、メイン未設定 |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | 取得のキャッシュ破壊、一度だけのキャッシュ、invalidate 後の再取得、デフォルト無効フォールバック |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend` は無効時のみ警告。有効時と取得失敗時は静か |
-| `client/app/pages/home/components/__tests__/ConfigDialog.token.test.ts` | Vitest | バナーと保存前拒否。有効値は永続化しキャッシュを無効化 |
+| `client/app/pages/home/components/__tests__/ConfigPanel.token.test.ts` | Vitest | バナーと保存前拒否。有効値は永続化しキャッシュを無効化 |
 
 ```bash
 # Python (unit + integration)
@@ -141,7 +141,7 @@ uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent
   tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
-cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.token
+cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token
 ```
 
 ## ⚠️ 制限と非目標
@@ -166,5 +166,5 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | フロントエンドキャッシュ | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |
 | フロントエンド警告 | `client/app/composables/use-chat-stream.ts:435` | 送信時の非ブロッキング toast |
-| フロントエンドダイアログ | `client/app/pages/home/components/ConfigDialog.vue` | バナー、保存前検証、キャッシュ無効化 |
+| フロントエンドパネル | `client/app/pages/home/components/ConfigPanel.vue` | バナー、保存前検証、キャッシュ無効化 |
 | 既定値 | `.env.example:8,59` | 両キーとも `131072` |

@@ -129,18 +129,18 @@ client/
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
-│   │           ├── ExtendDialog.vue           # "Extend" dialog
-│   │           ├── ConfigDialog.vue           # System config (.env editor, background, language, ...)
-│   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add, used by ConfigDialog)
+│   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
+│   │           ├── ConfigPanel.vue            # System-config tab (.env editor, background, language, ...)
+│   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add, used by ConfigPanel)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
-│   │           ├── PersonaDialog.vue          # System prompt / persona editor
-│   │           ├── MemoryDialog.vue           # Long-term memory editor (workspace/memory/*)
-│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md editor
-│   │           ├── CronDialog.vue             # Cron job management (/cron)
-│   │           ├── SkillsDialog.vue           # Skill manager (list/upload/toggle/pin/delete/curator)
+│   │           ├── PersonaPanel.vue           # System-prompt / persona tab
+│   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
+│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab
+│   │           ├── CronPanel.vue              # Cron job tab (/cron)
+│   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationDialog.vue     # Server-push notification list
-│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels (log viewer / statistics / knowledge graph)
+│   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
 │   │           ├── LogsPanel.vue              # Log-viewer tab (server logs + client logs, live stream)
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)

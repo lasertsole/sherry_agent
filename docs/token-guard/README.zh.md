@@ -4,7 +4,7 @@
 
 > Agent 如何对两个 LLM 强制 128K 上下文窗口硬下限：一个共享断言在四个执法点抛出（服务启动、图构建、子 Agent 派生、`.env` 写入），前端在被拦截之前先告警，`GET /model-config` 对外暴露实时判定。
 
-事实来源：`config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigDialog.vue`，以及 `.env.example`。本文档中的每一个行号与常量都已对照该代码核对。
+事实来源：`config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`，以及 `.env.example`。本文档中的每一个行号与常量都已对照该代码核对。
 
 ## 目录
 
@@ -133,7 +133,7 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` 的响应形状与 `valid`：两者达最小值、主值过低、辅助未设、主值未设 |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | 拉取的破缓存、只拉一次缓存、失效后重拉、默认无效回退 |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend` 仅在不达标时告警；有效与拉取失败时静默 |
-| `client/app/pages/home/components/__tests__/ConfigDialog.token.test.ts` | Vitest | 横幅与保存前拒绝；合法值持久化并让缓存失效 |
+| `client/app/pages/home/components/__tests__/ConfigPanel.token.test.ts` | Vitest | 横幅与保存前拒绝；合法值持久化并让缓存失效 |
 
 ```bash
 # Python (unit + integration)
@@ -141,7 +141,7 @@ uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent
   tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
-cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.token
+cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token
 ```
 
 ## ⚠️ 局限与非目标
@@ -166,5 +166,5 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | 前端缓存 | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |
 | 前端告警 | `client/app/composables/use-chat-stream.ts:435` | 发送时的非阻断 toast |
-| 前端对话框 | `client/app/pages/home/components/ConfigDialog.vue` | 横幅、保存前校验、缓存失效 |
+| 前端面板 | `client/app/pages/home/components/ConfigPanel.vue` | 横幅、保存前校验、缓存失效 |
 | 默认值 | `.env.example:8,59` | 两个键默认均为 `131072` |

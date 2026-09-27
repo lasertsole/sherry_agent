@@ -136,7 +136,7 @@ The client warns early but never blocks the user. The backend remains the enforc
 
 - `fetchModelConfig()` calls `GET /model-config` with a cache-busting `_ts` query param and replaces an empty body with a default-invalid object.
 - `getModelConfigCached()` fetches once and caches the result module-wide; on fetch failure it caches a default-invalid object (`valid: false`) so the send path is never broken by a backend hiccup.
-- `invalidateModelConfigCache()` clears the cache. `ConfigDialog` calls it after a successful env save, so the next `getModelConfigCached()` refetches.
+- `invalidateModelConfigCache()` clears the cache. `ConfigPanel` calls it after a successful env save, so the next `getModelConfigCached()` refetches.
 
 ```ts
 function invalidModelConfig(): ModelConfig {
@@ -159,7 +159,7 @@ When the config is valid, or when the fetch fails, the toast stays silent. The s
 
 ### Env tab banner and pre-save validation
 
-`client/app/pages/home/components/ConfigDialog.vue`:
+`client/app/pages/home/components/ConfigPanel.vue`:
 
 - When the env tab exposes any `*_MAX_TOKEN` key (`hasMaxTokenKeys`, line 344), an amber banner renders `config.env.maxTokenHint` (line 211).
 - On save, `persistEnvChanges()` pre-validates both token keys (lines 379 to 389). A non-integer or sub-`131072` value sets `config.env.maxTokenError` and returns `false`, so the PUT is never sent:
@@ -186,5 +186,5 @@ for (const [key, value] of Object.entries(changes)) {
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | Toast title |
 | `chat.tokenGuard.detail` | same locale files | Toast body (points to System Config then Environment) |
-| `config.env.maxTokenHint` | `ConfigDialog.vue` `<i18n>` block | Amber banner text |
-| `config.env.maxTokenError` | `ConfigDialog.vue` `<i18n>` block | Pre-save rejection message; `{key}` interpolates the offending var |
+| `config.env.maxTokenHint` | `ConfigPanel.vue` `<i18n>` block | Amber banner text |
+| `config.env.maxTokenError` | `ConfigPanel.vue` `<i18n>` block | Pre-save rejection message; `{key}` interpolates the offending var |

@@ -4,7 +4,7 @@
 
 > 에이전트가 두 LLM 모두에 128K 컨텍스트 윈도우 하한을 강제하는 방식: 하나의 공유 술어가 네 개의 적용 지점(서버 부팅, 그래프 빌드, 서브에이전트 스폰, `.env` 쓰기)에서 예외를 던지고, 프런트엔드는 차단하기 전에 경고하며, `GET /model-config`가 현재 판정을 노출합니다.
 
-사실 출처: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigDialog.vue`, 그리고 `.env.example`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조해 검증했습니다.
+사실 출처: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, 그리고 `.env.example`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조해 검증했습니다.
 
 ## 목차
 
@@ -133,7 +133,7 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 | `tests/server/trigger/test_model_config.py` | `integration` | `GET /model-config` 형상과 `valid`: 둘 다 최소, 메인 미만, 보조 미설정, 메인 미설정 |
 | `client/app/composables/__tests__/modelConfig.test.ts` | Vitest | 조회 캐시 무효화, 한 번만 캐시, invalidate 후 재조회, 기본 무효 폴백 |
 | `client/app/composables/__tests__/use-chat-stream.token.test.ts` | Vitest | `handleSend`는 무효일 때만 경고. 유효할 때와 조회 실패 시 조용 |
-| `client/app/pages/home/components/__tests__/ConfigDialog.token.test.ts` | Vitest | 배너와 저장 전 거부. 유효값은 영속화하고 캐시를 무효화 |
+| `client/app/pages/home/components/__tests__/ConfigPanel.token.test.ts` | Vitest | 배너와 저장 전 거부. 유효값은 영속화하고 캐시를 무효화 |
 
 ```bash
 # Python (unit + integration)
@@ -141,7 +141,7 @@ uv run pytest tests/config/test_token_guard.py tests/agent/core/test_built_agent
   tests/server/service/test_env_guard.py tests/server/trigger/test_model_config.py -q
 
 # Frontend
-cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.token
+cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.token
 ```
 
 ## ⚠️ 한계와 비목표
@@ -166,5 +166,5 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigDialog.to
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | 프런트엔드 캐시 | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
 | 프런트엔드 경고 | `client/app/composables/use-chat-stream.ts:435` | 전송 시 비차단 toast |
-| 프런트엔드 다이얼로그 | `client/app/pages/home/components/ConfigDialog.vue` | 배너, 저장 전 검증, 캐시 무효화 |
+| 프런트엔드 다이얼로그 | `client/app/pages/home/components/ConfigPanel.vue` | 배너, 저장 전 검증, 캐시 무효화 |
 | 기본값 | `.env.example:8,59` | 두 키 모두 `131072` |

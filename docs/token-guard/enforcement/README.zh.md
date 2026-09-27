@@ -136,7 +136,7 @@ HTTP 处理器会把它变成 `{"success": False}` 返回客户端，磁盘上�
 
 - `fetchModelConfig()` 调用 `GET /model-config`，附带打破缓存的 `_ts` 查询参数，并把空响应体替换为默认无效对象。
 - `getModelConfigCached()` 只拉取一次并在模块级缓存结果；拉取失败时缓存一个默认无效对象（`valid: false`），因此发送链路永远不会被后端的抖动打断。
-- `invalidateModelConfigCache()` 清空缓存。`ConfigDialog` 在环境保存成功后调用它，于是下一次 `getModelConfigCached()` 会重新拉取。
+- `invalidateModelConfigCache()` 清空缓存。`ConfigPanel` 在环境保存成功后调用它，于是下一次 `getModelConfigCached()` 会重新拉取。
 
 ```ts
 function invalidModelConfig(): ModelConfig {
@@ -159,7 +159,7 @@ if (!cfg.valid) {
 
 ### 环境标签横幅与保存前校验
 
-`client/app/pages/home/components/ConfigDialog.vue`：
+`client/app/pages/home/components/ConfigPanel.vue`：
 
 - 当环境标签暴露任意 `*_MAX_TOKEN` 键（`hasMaxTokenKeys`，第 344 行）时，渲染一条琥珀色横幅显示 `config.env.maxTokenHint`（第 211 行）。
 - 保存时，`persistEnvChanges()` 会预校验两个 token 键（第 379 至 389 行）。非整数或低于 `131072` 的值会设置 `config.env.maxTokenError` 并返回 `false`，因此 PUT 永远不会发出：
@@ -186,5 +186,5 @@ for (const [key, value] of Object.entries(changes)) {
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | Toast 标题 |
 | `chat.tokenGuard.detail` | 同上语言文件 | Toast 正文（指向 系统配置 然后 环境配置） |
-| `config.env.maxTokenHint` | `ConfigDialog.vue` 的 `<i18n>` 块 | 琥珀色横幅文案 |
-| `config.env.maxTokenError` | `ConfigDialog.vue` 的 `<i18n>` 块 | 保存前拒绝消息；`{key}` 插值出问题变量名 |
+| `config.env.maxTokenHint` | `ConfigPanel.vue` 的 `<i18n>` 块 | 琥珀色横幅文案 |
+| `config.env.maxTokenError` | `ConfigPanel.vue` 的 `<i18n>` 块 | 保存前拒绝消息；`{key}` 插值出问题变量名 |

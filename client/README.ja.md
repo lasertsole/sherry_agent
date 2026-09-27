@@ -130,18 +130,18 @@ client/
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
-│   │           ├── ExtendDialog.vue           # "Extend" ダイアログ
-│   │           ├── ConfigDialog.vue           # システム設定（.env エディター、背景、言語、...）
-│   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加、ConfigDialog 用）
+│   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
+│   │           ├── ConfigPanel.vue            # システム設定タブ（.env 編集、背景、言語など）
+│   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加、ConfigPanel 用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
-│   │           ├── PersonaDialog.vue          # システムプロンプト / ペルソナエディター
-│   │           ├── MemoryDialog.vue           # 長期メモリエディター（workspace/memory/*）
-│   │           ├── HeartbeatDialog.vue        # HEARTBEAT.md エディター
-│   │           ├── CronDialog.vue             # cron ジョブ管理（/cron）
-│   │           ├── SkillsDialog.vue           # スキルマネージャー（一覧/アップロード/切替/ピン/削除/curator）
+│   │           ├── PersonaPanel.vue           # システムプロンプト / ペルソナタブ
+│   │           ├── MemoryPanel.vue            # 長期メモリタブ（workspace/memory/*）
+│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md タブ
+│   │           ├── CronPanel.vue              # 定期タスクタブ（/cron）
+│   │           ├── SkillsPanel.vue            # スキル管理タブ（一覧 / アップロード / 切替 / ピン留め / 削除 / curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationDialog.vue     # サーバー push 通知リスト
-│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— タブ式パネル（ログ / 統計 / ナレッジグラフ）
+│   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
 │   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
