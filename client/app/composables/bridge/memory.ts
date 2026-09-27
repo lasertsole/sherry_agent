@@ -70,3 +70,61 @@ export async function writeHeartbeat(fileToContent: Record<string, string>): Pro
     method: 'put'
   });
 }
+
+/** Global heartbeat switch state (the 心跳 panel's toggle). */
+export interface HeartbeatStatus {
+  /** The persisted choice — what the switch shows. */
+  enabled: boolean;
+  /** The live scheduler state (differs briefly right after a toggle). */
+  running: boolean;
+  /** Tick interval in seconds. */
+  interval_s: number;
+}
+
+/**
+ * Read the global heartbeat switch state (`GET /heartbeat/status`).
+ */
+export async function fetchHeartbeatStatus(): Promise<HeartbeatStatus> {
+  const res = await fetchApiPayload<HeartbeatStatus>({
+    url: '/heartbeat/status',
+    opts: { _ts: Date.now() },
+    method: 'get'
+  });
+  return normalizeHeartbeatStatus(res);
+}
+
+/**
+ * Toggle the global heartbeat scheduler (`PUT /heartbeat/status`).
+ *
+ * Applies immediately on the running service and persists to `sherry.jsonc`, so
+ * the choice survives a restart. Rejects when the backend refuses (e.g. the
+ * config write failed) — the caller reverts its optimistic switch.
+ * @param enabled
+ */
+export async function setHeartbeatEnabled(enabled: boolean): Promise<HeartbeatStatus> {
+  const res = await fetchApiPayload<HeartbeatStatus & { success?: boolean; message?: string }>({
+    url: '/heartbeat/status',
+    opts: { enabled },
+    method: 'put'
+  });
+  if (res && res.success === false) {
+    throw new Error(res.message || 'heartbeat toggle failed');
+  }
+  return normalizeHeartbeatStatus(res);
+}
+
+/**
+ * Coerce a status payload into the typed shape (the switch needs a definite
+ * boolean, and a missing field must not read as "off").
+ * @param raw
+ */
+function normalizeHeartbeatStatus(
+  raw: (Partial<HeartbeatStatus> & { data?: Partial<HeartbeatStatus> }) | null
+): HeartbeatStatus {
+  const source = raw?.data ?? raw ?? {};
+  return {
+    enabled: source.enabled === true,
+    running: source.running === true,
+    interval_s: Number(source.interval_s ?? 0)
+  };
+}

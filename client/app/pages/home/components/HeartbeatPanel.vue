@@ -11,6 +11,29 @@
         <ProgressSpinner style="width: 2rem; height: 2rem" />
       </div>
       <template v-else>
+        <!-- Global heartbeat switch: applies to the running scheduler at once and
+             persists to sherry.jsonc, so it also holds across a restart. -->
+        <div
+          class="flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-100 px-3 py-2 dark:border-gray-800">
+          <div class="flex min-w-0 flex-col">
+            <span class="text-sm font-medium text-gray-700 dark:text-gray-200">
+              {{ t('config.heartbeat.globalSwitch') }}
+            </span>
+            <span class="text-xs text-gray-400 dark:text-gray-500">
+              {{
+                statusLoaded && !heartbeatEnabled
+                  ? t('config.heartbeat.globalSwitchOff')
+                  : t('config.heartbeat.globalSwitchHint', { minutes: intervalMinutes })
+              }}
+            </span>
+          </div>
+          <ToggleSwitch
+            :model-value="heartbeatEnabled"
+            :disabled="!statusLoaded || togglingEnabled"
+            :aria-label="t('config.heartbeat.globalSwitch')"
+            @update:model-value="handleToggleEnabled" />
+        </div>
+
         <!-- Header row: effectiveHint (left) + char counter (right) -->
         <div class="flex items-center justify-between gap-2">
           <div class="flex items-start gap-1 text-xs text-blue-500 dark:text-blue-400">
@@ -154,6 +177,54 @@ const COMPLETED_HEADER = '## Completed';
 
 const loading = ref(false);
 const saving = ref(false);
+
+/** Global heartbeat switch: null until the backend reported its state. */
+const heartbeatEnabled = ref(false);
+const statusLoaded = ref(false);
+const togglingEnabled = ref(false);
+/** Tick interval in seconds, reported with the status (drives the hint copy). */
+const heartbeatIntervalS = ref(0);
+
+/** Tick interval in whole minutes (the hint copy is written in minutes). */
+const intervalMinutes = computed(() => Math.max(1, Math.round(heartbeatIntervalS.value / 60)));
+
+/**
+ * Load the switch state (at mount, alongside the file content).
+ */
+const loadStatus = async () => {
+  try {
+    const status = await fetchHeartbeatStatus();
+    heartbeatEnabled.value = status.enabled;
+    heartbeatIntervalS.value = status.interval_s;
+    statusLoaded.value = true;
+  } catch (e) {
+    logUtil.e('[HeartbeatPanel] Failed to load the heartbeat switch state:', e);
+  }
+};
+
+/**
+ * Toggle the global heartbeat: optimistic (the switch moves at once), rolled
+ * back when the backend refuses — a switch that keeps showing a state the
+ * backend never applied would make the panel lie about what is running.
+ * @param value
+ */
+const handleToggleEnabled = async (value: boolean | undefined) => {
+  const next = value === true;
+  const previous = heartbeatEnabled.value;
+  if (next === previous || togglingEnabled.value) return;
+  heartbeatEnabled.value = next;
+  togglingEnabled.value = true;
+  try {
+    const status = await setHeartbeatEnabled(next);
+    heartbeatEnabled.value = status.enabled;
+    heartbeatIntervalS.value = status.interval_s;
+  } catch (e) {
+    heartbeatEnabled.value = previous;
+    logUtil.e('[HeartbeatPanel] Failed to toggle the global heartbeat:', e);
+  } finally {
+    togglingEnabled.value = false;
+  }
+};
 
 /** File header region above "## Active Tasks" (fixed, not editable). */
 const header = ref('');
@@ -364,7 +435,10 @@ const handleSave = async () => {
 };
 
 // The tab's lifetime drives the load.
-onMounted(loadContent);
+onMounted(() => {
+  void loadContent();
+  void loadStatus();
+});
 </script>
 
 <i18n lang="json">
@@ -373,6 +447,9 @@ onMounted(loadContent);
     "config": {
       "heartbeat": {
         "addTask": "添加任务",
+        "globalSwitch": "全局心跳",
+        "globalSwitchHint": "开启中：每 {minutes} 分钟检查一次任务",
+        "globalSwitchOff": "已关闭：定时心跳不会触发（重启后仍然关闭）",
         "effectiveHint": "此文件每30分钟被检查一次。请在下方添加希望 Agent 定期处理的任务。若仅剩标题/注释（没有任务），则将跳过心跳。",
         "activeEmpty": "暂无活动任务。请在下方添加新任务。",
         "completedEmpty": "暂无已完成任务。",
@@ -386,6 +463,9 @@ onMounted(loadContent);
     "config": {
       "heartbeat": {
         "addTask": "Add task",
+        "globalSwitch": "Global heartbeat",
+        "globalSwitchHint": "On: checks the tasks every {minutes} minutes",
+        "globalSwitchOff": "Off: the periodic heartbeat does not fire (and stays off after a restart)",
         "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
         "activeEmpty": "No active tasks. Add new tasks below.",
         "completedEmpty": "No completed tasks yet.",
@@ -399,6 +479,9 @@ onMounted(loadContent);
     "config": {
       "heartbeat": {
         "addTask": "タスクを追加",
+        "globalSwitch": "グローバル ハートビート",
+        "globalSwitchHint": "{minutes} 分ごとにタスクを確認します",
+        "globalSwitchOff": "オフ：定期ハートビートは実行されません（再起動後もオフのまま）",
         "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
         "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
         "completedEmpty": "完了済みのタスクはまだありません。",
@@ -412,6 +495,9 @@ onMounted(loadContent);
     "config": {
       "heartbeat": {
         "addTask": "작업 추가",
+        "globalSwitch": "전역 하트비트",
+        "globalSwitchHint": "{minutes}분마다 작업을 확인합니다",
+        "globalSwitchOff": "꺼짐: 주기 하트비트가 실행되지 않습니다(재시작 후에도 꺼진 상태 유지)",
         "effectiveHint": "이 파일은 30분마다 확인됩니다. 에이전트가 주기적으로 처리하길 원하는 작업을 아래에 추가하세요. 헤더/주석만 남고 작업이 없으면 하트비트를 건너뜁니다.",
         "activeEmpty": "활성 작업이 없습니다. 아래에서 새 작업을 추가하세요.",
         "completedEmpty": "완료된 작업이 아직 없습니다.",

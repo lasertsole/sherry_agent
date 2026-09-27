@@ -36,6 +36,9 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "LOG_LEVEL": "INFO",
     "SUBAGENT_TODO_DONE_FUNC": "archive",
     "WORKSPACE_TEMPLATE_LANG": "en",
+    # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off also
+    # survives a restart: the boot path reads this value before starting.
+    "heartbeat.enabled": True,
     "LANGSMITH.TRACING_V2": False,
     "LANGSMITH.API_KEY": "",
     "LANGSMITH.PROJECT": "EMA_AI_agent",
@@ -62,6 +65,7 @@ _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
 _BOOL_KEYS = frozenset(
     {
         "LANGSMITH.TRACING_V2",
+        "heartbeat.enabled",
         "curator.enabled",
         "curator.consolidate",
         "curator.prune_builtins",

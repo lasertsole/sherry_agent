@@ -15,6 +15,9 @@ SAMPLE = """// app settings
 
   "SUBAGENT_TODO_DONE_FUNC": "archive",
   "WORKSPACE_TEMPLATE_LANG": "en",
+  "heartbeat": {
+    "enabled": true
+  },
   "LANGSMITH": {
     "TRACING_V2": false,
     "API_KEY": "",

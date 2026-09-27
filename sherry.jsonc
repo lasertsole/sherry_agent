@@ -20,6 +20,14 @@
   // 人设模板语言（首次使用时从 workspace/template/{lang}/ 懒拷贝）
   "WORKSPACE_TEMPLATE_LANG": "en",
 
+  // Global heartbeat scheduler switch (the 心跳 panel toggle writes this value and applies it live).
+  // false = the periodic heartbeat never fires; delivery to channels is separately gated per channel.
+  // 全局心跳调度开关（「心跳」面板里的开关会写这里并立即生效）；false 表示定时心跳不再触发，
+  // 通道投递另有每个通道的 heartbeat 开关控制。
+  "heartbeat": {
+    "enabled": true
+  },
+
   // LangSmith tracing
   "LANGSMITH": {
     "TRACING_V2": false,

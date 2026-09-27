@@ -68,7 +68,15 @@ export {
 } from './bridge/system-prompt';
 
 // ── Memory & heartbeat ──────────────────────────────────
-export { readMemory, writeMemory, readHeartbeat, writeHeartbeat } from './bridge/memory';
+export {
+  readMemory,
+  writeMemory,
+  readHeartbeat,
+  writeHeartbeat,
+  fetchHeartbeatStatus,
+  setHeartbeatEnabled
+} from './bridge/memory';
+export type { HeartbeatStatus } from './bridge/memory';
 
 // ── Cron (scheduled tasks) ──────────────────────────────
 export type {

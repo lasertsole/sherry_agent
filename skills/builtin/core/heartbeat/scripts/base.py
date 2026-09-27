@@ -172,6 +172,15 @@ class HeartbeatService:
             self._task.cancel()
             self._task = None
 
+    @property
+    def is_running(self) -> bool:
+        """Whether the periodic loop is currently scheduled.
+
+        The runtime toggle reads this to report the real state (a service marked
+        ``enabled`` still reports not-running before its first start).
+        """
+        return self._running
+
     async def _run_loop(self) -> None:
         """Main heartbeat loop."""
         while self._running:
