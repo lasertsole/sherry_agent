@@ -153,33 +153,19 @@
             <div
               v-show="!hitlRequest"
               class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
-              <div class="hidden sm:block">
-                <Button
-                  v-for="tool in tools"
-                  :key="tool.event"
-                  :icon="tool.icon"
-                  :label="t(tool.toolName)"
-                  @click="handleOperate('toolBar', tool.event)"
-                  size="small"
-                  variant="text" />
-              </div>
-              <div class="block sm:hidden">
-                <Button
-                  v-for="tool in tools"
-                  :key="tool.event"
-                  :icon="tool.icon"
-                  :aria-label="t(tool.toolName)"
-                  @click="handleOperate('toolBar', tool.event)"
-                  size="small"
-                  variant="text" />
-              </div>
-              <!-- Per-session model thinking control (right side of the media toolbar); locked while a turn streams -->
-              <ThinkingToggle
+              <!-- Media entry: image / audio / video uploads collapsed into one
+                   dropdown (same trigger + popup shape as the model picker) -->
+              <MediaMenu @select="event => handleOperate('toolBar', event)" />
+              <!-- Per-session model + thinking controls (right side of the media
+                   toolbar). Switching is allowed at any time; a mid-turn change
+                   is parked by the backend and lands on the next turn. -->
+              <div
                 v-if="mySid"
-                class="ml-auto"
-                :session-id="mySid"
-                :streaming="isSending" />
-              <!-- Hidden image file input: triggered by the toolbar image button via triggerImagePicker() -->
+                class="ml-auto flex items-center">
+                <SessionModelPicker :session-id="mySid" />
+                <ThinkingToggle :session-id="mySid" />
+              </div>
+              <!-- Hidden image file input: triggered by the media menu's image entry via triggerImagePicker() -->
               <input
                 ref="imageFileInputRef"
                 type="file"
@@ -187,7 +173,7 @@
                 multiple
                 class="hidden"
                 @change="onImageSelected" />
-              <!-- Hidden audio file input: triggered by the toolbar audio button via triggerAudioPicker() -->
+              <!-- Hidden audio file input: triggered by the media menu's audio entry via triggerAudioPicker() -->
               <input
                 ref="audioFileInputRef"
                 type="file"
@@ -195,7 +181,7 @@
                 multiple
                 class="hidden"
                 @change="onAudioSelected" />
-              <!-- Hidden video file input: triggered by the toolbar video button via triggerVideoPicker() -->
+              <!-- Hidden video file input: triggered by the media menu's video entry via triggerVideoPicker() -->
               <input
                 ref="videoFileInputRef"
                 type="file"
@@ -353,11 +339,12 @@ import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watc
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
-import { tools } from '../config';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
+import SessionModelPicker from '../components/SessionModelPicker.vue';
+import MediaMenu from '../components/MediaMenu.vue';
 import { useTodoStore } from '~/stores/todo';
 
 // Image preview

@@ -19,8 +19,8 @@ export interface Tool {
   toolName: string;
   /** Icon */
   icon: string;
-  /** Hover tooltip */
-  title: string;
+  /** Hover tooltip (media entries carry none: the trigger names the category) */
+  title?: string;
   /** Event to trigger */
   event: string;
   /** label--for component adaptation */

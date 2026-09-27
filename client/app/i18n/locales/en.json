@@ -45,7 +45,6 @@
   "sidebar": {
     "tasksLoading": "Loading tasks...",
     "noTasks": "No background tasks yet",
-    "tasksUpdatedAt": "Updated {time}",
     "tasksAgoSeconds": "{sec}s ago",
     "statusRunning": "Running",
     "statusInterrupted": "Interrupted",
@@ -62,13 +61,9 @@
   },
   "toolbar": {
     "newChat": "New Chat",
-    "knowledgeBase": "Knowledge Base",
-    "uploadImage": "Upload Image",
     "image": "Image",
     "audio": "Audio",
-    "uploadAudio": "Upload Audio",
     "video": "Video",
-    "uploadVideo": "Upload Video",
     "skills": "Skills",
     "knowledgeGraph": "Knowledge Graph",
     "stats": "Statistics",

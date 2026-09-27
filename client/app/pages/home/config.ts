@@ -1,22 +1,23 @@
 import type { Tool } from './type';
 
+/**
+ * Media entries of the session input toolbar: the option list of the collapsed
+ * 多媒体 dropdown (see home/components/MediaMenu.vue).
+ */
 export const tools: Tool[] = [
   {
     toolName: 'toolbar.image',
     icon: 'pi pi-image',
-    title: 'toolbar.uploadImage',
     event: 'uploadImage'
   },
   {
     toolName: 'toolbar.audio',
     icon: 'pi pi-microphone',
-    title: 'toolbar.uploadAudio',
     event: 'uploadAudio'
   },
   {
     toolName: 'toolbar.video',
     icon: 'pi pi-video',
-    title: 'toolbar.uploadVideo',
     event: 'uploadVideo'
   }
 ];

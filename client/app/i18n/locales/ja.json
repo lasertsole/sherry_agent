@@ -45,7 +45,6 @@
   "sidebar": {
     "tasksLoading": "タスクを読み込み中...",
     "noTasks": "バックグラウンドタスクはまだありません",
-    "tasksUpdatedAt": "{time} に更新",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "実行中",
     "statusInterrupted": "中断",
@@ -62,13 +61,9 @@
   },
   "toolbar": {
     "newChat": "新しい会話",
-    "knowledgeBase": "ナレッジベース",
-    "uploadImage": "画像をアップロード",
     "image": "画像",
     "audio": "音声",
-    "uploadAudio": "音声をアップロード",
     "video": "動画",
-    "uploadVideo": "動画をアップロード",
     "skills": "スキル",
     "knowledgeGraph": "ナレッジグラフ",
     "stats": "統計",
