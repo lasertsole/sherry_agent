@@ -1,8 +1,8 @@
 import type { Tool } from './type';
 
 /**
- * Media entries of the session input toolbar: the option list of the collapsed
- * 多媒体 dropdown (see home/components/MediaMenu.vue).
+ * Media entries of the session input toolbar: the option list behind the plus
+ * glyph (see home/components/MediaMenu.vue).
  */
 export const tools: Tool[] = [
   {

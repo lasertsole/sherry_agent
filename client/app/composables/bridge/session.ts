@@ -209,6 +209,86 @@ export async function getHistory(sessionId: string, lastTurnCount: number = 10):
 export type ThinkingMode = 'on_off' | 'levels';
 export type ThinkingValue = boolean | 'low' | 'high' | 'max';
 
+/** Toolbar shield control: how much the session may do unattended. */
+export type AccessMode = 'confirm_all' | 'auto_edit' | 'full_access';
+
+/** Modes the backend understands, for narrowing a raw payload value. */
+const ACCESS_MODES: AccessMode[] = ['confirm_all', 'auto_edit', 'full_access'];
+
+/**
+ * Narrow a raw ``mode`` payload value to an :type:`AccessMode`.
+ * @param raw
+ */
+const toAccessMode = (raw: string | undefined): AccessMode => ACCESS_MODES.find(mode => mode === raw) ?? 'auto_edit';
+
+/**
+ * Read the session's access mode (``auto_edit`` unless another one was chosen).
+ * @param sessionId
+ */
+export async function fetchAccessMode(sessionId: string): Promise<AccessMode> {
+  const res = await fetchApiPayload<{ mode?: string }>({
+    url: '/sessions/access_mode',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return toAccessMode(res.mode);
+}
+
+/**
+ * Switch the session's access mode; applies from the next tool call on.
+ * ``confirm_all`` and ``full_access`` are mutually exclusive — the backend
+ * clears the other flag on every write, and ``auto_edit`` clears both.
+ * @param sessionId
+ * @param mode
+ */
+export async function setAccessMode(sessionId: string, mode: AccessMode): Promise<AccessMode> {
+  const res = await fetchApiPayload<{ mode?: string }>({
+    url: '/sessions/access_mode',
+    opts: { session_id: sessionId, mode },
+    method: 'put'
+  });
+  return toAccessMode(res.mode);
+}
+
+export interface ContextUsage {
+  /** Context window of the configured main LLM. */
+  window: number;
+  /** Prompt size the provider reported for the session's last finished turn. */
+  total: number;
+  /** System-prompt estimate. */
+  system: number;
+  /** Main tool-schema estimate. */
+  tools: number;
+  /** Rest of the reported prompt (the conversation itself). */
+  messages: number;
+  /** Session-wide cached-prompt share (cached / prompt tokens), null when unknown. */
+  cache_hit_ratio: number | null;
+  /** Pressure at which summarization compacts the session (share of the window). */
+  compress_ratio: number;
+}
+
+/**
+ * Read the session's context accounting: the window, the reported prompt size
+ * and how it splits into system prompt / tool schemas / messages.
+ * @param sessionId
+ */
+export async function fetchContextUsage(sessionId: string): Promise<ContextUsage> {
+  const res = await fetchApiPayload<ContextUsage>({
+    url: '/context_usage',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return {
+    window: Number(res.window ?? 0),
+    total: Number(res.total ?? 0),
+    system: Number(res.system ?? 0),
+    tools: Number(res.tools ?? 0),
+    messages: Number(res.messages ?? 0),
+    cache_hit_ratio: typeof res.cache_hit_ratio === 'number' ? res.cache_hit_ratio : null,
+    compress_ratio: Number(res.compress_ratio ?? 0)
+  };
+}
+
 export interface ThinkingState {
   mode: ThinkingMode;
   enabled: boolean | null;

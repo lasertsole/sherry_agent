@@ -28,13 +28,15 @@
           <i class="pi pi-angle-right text-xs text-gray-400"></i>
         </div>
         <ChatBox
+          ref="chatBoxRef"
           :messages="chatMessages"
           :user-avatar="characterInfo.userAvatar"
           :ai-avatar="characterInfo.aiAvatar"
           :user-name="characterInfo.userName"
           :ai-name="characterInfo.aiName"
           :loading-older="loadingOlder"
-          @reach-top="loadOlderHistory" />
+          @reach-top="loadOlderHistory"
+          @release-head="onReleaseHead" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -156,12 +158,29 @@
               <!-- Media entry: image / audio / video uploads collapsed into one
                    dropdown (same trigger + popup shape as the model picker) -->
               <MediaMenu @select="event => handleOperate('toolBar', event)" />
+              <!-- Access mode: one position right of the media entry, showing the
+                   current mode's shield (confirm changes / auto-edit / full
+                   access). -->
+              <AccessModePicker
+                v-if="mySid"
+                :session-id="mySid" />
+              <!-- Running background work of this session (terminal entry): opens a
+                   right-sidebar tab; the badge counts what still owns a slot. -->
+              <TasksButton
+                v-if="mySid"
+                :session-id="mySid"
+                @focus="onTasksFocus" />
               <!-- Per-session model + thinking controls (right side of the media
                    toolbar). Switching is allowed at any time; a mid-turn change
                    is parked by the backend and lands on the next turn. -->
               <div
                 v-if="mySid"
                 class="ml-auto flex items-center">
+                <!-- Context ring sits immediately left of the model picker (it
+                     reports what that model's window holds). -->
+                <ContextUsageButton
+                  :session-id="mySid"
+                  :used-tokens="lastPromptTokens" />
                 <SessionModelPicker :session-id="mySid" />
                 <ThinkingToggle :session-id="mySid" />
               </div>
@@ -339,10 +358,14 @@ import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watc
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { MessageItem } from '../type.ts';
+import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
 import SubagentTasksView from '../components/SubagentTasksView.vue';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
+import ContextUsageButton from '../components/ContextUsageButton.vue';
+import TasksButton from '../components/TasksButton.vue';
+import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import MediaMenu from '../components/MediaMenu.vue';
 import { useTodoStore } from '~/stores/todo';
@@ -379,7 +402,7 @@ const viewMode = ref<'chat' | 'tasks'>('chat');
 /** run_id carried when clicking sidebar task items, used for locating/expanding/highlighting that run in the task list page. */
 const targetRunId = ref<string | undefined>(undefined);
 
-const { taskRuns, initTasks, setTasksTabActive } = useSubagentTasks();
+const { taskRuns, initTasks, setTasksTabActive, focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
 
 /**
@@ -398,6 +421,33 @@ const onShowTasks = (payload: unknown) => {
 const onShowChat = () => {
   viewMode.value = 'chat';
   setTasksTabActive(false);
+};
+
+/** The chat list, so the toolbar's terminal entry can reveal a command's card. */
+const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void }>('chatBoxRef');
+
+/**
+ * A row of the toolbar's terminal entry was picked: show where that work lives.
+ *
+ * A sub-agent opens the background-task view focused on its run (the live
+ * context of the child agent, the same destination as the sidebar's task
+ * items); a terminal command reveals its own tool card in the chat, because the
+ * card is where the command's output streams — no extra panel needed.
+ * @param payload Which row was picked (`run` / `command`) and its id.
+ * @param payload.kind
+ * @param payload.id
+ */
+const onTasksFocus = (payload: { kind: 'run' | 'command'; id: string | number }) => {
+  if (payload.kind === 'run') {
+    const runId = String(payload.id);
+    focusRun(runId);
+    onShowTasks(runId);
+    setTasksTabActive(true);
+    return;
+  }
+  // The command's log is in the chat: leave the task view, then reveal the card.
+  onShowChat();
+  void nextTick(() => chatBoxRef.value?.scrollToMessage(Number(payload.id)));
 };
 
 /**
@@ -473,7 +523,11 @@ const drafts = useDraftPersistence(chatMessages);
 
 // Scroll-up pagination: pulling to the top fetches the next older turn window
 // and prepends it; the virtualizer's end anchoring keeps the viewport stable.
-const { loadingOlder, loadOlder: loadOlderHistory } = useChatOlderHistory({
+const {
+  loadingOlder,
+  loadOlder: loadOlderHistory,
+  resetExhausted
+} = useChatOlderHistory({
   sessionId: () => mySid,
   messages: () => chatMessages.value,
   prepend: rows => {
@@ -484,6 +538,43 @@ const { loadingOlder, loadOlder: loadOlderHistory } = useChatOlderHistory({
     // preserves the list's ascending turn order.
     chatMessages.value = [...fresh, ...chatMessages.value];
   }
+});
+
+/**
+ * The list released its oldest loaded rows to stay under its memory cap: drop
+ * them from the in-memory history and re-arm paging, so scrolling back up
+ * fetches them again (the Dexie cache and the server still have them).
+ * @param messageIds Ids the list let go of.
+ */
+const onReleaseHead = (messageIds: number[]) => {
+  if (!messageIds.length) return;
+  const released = new Set(messageIds);
+  chatMessages.value = chatMessages.value.filter(message => !released.has(message.id));
+  resetExhausted();
+};
+
+/**
+ * Prompt size the provider reported for the newest finished turn — the context
+ * the model actually saw. Drives the toolbar's usage ring before (and between)
+ * the backend reads.
+ */
+const lastPromptTokens = computed(() => {
+  for (let i = chatMessages.value.length - 1; i >= 0; i -= 1) {
+    const message = chatMessages.value[i];
+    if (message && message.role === CHAT_ROLE.AI && message.inputTokens) return message.inputTokens;
+  }
+  return 0;
+});
+
+/**
+ * Running tool calls of this session feed the toolbar's terminal entry: a TOOL
+ * row is only reported while the session is generating (a finished turn — or a
+ * turn paused on an approval card — owns nothing that is executing).
+ */
+const runningCommands = useRunningCommandsStore();
+watch([chatMessages, isSending], ([messages, sending]) => runningCommands.sync(messages, sending), {
+  immediate: true,
+  deep: false
 });
 
 const chunks = useStreamChunks(chatMessages, drafts.allocateTempId, drafts);

@@ -31,11 +31,14 @@ function mountMenu() {
 }
 
 describe('MediaMenu.vue (integration)', () => {
-  it('collapses image / audio / video into one 多媒体 entry', () => {
+  it('collapses image / audio / video behind one plus-glyph trigger', () => {
     const wrapper = mountMenu();
 
-    // One trigger naming the category; the three kinds are not in the row.
-    expect(wrapper.find('button.trigger').text()).toContain('多媒体');
+    // One trigger, labelled by a plus glyph rather than by category text; the
+    // three kinds are not in the row.
+    const trigger = wrapper.find('button.trigger');
+    expect(trigger.text().trim()).toBe('');
+    expect(trigger.find('i.pi-plus').exists()).toBe(true);
     expect(wrapper.text()).not.toContain('图片');
     expect(wrapper.findAll('button.opt').length).toBe(0);
   });
