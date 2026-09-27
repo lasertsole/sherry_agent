@@ -352,3 +352,70 @@ class TestLoopGuard:
 
         with pytest.raises(RuntimeError, match="running event loop"):
             asyncio.run(_call())
+
+
+class TestResultPolling:
+    """``result()`` is synchronous-only; :meth:`result_async` is the loop-safe twin."""
+
+    @staticmethod
+    def _terminal_run():
+        from agent.tools.subagent.types.registry import RunOutcome, RunOutcomeStatus
+
+        class _FakeRun:
+            class _Execution:
+                # ``poll()`` only lifts the terminal fields once the execution
+                # status reads TERMINAL.
+                status = "TERMINAL"
+                outcome = RunOutcome(status=RunOutcomeStatus.OK, error=None)
+
+            class _Completion:
+                result_text = "mock result"
+
+            execution = _Execution()
+            completion = _Completion()
+
+        return _FakeRun()
+
+    def test_result_from_a_loop_thread_raises_with_the_async_twin(self, monkeypatch):
+        handle = DelegatedTaskHandle(status="accepted", run_id="r1")
+        monkeypatch.setattr(delegate, "get_run", lambda run_id: self._terminal_run())
+
+        async def _call():
+            handle.result()
+
+        with pytest.raises(RuntimeError, match="result_async"):
+            asyncio.run(_call())
+
+    def test_result_outside_a_loop_still_blocks_and_populates(self, monkeypatch):
+        handle = DelegatedTaskHandle(status="accepted", run_id="r1")
+        handle.is_running = lambda: False  # type: ignore[method-assign]
+        monkeypatch.setattr(delegate, "get_run", lambda run_id: self._terminal_run())
+
+        out = handle.result(poll_interval=0)
+
+        assert out is handle
+        assert out.result_text == "mock result"
+
+    @pytest.mark.asyncio
+    async def test_result_async_polls_without_blocking_the_loop(self, monkeypatch):
+        handle = DelegatedTaskHandle(status="accepted", run_id="r1")
+        state = {"done": False, "ticks": 0}
+        handle.is_running = lambda: not state["done"]  # type: ignore[method-assign]
+        monkeypatch.setattr(delegate, "get_run", lambda run_id: self._terminal_run())
+
+        async def _ticker():
+            while not state["done"]:
+                state["ticks"] += 1
+                await asyncio.sleep(0.001)
+
+        async def _finish_soon():
+            await asyncio.sleep(0.03)
+            state["done"] = True
+
+        ticker = asyncio.create_task(_ticker())
+        result, _ = await asyncio.gather(handle.result_async(poll_interval=0.005), _finish_soon())
+        await ticker
+
+        assert result is handle
+        assert result.result_text == "mock result"
+        assert state["ticks"] > 1, "the loop kept running while result_async waited"
