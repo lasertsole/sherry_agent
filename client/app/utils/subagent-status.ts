@@ -131,7 +131,9 @@ export const SUBAGENT_STATUS_FALLBACK: SubagentStatusMeta = {
  */
 export function subagentStatusMeta(status: string | null | undefined): SubagentStatusMeta {
   if (!status) return SUBAGENT_STATUS_FALLBACK;
-  return SUBAGENT_STATUS_META[status as SubagentStatus] ?? SUBAGENT_STATUS_FALLBACK;
+  // The same vocabulary arrives lower-cased over HTTP/WS (the backend enums'
+  // values) and upper-cased over the native IPC payload, so match on one case.
+  return SUBAGENT_STATUS_META[String(status).toUpperCase() as SubagentStatus] ?? SUBAGENT_STATUS_FALLBACK;
 }
 
 /**

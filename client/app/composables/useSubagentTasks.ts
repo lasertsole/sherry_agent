@@ -14,6 +14,7 @@ import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 import { useSubagentStore } from '~/stores/subagent';
 import { subagentStatusMeta } from '~/utils/subagent-status';
+import { isRunning } from '~/utils/subagent';
 import type { SubagentRun } from './bridge';
 
 /**
@@ -50,7 +51,7 @@ export function useSubagentTasks() {
    */
   function badgeClass(run: SubagentRun): string {
     const exec = run?.execution?.status;
-    if (exec === 'RUNNING' || exec === 'INTERRUPTED') return subagentStatusMeta(exec).badgeClass;
+    if (isRunning(run)) return subagentStatusMeta(exec).badgeClass;
     return subagentStatusMeta(run?.execution?.outcome?.status).badgeClass;
   }
 
@@ -60,8 +61,8 @@ export function useSubagentTasks() {
    */
   function statusLabel(run: SubagentRun): string {
     const exec = run?.execution?.status;
-    if (exec === 'RUNNING' || exec === 'INTERRUPTED') return t(subagentStatusMeta(exec).labelKey);
-    const delivery = run?.delivery?.status;
+    if (isRunning(run)) return t(subagentStatusMeta(exec).labelKey);
+    const delivery = String(run?.delivery?.status ?? '').toUpperCase();
     if (delivery === 'PENDING' || delivery === 'IN_PROGRESS' || delivery === 'DELIVERED') {
       return t(subagentStatusMeta(delivery).labelKey);
     }
@@ -91,7 +92,9 @@ export function useSubagentTasks() {
    * @param run
    */
   function parentSessionLabel(run: SubagentRun): string {
-    return run?.requester_session_key || '-';
+    // The recorded key is the announcer form (``agent:main:session:{id}``);
+    // show the bare id the session list uses.
+    return normalizeSessionKey(run?.requester_session_key) || '-';
   }
 
   /** Last-updated time text (second granularity) */

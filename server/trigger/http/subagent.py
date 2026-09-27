@@ -15,6 +15,7 @@ from server.trigger.core import app
 # noqa: F401 -- re-export contract asserted by test_subagent_serialize
 from server.trigger.subagent_serialize import PUBLIC_FIELDS as _PUBLIC_FIELDS  # noqa: F401
 from server.trigger.subagent_serialize import serialize_run as _serialize_run
+from agent.tools.subagent.registry.session_keys import denormalize_session_key
 
 from agent.tools.subagent.registry.read import (
     list_descendant_runs_readonly,
@@ -80,6 +81,11 @@ async def get_subagent_runs_handler(request):
     session_id: str | None = query_params.get("session_id", None)
     scope: str = query_params.get("scope", "descendants")
     run_id: str | None = query_params.get("run_id", None)
+    # Callers name the session either way round: the chat UI sends the bare id
+    # while the announce side stores the prefixed ``agent:main:session:{id}``
+    # form, and the registry matches on that prefixed form. Accept both.
+    if session_id:
+        session_id = denormalize_session_key(session_id)
     logger.debug(f"Reading sub-agent runs: session_id={session_id}, run_id={run_id}, scope={scope}")
 
     if run_id:

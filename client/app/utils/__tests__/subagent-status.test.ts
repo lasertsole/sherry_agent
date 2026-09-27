@@ -97,6 +97,15 @@ describe('SUBAGENT_STATUS_META', () => {
     expect(subagentStatusMeta('DELIVERED')).toBe(SUBAGENT_STATUS_META.DELIVERED);
   });
 
+  it('resolves the lower-case wire values (HTTP / WS payloads) too', () => {
+    // The backend serializes its enums' values (lower-case); the native IPC
+    // payload upper-cases them. Both must land on the same entry.
+    expect(subagentStatusMeta('running')).toBe(SUBAGENT_STATUS_META.RUNNING);
+    expect(subagentStatusMeta('ok')).toBe(SUBAGENT_STATUS_META.OK);
+    expect(subagentStatusMeta('interrupted')).toBe(SUBAGENT_STATUS_META.INTERRUPTED);
+    expect(subagentStatusColorLight('ok')).toBe('#10b981');
+  });
+
   it.each([undefined, null, '', 'WEIRD'])('falls back for the unknown status %o', status => {
     expect(subagentStatusMeta(status)).toBe(SUBAGENT_STATUS_FALLBACK);
     expect(subagentStatusColorLight(status)).toBe('#64748b');

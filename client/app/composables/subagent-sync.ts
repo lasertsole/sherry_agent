@@ -79,7 +79,16 @@ export function resolveSid(force?: string): string | undefined {
  */
 export function filterBySession(runs: CachedSubagentRun[], sid: string | undefined): SubagentRun[] {
   if (!sid) return [];
-  return runs.filter(c => c.requester_session_key === sid || c.child_session_key === sid).map(toSubagentRun);
+  // Runs are recorded against the prefixed announcer key
+  // (``agent:main:session:{id}``) while the page knows the bare id, so compare
+  // the normalized forms — a raw comparison drops every run of the session.
+  const target = normalizeSessionKey(sid);
+  return runs
+    .filter(
+      c =>
+        normalizeSessionKey(c.requester_session_key) === target || normalizeSessionKey(c.child_session_key) === target
+    )
+    .map(toSubagentRun);
 }
 
 /**

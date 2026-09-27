@@ -48,7 +48,13 @@ def test_missing_session_and_run_id_is_a_structured_400():
     assert body["message"] == "session_id is required"
 
 
-def test_session_scoped_query_returns_the_runs_payload(monkeypatch):
+def test_session_scoped_query_canonicalizes_a_bare_session_id(monkeypatch):
+    """A bare id and its prefixed form name the same session.
+
+    The browser sends the bare id; the registry matches on the prefixed
+    ``agent:main:session:{id}`` key. Without canonicalization the query returns
+    an empty list for every caller that only has the bare id.
+    """
     seen: list[str] = []
 
     def fake_list_readonly(session_id: str):
@@ -60,10 +66,27 @@ def test_session_scoped_query_returns_the_runs_payload(monkeypatch):
         subagent_http.get_subagent_runs_handler(_FakeRequest({"session_id": "default"}))
     )
 
-    assert seen == ["default"]
+    assert seen == ["agent:main:session:default"]
     # Robyn's route wrapper serializes the returned dict into a 200 JSON body.
     assert int(response.status_code) == 200
     assert _payload(response) == {"runs": []}
+
+
+def test_an_already_prefixed_session_id_is_passed_through(monkeypatch):
+    seen: list[str] = []
+
+    def fake_list_readonly(session_id: str):
+        seen.append(session_id)
+        return []
+
+    monkeypatch.setattr(subagent_http, "list_descendant_runs_readonly", fake_list_readonly)
+    asyncio.run(
+        subagent_http.get_subagent_runs_handler(
+            _FakeRequest({"session_id": "agent:main:session:default"})
+        )
+    )
+
+    assert seen == ["agent:main:session:default"]
 
 
 def test_controller_scope_reads_the_controller_view(monkeypatch):
@@ -79,7 +102,7 @@ def test_controller_scope_reads_the_controller_view(monkeypatch):
         )
     )
 
-    assert seen == ["default"]
+    assert seen == ["agent:main:session:default"]
     assert int(response.status_code) == 200
     assert _payload(response) == {"runs": []}
 

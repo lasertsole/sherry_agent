@@ -44,6 +44,7 @@ import { Graph, NodeEvent } from '@antv/g6';
 import type { GraphData, IElementEvent, NodeData } from '@antv/g6';
 import type { SubagentRun } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
+import { isRunning } from '~/utils/subagent';
 import { subagentStatusColorDark, subagentStatusColorLight, subagentStatusMeta } from '~/utils/subagent-status';
 
 const { t } = useI18n();
@@ -122,8 +123,7 @@ const statusColor = (status: string): string => {
  * @param run
  */
 const statusKey = (run: SubagentRun): string => {
-  const exec = run?.execution?.status;
-  if (exec === 'RUNNING' || exec === 'INTERRUPTED') return subagentStatusMeta(exec).flowKey;
+  if (isRunning(run)) return subagentStatusMeta(run?.execution?.status).flowKey;
   return subagentStatusMeta(run?.execution?.outcome?.status).flowKey;
 };
 

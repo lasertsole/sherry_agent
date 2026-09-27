@@ -346,6 +346,7 @@ const {
   initTasks,
   setTasksTabActive,
   focusRun,
+  normalizeSessionKey,
   focusedRunId,
   loadTaskRuns,
   toggleTaskSelection,
@@ -767,8 +768,9 @@ const showTasksView = (run: SubagentRun) => {
     emit('subagent:show-tasks', run.run_id);
     setTasksTabActive(true);
   } else {
-    // Without active session: focus + navigate to standalone task page (parent session of cross-session task tree)
-    const parentSid = run.requester_session_key;
+    // Without active session: focus + navigate to standalone task page (parent session of cross-session task tree).
+    // The recorded key is the announcer form (``agent:main:session:{id}``); the route needs the bare id.
+    const parentSid = normalizeSessionKey(run.requester_session_key);
     router.push(localePath(`/home/tasks/${parentSid || 'default'}`));
   }
 };
