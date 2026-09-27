@@ -287,7 +287,7 @@ def evict_tool_result(msg: ToolMessage, session_id: str) -> ToolMessage | None:
         return None
 
     tool_call_id = getattr(msg, "tool_call_id", "") or "unknown"
-    key = f"{tool_call_id}_{hashlib.md5(text.encode()).hexdigest()[:8]}"
+    key = f"{tool_call_id}_{hashlib.md5(text.encode(), usedforsecurity=False).hexdigest()[:8]}"
     file_path = eviction_dir / f"{key}.txt"
 
     preview = build_preview(text, file_path)

@@ -14,7 +14,7 @@ from pydantic import Field, validate_call
 from langchain_core.messages import BaseMessage
 
 
-# Lazy shared connection; created on first DB access, not at import (audit #14).
+# Lazy shared connection; created on first DB access, not at import.
 # Resolved through :func:`_shared_db` so importing this module has no I/O side
 # effect; the connection itself remains the process-wide ``get_db()`` singleton.
 _db: sqlite3.Connection | None = None
@@ -32,14 +32,14 @@ def _shared_db() -> sqlite3.Connection:
 _message_repository = MessageRepository(_shared_db)
 
 
-# Audit #5: serializes the read-MAX-then-INSERT turn assignment inside
+# Serializes the read-MAX-then-INSERT turn assignment inside
 # ``add_messages``. The store runs on a single shared connection in autocommit
 # mode (``isolation_level=None``), so without this lock two concurrent
 # ``add_messages`` calls on the same session could both observe the same
 # ``MAX(turn_num)`` and silently merge two turns into one.
 _turn_assign_lock = threading.Lock()
 
-# Audit #21: strictly-increasing turn stamps. Two turns in the same second
+# Strictly-increasing turn stamps. Two turns in the same second
 # (or even the same millisecond) must never share a stamp, or session
 # ordering (MAX(ts_ms)) ties. Same-ms calls are bumped 1ms apart.
 _turn_stamp_lock = threading.Lock()
@@ -303,7 +303,7 @@ def _idempotency_key(session_id: str, turn_num: int, ts_ms: int, index: int, m: 
         sort_keys=True,
         default=str,
     )
-    digest = hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+    digest = hashlib.sha1(payload.encode("utf-8"), usedforsecurity=False).hexdigest()[:16]
     return f"{session_id}:{turn_num}:{ts_ms}:{index}:{digest}"
 
 
@@ -313,7 +313,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
     Runs every row builder (up to 5 ``json.dumps`` per message), the
     idempotency-key hashing and all SQLite statements. :func:`add_messages`
     awaits this through :func:`asyncio.to_thread` so the serialization and the
-    DB I/O never block the event loop (audit #38). Thread safety is unchanged:
+    DB I/O never block the event loop. Thread safety is unchanged:
     ``_turn_assign_lock`` still serializes turn assignment, ``_turn_stamp_lock``
     keeps stamps strictly increasing, and the shared connection is opened with
     ``check_same_thread=False``.
@@ -331,7 +331,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
             insert_rows.append(row)
             paired.append((m, row))
 
-    # Audit #5: assign the turn number atomically. Re-read MAX(turn_num) and
+    # Assign the turn number atomically. Re-read MAX(turn_num) and
     # insert while holding the module-level lock, so two concurrent writers on
     # the same session can never observe the same MAX and silently merge two
     # turns into one. No explicit BEGIN: the connection is in autocommit mode
@@ -441,7 +441,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
 
     All messages passed in one call share the same (auto-incremented) turn_num
     and a single timestamp derived from the current time. Serialization and
-    SQLite I/O are offloaded to a worker thread (audit #38); turn assignment,
+    SQLite I/O are offloaded to a worker thread; turn assignment,
     stamps, FTS triggers and exception behavior are identical to the previous
     on-loop implementation.
 
@@ -453,7 +453,7 @@ async def add_messages(session_id: str, messages: list[BaseMessage]) -> None:
     if not pending:
         return
 
-    # Audit #38: run the whole persistence core (row builders → json.dumps,
+    # Run the whole persistence core (row builders → json.dumps,
     # idempotency hashing, locked turn assignment, INSERTs) on a worker thread.
     # The module locks make the offload safe, and the awaited call keeps
     # exception propagation identical to the previous on-loop implementation.
@@ -644,7 +644,7 @@ def restore_compaction_checkpoint(session_id: str, checkpoint_id: int) -> dict:
 
 
 def _decode_json_columns(row: dict) -> dict:
-    """Decode a message row's JSON-encoded cells in place and return it (audit 3.1.5).
+    """Decode a message row's JSON-encoded cells in place and return it.
 
     Shared by :func:`get_turns_by_turn_num_scope` and
     :func:`get_history_by_turn_page`: decodes the ``content``/``tool_calls``/

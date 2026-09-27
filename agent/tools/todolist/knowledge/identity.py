@@ -72,18 +72,20 @@ def plan_key(plan_ref: Path) -> str:
         seed = normalized.relative_to(config_path.ROOT_DIR).as_posix()
     except ValueError:
         seed = normalized.as_posix()
-    return hashlib.sha1(seed.encode("utf-8")).hexdigest()[:_KEY_LENGTH]
+    return hashlib.sha1(seed.encode("utf-8"), usedforsecurity=False).hexdigest()[:_KEY_LENGTH]
 
 
 def fallback_plan_name(session_id: str) -> str:
     """Session-derived fallback plan name, hashed over the FULL session id."""
-    digest = hashlib.sha1(session_id.encode("utf-8")).hexdigest()
+    digest = hashlib.sha1(session_id.encode("utf-8"), usedforsecurity=False).hexdigest()
     return f"{_FALLBACK_PREFIX}{digest[:8]}"
 
 
 def fallback_plan_key(session_id: str) -> str:
     """Storage key for a session's fallback identity (no plan file resolves)."""
-    return hashlib.sha1(f"session:{session_id}".encode()).hexdigest()[:_KEY_LENGTH]
+    return hashlib.sha1(f"session:{session_id}".encode(), usedforsecurity=False).hexdigest()[
+        :_KEY_LENGTH
+    ]
 
 
 def _normalize_ref(ref: str, anchor_session_id: str) -> Path | None:

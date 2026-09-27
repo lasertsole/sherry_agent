@@ -88,12 +88,14 @@ def content_hash(content: str) -> str:
         return "|"
 
     if len(normalized) <= _TAIL_CHARS:
-        h = hashlib.md5(normalized.encode()).hexdigest()
+        h = hashlib.md5(normalized.encode(), usedforsecurity=False).hexdigest()
         return f"{h}|{h}"
 
     head = normalized[:_TAIL_CHARS]
     tail = normalized[-_TAIL_CHARS:]
-    return f"{hashlib.md5(head.encode()).hexdigest()}|{hashlib.md5(tail.encode()).hexdigest()}"
+    head_hash = hashlib.md5(head.encode(), usedforsecurity=False).hexdigest()
+    tail_hash = hashlib.md5(tail.encode(), usedforsecurity=False).hexdigest()
+    return f"{head_hash}|{tail_hash}"
 
 
 class SentenceRepetitionDetector:

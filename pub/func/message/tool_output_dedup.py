@@ -18,7 +18,7 @@ def _tool_signature(tool_call: Mapping[str, Any]) -> str:
         sorted_args = json.dumps(args, sort_keys=True, ensure_ascii=False)
     except (TypeError, ValueError):
         sorted_args = str(args)
-    return f"{name}::{hashlib.md5(sorted_args.encode()).hexdigest()}"
+    return f"{name}::{hashlib.md5(sorted_args.encode(), usedforsecurity=False).hexdigest()}"
 
 
 def dedup_tool_outputs(

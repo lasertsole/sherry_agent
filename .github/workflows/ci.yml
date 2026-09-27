@@ -59,6 +59,43 @@ jobs:
       - name: Check server layer contract
         run: uv run --no-sync lint-imports
 
+  security-scan:
+    name: Security scans (bandit + pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # SAST over the project's own source. Vendored code, skill scripts,
+      # evals and tests are excluded (the pre-commit hook scans vendored code
+      # separately); the gate fails on high-severity/high-confidence findings
+      # only, so the report stays actionable.
+      - name: Static security scan (bandit)
+        run: >
+          uvx bandit -r agent server config models context_engine runtime pub
+          workspace channels bus
+          --severity-level high --confidence-level high
+
+      # Dependency audit against the exported lockfile. Known advisories are
+      # accepted explicitly in .github/security/pip-audit-ignore.txt (each with
+      # a reason); anything else fails the job.
+      - name: Dependency vulnerability audit (pip-audit)
+        run: |
+          uv export --frozen --no-hashes --no-emit-project --format requirements-txt > "$RUNNER_TEMP/requirements-audit.txt"
+          args=()
+          while read -r id _reason; do
+            case "$id" in ''|'#'*) continue ;; esac
+            args+=(--ignore-vuln "$id")
+          done < .github/security/pip-audit-ignore.txt
+          uvx pip-audit -r "$RUNNER_TEMP/requirements-audit.txt" --progress-spinner off "${args[@]}"
+
   frontend-test:
     name: Frontend tests (Vitest)
     runs-on: ubuntu-latest

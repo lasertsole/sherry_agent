@@ -116,7 +116,9 @@ class ToolGuardrails(AgentMiddleware):
 
     @staticmethod
     def _result_hash(content: str) -> str:
-        return hashlib.md5(content.encode(errors="surrogateescape")).hexdigest()
+        return hashlib.md5(
+            content.encode(errors="surrogateescape"), usedforsecurity=False
+        ).hexdigest()
 
     def _evaluate(
         self,

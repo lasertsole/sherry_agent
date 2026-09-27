@@ -1,4 +1,4 @@
-"""Shared helpers and base classes for agent middlewares (audit 1.1)."""
+"""Shared helpers and base classes for agent middlewares."""
 
 import hashlib
 import json
@@ -101,4 +101,4 @@ def args_hash(args: dict[str, Any]) -> str:
         serialized = json.dumps(args, sort_keys=True, default=str)
     except (TypeError, ValueError):
         serialized = str(args)
-    return hashlib.md5(serialized.encode()).hexdigest()
+    return hashlib.md5(serialized.encode(), usedforsecurity=False).hexdigest()

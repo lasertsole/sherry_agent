@@ -134,7 +134,7 @@ def _fingerprint_key(message: BaseMessage) -> str:
         sort_keys=True,
         default=str,
     )
-    return "sha1:" + hashlib.sha1(payload.encode("utf-8")).hexdigest()
+    return "sha1:" + hashlib.sha1(payload.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def _watermark_key(message: BaseMessage) -> str:

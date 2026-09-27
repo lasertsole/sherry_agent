@@ -232,9 +232,13 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         proc: subprocess.Popen[bytes] | None = None
         try:
             if shell:
+                # The terminal tool exists to run shell commands: this is the
+                # unsandboxed fallback path (SANDBOX_POLICY=off or no OS
+                # backend), and every call is gated by the HITL approval /
+                # dangerous-command policy upstream of this spawn point.
                 proc = subprocess.Popen(
                     argv,
-                    shell=True,
+                    shell=True,  # nosec B602
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     cwd=str(ROOT_DIR),

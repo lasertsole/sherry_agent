@@ -1,0 +1,20 @@
+# Accepted dependency advisories for the CI pip-audit gate.
+#
+# One advisory ID per line; `pip-audit --ignore-vuln <ID>` is passed for each.
+# Lines starting with `#` and blank lines are ignored.
+#
+# Policy: the gate must stay RED for anything not listed here, so every entry
+# needs a one-line reason. Entries are transitive ML dependencies (transformers
+# / accelerate / ragas and its diskcache), where an upgrade means a major-line
+# bump that only the RAG / local-inference skills can validate; setuptools is a
+# locked build-time dependency whose fix (83.0.0) rides a future lock refresh.
+# Re-check this list whenever uv.lock is upgraded.
+PYSEC-2026-3804  # accelerate — transitive (transformers stack), no fix in the 1.x line
+PYSEC-2026-2447  # diskcache — transitive via ragas, no fix published
+PYSEC-2026-3046  # ragas — transitive eval dep, no fix published
+PYSEC-2026-3447  # setuptools — fix is 83.0.0; waits for the next lock refresh
+PYSEC-2025-217   # transformers — transitive (RAG / STT stack), no fix in the 4.x line
+PYSEC-2026-2288  # transformers — fix requires the 5.x major line
+PYSEC-2026-2289  # transformers — fix requires the 5.x major line
+PYSEC-2026-2290  # transformers — fix requires the 5.x major line
+PYSEC-2026-3929  # transformers — fix requires the 5.x major line

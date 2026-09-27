@@ -36,7 +36,7 @@ def string_to_int(s: str, algorithm: str = "sha256", slice_len: int = 8) -> int:
         raise ValueError(f"Unsupported algorithm {algorithm!r}; expected one of {_ALGORITHMS}")
     if algorithm == "sha256":
         return int.from_bytes(hashlib.sha256(s.encode("utf-8")).digest()[:8], byteorder="big")
-    return int(hashlib.md5(s.encode("utf-8")).hexdigest()[:slice_len], 16)
+    return int(hashlib.md5(s.encode("utf-8"), usedforsecurity=False).hexdigest()[:slice_len], 16)
 
 
 def string_to_unique_int(s: str) -> int:
