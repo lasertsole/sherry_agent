@@ -57,7 +57,7 @@
 
 <template>
   <!-- Right-sidebar tab body: mounted with the tab, which drives the load. -->
-  <div class="flex flex-col gap-3 h-full min-h-0">
+  <div class="flex flex-col gap-3 h-full min-h-0 pt-4 pb-4">
     <div class="flex flex-col gap-3">
       <!-- Range switch + refresh -->
       <div class="shrink-0 flex items-center justify-center gap-2">
