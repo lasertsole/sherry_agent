@@ -19,6 +19,8 @@ export const useThinkingStore = defineStore('thinking', () => {
   const mode = ref<ThinkingMode>('on_off');
   /** sid → explicit user choice (hydrated from the backend or set locally). */
   const bySession = ref<Record<string, ThinkingValue>>({});
+  /** sid → the choice was parked mid-turn and lands on the next turn. */
+  const pendingBySession = ref<Record<string, boolean>>({});
 
   /**
    * Current control position for a session (off / high until hydrated —
@@ -40,6 +42,15 @@ export const useThinkingStore = defineStore('thinking', () => {
     mode.value = state.mode;
     const value: ThinkingValue = state.mode === 'levels' ? (state.level ?? 'high') : (state.enabled ?? false);
     bySession.value = { ...bySession.value, [sessionId]: value };
+    pendingBySession.value = { ...pendingBySession.value, [sessionId]: state.pending === true };
+  }
+
+  /**
+   * Whether the session's choice is parked (lands on the next turn).
+   * @param sessionId
+   */
+  function isPending(sessionId: string): boolean {
+    return pendingBySession.value[sessionId] === true;
   }
 
   /**
@@ -51,13 +62,18 @@ export const useThinkingStore = defineStore('thinking', () => {
   async function setValue(sessionId: string, value: ThinkingValue): Promise<void> {
     const previous = bySession.value[sessionId];
     const fallback: ThinkingValue = previous ?? (mode.value === 'levels' ? 'high' : false);
+    const previousPending = pendingBySession.value[sessionId] ?? false;
     bySession.value = { ...bySession.value, [sessionId]: value };
+    // Optimistically "parked" until the server says the write landed live.
+    pendingBySession.value = { ...pendingBySession.value, [sessionId]: true };
     try {
-      await setThinkingValue(sessionId, value);
+      const result = await setThinkingValue(sessionId, value);
+      pendingBySession.value = { ...pendingBySession.value, [sessionId]: result.pending };
     } catch {
       bySession.value = { ...bySession.value, [sessionId]: fallback };
+      pendingBySession.value = { ...pendingBySession.value, [sessionId]: previousPending };
     }
   }
 
-  return { mode, bySession, current, hydrate, setValue };
+  return { mode, bySession, pendingBySession, current, hydrate, isPending, setValue };
 });

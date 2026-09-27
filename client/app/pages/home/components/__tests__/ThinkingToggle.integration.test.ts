@@ -10,6 +10,7 @@ let storeApi: {
   current: ReturnType<typeof vi.fn>;
   hydrate: ReturnType<typeof vi.fn>;
   setValue: ReturnType<typeof vi.fn>;
+  isPending: ReturnType<typeof vi.fn>;
 };
 
 beforeEach(() => {
@@ -17,7 +18,8 @@ beforeEach(() => {
     mode: 'on_off',
     current: vi.fn(() => false),
     hydrate: vi.fn(),
-    setValue: vi.fn()
+    setValue: vi.fn(),
+    isPending: vi.fn(() => false)
   };
   vi.stubGlobal(
     'useThinkingStore',
@@ -120,17 +122,23 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
     expect(storeApi.setValue).toHaveBeenCalledWith('sid-1', 'low');
   });
 
-  it('blocks opening the popup while the session is streaming', async () => {
+  it('allows switching while a turn is running (parked for the next turn)', async () => {
     storeApi.mode = 'levels';
     storeApi.current.mockReturnValue('high');
+    storeApi.isPending.mockReturnValue(true);
     const wrapper = mount(ThinkingToggle, {
-      props: { sessionId: 'sid-1', streaming: true },
+      props: { sessionId: 'sid-1' },
       global: { stubs }
     });
-    expect(wrapper.find('.pointer-events-none').exists()).toBe(true);
+    // No streaming lock: the control stays interactive and a change goes
+    // straight through the store (the backend parks it).
+    expect(wrapper.find('.pointer-events-none').exists()).toBe(false);
+    // The parked choice is announced with a clock hint.
+    expect(wrapper.find('i.pi-clock').exists()).toBe(true);
     await wrapper.find('button.trigger').trigger('click');
-    expect(wrapper.findAll('button.lvl').length).toBe(0);
-    expect(storeApi.setValue).not.toHaveBeenCalled();
+    const low = wrapper.findAll('button.lvl').find(b => b.text() === '低');
+    await low!.trigger('click');
+    expect(storeApi.setValue).toHaveBeenCalledWith('sid-1', 'low');
   });
 
   it('mobile button cycles levels for always-think models', async () => {
@@ -142,5 +150,13 @@ describe('ThinkingToggle.vue (integration, store mocked)', () => {
     });
     await wrapper.find('button.block').trigger('click');
     expect(storeApi.setValue).toHaveBeenCalledWith('sid-1', 'max');
+  });
+
+  it('hides the clock hint when nothing is parked', () => {
+    const wrapper = mount(ThinkingToggle, {
+      props: { sessionId: 'sid-1' },
+      global: { stubs }
+    });
+    expect(wrapper.find('i.pi-clock').exists()).toBe(false);
   });
 });

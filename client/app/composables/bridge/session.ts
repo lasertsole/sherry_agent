@@ -213,6 +213,8 @@ export interface ThinkingState {
   mode: ThinkingMode;
   enabled: boolean | null;
   level: 'low' | 'high' | 'max' | null;
+  /** True when the choice was parked mid-turn and lands on the next turn. */
+  pending?: boolean;
 }
 
 /**
@@ -228,19 +230,109 @@ export async function fetchThinkingState(sessionId: string): Promise<ThinkingSta
     opts: { session_id: sessionId },
     method: 'get'
   });
-  return { mode: res.mode ?? 'on_off', enabled: res.enabled ?? null, level: res.level ?? null };
+  return {
+    mode: res.mode ?? 'on_off',
+    enabled: res.enabled ?? null,
+    level: res.level ?? null,
+    pending: res.pending === true
+  };
 }
 
 /**
  * Persist the session's explicit thinking choice.
  *
+ * Switching is allowed at any moment: while a turn is in flight the choice is
+ * parked and lands on the next turn (the running turn keeps its variant).
+ *
  * @param sessionId Session whose flag should be written.
  * @param value Boolean for on_off models; 'low' | 'high' | 'max' for level models.
+ * @returns Whether the choice was parked for the next turn.
  */
-export async function setThinkingValue(sessionId: string, value: ThinkingValue): Promise<void> {
-  await fetchApi({
+export async function setThinkingValue(sessionId: string, value: ThinkingValue): Promise<{ pending: boolean }> {
+  const res = await fetchApiPayload<{ pending?: boolean }>({
     url: '/sessions/thinking',
     opts: { session_id: sessionId, value },
     method: 'put'
   });
+  return { pending: res.pending === true };
+}
+
+/**
+ * Main-model override payload shapes.
+ *
+ * The override mirrors one entry of the environment-config MAIN_LLM list (a
+ * saved profile: provider/model/base_url/api_key). The session runs on that
+ * model from the NEXT turn on; the stored credential never echoes back —
+ * ``has_api_key`` reports whether one is held.
+ */
+export interface SessionModelProfile {
+  /** Client profile id (stable across the picker's entries). */
+  id: string;
+  /** Display label of the profile. */
+  label: string;
+  /** Provider id (`openai`, `zhipu`, ...); absent = keep the env provider. */
+  provider?: string;
+  /** Model / API name the backend calls. */
+  model: string;
+  /** Gateway base URL; absent = keep the env one. */
+  base_url?: string;
+  /** Gateway credential; absent = keep the env one. */
+  api_key?: string;
+}
+
+/** A stored override as returned by the backend (credential masked). */
+export type SessionModelOverride = Omit<SessionModelProfile, 'api_key'> & {
+  /** Whether the stored override carries a credential. */
+  has_api_key?: boolean;
+};
+
+export interface SessionModelState {
+  /** The session's override, or null while it follows the env config. */
+  override: SessionModelOverride | null;
+  /** The env-configured identity the "follow env config" entry stands for. */
+  env_model: { provider: string | null; model: string | null };
+  /** True when the choice was parked mid-turn and lands on the next turn. */
+  pending?: boolean;
+}
+
+/**
+ * Read the session's main-model override and the env-configured identity.
+ *
+ * @param sessionId Session whose override should be read.
+ * @returns The current state; a null override = follow the environment config.
+ */
+export async function fetchSessionModel(sessionId: string): Promise<SessionModelState> {
+  const res = await fetchApiPayload<SessionModelState & { success?: boolean }>({
+    url: '/sessions/model',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return {
+    override: res.override ?? null,
+    env_model: res.env_model ?? { provider: null, model: null },
+    pending: res.pending === true
+  };
+}
+
+/**
+ * Persist (or clear, with null) the session's main-model override.
+ *
+ * @param sessionId Session whose model should change.
+ * @param profile The chosen env-config profile, or null to follow the env config.
+ * @returns The state the backend stored (override masked), for the control to mirror.
+ */
+export async function setSessionModel(
+  sessionId: string,
+  profile: SessionModelProfile | null
+): Promise<SessionModelState> {
+  const res = await fetchApiPayload<SessionModelState & { success?: boolean }>({
+    url: '/sessions/model',
+    opts: { session_id: sessionId, profile },
+    method: 'put'
+  });
+  return {
+    override: res.override ?? null,
+    env_model: res.env_model ?? { provider: null, model: null },
+    pending: res.pending === true
+  };
 }

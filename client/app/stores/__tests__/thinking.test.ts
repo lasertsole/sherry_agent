@@ -67,12 +67,39 @@ describe('stores/thinking', () => {
 
   it('setValue() persists and updates the control optimistically', async () => {
     const store = useThinkingStore();
-    bridge.setThinkingValue.mockResolvedValueOnce(undefined);
+    bridge.setThinkingValue.mockResolvedValueOnce({ pending: false });
 
     await store.setValue('sid-1', 'max');
 
     expect(store.current('sid-1')).toBe('max');
     expect(bridge.setThinkingValue).toHaveBeenCalledWith('sid-1', 'max');
+    // The write landed live: nothing is parked.
+    expect(store.isPending('sid-1')).toBe(false);
+  });
+
+  it('setValue() mid-turn mirrors the parked flag from the backend', async () => {
+    const store = useThinkingStore();
+    bridge.setThinkingValue.mockResolvedValueOnce({ pending: true });
+
+    await store.setValue('sid-1', true);
+
+    // The picked value shows immediately; it lands on the next turn.
+    expect(store.current('sid-1')).toBe(true);
+    expect(store.isPending('sid-1')).toBe(true);
+  });
+
+  it('hydrate() mirrors the parked flag', async () => {
+    const store = useThinkingStore();
+    bridge.fetchThinkingState.mockResolvedValueOnce({
+      mode: 'on_off',
+      enabled: true,
+      level: null,
+      pending: true
+    });
+
+    await store.hydrate('sid-parked');
+
+    expect(store.isPending('sid-parked')).toBe(true);
   });
 
   it('setValue() rolls back when the backend rejects the write', async () => {
@@ -82,6 +109,7 @@ describe('stores/thinking', () => {
     await store.setValue('sid-1', true);
 
     expect(store.current('sid-1')).toBe(false);
+    expect(store.isPending('sid-1')).toBe(false);
   });
 
   it('tracks sessions independently', async () => {
