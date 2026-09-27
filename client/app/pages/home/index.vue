@@ -114,16 +114,16 @@
         </div>
       </div>
 
-      <!-- Settings menu: shown centered in a large dialog containing a nine-grid.
+      <!-- Settings menu: shown centered in a large dialog containing the entry grid.
            Each function is a square block with a large icon on top and the function name below.
-           Clicking an item directly triggers the corresponding function (dialog / route jump). -->
+           Clicking an item directly triggers the corresponding function (right-sidebar tab / route jump). -->
       <Dialog
         v-model:visible="isSettingsMenuOpen"
         :header="t('toolbar.settingsMenu')"
         :modal="true"
         :closable="true"
-        class="w-[min(90vw,720px)]">
-        <div class="grid grid-cols-3 gap-4">
+        class="w-[min(92vw,800px)]">
+        <div class="grid grid-cols-4 gap-4">
           <button
             v-for="tool in headerTools"
             :key="tool.event"
