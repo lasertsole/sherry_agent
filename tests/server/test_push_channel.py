@@ -1,4 +1,4 @@
-"""TDD tests for audit 2.1.4 — shared ``WSPushChannel`` (server/trigger/ws/push_channel.py).
+"""TDD tests for the shared ``WSPushChannel`` (server/trigger/ws/push_channel.py).
 
 Pins the push machinery logs.py and subagent_ws.py used to duplicate:
 lock-guarded subscriber set, bounded per-websocket deque with drop-oldest,
@@ -20,6 +20,10 @@ pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 class _FakeSocket:
     def __init__(self, *, receive_side_effect=None):
         self.id = f"ws-{id(self)}"
+        # Token-carrying handshake: the push channel closes token-less sockets.
+        from server.trigger import auth
+
+        self.query_params = {"token": auth.gateway_token()}
         self.sent: list[str] = []
         self._receive_side_effect = receive_side_effect or "wait"
 

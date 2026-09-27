@@ -22,7 +22,12 @@ from loguru import logger
 from robyn import Response
 
 from server.trigger.core import app
-from server.trigger.http.helpers import query_int
+from server.trigger.http.helpers import failure_detail, query_int
+
+# Traversal ceilings: the graph walk is breadth-first over shared caches, so a
+# request must not be able to ask for an unbounded expansion.
+_MAX_DEPTH = 8
+_MAX_NODES = 5000
 
 # File extensions accepted for knowledge-graph ingestion.
 # RAG-Anything (mineru/fallback_txt parsers) natively supports these.
@@ -106,7 +111,7 @@ async def knowledge_graph_upload_handler(request):
                 logger.info("Knowledge-graph upload ingested: {}", name)
             except Exception as e:  # noqa: BLE001 - surface any backend failure cleanly
                 logger.exception("Knowledge-graph ingestion failed for: {}", name)
-                results.append({"name": name, "ok": False, "error": str(e)})
+                results.append({"name": name, "ok": False, "error": failure_detail(e)})
             finally:
                 # Best-effort cleanup of the staged temp file.
                 try:
@@ -120,7 +125,7 @@ async def knowledge_graph_upload_handler(request):
         logger.exception("Knowledge-graph upload failed")
         return _json_response(
             500,
-            {"success": False, "message": str(e), "files": results},
+            {"success": False, "message": failure_detail(e), "files": results},
         )
 
     ok_count = sum(1 for r in results if r["ok"])
@@ -148,8 +153,10 @@ async def knowledge_graph_handler(request):
     query = request.query_params
 
     node_label = query.get("node_label", "*")
-    max_depth = query_int(query, "max_depth", 3, minimum=0)
-    max_nodes = query_int(query, "max_nodes", 1000, minimum=1)
+    # Upper bounds are as important as the floors: an unbounded traversal walks
+    # the whole graph (and its caches) on one request.
+    max_depth = query_int(query, "max_depth", 3, minimum=0, maximum=_MAX_DEPTH)
+    max_nodes = query_int(query, "max_nodes", 1000, minimum=1, maximum=_MAX_NODES)
 
     try:
         from skills.builtin.core.multimodal_rag.scripts.graph_rag import get_lightrag
@@ -197,4 +204,4 @@ async def knowledge_graph_handler(request):
         }
     except Exception as e:  # noqa: BLE001 - surface any backend failure cleanly
         logger.exception("Knowledge graph request failed")
-        return {"error": str(e), "nodes": [], "edges": [], "is_truncated": False}
+        return {"error": failure_detail(e), "nodes": [], "edges": [], "is_truncated": False}

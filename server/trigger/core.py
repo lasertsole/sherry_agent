@@ -8,15 +8,58 @@ from robyn import Robyn, ALLOW_CORS
 from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from runtime import relation_register, clear_all_register_sessions
+from server.trigger import auth
 
 # Create the app
 app = Robyn(__file__)
 
-# Enable CORS for all origins (development)
-ALLOW_CORS(app, origins=["*"])
+# CORS: the Origin allowlist replaces the previous wildcard. Requests from an
+# unlisted Origin are answered 403 by this middleware (the same check runs
+# again in ``gateway_auth_middleware`` for the JSON error body). The custom
+# ``token`` header must be listed or the browser's preflight would refuse it.
+ALLOW_CORS(app, origins=auth.allowed_origins(), headers=[auth.TOKEN_HEADER])
+
+# Issue the gateway token on every response and expose it to the app's
+# cross-origin fetch (without Expose-Headers the browser hides the value). The
+# desktop client caches it in memory and echoes it as the ``token`` request
+# header / WS ``?token=`` parameter — see server/trigger/auth.py for the policy.
+app.set_response_header("Access-Control-Expose-Headers", auth.TOKEN_HEADER)
+app.set_response_header(auth.TOKEN_HEADER, auth.gateway_token())
 
 
-@app.exception
+@app.get(auth.BOOTSTRAP_PATH)
+async def gateway_token_handler(request):
+    """Hand the gateway token to a token-less caller (client bootstrap).
+
+    Reachable without a token in strict mode too — it is how the desktop client
+    learns the per-boot secret. The Origin allowlist still applies.
+    """
+    return {"token": auth.gateway_token()}
+
+
+def gateway_auth_middleware(request):
+    """Origin + token gate for every HTTP route (see server/trigger/auth.py)."""
+    verdict = auth.check_http(
+        origin=request.headers.get("Origin"),
+        presented_token=request.headers.get(auth.TOKEN_HEADER),
+        path=request.url.path,
+    )
+    if verdict is None:
+        return request
+    status, message = verdict
+    return Response(
+        status_code=status,
+        headers={"Content-Type": "application/json"},
+        description=json.dumps({"success": False, "message": message}, ensure_ascii=False),
+    )
+
+
+# Register BEFORE_REQUEST explicitly: the decorator form rebinds the name to
+# None (Robyn's ``add_middleware`` returns no handle), and the function must
+# stay importable for tests.
+app.before_request()(gateway_auth_middleware)
+
+
 def handle_exception(error: Exception):
     """
     Global exception interceptor
@@ -24,6 +67,13 @@ def handle_exception(error: Exception):
     """
     # Log the error for debugging
     logger.exception(error)
+
+    # Client-contract errors keep their message: handlers raise ValueError to
+    # report bad input and the client surfaces that text. Anything else is
+    # reported as its class name only — the response must not leak internal
+    # paths/state, while the log above keeps the full detail (same policy as
+    # ``server/trigger/http/helpers.py::failure_detail``).
+    detail = str(error) if isinstance(error, ValueError) else type(error).__name__
 
     # Return a uniform JSON error response
     return Response(
@@ -33,11 +83,16 @@ def handle_exception(error: Exception):
             {
                 "success": False,
                 "message": "Internal Server Error",
-                "error": str(error),
+                "error": detail,
             },
             ensure_ascii=False,
         ),
     )
+
+
+# Registered explicitly (not via the decorator) so the function stays importable
+# for tests — the decorator form rebinds the module name to None.
+app.exception(handle_exception)
 
 
 ws_event_processor_dict: dict[str, Callable[[str, str | dict[str, Any]], Any]] = {}
@@ -155,6 +210,12 @@ async def ws_handler(websocket: WebSocketAdapter):
 
 @getattr(ws_handler, "on_connect")
 async def handle_connect(websocket: WebSocketAdapter):
+    refusal = auth.check_ws(websocket.query_params.get(auth.TOKEN_QUERY_PARAM, None))
+    if refusal is not None:
+        logger.warning(f"WebSocket connection rejected: {refusal}, websocket_id={websocket.id}")
+        await websocket.close()
+        return
+
     logger.info(f"Client {websocket.id} connected")
 
     query_params = websocket.query_params

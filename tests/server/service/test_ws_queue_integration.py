@@ -61,6 +61,11 @@ class _HandlerSocket:
         # older tests. Tests driving MULTIPLE sockets concurrently must pass
         # distinct ws_id values or register/unregister will collide on id.
         self.id = ws_id  # messages.py logs websocket.id at handler entry
+        # The agent socket requires the gateway token on the handshake (the
+        # handler closes token-less connections).
+        from server.trigger import auth
+
+        self.query_params = {"token": auth.gateway_token()}
         self.frames: list[dict[str, Any]] = []
         self._inbound: deque[str] = deque()
         self._waiter: asyncio.Future | None = None

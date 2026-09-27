@@ -2,7 +2,7 @@ import asyncio
 
 from config.features import CURATOR_DEFAULTS, TOOLS_TIMEOUTS
 from server.trigger.core import app
-from server.trigger.http.helpers import bad_request, ok, read_body
+from server.trigger.http.helpers import bad_request, failure_detail, ok, read_body
 from loguru import logger
 from context_engine.curator import reset_idle_for_seconds
 from context_engine.curator.orchestrator import run_curator_review
@@ -60,7 +60,7 @@ async def get_curator_settings_handler(request):
         }
     except Exception as e:
         logger.exception("Failed to load curator settings: {}", e)
-        return {"success": False, "error": str(e)}, {}, 500
+        return {"success": False, "error": failure_detail(e)}, {}, 500
 
 
 @app.put("/curator/settings")
@@ -155,7 +155,7 @@ async def run_curator_handler(request):
         return {"success": True, "result": result}
     except Exception as e:
         logger.exception("Curator force-run failed: {}", e)
-        return {"success": False, "error": str(e)}, {}, 500
+        return {"success": False, "error": failure_detail(e)}, {}, 500
     finally:
         reset_idle_for_seconds()
 

@@ -1,4 +1,4 @@
-"""Shared bounded-deque WS push channel (audit 2.1.4).
+"""Shared bounded-deque WS push channel.
 
 ``server/trigger/ws/logs.py`` and ``server/trigger/ws/subagent_ws.py``
 previously carried the same push machinery: a lock-guarded subscriber set, a
@@ -19,6 +19,7 @@ sub-agent lifecycle hooks) plus their log wording.
 """
 
 import asyncio
+import contextlib
 import json
 import threading
 from collections import deque
@@ -27,6 +28,8 @@ from collections.abc import Callable
 
 from loguru import logger
 from robyn import WebSocketDisconnect
+
+from server.trigger import auth
 
 
 class WSPushChannel:
@@ -82,8 +85,19 @@ class WSPushChannel:
 
         ``ensure_registered`` is the endpoint's idempotent registration hook
         (called once per connection, after the started log line).
+
+        The handshake must carry the gateway token (``?token=``): these sockets
+        stream logs and run events to anyone who can reach ``ws://127.0.0.1``,
+        so a token-less connection is closed before it is subscribed (see
+        ``server/trigger/auth.py``).
         """
         logger.info(f"{handler_label} handler started: websocket_id={websocket.id}")
+        query_params = getattr(websocket, "query_params", {}) or {}
+        refusal = auth.check_ws(query_params.get(auth.TOKEN_QUERY_PARAM, None))
+        if refusal is not None:
+            logger.warning(f"{handler_label} connection rejected: {refusal}")
+            await websocket.close()
+            return
         ensure_registered()
 
         queue: deque[str] = deque()
@@ -106,7 +120,11 @@ class WSPushChannel:
         except (WebSocketDisconnect, ConnectionResetError, Exception) as e:
             logger.warning(f"{client_label} client {websocket.id} disconnected: {e}")
         finally:
+            # Await the cancelled task so its frame is finished before the
+            # socket is unregistered (a bare cancel leaves it pending).
             sender_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await sender_task
             with self._subscribers_lock:
                 self._subscribers.discard(websocket)
                 self._pending.pop(websocket, None)

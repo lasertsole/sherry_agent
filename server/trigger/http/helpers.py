@@ -1,4 +1,4 @@
-"""Shared Robyn HTTP response helpers (audit 2.1.6).
+"""Shared Robyn HTTP response helpers.
 
 ``server/trigger/http/subagent.py`` and ``server/trigger/http/cron.py``
 previously carried identical private ``_to_text_response`` / ``_ok`` /
@@ -33,6 +33,18 @@ def bad_request(message: str) -> Response:
 
 def not_found(message: str) -> Response:
     return to_text_response(404, {"success": False, "message": message})
+
+
+def failure_detail(error: Exception) -> str:
+    """Public-safe failure detail for a response body.
+
+    Client-contract errors (``ValueError``, raised deliberately by handlers for
+    bad input) keep their message — the UI surfaces that text. Anything else is
+    reported as the exception class name only: a response must not leak
+    internal paths/state, while the caller's ``logger.exception`` keeps the
+    full detail for debugging.
+    """
+    return str(error) if isinstance(error, ValueError) else type(error).__name__
 
 
 def read_body(request) -> dict | None:

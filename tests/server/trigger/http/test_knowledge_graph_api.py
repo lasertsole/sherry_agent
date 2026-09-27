@@ -101,7 +101,10 @@ def test_graph_failure_is_reported_without_a_traceback_shaped_payload(monkeypatc
 
     response = asyncio.run(kg_http.knowledge_graph_handler(_FakeRequest()))
     body = _payload(response)
-    assert body["error"] == "graph backend down"
+    # The failure detail is the exception CLASS name: the response must not
+    # echo internal error text (the full detail stays in the server log).
+    assert body["error"] == "RuntimeError"
+    assert "graph backend down" not in json.dumps(body)
     assert body["nodes"] == [] and body["edges"] == []
 
 

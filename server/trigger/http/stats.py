@@ -14,6 +14,7 @@ from datetime import date, datetime, timedelta
 from loguru import logger
 
 from server.trigger.core import app
+from server.trigger.http.helpers import failure_detail
 from context_engine.store.db import get_db
 
 
@@ -124,4 +125,4 @@ async def stats_tokens_handler(request):
         return {"range": range_key, "days": days}
     except Exception as e:  # noqa: BLE001 - surface any backend failure cleanly
         logger.exception("Token stats request failed")
-        return {"error": str(e), "days": []}
+        return {"error": failure_detail(e), "days": []}

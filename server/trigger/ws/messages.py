@@ -13,6 +13,7 @@ from server.service import turn_runner
 from server.service.stream_driver import StreamDriver
 from server.service.stream_dispatch import _clear_pending_args
 from server.utils.ws_helpers import send_ws_json
+from server.trigger import auth
 from pub.types.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
@@ -42,7 +43,7 @@ turn_runner.register_active_tasks_provider(lambda: _active_tasks)
 async def _send_ws(websocket: WebSocketAdapter, payload: dict[str, Any]) -> None:
     """Best-effort send; swallows send failures (socket may be closing).
 
-    Audit 2.1.2: delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
+    Delegates to the shared :func:`server.utils.ws_helpers.send_ws_json`
     (original log wording preserved via ``warn_prefix``).
     """
     await send_ws_json(websocket, payload, warn_prefix="Agent WS send failed")
@@ -65,7 +66,7 @@ async def _run_stream(
     in the finally block; the TurnRunner then drains any rows queued while the
     turn was running. Resume turns pass nothing — they own no queue row.
 
-    Audit 2.1.3: the loop itself is the shared :class:`StreamDriver` template;
+    The loop itself is the shared :class:`StreamDriver` template;
     ``_AgentWsStreamDriver`` carries this site's knobs.
     """
     await _AgentWsStreamDriver(session_id, websocket, claim_row_id, stream_kind).drive(source)
@@ -149,6 +150,14 @@ async def _cancel_session(session_id: str) -> None:
 @app.websocket("/sessions/agent/ws")
 async def agent_ws_handler(websocket: WebSocketAdapter):
     logger.info(f"Agent WebSocket handler started: websocket_id={websocket.id}")
+    # This socket drives generation, approves HITL tool calls and cancels runs,
+    # so the handshake must carry the gateway token (see server/trigger/auth.py).
+    query_params = getattr(websocket, "query_params", {}) or {}
+    refusal = auth.check_ws(query_params.get(auth.TOKEN_QUERY_PARAM, None))
+    if refusal is not None:
+        logger.warning(f"Agent WS connection rejected: {refusal}")
+        await websocket.close()
+        return
     # Bound before the loop so the receive-loop catch-all can always reference
     # it when composing an error frame (never unbound there).
     session_id: str | None = None
