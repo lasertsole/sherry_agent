@@ -232,6 +232,22 @@ middleware = HumanInTheLoop(
 
 ---
 
+## 会话访问模式
+
+会话级的三种力度，决定这个会话能无人值守地做多少事。它们由聊天工具栏的访问模式控件
+（`GET/PUT /sessions/access_mode`）掌控，存在内存态会话状态寄存器里
+（`runtime/session/state_keys.py`），因此切换从下一次工具调用起生效。
+
+| 模式 | 标志 | 行为 |
+|---|---|---|
+| `confirm_all` | `hitl:session_confirm_all` | 严格：每条终端命令、每次文件改动（`write_file` / `patch_file`）都要确认。普通命令也问，智能审批被跳过，且本会话已记住的首次确认被忽略——同一个工具每次调用都会再问。硬拉黑名单与用户 deny 规则仍然直接拦截。 |
+| `auto_edit` | — | 默认：只有危险或不确定的调用才弹卡；改动类工具的首次使用每个会话问一次。 |
+| `full_access` | `hitl:session_yolo` | 全量旁路（YOLO）：该会话不再弹审批卡。硬拉黑名单、deny 规则与外部路径拒绝清单依然生效。 |
+
+严格标志与旁路标志互斥——`set_session_yolo()` 与 `set_session_confirm_all()`
+互相清除，`auto_edit` 两个都清。审批卡上点 `yolo` 设置的正是控件读取的那个标志，
+所以该会话随后会报告（并且可以从）`full_access` 切回。
+
 ## 审批钩子系统
 
 注册外部回调，每次审批决策后触发：

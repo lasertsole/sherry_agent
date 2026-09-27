@@ -248,7 +248,7 @@ heartbeat_service.stop()  # 置 _running = False 并取消 asyncio 任务
 |------|--------|------|
 | `interval_s` | `30 * 60`（1800 秒） | 两次 tick 的间隔秒数；循环**先 sleep 再 tick**，因此首次检查发生在 `start()` 后一个完整间隔。同时是失败退避的基准间隔 |
 | 失败退避 | `factor=2.0`、上限 `7200 秒`、`5` 次后停止 | 硬编码的 `PeriodicBackoff` 参数（`HeartbeatService.__init__`，`runtime/process/periodic_backoff.py`）；连续 tick 失败会把 sleep 拉长至最多 2 小时，之后服务停止直到重启 |
-| `enabled` | `True` | 为 `False` 时，`start()` 记录 "Heartbeat disabled" 并直接返回 |
+| `enabled` | `True` | 为 `False` 时，`start()` 记录 "Heartbeat disabled" 并直接返回。「心跳」面板的全局开关通过 `PUT /heartbeat/status`（`server/service/heartbeat_control.py`）写这个值：选择会持久化到 `sherry.jsonc` 的 `heartbeat.enabled`，开机时读取，并立即作用于运行中的服务 |
 | `timezone` | `None` | 传给 `current_time_str()`，用于决策提示词中的 "Current Time" 行 |
 | `on_execute` / `on_notify` | `None` | 异步回调；未设置时跳过执行 / 投递 |
 | `HEARTBEAT_PATH` | `workspace/HEARTBEAT.md` | 定义于 `config/path.py` |

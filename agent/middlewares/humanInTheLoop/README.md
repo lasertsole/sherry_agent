@@ -232,6 +232,26 @@ middleware = HumanInTheLoop(
 
 ---
 
+## Session Access Modes
+
+Three session-scoped positions for how much may run unattended. They are owned by
+the chat toolbar's access-mode control (`GET/PUT /sessions/access_mode`) and live
+in the in-memory session state register (`runtime/session/state_keys.py`), so the
+switch applies from the next tool call on.
+
+| Mode | Flag | Behaviour |
+|---|---|---|
+| `confirm_all` | `hitl:session_confirm_all` | Strict: every terminal command and every file change (`write_file` / `patch_file`) asks. Ordinary commands ask too, smart approval is skipped, and the remembered first-call confirmation is ignored so the same tool asks again on every call. The hardline blocklist and the user deny rules still block outright. |
+| `auto_edit` | — | Default: only dangerous or uncertain calls ask; the first use of a mutation tool asks once per session. |
+| `full_access` | `hitl:session_yolo` | Bypass-all (YOLO): no approval card for this session. The hardline blocklist, the deny rules and the external-path deny list still apply. |
+
+The strict and bypass flags are mutually exclusive — `set_session_yolo()` and
+`set_session_confirm_all()` clear each other, and `auto_edit` clears both.
+Answering an approval card with `yolo` sets the flag the control reads, so that
+session then reports (and switches back from) `full_access`.
+
+---
+
 ## Approval Hook System
 
 Register external callbacks that fire after every approval decision:

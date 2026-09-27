@@ -121,11 +121,16 @@ client/
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
 │   │       ├── index/tasks/[sid].vue  # Standalone background-tasks page (/home/tasks/{sid})
-│   │       └── components/        # 27 page components:
+│   │       └── components/        # 32 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
+│   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
+│   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (env-config MAIN_LLM profiles, effective next turn)
-│   │           ├── MediaMenu.vue              # Collapsed media dropdown of the input toolbar (image / audio / video)
+│   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
+│   │           ├── AccessModePicker.vue       # Toolbar access mode: shield trigger (confirm changes / auto edit / full access), effective from the next tool call
+│   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
+│   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands of the session; a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
@@ -135,7 +140,7 @@ client/
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt / persona tab
 │   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
-│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab
+│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
 │   │           ├── CronPanel.vue              # Cron job tab (/cron)
 │   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
@@ -156,6 +161,9 @@ client/
 │   │   ├── right-sidebar.ts    # Right sidebar (collapsed / width persisted, open tab kinds)
 │   │   ├── thinking.ts         # Per-session thinking toggle / level (effective next turn)
 │   │   ├── session-model.ts    # Per-session main-model override (effective next turn)
+│   │   ├── context-usage.ts    # Per-session context accounting (window / reported prompt / parts)
+│   │   ├── running-commands.ts # Running background commands of a session (running tool rows, and only while the session is generating)
+│   │   ├── access-mode.ts      # Per-session access mode (confirm changes / auto edit / full access, mirrored from the backend)
 │   │   ├── llm-profiles.ts     # Model profiles from the env config (MAIN_LLM group), for the pickers
 │   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
@@ -325,7 +333,7 @@ A 300+ line SCSS mixin library providing utilities for layout, shapes, scrollbar
 
 ### State & Events
 
-- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`)
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
 - **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 
