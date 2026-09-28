@@ -25,12 +25,23 @@ getTaskSummary).
 - `taskflow_create(flow_id, description, initial_state)`: create a flow with
   initial revision=1 and status running.
 - `taskflow_run_task(flow_id, task, label, depends_on, expected_revision,
-  validation_criteria, retry_policy)`:
+  validation_criteria, retry_policy, response_schema, expected_params,
+  input_bindings, judge_criteria, judge_model, functional_role, step_model,
+  step_timeout_seconds, priority)`:
   register a step and dispatch a detached subagent session (through the existing
   spawn entry); `child_session_key` is persisted. `validation_criteria` records
   natural-language acceptance criteria on the step (the step judge uses them at
   resume); `retry_policy` opts the step into failure-aware re-dispatch by
-  `taskflow_wait_all`. `depends_on` is a list of
+  `taskflow_wait_all`. The expectation side of a step is declared here:
+  `response_schema` (JSON Schema the child's structured output must satisfy — it
+  is handed to the child as its output contract and validated again on resume),
+  `judge_criteria` + `judge_model` (semantic acceptance criteria and an optional
+  judge model), `expected_params` (structured inputs, recorded for the report),
+  and `input_bindings` (e.g. `{"target_files": "step-1.structured_result.files"}`
+  — upstream structured values appended to this step's task as an
+  `## Input parameters` block). Execution metadata: `functional_role`
+  (researcher / executor / reviewer / librarian / general), `step_model`,
+  `step_timeout_seconds`, `priority`. `depends_on` is a list of
   prerequisite step ids (e.g. `["step-1"]`): while dependencies are unmet the
   step is recorded as `blocked` and is not dispatched; once every dependency is
   `done` it is dispatched immediately and recorded as `dispatched`. When the
@@ -48,7 +59,8 @@ getTaskSummary).
 - `taskflow_update_steps(flow_id, steps, expected_revision)`: full-replace the
   flow's steps list (like `todowrite` for TaskFlow). Pass the COMPLETE list;
   each step is an object with `step_id`, `task`, `depends_on`, `status`
-  (`ready | blocked | dispatched | done`). Use it to add, remove, reorder, or
+  (`ready | blocked | dispatched | done | failed | skipped | cancelled`). Use
+  it to add, remove, reorder, or
   rewrite steps. New steps must be `ready`/`blocked` — dispatch still goes
   through `taskflow_dispatch`. A `dispatched` step keeps its
   `child_session_key` and cannot be downgraded to `ready`/`blocked` (its task
@@ -65,16 +77,34 @@ getTaskSummary).
 - `taskflow_set_waiting(flow_id, wait_reason, expected_revision)`: set the flow
   to waiting and record the wait reason.
 - `taskflow_resume(flow_id, child_session_key, result, expected_revision,
-  token_usage, validation_criteria)`:
+  token_usage, validation_criteria, structured_result, step_outcome)`:
   inject the child-session result into the flow state and return to running.
   Idempotent: resuming again with the same (child_session_key, result) does not
-  inject a second time, and the revision does not change. When the step carries
-  `validation_criteria`, an auxiliary-LLM step judge reviews the result and
-  returns pass / retry / block: `retry` re-dispatches the step within its own
-  retry budget (`STEP_JUDGE["max_retries"]`, default 2) with the judge's
-  guidance appended to the replacement task, and `block` (or an exhausted
-  budget) marks the step `blocked`. The judge is fail-open — when it is
-  disabled or unavailable the step is marked `done`.
+  inject a second time, and the revision does not change.
+
+  Two-tier quality gate, both tiers opt-in per step and chained:
+
+  * **Tier 1 — structure.** When the step declares `response_schema`, the result
+    (`structured_result` when you pass it, else parsed from `result`) is
+    validated against that schema. The verdict is recorded on the result entry
+    (`structured_result`, `schema_validated`, and the pairing key `step_id`). A
+    failure is a failure signal like any other: it re-dispatches under the
+    step's `retry_policy` (`schema_error` is the retry type) and **never** spends
+    a judge call; with no retry budget left the step is marked `failed`.
+  * **Tier 2 — semantics.** When the step declares `judge_criteria` (or the
+    legacy `validation_criteria`), an auxiliary-LLM step judge reviews the
+    result — the validated `structured_result` when there is one, else the
+    result text — and returns pass / retry / block: `retry` re-dispatches within
+    the step's retry budget (`STEP_JUDGE["max_retries"]`, default 2) with the
+    judge's guidance appended to the replacement task, and `block` (or an
+    exhausted budget) marks the step `blocked`. A Tier 1 pass does **not** skip
+    Tier 2: a structurally valid result can still be semantically wrong.
+
+  `step_outcome` (`success` / `failure` / `partial` / `skipped`) lets the caller
+  state how the child run ended; it outranks both tiers. `failure` marks the step
+  `failed` without calling the judge, `skipped` marks it `skipped`, and
+  `success` / `partial` are recorded while the gates still run. The judge is
+  fail-open — when it is disabled or unavailable the step is marked `done`.
 - `taskflow_finish(flow_id, summary, expected_revision, todo, plan_path,
   checkbox_label)`: mark done (terminal). Gated, fail-open: every step must be
   `done` or `blocked`, no step may be `blocked`, the flow's evidence must have
@@ -128,27 +158,40 @@ running -> waiting (set waiting) -> running (resume) -> done / failed / cancelle
 
 ## Step dependencies and status
 
-Besides `task` / `label` / `child_session_key`, a step carries two fields:
+Besides `task` / `label` / `child_session_key`, a step carries the DAG fields
+and, optionally, its expectations:
 
 - `depends_on`: list of prerequisite step ids (e.g. `["step-1"]`). Step ids look
   like `step-1`, `step-2` and are assigned sequentially by `taskflow_run_task`;
   dependencies reference ids, not list positions.
-- `status`: step status, one of `blocked | ready | dispatched | done`.
+- `status`: step status, one of
+  `blocked | ready | dispatched | done | failed | skipped | cancelled` (see
+  "Step statuses" below).
+- expectations (all optional, all defaulting to "no gate"): `response_schema`,
+  `judge_criteria` / `judge_model`, `expected_params`, `input_bindings`,
+  `validation_criteria`, `retry_policy`, and the execution metadata
+  `functional_role` / `step_model` / `step_timeout_seconds` / `priority`.
 
-Status progression: `blocked -> ready -> dispatched -> done`.
+Status progression: `blocked -> ready -> dispatched -> done`, with `failed` /
+`skipped` / `cancelled` ending a step that did not succeed.
 
 - `blocked`: dependencies are not all `done`; `taskflow_run_task` only registers
   the step and does not dispatch it.
 - `ready`: dependencies satisfied, waiting to be dispatched. **Unlocked by
   `taskflow_resume`**: after a prerequisite step is marked `done`, the `blocked`
   steps depending on it become `ready`; `taskflow_resume` only reports the newly
-  unlocked step ids and does not dispatch automatically.
+  unlocked step ids and does not dispatch automatically. Unlocking is
+  failure-aware: a prerequisite that ended `failed` leaves its dependents
+  `blocked`, and one that was `skipped`/`cancelled` cascades `skipped` into them.
 - `dispatched`: a detached subagent session was dispatched and
   `child_session_key` was persisted.
 - `done`: the child-session result was injected into the flow state via
   `taskflow_resume`.
 
-`taskflow_summary` renders each step's status, depends_on, and the per-status counts.
+`taskflow_summary` renders each step's status, depends_on, its configured
+expectations (schema properties, judge criteria, bindings, metadata) and the
+per-status counts; `taskflow_progress` reports `failed=` / `skipped=` counts and
+a "Needs a decision" list naming each unresolved step with its recorded reason.
 
 ## Dynamic step editing (`taskflow_update_steps`)
 
@@ -179,14 +222,34 @@ non-blocking warning — kill the child or settle it (`taskflow_wait_all` /
    one by one; each injection may unlock the next layer of `ready` steps — return
    to step 3 until every step is `done`.
 
+## Step statuses
+
+`blocked → ready → dispatched → done` is the happy path. Three further statuses
+describe how a step ended without succeeding:
+
+- `failed` — a definitive failure: the caller declared `step_outcome="failure"`,
+  or a `response_schema` result stayed invalid after its retry budget. Its
+  dependents stay `blocked` (a failure never unlocks anything); `fail_reason`
+  names the cause.
+- `skipped` — the step was declared `step_outcome="skipped"`, or a dependency was
+  skipped/cancelled (the skip cascades down the branch, so nothing waits forever
+  on a result that will not come); `skip_reason` names the cause.
+- `cancelled` — `taskflow_cancel` cancelled the flow; every step that had not
+  finished is marked `cancelled`.
+
+`taskflow_finish` refuses to complete a flow with any of those pending: they are
+a decision for the caller (resume / retry / cancel), not a completion record.
+
 ## Known limitations
 
-- A step being `done` only means "the result has been injected"; it does **not**
-  mean the child session succeeded. There is no step-level `failed` / `skipped`
-  status: a step with neither `validation_criteria` nor a matching
-  `retry_policy` still lands `done` and unlocks successors even after a failed
-  child. Failure-aware handling is opt-in — `retry_policy` re-dispatches
-  through `taskflow_wait_all`, and `validation_criteria` runs the step judge,
-  which can mark the step `blocked`.
+- A step being `done` means "the result was injected and its configured gates
+  passed". With **no** expectation configured (`response_schema`,
+  `judge_criteria`/`validation_criteria`, `retry_policy`) a failed child still
+  lands `done` and unlocks its successors — declare an expectation (or report
+  `step_outcome="failure"`) to make the closure catch it.
+- The gate is fail-open by design: an unavailable judge marks the step `done`
+  rather than wedging the flow, so a judge outage degrades to the old behaviour.
+- `input_bindings` resolve against `structured_result` only; a binding that does
+  not resolve contributes `null` to the task text instead of failing dispatch.
 - `taskflow_wait_all` only performs bounded polling; a timeout returns a partial
   report. A child session that never settles will not automatically fail the flow.

@@ -105,7 +105,12 @@ def _capture_statuses(flow: dict) -> dict[str, str]:
 def _wire(monkeypatch: pytest.MonkeyPatch, dispatched: list, queried: list):
     """Install the fake dispatch recorder and the fake registry liveness seam."""
 
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         dispatched.append((task, requester_session_key, label))
         return _CHILD_BY_TASK[task]
 
@@ -135,7 +140,11 @@ class _RecordingDispatch:
         self.calls: list[tuple[str, str, str | None]] = []
 
     async def __call__(
-        self, task: str, requester_session_key: str, label: str | None = None
+        self,
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
     ) -> str:
         self.calls.append((task, requester_session_key, label))
         if len(self.calls) > len(self.child_keys):
@@ -314,7 +323,10 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
 
         # Then the summary shows the step-status counts line
         summary = await tools["taskflow_summary"].coroutine(session_id=_SESSION, flow_id=FLOW)
-        assert "step statuses: blocked=0 ready=0 dispatched=0 done=3" in summary, summary
+        assert (
+            "step statuses: blocked=0 ready=0 dispatched=0 done=3 failed=0 skipped=0 cancelled=0"
+            in summary
+        ), summary
         assert "results: 3" in summary, summary
 
     asyncio.run(phase2())  # event loop 2 (second "process")
@@ -479,6 +491,7 @@ def test_dag_e2e_validation_criteria_echo_and_summary(
         criteria: str | None,
         result_text: str,
         evidence_summary: str | None = None,
+        structured_result: dict | None = None,
     ) -> JudgeResult:
         return JudgeResult(StepVerdict.PASS, "criteria met", "")
 

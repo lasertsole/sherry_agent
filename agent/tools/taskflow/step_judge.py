@@ -144,16 +144,26 @@ async def judge_step_result(
     criteria: str | None,
     result_text: str,
     evidence_summary: str | None = None,
+    structured_result: dict | None = None,
 ) -> JudgeResult:
     """Judge whether a subagent's step result satisfies its validation criteria.
+
+    ``structured_result`` (already validated against the step's
+    ``response_schema`` by the caller) is judged instead of the truncated raw
+    text when present: the judge then reasons over the actual values rather than
+    re-parsing prose.
 
     Fail-open: any error (model failure, unparseable output) degrades to PASS so
     the judge can never block progress.
     """
+    if structured_result is not None:
+        judged_text = json.dumps(structured_result, ensure_ascii=False, default=str)
+    else:
+        judged_text = result_text or ""
     prompt = _build_judge_prompt(
         step_task,
         criteria,
-        (result_text or "")[: int(STEP_JUDGE["max_result_chars"])],
+        judged_text[: int(STEP_JUDGE["max_result_chars"])],
         evidence_summary if STEP_JUDGE["evidence_aware"] else None,
     )
     try:

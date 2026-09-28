@@ -66,7 +66,12 @@ def _tool_map() -> dict:
 
 
 def _fake_dispatch(child_key: str, calls: list | None = None):
-    async def _dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         if calls is not None:
             calls.append((task, requester_session_key, label))
         return child_key
@@ -167,7 +172,12 @@ def test_full_chain_create_run_resume_finish_across_restart(
 ):
     dispatched: list = []
 
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         dispatched.append((task, requester_session_key, label))
         return "agent:main:subagent:child-1"
 
@@ -446,7 +456,12 @@ async def test_run_task_registers_step_and_dispatch_args(
 ):
     dispatched: list = []
 
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         dispatched.append((task, requester_session_key, label))
         return "agent:main:subagent:child-7"
 

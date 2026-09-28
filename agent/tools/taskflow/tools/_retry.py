@@ -25,6 +25,7 @@ import time
 from ..config import StepStatus
 from . import _dispatch
 from ._shared import (
+    build_task_with_bindings,
     build_task_with_dep_results,
     requester_session_key,
     result_hash,
@@ -105,15 +106,25 @@ def retries_remaining(step: dict) -> int:
     return max(0, policy["max_retries"] - step_retry_count(step))
 
 
-def should_retry_failure(step: dict, result: str) -> bool:
-    """True when a result-text failure consumes a retry under the policy.
+def should_retry_failure(step: dict, result: str, *, schema_validated: bool | None = None) -> bool:
+    """True when a failure consumes a retry under the policy.
 
     A clean result never retries. With a non-empty ``retry_on`` only matching
     classified types retry; with an empty list every classified failure does.
+
+    ``schema_validated is False`` is a failure signal of its own: the result
+    missed the step's declared ``response_schema`` (a required field absent, a
+    wrong type, unparseable JSON), which text classification cannot see. It
+    retries unless ``retry_on`` names other types and omits ``schema_error`` —
+    i.e. an explicit ``retry_on`` list still decides, so a caller can opt out.
     """
     policy = normalize_policy(step)
     if policy is None or retries_remaining(step) <= 0:
         return False
+    if schema_validated is False:
+        if not policy["retry_on"]:
+            return True
+        return "schema_error" in policy["retry_on"]
     failure_type = classify_failure(result)
     if failure_type is None:
         return False
@@ -257,7 +268,9 @@ def plan_settled_retries(
                     "child_session_key": child_key,
                     "retry_count": count + 1,
                     "policy": policy,
-                    "task": build_task_with_dep_results(step, steps, results),
+                    "task": build_task_with_bindings(
+                        build_task_with_dep_results(step, steps, results), step, steps, results
+                    ),
                 }
             )
         else:

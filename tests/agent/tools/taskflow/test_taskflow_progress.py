@@ -108,7 +108,9 @@ async def test_progress_with_blocked(isolated_db):
     out = await taskflow_progress.coroutine(session_id=_SESSION, flow_id="flow-blocked")
 
     assert "blocked=1" in out
-    assert "⊘ [step-2] second" in out
+    # A blocked step is a decision, not "next work": it is reported there.
+    assert "Needs a decision:" in out
+    assert "! [step-2] blocked" in out
 
 
 async def test_progress_next_steps_max_three(isolated_db):

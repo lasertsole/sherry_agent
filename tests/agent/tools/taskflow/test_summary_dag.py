@@ -52,7 +52,10 @@ async def test_summary_renders_blocked_and_done_statuses_with_counts(isolated_db
 
     assert "  - [step-1] blocked wait for dep -> None depends_on=[step-2]" in lines
     assert "  - [step-2] done first -> child-a depends_on=[]" in lines
-    assert "step statuses: blocked=1 ready=0 dispatched=0 done=1" in lines
+    assert (
+        "step statuses: blocked=1 ready=0 dispatched=0 done=1 failed=0 skipped=0 cancelled=0"
+        in lines
+    )
 
 
 @pytest.mark.asyncio
@@ -79,4 +82,7 @@ async def test_summary_derives_status_for_legacy_step(isolated_db):
 
     assert "Error" not in out
     assert "  - [step-1] dispatched legacy task -> child-legacy depends_on=[]" in lines
-    assert "step statuses: blocked=0 ready=0 dispatched=1 done=0" in lines
+    assert (
+        "step statuses: blocked=0 ready=0 dispatched=1 done=0 failed=0 skipped=0 cancelled=0"
+        in lines
+    )

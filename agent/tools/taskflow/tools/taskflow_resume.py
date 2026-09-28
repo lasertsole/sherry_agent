@@ -9,14 +9,16 @@ result text classifies as a failure allowed by ``retry_on``, the step is
 re-dispatched instead of marked done - the failure result is still recorded.
 """
 
+import json
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 
 from config.features import STEP_JUDGE
-from ..config import StepStatus, TaskFlowStatus
+from agent.tools.subagent.swarm.collector import validate_structured_output
+from ..config import StepOutcome, StepStatus, TaskFlowStatus
 from ..evidence_collector import collect_evidence_summary
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
@@ -32,6 +34,7 @@ from ._retry import (
     with_judge_feedback,
 )
 from ._shared import (
+    build_task_with_bindings,
     build_task_with_dep_results,
     conflict_error,
     is_terminal,
@@ -56,6 +59,8 @@ async def taskflow_resume(
     expected_revision: int | None = None,
     token_usage: dict | None = None,
     validation_criteria: str | None = None,
+    structured_result: dict | None = None,
+    step_outcome: str | None = None,
     session_id: SessionId = "",
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
@@ -80,10 +85,38 @@ async def taskflow_resume(
     spawned and the step stays dispatched on the new child; otherwise the step
     is marked done. ``session_id`` is injected by the runtime and used as the
     fallback requester for a replacement child.
+
+    Two-tier quality gate (both tiers are opt-in per step, and they chain):
+
+    * **Tier 1 — structure (free).** When the step declares ``response_schema``,
+      the result is parsed (``structured_result`` when the caller passes it,
+      else the result text) and validated against that schema. A result that
+      fails structure is recorded (``schema_validated=false``) and treated as a
+      failure: it retries under the step's policy (``schema_error`` is the retry
+      type) and never spends a judge call. A pass stores
+      ``structured_result`` + ``schema_validated=true`` and continues to Tier 2
+      — structure alone never proves the content is right.
+    * **Tier 2 — semantics (LLM).** When the step declares ``judge_criteria``
+      (or the legacy ``validation_criteria``), the step judge evaluates the
+      result — the validated ``structured_result`` when there is one, else the
+      result text.
+
+    ``step_outcome`` lets the caller state how the run ended
+    (``success``/``failure``/``partial``/``skipped``), which outranks the
+    gates: ``failure`` marks the step ``failed`` and skips the judge,
+    ``skipped`` marks it ``skipped`` (its dependents cascade ``skipped``), and
+    ``success``/``partial`` are recorded on the result while the gates still
+    run. A ``failed`` step never unlocks its dependents.
     """
     flow_id = (flow_id or "").strip()
     child_session_key = (child_session_key or "").strip()
     result = result or ""
+    declared_outcome = (step_outcome or "").strip().lower() or None
+    if declared_outcome is not None and declared_outcome not in {
+        member.value for member in StepOutcome
+    }:
+        allowed = ", ".join(member.value for member in StepOutcome)
+        return f"Error: step_outcome must be one of: {allowed}"
     if not flow_id:
         return "Error: flow_id is required"
     if not child_session_key and not result:
@@ -123,18 +156,52 @@ async def taskflow_resume(
     steps = list(state.get("steps") or [])
     step = next((s for s in steps if s.get("child_session_key") == child_session_key), None)
     step_id = step.get("step_id") if step is not None else None
+
+    # ── Tier 1: structural gate (expectation -> actual pairing) ──────────────
+    # Nothing here calls a model: a schema-less step skips it entirely, keeping
+    # pre-closure flows byte-identical.
+    schema = step.get("response_schema") if step is not None else None
+    parsed_result: Any = structured_result
+    schema_validated: bool | None = None
+    schema_error: str | None = None
+    if schema is not None:
+        if parsed_result is None:
+            try:
+                parsed_result = json.loads(result)
+            except (json.JSONDecodeError, TypeError) as exc:
+                parsed_result = None
+                schema_error = f"result is not JSON: {exc}"
+        if parsed_result is not None:
+            schema_ok, schema_error = validate_structured_output(
+                json.dumps(parsed_result, ensure_ascii=False, default=str), schema
+            )
+            schema_validated = bool(schema_ok)
+        else:
+            schema_validated = False
+            schema_error = schema_error or "no structured result to validate"
+        if parsed_result is not None:
+            result_record["structured_result"] = parsed_result
+    result_record["step_id"] = step_id
+    result_record["schema_validated"] = schema_validated
+    if declared_outcome is not None:
+        result_record["step_outcome"] = declared_outcome
+
     retry_text = ""
     redispatched_key: str | None = None
     retry_count_after: int | None = None
     if step is not None:
         policy = normalize_policy(step)
-        if policy is not None and should_retry_failure(step, result):
+        if policy is not None and should_retry_failure(
+            step, result, schema_validated=schema_validated
+        ):
             requester_key = requester_key_for_retry(state, session_id)
             await wait_before_retry(policy)
             try:
                 redispatched_key = await spawn_replacement(
                     with_judge_feedback(
-                        build_task_with_dep_results(step, steps, results),
+                        build_task_with_bindings(
+                            build_task_with_dep_results(step, steps, results), step, steps, results
+                        ),
                         str(step.get("judge_feedback") or ""),
                     ),
                     requester_key,
@@ -156,20 +223,43 @@ async def taskflow_resume(
 
     validation_text = ""
     judge_text = ""
+    outcome_text = ""
     if step is not None and redispatched_key is None:
         criteria = (validation_criteria or "").strip()
         if criteria:
             step["validation_criteria"] = criteria
         stored_criteria = str(step.get("validation_criteria") or "").strip()
-        if stored_criteria:
+        # Tier 2 criteria: judge_criteria wins over the legacy field.
+        judge_criteria_text = str(step.get("judge_criteria") or "").strip()
+        if judge_criteria_text:
+            validation_text = f"\n  judge_criteria: {judge_criteria_text}"
+        elif stored_criteria:
             validation_text = f"\n  validation_criteria: {stored_criteria}"
+
+        if schema_validated is False:
+            # Tier 1 failed with no retry left: the expectation was not met.
+            # No judge call — the structure is already known to be wrong.
+            step["status"] = str(StepStatus.FAILED)
+            step["fail_reason"] = f"response_schema not satisfied: {schema_error}"
+            outcome_text = f"\n  outcome: failed (schema, no retry left: {schema_error})"
+        elif declared_outcome == StepOutcome.FAILURE.value:
+            # The caller reported a definitive failure: it outranks the gates.
+            step["status"] = str(StepStatus.FAILED)
+            step["fail_reason"] = f"step_outcome=failure: {(result or '')[:200]}"
+            outcome_text = "\n  outcome: failed (declared by the caller)"
+        elif declared_outcome == StepOutcome.SKIPPED.value:
+            step["status"] = str(StepStatus.SKIPPED)
+            step["skip_reason"] = "step_outcome=skipped"
+            outcome_text = "\n  outcome: skipped (declared by the caller)"
+        elif judge_criteria_text or stored_criteria:
             judge_result = await judge_step_result(
                 step_task=str(step.get("task") or ""),
-                criteria=stored_criteria,
+                criteria=judge_criteria_text or stored_criteria,
                 result_text=result,
                 evidence_summary=collect_evidence_summary(
                     session_key=str(step.get("child_session_key") or "")
                 ),
+                structured_result=parsed_result if schema_validated else None,
             )
             if judge_result.verdict == StepVerdict.RETRY:
                 if step_retry_count(step) < STEP_JUDGE["max_retries"]:
@@ -177,7 +267,12 @@ async def taskflow_resume(
                     try:
                         redispatched_key = await spawn_replacement(
                             with_judge_feedback(
-                                build_task_with_dep_results(step, steps, results),
+                                build_task_with_bindings(
+                                    build_task_with_dep_results(step, steps, results),
+                                    step,
+                                    steps,
+                                    results,
+                                ),
                                 judge_result.feedback,
                             ),
                             requester_key,
@@ -308,4 +403,15 @@ async def taskflow_resume(
         f"{validation_text}"
         f"{retry_text}"
         f"{judge_text}"
+        f"{outcome_text}"
+        f"{_schema_text(schema_validated, schema_error)}"
     )
+
+
+def _schema_text(schema_validated: bool | None, schema_error: str | None) -> str:
+    """One response line for the Tier 1 verdict (nothing when no schema ran)."""
+    if schema_validated is None:
+        return ""
+    if schema_validated:
+        return "\n  schema: validated"
+    return f"\n  schema: invalid ({schema_error})"

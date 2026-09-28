@@ -46,7 +46,11 @@ class _DispatchRecorder:
         self.calls: list[str] = []
 
     async def __call__(
-        self, task: str, requester_session_key: str, label: str | None = None
+        self,
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
     ) -> str:
         self.calls.append(task)
         if len(self.calls) > len(self.keys):
@@ -214,7 +218,11 @@ async def test_step_judge_retry_reproduces_aggregation(isolated_db: Path, monkey
     monkeypatch.setattr(dispatch_module, "dispatch_child", fake)
 
     async def _retry_judge(
-        step_task: str, criteria: str | None, result_text: str, evidence_summary=None
+        step_task: str,
+        criteria: str | None,
+        result_text: str,
+        evidence_summary=None,
+        structured_result: dict | None = None,
     ) -> JudgeResult:
         return JudgeResult(StepVerdict.RETRY, "missing PASS", "emit the PASS token")
 

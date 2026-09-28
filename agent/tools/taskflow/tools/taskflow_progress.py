@@ -16,6 +16,9 @@ from ._shared import not_found_error, step_status, steps_summary
 
 SessionId = Annotated[str, InjectedState("session_id")]
 
+#: Statuses that are not work to start but a decision for the caller.
+DECISION_STATUSES = ("failed", "blocked", "skipped", "cancelled")
+
 _STEP_ICONS = {
     "done": "✓",
     "dispatched": "→",
@@ -57,17 +60,43 @@ async def taskflow_progress(flow_id: str, session_id: SessionId = "") -> str:
         f"  Description: {state.get('description', '')[:80]}",
         f"  Completion: {done}/{total} steps ({pct}%)",
         "  Breakdown: "
-        + " · ".join(f"{s}={counts.get(s, 0)}" for s in ("done", "dispatched", "ready", "blocked")),
+        + " · ".join(
+            f"{s}={counts.get(s, 0)}"
+            for s in (
+                "done",
+                "dispatched",
+                "ready",
+                "blocked",
+                "failed",
+                "skipped",
+                "cancelled",
+            )
+        ),
     ]
 
-    # Next actionable steps (first 3 non-done)
-    actionable = [s for s in steps if step_status(s) != "done"]
+    # Work the caller can actually start: not done, and not parked on a decision.
+    actionable = [s for s in steps if step_status(s) not in ("done", *DECISION_STATUSES)]
     if actionable:
         lines.append("  Next steps:")
         for s in actionable[:3]:
             icon = _STEP_ICONS.get(step_status(s), "?")
             task_text = (s.get("task", "") or "")[:60]
             lines.append(f"    {icon} [{s.get('step_id', '?')}] {task_text}")
+
+    # A failed/blocked/skipped step is a decision for the caller, not work:
+    # name them (with the recorded reason) so the report says what to resolve.
+    needs_decision = [s for s in steps if step_status(s) in DECISION_STATUSES]
+    if needs_decision:
+        lines.append("  Needs a decision:")
+        for s in needs_decision[:5]:
+            reason = (
+                s.get("fail_reason")
+                or s.get("block_reason")
+                or s.get("skip_reason")
+                or s.get("cancel_reason")
+                or "no reason recorded"
+            )
+            lines.append(f"    ! [{s.get('step_id', '?')}] {step_status(s)}: {reason}")
 
     # Estimated remaining time
     done_steps = [s for s in steps if step_status(s) == "done" and s.get("dispatched_at")]

@@ -36,7 +36,12 @@ def _tools() -> dict:
 
 
 def _fake_dispatch(child_key: str, calls: list | None = None):
-    async def _dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         if calls is not None:
             calls.append((task, requester_session_key, label))
         return child_key
@@ -190,7 +195,12 @@ async def test_partial_completion_leaves_sibling_dispatched(
 ):
     keys = iter(["agent:main:subagent:child-1", "agent:main:subagent:child-2"])
 
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         return next(keys)
 
     monkeypatch.setattr(taskflow_dispatch_module, "dispatch_child", fake_dispatch)

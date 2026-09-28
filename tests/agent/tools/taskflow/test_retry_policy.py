@@ -57,7 +57,11 @@ class _DispatchRecorder:
         self.calls: list[tuple[str, str, str | None]] = []
 
     async def __call__(
-        self, task: str, requester_session_key: str, label: str | None = None
+        self,
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
     ) -> str:
         self.calls.append((task, requester_session_key, label))
         if len(self.calls) > len(self.keys):

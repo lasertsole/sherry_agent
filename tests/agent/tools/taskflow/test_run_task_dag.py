@@ -31,7 +31,10 @@ pytestmark = [pytest.mark.unit]
 
 def _recording_dispatch(child_key: str, calls: list):
     async def _dispatch_call(
-        task: str, requester_session_key: str, label: str | None = None
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
     ) -> str:
         calls.append((task, requester_session_key, label))
         return child_key

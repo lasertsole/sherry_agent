@@ -21,6 +21,7 @@ from ..registry import store_sqlite
 from . import _dispatch
 from ._retry import is_redispatch, normalize_policy, step_retry_count, with_judge_feedback
 from ._shared import (
+    build_task_with_bindings,
     apply_dispatched_steps,
     build_task_with_dep_results,
     deps_satisfied,
@@ -118,7 +119,12 @@ async def taskflow_dispatch(
     for sid in requested:
         step = by_id[sid]
         feedback = str(step.get("judge_feedback") or "").strip()
-        task_text = with_judge_feedback(build_task_with_dep_results(step, steps, results), feedback)
+        task_text = with_judge_feedback(
+            build_task_with_bindings(
+                build_task_with_dep_results(step, steps, results), step, steps, results
+            ),
+            feedback,
+        )
         try:
             child_key = await _dispatch.dispatch_child(
                 task=task_text,

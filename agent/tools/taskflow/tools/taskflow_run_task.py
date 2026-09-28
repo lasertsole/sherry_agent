@@ -11,7 +11,7 @@ without touching the spawn pipeline.
 """
 
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
@@ -22,6 +22,7 @@ from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from . import _dispatch
 from ._retry import validate_policy
 from ._shared import (
+    build_task_with_bindings,
     build_task_with_dep_results,
     conflict_error,
     deps_satisfied,
@@ -47,6 +48,15 @@ async def taskflow_run_task(
     validation_criteria: str | None = None,
     retry_policy: dict | None = None,
     aggregate_deps: bool = False,
+    response_schema: dict | None = None,
+    expected_params: dict | None = None,
+    input_bindings: dict | None = None,
+    judge_criteria: str | None = None,
+    judge_model: str | None = None,
+    functional_role: str | None = None,
+    step_model: str | None = None,
+    step_timeout_seconds: float | None = None,
+    priority: int | None = None,
     session_id: SessionId = "",
 ) -> str:
     """Register a step on the flow and dispatch it to a detached child subagent.
@@ -77,6 +87,24 @@ async def taskflow_run_task(
     steps' recorded results to the dispatched task text. The flag is stored on
     the step, so a later batch dispatch or retry re-derives the aggregation
     from the (stable) dependency results without rewriting the stored task.
+
+    Expectation side of the closure (all optional, stored on the step and
+    enforced by taskflow_resume):
+
+    * response_schema — JSON Schema the child's structured output must satisfy.
+      It is passed to the spawned sub-agent as its output contract, and the
+      result is schema-validated on resume (Tier 1).
+    * judge_criteria / judge_model — semantic acceptance criteria judged by the
+      auxiliary-LLM step judge (Tier 2), and an optional model override.
+    * expected_params — structured inputs the step is supposed to work on
+      (recorded for the caller/UI; nothing is enforced from it).
+    * input_bindings — {"param": "step-A.structured_result.files"} mappings read
+      from upstream steps' structured results and appended to this step's
+      dispatched task text.
+
+    Execution metadata: functional_role (sub-agent specialization), step_model
+    (child model override), step_timeout_seconds (per-step child timeout),
+    priority (dispatch ordering hint).
     """
     flow_id = (flow_id or "").strip()
     task = (task or "").strip()
@@ -111,11 +139,20 @@ async def taskflow_run_task(
     requester_key = requester_session_key(session_id)
     step_id = f"step-{len(steps) + 1}"
 
-    candidate = new_step(step_id, task, depends_on=deps, status=StepStatus.READY)
-    if criteria:
-        candidate["validation_criteria"] = criteria
-    if retry_policy is not None:
-        candidate["retry_policy"] = retry_policy
+    optional_fields: dict[str, Any] = {
+        "validation_criteria": criteria or None,
+        "retry_policy": retry_policy,
+        "response_schema": response_schema,
+        "expected_params": expected_params,
+        "input_bindings": input_bindings,
+        "judge_criteria": (judge_criteria or "").strip() or None,
+        "judge_model": (judge_model or "").strip() or None,
+        "functional_role": (functional_role or "").strip() or None,
+        "step_model": (step_model or "").strip() or None,
+        "step_timeout_seconds": step_timeout_seconds,
+        "priority": priority,
+    }
+    candidate = new_step(step_id, task, depends_on=deps, status=StepStatus.READY, **optional_fields)
     if aggregate_deps:
         candidate["aggregate_deps"] = True
     if not deps_satisfied(candidate, steps):
@@ -140,9 +177,15 @@ async def taskflow_run_task(
         )
 
     child_session_key = await _dispatch.dispatch_child(
-        task=build_task_with_dep_results(candidate, steps, results),
+        task=build_task_with_bindings(
+            build_task_with_dep_results(candidate, steps, results), candidate, steps, results
+        ),
         requester_session_key=requester_key,
         label=label,
+        output_schema=response_schema,
+        functional_role=optional_fields["functional_role"],
+        step_model=optional_fields["step_model"],
+        step_timeout_seconds=step_timeout_seconds,
     )
     dispatched_at = time.time()
 
@@ -151,11 +194,9 @@ async def taskflow_run_task(
         fresh_state = dict(fresh_flow["state"])
         fresh_steps = list(fresh_state.get("steps") or [])
         step_id = f"step-{len(fresh_steps) + 1}"
-        dispatched = new_step(step_id, task, depends_on=deps, status=StepStatus.DISPATCHED)
-        if criteria:
-            dispatched["validation_criteria"] = criteria
-        if retry_policy is not None:
-            dispatched["retry_policy"] = retry_policy
+        dispatched = new_step(
+            step_id, task, depends_on=deps, status=StepStatus.DISPATCHED, **optional_fields
+        )
         if aggregate_deps:
             dispatched["aggregate_deps"] = True
         dispatched["child_session_key"] = child_session_key

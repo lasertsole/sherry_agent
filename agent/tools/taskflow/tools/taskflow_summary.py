@@ -54,6 +54,7 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
                 f"  - [{step.get('step_id')}] {step_status(step)} {step.get('task')} "
                 f"-> {step.get('child_session_key')} depends_on={deps_text}{criteria_text}"
             )
+            lines.extend(_expectation_lines(step))
     counts = steps_summary(steps)
     lines.append("step statuses: " + " ".join(f"{status}={n}" for status, n in counts.items()))
     deadline_ts = flow.get("deadline_ts")
@@ -72,6 +73,7 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
     for item in results:
         if isinstance(item, dict):
             lines.append(f"  - [{item.get('child_session_key')}] {str(item.get('result'))[:400]}")
+            lines.extend(_result_gate_lines(item))
     if flow["wait"] is not None:
         wait_payload = flow["wait"]
         lines.append(f"wait: {json.dumps(wait_payload, ensure_ascii=False)}")
@@ -103,3 +105,70 @@ async def taskflow_summary(flow_id: str, session_id: SessionId = "") -> str:
     if state.get("cancel_reason"):
         lines.append(f"cancel_reason: {state['cancel_reason']}")
     return "\n".join(lines)
+
+
+def _expectation_lines(step: dict) -> list[str]:
+    """Indented lines describing a step's expectation side (nothing when plain).
+
+    Only configured fields are printed, so a pre-closure step adds no lines and
+    the summary stays short for simple flows.
+    """
+    out: list[str] = []
+    schema = step.get("response_schema")
+    if isinstance(schema, dict):
+        properties = sorted(schema.get("properties", {}).keys())
+        required = sorted(schema.get("required", []))
+        out.append(
+            f"      response_schema: properties={properties or '{}'} required={required or '[]'}"
+        )
+    if step.get("expected_params") is not None:
+        out.append(
+            "      expected_params: "
+            + json.dumps(step["expected_params"], ensure_ascii=False, default=str)
+        )
+    if step.get("input_bindings"):
+        out.append(
+            "      input_bindings: "
+            + json.dumps(step["input_bindings"], ensure_ascii=False, default=str)
+        )
+    if step.get("judge_criteria"):
+        out.append(f"      judge_criteria: {step['judge_criteria']}")
+    if step.get("judge_model"):
+        out.append(f"      judge_model: {step['judge_model']}")
+    for key, label in (
+        ("functional_role", "functional_role"),
+        ("step_model", "step_model"),
+        ("step_timeout_seconds", "step_timeout_seconds"),
+        ("priority", "priority"),
+        ("block_reason", "block_reason"),
+        ("fail_reason", "fail_reason"),
+        ("skip_reason", "skip_reason"),
+    ):
+        if step.get(key) not in (None, ""):
+            out.append(f"      {label}: {step[key]}")
+    return out
+
+
+def _result_gate_lines(record: dict) -> list[str]:
+    """Indented lines for a result record's gate verdicts (schema/outcome/judge)."""
+    out: list[str] = []
+    if record.get("step_id"):
+        out.append(f"      step_id: {record['step_id']}")
+    schema_validated = record.get("schema_validated")
+    if schema_validated is not None:
+        out.append(f"      schema_validated: {str(bool(schema_validated)).lower()}")
+    if record.get("structured_result") is not None:
+        out.append(
+            "      structured_result: "
+            + json.dumps(record["structured_result"], ensure_ascii=False, default=str)[:400]
+        )
+    if record.get("step_outcome"):
+        out.append(f"      step_outcome: {record['step_outcome']}")
+    if record.get("judge_verdict"):
+        out.append(f"      judge_verdict: {record['judge_verdict']}")
+    if record.get("judge_reason"):
+        out.append(f"      judge_reason: {record['judge_reason']}")
+    token_usage = record.get("token_usage")
+    if isinstance(token_usage, dict) and token_usage:
+        out.append("      token_usage: " + json.dumps(token_usage, ensure_ascii=False, default=str))
+    return out

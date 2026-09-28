@@ -64,7 +64,12 @@ async def _seed(flow_id: str, steps: list[dict]) -> None:
 def _recording_dispatch(calls: list, keys: list[str], fail_at: int | None = None):
     """Fake seam: records calls; raises RuntimeError on the Nth (1-based) call."""
 
-    async def _fake(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _fake(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         calls.append((task, requester_session_key, label))
         index = len(calls)
         if fail_at is not None and index == fail_at:

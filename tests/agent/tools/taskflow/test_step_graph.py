@@ -279,7 +279,15 @@ def test_steps_summary_counts_every_status():
     counts = _shared.steps_summary(steps)
 
     # Then each status is counted, including zeros for absent ones
-    assert counts == {"blocked": 1, "ready": 1, "dispatched": 1, "done": 2}
+    assert counts == {
+        "blocked": 1,
+        "ready": 1,
+        "dispatched": 1,
+        "done": 2,
+        "failed": 0,
+        "skipped": 0,
+        "cancelled": 0,
+    }
 
 
 def test_steps_summary_derives_legacy_steps():
@@ -290,7 +298,15 @@ def test_steps_summary_derives_legacy_steps():
     counts = _shared.steps_summary(steps)
 
     # Then the derived statuses are counted
-    assert counts == {"blocked": 0, "ready": 1, "dispatched": 1, "done": 0}
+    assert counts == {
+        "blocked": 0,
+        "ready": 1,
+        "dispatched": 1,
+        "done": 0,
+        "failed": 0,
+        "skipped": 0,
+        "cancelled": 0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -300,7 +316,12 @@ def test_steps_summary_derives_legacy_steps():
 
 def test_dispatch_child_seam_is_monkeypatchable_and_returns_child_key(monkeypatch):
     # Given the real dispatch seam replaced by a fake
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         assert task == "do work"
         assert requester_session_key == "agent:main:session:sess-1"
         assert label == "lbl"

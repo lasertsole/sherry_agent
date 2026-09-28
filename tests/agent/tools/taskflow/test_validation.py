@@ -35,7 +35,12 @@ _CRITERIA = "output must contain PASS and must not contain ERROR"
 
 
 def _fake_dispatch(child_key: str):
-    async def _dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         return child_key
 
     return _dispatch
@@ -51,6 +56,7 @@ def _patch_judge_pass(monkeypatch: pytest.MonkeyPatch) -> None:
         criteria: str | None,
         result_text: str,
         evidence_summary: str | None = None,
+        structured_result: dict | None = None,
     ) -> JudgeResult:
         return JudgeResult(StepVerdict.PASS, "criteria met", "")
 

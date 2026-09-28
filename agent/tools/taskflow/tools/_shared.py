@@ -13,6 +13,7 @@ with the freshest expected_revision, per skills/builtin/core/taskflow/SKILL.md.
 # cohesion gain.
 
 import hashlib
+import json
 from collections.abc import Callable
 from typing import Any
 
@@ -77,25 +78,58 @@ def is_terminal(status: str) -> bool:
     return status in TERMINAL_STATUSES
 
 
+# Expectation / metadata fields a step may carry on top of the DAG core. Every
+# one is optional and only written when the caller provided it, so a flow with
+# no expectations stays byte-identical to a pre-closure one (backward compat).
+_OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
+    # Expectation side (the "expected" half of the closure):
+    "expected_params",  # A1: structured inputs this step is supposed to work on
+    "response_schema",  # A2: JSON Schema the structured result must satisfy
+    "judge_criteria",  # B3: semantic acceptance criteria for the LLM judge
+    "judge_model",  # B3: model override for that judge
+    "validation_criteria",  # legacy text criteria (still judged when present)
+    # Execution metadata:
+    "functional_role",  # D1: sub-agent specialization
+    "step_model",  # D1: child model override
+    "step_timeout_seconds",  # D3: per-step child run timeout
+    "priority",  # D2: dispatch ordering hint
+    "input_bindings",  # C1/C2: upstream structured fields bound as inputs
+    "retry_policy",  # existing: failure retry policy
+)
+
+
 def new_step(
     step_id: str,
     task: str,
     depends_on: list[str] | None = None,
     status: StepStatus | str = StepStatus.READY,
+    **optional: Any,
 ) -> dict:
     """Build a step dict for the flow's ``steps`` list.
 
     All DAG fields live inside ``state_json`` (no DB migration): a stable
     ``step_id``, the task text, the dependency ids, the current status, and the
     retry counter (0 = no re-dispatch yet; see ``_retry``).
+
+    ``optional`` accepts any of :data:`_OPTIONAL_STEP_FIELDS` (expectations,
+    judge criteria, sub-agent metadata, input bindings). A field is written only
+    when its value is not ``None`` — an empty/absent expectation must stay
+    absent so the resume path can tell "no gate configured" from "gate failed".
+    Unknown keys raise, so a typo can never silently drop an expectation.
     """
-    return {
+    step: dict[str, Any] = {
         "step_id": step_id,
         "task": task,
         "depends_on": list(depends_on or []),
         "status": str(status),
         "retry_count": 0,
     }
+    for key, value in optional.items():
+        if key not in _OPTIONAL_STEP_FIELDS:
+            raise ValueError(f"new_step: unknown step field {key!r}")
+        if value is not None:
+            step[key] = value
+    return step
 
 
 def step_status(step: dict) -> str:
@@ -191,6 +225,19 @@ def unlock_dependents(steps: list[dict]) -> list[str]:
     A blocked step with no ``depends_on`` is not waiting on the DAG (for
     example it was blocked by the step judge), so it is never auto-unlocked.
     A single pass, so a self-dependency or a dependency cycle can never loop.
+
+    Dependency results are failure-aware:
+
+    * a dependency that ended ``failed`` (or is still ``blocked``/in-flight)
+      never unlocks its dependents — they stay ``blocked`` for a human decision;
+    * a dependency that was ``skipped`` or ``cancelled`` cascades ``skipped``
+      into its dependents, because waiting on a branch that will never produce a
+      result would otherwise park the flow forever.
+
+    A skipped dependent is not followed transitively here: the next call (after
+    the caller persists and re-runs the pass) cascades one level further, so a
+    long dead branch settles in a bounded number of passes rather than one
+    unbounded loop.
     """
     newly_ready: list[str] = []
     for step in steps:
@@ -198,12 +245,118 @@ def unlock_dependents(steps: list[dict]) -> list[str]:
             continue
         if not step.get("depends_on"):
             continue
-        if deps_satisfied(step, steps):
+        dep_statuses = _dep_statuses(step, steps)
+        if dep_statuses is None:
+            continue
+        if any(status in _CASCADING_DEP_STATUSES for status in dep_statuses):
+            step["status"] = str(StepStatus.SKIPPED)
+            step["skip_reason"] = "dependency skipped or cancelled"
+            continue
+        if all(status == str(StepStatus.DONE) for status in dep_statuses):
             step["status"] = str(StepStatus.READY)
             step_id = step.get("step_id")
             if step_id is not None:
                 newly_ready.append(step_id)
     return newly_ready
+
+
+def _dep_statuses(step: dict, steps: list[dict]) -> list[str] | None:
+    """Statuses of ``step``'s dependencies, or ``None`` when one is unusable.
+
+    ``None`` means "cannot judge": an unknown dep id or a self-dependency, which
+    must leave the step blocked rather than count as satisfied or skipped.
+    """
+    step_id = step.get("step_id")
+    by_id = {s.get("step_id"): s for s in steps}
+    statuses: list[str] = []
+    for dep_id in step.get("depends_on") or []:
+        if dep_id == step_id:
+            return None
+        dep = by_id.get(dep_id)
+        if dep is None:
+            return None
+        statuses.append(step_status(dep))
+    return statuses
+
+
+#: A dependency in one of these states kills the branch: its dependents are
+#: skipped instead of being unlocked or left blocked forever.
+_CASCADING_DEP_STATUSES = frozenset(
+    {
+        StepStatus.SKIPPED.value,
+        StepStatus.CANCELLED.value,
+    }
+)
+
+
+def extract_nested(data: Any, path: str) -> Any:
+    """Read a dotted path out of a nested dict/list value.
+
+    ``"files.0.name"`` walks ``data["files"][0]["name"]``. A missing key, an
+    out-of-range or non-numeric list index, or a path that runs into a scalar
+    yields ``None`` (never raises): a binding that cannot be resolved must
+    degrade to "no value", not break the dispatch.
+
+    :param data: Parsed structured result (usually a step's
+        ``structured_result``).
+    :param path: Dotted path into ``data`` ('' returns ``data`` itself).
+    :returns: The value at ``path``, or ``None``.
+    """
+    if not path:
+        return data
+    current = data
+    for part in str(path).split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        elif isinstance(current, (list, tuple)) and part.isdigit():
+            index = int(part)
+            current = current[index] if 0 <= index < len(current) else None
+        else:
+            return None
+    return current
+
+
+def build_task_with_bindings(
+    task_text: str, step: dict, steps: list[dict], results: list[dict]
+) -> str:
+    """Append the step's ``input_bindings`` values to its dispatched task text.
+
+    ``input_bindings`` maps a parameter name to a dotted path into an upstream
+    step's structured result: ``{"target_files": "step-A.structured_result.files"}``
+    reads ``files`` out of step-A's recorded ``structured_result``. The resolved
+    values are appended as an ``## Input parameters`` JSON block, so the child
+    receives the upstream data as data (not as prose it has to re-parse).
+
+    Degradation is deliberate and silent: an unresolvable binding (no such step,
+    no structured result, missing path) contributes a ``null`` value instead of
+    failing the dispatch — a step must still run when an upstream field it hoped
+    for is absent, and the null is visible in the child's task text.
+
+    :param task_text: The task text built so far (dep-result aggregation applied).
+    :param step: The step carrying ``input_bindings``.
+    :param steps: The flow's steps (binding sources are looked up here).
+    :param results: The flow's recorded result entries.
+    :returns: ``task_text`` unchanged when no bindings, else text + param block.
+    """
+    bindings = step.get("input_bindings")
+    if not isinstance(bindings, dict) or not bindings:
+        return task_text
+    by_id = {s.get("step_id"): s for s in steps}
+    by_child = {str(r.get("child_session_key") or ""): r for r in results if isinstance(r, dict)}
+    resolved: dict[str, Any] = {}
+    for param_name, binding in bindings.items():
+        value: Any = None
+        if isinstance(binding, str) and binding:
+            parts = binding.split(".", 2)
+            if len(parts) == 3 and parts[1] == "structured_result":
+                source_step = by_id.get(parts[0])
+                if source_step is not None:
+                    record = by_child.get(str(source_step.get("child_session_key") or ""))
+                    if record is not None:
+                        value = extract_nested(record.get("structured_result"), parts[2])
+        resolved[str(param_name)] = value
+    block = json.dumps(resolved, ensure_ascii=False, default=str, indent=2)
+    return f"{task_text}\n\n## Input parameters\n{block}"
 
 
 def record_unpersisted_children_error(flow_id: str, child_keys: list[str], attempts: int) -> str:

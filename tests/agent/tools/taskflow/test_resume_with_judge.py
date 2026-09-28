@@ -28,7 +28,12 @@ def _tools() -> dict:
 def _key_dispatch(keys: list[str], calls: list | None = None):
     iterator = iter(keys)
 
-    async def _dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         if calls is not None:
             calls.append(task)
         return next(iterator)
@@ -49,6 +54,7 @@ def _patch_judge(
         criteria: str | None,
         result_text: str,
         evidence_summary: str | None = None,
+        structured_result: dict | None = None,
     ) -> JudgeResult:
         if seen_criteria is not None:
             seen_criteria.append((step_task, criteria, result_text))

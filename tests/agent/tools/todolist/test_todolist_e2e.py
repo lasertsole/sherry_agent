@@ -486,7 +486,12 @@ class TestTodolistFullPipeline:
         flow_id = "e2e-prompt-flow"
         flow_tools = _flow_tools()
 
-        async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None):
+        async def fake_dispatch(
+            task: str,
+            requester_session_key: str,
+            label: str | None = None,
+            **_kwargs: object,
+        ):
             return f"agent:main:subagent:{task}"
 
         monkeypatch.setattr(dispatch_mod, "dispatch_child", fake_dispatch)
@@ -561,7 +566,12 @@ class TestTodolistFullPipeline:
         flow_id = "e2e-lifecycle-flow"
         child = "agent:main:subagent:lifecycle-1"
 
-        async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None):
+        async def fake_dispatch(
+            task: str,
+            requester_session_key: str,
+            label: str | None = None,
+            **_kwargs: object,
+        ):
             return child
 
         monkeypatch.setattr(dispatch_mod, "dispatch_child", fake_dispatch)
@@ -786,7 +796,12 @@ class TestTodolistPromptBlocks:
         flow_tools = _flow_tools()
         sid = "e2e-all-blocks"
 
-        async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None):
+        async def fake_dispatch(
+            task: str,
+            requester_session_key: str,
+            label: str | None = None,
+            **_kwargs: object,
+        ):
             return f"agent:main:subagent:{task}"
 
         monkeypatch.setattr(dispatch_mod, "dispatch_child", fake_dispatch)

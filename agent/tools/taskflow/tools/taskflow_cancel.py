@@ -5,10 +5,10 @@ from typing import Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 
-from ..config import TaskFlowStatus
+from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
-from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
+from ._shared import conflict_error, is_terminal, not_found_error, step_status, terminal_error
 
 SessionId = Annotated[str, InjectedState("session_id")]
 
@@ -45,6 +45,22 @@ async def taskflow_cancel(
     if reason:
         state["cancel_reason"] = reason
 
+    # Steps that never produced a result are cancelled with the flow: their DAG
+    # status must not keep saying ready/dispatched/blocked after the flow is
+    # terminal. Steps already done stay done (their work happened).
+    cancelled_steps = 0
+    steps = list(state.get("steps") or [])
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        if step_status(step) in (StepStatus.DONE.value, StepStatus.CANCELLED.value):
+            continue
+        step["status"] = str(StepStatus.CANCELLED)
+        step["cancel_reason"] = reason or "flow cancelled"
+        cancelled_steps += 1
+    if steps:
+        state["steps"] = steps
+
     try:
         updated = await store_sqlite.update_flow(
             flow_id,
@@ -61,5 +77,5 @@ async def taskflow_cancel(
 
     return (
         f"TaskFlow cancelled: flow_id={flow_id}, revision={updated['expected_revision']}, "
-        f"status={updated['status']}"
+        f"status={updated['status']}, steps_cancelled={cancelled_steps}"
     )

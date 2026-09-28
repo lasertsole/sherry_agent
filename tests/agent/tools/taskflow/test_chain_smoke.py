@@ -81,7 +81,12 @@ def _tools() -> dict:
 def _key_dispatch(keys: list[str], calls: list[str]):
     iterator = iter(keys)
 
-    async def _dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         calls.append(task)
         return next(iterator)
 

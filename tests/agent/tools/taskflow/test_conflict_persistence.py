@@ -53,7 +53,12 @@ def _fake_dispatch(*keys: str, fail_at: int | None = None):
     """Fake seam returning ``keys`` in order; raises RuntimeError on the Nth call."""
     calls: list = []
 
-    async def _call(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def _call(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         calls.append((task, requester_session_key, label))
         index = len(calls)
         if fail_at is not None and index == fail_at:

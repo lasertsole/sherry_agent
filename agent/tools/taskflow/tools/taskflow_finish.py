@@ -133,8 +133,26 @@ async def taskflow_finish(
             f"{[step.get('step_id') for step in pending]}"
         )
 
-    # Gate B — blocked steps need intervention, not a completion record.
+    # Gate B — an unresolved step (blocked / failed / skipped / cancelled) needs
+    # a decision, not a completion record. ``failed`` in particular must never be
+    # finished over: its dependents are still blocked and the work is not done.
     blocked = [step for step in steps if step_status(step) == StepStatus.BLOCKED.value]
+    failed = [
+        step
+        for step in steps
+        if step_status(step)
+        in (StepStatus.FAILED.value, StepStatus.SKIPPED.value, StepStatus.CANCELLED.value)
+    ]
+    if failed:
+        details = [
+            f"{step.get('step_id')}={step_status(step)}"
+            f"({step.get('fail_reason') or step.get('skip_reason') or 'no reason recorded'})"
+            for step in failed
+        ]
+        return (
+            f"Error: Cannot finish: {len(failed)} step(s) unresolved: {details}. "
+            "Resume, retry or cancel them, or cancel the flow."
+        )
     if blocked:
         return (
             f"Error: Cannot finish: {len(blocked)} step(s) are blocked: "

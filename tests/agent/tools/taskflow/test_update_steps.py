@@ -508,7 +508,12 @@ async def test_expected_revision_match_succeeds(isolated_db: Path):
 async def test_update_then_dispatch_schedules_ready_step(
     isolated_db: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    async def fake_dispatch(task: str, requester_session_key: str, label: str | None = None) -> str:
+    async def fake_dispatch(
+        task: str,
+        requester_session_key: str,
+        label: str | None = None,
+        **_kwargs: object,
+    ) -> str:
         return "child-new"
 
     monkeypatch.setattr(dispatch_mod, "dispatch_child", fake_dispatch)
