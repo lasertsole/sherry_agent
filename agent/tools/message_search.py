@@ -672,11 +672,13 @@ def session_search(
 
 def _run_semantic_search(query: str, session_id: str | None, limit: int) -> str:
     """Embedding-similarity ranking over MesMemory messages."""
-    import asyncio
-
     from context_engine.embeddings import semantic_search
 
-    matches = asyncio.run(semantic_search(query, session_id, limit))
+    # run_async, not asyncio.run: the latter creates a disposable loop that
+    # conflicts with the cached AsyncOpenAI/httpx clients bound to the gateway's
+    # loop (the deadlock the sibling path above documents), while run_async
+    # bridges sync→async across CLI, gateway and worker-thread callers.
+    matches = run_async(semantic_search(query, session_id, limit))
     if not matches:
         return (
             "No semantically similar messages found. The embedding index may "

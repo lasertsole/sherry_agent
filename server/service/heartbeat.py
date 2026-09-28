@@ -109,7 +109,10 @@ async def process_heartbeat_task(task: str) -> str:
             SystemMessage(content=build_system_prompt(selected_file_names=CORE_SYSTEM_FILE_NAMES)),
             HumanMessage(content=task),
         ]
-        result: dict[str, Any] = agent.invoke(input={"messages": messages})
+        # Await it: a sync invoke() here runs the whole turn inside this
+        # coroutine's thread and stalls the event loop (every other session's
+        # stream, the WS pushes) for its duration.
+        result: dict[str, Any] = await agent.ainvoke(input={"messages": messages})
         res_messages = result["messages"]
 
         agent_res: str = res_messages[-1].content

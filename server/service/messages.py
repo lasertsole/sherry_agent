@@ -559,29 +559,31 @@ async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
         config = build_agent_config(session_id)
         state = await agent.aget_state(config=config)
 
+        # Scan EVERY task of the superstep: a graph that resumed several
+        # parallel branches carries one task each, and stopping at the first
+        # task silently dropped the approval of a later one (the frontend then
+        # showed no dialog at all). The first interrupt with a payload wins.
         for task in getattr(state, "tasks", []):
-            if hasattr(task, "interrupts") and task.interrupts:
-                for intr in task.interrupts:
-                    value = getattr(intr, "value", None)
-                    if value is None:
-                        continue
-                    action_requests = (
-                        value.get("action_requests", []) if isinstance(value, dict) else []
-                    )
-                    review_configs = (
-                        value.get("review_configs", []) if isinstance(value, dict) else []
-                    )
-                    if not action_requests:
-                        continue
-                    ar = action_requests[0]
-                    rc = review_configs[0] if review_configs else {}
-                    return {
-                        "tool_name": ar.get("name", "unknown"),
-                        "tool_args": ar.get("args", {}),
-                        "description": ar.get("description", ""),
-                        "allowed_decisions": rc.get("allowed_decisions", ["approve", "reject"]),
-                    }
-            break
+            if not (hasattr(task, "interrupts") and task.interrupts):
+                continue
+            for intr in task.interrupts:
+                value = getattr(intr, "value", None)
+                if value is None:
+                    continue
+                action_requests = (
+                    value.get("action_requests", []) if isinstance(value, dict) else []
+                )
+                review_configs = value.get("review_configs", []) if isinstance(value, dict) else []
+                if not action_requests:
+                    continue
+                ar = action_requests[0]
+                rc = review_configs[0] if review_configs else {}
+                return {
+                    "tool_name": ar.get("name", "unknown"),
+                    "tool_args": ar.get("args", {}),
+                    "description": ar.get("description", ""),
+                    "allowed_decisions": rc.get("allowed_decisions", ["approve", "reject"]),
+                }
         return None
     except Exception as e:
         logger.debug(f"get_pending_interrupt failed for session_id={session_id}: {e}")
