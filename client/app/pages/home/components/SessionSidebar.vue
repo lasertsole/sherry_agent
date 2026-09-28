@@ -14,249 +14,104 @@
     <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
       <!-- LOGO area -->
       <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
-      <!-- Tab switcher: sessions / background tasks -->
-      <div class="flex gap-1 my-3 rounded-lg p-1 bg-gray-100 dark:bg-gray-800">
-        <button
-          class="flex-1 h-8 rounded-md text-sm transition-all cursor-pointer"
-          :class="
-            activeTab === 'sessions'
-              ? 'bg-white dark:bg-gray-700 text-primary font-medium shadow-sm'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          "
-          @click="switchTab('sessions')">
-          {{ t('sidebar.tabSessions') }}
-        </button>
-        <button
-          class="flex-1 h-8 rounded-md text-sm transition-all cursor-pointer flex items-center justify-center gap-1"
-          :class="
-            activeTab === 'tasks'
-              ? 'bg-white dark:bg-gray-700 text-primary font-medium shadow-sm'
-              : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
-          "
-          @click="switchTab('tasks')">
-          {{ t('sidebar.tabTasks') }}
-          <span
-            v-if="allRunningTaskCount > 0"
-            class="inline-flex items-center justify-center min-w-4 h-4 px-1 rounded-full text-[11px] leading-none text-white bg-red-500">
-            {{ allRunningTaskCount }}
-          </span>
-        </button>
+      <!-- Session list -->
+      <!-- New chat -->
+      <Button
+        icon="pi pi-comment"
+        :label="t('toolbar.newChat')"
+        class="mb-3"
+        @click="handleCreateSession"
+        size="small" />
+      <!-- Filter toggle: collapsed by default, no search box shown while collapsed (reuses the ChatBox collapsible block's chevron+rotate pattern) -->
+      <div
+        class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
+        role="button"
+        tabindex="0"
+        :aria-expanded="showSessionFilters"
+        @click="showSessionFilters = !showSessionFilters"
+        @keydown.enter.prevent="showSessionFilters = !showSessionFilters"
+        @keydown.space.prevent="showSessionFilters = !showSessionFilters">
+        <span>{{ t('history.filterToggle') }}</span>
+        <i
+          :class="[
+            'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
+            { 'rotate-180': showSessionFilters }
+          ]" />
       </div>
-
-      <!-- ===== Sessions Tab ===== -->
-      <template v-if="activeTab === 'sessions'">
-        <!-- New chat -->
+      <!-- Filter bar: title keyword + creation date range (local filtering, the two conditions combine with AND, both optional) -->
+      <div
+        v-if="showSessionFilters"
+        class="flex flex-col gap-2 mb-3">
+        <InputText
+          v-model="searchKeyword"
+          class="w-full"
+          :placeholder="t('history.searchPlaceholder')" />
+        <Calendar
+          v-model="dateRange"
+          selectionMode="range"
+          showIcon
+          fluid
+          class="w-full"
+          :placeholder="t('history.dateRange')" />
         <Button
-          icon="pi pi-comment"
-          :label="t('toolbar.newChat')"
-          class="mb-3"
-          @click="handleCreateSession"
-          size="small" />
-        <!-- Filter toggle: collapsed by default, no search box shown while collapsed (reuses the ChatBox collapsible block's chevron+rotate pattern) -->
-        <div
-          class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
-          role="button"
-          tabindex="0"
-          :aria-expanded="showSessionFilters"
-          @click="showSessionFilters = !showSessionFilters"
-          @keydown.enter.prevent="showSessionFilters = !showSessionFilters"
-          @keydown.space.prevent="showSessionFilters = !showSessionFilters">
-          <span>{{ t('history.filterToggle') }}</span>
-          <i
-            :class="[
-              'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
-              { 'rotate-180': showSessionFilters }
-            ]" />
-        </div>
-        <!-- Filter bar: title keyword + creation date range (local filtering, the two conditions combine with AND, both optional) -->
-        <div
-          v-if="showSessionFilters"
-          class="flex flex-col gap-2 mb-3">
-          <InputText
-            v-model="searchKeyword"
-            class="w-full"
-            :placeholder="t('history.searchPlaceholder')" />
-          <Calendar
-            v-model="dateRange"
-            selectionMode="range"
-            showIcon
-            fluid
-            class="w-full"
-            :placeholder="t('history.dateRange')" />
-          <Button
-            v-if="hasActiveFilters"
-            icon="pi pi-filter-slash"
-            :label="t('history.clearFilter')"
-            size="small"
-            text
-            severity="secondary"
-            @click="clearFilters" />
-        </div>
-        <!-- Records list: windowed (only the visible band of session cards is
+          v-if="hasActiveFilters"
+          icon="pi pi-filter-slash"
+          :label="t('history.clearFilter')"
+          size="small"
+          text
+          severity="secondary"
+          @click="clearFilters" />
+      </div>
+      <!-- Records list: windowed (only the visible band of session cards is
              mounted), so a long session history no longer costs a card per entry.
              NOT a flex container: a flex parent shrinks the spacer below its
              declared height and the scroll range collapses to the rendered band. -->
+      <div
+        ref="sessionsScrollRef"
+        class="overflow-auto flex-1">
         <div
-          ref="sessionsScrollRef"
-          class="overflow-auto flex-1">
-          <div
-            v-if="filteredHistoryList.length === 0"
-            class="flex items-center justify-center h-full w-full text-[#868686]">
-            {{ hasActiveFilters ? t('history.noSearchResults') : t('history.noSessions') }}
-          </div>
-          <div
-            v-else
-            class="relative w-full shrink-0"
-            :style="{ height: `${sessionTotalSize}px` }">
-            <div
-              v-for="vRow in sessionVirtualRows"
-              :key="String(vRow.key)"
-              :ref="el => sessionVirtualizer.measureElement(el as HTMLElement)"
-              :data-index="vRow.index"
-              :class="['absolute left-0 top-0 w-full', vRow.index < sessionRows.length - 1 ? 'pb-3' : '']"
-              :style="{ transform: `translateY(${vRow.start}px)` }">
-              <HistoryItem
-                v-if="sessionRowAt(vRow.index)"
-                :history-record="sessionRowAt(vRow.index)!.item"
-                :is-active="currentSessionId === sessionRowAt(vRow.index)!.item.id"
-                @choose-session="handleToggleSession"
-                @delete-session="handleDeleteSession"
-                @rename-session="handleRenameSession"
-                v-model:selectedList="selectedSessionIds" />
-            </div>
-          </div>
-        </div>
-        <div class="h-17 flex items-center justify-between">
-          <div class="flex items-center justify-center gap-1">
-            <Checkbox
-              :model-value="isCheckAllSession"
-              :indeterminate="isIndeterminate"
-              binary
-              @update:model-value="handleToggleSelectAll" />
-            <span>{{ t('history.selectAll') }}</span>
-          </div>
-          <Button
-            icon="pi pi-trash"
-            :label="t('history.batchDelete')"
-            :disabled="selectedSessionIds.length === 0 || batchDeleting"
-            :loading="batchDeleting"
-            @click="handleBatchDelete" />
-        </div>
-      </template>
-
-      <!-- ===== Background Tasks Tab ===== -->
-      <template v-else>
-        <!-- Windowed task list: calling-session headers and run cards are flattened
-             into one row stream so a registry with thousands of runs renders only
-             the visible band. Same "not a flex container" rule as the session list:
-             the spacer must keep its layout height or the scroll range truncates. -->
-        <div
-          ref="tasksScrollRef"
-          class="overflow-auto flex-1">
-          <div
-            v-if="taskLoading"
-            class="flex items-center justify-center h-full w-full text-[#868686]">
-            <i class="pi pi-spin pi-spinner mr-2" />{{ t('sidebar.tasksLoading') }}
-          </div>
-          <div
-            v-else-if="rootTaskRuns.length === 0"
-            class="flex items-center justify-center h-full w-full text-[#868686]">
-            {{ t('sidebar.noTasks') }}
-          </div>
-          <div
-            v-else
-            class="relative w-full shrink-0"
-            :style="{ height: `${taskTotalSize}px` }">
-            <div
-              v-for="vRow in taskVirtualRows"
-              :key="String(vRow.key)"
-              :ref="el => taskVirtualizer.measureElement(el as HTMLElement)"
-              :data-index="vRow.index"
-              :class="['absolute left-0 top-0 w-full', vRow.index < taskRows.length - 1 ? 'pb-2' : '']"
-              :style="{ transform: `translateY(${vRow.start}px)` }">
-              <!-- Calling-session header -->
-              <div
-                v-if="taskRowAt(vRow.index)?.kind === 'header'"
-                class="flex items-center gap-2 pt-1.5 pb-0.5 text-[11px] font-semibold uppercase tracking-wide text-[#868686]">
-                <span class="flex-none text-[#b0b0b0]">{{ t('sidebar.callingSession') }}:</span>
-                <span class="truncate break-all">{{ taskRowAt(vRow.index)!.sessionId }}</span>
-                <span class="ml-auto flex-none text-[#868686]">({{ taskRowAt(vRow.index)!.runCount }})</span>
-              </div>
-              <!-- Run card -->
-              <div
-                v-else-if="taskRowAt(vRow.index)?.run"
-                class="p-3 border border-solid rounded-lg text-[#ccc] cursor-pointer border-gray-light text-theme-main bg-white dark:bg-[#2a2a36]/[0.6] dark:border-[#555] flex flex-col gap-1.5 md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]"
-                :class="{ 'text-theme-main bg-[#c1d6e5]!': focusedRunId === taskRowAt(vRow.index)!.run!.run_id }"
-                role="button"
-                tabindex="0"
-                @click="showTasksView(taskRowAt(vRow.index)!.run!)"
-                @keydown.enter.prevent="showTasksView(taskRowAt(vRow.index)!.run!)"
-                @keydown.space.prevent="showTasksView(taskRowAt(vRow.index)!.run!)">
-                <div class="flex items-center gap-2">
-                  <Checkbox
-                    :model-value="selectedRunIds.has(taskRowAt(vRow.index)!.run!.run_id)"
-                    binary
-                    class="flex-none"
-                    @update:model-value="handleToggleTask(taskRowAt(vRow.index)!.run!.run_id)"
-                    @click.stop />
-                  <span
-                    v-if="statusLabel(taskRowAt(vRow.index)!.run!) !== t('sidebar.statusUnknown')"
-                    class="ml-auto flex-none inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full leading-none"
-                    :class="badgeClass(taskRowAt(vRow.index)!.run!)">
-                    <i
-                      v-if="isRunning(taskRowAt(vRow.index)!.run!)"
-                      class="pi pi-spin pi-spinner text-[10px]" />
-                    {{ statusLabel(taskRowAt(vRow.index)!.run!) }}
-                  </span>
-                </div>
-                <div class="text-[13px] leading-snug line-clamp-2 break-words">
-                  {{ taskRowAt(vRow.index)!.run!.label || taskRowAt(vRow.index)!.run!.task_name || '-' }}
-                </div>
-                <div class="flex justify-between items-center gap-2 text-[11px] leading-snug text-[#868686] break-all">
-                  <div class="min-w-0">
-                    <span class="text-[#b0b0b0]">{{ t('sidebar.startTime') }}: </span
-                    >{{ formatTime(taskRowAt(vRow.index)!.run!.execution.started_at) }}
-                    <span class="mx-1.5 text-[#b0b0b0]">/</span>
-                    <span class="text-[#b0b0b0]">{{ t('sidebar.endTime') }}: </span
-                    >{{ formatTime(taskRowAt(vRow.index)!.run!.execution.ended_at) }}
-                  </div>
-                  <!-- Single delete: trash icon (reuses the session box pattern), deletes this task and its entire subtree -->
-                  <button
-                    type="button"
-                    class="shrink-0 cursor-pointer text-theme-main hover:text-red-500"
-                    :aria-label="t('sidebar.taskDelete')"
-                    :title="t('sidebar.taskDelete')"
-                    @click.stop="handleDeleteTask(taskRowAt(vRow.index)!.run!)">
-                    <i
-                      class="pi"
-                      :class="
-                        deletingRunIds.has(taskRowAt(vRow.index)!.run!.run_id) ? 'pi-spin pi-spinner' : 'pi-trash'
-                      " />
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          v-if="filteredHistoryList.length === 0"
+          class="flex items-center justify-center h-full w-full text-[#868686]">
+          {{ hasActiveFilters ? t('history.noSearchResults') : t('history.noSessions') }}
         </div>
         <div
-          v-if="rootTaskRuns.length > 0"
-          class="h-17 flex items-center justify-between">
-          <div class="flex items-center justify-center gap-1">
-            <Checkbox
-              :model-value="allSelected"
-              :indeterminate="someSelected"
-              binary
-              @update:model-value="toggleSelectAllTasks()" />
-            <span>{{ t('sidebar.tasksSelectAll') }}</span>
+          v-else
+          class="relative w-full shrink-0"
+          :style="{ height: `${sessionTotalSize}px` }">
+          <div
+            v-for="vRow in sessionVirtualRows"
+            :key="String(vRow.key)"
+            :ref="el => sessionVirtualizer.measureElement(el as HTMLElement)"
+            :data-index="vRow.index"
+            :class="['absolute left-0 top-0 w-full', vRow.index < sessionRows.length - 1 ? 'pb-3' : '']"
+            :style="{ transform: `translateY(${vRow.start}px)` }">
+            <HistoryItem
+              v-if="sessionRowAt(vRow.index)"
+              :history-record="sessionRowAt(vRow.index)!.item"
+              :is-active="currentSessionId === sessionRowAt(vRow.index)!.item.id"
+              @choose-session="handleToggleSession"
+              @delete-session="handleDeleteSession"
+              @rename-session="handleRenameSession"
+              v-model:selectedList="selectedSessionIds" />
           </div>
-          <Button
-            icon="pi pi-trash"
-            :label="t('sidebar.tasksBatchDelete')"
-            :disabled="selectedRunIds.size === 0 || deletingRunIds.size > 0"
-            :loading="deletingRunIds.size > 0"
-            @click="handleBatchDeleteTasks" />
         </div>
-      </template>
+      </div>
+      <div class="h-17 flex items-center justify-between">
+        <div class="flex items-center justify-center gap-1">
+          <Checkbox
+            :model-value="isCheckAllSession"
+            :indeterminate="isIndeterminate"
+            binary
+            @update:model-value="handleToggleSelectAll" />
+          <span>{{ t('history.selectAll') }}</span>
+        </div>
+        <Button
+          icon="pi pi-trash"
+          :label="t('history.batchDelete')"
+          :disabled="selectedSessionIds.length === 0 || batchDeleting"
+          :loading="batchDeleting"
+          @click="handleBatchDelete" />
+      </div>
     </div>
   </div>
 </template>
@@ -316,13 +171,11 @@ export async function ensureSessionCharacter(sessionId: string) {
 // components
 import HistoryItem from './HistoryItem.vue';
 // function
-import { computed, onMounted, onUnmounted, watch } from 'vue';
+import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
-import type { SubagentRun } from '@/composables/bridge';
 // `useVirtualRows` and the row builders come from Nuxt's composable
 // auto-import (a value import of `@/composables/**` is lint-restricted).
-import dayjs from 'dayjs';
 import { isValidSessionTitle } from '@/common/utils';
 
 const { t } = useI18n();
@@ -330,45 +183,14 @@ const router = useRouter();
 const route = useRoute();
 const localePath = useLocalePath();
 
-// Background task shared state (module-level singleton, shares same reactive data with right-side complete task list page)
-const {
-  rootTaskRuns,
-  groupedRootTaskRuns,
-  taskLoading,
-  allRunningTaskCount,
-  selectedRunIds,
-  deletingRunIds,
-  allSelected,
-  someSelected,
-  isRunning,
-  badgeClass,
-  statusLabel,
-  initTasks,
-  setTasksTabActive,
-  focusRun,
-  normalizeSessionKey,
-  focusedRunId,
-  loadTaskRuns,
-  toggleTaskSelection,
-  toggleSelectAllTasks,
-  deleteSubagentSubtree,
-  deleteSelectedTasks
-} = useSubagentTasks();
+// Background tasks live in the right sidebar's task-detail tab now; the left
+// column only lists sessions.
 
 /** Whether collapsed (controlled by parent component via v-model:collapsed, collapse/expand buttons in parent component toolbar) */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
 
 /** Current session id (bidirectionally synced by parent component via v-model:current-session-id, parent uses it to load character snapshot) */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');
-
-/**
- * Render execution time: epoch milliseconds → local readable string; null/invalid values show placeholder '-'
- * @param ms
- */
-function formatTime(ms: number | null | undefined): string {
-  if (ms == null || Number.isNaN(Number(ms))) return '-';
-  return dayjs(Number(ms)).format('YYYY-MM-DD HH:mm:ss');
-}
 
 /** History sessions */
 const historyList = ref<SessionRecord[]>([]);
@@ -388,12 +210,10 @@ const dateRange = ref<Date[] | null>(null);
 const filteredHistoryList = computed(() => filterSessions(historyList.value, searchKeyword.value, dateRange.value));
 
 /* ------------------------------------------------------------------ */
-/* Windowed lists (sessions / background tasks)                        */
+/* Windowed session list                                                */
 /* ------------------------------------------------------------------ */
 /** Sessions list scroll container (only mounted while the sessions tab is active) */
 const sessionsScrollRef = useTemplateRef<HTMLDivElement>('sessionsScrollRef');
-/** Background-tasks list scroll container (only mounted while the tasks tab is active) */
-const tasksScrollRef = useTemplateRef<HTMLDivElement>('tasksScrollRef');
 
 /** Virtual rows for the (filtered) session list. */
 const sessionRows = computed(() => buildSessionRows(filteredHistoryList.value));
@@ -406,20 +226,6 @@ const {
   sessionsScrollRef,
   () => sessionRows.value,
   () => SESSION_ROW_ESTIMATE_PX
-);
-
-/** Virtual rows for the task tab: calling-session headers + run cards, flattened. */
-const taskRows = computed(() => buildTaskRows(groupedRootTaskRuns.value));
-const {
-  virtualizer: taskVirtualizer,
-  virtualRows: taskVirtualRows,
-  totalSize: taskTotalSize,
-  rowAt: taskRowAt,
-  remeasure: remeasureTasks
-} = useVirtualRows(
-  tasksScrollRef,
-  () => taskRows.value,
-  index => taskRowEstimate(taskRows.value, index)
 );
 
 /**
@@ -542,9 +348,6 @@ const handleCreateSession = () => {
   currentSessionId.value = sessionId;
   // New session: immediately create and lock character snapshot with current global profile, ensure avatar/name display correctly
   ensureSessionCharacter(sessionId);
-  // Switch back to 'chat' display state: notify right-side [sid].vue to restore chat area
-  emit('subagent:show-chat');
-  setTasksTabActive(false);
   // Persist placeholder session (written to IndexedDB on creation), ensure this empty session remains in list after refresh/reopen
   // (server session list is derived from message table, no records before messages sent, can only recover from local placeholders).
   cacheSessionMeta({ id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
@@ -561,9 +364,6 @@ const handleToggleSession = (id: string) => {
   currentSessionId.value = id;
   // Switch session: load this session's locked character snapshot (use global profile lock if no snapshot)
   ensureSessionCharacter(id);
-  // Switch back to 'chat' display state: notify right-side [sid].vue to restore chat area
-  emit('subagent:show-chat');
-  setTasksTabActive(false);
   router.push(localePath(`/home/${id}`));
 };
 
@@ -711,135 +511,12 @@ const doBatchDeleteSessions = async () => {
 
 // Load default session character display info (avatar + name) on first screen
 ensureSessionCharacter('default');
-// After mounting, fetch session list + initialize background tasks (WS subscription is module-level singleton, idempotent; character info already loaded by ensureSessionCharacter from local Dexie)
-// When receiving 'show chat' event (new session/switch session/background task 'return to session'),
-// switch back to 'sessions' tab, ensure session list is visible and highlight target session box.
-const onShowChatSwitchTab = () => switchTab('sessions');
+// After mounting, fetch the session list (WS subscription is a module-level
+// singleton, idempotent; character info already loaded by
+// ensureSessionCharacter from local Dexie).
 onMounted(() => {
   loadSessionList();
-  initTasks(activeSessionId.value);
-  on('subagent:show-chat', onShowChatSwitchTab);
 });
-onUnmounted(() => {
-  off('subagent:show-chat', onShowChatSwitchTab);
-});
-
-/* ------------------------------------------------------------------ */
-/* Background Tasks Tab (Subagent Run Records)                         */
-/* ------------------------------------------------------------------ */
-/** Sidebar current active tab: 'sessions' (sessions) | 'tasks' (background tasks) */
-const activeTab = ref<'sessions' | 'tasks'>('sessions');
-
-/**
- * Switch tab (only switches sidebar left-side display list + background tasks loading state, **does not** switch right-side view).
- * Right-side view only switches when clicking specific 'Session Box' (handleToggleSession / handleCreateSession) or
- * 'Background Tasks Box' (showTasksView).
- * - Switch to 'background tasks': mark background tasks in display state, let WS pull full task data for list display when ready.
- * - Switch to 'sessions': unmark that state.
- * @param tab
- */
-const switchTab = (tab: 'sessions' | 'tasks') => {
-  activeTab.value = tab;
-  if (tab === 'tasks') {
-    setTasksTabActive(true);
-    void loadTaskRuns();
-    // The tasks container only mounts now: measure it against the real viewport
-    // instead of the null element the virtualizer saw while the tab was hidden.
-    remeasureTasks();
-  } else {
-    setTasksTabActive(false);
-  }
-};
-
-/**
- * Click task item: switch to 'background tasks' display state, and locate/expand/highlight that run.
- * When there's an active session (route with sid), emit subagent:show-tasks event, received by [sid].vue embedded view and set to task display state;
- * When there's no active session (root path /home, [sid].vue not mounted, event has no receiver), directly focus that run (module-level singleton state preserved across routes)
- * and navigate to standalone task page /home/tasks/{parent session} — that page always mounts SubagentTasksView, can read focused run from singleton state.
- * @param run
- */
-const showTasksView = (run: SubagentRun) => {
-  activeTab.value = 'tasks';
-  // Record currently focused/opened run, used for sidebar task box active state highlight (consistent with session list items)
-  focusRun(run.run_id);
-  const sid = route.params.sid;
-  if (typeof sid === 'string' && sid) {
-    // With active session: go through embedded view event flow (by [sid].vue's onShowTasks switching viewMode to 'tasks')
-    emit('subagent:show-tasks', run.run_id);
-    setTasksTabActive(true);
-  } else {
-    // Without active session: focus + navigate to standalone task page (parent session of cross-session task tree).
-    // The recorded key is the announcer form (``agent:main:session:{id}``); the route needs the bare id.
-    const parentSid = normalizeSessionKey(run.requester_session_key);
-    router.push(localePath(`/home/tasks/${parentSid || 'default'}`));
-  }
-};
-
-/**
- * Toggle single task selection state (only triggered by checkbox within task card).
- * Card body click changed to showTasksView (opens task detail page), avoiding blocking open logic.
- * @param runId
- */
-const handleToggleTask = (runId: string) => {
-  if (deletingRunIds.value.has(runId)) return;
-  toggleTaskSelection(runId);
-};
-
-/** Batch delete currently selected tasks: PrimeVue confirmation dialog (each task along with its entire subtree completely cleared from frontend and backend cache). */
-const handleBatchDeleteTasks = () => {
-  if (selectedRunIds.value.size === 0) return;
-  confirm.require({
-    header: t('common.confirmDelete'),
-    message: t('sidebar.tasksBatchDeleteConfirm'),
-    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
-    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
-    accept: () => {
-      void doBatchDeleteTasks();
-    }
-  });
-};
-
-/** Actual executor for batch background task deletion (triggered by confirmation dialog accept callback). */
-const doBatchDeleteTasks = async () => {
-  try {
-    const removed = await deleteSelectedTasks();
-    if (removed > 0) emit('subagent:refresh-tasks');
-  } catch (error) {
-    logUtil.e('[SessionSidebar] Failed to batch delete background tasks:', error);
-  }
-};
-
-/**
- * Single task box deletion (trash icon at bottom right, consistent with session box delete entry).
- * Reuses the same deletion pipeline as batch delete: after PrimeVue confirmation dialog, completely deletes the task and its entire subtree (frontend/backend + Dexie).
- * @param run
- * @param run.run_id
- */
-const handleDeleteTask = (run: { run_id: string }) => {
-  if (deletingRunIds.value.has(run.run_id)) return;
-  confirm.require({
-    header: t('common.confirmDelete'),
-    message: t('sidebar.taskDeleteConfirm'),
-    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
-    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
-    accept: () => {
-      void doDeleteTask(run.run_id);
-    }
-  });
-};
-
-/**
- * Actual executor for single background task deletion (triggered by confirmation dialog accept callback).
- * @param runId
- */
-const doDeleteTask = async (runId: string) => {
-  try {
-    await deleteSubagentSubtree(runId);
-    emit('subagent:refresh-tasks');
-  } catch (error) {
-    logUtil.e('[SessionSidebar] Failed to delete background task:', error);
-  }
-};
 
 // Stronger guarantee: use the session_id at the end of the browser URL as the 'single source of truth' for the active state.
 // Use immediate watch on route.params.sid, covering three scenarios simultaneously:
@@ -861,15 +538,6 @@ watch(
     }
   },
   { immediate: true }
-);
-
-// Refresh background tasks when switching active session (only if user has opened this Tab before)
-watch(
-  activeSessionId,
-  () => {
-    if (activeTab.value === 'tasks') loadTaskRuns();
-  },
-  { immediate: false }
 );
 </script>
 

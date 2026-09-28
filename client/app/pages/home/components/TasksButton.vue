@@ -134,7 +134,10 @@ const syncTicker = () => {
 watch(activeCount, syncTicker, { immediate: true });
 
 onMounted(() => {
-  if (props.sessionId) void loadTaskRuns(props.sessionId);
+  // The entry that shows the count owns the initial load now that the chat's
+  // jump bar is gone: initTasks fetches this session's runs and registers the
+  // sub-agent websocket (idempotent singleton).
+  if (props.sessionId) initTasks(props.sessionId);
 });
 
 onBeforeUnmount(() => {

@@ -192,7 +192,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
     expect(active[0]!.props('historyRecord').id).toBe('s3');
   });
 
-  it('lists task runs grouped by calling session on the tasks tab', async () => {
+  it('keeps the left column to sessions — background tasks are a right-sidebar tab', async () => {
     const store = useSubagentStore();
     store.allTaskRuns = [
       {
@@ -201,34 +201,17 @@ describe('home/index.vue (integration, backend mocked)', () => {
         requester_session_key: 'sess-A',
         task_name: '任务甲',
         execution: {}
-      },
-      {
-        run_id: 'r2',
-        depth: 1,
-        requester_session_key: 'sess-A',
-        task_name: '任务乙',
-        execution: {}
-      },
-      {
-        run_id: 'r3',
-        depth: 1,
-        requester_session_key: 'sess-B',
-        task_name: '任务丙',
-        execution: {}
       }
     ] as unknown as SubagentRun[];
     const wrapper = mountHome();
     await flushPromises();
-    const tasksTab = wrapper.findAll('button').find(b => b.text().includes('后台任务'));
-    expect(tasksTab).toBeTruthy();
-    await tasksTab!.trigger('click');
-    await flushPromises();
-    // Headers carry the calling session (with its run count), cards the task names.
-    expect(wrapper.text()).toContain('sess-A');
-    expect(wrapper.text()).toContain('(2)');
-    expect(wrapper.text()).toContain('sess-B');
-    expect(wrapper.text()).toContain('任务甲');
-    expect(wrapper.text()).toContain('任务丙');
+
+    // The sidebar used to carry a 会话 / 后台任务 tab strip plus its own task list;
+    // both are gone, so no run data may leak into the left column.
+    const labels = wrapper.findAll('button').map(b => b.text());
+    expect(labels.some(text => text.includes('后台任务'))).toBe(false);
+    expect(wrapper.text()).not.toContain('任务甲');
+
     store.allTaskRuns = [];
   });
 });

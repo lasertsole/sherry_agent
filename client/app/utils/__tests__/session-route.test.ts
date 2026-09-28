@@ -17,11 +17,10 @@ describe('sessionIdFromPathname', () => {
   });
 
   it('honours caller-specific reserved segments', () => {
-    // subagent-sync.ts keeps the default reserved set: the tasks route has not been handled there.
     expect(RESERVED_SESSION_SEGMENTS).toEqual(['home']);
-    expect(sessionIdFromPathname('/home/tasks')).toBe('tasks');
-    // stores/todo.ts also reserves the standalone background-tasks route.
-    expect(sessionIdFromPathname('/home/tasks', ['home', 'tasks'])).toBeUndefined();
-    expect(sessionIdFromPathname('/home/tasks/sess-9', ['home', 'tasks'])).toBe('sess-9');
+    // The reserved set is a caller decision: the shell route is the only one
+    // every consumer agrees on, and others may add their own.
+    expect(sessionIdFromPathname('/home/other', ['home', 'other'])).toBeUndefined();
+    expect(sessionIdFromPathname('/home/other/sess-9', ['home', 'other'])).toBe('sess-9');
   });
 });

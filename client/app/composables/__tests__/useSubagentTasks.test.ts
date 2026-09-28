@@ -91,7 +91,6 @@ function resetSingleton(): void {
   api.expandedRunId.value = undefined;
   api.selectedRunId.value = undefined;
   api.focusedRunId.value = undefined;
-  api.selectedRunIds.value = new Set();
   api.deletingRunIds.value = new Set();
   api.setTasksTabActive(false);
   // Ensure the module-level `resolveSid()` reads a clean path.
@@ -117,8 +116,6 @@ describe('useSubagentTasks', () => {
     expect(api.taskRuns.value).toEqual([]);
     expect(api.allTaskRuns.value).toEqual([]);
     expect(api.taskLoading.value).toBe(false);
-    expect(api.runningTaskCount.value).toBe(0);
-    expect(api.allRunningTaskCount.value).toBe(0);
     expect(api.subagentWsReady.value).toBe(false);
   });
 
@@ -233,20 +230,6 @@ describe('useSubagentTasks', () => {
   });
 
   describe('grouping / subtree computed', () => {
-    it('rootTaskRuns only keeps depth===1 and groupedRootTaskRuns clusters by session', () => {
-      const api = useSubagentTasks();
-      api.allTaskRuns.value = [
-        makeRun({ run_id: 'root-1', depth: 1, requester_session_key: 'A' }),
-        makeRun({ run_id: 'root-2', depth: 1, requester_session_key: 'B' }),
-        makeRun({ run_id: 'root-3', depth: 1, requester_session_key: 'A' }),
-        makeRun({ run_id: 'deep', depth: 2, requester_session_key: 'A' })
-      ];
-      expect(api.rootTaskRuns.value.map(r => r.run_id)).toEqual(['root-1', 'root-2', 'root-3']);
-      const groups = api.groupedRootTaskRuns.value;
-      expect(groups.map(g => g.sessionId)).toEqual(['A', 'B']);
-      expect(groups[0]!.runs.map(r => r.run_id)).toEqual(['root-1', 'root-3']);
-    });
-
     it('focusedSubtreeRuns without focus returns rootTaskRuns', () => {
       const api = useSubagentTasks();
       api.allTaskRuns.value = [
@@ -430,46 +413,6 @@ describe('useSubagentTasks', () => {
     });
   });
 
-  describe('selection helpers', () => {
-    it('toggleSelectAllTasks / toggleTaskSelection / allSelected / someSelected', () => {
-      const api = useSubagentTasks();
-      api.allTaskRuns.value = [
-        makeRun({ run_id: 'root-1', depth: 1 }),
-        makeRun({ run_id: 'root-2', depth: 1 }),
-        makeRun({ run_id: 'deep', depth: 2 })
-      ];
-      // `selectableRunIds` is module-private; its behavior (only depth===1
-      // roots are selectable) is validated indirectly below via the toggle.
-      expect(api.allSelected.value).toBe(false);
-      expect(api.someSelected.value).toBe(false);
-
-      api.toggleSelectAllTasks();
-      expect(api.selectedRunIds.value.has('deep')).toBe(false);
-      expect(api.allSelected.value).toBe(true);
-      expect(api.someSelected.value).toBe(false);
-
-      // Deselect one → someSelected true, allSelected false.
-      api.toggleTaskSelection('root-1');
-      expect(api.selectedRunIds.value.has('root-1')).toBe(false);
-      expect(api.allSelected.value).toBe(false);
-      expect(api.someSelected.value).toBe(true);
-
-      // Re-select, then toggle all again → deselect all.
-      api.toggleTaskSelection('root-1');
-      api.toggleSelectAllTasks();
-      expect(api.selectedRunIds.value.size).toBe(0);
-      expect(api.allSelected.value).toBe(false);
-    });
-
-    it('clearTaskSelection empties the selected set', () => {
-      const api = useSubagentTasks();
-      api.allTaskRuns.value = [makeRun({ run_id: 'root-1', depth: 1 })];
-      api.toggleSelectAllTasks();
-      api.clearTaskSelection();
-      expect(api.selectedRunIds.value.size).toBe(0);
-    });
-  });
-
   describe('delete flow', () => {
     it('deleteSubagentSubtree removes run + descendants from store and Dexie', async () => {
       const api = useSubagentTasks();
@@ -489,23 +432,6 @@ describe('useSubagentTasks', () => {
       expect(api.taskRuns.value.map(r => r.run_id)).toEqual(['keep-1']);
       expect(api.focusedRunId.value).toBeUndefined();
       expect(api.deletingRunIds.value.has('root-1')).toBe(false);
-    });
-
-    it('deleteSelectedTasks deletes each selected root and returns the count', async () => {
-      const api = useSubagentTasks();
-      api.allTaskRuns.value = [
-        makeRun({ run_id: 'root-1', depth: 1 }),
-        makeRun({ run_id: 'root-2', depth: 1 }),
-        makeRun({ run_id: 'keep', depth: 1 })
-      ];
-      api.taskRuns.value = [...api.allTaskRuns.value];
-      api.toggleSelectAllTasks(); // selects root-1, root-2, keep
-      api.toggleTaskSelection('keep'); // drop keep
-
-      const removed = await api.deleteSelectedTasks();
-      expect(removed).toBe(2);
-      expect(api.allTaskRuns.value.map(r => r.run_id)).toEqual(['keep']);
-      expect(api.selectedRunIds.value.size).toBe(0);
     });
   });
 });

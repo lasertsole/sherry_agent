@@ -10,10 +10,16 @@ import { reactive, ref } from 'vue';
 import TasksButton from '@/pages/home/components/TasksButton.vue';
 
 const state = vi.hoisted(() => ({
-  loadTaskRuns: vi.fn(async () => {})
+  loadTaskRuns: vi.fn(async () => {}),
+  initTasks: vi.fn()
 }));
 
-vi.mock('@/composables/subagent-sync', () => ({ loadTaskRuns: state.loadTaskRuns }));
+// The entry owns the initial load (the chat's jump bar is gone), so both seams
+// are mocked.
+vi.mock('@/composables/subagent-sync', () => ({
+  loadTaskRuns: state.loadTaskRuns,
+  initTasks: state.initTasks
+}));
 
 const command = {
   id: 42,
@@ -30,6 +36,7 @@ const run = {
 
 beforeEach(() => {
   state.loadTaskRuns.mockClear();
+  state.initTasks.mockClear();
   vi.stubGlobal('useSubagentStore', () => reactive({ taskRuns: [run], focusedRunId: undefined, taskLoading: false }));
   vi.stubGlobal('useRunningCommandsStore', () => reactive({ commands: ref([command]) }));
 });

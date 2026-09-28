@@ -110,7 +110,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   memory: defineAsyncComponent(() => import('./MemoryPanel.vue')),
   heartbeat: defineAsyncComponent(() => import('./HeartbeatPanel.vue')),
   cron: defineAsyncComponent(() => import('./CronPanel.vue')),
-  extend: defineAsyncComponent(() => import('./ExtendPanel.vue'))
+  extend: defineAsyncComponent(() => import('./ExtendPanel.vue')),
+  taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue'))
 };
 
 /**
@@ -227,6 +228,7 @@ onBeforeUnmount(() => {
       "heartbeat": "心跳",
       "cron": "定时任务",
       "extend": "扩展",
+      "taskDetail": "任务详情",
       "knowledgeGraph": "知识图谱",
       "resize": "拖动调整宽度",
       "stats": "统计",
@@ -244,6 +246,7 @@ onBeforeUnmount(() => {
       "heartbeat": "Heartbeat",
       "cron": "Scheduled Tasks",
       "extend": "Extend",
+      "taskDetail": "Task details",
       "knowledgeGraph": "Knowledge Graph",
       "resize": "Drag to resize",
       "stats": "Statistics",
@@ -261,6 +264,7 @@ onBeforeUnmount(() => {
       "heartbeat": "ハートビート",
       "cron": "定期タスク",
       "extend": "拡張",
+      "taskDetail": "タスク詳細",
       "knowledgeGraph": "ナレッジグラフ",
       "resize": "ドラッグで幅を変更",
       "stats": "統計",
@@ -278,6 +282,7 @@ onBeforeUnmount(() => {
       "heartbeat": "하트비트",
       "cron": "예약 작업",
       "extend": "확장",
+      "taskDetail": "작업 상세",
       "knowledgeGraph": "지식 그래프",
       "resize": "드래그하여 너비 조절",
       "stats": "통계",

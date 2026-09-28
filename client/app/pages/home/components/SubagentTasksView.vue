@@ -5,7 +5,7 @@
       class="flex items-center justify-between gap-3 shrink-0 border-b border-solid border-gray-light dark:border-gray-dark bg-white/60 dark:bg-[#1a1d21]/60 px-4 py-2">
       <div class="min-w-0 flex items-center gap-3">
         <button
-          v-if="backToSessionSid"
+          v-if="backToSessionSid && !inPanel"
           type="button"
           class="shrink-0 flex items-center gap-1.5 text-xs text-primary cursor-pointer hover:opacity-80 transition-opacity"
           :title="t('sidebar.backToSessionPrompt')"
@@ -73,7 +73,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, defineAsyncComponent, onMounted, onUnmounted } from 'vue';
+import { computed, defineAsyncComponent, onMounted, onUnmounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute, useRouter } from 'vue-router';
 import type { SubagentRun } from '@/composables/bridge';
@@ -86,8 +86,14 @@ import SubagentRunDetail from './SubagentRunDetail.vue';
 const SubagentFlowGraph = defineAsyncComponent(() => import('./SubagentFlowGraph.vue'));
 
 const props = defineProps<{
-  /** run_id to initially locate/expand (passed in when clicking a sidebar task item) */
+  /** run_id to initially locate/expand (passed in when opening the view for one run) */
   initialRunId?: string;
+  /**
+   * Rendered inside a right-sidebar tab: the chat stays visible next to it, so
+   * the "back to session" action (which exists to leave the full-page host) is
+   * dropped and the header keeps only the refresh control.
+   */
+  inPanel?: boolean;
 }>();
 
 const { t } = useI18n();
@@ -102,7 +108,6 @@ const {
   selectedRunId,
   focusRun,
   initTasks,
-  setTasksTabActive,
   refreshFocusedSubtree,
   // Shares one session-existence check with orphaned-run filtering (avoids the two sides fetching and normalizing inconsistently)
   normalizeSessionKey,
@@ -178,22 +183,12 @@ const backToSessionSid = computed(() => {
  *  Target session = the requester_session_key of the current focused subtree root (depth-1 task),
  *  i.e. the parent session that spawned this subtask, not the current route's sid;
  *  when not focused (default full list), falls back to the current sid.
- *  Embedded view (viewMode==='tasks' inside [sid].vue): broadcasts 'subagent:show-chat' over the
- *  mitt bus; the onShowChat listener in [sid].vue switches viewMode back to 'chat', and the
- *  sidebar switches back to the "Sessions" tab accordingly.
- *  Standalone page /home/tasks/{sid}: there is no 'subagent:show-chat' listener, so an explicit
- *  route to that session's chat page is required.
- *  Double-invocation safe: in embedded mode, when the target session is the current route,
- *  router.push is a no-op and no duplicate navigation occurs. */
+ *  Only offered by the full-page host (`inPanel` false): the panel sits next to
+ *  the chat already, so its header drops the action. */
 const jumpBackToSession = () => {
   const targetSid = backToSessionSid.value;
   if (!targetSid) return;
-  // Embedded (viewMode==='tasks' inside [sid].vue): notify the host to switch back to the chat view
-  emit('subagent:show-chat');
-  // Switch the sidebar back to the "Sessions" tab, ensuring the session list is visible and the target session is highlighted
-  setTasksTabActive(false);
-  // Route to the target session page; a no-op in embedded mode if already on the target page, completes the jump on the standalone page.
-  // The route change triggers SessionSidebar's activeSessionId watch, moving the highlight to the target session.
+  // Route to the target session page; the route change moves the sidebar's highlight too.
   router.push(localePath(`/home/${targetSid}`));
 };
 
@@ -219,6 +214,14 @@ onMounted(() => {
   on('subagent:show-tasks', onShowTasks);
   // On first entry with an initialRunId, locate/expand the corresponding run (state is hoisted to a singleton and survives remounts)
   focusRun(props.initialRunId);
+});
+
+// In a panel the view outlives a session switch (the page no longer remounts it),
+// so the run list has to follow the route: refetch and drop the previously
+// focused run, which belongs to the session the user just left.
+watch(currentSessionId, sid => {
+  focusRun(undefined);
+  initTasks(sid);
 });
 
 onUnmounted(() => {

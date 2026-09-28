@@ -1,32 +1,11 @@
 ﻿<template>
   <div class="flex flex-col flex-1 h-full bg-transparent dark:bg-transparent">
-    <!-- Chat main area / empty state (with a session sid, shows the chat panel or the background task list page; only the root path without sid shows "start a new chat").
-        The chat area and the background task view stay **permanently mounted** while sid exists, toggled only via v-show,
-        so clicking a background task within the same session only switches focus (focusRun) — SubagentTasksView is not remounted,
-        initTasks/HTTP refetching is not triggered, and the G6 graph is not rebuilt. -->
+    <!-- Chat main area / empty state (with a session sid shows the chat panel; the root path without sid shows "start a new chat").
+        Background tasks live in the right sidebar's task-detail tab, so this column is always the chat. -->
     <div
       v-if="sessionId"
       class="flex flex-col flex-1 h-full min-h-0">
-      <div
-        v-show="viewMode === 'chat'"
-        class="flex-1 flex flex-col min-h-0">
-        <!-- "View Background Tasks" jump bar: shown only when the current session has background tasks (running/finished).
-            Clicking navigates to the standalone tasks page /home/tasks/{sid} (rather than the right-side viewMode='tasks' embedded view),
-            making it easy to inspect this session's full task execution chain on a large viewport. -->
-        <div
-          v-if="taskRuns.length > 0"
-          class="shrink-0 mx-2 mt-2 flex items-center gap-2 bg-white dark:bg-[#131619] rounded-lg border border-solid border-gray-light dark:border-gray-dark shadow-sm px-3 py-2 cursor-pointer hover:bg-gray-50 dark:hover:bg-[#1a1d21] transition-colors select-none"
-          role="button"
-          tabindex="0"
-          @click="router.push(localePath(`/home/tasks/${sessionId}`))"
-          @keydown.enter.prevent="router.push(localePath(`/home/tasks/${sessionId}`))"
-          @keydown.space.prevent="router.push(localePath(`/home/tasks/${sessionId}`))">
-          <i class="pi pi-sitemap text-sm text-theme-main"></i>
-          <span class="flex-1 text-sm font-medium text-gray-900 dark:text-gray-100">
-            {{ t('taskViewer.viewTasks') }}
-          </span>
-          <i class="pi pi-angle-right text-xs text-gray-400"></i>
-        </div>
+      <div class="flex flex-1 flex-col min-h-0">
         <ChatBox
           ref="chatBoxRef"
           :messages="chatMessages"
@@ -321,11 +300,6 @@
           </div>
         </div>
       </div>
-      <!-- Background task list page: permanently mounted while sid exists (visibility toggled via v-show, no remount/refetch);
-        clicking within the same session only switches focus via focusRun and highlights the root graph node in place. -->
-      <SubagentTasksView
-        v-show="viewMode === 'tasks'"
-        :initial-run-id="targetRunId" />
     </div>
     <!-- Empty state (root path without sid only): shows a centered "start a new chat" button when there are no messages -->
     <div
@@ -361,7 +335,6 @@ import type { MessageItem } from '../type.ts';
 import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
 import type { ChatController } from '@/composables/messages';
-import SubagentTasksView from '../components/SubagentTasksView.vue';
 import ThinkingToggle from '../components/ThinkingToggle.vue';
 import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
@@ -376,7 +349,6 @@ const { openPreview } = useImagePreview();
 const { t } = useI18n();
 const route = useRoute();
 const router = useRouter();
-const localePath = useLocalePath();
 
 /** Current session ID (from the [sid] route param) */
 const sessionId = computed(() => String(route.params.sid ?? ''));
@@ -394,33 +366,18 @@ const sessionId = computed(() => String(route.params.sid ?? ''));
  */
 const mySid = String(route.params.sid ?? '');
 
-/**
- * Right-side display mode: 'chat' (chat area) | 'tasks' (background task list page).
- * This is a regular ref for this instance, only controls right-side area rendering content, doesn't affect KeepAlive cache / page-key mechanism.
- */
-const viewMode = ref<'chat' | 'tasks'>('chat');
-/** run_id carried when clicking sidebar task items, used for locating/expanding/highlighting that run in the task list page. */
-const targetRunId = ref<string | undefined>(undefined);
-
-const { taskRuns, initTasks, setTasksTabActive, focusRun } = useSubagentTasks();
+const { focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
+const rightSidebarStore = useRightSidebarStore();
 
 /**
- * Receive 'show background tasks' event: switch to task list page and record the run_id to locate (if any).
- * @param payload
+ * Show this session's background tasks in the right sidebar: the chat column
+ * stays in place (the view used to replace it) and the detail opens as a tab.
+ * @param runId Optional run to locate inside the view.
  */
-// mitt Handler<unknown> requires the (event: unknown) signature; narrow the broadcast value manually
-// (sidebar emits a string run_id or undefined).
-const onShowTasks = (payload: unknown) => {
-  const runId = typeof payload === 'string' ? payload : undefined;
-  targetRunId.value = runId;
-  viewMode.value = 'tasks';
-};
-
-/** Receive 'show chat' event: restore chat area and sync sidebar tab state. */
-const onShowChat = () => {
-  viewMode.value = 'chat';
-  setTasksTabActive(false);
+const openTaskDetail = (runId?: string) => {
+  focusRun(runId);
+  rightSidebarStore.openTab('taskDetail');
 };
 
 /** The chat list, so the toolbar's terminal entry can reveal a command's card. */
@@ -439,14 +396,10 @@ const chatBoxRef = useTemplateRef<{ scrollToMessage: (id: number) => void }>('ch
  */
 const onTasksFocus = (payload: { kind: 'run' | 'command'; id: string | number }) => {
   if (payload.kind === 'run') {
-    const runId = String(payload.id);
-    focusRun(runId);
-    onShowTasks(runId);
-    setTasksTabActive(true);
+    openTaskDetail(String(payload.id));
     return;
   }
-  // The command's log is in the chat: leave the task view, then reveal the card.
-  onShowChat();
+  // The command's log is in the chat: reveal its card in place.
   void nextTick(() => chatBoxRef.value?.scrollToMessage(Number(payload.id)));
 };
 
@@ -463,9 +416,6 @@ onActivated(() => {
   isActive.value = true;
   // When returning to this session, refresh the HITL card that may still be pending approval (idempotent: early-return if a card already exists or a resume is in flight)
   if (mySid) restorePendingHitl(mySid);
-  // Prefetch background tasks for this session (idempotent: only actually fetch when session switches or list is empty),
-  // Used by "View Background Tasks" jump bar to determine whether to show (don't show if no tasks).
-  if (mySid) initTasks(mySid);
   // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
   if (mySid) todoStore.init(mySid);
 });
@@ -711,7 +661,6 @@ const stream = useChatStream({
   t,
   getPendingMedia,
   clearMediaSelection,
-  setTasksTabActive,
   loadSessionHistory,
   drafts,
   chunks,
@@ -903,8 +852,6 @@ onMounted(() => {
   // home/index.vue broadcasts, and this handler aborts this instance's AbortController.
   on(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
   // Subscribe to "background tasks" show / chat switch events (broadcast by the sidebar)
-  on('subagent:show-tasks', onShowTasks);
-  on('subagent:show-chat', onShowChat);
   // Subscribe to WS stream reconnection events (broadcast by bridge.sendChatMessageWs, drives the reconnect banner)
   on('stream:reconnecting', onStreamReconnecting);
   on('stream:reconnected', onStreamReconnected);
@@ -914,8 +861,6 @@ onMounted(() => {
 // Remove listeners on component unmount (KeepAlive cache slot evicted/destroyed) to avoid leaks
 onUnmounted(() => {
   off(SESSION_ABORT_STREAM_EVENT, handleAbortStreamOnDelete);
-  off('subagent:show-tasks', onShowTasks);
-  off('subagent:show-chat', onShowChat);
   off('stream:reconnecting', onStreamReconnecting);
   off('stream:reconnected', onStreamReconnected);
   off('stream:reconnect:failed', onStreamReconnectFailed);
@@ -962,9 +907,6 @@ onUnmounted(() => {
       "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批",
       "customPlaceholder": "输入自定义回答…",
       "submit": "提交"
-    },
-    "taskViewer": {
-      "viewTasks": "查看后台任务"
     }
   },
   "en": {
@@ -991,9 +933,6 @@ onUnmounted(() => {
       "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts",
       "customPlaceholder": "Type a custom answer…",
       "submit": "Submit"
-    },
-    "taskViewer": {
-      "viewTasks": "View Background Tasks"
     }
   },
   "ja": {
@@ -1020,9 +959,6 @@ onUnmounted(() => {
       "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません",
       "customPlaceholder": "カスタム回答を入力…",
       "submit": "送信"
-    },
-    "taskViewer": {
-      "viewTasks": "バックグラウンドタスクを表示"
     }
   },
   "ko": {
@@ -1049,9 +985,6 @@ onUnmounted(() => {
       "yoloTooltip": "이번 작업과 이 세션의 이후 모든 작업을 승인하며 확인 창이 다시 표시되지 않습니다",
       "customPlaceholder": "직접 답변 입력…",
       "submit": "제출"
-    },
-    "taskViewer": {
-      "viewTasks": "백그라운드 작업 보기"
     }
   }
 }

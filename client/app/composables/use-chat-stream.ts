@@ -61,8 +61,6 @@ export interface ChatStreamDeps {
   getPendingMedia: () => { images: string[]; audios: string[]; videos: string[] };
   /** Clear the pending media selections (called after a send takes them). */
   clearMediaSelection: () => void;
-  /** Switch the right-side view back to chat (no-op passthrough to the tasks tab state). */
-  setTasksTabActive: (active: boolean) => void;
   /** Rebuild the history list after the stream completes. */
   loadSessionHistory: (sid: string) => Promise<void>;
   /** Draft persistence slice. */
@@ -118,7 +116,6 @@ export function useChatStream(deps: ChatStreamDeps) {
     t,
     getPendingMedia,
     clearMediaSelection,
-    setTasksTabActive,
     loadSessionHistory,
     drafts,
     chunks,
@@ -444,9 +441,6 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
 
     const sid = sessionId.value || 'default';
-
-    // When the user sends a message, make sure the right side returns to the chat area (if it was previously on the background task list page)
-    setTasksTabActive(false);
 
     // Compute the next turn number: current max turn_num + 1, not the array length.
     const turnNum = chatMessages.value.reduce((max, m) => Math.max(max, m.turn_num), 0) + 1;

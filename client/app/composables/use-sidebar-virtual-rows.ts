@@ -23,16 +23,12 @@
 import { onActivated, nextTick } from 'vue';
 import { useVirtualizer } from '@tanstack/vue-virtual';
 import type { SessionRecord } from '~/pages/home/type';
-import type { SubagentRun } from '~/composables/bridge';
-import type { TaskSessionGroup } from '~/utils/subagent';
 
 /** Rows kept mounted outside the viewport (both directions). */
 const OVERSCAN = 6;
 
 /** First-render height guesses, corrected by real measurement. */
 export const SESSION_ROW_ESTIMATE_PX = 100;
-export const TASK_HEADER_ESTIMATE_PX = 28;
-export const TASK_RUN_ESTIMATE_PX = 96;
 
 /** One windowed row: a stable identity key plus its model. */
 export interface SidebarVirtualRow {
@@ -48,17 +44,6 @@ export interface SessionVirtualRow extends SidebarVirtualRow {
   item: SessionRecord;
 }
 
-/** A task row: either a calling-session header or one run card. */
-export interface TaskVirtualRow extends SidebarVirtualRow {
-  kind: 'header' | 'run';
-  /** Calling session this row belongs to (header text / grouping key). */
-  sessionId: string;
-  /** Run count shown on a header row. */
-  runCount: number;
-  /** Present on `kind === 'run'` rows. */
-  run?: SubagentRun;
-}
-
 /**
  * Flatten the session list into virtual rows.
  * @param list Sessions in display order.
@@ -66,39 +51,6 @@ export interface TaskVirtualRow extends SidebarVirtualRow {
  */
 export const buildSessionRows = (list: SessionRecord[]): SessionVirtualRow[] =>
   list.map(item => ({ key: `s-${item.id}`, item }));
-
-/**
- * Flatten the grouped task runs into virtual rows: a header row followed by its
- * run cards. Flattening (rather than virtualizing each group separately) keeps
- * a single scroll geometry for the whole tab.
- * @param groups Task groups in display order.
- * @returns Header + run rows, keyed by session id and run id.
- */
-export const buildTaskRows = (groups: TaskSessionGroup[]): TaskVirtualRow[] =>
-  groups.flatMap(group => [
-    {
-      key: `h-${group.sessionId}`,
-      kind: 'header' as const,
-      sessionId: group.sessionId,
-      runCount: group.runs.length
-    },
-    ...group.runs.map(run => ({
-      key: `r-${run.run_id}`,
-      kind: 'run' as const,
-      sessionId: group.sessionId,
-      runCount: group.runs.length,
-      run
-    }))
-  ]);
-
-/**
- * Estimated height of a task row (headers are one text line, cards are not).
- * @param rows Row models the estimate is read from.
- * @param index Row index being estimated.
- * @returns The height guess in px.
- */
-export const taskRowEstimate = (rows: TaskVirtualRow[], index: number): number =>
-  rows[index]?.kind === 'header' ? TASK_HEADER_ESTIMATE_PX : TASK_RUN_ESTIMATE_PX;
 
 /**
  * Create a windowed controller over `rows` for the scroll container `scrollRef`.

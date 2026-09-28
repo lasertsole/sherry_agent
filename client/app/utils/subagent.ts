@@ -1,13 +1,5 @@
 import type { SubagentRun } from '~/composables/bridge';
 
-/** Defines the background-task grouping structure after clustering by calling session. */
-export interface TaskSessionGroup {
-  /** Calling session_id (requester_session_key; empty values fall into the fallback key '-') */
-  sessionId: string;
-  /** First-level task list spawned under that calling session (keeps the original rootTaskRuns order) */
-  runs: SubagentRun[];
-}
-
 /**
  * Whether the run is still running (RUNNING / INTERRUPTED count as not yet finished)
  * @param run
@@ -86,32 +78,6 @@ export function collectSubtreeRunIds(rootId: string, pool: SubagentRun[]): strin
     }
   }
   return out;
-}
-
-/**
- * Clustered list for the background tasks tab: groups task boxes by "calling session_id"
- * (the requester_session_key of each root task). Multiple root tasks spawned by the same
- * calling session are placed into the same group, so the left column can show intuitive
- * session-based clusters; groups are stably sorted by sessionId (the empty-value group
- * goes last).
- * @param rootTaskRuns
- */
-export function groupRunsBySession(rootTaskRuns: SubagentRun[]): TaskSessionGroup[] {
-  const groups = new Map<string, SubagentRun[]>();
-  for (const run of rootTaskRuns) {
-    const key = run.requester_session_key || '-';
-    const list = groups.get(key);
-    if (list) list.push(run);
-    else groups.set(key, [run]);
-  }
-  return Array.from(groups.entries())
-    .sort(([a], [b]) => {
-      // Empty-value group goes last; the rest sort lexicographically by sessionId
-      if (a === '-') return 1;
-      if (b === '-') return -1;
-      return a < b ? -1 : a > b ? 1 : 0;
-    })
-    .map(([sessionId, runs]) => ({ sessionId, runs }));
 }
 
 /**

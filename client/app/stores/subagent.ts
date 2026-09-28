@@ -2,17 +2,11 @@ import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import type { SubagentRun } from '~/composables/bridge';
 import { logUtil } from '~/utils/log';
-import {
-  collectSubtreeRunIds,
-  computeFocusedSubtreeRuns,
-  groupRunsBySession,
-  isRunning,
-  type TaskSessionGroup
-} from '~/utils/subagent';
+import { collectSubtreeRunIds, computeFocusedSubtreeRuns, isRunning } from '~/utils/subagent';
 
 /**
  * Background-task state store: the shared singleton reactive lists, the
- * expand/selection/focus state of the task view, and the self-contained
+ * expand/focus state of the task view, and the self-contained
  * derived views over them.
  *
  * The store is a singleton by construction: every component gets the same
@@ -41,9 +35,7 @@ export const useSubagentStore = defineStore('subagent', () => {
   const selectedRunId = ref<string | undefined>(undefined);
   /** run_id currently focused in the right-side task view (set when clicking a background task Box on the left; used to display that run's subtree) */
   const focusedRunId = ref<string | undefined>(undefined);
-  /** Set of root run_ids currently selected in the background tasks tab (for multi-select / select-all / batch delete) */
-  const selectedRunIds = ref<Set<string>>(new Set());
-  /** Batch deletion currently in progress on the background tasks tab */
+  /** Run ids whose subtree deletion is in flight (guards against a double delete) */
   const deletingRunIds = ref<Set<string>>(new Set());
   /** Set of bare UUIDs of sessions that "still exist".
    *  Data source: the authoritative server `/sessions` list + local Dexie session placeholders; populated by loadSubagentValidSessions().
@@ -51,20 +43,6 @@ export const useSubagentStore = defineStore('subagent', () => {
   const subagentValidSessionIds = ref<Set<string>>(new Set());
 
   // ── Derived views ────────────────────────────────────────────────────────
-
-  /** Number of running resident subagents (for the "Sessions" tab red-dot badge; filtered to the current session). */
-  const runningTaskCount = computed(() => taskRuns.value.filter(run => isRunning(run)).length);
-
-  /** Number of running subagents across all sessions (for the "background tasks" tab red-dot badge). */
-  const allRunningTaskCount = computed(() => allTaskRuns.value.filter(run => isRunning(run)).length);
-
-  /** Display list for the background tasks tab: only "first-level direct tasks" (depth === 1, i.e. subtasks spawned directly by each session), across all sessions.
-   *  Orphaned runs (stale cache whose calling session has already been destroyed) are **still shown**; their "back to session"
-   *  target is validated by SubagentTasksView via wouldExistSession, and the button is hidden when it does not exist (the task box is kept). */
-  const rootTaskRuns = computed(() => allTaskRuns.value.filter(run => run?.depth === 1));
-
-  /** Clustered list for the background tasks tab: groups task boxes by "calling session_id" (rootTaskRuns). */
-  const groupedRootTaskRuns = computed<TaskSessionGroup[]>(() => groupRunsBySession(rootTaskRuns.value));
 
   /**
    * Display list for the right-side task view: with a focused run, all first-level root tasks
@@ -74,21 +52,6 @@ export const useSubagentStore = defineStore('subagent', () => {
   const focusedSubtreeRuns = computed<SubagentRun[]>(() =>
     computeFocusedSubtreeRuns(focusedRunId.value, allTaskRuns.value)
   );
-
-  /** List of currently selectable (first-level direct task) run_ids. */
-  const selectableRunIds = computed<string[]>(() => rootTaskRuns.value.map(r => r.run_id).filter(Boolean));
-
-  /** Whether everything is selected (non-empty and all selected). */
-  const allSelected = computed(() => {
-    const ids = selectableRunIds.value;
-    return ids.length > 0 && ids.every(id => selectedRunIds.value.has(id));
-  });
-
-  /** Whether in an indeterminate (partially selected) state (some selected but not all). */
-  const someSelected = computed(() => {
-    const ids = selectableRunIds.value;
-    return ids.some(id => selectedRunIds.value.has(id)) && !allSelected.value;
-  });
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
@@ -139,23 +102,6 @@ export const useSubagentStore = defineStore('subagent', () => {
    * Toggle the selected state of a single task.
    * @param runId
    */
-  function toggleTaskSelection(runId: string): void {
-    selectedRunIds.value = new Set(selectedRunIds.value);
-    if (selectedRunIds.value.has(runId)) selectedRunIds.value.delete(runId);
-    else selectedRunIds.value.add(runId);
-  }
-
-  /** Select all / deselect all first-level direct tasks. */
-  function toggleSelectAllTasks(): void {
-    const ids = selectableRunIds.value;
-    if (allSelected.value) selectedRunIds.value = new Set();
-    else selectedRunIds.value = new Set(ids);
-  }
-
-  /** Clear the selection (called after deletion completes). */
-  function clearTaskSelection(): void {
-    selectedRunIds.value = new Set();
-  }
 
   /**
    * Delete a root task and its entire subtree (fully cleared on both frontend and backend).
@@ -192,7 +138,6 @@ export const useSubagentStore = defineStore('subagent', () => {
         expandedRunId.value = undefined;
         selectedRunId.value = undefined;
       }
-      selectedRunIds.value = new Set([...selectedRunIds.value].filter(id => !removed.has(id)));
     } catch (e) {
       logUtil.e('[useSubagentTasks] Failed to delete subagent subtree:', e);
       throw e;
@@ -200,22 +145,6 @@ export const useSubagentStore = defineStore('subagent', () => {
       deletingRunIds.value = new Set(deletingRunIds.value);
       deletingRunIds.value.delete(runId);
     }
-  }
-
-  /** Batch-delete the currently selected first-level tasks (each deletes its own root subtree). */
-  async function deleteSelectedTasks(): Promise<number> {
-    const ids = [...selectedRunIds.value];
-    let removed = 0;
-    for (const id of ids) {
-      try {
-        await deleteSubagentSubtree(id);
-        removed += 1;
-      } catch {
-        // A single failure does not interrupt the deletion of the remaining tasks
-      }
-    }
-    clearTaskSelection();
-    return removed;
   }
 
   return {
@@ -229,28 +158,16 @@ export const useSubagentStore = defineStore('subagent', () => {
     expandedRunId,
     selectedRunId,
     focusedRunId,
-    selectedRunIds,
     deletingRunIds,
     subagentValidSessionIds,
     // Derived
-    runningTaskCount,
-    allRunningTaskCount,
-    rootTaskRuns,
-    groupedRootTaskRuns,
     focusedSubtreeRuns,
-    selectableRunIds,
-    allSelected,
-    someSelected,
     // Behavior
     isRunning,
     setTasksTabActive,
     toggleExpandRun,
     focusRun,
     resetFlowState,
-    toggleTaskSelection,
-    toggleSelectAllTasks,
-    clearTaskSelection,
-    deleteSubagentSubtree,
-    deleteSelectedTasks
+    deleteSubagentSubtree
   };
 });

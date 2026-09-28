@@ -2,24 +2,13 @@ import { describe, it, expect } from 'vitest';
 import { defineComponent } from 'vue';
 import { mount } from '@vue/test-utils';
 import type { SessionRecord } from '@/pages/home/type';
-import type { SubagentRun } from '@/composables/bridge';
-import {
-  SESSION_ROW_ESTIMATE_PX,
-  TASK_HEADER_ESTIMATE_PX,
-  TASK_RUN_ESTIMATE_PX,
-  buildSessionRows,
-  buildTaskRows,
-  taskRowEstimate,
-  useVirtualRows
-} from '../use-sidebar-virtual-rows';
+import { SESSION_ROW_ESTIMATE_PX, buildSessionRows, useVirtualRows } from '../use-sidebar-virtual-rows';
 
 const session = (id: string, title = id): SessionRecord => ({
   id,
   title,
   createTime: '2026-09-25 10:00'
 });
-
-const run = (runId: string): SubagentRun => ({ run_id: runId, depth: 1 }) as SubagentRun;
 
 describe('buildSessionRows', () => {
   it('keys every session by id, display order preserved', () => {
@@ -36,44 +25,6 @@ describe('buildSessionRows', () => {
 
   it('is empty for an empty list', () => {
     expect(buildSessionRows([])).toEqual([]);
-  });
-});
-
-describe('buildTaskRows', () => {
-  it('flattens each group into a header row followed by its run cards', () => {
-    const rows = buildTaskRows([
-      { sessionId: 'sid-1', runs: [run('r1'), run('r2')] },
-      { sessionId: 'sid-2', runs: [run('r3')] }
-    ]);
-    expect(rows.map(r => r.key)).toEqual(['h-sid-1', 'r-r1', 'r-r2', 'h-sid-2', 'r-r3']);
-    expect(rows.map(r => r.kind)).toEqual(['header', 'run', 'run', 'header', 'run']);
-    expect(rows[0]!.runCount).toBe(2);
-    expect(rows[4]!.run?.run_id).toBe('r3');
-  });
-
-  it('keeps a header for a group with no runs (header is the group identity)', () => {
-    const rows = buildTaskRows([{ sessionId: 'empty', runs: [] }]);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]!.kind).toBe('header');
-    expect(rows[0]!.runCount).toBe(0);
-  });
-
-  it('is empty when there are no groups', () => {
-    expect(buildTaskRows([])).toEqual([]);
-  });
-});
-
-describe('taskRowEstimate', () => {
-  const rows = buildTaskRows([{ sessionId: 'sid', runs: [run('r1')] }]);
-
-  it('estimates headers and cards separately', () => {
-    expect(taskRowEstimate(rows, 0)).toBe(TASK_HEADER_ESTIMATE_PX);
-    expect(taskRowEstimate(rows, 1)).toBe(TASK_RUN_ESTIMATE_PX);
-  });
-
-  it('falls back to a card estimate for an index past the end', () => {
-    // The window can briefly read one index past the list while rows are replaced.
-    expect(taskRowEstimate(rows, 99)).toBe(TASK_RUN_ESTIMATE_PX);
   });
 });
 

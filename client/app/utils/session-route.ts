@@ -1,16 +1,13 @@
 /**
  * URL-pathname session-id resolution.
  *
- * Two consumers parse the active session id from the URL independently before
- * this module existed:
- * - `composables/subagent-sync.ts::resolveSid()` — trailing segment with `home`
- *   reserved, `undefined` when the path carries no session;
- * - `stores/todo.ts::resolveSid()` — the same parse plus `tasks` reserved (the
- *   standalone background-tasks route shares the `/home/tasks/<sid>` prefix),
- *   normalizing "no session" to `''`.
+ * Two consumers parse the active session id from the URL and differ only in how
+ * they spell "no session":
+ * - `composables/subagent-sync.ts::resolveSid()` — `undefined` when the path
+ *   carries no session;
+ * - `stores/todo.ts::resolveSid()` — the same parse, normalized to `''`.
  *
- * The parse itself is identical; only the reserved-segment set and the
- * empty-result mapping differ, so both now delegate here.
+ * Both delegate here so the reserved-segment set stays single-sourced.
  */
 
 /** Route segments that are never a session id (the shell route). */

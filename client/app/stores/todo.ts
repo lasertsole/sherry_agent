@@ -81,9 +81,7 @@ export type TodoState = 'hide' | 'close' | 'open';
  */
 function resolveSid(): string {
   if (typeof window === 'undefined') return '';
-  // `tasks` is the standalone background-tasks route (/home/tasks/<sid>): the
-  // trailing segment of /home/tasks is the route name, not a session id.
-  return sessionIdFromPathname(window.location.pathname, ['home', 'tasks']) ?? '';
+  return sessionIdFromPathname(window.location.pathname) ?? '';
 }
 
 /**

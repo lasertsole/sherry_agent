@@ -56,9 +56,6 @@ describe('stores/subagent', () => {
     expect(store.lastTasksFetchedAt).toBe(0);
     expect(store.subagentWsReady).toBe(false);
     expect(store.tasksTabActive).toBe(false);
-    expect(store.runningTaskCount).toBe(0);
-    expect(store.allRunningTaskCount).toBe(0);
-    expect(store.selectedRunIds.size).toBe(0);
     expect(store.deletingRunIds.size).toBe(0);
   });
 
@@ -72,32 +69,6 @@ describe('stores/subagent', () => {
         makeRun({ run_id: 'r3', execution: { status: 'INTERRUPTED', started_at: 0, ended_at: 0, outcome: null } })
       )
     ).toBe(true);
-    expect(store.runningTaskCount).toBe(0);
-  });
-
-  it('counts running tasks per session and globally', () => {
-    store.taskRuns = [
-      makeRun({ run_id: 'r1', execution: { status: 'RUNNING', started_at: 0, ended_at: 0, outcome: null } })
-    ];
-    store.allTaskRuns = [
-      makeRun({ run_id: 'r1', execution: { status: 'RUNNING', started_at: 0, ended_at: 0, outcome: null } }),
-      makeRun({ run_id: 'r2' })
-    ];
-    expect(store.runningTaskCount).toBe(1);
-    expect(store.allRunningTaskCount).toBe(1);
-  });
-
-  it('rootTaskRuns only keeps depth===1 and groupedRootTaskRuns clusters by session', () => {
-    store.allTaskRuns = [
-      makeRun({ run_id: 'root-1', depth: 1, requester_session_key: 'A' }),
-      makeRun({ run_id: 'root-2', depth: 1, requester_session_key: 'B' }),
-      makeRun({ run_id: 'root-3', depth: 1, requester_session_key: 'A' }),
-      makeRun({ run_id: 'deep', depth: 2, requester_session_key: 'A' })
-    ];
-    expect(store.rootTaskRuns.map(r => r.run_id)).toEqual(['root-1', 'root-2', 'root-3']);
-    const groups = store.groupedRootTaskRuns;
-    expect(groups.map(g => g.sessionId)).toEqual(['A', 'B']);
-    expect(groups[0]!.runs.map(r => r.run_id)).toEqual(['root-1', 'root-3']);
   });
 
   it('focusedSubtreeRuns without focus returns rootTaskRuns; with focus collects the subtree', () => {
@@ -136,39 +107,6 @@ describe('stores/subagent', () => {
     expect(store.focusedRunId).toBe('r2');
   });
 
-  it('toggleSelectAllTasks / toggleTaskSelection / allSelected / someSelected only consider depth-1 roots', () => {
-    store.allTaskRuns = [
-      makeRun({ run_id: 'root-1', depth: 1 }),
-      makeRun({ run_id: 'root-2', depth: 1 }),
-      makeRun({ run_id: 'deep', depth: 2 })
-    ];
-    expect(store.selectableRunIds).toEqual(['root-1', 'root-2']);
-    expect(store.allSelected).toBe(false);
-    expect(store.someSelected).toBe(false);
-
-    store.toggleSelectAllTasks();
-    expect(store.selectedRunIds.has('deep')).toBe(false);
-    expect(store.allSelected).toBe(true);
-    expect(store.someSelected).toBe(false);
-
-    store.toggleTaskSelection('root-1');
-    expect(store.selectedRunIds.has('root-1')).toBe(false);
-    expect(store.allSelected).toBe(false);
-    expect(store.someSelected).toBe(true);
-
-    store.toggleTaskSelection('root-1');
-    store.toggleSelectAllTasks();
-    expect(store.selectedRunIds.size).toBe(0);
-    expect(store.allSelected).toBe(false);
-  });
-
-  it('clearTaskSelection empties the selected set', () => {
-    store.allTaskRuns = [makeRun({ run_id: 'root-1', depth: 1 })];
-    store.toggleSelectAllTasks();
-    store.clearTaskSelection();
-    expect(store.selectedRunIds.size).toBe(0);
-  });
-
   it('deleteSubagentSubtree removes run + descendants from store and Dexie and clears flow state', async () => {
     store.allTaskRuns = [
       makeRun({ run_id: 'root-1', depth: 1, child_session_key: 'cs' }),
@@ -187,21 +125,5 @@ describe('stores/subagent', () => {
     expect(store.focusedRunId).toBeUndefined();
     expect(store.expandedRunId).toBeUndefined();
     expect(store.deletingRunIds.has('root-1')).toBe(false);
-  });
-
-  it('deleteSelectedTasks deletes each selected root and returns the count', async () => {
-    store.allTaskRuns = [
-      makeRun({ run_id: 'root-1', depth: 1 }),
-      makeRun({ run_id: 'root-2', depth: 1 }),
-      makeRun({ run_id: 'keep', depth: 1 })
-    ];
-    store.taskRuns = [...store.allTaskRuns];
-    store.toggleSelectAllTasks();
-    store.toggleTaskSelection('keep');
-
-    const removed = await store.deleteSelectedTasks();
-    expect(removed).toBe(2);
-    expect(store.allTaskRuns.map(r => r.run_id)).toEqual(['keep']);
-    expect(store.selectedRunIds.size).toBe(0);
   });
 });

@@ -35,6 +35,20 @@
           <span :class="['shrink-0 px-2 py-0.5 rounded-full text-xs font-medium', badgeClass(run)]">
             {{ statusLabel(run) }}
           </span>
+          <!-- Deleting the run (and its subtree) used to live on the removed
+               sidebar task list; the detail pane keeps the capability. -->
+          <Button
+            icon="pi pi-trash"
+            severity="danger"
+            text
+            rounded
+            size="small"
+            class="shrink-0"
+            :disabled="deleting"
+            :loading="deleting"
+            :title="t('taskDetail.delete')"
+            :aria-label="t('taskDetail.delete')"
+            @click="handleDelete" />
         </div>
       </div>
 
@@ -156,6 +170,7 @@
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import dayjs from 'dayjs';
+import { logUtil } from '~/utils/log';
 import type { SubagentRun } from '@/composables/bridge';
 
 const props = defineProps<{
@@ -164,7 +179,46 @@ const props = defineProps<{
 }>();
 
 const { t } = useI18n();
-const { badgeClass, statusLabel, roleLabel, runLabel, parentSessionLabel, refreshFocusedSubtree } = useSubagentTasks();
+const {
+  badgeClass,
+  statusLabel,
+  roleLabel,
+  runLabel,
+  parentSessionLabel,
+  refreshFocusedSubtree,
+  deleteSubagentSubtree,
+  deletingRunIds
+} = useSubagentTasks();
+
+const confirm = useConfirm();
+
+/** Whether a delete for this run is in flight (disables the button). */
+const deleting = computed(() => (props.run ? deletingRunIds.value.has(props.run.run_id) : false));
+
+/**
+ * Delete this run and its whole subtree (backend registry + local cache), then
+ * refresh the tree so the graph drops the node.
+ */
+const handleDelete = () => {
+  const run = props.run;
+  if (!run) return;
+  confirm.require({
+    header: t('common.confirmDelete'),
+    message: t('taskDetail.deleteConfirm'),
+    acceptProps: { label: t('common.delete'), severity: 'danger', icon: 'pi pi-trash' },
+    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
+    accept: () => {
+      void (async () => {
+        try {
+          await deleteSubagentSubtree(run.run_id);
+          refreshFocusedSubtree();
+        } catch (e) {
+          logUtil.e('[SubagentRunDetail] Failed to delete the run:', e);
+        }
+      })();
+    }
+  });
+};
 
 /** delivery.status label (reuses the sidebar status keys; shows the raw value as fallback) */
 const deliveryLabel = computed(() => {
@@ -231,6 +285,8 @@ function formatTime(ms: number | null | undefined): string {
 {
   "zh": {
     "taskDetail": {
+      "delete": "删除任务",
+      "deleteConfirm": "删除该任务及其全部子任务？此操作不可恢复。",
       "agentId": "Agent",
       "delivery": "配送状态",
       "depth": "深度",
@@ -256,6 +312,8 @@ function formatTime(ms: number | null | undefined): string {
   },
   "en": {
     "taskDetail": {
+      "delete": "Delete task",
+      "deleteConfirm": "Delete this task and all of its sub-tasks? This cannot be undone.",
       "agentId": "Agent",
       "delivery": "Delivery",
       "depth": "Depth",
@@ -281,6 +339,8 @@ function formatTime(ms: number | null | undefined): string {
   },
   "ja": {
     "taskDetail": {
+      "delete": "タスクを削除",
+      "deleteConfirm": "このタスクとすべてのサブタスクを削除しますか？元に戻せません。",
       "agentId": "エージェント",
       "delivery": "配信",
       "depth": "深さ",
@@ -306,6 +366,8 @@ function formatTime(ms: number | null | undefined): string {
   },
   "ko": {
     "taskDetail": {
+      "delete": "작업 삭제",
+      "deleteConfirm": "이 작업과 모든 하위 작업을 삭제할까요? 되돌릴 수 없습니다.",
       "agentId": "에이전트",
       "delivery": "전송",
       "depth": "깊이",

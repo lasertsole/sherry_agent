@@ -14,7 +14,8 @@ export type RightSidebarPanelKind =
   | 'memory'
   | 'heartbeat'
   | 'cron'
-  | 'extend';
+  | 'extend'
+  | 'taskDetail';
 
 /**
  * Width an editor panel is opened with when the sidebar is narrower: those
@@ -31,7 +32,8 @@ const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
   'memory',
   'heartbeat',
   'cron',
-  'extend'
+  'extend',
+  'taskDetail'
 ]);
 
 /** Narrowest usable sidebar (below this the panels get unusable). */

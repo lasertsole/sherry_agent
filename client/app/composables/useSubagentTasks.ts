@@ -33,16 +33,9 @@ export function useSubagentTasks() {
     expandedRunId,
     selectedRunId,
     focusedRunId,
-    selectedRunIds,
     deletingRunIds,
     subagentValidSessionIds,
-    runningTaskCount,
-    allRunningTaskCount,
-    rootTaskRuns,
-    groupedRootTaskRuns,
-    focusedSubtreeRuns,
-    allSelected,
-    someSelected
+    focusedSubtreeRuns
   } = storeToRefs(store);
 
   /**
@@ -108,16 +101,12 @@ export function useSubagentTasks() {
     // Reactive state
     taskRuns,
     allTaskRuns,
-    rootTaskRuns,
-    groupedRootTaskRuns,
     focusedSubtreeRuns,
     taskLoading,
     lastTasksFetchedAt,
     subagentWsReady,
-    runningTaskCount,
-    allRunningTaskCount,
     lastUpdatedText,
-    // Task view expand/flow-graph state (kept alive across chat↔tasks switches)
+    // Task view expand/flow-graph state (kept alive across tab switches)
     expandedRunId,
     selectedRunId,
     focusedRunId,
@@ -125,7 +114,7 @@ export function useSubagentTasks() {
     focusRun: store.focusRun,
     resetFlowState: store.resetFlowState,
     // Behavior methods
-    isRunning: store.isRunning,
+    isRunning,
     badgeClass,
     statusLabel,
     roleLabel,
@@ -135,16 +124,9 @@ export function useSubagentTasks() {
     refresh,
     refreshFocusedSubtree,
     setTasksTabActive: store.setTasksTabActive,
-    // Background tasks tab multi-select / select-all / batch delete
-    selectedRunIds,
+    // Single-run deletion (the detail pane's delete action; guards a double delete)
     deletingRunIds,
-    allSelected,
-    someSelected,
-    toggleTaskSelection: store.toggleTaskSelection,
-    toggleSelectAllTasks: store.toggleSelectAllTasks,
-    clearTaskSelection: store.clearTaskSelection,
     deleteSubagentSubtree: store.deleteSubagentSubtree,
-    deleteSelectedTasks: store.deleteSelectedTasks,
     // Lower-level reuse (for SubagentTasksView etc. to do their own internal handling)
     loadTaskRuns,
     refreshFromCache,

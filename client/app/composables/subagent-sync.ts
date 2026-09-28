@@ -101,7 +101,7 @@ export async function refreshFromCache(sid?: string): Promise<void> {
     const cached = await readCachedRuns();
     // The global cache is cumulative data across "all sessions" (the Dexie table is global); map it directly into the global task view data
     store.allTaskRuns = cached.map(toSubagentRun);
-    // Session-filtered view: used by the chat page jump bar / sidebar red dot to detect this session's tasks
+    // Session-filtered view: what the toolbar's running-work entry reads (badge + popover).
     const target = resolveSid(sid);
     store.taskRuns = target ? filterBySession(cached, target) : [];
   } catch {
