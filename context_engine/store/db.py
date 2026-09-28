@@ -435,6 +435,30 @@ def _self_heal_schema(db: sqlite3.Connection) -> None:
     db.commit()
 
 
+def backfill_injector_origins(db: sqlite3.Connection) -> None:
+    """Retag rows written before the injectors stamped their own ``origin``.
+
+    The completion gate and the todo directives were persisted as plain user
+    rows (``origin = 'user'``), so the chat showed them as messages the user had
+    written. Each producer now tags its own rows, and this one-off pass fixes
+    the history that was already stored: both shapes are frozen literal
+    prefixes, and a row that no longer matches is left untouched.
+
+    Idempotent (a second run matches nothing) and recorded in ``_migrations``.
+    """
+    db.execute(
+        "UPDATE messages SET origin = 'quality_gate' "
+        "WHERE role = 'human' AND (origin IS NULL OR origin = 'user') "
+        "AND content LIKE '%[GATE] Completion blocked:%'"
+    )
+    db.execute(
+        "UPDATE messages SET origin = 'todo_continuation' "
+        "WHERE role = 'human' AND (origin IS NULL OR origin = 'user') "
+        "AND (content LIKE '%[SYSTEM DIRECTIVE: TODO CONTINUATION]%' "
+        "OR content LIKE '%[SYSTEM DIRECTIVE: RECOVERY MODE]%')"
+    )
+
+
 def _migration_steps() -> list[tuple[str, MigrationStep]]:
     """Ordered ``(name, step)`` pairs; names are stable and never renamed.
 
@@ -448,7 +472,10 @@ def _migration_steps() -> list[tuple[str, MigrationStep]]:
     ``build_schema_v1`` is the complete baseline: a fresh database is fully
     provisioned by this single step, recorded as ``0001_initial_schema``.
     """
-    return [("0001_initial_schema", build_schema_v1)]
+    return [
+        ("0001_initial_schema", build_schema_v1),
+        ("0002_backfill_injector_origins", backfill_injector_origins),
+    ]
 
 
 def get_db_path() -> Path:

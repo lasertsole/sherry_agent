@@ -40,7 +40,7 @@
                 <span
                   aria-hidden="true"
                   class="pi pi-server text-[10px]"></span>
-                {{ t('chat.backgroundMessage') }}
+                {{ originLabel(carrier) }}
               </span>
               <!-- Carrier body: verbatim plain text ({{ }} interpolation, no markdown round-trip);
                    whitespace preserved so the self-describing first line keeps its own line -->
@@ -287,6 +287,27 @@ const {
 const { failedImageSources, onImageError } = useChatMedia();
 const { copiedMessageId, canCopyMessage, copyMessage } = useMessageCopy();
 const { expandedToolCards, expandedThinking, toggleToolCard, toggleThinking } = useChatCardExpansion();
+
+/**
+ * Header label of a neutral (injector-origin) card, by the row's `origin`.
+ *
+ * Injected rows are not the user's words: the backend tags each producer with
+ * an origin (`subagent_completion`, `task_intent`, `quality_gate`,
+ * `todo_continuation`, ...) and the card says which one it was. An unknown
+ * non-user origin still renders neutrally, under the generic label.
+ */
+const ORIGIN_LABEL_KEYS: Record<string, string> = {
+  subagent_completion: 'chat.backgroundMessage',
+  task_intent: 'chat.originTaskIntent',
+  quality_gate: 'chat.originQualityGate',
+  todo_continuation: 'chat.originTodoNudge'
+};
+
+/**
+ * Header text of a neutral card.
+ * @param message Injected USER row (non-user origin).
+ */
+const originLabel = (message: MessageItem): string => t(ORIGIN_LABEL_KEYS[message.origin ?? ''] ?? 'chat.originSystem');
 
 /**
  * Whether the bubble has anything to draw: text, or media attachments (a user

@@ -40,6 +40,9 @@ from runtime import hooks
 __all__ = ["TodoContinuationEnforcer"]
 
 # Continuation directive (behavior contract of this module).
+# Origin tag of every injected directive from this middleware.
+_ORIGIN = "todo_continuation"
+
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: TODO CONTINUATION]
 
 Incomplete tasks remain in your todo list. Continue working on the next pending task.
@@ -201,7 +204,12 @@ class TodoContinuationEnforcer(AgentMiddleware):
             if trigger is None:
                 return
             session_key = f"agent:main:session:{session_id}"
-            await trigger(session_key, HumanMessage(content=prompt))
+            # Injector provenance (persisted as the human row's ``origin``): these
+            # directives must not read as messages the user sent.
+            await trigger(
+                session_key,
+                HumanMessage(content=prompt, metadata={"origin": _ORIGIN, "internal": True}),
+            )
             st.mark_injected(session_id)
         except Exception:
             logger.exception(

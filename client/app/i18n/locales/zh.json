@@ -21,6 +21,10 @@
   },
   "chat": {
     "backgroundMessage": "后台任务",
+    "originTaskIntent": "任务意图",
+    "originQualityGate": "质量门控",
+    "originTodoNudge": "待办提醒",
+    "originSystem": "系统消息",
     "tokenGuard": {
       "title": "模型配置不达标",
       "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 环境配置中修正。"

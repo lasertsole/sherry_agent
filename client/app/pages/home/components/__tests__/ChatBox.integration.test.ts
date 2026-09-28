@@ -317,6 +317,23 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     expect(wrapper.text()).not.toContain('后台任务');
   });
 
+  it.each([
+    ['quality_gate', '质量门控'],
+    ['task_intent', '任务意图'],
+    ['todo_continuation', '待办提醒'],
+    ['something_new', '系统消息']
+  ])('labels the neutral card with its own source (%s)', (origin, label) => {
+    // Every injector tags its rows with an origin, and the card names that
+    // source instead of the generic background-task label.
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 24, content: '门控正文', origin })] }
+    });
+
+    expect(wrapper.find('.background-task-card').exists()).toBe(true);
+    expect(wrapper.text()).toContain(label);
+    expect(wrapper.html()).not.toContain('bg-[#2563EB]');
+  });
+
   it('does not treat a null/empty origin as a background task', () => {
     const wrapper = mount(ChatBox, {
       props: {

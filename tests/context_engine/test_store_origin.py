@@ -249,3 +249,79 @@ class TestHistoryRowsExposeOrigin:
             "subagent_completion"
         )
         assert by_content["reply"] is None
+
+
+class TestInjectorOriginBackfill:
+    """The one-off pass that retags injector rows written before they were tagged.
+
+    The gate / todo directives were persisted exactly like user input, so the
+    chat rendered them as messages the user had written; the backfill fixes the
+    history that is already on disk.
+    """
+
+    def _db(self, tmp_path):
+        """A database that predates the backfill: schema v1 applied, 0002 pending."""
+        import sqlite3
+
+        from context_engine.store.db import build_schema_v1
+
+        conn = sqlite3.connect(tmp_path / "origin_backfill.db")
+        build_schema_v1(conn)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS _migrations (name TEXT PRIMARY KEY, at INTEGER NOT NULL)"
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO _migrations (name, at) VALUES ('0001_initial_schema', 0)"
+        )
+        return conn
+
+    def _insert(self, conn, content: str, origin: str):
+        conn.execute(
+            "INSERT INTO messages (session_id, role, content, timestamp, ts_ms, turn_num, origin) "
+            "VALUES ('s1', 'human', ?, '2026-09-28 10:00:00', 0, 1, ?)",
+            (f'[{{"type": "text", "text": {content!r}}}]', origin),
+        )
+
+    def test_retags_gate_and_directive_rows_and_leaves_user_rows_alone(self, tmp_path):
+        from context_engine.store.db import _migrate
+
+        conn = self._db(tmp_path)
+        self._insert(conn, "[GATE] Completion blocked: verification evidence missing", "user")
+        self._insert(conn, "[SYSTEM DIRECTIVE: TODO CONTINUATION] keep going", "user")
+        self._insert(conn, "[SYSTEM DIRECTIVE: RECOVERY MODE] recover", "user")
+        self._insert(conn, "帮我看看这个 bug", "user")
+
+        _migrate(conn)
+
+        rows = dict(
+            conn.execute("SELECT content, origin FROM messages WHERE role = 'human'").fetchall()
+        )
+        origins = {content: origin for content, origin in rows.items()}
+        assert [o for c, o in origins.items() if "[GATE] Completion blocked" in c] == [
+            "quality_gate"
+        ]
+        assert [o for c, o in origins.items() if "[SYSTEM DIRECTIVE: TODO CONTINUATION]" in c] == [
+            "todo_continuation"
+        ]
+        assert [o for c, o in origins.items() if "[SYSTEM DIRECTIVE: RECOVERY MODE]" in c] == [
+            "todo_continuation"
+        ]
+        # A real user row is never touched.
+        assert [o for c, o in origins.items() if "帮我看看这个 bug" in c] == ["user"]
+
+    def test_is_recorded_and_idempotent(self, tmp_path):
+        from context_engine.store.db import _migrate
+
+        conn = self._db(tmp_path)
+        self._insert(conn, "[GATE] Completion blocked: verification evidence missing", "user")
+
+        _migrate(conn)
+        applied = {row[0] for row in conn.execute("SELECT name FROM _migrations")}
+        assert "0002_backfill_injector_origins" in applied
+
+        # Re-running the pass (or reopening the database) changes nothing.
+        _migrate(conn)
+        again = conn.execute(
+            "SELECT origin FROM messages WHERE content LIKE '%[GATE]%'"
+        ).fetchone()[0]
+        assert again == "quality_gate"

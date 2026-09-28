@@ -90,6 +90,10 @@ def test_missing_evidence_injects_gate(patched_drain: dict, ledger: EvidenceLedg
     gate = result["messages"][1]
     assert isinstance(gate, HumanMessage)
     assert gate.text == _VERIFICATION_GATE_MESSAGE
+    # Injector provenance: the chat renders a non-user origin as a neutral system
+    # card instead of a bubble the user "wrote".
+    assert gate.metadata.get("origin") == "quality_gate"
+    assert gate.metadata.get("internal") is True
 
 
 def test_failed_evidence_injects_gate(patched_drain: dict, ledger: EvidenceLedger):

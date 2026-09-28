@@ -122,6 +122,12 @@ EXPECTED_AUX_TABLES = frozenset(
 )
 
 BASELINE_NAME = "0001_initial_schema"
+BACKFILL_NAME = "0002_backfill_injector_origins"
+# Every name the shipped `_migration_steps()` records on a fresh database: the
+# complete baseline plus the additive steps after it. Assertions about "what a
+# migrated database has applied" use this set, so adding a step is a deliberate
+# test edit rather than a silent drift.
+SHIPPED_STEP_NAMES = {BASELINE_NAME, BACKFILL_NAME}
 
 
 def _connect(path: str | Path = ":memory:") -> sqlite3.Connection:
@@ -168,7 +174,7 @@ class TestFreshBaseline:
         db = _connect()
         _migrate(db)
 
-        assert _applied(db) == {BASELINE_NAME}
+        assert _applied(db) == SHIPPED_STEP_NAMES
         assert _migration_table_shape(db) == [("name", "TEXT", 1), ("at", "INTEGER", 0)]
 
     def test_has_complete_message_columns(self):
@@ -249,7 +255,7 @@ class TestIdempotency:
         _migrate(db)
 
         assert replayed == []
-        assert _applied(db) == {BASELINE_NAME}
+        assert _applied(db) == SHIPPED_STEP_NAMES
 
 
 class TestMiddleInsertRegression:
@@ -353,7 +359,7 @@ class TestLegacyIndexedTrackingTable:
         _migrate(db)
 
         assert _migration_table_shape(db) == [("name", "TEXT", 1), ("at", "INTEGER", 0)]
-        assert _applied(db) == {BASELINE_NAME}
+        assert _applied(db) == SHIPPED_STEP_NAMES
         assert (
             _table_names(db),
             _index_names(db),
@@ -367,7 +373,7 @@ class TestLegacyIndexedTrackingTable:
         db = self._legacy_v_database(tmp_path)
 
         _migrate(db)
-        assert _applied(db) == {BASELINE_NAME}
+        assert _applied(db) == SHIPPED_STEP_NAMES
 
         ran: list[str] = []
 
@@ -383,7 +389,9 @@ class TestLegacyIndexedTrackingTable:
         _migrate(db)
 
         assert ran == ["0002_next"]
-        assert _applied(db) == {BASELINE_NAME, "0002_next"}
+        # The synthetic list replaced the shipped one, so the ledger is the real
+        # shipped set plus this synthetic step.
+        assert _applied(db) == SHIPPED_STEP_NAMES | {"0002_next"}
 
 
 class TestAddMessagesSmoke:
@@ -501,7 +509,7 @@ class TestLegacySchemaSelfHeal:
             assert EXPECTED_AUX_TABLES <= _table_names(db)
             # The legacy tracking table was replaced and the baseline recorded.
             assert _migration_table_shape(db) == [("name", "TEXT", 1), ("at", "INTEGER", 0)]
-            assert _applied(db) == {BASELINE_NAME}
+            assert _applied(db) == SHIPPED_STEP_NAMES
             # The pre-existing row survived unchanged, new columns defaulted.
             row = db.execute(
                 "SELECT turn_num, session_id, role, content, timestamp, ts_ms, "
@@ -526,6 +534,6 @@ class TestLegacySchemaSelfHeal:
         try:
             assert db.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
             assert _message_columns(db) == set(EXPECTED_MESSAGE_COLUMNS)
-            assert _applied(db) == {BASELINE_NAME}
+            assert _applied(db) == SHIPPED_STEP_NAMES
         finally:
             db.close()

@@ -6,7 +6,11 @@ import ko from '../../i18n/locales/ko.json';
 
 type Dict = { [key: string]: unknown };
 
-/** Flattens a nested object into a list of dot-path keys, used for parity checks */
+/**
+ * Flattens a nested object into a list of dot-path keys, used for parity checks
+ * @param obj
+ * @param prefix
+ */
 const flatten = (obj: Dict, prefix = ''): string[] =>
   Object.keys(obj).flatMap(k => {
     const path = prefix ? `${prefix}.${k}` : k;
@@ -17,6 +21,8 @@ const flatten = (obj: Dict, prefix = ''): string[] =>
 /**
  * Validates that interpolation placeholders ({xxx}) line up.
  * Returns the placeholder set for every leaf key.
+ * @param obj
+ * @param prefix
  */
 const placeholdersOf = (obj: Dict, prefix = ''): Record<string, Set<string>> => {
   const result: Record<string, Set<string>> = {};
@@ -64,7 +70,11 @@ describe('i18n locale parity', () => {
 });
 
 describe('i18n chat.backgroundMessage (subagent-origin-tagging Task 5)', () => {
-  /** Resolves a dot-path against a locale dict (index-signature safe, no literal-type pitfalls) */
+  /**
+   * Resolves a dot-path against a locale dict (index-signature safe, no literal-type pitfalls)
+   * @param dict
+   * @param path
+   */
   const keyOf = (dict: Dict, path: string): unknown =>
     path
       .split('.')
@@ -76,5 +86,42 @@ describe('i18n chat.backgroundMessage (subagent-origin-tagging Task 5)', () => {
     expect(keyOf(zh as Dict, 'chat.backgroundMessage')).toBe('后台任务');
     expect(keyOf(ja as Dict, 'chat.backgroundMessage')).toBe('バックグラウンドタスク');
     expect(keyOf(ko as Dict, 'chat.backgroundMessage')).toBe('백그라운드 작업');
+  });
+
+  // One label per injector origin: the neutral card names its source, so a gate
+  // message never reads as a background task (nor as a message the user wrote).
+  it('all four locales define the per-origin neutral-card labels', () => {
+    const keys = ['originTaskIntent', 'originQualityGate', 'originTodoNudge', 'originSystem'];
+    const expected: Record<string, Record<string, string>> = {
+      en: {
+        originTaskIntent: 'Task intent',
+        originQualityGate: 'Quality gate',
+        originTodoNudge: 'Todo nudge',
+        originSystem: 'System message'
+      },
+      zh: {
+        originTaskIntent: '任务意图',
+        originQualityGate: '质量门控',
+        originTodoNudge: '待办提醒',
+        originSystem: '系统消息'
+      },
+      ja: {
+        originTaskIntent: 'タスク意図',
+        originQualityGate: '品質ゲート',
+        originTodoNudge: 'TODO リマインダー',
+        originSystem: 'システム メッセージ'
+      },
+      ko: {
+        originTaskIntent: '작업 의도',
+        originQualityGate: '품질 게이트',
+        originTodoNudge: '할 일 알림',
+        originSystem: '시스템 메시지'
+      }
+    };
+    for (const [lang, dict] of Object.entries({ en, zh, ja, ko })) {
+      for (const key of keys) {
+        expect(keyOf(dict as Dict, `chat.${key}`)).toBe(expected[lang]![key]);
+      }
+    }
   });
 });

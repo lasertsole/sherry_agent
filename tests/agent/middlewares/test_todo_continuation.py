@@ -131,6 +131,9 @@ async def test_incomplete_injects_continuation_once(
     # Status block reports the remaining count and flow/step association.
     assert "2 remaining" in injection.content
     assert "flow f1 / s2" in injection.content
+    # Injector provenance: the chat shows these directives as a neutral system
+    # card, never as a message the user sent.
+    assert injection.metadata.get("origin") == "todo_continuation"
     # mark_injected recorded -> the session is now inside the cooldown window.
     assert st.is_in_cooldown(_SID) is True
 

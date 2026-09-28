@@ -45,6 +45,12 @@ _VERIFICATION_GATE_MESSAGE = (
     "Run verification commands (test/lint/build) before completing."
 )
 
+# Injector provenance, persisted as the human row's ``origin``: the chat renders
+# a non-user origin as a neutral system card instead of a bubble the user "wrote"
+# (see context_engine/store/core.py for the origin contract).
+_GATE_ORIGIN = "quality_gate"
+_GATE_METADATA = {"origin": _GATE_ORIGIN, "internal": True}
+
 
 def _completion_gate_violated(session_key: str) -> bool:
     """True when the session lacks passing verification evidence.
@@ -144,7 +150,9 @@ class SubagentCompletionDrainMiddleware(AgentMiddleware):
             # session has no passing verification evidence, append the gate.
             messages = [item.message for item in items]
             if _completion_gate_violated(str(key)):
-                messages.append(HumanMessage(content=_VERIFICATION_GATE_MESSAGE))
+                messages.append(
+                    HumanMessage(content=_VERIFICATION_GATE_MESSAGE, metadata=dict(_GATE_METADATA))
+                )
             return {"messages": messages}
         except Exception:
             logger.exception("completion drain failed; continuing turn without injection")
