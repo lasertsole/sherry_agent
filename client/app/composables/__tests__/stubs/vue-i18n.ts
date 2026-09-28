@@ -48,19 +48,26 @@ function deepMerge(target: Dict, source: Dict): void {
   }
 }
 
+/** The locale the suites run in; a test switches it to exercise other languages. */
+const currentLocale = { value: 'zh' };
+
 /**
  * Local scope overlay: `<i18n lang="json">` block messages attached to the
  * mounted component by the `vitest-sfc-i18n-blocks` plugin (vitest.config.ts),
  * mirroring vue-i18n's component-local scope. Empty for components without
  * blocks and for calls outside a component instance (composables).
+ *
+ * The CURRENT locale's block wins (a test may switch `locale.value` to drive
+ * locale-dependent rendering), falling back to `zh`.
  */
 function localOverlay(): Dict {
   const blocks = (getCurrentInstance()?.type as I18nBlockHost | undefined)?.__i18n;
   const overlay: Dict = {};
   for (const entry of blocks ?? []) {
     if (!entry || typeof entry !== 'object') continue;
-    const zh = (entry as Dict).zh;
-    if (zh && typeof zh === 'object') deepMerge(overlay, zh as Dict);
+    const dict = entry as Dict;
+    const localized = dict[currentLocale.value] ?? dict.zh;
+    if (localized && typeof localized === 'object') deepMerge(overlay, localized as Dict);
   }
   return overlay;
 }
@@ -77,10 +84,10 @@ export function useI18n() {
       }
       return text;
     },
-    locale: { value: 'zh' },
+    locale: currentLocale,
     te: () => true
   };
 }
 
 export const createI18n = () => ({ global: { t: (key: string) => lookupTree(zhMessages, key) ?? key } });
-export const locale = { value: 'zh' };
+export const locale = currentLocale;

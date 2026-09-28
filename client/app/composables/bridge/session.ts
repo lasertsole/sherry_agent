@@ -255,8 +255,10 @@ export interface ContextUsage {
   window: number;
   /** Prompt size the provider reported for the session's last finished turn. */
   total: number;
-  /** System-prompt estimate. */
+  /** System-prompt estimate, skill index excluded. */
   system: number;
+  /** Skill-index estimate (the ``<available_skills>`` block). */
+  skills: number;
   /** Main tool-schema estimate. */
   tools: number;
   /** Rest of the reported prompt (the conversation itself). */
@@ -282,6 +284,7 @@ export async function fetchContextUsage(sessionId: string): Promise<ContextUsage
     window: Number(res.window ?? 0),
     total: Number(res.total ?? 0),
     system: Number(res.system ?? 0),
+    skills: Number(res.skills ?? 0),
     tools: Number(res.tools ?? 0),
     messages: Number(res.messages ?? 0),
     cache_hit_ratio: typeof res.cache_hit_ratio === 'number' ? res.cache_hit_ratio : null,

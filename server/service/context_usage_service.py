@@ -1,15 +1,20 @@
 """Current-context accounting for the chat toolbar's usage ring.
 
 The toolbar shows how full the model's context window is, and splitting that
-into the three parts the model actually receives:
+into the four parts the model actually receives:
 
-  - **system prompt** — the session's prompt from the state register, the same
-    source the summarization overflow router estimates;
+  - **system prompt** — the session's prompt from the state register (the same
+    source the summarization overflow router estimates), minus the skill index
+    below: persona files, memory, and the live todo/taskflow/continuity blocks;
+  - **skill index** — the ``<available_skills>`` block ``build_system_prompt``
+    appends last, located inside the prompt that was actually injected rather
+    than re-derived (re-deriving would measure the skills on disk NOW, not the
+    set that turn carried);
   - **tool schemas** — the main tool set serialized the way a provider sees it,
     estimated once per process (the set is static);
   - **messages** — the remainder of the prompt: the provider's reported prompt
-    size minus the two parts above. That reported number is the only ground
-    truth for what the model got (it counts the full prompt, including chat
+    size minus the parts above. That reported number is the only ground truth
+    for what the model got (it counts the full prompt, including chat
     templates the server cannot re-serialize exactly), so the message part is
     derived from it rather than from a local re-estimate.
 
@@ -30,6 +35,11 @@ from pub.func.estimate_tokens import estimate_json_tokens, estimate_text_tokens
 from runtime import StateKey, state_register_mem
 
 from loguru import logger
+
+# The skill index is the only prompt part wrapped in these tags (see
+# skills/loader.get_skills_text): they identify it inside an assembled prompt.
+_SKILLS_OPEN = "<available_skills>"
+_SKILLS_CLOSE = "</available_skills>"
 
 
 @lru_cache(maxsize=1)
@@ -52,6 +62,27 @@ def _tool_schema_tokens() -> int:
         # the tool part swallow short prompts whole.
         total += estimate_json_tokens(json.dumps(schema, ensure_ascii=False))
     return total
+
+
+def _split_skill_index(prompt: str) -> tuple[str, str]:
+    """Split an assembled system prompt into (persona + blocks, skill index).
+
+    ``build_system_prompt`` appends ``get_skills_text(...)`` as the last
+    ``\\n\\n``-joined part, and that index is the only part wrapped in
+    ``<available_skills>``: locating it by its own tags measures the index the
+    turn actually carried, while re-deriving it from disk would measure whatever
+    the skill set is now. A prompt without the tags (filtered build, older row)
+    reports no index at all instead of inventing one.
+    """
+    start = prompt.find(_SKILLS_OPEN)
+    if start < 0:
+        return prompt, ""
+    end = prompt.find(_SKILLS_CLOSE, start)
+    if end < 0:
+        return prompt, ""
+    end += len(_SKILLS_CLOSE)
+    # Drop the join separators that used to hold the index in place.
+    return (prompt[:start] + prompt[end:]).strip("\n"), prompt[start:end]
 
 
 def _system_prompt_text(session_id: str) -> str:
@@ -129,7 +160,8 @@ def get_context_usage(session_id: str) -> dict[str, int | float | None]:
         {
             "window":          int,          # context window of the configured main LLM
             "total":           int,          # prompt size the provider reported for the last turn
-            "system":          int,          # system prompt estimate
+            "system":          int,          # system prompt estimate, skill index excluded
+            "skills":          int,          # skill-index estimate
             "tools":           int,          # tool-schema estimate
             "messages":        int,          # remainder (never negative)
             "cache_hit_ratio": float | None, # session-wide cached-prompt share
@@ -142,27 +174,31 @@ def get_context_usage(session_id: str) -> dict[str, int | float | None]:
     window = int(main_llm_context_window or 0)
     total = _reported_prompt_tokens(session_id)
     prompt = _system_prompt_text(session_id)
-    system = estimate_text_tokens(prompt) if prompt else 0
+    persona_prompt, skill_index = _split_skill_index(prompt) if prompt else ("", "")
+    system = estimate_text_tokens(persona_prompt) if persona_prompt else 0
+    skills = estimate_text_tokens(skill_index) if skill_index else 0
     try:
         tools = _tool_schema_tokens()
     except Exception as error:  # a tool-set failure must not break the ring
         logger.warning("context usage: tool schema estimate failed: {}", error)
         tools = 0
 
-    # The two estimates are character-based and the tool schemas are large, so on
-    # a short prompt they can add up to more than the provider reported. Scale
-    # them down in that case: the panel must never show a part larger than the
-    # whole prompt, and `messages` is the remainder of the reported total.
-    estimated = system + tools
+    # The estimates are character-based and the tool schemas are large, so on a
+    # short prompt they can add up to more than the provider reported. Scale them
+    # down in that case: the panel must never show a part larger than the whole
+    # prompt, and `messages` is the remainder of the reported total.
+    estimated = system + skills + tools
     if total and estimated > total:
         scale = total / estimated
         system = int(system * scale)
+        skills = int(skills * scale)
         tools = int(tools * scale)
-    messages = max(total - system - tools, 0)
+    messages = max(total - system - skills - tools, 0)
     return {
         "window": window,
         "total": total,
         "system": system,
+        "skills": skills,
         "tools": tools,
         "messages": messages,
         "cache_hit_ratio": _cache_hit_ratio(session_id),

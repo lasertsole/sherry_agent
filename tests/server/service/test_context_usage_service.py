@@ -38,7 +38,7 @@ def test_usage_splits_the_reported_prompt(monkeypatch):
     assert usage["tools"] == 2_000
     assert usage["system"] > 0
     # The message part is the remainder of the reported prompt.
-    assert usage["messages"] == 30_000 - usage["system"] - 2_000
+    assert usage["messages"] == 30_000 - usage["system"] - usage["skills"] - 2_000
 
 
 def test_usage_never_reports_a_negative_message_part(monkeypatch):
@@ -70,9 +70,9 @@ def test_estimates_are_scaled_to_fit_a_short_prompt(monkeypatch):
     usage = service.get_context_usage("s1")
 
     # Both parts shrink together so their sum fits the reported prompt…
-    assert usage["system"] + usage["tools"] <= usage["total"]
+    assert usage["system"] + usage["skills"] + usage["tools"] <= usage["total"]
     # …and the message part takes what is left (nothing here).
-    assert usage["messages"] == 5_000 - usage["system"] - usage["tools"]
+    assert usage["messages"] == 5_000 - usage["system"] - usage["skills"] - usage["tools"]
     assert usage["system"] > usage["tools"]  # proportions survive the scaling
 
 
@@ -87,6 +87,7 @@ def test_usage_without_a_finished_turn_has_no_total(monkeypatch):
         "window": 64_000,
         "total": 0,
         "system": 0,
+        "skills": 0,
         "tools": 2_000,
         "messages": 0,
         "cache_hit_ratio": None,
@@ -171,6 +172,61 @@ def test_tool_estimate_failure_does_not_break_the_ring(monkeypatch):
 
     assert usage["tools"] == 0
     assert usage["messages"] == 5_000
+
+
+def _prompt_with_skills(persona: str, skills: str) -> str:
+    """An assembled prompt: build_system_prompt joins the index in LAST."""
+    return f"{persona}\n\n{skills}"
+
+
+def test_skill_index_is_split_out_of_the_system_prompt(monkeypatch):
+    persona = "档案与记忆" * 200
+    index = (
+        "<available_skills>\n"
+        "  <skill>\n    <name>code_wiki</name>\n    <description>仓库维基</description>\n"
+        "  </skill>\n</available_skills>"
+    )
+    monkeypatch.setattr(service, "main_llm_context_window", 128_000)
+    monkeypatch.setattr(service, "_reported_prompt_tokens", lambda sid: 9_000)
+    monkeypatch.setattr(
+        service.state_register_mem,
+        "get_state",
+        lambda sid, key, default=None: _prompt_with_skills(persona, index),
+    )
+
+    usage = service.get_context_usage("s1")
+
+    # The index is measured on its own, and the system part no longer carries it.
+    assert usage["skills"] > 0
+    assert usage["skills"] < usage["system"]
+    assert usage["system"] == service.estimate_text_tokens(persona)
+    assert usage["skills"] == service.estimate_text_tokens(index)
+    # The four parts still account for the whole reported prompt.
+    assert usage["messages"] + usage["system"] + usage["skills"] + usage["tools"] == usage["total"]
+
+
+def test_prompt_without_a_skill_index_reports_none(monkeypatch):
+    # A filtered build (explicit file selection) carries no index: the panel says
+    # 0 rather than re-deriving the index from disk and double-counting it.
+    monkeypatch.setattr(service, "main_llm_context_window", 128_000)
+    monkeypatch.setattr(service, "_reported_prompt_tokens", lambda sid: 9_000)
+    monkeypatch.setattr(
+        service.state_register_mem, "get_state", lambda sid, key, default=None: "只有档案" * 100
+    )
+
+    usage = service.get_context_usage("s1")
+
+    assert usage["skills"] == 0
+    assert usage["system"] > 0
+
+
+def test_split_skill_index_ignores_an_unterminated_block():
+    # A truncated index is not an index: nothing is extracted, nothing is lost.
+    assert service._split_skill_index("<available_skills>\n  <skill>") == (
+        "<available_skills>\n  <skill>",
+        "",
+    )
+    assert service._split_skill_index("") == ("", "")
 
 
 def test_http_handler_returns_the_accounting(monkeypatch):
