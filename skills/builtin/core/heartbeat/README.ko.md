@@ -248,7 +248,7 @@ heartbeat_service.stop()  # _running = False로 설정하고 asyncio 태스크�
 |-----------|---------|-------------|
 | `interval_s` | `30 * 60` (1800초) | tick 사이의 초 단위 간격. 루프는 각 tick **전에 sleep하므로** 첫 확인은 `start()` 후 한 주기 뒤에 발생합니다. 실패 백오프의 기준 간격이기도 합니다 |
 | 실패 백오프 | `factor=2.0`, 상한 `7200초`, `5`회 후 중지 | `HeartbeatService.__init__`에 하드코딩된 `PeriodicBackoff` 매개변수(`runtime/process/periodic_backoff.py`). 연속 tick 실패 시 sleep이 최대 2시간까지 늘어나고, 이후에는 재시작까지 서비스가 중지됩니다 |
-| `enabled` | `True` | `False`이면 `start()`가 "Heartbeat disabled"를 기록하고 아무것도 하지 않습니다. 心跳 패널의 전역 스위치는 `PUT /heartbeat/status`(`server/service/heartbeat_control.py`)로 이 값을 씁니다: 선택은 `sherry.jsonc`의 `heartbeat.enabled`에 영속화되고, 부팅 시 읽히며, 실행 중인 서비스에 즉시 적용됩니다 |
+| `enabled` | `True` | `False`이면 `start()`가 "Heartbeat disabled"를 기록하고 아무것도 하지 않습니다. 心跳 패널의 전역 스위치는 `PUT /heartbeat/status`(`server/service/heartbeat_control.py`)로 이 값을 씁니다: 선택은 `sherry.jsonc`의 `heartbeat.enabled`에 영속화되고, 부팅 시 읽히며, 실행 중인 서비스에 즉시 적용됩니다. **동봉된 설정의 기본값은 `false`** — 주기 하트비트는 옵트인이라 스위치를 켜지 않으면 새 환경에서 에이전트가 스스로 깨어나지 않습니다 |
 | `timezone` | `None` | 결정 프롬프트의 "Current Time" 행을 위해 `current_time_str()`에 전달됩니다 |
 | `on_execute` / `on_notify` | `None` | 비동기 콜백. 설정되지 않으면 실행 / 전달이 건너뛰어집니다 |
 | `HEARTBEAT_PATH` | `workspace/HEARTBEAT.md` | `config/path.py`에 정의 |

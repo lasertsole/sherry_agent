@@ -248,7 +248,7 @@ heartbeat_service.stop()  # sets _running = False and cancels the asyncio task
 |-----------|---------|-------------|
 | `interval_s` | `30 * 60` (1800 s) | Seconds between ticks; the loop sleeps **before** each tick, so the first check happens one interval after `start()`. Also the base interval of the failure backoff |
 | Failure backoff | `factor=2.0`, cap `7200 s`, stop after `5` | Hardcoded `PeriodicBackoff` parameters (`HeartbeatService.__init__`, `runtime/process/periodic_backoff.py`); consecutive tick failures stretch the sleep up to 2 h, then the service stops until restart |
-| `enabled` | `True` | When `False`, `start()` logs "Heartbeat disabled" and does nothing. The 心跳 panel's global switch writes it through `PUT /heartbeat/status` (`server/service/heartbeat_control.py`): the choice is persisted to `sherry.jsonc` as `heartbeat.enabled`, adopted by the boot path, and applied to the running service immediately |
+| `enabled` | `True` | When `False`, `start()` logs "Heartbeat disabled" and does nothing. The 心跳 panel's global switch writes it through `PUT /heartbeat/status` (`server/service/heartbeat_control.py`): the choice is persisted to `sherry.jsonc` as `heartbeat.enabled`, adopted by the boot path, and applied to the running service immediately. The **shipped setting defaults to `false`** — the periodic heartbeat is opt-in, so a fresh install never wakes the agent until the switch is turned on |
 | `timezone` | `None` | Passed to `current_time_str()` for the "Current Time" line of the decision prompt |
 | `on_execute` / `on_notify` | `None` | Async callbacks; execution / delivery are skipped when unset |
 | `HEARTBEAT_PATH` | `workspace/HEARTBEAT.md` | Defined in `config/path.py` |

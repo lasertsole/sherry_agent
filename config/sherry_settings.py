@@ -36,9 +36,10 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "LOG_LEVEL": "INFO",
     "SUBAGENT_TODO_DONE_FUNC": "archive",
     "WORKSPACE_TEMPLATE_LANG": "en",
-    # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off also
-    # survives a restart: the boot path reads this value before starting.
-    "heartbeat.enabled": True,
+    # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off by
+    # default: the periodic heartbeat is opt-in, and the boot path reads this
+    # value, so a session that never touches the switch never wakes the agent.
+    "heartbeat.enabled": False,
     "LANGSMITH.TRACING_V2": False,
     "LANGSMITH.API_KEY": "",
     "LANGSMITH.PROJECT": "EMA_AI_agent",

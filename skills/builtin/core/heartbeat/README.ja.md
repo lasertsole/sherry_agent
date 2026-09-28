@@ -248,7 +248,7 @@ heartbeat_service.stop()  # _running = False に設定し、asyncio タスクを
 |-----------|---------|-------------|
 | `interval_s` | `30 * 60`（1800 秒） | tick 間の秒数。ループは各 tick の**前に sleep する**ため、最初のチェックは `start()` の 1 周期後に発生します。失敗バックオフの基底間隔でもあります |
 | 失敗バックオフ | `factor=2.0`、上限 `7200 秒`、`5` 回で停止 | `HeartbeatService.__init__` にハードコードされた `PeriodicBackoff` パラメータ（`runtime/process/periodic_backoff.py`）。連続する tick 失敗で sleep は最大 2 時間まで伸び、その後は再起動までサービスが停止します |
-| `enabled` | `True` | `False` の場合、`start()` は "Heartbeat disabled" をログ出力して何もしません。心跳パネルのグローバル スイッチは `PUT /heartbeat/status`（`server/service/heartbeat_control.py`）経由でこの値を書き込みます：選択は `sherry.jsonc` の `heartbeat.enabled` に永続化され、起動時に読み込まれ、稼働中のサービスに即時適用されます |
+| `enabled` | `True` | `False` の場合、`start()` は "Heartbeat disabled" をログ出力して何もしません。心跳パネルのグローバル スイッチは `PUT /heartbeat/status`（`server/service/heartbeat_control.py`）経由でこの値を書き込みます：選択は `sherry.jsonc` の `heartbeat.enabled` に永続化され、起動時に読み込まれ、稼働中のサービスに即時適用されます。**同梱設定の既定値は `false`** — 定期ハートビートはオプトインで、スイッチを入れない限り新しい環境でエージェントが起きることはありません |
 | `timezone` | `None` | 決定プロンプトの "Current Time" 行のために `current_time_str()` へ渡されます |
 | `on_execute` / `on_notify` | `None` | 非同期コールバック。未設定の場合、実行 / 配信はスキップされます |
 | `HEARTBEAT_PATH` | `workspace/HEARTBEAT.md` | `config/path.py` で定義 |
