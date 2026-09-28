@@ -228,7 +228,7 @@ Gate D は `todo` + `plan_path` の連携がない場合は完全にスキップ
 
 ### パイプラインレベル: 完了 drain のプログラム的ゲート
 
-`SubagentCompletionDrainMiddleware` は drain された各完了バッチをセッションの検証証跡と照合します：キャリアはそのまま注入され、セッションに合格した証跡がない場合はその後ろに必須検証メッセージが追記されます。ゲートは fail-open で、証跡照会が利用できなくてもターンを止めません。
+`SubagentCompletionDrainMiddleware` は drain された各完了バッチをセッションの検証証跡と照合します：キャリアはそのまま注入され、セッションに合格した証跡がない場合はその後ろに必須検証メッセージが追記されます。ゲートは fail-open で、証跡照会が利用できなくてもターンを止めません。注入される行は `metadata.origin`（ここでは `quality_gate`、他は `subagent_completion` / `task_intent` / `todo_continuation`）を持ち、その出所が永続化されるため、チャットはそれを「ユーザーが書いたメッセージ」ではなく中立なカードとして表示します。
 
 ## 📊 優先順位マトリクス
 

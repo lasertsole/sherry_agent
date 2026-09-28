@@ -265,7 +265,10 @@ blocking a finish.
 the session's verification evidence: the carriers are injected verbatim, and
 when the session has no passing evidence a mandatory-verification message is
 appended after them. The gate is fail-open: an unavailable evidence lookup never
-blocks the turn.
+blocks the turn. Injected rows carry ``metadata.origin`` (``quality_gate`` here,
+``subagent_completion`` / ``task_intent`` / ``todo_continuation`` elsewhere),
+which is persisted and makes the chat render them as neutral cards rather than
+as messages the user wrote.
 
 ## 📊 Precedence Matrix
 

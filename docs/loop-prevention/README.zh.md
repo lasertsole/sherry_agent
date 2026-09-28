@@ -224,7 +224,7 @@
 
 ### 管线级：完成 drain 程序化门控
 
-`SubagentCompletionDrainMiddleware` 会把每个被 drain 的完成批次对照会话的验证证据检查：载体原样注入，当会话没有通过证据时，在它们之后追加一条强制验证消息。该门是 fail-open：证据查询不可用永远不会阻塞该回合。
+`SubagentCompletionDrainMiddleware` 会把每个被 drain 的完成批次对照会话的验证证据检查：载体原样注入，当会话没有通过证据时，在它们之后追加一条强制验证消息。该门是 fail-open：证据查询不可用永远不会阻塞该回合。注入的行带 `metadata.origin`（这里是 `quality_gate`，别处还有 `subagent_completion` / `task_intent` / `todo_continuation`），该来源会被持久化，聊天据此把它们渲染成中立卡片，而不是"用户说过的话"。
 
 ## 📊 优先级矩阵
 

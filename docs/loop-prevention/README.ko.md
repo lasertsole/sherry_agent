@@ -227,7 +227,7 @@ Gate D는 `todo` + `plan_path` 연결이 없으면 완전히 건너뛰고, 모�
 
 ### 파이프라인 수준: 완료 drain 프로그램 게이트
 
-`SubagentCompletionDrainMiddleware`는 drain된 각 완료 배치를 세션의 검증 evidence와 대조합니다: 캐리어는 그대로 주입되고, 세션에 통과 evidence가 없으면 그 뒤에 필수 검증 메시지가 덧붙습니다. 게이트는 fail-open이라 evidence 조회가 불가능해도 턴을 막지 않습니다.
+`SubagentCompletionDrainMiddleware`는 drain된 각 완료 배치를 세션의 검증 evidence와 대조합니다: 캐리어는 그대로 주입되고, 세션에 통과 evidence가 없으면 그 뒤에 필수 검증 메시지가 덧붙습니다. 게이트는 fail-open이라 evidence 조회가 불가능해도 턴을 막지 않습니다. 주입되는 행은 `metadata.origin`(여기서는 `quality_gate`, 그 밖에 `subagent_completion` / `task_intent` / `todo_continuation`)을 가지며, 그 출처가 영속화되므로 채팅은 이를 "사용자가 쓴 메시지"가 아니라 중립 카드로 표시합니다.
 
 ## 📊 우선순위 매트릭스
 
