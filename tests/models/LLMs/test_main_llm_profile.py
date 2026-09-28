@@ -54,10 +54,23 @@ class TestProfileClientConfig:
         assert cfg["api_key"] == _ENV_KEY
         assert cfg["base_url"] == _ENV_BASE
 
-    def test_missing_provider_falls_back_to_env(self):
+    def test_missing_provider_falls_back_to_env(self, monkeypatch):
+        # The module global is snapshotted from the env at import, so pin it:
+        # asserting against the ambient value only holds where a .env exists.
+        monkeypatch.setattr(main_llm_module, "model_provider", "zhipu")
+
         cfg = main_llm_module._profile_client_config(provider=None, model="glm-4.6")
 
-        assert cfg["model_provider"] == main_llm_module.model_provider
+        assert cfg["model_provider"] == "zhipu"
+
+    def test_unset_provider_everywhere_lets_the_client_infer(self, monkeypatch):
+        """No provider in the profile and none in the env → the key is dropped
+        so ``init_chat_model`` infers the provider from the model name."""
+        monkeypatch.setattr(main_llm_module, "model_provider", None)
+
+        cfg = main_llm_module._profile_client_config(provider=None, model="glm-4.6")
+
+        assert "model_provider" not in cfg
 
     def test_thinking_dispatch_uses_the_override_identity(self):
         """glm-4.6 on the openai provider → the GLM enable/disable payload."""
