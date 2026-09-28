@@ -121,8 +121,7 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       ├── index/tasks/[sid].vue  # 독립형 백그라운드 작업 페이지(/home/tasks/{sid})
-│   │       └── components/        # 32 개의 페이지 컴포넌트:
+│   │       └── components/        # 33 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
@@ -151,7 +150,8 @@ client/
 │   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
 │   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)
 │   │           ├── GChart.vue                 # @antv/g2 차트 래퍼
-│   │           ├── SubagentTasksView.vue      # 백그라운드 작업 뷰(목록/상세/플로우 그래프)
+│   │           ├── SubagentTasksView.vue      # 백그라운드 작업 뷰(플로우 그래프 + 선택한 run 상세), 작업 상세 탭이 호스트
+│   │           ├── SubagentTasksPanel.vue     # 오른쪽 사이드바 탭: 패널 내 SubagentTasksView(세션으로 돌아가기 없음)
 │   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
 │   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
 │   │           └── AvatarCropDialog.vue       # 아바타 업로드 + 크롭(cropperjs)
@@ -239,8 +239,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
             ├─ /            → /home으로 301 리다이렉트(routeRules)
             └─ /home(home/index.vue: SessionSidebar + 툴바)
                  └─ NuxtPage(page-key = route.params.sid, KeepAlive)
-                      ├─ /home/{sid}       (index/[sid].vue — 채팅 + HITL 카드)
-                      └─ /home/tasks/{sid} (index/tasks/[sid].vue — SubagentTasksView)
+                      └─ /home/{sid}       (index/[sid].vue — 채팅 + HITL 카드)
 ```
 
 ### 통신 브리지(bridge.ts)

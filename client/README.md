@@ -120,8 +120,7 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       ├── index/tasks/[sid].vue  # Standalone background-tasks page (/home/tasks/{sid})
-│   │       └── components/        # 32 page components:
+│   │       └── components/        # 33 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
@@ -150,7 +149,8 @@ client/
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)
 │   │           ├── GChart.vue                 # @antv/g2 chart wrapper
-│   │           ├── SubagentTasksView.vue      # Background tasks view (list/detail/flow graph)
+│   │           ├── SubagentTasksView.vue      # Background tasks view (flow graph + selected run detail), hosted by the task-detail tab
+│   │           ├── SubagentTasksPanel.vue     # Right-sidebar tab: SubagentTasksView in-panel (no back-to-session action)
 │   │           ├── SubagentRunDetail.vue      # Single subagent run detail
 │   │           ├── SubagentFlowGraph.vue      # Subagent run tree graph (@antv/g6)
 │   │           └── AvatarCropDialog.vue       # Avatar upload + crop (cropperjs)
@@ -239,8 +239,7 @@ app.vue (root: toast layer, connection banner, locale restore)
             ├─ /            → 301 redirect to /home (routeRules)
             └─ /home (home/index.vue: SessionSidebar + toolbar)
                  └─ NuxtPage (page-key = route.params.sid, KeepAlive)
-                      ├─ /home/{sid}       (index/[sid].vue — chat + HITL card)
-                      └─ /home/tasks/{sid} (index/tasks/[sid].vue — SubagentTasksView)
+                      └─ /home/{sid}       (index/[sid].vue — chat + HITL card)
 ```
 
 ### Communication Bridge (bridge.ts)

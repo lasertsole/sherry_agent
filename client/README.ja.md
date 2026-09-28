@@ -121,8 +121,7 @@ client/
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       ├── index/tasks/[sid].vue  # スタンドアロンのバックグラウンドタスクページ（/home/tasks/{sid}）
-│   │       └── components/        # 32 のページコンポーネント：
+│   │       └── components/        # 33 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグルまたは 低/高/最高 ピッカー、次ターンから有効）
@@ -151,7 +150,8 @@ client/
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
 │   │           ├── GChart.vue                 # @antv/g2 チャートラッパー
-│   │           ├── SubagentTasksView.vue      # バックグラウンドタスクビュー（一覧/詳細/フローグラフ）
+│   │           ├── SubagentTasksView.vue      # バックグラウンドタスクビュー（フローグラフ + 選択中 run の詳細）。タスク詳細タブがホスト
+│   │           ├── SubagentTasksPanel.vue     # 右サイドバー タブ：パネル内の SubagentTasksView（セッションへ戻る操作なし）
 │   │           ├── SubagentRunDetail.vue      # 単一サブエージェント実行の詳細
 │   │           ├── SubagentFlowGraph.vue      # サブエージェント実行ツリーグラフ（@antv/g6）
 │   │           └── AvatarCropDialog.vue       # アバターアップロード + 切り抜き（cropperjs）
@@ -239,8 +239,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
             ├─ /            → 301 リダイレクトで /home へ（routeRules）
             └─ /home（home/index.vue：SessionSidebar + ツールバー）
                  └─ NuxtPage（page-key = route.params.sid、KeepAlive）
-                      ├─ /home/{sid}       （index/[sid].vue — チャット + HITL カード）
-                      └─ /home/tasks/{sid} （index/tasks/[sid].vue — SubagentTasksView）
+                      └─ /home/{sid}       （index/[sid].vue — チャット + HITL カード）
 ```
 
 ### 通信ブリッジ（bridge.ts）

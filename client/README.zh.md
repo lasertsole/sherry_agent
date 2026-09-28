@@ -121,8 +121,7 @@ client/
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       ├── index/tasks/[sid].vue  # 独立后台任务页（/home/tasks/{sid}）
-│   │       └── components/        # 32 个页面组件：
+│   │       └── components/        # 33 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关或 低/高/最高 选择器，下一轮生效）
@@ -151,7 +150,8 @@ client/
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）
 │   │           ├── GChart.vue                 # @antv/g2 图表封装
-│   │           ├── SubagentTasksView.vue      # 后台任务视图（列表/详情/流程图）
+│   │           ├── SubagentTasksView.vue      # 后台任务视图（运行图 + 选中 run 的详情），由任务详情标签页承载
+│   │           ├── SubagentTasksPanel.vue     # 右侧栏标签页：面板内的 SubagentTasksView（不带返回会话动作）
 │   │           ├── SubagentRunDetail.vue      # 单个子智能体运行详情
 │   │           ├── SubagentFlowGraph.vue      # 子智能体运行树图（@antv/g6）
 │   │           └── AvatarCropDialog.vue       # 头像上传 + 裁剪（cropperjs）
@@ -239,8 +239,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
             ├─ /            → 301 重定向到 /home（routeRules）
             └─ /home（home/index.vue：SessionSidebar + 工具栏）
                  └─ NuxtPage（page-key = route.params.sid，KeepAlive）
-                      ├─ /home/{sid}       （index/[sid].vue —— 聊天 + HITL 卡片）
-                      └─ /home/tasks/{sid} （index/tasks/[sid].vue —— SubagentTasksView）
+                      └─ /home/{sid}       （index/[sid].vue —— 聊天 + HITL 卡片）
 ```
 
 ### 通信桥接（bridge.ts）
