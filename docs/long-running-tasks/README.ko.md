@@ -245,7 +245,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 ## ⚠️ 알려진 한계
 
-- **`done`은 성공이 아닙니다.** 단계의 `done`은 "결과가 주입됨"만을 뜻하며, `failed`/`skipped` 단계 상태는 없습니다. 자식이 오류를 보고해도 `taskflow_resume`는 단계를 `done`으로 표시하고 후속을 언락합니다. 실패 인식 단계 전환은 의도적으로 미뤄져 있습니다.
+- **`done` 자체가 성공은 아닙니다.** 단계의 `done`은 "결과가 주입되었고 그 단계에 설정된 품질 게이트를 모두 통과했다"는 뜻입니다. 기대가 아무것도 설정되지 않은 경우(`response_schema`, `judge_criteria`/`validation_criteria`, `retry_policy`)에는 "결과가 주입됨"으로 퇴화하므로, 오류를 보고한 자식도 `done`이 되어 후속을 언락할 수 있습니다. 기대를 선언하거나 `step_outcome="failure"`를 선언하면 폐루프가 이를 잡습니다 — `failed` / `skipped` / `cancelled`는 이제 실제 단계 상태이고, 실패는 의존 단계를 언락하지 않으며, `taskflow_finish`도 미해결 단계를 남긴 채 완료하지 않습니다.
 - **`taskflow_wait_all`은 설계상 flow 범위입니다.** 주어진 flow의 디스패치된 단계에 기록된 자식만 기다리며, 알 수 없거나 이미 정리된 run은 정착으로 간주합니다. "모든 활성 flow 대기" 전역 프리미티브는 없습니다.
 - **유휴 감지는 권고용입니다.** sweeper는 `stale_detected_at` / `stale_child_session_key`를 `wait_json`에 찍지만 오래된 `waiting` flow를 자동 실패시키지 않습니다. 사람이나 모델이 마커에 따라 조치해야 합니다.
 - **압축 전 메모리 플러시는 잠재 상태입니다.** `Summarization`의 프로덕션 인스턴스(메인/서브)는 `memory_store` / `llm_factory`를 전달하지 않아, 호출 지점이 배선할 때까지 플러시가 실행되지 않습니다. 코드는 구현·테스트되었지만 현재 비활성입니다.

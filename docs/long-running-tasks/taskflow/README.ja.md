@@ -97,14 +97,45 @@ running ──→ waiting ──→ running（taskflow_resume 経由）
 blocked → ready → dispatched → done
 ```
 
-| 状態         | 意味                                                                             | 遷移トリガー                                   |
-| ------------ | -------------------------------------------------------------------------------- | ---------------------------------------------- |
-| `blocked`    | 依存関係がまだすべて `done` ではない；`taskflow_run_task` は登録のみ、spawn なし | `taskflow_resume` が依存関係満了時にアンロック |
-| `ready`      | 依存関係満た済み、ディスパッチ待ち                                               | `taskflow_dispatch` がディスパッチ             |
-| `dispatched` | 分離された子セッションが spawn 済み、`child_session_key` 永続化済み              | `taskflow_resume` が結果注入                   |
-| `done`       | 結果が `taskflow_resume` で注入済み                                              | （このステップの終端状態）                     |
+| 状態          | 意味                                                                             | 遷移トリガー                                                   |
+| ------------- | -------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `blocked`     | 依存関係がまだすべて `done` ではない；`taskflow_run_task` は登録のみ、spawn なし | `taskflow_resume` が依存関係満了時にアンロック                 |
+| `ready`       | 依存関係満た済み、ディスパッチ待ち                                               | `taskflow_dispatch` がディスパッチ                             |
+| `dispatched`  | 分離された子セッションが spawn 済み、`child_session_key` 永続化済み              | `taskflow_resume` が結果注入                                   |
+| `done`        | 結果が `taskflow_resume` で注入され、**かつ設定された品質ゲートをすべて通過**    | （このステップの終端状態）                                     |
+| `failed`      | 確定的な失敗：呼び出し側が `step_outcome="failure"` を宣言、または `response_schema` の結果が再試行予算を使い切っても不適合 | （このステップの終端状態。依存側は `blocked` のまま）          |
+| `skipped`     | `step_outcome="skipped"` の宣言、または依存がスキップ/キャンセルされた（スキップは下流へ連鎖） | （このステップの終端状態）                                     |
+| `cancelled`   | ステップ完了前に `taskflow_cancel` がフローをキャンセル                          | （このステップの終端状態）                                     |
 
-> `done` は「結果が注入された」ことを意味し、**「子エージェントが成功した」ことを意味しない**。`failed`/`skipped` ステップ状態は存在せず、失敗対応はステップのオプトイン `retry_policy` とステップ判定器（`block` 判定または再試行予算の枯渇で `blocked`）にあります。
+> `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来どおり「結果が注入された」に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子でも `done` になり得ます。
+>
+> `failed`・`skipped`・`cancelled` はいずれも依存側をアンロックしません。`failed` の依存は依存側を `blocked` のまま残し（失敗を黙って飛ばしてはいけない）、`skipped`/`cancelled` の依存は `skipped` を依存側へ連鎖させ、死んだ枝をその場で決着させてフローを永遠に待たせません。
+
+### 期待 → 実績の閉ループ
+
+ステップは**期待**を持てるようになり、resume 経路が**実績**を対にして記録するため、「このステップは要求どおりにやったか」がフロー状態だけで答えられます。
+
+期待フィールド（すべて任意、`taskflow_run_task` が書き込み、ステップに保存）：
+
+| フィールド            | 意味                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `response_schema`     | 構造化結果が満たすべき JSON Schema（Tier 1）。spawn 層の `output_schema` として子エージェントの出力契約にもなります。 |
+| `judge_criteria`      | LLM ステップ判定器に渡す自然言語の合格基準（Tier 2）。`judge_model` で判定器のモデルを上書きできます。 |
+| `expected_params`     | そのステップが扱うはずの構造化入力（記録のみで、強制はしません）。                        |
+| `input_bindings`      | `{"param": "step-A.structured_result.files"}`——上流の構造化結果を `## Input parameters` ブロックとして、このステップのタスク本文に追記します。 |
+| `validation_criteria` | 旧来のテキスト基準。存在すれば判定されます（`judge_criteria` が無い場合に使用）。        |
+| `retry_policy`        | 既存の失敗再試行ポリシー（`max_retries`、`retry_delay_seconds`、`retry_on`）。            |
+
+実績フィールド（`taskflow_resume` が結果エントリに書き込み）：
+
+| フィールド          | 意味                                                                          |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `step_id`           | 対にするためのキー：この結果はどのステップのものか。                          |
+| `structured_result` | 解析された構造化値（呼び出し側の `structured_result` または `result` 由来）。 |
+| `schema_validated`  | `true` / `false` / `null`（schema 未設定）——Tier 1 の判定結果。               |
+| `step_outcome`      | 呼び出し側が宣言した場合に記録（`success` / `failure` / `partial` / `skipped`）。 |
+
+2 層の品質ゲートはこの順に連結され、どちらもステップ単位でオプトインです（実行順序は下の `taskflow_resume` を参照）。
 
 ### 従来ステップの互換性
 
@@ -127,18 +158,32 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 ```python
 async def taskflow_run_task(
     flow_id: str, task: str, label: str | None = None,
-    depends_on: list[str] | None = None,
     expected_revision: int | None = None,
+    depends_on: list[str] | None = None,
+    validation_criteria: str | None = None,
+    retry_policy: dict | None = None,
+    aggregate_deps: bool = False,
+    response_schema: dict | None = None,
+    expected_params: dict | None = None,
+    input_bindings: dict | None = None,
+    judge_criteria: str | None = None,
+    judge_model: str | None = None,
+    functional_role: str | None = None,
+    step_model: str | None = None,
+    step_timeout_seconds: float | None = None,
+    priority: int | None = None,
     session_id: Annotated[str, InjectedState("session_id")] = "",
 ) -> str
 ```
 
-フローにステップを登録し、分離された子エージェントにディスパッチ。ステップ id は `step-1`、`step-2` 等に自動採番。
+フローにステップを登録し、分離された子エージェントへディスパッチします。ステップ id は `step-1`、`step-2` の順に自動採番されます。
 
-- **依存関係なし**（または全て満た済み）→ ステップは即座に `dispatched`（子エージェント spawn）。
-- **依存関係未満足** → ステップは `blocked` として登録、子エージェントは spawn されない。未知の依存 id は spawn や状態変更の前に拒否。
-- `step_id`、`child_session_key`、`revision` を返す（ブロック時は `pending=[...]` に未満足依存をリスト）。
-
+- **依存なし**（または満た済み）→ 直ちに `dispatched`（子を spawn）。
+- **依存未満** → `blocked` として登録し spawn しません。未知の依存 id は spawn や状態変更の前に拒否されます。
+- **期待パラメータ** はステップに保存され resume で効きます：`response_schema`（spawn 層には `output_schema` として渡されます）、`judge_criteria` / `judge_model`、`expected_params`、`input_bindings`。
+- **実行メタ情報** は子へ引き継がれます：`functional_role`（researcher / executor / reviewer / librarian / general）、`step_model`、`step_timeout_seconds`。`priority` はディスパッチ順のヒントです。
+- 指定しなかったフィールドはステップに書かれません。これが「期待を持たないフローは閉ループ導入前とバイト単位で同じ」である理由です。
+- `step_id`、`child_session_key`、`revision` を返します（ブロック時は `pending=[...]` で未充足の依存を列挙）。
 ### taskflow_dispatch
 
 ```python
@@ -178,15 +223,21 @@ async def taskflow_resume(
     flow_id: str, child_session_key: str = "", result: str = "",
     expected_revision: int | None = None, token_usage: dict | None = None,
     validation_criteria: str | None = None,
+    structured_result: dict | None = None,
+    step_outcome: str | None = None,
 ) -> str
 ```
 
-完了した子セッションの結果をフロー状態に注入（べき等）。`{child_session_key, result, result_hash, injected_at}` を results に追加。フローが `waiting` だった場合、`running` に復帰。
+完了した子セッションの結果をフロー状態に注入します（冪等）。results に `{child_session_key, result, result_hash, injected_at, step_id, schema_validated}` を追記します（判明していれば `structured_result` / `step_outcome` も）。フローが `waiting` なら `running` に戻します。
 
-**DAG 記簿**：マッチするステップを `done` にマークし、`unlock_dependents()` を呼んで新たに満たされた `blocked` ステップを `ready` に移行。アンロックされたステップ id を返す。**resume は決して spawn しない**——呼び出し側は `taskflow_dispatch` で新たに準備完了したステップを明示的にディスパッチする必要がある。
+**実行順序**（各ゲートはステップ単位のオプトインで、連結されます）：
 
-**ステップ判定器**：ステップが `validation_criteria` を持つ場合（`taskflow_run_task` が設定、またはここで渡す）、補助 LLM 判定器（`agent/tools/taskflow/step_judge.py`、温度 0）が結果を基準に照らして審査し、`pass` / `retry` / `block` を返す。`retry` は共有 `_retry` シームを通じてステップを再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して、判定器の指針を `with_judge_feedback` で代替タスクに追加する。予算を使い切るか `block` 判定の場合は、判定器の理由とともにステップを `blocked` にする。判定器にはこのフローの evidence 要約が渡され、フェイルオープンである — モデルエラーや解析不能な応答は `pass` に劣化する。
+1. **失敗時の再試行** —— ステップに `retry_policy` があり結果が失敗なら、決着させずに代替の子で再ディスパッチします。失敗シグナルは分類された結果テキストと `schema_validated=false` の両方です。宣言した schema に構造が合わないのはテキスト分類では見えない失敗で、ここで再ディスパッチされます——**判定器呼び出しより前**なので、壊れた構造が判定トークンを消費することはありません。
+2. **Tier 1 —— 構造。** ステップに `response_schema` があると、結果（呼び出し側の `structured_result`、無ければ `result` を JSON として解析）を照合し、判定を結果エントリに記録します。再試行予算を使い切った失敗はステップを `failed` にし、`fail_reason` に schema エラーを残します。通過した場合は Tier 2 へ進みます——構造が正しいことは内容が正しいことを意味しません。
+3. **Tier 2 —— 意味論。** ステップに `judge_criteria`（または旧来の `validation_criteria`）があると、auxiliary-LLM 判定器（`agent/tools/taskflow/step_judge.py`、温度 0）が結果（検証済みの `structured_result` があればそれ、無ければ結果テキスト）を評し、`pass` / `retry` / `block` を返します。`retry` は共有 `_retry` の継ぎ目で再ディスパッチし、ステップ自身の `retry_count` 予算（`STEP_JUDGE["max_retries"]`、既定 2）を再利用して `with_judge_feedback` で判定器の助言を代替タスクに付けます。予算切れまたは `block` 判定は理由付きでステップを `blocked` にします。判定器はフローの証跡サマリを受け取り、fail-open です——モデルエラーや解析不能な応答は `pass` に退行します。
+4. **呼び出し側の宣言結果。** `step_outcome` は 2 つのゲートより優先されます：`failure` は判定器を呼ばずに `failed`、`skipped` は `skipped`、`success` / `partial` は記録のみでゲートは通常どおり走ります。不正な値は状態変更の前に拒否されます。
 
+**DAG の記帳**：ゲート通過時は該当ステップを `done` にして `unlock_dependents()` を呼び、依存が満たされた `blocked` ステップを `ready` に移します。`failed` のステップは依存側を `blocked` のまま残し、`skipped`/`cancelled` のステップは `skipped` を依存側へ連鎖させます。アンロックされたステップ id を返します。**resume は新たに ready になったステップをディスパッチしません**——呼び出し側が `taskflow_dispatch` で明示的に行います。
 ### taskflow_set_waiting
 
 ```python
@@ -204,16 +255,14 @@ async def taskflow_set_waiting(
 async def taskflow_summary(flow_id: str) -> str
 ```
 
-読み取り専用でフロー状態を全て再読み：状態、リビジョン、child_session_key、説明、全ステップ（状態、depends_on、child_session_key 付き）、ステップ状態カウント、結果、待機ペイロード、サマリー、失敗理由、取消理由。リビジョン競合後の指定再読みステップでもある。
-
+フロー状態全体を読み取り専用で再読します：status、revision、child_session_key、description、全ステップ（status、depends_on、child_session_key に加え、設定された期待——`response_schema` の properties/required、`judge_criteria`、`judge_model`、`input_bindings`、`expected_params`、実行メタ情報、および `block_reason` / `fail_reason` / `skip_reason`）、ステータス別件数、results（各エントリの `step_id`、`schema_validated`、`structured_result`、`step_outcome`、`judge_verdict` / `judge_reason`、記録があれば `token_usage`）、wait ペイロード、summary、failure_reason、cancel_reason。リビジョン競合後の指定再読ステップでもあります。
 ### taskflow_progress
 
 ```python
 async def taskflow_progress(flow_id: str) -> str
 ```
 
-読み取り専用の完了レポート：完了率、ステータス内訳、次のステップ、推定残り時間（`dispatched_at` タイムスタンプを持つ `done` ステップが 2 つ以上ある場合）。フローを変更しません。
-
+読み取り専用の完了レポート：完了率、ステータス内訳の全体（`done` / `dispatched` / `ready` / `blocked` / `failed` / `skipped` / `cancelled`）、着手すべき次のステップ、そして **Needs a decision** リスト——`failed` / `blocked` / `skipped` / `cancelled` の各ステップを記録された理由とともに列挙します。`done` ステップが 2 つ以上 `dispatched_at` を持つ場合は残り時間の推定も出します。フローは決して変更しません。
 ### taskflow_budget
 
 ```python
@@ -254,10 +303,11 @@ async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int |
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
-終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` をフロー状態に記録。ディスパッチ済みの子セッションは実行を継続し、フローが取消される前の結果は `taskflow_resume` で配信可能。
+終端遷移。`finish` は `summary`、`fail` は `failure_reason`、`cancel` は `cancel_reason` を記録します。ディスパッチ済みの子セッションは動き続け、フローがキャンセルされるまで `taskflow_resume` で結果を届けられます。
 
-`finish` は DONE 遷移の前に 4 つのゲートを順に通す：**A** すべてのステップが `done` または `blocked`；**B** `blocked` のステップが存在しない；**C** このフローの evidence（`agent/tools/taskflow/evidence_collector.py`）に `FAIL` 行も `[stale]` 行もない；**D** `SisyphusVerifier` が合格 — 呼び出し側が `todo` と `plan_path` の両方を明示的に渡した場合のみで、フロー/ステップの schema 移行は不要。すべてのゲートはフェイルオープン：evidence コレクタが利用不能、または検証器エラーの場合は完了をブロックせず通過する。
+`finish` は DONE への遷移を 4 つのチェックで順に守ります：**A** すべてのステップが `done` か `blocked`；**B** 未解決のステップを残さない——`failed`・`skipped`・`cancelled` のステップは id と記録された理由付きで報告され（呼び出し側の判断が必要です：resume・retry・cancel）、`blocked` も同様です；**C** フローの証跡（`agent/tools/taskflow/evidence_collector.py`）に `FAIL` も `[stale]` 行もない；**D** `SisyphusVerifier` が通る——呼び出し側が `todo` と `plan_path` の両方を渡したときだけ実行されるため、flow/step schema の移行は不要です。各ゲートは fail-open で、証跡コレクタが使えない場合や検証器のエラーは完了を妨げず通します。
 
+`cancel` は終端化の前に、未完了のすべてのステップを `cancelled`（キャンセル理由付き）にします。フロー終了後もステップ状態が `ready` / `dispatched` / `blocked` を主張し続けないためです。
 ---
 
 ## 楽観的ロックと競合リトライ
@@ -291,8 +341,7 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 ### unlock_dependents(steps) → list[str]
 
-`steps` を**シングルパス**で走査：依存関係が満たされた `blocked` ステップを `ready` に移行。新たに準備完了したステップ id を返す。シングルパスにより依存サイクルが無限ループを生じないことを保証。
-
+`steps` を**1 回だけ**走査し、依存が満たされた `blocked` ステップを `ready` に移し、今回アンロックしたステップ id を返します。単一パスなので依存サイクルが無限ループになることはありません。アンロックは**失敗を認識**します：`failed` で終わった（あるいはまだ `blocked` / 実行中の）依存は依存側を `blocked` のままにし、`skipped` または `cancelled` の依存は `skip_reason` とともに `skipped` を依存側へ連鎖させます——死んだ枝はその場で決着し、フローが永遠に待つことはありません。
 ---
 
 ### 合成——`aggregate_deps`
@@ -349,6 +398,6 @@ DAG フィールドは完全に `state_json` 内に存在（DB 移行不要）�
 
 ## 既知の制限
 
-- **`done` ≠ 成功**：ステップ `done` は「結果が注入された」ことのみを意味し、「子エージェントが成功した」ことを意味しない。`failed`/`skipped` ステップ状態は存在せず、`validation_criteria` も一致する `retry_policy` も持たないステップは、子が失敗しても `done` となり後続をアンロックする。失敗対応のリカバリにはステップに `retry_policy` を付与：`taskflow_wait_all` はリトライ予算が残る間、終了した子を再ディスパッチし、予算尽き後は失敗注記付きで `done` にマークする。`validation_criteria` がある場合、判定器の `block` 判定またはリトライ予算の枯渇が代わりにステップを `blocked` にする。
+- **`done` ≠ 成功**：ステップ `done` は「結果が注入され、**かつそのステップに設定された品質ゲートをすべて通過した**」ことを意味します。**期待が何も設定されていない**場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は従来の意味に退化するため、呼び出し側が `step_outcome="failure"` を宣言しない限り、失敗した子は `done` になります。閉ループに失敗を捕まえさせるには、期待を宣言する（`response_schema` の検証は判定器呼び出しより前で無料です）か結果を宣言します。`failed` は依存側をブロックし、`retry_policy` は予算が残る限り終了した子を再ディスパッチします（判定器は `block` 判定や予算枯渇で `blocked` を付けます）。
 - **`taskflow_wait_all` タイムアウトは有界ポーリング**：完了しない子セッションが自動的にフローを失敗させることはない。タイムアウトは部分レポートを返す。
 - **ステップ id は順次割当**：登録時に `step-{len(steps)+1}` を割当。ステップが並行して追加される場合、id は競合リトライ時に `build_state` 内で再計算。

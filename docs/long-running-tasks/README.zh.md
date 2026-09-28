@@ -245,7 +245,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 ## ⚠️ 已知局限
 
-- **`done` 不等于成功。** 步骤的 `done` 只表示“已注入结果”；不存在 `failed`/`skipped` 步骤状态。即使子 Agent 报告错误，`taskflow_resume` 仍会把步骤标记为 `done` 并解锁后继。感知失败的步骤转换被有意推迟。
+- **`done` 本身不等于成功。** 步骤的 `done` 表示「结果已注入，且该步骤配置的质量门全部通过」；未配置任何期望（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为「已注入结果」，因此报告错误的子 Agent 仍可能落到 `done` 并解锁后继。声明期望——或声明 `step_outcome="failure"`——闭环就会接住它：`failed` / `skipped` / `cancelled` 已是真实的步骤状态，失败永不解锁依赖者，`taskflow_finish` 也不会在有未解决步骤时完成流程。
 - **`taskflow_wait_all` 按设计限定于单个 flow。** 它只等待记录在给定 flow 的已派发步骤上的子 Agent，未知/已清理的 run 计入已落定。不存在“等待所有活动 flow”的全局原语。
 - **空闲检测是提示性的。** sweeper 会把 `stale_detected_at` / `stale_child_session_key` 写入 `wait_json`，但从不自动把过期 `waiting` flow 置为失败；需要人或模型对该标记采取行动。
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。

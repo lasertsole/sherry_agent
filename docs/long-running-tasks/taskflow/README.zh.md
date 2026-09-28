@@ -97,14 +97,45 @@ running ──→ waiting ──→ running（通过 taskflow_resume）
 blocked → ready → dispatched → done
 ```
 
-| 状态         | 含义                                                    | 转换触发                           |
-| ------------ | ------------------------------------------------------- | ---------------------------------- |
-| `blocked`    | 依赖尚未全部 `done`；`taskflow_run_task` 仅注册不 spawn | `taskflow_resume` 在依赖满足时解锁 |
-| `ready`      | 依赖已满足，等待派发                                    | `taskflow_dispatch` 派发           |
-| `dispatched` | 已 spawn 分离式子代理会话，`child_session_key` 已持久化 | `taskflow_resume` 注入结果         |
-| `done`       | 结果已通过 `taskflow_resume` 注入                       | （此步骤的终态）                   |
+| 状态          | 含义                                                                          | 转换触发                                                     |
+| ------------- | ----------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `blocked`     | 依赖尚未全部 `done`；`taskflow_run_task` 仅注册不 spawn                       | `taskflow_resume` 在依赖满足时解锁                           |
+| `ready`       | 依赖已满足，等待派发                                                          | `taskflow_dispatch` 派发                                     |
+| `dispatched`  | 已 spawn 分离式子代理会话，`child_session_key` 已持久化                       | `taskflow_resume` 注入结果                                   |
+| `done`        | 结果已通过 `taskflow_resume` 注入，**且该步骤配置的质量门全部通过**           | （此步骤的终态）                                             |
+| `failed`      | 确定性失败：调用方声明 `step_outcome="failure"`，或 `response_schema` 结果在重试预算耗尽后仍不合格 | （此步骤的终态；其依赖者保持 `blocked`）                     |
+| `skipped`     | 声明 `step_outcome="skipped"`，或某个依赖被跳过/取消（跳过会向下级联）        | （此步骤的终态）                                             |
+| `cancelled`   | `taskflow_cancel` 在该步骤完成前取消了整个流                                  | （此步骤的终态）                                             |
 
-> `done` 表示"已注入结果"，**不**表示"子代理成功"。不存在 `failed`/`skipped` 步骤状态；故障感知处理位于步骤可选的 `retry_policy` 与步骤判别器中（`block` 判定或重试预算耗尽时标记 `blocked`）。
+> `done` 表示"结果已注入，且该步骤配置的质量门全部通过"——在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义"已注入结果"，因此调用方不声明 `step_outcome="failure"` 时，失败的子代理仍可能落到 `done`。
+>
+> `failed`、`skipped`、`cancelled` 都不会解锁依赖者：`failed` 的依赖会让依赖者保持 `blocked`（失败不能被静默跳过），而 `skipped`/`cancelled` 的依赖会把 `skipped` 级联给依赖者，让死分支就地结束而不是让整个流永远等待。
+
+### 期望 → 实际闭环
+
+步骤可以携带**期望**，resume 路径会把**实际**与之配对记录，于是"这一步有没有做到要求的事"只从流状态就能回答。
+
+期望字段（全部可选，由 `taskflow_run_task` 写入并存在步骤上）：
+
+| 字段                  | 含义                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------- |
+| `response_schema`     | 结构化结果必须满足的 JSON Schema（Tier 1）。同时经 spawn 层的 `output_schema` 交给子代理作为输出契约。 |
+| `judge_criteria`      | 交给 LLM 步骤判别器的自然语言验收标准（Tier 2）。`judge_model` 可覆盖判别器所用模型。    |
+| `expected_params`     | 该步骤本应处理的结构化输入（仅记录，不对其做强制校验）。                                 |
+| `input_bindings`      | `{"param": "step-A.structured_result.files"}`——把上游结构化结果以 `## Input parameters` 块追加到本步骤派发的任务文本。 |
+| `validation_criteria` | 旧版文本标准；存在时仍会判别（`judge_criteria` 缺省时使用）。                            |
+| `retry_policy`        | 既有的失败重试策略（`max_retries`、`retry_delay_seconds`、`retry_on`）。                 |
+
+实际字段（由 `taskflow_resume` 写入结果条目）：
+
+| 字段                | 含义                                                                          |
+| ------------------- | ----------------------------------------------------------------------------- |
+| `step_id`           | 配对键：这条结果属于哪个步骤。                                                |
+| `structured_result` | 解析出的结构化值（来自调用方的 `structured_result` 或 `result`）。            |
+| `schema_validated`  | `true` / `false` / `null`（未配置 schema）——Tier 1 的判定结论。               |
+| `step_outcome`      | 调用方声明时记录（`success` / `failure` / `partial` / `skipped`）。           |
+
+两层质量门按上述顺序串联，且都按步骤可选（具体执行顺序见下方 `taskflow_resume`）。
 
 ### 旧步骤兼容
 
@@ -127,18 +158,32 @@ async def taskflow_create(flow_id: str, description: str = "", initial_state: di
 ```python
 async def taskflow_run_task(
     flow_id: str, task: str, label: str | None = None,
-    depends_on: list[str] | None = None,
     expected_revision: int | None = None,
+    depends_on: list[str] | None = None,
+    validation_criteria: str | None = None,
+    retry_policy: dict | None = None,
+    aggregate_deps: bool = False,
+    response_schema: dict | None = None,
+    expected_params: dict | None = None,
+    input_bindings: dict | None = None,
+    judge_criteria: str | None = None,
+    judge_model: str | None = None,
+    functional_role: str | None = None,
+    step_model: str | None = None,
+    step_timeout_seconds: float | None = None,
+    priority: int | None = None,
     session_id: Annotated[str, InjectedState("session_id")] = "",
 ) -> str
 ```
 
-在流上注册步骤并派发至分离式子代理。步骤 id 自动分配为 `step-1`、`step-2` 等。
+在流上注册一个步骤并把它派发给分离式子代理。步骤 id 自动递增为 `step-1`、`step-2` 等。
 
-- **无依赖**（或全部满足）→ 步骤立即 `dispatched`（spawn 子代理）。
-- **依赖未满足** → 步骤注册为 `blocked`，不 spawn 子代理。未知依赖 id 在任何 spawn 或状态变更之前即被拒绝。
-- 返回 `step_id`、`child_session_key` 和 `revision`（阻塞时返回 `pending=[...]` 列出未满足的依赖）。
-
+- **无依赖**（或依赖已满足）→ 步骤立即 `dispatched`（已 spawn 子代理）。
+- **依赖未满足** → 步骤登记为 `blocked`，不 spawn。未知依赖 id 在任何 spawn 或状态变更之前就拒绝。
+- **期望参数** 会写入步骤并在 resume 时生效：`response_schema`（同时作为 `output_schema` 交给 spawn 层）、`judge_criteria` / `judge_model`、`expected_params`、`input_bindings`。
+- **执行元信息** 随行下发：`functional_role`（researcher / executor / reviewer / librarian / general）、`step_model`、`step_timeout_seconds`；`priority` 是派发排序提示。
+- 未给出的字段不会写进步骤，这也正是"没有期望的流与闭环前格式逐字节一致"的原因。
+- 返回 `step_id`、`child_session_key`、`revision`（被阻塞时返回 `pending=[...]` 列出未满足的依赖）。
 ### taskflow_dispatch
 
 ```python
@@ -178,15 +223,21 @@ async def taskflow_resume(
     flow_id: str, child_session_key: str = "", result: str = "",
     expected_revision: int | None = None, token_usage: dict | None = None,
     validation_criteria: str | None = None,
+    structured_result: dict | None = None,
+    step_outcome: str | None = None,
 ) -> str
 ```
 
-将已完成子代理会话的结果注入流状态（幂等）。将 `{child_session_key, result, result_hash, injected_at}` 追加到 results。如果流原为 `waiting`，恢复为 `running`。
+把已完成的子会话结果注入流状态（幂等）。向 results 追加 `{child_session_key, result, result_hash, injected_at, step_id, schema_validated}`（已知时还包括 `structured_result` / `step_outcome`）。若流处于 `waiting`，则回到 `running`。
 
-**DAG 簿记**：标记匹配步骤为 `done` 并调用 `unlock_dependents()` 将新满足的 `blocked` 步骤移至 `ready`。返回解锁的步骤 id。**resume 永不 spawn**——调用者需通过 `taskflow_dispatch` 显式派发新就绪步骤。
+**执行顺序**（每道门都按步骤可选，且串联）：
 
-**步骤判别器**：当步骤携带 `validation_criteria`（由 `taskflow_run_task` 设置或在此传入）时，辅助 LLM 判别器（`agent/tools/taskflow/step_judge.py`，温度 0）按标准审查结果，返回 `pass` / `retry` / `block`。`retry` 通过共享的 `_retry` 缝重新派发该步骤，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback` 把判别器指引附加到替换任务；预算耗尽或 `block` 判定则把步骤标记为 `blocked` 并附判别器原因。判别器会看到本流的证据摘要，且失败开放——模型报错或响应无法解析时降级为 `pass`。
+1. **失败重试** —— 步骤带 `retry_policy` 且结果属于失败时，用替换子代理重新派发而不是就此结案。失败信号既有分类出的结果文本，也有 `schema_validated=false`：声明了 schema 却结构不合格，是文本分类看不见的失败，会在这里重派——**早于**任何判别器调用，因此坏结构不会消耗判别 token。
+2. **Tier 1 —— 结构。** 步骤带 `response_schema` 时，用结果（调用方传入的 `structured_result`，否则把 `result` 解析为 JSON）对照校验，并把结论记录到结果条目。失败且重试预算耗尽时把步骤标为 `failed`，`fail_reason` 写入 schema 错误；通过则继续 Tier 2——结构正确不代表内容正确。
+3. **Tier 2 —— 语义。** 步骤带 `judge_criteria`（或旧版 `validation_criteria`）时，由 auxiliary-LLM 判别器（`agent/tools/taskflow/step_judge.py`，温度 0）评审结果——有已校验的 `structured_result` 就用它，否则用结果文本——返回 `pass` / `retry` / `block`。`retry` 走共享 `_retry` 缝隙重派，复用步骤自身的 `retry_count` 预算（`STEP_JUDGE["max_retries"]`，默认 2），并通过 `with_judge_feedback` 把判别器的指引附加到替换任务；预算耗尽或 `block` 判定则把步骤标为 `blocked` 并记录理由。判别器会看到流的证据摘要，且是 fail-open——模型报错或输出无法解析都退化为 `pass`。
+4. **调用方声明的结果。** `step_outcome` 优先于两道门：`failure` 直接标 `failed` 且不调用判别器，`skipped` 标 `skipped`，`success` / `partial` 只做记录而两道门照常运行。非法取值在任何状态变更之前就被拒绝。
 
+**DAG 记账**：质量门通过时把对应步骤标 `done` 并调用 `unlock_dependents()`，把依赖已满足的 `blocked` 步骤转为 `ready`；`failed` 的步骤让其依赖者保持 `blocked`，`skipped`/`cancelled` 的步骤会把 `skipped` 级联给依赖者。返回被解锁的步骤 id。**resume 永不派发**新就绪的步骤——由调用方显式 `taskflow_dispatch`。
 ### taskflow_set_waiting
 
 ```python
@@ -204,16 +255,14 @@ async def taskflow_set_waiting(
 async def taskflow_summary(flow_id: str) -> str
 ```
 
-只读重读完整流状态：状态、版本号、child_session_key、描述、所有步骤（含状态、depends_on、child_session_key）、步骤状态计数、结果、等待载荷、摘要、失败原因、取消原因。也是版本冲突后的指定重读步骤。
-
+只读地重读整个流状态：状态、revision、child_session_key、description、全部步骤（含状态、depends_on、child_session_key，以及配置的期望——`response_schema` 的 properties/required、`judge_criteria`、`judge_model`、`input_bindings`、`expected_params`、执行元信息和任何 `block_reason` / `fail_reason` / `skip_reason`）、各状态计数、结果（每条含 `step_id`、`schema_validated`、`structured_result`、`step_outcome`、`judge_verdict` / `judge_reason` 以及记录到的 `token_usage`）、wait 负载、summary、failure_reason、cancel_reason。也是版本冲突后的指定重读步骤。
 ### taskflow_progress
 
 ```python
 async def taskflow_progress(flow_id: str) -> str
 ```
 
-只读完成度报告：完成百分比、状态分布、下一步骤，以及预计剩余时间（至少两个 `done` 步骤带有 `dispatched_at` 时间戳时给出）。绝不修改流状态。
-
+只读完成度报告：完成百分比、完整状态分布（`done` / `dispatched` / `ready` / `blocked` / `failed` / `skipped` / `cancelled`）、值得启动的下一步、以及 **Needs a decision** 清单——列出每个 `failed` / `blocked` / `skipped` / `cancelled` 步骤及其记录的原因；当至少两个 `done` 步骤带 `dispatched_at` 时间戳时还给出预计剩余时间。永不修改流。
 ### taskflow_budget
 
 ```python
@@ -254,10 +303,11 @@ async def taskflow_fail(flow_id: str, reason: str = "", expected_revision: int |
 async def taskflow_cancel(flow_id: str, reason: str = "", expected_revision: int | None = None) -> str
 ```
 
-终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子代理会话继续运行；在流取消前其结果仍可通过 `taskflow_resume` 投递。
+终态转换。`finish` 记录 `summary`，`fail` 记录 `failure_reason`，`cancel` 记录 `cancel_reason`。已派发的子会话会继续运行；在流被取消之前，它们的结果仍可通过 `taskflow_resume` 送达。
 
-`finish` 在 DONE 迁移前按顺序经过四道门：**A** 每个步骤都是 `done` 或 `blocked`；**B** 没有步骤处于 `blocked`；**C** 本流的 evidence（`agent/tools/taskflow/evidence_collector.py`）不含 `FAIL` 行、也不含 `[stale]` 行；**D** `SisyphusVerifier` 通过——仅当调用方同时显式传入 `todo` 与 `plan_path`，因此无需任何流/步骤 schema 迁移。每道门都失败开放：evidence 收集器不可用或校验器报错时放行，不阻断完成。
+`finish` 按顺序用四道检查把守 DONE 转换：**A** 每个步骤都是 `done` 或 `blocked`；**B** 不能留下未解决的步骤——`failed`、`skipped`、`cancelled` 的步骤会带 id 与记录的原因被报出（它们需要调用方决策：resume、retry 或 cancel），`blocked` 的步骤同理；**C** 流的证据（`agent/tools/taskflow/evidence_collector.py`）中没有 `FAIL`、也没有 `[stale]` 行；**D** `SisyphusVerifier` 通过——仅在调用方同时给出 `todo` 与 `plan_path` 时执行，因此不需要任何 flow/step schema 迁移。每道门都是 fail-open：证据收集器不可用或校验器报错都会放行而不是挡住完成。
 
+`cancel` 会把所有未完成的步骤标为 `cancelled`（连同取消原因）再翻转流终态，这样流终结后步骤状态不会继续声称 `ready` / `dispatched` / `blocked`。
 ---
 
 ## 乐观锁与冲突重试
@@ -291,8 +341,7 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ### unlock_dependents(steps) → list[str]
 
-**单次遍历** `steps`：将依赖已满足的 `blocked` 步骤移至 `ready`。返回新就绪步骤 id。单次遍历确保依赖循环不会产生无限循环。
-
+对 `steps` 做**单次遍历**：把依赖刚刚满足的 `blocked` 步骤转为 `ready`，返回本次解锁的步骤 id。单次遍历确保依赖环永远无法死循环。解锁是**失败感知**的：以 `failed` 结束（或仍处于 `blocked` / 执行中）的依赖会让依赖者保持 `blocked`，而被 `skipped` 或 `cancelled` 的依赖会把 `skipped` 连同 `skip_reason` 级联给依赖者——死分支就地结束，而不是让整个流永远等待。
 ---
 
 ### 合成——`aggregate_deps`
@@ -349,6 +398,6 @@ DAG 字段完全存放在 `state_json` 中（无需数据库迁移）。`StepSta
 
 ## 已知限制
 
-- **`done` ≠ 成功**：步骤 `done` 仅表示"已注入结果"，不表示"子代理成功"。无步骤级 `failed`/`skipped` 状态；既无 `validation_criteria` 也无匹配 `retry_policy` 的步骤即使子代理失败也仍标记 `done` 并解锁后继。故障感知恢复可为步骤附加 `retry_policy`：`taskflow_wait_all` 在重试预算内会重新派发已结束的子代理，预算耗尽后以失败注记标记 `done`；若步骤带 `validation_criteria`，判别器的 `block` 判定或重试预算耗尽则改标记步骤为 `blocked`。
+- **`done` ≠ 成功**：步骤 `done` 表示"结果已注入**且该步骤配置的质量门全部通过**"。在**未配置任何期望**（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）时退化为旧含义，因此除非调用方声明 `step_outcome="failure"`，失败的子代理仍会落到 `done`。要让闭环接住失败：声明期望（`response_schema` 的校验是免费的，且在判别调用之前执行）或声明结果；`failed` 会让依赖者保持阻塞，而 `retry_policy` 仍在预算内重新派发已结束的子代理（判别器对 `block` 判定或预算耗尽依旧标记 `blocked`）。
 - **`taskflow_wait_all` 超时为有界轮询**：永不完成的子代理会话不会自动使流失败。超时返回部分报告。
 - **步骤 id 为顺序分配**：注册时分配 `step-{len(steps)+1}`。如果步骤被并发追加，id 在冲突重试时由 `build_state` 重新计算。

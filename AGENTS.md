@@ -28,7 +28,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/` | Agent core: middleware chain, tools, subagent system, checkpointer | `agent/core.py::built_agent()` |
 | `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence) | `agent/middlewares/__init__.py` |
 | `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
-| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, evidence collector) | `agent/tools/taskflow/config.py` |
+| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector) | `agent/tools/taskflow/config.py` |
 | `agent/tools/todolist/` | Session-scoped todo planning layer + append-only evidence ledger/recorder | `agent/tools/todolist/service.py` |
 | `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles) | `agent/tools/subagent/spawn/core.py` |
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
@@ -89,14 +89,21 @@ User message → Robyn WS → agent.core.built_agent() graph
        stamped there) → detached child agents → announce pipeline → drain
 
   completion gates (all always-on, all fail-open):
+    · Tier 1 schema gate — a step's response_schema is validated on
+      taskflow_resume (json parse + validate_structured_output); a miss is a
+      retry signal ("schema_error") that never spends a judge call, and an
+      unretried miss marks the step failed
     · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
-      (pass / retry within STEP_JUDGE["max_retries"] / block)
+      (judge_criteria or validation_criteria; pass / retry within
+      STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
+      caller-declared step_outcome outranks both
     · CompletionJudge goal loop — every spawn, bounded by
       COMPLETION_JUDGE["goal_max_turns"]; continue injects a follow-up turn
     · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
       stale events; read side derives staleness (evidence_collector.py)
-    · taskflow_finish gates A–D — DAG completeness, no blocked steps, no
-      FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
+    · taskflow_finish gates A–D — DAG completeness, no unresolved steps
+      (blocked/failed/skipped/cancelled are reported by id with their reason),
+      no FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
     · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
       drained completion carriers when the session lacks passing evidence
 ```

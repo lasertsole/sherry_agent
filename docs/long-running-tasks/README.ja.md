@@ -245,7 +245,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 
 ## ⚠️ 既知の制限
 
-- **`done` は成功ではない。** ステップの `done` は「結果が注入された」ことだけを意味し、`failed`/`skipped` のステップ状態は存在しません。子がエラーを報告しても `taskflow_resume` はステップを `done` にして後続をアンロックします。失敗を認識するステップ遷移は意図的に先送りされています。
+- **`done` だけでは成功を意味しません。** ステップの `done` は「結果が注入され、そのステップに設定された品質ゲートをすべて通過した」ことを意味します。期待が何も設定されていない場合（`response_schema`、`judge_criteria`/`validation_criteria`、`retry_policy`）は「結果が注入された」に退化するため、エラーを報告した子でも `done` になり後続をアンロックし得ます。期待を宣言するか `step_outcome="failure"` を宣言すれば、閉ループがそれを捕まえます——`failed` / `skipped` / `cancelled` は実際のステップ状態となり、失敗は依存側をアンロックせず、`taskflow_finish` も未解決ステップを残したまま完了しません。
 - **`taskflow_wait_all` は設計上 flow スコープ。** 指定 flow のディスパッチ済みステップに記録された子だけを待ち、未知/クリーンアップ済みの run は確定とみなします。「すべてのアクティブ flow を待つ」グローバルプリミティブはありません。
 - **アイドル検出は助言的。** sweeper は `stale_detected_at` / `stale_child_session_key` を `wait_json` に刻みますが、古い `waiting` flow を自動で失敗させることはありません。人間かモデルがマーカーに基づいて行動する必要があります。
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
