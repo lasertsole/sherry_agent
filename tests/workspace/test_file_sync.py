@@ -6,9 +6,8 @@ the template's purpose comment can land after a first-boot touch; authored
 content is never overwritten.
 """
 
-import logging
-
 import pytest
+from loguru import logger
 
 
 pytestmark = [pytest.mark.unit]
@@ -117,19 +116,25 @@ def test_idempotent_second_call_copies_nothing(file_sync_isolation):
     assert second == []
 
 
-def test_missing_template_logs_warning_and_continues(file_sync_isolation, caplog):
+def test_missing_template_logs_warning_and_continues(file_sync_isolation):
     from workspace.file_sync import ensure_workspace_system_files
 
     ctx = file_sync_isolation
     (ctx["template_en"] / "AGENTS.md").unlink()
 
-    with caplog.at_level(logging.WARNING):
+    # file_sync logs through loguru (stdlib records never reached its sinks), so
+    # the warning is captured with a sink rather than caplog.
+    messages: list[str] = []
+    handler_id = logger.add(messages.append, level="WARNING", format="{message}")
+    try:
         copied = ensure_workspace_system_files()
+    finally:
+        logger.remove(handler_id)
 
     # AGENTS.md template missing -> skipped, others still copied.
     assert "AGENTS.md" not in copied
     assert set(copied) == _expected_copied(ctx) - {"AGENTS.md"}
-    assert any("missing and no template" in r.getMessage() for r in caplog.records)
+    assert any("missing and no template" in message for message in messages), messages
 
 
 def test_returns_empty_when_nothing_required(file_sync_isolation):

@@ -38,7 +38,6 @@ relevant, and pass ``[]``/``None`` ONLY when no skill matches the task domain.
 from __future__ import annotations
 
 import asyncio
-import logging
 import warnings
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -47,7 +46,7 @@ from .config import SubagentConfig, MAX_SPAWN_DEPTH_CAP, get_config
 from .registry import get_run
 from .spawn import SpawnResult, spawn_subagent_direct
 
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 @dataclass
@@ -242,7 +241,7 @@ def _validate_load_skills(load_skills: list[str] | None) -> list[str]:
     unknown = [name for name in load_skills if name not in known]
     if unknown:
         logger.warning(
-            "delegate_task: unknown skill(s) ignored: %s. Known skills: %s",
+            "delegate_task: unknown skill(s) ignored: {}. Known skills: {}",
             ", ".join(sorted(unknown)),
             ", ".join(sorted(known)),
         )

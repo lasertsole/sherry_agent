@@ -11,14 +11,13 @@ expecting a system file still finds it present.
 
 from __future__ import annotations
 
-import logging
 import shutil
 from pathlib import Path
 
 from config.path import MEMORY_DIR, WORKSPACE_DIR, resolve_workspace_template_dir
-from workspace import ALL_SYSTEM_FILE_NAMES, MEMORY_SYSTEM_FILE_NAMES
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from workspace import ALL_SYSTEM_FILE_NAMES, MEMORY_SYSTEM_FILE_NAMES
 
 
 def _memory_file_has_content(path: Path) -> bool:
@@ -40,7 +39,7 @@ def _copy_template_file(name: str, source: Path, target: Path) -> bool:
     """Copy one template file into place. Returns True when it was copied."""
     if not source.is_file():
         logger.warning(
-            "Workspace system file %r missing and no template at %r",
+            "Workspace system file {!r} missing and no template at {!r}",
             name,
             source,
         )
@@ -49,14 +48,14 @@ def _copy_template_file(name: str, source: Path, target: Path) -> bool:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
     except OSError:
-        logger.exception(
-            "Failed to copy workspace system file %r from %r to %r",
+        logger.opt(exception=True).error(
+            "Failed to copy workspace system file {!r} from {!r} to {!r}",
             name,
             source,
             target,
         )
         raise
-    logger.info("Copied workspace system file %r from %r", name, source)
+    logger.info("Copied workspace system file {!r} from {!r}", name, source)
     return True
 
 

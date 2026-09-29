@@ -45,7 +45,6 @@ For callers that need ``max(local_estimate, reported)`` semantics (e.g.
 the pure local estimate and let the caller apply ``max()`` itself.
 """
 
-import logging
 from collections.abc import Sequence
 from typing import Any
 
@@ -54,7 +53,6 @@ from langchain_core.messages import AIMessage, BaseMessage
 from config.features import TOKEN_ESTIMATION
 from pub.func.cjk import count_cjk
 
-logger = logging.getLogger(__name__)
 
 CHARS_PER_TOKEN = TOKEN_ESTIMATION["chars_per_token"]
 CHARS_PER_TOKEN_CJK = TOKEN_ESTIMATION["chars_per_token_cjk"]

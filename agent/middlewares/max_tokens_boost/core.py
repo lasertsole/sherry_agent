@@ -24,16 +24,14 @@ truncated intermediate responses never reach the checkpointer and the
 IterationBudget is charged once per outer model call.
 """
 
-import logging
 from typing import Any
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import AIMessage
 
 from config.features import MAX_TOKENS_BOOST
+from loguru import logger
 from runtime.session.state_keys import StateKey
-
-_logger = logging.getLogger(__name__)
 
 # Bound to the feature registry (single source of truth); names preserved.
 # The env read (MAIN_LLM_OUTPUT_MAX_TOKEN) now lives in the config builder.
@@ -148,8 +146,8 @@ class MaxTokensBoostMiddleware(AgentMiddleware):
                 if not self._detect_tool_call_truncation(result):
                     break
             else:
-                _logger.warning(
-                    "MaxTokensBoost exhausted %s retries (base=%s, cap=%s); "
+                logger.warning(
+                    "MaxTokensBoost exhausted {} retries (base={}, cap={}); "
                     "returning last truncated result",
                     _MAX_RETRIES,
                     base,

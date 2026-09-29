@@ -11,7 +11,10 @@ AI coding assistant guide for the EMA AI Agent (Sherry) project. Read this befor
 ```bash
 uv run python -m server                              # start backend (127.0.0.1:8080)
 uv run pytest tests/agent/middlewares -q -k "not llm_e2e"  # run middleware tests
-uv run --no-sync python tests/run_tests_split.py     # CI test gate (3-process)
+uv run --no-sync python tests/run_tests_split.py     # CI test gate (3-process; group C also runs the perf guards)
+uv run --no-sync pytest tests/perf -q -s             # hot-path perf guards: prints each measured growth ratio
+uv run --no-sync pytest tests/ -m "not llm_e2e" --cov=agent --cov=server --cov=context_engine \
+  --cov=pub --cov=runtime --cov=workspace --cov-report=term-missing   # coverage report (single process; use run_tests_split.py -- --cov-append for the gate grouping)
 uv run --no-sync python scripts/check_docs_parity.py # four-language README parity gate
 uv run --no-sync python scripts/check_doc_links.py   # Markdown dead-link + anchor gate
 uv run --no-sync lint-imports                        # import-linter contract check
@@ -44,7 +47,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `runtime/hooks.py` | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server` | `runtime/hooks.py` |
 | `runtime/data_provider.py` | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent` | `runtime/data_provider.py` |
 | `runtime/lane/` | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`) | `runtime/lane/core.py` |
-| `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression) | `tests/run_tests_split.py` |
+| `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression/perf) | `tests/run_tests_split.py` |
 | `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
 | `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |
 | `docs/context-governance/` | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering) | `docs/context-governance/README.md` |

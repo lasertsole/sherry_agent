@@ -93,7 +93,8 @@ def _build_todo_block(session_id: str) -> str:
             "Completion is verified by the Sisyphus contract — unverified claims will be rejected."
         )
         return "\n".join(lines)
-    except Exception:
+    except Exception as error:  # a broken block must not break the prompt
+        logger.debug("prompt builder: todo block failed ({}); omitting it", error)
         return ""
 
 
@@ -138,7 +139,8 @@ def _build_boulder_block(session_id: str) -> str:
                 f"- Remaining: {remaining} unchecked checkboxes",
             ]
         )
-    except Exception:
+    except Exception as error:  # a broken block must not break the prompt
+        logger.debug("prompt builder: boulder block failed ({}); omitting it", error)
         return ""
 
 
@@ -184,7 +186,8 @@ def _build_taskflow_block(session_id: str) -> str:
 
         lines.append("Use taskflow_summary to inspect a flow and continue execution.")
         return "\n".join(lines)
-    except Exception:
+    except Exception as error:  # a broken block must not break the prompt
+        logger.debug("prompt builder: taskflow block failed ({}); omitting it", error)
         return ""
 
 
@@ -198,7 +201,8 @@ def _build_continuity_block(session_id: str) -> str:
     try:
         provider = _resolve_provider("build_continuity_prompt")
         return provider.build_continuity_prompt(session_id) if provider is not None else ""
-    except Exception:
+    except Exception as error:  # a broken block must not break the prompt
+        logger.debug("prompt builder: continuity block failed ({}); omitting it", error)
         return ""
 
 
@@ -207,7 +211,8 @@ def _build_knowledge_block(session_id: str) -> str:
     try:
         provider = _resolve_provider("build_todolist_knowledge_block")
         return provider.build_todolist_knowledge_block(session_id) if provider is not None else ""
-    except Exception:
+    except Exception as error:  # a broken block must not break the prompt
+        logger.debug("prompt builder: knowledge block failed ({}); omitting it", error)
         return ""
 
 

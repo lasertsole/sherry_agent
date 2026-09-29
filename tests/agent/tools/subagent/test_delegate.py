@@ -1,6 +1,7 @@
 import asyncio
 
 import pytest
+from loguru import logger
 
 import agent.tools.subagent.delegate as delegate
 from agent.tools.subagent.delegate import DelegatedTaskHandle, delegate_task
@@ -161,11 +162,17 @@ class TestValidateLoadSkills:
     def test_all_main_only_resolves_empty(self):
         assert delegate._validate_load_skills(["clawhub", "skill_creator"]) == []
 
-    def test_unknown_names_dropped_and_warned(self, caplog):
-        with caplog.at_level("WARNING", logger="agent.tools.subagent.delegate"):
+    def test_unknown_names_dropped_and_warned(self):
+        # delegate logs through loguru, which stdlib caplog does not see.
+        messages: list[str] = []
+        handler_id = logger.add(messages.append, level="WARNING", format="{message}")
+        try:
             resolved = delegate._validate_load_skills(["nope", "web_search"])
+        finally:
+            logger.remove(handler_id)
+
         assert resolved == ["web_search"]
-        assert "unknown skill" in caplog.text
+        assert any("unknown skill" in message for message in messages), messages
 
     def test_empty_and_none(self):
         assert delegate._validate_load_skills(None) == []

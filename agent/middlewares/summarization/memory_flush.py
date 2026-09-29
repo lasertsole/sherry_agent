@@ -8,13 +8,12 @@ unchanged; the flush is a best-effort enhancement that never blocks it.
 Reference: openclaw compaction.memoryFlush.
 """
 
-import logging
 from collections.abc import Callable, Sequence
 from typing import Any
 
-from config.features import MEMORY_FLUSH
+from loguru import logger
 
-logger = logging.getLogger(__name__)
+from config.features import MEMORY_FLUSH
 
 _FLUSH_PROMPT = """\
 You are a memory extraction assistant. Below is conversation history that is \
@@ -92,13 +91,13 @@ async def run_memory_flush(
 
         result = memory_store.append_entries(extracted)
         logger.info(
-            "Memory Flush: wrote %d chars to MEMORY.md (%s)",
+            "Memory Flush: wrote {} chars to MEMORY.md ({})",
             len(extracted),
             result.get("message", ""),
         )
         return True
     except Exception as e:  # noqa: BLE001 -- boundary: flush must never break compression
-        logger.warning("Memory Flush failed (non-blocking): %s", e)
+        logger.warning("Memory Flush failed (non-blocking): {}", e)
         return False
 
 
@@ -128,13 +127,13 @@ def run_memory_flush_sync(
 
         result = memory_store.append_entries(extracted)
         logger.info(
-            "Memory Flush: wrote %d chars to MEMORY.md (%s)",
+            "Memory Flush: wrote {} chars to MEMORY.md ({})",
             len(extracted),
             result.get("message", ""),
         )
         return True
     except Exception as e:  # noqa: BLE001 -- boundary: flush must never break compression
-        logger.warning("Memory Flush failed (non-blocking): %s", e)
+        logger.warning("Memory Flush failed (non-blocking): {}", e)
         return False
 
 
