@@ -413,6 +413,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 メインエージェントでは **`ToolGuardrails` の直後** に登録されるため、wrap チェーンでは `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` の**外側**に位置します（先に登録されたものが最外層）。`MessagePersistenceMiddleware` は最内層のままなので、ツール結果については内側の層がツール復帰の瞬間に**生の結果**を MesMemory へフラッシュし、その後でこの層がプレビューに差し替えます。state（したがってチェックポインターと次回のモデル呼び出し）に入るのは常にプレビューだけで、大きな内容がプレフィックスに入ることはありません。ワーカーパイプラインには登録されません（子トランスクリプトは完全なツール結果を保持）。
 
+**信頼できないツール結果はフェンスされます（A1/A3）。** 退避の後、攻撃者が制御しうるツールの結果（`web_search`、キー設定時の `tavily_search` 形態、`message_search`、および `mcp_` ツール）は `<untrusted_tool_result source="…" id="…">` ブロックで包まれ、その勧告文が内容は指示ではなくデータだと述べます。ペイロード内の閉じタグは包む前に `</untrusted-tool-result>` へ書き換えられ、ブロックを早期に閉じられません。フェンスされるのはこのモデル表示だけで、内側が永続化した原文は変わりません。スイッチと文言は `config/features/agent_side/untrusted_output.py` にあります。
+ 同じパスが、漏洩しやすいツール（`terminal`、`python_repl`、信頼できないツール群、`mcp_*`）の結果中の資格情報もマスクします——順序は **evict → redact → fence**。ファイルツールは原文のまま（読み書き往復で設定を壊さないため）。スイッチは `REDACTION["tool_output_enabled"]`。
+
 同じミドルウェアが**人間メッセージ**経路（P1-9）も持ち、その三状態分割はツール側とは逆です。以下を参照：[人間メッセージの退避](#人間メッセージの退避p1-9)。
 
 **ツール結果の 2 つの縮小パス**

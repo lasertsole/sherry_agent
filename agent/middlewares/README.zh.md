@@ -412,6 +412,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 在主 Agent 中注册于 **`ToolGuardrails` 之后**，因此在 wrap 链中位于 `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` 的**外层**（先注册者最外层）。`MessagePersistenceMiddleware` 保持最内层，由此形成工具结果的关键分工：内层在工具返回瞬间把**原文**写入 MesMemory，随后本层才换上预览。进入 state（以及 checkpointer、下一次模型调用）的始终只有预览，大内容从不进入前缀。子 Agent 流水线不注册本中间件：子会话保留完整工具结果。
 
+**不可信工具结果会被围栏（A1/A3）。** 驱逐之后，来自攻击者可控工具的结果（`web_search`，或配了 key 的 `tavily_search` 形态、`message_search`，以及任何 `mcp_` 工具）会被包进 `<untrusted_tool_result source="…" id="…">` 块，块内提示语声明这些内容是数据而非指令。载荷里的任何闭合标签都会在包装前被改写成 `</untrusted-tool-result>`，无法提前结束该块；被围栏的只有模型视图——内层已持久化的原文不受影响。开关与提示语在 `config/features/agent_side/untrusted_output.py`。
+ 同一趟还会掩码那些天生易泄漏的工具结果（`terminal`、`python_repl`、不可信工具集、`mcp_*`）中的凭证——顺序为 **evict → redact → fence**；文件工具保持原文，避免读回再写回时破坏配置。开关：`REDACTION["tool_output_enabled"]`。
+
 同一中间件还持有**人类消息**路径（P1-9），其三是三态切分与工具侧相反；见下文[人类消息驱逐](#人类消息驱逐p1-9)。
 
 **工具结果的两条缩减路径**

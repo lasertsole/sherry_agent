@@ -413,6 +413,9 @@ The shared batch pipeline (both hooks):
 
 Registered in the main agent **immediately after `ToolGuardrails`** and therefore OUTER relative to `PathGuard` / `HumanInTheLoop` / `MessagePersistenceMiddleware` in the wrap chain (first registered = outermost). `MessagePersistenceMiddleware` stays innermost, which produces the key split for tool results: the inner layer flushes the **raw** result to MesMemory the moment the handler returns, and only then does this layer swap in the preview. Graph state — hence the checkpointer and the context sent to the model — only ever holds the preview; the big payload never enters the prefix. Not registered in the worker pipeline: child transcripts keep their full tool results.
 
+**Untrusted tool results are fenced (A1/A3).** After eviction, a result from an attacker-facing tool (`web_search`, or its keyed `tavily_search` shape, `message_search`, and any `mcp_` tool) is wrapped in an `<untrusted_tool_result source="…" id="…">` block whose advisory states the content is data, not instructions. Any closing tag inside the payload is rewritten to `</untrusted-tool-result>` before wrapping, so it cannot end the block early, and only this model view is fenced — the raw text the inner boundary persisted is untouched. Switch and wording live in `config/features/agent_side/untrusted_output.py`.
+ The same pass masks credentials in results from tools that leak them for a living (`terminal`, `python_repl`, the untrusted set, `mcp_*`) — **evict → redact → fence**, in that order; file tools stay verbatim so a read-then-write round trip cannot corrupt a config. Switch: `REDACTION["tool_output_enabled"]`.
+
 The same middleware owns the **human-message** path (P1-9) with the opposite three-state split; see [Human-message eviction](#human-message-eviction-p1-9) below.
 
 **Tool-result reduction paths**

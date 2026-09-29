@@ -4,7 +4,44 @@
 > **创建日期**: 2026-09-28
 > **审查范围**: 6 个 Agent 项目（hermes-agent、deepagents、openclaw、codex-main、opencode-dev、oh-my-openagent-dev）的安全防御机制
 > **审查方法**: 3 路并行子代理逐文件审查
-> **状态**: 待执行
+> **状态**: 阶段 1、2、3、5 已落地（2026-09-30）；阶段 4、6、7、8、9 待执行。落点与提案的差异、以及过程中发现的缺陷见下。
+
+---
+
+## 〇、执行状态（2026-09-30）
+
+### 已落地
+
+**阶段 1 — 威胁模型文档（C1）+ 注入模式扫描器（A2）**
+
+- `agent/security/threat_patterns.py`：三级 scope（`all` ⊂ `context` ⊂ `strict`），有界量词、永不抛异常、未知 scope 回落、只回报命中 ID（不回显原文）。
+- 文档按仓库惯例落成**四语主题组** `docs/threat-model/README{,.zh,.ja,.ko}.md`（`docs/` 下没有单语文档，parity 门禁强制四语），并在四语根 README 的文档表登记；`tests/docs/test_threat_model_claims.py` 钉住文档声明与代码一致。
+- 差异（实测证据）：计划代码的 `_FILLER = r"(?:\w+\s+){0,8}"` 要求动词后**紧跟词字符**，而真实文本 `ignore all previous instructions` 中间是空格——**连计划自己注释里的例子都匹配不到**；改为 `(?:\s+\w+){0,8}` 后补 `\s+`。HTML 注释规则的 `.*`+DOTALL 改为有界窗口；不可见 Unicode 类排除 U+200E/U+200F（阿拉伯语/希伯来语正常双向控制符，保留会误报）。
+
+**阶段 2 — 不可信工具输出包装（A1）+ 分隔符防伪（A3）**
+
+- `agent/security/untrusted_wrapper.py` + 配置 `UNTRUSTED_OUTPUT`。
+- 接线差异：计划指定的 `tool_call_normalize/core.py` **没有 `wrap_tool_call`**（只有 `before_model` 转录修复），实际接缝为 `ContextEvictionMiddleware._apply`——它已经在做"跑完工具、在结果进模型前改写"，且位于持久化外层（原文先落库）。顺序为 **evict → wrap**（否则围栏会被当作超大结果切掉）；包装不依赖 session id；失败 fail-open。
+- 缺陷修复：策略列表补 `tavily_search`——配了 Tavily key 时该工具以 `TavilySearch` 自己的名字出厂，只列 `web_search` 会让**网页结果恰好在这类部署里失去围栏**。
+- 顺带修复：`agent/tools/message_search.py::summarize_all` 声明 `async` 却无 `await`（内部走 `run_async`）→ 调用方拿到 coroutine → `'coroutine' object is not iterable`，**带 session_id 的会话检索在生产里必然报错**；去掉多余的 `async`。
+- 活体 e2e：真实模型调用真实 `message_search`，真实中间件链交给它的是带围栏、且伪造闭合标签已失效的结果。
+
+**阶段 3 — 密钥脱敏引擎（B1）+ 日志脱敏格式化器（B5）**
+
+- `agent/security/redact.py`：vendor 前缀、密钥名赋值、Authorization 头、JWT、PEM、URL 凭证、JSON 字段、配置文件形状；带**廉价预筛**（每行日志先跑一次联合正则）、幂等（哨兵不匹配任何家族）、开关在导入时快照（`SHERRY_REDACT`，会话中途无法被 LLM 关掉），日志路径用 `force=True`。
+- `agent/security/redact_formatter.py` + `logs/logger.py`：差异——计划改 loguru 私有 `handler._sink`，实际用**公开 patcher** `logger.configure(patcher=…)`（对全部 sink 生效，含之后新增的）；已知边界：`diagnose=True` 的 traceback 局部变量不受其覆盖（覆盖需重写 loguru 的 traceback 渲染），已在模块与文档写明。
+- 子进程 e2e：真实日志栈写密钥 → 读回三个 sink 的文件，密钥不在、哨兵在、普通文本完好。
+
+**阶段 5 — URL 凭证脱敏（B2）+ 配置文件密钥脱敏（B7）**
+
+- URL：协议扩展到 postgres/mysql/mongodb/redis 等连接串；**嵌套百分号解码深度 8**（`user:pa%253A55@host` 也命中，只解码捕获片段、绝不重写全文）；查询参数与 AWS/GCS 预签名（值脱敏、其余参数保留）；只有用户名无密码的 URL 不误报。
+- 配置形状：`.env`/INI/YAML/TOML/JSON（含 jsonc 的 `"CURATOR_API_KEY": "…"` 这类**带前缀键**）与**引号内含空格的值**；三族共用"名字载体 + 引号/裸值"形状，引号原样保留。
+- 规则相互作用修复：裸值类收紧为不含 `& , ;`——否则赋值规则会再次匹配已被查询规则改写的 `token=«redacted»&page=2`，把 token 之后的整段参数吞掉。
+- 接线：`ContextEvictionMiddleware` 中 **evict → redact → wrap**；默认只覆盖易泄漏面（`terminal`/`python_repl`/不可信工具集 + `mcp_` 前缀），**文件工具保持原文**——理由：agent 要改自己的配置，掩码会让"读回再写回"变成有损操作（写在 `config/features/agent_side/redaction.py`）。
+
+### 待执行
+
+阶段 4（记忆写入注入拦截 A4 + 终端控制序列剥离 A5）、阶段 6（子进程 env hijack 阻止 B6 + 上下文引用守卫 A6）、阶段 7（推理块剥离 B4 + PII 脱敏 B3）、阶段 8（安全策略文件 C2 + 安全运行手册 C3）、阶段 9（测试 + CI 集成，已随各阶段落地一部分）。
 
 ---
 
