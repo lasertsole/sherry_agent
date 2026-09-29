@@ -52,6 +52,14 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
     # 1. Clear Loguru's default configuration
     logger.remove()
 
+    # 1a. Redact secrets BEFORE any sink formats or writes a record. Installed
+    #     here (the single place sinks are configured) so the guarantee holds for
+    #     every sink added below and any added later: a log file outlives the
+    #     session and is read by people who never saw the credential.
+    from agent.security.redact_formatter import install_log_redaction
+
+    install_log_redaction()
+
     # 2. Console output
     logger.add(
         sys.stderr,

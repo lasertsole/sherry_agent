@@ -63,6 +63,8 @@ from langgraph.types import Command
 from loguru import logger
 
 from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
+from config.features.agent_side.redaction import REDACTION
+from config.features.agent_side.untrusted_output import UNTRUSTED_OUTPUT
 from context_engine import is_message_persisted, mark_message_ids_persisted
 from pub.func.message.eviction import (
     EVICTED_TO_KEY,
@@ -76,6 +78,8 @@ from pub.func.message.eviction import (
     slice_read_file_result,
 )
 from agent.middlewares.base import require_session_id
+from agent.security.redact import redact_sensitive_text
+from agent.security.untrusted_wrapper import wrap_tool_message
 from agent.middlewares.message_persistence.prepare import _watermark_key
 
 __all__ = ["ContextEvictionMiddleware"]
@@ -152,11 +156,21 @@ def _build_model_view(message: HumanMessage, session_id: str | None) -> HumanMes
 
 
 class ContextEvictionMiddleware(AgentMiddleware):
-    """Offload oversized tool results (P0-2/P2-4) and human messages (P1-9)."""
+    """Offload oversized tool results (P0-2/P2-4), fence untrusted ones (A1/A3), tag human messages (P1-9).
+
+    This middleware owns what the MODEL reads of a tool result: the raw text is
+    already persisted by the inner boundary, so everything here shapes the model
+    view only.
+    """
 
     def __init__(self) -> None:
         self._enabled = TOOL_RESULT_EVICTION["enabled"]
         self._human_enabled = TOOL_RESULT_EVICTION["human_evict_enabled"]
+        self._wrap_enabled = UNTRUSTED_OUTPUT["enabled"]
+        self._wrap_advisory = UNTRUSTED_OUTPUT["advisory"]
+        self._redact_enabled = REDACTION["tool_output_enabled"]
+        self._redact_tools = REDACTION["tool_output_tools"]
+        self._redact_prefixes = REDACTION["tool_output_prefixes"]
 
     @override
     def wrap_tool_call(
@@ -183,14 +197,50 @@ class ContextEvictionMiddleware(AgentMiddleware):
         return await asyncio.to_thread(self._apply, request, response)
 
     def _apply(self, request: ToolCallRequest, response: Any) -> Any:
-        if not self._enabled:
-            return response
-        session_id = self._resolve_session_id(request.state)
-        if session_id is None:
-            return response
-        return _rewrite_tool_messages(
-            response, lambda message: self._maybe_evict(message, session_id)
-        )
+        if self._enabled:
+            session_id = self._resolve_session_id(request.state)
+            if session_id is not None:
+                response = _rewrite_tool_messages(
+                    response, lambda message: self._maybe_evict(message, session_id)
+                )
+        # Wrapping runs LAST and independently of eviction: the model must read
+        # the fence around whatever it is finally shown (a preview included), and
+        # a missing session id must not silently remove the injection boundary.
+        # Redaction sits between eviction and wrapping: it scans the text the
+        # model will actually read (after the preview swap, so it stays cheap),
+        # and the fence then declares where that text came from.
+        if self._redact_enabled:
+            response = _rewrite_tool_messages(response, self._maybe_redact)
+        if self._wrap_enabled:
+            response = _rewrite_tool_messages(response, self._maybe_wrap)
+        return response
+
+    def _maybe_redact(self, result: ToolMessage) -> ToolMessage:
+        """Mask credentials in a tool result whose surface leaks them (fail-open)."""
+        try:
+            name = getattr(result, "name", "") or ""
+            if name not in self._redact_tools and not any(
+                name.startswith(prefix) for prefix in self._redact_prefixes
+            ):
+                return result
+            content = getattr(result, "content", None)
+            if not isinstance(content, str):
+                return result
+            redacted = redact_sensitive_text(content)
+            if redacted == content:
+                return result
+            return result.model_copy(update={"content": redacted})
+        except Exception:
+            logger.exception("tool-output redaction failed (fail-open)")
+            return result
+
+    def _maybe_wrap(self, result: ToolMessage) -> ToolMessage:
+        """Fence an untrusted tool's text in the data-only block (fail-open)."""
+        try:
+            return wrap_tool_message(result, advisory=self._wrap_advisory)
+        except Exception:
+            logger.exception("untrusted-output wrapping failed (fail-open)")
+            return result
 
     # ── Human messages (P1-9) ─────────────────────────────────────────────
 
