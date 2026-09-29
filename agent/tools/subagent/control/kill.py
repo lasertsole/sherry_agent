@@ -58,8 +58,11 @@ async def kill_subagent_run(
     cancel_recovery(run_id)
 
     save_kill_reconciliation(run_id)
+    # cancel_task is keyed by run_id (task_refs.register_task) and is the whole
+    # cancellation story: the child's background task is registered under its
+    # run, never under its session key, so the session-keyed queue clear that
+    # used to sit here could not match anything and cancelled nothing.
     cancel_task(run_id)
-    await _clear_session_queues(run.child_session_key)
 
     from ..registry.lifecycle import complete_subagent_run
 
@@ -184,15 +187,3 @@ async def kill_all_controlled_subagent_runs(
         except Exception as e:
             logger.warning("wake_yield failed for session {}: {}", requester_session_key, e)
     return killed
-
-
-async def _clear_session_queues(child_session_key: str) -> None:
-    """Best-effort cancellation of pending asyncio tasks for a child session."""
-    try:
-        from ..registry import get_task
-
-        task = get_task(child_session_key)
-        if task and not task.done():
-            task.cancel()
-    except Exception as e:
-        logger.debug("Session queue clear skipped for {}: {}", child_session_key, e)
