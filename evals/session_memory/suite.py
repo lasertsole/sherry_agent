@@ -81,7 +81,7 @@ async def check_cooldown_restart_survival(sid: str) -> dict[str, Any]:
 
     # Simulate a process restart: volatile memory is wiped, durable state stays.
     state_register_mem.clear_session(sid)
-    summarization_module._RESTORED_COOLDOWN_SESSIONS.discard(sid)
+    summarization_module._RESTORED_COOLDOWN_SESSIONS.pop(sid, None)
     middleware._maybe_restore_cooldown_state(sid)
     suppressed_after_restart = middleware._tick_cooldown(sid)  # True = still cooling
 
