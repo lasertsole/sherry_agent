@@ -51,7 +51,7 @@ AIMessage(<summary>, lc_source="summarization")
 | 主 agent（`agent/core.py:204`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
 | Worker/子 agent（`agent/tools/subagent/spawn/core.py:909`） | `("messages", 40)` **或** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（默认） |
 
-两者都传入 `main_llm_context_window=main_llm_max_tokens`（来自 `MAIN_LLM_MAX_TOKEN`）和 `keep=("messages", 10)`。
+两者都传入 `main_llm_context_window=main_llm_max_tokens`（来自 `MAIN_LLM_MAX_TOKEN`）。
 
 ## 🪙 Token 估算（无分词器）
 
@@ -156,7 +156,7 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 
 ## ⚠️ 诚实与局限
 
-- **`keep=("messages", 10)` 被接受但从未使用。** 构造函数仅为 API 兼容而存储它；尾部保留由预算决定（`PRESERVE_RATIO` × 窗口，夹在 [2 000, 15 000]），加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距。改 `keep` 没有任何效果。
+- **尾部保留由预算决定，不是消息条数。** 保留预算为 `PRESERVE_RATIO` × 窗口、夹在 [2 000, 15 000]，再加上路由的 `TRUNCATABLE_RECENT_SKIP` 边距；构造函数不接受 `keep` 参数。
 - **纯装饰性导入。** `summarization/core.py` 顶部的 `json`、`hashlib`、`SUMMARY_TRIM_TOKENS` 与 `AUTO_CONTINUE_PROMPT` 被导入但从未读取；`DEGRADATION_MONITOR_COUNT` 与 `FILE_OPS_SECTION_MAX_CHARS` 在 `config/features/agent_side/summarization.py` 的 `SUMMARIZATION` TypedDict 中有定义但无人消费。
 - **TTL 注册表没有接入生产。** `record_first_seen` / `select_expired` / `truncate_expired`（以及 `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）只有测试在用；中间件只使用 `truncate_to_budget`。对 `agent/` 的 grep 找不到 TTL 三件套的任何生产调用点。注册表同样是易失的（内存态、以 `tool_call_id` 为键、重启即失）。
 - **保留但失效的代码。** `_preemptive_check`（overflow.py:148）与 `_preemptive_truncate`（compression.py:420）仅供参照：没有任何生产调用点会走到它们实现的二档抢先机制。

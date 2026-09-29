@@ -75,7 +75,6 @@ def make_middleware(model):
     return summarization_module.Summarization(
         model=model,
         trigger=[("tokens", 80_000)],
-        keep=("messages", 10),
         main_llm_context_window=CTX_WINDOW,
         need_update_system_prompt=False,
     )

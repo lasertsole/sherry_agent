@@ -210,7 +210,6 @@ def _build_middlewares(
             model=auxiliary_llm,
             main_llm_context_window=main_llm_context_window,
             trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
-            keep=("messages", 10),
         ),
     ]
 

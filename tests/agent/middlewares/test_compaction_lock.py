@@ -145,7 +145,6 @@ async def test_apply_compression_fails_open_under_foreign_lock(lock_db, monkeypa
     mw = summarization_module.Summarization(
         model=_RecordingModel(),
         trigger=[("tokens", 500)],
-        keep=("messages", 10),
         main_llm_context_window=8000,
         need_update_system_prompt=False,
     )

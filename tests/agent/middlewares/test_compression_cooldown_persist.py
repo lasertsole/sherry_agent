@@ -73,7 +73,6 @@ def _make_middleware(model=None, context_window=8000):
     return summarization_module.Summarization(
         model=model or _RecordingModel(),
         trigger=[("tokens", 500)],
-        keep=("messages", 10),
         main_llm_context_window=context_window,
         need_update_system_prompt=False,
     )

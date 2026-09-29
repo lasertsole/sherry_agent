@@ -189,7 +189,6 @@ def _build_agent(order: str, main_model, aux_model):
                 model=aux_model,
                 main_llm_context_window=CTX_WINDOW,
                 trigger=[("tokens", trigger_tokens)],
-                keep=("messages", 10),
             ),
         ]
     elif order == "worker":
@@ -198,7 +197,6 @@ def _build_agent(order: str, main_model, aux_model):
                 model=aux_model,
                 main_llm_context_window=CTX_WINDOW,
                 trigger=[("messages", 40), ("tokens", trigger_tokens)],
-                keep=("messages", 10),
             ),
             IterationBudget(60),
         ]

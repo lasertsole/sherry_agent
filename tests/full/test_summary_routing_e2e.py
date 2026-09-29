@@ -212,7 +212,6 @@ class _CompressionHarness:
         self.middleware = Summarization(
             model=build_auxiliary_llm(),
             trigger=[("tokens", 80_000)],
-            keep=("messages", 10),
             main_llm_context_window=window,
             need_update_system_prompt=False,
         )
@@ -507,7 +506,6 @@ async def test_notes_cap_evicts_oldest_with_annotation() -> None:
     middleware = Summarization(
         model=build_auxiliary_llm(),
         trigger=[("tokens", 80_000)],
-        keep=("messages", 10),
         main_llm_context_window=_CTX_WINDOW,
         need_update_system_prompt=False,
     )
@@ -699,7 +697,6 @@ async def test_p1_9_eviction_then_compression_three_way_consistency() -> None:
     middleware = Summarization(
         model=build_auxiliary_llm(),
         trigger=[("tokens", 80_000)],
-        keep=("messages", 10),
         main_llm_context_window=_CTX_WINDOW,
         need_update_system_prompt=False,
     )
@@ -770,7 +767,6 @@ async def test_multi_message_burst_keeps_last_request_and_evicted_refs() -> None
     middleware = Summarization(
         model=build_auxiliary_llm(),
         trigger=[("tokens", 80_000)],
-        keep=("messages", 10),
         main_llm_context_window=_CTX_WINDOW,
         need_update_system_prompt=False,
     )

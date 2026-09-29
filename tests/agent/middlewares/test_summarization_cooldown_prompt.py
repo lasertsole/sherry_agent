@@ -43,7 +43,6 @@ def _middleware() -> summarization_module.Summarization:
     return summarization_module.Summarization(
         model=StubModel(),
         trigger=[("tokens", 80000)],
-        keep=("messages", 10),
         main_llm_context_window=41600,
         need_update_system_prompt=True,
     )

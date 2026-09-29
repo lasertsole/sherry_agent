@@ -51,7 +51,7 @@ Two registrations exist:
 | Main agent (`agent/core.py:204`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
 | Worker/subagent (`agent/tools/subagent/spawn/core.py:909`) | `("messages", 40)` **or** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False` (default) |
 
-Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`) and `keep=("messages", 10)`.
+Both pass `main_llm_context_window=main_llm_max_tokens` (from `MAIN_LLM_MAX_TOKEN`).
 
 ## 🪙 Token Estimation (No Tokenizer)
 
@@ -156,7 +156,7 @@ The full process-isolated suite (`uv run python tests/run_tests_split.py`) passe
 
 ## ⚠️ Honesty & Limitations
 
-- **`keep=("messages", 10)` is accepted but unused.** The constructor stores it for API compatibility; tail retention is budget-based (`PRESERVE_RATIO` × window clamped to [2 000, 15 000]) plus the router's `TRUNCATABLE_RECENT_SKIP` margin. Changing `keep` has no effect.
+- **Tail retention is budget-based, not a message count.** The preserve budget is `PRESERVE_RATIO` × window clamped to [2 000, 15 000], plus the router's `TRUNCATABLE_RECENT_SKIP` margin; the constructor takes no `keep` argument.
 - **Doc-verbatim imports.** `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, and `AUTO_CONTINUE_PROMPT` are imported at the top of `summarization/core.py` but never read. `DEGRADATION_MONITOR_COUNT` and `FILE_OPS_SECTION_MAX_CHARS` are defined in the `SUMMARIZATION` TypedDict in `config/features/agent_side/summarization.py` but consumed by nothing.
 - **The TTL registry is not wired into production.** `record_first_seen` / `select_expired` / `truncate_expired` (and `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`) are consumed only by tests; the middleware uses exclusively `truncate_to_budget`. A grep of `agent/` finds no production call sites for the TTL trio. The registry is also volatile (in-memory, keyed by `tool_call_id`, lost on restart).
 - **Retained-but-inert code.** `_preemptive_check` (overflow.py:148) and `_preemptive_truncate` (compression.py:420) are reference-only: no production call site reaches the two-band preemption they implement.

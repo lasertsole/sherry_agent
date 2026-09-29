@@ -180,7 +180,6 @@ Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,
     trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
-    keep=("messages", 10),
 )
 
 # agent/tools/subagent/spawn/core.py:909 — worker agent（第一个中间件）
@@ -191,6 +190,5 @@ Summarization(
         ("messages", 40),
         ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
     ],
-    keep=("messages", 10),
 )
 ```

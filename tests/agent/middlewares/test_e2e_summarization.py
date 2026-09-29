@@ -10,7 +10,7 @@ What this proves, end to end and without a single network byte:
      instantiated with ``need_update_system_prompt=True`` (core.py:153), a stubbed
      auxiliary model (core.py:154), ``main_llm_context_window`` (core.py:155), the
      trigger-ratio form ``[("tokens", int(window * COMPRESSION_TRIGGER_RATIO))]``
-     (core.py:156) and ``keep=("messages", 10)`` (core.py:157).
+     (core.py:156).
   2. Injecting PART2 §14's history (30 turns of Human+AI+Tool, ~5000 chars each,
      90 messages) drives the compiled graph's ``awrap_model_call`` hook through the
      full pipeline: preemptive truncate -> non-LLM strategies (dedup / prune /
@@ -197,7 +197,6 @@ def _build_agent():
                 model=aux_model,  # agent/core.py:154 — stubbed auxiliary
                 main_llm_context_window=window,  # agent/core.py:155
                 trigger=[("tokens", int(window * COMPRESSION_TRIGGER_RATIO))],  # core.py:156
-                keep=("messages", 10),  # agent/core.py:157
             ),
         ],
     )

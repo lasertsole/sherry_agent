@@ -497,7 +497,7 @@ async def test_fact_c_marker_within_keep_window_survives_verbatim():
         model,
         [
             ToolCallNormalize(),
-            Summarization(model=aux, trigger=[("messages", 50)], keep=("messages", 2)),
+            Summarization(model=aux, trigger=[("messages", 50)]),
         ],
     )
 
@@ -539,7 +539,6 @@ async def test_fact_c_marker_swallowed_from_model_view_once_summarized():
             Summarization(
                 model=aux,
                 trigger=[("messages", 5)],
-                keep=("messages", 2),
                 # §9.7b adaptation (T9 gate-repair, 4-route T1 contract from
                 # 5502075): the window MUST exceed COMPRESSION_RESERVE_TOKENS
                 # (16 000) so the usable budget is positive. At 8 000 the

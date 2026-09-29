@@ -73,7 +73,6 @@ class TestSummarizationTriggerContract:
             model=model,
             main_llm_context_window=MAIN_LLM_MAX_TOKEN,
             trigger=[("tokens", int(MAIN_LLM_MAX_TOKEN * COMPRESSION_TRIGGER_RATIO))],
-            keep=("messages", 10),
         )
         return inst
 

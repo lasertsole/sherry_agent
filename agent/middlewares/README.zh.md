@@ -113,7 +113,6 @@ middleware = [
         model=auxiliary_llm,
         main_llm_context_window=main_llm_max_tokens,
         trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
-        keep=("messages", 10),
     ),
 ]
 # create_agent(model=main_llm, tools=tools, middleware=middleware, ...)
@@ -136,7 +135,6 @@ middleware = [
             ("messages", 40),
             ("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO)),
         ],
-        keep=("messages", 10),
     ),
     IterationBudget(60),
     ToolGuardrails(),
@@ -737,7 +735,6 @@ agent = create_agent(
             model=auxiliary_llm,
             main_llm_context_window=main_llm_max_tokens,
             trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
-            keep=("messages", 10),
         ),
     ],
 )

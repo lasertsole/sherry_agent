@@ -117,7 +117,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     ├── child_session_key별로 독립적인 비동기 SQLite checkpointer
   │     └── create_agent()로 7겹의 미들웨어 구성:
   │           ├── Summarization(model=<보조 LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
+  │           │                  ("tokens",0.80×main_window)])
   │           ├── IterationBudget(60)      — 최대 반복 횟수
   │           ├── ToolGuardrails()         — 도구 안전 가드레일
   │           ├── OutputRepetitionGuard()  — 출력 반복 억제

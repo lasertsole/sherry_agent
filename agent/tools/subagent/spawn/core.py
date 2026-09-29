@@ -890,7 +890,6 @@ def _build_child_middlewares(
                     int(main_llm_context_window * SUMMARIZATION["compression_trigger_ratio"]),
                 ),
             ],
-            keep=("messages", 10),
         ),
         IterationBudget(ITERATION_BUDGET["worker_max_iterations"]),
         ToolGuardrails(),

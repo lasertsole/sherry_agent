@@ -461,7 +461,6 @@ class _CompressionHarness:
         self.middleware = Summarization(
             model=self.aux,
             trigger=[("tokens", 80_000)],
-            keep=("messages", 10),
             main_llm_context_window=window,
             need_update_system_prompt=False,
         )

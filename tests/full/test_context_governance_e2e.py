@@ -447,7 +447,6 @@ def _component_middleware(model: _CountingLLM) -> Summarization:
     return Summarization(
         model=model,
         trigger=[("tokens", 80_000)],
-        keep=("messages", 10),
         main_llm_context_window=_CTX_WINDOW,
         need_update_system_prompt=False,
     )

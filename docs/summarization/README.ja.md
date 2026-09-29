@@ -51,7 +51,7 @@ AIMessage(<summary>, lc_source="summarization")
 | メインエージェント（`agent/core.py:204`） | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
 | ワーカー/サブエージェント（`agent/tools/subagent/spawn/core.py:909`） | `("messages", 40)` **または** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`（デフォルト） |
 
-どちらも `main_llm_context_window=main_llm_max_tokens`（`MAIN_LLM_MAX_TOKEN` 由来）と `keep=("messages", 10)` を渡します。
+どちらも `main_llm_context_window=main_llm_max_tokens`（`MAIN_LLM_MAX_TOKEN` 由来）を渡します。
 
 ## 🪙 トークン推定（トークナイザなし）
 
@@ -156,7 +156,7 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 
 ## ⚠️ 正直な限界
 
-- **`keep=("messages", 10)` は受け取られるが使用されません。** コンストラクタは API 互換のために保存するだけ; 末尾保持は予算ベース（`PRESERVE_RATIO` × ウィンドウ、[2 000, 15 000] にクランプ）にルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。`keep` を変えても効果はありません。
+- **末尾保持は予算ベースであり、メッセージ件数ではありません。** 保持予算は `PRESERVE_RATIO` × ウィンドウを [2 000, 15 000] にクランプし、ルーターの `TRUNCATABLE_RECENT_SKIP` マージンを加えたものです。コンストラクタは `keep` 引数を受け取りません。
 - **飾りインポート。** `summarization/core.py` 先頭の `json`、`hashlib`、`SUMMARY_TRIM_TOKENS`、`AUTO_CONTINUE_PROMPT` はインポートされるが一度も読まれません。`DEGRADATION_MONITOR_COUNT` と `FILE_OPS_SECTION_MAX_CHARS` は `config/features/agent_side/summarization.py` の `SUMMARIZATION` TypedDict に定義があるが消費者はいません。
 - **TTL レジストリは本番に接続されていません。** `record_first_seen` / `select_expired` / `truncate_expired`（および `PRUNE_TTL_SECONDS`、`TTL_REGISTRY_MAX_ENTRIES`）を消費するのはテストだけです; ミドルウェアはもっぱら `truncate_to_budget` を使います。`agent/` 全域の grep でも TTL トリオの本番呼び出し箇所は見つかりません。レジストリは揮発性でもあります（インメモリ、`tool_call_id` キー、再起動で喪失）。
 - **残存するが不活性なコード。** `_preemptive_check`（overflow.py:148）と `_preemptive_truncate`（compression.py:420）は参照専用です: これらが実装する 2 バンドの先取りに到達する本番呼び出し箇所はありません。

@@ -51,7 +51,7 @@ AIMessage(<summary>, lc_source="summarization")
 | 메인 에이전트(`agent/core.py:204`) | `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `True` |
 | 워커/서브에이전트(`agent/tools/subagent/spawn/core.py:909`) | `("messages", 40)` **또는** `("tokens", int(main_llm_max_tokens * 0.80))` | `auxiliary_llm` | `False`(기본값) |
 
-둘 다 `main_llm_context_window=main_llm_max_tokens`(`MAIN_LLM_MAX_TOKEN`에서 유래)와 `keep=("messages", 10)`을 전달합니다.
+둘 다 `main_llm_context_window=main_llm_max_tokens`(`MAIN_LLM_MAX_TOKEN`에서 유래)를 전달합니다.
 
 ## 🪙 토큰 추정 (토크나이저 없음)
 
@@ -156,7 +156,7 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 
 ## ⚠️ 정직함과 한계
 
-- **`keep=("messages", 10)`은 받아들여지지만 사용되지 않습니다.** 생성자는 API 호환성을 위해 저장할 뿐; 꼬리 보존은 예산 기반(`PRESERVE_RATIO` × 윈도우, [2 000, 15 000] 클램프)에 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. `keep`을 바꿔도 효과가 없습니다.
+- **꼬리 보존은 예산 기반이며 메시지 개수가 아닙니다.** 보존 예산은 `PRESERVE_RATIO` × 윈도우를 [2 000, 15 000]으로 클램프하고 라우터의 `TRUNCATABLE_RECENT_SKIP` 마진을 더한 것입니다. 생성자는 `keep` 인자를 받지 않습니다.
 - **문서 장식용 임포트.** `summarization/core.py` 상단의 `json`, `hashlib`, `SUMMARY_TRIM_TOKENS`, `AUTO_CONTINUE_PROMPT`는 임포트되지만 절대 읽히지 않습니다. `DEGRADATION_MONITOR_COUNT`와 `FILE_OPS_SECTION_MAX_CHARS`는 `config/features/agent_side/summarization.py`의 `SUMMARIZATION` TypedDict에 정의되지만 소비자가 없습니다.
 - **TTL 레지스트리는 프로덕션에 연결되어 있지 않습니다.** `record_first_seen` / `select_expired` / `truncate_expired`(및 `PRUNE_TTL_SECONDS`, `TTL_REGISTRY_MAX_ENTRIES`)는 테스트만 소비합니다; 미들웨어는 오직 `truncate_to_budget`만 사용합니다. `agent/` 전역 grep에서 TTL 트리오의 프로덕션 호출 지점은 발견되지 않습니다. 레지스트리는 또한 휘발적입니다(인메모리, `tool_call_id` 키, 재시작 시 소실).
 - **남아 있지만 비활성인 코드.** `_preemptive_check`(overflow.py:148)와 `_preemptive_truncate`(compression.py:420)는 참조 전용입니다: 이들이 구현하는 2-밴드 선점에 도달하는 프로덕션 호출 지점은 없습니다.

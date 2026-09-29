@@ -98,7 +98,6 @@ def _make_middleware() -> summarization_module.Summarization:
     return summarization_module.Summarization(
         model=StubModel(),
         trigger=[("tokens", TRIGGER_TOKENS)],
-        keep=("messages", 10),
         main_llm_context_window=CTX_WINDOW,
     )
 

@@ -117,7 +117,7 @@ _execute_subagent(run, system_prompt, user_message, ...)
   │     ├── child_session_key ごとに独立した非同期 SQLite checkpointer
   │     └── create_agent() で 7 層のミドルウェアを構成：
   │           ├── Summarization(model=<補助 LLM>, trigger=[("messages",40),
-  │           │                  ("tokens",0.80×main_window)], keep=("messages",10))
+  │           │                  ("tokens",0.80×main_window)])
   │           ├── IterationBudget(60)      — 最大反復回数
   │           ├── ToolGuardrails()         — ツール安全ガードレール
   │           ├── OutputRepetitionGuard()  — 出力反復抑制

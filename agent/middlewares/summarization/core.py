@@ -256,7 +256,6 @@ class Summarization(
         self,
         model,
         trigger: list | None = None,
-        keep: tuple = ("messages", 10),
         main_llm_context_window: int | None = None,
         need_update_system_prompt: bool = False,
         memory_store: Any = None,
@@ -265,7 +264,6 @@ class Summarization(
     ):
         self._model = model
         self._trigger = trigger or [("tokens", 80_000)]
-        self._keep = keep
         self._main_llm_context_window = main_llm_context_window
         self._need_update_system_prompt = need_update_system_prompt
         self._compress_last_turn: bool = False
