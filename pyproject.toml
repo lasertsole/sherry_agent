@@ -51,6 +51,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-timeout>=2.4.0",
     "import-linter>=2.1",
+    "pytest-cov>=7.1.0",
 ]
 
 [tool.pytest.ini_options]
@@ -71,6 +72,27 @@ markers = [
     "system: full system",
     "regression: regression tests",
     "llm_e2e: real LLM API tests (costs tokens)",
+    "perf: timing guards (growth ratios, run with -s to see the numbers)",
+]
+
+[tool.coverage.run]
+# Source is measured per-package by the command line; these are the things that
+# must never be counted — test code itself, vendored third-party trees, and the
+# generated DB/log artifacts.
+omit = [
+    "tests/*",
+    "*/vendored_*",
+    "skills/builtin/**/scripts/graph_rag/vendored_*",
+]
+
+[tool.coverage.report]
+# Keep a missing-line report readable: the CI gate never chases 100%, it reads
+# the module list to decide what to cover next.
+skip_covered = true
+exclude_also = [
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "@overload",
 ]
 
 [tool.uv.sources]

@@ -74,3 +74,8 @@ tasks-*.yml
 models/extract_model/mineru_config.json
 
 client/repros/
+
+# Coverage / perf artifacts — regenerated per run
+.coverage
+.coverage.*
+htmlcov/
