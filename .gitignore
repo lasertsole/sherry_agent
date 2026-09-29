@@ -41,8 +41,14 @@ logs/*.log
 *.db
 *.db-shm
 *.db-wal
-# live persona workspace (root only); tests/workspace must stay trackable
+# live persona workspace (root only); tests/workspace must stay trackable.
+# The two agent-written notes under memory/ are RUNTIME state — the memory tool
+# rewrites them mid-session — so they are deliberately untracked even though
+# USER.md (authored) stays versioned; file_sync recreates them from the
+# workspace/template copies on a fresh boot.
 /workspace/
+/workspace/memory/FACTS.md
+/workspace/memory/MEMORY.md
 skills/auto
 skills/plugins/*.state.json
 **/wiki/
