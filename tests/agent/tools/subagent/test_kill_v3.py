@@ -98,3 +98,32 @@ class TestListKillableChildren:
     def test_no_children(self):
         result = list_killable_children("nonexistent")
         assert result == []
+
+
+@pytest.mark.asyncio
+async def test_tasks_are_registered_under_the_run_id_not_the_session_key():
+    """Why kill cancels by run id: the registry never keys tasks by session.
+
+    A session-keyed queue clear (``get_task(child_session_key)``) could not match
+    anything, which is why that no-op helper was removed; cancel_task(run_id) is
+    the whole cancellation story.
+    """
+    import asyncio
+    import contextlib
+
+    from agent.tools.subagent.registry import register_task
+    from agent.tools.subagent.registry.task_refs import get_task
+
+    async def _never() -> None:
+        await asyncio.sleep(30)
+
+    task = asyncio.create_task(_never())
+    try:
+        register_task("r1", task)
+
+        assert get_task("r1") is task
+        assert get_task("agent:main:subagent:abc") is None
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task

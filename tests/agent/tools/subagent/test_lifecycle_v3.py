@@ -1,4 +1,5 @@
 from agent.tools.subagent.registry.lifecycle import (
+    _apply_kill_reconciliation,
     _should_suspend_pending_final_delivery,
     _should_retain_attachments,
     _arbitrate_kill_vs_completion,
@@ -150,6 +151,22 @@ class TestArbitrateKillVsCompletion:
         assert result.kill_reconciliation.reconciled is True
         assert result.suppress_completion_delivery is False
 
+    def test_ok_without_a_result_still_loses_to_the_kill(self):
+        # The override needs the provider's TEXT, not just its status: an OK
+        # with no result would deliver an empty completion.
+        kr = KillReconciliationState(
+            snapshot_execution=ExecutionState(
+                outcome=RunOutcome(status=RunOutcomeStatus.KILLED),
+            ),
+            reconciled=False,
+        )
+        run = _make_run(
+            kill_reconciliation=kr,
+            completion=CompletionState(result_text=""),
+        )
+        result = _arbitrate_kill_vs_completion(run, RunOutcome(status=RunOutcomeStatus.OK))
+        assert result.kill_reconciliation.reconciled is True
+
     def test_kill_takes_precedence_on_error(self):
         kr = KillReconciliationState(
             snapshot_execution=ExecutionState(
@@ -174,3 +191,20 @@ class TestMarkTerminalOwner:
         run = _make_run(terminal_owner="existing")
         result = _mark_terminal_owner(run, "outcome:ok")
         assert result.terminal_owner == "existing"
+
+
+class TestApplyKillReconciliation:
+    def test_finalises_once_and_is_idempotent(self):
+        pending = _make_run(kill_reconciliation=KillReconciliationState(reconciled=False))
+
+        reconciled = _apply_kill_reconciliation(pending)
+
+        assert reconciled.kill_reconciliation.reconciled is True
+        # A copy: the record handed in stays untouched.
+        assert pending.kill_reconciliation.reconciled is False
+        assert _apply_kill_reconciliation(reconciled) is reconciled
+
+    def test_a_run_without_a_kill_is_untouched(self):
+        run = _make_run()
+
+        assert _apply_kill_reconciliation(run) is run
