@@ -894,16 +894,6 @@ def _summary_tags():
     )
 
 
-def fresh_sid(prefix="t8-s"):
-    """Unique session id string, defensively cleared from the mem register."""
-    s = f"{prefix}-{uuid.uuid4().hex[:8]}"
-    try:
-        state_register_mem.clear_session(s)
-    except Exception:  # noqa: S110
-        pass
-    return s
-
-
 # ======================================================================
 # Compression: strategy pipeline, aggressive truncate, apply modes,
 # recovery context, degradation monitoring, empty-response detection

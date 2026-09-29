@@ -100,9 +100,9 @@ def wrapper_disabled_state():
     """The wrapper's per-turn state uses runtime.session.state_register_mem.
 
     Use the real (in-memory) register so set_state/get_state work exactly
-    as they would in production. Ensure a unique session per test to avoid
-    cross-test leakage (the auto `clean_registers` fixture clears all
-    sessions between tests).
+    as they would in production, and give each test its OWN session id — that
+    is what isolates them (the empty autouse `clean_registers` fixture this
+    docstring used to credit cleared nothing).
     """
     yield
 

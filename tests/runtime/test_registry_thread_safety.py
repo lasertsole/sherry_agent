@@ -73,32 +73,6 @@ class SlowDict(dict):
         super().__setitem__(key, value)
 
 
-class RampSlowDict(dict):
-    """dict whose FIRST contains call sleeps long, later ones short.
-
-    Two threads racing on a check-then-act ``key not in d`` both observe the
-    key missing regardless of arrival order (the late thread finishes its
-    short check while the early thread is still asleep), which makes the
-    lost-update DETERMINISTIC instead of scheduler-dependent.
-    """
-
-    def __init__(self, *args, first_delay: float = 0.1, rest_delay: float = 0.005, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._first_delay = first_delay
-        self._rest_delay = rest_delay
-        self._contains_calls = 0
-        self.setitem_count = 0
-
-    def __contains__(self, key) -> bool:
-        self._contains_calls += 1
-        time.sleep(self._first_delay if self._contains_calls == 1 else self._rest_delay)
-        return super().__contains__(key)
-
-    def __setitem__(self, key, value) -> None:
-        self.setitem_count += 1
-        super().__setitem__(key, value)
-
-
 class RaceWriteDict(dict):
     """Fast __contains__; the FIRST __setitem__ sleeps BEFORE storing.
 

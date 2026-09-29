@@ -2,7 +2,8 @@
 
 Consolidates the former per-type-directory conftests (the pre-mirror ``unit`` and
 ``integration`` trees) after the mirror-structure migration: their autouse safety nets now apply
-suite-wide.
+suite-wide. Markers are declared in ``pyproject.toml`` only — the hook that used to
+re-register them here had drifted out of sync with that list.
 """
 
 import asyncio
@@ -15,21 +16,6 @@ from pathlib import Path
 from unittest.mock import patch
 
 logger = logging.getLogger(__name__)
-
-
-def pytest_configure(config):
-    """Register custom markers and set asyncio mode."""
-    config.addinivalue_line("markers", "asyncio: mark test as async")
-    config.addinivalue_line("markers", "unit: mark test as unit test")
-    config.addinivalue_line("markers", "module: mark test as module test")
-    config.addinivalue_line("markers", "system: mark test as system test")
-    config.addinivalue_line("markers", "integration: mark test as integration test")
-    config.addinivalue_line("markers", "regression: mark test as regression test")
-    config.addinivalue_line(
-        "markers",
-        "llm_e2e: real-LLM network e2e test (slow, costs tokens, order-sensitive; "
-        "deselected by default — run explicitly with `-m llm_e2e`)",
-    )
 
 
 @pytest.fixture
@@ -49,38 +35,6 @@ def unit_test_config():
             yield tmp_path
 
 
-@pytest.fixture
-def tmp_skills_dir(unit_test_config):
-    """Create a temp auto-skills directory with test SKILL.md files."""
-    skills_dir = unit_test_config / "skills" / "auto"
-    skills_dir.mkdir(parents=True, exist_ok=True)
-
-    # Create a test skill
-    test_skill_dir = skills_dir / "test_skill"
-    test_skill_dir.mkdir()
-    (test_skill_dir / "SKILL.md").write_text(
-        "---\nname: test_skill\ndescription: A test skill\n---\n\nThis is a test skill body.",
-        encoding="utf-8",
-    )
-
-    return skills_dir
-
-
-@pytest.fixture
-def message_bus():
-    """Create a fresh MessageBus instance for bus tests."""
-    from bus.core import MessageBus
-
-    return MessageBus()
-
-
-@pytest.fixture(autouse=True)
-def clean_registers():
-    """Clear all register sessions before each test to prevent state leakage."""
-    yield
-    # Cleanup after test if needed
-
-
 @pytest.fixture(autouse=True)
 def _isolated_prompt_data_provider():
     """No test may leak a registered prompt data provider into the next test."""
@@ -88,31 +42,6 @@ def _isolated_prompt_data_provider():
 
     yield
     data_provider.clear_prompt_data_provider()
-
-
-@pytest.fixture
-def mock_state_register_mem():
-    """Provide a clean StateRegisterMeM instance for module tests."""
-    from runtime.session.state_register import StateRegisterMeM
-
-    # Force a fresh instance by clearing the singleton
-    from runtime.session.core import SessionRegister
-
-    if StateRegisterMeM in SessionRegister._instances:
-        del SessionRegister._instances[StateRegisterMeM]
-    reg = StateRegisterMeM()
-    yield reg
-    # Cleanup: clear all sessions
-    for session_id in list(reg._states.keys()):
-        reg.clear_session(session_id)
-
-
-@pytest.fixture
-def tmp_sqlite_db():
-    """Create a temporary SQLite database for StateRegisterDB tests."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        db_path = Path(tmpdir) / "test_state.db"
-        yield db_path
 
 
 @pytest.fixture(autouse=True)
