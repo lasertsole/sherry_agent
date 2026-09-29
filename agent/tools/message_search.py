@@ -283,10 +283,17 @@ class SessionSummarizer:
                     )
                     return None
 
-    async def summarize_all(
+    def summarize_all(
         self, tasks: list[tuple[str, dict[str, Any], str]], query: str
     ) -> list[str | Exception]:
-        """Summarize all sessions with bounded concurrency."""
+        """Summarize all sessions with bounded concurrency (sync: bridges internally).
+
+        Not ``async`` on purpose — the body awaits nothing itself, it hands the
+        coroutine batch to ``run_async``. Declaring it async made the single
+        caller receive an un-awaited coroutine, which ``collect_summaries`` then
+        failed to iterate ("'coroutine' object is not iterable"), so every
+        session search returned an error instead of summaries.
+        """
 
         async def _summarize_all() -> list[str | Exception]:
             max_concurrency = 5
