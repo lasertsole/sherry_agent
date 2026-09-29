@@ -403,7 +403,7 @@ def install_redacting_sink():
 | 沙箱逃逸 | bwrap/seatbelt | 已落地 |
 | 子 Agent 结果注入 | — | **A1: announce 管道无包装** |
 | MCP 不可信内容 | — | **A1: MCP 输出无包装** |
-| HTTP 端点未认证 | — | **P0-4: 上传端点无认证**（已知缺口，待单独跟踪） |
+| HTTP 端点未认证 | — | **上传端点无认证**（已知缺口：网关已做 Origin+token 校验，缺字节签名与声明类型一致性校验） |
 | 推理块泄漏 | — | **B4: 无 think scrubber** |
 | 不可见 Unicode 注入 | — | **A2: 无 Unicode 扫描** |
 ```
