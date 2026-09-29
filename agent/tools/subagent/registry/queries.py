@@ -1,5 +1,7 @@
 """Read-only query functions over the in-memory store, used by spawn/announce/control modules."""
 
+from collections import deque
+
 from ..types.registry import SubagentRunRecord, ExecutionStatus, DeliveryStatus
 from . import memory
 
@@ -14,14 +16,17 @@ def list_descendant_runs(requester_session_key: str) -> list[SubagentRunRecord]:
 
     Builds the requester → runs index once and walks that, so the cost is one
     registry pass plus the BFS — the previous implementation re-scanned every
-    run record (``memory.values()``) once per expanded node (O(N*D)).
+    run record (``memory.values()``) once per expanded node (O(N*D)). The
+    frontier is a deque: ``list.pop(0)`` shifts the whole queue on every visit,
+    which is quadratic for a wide fan-out (one requester holding thousands of
+    children).
     """
     index = build_read_index()
     result: list[SubagentRunRecord] = []
-    queue = [requester_session_key]
+    queue = deque([requester_session_key])
     visited: set[str] = set()
     while queue:
-        current = queue.pop(0)
+        current = queue.popleft()
         if current in visited:
             continue
         visited.add(current)
