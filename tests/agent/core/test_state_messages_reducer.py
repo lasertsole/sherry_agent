@@ -1,19 +1,20 @@
-"""Reducer/channel contract for the agent state ``messages`` key (P1-4 / P1-5).
+"""Reducer/channel contract for the agent state ``messages`` key.
 
-Evaluation verdict these tests lock in (see ``TODO/DEEPAGENTS_BORROWING_PLAN.md``):
+Two proposals were evaluated and rejected; these tests lock the verdict in:
 
-P1-5 — *covered by LangGraph's standard ``add_messages``*, so no custom reducer
-is added. The plan's sample reducer skips a same-id write; the standard reducer
-*replaces* it, and P1-9 (in-place tagging via ``model_copy``) depends on that
-replacement. A skip-on-duplicate reducer would silently drop the tag.
+* a **custom skip-on-duplicate reducer** — *covered by LangGraph's standard
+  ``add_messages``*, so none is added. A skip-on-duplicate reducer drops a
+  same-id write, while the standard reducer *replaces* it, and in-place tagging
+  (``model_copy`` on the same id) depends on that replacement; skipping would
+  silently drop the tag.
+* a **DeltaChannel** — it is available in the installed langgraph and the
+  project's saver implements ``get_delta_channel_history``, but Sherry's
+  ``aclean_old_checkpoints`` keeps only the newest checkpoint per thread. That
+  pruning severs DeltaChannel's ancestor-write replay and makes delta state
+  reconstruct as **empty** (LangGraph documents this hazard).
 
-P1-4 — DeltaChannel is available in the installed langgraph and the project's
-saver implements ``get_delta_channel_history``, but Sherry's
-``aclean_old_checkpoints`` keeps only the newest checkpoint per thread. That
-pruning severs DeltaChannel's ancestor-write replay and makes delta state
-reconstruct as **empty** (LangGraph documents this hazard). The tests below
-pin the current safe choice: the ``messages`` channel stays the standard
-snapshotting ``add_messages`` reducer, not a ``DeltaChannel``.
+The tests below pin the current safe choice: the ``messages`` channel stays the
+standard snapshotting ``add_messages`` reducer, not a ``DeltaChannel``.
 """
 
 from __future__ import annotations

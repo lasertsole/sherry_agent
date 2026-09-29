@@ -1,4 +1,4 @@
-"""Tests for middleware scaffolding protection (P1-6).
+"""Tests for middleware scaffolding protection.
 
 Mirrors deepagents' ``test_graph.py::TestRequiredMiddlewareNamesCoverage`` and
 its exclusion-wiring tests, adapted for Sherry's dual-chain model. The

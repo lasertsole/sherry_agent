@@ -25,7 +25,7 @@ from .humanInTheLoop import HumanInTheLoop as HumanInTheLoop, HITLConfig as HITL
 
 from . import llm_capability_cache as llm_capability_cache
 
-# Middleware scaffolding protection (P1-6). Imported LAST so every required
+# Middleware scaffolding protection. Imported LAST so every required
 # middleware class above is already bound: scaffolding.py imports the classes
 # from their concrete submodules, and re-exporting it here (rather than having
 # it import this package) keeps the dependency one-way.
