@@ -92,8 +92,9 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         enqueue=True,
     )
 
-    # 5. Exception/error log (captures ERROR and CRITICAL only, with full
-    #    stack traces and variable diagnostics)
+    # 5. Exception/error log (captures ERROR and CRITICAL only, with the failing
+    #    source line of every frame — no `diagnose` variable dump: frame values
+    #    are printed verbatim and hold identifiers no redaction family knows)
     logger.add(
         os.path.join(error_dir, f"error_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
         level="ERROR",
@@ -103,5 +104,5 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         encoding="utf-8",
         enqueue=True,
         backtrace=True,
-        diagnose=True,
+        diagnose=False,
     )

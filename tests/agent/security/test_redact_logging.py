@@ -43,12 +43,25 @@ logger.warning("Authorization: Bearer {}", secrets["bearer"])
 logger.error("db password: {}", secrets["password"])
 logger.debug("session {}", secrets["jwt"])
 logger.info("ordinary line: the token budget was refreshed")
+
+# An exception carries two more paths into a log record: its own message text,
+# and (on the error sink, which sets diagnose=True) the annotation of every name
+# shown on each frame's source line.
+def failing_call(api_key, chat_id):
+    raise RuntimeError(f"refused {api_key} for {chat_id}")
+
+try:
+    failing_call(secrets["openai"], "chat-42")
+except Exception:
+    logger.exception("channel send failed")
+
 logger.complete()  # flush the enqueue=True sinks
 
 text = "\\n".join(p.read_text(encoding="utf-8") for p in log_dir.rglob("*.log"))
 print("LEAKED:" + ",".join(name for name, value in secrets.items() if value in text))
 print("SENTINEL:" + str("\\u00abredacted" in text))
 print("ORDINARY:" + str("the token budget was refreshed" in text))
+print("TRACEBACK:" + str("RuntimeError" in text))
 print("FILES:" + str(len(list(log_dir.rglob("*.log")))))
 """
 
@@ -64,10 +77,10 @@ def _run_probe() -> dict[str, str]:
     assert result.returncode == 0, result.stderr
     lines = {}
     for line in result.stdout.splitlines():
-        for prefix in ("LEAKED:", "SENTINEL:", "ORDINARY:", "FILES:"):
+        for prefix in ("LEAKED:", "SENTINEL:", "ORDINARY:", "TRACEBACK:", "FILES:"):
             if line.startswith(prefix):
                 lines[prefix[:-1]] = line[len(prefix) :]
-    assert set(lines) == {"LEAKED", "SENTINEL", "ORDINARY", "FILES"}, result.stdout
+    assert set(lines) == {"LEAKED", "SENTINEL", "ORDINARY", "TRACEBACK", "FILES"}, result.stdout
     return lines
 
 
@@ -78,3 +91,14 @@ def test_no_secret_reaches_the_log_files_and_ordinary_text_survives():
     assert out["SENTINEL"] == "True", "no redaction sentinel: the patcher is not installed"
     assert out["ORDINARY"] == "True", "redaction corrupted ordinary log text"
     assert int(out["FILES"]) >= 3, f"expected the info/all/error sinks, got {out['FILES']}"
+
+
+def test_a_secret_in_an_exception_is_redacted_without_losing_the_traceback():
+    """The two paths a patcher cannot see by itself: the exception's own text and
+    the ``diagnose`` annotation of the values on its source lines."""
+    out = _run_probe()
+
+    assert out["LEAKED"] == "", f"a secret escaped through the exception: {out['LEAKED']}"
+    assert out["TRACEBACK"] == "True", (
+        "the exception is gone from the log: redaction must rewrite it, not drop it"
+    )
