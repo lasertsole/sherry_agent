@@ -132,6 +132,10 @@ from .lsp import (
     LSP as LSP,
     LspConfig as LspConfig,
 )
+from .ripgrep import (
+    RIPGREP as RIPGREP,
+    RipgrepConfig as RipgrepConfig,
+)
 from .ptc import (
     PTC as PTC,
     PtcConfig as PtcConfig,

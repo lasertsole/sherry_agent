@@ -13,8 +13,8 @@ import json
 import pytest
 
 from agent.tools.file_tools.search_files import build_search_files_tool
-from agent.tools.pub_base import path_utils
-from config.features import TOOLS_TIMEOUTS
+from agent.tools.pub_base import path_utils, rg_resolver
+from config.features import RIPGREP, TOOLS_TIMEOUTS
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -32,6 +32,12 @@ def virtual_root(tmp_path, monkeypatch):
 
 def _search(**kwargs) -> dict:
     return json.loads(build_search_files_tool()._core(session_id=SESSION, **kwargs))
+
+
+def _force_python_engine(monkeypatch) -> None:
+    """Pin the walk for cases that assert walk-only bookkeeping."""
+    monkeypatch.setitem(RIPGREP, "enabled", False)
+    rg_resolver.reset_cache()
 
 
 class TestTimeBudget:
@@ -75,7 +81,16 @@ class TestMatchCap:
 
 class TestPruneDirs:
     @pytest.mark.parametrize("target", ["content", "files"])
-    def test_prune_dirs_are_skipped_and_counted(self, virtual_root, target):
+    def test_prune_dirs_are_skipped_and_counted(self, virtual_root, monkeypatch, target):
+        """The walk prunes the pseudo-filesystem dirs and reports how many.
+
+        The count is a property of the walk — ripgrep cannot report what it
+        excluded through a glob — so this case pins the Python engine on purpose;
+        the rg engine's side of the same contract (the pruned directory yields
+        no results, and nothing is claimed about a count) lives in
+        test_search_engines.py.
+        """
+        _force_python_engine(monkeypatch)
         (virtual_root / "proc").mkdir()
         (virtual_root / "proc" / "needle.txt").write_text("needle\n", encoding="utf-8")
         (virtual_root / "keep").mkdir()

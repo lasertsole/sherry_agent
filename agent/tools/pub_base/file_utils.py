@@ -1,5 +1,14 @@
 from pathlib import Path
 
+#: Directory names the walker refuses to descend into, at any depth. Dot-named
+#: directories are skipped wholesale by :func:`should_skip_dir`, so only the
+#: non-dot entries need naming here. Kept as a constant because the ripgrep
+#: backend builds equivalent ``--glob`` exclusions from it — one list, two
+#: engines, no drift.
+SKIP_DIR_NAMES: frozenset[str] = frozenset(
+    {"__pycache__", "node_modules", "venv", ".venv", ".git", ".hg", ".svn", ".idea", ".mypy_cache"}
+)
+
 
 def is_text_file(path: Path, sample_size: int = 4096) -> bool:
     """Check if a file appears to be a text file (no null bytes in sample)."""
@@ -18,16 +27,4 @@ def should_skip_dir(d: Path) -> bool:
     name = d.name
     if name.startswith(".") and name not in (".", ".."):
         return True
-    if name in (
-        "__pycache__",
-        "node_modules",
-        ".venv",
-        "venv",
-        ".git",
-        ".hg",
-        ".svn",
-        ".idea",
-        ".mypy_cache",
-    ):
-        return True
-    return False
+    return name in SKIP_DIR_NAMES

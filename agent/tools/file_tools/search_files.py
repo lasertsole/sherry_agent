@@ -1,12 +1,20 @@
-"""Search files tool — pure Python, cross-platform.
+"""Search files tool — ripgrep when available, pure Python otherwise.
 
 Supports two search targets:
   - ``content``: grep-like regex search inside files (returns matches with line numbers)
   - ``files``: glob-like filename search (returns matching file paths)
 
-No external dependencies (rg, grep, find) required.
+Two engines, one contract. ripgrep does the scanning when it can be resolved
+(``agent/tools/pub_base/rg_resolver.py``) and its engine can express the
+pattern; everything else — no ``rg`` on this host, a lookaround or backreference
+in the pattern, a hard rg failure — falls through to the pure-Python walk below,
+so the tool never depends on an external binary being present. Both engines
+return the same envelope and honour the same bounds (time budget, match cap,
+prune list), which is what makes paging and the truncation markers trustworthy
+either way.
 """
 
+import asyncio
 import fnmatch
 import json
 import re
@@ -19,6 +27,8 @@ from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
 from agent.tools.file_tools.search_scan import ScanState, SearchQuery, bounded_walk
+from agent.tools.pub_base.rg_backend import pattern_needs_python, rg_search, rg_search_files
+from agent.tools.pub_base.rg_resolver import resolve_rg
 from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
@@ -224,12 +234,34 @@ class SearchFilesTool(BaseTool):
             )
 
         state = ScanState.start(offset, limit)
-        if target == "files":
-            result = _search_files(SearchQuery(pattern, resolved), state)
-        else:
-            result = _search_content(SearchQuery(pattern, resolved, file_glob, context), state)
+        query = (
+            SearchQuery(pattern, resolved)
+            if target == "files"
+            else SearchQuery(pattern, resolved, file_glob, context)
+        )
 
+        result = self._engine(query, target, state)
         return json.dumps(result, ensure_ascii=False)
+
+    @staticmethod
+    def _engine(query: SearchQuery, target: str, state: ScanState) -> dict:
+        """Run the ripgrep engine, or the Python walk when it cannot serve this query.
+
+        The walk is not a leftover: it is the answer for hosts without ``rg``, for
+        patterns using constructs ripgrep's engine lacks, and for the hard failures
+        where a partial rg result must not be presented as a complete one.
+        """
+        binary = resolve_rg()
+        if binary is not None and not (target != "files" and pattern_needs_python(query.pattern)):
+            result = (
+                rg_search_files(query, state, binary=binary)
+                if target == "files"
+                else rg_search(query, state, binary=binary)
+            )
+            if result is not None:
+                return result
+
+        return _search_files(query, state) if target == "files" else _search_content(query, state)
 
     @override
     def _run(
@@ -261,7 +293,11 @@ class SearchFilesTool(BaseTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = session_id or _extract_session_id(run_manager)
-        return self._core(pattern, target, path, file_glob, limit, offset, context, session_id)
+        # The scan (walk or child process) is blocking work; run it in a worker
+        # thread so a search cannot stall the event loop for its whole budget.
+        return await asyncio.to_thread(
+            self._core, pattern, target, path, file_glob, limit, offset, context, session_id
+        )
 
 
 def build_search_files_tool() -> SearchFilesTool:
