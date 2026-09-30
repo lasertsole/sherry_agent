@@ -4,7 +4,7 @@
 > **创建日期**: 2026-09-28
 > **审查范围**: 6 个 Agent 项目（hermes-agent、deepagents、openclaw、codex-main、opencode-dev、oh-my-openagent-dev）的安全防御机制
 > **审查方法**: 3 路并行子代理逐文件审查
-> **状态**: 阶段 1、2、3、5、6、8 已落地（2026-09-30），阶段 9 随各阶段落地；阶段 4、7 待执行，A6 经评估**不适用**。落点与提案的差异、以及过程中发现的缺陷见下。
+> **状态**: 全部阶段（1–9）已落地（2026-09-30）；A6 经评估**不适用**。落点与提案的差异、以及过程中发现的缺陷见下。
 
 ---
 
@@ -55,9 +55,22 @@
 - 各阶段测试随阶段落地并进入门禁分组（A 单元 / B 集成 / C 回归）。
 - `tests/docs/test_threat_model_claims.py` 扩至 6 组契约：文档里的每个 `.py` 路径必须存在、示例 import 必须可导入、scope 名与扫描窗口必须等于代码常量、边界表点名的防护必须真实、**策略/运行手册两节必须在且 hijack 两档与代码集合一致**、**运行手册点名的日志信号必须在代码里真实存在**——最后这条当场抓到文档写成 `Security threat detected` 而代码是 `Potential security threat detected`。
 
-### 待执行
+**阶段 4 — 记忆写入注入拦截（A4）+ 终端控制序列剥离（A5）**
 
-阶段 4（记忆写入注入拦截 A4 + 终端控制序列剥离 A5）、阶段 7（推理块剥离 B4 + PII 脱敏 B3）。阶段 9 的测试与 CI 集成随各阶段落地，无独立余量。
+- A4 落点修正：先按计划在 memory 工具边界加了一道 strict 档守卫，**随即回退**——strict 档对"介绍系统的散文"误报（实测拒绝提到 `.bashrc`、`KEY=` 名字的正当笔记），而真正缺陷在原表本身：canonical 注入短语"ignore all previous instructions"因填充间隙缺失**根本匹配不上**（量词只允许 `\w+`，漏了前导空格）。改为修表并补 C2/改写指令族；两张表继续分开的理由写在 `memory.py` 的注释里。
+- 误报同时被修掉：`cobalt strike|sliver|havoc|mythic|brainworm` 会把"Sliver-haired"这类普通英文当成 C2 框架名，改为要求工具形限定词（`sliver server` 等）或紧邻 C2 标记；`threat_patterns.py` 与 `memory.py` 同步。
+- A5 新建 `agent/security/terminal_output.py`，接在 `terminal.py` 的两个解码点（同步 + 异步）。其测试当场抓到自身两个缺陷：CR 覆写规则把 `foo\r\nbar` 的行首文本吃掉（CRLF 是行终止符，不是覆写），以及转义类 `ESC @-_` 漏掉 `ESC ( B`、`ESC =`（改为 `ESC [中间字节]* 终结字节`）。
+
+**阶段 7 — 推理块剥离（B4）+ PII 脱敏（B3）**
+
+- B4 按本文件预分析落地为**提取 + 重定向**：`StreamingReasoningScrubber` 每回合一个（状态不能放共享模型实例上），`stream_dispatch.py` 把内联 CoT 经 `{"type":"reasoning"}` 通道送前端思考块，而不是丢弃。语料 16 条 × 6 种切分逐点验证"可见文本 + 回收推理"与整段一致；接线做了变异验证（去掉 scrubber 调用 → 3 条接线测试转红）。
+- B3 按预分析实施在**日志边界**：新增 `agent/security/pii.py`（12 位十六进制、跨进程稳定），QQ 插件四条 + 渠道核心一条日志改用假名。模型面经证据确认**没有 PII 路径**：`sender_id` 只用于 cron/用户分类，`chat_id` 只进 `relation_register`/`reply_target`/SDK 调用，`session_id` 由渠道名派生，提示词构造不接收这两个字段；`message_id` 保持原样（平台消息标识，与身份无关，且重投递排查需要它）。
+- **顺带修掉阶段 3 的一个真实缺陷**：日志脱敏只覆盖 message/extra，异常文本不在其中——异常自身的消息（`RuntimeError: bad key sk-…` 形态）与 error sink `diagnose` 的栈帧变量转储都会原样落盘（探针实测）。修法：patcher 用 loguru 自己的 `ExceptionFormatter` 渲染异常、脱敏后接进 message 并清空异常字段（sink 不再二次渲染）；渲染**不带**变量值，`logs/logger.py` 的 error sink 相应关掉 `diagnose`（变量转储会打印聊天 ID 一类任何规则都认不出的值）。四语文档与 `tests/agent/security/test_redact_logging.py` 同步。
+
+**阶段 9 — 测试与 CI 集成（收尾）**
+
+- 新增/更新测试：`tests/agent/tools/test_memory_injection_guard.py`（拦截方向 + 正当笔记放行 + 三条写路径同表）、`tests/agent/security/test_terminal_output.py`（单元 + 真实子进程）、`tests/agent/security/test_think_scrub.py`（切分不变式）、`tests/server/service/test_stream_reasoning_scrub.py`（StreamTurn 接线）、`tests/agent/security/test_pii.py`（跨进程稳定 + 真实渠道代码的日志记录）。
+- `tests/docs/test_threat_model_claims.py` 增至 8 组契约：新增「写入与输出边界」表的机制真实性、以及**接线**校验（strip 调用点 = 解码点、memory 扫描 ≥ 4 处、stream 既脱敏又转发、渠道日志用假名）——这一组抓的正是"模块存在但没人调用"。
 
 ### B3 PII 脱敏——实施约束与功能影响评估
 
@@ -687,17 +700,17 @@ if is_untrusted_tool(tool_name):
 
 | 维度                | 措施                                                                                    | 来源                                         | 状态                                                                                                                                                                                     |
 | ------------------- | --------------------------------------------------------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **不可信输出包装**  | web_search/tavily_search/message_search/`mcp_*` 输出包装在 `<untrusted_tool_result>` 中 | hermes + openclaw                            | ✅ `agent/security/untrusted_wrapper.py`（terminal 属阶段 4，未接线）                                                                                                                    |
+| **不可信输出包装**  | web_search/tavily_search/message_search/`mcp_*` 输出包装在 `<untrusted_tool_result>` 中 | hermes + openclaw                            | ✅ `agent/security/untrusted_wrapper.py`（terminal 输出另走控制序列剥离，见本表「终端控制序列」一行——terminal 不在包装集内，因为它的输出是命令结果而非外部内容）                          |
 | **注入模式扫描**    | 3 级 scope 扫描（all/context/strict）                                                   | hermes `threat_patterns.py`                  | ✅ `agent/security/threat_patterns.py`（计划样例的有界填充有缺陷，已修）                                                                                                                 |
 | **分隔符防伪**      | 内容中的伪造 `</untrusted_tool_result>` 标签被中和                                      | hermes `_neutralize_delimiters`              | ✅ `untrusted_wrapper.neutralize_delimiters`（包装前执行）                                                                                                                               |
-| **记忆写入拦截**    | memory 工具写入前扫描，strict scope 拦截注入文本                                        | openclaw `memory_store`                      | 未实现（阶段 4）                                                                                                                                                                         |
+| **记忆写入拦截**    | memory 工具写入前扫描，拦截注入文本                                                     | openclaw `memory_store`                      | ✅ `agent/tools/memory.py::_scan_memory_content`（`add`/`replace`/flush 三条路径；**不**用 scanner 的 strict 档——记忆条目是*介绍系统*的散文，strict 会拒绝提到 `.bashrc`/`KEY=` 的正当笔记，故保留自有表并补齐填充间隙） |
 | **密钥脱敏**        | vendor prefix/auth header/JWT/PEM/URL/JSON/config 各族                                  | hermes `redact.py`                           | ✅ `agent/security/redact.py`（预筛 + 幂等 + 导入时快照；修掉 PEM 量词陷阱）                                                                                                             |
-| **日志脱敏**        | 所有日志记录自动脱敏                                                                    | hermes `RedactingFormatter`                  | ✅ `redact_formatter.py` + `logs/logger.py`（用公开 patcher，非计划里的私有 `_sink`；`diagnose` 的 traceback 局部变量不覆盖）                                                            |
-| **终端控制序列**    | 剥离 CPR/DSR/SGR 序列                                                                   | hermes `_strip_leaked_terminal_responses`    | 未实现（阶段 4）                                                                                                                                                                         |
+| **日志脱敏**        | 所有日志记录自动脱敏（含异常文本）                                                      | hermes `RedactingFormatter`                  | ✅ `redact_formatter.py` + `logs/logger.py`（公开 patcher）——**含异常**：patcher 自行用 loguru formatter 渲染 traceback 后脱敏并清空异常字段（只靠 message 脱敏会漏掉异常消息文本；同时把 error sink 的 `diagnose` 关掉，变量转储会原样打印聊天 ID 一类无法识别的值） |
+| **终端控制序列**    | 剥离 CPR/DSR/SGR 序列                                                                   | hermes `_strip_leaked_terminal_responses`    | ✅ `agent/security/terminal_output.py`（CSI/OSC/其余转义 + C0 + CR 覆写语义；**两个** spawn/解码点都接线；自带测试当场抓到 CRLF 丢行与 ESC 类漏 `ESC ( B` 两个缺陷）                       |
 | **env hijack 阻止** | 启动钩子变量始终阻止；加载器变量严格模式下阻止                                          | deepagents `_backend_child_env`              | ✅ `env_scrub._HIJACK_KEYS` / `_LOADER_KEYS`——**分两档**：本机（PRoot）真的导出 `LD_PRELOAD`/`LD_LIBRARY_PATH`，默认剔除会让所有子进程起不来（PTC 63 条超时，回退后 27s 全绿，A/B 实测） |
 | **上下文引用守卫**  | `@file:` 引用走 read deny-list                                                          | hermes `context_references.py`               | **不适用**：本仓没有 `@file:` 式上下文引用功能，无此攻击面（全仓检索为空）                                                                                                               |
-| **推理块剥离**      | `<think>`/`<reasoning>` 块不泄漏到流式输出                                              | hermes `StreamingThinkScrubber`              | 未实现（阶段 7）                                                                                                                                                                         |
-| **PII 脱敏**        | 用户 ID/聊天 ID 哈希化                                                                  | hermes `_hash_id`                            | 未实现（阶段 7）                                                                                                                                                                         |
+| **推理块剥离**      | `<think>`/`<reasoning>` 块不泄漏到流式输出                                              | hermes `StreamingThinkScrubber`              | ✅ `agent/security/think_scrub.py` + `stream_dispatch.py`——**提取+重定向**而非纯剥离：内联 CoT 经 reasoning 通道进前端思考块（纯剥离会让开思考开关的用户看不到任何思考，属功能回退）；切分不变式在语料每个切点验证 |
+| **PII 脱敏**        | 用户 ID/聊天 ID 哈希化                                                                  | hermes `_hash_id`                            | ✅ `agent/security/pii.py` + 渠道日志边界（QQ 四条 + 渠道核心一条）——标识**跨进程稳定**（日志文件里仍可关联），原值留在路由表/回复目标/SDK 调用；模型面本就无 PII（见阶段 7 证据）           |
 | **威胁模型文档**    | 组件/信任边界/数据流/威胁                                                               | deepagents `THREAT_MODEL.md`                 | ✅ `docs/threat-model/README{,.zh,.ja,.ko}.md`（四语组 + 声明校验测试）                                                                                                                  |
 | **安全策略**        | 信任模型：OS 是唯一边界，进程内机制是启发式                                             | hermes `SECURITY.md`                         | ✅ threat-model 的「Security policy」一节                                                                                                                                                |
 | **安全运行手册**    | 运维层面的安全配置指南（启动检查 / 日志信号 / 泄漏处置 / 加固开关）                     | deepagents `openwiki/operations/security.md` | ✅ threat-model 的「Operations」一节                                                                                                                                                     |

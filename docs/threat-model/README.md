@@ -35,13 +35,15 @@ OS-isolation detail.
 |---|---|---|
 | Indirect prompt injection (tool output) | **Untrusted-output fence** (forged delimiters defanged), tool-result eviction, invisible-Unicode scan | — |
 | Injected instructions in web/terminal text | Prompt-injection scanner (below) | Callers must apply it per surface |
-| Memory / skill file injection | Skill scan gate on install | **Blocking scan on memory write** |
-| Secret leakage into logs / tool output | **Redaction engine** on the log pipeline (always on) and on leak-prone tool output, `scrub_env` for child processes | Traceback locals under `diagnose=True` are not covered (see below) |
+| Memory / skill file injection | **Memory-write scan** on all three write paths (a prose-specific table, because a note *about* the system is not an attack) + skill scan gate on install | — |
+| Secret leakage into logs / tool output | **Redaction engine** on the log pipeline (always on, exception text included) and on leak-prone tool output, `scrub_env` for child processes | It removes what its patterns recognise, nothing more |
 | URL credential leakage | **URL redaction**: extra schemes, nested percent-encoding (depth 8), query and presigned parameters | — |
 | Path traversal | `PathGuard` + `O_NOFOLLOW` | — |
 | Shell injection | `agent/middlewares/humanInTheLoop/detection.py` blocklist (12 hardline + 59 dangerous rules) | — |
 | Sandbox escape | `bwrap` / `seatbelt` | — |
-| Reasoning-block leakage into the stream | — | **Think scrubber** |
+| Reasoning-block leakage into the stream | **Inline-CoT redirect**: the thinking is moved to the reasoning channel, not discarded | Models that emit no tags at all are unaffected by definition |
+| Terminal control sequences in captured output | **Sequence stripper** on both `terminal` spawn paths | — |
+| Channel identifiers (user / chat) in logs | **Stable pseudonym** at the channel log boundary | Routing tables and reply targets keep the raw value by design |
 | Subprocess env hijack (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV`, …) | **Hijack-variable block**: startup hooks (`PYTHONPATH`, `BASH_ENV`, `ENV`, …) are always dropped; the loader variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`) only under `SHERRY_STRICT_ENV_HIJACK=1`, because container runtimes set them for real | Loader variables are not blocked by default — see the note in the operations section |
 | Upload endpoint content spoofing | Gateway auth (Origin + token) | **Byte-signature vs declared type check** |
 
@@ -94,9 +96,27 @@ Properties worth relying on:
   self-assignments of a secret-named variable in code are rewritten too (the rule
   itself carries the example); the corpus test pins
   the surfaces where rewriting would hurt (docs).
-* **Known limit:** an exception's traceback is rendered from live frames, so a
-  secret that only ever existed as a local variable inside the failing frame can
-  still appear in the error sink's `diagnose` dump.
+* **The exception is covered too.** loguru renders a traceback from the live
+  frames at emit time, so a patcher never sees that text; the patcher therefore
+  renders it itself (through loguru's own formatter, so the `> File …` layout
+  survives), redacts it, and clears the record's exception so no sink prints it
+  again. That closes both paths a secret used to have out of a failing call: the
+  exception's own message and the `diagnose` dump of frame values. It renders
+  **without** those values on purpose — an annotated dump prints frame locals
+  verbatim, and a chat id or a quoted message has no shape any rule recognises.
+
+## Write and output boundaries
+
+Four surfaces rewrite what leaves the process rather than what enters it. Each
+was added because the raw form is useless or harmful downstream, and each is a
+hygiene measure, not a boundary.
+
+| Surface | Module | What it does |
+|---|---|---|
+| Memory writes (`memory` tool `add`/`replace` and the flush path) | `agent/tools/memory.py` | Screens the entry against a prose-specific pattern table and refuses the write; a blocked entry never reaches disk. It keeps its own table instead of the scanner tiers above because memory entries are prose *about* the system — a note naming `.bashrc` or a `KEY=` variable is a note, not an attack |
+| Captured terminal output | `agent/security/terminal_output.py` | Drops CSI/OSC and the remaining escape sequences, C0 control bytes, and applies carriage-return overwrite semantics (`10%\r100%` → `100%`; a `\r\n` line ending keeps its text). Applied at BOTH `terminal` spawn sites (sync and async) |
+| Answered text carrying inline reasoning | `agent/security/think_scrub.py` | Moves `<think>`/`<thinking>`/`<reasoning>` content from the answer channel to the reasoning channel the client renders as a thinking block. The per-turn scrubber is split-invariant: the provider decides where chunks break, so a tag cut anywhere must produce the same result as one chunk |
+| Channel user/chat identifiers | `agent/security/pii.py` | Logs `«pii:<12 hex>»` instead of the platform identifier. Stable across processes, so "received" still correlates with "sent" in a later log file; the raw value stays where it functions (routing tables, reply targets, the platform SDK call) |
 
 ## Security policy
 
@@ -108,7 +128,7 @@ heuristic:
 | Layer | What it is | Not a boundary because |
 |---|---|---|
 | Prompt-injection scanner, untrusted-output fence | Detection and labelling | A model can be argued past a fence; a pattern can be phrased around |
-| Secret redaction | Hygienic rewriting of text | It only removes what its patterns recognise |
+| Secret redaction, identifier pseudonyms, control-sequence stripping | Hygienic rewriting of text at an output boundary | They only remove what their rules recognise, and the raw value usually still exists upstream |
 | Path guard, HITL allowlists, shell blocklists | Deny rules for known-bad shapes | Deny rules are incomplete by construction |
 | Env scrubbing, lane limits, iteration budgets | Blast-radius reduction | They assume the child itself is not the attacker's code path |
 
@@ -139,6 +159,7 @@ lines are:
 |---|---|
 | ``refusing WebSocket handshake`` | A client with a stale or missing token — expected after a restart |
 | ``«redacted»`` in a message | A credential-shaped string reached a log record and was masked |
+| ``«pii:…»`` in a message | A channel user/chat identifier was pseudonymised (the same string is the same chat) |
 | ``Potential security threat detected: <id>`` | The injection scanner fired on tool output |
 | sandbox / denial lines | A tool call was refused by a deny rule |
 
