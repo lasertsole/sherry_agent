@@ -183,7 +183,11 @@ def test_the_projects_own_docs_are_not_rewritten():
     ]:
         path = pathlib.Path(name)
         assert path.exists(), f"corpus file moved: {name}"
-        if REDACTED in redact_sensitive_text(path.read_text(encoding="utf-8")):
+        text = path.read_text(encoding="utf-8")
+        # Compare before/after rather than looking for the sentinel: the threat
+        # model DOCUMENTS the sentinel as a log signal, so its presence is prose,
+        # not evidence of a rewrite.
+        if redact_sensitive_text(text) != text:
             rewritten.append(name)
     assert rewritten == [], rewritten
 
