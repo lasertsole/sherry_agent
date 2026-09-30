@@ -152,13 +152,20 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
     run = lane["run"]
     assert run.functional_role is FunctionalRole.RESEARCHER
     assert lane["model_tier"] == "auxiliary"
-    assert run.inherited_tool_allow == ["read_file", "terminal", "web_search", "python_repl"]
+    assert run.inherited_tool_allow == [
+        "read_file",
+        "search_files",
+        "terminal",
+        "web_search",
+        "python_repl",
+    ]
     assert "RESEARCHER specialization" in lane["system_prompt"]
     assert "## Role Instructions" in lane["system_prompt"]
 
     # ...and the captured role drives the real child-agent construction
     candidates = [
         _StubTool("read_file"),
+        _StubTool("search_files"),
         _StubTool("terminal"),
         _StubTool("web_search"),
         _StubTool("python_repl"),
@@ -181,6 +188,7 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
     assert _wiring["model"] is _wiring["aux_llm"]
     assert [t.name for t in _wiring["tools"]] == [
         "read_file",
+        "search_files",
         "terminal",
         "web_search",
         "python_repl",

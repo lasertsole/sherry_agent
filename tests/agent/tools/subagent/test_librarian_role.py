@@ -94,18 +94,19 @@ class TestLibrarianChildToolFace:
         _build(
             tools=[
                 _StubTool("read_file"),
+                _StubTool("search_files"),
                 _StubTool("terminal"),
                 _StubTool("web_search"),
                 _StubTool("write_file"),
                 _StubTool("sessions_spawn"),
             ],
-            tool_allow=["read_file", "terminal", "web_search"],
+            tool_allow=["read_file", "search_files", "terminal", "web_search"],
             tool_deny=[],
             functional_role=FunctionalRole.LIBRARIAN,
             model_tier="auxiliary",
         )
         names = _tool_names(_wiring)
-        assert {"read_file", "terminal", "web_search"} <= names
+        assert {"read_file", "search_files", "terminal", "web_search"} <= names
         assert CODE_INTEL_NAMES <= names
         assert LSP_NAMES <= names
         assert AST_GREP_NAMES <= names
@@ -170,6 +171,7 @@ class TestLibrarianSpawnE2E:
         assert lane["model_tier"] == "auxiliary"
         assert lane["run"].inherited_tool_allow == [
             "read_file",
+            "search_files",
             "terminal",
             "web_search",
         ]

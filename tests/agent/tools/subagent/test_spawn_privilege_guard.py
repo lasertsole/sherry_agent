@@ -111,10 +111,10 @@ class TestA1WhitelistIntersection:
     @pytest.mark.parametrize(
         ("hint", "expected_allow"),
         [
-            ("researcher", ["read_file", "terminal", "web_search"]),
+            ("researcher", ["read_file", "search_files", "terminal", "web_search"]),
             ("executor", ["read_file", "write_file", "patch_file", "terminal", "python_repl"]),
             ("reviewer", ["read_file", "terminal"]),
-            ("librarian", ["read_file", "terminal", "web_search"]),
+            ("librarian", ["read_file", "search_files", "terminal", "web_search"]),
         ],
     )
     def test_builtin_roles_leaf_whitelist_unchanged(

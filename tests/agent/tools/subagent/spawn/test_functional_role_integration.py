@@ -62,7 +62,7 @@ class TestSpawnFunctionalRole:
         run = _captured_lane[-1]["run"]
         assert run.functional_role is FunctionalRole.RESEARCHER
         assert _captured_lane[-1]["model_tier"] == "auxiliary"
-        assert run.inherited_tool_allow == ["read_file", "terminal", "web_search"]
+        assert run.inherited_tool_allow == ["read_file", "search_files", "terminal", "web_search"]
 
     def test_librarian_record_llm_tier_and_whitelist(self, _leaf_depth, _captured_lane):
         result = asyncio.run(_spawn(_captured_lane, functional_role_hint="librarian"))
@@ -70,7 +70,7 @@ class TestSpawnFunctionalRole:
         run = _captured_lane[-1]["run"]
         assert run.functional_role is FunctionalRole.LIBRARIAN
         assert _captured_lane[-1]["model_tier"] == "auxiliary"
-        assert run.inherited_tool_allow == ["read_file", "terminal", "web_search"]
+        assert run.inherited_tool_allow == ["read_file", "search_files", "terminal", "web_search"]
 
     def test_agent_id_librarian_resolves_at_resolver_level(self):
         from agent.tools.subagent.spawn.core import _resolve_functional_role
@@ -176,7 +176,7 @@ class TestRoleToolWhitelist:
         ]
         _build(
             tools=candidates,
-            tool_allow=["read_file", "terminal", "web_search"],
+            tool_allow=["read_file", "search_files", "terminal", "web_search"],
             tool_deny=[],
             role=SubagentSessionRole.LEAF,
             functional_role=FunctionalRole.RESEARCHER,
@@ -213,7 +213,7 @@ class TestRoleToolWhitelist:
         ]
         _build(
             tools=candidates,
-            tool_allow=["read_file", "terminal", "web_search"],
+            tool_allow=["read_file", "search_files", "terminal", "web_search"],
             tool_deny=[],
             role=SubagentSessionRole.LEAF,
             functional_role=FunctionalRole.LIBRARIAN,

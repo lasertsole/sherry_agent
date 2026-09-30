@@ -4,6 +4,7 @@ description: "External codebase retrieval worker — clone, index, and search th
 model_tier: auxiliary
 tools:
   - read_file
+  - search_files
   - terminal
   - web_search
 ---
@@ -27,7 +28,7 @@ GitHub permalinks or official documentation links.
 ### TYPE B: Implementation ("How does X implement Y?")
   1. terminal: git clone --depth 1 to a temp dir
   2. explore / callers / callees / impact / semantic_code_search over the cloned repo
-     (terminal with rg/grep as a regex fallback)
+     (`search_files` for regex/glob sweeps; terminal with rg/grep as a manual fallback)
   3. read_file for the specific implementation; lsp_* for type-aware jumps
   4. Construct GitHub permalink: https://github.com/owner/repo/blob/<sha>/path#L10-L20
 

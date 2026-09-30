@@ -44,7 +44,7 @@ class TestBuiltinDefinitions:
         assert definition is not None
         assert definition.description.startswith("Read-only research")
         assert definition.model_tier == "auxiliary"
-        assert definition.tools == ["read_file", "terminal", "web_search"]
+        assert definition.tools == ["read_file", "search_files", "terminal", "web_search"]
 
     def test_general_inherits_all_tools(self):
         definition = load_role_definition(FunctionalRole.GENERAL)
@@ -77,7 +77,7 @@ class TestBuiltinDefinitions:
     def test_librarian_tools_are_real_tool_names(self):
         definition = load_role_definition(FunctionalRole.LIBRARIAN)
         assert definition is not None
-        assert definition.tools == ["read_file", "terminal", "web_search"]
+        assert definition.tools == ["read_file", "search_files", "terminal", "web_search"]
         assert "web_fetch" not in definition.tools
         assert not {"write_file", "patch_file", "python_repl"} & set(definition.tools or [])
 
