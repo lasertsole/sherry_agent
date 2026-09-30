@@ -20,6 +20,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
+from loguru import logger as loguru_logger
+
 from agent.middlewares.humanInTheLoop import HITLConfig, HumanInTheLoop
 from agent.middlewares.message_persistence import MessagePersistenceMiddleware
 from agent.middlewares.message_persistence import core as mp_core
@@ -27,6 +29,26 @@ from context_engine.store import core as store_core
 from context_engine.store.core import get_history_by_turn_page
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(120)]
+
+
+def _capture_persistence_log() -> tuple[list[str], int]:
+    """Collect the persistence debug lines so a lost row can be explained.
+
+    The middleware logs one line per flush ("wrote N messages at <source>"); when
+    the row count is short, those lines say which phase dropped the message —
+    the collector, the batch preparation, or the write itself.
+    """
+    lines: list[str] = []
+    handler_id = loguru_logger.add(
+        lambda message: (
+            lines.append(message.record["message"])
+            if "message persistence" in message.record["message"]
+            else None
+        ),
+        level="DEBUG",
+        format="{message}",
+    )
+    return lines, handler_id
 
 
 def _state(session_id: str, messages: list) -> dict:
@@ -197,6 +219,7 @@ class TestToolReturnPersistence:
         tools = [
             _tool_message(f"c{i}", content=f"parallel output {i}", msg_id=f"t{i}") for i in range(3)
         ]
+        lines, handler_id = _capture_persistence_log()
 
         if sync:
             for index, tool in enumerate(tools):
@@ -215,9 +238,19 @@ class TestToolReturnPersistence:
             )
             assert all(response is tool for response, tool in zip(responses, tools, strict=True))
 
-        _assert_no_duplicate_rows(sid, 3)
-        for index in range(3):
-            assert _tool_row_count(sid, f"c{index}") == 1
+        try:
+            _assert_no_duplicate_rows(sid, 3)
+            for index in range(3):
+                assert _tool_row_count(sid, f"c{index}") == 1
+        except AssertionError as exc:  # report what each flush did before failing
+            present = [index for index in range(3) if _tool_row_count(sid, f"c{index}")]
+            raise AssertionError(
+                f"{exc}\n"
+                f"session={sid} sync={sync} rows={_row_count(sid)} "
+                f"present_calls={present} captured={lines!r}"
+            ) from exc
+        finally:
+            loguru_logger.remove(handler_id)
 
         # The AI message issuing the parallel calls persists once at the boundary.
         state = _state(
