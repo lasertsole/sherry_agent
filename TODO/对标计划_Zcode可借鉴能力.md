@@ -4,7 +4,7 @@
 > **创建日期**: 2026-09-30（2026-09-30 第二轮源码核验后重写）
 > **对标对象**: Zcode v3.14.4（Electron 桌面端 + `apps/zcode-cli`），本机 `/usr/bin/zcode`、`~/.zcode/`、源码树 `/home/honor/Desktop/project/ZCode`
 > **目标**: 记录 Zcode 在长任务可靠性、扩展点、工具实现上优于 Sherry 的设计点，作为 Sherry 后续演进的候选 backlog
-> **配套文档**: [`对标分析_Zcode与Sherry差异.md`](./对标分析_Zcode与Sherry差异.md) 是本文的完整双向对标底稿（含安全缺陷与 Sherry 优势侧）。**本文只提炼「Zcode 更优、值得 Sherry 借鉴」的部分**，每条结论的完整证据链在配套文档对应章节
+> **文档定位**: **本文只提炼「Zcode 更优、值得 Sherry 借鉴」的部分**（Sherry 领先侧与 Zcode 安全缺陷不在本文范围）。每条结论的证据就地标注，来源清单见文末「附：数据来源」——本文不依赖其他文档
 > **证据分级**（本文统一使用）：
 
 | 标记 | 含义 |
@@ -17,7 +17,7 @@
 
 > **重要声明（已修正）**:
 > 1. **Zcode 源码是可读的完整 TypeScript monorepo，非闭源打包**。本文所有 Zcode 结论均带源码路径或落盘路径，不再有「无法核验」的降级表述。首轮「闭源不可测」的说法已作废。
-> 2. **本文不记录 Zcode 的安全缺陷**（Bash 无沙箱、插件 hook 无信任门、workflow `vm` 非安全边界、遥测等）。这些是反向议题，见配套文档 §11、§12.3、§15.2。但**部分缺陷会否决本文的照搬建议**（如 WebFetch 的 SSRF、workflow 脚本化），相关条目已就地标注。
+> 2. **本文不记录 Zcode 的安全缺陷**（Bash 无沙箱、插件 hook 无信任门、workflow `vm` 非安全边界、遥测等）——那是反向议题，需另文。但**部分缺陷会否决本文的照搬建议**（如 WebFetch 的 SSRF、workflow 脚本化），相关条目已就地标注，附数据来源表里也标了「否决照抄项」的源码位置。
 > 3. **源码版本与发布版可能不一致**：源码树 `apps/zcode-cli` 版本为 0.16.9，发布版为 v3.14.4。唯一强交叉验证项是压缩阈值（966,000 与 `autoCompactThreshold` 精确吻合）。
 
 ---
@@ -63,11 +63,11 @@
 
 **实际情况** [源码确认 vs 实测]：Sherry taskflow 状态是 SQLite WAL 持久化的，`get_active_flows_sync(session_id)` 从 SQL 侧直接取非终态 flow（`agent/tools/taskflow/registry/store_sqlite.py` + `agent/prompt_data_provider.py:37-41`），进程重启后照样读得到。`StepStatus` 7 态中 `dispatched` 是可重入中间态，不是终态（`agent/tools/taskflow/config.py:35-41`）。
 
-**真正的差距收窄为四条** [源码确认，见配套文档 §12.6]：
+**真正的差距收窄为四条** [源码确认]：
 
 | 维度 | Zcode 新一代 | Sherry taskflow |
 | --- | --- | --- |
-| ① 已完成步骤是否重跑 | ❌ **不重跑**——`AskScheduler.admitAsk`（`scheduler.ts:116-174`）按 `(siteId, ordinal)` 读 journal，`completed` / `failed` 节点**从 journal 短路**（`releaseCachedAsk`，**连 driver 都不调**），带 `inputHash` 防御性校验 | ⚠️ `depends_on` 满足即重注入；已 `done` 的 step 由 DAG 依赖判定跳过，但调度器仍被唤醒 |
+| ① 已完成步骤是否重跑 | ❌ **不重跑**——`AskScheduler.admitAsk`（`dynamic-workflow/src/engine/scheduler.ts:116-174`）按 `(siteId, ordinal)` 读 journal，`completed` / `failed` 节点**从 journal 短路**（`releaseCachedAsk`，**连 driver 都不调**），带 `inputHash` 防御性校验 | ⚠️ `depends_on` 满足即重注入；已 `done` 的 step 由 DAG 依赖判定跳过，但调度器仍被唤醒 |
 | ② 显式挂起 | ✅ `paused`（legacy）/ `stopped(user)`（新），被后继 run 标记 `superseded` | ⚠️ `set_waiting` / `wait_all` 是**阻塞等待**语义，不是用户主动挂起 |
 | ③ 血缘指针 | ✅ `dwf_run.resumed_from` + `superseded` 取代语义 | ❌ 无 |
 | ④ 步骤级结果缓存 | ✅ `cached` 状态 + `input_hash` 命中 | ❌ 无 |
@@ -229,7 +229,7 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 **Sherry 现状** [实测]：全文搜索 `hook` 命中 194 处，**全部是内部机制**：
 - `abefore_model` / `aafter_agent` — LangChain 中间件钩子
 - `runtime/hooks.py` — 进程级回调注册表
-- `humanInTheLoop/core.py:159-216` — `interrupt()` / `set_interrupt`，≈ `PermissionRequest` 的硬编码内置版
+- `agent/middlewares/humanInTheLoop/core.py:159-216` — `interrupt()` / `set_interrupt`，≈ `PermissionRequest` 的硬编码内置版
 - `wrap_tool_call` — ≈ `PreToolUse` 的硬编码内置版
 
 最接近的扩展点是 `skills/builtin/*/scripts/`（11 个目录），但那是 **skill 自带脚本，不是生命周期钩子**。
@@ -238,7 +238,7 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 
 **改造建议**：
 1. **先做只读 + 通知型 hook**（`PostToolUse` / `PostToolUseFailure` / `Stop` 三个事件）：只允许发通知 / 写审计日志，**不允许阻断**。这一步无安全风险，能验证配置加载、进程调用、超时、输出截断四件事。
-2. **再做 `PreToolUse` 的 allow/ask/deny**：这一步等于把用户策略放到关键路径上，**必须先有项目级信任门**——Zcode 的插件 hook 是无条件执行的（见配套文档 §15.2），这个设计不能抄。Sherry 已有 `SkillSpector` 扫描第三方 skill 的先例，hook 应复用同一套信任模型。
+2. **再做 `PreToolUse` 的 allow/ask/deny**：这一步等于把用户策略放到关键路径上，**必须先有项目级信任门**——Zcode 的插件 hook 是无条件执行的（`adapters/src/plugins/index.ts:366`），这个设计不能抄。Sherry 已有 `SkillSpector` 扫描第三方 skill 的先例，hook 应复用同一套信任模型。
 3. `updatedInput`（改写 tool input）**最后做**，且应限制为「路径规范化 / 参数补全」这类幂等变换，不允许注入新语义。
 
 **收益**：这是 Sherry 作为**自托管**产品最缺的能力——用户想定制自己的策略，现在只能改 Python 源码。
@@ -443,12 +443,12 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 **Zcode 做法** [源码确认]：
 
-*stale 检测三要素*（`handlers/edit.ts:444-468`, `write.ts:306-332`）：
+*stale 检测三要素*（`core/src/tool/handlers/edit.ts:444-468`, `core/src/tool/handlers/write.ts:306-332`）：
 1. `mtime` 推进（**整数毫秒**比较，抑制误报）
 2. `size` 变化
 3. `revisionId` 不同 —— 形如 `mtime:<ms>:size:<bytes>`（`fs/index.ts:775-777`）
 
-*假阳性豁免*（`edit.ts:434`, `write.ts:295`）：若上次是**全量读**且存储内容与当前内容相等，则**即使 mtime 推进也不算 stale**——容忍 linter/formatter 触碰文件但不改字节。
+*假阳性豁免*（`core/src/tool/handlers/edit.ts:434`, `core/src/tool/handlers/write.ts:295`）：若上次是**全量读**且存储内容与当前内容相等，则**即使 mtime 推进也不算 stale**——容忍 linter/formatter 触碰文件但不改字节。
 
 *原子性*（`fs/index.ts:700-755`）：`O_EXCL|O_NOFOLLOW` 写临时文件 → `fsync` → `rename` 覆盖；失败清理临时文件并降级为 `O_NOFOLLOW` 截断写。**保留原文件 mode**（exec 位不丢）。**拒绝穿符号链接**（`SymlinkWriteRefusedError`）。
 
@@ -504,11 +504,13 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 **Zcode 做法** [源码确认] `bash-file-output.ts`：当输出超过内联预算（`maxInlineBytes` / `maxModelBytes`）时，**子进程 stdout 直接 fd 写到 artifact 文件**，Node 进程不驻留内容，只回传路径 + 预览。
 
-**Sherry 现状** [实测]：**未验证**——`terminal.py` 是否有大输出保护是本文唯一未确认的 Sherry 侧项（见配套文档 §11.2）。
+**Sherry 现状** [实测]：**工具侧没有输出上限，上下文侧有**。`terminal.py` 的两个落点都用 `proc.communicate()` 把 stdout 一次性收进内存再解码（`_execute_sync` 与 `_arun`），命令输出多大就读多大，工具本身不截断；真正的保护在下游——`ContextEvictionMiddleware` 对超过 `TOOL_RESULT_EVICTION["evict_threshold_chars"]`（20,000 字符）的工具结果做落盘驱逐，只给模型留下 5 行头 + 5 行尾的预览（`config/features/agent_side/tool_result_eviction.py`）。
 
-**改造建议**：**先核查再决定**。如果 `terminal.py` 目前把大输出读进内存，这是**真实的内存风险点**（一个 `cat` 大文件就能打爆），优先级应高于本文多数条目。核查命令：静态读 `agent/tools/terminal.py` 的输出处理路径 + 起一个真实大输出命令观察内存。
+**结论**：`ContextEvictionMiddleware` 已经解决了「大输出灌爆上下文」，**剩下的是进程内存**——一条 `cat` 大文件仍然让整段输出驻留内存（外加驱逐文件落盘一份）。Zcode 的 fd 直写文件把这一段也省掉。
 
-**风险**：未知（因为未核查）。这是本文**唯一建议先做核查再决策**的条目。
+**改造建议**：优先级低于本文多数条目（上下文侧已受保护），但方向明确：输出超过内联预算时改为把子进程 stdout 直接写进 artifact 文件，只回传路径 + 预览。
+
+**风险**：中——改动落在工具执行路径上，且要同时覆盖同步/异步与沙箱（`bwrap`）两条路径。
 
 ---
 
@@ -705,15 +707,15 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 5. **`guide` 模式本机从未使用** [落盘实测]：`session_input` 214 行只用 `startNow`（107）与 `queue`（92 + 15 cancelled），`guide` 代码存在但真实行为未验证。3.1 的设计判断基于源码。
 6. **`vm` 逃逸未验证** [行为推断]：`__send.constructor("return process")()` 是理论推断，**未执行**。不应作为已确认漏洞，仅作为「vm 非安全边界」的风险提示。
 7. **落盘计数是快照且库为活库**：`~/.zcode/cli/db/db.sqlite` 仍在写入，本文所有行数（509 checkpoint / 5,880 model_usage / 30 todo）为 2026-09-30 快照值，会随使用增长。**趋势可信，绝对值会变。**
-8. **Sherry 侧唯一未验证项**：`terminal.py` 的大输出处理（4.4）。**建议先核查这一项。**
+8. **Sherry 侧唯一未验证项已核查**：`terminal.py` 的大输出处理（4.4）——工具侧无上限、上下文侧由 20k 字符驱逐兜底，结论已就地改写。
 9. **本文未评估 Zcode 的遥测/隐私行为**：`config.isTelemetryEnabled` 等设置项存在，但该 checkout 中遥测实现不完整，未做结论。
-10. **本文未记录 Zcode 的安全缺陷**（反向议题，见配套文档 §11、§12.3、§15.2）。部分缺陷已就地标注为「不可照抄」，但完整安全评估需另文。
+10. **本文未记录 Zcode 的安全缺陷**（反向议题）。部分缺陷已就地标注为「不可照抄」（附数据来源表里标了源码位置），但完整安全评估需另文。
 
 ---
 
 ## 附：数据来源
 
-完整证据链见 [`对标分析_Zcode与Sherry差异.md`](./对标分析_Zcode与Sherry差异.md) 附录。本文主要来源：
+本文每一节的结论都在正文就地标注证据，来源清单如下（路径以本机源码树 `/home/honor/Desktop/project/ZCode` 为根；`.../` 承接上一行的前缀）：
 
 ### Zcode 侧
 
