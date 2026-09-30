@@ -1,4 +1,4 @@
-"""Embedding build + storage over the Phase 1 symbol table.
+"""Embedding build + storage over the symbol table.
 
 Incremental by construction: :class:`SemanticIndexer` refreshes the symbol index
 first (reusing :class:`~agent.tools.code_intel.indexer.CodeIndexer`), drops
@@ -343,7 +343,7 @@ class SemanticIndexer:
         return 0
 
     def _read_lines(self, path: Path) -> list[str] | None:
-        """Read a file's lines, respecting the Phase 1 per-file byte ceiling."""
+        """Read a file's lines, respecting the indexer's per-file byte ceiling."""
         max_bytes = int(self._config["code_intel_index_max_file_bytes"])
         try:
             if path.stat().st_size > max_bytes:

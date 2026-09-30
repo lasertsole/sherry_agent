@@ -3,7 +3,7 @@
 Resolution order the caller should present:
 
   1. LSP available → use the precise LSP tools (goto_definition, find_references, ...)
-  2. not_installed → return the install hint and point at ``explore`` (Phase 1)
+  2. not_installed → return the install hint and point at ``explore`` (the symbol index)
   3. not_configured / no match → point at ``terminal`` (rg/grep)
 
 Every message ends with an actionable next step; nothing here starts a process

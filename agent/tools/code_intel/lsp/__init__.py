@@ -1,4 +1,4 @@
-"""LSP precise retrieval — RESEARCHER subagent only (Phase 2 / 2S / 2X).
+"""LSP precise retrieval — RESEARCHER subagent only.
 
 Public surface: the eight LangChain tools, the JSON-RPC client, the process-level
 server manager, the binary resolver/installer, and the fallback helpers.

@@ -204,7 +204,7 @@ async def test_schema_failure_without_budget_fails_and_keeps_dependents_blocked(
 
 @pytest.mark.asyncio
 async def test_schema_pass_still_runs_the_judge(isolated_db, monkeypatch):
-    # B5: a structurally valid result can still be semantically poor.
+    # A structurally valid result can still be semantically poor.
     _patch_judge(monkeypatch, StepVerdict.RETRY, "only one of three files inspected")
     monkeypatch.setattr(dispatch_module, "dispatch_child", _recording_dispatch(["child-2"]))
 

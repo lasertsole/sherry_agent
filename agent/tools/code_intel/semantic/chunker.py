@@ -1,12 +1,12 @@
 """Symbol-level chunking for the embedding index.
 
 Pure module: symbol rows (+ optional source lines) in, embeddable text chunks
-out. It reuses the Phase 1 symbol table rather than slicing arbitrary line
+out. It reuses the symbol table rather than slicing arbitrary line
 windows, so each vector describes one function / method / class and carries the
 metadata the tool returns (file path, line range, symbol name, kind).
 
 The chunk text is a header line naming the symbol and its location plus the
-symbol body (or the stored Phase 1 snippet when the source lines are
+symbol body (or the stored source snippet when the source lines are
 unavailable). Everything is bounded by ``max_chars`` so a single pathological
 symbol cannot blow the memory budget.
 """
@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Kinds the Phase 1 extractor emits that are worth embedding. A "variable" kind
+# Kinds the extractor emits that are worth embedding. A "variable" kind
 # (if any future grammar adds one) is intentionally excluded — it is not a
 # retrievable code unit.
 _EMBEDDABLE_KINDS: frozenset[str] = frozenset({"function", "method", "class"})
@@ -59,7 +59,7 @@ def build_chunk(
     """Build the chunk for one symbol, or ``None`` when it is not embeddable.
 
     ``lines`` is the decoded source of the symbol's file (or ``None`` when it
-    could not be read); the stored Phase 1 ``source_snippet`` is the fallback so
+    could not be read); the stored ``source_snippet`` is the fallback so
     a symbol is never dropped just because its file was unavailable.
     """
     if max_chars <= 0 or record.kind not in _EMBEDDABLE_KINDS:

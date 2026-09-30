@@ -1,6 +1,6 @@
 """Loguru patcher that redacts secrets before any sink sees them.
 
-Why a patcher rather than the sink wrapper the plan sketched: rewriting
+Why a patcher rather than a hand-written sink wrapper: rewriting
 ``handler._sink`` reaches into loguru's private handler objects, has to be
 re-run whenever a sink is added later, and silently stops working if loguru
 renames the attribute. ``logger.configure(patcher=…)`` is the supported hook —

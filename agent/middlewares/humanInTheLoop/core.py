@@ -288,7 +288,7 @@ class HumanInTheLoop(AgentMiddleware):
         A ``{"type": "yolo"}`` decision approves the call AND activates the
         session-scoped YOLO flag (subsequent gates in this session bypass).
 
-        Contract (plan line 739, Metis ruling): the tool layer's scope/policy
+        Contract: the tool layer's scope/policy
         denial is NOT repeated here — ``_deny_sandbox_bypass`` in terminal.py /
         python_repl.py already raises ``ToolException`` for non-main
         ``caller_scope`` + ``sandbox=False`` and for ``SANDBOX_POLICY=required``

@@ -83,17 +83,17 @@ def is_terminal(status: str) -> bool:
 # no expectations stays byte-identical to a pre-closure one (backward compat).
 _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     # Expectation side (the "expected" half of the closure):
-    "expected_params",  # A1: structured inputs this step is supposed to work on
-    "response_schema",  # A2: JSON Schema the structured result must satisfy
-    "judge_criteria",  # B3: semantic acceptance criteria for the LLM judge
-    "judge_model",  # B3: model override for that judge
+    "expected_params",  # structured inputs this step is supposed to work on
+    "response_schema",  # JSON Schema the structured result must satisfy
+    "judge_criteria",  # semantic acceptance criteria for the LLM judge
+    "judge_model",  # model override for that judge
     "validation_criteria",  # legacy text criteria (still judged when present)
     # Execution metadata:
-    "functional_role",  # D1: sub-agent specialization
-    "step_model",  # D1: child model override
-    "step_timeout_seconds",  # D3: per-step child run timeout
-    "priority",  # D2: dispatch ordering hint
-    "input_bindings",  # C1/C2: upstream structured fields bound as inputs
+    "functional_role",  # sub-agent specialization
+    "step_model",  # child model override
+    "step_timeout_seconds",  # per-step child run timeout
+    "priority",  # dispatch ordering hint
+    "input_bindings",  # upstream structured fields bound as inputs
     "retry_policy",  # existing: failure retry policy
 )
 

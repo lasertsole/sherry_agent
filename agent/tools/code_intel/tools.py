@@ -7,7 +7,7 @@ its functional role is RESEARCHER. Each carries
 ``metadata={"scope": "researcher_only"}`` so the tag is visible to policy
 layers, and the outputs are JSON strings, matching the rest of the tool surface.
 
-``semantic_code_search`` is Phase 3: an embedding-backed, concept-level search
+``semantic_code_search`` is the embedding-backed, concept-level search
 over the same symbol table. It is fail-open — an unavailable embedding model or
 reranker degrades the result instead of failing the call.
 """

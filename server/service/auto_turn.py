@@ -140,7 +140,7 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
             # on_turn_finished (queue I/O). Orphaning it here lets event-loop
             # teardown cancel it mid-statement — a first-use _ensure_db cut
             # mid-init poisons the UserInputQueue singleton for every later
-            # event loop (order-dependent 10 s stall; F3 VERDICT-queue.md).
+            # event loop (order-dependent 10 s stall).
             # return_exceptions=True: a cancelled/failed child surfaces as a
             # result, so only OUR re-cancellation raises here.
             try:

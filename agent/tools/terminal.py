@@ -72,7 +72,7 @@ _SENSITIVE_FILE_MESSAGE = (
     "files from the shell."
 )
 
-# Regex blacklist over the " && "-joined command string (plan line 563).
+# Regex blacklist over the " && "-joined command string.
 # Supersedes the old element-exact BLACKLIST set: "rm -rf /", "mkfs",
 # "shutdown", "reboot" are all covered, plus the joined/chained variants the
 # exact matcher missed (["echo ok", "rm -rf /"] was the defect).
@@ -130,7 +130,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
     tool_call_schema: ClassVar[Any] = class_or_instance_schema(ShellTool)
 
     # ShellTool sets args_schema=ShellInput EXPLICITLY — signature-only changes
-    # never propagate; the subclass must be wired here (plan line 559).
+    # never propagate; the subclass must be wired here.
     args_schema: type[BaseModel] = SafeShellInput
 
     # Declared as a pydantic field so super.__init__(root_dir=...) is a real

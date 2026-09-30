@@ -1,6 +1,6 @@
 """Semantic code search — RESEARCHER-only embedding index over the symbol table.
 
-Phase 3 of the code-intel plan: symbol-level chunks embedded through the existing
+Symbol-level chunks embedded through the existing
 ``models/embed_model`` wrapper, stored as SQLite BLOBs (the
 ``context_engine/embeddings`` pattern), and queried by cosine similarity with an
 optional reranker pass. Every entry point is fail-open; see each module's
