@@ -1,9 +1,9 @@
 import asyncio
 import hashlib
 import json
-import sqlite3
 import threading
 from ..content_codec import decode_content
+import context_engine.store.db as store_db
 from .db import get_db
 from .message_repository import MessageRepository
 from abc import ABC, abstractmethod
@@ -17,10 +17,10 @@ from langchain_core.messages import BaseMessage
 # Lazy shared connection; created on first DB access, not at import.
 # Resolved through :func:`_shared_db` so importing this module has no I/O side
 # effect; the connection itself remains the process-wide ``get_db()`` singleton.
-_db: sqlite3.Connection | None = None
+_db: store_db.ConnectionLike | None = None
 
 
-def _shared_db() -> sqlite3.Connection:
+def _shared_db() -> store_db.ConnectionLike:
     global _db
     if _db is None:
         _db = get_db()

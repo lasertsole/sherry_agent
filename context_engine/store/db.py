@@ -1,6 +1,7 @@
 import threading
 import time
 import sqlite3
+from typing import Any
 from collections.abc import Callable
 from pathlib import Path
 from loguru import logger
@@ -8,9 +9,66 @@ from config import SRC_DIR
 from config.features import MES_MEMORY
 
 _db_path: Path = SRC_DIR / "store/mes_memory/mes_memory.db"
-_db: sqlite3.Connection | None = None
 # Guards singleton creation (unlocked double-check leaked connections).
 _db_lock = threading.Lock()
+
+# Serializes STATEMENTS on the shared connection. The store deliberately shares
+# one connection across threads (``check_same_thread=False``) and offloads work
+# with ``asyncio.to_thread``, so two callers can reach ``execute`` at the same
+# instant. SQLite's statement handle is not thread-safe: the loser raises
+# ``InterfaceError: You can only execute one statement at a time``, and the
+# caller — tool-result persistence — logs it and fails open, silently losing the
+# row (measured on CI: 3 concurrent tool results landed 2 rows). The lock is
+# re-entrant and innermost: no caller takes it and then another store lock, so it
+# cannot deadlock against ``_turn_assign_lock``/``_turn_stamp_lock``.
+_stmt_lock = threading.RLock()
+
+
+class _SerializedConnection:
+    """A ``sqlite3.Connection`` whose statements never run concurrently.
+
+    Everything else (``row_factory``, ``close``, ``in_transaction``, the context
+    manager protocol) delegates to the wrapped connection, so call sites keep
+    treating this as the connection they always had.
+    """
+
+    __slots__ = ("_conn",)
+
+    def __init__(self, conn: sqlite3.Connection) -> None:
+        self._conn = conn
+
+    def execute(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        with _stmt_lock:
+            return self._conn.execute(*args, **kwargs)
+
+    def executemany(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        with _stmt_lock:
+            return self._conn.executemany(*args, **kwargs)
+
+    def executescript(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        with _stmt_lock:
+            return self._conn.executescript(*args, **kwargs)
+
+    def commit(self) -> None:
+        with _stmt_lock:
+            self._conn.commit()
+
+    def close(self) -> None:
+        with _stmt_lock:
+            self._conn.close()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conn, name)
+
+    def __enter__(self) -> "_SerializedConnection":
+        # Return the proxy, not the wrapped connection: statements inside a
+        # ``with _shared_db():`` block must go through the lock too.
+        self._conn.__enter__()
+        return self
+
+    def __exit__(self, *exc_info: Any) -> Any:
+        return self._conn.__exit__(*exc_info)
+
 
 # Busy-wait budget before "database is locked"; 1.0s starved under contention.
 SQLITE_BUSY_TIMEOUT_S = MES_MEMORY["busy_timeout_s"]
@@ -52,6 +110,12 @@ def _migrate(db: sqlite3.Connection) -> None:
         )
         db.commit()
     db.commit()
+
+
+#: The shared handle: a real connection wrapped in :class:`_SerializedConnection`,
+#: so it is typed as either — call sites use it as a connection in both cases.
+ConnectionLike = sqlite3.Connection | _SerializedConnection
+_db: ConnectionLike | None = None
 
 
 def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
@@ -483,7 +547,7 @@ def get_db_path() -> Path:
     return _db_path
 
 
-def get_db():
+def get_db() -> ConnectionLike:
     global _db
     if _db is not None:
         return _db
@@ -493,6 +557,6 @@ def get_db():
             return _db
 
         _db_path.parent.mkdir(parents=True, exist_ok=True)
-        _db = _connect_with_retry()
+        _db = _SerializedConnection(_connect_with_retry())
 
     return _db

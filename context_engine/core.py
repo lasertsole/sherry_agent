@@ -10,10 +10,11 @@ from loguru import logger
 from pub.func import contains_cjk, count_cjk
 from .content_codec import decode_content
 from .store import get_db, get_messages_by_lastest_n_turns
+from .store.db import ConnectionLike
 
 
 # Lazy shared connection; created on first DB access, not at import.
-_db: sqlite3.Connection | None = None
+_db: ConnectionLike | None = None
 _lock = threading.Lock()
 _CONTENT_JSON_PREFIX = "\x00json:"
 
@@ -27,7 +28,7 @@ _MAX_TOKEN_CHARS = MES_MEMORY["max_token_chars"]
 _MAX_WILDCARD_TERMS = MES_MEMORY["max_wildcard_terms"]
 
 
-def _shared_db() -> sqlite3.Connection:
+def _shared_db() -> ConnectionLike:
     global _db
     if _db is None:
         _db = get_db()

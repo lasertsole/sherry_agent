@@ -14,13 +14,15 @@ its test seam that injects a connection by patching ``core._db``.
 from __future__ import annotations
 
 import sqlite3
+
+from .db import ConnectionLike
 from collections.abc import Callable
 
 
 class MessageRepository:
     """Turn-range and identity reads over the ``messages`` table."""
 
-    def __init__(self, db_provider: Callable[[], sqlite3.Connection]) -> None:
+    def __init__(self, db_provider: Callable[[], ConnectionLike]) -> None:
         self._db_provider = db_provider
 
     def max_turn_num(self, session_id: str) -> int:
