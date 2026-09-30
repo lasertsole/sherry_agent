@@ -210,7 +210,7 @@ class StreamTurn:
         # when the stream died).
         self._has_reasoning: bool = False
         self._has_visible_text: bool = False
-        # B4: inline <think>/<reasoning> blocks are moved out of the visible
+        # Inline <think>/<reasoning> blocks are moved out of the visible
         # answer as it streams (one scrubber per turn, so it survives the
         # continuation loop's source re-creations).
         self._think_scrubber = StreamingReasoningScrubber()
@@ -586,7 +586,7 @@ class StreamTurn:
                                     self._has_visible_text = True
                                     self._diag["bytes"] += len(res)
                                     yield {"type": "text", "content": res}
-                                # B4: inline CoT found in ``content`` is moved to
+                                # Inline CoT found in ``content`` is moved to
                                 # the reasoning channel rather than dropped, so a
                                 # model that only emits ``<think>`` still fills the
                                 # client's thinking block (models that carry CoT in

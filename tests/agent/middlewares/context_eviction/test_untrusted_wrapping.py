@@ -1,4 +1,4 @@
-"""The untrusted-output fence as the model sees it (A1/A3, through the middleware).
+"""The untrusted-output fence as the model sees it (through the middleware).
 
 What these tests protect, beyond the wrapper's own unit tests:
 

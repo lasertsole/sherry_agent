@@ -1,4 +1,4 @@
-"""Strip terminal control sequences from captured output (A5).
+"""Strip terminal control sequences from captured output.
 
 A command's stdout is not plain text: a TUI or a progress-rendering tool emits
 ANSI escapes, cursor-position reports (CPR/DSR) and other control bytes that say

@@ -1,4 +1,4 @@
-"""Secret redaction applied to what the model reads (B1/B2).
+"""Secret redaction applied to what the model reads.
 
 The engine in ``agent/security/redact.py`` is also wired into the log pipeline
 (always on, no switch). This module decides the *tool output* half: which tools'

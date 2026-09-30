@@ -1,4 +1,4 @@
-"""Terminal output is stripped of control sequences before it enters context (A5).
+"""Terminal output is stripped of control sequences before it enters context.
 
 Two halves, and the second is the one that keeps the first honest:
 

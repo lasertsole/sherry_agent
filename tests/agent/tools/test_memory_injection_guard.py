@@ -1,4 +1,4 @@
-"""Memory writes are screened for injection payloads (A4).
+"""Memory writes are screened for injection payloads.
 
 Memory entries are re-injected into every later system prompt, so a stored
 instruction is an injection that outlives the turn that wrote it — the reason the

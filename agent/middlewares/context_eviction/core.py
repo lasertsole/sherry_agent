@@ -156,7 +156,7 @@ def _build_model_view(message: HumanMessage, session_id: str | None) -> HumanMes
 
 
 class ContextEvictionMiddleware(AgentMiddleware):
-    """Offload oversized tool results (P0-2/P2-4), fence untrusted ones (A1/A3), tag human messages (P1-9).
+    """Offload oversized tool results (P0-2/P2-4), fence untrusted ones, tag human messages (P1-9).
 
     This middleware owns what the MODEL reads of a tool result: the raw text is
     already persisted by the inner boundary, so everything here shapes the model

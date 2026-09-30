@@ -1,4 +1,4 @@
-"""Stable pseudonyms for channel user/chat identifiers in logs (B3).
+"""Stable pseudonyms for channel user/chat identifiers in logs.
 
 A chat platform hands us identifiers for the person and the chat (QQ openids,
 Telegram ids, Discord snowflakes). Nothing in the agent needs them: an inbound

@@ -1,4 +1,4 @@
-"""The stream layer moves inline reasoning to the reasoning channel (B4).
+"""The stream layer moves inline reasoning to the reasoning channel.
 
 The unit contract lives in ``tests/agent/security/test_think_scrub.py``; this file
 covers the half a module-only implementation would miss — that ``StreamTurn``

@@ -1,4 +1,4 @@
-"""Redaction as the model sees it, through the middleware (B1/B2).
+"""Redaction as the model sees it, through the middleware.
 
 The engine's own tests prove the patterns; these prove the wiring and — more
 importantly — the two boundaries the default configuration draws:

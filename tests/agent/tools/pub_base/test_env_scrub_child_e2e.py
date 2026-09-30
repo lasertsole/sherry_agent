@@ -1,4 +1,4 @@
-"""End-to-end: a poisoned parent environment does not reach the child (B6).
+"""End-to-end: a poisoned parent environment does not reach the child.
 
 The unit tests prove the filter; these prove the boundary. A real ``/bin/sh`` and a
 real ``python`` child are spawned with ``env=scrub_env(poisoned)`` and asked what

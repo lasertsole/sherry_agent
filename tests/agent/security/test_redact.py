@@ -1,4 +1,4 @@
-"""Behavioural tests for the secret-redaction engine (B1).
+"""Behavioural tests for the secret-redaction engine.
 
 Two halves matter equally: that every credential family is caught, and that
 ordinary text is left alone. The corpus below is real content — this repository's
@@ -223,7 +223,7 @@ def test_truncating_helper_only_bounds_what_it_scans():
 
 
 # ---------------------------------------------------------------------------
-# URL credentials, including the encoded ones (B2)
+# URL credentials, including the encoded ones
 # ---------------------------------------------------------------------------
 
 
@@ -280,7 +280,7 @@ def test_the_rest_of_a_query_string_survives():
 
 
 # ---------------------------------------------------------------------------
-# Config-file shapes (B7)
+# Config-file shapes
 # ---------------------------------------------------------------------------
 
 

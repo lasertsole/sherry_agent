@@ -108,7 +108,7 @@ async def _send_reply(target: dict[str, Any], content: str, message_id: str | No
             )
         )
     except Exception:
-        # B3: a failure line carries a stable pseudonym, not the chat id — a log
+        # A failure line carries a stable pseudonym, not the chat id — a log
         # file must not become a record of who talked to the bot.
         logger.exception(
             "channel send failed for {} / {}", channel_name, pseudonym(target.get("chat_id"))

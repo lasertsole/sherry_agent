@@ -1,4 +1,4 @@
-"""Inline chain-of-thought is moved from the answer channel to the reasoning one (B4).
+"""Inline chain-of-thought is moved from the answer channel to the reasoning one.
 
 The scrubber's real contract is a *split-invariance*: the same token stream
 chopped into different chunks must produce the same visible text and the same

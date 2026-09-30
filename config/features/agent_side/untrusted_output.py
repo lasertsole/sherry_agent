@@ -1,4 +1,4 @@
-"""Untrusted-tool-output wrapping config (A1/A3).
+"""Untrusted-tool-output wrapping config.
 
 External content (web search results, replayed conversation text, MCP server
 output) reaches the model through the same channel as the user's own words, so

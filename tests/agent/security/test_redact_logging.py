@@ -1,4 +1,4 @@
-"""End-to-end: what lands in the real log files after a secret is logged (B5).
+"""End-to-end: what lands in the real log files after a secret is logged.
 
 This runs the production logging stack — ``logs/logger.py::init_logger``, which
 removes loguru's defaults and installs the console plus three rotating file sinks

@@ -254,7 +254,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     env=env,
                 )
             stdout_bytes, _ = proc.communicate(timeout=TERMINAL_TIMEOUT)
-            # A5: a TUI/progress command emits ANSI escapes and cursor reports
+            # A TUI/progress command emits ANSI escapes and cursor reports
             # that say nothing to a reader but cost context (and carry an
             # injection surface of their own).
             output = strip_control_sequences(stdout_bytes.decode(encoding, errors="replace"))

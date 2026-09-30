@@ -1,4 +1,4 @@
-"""Behavioural tests for the untrusted-tool-output wrapper (A1/A3).
+"""Behavioural tests for the untrusted-tool-output wrapper.
 
 The wrapper exists to make a boundary explicit to the model, so the tests are
 about the boundary holding: only attacker-facing tools get fenced, a forged
@@ -64,7 +64,7 @@ def test_the_policy_covers_the_tools_that_actually_ship():
 
 
 # ---------------------------------------------------------------------------
-# Delimiter anti-forgery (A3)
+# Delimiter anti-forgery
 # ---------------------------------------------------------------------------
 
 

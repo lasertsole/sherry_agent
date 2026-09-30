@@ -1,4 +1,4 @@
-"""Channel identifiers are pseudonymised at the log boundary (B3).
+"""Channel identifiers are pseudonymised at the log boundary.
 
 The threat is a log file that doubles as a record of who talked to the bot: a
 chat platform's ``chat_id``/``user_id`` is an account identifier, and the

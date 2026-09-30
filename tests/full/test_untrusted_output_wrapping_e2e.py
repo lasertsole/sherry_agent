@@ -1,4 +1,4 @@
-"""Live-network e2e: an untrusted tool result reaches the model fenced (A1/A3).
+"""Live-network e2e: an untrusted tool result reaches the model fenced.
 
 LIVE-NETWORK, RUN EXPLICITLY. The production graph is built by
 ``agent.core.built_agent()`` and driven against the real configured main LLM,

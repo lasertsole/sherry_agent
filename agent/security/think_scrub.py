@@ -1,4 +1,4 @@
-"""Move inline chain-of-thought from the answer channel to the reasoning one (B4).
+"""Move inline chain-of-thought from the answer channel to the reasoning one.
 
 Reasoning models emit their thinking either in a separate ``additional_kwargs``
 key (this repository's normal path) or inline in ``content``, wrapped in

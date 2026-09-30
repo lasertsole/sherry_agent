@@ -1,4 +1,4 @@
-"""Live-network e2e: a secret printed by a real tool never reaches the model (B1/B2).
+"""Live-network e2e: a secret printed by a real tool never reaches the model.
 
 LIVE-NETWORK, RUN EXPLICITLY. The production graph runs against the real main
 LLM; the model is asked to call the real ``terminal`` tool and echo a
