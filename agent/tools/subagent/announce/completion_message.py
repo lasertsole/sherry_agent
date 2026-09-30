@@ -1,12 +1,12 @@
 """Synthetic completion message builder for subagent-completion injections.
 
 Builds the human-role message injected into the parent agent's turn input when
-a child subagent run finishes (plan Q6: idle=synthetic message auto-turn /
-busy=steering both consume this builder's output).
+a child subagent run finishes (idle=synthetic message auto-turn /
+busy=steering — both consume this builder's output).
 
-Frozen metadata contract (plan decision Q6) — carried on the LangChain
+Frozen metadata contract — carried on the LangChain
 ``BaseMessage.metadata`` field (native ``dict`` in langchain-core 1.4.7), so
-downstream filters (RepetitionGuardWrapper / IterationBudget, task 7) skip
+downstream filters (RepetitionGuardWrapper / IterationBudget) skip
 these messages with a trivial check:
 
     meta = getattr(msg, "metadata", None) or {}
@@ -43,7 +43,7 @@ VALID_STATUSES = frozenset({STATUS_COMPLETED, STATUS_FAILED, STATUS_INTERRUPTED}
 def _resolve_child_name(child_run_info: SubagentRunRecord) -> str:
     """Resolve the display name for the marker line.
 
-    Duck-typed so both ``SubagentRunRecord`` (label/task_name) and the task 5
+    Duck-typed so both ``SubagentRunRecord`` (label/task_name) and the
     ``PendingInjection`` record (child_name) work without import coupling.
     """
     name = (

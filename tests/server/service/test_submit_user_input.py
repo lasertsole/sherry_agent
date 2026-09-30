@@ -1,6 +1,6 @@
-"""Task 5 — atomic ``submit_user_input`` entry point (service layer).
+"""``submit_user_input`` — atomic entry point (service layer).
 
-Covers the plan spec (input-queueing-reply-binding Task 5):
+Covers the contract:
 
 1. Idle session → ``STARTED`` + exactly ONE ``CLAIMED`` placeholder row
    persisted (the durable "turn in progress" fact, written in the SAME

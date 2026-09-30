@@ -10,8 +10,8 @@ together end to end:
   selection and tool filtering.
 * ``test_synthesize_reaches_real_spawn_smoke`` runs the REAL ``taskflow_run_task``
   with ``aggregate_deps=True`` while only the SUBAGENT lane is stubbed, so the
-  dependency result is aggregated by Phase 2 and then travels through the real
-  spawn pipeline.
+  dependency result is aggregated by the synthesize dispatch and then travels
+  through the real spawn pipeline.
 * ``test_synthesize_task_with_role_through_dispatch_smoke`` strings the two
   phases directly: ``build_task_with_dep_results`` output is handed to the real
   ``_dispatch.dispatch_child(functional_role=...)`` seam, so the aggregated task
@@ -234,8 +234,8 @@ async def test_synthesize_reaches_real_spawn_smoke(isolated_db, _captured_lane):
 async def test_synthesize_task_with_role_through_dispatch_smoke(
     isolated_db, _captured_lane, monkeypatch
 ):
-    # Given a dependency result aggregated into a dispatch task (Phase 2) and a
-    # LEAF depth cap (Phase 1 whitelist)
+    # Given a dependency result aggregated into a dispatch task (synthesize) and a
+    # LEAF depth cap (role whitelist)
     monkeypatch.setattr(get_config(), "max_spawn_depth", 1)
     steps = [
         {

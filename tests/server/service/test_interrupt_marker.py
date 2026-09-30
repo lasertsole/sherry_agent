@@ -1,6 +1,6 @@
-"""Task 6 — interrupted marker writer (``server/service/interrupt_marker.py``).
+"""Interrupted marker writer (``server/service/interrupt_marker.py``).
 
-Covers the plan spec (input-queueing-reply-binding Task 6) against the
+Covers the writer's contract against the
 production module:
 
 1. **AC-1 binding sequence** — seed state with Q1 via ``aupdate_state``,

@@ -1,6 +1,6 @@
 """Dependency-result aggregation helper (taskflow synthesize increment).
 
-Phase 2's only new capability is synthesize: a step that opts in via
+The capability this increment adds is synthesize: a step that opts in via
 ``aggregate_deps`` gets its dependency steps' recorded results appended to the
 task text at dispatch time. ``_shared.build_task_with_dep_results`` is that
 pure function; the tool wiring is pinned separately in

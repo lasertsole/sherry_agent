@@ -4,10 +4,10 @@ Supports dual-path delivery: sub→sub internal injection vs sub→user completi
 message. Classifies errors as transient/permanent and applies appropriate retry
 schedules including compaction-retry for nested sub-agent scenarios. adds a third, additive path: when a run announces to a main-agent WS
 session, the completion is also routed into the requester's turn pipeline
-(busy → task 6 steering queue, idle → task 8 auto-turn trigger). Channel
-sessions and non-session requesters keep the notification-bell status quo (Q2);
-consumed injections are never re-enqueued (Q4); failed runs follow the same
-routing (Q3). The third path is best-effort and log-only — it never awaits a
+(busy → steering queue, idle → auto-turn trigger). Channel
+sessions and non-session requesters keep the notification-bell status quo;
+consumed injections are never re-enqueued; failed runs follow the same
+routing. The third path is best-effort and log-only — it never awaits a
 turn/model call and never alters the dual-path result.
 """
 
@@ -184,7 +184,7 @@ def _trigger_auto_turn(session_key: str, injection: HumanMessage):
     Resolved through ``runtime.hooks`` so the announce layer never reaches up
     into the server stack. Unregistered (evals / unit tests / no server
     assembled) -> ``None`` ("not triggered"), which the caller turns into the
-    steering-queue fallback (Q4: never drop).
+    steering-queue fallback (never drop).
     """
     trigger = _resolve_hook(hooks.MAYBE_TRIGGER_AUTO_TURN)
     if trigger is None:
@@ -193,20 +193,20 @@ def _trigger_auto_turn(session_key: str, injection: HumanMessage):
 
 
 def _resolve_builder_status(run: SubagentRunRecord) -> str:
-    """Map a registry outcome to the task 4 builder vocabulary (frozen: ok→completed, else failed)."""
+    """Map a registry outcome to the completion-message vocabulary (frozen: ok→completed, else failed)."""
     outcome = run.execution.outcome
     status = outcome.status if outcome is not None else RunOutcomeStatus.UNKNOWN
     return STATUS_COMPLETED if status == RunOutcomeStatus.OK else STATUS_FAILED
 
 
 async def _route_completion_injection(run: SubagentRunRecord) -> None:
-    """Route one completion injection into the requester's turn pipeline (task 9 third path).
+    """Route one completion injection into the requester's turn pipeline (the third path).
 
     Guards (any miss short-circuits to the status quo): main-session key prefix;
-    live websocket binding (WS-only v1, Q2); run not already consumed (Q4, one
-    query + one if). Routing: busy → steering queue; idle → auto-turn trigger.
+    live websocket binding (WS-only); run not already consumed (one query +
+    one if). Routing: busy → steering queue; idle → auto-turn trigger.
     A not-triggered outcome or any exception falls back to the steering queue
-    (Q4: never drop). Never awaits a turn/model call.
+    (never drop). Never awaits a turn/model call.
     """
     raw = (run.requester_session_key or "").strip()
     if not raw:
@@ -217,14 +217,14 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
     if not bare or bare == raw:
         return  # child/swarm/unknown keys carry no main-session prefix — status quo
     if _get_bound_websocket(bare) is None:
-        return  # no websocket (channel session or unbound) — notification-bell status quo (Q2)
+        return  # no websocket (channel session or unbound) — notification-bell status quo
 
     from ..registry.pending_injections import PendingInjectionStatus
 
     existing = await _get_injection_store().get(run.run_id)  # one query for the consumed marker
     if existing is not None and existing.status == PendingInjectionStatus.CONSUMED:
         logger.debug("Third path skipped for run {}: injection already consumed", run.run_id)
-        return  # Q4: the parent turn already consumed it — no double-inject
+        return  # the parent turn already consumed it — no double-inject
 
     content = run.completion.result_text or ""
     if len(content) > 4000:  # mirrors the user-facing completion message budget
@@ -242,13 +242,13 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
     except Exception as exc:  # noqa: BLE001 - routing failure falls through to the persist fallback
         logger.warning("Third-path routing failed for run {}: {}", run.run_id, exc)
     try:
-        await _enqueue_steering(bare, injection)  # Q4: persist so the next turn consumes it
+        await _enqueue_steering(bare, injection)  # persist so the next turn consumes it
     except Exception as exc:  # noqa: BLE001 - log-only by contract
         logger.error("Third-path fallback enqueue failed for run {}: {}", run.run_id, exc)
 
 
 async def route_subagent_failure_notification(run: SubagentRunRecord) -> None:
-    """(Q3) failure trigger for runs that never enter the standard announce flow.
+    """Failure trigger for runs that never enter the standard announce flow.
 
     Runs with completion not required skip the announce gate in
     registry/lifecycle.py entirely; this routes their failure outcome through
@@ -262,7 +262,7 @@ async def route_subagent_failure_notification(run: SubagentRunRecord) -> None:
 
 
 async def _maybe_route_third_path(run: SubagentRunRecord, result: AnnounceDeliveryResult) -> None:
-    """Gate the third path behind a successful dual-path dispatch (task 9).
+    """Gate the third path behind a successful dual-path dispatch.
 
     Thin wrapper called after the dual-path dispatch in deliver_subagent_announcement;
     best-effort and log-only — it never alters the existing announce result.

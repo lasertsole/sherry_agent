@@ -1,6 +1,6 @@
-"""Per-session steering queue runtime for subagent-completion injections (plan task 6).
+"""Per-session steering queue runtime for subagent-completion injections.
 
-Runtime half of the durable injection queue built on task 3's
+Runtime half of the durable injection queue built on
 ``PendingInjectionStore``: busy-session steering messages are queued in memory
 AND persisted to SQLite in one call, and drained into a parent turn by the task
 7 ``before_model`` middleware. Crash recovery is rehydration-on-first-access
@@ -14,22 +14,22 @@ cross-loop queue precedent in this codebase:
   loop, subagent task loop), and asyncio primitives would bind to one loop;
 - plain ``threading.Lock`` guards only the multi-step memory sections
   (take-all, registry creation). It is NEVER held across an ``await``: SQLite
-  calls (task 3 API, aiosqlite) happen strictly outside the lock;
-- same-loop delivery is the confirmed production shape (Metis finding: the
-  subagent task loop == the parent turn's server loop), so no cross-thread
+  calls (``PendingInjectionStore``, aiosqlite) happen strictly outside the lock;
+- same-loop delivery is the confirmed production shape (the subagent task
+  loop == the parent turn's server loop), so no cross-thread
   handoff machinery is needed.
 
 Session keys arrive in announce form ``agent:main:session:{id}`` and are
-normalized via task 1 ``normalize_session_key`` before use as dict keys (the
+normalized via ``normalize_session_key`` before use as dict keys (the
 registry side uses bare ids); child/swarm keys carry no session prefix and pass
 through unchanged, forming their own queues.
 
-Element carrier type is the task 4 ``build_completion_message()`` product: a
+Element carrier type is the ``build_completion_message()`` product: a
 ``HumanMessage`` whose frozen metadata contract carries
 ``{internal, provenance, run_id, status}``. Each memory element pairs that
 message with a ``PendingInjection`` mirror (the persistable form).
 
-Known API gap (task 3 file is frozen — recorded, not fixed here):
+Known API gap (``pending_injections.py`` is frozen — recorded, not fixed here):
     ``PendingInjection`` has no message-level completion-status field
     (completed/failed/interrupted). Messages rebuilt during rehydration
     therefore carry metadata ``{internal, provenance, run_id}`` WITHOUT
@@ -76,8 +76,8 @@ def _message_text(message: BaseMessage) -> str:
 class SteeringItem:
     """One steering/completion injection awaiting (or just taken from) a queue.
 
-    ``message`` is the task 4 carrier injected into the parent turn by the task
-    7 middleware; ``record`` is the task 3 persistable mirror (also the shape
+    ``message`` is the completion carrier injected into the parent turn by the
+    drain middleware; ``record`` is the ``PendingInjection`` mirror (also the shape
     restored from SQLite on rehydration). ``consumed`` is set during ``drain``:
     ``True`` only when THIS drain call transitioned the SQLite row to CONSUMED.
     """
@@ -122,7 +122,7 @@ class _SessionState:
 
 
 class SteeringQueue:
-    """Per-session in-memory steering queues with task 3 SQLite persistence.
+    """Per-session in-memory steering queues with ``PendingInjectionStore`` persistence.
 
     Open one instance per process (the module-level ``get_steering_queue()``
     singleton in production; per-test instances in the suite). A fresh instance
@@ -141,7 +141,7 @@ class SteeringQueue:
 
     @property
     def store(self) -> PendingInjectionStore:
-        """The task 3 store backing this queue (exposed for tests/verification)."""
+        """The store backing this queue (exposed for tests/verification)."""
         return self._store
 
     async def enqueue_steering(
@@ -149,7 +149,7 @@ class SteeringQueue:
     ) -> SteeringItem | None:
         """Queue one injection for ``session_key``: memory first, then SQLite.
 
-        ``injection`` is the task 4 builder product; its frozen metadata must
+        ``injection`` is a ``build_completion_message()`` product; its frozen metadata must
         carry ``run_id`` (ValueError otherwise). Both steps happen here so the
         announce-flow caller stays zero-distraction.
 
@@ -159,7 +159,7 @@ class SteeringQueue:
           message; the SQLite write is a no-op (INSERT OR IGNORE); returns the
           existing item;
         - duplicate whose SQLite row is already CONSUMED → never re-queued
-          (task 3 contract: consumed rows are not revived); the just-appended
+          (the store's contract: consumed rows are not revived); the just-appended
           memory element is rolled back and ``None`` is returned.
 
         Returns the queued item for ``run_id``, or ``None`` when the run was
@@ -205,12 +205,12 @@ class SteeringQueue:
         """Atomically take ALL queued items and consume their SQLite rows.
 
         Take-all happens under the per-session lock (no awaits inside); each
-        item is then transitioned to CONSUMED via the task 3 guarded UPDATE.
+        item is then transitioned to CONSUMED via the store's guarded UPDATE.
         The per-item ``consumed`` flag reports the true mark_consumed outcome
         (``False`` when the row was unknown/already consumed/consumption
         failed) — items are always returned, never silently dropped.
 
-        Timing of WHEN this gets called is the task 7 middleware's decision;
+        Timing of WHEN this gets called is the drain middleware's decision;
         this method is a pure queue primitive.
         """
         bare = normalize_session_key(session_key)
@@ -256,12 +256,12 @@ class SteeringQueue:
 
     @staticmethod
     def _record_from_message(injection: BaseMessage, bare_key: str) -> PendingInjection:
-        """Derive the persistable task 3 record from a task 4 carrier message."""
+        """Derive the persistable ``PendingInjection`` record from a carrier message."""
         meta = getattr(injection, "metadata", None) or {}
         run_id = meta.get("run_id")
         if not run_id:
             raise ValueError(
-                "steering injection message must carry metadata['run_id'] (task 4 build_completion_message contract)"
+                "steering injection message must carry metadata['run_id'] (build_completion_message contract)"
             )
         return PendingInjection(
             run_id=str(run_id),
@@ -353,7 +353,7 @@ def get_steering_queue() -> SteeringQueue:
 async def enqueue_steering(session_key: str, injection: HumanMessage) -> SteeringItem | None:
     """Queue one injection for ``session_key`` on the process-wide singleton.
 
-    Module-level convenience wrapper (frozen plan API): the task 7 middleware
+    Module-level convenience wrapper (frozen API): the drain middleware
     and the announce flow can call it without owning a ``SteeringQueue``.
     """
     return await get_steering_queue().enqueue_steering(session_key, injection)

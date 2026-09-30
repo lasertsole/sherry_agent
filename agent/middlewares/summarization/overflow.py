@@ -693,9 +693,9 @@ class OverflowMixin:
           the ORIGINAL exception (never the compression error).
         - ``_monitor_degradation`` is NOT called here: wrap calls it once,
           AFTER this helper returns, on the final successful response only
-          (Metis lock: failed retry calls must not pollute degradation
+          (locked decision: failed retry calls must not pollute degradation
           statistics). T3 post-response checks run after the recovered
-          final response ( wiring preserved).
+          final response (wiring preserved).
         """
         while True:
             try:

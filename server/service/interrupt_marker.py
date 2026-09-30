@@ -1,4 +1,4 @@
-"""Interrupted-turn marker writer (plan, input-queueing-reply-binding).
+"""Interrupted-turn marker writer.
 
 When a streaming turn dies mid-flight (user cancel via ``asyncio.Task.cancel()``
 or the heartbeat idle timeout), the checkpointer transcript can end in a
@@ -11,12 +11,12 @@ reconciles the graph state and persists the interruption:
    interrupt marker ``AIMessage``. The marker carries a DETERMINISTIC message
    id (``interrupted-{thread_id}-{turn_seq}``), so the ``add_messages``
    reducer upserts it — a retried write is an idempotent rewrite, never a
-   duplicate ( spike verdict, FACT A + FACT D).
+   duplicate (FACT A + FACT D).
 
 2. **MesMemory dual-write** — one ``role=ai`` row prefixed
    ``[interrupted:{reason}] `` through the EXISTING store writer
    (``context_engine.store.core.add_messages``; no schema change). MesMemory
-   is APPEND-ONLY with no id dedupe (verdict FACT D clarification), so this
+   is APPEND-ONLY with no id dedupe (FACT D), so this
    module dedupes itself by scanning the session's latest turn rows for an
    already-present interrupted row.
 
@@ -30,9 +30,10 @@ loguru and swallowed — this runs ON the cancellation exception paths of
 ``server.service.messages.async_generate`` and must never mask the cancel
 frames or raise into the generator teardown.
 
-Design authority: the interrupt-marker spike verdict (heal at WRITE time,
-deterministic-id upsert, marker must not rely on ToolCallNormalize — see the
-inline comment at the heal decision).
+Design authority: the interrupt-marker FACT list in the spike tests
+(``tests/context_engine/store/test_interrupt_marker_approach.py``; heal at WRITE
+time, deterministic-id upsert, marker must not rely on ToolCallNormalize — see
+the inline comment at the heal decision).
 """
 
 from __future__ import annotations
@@ -54,7 +55,7 @@ __all__ = ["write_interrupted_marker"]
 InterruptReason = Literal["cancelled", "heartbeat_timeout"]
 
 # MesMemory row prefix carrying the interrupted flag (no schema change; the
-# reason rides inside the content text — plan approved fallback).
+# reason rides inside the content text).
 _MESMEMORY_PREFIX_TEMPLATE = "[interrupted:{reason}]"
 
 
@@ -140,7 +141,7 @@ async def _write_interrupted_marker_inner(
     if already_written:
         # Idempotent rewrite: the deterministic id is already in state — skip
         # the checkpointer write AND the MesMemory insert (MesMemory is
-        # append-only with no id dedupe; verdict FACT D), but ALWAYS run the
+        # append-only with no id dedupe; FACT D), but ALWAYS run the
         # CLAIMED cleanup below.
         logger.info(
             "interrupt_marker: marker {!r} already in state; skipping "
@@ -155,7 +156,7 @@ async def _write_interrupted_marker_inner(
         )
         placeholders = _heal_trailing_tool_calls(messages, marker_id)
         # ONE aupdate_state commit: [placeholders..., marker] — the marker is
-        # appended after a provider-valid element (verdict FACT A instruction).
+        # appended after a provider-valid element (FACT A).
         # as_node="model" is REQUIRED on create_agent graphs: LangGraph cannot
         # infer the attribution node on a bare graph's state-only checkpoint
         # (next-node inference is ambiguous -> InvalidUpdateError "Ambiguous
@@ -181,10 +182,10 @@ def _heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> li
     """Synthesize error ToolMessages for the TRAILING incomplete super-step.
 
     Decision (spike verdict): heal at WRITE time, in the SAME
-    ``aupdate_state`` commit as the marker. The verdict's FACT B1 shows relying
+    ``aupdate_state`` commit as the marker. FACT B1 shows relying
     on input-time ``ToolCallNormalize`` healing is NOT safe —
     its span scan silently DROPS the next HumanMessage when the dangling span
-    reaches end-of-transcript (pre-existing P1, out of scope) — and FACT B3
+    reaches end-of-transcript (pre-existing behaviour, out of scope) — and FACT B3
     shows the marker only rescues that case by accident of its message type.
     Only the TRAILING incomplete super-step is healed; earlier dangling spans
     stay untouched for provider validity (appending a ToolMessage at the end
@@ -232,9 +233,9 @@ async def _persist_to_mesmemory(
     """Mirror the marker as one ``role=ai`` MesMemory row (existing write path).
 
     Content prefix ``[interrupted:{reason}] `` carries the flag WITHOUT a
-    schema change (plan approved fallback; metadata does not survive
+    schema change (metadata does not survive
     into MesMemory rows). ``add_messages`` is APPEND-ONLY with NO id dedupe
-    (verdict FACT D clarification), so dedupe happens HERE: the session's
+    (FACT D), so dedupe happens HERE: the session's
     latest turn rows are scanned for an existing interrupted ai row first.
     """
     from context_engine.store import core as store_core

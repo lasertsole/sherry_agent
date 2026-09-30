@@ -42,12 +42,12 @@ RepetitionGuardWrapper. Those are excluded here because they bind to real
 disk stores (MesMemory SQLite, media files, steering-queue SQLite) or start
 timer threads — none of them participate in reducer/update_state semantics or
 in ToolCallNormalize/Summarization behavior, which are the objects under test.
-Task 6 may reuse this harness; facts here are pinned to langgraph 1.2.5 /
+The production writer may reuse this harness; facts here are pinned to langgraph 1.2.5 /
 langchain 1.3.9 / langchain-core 1.4.7 (uv.lock).
 
 RED status: all facts in this file are ALREADY established by execution
-(green). Task 6 converts the marker-writing procedure exercised here into the
-production ``server/service/interrupt_marker.py`` implementation.
+(green). The production writer
+(``server/service/interrupt_marker.py``) shipped the procedure exercised here.
 """
 
 import sqlite3
@@ -83,7 +83,7 @@ LANGCHAIN_CORE_VERSION = "1.4.7"
 
 THREAD_ID = "spike-thread"
 
-# The deterministic ID shape Task 6 plans to write (plan Task 6: `interrupted-turn-{n}`)
+# The deterministic ID shape the production writer uses (`interrupted-turn-{n}`)
 MARKER_ID = "interrupted-turn-1"
 MARKER_CONTENT = "[interrupted] partial answer text"
 MARKER_METADATA = {"interrupted": True, "reason": "cancelled"}

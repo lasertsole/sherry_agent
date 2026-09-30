@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Queued-frame dispatch tests: the backend reports `{"event":"queued","session_id":"...",
 // "position":N,"queue_size":M,"message_id":"..."}` when a message arrives while the session
-// is busy (input-queueing-reply-binding). Mirrors the hitl-bridge.test.ts structure.
+// is busy. Mirrors the hitl-bridge.test.ts structure.
 
 const mocks = vi.hoisted(() => ({
   fetchApi: vi.fn()
