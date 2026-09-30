@@ -98,8 +98,22 @@ _PATTERNS_CONTEXT: list[_Finding] = _PATTERNS_ALL + [
     (re.compile(r"register\s+as\s+a\s+node", re.IGNORECASE), "c2_register_node"),
     (re.compile(r"(heartbeat|beacon)\s+to\s+", re.IGNORECASE), "c2_heartbeat"),
     (re.compile(r"pull\s+tasking", re.IGNORECASE), "c2_pull_tasking"),
+    # Same qualification rule as the memory table: a bare "sliver"/"havoc"/"mythic"
+    # is ordinary English, so the name needs its tool-shaped qualifier or a C2
+    # marker next to it before it is a finding.
+    (re.compile(r"cobalt\s+strike", re.IGNORECASE), "c2_known_framework"),
     (
-        re.compile(r"cobalt\s+strike|sliver|havoc|mythic|brainworm", re.IGNORECASE),
+        re.compile(
+            r"(?:sliver|havoc|mythic|brainworm)[\s_-]*(?:server|client|c2|beacon|implant|payload|listener)",
+            re.IGNORECASE,
+        ),
+        "c2_known_framework",
+    ),
+    (
+        re.compile(
+            r"\b(?:c2|c&c|command[\s-]+and[\s-]+control)\b.{0,40}(?:sliver|havoc|mythic|brainworm)",
+            re.IGNORECASE,
+        ),
         "c2_known_framework",
     ),
     # Instructions that rewrite the agent's own instruction files

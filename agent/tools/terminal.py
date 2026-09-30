@@ -50,6 +50,7 @@ from langchain_core.tools import ToolException
 
 from agent.tools.pub_base import _extract_session_id
 from agent.tools.pub_base.env_scrub import scrub_env
+from agent.security.terminal_output import strip_control_sequences
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
@@ -253,7 +254,10 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     env=env,
                 )
             stdout_bytes, _ = proc.communicate(timeout=TERMINAL_TIMEOUT)
-            output = stdout_bytes.decode(encoding, errors="replace")
+            # A5: a TUI/progress command emits ANSI escapes and cursor reports
+            # that say nothing to a reader but cost context (and carry an
+            # injection surface of their own).
+            output = strip_control_sequences(stdout_bytes.decode(encoding, errors="replace"))
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
             return output
@@ -371,7 +375,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     env=env,
                 )
             stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=TERMINAL_TIMEOUT)
-            output = stdout_bytes.decode(self._encoding, errors="replace")
+            output = strip_control_sequences(stdout_bytes.decode(self._encoding, errors="replace"))
             if proc.returncode != 0:
                 return self._record_verification(
                     cmd_str, f"Exit code {proc.returncode}\n{output}", run_manager

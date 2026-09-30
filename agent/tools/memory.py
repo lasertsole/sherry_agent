@@ -70,11 +70,18 @@ _INVISIBLE_CHARS = {
 }
 _MEMORY_THREAT_PATTERNS = [
     # Prompt injection
-    (r"ignore\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
+    # ``(?:\s+\w+){0,8}\s+`` tolerates the words a real payload slips between the
+    # verb and its object: without it the canonical phrasing
+    # "ignore all previous instructions" did NOT match (measured), which is the
+    # one shape this guard exists for. Same bound as the shared scanner.
+    (r"ignore(?:\s+\w+){0,8}\s+(previous|all|above|prior)\s+instructions", "prompt_injection"),
     (r"you\s+are\s+now\s+", "role_hijack"),
     (r"do\s+not\s+tell\s+the\s+user", "deception_hide"),
     (r"system\s+prompt\s+override", "sys_prompt_override"),
-    (r"disregard\s+(your|all|any)\s+(instructions|rules|guidelines)", "disregard_rules"),
+    (
+        r"disregard(?:\s+\w+){0,8}\s+(your|all|any)\s+(instructions|rules|guidelines)",
+        "disregard_rules",
+    ),
     (
         r"act\s+as\s+(if|though)\s+you\s+(have\s+no|don\'t\s+have)\s+(restrictions|limits|rules)",
         "bypass_restrictions",
@@ -86,7 +93,32 @@ _MEMORY_THREAT_PATTERNS = [
     # Persistence via shell rc
     (r"authorized_keys", "ssh_backdoor"),
     (r"\$HOME/\.ssh|\~/\.ssh", "ssh_access"),
+    # C2 / promptware: a stored note is the cheapest place to park a beacon, and
+    # every note is re-injected into a later system prompt.
+    (r"register\s+as\s+a\s+node", "c2_register_node"),
+    (r"(heartbeat|beacon)\s+to\s+", "c2_heartbeat"),
+    (r"pull\s+tasking", "c2_pull_tasking"),
+    # The bare names are ordinary English ("a sliver of hope", "mythic lore"), so a
+    # name only counts with its tool-shaped qualifier or an explicit C2 marker beside
+    # it. Measured: the unqualified alternation refused "Sliver-haired detective notes".
+    (r"cobalt\s+strike", "c2_known_framework"),
+    (
+        r"(?:sliver|havoc|mythic|brainworm)[\s_-]*(?:server|client|c2|beacon|implant|payload|listener)",
+        "c2_known_framework",
+    ),
+    (
+        r"\b(?:c2|c&c|command[\s-]+and[\s-]+control)\b.{0,40}(?:sliver|havoc|mythic|brainworm)",
+        "c2_known_framework",
+    ),
+    # Rewriting the agent's own instruction files from inside a note.
+    (r"(modify|overwrite|replace)\s+.{0,60}(AGENTS|CLAUDE)\.md", "rewrite_instruction_file"),
 ]
+
+# Why this table instead of ``agent.security.threat_patterns``': memory entries
+# are prose ABOUT the system, so the attacker-surface tiers refuse legitimate
+# notes (one mentioning ``.bashrc`` or a ``KEY=`` variable name is not an
+# attack). These patterns target instructions and exfiltration commands only;
+# the shared scanner keeps guarding tool output, where nothing is prose.
 
 
 def _scan_memory_content(content: str) -> str | None:

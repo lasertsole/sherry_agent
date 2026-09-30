@@ -135,6 +135,8 @@ def test_scope_table_is_the_public_surface():
         "We should disregard the stale cache before the next run.",  # no 'instructions'
         "The system prompt builder assembles persona, memory and the skill index.",
         "See the author_keys section of the config loader.",
+        "A sliver of hope, and the havoc of a mythic hero.",  # C2 names as English
+        "The sliver of a leaf stuck to the page.",  # bare name, no qualifier
         "النص العربي مع علامات الاتجاه العادية",  # RTL text without zero-width marks
         "\u200eLTR mark and \u200fRTL mark are legitimate bidi controls",
     ],
@@ -150,9 +152,9 @@ def test_the_projects_own_files_are_clean():
     The scanner is meant to run over tool output; if it flagged ordinary
     repository text, every later stage would drown in noise. The scanner's own
     source is deliberately NOT in the corpus: a pattern table has to spell out
-    the words it looks for ("sliver", ".bashrc", "authorized_keys", the comment
-    markers), so it matches itself by construction — and it never scans itself,
-    only tool output.
+    the words it looks for (".bashrc", "authorized_keys", the comment markers,
+    the C2 names), so it matches itself by construction — and it never scans
+    itself, only tool output.
     """
     import pathlib
 
@@ -218,9 +220,10 @@ def test_messages_never_echo_the_matched_text():
 def test_adversarial_input_scans_in_bounded_time():
     """A scanner on attacker-controlled text must not become the DoS.
 
-    The filler between tokens is the shape a crafted input would attack, and the
-    HTML-comment rule spans two markers, so both are exercised at the scan
-    window's full size.
+    The filler between tokens is the shape a crafted input would attack, the
+    HTML-comment rule spans two markers, and the C2 rule has a separated pair
+    (``sliver`` + ``server``), so all three are exercised at the scan window's
+    full size.
     """
     import time
 
@@ -229,6 +232,10 @@ def test_adversarial_input_scans_in_bounded_time():
         "ignore " * (window // 7),
         "<!-- " * (window // 5),
         "disregard " * (window // 10),
+        # The C2 separator run: many occurrences of a name followed by a long
+        # separator run, which is what turns a `[\s_-]*` between two alternations
+        # into a backtracking hazard.
+        ("sliver" + "_" * 500) * (window // 506),
     ]
     for payload in worst_cases:
         start = time.perf_counter()
