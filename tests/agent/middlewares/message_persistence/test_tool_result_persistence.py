@@ -39,14 +39,16 @@ def _capture_persistence_log() -> tuple[list[str], int]:
     the collector, the batch preparation, or the write itself.
     """
     lines: list[str] = []
+    # No format= on purpose: the default renders {exception} too, so a fail-open
+    # line arrives with its traceback — the whole diagnosis when a flush raises
+    # instead of writing.
     handler_id = loguru_logger.add(
         lambda message: (
-            lines.append(message.record["message"])
+            lines.append(str(message))
             if "message persistence" in message.record["message"]
             else None
         ),
         level="DEBUG",
-        format="{message}",
     )
     return lines, handler_id
 
