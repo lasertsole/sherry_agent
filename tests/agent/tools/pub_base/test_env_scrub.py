@@ -5,7 +5,7 @@ Behavior contract (sandbox-hardening spec):
 - Critical vars are kept by exact name or by name prefix so child processes
   keep working (PATH lookup, Windows loader, etc.).
 - sherry_agent's own secret vars are dropped by exact name.
-- Precedence: name-keep > name-deny > substring-block.
+- Precedence: hijack-block > name-keep > name-deny > substring-block.
 
 Rule tables are the source of truth; tests use only fake variable names
 (no real secrets).
@@ -15,10 +15,8 @@ import os
 
 import pytest
 
-from agent.tools.pub_base.env_scrub import (
-    SHERRY_SECRET_NAMES,
-    scrub_env,
-)
+from agent.tools.pub_base.env_scrub import SHERRY_SECRET_NAMES, scrub_env
+from agent.tools.pub_base import env_scrub
 
 
 pytestmark = [pytest.mark.module]
@@ -187,7 +185,8 @@ class TestWindowsCriticalPreserved:
             "TEMP": "C:/temp",
             "SHELL": "/bin/bash",
             "LOGNAME": "x",
-            "PYTHONPATH": "/repo/src",
+            # PYTHONPATH moved to the hijack block (see TestHijackVectors): the
+            # one child that needs one sets it after scrubbing.
             "PYTHONUTF8": "1",
             "VIRTUAL_ENV": "/repo/.venv",
         }
@@ -211,3 +210,84 @@ class TestOsEnvironIntegration:
         assert "SHERRY_TEST_SECRET" not in result
         assert "MAIN_LLM_API_KEY" not in result
         assert "PATH" in result
+
+
+class TestHijackVectors:
+    """Startup-hook variables never reach a child process.
+
+    These hijack the *child's* runtime rather than merely naming a secret: a
+    poisoned ``PYTHONPATH`` makes it import attacker modules, ``BASH_ENV`` runs a
+    script before every non-interactive shell. They are blocked at a precedence
+    above keep-by-name so no future keep entry can re-open the hole.
+    """
+
+    HIJACK_VARS = (
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "BASH_ENV",
+        "ENV",
+        "ZDOTDIR",
+        "PERL5OPT",
+        "RUBYOPT",
+    )
+
+    @pytest.mark.parametrize("name", HIJACK_VARS)
+    def test_hijack_vars_are_dropped(self, name):
+        assert name not in scrub_env({name: "/tmp/attacker", "PATH": "/usr/bin"})
+
+    def test_the_hijack_block_outranks_the_keep_list(self):
+        """``PYTHONPATH`` used to be keep-listed; the block must still win."""
+        env = scrub_env({"PYTHONPATH": "/tmp/attacker", "PYTHONUTF8": "1"})
+
+        assert "PYTHONPATH" not in env
+        assert env["PYTHONUTF8"] == "1", "the rest of the Python runtime vars stay"
+
+    def test_hijack_matching_is_case_insensitive(self):
+        assert "pythonpath" not in scrub_env({"pythonpath": "/tmp/attacker"})
+        assert "PyThOnPaTh" not in scrub_env({"PyThOnPaTh": "/tmp/attacker"})
+
+    def test_ordinary_and_critical_vars_are_unaffected(self):
+        env = scrub_env({"PATH": "/usr/bin", "HOME": "/root", "MY_TOOL": "1", "LC_ALL": "C.UTF-8"})
+
+        assert env == {"PATH": "/usr/bin", "HOME": "/root", "MY_TOOL": "1", "LC_ALL": "C.UTF-8"}
+
+    def test_input_is_still_not_mutated(self):
+        source = {"BASH_ENV": "/tmp/attacker", "PATH": "/usr/bin"}
+
+        scrub_env(source)
+
+        assert source == {"BASH_ENV": "/tmp/attacker", "PATH": "/usr/bin"}
+
+
+class TestLoaderVariables:
+    """The dynamic loader's variables follow the platform, so they are opt-in.
+
+    Measured on this development host: it exports ``LD_PRELOAD`` and
+    ``LD_LIBRARY_PATH`` for its container runtime, and stripping them makes every
+    child fail to start (the programmatic-tool-calling suite times out). Blocking
+    them by default would break the platform to close a vector, so they move
+    behind ``SHERRY_STRICT_ENV_HIJACK`` for hosts that own their loader
+    environment.
+    """
+
+    LOADER_VARS = ("LD_PRELOAD", "LD_LIBRARY_PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH")
+
+    @pytest.mark.parametrize("name", LOADER_VARS)
+    def test_loader_vars_survive_by_default(self, name, monkeypatch):
+        monkeypatch.setattr(env_scrub, "_STRICT_ENV_HIJACK", False, raising=False)
+
+        assert name in scrub_env({name: "/platform/loader", "PATH": "/usr/bin"})
+
+    @pytest.mark.parametrize("name", LOADER_VARS)
+    def test_loader_vars_are_dropped_in_strict_mode(self, name, monkeypatch):
+        monkeypatch.setattr(env_scrub, "_STRICT_ENV_HIJACK", True)
+
+        assert name not in scrub_env({name: "/tmp/attacker", "PATH": "/usr/bin"})
+
+    def test_strict_mode_keeps_the_hijack_block(self, monkeypatch):
+        monkeypatch.setattr(env_scrub, "_STRICT_ENV_HIJACK", True)
+
+        env = scrub_env({"PYTHONPATH": "/tmp/attacker", "PATH": "/usr/bin"})
+
+        assert env == {"PATH": "/usr/bin"}

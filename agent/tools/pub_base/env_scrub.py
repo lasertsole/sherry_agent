@@ -61,7 +61,6 @@ _KEEP_EXACT_NAMES = frozenset(
         "SHELL",
         "LOGNAME",
         # Python runtime
-        "PYTHONPATH",
         "PYTHONUTF8",
         "VIRTUAL_ENV",
         # Windows OS essentials (missing these breaks child processes)
@@ -84,6 +83,67 @@ _KEEP_EXACT_NAMES = frozenset(
 
 # Vars kept by NAME PREFIX (case-insensitive).
 _KEEP_NAME_PREFIXES = ("LC_", "XDG_", "CONDA")
+
+# Variables that let whoever set them run code in the child — or redirect where
+# it loads code from — before the child's own code runs.
+#
+# Two tiers, because one of them is platform-owned:
+#
+# * ``_HIJACK_KEYS`` are dropped always. They are interpreter/shell startup
+#   hooks: nothing legitimate needs to hand the agent's children a startup file.
+# * ``_LOADER_KEYS`` are dropped only under ``SHERRY_STRICT_ENV_HIJACK=1``.
+#   They are the dynamic loader's own variables, and container tooling sets them
+#   for real: this development host (PRoot/Android) exports both ``LD_PRELOAD``
+#   and ``LD_LIBRARY_PATH``, and stripping them makes every child process fail to
+#   start — measured, the programmatic-tool-calling suite times out with them
+#   blocked and passes 63/63 without. A hardening step that bricks the children
+#   is worse than the vector it closes, so the strict tier exists for deployments
+#   that control their own loader environment.
+#
+# ``PYTHONPATH`` stays in the always-dropped tier, verified rather than assumed:
+# nothing in this repository sets it, the project is not installed into the venv
+# (the server and agent run as ``python -m server`` from the repository root,
+# which puts the cwd on ``sys.path``), the skill scripts add the repository root
+# themselves with ``sys.path.insert``, and the one child that needs a
+# ``PYTHONPATH`` — the programmatic-tool-calling runner, for its ``sherry_tools``
+# stub directory — sets it right after scrubbing
+# (``ptc/runner.py::build_child_env``), overwriting whatever it inherited.
+_HIJACK_KEYS = frozenset(
+    {
+        "PYTHONPATH",
+        "PYTHONSTARTUP",
+        "PYTHONHOME",
+        "BASH_ENV",
+        "ENV",
+        "ZDOTDIR",
+        "PERL5OPT",
+        "RUBYOPT",
+    }
+)
+
+#: Loader variables, dropped only in strict mode (see the note above).
+_LOADER_KEYS = frozenset(
+    {
+        "LD_PRELOAD",
+        "LD_LIBRARY_PATH",
+        "DYLD_INSERT_LIBRARIES",
+        "DYLD_LIBRARY_PATH",
+    }
+)
+
+#: Strict mode for hosts whose loader environment is under the operator's control.
+_STRICT_ENV_HIJACK = os.getenv("SHERRY_STRICT_ENV_HIJACK", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
+
+
+def _blocked_env_names() -> frozenset[str]:
+    """The hijack set in force for this process (strict mode adds the loaders)."""
+    return _HIJACK_KEYS | _LOADER_KEYS if _STRICT_ENV_HIJACK else _HIJACK_KEYS
+
 
 # sherry_agent secret vars (loaded from .env at import time via
 # config/path.py load_dotenv), dropped by EXACT name.
@@ -118,11 +178,15 @@ def scrub_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
 
     Filters, by variable NAME only (values are never inspected):
 
-    1. Keep-by-name/prefix wins over everything (critical vars such as
-       ``PATH``, ``SystemRoot``, ``LC_*`` survive even when the name also
-       matches a blocking rule).
-    2. Deny-by-name drops sherry_agent's own secret vars.
-    3. Substring-block drops any remaining name containing a secret
+    1. Hijack-block wins over everything: a startup-hook variable
+       (``PYTHONPATH``, ``BASH_ENV``, ``ENV``, …) never reaches a child, not even
+       when a keep rule would have kept it. In ``SHERRY_STRICT_ENV_HIJACK=1``
+       mode the loader variables (``LD_PRELOAD``, ``LD_LIBRARY_PATH``, …) join it.
+    2. Keep-by-name/prefix comes next (critical vars such as ``PATH``,
+       ``SystemRoot``, ``LC_*`` survive even when the name also matches a
+       blocking rule).
+    3. Deny-by-name drops sherry_agent's own secret vars.
+    4. Substring-block drops any remaining name containing a secret
        substring (KEY, TOKEN, SECRET, PASSWORD, CREDENTIAL, PASSWD, AUTH,
        DSN, WEBHOOK, BEARER, APIKEY — case-insensitive).
 
@@ -136,10 +200,15 @@ def scrub_env(base_env: dict[str, str] | None = None) -> dict[str, str]:
         A new dict; ``base_env`` is never mutated.
     """
     source: dict[str, str] = os.environ if base_env is None else base_env
+    blocked = _blocked_env_names()
     safe_env: dict[str, str] = {}
     for name, value in source.items():
         upper_name = name.upper()
-        # Precedence: keep-by-name > deny-by-name > substring-block.
+        # Precedence: hijack-block > keep-by-name > deny-by-name > substring-block.
+        # The hijack check runs FIRST on purpose: it must win over the keep list
+        # (and over any future entry someone adds there).
+        if upper_name in blocked:
+            continue
         if _is_kept(upper_name):
             safe_env[name] = value
         elif upper_name in _SECRET_NAMES_UPPER:
