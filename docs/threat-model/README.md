@@ -42,7 +42,7 @@ OS-isolation detail.
 | Shell injection | `agent/middlewares/humanInTheLoop/detection.py` blocklist (12 hardline + 59 dangerous rules) | — |
 | Sandbox escape | `bwrap` / `seatbelt` | — |
 | Reasoning-block leakage into the stream | — | **Think scrubber** |
-| Subprocess env hijack (`LD_PRELOAD`, `BASH_ENV`, …) | Name-based secret blocklist | **Hijack-variable block** |
+| Subprocess env hijack (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV`, …) | **Hijack-variable block**: startup hooks (`PYTHONPATH`, `BASH_ENV`, `ENV`, …) are always dropped; the loader variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`) only under `SHERRY_STRICT_ENV_HIJACK=1`, because container runtimes set them for real | Loader variables are not blocked by default — see the note in the operations section |
 | Upload endpoint content spoofing | Gateway auth (Origin + token) | **Byte-signature vs declared type check** |
 
 ## Untrusted-output fence
@@ -97,6 +97,63 @@ Properties worth relying on:
 * **Known limit:** an exception's traceback is rendered from live frames, so a
   secret that only ever existed as a local variable inside the failing frame can
   still appear in the error sink's `diagnose` dump.
+
+## Security policy
+
+**The only hard boundary is the operating system.** Process isolation, file
+permissions, the sandbox backends, and the gateway's auth boundary are the things
+an attacker must actually defeat. Everything the agent does *in-process* is a
+heuristic:
+
+| Layer | What it is | Not a boundary because |
+|---|---|---|
+| Prompt-injection scanner, untrusted-output fence | Detection and labelling | A model can be argued past a fence; a pattern can be phrased around |
+| Secret redaction | Hygienic rewriting of text | It only removes what its patterns recognise |
+| Path guard, HITL allowlists, shell blocklists | Deny rules for known-bad shapes | Deny rules are incomplete by construction |
+| Env scrubbing, lane limits, iteration budgets | Blast-radius reduction | They assume the child itself is not the attacker's code path |
+
+Operating consequences we accept and state plainly:
+
+* model output is untrusted input to whatever consumes it — never let the agent's
+  words drive a privileged action without an OS-level check;
+* anything the agent can read, it can eventually leak: give it only the
+  credentials the task needs;
+* ``terminal`` and ``python_repl`` run with the operator's OS identity, minus
+  secret-named environment variables — so the OS permissions of that account are
+  the real limit, not the sandbox *config*;
+* a determined model that ignores the fence, or a malicious operator with the same
+  account, is out of scope. We defend against *content* arriving from elsewhere,
+  not against the person running the agent.
+
+## Operations
+
+**Boot checks.** The 128K context floor refuses to start (both LLMs); the gateway
+mints a per-boot token, so a page open across a restart reconnects only after a
+reload; secrets belong in ``.env`` (env vars only — the config files are not a
+secret store).
+
+**What to watch.** ``logs/output/error/`` carries the failures; the security-relevant
+lines are:
+
+| Signal in the log | Meaning |
+|---|---|
+| ``refusing WebSocket handshake`` | A client with a stale or missing token — expected after a restart |
+| ``«redacted»`` in a message | A credential-shaped string reached a log record and was masked |
+| ``Potential security threat detected: <id>`` | The injection scanner fired on tool output |
+| sandbox / denial lines | A tool call was refused by a deny rule |
+
+**If you suspect a leak.** Rotate the credential first (环境配置 / ``.env``), then
+search the logs for its prefix — the redaction sentinel tells you a value of that
+shape *was* logged, and MesMemory holds the tool output it came from. A leak that
+never had a recognised shape is exactly what the heuristic cannot rule out; assume
+the worst for anything you cannot account for.
+
+**Hardening knobs.** ``SHERRY_STRICT_ENV_HIJACK=1`` extends the child-env block to
+the loader variables — correct for hosts that own their loader environment, wrong
+on container runtimes that set them (this repository's development host does).
+``UNTRUSTED_OUTPUT["enabled"]`` and ``REDACTION["tool_output_enabled"]`` switch the
+model-path protections; ``SHERRY_REDACT`` is snapshotted at import, so a session
+cannot turn redaction off by editing anything it can write.
 
 ## Prompt-injection scanner
 

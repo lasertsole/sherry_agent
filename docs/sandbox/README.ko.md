@@ -33,7 +33,7 @@
 
 두 계층과 하나의 게이트 — 여기에 파일 도구만의 경로 방어 스택이 더해집니다:
 
-- **L1. 환경 변수 세척**(`scrub_env`): 무조건, 모든 생성 시점에서 실행. 사람이 `sandbox=False`를 승인한 경우에도 예외 없음.
+- **L1. 환경 변수 세척**(`scrub_env`): 무조건, 모든 생성 시점에서 실행. 사람이 `sandbox=False`를 승인한 경우에도 예외 없음. 비밀 이름 변수를 제거할 뿐 아니라 **시작 훅 변수**(`PYTHONPATH`, `BASH_ENV`, `ENV` 등)를 자체 허용 목록보다 높은 우선순위로 차단하여, 부모 환경을 설정한 사람이 고른 스크립트를 읽거나 모듈을 import 하는 일을 자식 프로세스에 허용하지 않습니다. 로더 변수(`LD_PRELOAD`, `LD_LIBRARY_PATH` 등)는 `SHERRY_STRICT_ENV_HIJACK=1` 일 때만 차단합니다——컨테이너 런타임이 실제로 설정하며 제거하면 모든 자식 프로세스가 시작되지 않기 때문입니다.
 - **L2. OS 네이티브 샌드박스**: Linux는 bubblewrap, macOS는 Seatbelt — 쓰기 봉쇄에 더해 민감 경로 리드 실드([§2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2) 참조). Windows에는 OS 백엔드가 없음([정직한 한계 고지](#️-정직한-한계-고지) 참조).
 - **사람 승인 게이트**: `sandbox=False` 우회는 메인 세션에서만 가능하며 HITL 인터럽트를 거칩니다.
 - **PTC(`execute_code`)**: executor 전용이고 `sandbox` 플래그가 없으므로 항상 샌드박스를 요청합니다 — 자식 argv는 같은 L2 백엔드로 감싸집니다. `SANDBOX_POLICY=required`는 실행을 거부하고, `auto`는 정확히 한 번의 경고와 함께 강등합니다([격리 §2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2) 참조).

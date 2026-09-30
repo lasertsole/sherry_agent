@@ -33,7 +33,7 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 
 Two layers plus one gate — plus a separate path-defense stack for the file tools:
 
-- **L1. Environment scrubbing** (`scrub_env`): unconditional, at every spawn point, even when a human approved `sandbox=False`.
+- **L1. Environment scrubbing** (`scrub_env`): unconditional, at every spawn point, even when a human approved `sandbox=False`. It drops secret-named variables *and* blocks startup-hook variables outright (`PYTHONPATH`, `BASH_ENV`, `ENV`, …) at a precedence above its own keep list, so a child never sources a file or imports a module chosen by whoever set the parent environment; the loader variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`, …) are blocked only under `SHERRY_STRICT_ENV_HIJACK=1`, because container runtimes set them for real and stripping them stops every child from starting.
 - **L2. OS-native sandbox**: bubblewrap on Linux, Seatbelt on macOS — write containment plus a sensitive-path read-shield (see [§2](isolation/README.md#2-os-native-sandbox-backends-l2)). Windows has no OS backend (see [Honesty & Limitations](#️-honesty--limitations)).
 - **Human approval gate**: `sandbox=False` bypasses only in the main session, through a HITL interrupt.
 - **PTC (`execute_code`)**: executor-only and exposes no `sandbox` flag, so it always requests sandboxing — the child argv is wrapped by the same L2 backend. `SANDBOX_POLICY=required` refuses the run and `auto` degrades with exactly one warning (see [Isolation §2](isolation/README.md#2-os-native-sandbox-backends-l2)).

@@ -4,7 +4,7 @@
 > **创建日期**: 2026-09-28
 > **审查范围**: 6 个 Agent 项目（hermes-agent、deepagents、openclaw、codex-main、opencode-dev、oh-my-openagent-dev）的安全防御机制
 > **审查方法**: 3 路并行子代理逐文件审查
-> **状态**: 阶段 1、2、3、5 已落地（2026-09-30）；阶段 4、6、7、8、9 待执行。落点与提案的差异、以及过程中发现的缺陷见下。
+> **状态**: 阶段 1、2、3、5、6、8 已落地（2026-09-30），阶段 9 随各阶段落地；阶段 4、7 待执行，A6 经评估**不适用**。落点与提案的差异、以及过程中发现的缺陷见下。
 
 ---
 
@@ -39,9 +39,25 @@
 - 规则相互作用修复：裸值类收紧为不含 `& , ;`——否则赋值规则会再次匹配已被查询规则改写的 `token=«redacted»&page=2`，把 token 之后的整段参数吞掉。
 - 接线：`ContextEvictionMiddleware` 中 **evict → redact → wrap**；默认只覆盖易泄漏面（`terminal`/`python_repl`/不可信工具集 + `mcp_` 前缀），**文件工具保持原文**——理由：agent 要改自己的配置，掩码会让"读回再写回"变成有损操作（写在 `config/features/agent_side/redaction.py`）。
 
+**阶段 6 — 子进程 env hijack 阻止（B6）+ 上下文引用守卫（A6）**
+
+- `env_scrub.py`：**两档** hijack 阻止——启动钩子（`PYTHONPATH`、`PYTHONSTARTUP`、`PYTHONHOME`、`BASH_ENV`、`ENV`、`ZDOTDIR`、`PERL5OPT`、`RUBYOPT`）始终剔除，且优先级高于自身白名单；加载器变量（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`DYLD_INSERT_LIBRARIES`、`DYLD_LIBRARY_PATH`）仅在 `SHERRY_STRICT_ENV_HIJACK=1` 下剔除。
+- 计划标注的 ⚠️ 全部实测：① 本机（PRoot/Android）**真的导出** `LD_PRELOAD` 与 `LD_LIBRARY_PATH`，默认剔除会让所有子进程起不来——PTC 套件 63 条超时、回退该改动后 27s 全绿（A/B 实测），故分档并把严格模式留给自有加载器环境的主机；② `PYTHONPATH` 进默认档前逐项验证：本仓无人设置、项目未安装进 venv（服务端以 `python -m server` 从仓库根运行，cwd 在 sys.path 上）、技能脚本自行 `sys.path.insert`、唯一需要它的 PTC runner 在 scrub **之后**自行赋值（`ptc/runner.py::build_child_env`），并用测试钉住该顺序。
+- A6 **不适用**：本仓没有 `@file:` 式上下文引用功能（全仓检索为空），不存在计划描述的攻击面；按证据记为不适用，而非"待实现"。
+- 测试：单元两档 + **真实子进程 e2e**（`/bin/sh` 与 `python` 子进程收不到 hijack 变量、`BASH_ENV` 指向的启动脚本确实未执行、严格模式下加载器变量也消失、PTC 顺序不变量）。
+
+**阶段 8 — 安全策略（C2）+ 安全运行手册（C3）**
+
+- 落点与提案不同：未新建独立文件，而是作为四语 `docs/threat-model/README{,.zh,.ja,.ko}.md` 的两节——「Security policy」（唯一硬边界是 OS；逐层说明各进程内机制**为何不是边界**，并写明三条运行结论与明确的**不防御范围**）与「Operations」（启动检查、安全日志信号表、泄漏处置步骤、加固开关及其取舍）。理由：`docs/` 无单语文档、parity 门禁强制四语，且两节与威胁模型同源、互相引用。
+
+**阶段 9 — 测试与 CI 集成**
+
+- 各阶段测试随阶段落地并进入门禁分组（A 单元 / B 集成 / C 回归）。
+- `tests/docs/test_threat_model_claims.py` 扩至 6 组契约：文档里的每个 `.py` 路径必须存在、示例 import 必须可导入、scope 名与扫描窗口必须等于代码常量、边界表点名的防护必须真实、**策略/运行手册两节必须在且 hijack 两档与代码集合一致**、**运行手册点名的日志信号必须在代码里真实存在**——最后这条当场抓到文档写成 `Security threat detected` 而代码是 `Potential security threat detected`。
+
 ### 待执行
 
-阶段 4（记忆写入注入拦截 A4 + 终端控制序列剥离 A5）、阶段 6（子进程 env hijack 阻止 B6 + 上下文引用守卫 A6）、阶段 7（推理块剥离 B4 + PII 脱敏 B3）、阶段 8（安全策略文件 C2 + 安全运行手册 C3）、阶段 9（测试 + CI 集成，已随各阶段落地一部分）。
+阶段 4（记忆写入注入拦截 A4 + 终端控制序列剥离 A5）、阶段 7（推理块剥离 B4 + PII 脱敏 B3）。阶段 9 的测试与 CI 集成随各阶段落地，无独立余量。
 
 ---
 
@@ -605,23 +621,24 @@ if is_untrusted_tool(tool_name):
 
 | 维度 | 措施 | 来源 | 状态 |
 |------|------|------|------|
-| **不可信输出包装** | web_search/terminal/MCP 输出包装在 `<untrusted_tool_result>` 中 | hermes + openclaw | 待实现 |
-| **注入模式扫描** | 3 级 scope 扫描（all/context/strict） | hermes `threat_patterns.py` | 待实现 |
-| **分隔符防伪** | 内容中的伪造 `</untrusted_tool_result>` 标签被中和 | hermes `_neutralize_delimiters` | 待实现 |
-| **记忆写入拦截** | memory 工具写入前扫描，strict scope 拦截注入文本 | openclaw `memory_store` | 待实现 |
-| **密钥脱敏** | 13+ 正则族覆盖 vendor prefix/auth header/JWT/PEM/URL/JSON/config | hermes `redact.py` | 待实现 |
-| **日志脱敏** | loguru sink 包装，所有日志记录自动脱敏 | hermes `RedactingFormatter` | 待实现 |
-| **终端控制序列** | 剥离 CPR/DSR/SGR 序列 | hermes `_strip_leaked_terminal_responses` | 待实现 |
-| **env hijack 阻止** | blocklist 之上叠加 hijack 变量阻止（LD_PRELOAD 等） | deepagents `_backend_child_env` | 待实现 |
-| **上下文引用守卫** | `@file:` 引用走 read deny-list | hermes `context_references.py` | 待实现 |
-| **推理块剥离** | `<think>`/`<reasoning>` 块不泄漏到流式输出 | hermes `StreamingThinkScrubber` | 待实现 |
-| **PII 脱敏** | 用户 ID/聊天 ID 哈希化 | hermes `_hash_id` | 待实现 |
-| **威胁模型文档** | STRACE 风格：组件/信任边界/数据流/威胁 | deepagents `THREAT_MODEL.md` | 待实现 |
-| **安全策略** | 信任模型：OS 是唯一边界，进程内机制是启发式 | hermes `SECURITY.md` | 待实现 |
+| **不可信输出包装** | web_search/tavily_search/message_search/`mcp_*` 输出包装在 `<untrusted_tool_result>` 中 | hermes + openclaw | ✅ `agent/security/untrusted_wrapper.py`（terminal 属阶段 4，未接线） |
+| **注入模式扫描** | 3 级 scope 扫描（all/context/strict） | hermes `threat_patterns.py` | ✅ `agent/security/threat_patterns.py`（计划样例的有界填充有缺陷，已修） |
+| **分隔符防伪** | 内容中的伪造 `</untrusted_tool_result>` 标签被中和 | hermes `_neutralize_delimiters` | ✅ `untrusted_wrapper.neutralize_delimiters`（包装前执行） |
+| **记忆写入拦截** | memory 工具写入前扫描，strict scope 拦截注入文本 | openclaw `memory_store` | 未实现（阶段 4） |
+| **密钥脱敏** | vendor prefix/auth header/JWT/PEM/URL/JSON/config 各族 | hermes `redact.py` | ✅ `agent/security/redact.py`（预筛 + 幂等 + 导入时快照；修掉 PEM 量词陷阱） |
+| **日志脱敏** | 所有日志记录自动脱敏 | hermes `RedactingFormatter` | ✅ `redact_formatter.py` + `logs/logger.py`（用公开 patcher，非计划里的私有 `_sink`；`diagnose` 的 traceback 局部变量不覆盖） |
+| **终端控制序列** | 剥离 CPR/DSR/SGR 序列 | hermes `_strip_leaked_terminal_responses` | 未实现（阶段 4） |
+| **env hijack 阻止** | 启动钩子变量始终阻止；加载器变量严格模式下阻止 | deepagents `_backend_child_env` | ✅ `env_scrub._HIJACK_KEYS` / `_LOADER_KEYS`——**分两档**：本机（PRoot）真的导出 `LD_PRELOAD`/`LD_LIBRARY_PATH`，默认剔除会让所有子进程起不来（PTC 63 条超时，回退后 27s 全绿，A/B 实测） |
+| **上下文引用守卫** | `@file:` 引用走 read deny-list | hermes `context_references.py` | **不适用**：本仓没有 `@file:` 式上下文引用功能，无此攻击面（全仓检索为空） |
+| **推理块剥离** | `<think>`/`<reasoning>` 块不泄漏到流式输出 | hermes `StreamingThinkScrubber` | 未实现（阶段 7） |
+| **PII 脱敏** | 用户 ID/聊天 ID 哈希化 | hermes `_hash_id` | 未实现（阶段 7） |
+| **威胁模型文档** | 组件/信任边界/数据流/威胁 | deepagents `THREAT_MODEL.md` | ✅ `docs/threat-model/README{,.zh,.ja,.ko}.md`（四语组 + 声明校验测试） |
+| **安全策略** | 信任模型：OS 是唯一边界，进程内机制是启发式 | hermes `SECURITY.md` | ✅ threat-model 的「Security policy」一节 |
+| **安全运行手册** | 运维层面的安全配置指南（启动检查 / 日志信号 / 泄漏处置 / 加固开关） | deepagents `openwiki/operations/security.md` | ✅ threat-model 的「Operations」一节 |
 | **Shell 危险命令** | 12 hardline + 59 dangerous + 2 ClawHub 远程 npm 模式 | sherry 现有 `detection.py` | ✅ 已落地 |
 | **OS 沙箱** | bwrap/seatbelt 写隔离 + 读遮蔽 | sherry 现有 `sandbox*.py` | ✅ 已落地 |
 | **路径防护** | 遍历拦截 + O_NOFOLLOW + 符号链接检测 | sherry 现有 `path_guard` + `path_utils` | ✅ 已落地 |
-| **环境变量剥离** | 子进程 env 剥离 KEY/TOKEN/SECRET | sherry 现有 `env_scrub.py` | ✅ 已落地（待叠加 hijack 阻止） |
+| **环境变量剥离** | 子进程 env 剥离 KEY/TOKEN/SECRET | sherry 现有 `env_scrub.py` | ✅ 已落地，并叠加 hijack 阻止（见本表 env hijack 一行与其 A/B 证据） |
 | **内容过滤响应** | provider content_filter → 回退模型 | sherry 现有 `LLMRetryMiddleware` | ✅ 已落地 |
 | **多模态净化** | 剥离不支持的媒体块 | sherry 现有 `media_pipeline/scrub.py` | ✅ 已落地 |
 | **转录修复** | tool-call/result 配对修复 | sherry 现有 `transcript_repair.py` | ✅ 已落地 |

@@ -33,7 +33,7 @@
 
 两层防线、一道门，外加文件工具独立的一套路径防御栈：
 
-- **L1. 环境变量清洗**（`scrub_env`）：无条件、在每个子进程创建点执行，即使人工批准了 `sandbox=False` 也不例外。
+- **L1. 环境变量清洗**（`scrub_env`）：无条件、在每个子进程创建点执行，即使人工批准了 `sandbox=False` 也不例外。它除了按名称剔除密钥变量，还会以高于自身白名单的优先级**阻止启动钩子变量**（`PYTHONPATH`、`BASH_ENV`、`ENV` 等），使子进程永远不会加载由父环境设置者指定的脚本或模块；加载器变量（`LD_PRELOAD`、`LD_LIBRARY_PATH` 等）仅在 `SHERRY_STRICT_ENV_HIJACK=1` 下阻止——容器运行时会真的设置它们，剔除后所有子进程都起不来。
 - **L2. 操作系统原生沙箱**：Linux 用 bubblewrap，macOS 用 Seatbelt——写入围堵之外还有敏感路径读遮蔽（见[§2](isolation/README.zh.md#2-操作系统原生沙箱后端l2)）。Windows 没有操作系统级后端（见[诚实声明与局限](#️-诚实声明与局限)）。
 - **人工审批门**：`sandbox=False` 的绕过只可能发生在主会话，且必须经过 HITL 中断审批。
 - **PTC（`execute_code`）**：仅 executor 可用且不暴露 `sandbox` 开关，因此始终请求沙箱——子进程 argv 由同一套 L2 后端包装。`SANDBOX_POLICY=required` 拒绝该次运行，`auto` 降级时恰好一条警告（见[隔离 §2](isolation/README.zh.md#2-操作系统原生沙箱后端l2)）。
