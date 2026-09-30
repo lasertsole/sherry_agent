@@ -37,6 +37,7 @@ from collections.abc import AsyncGenerator
 
 from langchain.messages import AIMessageChunk
 from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMessage
+from agent.security.think_scrub import StreamingReasoningScrubber
 from loguru import logger
 from runtime import state_register_mem
 from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
@@ -209,6 +210,10 @@ class StreamTurn:
         # when the stream died).
         self._has_reasoning: bool = False
         self._has_visible_text: bool = False
+        # B4: inline <think>/<reasoning> blocks are moved out of the visible
+        # answer as it streams (one scrubber per turn, so it survives the
+        # continuation loop's source re-creations).
+        self._think_scrubber = StreamingReasoningScrubber()
         # Tool calls seen streaming this turn, keyed by call id (or name
         # when the id has not arrived yet) — entries are removed when the real
         # ToolMessage lands, so whatever remains died mid-call.
@@ -573,11 +578,23 @@ class StreamTurn:
 
                             # Conversation output logic
                             if isinstance(msg_chunk.content, str) and len(msg_chunk.content) > 0:
-                                res = msg_chunk.content
-                                self.ai_text += res
-                                self._has_visible_text = True
-                                self._diag["bytes"] += len(res)
-                                yield {"type": "text", "content": res}
+                                # A reasoning block held back entirely produces
+                                # no visible text (and must not count as one).
+                                res = self._think_scrubber.feed(msg_chunk.content)
+                                if res:
+                                    self.ai_text += res
+                                    self._has_visible_text = True
+                                    self._diag["bytes"] += len(res)
+                                    yield {"type": "text", "content": res}
+                                # B4: inline CoT found in ``content`` is moved to
+                                # the reasoning channel rather than dropped, so a
+                                # model that only emits ``<think>`` still fills the
+                                # client's thinking block (models that carry CoT in
+                                # ``additional_kwargs`` never hit this path).
+                                _inline_cot = self._think_scrubber.take_reasoning()
+                                if _inline_cot:
+                                    self._has_reasoning = True
+                                    yield {"type": "reasoning", "content": _inline_cot}
 
                             # Model reasoning output logic
                             # Reasoning models (DeepSeek thinking, GLM thinking, R1...)
@@ -609,6 +626,19 @@ class StreamTurn:
                 if not should_continue:
                     break
                 self._prepare_continuation(is_reasoning_only)
+
+            # A held-back fragment that never became a tag is plain text the
+            # reader still owes; an unterminated reasoning block hands its content
+            # over to the reasoning channel instead.
+            trailing = self._think_scrubber.flush()
+            if trailing:
+                self.ai_text += trailing
+                self._has_visible_text = True
+                yield {"type": "text", "content": trailing}
+            _tail_cot = self._think_scrubber.take_reasoning()
+            if _tail_cot:
+                self._has_reasoning = True
+                yield {"type": "reasoning", "content": _tail_cot}
 
             for frame in self._final_frames():
                 yield frame
