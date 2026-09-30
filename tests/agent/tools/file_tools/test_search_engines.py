@@ -148,6 +148,9 @@ def test_a_missing_binary_falls_back_to_the_walk(virtual_root, monkeypatch):
     monkeypatch.setattr(rg_resolver.shutil, "which", lambda name: None)
     monkeypatch.setattr(rg_resolver, "runtime_dir", lambda: virtual_root / "runtime")
     monkeypatch.setattr(rg_resolver, "CODE_INTEL_DIR", virtual_root / "bin")
+    # The venv's own rg (the ripgrep-bin dependency) must not answer either, or
+    # this stops testing "a host without ripgrep".
+    monkeypatch.setattr(rg_resolver, "interpreter_dirs", list)
     rg_resolver.reset_cache()
 
     assert rg_resolver.resolve_rg() is None

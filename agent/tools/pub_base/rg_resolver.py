@@ -1,12 +1,18 @@
 """ripgrep binary resolution — same five-tier discovery as the ast-grep resolver.
 
-Probing order (mirrors ``agent/tools/code_intel/ast_grep/resolver.py``):
+Probing order (the ast-grep resolver's five tiers plus one that the project
+dependency needs):
 
   1. Env override (``SHERRY_RG_PATH``)
-  2. sherry runtime (``~/.sherry/runtime/ripgrep/<slug>/rg``)
-  3. code-intel bin cache (``CODE_INTEL_DIR/ripgrep/bin/rg``)
-  4. PATH lookup (``rg`` / ``rg.exe``, Windows ``PATHEXT`` aware)
-  5. Homebrew / Linuxbrew prefixes
+  2. Next to the running interpreter — ``.venv/bin/rg``, where the
+     ``ripgrep-bin`` dependency installs its console script. This tier exists
+     because a server started as ``./.venv/bin/python -m server`` may not have
+     the venv's ``bin`` on ``PATH``, and the dependency route must not depend on
+     how the process was launched.
+  3. sherry runtime (``~/.sherry/runtime/ripgrep/<slug>/rg``)
+  4. code-intel bin cache (``CODE_INTEL_DIR/ripgrep/bin/rg``)
+  5. PATH lookup (``rg`` / ``rg.exe``, Windows ``PATHEXT`` aware)
+  6. Homebrew / Linuxbrew prefixes
 
 Every candidate must be a non-empty regular file AND pass a ``--version`` probe
 whose combined output contains ``ripgrep``; a candidate that fails for any
@@ -34,7 +40,7 @@ from loguru import logger
 from config.features import RIPGREP
 from config.path import CODE_INTEL_DIR
 
-__all__ = ["resolve_rg", "reset_cache", "spawn_failed"]
+__all__ = ["interpreter_dirs", "resolve_rg", "reset_cache", "spawn_failed"]
 
 _resolution_cache: str | None = None
 _cache_filled = False
@@ -84,6 +90,22 @@ def _accepts(binary_path: str) -> bool:
     return _candidate_exists(binary_path) and _probe_version(binary_path)
 
 
+def interpreter_dirs() -> list[Path]:
+    """Directories where a project-installed ``rg`` console script can live.
+
+    ``ripgrep-bin`` drops its binary next to the interpreter (``.venv/bin/rg``),
+    and a server started as ``./.venv/bin/python -m server`` may have no venv
+    ``bin`` on PATH — so these are probed before PATH. ``sys.executable`` is used
+    unresolved on purpose: ``.venv/bin/python`` is a symlink to the base
+    interpreter, and resolving it would look in the wrong directory.
+    """
+    script_dir = Path(sys.prefix) / ("Scripts" if sys.platform == "win32" else "bin")
+    dirs = [Path(sys.executable).parent]
+    if script_dir not in dirs:
+        dirs.append(script_dir)
+    return dirs
+
+
 def runtime_dir() -> Path:
     """Return the provision target directory (config override or ``~/.sherry``)."""
     configured = str(RIPGREP["runtime_dir"]).strip()
@@ -93,13 +115,15 @@ def runtime_dir() -> Path:
 
 
 def _candidates() -> list[str]:
-    """Every candidate path, in probing order (env → runtime → bin → PATH → brew)."""
+    """Every candidate path, in probing order (env → interpreter → runtime → cache → PATH → brew)."""
     candidates: list[str] = []
 
     override = os.environ.get(str(RIPGREP["path_env_key"]), "").strip()
     if override:
         candidates.append(override)
 
+    # The dependency route (see interpreter_dirs) comes before PATH on purpose.
+    candidates.extend(str(directory / _binary_name()) for directory in interpreter_dirs())
     candidates.append(str(runtime_dir() / _binary_name()))
     candidates.append(str(CODE_INTEL_DIR / "ripgrep" / "bin" / _binary_name()))
 

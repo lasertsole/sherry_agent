@@ -41,6 +41,7 @@ dependencies = [
     "tree-sitter-typescript>=0.23.2",
     "tree-sitter-rust>=0.24.2",
     "tree-sitter-go>=0.25.0",
+    "ripgrep-bin>=15.2.0",
 ]
 
 [dependency-groups]

@@ -15,8 +15,15 @@ class RipgrepConfig(TypedDict):
 
     enabled: bool
     # Discovery mirrors the ast-grep resolver (agent/tools/code_intel/ast_grep/
-    # resolver.py): env override -> provisioned runtime -> in-repo bin cache ->
-    # PATH -> Homebrew prefixes, each candidate probed with `--version`.
+    # resolver.py) and adds one tier the project dependency needs:
+    #   env override -> next to the running interpreter (.venv/bin, where
+    #   `ripgrep-bin` puts its console script) -> provisioned runtime ->
+    #   in-repo bin cache -> PATH -> Homebrew prefixes,
+    # each candidate probed with `--version`. The dependency ships wheels for
+    # linux aarch64/x86_64/riscv64 (glibc + musl), macOS x86_64/arm64 and Windows
+    # amd64/arm64, so the binary tier normally wins; on a platform without a
+    # wheel uv would build ripgrep from source, which is why the Python walk
+    # remains the fallback rather than an error.
     path_env_key: str
     # Empty string means ~/.sherry/runtime/ripgrep/<platform>-<arch>.
     runtime_dir: str

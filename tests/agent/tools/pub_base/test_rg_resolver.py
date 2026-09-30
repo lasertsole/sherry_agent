@@ -20,9 +20,15 @@ pytestmark = [pytest.mark.unit]
 
 
 @pytest.fixture(autouse=True)
-def _fresh_cache():
-    """Each case starts with an empty resolution cache."""
+def _fresh_cache(monkeypatch):
+    """Each case starts with an empty cache and no interpreter-adjacent rg.
+
+    The real ``.venv/bin/rg`` installed by the ``ripgrep-bin`` dependency would
+    otherwise satisfy every case; the tier is put back explicitly by the two
+    tests that are about it.
+    """
     rg_resolver.reset_cache()
+    monkeypatch.setattr(rg_resolver, "interpreter_dirs", list)
     yield
     rg_resolver.reset_cache()
 
@@ -66,6 +72,43 @@ def test_a_missing_candidate_falls_through_to_the_next_tier(tmp_path, monkeypatc
     monkeypatch.setattr(rg_resolver.shutil, "which", lambda name: good)
 
     assert rg_resolver.resolve_rg() == good
+
+
+def test_the_interpreter_adjacent_binary_wins_when_path_is_empty(tmp_path, monkeypatch):
+    """The dependency route must not depend on how the process was launched.
+
+    `ripgrep-bin` installs its console script next to the interpreter, and a
+    server started as `./.venv/bin/python -m server` may have no venv `bin` on
+    PATH — so that tier is checked before PATH.
+    """
+    monkeypatch.delenv("SHERRY_RG_PATH", raising=False)
+    sibling = tmp_path / "bin"
+    sibling.mkdir()
+    binary = sibling / "rg"
+    binary.write_text("#!/bin/sh\necho 'ripgrep 15.2.0'\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setattr(rg_resolver, "interpreter_dirs", lambda: [sibling])
+    monkeypatch.setattr(rg_resolver, "runtime_dir", lambda: tmp_path / "runtime")
+    monkeypatch.setattr(rg_resolver, "CODE_INTEL_DIR", tmp_path / "cache")
+    monkeypatch.setattr(rg_resolver.shutil, "which", lambda name: None)
+
+    assert rg_resolver.resolve_rg() == str(binary)
+
+
+def test_the_environments_script_dir_is_checked_before_path(tmp_path, monkeypatch):
+    """`sys.prefix/bin` covers a venv whose python is a symlink out of the venv."""
+    monkeypatch.delenv("SHERRY_RG_PATH", raising=False)
+    prefix = tmp_path / "venv"
+    (prefix / "bin").mkdir(parents=True)
+    binary = prefix / "bin" / "rg"
+    binary.write_text("#!/bin/sh\necho 'ripgrep 15.2.0'\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setattr(rg_resolver, "interpreter_dirs", lambda: [prefix / "bin"])
+    monkeypatch.setattr(rg_resolver, "runtime_dir", lambda: tmp_path / "runtime")
+    monkeypatch.setattr(rg_resolver, "CODE_INTEL_DIR", tmp_path / "cache")
+    monkeypatch.setattr(rg_resolver.shutil, "which", lambda name: None)
+
+    assert rg_resolver.resolve_rg() == str(binary)
 
 
 def test_an_empty_file_is_not_a_candidate(tmp_path, monkeypatch):

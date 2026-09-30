@@ -82,6 +82,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 | **ローカル推論** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT モデル）、FunASR（STT） |
 | **ドキュメント解析** | mineru-vl-utils |
 | **Web 検索** | langchain-tavily（Tavily API） |
+| **コード検索** | ripgrep（依存関係と一緒に入る `ripgrep-bin`）。純 Python 走査が常時のフォールバック |
 | **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-community + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
 | **構造化出力** | instructor、json_repair |
 | **評価（Evaluation）** | RAGAS（グラフ RAG 品質指標）+ 自製サンドボックス評価フレームワーク（`evals/`） |
