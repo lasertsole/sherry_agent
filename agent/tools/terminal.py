@@ -50,6 +50,7 @@ from langchain_core.tools import ToolException
 
 from agent.tools.pub_base import _extract_session_id
 from agent.tools.pub_base.env_scrub import scrub_env
+from agent.tools.pub_base.process_reap import areap_process, reap_process
 from agent.security.terminal_output import strip_control_sequences
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
@@ -262,9 +263,11 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                 return f"Exit code {proc.returncode}\n{output}"
             return output
         except subprocess.TimeoutExpired:
+            # Bounded cleanup: kill, then wait with a deadline. A bare
+            # communicate() here waits for EOF on a pipe a grandchild may hold,
+            # which turns a timed-out command into a hung tool call.
             if proc:
-                proc.kill()
-                proc.communicate()
+                reap_process(proc)
             logger.warning(
                 "terminal command timed out after {}s: {}",
                 TERMINAL_TIMEOUT,
@@ -383,8 +386,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             return self._record_verification(cmd_str, output, run_manager)
         except TimeoutError:
             if proc:
-                proc.kill()
-                await proc.communicate()
+                await areap_process(proc)
             logger.warning(
                 "terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120]
             )

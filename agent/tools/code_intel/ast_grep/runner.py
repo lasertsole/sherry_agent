@@ -162,25 +162,37 @@ def _rewrite_args(
 
 
 def _run_sg(binary: str, args: list[str], timeout_ms: int, cwd: str) -> dict[str, Any]:
-    """Run the sg CLI and return ``{ok, records, stdout}`` or ``{ok: False, error}``."""
+    """Run the sg CLI and return ``{ok, records, stdout}`` or ``{ok: False, error}``.
+
+    A ``subprocess.run(timeout=...)`` would look equivalent and is not: on timeout
+    the standard library kills the child and then drains its pipes *without* a
+    deadline, so a grandchild holding stdout turns the timeout into a hang. The
+    watchdog plus a bounded reap keeps the deadline a deadline.
+    """
     from agent.tools.pub_base.env_scrub import scrub_env
+    from agent.tools.pub_base.process_reap import ProcessWatchdog, reap_process
 
     try:
-        proc = subprocess.run(
+        proc = subprocess.Popen(  # noqa: S603 - argv list, no shell
             [binary, *args],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
             cwd=cwd,
-            timeout=timeout_ms / 1000,
             env=scrub_env(os.environ.copy()),
         )
-    except subprocess.TimeoutExpired:
-        return {"ok": False, "error": f"ast-grep timed out after {timeout_ms}ms"}
     except (OSError, subprocess.SubprocessError):
         return {"ok": False, "error": "ast-grep binary could not be executed"}
 
+    with ProcessWatchdog(timeout_ms / 1000, proc.kill) as dog:
+        stdout, stderr = proc.communicate()
+    returncode = proc.returncode
+    reap_process(proc)
+    if dog.fired:
+        return {"ok": False, "error": f"ast-grep timed out after {timeout_ms}ms"}
+
     records: list[Any] = []
-    for line in (proc.stdout or "").splitlines():
+    for line in (stdout or "").splitlines():
         stripped = line.strip()
         if not stripped:
             continue
@@ -189,17 +201,16 @@ def _run_sg(binary: str, args: list[str], timeout_ms: int, cwd: str) -> dict[str
         except json.JSONDecodeError:
             continue
 
-    if proc.returncode != 0 and not records:
-        stderr = (proc.stderr or "").strip()
+    if returncode != 0 and not records:
         return {
             "ok": False,
-            "error": stderr or f"ast-grep exited with code {proc.returncode}",
+            "error": (stderr or "").strip() or f"ast-grep exited with code {returncode}",
         }
     return {
         "ok": True,
         "records": records,
-        "stdout": proc.stdout or "",
-        "stderr": proc.stderr or "",
+        "stdout": stdout or "",
+        "stderr": stderr or "",
     }
 
 
