@@ -11,6 +11,7 @@ from bus import MessageBus
 from channels.deps import install_requirements
 from collections import deque
 from config.schema import Base
+from agent.security.pii import pseudonym
 from pub.types.bus import OutboundMessage
 from channels.base import BaseChannel
 from typing import TYPE_CHECKING, Any, Literal
@@ -293,7 +294,7 @@ class QQChannel(BaseChannel):
 
         start_time = time.time()
         logger.debug(
-            f"Sending QQ message: chat_id={msg.chat_id}, "
+            f"Sending QQ message: chat_id={pseudonym(msg.chat_id)}, "
             f"content_length={len(getattr(msg, 'content', ''))}"
         )
 
@@ -325,12 +326,13 @@ class QQChannel(BaseChannel):
 
             elapsed = time.time() - start_time
             logger.debug(
-                f"QQ message sent successfully: chat_id={msg.chat_id}, duration={elapsed:.2f}s"
+                f"QQ message sent successfully: chat_id={pseudonym(msg.chat_id)}, "
+                f"duration={elapsed:.2f}s"
             )
         except Exception as e:
             elapsed = time.time() - start_time
             logger.error(
-                f"Error sending QQ message: chat_id={msg.chat_id}, "
+                f"Error sending QQ message: chat_id={pseudonym(msg.chat_id)}, "
                 f"duration={elapsed:.2f}s, error={e}"
             )
 
@@ -371,7 +373,8 @@ class QQChannel(BaseChannel):
 
             content_preview = content[:50] if content else ""
             logger.info(
-                f"QQ message received: chat_id={chat_id}, user_id={user_id}, "
+                f"QQ message received: chat_id={pseudonym(chat_id)}, "
+                f"user_id={pseudonym(user_id)}, "
                 f"is_group={is_group}, content_preview='{content_preview}', "
                 f"media_count={len(media_urls)}"
             )
