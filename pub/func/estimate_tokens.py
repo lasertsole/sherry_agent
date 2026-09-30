@@ -87,6 +87,12 @@ def estimate_json_tokens(text: str) -> int:
     so prose ratios overshoot them — which matters when the estimate is
     subtracted from a provider-reported prompt.
 
+    CJK characters inside JSON string values tokenize at the CJK prose rate, so
+    they are split out and estimated separately: the flat JSON ratio would
+    underestimate them by ~3.5x (a Chinese tool description, or a schema whose
+    enum values are Chinese labels, inflates the ``messages`` share of the
+    context panel instead of the ``tools`` share).
+
     Args:
         text: Serialized JSON.
 
@@ -95,7 +101,9 @@ def estimate_json_tokens(text: str) -> int:
     """
     if not text:
         return 0
-    return max(len(text) // CHARS_PER_TOKEN_JSON, 0)
+    cjk = count_cjk(text)
+    non_cjk = len(text) - cjk
+    return (cjk // CHARS_PER_TOKEN_CJK) + (non_cjk // CHARS_PER_TOKEN_JSON)
 
 
 def estimate_text_tokens(text: str) -> int:

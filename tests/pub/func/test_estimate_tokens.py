@@ -32,7 +32,14 @@ _USAGE_500 = {"input_tokens": 500, "output_tokens": 5, "total_tokens": 505}
 
 
 class TestJsonEstimate:
-    """``estimate_json_tokens``: wire-shaped JSON counts cheaper than prose."""
+    """``estimate_json_tokens``: wire-shaped JSON counts cheaper than prose.
+
+    CJK is the exception to that flat ratio: a CJK character inside a JSON
+    string value costs what it costs in prose, so the structural ratio applies
+    only to the non-CJK part. Without the split, a Chinese tool description or
+    Chinese enum labels are underestimated ~3.5x, which inflates the
+    ``messages`` share of the context panel instead of the ``tools`` share.
+    """
 
     def test_uses_the_json_ratio(self):
         payload = "x" * (CHARS_PER_TOKEN_JSON * 10)
@@ -46,6 +53,32 @@ class TestJsonEstimate:
 
     def test_empty_input_is_zero(self):
         assert estimate_json_tokens("") == 0
+
+    def test_cjk_in_json_uses_the_cjk_ratio(self):
+        cjk_chars = "读" * (CHARS_PER_TOKEN_CJK * 10)  # 10 tokens at the CJK rate
+        payload = '{"description": "' + cjk_chars + '"}'
+        non_cjk_len = len(payload) - len(cjk_chars)
+
+        assert estimate_json_tokens(payload) == 10 + non_cjk_len // CHARS_PER_TOKEN_JSON
+
+    def test_cjk_json_estimate_exceeds_the_flat_ratio(self):
+        payload = '{"description": "读取文件内容并返回结果"}'
+
+        assert estimate_json_tokens(payload) > len(payload) // CHARS_PER_TOKEN_JSON
+
+    def test_pure_ascii_json_keeps_the_flat_ratio(self):
+        """The regression floor: an ASCII schema estimates exactly as before."""
+        payload = '{"description": "a rather long tool description", "type": "string"}'
+
+        assert estimate_json_tokens(payload) == len(payload) // CHARS_PER_TOKEN_JSON
+
+    def test_ascii_structure_with_cjk_values_is_split_the_same_way(self):
+        payload = '{"title": "中文标题", "note": "中文备注"}'
+        cjk_chars = 8  # 中文标题 + 中文备注
+
+        assert estimate_json_tokens(payload) == (
+            cjk_chars // CHARS_PER_TOKEN_CJK + (len(payload) - cjk_chars) // CHARS_PER_TOKEN_JSON
+        )
 
 
 class TestEstimateTextTokens:

@@ -1,6 +1,6 @@
 # 修复计划: estimate_json_tokens CJK 感知
 
-> **状态**: 待实施
+> **状态**: 已实施（2026-09-30）——验收 4 条全过（含 perf guard ×5.6 / 预算 ×30），落地记录见文末
 > **创建日期**: 2026-09-30
 > **目标**: 让 `estimate_json_tokens` 与 `estimate_text_tokens` 一样区分 CJK 和非 CJK 字符，消除中英夹杂 JSON 负载的 token 低估
 
@@ -163,3 +163,13 @@ class TestJsonEstimate:
 2. `uv run --no-sync pytest tests/perf -q -s` — 线性增长 guard 不变
 3. `uv run --with ruff ruff check pub/func/estimate_tokens.py && uv run --with ruff ruff format --check pub/func/estimate_tokens.py` — lint 通过
 4. `uv run --no-sync basedpyright pub/func/estimate_tokens.py` — 类型检查通过
+
+---
+
+## 5. 落地记录（2026-09-30）
+
+- 核心改动与本节 2.1 的方案逐字一致：`estimate_json_tokens` 拆 `count_cjk` / 非 CJK 两段，非 CJK 段保留 JSON 结构比例 `chars_per_token_json`。
+- 测试比 2.2 多两条：`test_pure_ascii_json_keeps_the_flat_ratio`（纯 ASCII 回归底线，等于改动前的公式）与 `test_ascii_structure_with_cjk_values_is_split_the_same_way`（结构是 ASCII、成本全在 CJK 值里的形状）。
+- **2.3 的 perf guard 实测**：`estimate_json_tokens (tool schemas): 10x input → 75.9ms → 428.1ms (×5.6, budget ×30)` —— 多一次全文遍历，仍是线性。
+- 计划外的一条**没有**落地：本想在 `tests/server/service/test_context_usage_service.py` 加一条"`json.dumps` 必须 `ensure_ascii=False`"的守卫，测算后发现假设不成立——转义把每个 CJK 字符变成 6 个 ASCII 字符再按 ÷7 计，得到 ~0.86 token/字，比 CJK 比例（0.5 token/字）**更高**而非更低，即转义是另一种偏差而不是"退回旧公式"。守卫因此删除，不在测试里钉一个错误的因果。
+- 受影响面与 3.2 一致，无其他调用点（全仓仅 `context_usage_service._tool_schema_tokens` 一处）。
