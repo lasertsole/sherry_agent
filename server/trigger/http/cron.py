@@ -227,9 +227,10 @@ async def update_cron_job_handler(request):
       "delete_after_run": bool (optional),
       "skills": list[str] | null (optional)
     }
-    Because the cron engine only exposes one-shot operations (add/enable/remove),
-    updates are applied by removing the existing job and re-adding it with the
-    merged fields while preserving its id and created timestamp.
+    Updates are applied in place (`CronService.replace_job`): the job keeps its
+    `id`, `createdAtMs`, its enabled flag and its recorded run state, while
+    `nextRunAtMs` is recomputed for the new schedule. An invalid schedule is
+    rejected before anything mutates, so a failed update never removes the job.
     """
     body = _read_body(request)
     if body is None:
@@ -258,16 +259,9 @@ async def update_cron_job_handler(request):
     else:
         schedule = existing.schedule
 
-    # Remove then re-add to get the engine to recompute state and persist.
-    removed = cron_service.remove_job(job_id)
-    if removed != "removed":
-        # "protected" or "not_found" — roll back gracefully.
-        return _to_text_response(
-            400, {"success": False, "message": f"Cannot update job '{job_id}' ({removed})"}
-        )
-
     try:
-        job = cron_service.add_job(
+        job = cron_service.replace_job(
+            job_id,
             name=name.strip(),
             schedule=schedule,
             message=message.strip(),
@@ -278,14 +272,18 @@ async def update_cron_job_handler(request):
             skills=_valid_skills(body.get("skills", existing.payload.skills)),
         )
     except ValueError as e:
+        # Validation runs before any mutation, so a rejected update leaves the
+        # stored job (and its id) exactly as it was.
         logger.warning("Cron update rejected: %s", e)
         return _bad_request(str(e))
     except Exception as e:
         logger.exception("Cron update failed: id=%s (%s)", job_id, e)
         return _to_text_response(500, {"success": False, "message": str(e)})
 
-    # add_job assigns a fresh id; restore the original one for a seamless update.
-    job.id = job_id
+    if job is None:
+        # Deleted between the lookup above and the replace.
+        return _not_found(f"Cron job '{job_id}' not found")
+
     logger.info(f"Cron job updated: id={job_id}, name={job.name}")
     return _ok({"success": True, "job": _job_to_dict(job)})
 

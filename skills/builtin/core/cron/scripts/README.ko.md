@@ -180,7 +180,7 @@ Python 쪽 대응 모델(`types.py`)은 snake_case를 사용합니다 (`at_ms`, 
 |-----------|------|
 | `GET /cron?include_disabled=false` | 작업 목록 (camelCase JSON) |
 | `POST /cron` | 생성: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}` (`skills`는 이름 목록 또는 `null`이어야 하며 그 외에는 `400`) |
-| `PUT /cron` | 수정: 제거 + 재추가로 적용되며 `id`와 `createdAtMs`는 유지됨 |
+| `PUT /cron` | 수정: 제자리에서 교체(`CronService.replace_job`). `id`, `createdAtMs`, 활성 플래그와 기록된 실행 상태를 유지하고 `nextRunAtMs`만 다시 계산합니다. 잘못된 스케줄은 아무것도 변경하기 전에 거부됩니다 |
 | `POST /cron/trigger` | 즉시 실행: `{"id", "force"}` (비활성 상태이고 `force`가 없으면 400) |
 | `POST /cron/enable` | 활성/비활성화: `{"id", "enabled"}` |
 | `POST /cron/failure-state` | 실패 브레이커 상태 조회: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; 모르는 작업 → `404`, 한 번도 실패한 적 없는 작업 → 0으로 초기화된 상태 |

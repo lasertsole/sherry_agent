@@ -207,6 +207,7 @@ class _SkillsStubService:
     def __init__(self, existing=None) -> None:
         self.existing = existing
         self.added: list[dict] = []
+        self.replaced: list[dict] = []
         self.removed: list[str] = []
 
     def get_job(self, job_id):
@@ -220,11 +221,19 @@ class _SkillsStubService:
         return "removed"
 
     def add_job(self, **kwargs):
+        self.added.append(kwargs)
+        return self._build("job-new", **kwargs)
+
+    def replace_job(self, job_id, **kwargs):
+        self.replaced.append(kwargs)
+        return self._build(job_id, **kwargs)
+
+    @staticmethod
+    def _build(job_id, **kwargs):
         from skills.builtin.core.cron.scripts.types import CronJob, CronPayload
 
-        self.added.append(kwargs)
         return CronJob(
-            id="job-new",
+            id=job_id,
             name=kwargs["name"],
             schedule=kwargs["schedule"],
             payload=CronPayload(
@@ -306,7 +315,7 @@ def test_put_cron_keeps_existing_skills_when_omitted(monkeypatch):
     resp = _call(cron_api.update_cron_job_handler, {"id": "job-1", "name": "renamed"})
 
     assert resp.status_code == 200
-    assert stub.added[0]["skills"] == ["x", "y"], "omitting the field preserves the binding"
+    assert stub.replaced[0]["skills"] == ["x", "y"], "omitting the field preserves the binding"
 
 
 def test_put_cron_clears_skills_on_explicit_null(monkeypatch):
@@ -316,7 +325,7 @@ def test_put_cron_clears_skills_on_explicit_null(monkeypatch):
     resp = _call(cron_api.update_cron_job_handler, {"id": "job-1", "skills": None})
 
     assert resp.status_code == 200
-    assert stub.added[0]["skills"] is None, "explicit null clears the binding"
+    assert stub.replaced[0]["skills"] is None, "explicit null clears the binding"
     assert _payload(resp)["job"]["payload"]["skills"] is None
 
 
@@ -326,4 +335,92 @@ def test_put_cron_replaces_skills_with_a_new_list(monkeypatch):
 
     _call(cron_api.update_cron_job_handler, {"id": "job-1", "skills": ["new", "old"]})
 
-    assert stub.added[0]["skills"] == ["new", "old"]
+    assert stub.replaced[0]["skills"] == ["new", "old"]
+
+
+# ---------------------------------------------------------------------------
+# PUT /cron — replace in place (identity + history survive)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def real_service(tmp_path, monkeypatch):
+    """The REAL CronService on a tmp store, wired into the HTTP module."""
+    from skills.builtin.core.cron.scripts.base import CronService
+
+    svc = CronService()
+    svc.store_path = tmp_path / "cron_jobs.json"
+    monkeypatch.setattr(cron_api, "cron_service", svc)
+    return svc
+
+
+def test_put_keeps_the_persisted_id_so_delete_by_it_still_works(real_service):
+    """Regression (found live): update used to persist a fresh uuid.
+
+    The client keeps sending the id it was given, so a PUT that swapped the
+    stored id made the very next GET/DELETE by that id a 404 and left the
+    original row orphaned in cron_jobs.json.
+    """
+    from skills.builtin.core.cron.scripts.types import CronSchedule
+
+    job = real_service.add_job(
+        name="orig", schedule=CronSchedule(kind="every", every_ms=60_000), message="m"
+    )
+
+    resp = _call(cron_api.update_cron_job_handler, {"id": job.id, "name": "renamed"})
+    assert resp.status_code == 200
+
+    # The id the caller holds is still the stored one.
+    stored = json.loads(real_service.store_path.read_text(encoding="utf-8"))["jobs"]
+    assert [j["id"] for j in stored] == [job.id], "no orphan row with a fresh id"
+    assert stored[0]["name"] == "renamed"
+
+    # And the documented follow-up call works.
+    resp = _call(cron_api.delete_cron_job_handler, {"id": job.id})
+    assert resp.status_code == 200, "delete by the id the client holds must work"
+    assert json.loads(real_service.store_path.read_text(encoding="utf-8"))["jobs"] == []
+
+
+def test_put_preserves_enabled_and_run_history(real_service):
+    from skills.builtin.core.cron.scripts.types import CronSchedule
+
+    job = real_service.add_job(
+        name="off", schedule=CronSchedule(kind="every", every_ms=60_000), message="m"
+    )
+    real_service.enable_job(job.id, False)
+    stored = real_service.get_job(job.id)
+    assert stored is not None
+    stored.state.last_status = "ok"
+    real_service._save_store()
+
+    _call(cron_api.update_cron_job_handler, {"id": job.id, "message": "m2"})
+
+    updated = real_service.get_job(job.id)
+    assert updated is not None
+    assert updated.enabled is False, "editing a disabled job must not re-enable it"
+    assert updated.state.last_status == "ok", "run history survives the edit"
+    assert updated.state.next_run_at_ms is None
+
+
+def test_put_invalid_schedule_is_rejected_without_touching_the_job(real_service):
+    from skills.builtin.core.cron.scripts.types import CronSchedule
+
+    job = real_service.add_job(
+        name="safe", schedule=CronSchedule(kind="every", every_ms=60_000), message="m"
+    )
+
+    resp = _call(
+        cron_api.update_cron_job_handler,
+        {"id": job.id, "schedule": {"kind": "every", "everyMs": 999}},  # below the floor
+    )
+
+    assert resp.status_code == 400
+    still = real_service.get_job(job.id)
+    assert still is not None, "a rejected update must never remove the job"
+    assert still.schedule.every_ms == 60_000
+
+
+def test_put_unknown_job_is_a_404(real_service):
+    resp = _call(cron_api.update_cron_job_handler, {"id": "ghost", "name": "x"})
+
+    assert resp.status_code == 404

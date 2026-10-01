@@ -177,7 +177,7 @@ These are the commands exposed to the agent via [`../SKILL.md`](../SKILL.md), us
 |----------|-------------|
 | `GET /cron?include_disabled=false` | List jobs (camelCase JSON) |
 | `POST /cron` | Create: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}` (`skills` must be a list of names or `null`; anything else is a `400`) |
-| `PUT /cron` | Update: applied as remove + re-add while preserving `id` and `createdAtMs` |
+| `PUT /cron` | Update: replaced in place (`CronService.replace_job`) keeping `id`, `createdAtMs`, the enabled flag and the recorded run state; `nextRunAtMs` is recomputed, and an invalid schedule is rejected before anything mutates |
 | `POST /cron/trigger` | Run now: `{"id", "force"}` (400 if disabled and no `force`) |
 | `POST /cron/enable` | Enable/disable: `{"id", "enabled"}` |
 | `POST /cron/failure-state` | Inspect the failure breaker state: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; unknown job → `404`, never-failed job → zeroed state |

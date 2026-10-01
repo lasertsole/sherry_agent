@@ -713,6 +713,21 @@ class CronService:
         jobs = store.jobs if include_disabled else [j for j in store.jobs if j.enabled]
         return sorted(jobs, key=lambda j: j.state.next_run_at_ms or float("inf"))
 
+    def _ensure_started(self) -> None:
+        """Start the service lazily when a caller mutates jobs before ``init()``."""
+        if self._running:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+            if loop.is_running():
+                loop.create_task(self.start())
+            else:
+                loop.run_until_complete(self.start())
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.start())
+
     def add_job(
         self,
         name: str,
@@ -732,18 +747,7 @@ class CronService:
         skill-free. Names are validated to be plain strings and deduplicated
         (order preserved).
         """
-        # Auto-start if not running
-        if not self._running:
-            try:
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    loop.create_task(self.start())
-                else:
-                    loop.run_until_complete(self.start())
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.start())
+        self._ensure_started()
 
         store = self._load_store()
         _validate_schedule_for_add(schedule)
@@ -775,20 +779,76 @@ class CronService:
         logger.info("Cron: added job %s (%s)", name, job.id)
         return job
 
+    def replace_job(
+        self,
+        job_id: str,
+        name: str,
+        schedule: CronSchedule,
+        message: str,
+        deliver: bool = False,
+        channel: str | None = None,
+        to: str | None = None,
+        delete_after_run: bool = False,
+        skills: list[str] | None = None,
+        enabled: bool | None = None,
+    ) -> CronJob | None:
+        """Replace an existing job in place; ``None`` when ``job_id`` is unknown.
+
+        This is the update path (``PUT /cron``): identity and history survive —
+        ``id``, ``created_at_ms``, the enabled flag (unless ``enabled`` is given
+        explicitly) and the recorded run state (``last_run_at_ms`` / ``last_status``
+        / ``last_error``) all carry over, so editing a job neither orphans the id
+        the client holds nor erases what the UI shows. Only ``next_run_at_ms`` is
+        recomputed for the new schedule, and it stays ``None`` while the job is
+        disabled (mirroring ``enable_job``).
+
+        An invalid schedule raises ``ValueError`` *before* anything mutates, so a
+        rejected update leaves the stored job untouched.
+        """
+        self._ensure_started()
+        store = self._load_store()
+        _validate_schedule_for_add(schedule)
+
+        existing = next((j for j in store.jobs if j.id == job_id), None)
+        if existing is None:
+            return None
+
+        now = _now_ms()
+        keep_enabled = existing.enabled if enabled is None else enabled
+        job = CronJob(
+            id=job_id,
+            name=name,
+            enabled=keep_enabled,
+            schedule=schedule,
+            payload=CronPayload(
+                kind="agent_turn",
+                message=message,
+                deliver=deliver,
+                channel=channel,
+                to=to,
+                skills=_normalize_skills(skills),
+            ),
+            state=CronJobState(
+                next_run_at_ms=_compute_next_run(schedule, now) if keep_enabled else None,
+                last_run_at_ms=existing.state.last_run_at_ms,
+                last_status=existing.state.last_status,
+                last_error=existing.state.last_error,
+            ),
+            created_at_ms=existing.created_at_ms,
+            updated_at_ms=now,
+            delete_after_run=delete_after_run,
+        )
+
+        store.jobs[store.jobs.index(existing)] = job
+        self._save_store()
+        self._arm_timer()
+
+        logger.info("Cron: replaced job %s (%s)", name, job.id)
+        return job
+
     def register_system_job(self, job: CronJob) -> CronJob:
         """Register an internal system job (idempotent on restart)."""
-        # Auto-start if not running
-        if not self._running:
-            try:
-                loop = asyncio.get_running_loop()
-                if loop.is_running():
-                    loop.create_task(self.start())
-                else:
-                    loop.run_until_complete(self.start())
-            except RuntimeError:
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(self.start())
+        self._ensure_started()
 
         store = self._load_store()
         now = _now_ms()

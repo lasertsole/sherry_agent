@@ -59,6 +59,16 @@ def test_reference_maintenance_helpers_exist_where_documented():
     assert cron_http._valid_skills(["a", "a"]) == ["a"]
 
 
+def test_the_documented_update_mechanics_match_the_service():
+    """The READMEs must describe the in-place replace, not the old remove+add."""
+    assert hasattr(cron_base.CronService, "replace_job")
+    sig = inspect.signature(cron_base.CronService.replace_job)
+    assert "enabled" in sig.parameters
+    for doc in _GROUP:
+        text = doc.read_text(encoding="utf-8")
+        assert "`CronService.replace_job`" in text, f"{doc}: update path not documented"
+
+
 def test_every_language_documents_the_same_surface():
     for doc in _GROUP:
         text = doc.read_text(encoding="utf-8")

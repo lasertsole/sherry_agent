@@ -177,7 +177,7 @@ Python 側の対応モデル（`types.py`）は snake_case を使用します（
 |--------------|------|
 | `GET /cron?include_disabled=false` | ジョブ一覧（camelCase JSON） |
 | `POST /cron` | 作成: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}`（`skills` は名前のリストか `null` でなければ `400`） |
-| `PUT /cron` | 更新: 削除 + 再追加として適用され、`id` と `createdAtMs` は保持される |
+| `PUT /cron` | 更新: その場で置換（`CronService.replace_job`）。`id`、`createdAtMs`、有効フラグ、記録済みの実行状態を保持し、`nextRunAtMs` のみ再計算します。不正なスケジュールは何も変更する前に拒否されます |
 | `POST /cron/trigger` | 即時実行: `{"id", "force"}`（無効かつ `force` なしの場合は 400） |
 | `POST /cron/enable` | 有効/無効化: `{"id", "enabled"}` |
 | `POST /cron/failure-state` | 失敗ブレーカー状態の照会: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; 未知のジョブ → `404`、失敗したことのないジョブ → ゼロの状態 |

@@ -177,7 +177,7 @@ Python 侧对应的模型（`types.py`）使用 snake_case（`at_ms`、`every_ms
 |------|------|
 | `GET /cron?include_disabled=false` | 列出任务（camelCase JSON） |
 | `POST /cron` | 创建：`{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}`（`skills` 必须是名称列表或 `null`，其它类型一律 `400`） |
-| `PUT /cron` | 更新：以"删除 + 重建"实现，保留原 `id` 和 `createdAtMs` |
+| `PUT /cron` | 更新：原地替换（`CronService.replace_job`），保留 `id`、`createdAtMs`、启用状态与已记录运行状态；`nextRunAtMs` 重新计算，非法调度在改动任何数据之前就被拒绝 |
 | `POST /cron/trigger` | 立即运行：`{"id", "force"}`（已禁用且未传 `force` 时返回 400） |
 | `POST /cron/enable` | 启用/禁用：`{"id", "enabled"}` |
 | `POST /cron/failure-state` | 查看失败熔断器状态：`{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`；未知任务 → `404`，从未失败的任务 → 全零状态 |

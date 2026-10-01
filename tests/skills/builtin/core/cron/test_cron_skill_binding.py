@@ -443,3 +443,131 @@ async def test_broken_binding_still_runs_the_job(cron_env, fake_telemetry):
 
     assert _message_text(cron_env.agent) == "STILL RUNS"
     assert fake_telemetry == []
+
+
+# ---------------------------------------------------------------------------
+# 6. replace_job — the update path keeps identity and history
+# ---------------------------------------------------------------------------
+
+
+def _service(store_file: Path) -> cron_base.CronService:
+    svc = cron_base.CronService()
+    svc.store_path = store_file
+    return svc
+
+
+def _job_from_disk(store_file: Path, job_id: str) -> dict:
+    data = json.loads(store_file.read_text(encoding="utf-8"))
+    return next(j for j in data["jobs"] if j["id"] == job_id)
+
+
+def test_replace_keeps_the_id_on_disk_and_preserves_identity(store_file: Path):
+    """The regression the live smoke hit: the persisted id must not change."""
+    svc = _service(store_file)
+    job = svc.add_job(
+        name="orig", schedule=CronSchedule(kind="every", every_ms=60_000), message="m"
+    )
+    created = job.created_at_ms
+    job.state.last_run_at_ms = created + 1000
+    job.state.last_status = "ok"
+    svc._save_store()
+
+    replaced = svc.replace_job(
+        job.id, name="renamed", schedule=CronSchedule(kind="cron", expr="0 9 * * *"), message="m2"
+    )
+
+    assert replaced is not None
+    assert replaced.id == job.id, "in-memory id preserved"
+    disk = _job_from_disk(store_file, job.id)
+    assert disk["name"] == "renamed"
+    assert disk["schedule"]["expr"] == "0 9 * * *"
+    assert disk["createdAtMs"] == created, "creation time preserved"
+    assert disk["state"]["lastRunAtMs"] == created + 1000, "run history preserved"
+    assert disk["state"]["lastStatus"] == "ok"
+    assert len(json.loads(store_file.read_text(encoding="utf-8"))["jobs"]) == 1, "no stray row"
+
+
+def test_replace_keeps_a_disabled_job_disabled_without_a_next_run(store_file: Path):
+    svc = _service(store_file)
+    job = svc.add_job(name="off", schedule=CronSchedule(kind="every", every_ms=60_000), message="m")
+    svc.enable_job(job.id, False)
+
+    replaced = svc.replace_job(
+        job.id, name="off-2", schedule=CronSchedule(kind="every", every_ms=120_000), message="m"
+    )
+
+    assert replaced is not None
+    assert replaced.enabled is False, "editing must not silently re-enable"
+    assert replaced.state.next_run_at_ms is None, "disabled jobs carry no next run"
+    assert _job_from_disk(store_file, job.id)["enabled"] is False
+
+
+def test_replace_can_flip_enabled_explicitly(store_file: Path):
+    svc = _service(store_file)
+    job = svc.add_job(name="j", schedule=CronSchedule(kind="every", every_ms=60_000), message="m")
+
+    replaced = svc.replace_job(
+        job.id,
+        name="j",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="m",
+        enabled=False,
+    )
+
+    assert replaced is not None and replaced.enabled is False
+    assert _job_from_disk(store_file, job.id)["enabled"] is False
+
+
+def test_replace_unknown_id_returns_none_and_leaves_the_store(store_file: Path):
+    svc = _service(store_file)
+    svc.add_job(name="keep", schedule=CronSchedule(kind="every", every_ms=60_000), message="m")
+    before = store_file.read_bytes()
+
+    assert (
+        svc.replace_job(
+            "ghost", name="x", schedule=CronSchedule(kind="every", every_ms=60_000), message="m"
+        )
+        is None
+    )
+    assert store_file.read_bytes() == before
+
+
+def test_replace_rejects_an_invalid_schedule_without_touching_the_job(store_file: Path):
+    """Validation happens before any mutation — a rejected update never deletes."""
+    svc = _service(store_file)
+    job = svc.add_job(
+        name="safe", schedule=CronSchedule(kind="every", every_ms=60_000), message="m"
+    )
+
+    import pytest as _pytest
+
+    with _pytest.raises(ValueError):
+        # tz is cron-only: the service-level validator rejects this outright.
+        svc.replace_job(
+            job.id,
+            name="safe",
+            schedule=CronSchedule(kind="every", every_ms=60_000, tz="Asia/Shanghai"),
+            message="m",
+        )
+
+    disk = _job_from_disk(store_file, job.id)
+    assert disk["name"] == "safe"
+    assert disk["schedule"]["everyMs"] == 60_000, "the stored job is untouched"
+
+
+def test_replace_updates_the_skill_binding(store_file: Path):
+    svc = _service(store_file)
+    job = svc.add_job(
+        name="b", schedule=CronSchedule(kind="every", every_ms=60_000), message="m", skills=["a"]
+    )
+
+    replaced = svc.replace_job(
+        job.id,
+        name="b",
+        schedule=CronSchedule(kind="every", every_ms=60_000),
+        message="m",
+        skills=["c", "c", " d "],
+    )
+
+    assert replaced is not None and replaced.payload.skills == ["c", "d"]
+    assert _job_from_disk(store_file, job.id)["payload"]["skills"] == ["c", "d"]
