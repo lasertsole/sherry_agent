@@ -340,6 +340,78 @@ export async function setThinkingValue(sessionId: string, value: ThinkingValue):
   return { pending: res.pending === true };
 }
 
+/** Session project directory: where the tools resolve relative paths against. */
+export interface ProjectDirectoryState {
+  /** The session's own binding; null = unbound (the process default applies). */
+  directory: string | null;
+  /** Where the tools actually resolve right now (binding, or the default). */
+  effective: string;
+  /** 'session' | 'env' | 'default' — which of the two is in effect. */
+  source: string;
+  /** A choice parked for the next turn boundary, or null. */
+  pendingDirectory: string | null;
+}
+
+/**
+ * Read the session's project directory.
+ *
+ * @param sessionId Session whose binding should be read.
+ */
+export async function fetchProjectDirectory(sessionId: string): Promise<ProjectDirectoryState> {
+  const res = await fetchApiPayload<{
+    directory?: string | null;
+    effective?: string;
+    source?: string;
+    pending_directory?: string | null;
+  }>({
+    url: '/sessions/project',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return {
+    directory: res.directory ?? null,
+    effective: res.effective ?? '',
+    source: res.source ?? 'default',
+    pendingDirectory: res.pending_directory ?? null
+  };
+}
+
+/**
+ * Bind (or clear, with ``null``) the session's project directory.
+ *
+ * While a turn is in flight the choice is parked and lands on the next turn;
+ * the response reports ``pending`` so the control can show the clock icon.
+ *
+ * @param sessionId Session whose binding should be written.
+ * @param directory Absolute path, or null to unbind.
+ */
+export async function setProjectDirectory(
+  sessionId: string,
+  directory: string | null
+): Promise<{ ok: boolean; state: ProjectDirectoryState; pending: boolean }> {
+  const res = await fetchApiPayload<{
+    ok?: boolean;
+    directory?: string | null;
+    effective?: string;
+    source?: string;
+    pending?: boolean;
+  }>({
+    url: '/sessions/project',
+    opts: { session_id: sessionId, directory },
+    method: 'put'
+  });
+  return {
+    ok: res.ok !== false,
+    pending: res.pending === true,
+    state: {
+      directory: res.directory ?? null,
+      effective: res.effective ?? '',
+      source: res.source ?? 'default',
+      pendingDirectory: res.pending ? (res.directory ?? null) : null
+    }
+  };
+}
+
 /**
  * Main-model override payload shapes.
  *

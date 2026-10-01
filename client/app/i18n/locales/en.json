@@ -81,7 +81,17 @@
     "extend": "Extend",
     "settingsMenu": "Menu",
     "collapseSidebar": "Collapse sidebar",
-    "expandSidebar": "Expand sidebar"
+    "expandSidebar": "Expand sidebar",
+    "projectDirectory": {
+      "label": "Project directory",
+      "unbound": "No project directory bound",
+      "pendingHint": "Applies on the next turn",
+      "pendingLabel": "Pending",
+      "browse": "Choose folder…",
+      "manualPlaceholder": "/absolute/path/to/project",
+      "confirm": "Apply",
+      "absoluteRequired": "Enter an absolute path (the server rejects relative ones)"
+    }
   },
   "todolist": {
     "progress": "{done}/{total} done",

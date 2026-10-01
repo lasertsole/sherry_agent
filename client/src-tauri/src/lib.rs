@@ -36,6 +36,9 @@ pub fn run() {
         // in services::python_process, so the generic allow-spawn/allow-execute
         // capability was pure attack surface)
         .plugin(tauri_plugin_notification::init())
+        // Native folder picker for the project-directory chip (registered here,
+        // granted in capabilities/default.json as dialog:allow-open only).
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Focus the existing window when a second instance is launched.

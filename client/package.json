@@ -23,6 +23,7 @@
     "@primevue/themes": "^4.5.0",
     "@tanstack/vue-virtual": "^3.13.39",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-dialog": "^2.8.0",
     "@types/lodash-es": "^4.17.12",
     "cropperjs": "^1.6.2",
     "dayjs": "^1.11.23",

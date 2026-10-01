@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": ["main"],
-  "permissions": ["core:default", "notification:default", "global-shortcut:default", "window-state:default"]
+  "permissions": [
+    "core:default",
+    "notification:default",
+    "global-shortcut:default",
+    "window-state:default",
+    "dialog:allow-open"
+  ]
 }

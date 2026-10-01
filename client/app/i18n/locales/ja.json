@@ -81,7 +81,17 @@
     "extend": "拡張",
     "settingsMenu": "メニュー",
     "collapseSidebar": "サイドバーを折りたたむ",
-    "expandSidebar": "サイドバーを展開"
+    "expandSidebar": "サイドバーを展開",
+    "projectDirectory": {
+      "label": "プロジェクトディレクトリ",
+      "unbound": "プロジェクトディレクトリ未設定",
+      "pendingHint": "次のターンで有効になります",
+      "pendingLabel": "保留中",
+      "browse": "フォルダーを選択…",
+      "manualPlaceholder": "/プロジェクトの/絶対パス",
+      "confirm": "適用",
+      "absoluteRequired": "絶対パスを入力してください（相対パスはサーバーが拒否します）"
+    }
   },
   "todolist": {
     "progress": "{done}/{total} 完了",

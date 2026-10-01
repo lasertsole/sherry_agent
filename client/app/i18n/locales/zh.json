@@ -81,7 +81,17 @@
     "extend": "扩展",
     "settingsMenu": "菜单",
     "collapseSidebar": "折叠侧边栏",
-    "expandSidebar": "展开侧边栏"
+    "expandSidebar": "展开侧边栏",
+    "projectDirectory": {
+      "label": "项目目录",
+      "unbound": "未绑定项目目录",
+      "pendingHint": "将于下一轮生效",
+      "pendingLabel": "待生效",
+      "browse": "选择文件夹…",
+      "manualPlaceholder": "/项目的/绝对路径",
+      "confirm": "确定",
+      "absoluteRequired": "请输入绝对路径（服务端会拒绝相对路径）"
+    }
   },
   "todolist": {
     "progress": "已完成 {done}/{total}",

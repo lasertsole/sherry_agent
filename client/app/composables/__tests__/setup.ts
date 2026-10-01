@@ -302,6 +302,25 @@ vi.stubGlobal('useAccessModeStore', () =>
   })
 );
 
+// `useProjectDirectoryStore` backs the toolbar's project-directory chip: the
+// default is "unbound" (the process default applies) until a suite drives it.
+vi.stubGlobal('useProjectDirectoryStore', () =>
+  Vue.reactive({
+    bySession: {},
+    stateFor: () => ({
+      directory: null,
+      effective: '',
+      source: 'default',
+      pendingDirectory: null,
+      error: null
+    }),
+    hydrate: async () => {},
+    select: async () => {},
+    fail: () => {},
+    clearError: () => {}
+  })
+);
+
 // `useRunningCommandsStore` / `useSubagentStore` back the toolbar's terminal
 // entry and its right-sidebar tab (running tool calls + background runs). The
 // defaults keep the session page mountable with nothing running.

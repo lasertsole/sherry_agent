@@ -194,6 +194,9 @@
                   :used-tokens="lastPromptTokens" />
                 <SessionModelPicker :session-id="mySid" />
                 <ThinkingToggle :session-id="mySid" />
+                <!-- Project directory: the root every file tool, shell command
+                     and path check resolves against. -->
+                <ProjectDirectoryChip :session-id="mySid" />
               </div>
               <!-- Hidden image file input: triggered by the media menu's image entry via triggerImagePicker() -->
               <input
@@ -401,6 +404,8 @@ const mySid = String(route.params.sid ?? '');
 const { focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
 const rightSidebarStore = useRightSidebarStore();
+/** Per-session project-directory chip store (hydrated on mount + turn start). */
+const projectDirectory = useProjectDirectoryStore();
 
 /**
  * Show this session's background tasks in the right sidebar: the chat column
@@ -727,7 +732,14 @@ const {
 agentSocket.setHandlers({
   onChunk: handleSocketChunk,
   onHitl: hitl.handleHitlRequest,
-  onTurnStarted: handleTurnStarted,
+  onTurnStarted: info => {
+    handleTurnStarted(info);
+    // A directory choice parked mid-turn is promoted exactly at the turn
+    // boundary, so the turn starting NOW may already run against the new root
+    // while the chip still shows the old one — refresh it from the backend
+    // (the promote path pushes no frame of its own).
+    void projectDirectory.hydrate(mySid);
+  },
   onQueued: handleQueued,
   onQueuedCancelled: handleQueuedCancelled,
   onQueuedUpdated: handleQueuedUpdated,
