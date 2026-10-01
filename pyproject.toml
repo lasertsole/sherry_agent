@@ -66,6 +66,12 @@ addopts = "-m 'not llm_e2e'"
 # terminates the pytest process — a bounded failure is the CI-desired outcome.
 # No global `timeout` value is set: per-test marks remain the only budgets.
 timeout_method = "thread"
+# A test that stops failing must be noticed: with strict xfail an
+# unexpectedly-passing xfail is an XPASS failure instead of a green
+# line nobody reads. No xfail markers exist today; set explicitly so the
+# default cannot silently relax. Use `@pytest.mark.xfail(strict=False)`
+# for a genuinely flaky case, with the reason beside it.
+xfail_strict = true
 markers = [
     "unit: pure logic, fully mocked",
     "integration: multi-component, backend mocked",

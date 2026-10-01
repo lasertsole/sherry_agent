@@ -179,6 +179,41 @@ def test_every_mechanism_the_section_credits_is_actually_wired():
         assert "pseudonym(" in source, f"{path} stopped pseudonymising the identifiers it logs"
 
 
+def test_the_network_boundary_section_matches_the_implementations():
+    """CSRF / headers / SSRF: each credited mechanism exists and is wired."""
+    import pathlib as _pathlib
+
+    from pub.func.validator.safe_fetch import safe_fetch
+    from server.trigger.csrf import csrf_verdict
+    from server.trigger.security_headers import security_headers
+
+    doc = _doc_text()
+
+    for module in ("server/trigger/csrf.py", "server/trigger/security_headers.py"):
+        assert module in doc, f"the document stopped naming {module}"
+        assert _pathlib.Path(module).exists()
+    assert "pub/func/validator/safe_fetch.py" in doc
+    assert _pathlib.Path("pub/func/validator/safe_fetch.py").exists()
+
+    # The guard's behaviour, not just its name: a cross-site mutation is refused
+    # and a header-less script client is not.
+    assert csrf_verdict("POST", None, None, "cross-site") is not None
+    assert csrf_verdict("POST", None, None, None) is None
+
+    headers = security_headers()
+    assert "Content-Security-Policy" in headers
+    assert "script-src 'self'" in headers["Content-Security-Policy"]
+    assert "object-src 'none'" in headers["Content-Security-Policy"]
+    assert headers["X-Content-Type-Options"] == "nosniff"
+
+    # The fetch transport is the one the media path actually calls.
+    media = _pathlib.Path("agent/middlewares/media_pipeline/media_handlers.py").read_text(
+        encoding="utf-8"
+    )
+    assert "safe_fetch(" in media, "the media path stopped fetching through safe_fetch"
+    assert callable(safe_fetch)
+
+
 def test_the_documented_reasoning_tags_are_the_ones_the_guard_uses():
     from agent.middlewares.output_repetition_guard import repetition_detectors
     from agent.security.think_scrub import INLINE_REASONING_TAGS

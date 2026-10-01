@@ -42,6 +42,10 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 터미널 출력의 제어 시퀀스 | **제어 시퀀스 제거**: `terminal` 의 두 spawn 지점 모두에 적용 | — |
 | 로그 속 채널 식별자(사용자 / 채팅) | **안정된 가명**: 채널 로그 경계에서 치환 | 라우팅 표와 회신 대상은 설계상 원값을 유지합니다 |
 | 자식 프로세스 env hijack(`LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV` 등) | **hijack 변수 차단**: 시작 훅(`PYTHONPATH`, `BASH_ENV`, `ENV` 등)은 항상 제거되고, 로더 변수(`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`)는 `SHERRY_STRICT_ENV_HIJACK=1` 일 때만 제거됩니다(컨테이너 런타임이 실제로 설정하기 때문) | 로더 변수는 기본적으로 차단되지 않습니다——운영 절 참조 |
+| 크로스 사이트 요청 위조(CSRF) | **Origin 허용 목록**과 더불어 **CSRF 가드**: 변경 메서드(POST/PUT/PATCH/DELETE)는 `Sec-Fetch-Site: cross-site`면 거부하고, `Origin`/`Referer`가 loopback도 허용 목록도 아니면 거부합니다 | 스크립트 클라이언트는 세 헤더를 보내지 않습니다(curl, 테스트 클라이언트) — 인증은 token이 담당합니다 |
+| 서버 측 요청 위조(SSRF) | **SSRF 판정**이 가져오는 모든 URL에 적용: 비전역 대상(사설, loopback, 클라우드 메타데이터, RFC 2544, IPv6 ULA)은 거부하고, 연결은 **검증된 주소에 고정**되며, 리디렉션은 홉마다 재검증합니다 | fake-ip 프록시 호스트는 공용 이름을 거부 대역으로 해석합니다 — 문서화된 스위치가 우회 경로입니다 |
+| 렌더링 콘텐츠의 XSS | 클라이언트 DOMPurify 허용 목록 + `vue/no-v-html` + **서버 보안 헤더**(`script-src 'self'`, `object-src 'none'`, `nosniff`, 프레이밍 차단) | CSP는 두 번째 층입니다: 클라이언트 정화기는 페이로드와 같은 컨텍스트에서 실행됩니다 |
+| `terminal` 을 통한 수기 SSRF(모델이 설득되어 `curl` 실행) | HITL 승인 패턴: 클라우드 메타데이터 엔드포인트와 **쓰기를 동반한** loopback 요청 | 패턴은 경계가 아니라 휴리스틱입니다: 표현을 바꿔 우회할 수 있습니다 |
 | 업로드 엔드포인트 내용 위조 | 게이트웨이 인증(Origin + token) | **바이트 서명과 선언 타입 일치 검증** |
 
 ## 신뢰 불가 출력 펜스
@@ -92,6 +96,18 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 인라인 추론을 담은 응답 텍스트 | `agent/security/think_scrub.py` | `<think>`/`<thinking>`/`<reasoning>` 의 내용을 응답 채널에서 클라이언트가 사고 블록으로 렌더링하는 추론 채널로 옮깁니다. 턴마다 스크러버 하나이며 분할 불변입니다——청크 경계는 provider 가 정하므로 태그가 어디서 잘려도 한 청크와 같은 결과여야 합니다 |
 | 채널 사용자 / 채팅 식별자 | `agent/security/pii.py` | 로그에 플랫폼 식별자 대신 `«pii:<16진수 12자리>»` 를 씁니다. 프로세스를 넘어 안정적이라 "수신"과 "전송 성공"이 이후 로그 파일에서도 연결됩니다. 원값은 기능하는 곳(라우팅 표, 회신 대상, 플랫폼 SDK 호출)에 남습니다 |
 
+## 네트워크 경계
+
+프로세스와 네트워크 사이에는 세 개의 문이 있고, 각각 위협이 실제로 도달하는 층에 놓여 있습니다:
+
+| 경계 | 메커니즘 | 비고 |
+|---|---|---|
+| 인바운드 변경 요청 | `server/trigger/csrf.py`——변경 메서드(`POST`/`PUT`/`PATCH`/`DELETE`)는 `Sec-Fetch-Site: cross-site` 면 거부하고, `Origin`/`Referer`가 loopback도 허용 목록도 아니면 거부합니다 | 브라우저가 설정하는 헤더는 페이지가 위조할 수 없는 신호입니다. `server/trigger/auth.py` 의 Origin 게이트가 첫 층으로 남고, 세 헤더를 보내지 않는 클라이언트(curl, 테스트 클라이언트)는 통과합니다——인증은 token이 담당합니다 |
+| 인바운드 응답 | `server/trigger/security_headers.py`——모든 응답(거부된 응답 포함)에 `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` 를 붙입니다 | `script-src 'self'` 와 `object-src 'none'` 은 클라이언트 정화기가 뚫린 뒤에도 살아 있는 층입니다. `GATEWAY["csp"]` 로 정책을 바꾸고, 리터럴 `disabled` 로 헤더를 생략합니다 |
+| 아웃바운드 가져오기 | `pub/func/validator/public_url.py`(판정) + `pub/func/validator/safe_fetch.py`(전송) | 해석된 주소가 **모두** 전역이 아니면 socket 을 열기 전에 거부합니다. 그런 다음 socket 은 검증된 주소로 직접 연결하고(호스트 이름은 여전히 `Host`/SNI 로 전달), 두 번째 DNS 응답이 연결 대상을 바꿀 수 없습니다. 리디렉션은 홉마다 같은 검사를 반복합니다 |
+
+셸은 네트워크 가드가 볼 수 없는 네 번째 경로입니다. HITL 승인 목록(`agent/middlewares/humanInTheLoop/detection.py`)에는 클라우드 메타데이터 엔드포인트(읽은 자격 증명을 모델이 요약해 돌려주는 형태)와 **쓰기를 동반한** loopback 요청 패턴이 있습니다. 반면 평범한 `curl http://127.0.0.1/…` 읽기는 의도적으로 막지 않습니다——로컬 확인마다 승인을 요구하면 운영자가 습관적으로 통과시키게 됩니다.
+
 ## 보안 정책
 
 **유일한 강한 경계는 운영체제입니다.** 프로세스 격리, 파일 권한, 샌드박스 백엔드, 게이트웨이 인증 경계가 공격자가 실제로 깨야 하는 것입니다. 에이전트가 **프로세스 내부**에서 하는 모든 것은 휴리스틱입니다:
@@ -121,6 +137,8 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | `refusing WebSocket handshake` | token 이 오래되었거나 없는 클라이언트——재시작 후에는 예상된 일 |
 | 메시지의 `«redacted»` | 자격 증명 형태의 문자열이 로그 레코드에 도달해 마스킹됨 |
 | 메시지의 `«pii:…»` | 채널 사용자/채팅 식별자가 가명화됨(같은 문자열은 같은 채팅) |
+| `csrf guard: refused` | 변경 요청이 크로스 사이트 또는 외부 출처로 도착했습니다——적대적 페이지, 또는 Origin 을 잃은 클라이언트 |
+| `refused by the SSRF guard` | URL 이 비전역 주소로 해석되어 가져오지 않았습니다 |
 | `Potential security threat detected: <id>` | 주입 스캐너가 도구 출력에서 발화 |
 | 샌드박스 / 거부 줄 | 도구 호출이 거부 규칙에 의해 차단됨 |
 

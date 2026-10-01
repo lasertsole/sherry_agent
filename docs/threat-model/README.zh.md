@@ -42,6 +42,10 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 终端输出中的控制序列 | **控制序列剥离**：`terminal` 两个 spawn 落点都施加 | — |
 | 日志里的渠道标识（用户 / 聊天） | **稳定假名**：渠道日志边界处替换 | 路由表与回复目标按设计保留原值 |
 | 子进程 env hijack（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`BASH_ENV` 等） | **hijack 变量阻止**：启动钩子（`PYTHONPATH`、`BASH_ENV`、`ENV` 等）始终剔除；加载器变量（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`DYLD_INSERT_LIBRARIES`）仅在 `SHERRY_STRICT_ENV_HIJACK=1` 下剔除——因为容器运行时会真的设置它们 | 加载器变量默认不阻止，理由见运行手册一节 |
+| 跨站请求伪造（CSRF） | **Origin 允许清单** + **CSRF 守卫**：写方法（POST/PUT/PATCH/DELETE）遇 `Sec-Fetch-Site: cross-site` 一律拒绝；`Origin`/`Referer` 存在但不是 loopback 也不在允许清单时同样拒绝 | 脚本客户端三个头都不发（curl、测试客户端）——它靠 token 鉴权，不靠这道守卫 |
+| 服务端请求伪造（SSRF） | **SSRF 判定**覆盖每个被抓取的 URL：非全局目标（私有、loopback、云元数据、RFC 2544、IPv6 ULA）拒绝；连接**钉在已校验的地址**上；每一次重定向逐跳复查 | fake-ip 代理主机会把公网域名解析到被拒网段——用文档化的开关作为逃生口 |
+| 渲染内容中的 XSS | 客户端 DOMPurify 允许清单 + `vue/no-v-html` + **服务端安全响应头**（`script-src 'self'`、`object-src 'none'`、`nosniff`、防嵌套） | CSP 是第二层：客户端净化器与载荷同上下文运行 |
+| 借 `terminal` 手工发起 SSRF（模型被说服执行 `curl`） | HITL 审批模式：云元数据端点、以及**带写入**的 loopback 请求 | 模式是启发式而非边界：命令可以换个说法绕开 |
 | 上传端点内容伪造 | 网关鉴权（Origin + token） | **字节签名与声明类型一致性校验** |
 
 ## 不可信输出围栏
@@ -90,6 +94,18 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 携带内联推理的回答文本 | `agent/security/think_scrub.py` | 把 `<think>`/`<thinking>`/`<reasoning>` 的内容从回答通道搬到客户端渲染思考块的推理通道。每回合一个 scrubber，且与切分无关：分块边界由 provider 决定，所以标签在任意位置被切开都必须与整段一致 |
 | 渠道用户 / 聊天标识 | `agent/security/pii.py` | 日志写 `«pii:<12 位十六进制>»` 而不是平台标识。跨进程稳定，因此"收到"与"已发送"在之后的日志文件里仍可关联；原值保留在它发挥作用的地方（路由表、回复目标、平台 SDK 调用） |
 
+## 网络边界
+
+进程与网络之间有三道闸门，各自守在威胁真正可达的那一层：
+
+| 边界 | 机制 | 说明 |
+|---|---|---|
+| 入站写请求 | `server/trigger/csrf.py`——写方法（`POST`/`PUT`/`PATCH`/`DELETE`）遇 `Sec-Fetch-Site: cross-site` 拒绝；`Origin`/`Referer` 存在但既非 loopback 也不在允许清单时拒绝 | 浏览器设置的头是网页伪造不了的信号；`server/trigger/auth.py` 的 Origin 门仍是第一层；三个头都不发的客户端（curl、测试客户端）放行——认证由 token 承担 |
+| 入站响应 | `server/trigger/security_headers.py`——每个响应（含被拒的响应）都带 `Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy` | `script-src 'self'` 与 `object-src 'none'` 是客户端净化器被绕过之后仍然生效的那层；`GATEWAY["csp"]` 可覆盖策略，字面值 `disabled` 则不输出该头 |
+| 出站抓取 | `pub/func/validator/public_url.py`（判定）+ `pub/func/validator/safe_fetch.py`（传输） | 只要解析出的地址**不是全部**全局可达就在开 socket 之前拒绝；随后 socket 直接连到已校验的那个地址（主机名照旧走 `Host`/SNI），因此第二次 DNS 应答无法把连接引向别处；每次重定向逐跳重复这一检查 |
+
+shell 是网络守卫看不见的第四条路径：HITL 审批清单（`agent/middlewares/humanInTheLoop/detection.py`）带了云元数据端点（那种"读了凭据再由模型复述回来"的形状）与**带写入**的 loopback 请求两类模式。而普通的 `curl http://127.0.0.1/…` 读取刻意不拦——为每次本地探测弹审批会训练操作员无脑点过。
+
 ## 安全策略
 
 **唯一硬边界是操作系统。** 进程隔离、文件权限、沙箱后端与网关鉴权边界，才是攻击者必须真正攻破的东西。代理在**进程内**做的一切都是启发式：
@@ -119,6 +135,8 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | `refusing WebSocket handshake` | 客户端 token 过期或缺失——重启后属预期 |
 | 消息里出现 `«redacted»` | 有凭证形状的字符串进了日志记录并被掩码 |
 | 消息里出现 `«pii:…»` | 某个渠道用户/聊天标识被假名化（同一字符串就是同一个会话） |
+| `csrf guard: refused` | 一个写请求带着跨站或外来来源到达——敌对页面，或丢了 Origin 的客户端 |
+| `refused by the SSRF guard` | 某个 URL 解析到非全局地址，未被抓取 |
 | `Potential security threat detected: <id>` | 注入扫描器在工具输出上命中 |
 | 沙箱 / 拒绝相关行 | 某次工具调用被拒绝规则拦下 |
 
