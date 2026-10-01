@@ -149,7 +149,7 @@ def resolve_project_path(file_path: str) -> Path:
 def resolve_within(base: Path, file_path: str) -> Path:
     """Resolve ``file_path`` inside ``base``; reject anything escaping it.
 
-    The file-browser gate (plan §七.5.2): the SAME four steps
+    The file-browser gate: the SAME four steps
     :func:`resolve_workspace_path` runs, but with a mandatory explicit base and
     no session/default fallback, so a caller can never accidentally inherit a
     broader root. ``base`` is resolved first; the traversal rejection happens

@@ -129,7 +129,7 @@ class TestResolveProjectPath:
 
 
 class TestResolveWorkspacePathEquivalence:
-    """P1: the root-parameterised resolver must equal the baseline, case by case.
+    """The root-parameterised resolver must equal the baseline, case by case.
 
     Every case runs BOTH functions with the SAME effective root — the baseline
     by repointing ``path_utils.ROOT_DIR`` at the fixture root, the new one via

@@ -1,4 +1,4 @@
-"""P7: the read-only project file browser (tree + preview).
+"""The read-only project file browser (tree + preview).
 
 Security contract under test:
 

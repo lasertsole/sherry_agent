@@ -62,7 +62,7 @@ from agent.tools.todolist.evidence_recorder import record_verification_evidence
 #: The calling session travels in the graph state (the same channel the file
 #: tools use). The runnable-config lookup in ``_extract_session_id`` is empty in
 #: production, so a tool that relied on it alone resolved against the process
-#: root instead of the session's project directory (found by the P3 smoke).
+#: root instead of the session's project directory (found by the live smoke).
 SessionId = Annotated[str, InjectedState("session_id")]
 
 # Bound to the feature registry (single source of truth); name preserved.

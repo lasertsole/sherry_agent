@@ -1,4 +1,4 @@
-"""P0 of the project-directory plan: the configurable process-level default root.
+"""The configurable process-level default root of the project-directory feature.
 
 ``resolve_default_project_dir`` answers "where does the agent work when a
 session has no explicit binding": ``SHERRY_PROJECT_DIR`` → the ``project_dir``

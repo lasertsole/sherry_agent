@@ -1,4 +1,4 @@
-"""P3: every execution point resolves against the SESSION's project directory.
+"""Every execution point resolves against the SESSION's project directory.
 
 The tools are process-level singletons (``agent/core.py`` builds them once), so
 any construction-time capture of a root would freeze the whole process. These

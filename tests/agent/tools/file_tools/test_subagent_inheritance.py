@@ -209,7 +209,7 @@ class TestSpawnWritesInheritanceKeys:
 
 
 # ---------------------------------------------------------------------------
-# P4: the child's project directory (inheritance + freeze)
+# The child's project directory (inheritance + freeze)
 # ---------------------------------------------------------------------------
 
 
