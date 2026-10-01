@@ -63,8 +63,11 @@ _DRAIN_ERROR_BACKOFF_S: float = WS_STREAM["drain_error_backoff_s"]
 _OUTBOUND_ROUTERS: dict[str, Any] = {}
 
 
-def _promote_pending_project_dir(session_id: str) -> bool:
-    """Seam over the project-dir promotion (lazy import, cycle-safe)."""
+def _promote_pending_project_dir(session_id: str) -> str | None:
+    """Seam over the project-dir promotion (lazy import, cycle-safe).
+
+    Returns the promoted directory (truthy) or ``None`` when nothing was parked.
+    """
     from server.service.session_project_service import promote_pending_project_dir
 
     return promote_pending_project_dir(session_id)
@@ -258,8 +261,14 @@ async def on_turn_finished(
         # The project directory parks/promotes exactly like the controls above:
         # same turn boundary, same HITL deferral, one extra key.
         try:
-            if await asyncio.to_thread(_promote_pending_project_dir, session_id):
+            promoted_dir = await asyncio.to_thread(_promote_pending_project_dir, session_id)
+            if promoted_dir:
                 logger.info("TurnRunner: promoted the parked project directory for {}", session_id)
+                # The model must learn about the change: the turn starting now
+                # already resolves against the new root.
+                from server.service.session_project_service import announce_project_switch
+
+                await announce_project_switch(session_id, promoted_dir)
         except Exception as e:  # pragma: no cover - promotion must never break the turn
             logger.warning(f"TurnRunner: project-dir promotion failed for {session_id}: {e}")
 

@@ -1,4 +1,4 @@
-"""P2: the session project-directory binding (service + routes + prompt block).
+"""The session project-directory binding (service + routes + prompt block).
 
 Contract:
 
@@ -215,10 +215,10 @@ def test_pending_choice_is_reported_and_promoted(project: Path, tmp_path: Path):
     assert svc.get_project_state(SESSION).directory == str(project.resolve()), (
         "live value unchanged"
     )
-    assert svc.promote_pending_project_dir(SESSION) is True
+    assert svc.promote_pending_project_dir(SESSION) == str(other.resolve())
     assert svc.get_project_state(SESSION).directory == str(other.resolve())
     assert svc.get_project_state(SESSION).pending is None
-    assert svc.promote_pending_project_dir(SESSION) is False, "nothing left to promote"
+    assert svc.promote_pending_project_dir(SESSION) is None, "nothing left to promote"
 
 
 # ---------------------------------------------------------------------------
@@ -343,7 +343,7 @@ def test_prompt_injection_includes_the_block(project: Path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# P5: dynamic switching — park while a turn runs, promote at the boundary
+# Dynamic switching — park while a turn runs, promote at the boundary
 # ---------------------------------------------------------------------------
 
 
@@ -401,7 +401,7 @@ class TestDynamicSwitch:
         svc.apply_project_choice(SESSION, str(project))
         await svc.apply_project_choice_async(SESSION, str(other))
 
-        assert svc.promote_pending_project_dir(SESSION) is True
+        assert svc.promote_pending_project_dir(SESSION) == str(other.resolve())
 
         assert svc.get_project_state(SESSION).directory == str(other.resolve())
         assert svc.get_project_state(SESSION).pending is None
@@ -428,7 +428,7 @@ class TestDynamicSwitch:
 
         assert state.directory == str(third.resolve())
         assert state.pending is None, "the parked value was superseded"
-        assert svc.promote_pending_project_dir(SESSION) is False
+        assert svc.promote_pending_project_dir(SESSION) is None
 
     @pytest.mark.asyncio
     async def test_rejected_value_parks_nothing(self, project: Path, monkeypatch):
@@ -511,3 +511,95 @@ def test_prime_mem_from_store_ignores_blank_values(monkeypatch):
 
     assert project_dir_mod.prime_mem_from_store() == 0
     assert project_dir_mod.read_project_dir(SESSION) is None
+
+
+# ---------------------------------------------------------------------------
+# The switch is announced into the transcript
+# ---------------------------------------------------------------------------
+
+
+class _FakeGraph:
+    """Captures ``aupdate_state`` calls (the announcement's only side effect)."""
+
+    def __init__(self) -> None:
+        self.updates: list[dict] = []
+
+    async def aupdate_state(self, config, values) -> None:  # noqa: ANN001
+        self.updates.append(values)
+
+
+@pytest.mark.asyncio
+async def test_a_live_switch_is_announced_into_the_transcript(project: Path, monkeypatch):
+    """The model must learn about the change: the transcript records it."""
+    # The real helper (captured before patching) drives the message shape.
+    real_announce = svc.announce_project_switch
+    announced: list[str | None] = []
+
+    async def record(session_id, directory, *, graph=None):  # noqa: ANN001
+        announced.append(directory)
+        return True
+
+    monkeypatch.setattr(svc, "announce_project_switch", record)
+    monkeypatch.setattr(
+        "server.service.session_settings_service._session_turn_active",
+        lambda _sid: False,
+        raising=False,
+    )
+
+    await svc.apply_project_choice_async(SESSION, str(project))
+
+    assert announced == [str(project.resolve())], "a live switch announces the new root"
+
+    graph = _FakeGraph()
+    assert await real_announce(SESSION, str(project), graph=graph) is True
+    message = graph.updates[0]["messages"][0]
+    assert "项目目录已切换" in message.content
+    assert str(project) in message.content
+    assert message.metadata["origin"] == "project_dir", "renders as a system card"
+    assert message.metadata["internal"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_notice_covers_unbinding_too():
+    graph = _FakeGraph()
+
+    await svc.announce_project_switch(SESSION, None, graph=graph)
+
+    text = graph.updates[0]["messages"][0].content
+    assert "解除绑定" in text
+    assert "process default" in text
+
+
+@pytest.mark.asyncio
+async def test_a_failed_announcement_never_raises():
+    class _BrokenGraph:
+        async def aupdate_state(self, config, values) -> None:  # noqa: ANN001
+            raise RuntimeError("checkpointer down")
+
+    assert await svc.announce_project_switch(SESSION, "/tmp/x", graph=_BrokenGraph()) is False
+
+
+def test_turn_runner_announces_a_promotion(monkeypatch):
+    """The boundary promotion announces the new root to the model."""
+    import asyncio as _asyncio
+
+    import server.service.turn_runner as turn_runner
+
+    announced: list[tuple[str, str]] = []
+    monkeypatch.setattr(turn_runner, "_promote_pending_project_dir", lambda _sid: "/tmp/new-root")
+    monkeypatch.setattr(turn_runner, "is_hitl_pending", lambda _sid: False)
+    monkeypatch.setattr(
+        turn_runner, "promote_pending_settings", lambda _sid: _asyncio.sleep(0, result=[])
+    )
+
+    import server.service.session_project_service as project_svc
+
+    async def fake_announce(session_id, directory, *, graph=None):  # noqa: ANN001
+        announced.append((session_id, directory))
+        return True
+
+    monkeypatch.setattr(project_svc, "announce_project_switch", fake_announce)
+
+    _asyncio.run(turn_runner.on_turn_finished(SESSION))
+
+    assert announced == [(SESSION, "/tmp/new-root")]

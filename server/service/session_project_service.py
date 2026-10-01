@@ -170,6 +170,8 @@ async def apply_project_choice_async(session_id: str, requested: str | None) -> 
                 # A live write supersedes any parked choice.
                 await asyncio.to_thread(park_project_choice, session_id, None)
                 state = await asyncio.to_thread(_state_for, session_id, None)
+            # The transcript must record the change for the model's sake.
+            await announce_project_switch(session_id, state.directory)
             return state
 
         state = await asyncio.to_thread(park_project_choice, session_id, target)
@@ -181,7 +183,67 @@ async def apply_project_choice_async(session_id: str, requested: str | None) -> 
         return state
 
 
-def promote_pending_project_dir(session_id: str) -> bool:
+#: Persisted as the injected row's ``origin``: the chat renders a non-user
+#: origin as a neutral system card instead of a bubble the user "wrote" (the same
+#: contract the completion/quality gates use — see context_engine/store/core.py).
+_SWITCH_NOTICE_ORIGIN = "project_dir"
+_SWITCH_NOTICE_METADATA = {"origin": _SWITCH_NOTICE_ORIGIN, "internal": True}
+
+
+def _switch_notice_text(directory: str | None) -> str:
+    """The notice body for a switch (or an unbinding)."""
+    if directory is None:
+        return (
+            "[项目目录已解除绑定 / no project directory bound] The session now resolves "
+            "against the process default. Ask the user which project to work in before "
+            "creating or changing files."
+        )
+    return (
+        f"[项目目录已切换 / working directory switched] The working directory is now "
+        f"`{directory}`. Relative paths in file tools, terminal commands and path checks "
+        "resolve against it, and paths outside it are rejected."
+    )
+
+
+async def announce_project_switch(
+    session_id: str, directory: str | None, *, graph: Any = None
+) -> bool:
+    """Append a neutral system notice about a directory switch; best-effort.
+
+    The notice is injected into the session's graph state, which is what the
+    MODEL reads next turn — without it the transcript carries no record of the
+    change, and the model can end up confused about which root it is writing
+    into (or re-create files it "already" made elsewhere). The persistence layer
+    flushes it like any other injected carrier and the chat renders it as a
+    system card because of its non-``user`` origin.
+
+    Never raises: a failed announcement must not fail the switch itself.
+    """
+    if not session_id or not is_safe_session_id(session_id):
+        return False
+    try:
+        if graph is None:
+            from agent import core as agent_core
+
+            graph = await agent_core.built_agent()
+        from langchain_core.messages import HumanMessage
+
+        from pub.func import build_agent_config
+
+        config = build_agent_config(session_id=session_id)
+        notice = HumanMessage(
+            content=_switch_notice_text(directory),
+            metadata=dict(_SWITCH_NOTICE_METADATA),
+        )
+        await graph.aupdate_state(config, {"messages": [notice]})
+        logger.info("Project dir: announced the switch for session {} -> {}", session_id, directory)
+        return True
+    except Exception as e:  # noqa: BLE001 - announcement is best-effort
+        logger.warning("Project dir: could not announce the switch for {}: {}", session_id, e)
+        return False
+
+
+def promote_pending_project_dir(session_id: str) -> str | None:
     """Promote a parked directory choice to the live key; ``True`` when it moved.
 
     Called at the turn boundary (``turn_runner.on_turn_finished``) for idle
@@ -190,11 +252,11 @@ def promote_pending_project_dir(session_id: str) -> bool:
     """
     parked = _read_pending(session_id)
     if parked is None:
-        return False
+        return None
     write_project_dir(session_id, parked, pending=False)
     write_pending_project_dir(session_id, None)
     logger.info("Project dir: promoted parked choice for session {} -> {}", session_id, parked)
-    return True
+    return parked
 
 
 def park_project_choice(session_id: str, requested: str | None) -> ProjectDirState:
