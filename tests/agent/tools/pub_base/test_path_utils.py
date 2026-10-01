@@ -22,6 +22,7 @@ from unittest.mock import MagicMock
 
 from agent.tools.pub_base.path_utils import (
     resolve_project_path,
+    resolve_workspace_path,
     resolve_external_path,
     resolve_path,
     to_virtual_path,
@@ -125,6 +126,77 @@ class TestResolveProjectPath:
 
 
 # ── Traversal, symlink-loop and O_NOFOLLOW gates ───────────────────────
+
+
+class TestResolveWorkspacePathEquivalence:
+    """P1: the root-parameterised resolver must equal the baseline, case by case.
+
+    Every case runs BOTH functions with the SAME effective root — the baseline
+    by repointing ``path_utils.ROOT_DIR`` at the fixture root, the new one via
+    its explicit ``workspace_root`` argument — and asserts identical outcomes
+    (same resolved path, or the same exception). That is the migration proof:
+    20+ call sites can move to the new function without a behaviour change.
+    """
+
+    @pytest.fixture()
+    def root(self, tmp_path: Path, monkeypatch) -> Path:
+        r = tmp_path.resolve()
+        (r / "f.txt").write_text("x", encoding="utf-8")
+        (r / "sub").mkdir()
+        (r / "sub" / "g.txt").write_text("y", encoding="utf-8")
+        monkeypatch.setattr("agent.tools.pub_base.path_utils.ROOT_DIR", r)
+        return r
+
+    @pytest.mark.parametrize(
+        "case",
+        ["f.txt", "sub/g.txt", "foo..bar", "配置..md"],
+    )
+    def test_relative_paths_resolve_identically(self, root: Path, case: str):
+        assert resolve_workspace_path(case, root) == resolve_project_path(case)
+
+    def test_absolute_in_root_paths_resolve_identically(self, root: Path):
+        absolute = str(root / "f.txt")
+
+        assert resolve_workspace_path(absolute, root) == resolve_project_path(absolute)
+
+    @pytest.mark.parametrize(
+        "case", ["/etc/passwd", "../escape.txt", "sub/../../escape.txt", "~/x"]
+    )
+    def test_rejections_match(self, root: Path, case: str):
+        with pytest.raises(PathOutOfBoundsError):
+            resolve_project_path(case)
+
+        with pytest.raises(PathOutOfBoundsError):
+            resolve_workspace_path(case, root)
+
+    def test_symlink_loop_outcomes_match(self, root: Path):
+        (root / "a").symlink_to(root / "b")
+        (root / "b").symlink_to(root / "a")
+
+        with pytest.raises(OSError) as baseline:
+            resolve_project_path("a")
+        with pytest.raises(OSError) as candidate:
+            resolve_workspace_path("a", root)
+
+        assert baseline.value.errno == candidate.value.errno == errno.ELOOP
+
+    def test_none_uses_the_process_default_root(self, tmp_path: Path, monkeypatch):
+        """workspace_root=None follows resolve_default_project_dir()."""
+        monkeypatch.setenv("SHERRY_PROJECT_DIR", str(tmp_path))
+        (tmp_path / "f.txt").write_text("x", encoding="utf-8")
+
+        assert resolve_workspace_path("f.txt") == (tmp_path / "f.txt").resolve()
+
+    def test_an_explicit_root_wins_over_the_configured_default(self, tmp_path, monkeypatch):
+        configured = tmp_path / "configured"
+        configured.mkdir()
+        explicit = tmp_path / "explicit"
+        explicit.mkdir()
+        monkeypatch.setenv("SHERRY_PROJECT_DIR", str(configured))
+
+        resolved = resolve_workspace_path("f.txt", explicit)
+
+        assert resolved == (explicit / "f.txt").resolve()
 
 
 class TestResolveGates:

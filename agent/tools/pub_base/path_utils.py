@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from config import ROOT_DIR
+from config.path import resolve_default_project_dir
 from runtime.session.state_keys import StateKey
 
 
@@ -83,32 +84,51 @@ def _open_no_follow(path: Path, flags: int, mode: int = 0o644) -> int:
     return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), mode)
 
 
-def resolve_project_path(file_path: str) -> Path:
-    """Resolve file_path against ROOT_DIR; reject paths escaping the project.
+def resolve_workspace_path(file_path: str, workspace_root: Path | None = None) -> Path:
+    """Resolve file_path against an explicit workspace root; reject escapes.
 
-    Three gates run in order:
+    The root-parameterised form of :func:`resolve_project_path`: the same three
+    gates (traversal rejection → ``resolve()`` → containment → symlink-loop
+    detection), with the boundary supplied by the caller — a session's bound
+    project directory — instead of the process-wide constant.
 
-    1. String-level rejection of ``..`` components and ``~`` prefixes
-       (no filesystem access).
-    2. ``resolve()`` + ``relative_to(ROOT_DIR)`` containment — absolute
-       paths that resolve outside are rejected via
-       :class:`PathOutOfBoundsError`.
-    3. Symlink-loop detection on the resolved path (``OSError(ELOOP)``).
+    ``workspace_root=None`` means "the process default"
+    (:func:`config.path.resolve_default_project_dir`: ``SHERRY_PROJECT_DIR`` →
+    the ``sherry.jsonc`` ``project_dir`` key → ``ROOT_DIR``), so a process with
+    nothing configured keeps the historical ``ROOT_DIR`` boundary exactly.
 
-    Relative paths are joined onto ROOT_DIR. For paths that legitimately
-    need to reach outside ROOT_DIR, use :func:`resolve_external_path` instead.
+    Relative paths are joined onto the root; absolute paths resolving outside
+    it raise :class:`PathOutOfBoundsError`. For paths that legitimately need to
+    reach outside, use :func:`resolve_external_path` (HITL-gated) instead.
     """
+    # Gate 1 first: traversal input must be rejected without touching the
+    # filesystem (resolving the root would be an FS access).
     _reject_traversal_input(file_path)
+    root = (
+        workspace_root if workspace_root is not None else resolve_default_project_dir()
+    ).resolve()
     p = Path(os.path.expanduser(file_path))
     if not p.is_absolute():
-        p = ROOT_DIR / p
+        p = root / p
     resolved = p.resolve()
-    if resolved != ROOT_DIR and not resolved.is_relative_to(ROOT_DIR):
+    if resolved != root and not resolved.is_relative_to(root):
         raise PathOutOfBoundsError(
-            f"Path resolves outside project root and is not allowed: {resolved} (root={ROOT_DIR})"
+            f"Path resolves outside project root and is not allowed: {resolved} (root={root})"
         )
     _raise_if_symlink_loop(resolved)
     return resolved
+
+
+def resolve_project_path(file_path: str) -> Path:
+    """Resolve file_path against the project root; reject paths escaping it.
+
+    Thin wrapper over :func:`resolve_workspace_path` pinned to the module's
+    ``ROOT_DIR`` (import-time resolved, monkeypatchable in tests), kept as the
+    historical name so existing call sites are untouched. Session-aware callers
+    pass their bound project directory to :func:`resolve_workspace_path`
+    directly instead.
+    """
+    return resolve_workspace_path(file_path, ROOT_DIR)
 
 
 def resolve_path(file_path: str) -> Path:
