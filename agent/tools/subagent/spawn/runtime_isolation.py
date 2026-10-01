@@ -42,9 +42,28 @@ def resolve_spawned_workspace_inheritance(
     target_agent_id: str,
     requester_cwd: str | None = None,
 ) -> str | None:
-    """Determine the working directory for the child, inheriting from the requester or probing a named workspace."""
+    """Determine the working directory for the child.
+
+    Precedence: an explicit ``requester_cwd`` (the spawn ``cwd`` argument) → the
+    **parent session's project directory** → a per-agent ``workspaces/<id>``
+    directory when one exists (the legacy probe; nothing in the repo creates
+    that tree, so it is effectively a last resort). ``None`` means "no opinion":
+    the child falls back to the process default exactly as before.
+
+    The parent's directory is read ONCE here, at spawn time: a child runs with
+    the root it was spawned with and does NOT follow a later switch in the
+    parent session (the ``spawned_cwd`` freeze, matching the "children are
+    independent sessions" rule).
+    """
     if requester_cwd:
         return requester_cwd
+
+    from agent.tools.pub_base import session_workspace_root
+    from agent.tools.subagent.registry.session_keys import normalize_session_key
+
+    parent_root = session_workspace_root(normalize_session_key(requester_session_key))
+    if parent_root is not None:
+        return str(parent_root)
 
     parts = requester_session_key.split(":")
     if len(parts) >= 3:

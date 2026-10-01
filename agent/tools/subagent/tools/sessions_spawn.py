@@ -59,6 +59,11 @@ class SessionsSpawnSchema(BaseModel):
         description="Additional tool names to attach for this spawn only "
         "(deepagents per-task tool pattern).",
     )
+    cwd: str | None = Field(
+        default=None,
+        description="Optional absolute working directory for the subagent. "
+        "Omit to inherit the caller's project directory (the default).",
+    )
 
 
 class SessionsSpawnTool(BaseTool):
@@ -89,6 +94,7 @@ class SessionsSpawnTool(BaseTool):
         goal_max_turns: int | None = None,
         functional_role: str | None = None,
         extra_tools: list[str] | None = None,
+        cwd: str | None = None,
     ) -> str:
         # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
         # if a tool instance leaked into its toolset. Returns through the tool's
@@ -122,6 +128,7 @@ class SessionsSpawnTool(BaseTool):
             thinking=thinking,
             cleanup=cleanup,
             attachments=attach_dicts,
+            cwd=cwd,
             expects_completion_message=True,
             goal_max_turns=goal_max_turns,
             functional_role_hint=functional_role,

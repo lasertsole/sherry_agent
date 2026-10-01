@@ -21,6 +21,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from agent.tools.file_tools.read_file import build_read_file_tool
 from agent.tools.pub_base.path_utils import _add_to_allowlist
 from runtime import state_register_mem
+from runtime.session.state_keys import StateKey
 
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
@@ -205,3 +206,78 @@ class TestSpawnWritesInheritanceKeys:
         child = result.child_session_key
         assert state_register_mem.get_state(child, "requester_session_key") == "s-parent"
         assert state_register_mem.get_state(child, "caller_scope") == "subagent"
+
+
+# ---------------------------------------------------------------------------
+# P4: the child's project directory (inheritance + freeze)
+# ---------------------------------------------------------------------------
+
+
+class TestSpawnProjectDirInheritance:
+    """A child inherits the parent's project directory and keeps it frozen."""
+
+    @pytest.fixture()
+    def parent_root(self, tmp_path):
+        root = tmp_path / "parent-proj"
+        root.mkdir()
+        return root
+
+    def test_explicit_cwd_wins(self, tmp_path, parent_root):
+        from agent.tools.subagent.spawn.runtime_isolation import (
+            resolve_spawned_workspace_inheritance,
+        )
+
+        state_register_mem.set_state("parent-sess", StateKey.PROJECT_DIR, str(parent_root))
+        other = tmp_path / "explicit"
+        other.mkdir()
+
+        assert resolve_spawned_workspace_inheritance(
+            "agent:main:session:parent-sess", "main", requester_cwd=str(other)
+        ) == str(other)
+
+    def test_parents_binding_is_inherited(self, parent_root):
+        from agent.tools.subagent.spawn.runtime_isolation import (
+            resolve_spawned_workspace_inheritance,
+        )
+
+        state_register_mem.set_state("parent-sess", StateKey.PROJECT_DIR, str(parent_root))
+
+        inherited = resolve_spawned_workspace_inheritance("agent:main:session:parent-sess", "main")
+
+        assert inherited == str(parent_root)
+
+    def test_unbound_parent_returns_none(self):
+        from agent.tools.subagent.spawn.runtime_isolation import (
+            resolve_spawned_workspace_inheritance,
+        )
+
+        assert (
+            resolve_spawned_workspace_inheritance("agent:main:session:unbound-sess", "main") is None
+        )
+
+    def test_child_binding_is_a_snapshot(self, parent_root, tmp_path):
+        """The child keeps its root even after the parent switches (Q4: no follow)."""
+        from agent.tools.subagent.spawn.runtime_isolation import (
+            resolve_spawned_workspace_inheritance,
+        )
+        from runtime.session import project_dir as project_dir_mod
+
+        state_register_mem.set_state("parent-sess", StateKey.PROJECT_DIR, str(parent_root))
+        child_cwd = resolve_spawned_workspace_inheritance("agent:main:session:parent-sess", "main")
+        assert child_cwd is not None
+        project_dir_mod.write_project_dir("child-sess", child_cwd)
+
+        # The parent switches afterwards…
+        later = tmp_path / "parent-proj-2"
+        later.mkdir()
+        state_register_mem.set_state("parent-sess", StateKey.PROJECT_DIR, str(later))
+
+        # …and the child still resolves against the root it was spawned with.
+        assert project_dir_mod.read_project_dir("child-sess") == parent_root
+        state_register_mem.clear_session("child-sess")
+
+    def test_spawn_tool_schema_exposes_cwd(self):
+        from agent.tools.subagent.tools.sessions_spawn import SessionsSpawnSchema
+
+        assert "cwd" in SessionsSpawnSchema.model_fields
+        assert SessionsSpawnSchema.model_fields["cwd"].default is None

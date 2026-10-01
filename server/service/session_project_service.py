@@ -98,6 +98,11 @@ def apply_project_choice(session_id: str, requested: str | None) -> ProjectDirSt
     :func:`config.path.validate_project_dir` normalises and validates it, and
     its message is safe to surface to the client. A rejected value never
     touches the stored state.
+
+    Synchronous direct entry point (tests / idle callers). The HTTP layer goes
+    through :func:`apply_project_choice_async`, which parks the value while a
+    turn is in flight so the running turn finishes against the root it started
+    with (the same contract as the thinking / main-model controls).
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
@@ -118,6 +123,62 @@ def apply_project_choice(session_id: str, requested: str | None) -> ProjectDirSt
     write_project_dir(session_id, directory, pending=False)
     logger.info("Project dir: session {} bound to {}", session_id, directory)
     return _state_for(session_id, _read_pending(session_id))
+
+
+async def apply_project_choice_async(session_id: str, requested: str | None) -> ProjectDirState:
+    """HTTP entry for ``PUT /sessions/project``; parks while a turn is running.
+
+    The busy decision reuses the input queue's per-session lock and the same
+    four signals every other control uses, so check-and-write stays atomic
+    against a racing submit. A parked choice lands at the next turn boundary
+    (``turn_runner.on_turn_finished`` promotes it) — never mid-turn, because the
+    LLM's transcript carries no record of a directory change and a half-switched
+    turn could write to two roots.
+    """
+    import asyncio
+
+    from loguru import logger as _logger
+
+    from agent.tools.subagent.registry.session_state import normalize_session_key
+    from server.queue.user_input_queue import UserInputQueueStatus
+    from server.service.input_queue_service import _get_session_lock, get_default_queue
+
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+
+    # Validate BEFORE the lock so a rejected value never mutates anything.
+    target: str | None = None if requested is None else str(validate_project_dir(requested))
+
+    from server.service.session_settings_service import _session_turn_active
+
+    async with _get_session_lock(session_id):
+        busy = _session_turn_active(session_id)
+        if not busy:
+            try:
+                queue = get_default_queue()
+                rows = await queue.list_active(normalize_session_key(session_id))
+                busy = any(
+                    row.status in (UserInputQueueStatus.QUEUED, UserInputQueueStatus.CLAIMED)
+                    for row in rows
+                )
+            except Exception:  # pragma: no cover - defensive, queue may be absent
+                busy = False
+
+        if not busy:
+            state = await asyncio.to_thread(apply_project_choice, session_id, target)
+            if state.pending is not None:
+                # A live write supersedes any parked choice.
+                await asyncio.to_thread(park_project_choice, session_id, None)
+                state = await asyncio.to_thread(_state_for, session_id, None)
+            return state
+
+        state = await asyncio.to_thread(park_project_choice, session_id, target)
+        _logger.info(
+            "Project dir parked: session={} target={} (a turn is in flight)",
+            session_id,
+            target,
+        )
+        return state
 
 
 def promote_pending_project_dir(session_id: str) -> bool:

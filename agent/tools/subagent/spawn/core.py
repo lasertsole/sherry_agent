@@ -685,7 +685,15 @@ async def _execute_subagent(
             # LangGraph inspects tags for the "thinking:<level>" pattern
             agent_config["tags"].append(f"thinking:{run.thinking}")
         if run.spawned_cwd:
-            agent_config["cwd"] = run.spawned_cwd
+            # The child's tools resolve against this root. It is persisted as the
+            # CHILD session's own project-dir binding (resolved at spawn time,
+            # inside the lane slot) because that register is the only channel the
+            # tools can read — LangGraph's ``config`` is not reachable from a
+            # tool body (no ToolRuntime). Freezing it here is what makes a child
+            # independent: a later switch in the parent session does not follow.
+            from runtime.session import project_dir as project_dir_mod
+
+            project_dir_mod.write_project_dir(run.child_session_key, run.spawned_cwd)
 
         # Security: the child's file tools resolve external-path authorization
         # against these keys — allowlist inheritance (parent session) and

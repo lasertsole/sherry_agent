@@ -13,6 +13,8 @@ SAMPLE = """// app settings
 
   "LOG_LEVEL": "INFO",
 
+  "project_dir": "",
+
   "SUBAGENT_TODO_DONE_FUNC": "archive",
   "WORKSPACE_TEMPLATE_LANG": "en",
   "heartbeat": {

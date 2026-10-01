@@ -15,7 +15,7 @@ from loguru import logger
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, ok, read_body
 from server.service.session_project_service import (
-    apply_project_choice,
+    apply_project_choice_async,
     get_project_state,
 )
 
@@ -70,7 +70,7 @@ async def put_project_directory_handler(request):
     if requested is not None and not isinstance(requested, str):
         return bad_request("'directory' must be a string or null")
     try:
-        state = await asyncio.to_thread(apply_project_choice, session_id, requested)
+        state = await apply_project_choice_async(session_id, requested)
     except ValueError as exc:
         # Validation messages name the user's own input (or the session id);
         # they carry no internals.

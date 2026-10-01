@@ -335,3 +335,133 @@ def test_prompt_injection_includes_the_block(project: Path, monkeypatch):
 
     assert "## Current Working Directory" in prompt
     assert str(project.resolve()) in prompt
+
+
+# ---------------------------------------------------------------------------
+# P5: dynamic switching — park while a turn runs, promote at the boundary
+# ---------------------------------------------------------------------------
+
+
+class TestDynamicSwitch:
+    @pytest.fixture()
+    def other(self, tmp_path: Path) -> Path:
+        target = tmp_path / "other-proj"
+        target.mkdir()
+        return target
+
+    @pytest.mark.asyncio
+    async def test_idle_switch_applies_immediately(self, project: Path, other: Path, monkeypatch):
+        # The service asks the settings module for the busy verdict (one shared
+        # definition of "busy"); stub that seam.
+        monkeypatch.setattr(
+            "server.service.session_settings_service._session_turn_active",
+            lambda _sid: False,
+            raising=False,
+        )
+
+        state = await svc.apply_project_choice_async(SESSION, str(other))
+
+        assert state.pending is None
+        assert state.directory == str(other.resolve())
+        assert svc.get_project_state(SESSION).directory == str(other.resolve())
+
+    @pytest.mark.asyncio
+    async def test_busy_switch_parks_and_the_turn_keeps_reading_the_old_root(
+        self, project: Path, other: Path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "server.service.session_settings_service._session_turn_active",
+            lambda _sid: True,
+            raising=False,
+        )
+        svc.apply_project_choice(SESSION, str(project))
+
+        state = await svc.apply_project_choice_async(SESSION, str(other))
+
+        assert state.directory == str(project.resolve()), "live value unchanged mid-turn"
+        assert state.pending == str(other.resolve()), "the new value is parked"
+        from runtime.session.project_dir import current_project_dir
+
+        assert current_project_dir(SESSION) == project.resolve(), "tools still read the old root"
+
+    @pytest.mark.asyncio
+    async def test_promotion_lands_at_the_turn_boundary(
+        self, project: Path, other: Path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "server.service.session_settings_service._session_turn_active",
+            lambda _sid: True,
+            raising=False,
+        )
+        svc.apply_project_choice(SESSION, str(project))
+        await svc.apply_project_choice_async(SESSION, str(other))
+
+        assert svc.promote_pending_project_dir(SESSION) is True
+
+        assert svc.get_project_state(SESSION).directory == str(other.resolve())
+        assert svc.get_project_state(SESSION).pending is None
+
+    @pytest.mark.asyncio
+    async def test_a_live_write_supersedes_a_parked_choice(
+        self, project: Path, other: Path, tmp_path: Path, monkeypatch
+    ):
+        monkeypatch.setattr(
+            "server.service.session_settings_service._session_turn_active",
+            lambda _sid: True,
+            raising=False,
+        )
+        await svc.apply_project_choice_async(SESSION, str(other))
+
+        third = tmp_path / "third"
+        third.mkdir()
+        monkeypatch.setattr(
+            "server.service.session_settings_service._session_turn_active",
+            lambda _sid: False,
+            raising=False,
+        )
+        state = await svc.apply_project_choice_async(SESSION, str(third))
+
+        assert state.directory == str(third.resolve())
+        assert state.pending is None, "the parked value was superseded"
+        assert svc.promote_pending_project_dir(SESSION) is False
+
+    @pytest.mark.asyncio
+    async def test_rejected_value_parks_nothing(self, project: Path, monkeypatch):
+        monkeypatch.setattr(
+            "server.service.session_settings_service._session_turn_active",
+            lambda _sid: True,
+            raising=False,
+        )
+        svc.apply_project_choice(SESSION, str(project))
+
+        with pytest.raises(ValueError):
+            await svc.apply_project_choice_async(SESSION, "relative/nope")
+
+        state = svc.get_project_state(SESSION)
+        assert state.pending is None
+        assert state.directory == str(project.resolve())
+
+
+def test_turn_runner_promotes_the_parked_directory(monkeypatch):
+    """The turn-end hook promotes the parked choice (same seam as the controls)."""
+    import asyncio as _asyncio
+
+    import server.service.turn_runner as turn_runner
+    from runtime.session import project_dir as project_dir_mod
+
+    calls: list[str] = []
+
+    def fake_promote(session_id: str) -> bool:
+        calls.append(session_id)
+        return True
+
+    monkeypatch.setattr(turn_runner, "_promote_pending_project_dir", fake_promote)
+    monkeypatch.setattr(turn_runner, "is_hitl_pending", lambda _sid: False)
+    monkeypatch.setattr(
+        turn_runner, "promote_pending_settings", lambda _sid: _asyncio.sleep(0, result=[])
+    )
+
+    _asyncio.run(turn_runner.on_turn_finished("sess-project-1"))
+
+    assert calls == ["sess-project-1"]
+    assert project_dir_mod is not None
