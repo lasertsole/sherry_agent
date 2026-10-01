@@ -91,7 +91,9 @@
       "manualPlaceholder": "/项目的/绝对路径",
       "confirm": "确定",
       "absoluteRequired": "请输入绝对路径（服务端会拒绝相对路径）"
-    }
+    },
+    "projectFiles": "项目文件",
+    "sessionList": "会话列表"
   },
   "todolist": {
     "progress": "已完成 {done}/{total}",
@@ -132,5 +134,16 @@
     "env": {
       "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
     }
+  },
+  "rightSidebar": {
+    "fileViewer": "项目文件"
+  },
+  "projectFiles": {
+    "refresh": "刷新",
+    "unbound": "未绑定项目目录",
+    "unboundHint": "可在输入框上方的目录控件里绑定。",
+    "truncated": "仅显示 {total} 项中的 {shown} 项",
+    "empty": "空目录",
+    "noFile": "未选择文件"
   }
 }

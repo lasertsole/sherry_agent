@@ -91,7 +91,9 @@
       "manualPlaceholder": "/absolute/path/to/project",
       "confirm": "Apply",
       "absoluteRequired": "Enter an absolute path (the server rejects relative ones)"
-    }
+    },
+    "projectFiles": "Project files",
+    "sessionList": "Sessions"
   },
   "todolist": {
     "progress": "{done}/{total} done",
@@ -132,5 +134,16 @@
     "env": {
       "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
     }
+  },
+  "rightSidebar": {
+    "fileViewer": "Project files"
+  },
+  "projectFiles": {
+    "refresh": "Refresh",
+    "unbound": "No project directory bound",
+    "unboundHint": "Bind one from the folder chip above the chat input.",
+    "truncated": "Showing {shown} of {total} entries",
+    "empty": "Empty directory",
+    "noFile": "No file selected"
   }
 }

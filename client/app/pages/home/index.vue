@@ -32,14 +32,29 @@
            the language picker drop out instead of wrapping the button row. -->
       <div
         class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
-        <!-- Left: collapse/expand the history sidebar -->
-        <Button
-          :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
-          :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
-          :aria-label="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
-          variant="text"
-          class="text-theme-main"
-          @click="toggleSidebar" />
+        <!-- Left: collapse/expand the sidebar, then the body switch
+             (sessions ↔ project files) -->
+        <div class="flex items-center gap-1">
+          <Button
+            :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
+            :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+            :aria-label="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
+            variant="text"
+            class="text-theme-main"
+            @click="toggleSidebar" />
+          <Button
+            :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
+            :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
+            :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
+            :aria-pressed="showFiles"
+            variant="text"
+            :class="
+              showFiles
+                ? 'bg-theme-main/10 text-theme-main'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
+            "
+            @click="uiStore.toggleSidebarBody()" />
+        </div>
         <!-- Right: original function button area (the theme switch and the language
              picker are the first to go when the column gets narrow) -->
         <div class="flex items-center gap-3">
@@ -305,6 +320,8 @@ const notificationUnread = ref(0);
 
 /** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
 const uiStore = useUiStore();
+/** Whether the sidebar body shows the project file tree. */
+const showFiles = computed(() => uiStore.sidebarBody === 'files');
 /** Whether the settings menu (nine-grid) is open (transient, not persisted) */
 const { settingsMenuOpen: isSettingsMenuOpen } = storeToRefs(uiStore);
 

@@ -15,7 +15,8 @@ export type RightSidebarPanelKind =
   | 'heartbeat'
   | 'cron'
   | 'extend'
-  | 'taskDetail';
+  | 'taskDetail'
+  | 'fileViewer';
 
 /**
  * Width an editor panel is opened with when the sidebar is narrower: those
@@ -68,6 +69,12 @@ export interface RightSidebarTab {
   id: string;
   /** Which panel component the tab renders. */
   kind: RightSidebarPanelKind;
+  /**
+   * Per-instance data for kinds that need it (the file viewer's relative path).
+   * The tab id is already the instance key, so the payload rides the tab itself
+   * rather than a parallel path-by-tab map.
+   */
+  payload?: { path: string };
 }
 
 let tabSeq = 0;
@@ -127,11 +134,13 @@ export const useRightSidebarStore = defineStore(
      * opened twice — e.g. one log view per source. An editor kind also widens
      * the sidebar up to its usable floor (never narrows it).
      * @param kind Panel kind to add.
+     * @param payload
+     * @param payload.path
      * @returns The new tab id.
      */
-    function openTab(kind: RightSidebarPanelKind): string {
+    function openTab(kind: RightSidebarPanelKind, payload?: { path: string }): string {
       const id = `${kind}-${++tabSeq}`;
-      tabs.value = [...tabs.value, { id, kind }];
+      tabs.value = [...tabs.value, payload ? { id, kind, payload } : { id, kind }];
       activeTabId.value = id;
       expand();
       if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));

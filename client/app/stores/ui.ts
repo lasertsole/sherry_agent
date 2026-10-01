@@ -15,6 +15,8 @@ export const useUiStore = defineStore(
     // reference remains valid afterwards)
     const colorMode = useColorMode();
     const sidebarCollapsed = ref(false);
+    /** What the left sidebar shows: the session list or the project file tree. */
+    const sidebarBody = ref<'sessions' | 'files'>('sessions');
     const settingsMenuOpen = ref(false);
     const todoDockCollapsed = ref(false);
     const setTheme = (value: string) => {
@@ -26,11 +28,23 @@ export const useUiStore = defineStore(
     const toggleTodoDock = () => {
       todoDockCollapsed.value = !todoDockCollapsed.value;
     };
-    return { sidebarCollapsed, settingsMenuOpen, todoDockCollapsed, setTheme, toggleSidebar, toggleTodoDock };
+    const toggleSidebarBody = () => {
+      sidebarBody.value = sidebarBody.value === 'sessions' ? 'files' : 'sessions';
+    };
+    return {
+      sidebarCollapsed,
+      settingsMenuOpen,
+      todoDockCollapsed,
+      sidebarBody,
+      setTheme,
+      toggleSidebar,
+      toggleTodoDock,
+      toggleSidebarBody
+    };
   },
   {
     persist: {
-      pick: ['sidebarCollapsed', 'todoDockCollapsed']
+      pick: ['sidebarCollapsed', 'todoDockCollapsed', 'sidebarBody']
     }
   }
 );

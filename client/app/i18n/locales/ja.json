@@ -91,7 +91,9 @@
       "manualPlaceholder": "/プロジェクトの/絶対パス",
       "confirm": "適用",
       "absoluteRequired": "絶対パスを入力してください（相対パスはサーバーが拒否します）"
-    }
+    },
+    "projectFiles": "プロジェクトファイル",
+    "sessionList": "セッション一覧"
   },
   "todolist": {
     "progress": "{done}/{total} 完了",
@@ -132,5 +134,16 @@
     "env": {
       "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
     }
+  },
+  "rightSidebar": {
+    "fileViewer": "プロジェクトファイル"
+  },
+  "projectFiles": {
+    "refresh": "再読み込み",
+    "unbound": "プロジェクトディレクトリ未設定",
+    "unboundHint": "入力欄の上のフォルダー操作から設定できます。",
+    "truncated": "{total} 件中 {shown} 件を表示",
+    "empty": "空のディレクトリ",
+    "noFile": "ファイルが選択されていません"
   }
 }

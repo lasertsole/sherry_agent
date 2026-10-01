@@ -302,6 +302,17 @@ vi.stubGlobal('useAccessModeStore', () =>
   })
 );
 
+// `useFileViewerStore` caches file previews for the right sidebar's viewer tab;
+// the default is an empty cache that always misses.
+vi.stubGlobal('useFileViewerStore', () =>
+  Vue.reactive({
+    entries: {},
+    get: () => null,
+    put: () => {},
+    clear: () => {}
+  })
+);
+
 // `useProjectDirectoryStore` backs the toolbar's project-directory chip: the
 // default is "unbound" (the process default applies) until a suite drives it.
 vi.stubGlobal('useProjectDirectoryStore', () =>

@@ -42,6 +42,18 @@ describe('stores/right-sidebar', () => {
     expect(store.activeTabId).toBe(second);
   });
 
+  it('openTab() carries a per-instance payload (two file tabs, two paths)', () => {
+    const store = useRightSidebarStore();
+
+    const first = store.openTab('fileViewer', { path: 'src/main.py' });
+    const second = store.openTab('fileViewer', { path: 'README.md' });
+
+    const tabs = store.tabs.filter(t => t.kind === 'fileViewer');
+    expect(tabs.map(t => t.payload?.path)).toEqual(['src/main.py', 'README.md']);
+    expect(first).not.toBe(second);
+    expect(store.tabs.find(t => t.id === second)?.payload?.path).toBe('README.md');
+  });
+
   it('activateTab() switches to an open tab only', () => {
     const store = useRightSidebarStore();
     const logs = store.openTab('logs');

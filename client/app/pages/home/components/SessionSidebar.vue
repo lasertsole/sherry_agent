@@ -14,104 +14,111 @@
     <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
       <!-- LOGO area -->
       <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
-      <!-- Session list -->
-      <!-- New chat -->
-      <Button
-        icon="pi pi-comment"
-        :label="t('toolbar.newChat')"
-        class="mb-3"
-        @click="handleCreateSession"
-        size="small" />
-      <!-- Filter toggle: collapsed by default, no search box shown while collapsed (reuses the ChatBox collapsible block's chevron+rotate pattern) -->
-      <div
-        class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
-        role="button"
-        tabindex="0"
-        :aria-expanded="showSessionFilters"
-        @click="showSessionFilters = !showSessionFilters"
-        @keydown.enter.prevent="showSessionFilters = !showSessionFilters"
-        @keydown.space.prevent="showSessionFilters = !showSessionFilters">
-        <span>{{ t('history.filterToggle') }}</span>
-        <i
-          :class="[
-            'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
-            { 'rotate-180': showSessionFilters }
-          ]" />
-      </div>
-      <!-- Filter bar: title keyword + creation date range (local filtering, the two conditions combine with AND, both optional) -->
-      <div
-        v-if="showSessionFilters"
-        class="flex flex-col gap-2 mb-3">
-        <InputText
-          v-model="searchKeyword"
-          class="w-full"
-          :placeholder="t('history.searchPlaceholder')" />
-        <Calendar
-          v-model="dateRange"
-          selectionMode="range"
-          showIcon
-          fluid
-          class="w-full"
-          :placeholder="t('history.dateRange')" />
+      <!-- Left-sidebar body switch: the session list (default) or the project
+           file tree of the session in view. The LOGO above stays in both. -->
+      <ProjectFileTree
+        v-if="sidebarBody === 'files'"
+        class="min-h-0 flex-1"
+        :session-id="routeSessionId" />
+      <template v-else>
+        <!-- New chat -->
         <Button
-          v-if="hasActiveFilters"
-          icon="pi pi-filter-slash"
-          :label="t('history.clearFilter')"
-          size="small"
-          text
-          severity="secondary"
-          @click="clearFilters" />
-      </div>
-      <!-- Records list: windowed (only the visible band of session cards is
+          icon="pi pi-comment"
+          :label="t('toolbar.newChat')"
+          class="mb-3"
+          @click="handleCreateSession"
+          size="small" />
+        <!-- Filter toggle: collapsed by default, no search box shown while collapsed (reuses the ChatBox collapsible block's chevron+rotate pattern) -->
+        <div
+          class="flex items-center mb-2 cursor-pointer select-none text-xs text-[#868686]"
+          role="button"
+          tabindex="0"
+          :aria-expanded="showSessionFilters"
+          @click="showSessionFilters = !showSessionFilters"
+          @keydown.enter.prevent="showSessionFilters = !showSessionFilters"
+          @keydown.space.prevent="showSessionFilters = !showSessionFilters">
+          <span>{{ t('history.filterToggle') }}</span>
+          <i
+            :class="[
+              'pi pi-chevron-down text-xs ml-auto transition-transform duration-200',
+              { 'rotate-180': showSessionFilters }
+            ]" />
+        </div>
+        <!-- Filter bar: title keyword + creation date range (local filtering, the two conditions combine with AND, both optional) -->
+        <div
+          v-if="showSessionFilters"
+          class="flex flex-col gap-2 mb-3">
+          <InputText
+            v-model="searchKeyword"
+            class="w-full"
+            :placeholder="t('history.searchPlaceholder')" />
+          <Calendar
+            v-model="dateRange"
+            selectionMode="range"
+            showIcon
+            fluid
+            class="w-full"
+            :placeholder="t('history.dateRange')" />
+          <Button
+            v-if="hasActiveFilters"
+            icon="pi pi-filter-slash"
+            :label="t('history.clearFilter')"
+            size="small"
+            text
+            severity="secondary"
+            @click="clearFilters" />
+        </div>
+        <!-- Records list: windowed (only the visible band of session cards is
              mounted), so a long session history no longer costs a card per entry.
              NOT a flex container: a flex parent shrinks the spacer below its
              declared height and the scroll range collapses to the rendered band. -->
-      <div
-        ref="sessionsScrollRef"
-        class="overflow-auto flex-1">
         <div
-          v-if="filteredHistoryList.length === 0"
-          class="flex items-center justify-center h-full w-full text-[#868686]">
-          {{ hasActiveFilters ? t('history.noSearchResults') : t('history.noSessions') }}
-        </div>
-        <div
-          v-else
-          class="relative w-full shrink-0"
-          :style="{ height: `${sessionTotalSize}px` }">
+          ref="sessionsScrollRef"
+          class="overflow-auto flex-1">
           <div
-            v-for="vRow in sessionVirtualRows"
-            :key="String(vRow.key)"
-            :ref="el => sessionVirtualizer.measureElement(el as HTMLElement)"
-            :data-index="vRow.index"
-            :class="['absolute left-0 top-0 w-full', vRow.index < sessionRows.length - 1 ? 'pb-3' : '']"
-            :style="{ transform: `translateY(${vRow.start}px)` }">
-            <HistoryItem
-              v-if="sessionRowAt(vRow.index)"
-              :history-record="sessionRowAt(vRow.index)!.item"
-              :is-active="currentSessionId === sessionRowAt(vRow.index)!.item.id"
-              @choose-session="handleToggleSession"
-              @delete-session="handleDeleteSession"
-              @rename-session="handleRenameSession"
-              v-model:selectedList="selectedSessionIds" />
+            v-if="filteredHistoryList.length === 0"
+            class="flex items-center justify-center h-full w-full text-[#868686]">
+            {{ hasActiveFilters ? t('history.noSearchResults') : t('history.noSessions') }}
+          </div>
+          <div
+            v-else
+            class="relative w-full shrink-0"
+            :style="{ height: `${sessionTotalSize}px` }">
+            <div
+              v-for="vRow in sessionVirtualRows"
+              :key="String(vRow.key)"
+              :ref="el => sessionVirtualizer.measureElement(el as HTMLElement)"
+              :data-index="vRow.index"
+              :class="['absolute left-0 top-0 w-full', vRow.index < sessionRows.length - 1 ? 'pb-3' : '']"
+              :style="{ transform: `translateY(${vRow.start}px)` }">
+              <HistoryItem
+                v-if="sessionRowAt(vRow.index)"
+                :history-record="sessionRowAt(vRow.index)!.item"
+                :is-active="currentSessionId === sessionRowAt(vRow.index)!.item.id"
+                @choose-session="handleToggleSession"
+                @delete-session="handleDeleteSession"
+                @rename-session="handleRenameSession"
+                v-model:selectedList="selectedSessionIds" />
+            </div>
           </div>
         </div>
-      </div>
-      <div class="h-17 flex items-center justify-between">
-        <div class="flex items-center justify-center gap-1">
-          <Checkbox
-            :model-value="isCheckAllSession"
-            :indeterminate="isIndeterminate"
-            binary
-            @update:model-value="handleToggleSelectAll" />
-          <span>{{ t('history.selectAll') }}</span>
+        <div class="h-17 flex items-center justify-between">
+          <div class="flex items-center justify-center gap-1">
+            <Checkbox
+              :model-value="isCheckAllSession"
+              :indeterminate="isIndeterminate"
+              binary
+              @update:model-value="handleToggleSelectAll" />
+            <span>{{ t('history.selectAll') }}</span>
+          </div>
+          <Button
+            icon="pi pi-trash"
+            :label="t('history.batchDelete')"
+            :disabled="selectedSessionIds.length === 0 || batchDeleting"
+            :loading="batchDeleting"
+            @click="handleBatchDelete" />
         </div>
-        <Button
-          icon="pi pi-trash"
-          :label="t('history.batchDelete')"
-          :disabled="selectedSessionIds.length === 0 || batchDeleting"
-          :loading="batchDeleting"
-          @click="handleBatchDelete" />
-      </div>
+      </template>
     </div>
   </div>
 </template>
@@ -188,6 +195,12 @@ const localePath = useLocalePath();
 
 /** Whether collapsed (controlled by parent component via v-model:collapsed, collapse/expand buttons in parent component toolbar) */
 const collapsed = defineModel<boolean>('collapsed', { default: false });
+
+/** Which body the sidebar shows; the top bar's folder button flips it. */
+const ui = useUiStore();
+const sidebarBody = computed(() => ui.sidebarBody);
+/** The session in view — the tree belongs to that session's project directory. */
+const routeSessionId = computed(() => String(route.params.sid ?? ''));
 
 /** Current session id (bidirectionally synced by parent component via v-model:current-session-id, parent uses it to load character snapshot) */
 const currentSessionId = defineModel<string | undefined>('currentSessionId');

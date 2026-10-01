@@ -72,6 +72,7 @@
           v-if="activePanel"
           :key="store.activeTabId ?? 'none'"
           class="h-full"
+          :payload="activeTabPayload"
           :style="{ minWidth: `${PANEL_MIN_WIDTH}px`, minHeight: `${PANEL_MIN_HEIGHT}px` }"
           @saved="emit('saved')" />
         <div
@@ -101,6 +102,7 @@ const store = useRightSidebarStore();
 
 /** Lazy panel components: the chunk loads when a tab of that kind first mounts. */
 const PANELS: Record<RightSidebarPanelKind, Component> = {
+  fileViewer: defineAsyncComponent(() => import('./FileViewerPanel.vue')),
   logs: defineAsyncComponent(() => import('./LogsPanel.vue')),
   stats: defineAsyncComponent(() => import('./StatsPanel.vue')),
   knowledgeGraph: defineAsyncComponent(() => import('./KnowledgeGraphPanel.vue')),
@@ -132,6 +134,10 @@ const activeKind = computed<RightSidebarPanelKind | null>(
 
 /** The panel component to render (null → the empty state). */
 const activePanel = computed<Component | null>(() => (activeKind.value ? PANELS[activeKind.value] : null));
+/** The active tab's own data (e.g. the file viewer's path); undefined for others. */
+const activeTabPayload = computed<{ path: string } | undefined>(
+  () => store.tabs.find(tab => tab.id === store.activeTabId)?.payload
+);
 
 /** Keep the store usable from the template without unwrapping refs manually. */
 const tabs = computed(() => store.tabs);
