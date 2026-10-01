@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 import server.trigger.http.session_project as project_api
+from runtime.session.state_keys import StateKey
 from runtime.session.state_register import state_register_mem
 from server.service import session_project_service as svc
 
@@ -68,6 +69,10 @@ class _InMemoryRegisterDB:
     def delete_state(self, session_id: str, key: str) -> bool:
         self.store.pop((session_id, key), None)
         return True
+
+    def get_all_session_ids(self) -> list[str]:
+        """Distinct sessions present in the mirror (used by the boot priming)."""
+        return sorted({sid for sid, _key in self.store})
 
 
 @pytest.fixture(autouse=True)
@@ -465,3 +470,44 @@ def test_turn_runner_promotes_the_parked_directory(monkeypatch):
 
     assert calls == ["sess-project-1"]
     assert project_dir_mod is not None
+
+
+# ---------------------------------------------------------------------------
+# Boot priming (the restart-survival fix found by the smoke)
+# ---------------------------------------------------------------------------
+
+
+def test_prime_mem_from_store_warms_bindings(monkeypatch):
+    """After a restart the mem tier is empty while the mirror holds the bindings.
+
+    The agent-side readers are mem-only, so an unprimed tier silently served the
+    process default (the repo) even though ``GET /sessions/project`` reported the
+    real binding. Boot now primes mem from the store.
+    """
+    import runtime
+    from runtime.session import project_dir as project_dir_mod
+
+    fake = _InMemoryRegisterDB()
+    fake.set_state(SESSION, str(StateKey.PROJECT_DIR), "/tmp/from-store")
+    monkeypatch.setattr(runtime, "state_register_db", fake)
+    state_register_mem.clear_session(SESSION)
+
+    warmed = project_dir_mod.prime_mem_from_store()
+
+    assert warmed == 1
+    assert project_dir_mod.read_project_dir(SESSION) == Path("/tmp/from-store")
+    # Idempotent: a second pass finds nothing to do.
+    assert project_dir_mod.prime_mem_from_store() == 0
+
+
+def test_prime_mem_from_store_ignores_blank_values(monkeypatch):
+    import runtime
+    from runtime.session import project_dir as project_dir_mod
+
+    fake = _InMemoryRegisterDB()
+    fake.set_state(SESSION, str(StateKey.PROJECT_DIR), "   ")
+    monkeypatch.setattr(runtime, "state_register_db", fake)
+    state_register_mem.clear_session(SESSION)
+
+    assert project_dir_mod.prime_mem_from_store() == 0
+    assert project_dir_mod.read_project_dir(SESSION) is None

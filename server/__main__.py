@@ -172,6 +172,13 @@ if __name__ == "__main__":
 
     install_lane_lifecycle()
 
+    # Warm the session project-directory cache: the agent-side readers are
+    # mem-only, so an unprimed tier after a restart silently serves the process
+    # default (see runtime/session/project_dir.py::prime_mem_from_store).
+    from runtime.session.project_dir import prime_mem_from_store
+
+    prime_mem_from_store()
+
     # Pin robyn to a single worker process. `--fast` sets processes=(cpu*2)+1,
     # spawning a process pool; every in-memory registry (relation_register,
     # state registers, input queues, subagent registry) lives per-process, so

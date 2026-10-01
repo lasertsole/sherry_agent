@@ -34,6 +34,7 @@ __all__ = [
     "current_project_dir",
     "project_dir_source",
     "read_project_dir",
+    "prime_mem_from_store",
     "read_project_dir_durable",
     "write_project_dir",
     "write_pending_project_dir",
@@ -138,6 +139,45 @@ def write_pending_project_dir(session_id: str, directory: Path | str | None) -> 
     value = str(directory)
     state_register_mem.set_state(session_id, StateKey.PROJECT_DIR_PENDING, value)
     state_register_db.set_state(session_id, StateKey.PROJECT_DIR_PENDING, value)
+
+
+def prime_mem_from_store() -> int:
+    """Warm the mem tier with every persisted project-dir binding.
+
+    The agent-side readers are mem-only (they run inside tool calls on the event
+    loop), so after a process restart an unprimed mem tier makes
+    :func:`read_project_dir` miss and :func:`current_project_dir` silently fall
+    back to the process default — the live smoke caught exactly that: the file
+    browser served the sherry checkout while ``GET /sessions/project`` still
+    reported the session's real binding (it reads the durable tier directly).
+
+    Called once at server startup. Returns the number of bindings warmed;
+    failures are swallowed — a broken mirror must not stop the boot.
+    """
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    warmed = 0
+    try:
+        for session_id in state_register_db.get_all_session_ids():
+            if state_register_mem.get_state(session_id, StateKey.PROJECT_DIR, None) is not None:
+                continue
+            raw = state_register_db.get_state(session_id, StateKey.PROJECT_DIR, None)
+            directory = _as_dir(raw)
+            if directory is None:
+                continue
+            state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(directory))
+            warmed += 1
+    except Exception as exc:  # noqa: BLE001 - boot must not depend on the mirror
+        from loguru import logger
+
+        logger.warning("project_dir: failed to prime the mem tier from the store: {}", exc)
+        return warmed
+    if warmed:
+        from loguru import logger
+
+        logger.info("project_dir: primed {} session binding(s) from the durable store", warmed)
+    return warmed
 
 
 def _as_dir(raw: object) -> Path | None:
