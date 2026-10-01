@@ -37,7 +37,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (51 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (54 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -111,6 +111,27 @@ User message → Robyn WS → agent.core.built_agent() graph
       drained completion carriers when the session lacks passing evidence
 ```
 
+## Queued User Input (`server/service/input_queue_service.py`)
+
+A message sent while the session is busy is persisted as a `QUEUED` row in
+`user_input_queue` (SQLite, `server/queue/user_input_queue.py`; cap =
+`INPUT_QUEUE["max_active_per_session"]`, dedup by `client_msg_id`) and answered
+by the `queued` WS frame with its FIFO position. The turn runner drains those
+rows **one per turn** (`server/service/turn_runner.py::_drain_loop` claims a
+single row via `claim_next` and `_execute_single` drives it), so N queued
+messages produce N turns and N replies — one answer per user bubble — never one
+merged answer. `on_turn_finished` kicks the drain; a HITL-pending session drains
+nothing until the resume completion.
+
+Each queued row is manageable from the client (`cancel_queued` / `edit_queued` /
+`send_now` frames → `queued_cancelled` / `queued_updated` / `send_now_ack`
+`{event, session_id, msg_id, ok}` acks): cancel voids a `QUEUED` row (a
+`CLAIMED` one is already inside a turn and is refused), edit rewrites only a
+`QUEUED` payload, and `send_now` re-stamps `created_at` below the session
+minimum **before** cancelling the running turn — the cancel-triggered drain then
+claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
+single ordering rule; there is no priority column).
+
 ## Concurrency Lanes (`runtime/lane/`)
 
 Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, gate concurrent work instead of rejecting it: over-limit work waits FIFO.
@@ -132,9 +153,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 32 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, ...) |
-| `config/features/infra_side/` | 19 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 51 TypedDicts + instances re-exported |
+| `config/features/agent_side/` | 34 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, ...) |
+| `config/features/infra_side/` | 20 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
+| `config/features/__init__.py` | Aggregator — all 54 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
