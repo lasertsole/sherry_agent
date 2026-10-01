@@ -279,7 +279,12 @@ async def test_idle_message_starts_turn_and_completes_without_queued_frame(ws_en
         assert drain_calls == [("s1", ["hello"])], "the executor drives the turn exactly once"
         assert ws_env.drain_origins == [{"origin": "user"}], "a WS user turn is stamped origin=user"
         assert _events(socket)[-1] == "done"
-        assert wsm._active_tasks == {}, "executor task must be unregistered after completion"
+        # The unregistration happens in the executor's on_finish (after the
+        # `done` frame), so wait for it instead of racing the task's last step.
+        await _wait_until(
+            lambda: wsm._active_tasks == {},
+            what="executor task unregistered after completion",
+        )
 
 
 @pytest.mark.asyncio
