@@ -43,6 +43,7 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_read_file_tool,
     build_write_file_tool,
     build_patch_file_tool,
+    build_search_files_tool,
     build_memory_tool,
     build_web_search_tool,
     build_terminal_tool,
