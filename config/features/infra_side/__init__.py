@@ -79,6 +79,10 @@ from .model_pricing import (
     ModelPricingConfig as ModelPricingConfig,
     MODEL_PRICING as MODEL_PRICING,
 )
+from .file_browser import (
+    FileBrowserConfig as FileBrowserConfig,
+    FILE_BROWSER as FILE_BROWSER,
+)
 from .lane_system import (
     LaneSystemConfig as LaneSystemConfig,
     LANE_SYSTEM as LANE_SYSTEM,

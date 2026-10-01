@@ -122,4 +122,6 @@ from .infra_side import (
     SkillsToolingConfig as SkillsToolingConfig,
     WsStreamConfig as WsStreamConfig,
     validate_lane_config as validate_lane_config,
+    FILE_BROWSER as FILE_BROWSER,
+    FileBrowserConfig as FileBrowserConfig,
 )

@@ -146,6 +146,34 @@ def resolve_project_path(file_path: str) -> Path:
     return resolve_workspace_path(file_path, ROOT_DIR)
 
 
+def resolve_within(base: Path, file_path: str) -> Path:
+    """Resolve ``file_path`` inside ``base``; reject anything escaping it.
+
+    The file-browser gate (plan §七.5.2): the SAME four steps
+    :func:`resolve_workspace_path` runs, but with a mandatory explicit base and
+    no session/default fallback, so a caller can never accidentally inherit a
+    broader root. ``base`` is resolved first; the traversal rejection happens
+    before any filesystem access.
+
+    Raises :class:`PathOutOfBoundsError` for traversal, escapes and symlink
+    loops. Callers that answer a client MUST NOT echo the exception text
+    unchanged — it names both the resolved path and the root; use
+    :func:`safe_error_detail` or a fixed message.
+    """
+    _reject_traversal_input(file_path)
+    root = base.resolve()
+    p = Path(os.path.expanduser(file_path))
+    if not p.is_absolute():
+        p = root / p
+    resolved = p.resolve()
+    if resolved != root and not resolved.is_relative_to(root):
+        raise PathOutOfBoundsError(
+            f"Path resolves outside project root and is not allowed: {resolved} (root={root})"
+        )
+    _raise_if_symlink_loop(resolved)
+    return resolved
+
+
 def resolve_path(file_path: str) -> Path:
     """Deprecated alias for resolve_project_path."""
     import warnings
