@@ -375,6 +375,7 @@ import ContextUsageButton from '../components/ContextUsageButton.vue';
 import TasksButton from '../components/TasksButton.vue';
 import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
+import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
 import MediaMenu from '../components/MediaMenu.vue';
 import { useTodoStore } from '~/stores/todo';
 

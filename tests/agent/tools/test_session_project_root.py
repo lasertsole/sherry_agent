@@ -320,3 +320,49 @@ def test_path_utils_rendering_anchors_at_the_session_root(two_roots: tuple[Path,
     assert path_utils.display_path(a / "note.txt", a) == "/note.txt"
     # Without the root argument the historical ROOT_DIR anchor applies.
     assert path_utils.display_path(a / "note.txt") == "note.txt"
+
+
+# ---------------------------------------------------------------------------
+# InjectedState is the PRODUCTION channel for subprocess tools
+# ---------------------------------------------------------------------------
+
+
+def test_terminal_takes_the_session_from_the_injected_state(two_roots):
+    """The runnable-config lookup is empty in production (smoke finding).
+
+    `_extract_session_id(run_manager)` reads `config["configurable"]["session_id"]`,
+    which nothing writes at runtime — so a terminal call that relied on it alone
+    ran in the repository root instead of the session's project directory. The
+    schema carries `session_id` as `InjectedState`, and the resolved cwd must
+    come from it whenever the fallback is empty.
+    """
+    from agent.tools.terminal import SafeShellInput, build_terminal_tool
+
+    a, _b = two_roots
+    _bind(SESSION_A, a)
+    tool = build_terminal_tool()
+
+    assert "session_id" in SafeShellInput.model_fields
+    assert tool._resolve_cwd(SESSION_A) == str(a)
+
+    class _EmptyRunManager:
+        """Stands in for the empty runnable config: no session id anywhere."""
+
+        def __getattr__(self, name):
+            return None
+
+    # The fallback path stays intact for direct callers…
+    assert tool._resolve_cwd(None) != str(a)
+    # …but the injected value always wins in production.
+    assert tool._resolve_cwd(SESSION_A) == str(a)
+
+
+def test_python_repl_prefers_the_injected_session(two_roots, monkeypatch):
+    from agent.tools import python_repl
+
+    a, _b = two_roots
+    _bind(SESSION_A, a)
+
+    monkeypatch.setattr(python_repl, "_extract_session_id", lambda _rm: "")
+    assert python_repl._resolve_session_cwd(None, SESSION_A) == str(a)
+    assert python_repl._resolve_session_cwd(None, "") is None

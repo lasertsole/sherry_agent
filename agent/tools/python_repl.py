@@ -22,7 +22,7 @@ Sandbox-hardening additions (see docs/sandbox/README.md):
 
 from __future__ import annotations
 
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 
 import sys
 import json
@@ -35,11 +35,17 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 from config.path import ROOT_DIR
 from config.features import TOOLS_TIMEOUTS
 from agent.tools.pub_base import _extract_session_id
+from langgraph.prebuilt.tool_node import InjectedState
+
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 from agent.tools.todolist.evidence_recorder import record_verification_evidence
+
+#: Injected calling session (see terminal.SessionId for why the runnable-config
+#: fallback is never enough in production).
+SessionId = Annotated[str, InjectedState("session_id")]
 
 # Bound to the feature registry (single source of truth); name preserved.
 PYTHON_REPL_TIMEOUT = TOOLS_TIMEOUTS["python_repl_timeout_seconds"]
@@ -92,7 +98,7 @@ except Exception as e:
 """)
 
 
-def _resolve_session_cwd(run_manager: Any) -> str | None:
+def _resolve_session_cwd(run_manager: Any, session_id: str = "") -> str | None:
     """The session's project directory for this call, or ``None`` (-> ROOT_DIR).
 
     Read per call: the REPL tool is a process-level singleton, so resolving the
@@ -101,7 +107,9 @@ def _resolve_session_cwd(run_manager: Any) -> str | None:
     """
     from agent.tools.pub_base import session_workspace_root
 
-    bound = session_workspace_root(_extract_session_id(run_manager))
+    # The injected state is the production channel; the runnable-config lookup
+    # below it stays as a fallback for direct/test callers (it is empty at runtime).
+    bound = session_workspace_root(session_id or _extract_session_id(run_manager))
     return str(bound) if bound is not None else None
 
 
@@ -208,10 +216,11 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         query: str,
         run_manager: CallbackManagerForToolRun | None = None,
         sandbox: bool = True,
+        session_id: SessionId = "",
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
         result = _run_with_timeout(
-            query, PYTHON_REPL_TIMEOUT, sandbox, _resolve_session_cwd(run_manager)
+            query, PYTHON_REPL_TIMEOUT, sandbox, _resolve_session_cwd(run_manager, session_id)
         )
         record_verification_evidence(query, result, _extract_session_id(run_manager))
         return result
@@ -221,6 +230,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         query: str,
         run_manager: AsyncCallbackManagerForToolRun | None = None,
         sandbox: bool = True,
+        session_id: SessionId = "",
     ) -> str:
         import asyncio
 
@@ -230,7 +240,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
             query,
             PYTHON_REPL_TIMEOUT,
             sandbox,
-            _resolve_session_cwd(run_manager),
+            _resolve_session_cwd(run_manager, session_id),
         )
         record_verification_evidence(query, result, _extract_session_id(run_manager))
         return result

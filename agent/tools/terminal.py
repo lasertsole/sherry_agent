@@ -37,7 +37,7 @@ import locale
 import asyncio
 import re
 import subprocess
-from typing import Any, ClassVar
+from typing import Annotated, Any, ClassVar
 from loguru import logger
 from pydantic import BaseModel, Field
 from typing import override
@@ -49,6 +49,8 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 from langchain_core.tools import ToolException
 
 from agent.tools.pub_base import _extract_session_id
+from langgraph.prebuilt.tool_node import InjectedState
+
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import areap_process, reap_process
 from agent.security.terminal_output import strip_control_sequences
@@ -56,6 +58,12 @@ from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
 from agent.tools.todolist.evidence_recorder import record_verification_evidence
+
+#: The calling session travels in the graph state (the same channel the file
+#: tools use). The runnable-config lookup in ``_extract_session_id`` is empty in
+#: production, so a tool that relied on it alone resolved against the process
+#: root instead of the session's project directory (found by the P3 smoke).
+SessionId = Annotated[str, InjectedState("session_id")]
 
 # Bound to the feature registry (single source of truth); name preserved.
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
@@ -111,6 +119,8 @@ _SENSITIVE_FILE_PATTERNS = [
 
 class SafeShellInput(ShellInput):
     """ShellInput + the ``sandbox`` flag, visible to the LLM."""
+
+    session_id: SessionId = ""
 
     sandbox: bool = Field(
         default=True,
@@ -326,13 +336,14 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         commands: str | list[str],
         run_manager: CallbackManagerForToolRun | None = None,
         sandbox: bool = True,
+        session_id: str = "",
         **kwargs: Any,
     ) -> str:
         cmd_str = self._join_commands(commands)
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
-        cwd = self._resolve_cwd(_extract_session_id(run_manager))
+        cwd = self._resolve_cwd(session_id or _extract_session_id(run_manager))
 
         env = scrub_env()
         if sandbox:
@@ -358,6 +369,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         commands: str | list[str],
         run_manager: AsyncCallbackManagerForToolRun | None = None,
         sandbox: bool = True,
+        session_id: str = "",
         **kwargs: Any,
     ) -> str:
         """Async version: non-blocking subprocess via asyncio.
@@ -372,7 +384,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
-        cwd = self._resolve_cwd(_extract_session_id(run_manager))
+        cwd = self._resolve_cwd(session_id or _extract_session_id(run_manager))
 
         env = scrub_env()
         argv: list[str] | None = None

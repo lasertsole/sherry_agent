@@ -71,6 +71,7 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ProjectTreeEntry } from '~/composables/bridge';
+import FileTreeNode from './FileTreeNode.vue';
 import { logUtil } from '~/utils/log';
 
 /** A tree row: one entry plus its (lazily loaded) children. */

@@ -43,6 +43,8 @@ export interface ProjectFileContent {
  * @param path Relative subdirectory ('' = the root).
  */
 export async function fetchProjectTree(sessionId: string, path = ''): Promise<ProjectTreeLevel> {
+  // `fetchApiPayload` passes a failed request's null payload through unchanged;
+  // surface it as an error instead of throwing on the first property access.
   const res = await fetchApiPayload<{
     root?: string;
     path?: string;
@@ -54,6 +56,7 @@ export async function fetchProjectTree(sessionId: string, path = ''): Promise<Pr
     opts: { session_id: sessionId, path },
     method: 'get'
   });
+  if (!res) throw new Error('project tree request failed');
   return {
     sessionId,
     root: res.root ?? '',
@@ -79,5 +82,6 @@ export async function fetchProjectFile(sessionId: string, path: string): Promise
     opts: { session_id: sessionId, path },
     method: 'get'
   });
+  if (!res) throw new Error('project file request failed');
   return { path, content: res.content ?? '', size: res.size ?? 0 };
 }

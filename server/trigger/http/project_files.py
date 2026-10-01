@@ -8,6 +8,7 @@ in a worker thread.
 """
 
 import asyncio
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -41,7 +42,9 @@ async def project_tree_handler(request):
     session_id = query.get("session_id", "") or ""
     if not session_id:
         return bad_request("session_id is required")
-    rel_path = query.get("path", "") or ""
+    # Query values arrive percent-encoded (`src%2Fapp.py`); the shared logs
+    # route decodes the same way before touching the filesystem.
+    rel_path = unquote(query.get("path", "") or "")
     try:
         level = await asyncio.to_thread(list_level, session_id, rel_path)
     except FileBrowserError as exc:
@@ -74,7 +77,7 @@ async def project_file_handler(request):
     session_id = query.get("session_id", "") or ""
     if not session_id:
         return bad_request("session_id is required")
-    rel_path = query.get("path", "") or ""
+    rel_path = unquote(query.get("path", "") or "")
     if not rel_path:
         return bad_request("path is required")
     try:

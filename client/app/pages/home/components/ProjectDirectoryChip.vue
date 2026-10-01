@@ -96,6 +96,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+// Siblings under pages/home/components are NOT auto-imported (only app/components
+// is), so every component usage needs an explicit import.
+import ToolbarPopover from './ToolbarPopover.vue';
 
 const props = defineProps<{ sessionId: string }>();
 

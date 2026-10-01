@@ -177,6 +177,7 @@ export async function ensureSessionCharacter(sessionId: string) {
 <script setup lang="ts">
 // components
 import HistoryItem from './HistoryItem.vue';
+import ProjectFileTree from './ProjectFileTree.vue';
 // function
 import { computed, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';

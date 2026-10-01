@@ -335,6 +335,29 @@ def test_file_route_maps_binary_and_oversize_to_their_status(project: Path, monk
     assert too_big.status_code == 413
 
 
+def test_routes_decode_percent_encoded_query_values(project: Path):
+    """Robyn hands query values through unchanged: `src%2Fapp.py` is a path."""
+    resp = _call(
+        api.project_file_handler,
+        _FakeRequest({"session_id": SESSION_A, "path": "src%2Fmain.py"}),
+    )
+
+    assert resp.status_code == 200
+    assert _payload(resp)["content"] == "print('hi')\n"
+
+    tree = _call(
+        api.project_tree_handler,
+        _FakeRequest({"session_id": SESSION_A, "path": "src"}),
+    )
+    assert tree.status_code == 200, "a plain level still lists"
+    # Decoding must not open a traversal hole: an encoded `..` is refused too.
+    escape = _call(
+        api.project_tree_handler,
+        _FakeRequest({"session_id": SESSION_A, "path": "src%2F..%2F..%2Fetc"}),
+    )
+    assert escape.status_code == 400
+
+
 def test_file_route_missing_path_is_400(project: Path):
     resp = _call(api.project_file_handler, _FakeRequest({"session_id": SESSION_A}))
 
