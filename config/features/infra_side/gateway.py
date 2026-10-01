@@ -17,6 +17,14 @@ class GatewayConfig(TypedDict):
     #: Strict bearer mode: refuse token-less requests (``/auth/token`` stays
     #: reachable so a pre-provisioned client can still bootstrap).
     require_token: bool
+    #: CSRF guard for mutating methods (POST/PUT/PATCH/DELETE): Sec-Fetch-Site
+    #: plus the Origin/Referer loopback check (see server/trigger/csrf.py).
+    #: Disable only for a headless client that mutates without any of those
+    #: headers while strict token mode carries the authentication.
+    csrf_guard_enabled: bool
+    #: Content-Security-Policy override: empty uses the shipped policy,
+    #: "disabled" omits the header, anything else is used verbatim.
+    csp: str
 
 
 #: Default allowlist: Tauri webview origins (per platform) + the Nuxt dev
@@ -47,6 +55,9 @@ def _build_gateway(env: Mapping[str, str] | None = None) -> GatewayConfig:
         allowed_origins=origins,
         require_token=source.get("SHERRY_GATEWAY_REQUIRE_TOKEN", "").strip().lower()
         in {"1", "true", "yes", "on"},
+        csrf_guard_enabled=source.get("SHERRY_CSRF_GUARD", "1").strip().lower()
+        in {"1", "true", "yes", "on"},
+        csp=source.get("SHERRY_CSP", "").strip(),
     )
 
 

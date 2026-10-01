@@ -9,6 +9,8 @@ from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from runtime import relation_register, clear_all_register_sessions
 from server.trigger import auth
+from server.trigger.csrf import csrf_guard_middleware
+from server.trigger.security_headers import security_headers
 
 # Create the app
 app = Robyn(__file__)
@@ -47,17 +49,29 @@ def gateway_auth_middleware(request):
     if verdict is None:
         return request
     status, message = verdict
+    # A middleware-produced refusal does not pass through the global response
+    # headers, so the security headers are attached here. The token header is
+    # deliberately NOT attached: a refused request must not learn it.
     return Response(
         status_code=status,
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", **security_headers()},
         description=json.dumps({"success": False, "message": message}, ensure_ascii=False),
     )
 
+
+# Static security headers on every response (CSP + nosniff + framing). Global
+# response headers, so static media routes inherit them too.
+for _header_name, _header_value in security_headers().items():
+    app.set_response_header(_header_name, _header_value)
 
 # Register BEFORE_REQUEST explicitly: the decorator form rebinds the name to
 # None (Robyn's ``add_middleware`` returns no handle), and the function must
 # stay importable for tests.
 app.before_request()(gateway_auth_middleware)
+# CSRF guard runs AFTER the Origin gate above: the hostile page is refused
+# before this layer looks at anything, and a same-origin mutation (the gap this
+# closes) gets its Sec-Fetch-Site / Origin check here.
+app.before_request()(csrf_guard_middleware)
 
 
 def handle_exception(error: Exception):
