@@ -212,6 +212,58 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     _active_tasks[session_id] = task
                     continue
 
+                # ── Queue management frames (toolbar's queued-message list) ──
+                # Each frame answers with its own ack: the client updates
+                # optimistically and uses the ack to correct itself.
+                if obj.get("type") == "cancel_queued":
+                    msg_id = str(obj.get("msg_id", ""))
+                    ok = await iqs.cancel_queued_message(session_id, msg_id)
+                    await _send_ws(
+                        websocket,
+                        {
+                            "event": "queued_cancelled",
+                            "session_id": session_id,
+                            "msg_id": msg_id,
+                            "ok": ok,
+                        },
+                    )
+                    continue
+
+                if obj.get("type") == "edit_queued":
+                    msg_id = str(obj.get("msg_id", ""))
+                    new_text = str(obj.get("message", ""))
+                    ok = await iqs.update_queued_message(session_id, msg_id, new_text)
+                    await _send_ws(
+                        websocket,
+                        {
+                            "event": "queued_updated",
+                            "session_id": session_id,
+                            "msg_id": msg_id,
+                            "ok": ok,
+                        },
+                    )
+                    continue
+
+                if obj.get("type") == "send_now":
+                    msg_id = str(obj.get("msg_id", ""))
+                    # Order matters: prioritize BEFORE cancelling. `_cancel_session`
+                    # awaits the task's cancellation and its finally drains the
+                    # queue, so a late prioritize would let the drain claim
+                    # whatever was first.
+                    ok = await iqs.prioritize_queued_message(session_id, msg_id)
+                    if ok:
+                        await _cancel_session(session_id)
+                    await _send_ws(
+                        websocket,
+                        {
+                            "event": "send_now_ack",
+                            "session_id": session_id,
+                            "msg_id": msg_id,
+                            "ok": ok,
+                        },
+                    )
+                    continue
+
                 multi_modal_message_data: dict[str, Any] | None = obj.get(
                     "multi_modal_message", None
                 )

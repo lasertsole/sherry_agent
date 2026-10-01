@@ -41,7 +41,7 @@ from collections.abc import Callable, Sequence
 
 from loguru import logger
 
-from config.features import INPUT_QUEUE, WS_STREAM
+from config.features import WS_STREAM
 from server.queue.user_input_queue import UserInputQueueStatus
 from server.service.input_queue_service import (
     BatchTurnExecutor,
@@ -61,8 +61,6 @@ from pub.types.message import MultiModalMessage
 _DRAIN_TASKS: dict[str, asyncio.Task] = {}
 _DRAIN_ERROR_BACKOFF_S: float = WS_STREAM["drain_error_backoff_s"]
 _OUTBOUND_ROUTERS: dict[str, Any] = {}
-# Max rows drained into ONE batched agent turn (config/features/infra_side).
-_BATCH_MAX_ROWS: int = INPUT_QUEUE["batch_max_rows"]
 
 
 def _iqs() -> Any:
@@ -119,10 +117,10 @@ def async_generate(*args: Any, **kwargs: Any) -> Any:
 
 
 def async_generate_multi(*args: Any, **kwargs: Any) -> Any:
-    """Seam over the batched ``async_generate_multi`` stream (lazy, cycle-safe).
+    """Seam over the multi-message ``async_generate_multi`` stream (lazy, cycle-safe).
 
-    One drained turn feeds the whole claimed FIFO batch as multiple
-    HumanMessages to a SINGLE graph call.
+    One drained turn feeds its claimed row(s) as HumanMessages to a SINGLE
+    graph call — one message under the per-item drain.
     """
     from server.service import async_generate_multi as _generate  # noqa: PLC0415
 
@@ -228,10 +226,11 @@ async def on_turn_finished(
 
     ``claim_row_ids`` identifies the CLAIMED row(s) of the turn that just
     finished (resolved by the executor at its start). Accepts a single id or a
-    sequence (a batched turn owns several rows). ``None`` (or an empty
-    sequence) means the completion cannot be attributed to a row (auto-turn,
-    cancelled turn, resume turn): nothing is marked and the drain defers while
-    a foreign CLAIMED row exists.
+    sequence; the per-item drain claims exactly one row per turn, the sequence
+    form covers executors that adopt several rows at once. ``None`` (or an
+    empty sequence) means the completion cannot be attributed to a row
+    (auto-turn, cancelled turn, resume turn): nothing is marked and the drain
+    defers while a foreign CLAIMED row exists.
 
     Parked control choices (thinking / main model, see
     ``session_settings_service``) are promoted here — before the drain kick, so
@@ -299,22 +298,15 @@ def _row_route(row: Any) -> str:
     return route_for(row.reply_target)
 
 
-def _group_claimed_rows(rows: Sequence[Any]) -> dict[str, list[Any]]:
-    """Group claimed rows by route group key, preserving FIFO order within each."""
-    groups: dict[str, list[Any]] = {}
-    for row in rows:
-        groups.setdefault(_row_group_key(row), []).append(row)
-    return groups
-
-
 async def _drain_loop(session_id: str) -> None:
-    """Execute the session's queued rows in FIFO batches until the queue runs dry.
+    """Execute the session's queued rows ONE AT A TIME in FIFO order.
 
-    Each iteration claims up to ``_BATCH_MAX_ROWS`` QUEUED rows in ONE atomic
-    transaction, groups them by route, and drives ONE ``execute_batch`` per
-    group (a batch of one for a lone row). While the session is HITL-pending
-    the loop claims nothing: the suspended graph owns the next turn and the
-    resume completion re-kicks the drain.
+    Each iteration claims a single QUEUED row and drives it as its own turn, so
+    N queued messages produce N turns and N replies — one answer per user
+    bubble, in the order they arrived — instead of one merged answer to the
+    whole batch. While the session is HITL-pending the loop claims nothing: the
+    suspended graph owns the next turn and the resume completion re-kicks the
+    drain.
     """
     try:
         while True:
@@ -326,11 +318,10 @@ async def _drain_loop(session_id: str) -> None:
                     )
                     break
                 queue = _iqs().get_default_queue()
-                rows = await queue.claim_batch(session_id, _BATCH_MAX_ROWS)
-                if not rows:
+                row = await queue.claim_next(session_id)
+                if row is None:
                     break
-                for group_rows in _group_claimed_rows(rows).values():
-                    await _execute_batch_group(session_id, group_rows)
+                await _execute_single(session_id, row)
             except Exception as e:
                 logger.warning(
                     f"TurnRunner: drain failed for session {session_id}; "
@@ -358,16 +349,16 @@ async def _invoke_executor_batch(
         await executor.execute(session_id, item.message, item.source, reply_target)
 
 
-async def _execute_batch_group(session_id: str, rows: list[Any]) -> None:
-    """Execute one route group as ONE turn; failure finalizes every row.
+async def _execute_single(session_id: str, row: Any) -> None:
+    """Execute one claimed row as its own turn; failure finalizes that row.
 
-    A single failing batch never stops the drain: pre-flight executor lookup
-    misses and executor exceptions mark ALL group rows FAILED + send one error
-    frame, then the drain continues with the next group.
+    A failing row never stops the drain: an unregistered route or an executor
+    exception marks THIS row FAILED, sends one error frame, and the loop claims
+    the next row.
     """
     queue = _iqs().get_default_queue()
-    route = _row_route(rows[0])
-    reply_target = rows[0].reply_target
+    route = _row_route(row)
+    reply_target = row.reply_target
     batch = [
         TurnInput(
             message=_parse_payload_text(row.payload),
@@ -375,16 +366,13 @@ async def _execute_batch_group(session_id: str, rows: list[Any]) -> None:
             message_id=row.client_msg_id,
             claim_row_id=row.id,
         )
-        for row in rows
     ]
     executor = get_registry().resolve(route)
     if executor is None:
         logger.warning(
-            f"TurnRunner: no executor registered for route '{route}'; "
-            f"marking {len(rows)} row(s) FAILED"
+            f"TurnRunner: no executor registered for route '{route}'; marking row {row.id} FAILED"
         )
-        for row in rows:
-            await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
+        await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
         await _send_turn_error(session_id, route, f"No executor registered for route '{route}'")
         return
 
@@ -392,15 +380,12 @@ async def _execute_batch_group(session_id: str, rows: list[Any]) -> None:
         await _invoke_executor_batch(executor, session_id, batch, reply_target)
     except Exception as e:
         logger.warning(
-            f"TurnRunner: executor '{route}' failed for session {session_id} "
-            f"({len(rows)} row(s)): {e}"
+            f"TurnRunner: executor '{route}' failed for session {session_id} (row {row.id}): {e}"
         )
-        for row in rows:
-            await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
+        await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
         await _send_turn_error(session_id, route, str(e))
         return
-    for row in rows:
-        await queue.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
+    await queue.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
 
 
 # ---------------------------------------------------------------------------
@@ -556,6 +541,10 @@ class WsTurnExecutor(BatchTurnExecutor):
         current = asyncio.current_task()
         if current is not None:
             active[session_id] = current
+        # The per-item drain always hands this exactly one TurnInput. The list
+        # comprehension stays because `batch[0]` would silently DROP a second
+        # item if a future caller passed one — the merge semantics were the bug,
+        # not the shape of this line.
         messages = [MultiModalMessage(text=item.message) for item in batch]
         sources = {item.source for item in batch}
         origin = origin_for_source("cron" if "cron" in sources else "user")

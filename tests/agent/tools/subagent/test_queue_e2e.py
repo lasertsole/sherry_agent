@@ -430,8 +430,8 @@ async def test_ac2_queue_fifo_drain(e2e_env):
     # turn-runner path (chunk/done) frames appear on the bound socket.
 
     # A completes NORMALLY (no answering flip) -> on_turn_finished drains the
-    # session's QUEUED rows as ONE batched turn (batch-drain contract): both
-    # inputs ride the same graph input in FIFO order and get ONE combined reply.
+    # session's QUEUED rows ONE PER TURN (per-item drain contract): each queued
+    # input rides its OWN graph input and gets its OWN reply.
     model.holds[0].set()
     await _wait_until(
         lambda: _no_active_rows(e2e_env.user_queue, sid),
@@ -439,13 +439,19 @@ async def test_ac2_queue_fifo_drain(e2e_env):
     )
     await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="drain finished")
 
-    assert len(model.received) == 2, "turn A + ONE drain turn for the whole batch"
-    drained = model.received[1]
-    assert [_text_of(m) for m in drained if isinstance(m, HumanMessage)] == [
-        "msg-a",
-        "msg-b",
-        "msg-c",
-    ], f"queued inputs must ride the batch in FIFO order, got {drained}"
+    assert len(model.received) == 3, "turn A + ONE drain turn per queued message"
+    # Transcripts accumulate the growing history: turn A sees msg-a only, and
+    # each drained turn adds EXACTLY ONE new human input, in FIFO order — a
+    # merged batch would show msg-b AND msg-c in a single call.
+    humans_per_call = [
+        [_text_of(m) for m in transcript if isinstance(m, HumanMessage)]
+        for transcript in model.received
+    ]
+    assert humans_per_call[0] == ["msg-a"], f"turn A input: {humans_per_call[0]}"
+    assert humans_per_call[1] == ["msg-a", "msg-b"], f"first drain turn: {humans_per_call[1]}"
+    assert humans_per_call[2] == ["msg-a", "msg-b", "msg-c"], (
+        f"second drain turn: {humans_per_call[2]}"
+    )
 
     seq: list[str] = []
     for f in socket.frames:
@@ -453,7 +459,7 @@ async def test_ac2_queue_fifo_drain(e2e_env):
             seq.append("done")
         elif f.get("event") == "chunk":
             raw = json.dumps(f, ensure_ascii=False)
-            for needle in ("partial-", "final", "reply-1"):
+            for needle in ("partial-", "final", "reply-1", "reply-2"):
                 if needle in raw:
                     seq.append(needle)
                     break
@@ -462,6 +468,8 @@ async def test_ac2_queue_fifo_drain(e2e_env):
         "final",
         "done",
         "reply-1",
+        "done",
+        "reply-2",
         "done",
     ], f"frame events seen: {[f.get('event') for f in socket.frames]}"
 

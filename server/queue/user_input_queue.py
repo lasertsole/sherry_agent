@@ -41,12 +41,9 @@ Public API (consumed by Tasks 5/7/9/10 -- signatures are a contract):
     Atomically claims the OLDEST non-expired QUEUED row (``expires_at > now``):
     single ``UPDATE ... RETURNING`` guarded by ``BEGIN IMMEDIATE``, so
     concurrent claimers never double-claim. Returns the row as CLAIMED, or
-    None when the queue is empty/fully expired.
-  - ``await claim_batch(session_id, limit) -> list[UserInputQueueRow]``
-    Atomically claims up to ``limit`` OLDEST non-expired QUEUED rows in ONE
-    ``UPDATE ... RETURNING`` under ``BEGIN IMMEDIATE`` (race-free), FIFO
-    sorted, so a finished turn can drain a whole batch into one agent turn.
-    Returns an empty list when the queue is empty/fully expired.
+    None when the queue is empty/fully expired. The drain calls this once per
+    turn (N queued messages -> N turns); ``prioritize`` re-stamps
+    ``created_at`` to reorder who "oldest" is.
   - ``await mark_terminal(row_id, status) -> None``
     Transitions an ACTIVE row to ``DELIVERED | FAILED | VOIDED`` (any other
     status raises ``ValueError``); unknown row ids are a no-op.
@@ -158,22 +155,36 @@ WHERE id = (
 RETURNING {_ROW_COLUMNS};
 """
 
-# Atomic race-free batch claim: same single-statement shape as _CLAIM_NEXT_SQL,
-# but the subquery selects up to ``limit`` FIFO rows at once. ``UPDATE ...
-# RETURNING`` does NOT guarantee output order, so callers sort FIFO in Python.
-_CLAIM_BATCH_SQL = f"""
+_TERMINAL_STATUSES_SQL = "('DELIVERED', 'FAILED', 'VOIDED')"
+
+# Cancel one message the user is still waiting on. Deliberately narrower than
+# _MARK_TERMINAL_SQL: a CLAIMED row is already inside a turn, and voiding it
+# would break the runner's own DELIVERED/FAILED bookkeeping.
+_CANCEL_QUEUED_SQL = f"""
 UPDATE user_input_queue
-SET status = 'CLAIMED', updated_at = ?
-WHERE id IN (
-    SELECT id FROM user_input_queue
-    WHERE session_id = ? AND status = 'QUEUED' AND expires_at > ?
-    ORDER BY created_at ASC, id ASC
-    LIMIT ?
-)
+SET status = 'VOIDED', updated_at = ?
+WHERE id = ? AND status = 'QUEUED'
 RETURNING {_ROW_COLUMNS};
 """
 
-_TERMINAL_STATUSES_SQL = "('DELIVERED', 'FAILED', 'VOIDED')"
+# Edit before delivery: only a QUEUED row can still change — a CLAIMED row's
+# text is already in a turn.
+_UPDATE_PAYLOAD_SQL = f"""
+UPDATE user_input_queue
+SET payload = ?, updated_at = ?
+WHERE id = ? AND status = 'QUEUED'
+RETURNING {_ROW_COLUMNS};
+"""
+
+# Jump the FIFO queue: claim_next orders by (created_at ASC, id ASC), so moving
+# a row's created_at just below the current minimum is enough. The caller
+# re-reads nothing afterwards: the queue's own ordering rule stays the single
+# source of truth for "who is next".
+_PRIORITIZE_SQL = """
+UPDATE user_input_queue
+SET created_at = ?, updated_at = ?
+WHERE id = ? AND session_id = ? AND status = 'QUEUED';
+"""
 
 _MARK_TERMINAL_SQL = f"""
 UPDATE user_input_queue
@@ -531,21 +542,36 @@ class QueueRepository:
         return _row_from_db(claimed) if claimed is not None else None
 
     @staticmethod
-    async def claim_batch(
-        db: aiosqlite.Connection, session_id: str, now: float, limit: int
-    ) -> list[UserInputQueueRow]:
-        """Claim up to ``limit`` OLDEST non-expired QUEUED rows, FIFO-ordered.
+    async def cancel_queued(db: aiosqlite.Connection, row_id: str, now: float) -> bool:
+        cursor = await db.execute(_CANCEL_QUEUED_SQL, (now, row_id))
+        return await cursor.fetchone() is not None
 
-        Single ``UPDATE ... RETURNING`` guarded by ``BEGIN IMMEDIATE``: the
-        selection and the CLAIMED flip are one statement, so concurrent
-        claimers can never receive the same row. ``RETURNING`` does not
-        preserve the subquery's ORDER BY, so the result is re-sorted in Python
-        by ``(created_at, id)`` before it is handed back.
-        """
-        cursor = await db.execute(_CLAIM_BATCH_SQL, (now, session_id, now, limit))
-        rows = [_row_from_db(row) async for row in cursor]
-        rows.sort(key=lambda row: (row.created_at, row.id))
-        return rows
+    @staticmethod
+    async def update_payload(
+        db: aiosqlite.Connection, row_id: str, payload: str, now: float
+    ) -> UserInputQueueRow | None:
+        cursor = await db.execute(_UPDATE_PAYLOAD_SQL, (payload, now, row_id))
+        updated = await cursor.fetchone()
+        return _row_from_db(updated) if updated is not None else None
+
+    @staticmethod
+    async def prioritize(
+        db: aiosqlite.Connection, session_id: str, row_id: str, older_than: float, now: float
+    ) -> bool:
+        cursor = await db.execute(_PRIORITIZE_SQL, (older_than, now, row_id, session_id))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    async def queued_min_created_at(db: aiosqlite.Connection, session_id: str) -> float | None:
+        cursor = await db.execute(
+            "SELECT MIN(created_at) FROM user_input_queue "
+            "WHERE session_id = ? AND status = 'QUEUED'",
+            (session_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None or row[0] is None:
+            return None
+        return float(row[0])
 
     @staticmethod
     async def mark_terminal(
@@ -687,22 +713,37 @@ class UserInputQueue:
         async with self._conn.write_transaction() as db:
             return await QueueRepository.claim_next(db, session_id, now)
 
-    async def claim_batch(self, session_id: str, limit: int) -> list[UserInputQueueRow]:
-        """Atomically claim up to ``limit`` OLDEST non-expired QUEUED rows.
+    async def cancel_queued(self, row_id: str) -> bool:
+        """Void a QUEUED row; returns False when it is not (any more) queued.
 
-        Same race-free guarantee as :meth:`claim_next` (one ``UPDATE ...
-        RETURNING`` under ``BEGIN IMMEDIATE``), but claims a FIFO batch in a
-        single transaction so a busy session's queued inputs can be drained
-        into ONE agent turn. Returns the rows as CLAIMED in FIFO order, or an
-        empty list when the queue is empty / fully expired. ``limit`` is
-        clamped to >= 1 so a misconfigured cap can never silently claim
-        nothing (a non-positive ``LIMIT`` in SQLite means "no limit").
+        Used by the toolbar's cancel button: the row never reaches the agent.
+        A CLAIMED row is refused on purpose — it is already inside a turn.
+        """
+        await self._ensure_db()
+        async with self._conn.write_transaction() as db:
+            return await QueueRepository.cancel_queued(db, row_id, time.time())
+
+    async def update_payload(self, row_id: str, new_payload: str) -> UserInputQueueRow | None:
+        """Replace the payload of a QUEUED row; None when the row is not queued."""
+        await self._ensure_db()
+        async with self._conn.write_transaction() as db:
+            return await QueueRepository.update_payload(db, row_id, new_payload, time.time())
+
+    async def prioritize(self, session_id: str, row_id: str) -> bool:
+        """Move a QUEUED row to the front of this session's FIFO queue.
+
+        ``claim_next`` orders by ``created_at ASC``, so the row is re-stamped
+        one second below the current minimum instead of the queue growing a
+        separate priority column: one ordering rule, one place to reason about
+        "who is next". Returns False when the row is not QUEUED (or not this
+        session's).
         """
         await self._ensure_db()
         now = time.time()
-        effective_limit = max(1, int(limit))
         async with self._conn.write_transaction() as db:
-            return await QueueRepository.claim_batch(db, session_id, now, effective_limit)
+            earliest = await QueueRepository.queued_min_created_at(db, session_id)
+            target = (earliest if earliest is not None else now) - 1.0
+            return await QueueRepository.prioritize(db, session_id, row_id, target, now)
 
     async def mark_terminal(
         self, row_id: str, status: UserInputQueueStatus | Literal["DELIVERED", "FAILED", "VOIDED"]

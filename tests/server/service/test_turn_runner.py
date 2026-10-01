@@ -272,8 +272,13 @@ async def test_drain_exits_cleanly_when_queue_empty(env):
 
 
 @pytest.mark.asyncio
-async def test_single_failure_marks_failed_sends_error_frame_and_continues(env, monkeypatch):
-    """With one-row batches, a failure is FAILED + error frame and the drain continues."""
+async def test_single_failure_marks_failed_sends_error_frame_and_continues(env):
+    """A failing row is FAILED + one error frame; the drain continues.
+
+    Rows are processed one per turn, so this needs no batching switch: the
+    failure of the middle row and the delivery of the row after it are the
+    default behaviour under test.
+    """
     tr, store, registry, sockets = env.tr, env.store, env.registry, env.sockets
     socket = FakeSocket()
     sockets["s1"] = socket
@@ -281,9 +286,6 @@ async def test_single_failure_marks_failed_sends_error_frame_and_continues(env, 
     bad = await _enqueue(store, "s1", "bad")
     ok2 = await _enqueue(store, "s1", "ok-2")
     registry.register("ws", RecordingExecutor(fail_texts={"bad"}))
-    # Force one-row batches so each row is its own route group (the drain's
-    # continue-after-failure property, independent of batch size).
-    monkeypatch.setattr(tr, "_BATCH_MAX_ROWS", 1)
 
     await tr.on_turn_finished("s1")
 
@@ -297,15 +299,17 @@ async def test_single_failure_marks_failed_sends_error_frame_and_continues(env, 
 
 
 @pytest.mark.asyncio
-async def test_batch_failure_marks_all_group_rows_failed_and_sends_one_error(env):
-    """An executor exception finalizes EVERY claimed row of a multi-row batch."""
+async def test_an_exception_marks_the_row_failed_and_the_drain_moves_on(env):
+    """Every failing row is finalized on its own; the drain keeps going."""
     tr, store, registry, sockets = env.tr, env.store, env.registry, env.sockets
     socket = FakeSocket()
     sockets["s1"] = socket
     rows = [await _enqueue(store, "s1", text) for text in ("a", "b", "c")]
+    attempts: list[str] = []
 
     class BoomBatchExecutor(iqs.BatchTurnExecutor):
         async def execute_batch(self, session_id, batch, reply_target) -> None:  # noqa: ANN001
+            attempts.append(batch[0].message)
             raise RuntimeError("boom-batch")
 
     registry.register("ws", BoomBatchExecutor())
@@ -314,14 +318,20 @@ async def test_batch_failure_marks_all_group_rows_failed_and_sends_one_error(env
 
     drain = tr._DRAIN_TASKS.get("s1")
     await asyncio.wait_for(drain, timeout=10)
+    assert attempts == ["a", "b", "c"], "each row is its own turn; a failure never stops the drain"
     assert all(_status_of(store, row.id) == "FAILED" for row in rows)
     errors = [f for f in socket.frames if f.get("event") == "error"]
-    assert len(errors) == 1 and "boom-batch" in errors[0].get("content", "")
+    assert len(errors) == 3 and all("boom-batch" in f.get("content", "") for f in errors)
 
 
 @pytest.mark.asyncio
-async def test_drain_batches_queued_rows_into_one_execute_batch(env):
-    """A finished turn drains ALL queued rows into ONE execute_batch call, FIFO."""
+async def test_drain_delivers_each_queued_row_in_its_own_turn(env):
+    """N queued rows become N turns in FIFO order — one reply per message.
+
+    This is the contract the per-item drain exists for: the old code merged a
+    busy session's messages into ONE turn with ONE answer, which read as the
+    agent answering a pile of questions at once.
+    """
     tr, store, registry = env.tr, env.store, env.registry
 
     class BatchRecordingExecutor(iqs.BatchTurnExecutor):
@@ -339,11 +349,12 @@ async def test_drain_batches_queued_rows_into_one_execute_batch(env):
 
     drain = tr._DRAIN_TASKS.get("s1")
     await asyncio.wait_for(drain, timeout=10)
-    assert len(executor.batches) == 1, "one route group => exactly one execute_batch"
-    batch = executor.batches[0]
-    assert [item.message for item in batch] == ["a", "b", "c"], "batch must be FIFO"
-    assert [item.claim_row_id for item in batch] == [row.id for row in rows]
-    assert all(item.source == "user" for item in batch)
+    assert [item.message for batch in executor.batches for item in batch] == ["a", "b", "c"]
+    assert all(len(batch) == 1 for batch in executor.batches), (
+        "each row must be its own turn, never merged with the next"
+    )
+    assert [batch[0].claim_row_id for batch in executor.batches] == [row.id for row in rows]
+    assert all(batch[0].source == "user" for batch in executor.batches)
     assert all(_status_of(store, row.id) == "DELIVERED" for row in rows)
 
 
@@ -398,8 +409,8 @@ async def test_channel_router_receives_error_frame_on_failure(env):
 
 
 @pytest.mark.asyncio
-async def test_drain_survives_claim_batch_failure_and_keeps_processing(env, monkeypatch):
-    """A claim_batch DB error must not kill the drain: log, back off, retry."""
+async def test_drain_survives_claim_failure_and_keeps_processing(env, monkeypatch):
+    """A claim DB error must not kill the drain: log, back off, retry."""
     tr, store, registry = env.tr, env.store, env.registry
     r1 = await _enqueue(store, "s1", "first")
     r2 = await _enqueue(store, "s1", "second")
@@ -413,11 +424,11 @@ async def test_drain_survives_claim_batch_failure_and_keeps_processing(env, monk
         def __getattr__(self, name):
             return getattr(real_store, name)
 
-        async def claim_batch(self, session_id: str, limit: int):
+        async def claim_next(self, session_id: str):
             if not claim_failures:
                 claim_failures.append(session_id)
                 raise RuntimeError("db hiccup")
-            return await real_store.claim_batch(session_id, limit)
+            return await real_store.claim_next(session_id)
 
     monkeypatch.setattr(iqs, "get_default_queue", lambda: FlakyClaimQueue())
     monkeypatch.setattr(tr, "_DRAIN_ERROR_BACKOFF_S", 0.01)
@@ -426,7 +437,7 @@ async def test_drain_survives_claim_batch_failure_and_keeps_processing(env, monk
 
     drain = tr._DRAIN_TASKS.get("s1")
     await asyncio.wait_for(drain, timeout=10)
-    assert len(claim_failures) == 1, "claim_batch must fail exactly once"
+    assert len(claim_failures) == 1, "the claim must fail exactly once"
     assert [call[1] for call in executor.calls] == ["first", "second"], (
         "queued rows must still be processed after the failed claim"
     )
@@ -700,8 +711,8 @@ async def test_cancelling_the_executor_cancels_the_driven_child(env, monkeypatch
     tr, store, sockets = env.tr, env.store, env.sockets
     sockets["s1"] = FakeSocket()
     await _enqueue(store, "s1", "long turn")
-    claimed = await store.claim_batch("s1", 1)
-    row = claimed[0]
+    row = await store.claim_next("s1")
+    assert row is not None
 
     started = asyncio.Event()
     child_cancelled = asyncio.Event()

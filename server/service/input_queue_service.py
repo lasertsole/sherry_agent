@@ -50,7 +50,7 @@ import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.subagent.registry.session_state import SessionState, detect_state
@@ -75,12 +75,15 @@ __all__ = [
     "TurnExecutor",
     "TurnExecutorRegistry",
     "TurnInput",
+    "cancel_queued_message",
     "get_default_queue",
     "get_default_registry",
     "origin_for_source",
+    "prioritize_queued_message",
     "queued",
     "route_for",
     "submit_user_input",
+    "update_queued_message",
 ]
 
 Source = Literal["user", "cron"]
@@ -147,11 +150,12 @@ class TurnExecutor(Protocol):
     completion (on_turn_finished drains the queue).
 
     ``execute`` drives a single message; ``execute_batch`` drives a FIFO batch
-    of messages as ONE turn (one reply). Executors that cannot batch still
-    satisfy the protocol shape as long as they expose both methods (subclass
-    :class:`BatchTurnExecutor`, whose ``execute`` delegates to
-    ``execute_batch``); the TurnRunner drain falls back to per-row ``execute``
-    for legacy execute-only executors.
+    of messages as ONE turn (one reply) for executors that still adopt several
+    rows at once. The per-item TurnRunner drain claims ONE row per turn and
+    calls ``execute_batch`` with a one-element batch when the executor exposes
+    it (falling back to per-row ``execute`` for legacy execute-only
+    executors); subclass :class:`BatchTurnExecutor` to implement only
+    ``execute_batch``.
     """
 
     async def execute(
@@ -309,6 +313,60 @@ async def _run_executor(
             raise
         except Exception:  # noqa: BLE001 - background task, log + keep serving
             logger.exception("turn executor crashed for session {}", session_id)
+
+
+async def _find_queued_row(
+    session_id: str, client_msg_id: str, queue: UserInputQueue | None = None
+) -> tuple[Any | None, UserInputQueue]:
+    """The QUEUED row for ``client_msg_id`` in ``session_id``, or ``(None, store)``.
+
+    Shared by the three queue-management entry points below. The lookup goes
+    through the store's ACTIVE-row index (the same dedup key ``submit`` uses),
+    then re-checks the session and the status: a CLAIMED row is already inside a
+    turn, and a row from another session must not be reachable through this one.
+    """
+    store = queue if queue is not None else get_default_queue()
+    if not client_msg_id:
+        return None, store
+    row = await store.find_active_by_client_msg_id(client_msg_id)
+    if row is None or row.session_id != session_id:
+        return None, store
+    if row.status is not UserInputQueueStatus.QUEUED:
+        return None, store
+    return row, store
+
+
+async def cancel_queued_message(session_id: str, client_msg_id: str) -> bool:
+    """Void a QUEUED message before it is delivered. False when it is not queued."""
+    row, store = await _find_queued_row(session_id, client_msg_id)
+    if row is None:
+        return False
+    cancelled = await store.cancel_queued(row.id)
+    if cancelled:
+        logger.info("cancel_queued_message: voided row {} for session {}", row.id, session_id)
+    return cancelled
+
+
+async def update_queued_message(session_id: str, client_msg_id: str, new_message: str) -> bool:
+    """Edit a QUEUED message's text. False when it is not (any more) queued."""
+    row, store = await _find_queued_row(session_id, client_msg_id)
+    if row is None:
+        return False
+    updated = await store.update_payload(row.id, _payload_json(new_message))
+    if updated is not None:
+        logger.info("update_queued_message: edited row {} for session {}", row.id, session_id)
+    return updated is not None
+
+
+async def prioritize_queued_message(session_id: str, client_msg_id: str) -> bool:
+    """Move a QUEUED message to the front of the FIFO queue ("send now")."""
+    row, store = await _find_queued_row(session_id, client_msg_id)
+    if row is None:
+        return False
+    moved = await store.prioritize(session_id, row.id)
+    if moved:
+        logger.info("prioritize_queued_message: row {} jumps the queue ({})", row.id, session_id)
+    return moved
 
 
 async def submit_user_input(

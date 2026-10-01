@@ -379,6 +379,183 @@ async def test_duplicate_msg_id_is_silent(ws_env):
 
 
 # ---------------------------------------------------------------------------
+# Queue management frames: cancel_queued / edit_queued / send_now
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_frame_voids_the_row_and_acks(ws_env):
+    store = ws_env.store
+    ws_env.detector["busy"] = True
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m1", "queued"))
+        await _wait_until(lambda: socket.frames, what="queued frame")
+        row = (await store.list_active("s1"))[0]
+
+        socket.push({"type": "cancel_queued", "session_id": "s1", "msg_id": "m1"})
+        await _wait_until(
+            lambda: any(f.get("event") == "queued_cancelled" for f in socket.frames),
+            what="queued_cancelled ack",
+        )
+        assert socket.frames[-1] == {
+            "event": "queued_cancelled",
+            "session_id": "s1",
+            "msg_id": "m1",
+            "ok": True,
+        }
+        assert _status_of(store, row.id) == "VOIDED"
+        assert await store.count_active("s1") == 0
+        assert ws_env.drain_calls == [], "a cancelled queued message never runs"
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_unknown_msg_id_acks_not_ok(ws_env):
+    """The ack carries ok=False for a msg_id that is not a live QUEUED row."""
+    ws_env.detector["busy"] = True
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    async with _handler_session(socket):
+        socket.push({"type": "cancel_queued", "session_id": "s1", "msg_id": "ghost"})
+        await _wait_until(lambda: socket.frames, what="queued_cancelled ack")
+        assert socket.frames == [
+            {
+                "event": "queued_cancelled",
+                "session_id": "s1",
+                "msg_id": "ghost",
+                "ok": False,
+            }
+        ]
+
+
+@pytest.mark.asyncio
+async def test_edit_queued_frame_rewrites_the_payload_and_acks(ws_env):
+    store = ws_env.store
+    ws_env.detector["busy"] = True
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m1", "before"))
+        await _wait_until(lambda: socket.frames, what="queued frame")
+        row = (await store.list_active("s1"))[0]
+
+        socket.push({"type": "edit_queued", "session_id": "s1", "msg_id": "m1", "message": "after"})
+        await _wait_until(
+            lambda: any(f.get("event") == "queued_updated" for f in socket.frames),
+            what="queued_updated ack",
+        )
+        assert socket.frames[-1] == {
+            "event": "queued_updated",
+            "session_id": "s1",
+            "msg_id": "m1",
+            "ok": True,
+        }
+        rows = await store.list_active("s1")
+        assert [r.id for r in rows] == [row.id], "same row, no re-enqueue"
+        assert json.loads(rows[0].payload)["text"] == "after"
+
+
+@pytest.mark.asyncio
+async def test_send_now_prioritizes_before_cancelling_the_running_turn(ws_env):
+    """The drain kicked off by the cancel must claim the prioritised row FIRST."""
+    store, drain_calls = ws_env.store, ws_env.drain_calls
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    block = asyncio.Event()
+    started = asyncio.Event()
+
+    async def block_first(texts: list[str]):
+        if "first" not in texts:
+            return
+        started.set()
+        try:
+            await block.wait()
+        except asyncio.CancelledError:
+            for row in await store.list_active("s1"):
+                if row.status is UserInputQueueStatus.CLAIMED:
+                    await store.mark_terminal(row.id, "VOIDED")  # marker stand-in
+            raise
+
+    turn_runner.async_generate_multi = _simple_generate_factory(drain_calls, on_text=block_first)
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m1", "first"))
+        await _wait_until(lambda: started.is_set(), what="first turn running")
+        ws_env.detector["busy"] = True
+        socket.push(_msg_frame("s1", "m2", "second"))
+        socket.push(_msg_frame("s1", "m3", "third"))
+        await _wait_until(
+            lambda: len([f for f in socket.frames if f.get("event") == "queued"]) == 2,
+            what="two queued frames",
+        )
+
+        socket.push({"type": "send_now", "session_id": "s1", "msg_id": "m3"})
+        await _wait_until(
+            lambda: drain_calls.count(("s1", ["third"])) == 1,
+            what="third delivered",
+        )
+        await _wait_until(
+            lambda: ("s1", ["second"]) in drain_calls and turn_runner._DRAIN_TASKS == {},
+            what="second delivered and drain finished",
+        )
+
+    assert [texts for _sid, texts in drain_calls] == [["first"], ["third"], ["second"]], (
+        "send_now must re-order the queue before the cancel-triggered drain claims"
+    )
+    acks = [f for f in socket.frames if f.get("event") == "send_now_ack"]
+    assert acks == [{"event": "send_now_ack", "session_id": "s1", "msg_id": "m3", "ok": True}]
+    contents = [f.get("content") for f in socket.frames if f.get("event") == "chunk"]
+    assert contents.index("echo:third") < contents.index("echo:second")
+    assert await store.count_active("s1") == 0, "all rows terminal after the drain"
+
+
+@pytest.mark.asyncio
+async def test_send_now_unknown_msg_id_does_not_cancel_the_running_turn(ws_env):
+    """A refused send_now must leave the running turn alone."""
+    wsm = ws_env.wsm
+    socket = _HandlerSocket()
+    ws_env.socket_holder["socket"] = socket
+
+    block = asyncio.Event()
+    started = asyncio.Event()
+
+    async def block_first(texts: list[str]):
+        if "first" not in texts:
+            return
+        started.set()
+        await block.wait()
+
+    turn_runner.async_generate_multi = _simple_generate_factory(
+        ws_env.drain_calls, on_text=block_first
+    )
+
+    async with _handler_session(socket):
+        socket.push(_msg_frame("s1", "m1", "first"))
+        await _wait_until(lambda: started.is_set(), what="turn running")
+
+        socket.push({"type": "send_now", "session_id": "s1", "msg_id": "ghost"})
+        await _wait_until(
+            lambda: any(f.get("event") == "send_now_ack" for f in socket.frames),
+            what="send_now_ack",
+        )
+        assert socket.frames[-1] == {
+            "event": "send_now_ack",
+            "session_id": "s1",
+            "msg_id": "ghost",
+            "ok": False,
+        }
+        assert "s1" in wsm._active_tasks, "the running turn must not be cancelled"
+        assert not wsm._active_tasks["s1"].done()
+
+        block.set()
+
+
+# ---------------------------------------------------------------------------
 # Stop: cancel current turn only, drain continues FIFO
 # ---------------------------------------------------------------------------
 

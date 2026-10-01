@@ -469,3 +469,106 @@ async def test_invalid_source_raises_value_error(
             executor_registry=registry,  # pyright: ignore[reportArgumentType]
         )
     assert await store.count_active("s1") == 0
+
+
+# ---------------------------------------------------------------------------
+# Queue-row operations: cancel / edit / send-now (client_msg_id addressed)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def default_queue(monkeypatch, store: UserInputQueue) -> UserInputQueue:
+    """Make the module-global default queue resolve to the hermetic store."""
+    monkeypatch.setattr(iqs, "get_default_queue", lambda: store)
+    return store
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_message_voids_by_client_msg_id(default_queue: UserInputQueue):
+    row, _ = await default_queue.enqueue(
+        "s1", '{"text": "cancel me", "image_base64_list": []}', "user", client_msg_id="m1"
+    )
+
+    assert await iqs.cancel_queued_message("s1", "m1") is True
+    assert await default_queue.count_active("s1") == 0
+    conn = await default_queue.find_active_by_client_msg_id("m1")
+    assert conn is None, "the voided row leaves the ACTIVE lookup"
+    assert await default_queue.cancel_queued(row.id) is False, "second cancel is a no-op"
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_message_refuses_unknown_foreign_and_claimed(
+    default_queue: UserInputQueue, registry: TurnExecutorRegistry, detector: FakeStateDetector
+):
+    """Only a QUEUED row of THIS session is reachable through this entry point."""
+    assert await iqs.cancel_queued_message("s1", "nope") is False
+    assert await iqs.cancel_queued_message("s1", "") is False, "empty key never matches"
+
+    claimed = await submit_user_input(
+        "s1",
+        "in flight",
+        "user",
+        client_msg_id="m-claimed",
+        queue=default_queue,
+        executor_registry=registry,
+    )
+    assert claimed.status is SubmitStatus.STARTED
+    assert await iqs.cancel_queued_message("s1", "m-claimed") is False, (
+        "a CLAIMED row is already inside a turn"
+    )
+
+    row, _ = await default_queue.enqueue(
+        "s2", '{"text": "other session", "image_base64_list": []}', "user", client_msg_id="m-other"
+    )
+    assert await iqs.cancel_queued_message("s1", "m-other") is False, "foreign session"
+    assert await default_queue.count_active("s2") == 1, "foreign row untouched"
+    assert row.status is UserInputQueueStatus.QUEUED
+    await _settle()
+
+
+@pytest.mark.asyncio
+async def test_update_queued_message_rewrites_the_payload(default_queue: UserInputQueue):
+    await default_queue.enqueue(
+        "s1", '{"text": "typo her", "image_base64_list": []}', "user", client_msg_id="m1"
+    )
+
+    assert await iqs.update_queued_message("s1", "m1", "typo here") is True
+
+    rows = await default_queue.list_active("s1")
+    assert len(rows) == 1
+    payload = json.loads(rows[0].payload)
+    assert payload["text"] == "typo here"
+    assert payload["image_base64_list"] == [], "media lists survive the rewrite"
+
+    assert await iqs.update_queued_message("s1", "no-such-id", "x") is False
+
+
+@pytest.mark.asyncio
+async def test_update_queued_message_refuses_a_claimed_row(
+    default_queue: UserInputQueue, registry: TurnExecutorRegistry, detector: FakeStateDetector
+):
+    started = await submit_user_input(
+        "s1",
+        "in flight",
+        "user",
+        client_msg_id="m-claimed",
+        queue=default_queue,
+        executor_registry=registry,
+    )
+    assert started.status is SubmitStatus.STARTED
+
+    assert await iqs.update_queued_message("s1", "m-claimed", "too late") is False
+    await _settle()
+
+
+@pytest.mark.asyncio
+async def test_prioritize_queued_message_jumps_the_fifo_queue(default_queue: UserInputQueue):
+    await default_queue.enqueue("s1", '{"text": "first"}', "user", client_msg_id="m1")
+    await default_queue.enqueue("s1", '{"text": "second"}', "user", client_msg_id="m2")
+
+    assert await iqs.prioritize_queued_message("s1", "m2") is True
+
+    claimed = await default_queue.claim_next("s1")
+    assert claimed is not None and json.loads(claimed.payload)["text"] == "second"
+    assert await iqs.prioritize_queued_message("s1", "m2") is False, "no longer QUEUED"
+    assert await iqs.prioritize_queued_message("s1", "nope") is False

@@ -91,26 +91,26 @@ async def test_claim_next_returns_oldest_first(store: UserInputQueue):
 
 
 @pytest.mark.asyncio
-async def test_claim_batch_returns_fifo_bounded_batch(store: UserInputQueue):
-    """claim_batch claims up to ``limit`` oldest rows, FIFO-ordered."""
+async def test_claim_next_drains_the_queue_one_row_at_a_time(store: UserInputQueue):
+    """The per-item drain claims exactly ONE row per call, in FIFO order."""
     for i in range(5):
         await store.enqueue("s1", _payload(f"msg-{i}"), source="user")
 
-    batch = await store.claim_batch("s1", 3)
-    assert [r.payload for r in batch] == [_payload(f"msg-{i}") for i in range(3)]
-    assert all(r.status == UserInputQueueStatus.CLAIMED for r in batch)
+    first = await store.claim_next("s1")
+    assert first is not None and first.payload == _payload("msg-0")
+    assert first.status == UserInputQueueStatus.CLAIMED
 
-    # The remaining two rows are still claimable; claimed rows are never re-claimed.
-    rest = await store.claim_batch("s1", 10)
-    assert [r.payload for r in rest] == [_payload("msg-3"), _payload("msg-4")]
-    assert await store.claim_batch("s1", 10) == []
+    # The rest are still claimable one at a time; drained queue returns None.
+    rest = [await store.claim_next("s1") for _ in range(4)]
+    assert [r.payload for r in rest if r is not None] == [_payload(f"msg-{i}") for i in range(1, 5)]
+    assert await store.claim_next("s1") is None
     assert await store.count_active("s1") == 5, "all rows still ACTIVE (CLAIMED)"
 
 
 @pytest.mark.asyncio
-async def test_claim_batch_empty_and_expired_rows(store: UserInputQueue, tmp_path: Path):
-    """claim_batch returns [] on an empty session and skips expired rows."""
-    assert await store.claim_batch("no-such-session", 5) == []
+async def test_claim_next_empty_and_expired_rows(store: UserInputQueue, tmp_path: Path):
+    """claim_next returns None on an empty session and skips expired rows."""
+    assert await store.claim_next("no-such-session") is None
 
     expired_id = uuid.uuid4().hex
     now = time.time()
@@ -127,7 +127,7 @@ async def test_claim_batch_empty_and_expired_rows(store: UserInputQueue, tmp_pat
     finally:
         await conn.close()
 
-    assert await store.claim_batch("s1", 5) == [], "expired rows must not be claimable"
+    assert await store.claim_next("s1") is None, "expired rows must not be claimable"
 
 
 @pytest.mark.asyncio
@@ -385,6 +385,90 @@ async def test_mark_terminal_accepts_only_terminal_statuses(store: UserInputQueu
 @pytest.mark.asyncio
 async def test_mark_terminal_missing_row_is_noop(store: UserInputQueue):
     await store.mark_terminal("no-such-id", UserInputQueueStatus.FAILED)  # must not raise
+
+
+# ---------------------------------------------------------------------------
+# cancel_queued / update_payload / prioritize (queue-row operations)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_voids_only_a_queued_row(store: UserInputQueue):
+    """The cancel button voids a QUEUED row and refuses a CLAIMED one."""
+    first, _ = await store.enqueue("s1", _payload("cancel me"), source="user")
+    second, _ = await store.enqueue("s1", _payload("keep me"), source="user")
+
+    assert await store.cancel_queued(first.id) is True
+
+    # The cancelled row is terminal: invisible to ACTIVE listing and unclaimable.
+    rows = await store.list_active("s1")
+    assert [r.id for r in rows] == [second.id]
+    claimed = await store.claim_next("s1")
+    assert claimed is not None and claimed.id == second.id
+    assert await store.cancel_queued(first.id) is False, "already terminal"
+
+
+@pytest.mark.asyncio
+async def test_cancel_queued_refuses_a_claimed_row(store: UserInputQueue):
+    """A CLAIMED row is inside a turn: cancelling it would break the runner."""
+    row, _ = await store.enqueue("s1", _payload("in flight"), source="user")
+    claimed = await store.claim_next("s1")
+    assert claimed is not None and claimed.id == row.id
+
+    assert await store.cancel_queued(row.id) is False
+    assert await store.count_active("s1") == 1, "row stays ACTIVE (CLAIMED)"
+
+
+@pytest.mark.asyncio
+async def test_update_payload_replaces_only_a_queued_row(store: UserInputQueue):
+    """Edit before delivery rewrites the payload and reports the new row."""
+    row, _ = await store.enqueue("s1", _payload("typo her"), source="user")
+
+    updated = await store.update_payload(row.id, _payload("typo here"))
+    assert updated is not None
+    assert updated.payload == _payload("typo here")
+    assert updated.id == row.id
+
+    # The next claim (i.e. the turn's input) sees the edited text.
+    claimed = await store.claim_next("s1")
+    assert claimed is not None and claimed.payload == _payload("typo here")
+
+    # A CLAIMED row's text is already inside a turn: the edit is refused.
+    assert await store.update_payload(row.id, _payload("too late")) is None
+
+
+@pytest.mark.asyncio
+async def test_update_payload_unknown_row_returns_none(store: UserInputQueue):
+    assert await store.update_payload("no-such-id", _payload("x")) is None
+
+
+@pytest.mark.asyncio
+async def test_prioritize_moves_a_queued_row_to_the_front(store: UserInputQueue):
+    """send-now re-stamps created_at so the NEXT claim is the prioritised row."""
+    first, _ = await store.enqueue("s1", _payload("first"), source="user")
+    second, _ = await store.enqueue("s1", _payload("second"), source="user")
+    third, _ = await store.enqueue("s1", _payload("third"), source="user")
+
+    assert await store.prioritize("s1", third.id) is True
+
+    # One ordering rule: list_active (position reporting) shows the same order
+    # claim_next will follow — the prioritised row first, the rest untouched.
+    rows = await store.list_active("s1")
+    assert [r.id for r in rows] == [third.id, first.id, second.id]
+
+    claimed = await store.claim_next("s1")
+    assert claimed is not None and claimed.payload == _payload("third")
+
+
+@pytest.mark.asyncio
+async def test_prioritize_refuses_claimed_and_foreign_rows(store: UserInputQueue):
+    """Only a QUEUED row of the SAME session can jump its queue."""
+    row, _ = await store.enqueue("s1", _payload("mine"), source="user")
+    assert await store.prioritize("s2", row.id) is False, "other session"
+
+    claimed = await store.claim_next("s1")
+    assert claimed is not None and claimed.id == row.id
+    assert await store.prioritize("s1", row.id) is False, "already claimed"
 
 
 # ---------------------------------------------------------------------------
