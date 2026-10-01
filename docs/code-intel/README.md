@@ -10,6 +10,7 @@ Source of truth: `agent/tools/code_intel/**`, `config/features/agent_side/code_i
 
 - [Overview](#-overview)
 - [Design Invariants](#-design-invariants)
+- [Layer 0: Keyword Search (ripgrep)](#-layer-0-keyword-search-ripgrep)
 - [Layer 1: Tree-sitter Symbol Index](#-layer-1-tree-sitter-symbol-index)
 - [Layer 2: ast-grep Structural Search & Rewrite](#-layer-2-ast-grep-structural-search--rewrite)
 - [Layer 3: LSP Precise Retrieval](#-layer-3-lsp-precise-retrieval)
@@ -23,10 +24,11 @@ Source of truth: `agent/tools/code_intel/**`, `config/features/agent_side/code_i
 
 ## 🎯 Overview
 
-Code Intel answers code-understanding questions for subagents with four retrieval engines, each aimed at a different question shape:
+Code Intel answers code-understanding questions with five retrieval engines, each aimed at a different question shape. Four of them are subagent-only; the keyword layer is the one the main agent shares:
 
 | Layer | Question it answers | Tools | Gate |
 |-------|--------------------|-------|------|
+| **Keyword search** | Where does this literal or regex appear — in contents or in file names? | `search_files` | main agent + `researcher` + `librarian` |
 | **Tree-sitter symbol index** | Where is a symbol defined, and what calls it? | `explore`, `callers`, `callees`, `impact` | `researcher` + `librarian` |
 | **ast-grep** | What code has this structural shape, and how do I rewrite it? | `ast_grep_search`, `ast_grep_rewrite` | every subagent |
 | **LSP** | What does the type checker know about this position? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `researcher` + `librarian` |
@@ -51,6 +53,47 @@ child agent assembly (spawn/core.py)
 5. **Writes are opt-in and containment-checked.** `ast_grep_rewrite` previews unless `dry_run=false`; `lsp_rename` and `lsp_format` preview unless called with the apply flag; every write path re-validates traversal and project-root containment before touching disk.
 6. **No new model providers.** Semantic search reuses the existing `models/embed_model` and `models/reranker_model` wrappers; the only new storage is the SQLite index.
 7. **Roots resolve per call.** `SHERRY_CODE_INTEL_ROOT`, `SHERRY_SG_ROOT`, and `SHERRY_LSP_ROOT` override the working root for drills and tests; without them the process cwd and the shared `resolve_project_path` gate apply.
+
+## 🔍 Layer 0: Keyword Search (ripgrep)
+
+`search_files` is the cheap layer, and the only retrieval tool the main agent
+holds: a regex sweep over file contents (`target='content'`) or over file names
+(`target='files'`). It runs on two engines behind one contract — ripgrep when it
+resolves, the pure-Python walk otherwise — and which one ran is invisible to the
+caller, because the result envelope, the page cut and the three truncation
+markers all come from `agent/tools/file_tools/search_scan.py`'s `ScanState`.
+
+| Property | How |
+|---|---|
+| Engine | `agent/tools/pub_base/rg_backend.py` runs `rg --json` streamed line by line, with `--sort=path` for stable paging |
+| Fallback | the walk in `agent/tools/file_tools/search_files.py` serves a host without `rg`, a pattern the Rust engine cannot express (lookaround, backreference) and every hard rg failure (`exit >= 2`) |
+| Discovery | `agent/tools/pub_base/rg_resolver.py`: `SHERRY_RG_PATH` → the interpreter's own directory and `sys.prefix/bin` → `~/.sherry/runtime/ripgrep/<slug>` → the code-intel bin cache → `PATH` → Homebrew, each candidate probed with `--version` |
+| Dependency | `ripgrep-bin`, whose platform wheels cover linux aarch64/x86_64/riscv64, macOS both, Windows both — so `uv sync` puts `rg` next to the interpreter, and the resolver checks there *before* `PATH` because a server started as `./.venv/bin/python -m server` has no venv `bin` on `PATH` |
+| Bounds | 5.0 s scan budget and 10 000 matches (`TOOLS_TIMEOUTS`), a page cut one match past `offset+limit`, and `SKIP_DIR_NAMES` plus the configured prune dirs translated into `--glob` exclusions |
+| Off the loop | the async path runs the scan in a worker thread |
+
+Measured on this repository: the same content search over the same scope costs
+**16.6 s** with the walk and **1.2 s** with ripgrep (2.0 s with `--sort=path`).
+The number that matters is not the speed-up but the budget: the walk cannot
+finish a repository-wide pass inside 5 s, so a search for a pattern that is not
+there returned `scan_stop_reason: "time_budget"` — honest, but incomplete.
+ripgrep finishes it.
+
+Three traps the implementation had to learn, each pinned by a test:
+
+- **Globs travel as one argv token** (`--glob=!**/x/**`). Passed bare they become
+  the search pattern *and* the paths: rg then scans everything, matches the wrong
+  thing and exits 2 — which the fallback hides.
+- **Include globs precede exclusions.** rg resolves overlapping globs
+  last-match-wins, so an include placed after the exclusions re-admits the
+  directories those exclusions pruned.
+- **stderr is drained on a thread with a cap.** We block on stdout; a child that
+  fills its stderr pipe would otherwise stall until the watchdog kills it.
+
+The bounded cleanup this shares with the other spawn sites lives in
+`agent/tools/pub_base/process_reap.py`: SIGTERM → wait → SIGKILL → wait →
+abandon the handle with a warning, because a child wedged in uninterruptible I/O
+(or holding a pipe open through a grandchild) must not turn a timeout into a hang.
 
 ## 🌳 Layer 1: Tree-sitter Symbol Index
 
@@ -140,7 +183,7 @@ Search self-heals the index, embeds the query, ranks every stored chunk by pure-
 | `executor` | no | no | yes |
 | `reviewer` | no | no | yes |
 
-The main agent is outside this table entirely: the builders are never added to `_MAIN_TOOLS_BUILDERS`, and the isolation tests assert that `build_lsp_tools` is absent from that list and from the `agent.tools` namespace. The `librarian` definition at `agent/tools/subagent/roles/definitions/librarian/AGENTS.md` documents the intended external-repo workflow — clone with `terminal`, then index and search with `explore` and `semantic_code_search`, and answer with permalinks. The two-axis role model itself (depth role × functional role) is documented in the [Subagent Design page](../subagent/README.md), and each role's tool list in the [Subagent System README](../../agent/tools/subagent/README.md).
+The main agent is outside this table entirely: the builders are never added to `_MAIN_TOOLS_BUILDERS`, and the isolation tests assert that `build_lsp_tools` is absent from that list and from the `agent.tools` namespace. The `librarian` definition at `agent/tools/subagent/roles/definitions/librarian/AGENTS.md` documents the intended external-repo workflow — clone with `terminal`, then index and search with `explore` and `semantic_code_search`, and answer with permalinks. `search_files` is the exception to that gating: it is a main tool (it is in `_MAIN_TOOLS_BUILDERS`) and `researcher` / `librarian` name it in their whitelists, so keyword retrieval is the one search surface the main agent shares with the code-intel roles. The two-axis role model itself (depth role × functional role) is documented in the [Subagent Design page](../subagent/README.md), and each role's tool list in the [Subagent System README](../../agent/tools/subagent/README.md).
 
 ## ⚙️ Configuration
 
@@ -150,6 +193,7 @@ The main agent is outside this table entirely: the builders are never added to `
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | model `bge-m3`, top-K 5 (max 20), candidate pool 40, batch 16, 1000 chunks per build, 60 per file, 2000 chars per chunk |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | pinned `0.43.0`, 50 matches, 16 KiB pattern, 30 s run timeout, 64 paths, 60 s provision timeout, 5 s version-probe timeout |
 | `LSP` | `config/features/agent_side/lsp.py` | request 10 s, start 15 s, diagnostics 15 s, 2 concurrent servers, 300 s idle shutdown, 50 results, 32 opened files, 1 MB per file, auto-install off |
+| `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime dir, 5 s version-probe timeout, 5 s / 5 s reap graces; the scan budget and match cap live in `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` and `librarian` |
 
 The index database path defaults to `CODE_INTEL_DIR / "index.db"` with `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"` in `config/path.py`, and both `SHERRY_CODE_INTEL_ROOT` and `SHERRY_CODE_INTEL_DB` can override the root and the database path at call time.
@@ -191,7 +235,7 @@ Any machine that lacks these capabilities degrades instead of failing: an unreso
 - **ast-grep's first use downloads the binary.** The provision path is bounded by a 60 s timeout and refuses to install on a checksum mismatch; on an offline or asset-less platform the tool returns install hints instead.
 - **LSP servers are heavy.** The manager caps them at 2 concurrent, reaps after 300 s idle, and evicts the least-recently-used server; the first request for a language pays the server start, and `lsp_diagnostics` may return `timed_out` when a server publishes nothing within its window.
 - **This host's LSP coverage is partial.** Only `python` and `typescript` are discoverable; `rust` resolves but cannot start without its toolchain component; the other seven languages need an install. Auto-install is off by default, so a missing server never triggers a package-manager run.
-- **The librarian tool face is `read_file` / `terminal` / `web_search` plus the code-intel suite.** It does not include `search_files` — that builder is absent from `_MAIN_TOOLS_BUILDERS`, so external-repo keyword retrieval runs through `terminal` (rg/grep) and `explore`.
+- **The keyword layer is budgeted, and its cost tracks the tree.** `search_files` stops at 5 s or 10 000 matches and says so; the limits are per call, so the scan budget is a property of the repository (a large `logs/` directory counts) rather than of the query. The librarian's tool face is `read_file` / `search_files` / `terminal` / `web_search` plus the code-intel suite — external-repo keyword retrieval can use either the structured tool or `terminal` (rg/grep).
 - **Writes are two-step by design.** `ast_grep_rewrite`, `lsp_rename`, and `lsp_format` only write when explicitly asked to; their previews are the safe default, and applied edits are still containment-checked.
 
 ## 🗺️ Test Map
@@ -204,6 +248,7 @@ Any machine that lacks these capabilities degrades instead of failing: an unreso
 | LSP protocol, resolver, installer, fallback, client, manager, and tools | `tests/agent/tools/code_intel/lsp/test_protocol.py`, `tests/agent/tools/code_intel/lsp/test_resolver.py`, `tests/agent/tools/code_intel/lsp/test_installer.py`, `tests/agent/tools/code_intel/lsp/test_fallback.py`, `tests/agent/tools/code_intel/lsp/test_client.py`, `tests/agent/tools/code_intel/lsp/test_manager.py`, `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`, `tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |
 | LSP role isolation and real smoke | `tests/agent/tools/code_intel/lsp/test_role_isolation.py`, `tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`, `tests/agent/tools/code_intel/lsp/test_lsp_e2e.py` |
 | Semantic chunking, indexing, search, and smoke | `tests/agent/tools/code_intel/semantic/test_chunker.py`, `tests/agent/tools/code_intel/semantic/test_indexer.py`, `tests/agent/tools/code_intel/semantic/test_search.py`, `tests/agent/tools/code_intel/semantic/test_semantic_e2e.py`, `tests/agent/tools/code_intel/semantic/test_semantic_smoke.py` |
+| Keyword layer: ripgrep vs the walk, discovery, reap | `tests/agent/tools/pub_base/test_rg_resolver.py`, `tests/agent/tools/pub_base/test_rg_backend.py`, `tests/agent/tools/pub_base/test_process_reap.py`, `tests/agent/tools/file_tools/test_search_engines.py`, `tests/agent/tools/file_tools/test_search_bounds.py` |
 | Role wiring and prompt sections | `tests/agent/tools/subagent/types/test_functional_role.py`, `tests/agent/tools/subagent/roles/test_loader.py`, `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`, `tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 
 ## 🔗 Related Documentation

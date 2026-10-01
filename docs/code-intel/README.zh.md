@@ -10,6 +10,7 @@
 
 - [总览](#-总览)
 - [设计不变量](#-设计不变量)
+- [第 0 层：关键词搜索（ripgrep）](#-第-0-层关键词搜索ripgrep)
 - [第 1 层：Tree-sitter 符号索引](#-第-1-层tree-sitter-符号索引)
 - [第 2 层：ast-grep 结构化搜索与重写](#-第-2-层ast-grep-结构化搜索与重写)
 - [第 3 层：LSP 精确检索](#-第-3-层lsp-精确检索)
@@ -23,10 +24,11 @@
 
 ## 🎯 总览
 
-Code Intel 用四个检索引擎回答子代理的代码理解问题，每个引擎对应一种问题形态：
+Code Intel 用五个检索引擎回答代码理解问题，每个引擎对应一种问题形态。其中四个只给子代理；关键词层是主代理共享的那一层：
 
 | 层 | 回答的问题 | 工具 | 开放范围 |
 |----|-----------|------|----------|
+| **关键词搜索** | 这个字面量或正则出现在哪里——内容里还是文件名里？ | `search_files` | 主代理 + `researcher` + `librarian` |
 | **Tree-sitter 符号索引** | 符号定义在哪里，谁在调用它？ | `explore`、`callers`、`callees`、`impact` | `researcher` + `librarian` |
 | **ast-grep** | 哪些代码具有该结构形态，如何重写？ | `ast_grep_search`、`ast_grep_rewrite` | 所有子代理 |
 | **LSP** | 类型检查器对这个位置了解什么？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `researcher` + `librarian` |
@@ -51,6 +53,29 @@ child agent assembly (spawn/core.py)
 5. **写入默认关闭并做容器校验。** `ast_grep_rewrite` 除非 `dry_run=false` 否则只预览；`lsp_rename` 与 `lsp_format` 除非传入应用标志否则只预览；每条写入路径在落盘前都重新校验路径穿越与项目根包含关系。
 6. **不引入新模型提供方。** 语义搜索复用既有的 `models/embed_model` 与 `models/reranker_model` 封装；唯一的新增存储是 SQLite 索引。
 7. **根目录按调用解析。** `SHERRY_CODE_INTEL_ROOT`、`SHERRY_SG_ROOT` 与 `SHERRY_LSP_ROOT` 可为演练与测试覆盖工作根；未设置时使用进程 cwd 与共享的 `resolve_project_path` 门禁。
+
+## 🔍 第 0 层：关键词搜索（ripgrep）
+
+`search_files` 是最便宜的一层，也是主代理唯一持有的检索工具：对文件内容（`target='content'`）或文件名（`target='files'`）做正则扫描。内部是两个引擎共用一份契约——能解析到 ripgrep 就用它，否则用纯 Python 遍历——而**调用方看不出跑的是哪一个**，因为结果信封、分页切点与三档截断标记都出自 `agent/tools/file_tools/search_scan.py` 的 `ScanState`。
+
+| 属性 | 做法 |
+|---|---|
+| 引擎 | `agent/tools/pub_base/rg_backend.py` 逐行流式解析 `rg --json`，用 `--sort=path` 保证分页稳定 |
+| 兜底 | `agent/tools/file_tools/search_files.py` 的遍历负责三种情况：主机没有 `rg`、模式用了 Rust 引擎表达不了的构造（环视、反向引用）、rg 硬失败（`exit >= 2`） |
+| 发现顺序 | `agent/tools/pub_base/rg_resolver.py`：`SHERRY_RG_PATH` → 解释器自身目录与 `sys.prefix/bin` → `~/.sherry/runtime/ripgrep/<slug>` → code-intel bin 缓存 → `PATH` → Homebrew，每个候选都要过 `--version` 探针 |
+| 依赖 | `ripgrep-bin`，wheel 覆盖 linux aarch64/x86_64/riscv64、macOS 双架构、Windows 双架构——`uv sync` 会把 `rg` 放到解释器旁边；解析器在 `PATH` **之前**查那个目录，因为 `./.venv/bin/python -m server` 起的服务端，PATH 里未必有 venv 的 `bin` |
+| 边界 | 5.0s 扫描预算与 10 000 条匹配上限（`TOOLS_TIMEOUTS`）、页码切在 `offset+limit` 之后一条、`SKIP_DIR_NAMES` 与配置的剪枝目录翻译成 `--glob` 排除项 |
+| 不占事件循环 | 异步路径把扫描放进工作线程 |
+
+在本仓库实测：同一范围内的同一内容搜索，遍历要 **16.6 s**，ripgrep 只要 **1.2 s**（带 `--sort=path` 为 2.0 s）。真正重要的不是快了多少，而是预算：遍历在 5 s 内跑不完一次全仓扫描，因此搜一个根本不存在的模式会返回 `scan_stop_reason: "time_budget"`——诚实，但结果残缺。ripgrep 能跑完。
+
+实现过程中撞到、并各自钉了测试的三个坑：
+
+- **glob 必须以单个 argv 传递**（`--glob=!**/x/**`）。裸写会被当成**搜索模式**和路径：rg 于是扫全仓、匹配错东西并退出码 2——而兜底会把这一切掩盖掉。
+- **include glob 必须排在 exclude 之前**。rg 对重叠 glob 取"后匹配者胜"，把 include 放在排除项之后会把已剪枝的目录重新放进来。
+- **stderr 要用带上限的线程排空**。我们阻塞在 stdout 上；子进程写满 stderr 管道时会一直卡住，直到看门狗把它杀掉。
+
+它与其他 spawn 落点共用的有界回收在 `agent/tools/pub_base/process_reap.py`：SIGTERM → 等待 → SIGKILL → 再等 → 放弃句柄并告警——因为卡在不可中断 IO 的子进程（或通过孙进程攥着管道的子进程）不该把一次超时变成一次挂死。
 
 ## 🌳 第 1 层：Tree-sitter 符号索引
 
@@ -140,7 +165,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | `executor` | 无 | 无 | 有 |
 | `reviewer` | 无 | 无 | 有 |
 
-主智能体完全在这张表之外：构建器从不加入 `_MAIN_TOOLS_BUILDERS`，隔离测试断言 `build_lsp_tools` 既不在该列表中，也不在 `agent.tools` 命名空间里。`agent/tools/subagent/roles/definitions/librarian/AGENTS.md` 中的 `librarian` 定义记录了预期的外部仓库工作流——用 `terminal` 克隆，然后用 `explore` 与 `semantic_code_search` 建索引并检索，最后以永久链接作答。两轴角色模型本身（深度角色 × 功能角色）见[子代理设计页](../subagent/README.zh.md)，各角色的工具清单见[子代理系统 README](../../agent/tools/subagent/README.zh.md)。
+主智能体完全在这张表之外：构建器从不加入 `_MAIN_TOOLS_BUILDERS`，隔离测试断言 `build_lsp_tools` 既不在该列表中，也不在 `agent.tools` 命名空间里。`agent/tools/subagent/roles/definitions/librarian/AGENTS.md` 中的 `librarian` 定义记录了预期的外部仓库工作流——用 `terminal` 克隆，然后用 `explore` 与 `semantic_code_search` 建索引并检索，最后以永久链接作答。`search_files` 是那套门控的例外：它是主工具（在 `_MAIN_TOOLS_BUILDERS` 里），而 `researcher` / `librarian` 在各自白名单中点名了它，因此关键词检索是主代理与 code-intel 角色共享的唯一检索面。两轴角色模型本身（深度角色 × 功能角色）见[子代理设计页](../subagent/README.zh.md)，各角色的工具清单见[子代理系统 README](../../agent/tools/subagent/README.zh.md)。
 
 ## ⚙️ 配置
 
@@ -150,6 +175,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 模型 `bge-m3`、top-K 5（最大 20）、候选池 40、批次 16、单次构建 1000 分块、每文件 60 分块、每分块 2000 字符 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 锁定 `0.43.0`、50 条匹配、16 KiB 模式、30 秒运行超时、64 路径、60 秒预置超时、5 秒版本探测超时 |
 | `LSP` | `config/features/agent_side/lsp.py` | 请求 10 秒、启动 15 秒、诊断 15 秒、并发服务器 2、空闲关停 300 秒、50 条结果、打开文件 32、单文件 1 MB、自动安装关闭 |
+| `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime 目录、5 s 版本探针超时、5 s / 5 s 回收宽限；扫描预算与匹配上限在 `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` 与 `librarian` |
 
 索引数据库路径默认为 `CODE_INTEL_DIR / "index.db"`，其中 `config/path.py` 定义 `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`；`SHERRY_CODE_INTEL_ROOT` 与 `SHERRY_CODE_INTEL_DB` 可在调用时覆盖根目录与数据库路径。
@@ -191,7 +217,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 - **ast-grep 首次使用需要下载二进制。** 预置路径受 60 秒超时约束，校验和不匹配时拒绝安装；离线或该平台没有资产时，工具改为返回安装提示。
 - **LSP 服务器很重。** 管理器限制最多 2 个并发、空闲 300 秒后回收，并淘汰最久未使用者；某种语言的首次请求要支付服务器启动成本，而服务器在窗口内没有任何发布时 `lsp_diagnostics` 可能返回 `timed_out`。
 - **本机的 LSP 覆盖不完整。** 只有 `python` 与 `typescript` 可被发现；`rust` 能解析但缺少工具链组件无法启动；其余七种语言需要安装。自动安装默认关闭，因此缺失服务器绝不会触发包管理器运行。
-- **librarian 的工具面是 `read_file` / `terminal` / `web_search` 加 code-intel 套件。** 它不含 `search_files` —— 该构建器不在 `_MAIN_TOOLS_BUILDERS` 中，因此外部仓库的关键词检索走 `terminal`（rg/grep）与 `explore`。
+- **关键词层是有预算的，成本随代码树走。** `search_files` 在 5 s 或 10 000 条匹配处停下并如实报告；限额是按调用的，所以扫描预算是仓库的属性（大 `logs/` 目录也算）而非查询的属性。librarian 的工具面是 `read_file` / `search_files` / `terminal` / `web_search` 加 code-intel 套件——外部仓库的关键词检索走结构化工具或 `terminal`（rg/grep）都行。
 - **写入按设计分两步。** `ast_grep_rewrite`、`lsp_rename` 与 `lsp_format` 只有在被明确要求时才写入；预览是安全默认，已应用的编辑仍会经过容器校验。
 
 ## 🗺️ 测试地图
@@ -204,6 +230,7 @@ LSP 层位于 `agent/tools/code_intel/lsp/`：`protocol.py`（URI、1 基与 0 �
 | LSP 协议、解析器、安装器、回退、客户端、管理器与工具 | `tests/agent/tools/code_intel/lsp/test_protocol.py`、`tests/agent/tools/code_intel/lsp/test_resolver.py`、`tests/agent/tools/code_intel/lsp/test_installer.py`、`tests/agent/tools/code_intel/lsp/test_fallback.py`、`tests/agent/tools/code_intel/lsp/test_client.py`、`tests/agent/tools/code_intel/lsp/test_manager.py`、`tests/agent/tools/code_intel/lsp/test_lsp_tools.py`、`tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |
 | LSP 角色隔离与真实冒烟 | `tests/agent/tools/code_intel/lsp/test_role_isolation.py`、`tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`、`tests/agent/tools/code_intel/lsp/test_lsp_e2e.py` |
 | 语义分块、索引、搜索与冒烟 | `tests/agent/tools/code_intel/semantic/test_chunker.py`、`tests/agent/tools/code_intel/semantic/test_indexer.py`、`tests/agent/tools/code_intel/semantic/test_search.py`、`tests/agent/tools/code_intel/semantic/test_semantic_e2e.py`、`tests/agent/tools/code_intel/semantic/test_semantic_smoke.py` |
+| 关键词层：ripgrep 与遍历、发现顺序、回收 | `tests/agent/tools/pub_base/test_rg_resolver.py`、`tests/agent/tools/pub_base/test_rg_backend.py`、`tests/agent/tools/pub_base/test_process_reap.py`、`tests/agent/tools/file_tools/test_search_engines.py`、`tests/agent/tools/file_tools/test_search_bounds.py` |
 | 角色接线与提示词小节 | `tests/agent/tools/subagent/types/test_functional_role.py`、`tests/agent/tools/subagent/roles/test_loader.py`、`tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、`tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 
 ## 🔗 相关文档

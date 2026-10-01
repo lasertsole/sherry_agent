@@ -10,6 +10,7 @@
 
 - [개요](#-개요)
 - [설계 불변식](#-설계-불변식)
+- [제 0 계층: 키워드 검색(ripgrep)](#-제-0-계층-키워드-검색ripgrep)
 - [제 1 계층: Tree-sitter 심볼 인덱스](#-제-1-계층-tree-sitter-심볼-인덱스)
 - [제 2 계층: ast-grep 구조 검색과 재작성](#-제-2-계층-ast-grep-구조-검색과-재작성)
 - [제 3 계층: LSP 정밀 검색](#-제-3-계층-lsp-정밀-검색)
@@ -23,10 +24,11 @@
 
 ## 🎯 개요
 
-Code Intel은 네 가지 검색 엔진으로 서브에이전트의 코드 이해 질문에 답하며, 각 엔진은 서로 다른 질문 형태를 담당합니다:
+Code Intel은 다섯 가지 검색 엔진으로 코드 이해 질문에 답하며, 각 엔진은 서로 다른 질문 형태를 담당합니다. 넷은 서브에이전트 전용이고, 키워드 층은 메인 에이전트가 공유하는 유일한 층입니다:
 
 | 계층 | 답하는 질문 | 도구 | 개방 범위 |
 |------|-------------|------|-----------|
+| **키워드 검색** | 이 리터럴이나 정규식이 어디에 나타나는가——내용인가, 파일 이름인가? | `search_files` | 메인 에이전트 + `researcher` + `librarian` |
 | **Tree-sitter 심볼 인덱스** | 심볼은 어디에 정의되고 누가 호출하는가? | `explore`, `callers`, `callees`, `impact` | `researcher` + `librarian` |
 | **ast-grep** | 어떤 코드가 이 구조 형태를 가지며 어떻게 재작성하는가? | `ast_grep_search`, `ast_grep_rewrite` | 모든 서브에이전트 |
 | **LSP** | 타입 검사기는 이 위치에 대해 무엇을 아는가? | `lsp_goto_definition`, `lsp_find_references`, `lsp_workspace_symbol`, `lsp_call_hierarchy`, `lsp_rename`, `lsp_diagnostics`, `lsp_format`, `lsp_status` | `researcher` + `librarian` |
@@ -51,6 +53,29 @@ child agent assembly (spawn/core.py)
 5. **쓰기는 옵트인이며 포함 관계를 검증합니다.** `ast_grep_rewrite`는 `dry_run=false`가 아니면 미리보기만 하고, `lsp_rename`과 `lsp_format`은 적용 플래그 없이는 미리보기만 합니다. 모든 쓰기 경로는 디스크를 건드리기 전에 경로 탈출과 프로젝트 루트 포함 관계를 다시 검증합니다.
 6. **새 모델 공급자를 도입하지 않습니다.** 시맨틱 검색은 기존 `models/embed_model`과 `models/reranker_model` 래퍼를 재사용하며, 유일한 새 저장소는 SQLite 인덱스입니다.
 7. **루트는 호출마다 해석됩니다.** `SHERRY_CODE_INTEL_ROOT`, `SHERRY_SG_ROOT`, `SHERRY_LSP_ROOT`가 드릴과 테스트를 위해 작업 루트를 덮어씁니다. 설정하지 않으면 프로세스 cwd와 공용 `resolve_project_path` 게이트가 적용됩니다.
+
+## 🔍 제 0 계층: 키워드 검색(ripgrep)
+
+`search_files` 는 가장 저렴한 층이자 메인 에이전트가 가진 유일한 검색 도구입니다: 파일 내용(`target='content'`)이나 파일 이름(`target='files'`)에 대한 정규식 스캔입니다. 내부적으로 두 엔진이 하나의 계약을 공유합니다——ripgrep 을 찾으면 그것을, 아니면 순수 Python 순회를 씁니다——어느 쪽이 돌았는지는 **호출자에게 보이지 않습니다**. 결과 봉투, 페이지 경계, 세 단계 절단 표시는 모두 `agent/tools/file_tools/search_scan.py` 의 `ScanState` 가 만듭니다.
+
+| 속성 | 방식 |
+|---|---|
+| 엔진 | `agent/tools/pub_base/rg_backend.py` 가 `rg --json` 을 줄 단위로 스트림 파싱하며, `--sort=path` 로 페이징을 안정시킵니다 |
+| 폴백 | `agent/tools/file_tools/search_files.py` 의 순회가 세 경우를 맡습니다: `rg` 가 없는 호스트, Rust 엔진이 표현할 수 없는 패턴(룩어라운드, 역참조), rg 하드 실패(`exit >= 2`) |
+| 탐색 순서 | `agent/tools/pub_base/rg_resolver.py`: `SHERRY_RG_PATH` → 인터프리터 자체 디렉터리와 `sys.prefix/bin` → `~/.sherry/runtime/ripgrep/<slug>` → code-intel bin 캐시 → `PATH` → Homebrew, 각 후보는 `--version` 프로브를 통과해야 합니다 |
+| 의존성 | `ripgrep-bin`(wheel 이 linux aarch64/x86_64/riscv64, macOS 양쪽, Windows 양쪽을 커버)——`uv sync` 가 `rg` 를 인터프리터 옆에 두고, 리졸버는 `PATH` 보다 **먼저** 그 디렉터리를 봅니다. `./.venv/bin/python -m server` 로 띄운 서버에는 venv `bin` 이 `PATH` 에 없기 때문입니다 |
+| 상한 | 5.0초 스캔 예산과 10 000건 매치 상한(`TOOLS_TIMEOUTS`), 페이지는 `offset+limit` 한 건 뒤에서 절단, `SKIP_DIR_NAMES` 와 설정된 프룬 디렉터리를 `--glob` 제외로 변환 |
+| 루프 비점유 | 비동기 경로는 스캔을 워커 스레드에서 실행합니다 |
+
+이 저장소 실측: 같은 범위의 같은 내용 검색이 순회로 **16.6 s**, ripgrep 으로 **1.2 s**(`--sort=path` 면 2.0 s)입니다. 중요한 것은 속도가 아니라 예산입니다: 순회는 저장소 전체를 5초 안에 끝내지 못하므로, 존재하지 않는 패턴을 찾으면 `scan_stop_reason: "time_budget"` 을 돌려줍니다——정직하지만 불완전합니다. ripgrep 은 끝냅니다.
+
+구현이 부딪혀 각각 테스트로 고정한 세 가지 함정:
+
+- **glob 은 하나의 argv 로 전달**(`--glob=!**/x/**`). 맨몸으로 넘기면 **검색 패턴**과 경로로 해석되어 rg 가 전체를 스캔하고, 엉뚱한 것에 매치하고 종료 코드 2 를 냅니다——폴백이 그것을 가립니다.
+- **include glob 은 exclude 보다 먼저**. rg 는 겹치는 glob 을 "나중 매치 우선"으로 해결하므로, 제외 뒤에 놓인 include 는 이미 프룬된 디렉터리를 다시 끌어들입니다.
+- **stderr 는 상한이 있는 스레드로 배출**. 우리는 stdout 에서 블록되므로, 자식이 stderr 파이프를 채우면 워치독이 죽일 때까지 멈춥니다.
+
+다른 spawn 지점과 공유하는 유계 정리는 `agent/tools/pub_base/process_reap.py` 에 있습니다: SIGTERM → 대기 → SIGKILL → 대기 → 핸들 포기와 경고——중단 불가 I/O 에 갇힌 자식(또는 손자가 파이프를 쥔 자식)이 타임아웃을 행으로 바꾸면 안 되기 때문입니다.
 
 ## 🌳 제 1 계층: Tree-sitter 심볼 인덱스
 
@@ -140,7 +165,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | `executor` | 없음 | 없음 | 있음 |
 | `reviewer` | 없음 | 없음 | 있음 |
 
-메인 에이전트는 이 표 밖에 전혀 있습니다: 빌더는 `_MAIN_TOOLS_BUILDERS`에 결코 추가되지 않으며, 격리 테스트가 `build_lsp_tools`의 부재를 그 목록과 `agent.tools` 네임스페이스 양쪽에서 주장합니다. `agent/tools/subagent/roles/definitions/librarian/AGENTS.md`의 `librarian` 정의는 의도된 외부 저장소 워크플로——`terminal`로 클론하고, `explore`와 `semantic_code_search`로 인덱싱·검색하고, 영구 링크로 답하기——를 기록합니다. 두 축 역할 모델 자체(깊이 역할 × 기능 역할)는 [서브에이전트 설계 페이지](../subagent/README.ko.md)에, 역할별 도구 목록은 [서브에이전트 시스템 README](../../agent/tools/subagent/README.ko.md)에 있습니다.
+메인 에이전트는 이 표 밖에 전혀 있습니다: 빌더는 `_MAIN_TOOLS_BUILDERS`에 결코 추가되지 않으며, 격리 테스트가 `build_lsp_tools`의 부재를 그 목록과 `agent.tools` 네임스페이스 양쪽에서 주장합니다. `agent/tools/subagent/roles/definitions/librarian/AGENTS.md`의 `librarian` 정의는 의도된 외부 저장소 워크플로——`terminal`로 클론하고, `explore`와 `semantic_code_search`로 인덱싱·검색하고, 영구 링크로 답하기——를 기록합니다. `search_files` 는 그 게이트의 예외입니다: 메인 도구(`_MAIN_TOOLS_BUILDERS` 에 포함)이고 `researcher` / `librarian` 이 허용 목록에서 이름을 올렸으므로, 키워드 검색은 메인 에이전트가 code-intel 역할과 공유하는 유일한 검색 면입니다. 두 축 역할 모델 자체(깊이 역할 × 기능 역할)는 [서브에이전트 설계 페이지](../subagent/README.ko.md)에, 역할별 도구 목록은 [서브에이전트 시스템 README](../../agent/tools/subagent/README.ko.md)에 있습니다.
 
 ## ⚙️ 설정
 
@@ -150,6 +175,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | 모델 `bge-m3`, top-K 5(최대 20), 후보 풀 40, 배치 16, 빌드당 1000 청크, 파일당 60, 청크당 2000자 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 고정 `0.43.0`, 50 일치, 16 KiB 패턴, 30초 실행 타임아웃, 64 경로, 60초 프로비저닝 타임아웃, 5초 버전 프로브 |
 | `LSP` | `config/features/agent_side/lsp.py` | 요청 10초, 시작 15초, 진단 15초, 동시 서버 2, 유휴 종료 300초, 50 결과, 열린 파일 32, 파일당 1 MB, 자동 설치 꺼짐 |
+| `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime 디렉터리, 5초 버전 프로브, 5초 / 5초 회수 유예. 스캔 예산과 매치 상한은 `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`와 `librarian` |
 
 인덱스 데이터베이스 경로는 기본 `CODE_INTEL_DIR / "index.db"`이며, `config/path.py`의 `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`입니다. `SHERRY_CODE_INTEL_ROOT`와 `SHERRY_CODE_INTEL_DB`가 호출 시 루트와 데이터베이스 경로를 덮어쓸 수 있습니다.
@@ -204,6 +230,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | LSP 프로토콜, 리졸버, 설치기, 폴백, 클라이언트, 관리자, 도구 | `tests/agent/tools/code_intel/lsp/test_protocol.py`, `tests/agent/tools/code_intel/lsp/test_resolver.py`, `tests/agent/tools/code_intel/lsp/test_installer.py`, `tests/agent/tools/code_intel/lsp/test_fallback.py`, `tests/agent/tools/code_intel/lsp/test_client.py`, `tests/agent/tools/code_intel/lsp/test_manager.py`, `tests/agent/tools/code_intel/lsp/test_lsp_tools.py`, `tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |
 | LSP 역할 격리와 실제 스모크 | `tests/agent/tools/code_intel/lsp/test_role_isolation.py`, `tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`, `tests/agent/tools/code_intel/lsp/test_lsp_e2e.py` |
 | 시맨틱 청킹, 인덱싱, 검색, 스모크 | `tests/agent/tools/code_intel/semantic/test_chunker.py`, `tests/agent/tools/code_intel/semantic/test_indexer.py`, `tests/agent/tools/code_intel/semantic/test_search.py`, `tests/agent/tools/code_intel/semantic/test_semantic_e2e.py`, `tests/agent/tools/code_intel/semantic/test_semantic_smoke.py` |
+| 키워드 층: ripgrep 과 순회, 탐색 순서, 회수 | `tests/agent/tools/pub_base/test_rg_resolver.py`, `tests/agent/tools/pub_base/test_rg_backend.py`, `tests/agent/tools/pub_base/test_process_reap.py`, `tests/agent/tools/file_tools/test_search_engines.py`, `tests/agent/tools/file_tools/test_search_bounds.py` |
 | 역할 배선과 프롬프트 절 | `tests/agent/tools/subagent/types/test_functional_role.py`, `tests/agent/tools/subagent/roles/test_loader.py`, `tests/agent/tools/subagent/spawn/test_functional_role_integration.py`, `tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 
 ## 🔗 관련 문서

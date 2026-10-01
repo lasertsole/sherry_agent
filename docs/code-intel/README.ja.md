@@ -10,6 +10,7 @@
 
 - [概要](#-概要)
 - [設計不変条件](#-設計不変条件)
+- [第 0 層：キーワード検索（ripgrep）](#-第-0-層キーワード検索ripgrep)
 - [第 1 層：Tree-sitter シンボル索引](#-第-1-層tree-sitter-シンボル索引)
 - [第 2 層：ast-grep 構造検索と書き換え](#-第-2-層ast-grep-構造検索と書き換え)
 - [第 3 層：LSP 精密検索](#-第-3-層lsp-精密検索)
@@ -23,10 +24,11 @@
 
 ## 🎯 概要
 
-Code Intel は 4 つの検索エンジンでサブエージェントのコード理解の問いに答えます。各エンジンは異なる問いの形に対応します：
+Code Intel は 5 つの検索エンジンでコード理解の問いに答えます。各エンジンは異なる問いの形に対応します。うち 4 つはサブエージェント専用で、キーワード層はメインエージェントが共有する唯一の層です：
 
 | 層 | 答える問い | ツール | 開放範囲 |
 |----|------------|--------|----------|
+| **キーワード検索** | このリテラルや正規表現はどこに出るか——内容か、ファイル名か？ | `search_files` | メインエージェント + `researcher` + `librarian` |
 | **Tree-sitter シンボル索引** | シンボルはどこで定義され、誰が呼ぶか？ | `explore`、`callers`、`callees`、`impact` | `researcher` + `librarian` |
 | **ast-grep** | どのコードがこの構造形を持ち、どう書き換えるか？ | `ast_grep_search`、`ast_grep_rewrite` | すべてのサブエージェント |
 | **LSP** | 型チェッカーはこの位置について何を知るか？ | `lsp_goto_definition`、`lsp_find_references`、`lsp_workspace_symbol`、`lsp_call_hierarchy`、`lsp_rename`、`lsp_diagnostics`、`lsp_format`、`lsp_status` | `researcher` + `librarian` |
@@ -51,6 +53,29 @@ child agent assembly (spawn/core.py)
 5. **書き込みはオプトインで、封じ込めを検証します。** `ast_grep_rewrite` は `dry_run=false` でない限りプレビューし、`lsp_rename` と `lsp_format` は適用フラグなしではプレビューだけです。すべての書き込み経路はディスクに触れる前にトラバーサルとプロジェクトルート内包を再検証します。
 6. **新しいモデルプロバイダを導入しません。** セマンティック検索は既存の `models/embed_model` と `models/reranker_model` ラッパーを再利用し、新しいストレージは SQLite 索引だけです。
 7. **ルートは呼び出しごとに解決されます。** `SHERRY_CODE_INTEL_ROOT`、`SHERRY_SG_ROOT`、`SHERRY_LSP_ROOT` がドリルとテスト用に作業ルートを上書きします。未設定時はプロセスの cwd と共有の `resolve_project_path` ゲートが適用されます。
+
+## 🔍 第 0 層：キーワード検索（ripgrep）
+
+`search_files` は最も安価な層であり、メインエージェントが持つ唯一の検索ツールです：ファイル内容（`target='content'`）またはファイル名（`target='files'`）への正規表現スキャンです。内部では 2 つのエンジンが 1 つの契約を共有します——ripgrep を解決できればそれを使い、できなければ純 Python 走査に切り替えます——どちらが動いたかは**呼び出し側から見えません**。結果エンベロープ、ページの切れ目、3 段階の打ち切りマーカーはすべて `agent/tools/file_tools/search_scan.py` の `ScanState` が生成するためです。
+
+| 属性 | 実装 |
+|---|---|
+| エンジン | `agent/tools/pub_base/rg_backend.py` が `rg --json` を行単位でストリーム解析し、`--sort=path` でページングを安定させます |
+| フォールバック | `agent/tools/file_tools/search_files.py` の走査が 3 つの場合を担います：`rg` の無いホスト、Rust エンジンが表現できないパターン（ルックアラウンド、後方参照）、rg のハード失敗（`exit >= 2`） |
+| 探索順 | `agent/tools/pub_base/rg_resolver.py`：`SHERRY_RG_PATH` → インタプリタ自身のディレクトリと `sys.prefix/bin` → `~/.sherry/runtime/ripgrep/<slug>` → code-intel bin キャッシュ → `PATH` → Homebrew。各候補は `--version` プローブを通ります |
+| 依存 | `ripgrep-bin`（wheel は linux aarch64/x86_64/riscv64、macOS 両方、Windows 両方をカバー）——`uv sync` が `rg` をインタプリタの隣に置きます。リゾルバは `PATH` より**先**にそのディレクトリを見ます。`./.venv/bin/python -m server` で起動したサーバーでは venv の `bin` が `PATH` に無いためです |
+| 上限 | 5.0 秒のスキャン予算と 10 000 件のマッチ上限（`TOOLS_TIMEOUTS`）、ページは `offset+limit` の 1 件先で切断、`SKIP_DIR_NAMES` と設定されたプルーン先を `--glob` 除外に変換 |
+| ループを塞がない | 非同期経路はスキャンをワーカースレッドで実行します |
+
+本リポジトリでの実測：同じ範囲の同じ内容検索は走査で **16.6 s**、ripgrep で **1.2 s**（`--sort=path` で 2.0 s）。重要なのは速度ではなく予算です：走査はリポジトリ全体を 5 秒以内に走り切れないため、存在しないパターンの検索は `scan_stop_reason: "time_budget"` を返しました——正直ですが不完全です。ripgrep は走り切ります。
+
+実装で突き当たり、それぞれテストで固定した 3 つの罠：
+
+- **glob は 1 つの argv として渡す**（`--glob=!**/x/**`）。裸で渡すと**検索パターン**とパスとして解釈され、rg は全体を走査し、誤ったものに一致して終了コード 2 を返します——フォールバックがそれを隠します。
+- **include glob は exclude より前**。rg は重複する glob を「後勝ち」で解決するため、除外の後に置いた include は剪定済みディレクトリを再び取り込みます。
+- **stderr は上限付きのスレッドで排出する**。こちらは stdout でブロックしているため、子プロセスが stderr パイプを埋めるとウォッチドッグに殺されるまで止まります。
+
+他の spawn 箇所と共有する有界の後始末は `agent/tools/pub_base/process_reap.py` にあります：SIGTERM → 待機 → SIGKILL → 待機 → ハンドルを放棄して警告——割り込み不能 I/O で固まった子（あるいは孫がパイプを握っている子）がタイムアウトをハングに変えてはならないからです。
 
 ## 🌳 第 1 層：Tree-sitter シンボル索引
 
@@ -140,7 +165,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | `executor` | なし | なし | あり |
 | `reviewer` | なし | なし | あり |
 
-メインエージェントはこの表の外にあります：ビルダーは `_MAIN_TOOLS_BUILDERS` に決して追加されず、分離テストが `build_lsp_tools` の不在をそのリストと `agent.tools` 名前空間の両方で主張します。`agent/tools/subagent/roles/definitions/librarian/AGENTS.md` の `librarian` 定義は想定される外部リポジトリのワークフロー——`terminal` でクローンし、`explore` と `semantic_code_search` で索引化・検索し、パーマリンクで答える——を記録しています。二軸ロールモデル自体（深さロール × 機能ロール）は[サブエージェント設計ページ](../subagent/README.ja.md)に、ロール別のツール一覧は[サブエージェントシステム README](../../agent/tools/subagent/README.ja.md)にあります。
+メインエージェントはこの表の外にあります：ビルダーは `_MAIN_TOOLS_BUILDERS` に決して追加されず、分離テストが `build_lsp_tools` の不在をそのリストと `agent.tools` 名前空間の両方で主張します。`agent/tools/subagent/roles/definitions/librarian/AGENTS.md` の `librarian` 定義は想定される外部リポジトリのワークフロー——`terminal` でクローンし、`explore` と `semantic_code_search` で索引化・検索し、パーマリンクで答える——を記録しています。`search_files` はそのゲートの例外です：メインのツール（`_MAIN_TOOLS_BUILDERS` に含まれます）であり、`researcher` / `librarian` が許可リストで名指ししているため、キーワード検索はメインエージェントが code-intel の役割と共有する唯一の検索面です。二軸ロールモデル自体（深さロール × 機能ロール）は[サブエージェント設計ページ](../subagent/README.ja.md)に、ロール別のツール一覧は[サブエージェントシステム README](../../agent/tools/subagent/README.ja.md)にあります。
 
 ## ⚙️ 設定
 
@@ -150,6 +175,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | `CODE_INTEL_SEMANTIC` | `config/features/agent_side/code_intel_semantic.py` | モデル `bge-m3`、top-K 5（最大 20）、候補プール 40、バッチ 16、1 構築 1000 チャンク、1 ファイル 60、1 チャンク 2000 文字 |
 | `AST_GREP` | `config/features/agent_side/ast_grep.py` | 固定 `0.43.0`、50 一致、16 KiB パターン、30 秒実行タイムアウト、64 パス、60 秒プロビジョニングタイムアウト、5 秒バージョンプローブ |
 | `LSP` | `config/features/agent_side/lsp.py` | 要求 10 秒、起動 15 秒、診断 15 秒、同時サーバー 2、アイドル停止 300 秒、50 結果、開くファイル 32、1 ファイル 1 MB、自動インストール無効 |
+| `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime ディレクトリ、5 s のバージョンプローブ、5 s / 5 s の回収猶予。スキャン予算とマッチ上限は `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` と `librarian` |
 
 索引データベースのパスは既定で `CODE_INTEL_DIR / "index.db"`、`config/path.py` の `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"` です。`SHERRY_CODE_INTEL_ROOT` と `SHERRY_CODE_INTEL_DB` は呼び出し時にルートとデータベースパスを上書きできます。
@@ -204,6 +230,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | LSP のプロトコル、リゾルバ、インストーラ、フォールバック、クライアント、マネージャ、ツール | `tests/agent/tools/code_intel/lsp/test_protocol.py`、`tests/agent/tools/code_intel/lsp/test_resolver.py`、`tests/agent/tools/code_intel/lsp/test_installer.py`、`tests/agent/tools/code_intel/lsp/test_fallback.py`、`tests/agent/tools/code_intel/lsp/test_client.py`、`tests/agent/tools/code_intel/lsp/test_manager.py`、`tests/agent/tools/code_intel/lsp/test_lsp_tools.py`、`tests/agent/tools/code_intel/lsp/test_lsp_extended.py` |
 | LSP ロール分離と実スモーク | `tests/agent/tools/code_intel/lsp/test_role_isolation.py`、`tests/agent/tools/code_intel/lsp/test_lsp_smoke.py`、`tests/agent/tools/code_intel/lsp/test_lsp_e2e.py` |
 | セマンティックのチャンク、索引、検索、スモーク | `tests/agent/tools/code_intel/semantic/test_chunker.py`、`tests/agent/tools/code_intel/semantic/test_indexer.py`、`tests/agent/tools/code_intel/semantic/test_search.py`、`tests/agent/tools/code_intel/semantic/test_semantic_e2e.py`、`tests/agent/tools/code_intel/semantic/test_semantic_smoke.py` |
+| キーワード層：ripgrep と走査、探索順、回収 | `tests/agent/tools/pub_base/test_rg_resolver.py`、`tests/agent/tools/pub_base/test_rg_backend.py`、`tests/agent/tools/pub_base/test_process_reap.py`、`tests/agent/tools/file_tools/test_search_engines.py`、`tests/agent/tools/file_tools/test_search_bounds.py` |
 | ロール配線とプロンプト節 | `tests/agent/tools/subagent/types/test_functional_role.py`、`tests/agent/tools/subagent/roles/test_loader.py`、`tests/agent/tools/subagent/spawn/test_functional_role_integration.py`、`tests/agent/tools/subagent/spawn/test_system_prompt_role.py` |
 
 ## 🔗 関連ドキュメント
