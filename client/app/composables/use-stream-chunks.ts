@@ -43,16 +43,38 @@ export function useStreamChunks(
   drafts: Pick<DraftPersistence, 'scheduleDraftWrite' | 'commitDraftTurn' | 'isDraftTurnActive'>
 ) {
   /**
-   * The tail of `chatMessages` when it is an AI message of the given turn, otherwise `undefined`.
+   * Index of the LAST row belonging to `turnNum`, or `-1` when the turn has none.
+   *
+   * A turn's rows are not always at the array tail: a send issued while the
+   * session is busy appends its optimistic bubbles immediately (they appear in
+   * the queue), so a LATER turn's rows can sit after this turn's own. Every
+   * streamed write must therefore resolve its target BY TURN — a "the tail is
+   * my row" check silently misfires and scatters one turn's rows (live-verified:
+   * text and token meta ended up on different rows of the same turn).
    * @param turnNum
    */
-  const tailSameTurnAi = (turnNum: number): MessageItem | undefined => {
-    const last = chatMessages.value[chatMessages.value.length - 1];
-    return last && last.role === CHAT_ROLE.AI && last.turn_num === turnNum ? last : undefined;
+  const lastSameTurnIdx = (turnNum: number): number => {
+    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+      if (chatMessages.value[i]?.turn_num === turnNum) return i;
+    }
+    return -1;
   };
 
   /**
-   * Create a new AI message of the given turn and append it to `chatMessages`.
+   * The turn's trailing AI row — the row that receives this turn's streamed
+   * content (text / reasoning), or `undefined` when a new one must be created.
+   * @param turnNum
+   */
+  const sameTurnTailAi = (turnNum: number): MessageItem | undefined => {
+    const idx = lastSameTurnIdx(turnNum);
+    const row = idx >= 0 ? chatMessages.value[idx] : undefined;
+    return row && row.role === CHAT_ROLE.AI ? row : undefined;
+  };
+
+  /**
+   * Create a new AI message of the given turn and place it right after that
+   * turn's last row (appending at the array end would separate it from its own
+   * turn when a later turn's bubbles already sit there).
    * @param sid
    * @param turnNum
    */
@@ -66,7 +88,9 @@ export function useStreamChunks(
       turn_num: turnNum,
       timestamp: new Date().toISOString()
     };
-    chatMessages.value.push(msg);
+    const idx = lastSameTurnIdx(turnNum);
+    if (idx >= 0) chatMessages.value.splice(idx + 1, 0, msg);
+    else chatMessages.value.push(msg);
     return msg;
   };
 
@@ -93,7 +117,7 @@ export function useStreamChunks(
    */
   const CHUNK_HANDLERS: Record<AgentChunkType, (ctx: ChunkHandlerContext) => void> = {
     text: ({ sid, content, turnNum, isActiveDraft }) => {
-      const tail = tailSameTurnAi(turnNum);
+      const tail = sameTurnTailAi(turnNum);
       if (tail) {
         // Tail of same turn is AI → append the body
         tail.content += content;
@@ -107,7 +131,7 @@ export function useStreamChunks(
       // Model thinking block: appended chunk by chunk into the `reasoning` field of the same-turn tail AI message,
       // without interfering with body text accumulation.
       // When the tail is TOOL / not this turn, create a new AI placeholder message to carry it (the body may arrive later).
-      const target = tailSameTurnAi(turnNum) ?? pushAiMessage(sid, turnNum);
+      const target = sameTurnTailAi(turnNum) ?? pushAiMessage(sid, turnNum);
       target.reasoning = (target.reasoning ?? '') + content;
       // Thinking blocks are discrete stages; debouncing seems intuitive, but thinking content must be persisted in real time
       // with the stream to support refresh recovery, so it simply shares the text-append debounce path

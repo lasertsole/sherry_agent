@@ -3,7 +3,7 @@
  * the unified bridge), stopping a generation, WS reconnect banner + queue
  * badge state and the post-interrupt delayed reconciliation.
  */
-import { computed, onUnmounted, ref, toRaw } from 'vue';
+import { computed, onUnmounted, ref } from 'vue';
 import type { Ref } from 'vue';
 import type { Composer } from 'vue-i18n';
 import { CHAT_ROLE } from '@/types/chat-role';
@@ -157,8 +157,6 @@ export function useChatStream(deps: ChatStreamDeps) {
 
   /** Locally-registered sends, keyed by protocol `msg_id` (for `turn_started` routing). */
   const sendByMsgId = new Map<string, SendEntry>();
-  /** Earlier member turns of a batch, keyed by the batch's trailing turn. */
-  const batchMembers = new Map<number, number[]>();
   /** Most recently sent `msg_id` (fallback for `queued` frames without an id). */
   let lastSendMsgId: string | null = null;
 
@@ -300,16 +298,14 @@ export function useChatStream(deps: ChatStreamDeps) {
   };
 
   /**
-   * `turn_started` handler: a generation turn (idle single-send OR a batch of queued
-   * sends) began.
+   * `turn_started` handler: a generation turn began. The drain runs queued
+   * messages ONE per turn, so the frame carries a single member in practice.
    *
-   * Consolidation: the backend persists a batch as ONE turn (the next turn after the
-   * running turn), so every member is unified onto the EARLIEST member's turn — the
-   * server's batch turn. The batch renders as N user bubbles + exactly ONE trailing
-   * AI reply: the earlier members' EMPTY AI placeholders are removed, the trailing
-   * member's bubble receives the whole reply, and every member queue badge is cleared.
-   * Unifying the turn numbers keeps the live view identical to the canonical history
-   * (a reload no longer changes anything).
+   * Each member keeps its OWN turn number (assigned at send time as the next
+   * turn after the running one, which the sequential drain preserves) — nothing
+   * is merged onto another member's turn. Consolidating a multi-member frame
+   * onto one turn was the batch-era contract; rewriting the numbers now would
+   * desynchronise the per-turn row lookup the stream relies on.
    * @param info
    */
   const handleTurnStarted = (info: TurnStartedInfo) => {
@@ -320,38 +316,19 @@ export function useChatStream(deps: ChatStreamDeps) {
       .sort((a, b) => a.turnNum - b.turnNum);
     if (members.length === 0) return;
 
-    const unifiedTurn = members[0]!.turnNum;
-    const replyTarget = members[members.length - 1]!;
-    for (const member of members) {
-      // Collapse the earlier sends' draft turns into the unified turn so the done
-      // handler commits the batch exactly once.
-      if (member.turnNum !== unifiedTurn) drafts.untrackDraftTurn(mySid, member.turnNum);
-      member.turnNum = unifiedTurn;
-      member.userMsg.turn_num = unifiedTurn;
-      member.aiMsg.turn_num = unifiedTurn;
-      // Drop the non-trailing EMPTY AI placeholders; the trailing one receives the
-      // whole reply (it already sits after every member user bubble).
-      if (member !== replyTarget && !member.aiMsg.content && !(member.aiMsg.reasoning ?? '')) {
-        // `chatMessages.value` elements are Vue proxies while `member.aiMsg` is the
-        // raw object, so compare through `toRaw` (a plain `!==` never matched and
-        // left the earlier placeholders in place).
-        chatMessages.value = chatMessages.value.filter(row => toRaw(row) !== member.aiMsg);
-      }
-    }
     clearQueueBadgesFor(info.messageIds);
-    streamingTurn.value = unifiedTurn;
+    // The turn now receiving frames is the LAST member's (the drain started it).
+    streamingTurn.value = members[members.length - 1]!.turnNum;
     chatMessages.value = [...chatMessages.value];
   };
 
   /**
-   * Drop the send registry entries of a finished turn (and its batch members).
+   * Drop the send registry entries of a finished turn.
    * @param turnNum
-   * @param memberTurns
    */
-  const dropSendEntries = (turnNum: number, memberTurns: number[]) => {
-    const turns = new Set<number>([turnNum, ...memberTurns]);
+  const dropSendEntries = (turnNum: number) => {
     for (const [msgId, entry] of sendByMsgId) {
-      if (turns.has(entry.turnNum)) sendByMsgId.delete(msgId);
+      if (entry.turnNum === turnNum) sendByMsgId.delete(msgId);
     }
   };
 
@@ -363,12 +340,28 @@ export function useChatStream(deps: ChatStreamDeps) {
    * @param meta.inputTokens
    * @param meta.outputTokens
    */
+  /**
+   * The AI row that actually received this turn's streamed content: its LAST AI
+   * row. The FIRST row of a turn can be an optimistic placeholder… matching it
+   * would stamp the tokens onto a row the reply is not displayed in (live-verified
+   * defect: the reply and its token meta ended up on two different rows once a
+   * later turn's queued bubbles sat between them).
+   * @param turnNum
+   */
+  const turnTailAi = (turnNum: number): MessageItem | undefined => {
+    for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+      const row = chatMessages.value[i];
+      if (row && row.role === CHAT_ROLE.AI && row.turn_num === turnNum) return row;
+    }
+    return undefined;
+  };
+
   const attachDoneMeta = (
     turnNum: number,
     meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }
   ) => {
     if (!meta) return;
-    const ai = chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turnNum);
+    const ai = turnTailAi(turnNum);
     if (ai) {
       if (meta.modelName !== undefined) ai.modelName = meta.modelName;
       if (meta.inputTokens !== undefined) ai.inputTokens = meta.inputTokens;
@@ -401,12 +394,9 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
     attachDoneMeta(turn, meta);
     clearQueueBadgeForTurn(turn);
-    const members = batchMembers.get(turn) ?? [];
-    batchMembers.delete(turn);
     void drafts.commitDraftTurn(mySid, turn).then(() => {
       drafts.untrackDraftTurn(mySid, turn);
-      for (const memberTurn of members) drafts.untrackDraftTurn(mySid, memberTurn);
-      dropSendEntries(turn, members);
+      dropSendEntries(turn);
       activeAgentController.value = null;
       isSending.value = false;
       streamingTurn.value = null;
@@ -423,8 +413,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     const turn = streamingTurn.value;
     activeAgentController.value = null;
     clearQueueBadgeForTurn(turn);
-    const aiMsg =
-      turn === null ? undefined : chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turn);
+    const aiMsg = turn === null ? undefined : turnTailAi(turn);
     const isResume = hitl.isResumeTurn(turn);
     if (err instanceof StreamInterruptedError) {
       // Network stream loss (final failure after the reconnect budget is exhausted): content may have partially rendered,
@@ -450,8 +439,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     // Persist a draft snapshot that includes the failed state
     if (turn !== null) {
       void drafts.writeDraftTurn(mySid, turn);
-      dropSendEntries(turn, batchMembers.get(turn) ?? []);
-      batchMembers.delete(turn);
+      dropSendEntries(turn);
     }
     if (isResume) hitl.onTurnError();
     isSending.value = false;
