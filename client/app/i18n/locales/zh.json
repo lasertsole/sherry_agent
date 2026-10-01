@@ -93,7 +93,9 @@
       "absoluteRequired": "请输入绝对路径（服务端会拒绝相对路径）"
     },
     "projectFiles": "项目文件",
-    "sessionList": "会话列表"
+    "sessionList": "会话列表",
+    "projectFilesHint": "项目文件",
+    "projectFilesHintDetail": "提示：可折叠左侧栏，给文件树和对话区让出更多空间。"
   },
   "todolist": {
     "progress": "已完成 {done}/{total}",

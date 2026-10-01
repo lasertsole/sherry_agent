@@ -93,7 +93,9 @@
       "absoluteRequired": "절대 경로를 입력하세요 (상대 경로는 서버가 거부합니다)"
     },
     "projectFiles": "프로젝트 파일",
-    "sessionList": "세션 목록"
+    "sessionList": "세션 목록",
+    "projectFilesHint": "프로젝트 파일",
+    "projectFilesHintDetail": "팁: 왼쪽 사이드바를 접으면 파일 트리와 채팅 공간이 넓어집니다."
   },
   "todolist": {
     "progress": "{done}/{total} 완료",

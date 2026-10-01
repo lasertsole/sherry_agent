@@ -93,7 +93,9 @@
       "absoluteRequired": "Enter an absolute path (the server rejects relative ones)"
     },
     "projectFiles": "Project files",
-    "sessionList": "Sessions"
+    "sessionList": "Sessions",
+    "projectFilesHint": "Project files",
+    "projectFilesHintDetail": "Tip: collapse the left sidebar to give the file tree and the chat more room."
   },
   "todolist": {
     "progress": "{done}/{total} done",

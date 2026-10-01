@@ -93,7 +93,9 @@
       "absoluteRequired": "絶対パスを入力してください（相対パスはサーバーが拒否します）"
     },
     "projectFiles": "プロジェクトファイル",
-    "sessionList": "セッション一覧"
+    "sessionList": "セッション一覧",
+    "projectFilesHint": "プロジェクトファイル",
+    "projectFilesHintDetail": "ヒント：左サイドバーを折りたたむと、ファイルツリーとチャットに余裕ができます。"
   },
   "todolist": {
     "progress": "{done}/{total} 完了",

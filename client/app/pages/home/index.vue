@@ -53,7 +53,7 @@
                 ? 'bg-theme-main/10 text-theme-main'
                 : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
             "
-            @click="uiStore.toggleSidebarBody()" />
+            @click="toggleSidebarBodyWithHint" />
         </div>
         <!-- Right: original function button area (the theme switch and the language
              picker are the first to go when the column gets narrow) -->
@@ -322,6 +322,28 @@ const notificationUnread = ref(0);
 const uiStore = useUiStore();
 /** Whether the sidebar body shows the project file tree. */
 const showFiles = computed(() => uiStore.sidebarBody === 'files');
+
+/** One-time flag: the narrow-screen hint below is shown once per browser. */
+const SIDEBAR_FILES_HINT_KEY = 'sherry.sidebarFilesHintShown';
+
+/**
+ * Switch the left sidebar's body, hinting once that the sidebar can collapse.
+ *
+ * Entering files mode usually means opening a file next to it, and at 1280px the
+ * fixed chrome (left 280 + right 420) squeezes the chat column hard — the plan's
+ * fixed-chrome measurement. The hint costs one toast and is remembered locally.
+ */
+const toggleSidebarBodyWithHint = (): void => {
+  uiStore.toggleSidebarBody();
+  if (uiStore.sidebarBody !== 'files') return;
+  try {
+    if (window.localStorage.getItem(SIDEBAR_FILES_HINT_KEY)) return;
+    window.localStorage.setItem(SIDEBAR_FILES_HINT_KEY, '1');
+  } catch {
+    // Private mode / storage disabled: show it, the cost is one toast per click.
+  }
+  toastInfo(t('toolbar.projectFilesHint'), t('toolbar.projectFilesHintDetail'), 6000);
+};
 /** Whether the settings menu (nine-grid) is open (transient, not persisted) */
 const { settingsMenuOpen: isSettingsMenuOpen } = storeToRefs(uiStore);
 
