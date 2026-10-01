@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage
 from agent.middlewares.media_pipeline import core as mm_mod
 from agent.middlewares.media_pipeline import media_handlers
 from pub.func.validator import public_url as guard_mod
+from pub.func.validator.safe_fetch import FetchResult
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
 
@@ -54,27 +55,27 @@ def _media_files(src_dir) -> list[str]:
     return sorted(path.name for path in media_dir.iterdir()) if media_dir.exists() else []
 
 
-class _FakeResponse:
-    def __init__(self, body: bytes) -> None:
-        self._body = body
-        self.headers: dict[str, str] = {}
+def _patch_transport(monkeypatch, *, body: bytes = b"RIFF", calls: list | None = None):
+    """Stub the media transport (``safe_fetch``) and record what reached it.
 
-    def __enter__(self) -> _FakeResponse:
-        return self
+    The handler now downloads through ``safe_fetch`` — DNS pinning, per-hop
+    redirect checks and the size cap live there — so the seam these tests fake
+    is that function, not ``urlopen``.
+    """
 
-    def __exit__(self, *exc: object) -> bool:
-        return False
+    def fake_fetch(url, **kwargs):
+        if calls is not None:
+            calls.append((url, kwargs))
+            return FetchResult(ok=False, reason="network", final_url=url)
+        return FetchResult(ok=True, body=body, observed_bytes=len(body), final_url=url)
 
-    def read(self, n: int = -1) -> bytes:
-        return self._body if n is None or n < 0 else self._body[:n]
+    monkeypatch.setattr(media_handlers, "safe_fetch", fake_fetch)
 
 
 def test_audio_url_to_cloud_metadata_is_refused_before_any_request(processor, src_dir, monkeypatch):
     _patch_dns(monkeypatch, "169.254.169.254")
     calls: list = []
-    monkeypatch.setattr(
-        media_handlers.urllib.request, "urlopen", lambda *args, **kwargs: calls.append(args)
-    )
+    _patch_transport(monkeypatch, calls=calls)
     mes = HumanMessage(
         content=[
             {"type": "text", "text": "听音频"},
@@ -126,9 +127,7 @@ def test_image_url_to_loopback_is_refused(processor, src_dir, monkeypatch):
 
 def test_public_audio_url_reaches_the_transport(processor, src_dir, monkeypatch):
     _patch_dns(monkeypatch, "93.184.216.34")
-    monkeypatch.setattr(
-        media_handlers.urllib.request, "urlopen", lambda *args, **kwargs: _FakeResponse(b"RIFF")
-    )
+    _patch_transport(monkeypatch)
     mes = HumanMessage(
         content=[
             {"type": "text", "text": "听音频"},
@@ -161,9 +160,7 @@ def test_public_image_url_still_passes_through(processor, src_dir, monkeypatch):
 def test_escape_hatch_allows_a_loopback_media_server(processor, src_dir, monkeypatch):
     _patch_dns(monkeypatch, "127.0.0.1")
     monkeypatch.setenv("SHERRY_ALLOW_PRIVATE_MEDIA_URLS", "1")
-    monkeypatch.setattr(
-        media_handlers.urllib.request, "urlopen", lambda *args, **kwargs: _FakeResponse(b"RIFF")
-    )
+    _patch_transport(monkeypatch)
     mes = HumanMessage(
         content=[
             {"type": "text", "text": "听音频"},

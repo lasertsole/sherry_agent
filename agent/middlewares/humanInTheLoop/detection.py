@@ -58,6 +58,40 @@ DANGEROUS_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bDELETE\s+FROM\b", re.IGNORECASE), "sql_delete_no_where"),
     (re.compile(r"\bALTER\s+TABLE\b", re.IGNORECASE), "sql_alter"),
     (re.compile(r"\bcurl\s+.*\|\s*(ba)?sh\b", re.IGNORECASE), "curl_pipe_sh"),
+    # SSRF by hand: the network guard cannot see inside a shell command, so the
+    # cloud metadata endpoints (a credential read that the model would then
+    # summarize back) need a pattern here. Approval, not a block — a legitimate
+    # diagnostics session may talk to a local metadata stub.
+    (
+        re.compile(
+            # ``[^\n]`` rather than ``[^|;]``: a metadata read can hide behind a
+            # separator inside a `-c` payload (`import x; urlopen(...)`), and this
+            # rule asks for approval rather than parsing the command.
+            r"\b(curl|wget|python|python3)\b[^\n]{0,200}"
+            r"(169\.254\.169\.254|metadata\.google\.internal|metadata\.azure\.com"
+            r"|100\.100\.100\.200|fd00:ec2::254)",
+            re.IGNORECASE,
+        ),
+        "cloud_metadata_ssrf",
+    ),
+    # Written (not read) requests to loopback: the shape that turns a local
+    # service into a confused deputy. Plain `curl http://127.0.0.1/health` stays
+    # ungated, because asking for approval on every local probe would train the
+    # operator to click through.
+    (
+        re.compile(
+            r"\b(curl|wget)\b[^|;]*(?:"
+            r"(?:-X\s*POST|-d\b|--data\b|--data-raw\b|--data-binary\b|--post-data\b"
+            r"|-F\b|--form\b)[^|;]*"
+            r"(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)"
+            r"|(?:localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)[^|;]*"
+            r"(?:-X\s*POST|-d\b|--data\b|--data-raw\b|--data-binary\b|--post-data\b"
+            r"|-F\b|--form\b)"
+            r")",
+            re.IGNORECASE,
+        ),
+        "loopback_write_ssrf",
+    ),
     (re.compile(r"\bwget\s+.*\|\s*(ba)?sh\b", re.IGNORECASE), "wget_pipe_sh"),
     (re.compile(r"\b(?:npm|npx|yarn)\s+publish\b", re.IGNORECASE), "npm_publish"),
     (re.compile(r"\b(?:pip|pip3|python\s+-m\s+pip)\s+install\s+", re.IGNORECASE), "pip_install"),

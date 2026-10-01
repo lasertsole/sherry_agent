@@ -14,6 +14,7 @@ from langchain_core.messages import HumanMessage
 
 from agent.middlewares.media_pipeline import core as mm_mod
 from agent.middlewares.media_pipeline import media_handlers
+from pub.func.validator.safe_fetch import FetchResult
 from config.features import MEDIA_PIPELINE
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -64,27 +65,31 @@ def _media_files(src_dir) -> list[str]:
     return sorted(path.name for path in media_dir.iterdir())
 
 
-class _FakeResponse:
-    def __init__(self, body: bytes, content_length: str | None = None) -> None:
-        self._body = body
-        self.headers = {} if content_length is None else {"Content-Length": content_length}
-        self.read_calls = 0
+def _patch_transport(monkeypatch, result: "FetchResult", calls: list | None = None) -> None:
+    """Stub the media transport (``safe_fetch``) with a canned outcome.
 
-    def __enter__(self) -> "_FakeResponse":
-        return self
+    The handler reads the body through ``safe_fetch`` now — the size cap is
+    enforced inside it — so the fixtures below build a ``FetchResult`` instead
+    of a urllib response object. ``calls`` records the arguments for the cases
+    that assert the cap was delegated.
+    """
 
-    def __exit__(self, *exc: object) -> bool:
-        return False
+    def fake_fetch(url, **kwargs):
+        if calls is not None:
+            calls.append(kwargs)
+        return result
 
-    def read(self, n: int = -1) -> bytes:
-        self.read_calls += 1
-        if n is not None and n >= 0:
-            return self._body[:n]
-        return self._body
+    monkeypatch.setattr(media_handlers, "safe_fetch", fake_fetch)
 
 
-def _patch_urlopen(monkeypatch, response: _FakeResponse) -> None:
-    monkeypatch.setattr(media_handlers.urllib.request, "urlopen", lambda *args, **kwargs: response)
+def _oversize(*, declared: int | None = None, observed: int = 0) -> "FetchResult":
+    return FetchResult(
+        ok=False,
+        reason="oversize",
+        declared_length=declared,
+        observed_bytes=observed,
+        final_url="https://example.com/a.wav",
+    )
 
 
 class TestOversizeLocalPayloads:
@@ -139,8 +144,8 @@ class TestOversizeRemoteUrls:
     def test_declared_content_length_over_limit_skips_before_reading(
         self, processor, src_dir, monkeypatch
     ):
-        response = _FakeResponse(b"", content_length="100")
-        _patch_urlopen(monkeypatch, response)
+        calls: list[dict] = []
+        _patch_transport(monkeypatch, _oversize(declared=100), calls)
         mes = HumanMessage(
             content=[
                 {"type": "text", "text": "听音频"},
@@ -150,14 +155,17 @@ class TestOversizeRemoteUrls:
 
         processor._before_agent_impl(_state([mes]))
 
-        assert response.read_calls == 0
+        # The size cap travels into the transport (enforced there, on both the
+        # declared length and the streamed read) instead of being re-implemented
+        # here; the declared notice below is what the caller sees.
+        assert calls and calls[0]["max_bytes"] > 0
         assert [item["type"] for item in mes.content] == ["text"]
         assert "100 bytes" in mes.content[0]["text"]
         assert "audios" not in mes.additional_kwargs
         assert _media_files(src_dir) == []
 
     def test_capped_read_over_limit_is_skipped(self, processor, src_dir, monkeypatch):
-        _patch_urlopen(monkeypatch, _FakeResponse(b"12345678"))
+        _patch_transport(monkeypatch, _oversize(observed=8))
         mes = HumanMessage(
             content=[
                 {"type": "text", "text": "看视频"},
@@ -173,7 +181,10 @@ class TestOversizeRemoteUrls:
         assert _media_files(src_dir) == []
 
     def test_empty_remote_body_follows_existing_failure_path(self, processor, src_dir, monkeypatch):
-        _patch_urlopen(monkeypatch, _FakeResponse(b""))
+        _patch_transport(
+            monkeypatch,
+            FetchResult(ok=True, body=b"", observed_bytes=0, final_url="https://example.com/a.wav"),
+        )
         mes = HumanMessage(
             content=[
                 {"type": "text", "text": "听音频"},

@@ -10,7 +10,6 @@ import abc
 import io
 import time
 import base64
-import urllib.request
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -21,6 +20,7 @@ from loguru import logger
 from config.features import MEDIA_PIPELINE
 from pub.func import is_url
 from pub.func.validator import is_public_url
+from pub.func.validator.safe_fetch import safe_fetch
 
 # Magic byte signatures → file extension
 # Ordered by specificity (more bytes = earlier check)
@@ -153,21 +153,26 @@ def _download_url_to_temp(
         return None
 
     limit = _max_media_bytes()
-    try:
-        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (EMA_AI_agent)"})
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            declared = _declared_content_length(resp)
-            if declared is not None and declared > limit:
-                _record_oversize(paths, kind, declared)
-                return None
-            data = resp.read(limit + 1)
-        if len(data) > limit:
-            _record_oversize(paths, kind, len(data))
-            return None
-        if not data:
-            logger.error(f"Media download returned empty body: {url}")
-            return None
+    fetched = safe_fetch(url, timeout=30, max_bytes=limit)
+    if not fetched.ok:
+        if fetched.reason == "oversize":
+            _record_oversize(paths, kind, fetched.declared_length or fetched.observed_bytes)
+        else:
+            # A refusal that is not about size (SSRF re-check on a redirect hop,
+            # a dead host, a redirect loop) gets its own notice so the caller can
+            # tell "too big" from "would not go there".
+            paths.skipped.append(
+                f"[Uploaded media] A remote {kind} URL was skipped: the download "
+                f"was refused ({fetched.reason}). It was not sent to the model."
+            )
+        return None
 
+    data = fetched.body or b""
+    if not data:
+        logger.error(f"Media download returned empty body: {url}")
+        return None
+
+    try:
         ext = _infer_extension(data, kind)
         timestamp = str(int(time.time() * 1000))
 
