@@ -36,6 +36,10 @@ def virtual_root(tmp_path, monkeypatch):
     """Point ROOT_DIR at tmp_path; fail external fallback closed as a subagent."""
     root = tmp_path.resolve()
     monkeypatch.setattr(path_utils, "ROOT_DIR", root)
+    # Tools resolve against the SESSION root, which falls back to the process
+    # default (env -> sherry.jsonc -> repo root). Point that default at the
+    # fixture tree too, so an unbound session behaves exactly like before.
+    monkeypatch.setenv("SHERRY_PROJECT_DIR", str(root))
 
     from runtime import state_register_mem
     import runtime
@@ -107,15 +111,15 @@ class TestToctouRace:
 
         import agent.tools.file_tools.read_file as read_file_module
 
-        real_resolve = read_file_module.resolve_project_path
+        real_resolve = read_file_module.resolve_workspace_path
 
-        def racing_resolve(file_path):
-            resolved = real_resolve(file_path)
+        def racing_resolve(file_path, root):
+            resolved = real_resolve(file_path, root)
             victim.unlink()
             _link(victim, secret)
             return resolved
 
-        monkeypatch.setattr(read_file_module, "resolve_project_path", racing_resolve)
+        monkeypatch.setattr(read_file_module, "resolve_workspace_path", racing_resolve)
 
         result = json.loads(build_read_file_tool()._core("victim.txt", session_id=SESSION))
 
@@ -130,15 +134,15 @@ class TestToctouRace:
 
         import agent.tools.file_tools.write_file as write_file_module
 
-        real_resolve = write_file_module.resolve_project_path
+        real_resolve = write_file_module.resolve_workspace_path
 
-        def racing_resolve(file_path):
-            resolved = real_resolve(file_path)
+        def racing_resolve(file_path, root):
+            resolved = real_resolve(file_path, root)
             victim.unlink()
             _link(victim, secret)
             return resolved
 
-        monkeypatch.setattr(write_file_module, "resolve_project_path", racing_resolve)
+        monkeypatch.setattr(write_file_module, "resolve_workspace_path", racing_resolve)
 
         out = build_write_file_tool()._core("victim.txt", "pwned", session_id=SESSION)
 

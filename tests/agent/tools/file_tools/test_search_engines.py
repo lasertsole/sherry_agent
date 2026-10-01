@@ -50,6 +50,10 @@ def virtual_root(tmp_path, monkeypatch):
     hidden.mkdir()
     (hidden / "secret.txt").write_text("needle\n", encoding="utf-8")
     monkeypatch.setattr(path_utils, "ROOT_DIR", root)
+    # Tools resolve against the SESSION root, which falls back to the process
+    # default (env -> sherry.jsonc -> repo root). Point that default at the
+    # fixture tree too, so an unbound session behaves exactly like before.
+    monkeypatch.setenv("SHERRY_PROJECT_DIR", str(root))
     return root
 
 

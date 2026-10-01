@@ -21,7 +21,7 @@ def ledger_path(tmp_path, monkeypatch):
 
 def test_write_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
     target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_project_path", lambda _path: target)
+    monkeypatch.setattr(write_file, "resolve_workspace_path", lambda _path, _root: target)
     EvidenceLedger.for_session("s1").append(kind="test", command="pytest foo.py")
     tool = write_file.build_write_file_tool()
 
@@ -36,7 +36,7 @@ def test_write_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
 
 def test_write_file_stale_event_derives_prior_evidence(ledger_path, tmp_path, monkeypatch):
     target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_project_path", lambda _path: target)
+    monkeypatch.setattr(write_file, "resolve_workspace_path", lambda _path, _root: target)
     EvidenceLedger.for_session("s1").append(kind="test", command="pytest foo.py")
     tool = write_file.build_write_file_tool()
 
@@ -51,7 +51,7 @@ def test_write_file_stale_event_derives_prior_evidence(ledger_path, tmp_path, mo
 def test_patch_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
     target = tmp_path / "bar.py"
     target.write_text("value = 1\n", encoding="utf-8")
-    monkeypatch.setattr(patch_file, "resolve_project_path", lambda _path: target)
+    monkeypatch.setattr(patch_file, "resolve_workspace_path", lambda _path, _root: target)
     EvidenceLedger.for_session("s1").append(kind="test", command="pytest bar.py")
     tool = patch_file.build_patch_file_tool()
 
@@ -66,7 +66,7 @@ def test_patch_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
 
 def test_write_file_survives_ledger_failure(ledger_path, tmp_path, monkeypatch):
     target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_project_path", lambda _path: target)
+    monkeypatch.setattr(write_file, "resolve_workspace_path", lambda _path, _root: target)
     tool = write_file.build_write_file_tool()
 
     def _boom(_entry):

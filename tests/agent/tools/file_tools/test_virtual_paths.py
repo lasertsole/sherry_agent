@@ -29,6 +29,10 @@ def virtual_root(tmp_path, monkeypatch):
     """Point ROOT_DIR at tmp_path; fail external fallback closed as a subagent."""
     root = tmp_path.resolve()
     monkeypatch.setattr(path_utils, "ROOT_DIR", root)
+    # Tools resolve against the SESSION root, which falls back to the process
+    # default (env -> sherry.jsonc -> repo root). Point that default at the
+    # fixture tree too, so an unbound session behaves exactly like before.
+    monkeypatch.setenv("SHERRY_PROJECT_DIR", str(root))
 
     from runtime import state_register_mem
     import runtime

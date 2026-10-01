@@ -68,23 +68,24 @@ def _override_root() -> Path | None:
     return Path(raw).expanduser().resolve() if raw else None
 
 
-def _resolve_one_path(raw: str) -> tuple[Path | None, str | None]:
+def _resolve_one_path(raw: str, root: Path | None = None) -> tuple[Path | None, str | None]:
     """Resolve one raw path against the project root.
 
     Returns ``(resolved, None)`` on success or ``(None, error)`` on rejection.
-    Without an override this delegates to the canonical
-    :func:`resolve_project_path` gate; with ``SHERRY_SG_ROOT`` set it applies the
-    same traversal predicate plus containment against that root.
+    ``root`` is the calling session's project directory (``None`` = the
+    process default). Without an override this delegates to the canonical
+    :func:`resolve_workspace_path` gate; with ``SHERRY_SG_ROOT`` set it applies
+    the same traversal predicate plus containment against that root.
     """
     if not raw or not raw.strip():
         return None, "path must be a non-empty string"
 
     override = _override_root()
     if override is None:
-        from agent.tools.pub_base import PathOutOfBoundsError, resolve_project_path
+        from agent.tools.pub_base import PathOutOfBoundsError, resolve_workspace_path
 
         try:
-            return resolve_project_path(raw), None
+            return resolve_workspace_path(raw, root), None
         except PathOutOfBoundsError as exc:
             return None, str(exc)
 
@@ -104,7 +105,9 @@ def _resolve_one_path(raw: str) -> tuple[Path | None, str | None]:
     return resolved, None
 
 
-def _resolve_paths(paths: list[str]) -> tuple[list[str] | None, str | None]:
+def _resolve_paths(
+    paths: list[str], root: Path | None = None
+) -> tuple[list[str] | None, str | None]:
     """Resolve and validate the whole path list (length-bounded)."""
     if not paths:
         return None, "paths must contain at least one path"
@@ -113,7 +116,7 @@ def _resolve_paths(paths: list[str]) -> tuple[list[str] | None, str | None]:
         return None, f"too many paths: {len(paths)} exceeds the limit of {max_paths}"
     resolved: list[str] = []
     for raw in paths:
-        path, error = _resolve_one_path(raw)
+        path, error = _resolve_one_path(raw, root)
         if error is not None:
             return None, error
         assert path is not None
@@ -262,6 +265,16 @@ class _AstGrepTool(BaseTool):
 
     _session_id: str = PrivateAttr(default="")
 
+    def _session_root(self) -> Path | None:
+        """The session's project directory (``None`` = the process default).
+
+        Read per call: the tool object is built once per session but the session
+        may switch directories at a turn boundary.
+        """
+        from agent.tools.pub_base import session_workspace_root
+
+        return session_workspace_root(self._session_id)
+
     def __init__(self, session_id: str = "", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
@@ -304,7 +317,7 @@ class AstGrepSearchTool(_AstGrepTool):
         if len(pattern.encode("utf-8")) > AST_GREP["ast_grep_max_pattern_bytes"]:
             return self._json({"error": "pattern too large", "count": 0, "matches": []})
 
-        resolved, error = _resolve_paths(paths)
+        resolved, error = _resolve_paths(paths, self._session_root())
         if error is not None:
             return self._json({"error": error, "count": 0, "matches": []})
 
@@ -355,7 +368,7 @@ class AstGrepRewriteTool(_AstGrepTool):
         paths: list[str],
         dry_run: bool = True,
     ) -> str:
-        resolved, error = _resolve_paths(paths)
+        resolved, error = _resolve_paths(paths, self._session_root())
         if error is not None:
             return self._json({"error": error, "applied": False, "count": 0, "changes": []})
 

@@ -12,10 +12,11 @@ from agent.tools.pub_base import (
     _open_no_follow,
     display_path,
     resolve_external_path,
-    resolve_project_path,
+    resolve_workspace_path,
     safe_error_detail,
 )
 from langchain_core.callbacks import CallbackManagerForToolRun
+from runtime.session.project_dir import current_project_dir
 
 SessionId = Annotated[str, InjectedState("session_id")]
 
@@ -71,7 +72,8 @@ class ReadFileTool(BaseTool):
     def _core(self, file_path: str, offset: int = 1, limit: int = 500, session_id: str = "") -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
-            resolved = resolve_project_path(file_path)
+            root = current_project_dir(session_id)
+            resolved = resolve_workspace_path(file_path, root)
         except PathOutOfBoundsError:
             try:
                 resolved = resolve_external_path(
@@ -82,11 +84,12 @@ class ReadFileTool(BaseTool):
 
         if not resolved.exists():
             return json.dumps(
-                {"error": f"File not found: {display_path(resolved)}"}, ensure_ascii=False
+                {"error": f"File not found: {display_path(resolved, root)}"}, ensure_ascii=False
             )
         if resolved.is_dir():
             return json.dumps(
-                {"error": f"Path is a directory: {display_path(resolved)}"}, ensure_ascii=False
+                {"error": f"Path is a directory: {display_path(resolved, root)}"},
+                ensure_ascii=False,
             )
 
         try:

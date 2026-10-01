@@ -16,6 +16,7 @@ from typing import Annotated, override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForToolRun
+from runtime.session.project_dir import current_project_dir
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import InjectedState
 from agent.tools.pub_base import (
@@ -24,7 +25,7 @@ from agent.tools.pub_base import (
     _open_no_follow,
     display_path,
     resolve_external_path,
-    resolve_project_path,
+    resolve_workspace_path,
     safe_error_detail,
     fuzzy_find_and_replace,
 )
@@ -124,7 +125,8 @@ class PatchFileTool(BaseTool):
     ) -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
-            resolved = resolve_project_path(file_path)
+            root = current_project_dir(session_id)
+            resolved = resolve_workspace_path(file_path, root)
         except PathOutOfBoundsError:
             try:
                 resolved = resolve_external_path(
@@ -135,11 +137,12 @@ class PatchFileTool(BaseTool):
 
         if not resolved.exists():
             return json.dumps(
-                {"error": f"File not found: {display_path(resolved)}"}, ensure_ascii=False
+                {"error": f"File not found: {display_path(resolved, root)}"}, ensure_ascii=False
             )
         if resolved.is_dir():
             return json.dumps(
-                {"error": f"Path is a directory: {display_path(resolved)}"}, ensure_ascii=False
+                {"error": f"Path is a directory: {display_path(resolved, root)}"},
+                ensure_ascii=False,
             )
 
         try:
@@ -175,7 +178,7 @@ class PatchFileTool(BaseTool):
             return json.dumps(
                 {
                     "error": (error or "No match found") + hint,
-                    "path": display_path(resolved),
+                    "path": display_path(resolved, root),
                     "strategy": strategy,
                 },
                 ensure_ascii=False,
@@ -196,12 +199,12 @@ class PatchFileTool(BaseTool):
             )
 
         mark_evidence_stale(file_path, session_id)
-        diff = _unified_diff(content, new_content, display_path(resolved))
+        diff = _unified_diff(content, new_content, display_path(resolved, root))
 
         return json.dumps(
             {
                 "success": True,
-                "path": display_path(resolved),
+                "path": display_path(resolved, root),
                 "strategy": strategy,
                 "matches": match_count,
                 "diff": diff,

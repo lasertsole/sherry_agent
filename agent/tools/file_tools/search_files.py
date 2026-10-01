@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Annotated, override
 
 from langchain_core.callbacks import CallbackManagerForToolRun
+from runtime.session.project_dir import current_project_dir
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
@@ -35,7 +36,7 @@ from agent.tools.pub_base import (
     display_path,
     is_text_file,
     resolve_external_path,
-    resolve_project_path,
+    resolve_workspace_path,
 )
 
 SessionId = Annotated[str, InjectedState("session_id")]
@@ -93,7 +94,7 @@ def _search_content(query: SearchQuery, state: ScanState) -> dict:
                     ctx_after = lines[i + 1 : i + 1 + query.context] if query.context else []
                     matches.append(
                         {
-                            "path": display_path(fpath),
+                            "path": display_path(fpath, query.root),
                             "line_number": i + 1,
                             "content": line[:500],
                             "context_before": ctx_before,
@@ -134,7 +135,7 @@ def _search_files(query: SearchQuery, state: ScanState) -> dict:
             matched = dirpath / fname
             if not _stays_within_root(matched, query.root):
                 continue
-            files.append(display_path(matched))
+            files.append(display_path(matched, query.root))
             state.note_match(len(files))
             if state.stopped:
                 break
@@ -215,7 +216,8 @@ class SearchFilesTool(BaseTool):
     ) -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
-            resolved = resolve_project_path(path)
+            root = current_project_dir(session_id)
+            resolved = resolve_workspace_path(path, root)
         except PathOutOfBoundsError:
             try:
                 resolved = resolve_external_path(
@@ -226,11 +228,12 @@ class SearchFilesTool(BaseTool):
 
         if not resolved.exists():
             return json.dumps(
-                {"error": f"Path not found: {display_path(resolved)}"}, ensure_ascii=False
+                {"error": f"Path not found: {display_path(resolved, root)}"}, ensure_ascii=False
             )
         if not resolved.is_dir():
             return json.dumps(
-                {"error": f"Path is not a directory: {display_path(resolved)}"}, ensure_ascii=False
+                {"error": f"Path is not a directory: {display_path(resolved, root)}"},
+                ensure_ascii=False,
             )
 
         state = ScanState.start(offset, limit)

@@ -84,19 +84,35 @@ class ExecuteCodeTool(BaseTool):
     _tools_map: dict[str, Any] = PrivateAttr(default_factory=dict)
     _config: Any = PrivateAttr(default=None)
 
+    def _resolve_cwd(self) -> str | None:
+        """The parent session's project directory for the child process.
+
+        Read per call (the tool is rebuilt per session but the session can still
+        switch directories between turns); ``None`` keeps the runner's
+        ``ROOT_DIR`` default for an unbound session.
+        """
+        from agent.tools.pub_base import session_workspace_root
+
+        bound = session_workspace_root(self._session_id)
+        return str(bound) if bound is not None else None
+
     def _run(
         self,
         code: str,
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        return asyncio.run(run_ptc(code, self._tools_map, self._session_id, self._config))
+        return asyncio.run(
+            run_ptc(code, self._tools_map, self._session_id, self._config, cwd=self._resolve_cwd())
+        )
 
     async def _arun(
         self,
         code: str,
         run_manager: AsyncCallbackManagerForToolRun | None = None,
     ) -> str:
-        return await run_ptc(code, self._tools_map, self._session_id, self._config)
+        return await run_ptc(
+            code, self._tools_map, self._session_id, self._config, cwd=self._resolve_cwd()
+        )
 
 
 def build_ptc_tool(available_tools: list[Any], session_id: str) -> ExecuteCodeTool:

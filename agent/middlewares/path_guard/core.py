@@ -16,8 +16,10 @@ Screening contract (conservative by design):
   misread as filesystem paths;
 - ``..`` traversal components (URL-decoded, backslash-normalized — the shared
   ``has_traversal_component`` predicate) are rejected;
-- a value that ``resolve_project_path()`` accepts is passed through untouched;
-- a value that resolves outside ``ROOT_DIR`` is passed through **unless** it is
+- a value that resolves inside the session's project directory is passed through
+  untouched (the root is read per call — this middleware is rebuilt every turn,
+  but the session can switch directories at a turn boundary);
+- a value that resolves outside that root is passed through **unless** it is
   on the hard-deny floor (the YOLO deny list / system credential files). Any
   other external path is left to the tool's own ``resolve_external_path()``
   HITL flow — intercepting it here would approve (or block) it twice, since
@@ -67,12 +69,16 @@ def _system_deny_paths() -> tuple[Path, ...]:
     return tuple(Path(path).resolve() for path in _SYSTEM_DENY_PATHS)
 
 
-def _external_target(value: str) -> Path | None:
-    """Resolve value as an external-path candidate; None when unresolvable."""
+def _external_target(value: str, root: Path | None = None) -> Path | None:
+    """Resolve value as an external-path candidate; None when unresolvable.
+
+    Relative values are joined onto the session root (``root``), which defaults
+    to the module's ``ROOT_DIR`` for session-less callers.
+    """
     try:
         target = Path(os.path.expanduser(value))
         if not target.is_absolute():
-            target = ROOT_DIR / target
+            target = (root if root is not None else ROOT_DIR) / target
         return target.resolve()
     except (OSError, RuntimeError):
         return None
@@ -87,21 +93,43 @@ def _is_hard_denied(target: Path) -> bool:
     return _is_yolo_denied(target)
 
 
-def _screen_path_arg(value: str) -> str | None:
-    """Return a rejection reason for value, or None to let the call proceed."""
+def _screen_path_arg(value: str, root: Path | None = None) -> str | None:
+    """Return a rejection reason for value, or None to let the call proceed.
+
+    ``root`` is the session's project directory; the pass/deny policy is
+    unchanged (in-root passes, outside the root only the hard-deny floor
+    rejects — everything else stays with the tools' HITL flow), only the
+    boundary moves with the session.
+    """
     if has_traversal_component(value):
         return "path traversal components are not allowed"
-    from agent.tools.pub_base.path_utils import PathOutOfBoundsError, resolve_project_path
+    from agent.tools.pub_base.path_utils import PathOutOfBoundsError, resolve_workspace_path
 
     try:
-        resolve_project_path(value)
+        resolve_workspace_path(value, root)
     except PathOutOfBoundsError:
-        target = _external_target(value)
+        target = _external_target(value, root)
         if target is not None and _is_hard_denied(target):
             return "path is on the hard deny list (credentials / system files)"
     except (OSError, RuntimeError):
         return None
     return None
+
+
+def _session_project_root(request: ToolCallRequest) -> Path | None:
+    """The calling session's project directory, or None when unknown.
+
+    The session id travels in the graph state (the same ``session_id`` every
+    path-aware tool injects); a state-less caller (tests, non-session graphs)
+    keeps the module ``ROOT_DIR`` boundary.
+    """
+    state = getattr(request, "state", None)
+    session_id = state.get("session_id") if isinstance(state, dict) else None
+    if not isinstance(session_id, str) or not session_id:
+        return None
+    from agent.tools.pub_base import session_workspace_root
+
+    return session_workspace_root(session_id)
 
 
 class PathGuard(AgentMiddleware):
@@ -118,10 +146,14 @@ class PathGuard(AgentMiddleware):
             candidate = value.strip()
             if not candidate or "://" in candidate:
                 continue
-            reason = _screen_path_arg(candidate)
+            reason = _screen_path_arg(candidate, self._session_project_root(request))
             if reason is not None:
                 return _Rejection(key=key, value=value, reason=reason)
         return None
+
+    def _session_project_root(self, request: ToolCallRequest) -> Path | None:
+        """Session root for this call (thin indirection so tests can stub it)."""
+        return _session_project_root(request)
 
     @staticmethod
     def _blocked_message(request: ToolCallRequest, rejection: _Rejection) -> ToolMessage:

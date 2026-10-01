@@ -92,13 +92,36 @@ except Exception as e:
 """)
 
 
-def _run_with_timeout(command: str, timeout: int, sandbox: bool = True, **_kwargs: Any) -> str:
+def _resolve_session_cwd(run_manager: Any) -> str | None:
+    """The session's project directory for this call, or ``None`` (-> ROOT_DIR).
+
+    Read per call: the REPL tool is a process-level singleton, so resolving the
+    root at construction time would pin every session to the first caller's
+    directory.
+    """
+    from agent.tools.pub_base import session_workspace_root
+
+    bound = session_workspace_root(_extract_session_id(run_manager))
+    return str(bound) if bound is not None else None
+
+
+def _run_with_timeout(
+    command: str,
+    timeout: int,
+    sandbox: bool = True,
+    cwd: str | None = None,
+    **_kwargs: Any,
+) -> str:
     """Execute Python code in a subprocess with timeout. Kill on timeout.
 
     Spawn-point hardening ():
 
     - ``env=scrub_env()``: the child never sees secret-named variables.
-    - ``cwd=str(ROOT_DIR)``: the child never inherits the server's launch dir.
+    - ``cwd``: the session's project directory when given (resolved per call by
+      the caller — the tool is a process-level singleton, so caching a root here
+      would freeze every session onto the first caller's directory); otherwise
+      ``ROOT_DIR``, the pre-project-binding behaviour. Either way the child
+      never inherits the server's launch dir.
     - ``sandbox=True`` + policy != OFF: ``get_backend`` resolves the OS
       sandbox — a usable backend wraps the interpreter argv (list exec form,
       no shell); ``None`` degrades to the direct unsandboxed spawn with one
@@ -133,7 +156,7 @@ def _run_with_timeout(command: str, timeout: int, sandbox: bool = True, **_kwarg
             stderr=subprocess.PIPE,
             text=True,
             env=env,
-            cwd=str(ROOT_DIR),
+            cwd=cwd or str(ROOT_DIR),
         )
         stdout, stderr = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -187,7 +210,9 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         sandbox: bool = True,
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
-        result = _run_with_timeout(query, PYTHON_REPL_TIMEOUT, sandbox)
+        result = _run_with_timeout(
+            query, PYTHON_REPL_TIMEOUT, sandbox, _resolve_session_cwd(run_manager)
+        )
         record_verification_evidence(query, result, _extract_session_id(run_manager))
         return result
 
@@ -200,7 +225,13 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
-        result = await asyncio.to_thread(_run_with_timeout, query, PYTHON_REPL_TIMEOUT, sandbox)
+        result = await asyncio.to_thread(
+            _run_with_timeout,
+            query,
+            PYTHON_REPL_TIMEOUT,
+            sandbox,
+            _resolve_session_cwd(run_manager),
+        )
         record_verification_evidence(query, result, _extract_session_id(run_manager))
         return result
 

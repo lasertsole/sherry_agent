@@ -1,6 +1,8 @@
 from .path_utils import (
     resolve_path,
     resolve_project_path,
+    resolve_workspace_path,
+    session_workspace_root,
     resolve_external_path,
     to_virtual_path,
     display_path,
@@ -29,6 +31,8 @@ from .skill_utils import (
 __all__ = [
     "resolve_path",
     "resolve_project_path",
+    "resolve_workspace_path",
+    "session_workspace_root",
     "resolve_external_path",
     "to_virtual_path",
     "display_path",

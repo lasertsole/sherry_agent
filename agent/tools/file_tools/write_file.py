@@ -9,6 +9,7 @@ from typing import Annotated, override
 from pydantic import BaseModel
 
 from langchain_core.callbacks import CallbackManagerForToolRun
+from runtime.session.project_dir import current_project_dir
 from langchain_community.tools.file_management import WriteFileTool
 from langchain_community.tools.file_management.write import WriteFileInput
 from langgraph.prebuilt.tool_node import InjectedState
@@ -19,7 +20,7 @@ from agent.tools.pub_base import (
     _open_no_follow,
     display_path,
     resolve_external_path,
-    resolve_project_path,
+    resolve_workspace_path,
     safe_error_detail,
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
@@ -85,7 +86,8 @@ class FormattedWriteFileTool(WriteFileTool):
     ) -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
-            resolved = resolve_project_path(file_path)
+            root = current_project_dir(session_id)
+            resolved = resolve_workspace_path(file_path, root)
         except PathOutOfBoundsError:
             try:
                 resolved = resolve_external_path(
@@ -108,7 +110,7 @@ class FormattedWriteFileTool(WriteFileTool):
             return "Error: " + safe_error_detail(e)
 
         mark_evidence_stale(file_path, session_id)
-        return f"File written successfully to {display_path(resolved)}."
+        return f"File written successfully to {display_path(resolved, root)}."
 
     @override
     def _run(

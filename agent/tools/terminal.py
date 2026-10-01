@@ -134,10 +134,10 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
     # never propagate; the subclass must be wired here.
     args_schema: type[BaseModel] = SafeShellInput
 
-    # Declared as a pydantic field so super.__init__(root_dir=...) is a real
-    # kwarg (pre-Task-6 code passed it as an extra, which pydantic silently
-    # dropped; declaring it makes the parameter real and fixes the
-    # basedpyright reportCallIssue).
+    # Legacy fallback working directory. Commands now resolve their cwd from the
+    # session (``_resolve_cwd``); this field is only consulted when no session is
+    # in scope at all (e.g. a direct ``_run`` without state), where it defaults
+    # to the repository root — the pre-project-binding behaviour.
     root_dir: str | None = None
 
     def __init__(self, root_dir: str | None = None):
@@ -153,6 +153,23 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self.metadata = {"idempotent": False}
 
     # ── Guards & helpers ────────────────────────────────────────────────────
+
+    def _resolve_cwd(self, session_id: str | None) -> str:
+        """The working directory for one command: the session's project dir.
+
+        Read per call (never cached): the tools are process-level singletons and
+        a session can switch directories at a turn boundary. A session without a
+        binding falls back to the process default (env → sherry.jsonc → repo
+        root), so an unbound session behaves exactly as before the feature.
+        With no session in scope at all (a direct ``_run`` call), the
+        constructor's ``root_dir`` applies — ``build_terminal_tool`` pins it to
+        the repository root.
+        """
+        if not session_id:
+            return self.root_dir or str(ROOT_DIR)
+        from runtime.session.project_dir import current_project_dir
+
+        return str(current_project_dir(session_id))
 
     @staticmethod
     def _join_commands(commands: str | list[str]) -> str:
@@ -225,6 +242,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         shell: bool,
         env: dict[str, str] | None,
         encoding: str,
+        cwd: str | None = None,
     ) -> str:
         """Single sync spawn point: Popen with explicit encoding + timeout.
 
@@ -243,7 +261,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     shell=True,  # nosec B602
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    cwd=str(ROOT_DIR),
+                    cwd=cwd,
                     env=env,
                 )
             else:
@@ -251,7 +269,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     argv,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
-                    cwd=str(ROOT_DIR),
+                    cwd=cwd or str(ROOT_DIR),
                     env=env,
                 )
             stdout_bytes, _ = proc.communicate(timeout=TERMINAL_TIMEOUT)
@@ -285,6 +303,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         commands: str | list[str],
         encoding: str,
         env: dict[str, str] | None = None,
+        cwd: str | None = None,
     ) -> str:
         """Run command with explicit encoding for stdout/stderr, with timeout.
 
@@ -293,11 +312,11 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         pre-sandbox-hardening path; the ONLY addition is ``env=``.
         """
         cmd_str = self._join_commands(commands)
-        return self._execute_sync(cmd_str, shell=True, env=env, encoding=encoding)
+        return self._execute_sync(cmd_str, shell=True, env=env, encoding=encoding, cwd=cwd)
 
-    def _run_wrapped(self, argv: list[str], env: dict[str, str]) -> str:
+    def _run_wrapped(self, argv: list[str], env: dict[str, str], cwd: str) -> str:
         """Sandboxed sync path: list-exec of the backend-wrapped argv."""
-        return self._execute_sync(argv, shell=False, env=env, encoding=self._encoding)
+        return self._execute_sync(argv, shell=False, env=env, encoding=self._encoding, cwd=cwd)
 
     # ── Tool entry points ───────────────────────────────────────────────────
 
@@ -313,13 +332,14 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
+        cwd = self._resolve_cwd(_extract_session_id(run_manager))
 
         env = scrub_env()
         if sandbox:
             argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env)
             if argv is not None:
                 return self._record_verification(
-                    cmd_str, self._run_wrapped(argv, wrapped_env), run_manager
+                    cmd_str, self._run_wrapped(argv, wrapped_env, cwd), run_manager
                 )
 
         # ShellTool._run delegates to BashProcess which uses subprocess.run(check=True)
@@ -328,7 +348,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         # use _run_with_encoding which has proper timeout and encoding handling.
         return self._record_verification(
             cmd_str,
-            self._run_with_encoding(commands, encoding=self._encoding, env=env),
+            self._run_with_encoding(commands, encoding=self._encoding, env=env, cwd=cwd),
             run_manager,
         )
 
@@ -352,6 +372,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
+        cwd = self._resolve_cwd(_extract_session_id(run_manager))
 
         env = scrub_env()
         argv: list[str] | None = None
@@ -367,14 +388,14 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     env=spawn_env,
-                    cwd=str(ROOT_DIR),
+                    cwd=cwd,
                 )
             else:
                 proc = await asyncio.create_subprocess_shell(
                     cmd_str,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
-                    cwd=str(ROOT_DIR),
+                    cwd=cwd or str(ROOT_DIR),
                     env=env,
                 )
             stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=TERMINAL_TIMEOUT)

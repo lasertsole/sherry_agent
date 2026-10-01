@@ -63,17 +63,21 @@ def _lsp_cwd() -> str:
     return str(override) if override is not None else str(Path.cwd().resolve())
 
 
-def _resolve_file(raw: str) -> tuple[Path | None, str | None]:
-    """Resolve one raw path against the project root, or return an error."""
+def _resolve_file(raw: str, root: Path | None = None) -> tuple[Path | None, str | None]:
+    """Resolve one raw path against the project root, or return an error.
+
+    ``root`` is the calling session's project directory (``None`` = the process
+    default); ``SHERRY_LSP_ROOT`` still overrides both for tests/drills.
+    """
     if not raw or not raw.strip():
         return None, "file_path must be a non-empty string"
 
     override = _override_root()
     if override is None:
-        from agent.tools.pub_base import PathOutOfBoundsError, resolve_project_path
+        from agent.tools.pub_base import PathOutOfBoundsError, resolve_workspace_path
 
         try:
-            return resolve_project_path(raw), None
+            return resolve_workspace_path(raw, root), None
         except PathOutOfBoundsError as exc:
             return None, str(exc)
 
@@ -106,6 +110,15 @@ class _LspTool(BaseTool):
     def __init__(self, session_id: str = "", **kwargs: Any) -> None:
         super().__init__(**kwargs)
         self._session_id = session_id
+
+    def _session_root(self):
+        """The session's project directory (``None`` = the process default).
+
+        Read per call: the session may switch directories at a turn boundary.
+        """
+        from agent.tools.pub_base import session_workspace_root
+
+        return session_workspace_root(self._session_id)
 
     def _run(self, **kwargs: Any) -> str:  # pragma: no cover - overridden
         raise NotImplementedError
@@ -232,7 +245,7 @@ class LspGotoDefinitionTool(_LspTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, file_path: str, line: int, character: int) -> str:
-        resolved, error = _resolve_file(file_path)
+        resolved, error = _resolve_file(file_path, self._session_root())
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
@@ -272,7 +285,7 @@ class LspFindReferencesTool(_LspTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, file_path: str, line: int, character: int) -> str:
-        resolved, error = _resolve_file(file_path)
+        resolved, error = _resolve_file(file_path, self._session_root())
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
@@ -316,7 +329,7 @@ class LspWorkspaceSymbolTool(_LspTool):
     def _run(self, query: str, file_path: str = "", language: str = "") -> str:
         resolved: Path | None = None
         if file_path:
-            resolved, error = _resolve_file(file_path)
+            resolved, error = _resolve_file(file_path, self._session_root())
             if error is not None:
                 return self._json({"error": error, "available": True})
         language, error = self._resolve_language(language, str(resolved) if resolved else "")
@@ -359,7 +372,7 @@ class LspCallHierarchyTool(_LspTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, file_path: str, line: int, character: int, direction: str = "incoming") -> str:
-        resolved, error = _resolve_file(file_path)
+        resolved, error = _resolve_file(file_path, self._session_root())
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
@@ -422,7 +435,7 @@ class LspRenameTool(_LspTool):
     ) -> str:
         if not new_name or not new_name.strip():
             return self._json({"error": "new_name must be a non-empty string", "available": True})
-        resolved, error = _resolve_file(file_path)
+        resolved, error = _resolve_file(file_path, self._session_root())
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
@@ -459,7 +472,7 @@ class LspRenameTool(_LspTool):
             payload["note"] = "Preview only; pass dry_run=false to apply these edits."
             return self._json(payload)
 
-        payload.update(_apply_workspace_edit(renames))
+        payload.update(_apply_workspace_edit(renames, self._session_root()))
         payload["applied"] = True
         return self._json(payload)
 
@@ -479,7 +492,7 @@ class LspDiagnosticsTool(_LspTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, file_path: str, timeout_s: float | None = None) -> str:
-        resolved, error = _resolve_file(file_path)
+        resolved, error = _resolve_file(file_path, self._session_root())
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
@@ -541,7 +554,7 @@ class LspFormatTool(_LspTool):
         end_character: int | None = None,
         write: bool = False,
     ) -> str:
-        resolved, error = _resolve_file(file_path)
+        resolved, error = _resolve_file(file_path, self._session_root())
         if error is not None:
             return self._json({"error": error, "available": True})
         assert resolved is not None
@@ -700,13 +713,17 @@ def _offset(offsets: list[int], text_len: int, line: int | None, character: int 
     return min(base + max((character or 1) - 1, 0), text_len)
 
 
-def _apply_workspace_edit(groups: list[dict]) -> dict:
-    """Apply grouped WorkspaceEdit entries, honoring the project-root path gate."""
+def _apply_workspace_edit(groups: list[dict], root: Path | None = None) -> dict:
+    """Apply grouped WorkspaceEdit entries, honoring the project-root path gate.
+
+    ``root`` is the calling session's project directory (``None`` = the process
+    default), threaded through so the rename tool cannot write outside it.
+    """
     applied = 0
     files_written: list[str] = []
     skipped: list[dict] = []
     for group in groups:
-        resolved, error = _resolve_file(group.get("path", ""))
+        resolved, error = _resolve_file(group.get("path", ""), root)
         if error is not None or resolved is None:
             skipped.append({"path": group.get("path"), "reason": error or "unresolved"})
             continue

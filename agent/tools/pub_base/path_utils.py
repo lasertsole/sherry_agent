@@ -119,6 +119,21 @@ def resolve_workspace_path(file_path: str, workspace_root: Path | None = None) -
     return resolved
 
 
+def session_workspace_root(session_id: str | None) -> Path | None:
+    """The session's bound project directory, or ``None`` (= process default).
+
+    The single accessor every session-aware tool uses to feed
+    :func:`resolve_workspace_path`. Read per call from the register's mem tier
+    (cheap, no I/O) — never cached, because the tool objects are process-level
+    singletons and a session can switch directories at a turn boundary.
+    """
+    if not session_id:
+        return None
+    from runtime.session.project_dir import read_project_dir
+
+    return read_project_dir(session_id)
+
+
 def resolve_project_path(file_path: str) -> Path:
     """Resolve file_path against the project root; reject paths escaping it.
 
@@ -146,25 +161,29 @@ def resolve_path(file_path: str) -> Path:
 # ── Model-visible path rendering ────────────────────────────────────
 
 
-def to_virtual_path(real_path: Path) -> str:
-    """Convert a real filesystem path to a virtual path anchored at ROOT_DIR.
+def to_virtual_path(real_path: Path, root: Path | None = None) -> str:
+    """Convert a real filesystem path to a virtual path anchored at *root*.
 
     /home/user/project/src/main.py -> /src/main.py
 
-    Raises ValueError if the path is outside ROOT_DIR.
+    ``root=None`` means the module's ``ROOT_DIR`` (the historical anchor).
+    Session-aware callers pass the session's project directory so a bound
+    session's files keep rendering as ``/src/main.py`` instead of degrading to
+    bare filenames. Raises ValueError if the path is outside the anchor.
     """
-    return "/" + real_path.resolve().relative_to(ROOT_DIR.resolve()).as_posix()
+    anchor = (root if root is not None else ROOT_DIR).resolve()
+    return "/" + real_path.resolve().relative_to(anchor).as_posix()
 
 
-def display_path(real_path: Path) -> str:
+def display_path(real_path: Path, root: Path | None = None) -> str:
     """Safely render a path for model-visible output.
 
     Returns a virtual path in normal cases. If the path cannot be converted
-    (outside root, unresolvable symlink), falls back to just the filename
-    so ROOT_DIR never leaks.
+    (outside the anchor, unresolvable symlink), falls back to just the filename
+    so no real root ever leaks.
     """
     try:
-        return to_virtual_path(real_path)
+        return to_virtual_path(real_path, root)
     except (ValueError, OSError, RuntimeError):
         return real_path.name or "/"
 
