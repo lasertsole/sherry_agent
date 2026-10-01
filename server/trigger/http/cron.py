@@ -56,6 +56,7 @@ def _job_to_dict(job) -> dict:
             "deliver": pd.deliver,
             "channel": pd.channel,
             "to": pd.to,
+            "skills": pd.skills,
         },
         "state": {
             "nextRunAtMs": st.next_run_at_ms,
@@ -70,6 +71,31 @@ def _job_to_dict(job) -> dict:
 
 
 _MIN_EVERY_MS: int = CRON_SERVICE["min_every_ms"]
+
+
+def _valid_skills(raw) -> list[str] | None:
+    """Validate the optional ``skills`` body field.
+
+    ``None``/absent -> ``None`` (no binding). A list of names -> stripped,
+    deduplicated (order-preserving), blanks dropped. Anything else raises
+    ``ValueError`` so the calling handler answers 400 instead of silently
+    dropping a binding the caller explicitly asked for.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list):
+        raise ValueError("'skills' must be a list of skill names or null")
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, str):
+            raise ValueError("each entry of 'skills' must be a string")
+        name = entry.strip()
+        if not name or name in seen:
+            continue
+        out.append(name)
+        seen.add(name)
+    return out or None
 
 
 def _valid_schedule(body: dict) -> CronSchedule | None:
@@ -138,8 +164,12 @@ async def add_cron_job_handler(request):
       "deliver": bool (optional),
       "channel": str | null (optional),
       "to": str | null (optional),
-      "delete_after_run": bool (optional)
+      "delete_after_run": bool (optional),
+      "skills": list[str] | null (optional)
     }
+
+    `skills` binds skill names whose contents are pre-loaded into the job's
+    prompt on every run; null/omitted keeps the job skill-free.
     """
     body = _read_body(request)
     if body is None:
@@ -169,6 +199,7 @@ async def add_cron_job_handler(request):
             channel=body.get("channel"),
             to=body.get("to"),
             delete_after_run=bool(body.get("delete_after_run", False)),
+            skills=_valid_skills(body.get("skills")),
         )
     except ValueError as e:
         logger.warning("Cron add rejected: %s", e)
@@ -193,7 +224,8 @@ async def update_cron_job_handler(request):
       "deliver": bool (optional),
       "channel": str | null (optional),
       "to": str | null (optional),
-      "delete_after_run": bool (optional)
+      "delete_after_run": bool (optional),
+      "skills": list[str] | null (optional)
     }
     Because the cron engine only exposes one-shot operations (add/enable/remove),
     updates are applied by removing the existing job and re-adding it with the
@@ -243,6 +275,7 @@ async def update_cron_job_handler(request):
             channel=body.get("channel", existing.payload.channel),
             to=body.get("to", existing.payload.to),
             delete_after_run=body.get("delete_after_run", existing.delete_after_run),
+            skills=_valid_skills(body.get("skills", existing.payload.skills)),
         )
     except ValueError as e:
         logger.warning("Cron update rejected: %s", e)

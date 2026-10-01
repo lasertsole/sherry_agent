@@ -27,6 +27,7 @@ _PATCHED_SURFACE = (
     "_migrate_source_files",
     "_provider_misses_logged",
     "_resolve_skill_dir",
+    "_rewrite_cron_skill_refs",
     "_schedule_system_prompt_refresh",
     "_write_supporting_files",
     "run_curator_review",

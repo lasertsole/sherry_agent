@@ -10,6 +10,7 @@ EMA AI Agent 系统内的轻量级、基于文件的定时任务服务，支持�
 - 基于 `cron_jobs.json`（项目根目录）的文件持久化，外部修改后自动重载
 - 独立的后台服务线程（拥有自己的 asyncio 事件循环）；自续订定时器精确唤醒到最早的到期任务
 - 任务执行会启动一个专属 Agent（主 LLM + 系统提示词 + Python REPL / 读文件 / 写文件工具）
+- 技能绑定：任务可绑定技能名（`payload.skills`），每次运行时把每个技能的 SKILL.md 内容预加载进任务提示词 —— 由定时任务决定何时执行，由技能决定如何执行
 - 结果通过 `MessageBus` 入站队列投递到渠道，并向浏览器 UI 推送尽力而为的 WebSocket `notification` 事件
 - 每个任务的执行日志以 JSON Lines 格式追加写入 `logs/output/cron/<job_id>.log`
 - 受保护的系统任务（`payload.kind == "system_event"`）无法删除
@@ -26,6 +27,7 @@ skills/builtin/core/cron/
     ├── __init__.py      # 公开导出：CronService, cron_service, Cron, cron, types
     ├── base.py          # CronService 单例、cron_jobs.json 读写、定时循环、任务执行
     ├── core.py          # Cron 门面（面向 Agent）：add_job / list_jobs / remove_job / set_context
+    ├── skill_refs.py    # 定时任务技能引用维护：referenced_skill_names() / rewrite_skill_refs()
     ├── types.py         # 数据模型：CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore
     └── README.md        # 本文件
 ```
@@ -45,10 +47,11 @@ skills/builtin/core/cron/
 
 **结果投递**（`base.py` 中的 `_on_cron_job`）：
 
-1. 以 `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` 构建一个全新 Agent，并以任务的 `payload.message` 作为 `HumanMessage` 调用。
-2. Agent 的最终消息以 `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` 的形式发布到消息总线。
-3. 渠道入站消费者（`server/trigger/channels/core.py`）按已启用渠道处理该消息，并通过 `channel.send(OutboundMessage(...))` 将生成的回复发送到配置的 `chat_id`。
-4. 与此同时，`_push_cron_notification` 向会话 `default`（`CRON_WS_SESSION_ID`）的 WebSocket 发送 `{"event": "notification", "content": "cron: <job name> [<status>]"}`，使浏览器 UI 的通知铃铛实时更新。尽力而为：失败仅记录日志，不会中断流程。
+1. **技能预加载**：当任务绑定了技能（`payload.skills`）时，`_assemble_skill_prompt()` 通过 `_skill_view(name, caller_scope="background")` 逐个解析技能名，把内容包裹在 `[IMPORTANT: The user has invoked the "…" skill. …]` 头中前置到提示词，并保持 `payload.message` 在最后；每个成功加载的技能计入一次使用（`bump_use`），无法加载的名字记日志后跳过，组装后的提示词只扫描一次注入模式（仅告警）。未绑定技能的任务原样发送消息。
+2. 以 `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` 构建一个全新 Agent，并以组装后的提示词作为 `HumanMessage` 调用。
+3. Agent 的最终消息以 `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` 的形式发布到消息总线。
+4. 渠道入站消费者（`server/trigger/channels/core.py`）按已启用渠道处理该消息，并通过 `channel.send(OutboundMessage(...))` 将生成的回复发送到配置的 `chat_id`。
+5. 与此同时，`_push_cron_notification` 向会话 `default`（`CRON_WS_SESSION_ID`）的 WebSocket 发送 `{"event": "notification", "content": "cron: <job name> [<status>]"}`，使浏览器 UI 的通知铃铛实时更新。尽力而为：失败仅记录日志，不会中断流程。
 
 > 注意：`deliver` 字段会随任务存储并通过 API 暴露，但当前执行路径（`_on_cron_job`）无论其取值如何都会把结果发布到总线。消息能否真正到达用户取决于已启用的渠道（见 `plugins/channels/config.json`）。
 
@@ -78,7 +81,8 @@ skills/builtin/core/cron/
         "message": "Summarize today's schedule and important events",
         "deliver": false,
         "channel": null,
-        "to": null
+        "to": null,
+        "skills": ["news-digest"]
       },
       "state": {
         "nextRunAtMs": 1756000000000,
@@ -125,6 +129,7 @@ skills/builtin/core/cron/
 | `deliver` | `bool` | 投递标志（默认 `false`；见上文说明——当前执行路径不读取该字段） |
 | `channel` | `str \| null` | 渠道名称，如 `"qq"` |
 | `to` | `str \| null` | 接收方标识（用作 `chat_id`） |
+| `skills` | `list[str] \| null` | 每次运行时预加载进提示词的有序技能名列表（`null` = 未绑定；旧存储缺少该键时按 `null` 载入） |
 
 **`state`**
 
@@ -146,7 +151,7 @@ Python 侧对应的模型（`types.py`）使用 snake_case（`at_ms`、`every_ms
 | 命令 | 说明 |
 |------|------|
 | `cron.set_context(channel, chat_id)` | 设置会话上下文（两者必填且非空），作为后续添加任务的投递目标 |
-| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True)` | 添加任务。`every_seconds` / `cron_expr` / `at`（ISO 日期时间）三者必须提供其一。需先调用 `set_context`。`tz` 仅可与 `cron_expr` 同用（默认 `"UTC"`）；无时区的 `at` 时间按 UTC 处理；`at` 任务自动设置 `delete_after_run=True`；`name` 默认取 `message` 前 30 个字符 |
+| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True, skills=None)` | 添加任务。`skills` 绑定的技能名会在每次运行时预加载其 SKILL.md 内容；名称经过去空白、去重（保序）并丢弃空项 |`every_seconds` / `cron_expr` / `at`（ISO 日期时间）三者必须提供其一。需先调用 `set_context`。`tz` 仅可与 `cron_expr` 同用（默认 `"UTC"`）；无时区的 `at` 时间按 UTC 处理；`at` 任务自动设置 `delete_after_run=True`；`name` 默认取 `message` 前 30 个字符 |
 | `cron.list_jobs()` | 人类可读的任务列表：调度时间、系统任务用途与保护标志、上次/下次运行时间 |
 | `cron.remove_job(job_id)` | 删除任务；对受保护的系统任务返回友好的错误提示 |
 
@@ -158,7 +163,7 @@ Python 侧对应的模型（`types.py`）使用 snake_case（`at_ms`、`every_ms
 | `stop()` | 停止服务并取消定时器任务 |
 | `set_on_job(callback)` | 注册异步执行回调（由 `init()` 绑定为 `_on_cron_job`） |
 | `list_jobs(include_disabled=False)` | 按下次运行时间排序列出任务；仅当 `include_disabled=True` 时包含已禁用任务 |
-| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | 添加任务（`payload.kind` 恒为 `"agent_turn"`）；自动启动服务；返回 `CronJob` |
+| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False, skills=None)` | 添加任务（`payload.kind` 恒为 `"agent_turn"`）；自动启动服务；返回 `CronJob` |
 | `register_system_job(job)` | 按 `id` 幂等地（重新）注册系统任务（当前仓库内无调用方） |
 | `remove_job(job_id)` | 返回 `"removed"`、`"protected"`（`payload.kind == "system_event"`）或 `"not_found"` |
 | `enable_job(job_id, enabled=True)` | 启用/禁用；重算或清空 `nextRunAtMs` |
@@ -171,13 +176,28 @@ Python 侧对应的模型（`types.py`）使用 snake_case（`at_ms`、`every_ms
 | 端点 | 说明 |
 |------|------|
 | `GET /cron?include_disabled=false` | 列出任务（camelCase JSON） |
-| `POST /cron` | 创建：`{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run"}` |
+| `POST /cron` | 创建：`{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}`（`skills` 必须是名称列表或 `null`，其它类型一律 `400`） |
 | `PUT /cron` | 更新：以"删除 + 重建"实现，保留原 `id` 和 `createdAtMs` |
 | `POST /cron/trigger` | 立即运行：`{"id", "force"}`（已禁用且未传 `force` 时返回 400） |
 | `POST /cron/enable` | 启用/禁用：`{"id", "enabled"}` |
 | `POST /cron/failure-state` | 查看失败熔断器状态：`{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`；未知任务 → `404`，从未失败的任务 → 全零状态 |
 | `POST /cron/reset-failures` | 重置失败熔断器状态：`{"id"}`；只重新启用被熔断器自己停用的任务（运维人员的主动停用得以保留） |
 | `DELETE /cron` | 删除：`{"id"}`；受保护的系统任务返回 `403` |
+
+## 技能绑定与引用维护
+
+任务的 `payload.skills` 是一个有序技能名列表。每次运行时，每个名字都会被解析为 SKILL.md 正文并注入到 `payload.message` 之前（见上文"工作原理"），因此任务从第一次模型调用起就带着技能指令 —— cron Agent 没有 `skill_view` 工具，也不需要。
+
+任何移动或归档技能的操作都会同步维护这些绑定（`skill_refs.py`）：
+
+| 机制 | 函数 | 作用 |
+|------|------|------|
+| 运行时预加载 | `_assemble_skill_prompt()` | 把每个绑定技能加载进提示词、计入使用、对被注入内容告警 |
+| 整合 / 裁剪 | `rewrite_skill_refs(consolidated, pruned)` | 把被整合的名字替换为其 umbrella（去重保序），并移除被裁剪的名字；由 curator 在归档之后、以及 `skill_manage(action="delete")` 带 `absorbed_into` 时调用 |
+| 不活跃保护 | `referenced_skill_names()` | 返回所有任务绑定的名字集合；curator 的 90 天转换拒绝归档该集合中的技能 |
+| 清空 | `rewrite_skill_refs(consolidated={}, pruned={…})` | 绑定列表失去最后一个名字后变成 `null` —— 任务重新以无技能方式运行 |
+
+`referenced_skill_names()` 与 `rewrite_skill_refs()` 由 `skills.builtin.core.cron.scripts` 重新导出。存储只做外科手术式修改（仅改动 `payload.skills`），且只有确实发生变化时才重写文件。
 
 ## 失败熔断器
 

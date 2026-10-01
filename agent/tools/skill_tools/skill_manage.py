@@ -212,9 +212,9 @@ class SkillManageSchema(BaseModel):
             "was merged into another (the target must already exist). "
             "Pass an empty string when the skill is truly stale and "
             "being pruned with no forwarding target. Omitting the arg "
-            "on delete is supported for backward compatibility but "
-            "downstream tooling (e.g. cron-job skill reference "
-            "rewriting) will have to guess at intent."
+            "on delete is supported for backward compatibility, but the "
+            "cron reference maintenance then treats the delete as a "
+            "prune and drops the skill from every job that bound it."
         ),
     )
 
@@ -850,6 +850,24 @@ def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]
     parent = skill_dir.parent
     if parent != skills_root and parent.exists() and not any(parent.iterdir()):
         parent.rmdir()
+
+    # Cron jobs binding this skill must not keep loading a dead name: follow the
+    # declared forwarding target, or drop the reference when truly pruned.
+    # Best-effort — a store rewrite failure must never fail the delete itself.
+    try:
+        from skills.builtin.core.cron.scripts.skill_refs import rewrite_skill_refs
+
+        forwarding = (
+            absorbed_into.strip()
+            if isinstance(absorbed_into, str) and absorbed_into.strip()
+            else ""
+        )
+        if forwarding:
+            rewrite_skill_refs(consolidated={name: forwarding}, pruned=set())
+        else:
+            rewrite_skill_refs(consolidated={}, pruned={name})
+    except Exception as e:  # noqa: BLE001 - reference maintenance is best-effort
+        logger.warning("Skill delete: failed to rewrite cron skill references: {}", e)
 
     message = f"Skill '{name}' deleted."
     if absorbed_into is not None and isinstance(absorbed_into, str) and absorbed_into.strip():

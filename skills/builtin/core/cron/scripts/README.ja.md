@@ -10,6 +10,7 @@ EMA AI Agent システム向けの軽量なファイルベース cron サービ�
 - `cron_jobs.json`（プロジェクトルート）によるファイル永続化、外部変更時の自動リロード
 - 専用のバックグラウンドサービススレッド（独自の asyncio イベントループを持つ）; 自己再武装するタイマーが最も早い実行時刻のジョブに合わせて正確に起床
 - ジョブ実行は専用エージェントを起動（メイン LLM + システムプロンプト + Python REPL / ファイル読み込み / ファイル書き込みツール）
+- スキルバインディング: ジョブはスキル名（`payload.skills`）をバインドでき、毎回の実行時に各スキルの SKILL.md 内容がジョブプロンプトへ事前ロードされます — いつ実行するかはクーロンが、どう実行するかはスキルが決めます
 - 結果は `MessageBus` のインバウンドキューを通じてチャネルへ配信され、ブラウザ UI にはベストエフォートで WebSocket `notification` イベントを送信
 - ジョブごとの実行ログを JSON Lines 形式で `logs/output/cron/<job_id>.log` に追記
 - 保護されたシステムジョブ（`payload.kind == "system_event"`）は削除不可
@@ -26,6 +27,7 @@ skills/builtin/core/cron/
     ├── __init__.py      # 公開エクスポート: CronService, cron_service, Cron, cron, types
     ├── base.py          # CronService シングルトン、cron_jobs.json 入出力、タイマーループ、ジョブ実行
     ├── core.py          # Cron ファサード（エージェント向け）: add_job / list_jobs / remove_job / set_context
+    ├── skill_refs.py    # cron ジョブのスキル参照メンテナンス: referenced_skill_names() / rewrite_skill_refs()
     ├── types.py         # データモデル: CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore
     └── README.md        # このファイル
 ```
@@ -45,10 +47,11 @@ skills/builtin/core/cron/
 
 **結果の配信**（`base.py` の `_on_cron_job`）:
 
-1. `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` で新しいエージェントを構築し、ジョブの `payload.message` を `HumanMessage` として実行します。
-2. エージェントの最終メッセージを `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` としてメッセージバスにパブリッシュします。
-3. チャネルのインバウンドコンシューマ（`server/trigger/channels/core.py`）が有効なチャネルごとにそのメッセージを処理し、生成された返信を `channel.send(OutboundMessage(...))` で設定された `chat_id` へ配信します。
-4. それとは別に、`_push_cron_notification` がセッション `default`（`CRON_WS_SESSION_ID`）の WebSocket へ `{"event": "notification", "content": "cron: <job name> [<status>]"}` を送信し、ブラウザ UI の通知ベルをリアルタイムに更新します。ベストエフォート: 失敗はログに記録されるだけでフローを中断しません。
+1. **スキル事前ロード**: ジョブがスキル（`payload.skills`）をバインドしている場合、`_assemble_skill_prompt()` が各名前を `_skill_view(name, caller_scope="background")` で解決し、内容を `[IMPORTANT: The user has invoked the "…" skill. …]` ヘッダで包んでプロンプトの先頭に付加し、`payload.message` は最後に残します。ロードできたスキルは使用として記録され（`bump_use`）、ロードできない名前はログに残してスキップされ、組み立て後のプロンプトは一度だけインジェクションパターンを走査されます（警告のみ）。スキル未バインドのジョブはメッセージをそのまま送信します。
+2. `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` で新しいエージェントを構築し、組み立て後のプロンプトを `HumanMessage` として実行します。
+3. エージェントの最終メッセージを `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` としてメッセージバスにパブリッシュします。
+4. チャネルのインバウンドコンシューマ（`server/trigger/channels/core.py`）が有効なチャネルごとにそのメッセージを処理し、生成された返信を `channel.send(OutboundMessage(...))` で設定された `chat_id` へ配信します。
+5. それとは別に、`_push_cron_notification` がセッション `default`（`CRON_WS_SESSION_ID`）の WebSocket へ `{"event": "notification", "content": "cron: <job name> [<status>]"}` を送信し、ブラウザ UI の通知ベルをリアルタイムに更新します。ベストエフォート: 失敗はログに記録されるだけでフローを中断しません。
 
 > 注意: `deliver` フィールドはジョブに保存され API でも公開されますが、現在の実行パス（`_on_cron_job`）はその値に関係なく結果をバスへパブリッシュします。メッセージが実際にユーザーに届くかどうかは、有効なチャネルに依存します（`plugins/channels/config.json` を参照）。
 
@@ -78,7 +81,8 @@ skills/builtin/core/cron/
         "message": "Summarize today's schedule and important events",
         "deliver": false,
         "channel": null,
-        "to": null
+        "to": null,
+        "skills": ["news-digest"]
       },
       "state": {
         "nextRunAtMs": 1756000000000,
@@ -125,6 +129,7 @@ skills/builtin/core/cron/
 | `deliver` | `bool` | 配信フラグ（デフォルト `false`; 上記の注意を参照 — 現在の実行パスでは参照されません） |
 | `channel` | `str \| null` | チャネル名、例: `"qq"` |
 | `to` | `str \| null` | 受信者識別子（`chat_id` として使用） |
+| `skills` | `list[str] \| null` | 毎回の実行時にプロンプトへ事前ロードされる順序付きスキル名リスト（`null` = 未バインド。キーのない旧ストアは `null` として読み込まれます） |
 
 **`state`**
 
@@ -146,7 +151,7 @@ Python 側の対応モデル（`types.py`）は snake_case を使用します（
 | コマンド | 説明 |
 |---------|------|
 | `cron.set_context(channel, chat_id)` | セッションコンテキストを設定（両方必須・非空）。以降に追加するジョブの配信先になります |
-| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True)` | ジョブを追加。`every_seconds` / `cron_expr` / `at`（ISO 日時）のいずれか 1 つが必須。事前の `set_context` が必要。`tz` は `cron_expr` とのみ併用可（デフォルト `"UTC"`）; タイムゾーン情報のない `at` は UTC として扱われ、`at` ジョブには `delete_after_run=True` が設定されます。`name` のデフォルトは `message` の先頭 30 文字 |
+| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True, skills=None)` | ジョブを追加。`skills` にバインドしたスキル名は毎回の実行時に SKILL.md 内容が事前ロードされます（空白除去・重複排除・空要素破棄）。`every_seconds` / `cron_expr` / `at`（ISO 日時）のいずれか 1 つが必須。事前の `set_context` が必要。`tz` は `cron_expr` とのみ併用可（デフォルト `"UTC"`）; タイムゾーン情報のない `at` は UTC として扱われ、`at` ジョブには `delete_after_run=True` が設定されます。`name` のデフォルトは `message` の先頭 30 文字 |
 | `cron.list_jobs()` | 人間が読める形式の一覧: スケジュール時刻、システムジョブの用途と保護フラグ、前回/次回の実行時刻 |
 | `cron.remove_job(job_id)` | ジョブを削除。保護されたシステムジョブには丁寧なエラーメッセージを返します |
 
@@ -158,7 +163,7 @@ Python 側の対応モデル（`types.py`）は snake_case を使用します（
 | `stop()` | サービスを停止しタイマータスクをキャンセル |
 | `set_on_job(callback)` | 非同期実行コールバックを登録（`init()` によって `_on_cron_job` に接続） |
 | `list_jobs(include_disabled=False)` | 次回実行時刻でソートしてジョブを一覧表示; `include_disabled=True` の場合のみ無効なジョブを含む |
-| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | ジョブを追加（`payload.kind` は常に `"agent_turn"`）; サービスを自動起動; `CronJob` を返す |
+| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False, skills=None)` | ジョブを追加（`payload.kind` は常に `"agent_turn"`）; サービスを自動起動; `CronJob` を返す |
 | `register_system_job(job)` | `id` をキーにシステムジョブを冪等に（再）登録（現在リポジトリ内に呼び出し元なし） |
 | `remove_job(job_id)` | `"removed"`、`"protected"`（`payload.kind == "system_event"`）、`"not_found"` のいずれかを返す |
 | `enable_job(job_id, enabled=True)` | 有効/無効化; `nextRunAtMs` を再計算またはクリア |
@@ -171,13 +176,28 @@ Python 側の対応モデル（`types.py`）は snake_case を使用します（
 | エンドポイント | 説明 |
 |--------------|------|
 | `GET /cron?include_disabled=false` | ジョブ一覧（camelCase JSON） |
-| `POST /cron` | 作成: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run"}` |
+| `POST /cron` | 作成: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}`（`skills` は名前のリストか `null` でなければ `400`） |
 | `PUT /cron` | 更新: 削除 + 再追加として適用され、`id` と `createdAtMs` は保持される |
 | `POST /cron/trigger` | 即時実行: `{"id", "force"}`（無効かつ `force` なしの場合は 400） |
 | `POST /cron/enable` | 有効/無効化: `{"id", "enabled"}` |
 | `POST /cron/failure-state` | 失敗ブレーカー状態の照会: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; 未知のジョブ → `404`、失敗したことのないジョブ → ゼロの状態 |
 | `POST /cron/reset-failures` | 失敗ブレーカー状態のリセット: `{"id"}`; ブレーカー自身が無効化したジョブだけを再有効化（オペレータによる無効化は保持） |
 | `DELETE /cron` | 削除: `{"id"}`; 保護されたシステムジョブは `403` |
+
+## スキルバインディングと参照メンテナンス
+
+ジョブの `payload.skills` は順序付きのスキル名リストです。毎回の実行で各名前は SKILL.md 本文へ解決され、`payload.message` の前に注入されます（上記「動作の仕組み」参照）。したがってジョブは最初のモデル呼び出しからスキルの指示を携えます — cron エージェントに `skill_view` ツールはなく、必要もありません。
+
+スキルを移動・アーカイブするあらゆる操作が、これらのバインディングを整合させます（`skill_refs.py`）:
+
+| メカニズム | 関数 | 動作 |
+|-----------|------|------|
+| 実行時の事前ロード | `_assemble_skill_prompt()` | 各バインド済みスキルをプロンプトへ読み込み、使用として記録し、注入された内容を警告 |
+| 統合 / 剪定 | `rewrite_skill_refs(consolidated, pruned)` | 統合された名前を umbrella に置換し（重複排除・順序維持）、剪定された名前を削除。curator がアーカイブ直後に、また `skill_manage(action="delete")` が `absorbed_into` 付きで呼び出します |
+| 非活動保護 | `referenced_skill_names()` | いずれかのジョブがバインドしている名前集合。curator の 90 日トランジションはこの集合のスキルのアーカイブを拒否します |
+| 空化 | `rewrite_skill_refs(consolidated={}, pruned={…})` | 最後の名前を失ったバインドリストは `null` になり、ジョブは再びスキルなしで実行されます |
+
+`referenced_skill_names()` と `rewrite_skill_refs()` は `skills.builtin.core.cron.scripts` から再エクスポートされます。ストアは外科的に編集され（`payload.skills` のみ変更）、実際に変更があった場合にのみファイルが書き換えられます。
 
 ## 失敗ブレーカー
 

@@ -10,6 +10,7 @@ A lightweight, file-based cron service for scheduling and executing one-shot, in
 - File-based persistence in `cron_jobs.json` (project root) with auto-reload when the file is modified externally
 - A dedicated background service thread with its own asyncio event loop; a self-re-arming timer wakes up exactly at the earliest due job
 - Job execution runs a dedicated agent (main LLM + system prompt + Python REPL / read-file / write-file tools)
+- Skill binding: a job may bind skill names (`payload.skills`); each bound skill's SKILL.md content is pre-loaded into the job prompt on every run — the cron sets when, the skill sets how
 - Results are delivered to channels through the `MessageBus` inbound queue, plus a best-effort WebSocket `notification` event to the browser UI
 - Per-job execution logs written as JSON Lines to `logs/output/cron/<job_id>.log`
 - Protected system jobs (`payload.kind == "system_event"`) cannot be removed
@@ -26,6 +27,7 @@ skills/builtin/core/cron/
     ├── __init__.py      # Public exports: CronService, cron_service, Cron, cron, types
     ├── base.py          # CronService singleton, cron_jobs.json I/O, timer loop, job execution
     ├── core.py          # Cron facade (agent-facing): add_job / list_jobs / remove_job / set_context
+    ├── skill_refs.py    # Cron job skill-reference maintenance: referenced_skill_names() / rewrite_skill_refs()
     ├── types.py         # Data models: CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore
     └── README.md        # This file
 ```
@@ -45,10 +47,11 @@ Related code outside this skill:
 
 **Result delivery** (`_on_cron_job` in `base.py`):
 
-1. A fresh agent is built with `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` and invoked with the job's `payload.message` as a `HumanMessage`.
-2. The agent's final message is published to the message bus as `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)`.
-3. The channel inbound consumer (`server/trigger/channels/core.py`) processes that message per enabled channel and delivers the generated reply via `channel.send(OutboundMessage(...))` to the configured `chat_id`.
-4. Independently, `_push_cron_notification` sends `{"event": "notification", "content": "cron: <job name> [<status>]"}` over the WebSocket of session `default` (`CRON_WS_SESSION_ID`) so the browser UI notification bell updates live. Best-effort: failures are logged and never break the flow.
+1. **Skill pre-load**: when the job binds skills (`payload.skills`), `_assemble_skill_prompt()` resolves each name through `_skill_view(name, caller_scope="background")` and prepends its content wrapped in an `[IMPORTANT: The user has invoked the "…" skill. …]` header, keeping `payload.message` last; each loaded skill counts as used (`bump_use`), an unloadable name is logged and skipped, and the assembled prompt is scanned once for injection patterns (warning only). A skill-free job sends its message verbatim.
+2. A fresh agent is built with `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])` and invoked with the assembled prompt as a `HumanMessage`.
+3. The agent's final message is published to the message bus as `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)`.
+4. The channel inbound consumer (`server/trigger/channels/core.py`) processes that message per enabled channel and delivers the generated reply via `channel.send(OutboundMessage(...))` to the configured `chat_id`.
+5. Independently, `_push_cron_notification` sends `{"event": "notification", "content": "cron: <job name> [<status>]"}` over the WebSocket of session `default` (`CRON_WS_SESSION_ID`) so the browser UI notification bell updates live. Best-effort: failures are logged and never break the flow.
 
 > Note: the `deliver` field is stored on the job and exposed via the API, but the current execution path (`_on_cron_job`) publishes the result to the bus regardless of it. Whether a message actually reaches a user depends on the enabled channels (see `plugins/channels/config.json`).
 
@@ -78,7 +81,8 @@ On disk, fields use camelCase (`_save_store` / `_load_store` in `base.py`). Top 
         "message": "Summarize today's schedule and important events",
         "deliver": false,
         "channel": null,
-        "to": null
+        "to": null,
+        "skills": ["news-digest"]
       },
       "state": {
         "nextRunAtMs": 1756000000000,
@@ -125,6 +129,7 @@ On disk, fields use camelCase (`_save_store` / `_load_store` in `base.py`). Top 
 | `deliver` | `bool` | Delivery flag (default `false`; see note above — not consulted by the current execution path) |
 | `channel` | `str \| null` | Channel name, e.g. `"qq"` |
 | `to` | `str \| null` | Recipient identifier (used as `chat_id`) |
+| `skills` | `list[str] \| null` | Ordered skill names pre-loaded into the prompt on every run (`null` = no binding; an old store without the key loads as `null`) |
 
 **`state`**
 
@@ -146,7 +151,7 @@ These are the commands exposed to the agent via [`../SKILL.md`](../SKILL.md), us
 | Command | Description |
 |---------|-------------|
 | `cron.set_context(channel, chat_id)` | Set the session context (both required, non-empty) used as delivery target for subsequently added jobs |
-| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True)` | Add a job. Exactly one of `every_seconds` / `cron_expr` / `at` (ISO datetime) is required. Requires prior `set_context`. `tz` is only valid with `cron_expr` (defaults to `"UTC"`); naive `at` datetimes are assumed UTC; `at` jobs get `delete_after_run=True`; `name` defaults to the first 30 chars of `message` |
+| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True, skills=None)` | Add a job. `skills` binds skill names whose SKILL.md content is pre-loaded on every run; names are stripped, deduplicated (order kept) and blank entries dropped | Exactly one of `every_seconds` / `cron_expr` / `at` (ISO datetime) is required. Requires prior `set_context`. `tz` is only valid with `cron_expr` (defaults to `"UTC"`); naive `at` datetimes are assumed UTC; `at` jobs get `delete_after_run=True`; `name` defaults to the first 30 chars of `message` |
 | `cron.list_jobs()` | Human-readable listing: timing, purpose and protected flag for system jobs, last/next run times |
 | `cron.remove_job(job_id)` | Remove a job; returns friendly errors for protected system jobs |
 
@@ -158,7 +163,7 @@ These are the commands exposed to the agent via [`../SKILL.md`](../SKILL.md), us
 | `stop()` | Stop the service and cancel the timer task |
 | `set_on_job(callback)` | Register the async execution callback (wired to `_on_cron_job` by `init()`) |
 | `list_jobs(include_disabled=False)` | List jobs sorted by next run time; disabled jobs only when `include_disabled=True` |
-| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | Add a job (`payload.kind` is always `"agent_turn"`); auto-starts the service; returns the `CronJob` |
+| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False, skills=None)` | Add a job (`payload.kind` is always `"agent_turn"`); auto-starts the service; returns the `CronJob` |
 | `register_system_job(job)` | Idempotently (re-)register a system job by `id` (no in-repo callers at the moment) |
 | `remove_job(job_id)` | Returns `"removed"`, `"protected"` (`payload.kind == "system_event"`), or `"not_found"` |
 | `enable_job(job_id, enabled=True)` | Enable/disable; recomputes or clears `nextRunAtMs` |
@@ -171,13 +176,28 @@ These are the commands exposed to the agent via [`../SKILL.md`](../SKILL.md), us
 | Endpoint | Description |
 |----------|-------------|
 | `GET /cron?include_disabled=false` | List jobs (camelCase JSON) |
-| `POST /cron` | Create: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run"}` |
+| `POST /cron` | Create: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}` (`skills` must be a list of names or `null`; anything else is a `400`) |
 | `PUT /cron` | Update: applied as remove + re-add while preserving `id` and `createdAtMs` |
 | `POST /cron/trigger` | Run now: `{"id", "force"}` (400 if disabled and no `force`) |
 | `POST /cron/enable` | Enable/disable: `{"id", "enabled"}` |
 | `POST /cron/failure-state` | Inspect the failure breaker state: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; unknown job → `404`, never-failed job → zeroed state |
 | `POST /cron/reset-failures` | Reset the failure breaker state: `{"id"}`; re-enables only jobs the breaker itself disabled (operator disables preserved) |
 | `DELETE /cron` | Remove: `{"id"}`; `403` for protected system jobs |
+
+## Skill Binding & Reference Maintenance
+
+A job's `payload.skills` is an ordered list of skill names. On every run each name is resolved to a SKILL.md body and injected ahead of `payload.message` (see "How It Works" above), so the job carries the skill's instructions from the first model call — the cron agent has no `skill_view` tool and needs none.
+
+Anything that moves or archives a skill keeps the bindings honest (`skill_refs.py`):
+
+| Mechanism | Function | What it does |
+|-----------|----------|--------------|
+| Runtime pre-load | `_assemble_skill_prompt()` | Loads each bound skill into the prompt, counts the use, warns on injected content |
+| Consolidation / pruning | `rewrite_skill_refs(consolidated, pruned)` | Replaces a consolidated name with its umbrella (deduplicated, order kept) and drops pruned names; called by the curator right after archiving and by `skill_manage(action="delete")` with `absorbed_into` |
+| Inactivity protection | `referenced_skill_names()` | The set of names bound by any job; the curator's 90-day transition refuses to archive a skill in this set |
+| Emptying | `rewrite_skill_refs(consolidated={}, pruned={…})` | A binding list that loses its last name becomes `null` — the job runs skill-free again |
+
+`referenced_skill_names()` and `rewrite_skill_refs()` are re-exported from `skills.builtin.core.cron.scripts`. The store is edited surgically (only `payload.skills` changes) and the file is rewritten only when something actually changed.
 
 ## Failure Breaker
 

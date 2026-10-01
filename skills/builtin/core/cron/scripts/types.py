@@ -29,6 +29,9 @@ class CronPayload:
     deliver: bool = False
     channel: str | None = None  # e.g. "whatsapp"
     to: str | None = None  # e.g. phone number
+    # Ordered skill names pre-loaded into the prompt when the job fires; None
+    # (or empty) keeps the job skill-free (backward compatible with old stores).
+    skills: list[str] | None = None
 
 
 @dataclass

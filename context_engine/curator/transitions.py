@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, UTC
 
+from loguru import logger
+
 
 from context_engine.curator.constants import STATE_ACTIVE, STATE_STALE, STATE_ARCHIVED
 from context_engine.curator.helpers import _parse_iso
@@ -52,6 +54,14 @@ def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
         "seeded": 0,
     }
 
+    # Skills bound by a cron job are in use by definition: archiving one would
+    # silently break the job that loads it on every run. Protection applies to
+    # the automatic inactivity path only — explicit consolidation/pruning still
+    # archives, and rewrites the bindings that pointed at the skill.
+    from skills.builtin.core.cron.scripts.skill_refs import referenced_skill_names
+
+    protected = referenced_skill_names()
+
     for row in agent_created_report():
         counts["checked"] += 1
         name = row["name"]
@@ -78,6 +88,12 @@ def apply_automatic_transitions(now: datetime | None = None) -> dict[str, int]:
             continue
 
         if anchor <= archive_cutoff and current != STATE_ARCHIVED:
+            if name in protected:
+                logger.info(
+                    "Curator: '{}' is referenced by a cron job; archival skipped",
+                    name,
+                )
+                continue
             ok, _msg = archive_skill(name)
             if ok:
                 counts["archived"] += 1

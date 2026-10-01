@@ -132,6 +132,23 @@ minimum **before** cancelling the running turn — the cancel-triggered drain th
 claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
 single ordering rule; there is no priority column).
 
+## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
+
+The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
+`cron_jobs.json`), with the agent-facing facade in `scripts/core.py`, REST wrappers in
+`server/trigger/http/cron.py`, and the panel in `client/…/CronPanel.vue`. A job can bind an
+ordered list of skill names (`payload.skills`): on every run `_assemble_skill_prompt()` loads
+each SKILL.md through `_skill_view(name, caller_scope="background")` and prepends it (wrapped
+in an `[IMPORTANT: …]` header) ahead of the job message, counts the use (`bump_use`), and scans
+the assembled prompt for injection patterns (warning only). The cron agent keeps its minimal
+background tool set — skills arrive by pre-load, not by a `skill_view` tool.
+
+Reference maintenance lives in `scripts/skill_refs.py` and keeps bindings honest when skills
+move: `rewrite_skill_refs()` follows consolidation into an umbrella or drops pruned names (called
+by the curator right after archiving and by `skill_manage(action="delete")`), and
+`referenced_skill_names()` makes the curator's 90-day transition refuse to archive a skill that
+some job still loads. Documented in the four-language `scripts/README*.md`.
+
 ## Concurrency Lanes (`runtime/lane/`)
 
 Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, gate concurrent work instead of rejecting it: over-limit work waits FIFO.

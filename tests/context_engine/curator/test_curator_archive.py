@@ -195,3 +195,86 @@ class TestConstantsContract:
 
         assert curator.archive_skill is curator_usage.archive_skill
         assert curator.STATE_ARCHIVED == curator_constants.STATE_ARCHIVED
+
+
+class TestCronReferencedSkillsAreProtected:
+    """A skill bound by a cron job must never be archived by inactivity.
+
+    Archiving moves the skill dir out of the live tree, which would silently
+    break every job that pre-loads it on each run.
+    """
+
+    def test_aged_but_referenced_skill_is_not_archived(self, curator_tree, tmp_path, monkeypatch):
+        from skills.builtin.core.cron.scripts import skill_refs
+
+        store = tmp_path / "cron_jobs.json"
+        store.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "jobs": [
+                        {
+                            "id": "j1",
+                            "name": "n",
+                            "payload": {"kind": "agent_turn", "message": "m", "skills": ["docker"]},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(skill_refs, "CRON_STORE_PATH", store)
+
+        now = datetime.now(UTC)
+        _make_skill(curator_tree, "docker")
+        _seed_record(
+            "docker",
+            use_count=4,
+            created_at=(now - timedelta(days=120)).isoformat(),
+            last_activity_at=(now - timedelta(days=100)).isoformat(),
+        )
+
+        counts = apply_automatic_transitions(now=now)
+
+        assert counts["archived"] == 0
+        assert (curator_tree.auto / "docker" / "SKILL.md").is_file(), "skill stays live"
+        assert curator_usage.load_record("docker")["state"] != curator_constants.STATE_ARCHIVED
+
+    def test_unreferenced_skill_still_archives(self, curator_tree, tmp_path, monkeypatch):
+        """Protection is per-name: an unrelated aged skill keeps aging out."""
+        from skills.builtin.core.cron.scripts import skill_refs
+
+        store = tmp_path / "cron_jobs.json"
+        store.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "jobs": [
+                        {
+                            "id": "j1",
+                            "name": "n",
+                            "payload": {"kind": "agent_turn", "message": "m", "skills": ["docker"]},
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(skill_refs, "CRON_STORE_PATH", store)
+
+        now = datetime.now(UTC)
+        _make_skill(curator_tree, "docker")
+        _make_skill(curator_tree, "unrelated")
+        for name in ("docker", "unrelated"):
+            _seed_record(
+                name,
+                use_count=4,
+                created_at=(now - timedelta(days=120)).isoformat(),
+                last_activity_at=(now - timedelta(days=100)).isoformat(),
+            )
+
+        counts = apply_automatic_transitions(now=now)
+
+        assert counts["archived"] == 1
+        assert (curator_tree.archive / "unrelated" / "SKILL.md").is_file()
+        assert (curator_tree.auto / "docker" / "SKILL.md").is_file()

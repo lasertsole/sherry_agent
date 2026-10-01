@@ -59,6 +59,100 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _normalize_skills(skills: object) -> list[str] | None:
+    """Coerce a persisted/API ``skills`` value into a clean name list.
+
+    Accepts ``None``/absent (-> ``None``), a list of names (strings only), or a
+    bare string. Blank entries are dropped and duplicates collapse keeping the
+    FIRST occurrence, so a stored job's prompt order is stable. Anything else
+    (dict, int, ...) degrades to ``None`` instead of raising — the store loader
+    must never reject a whole cron_jobs.json over one malformed field.
+    """
+    if skills is None:
+        return None
+    if isinstance(skills, str):
+        skills = [skills]
+    if not isinstance(skills, list):
+        return None
+    out: list[str] = []
+    seen: set[str] = set()
+    for entry in skills:
+        if not isinstance(entry, str):
+            continue
+        name = entry.strip()
+        if not name or name in seen:
+            continue
+        out.append(name)
+        seen.add(name)
+    return out or None
+
+
+def _assemble_skill_prompt(message: str, skill_names: list[str]) -> str:
+    """Prepend each bound skill's SKILL.md content to ``message``.
+
+    Rendering contract (mirrors the hermes-agent ``_build_job_prompt``): every
+    loaded skill is wrapped in an ``[IMPORTANT: ...]`` header so the model reads
+    it as instructions to follow, and the user's own message stays LAST. A skill
+    that cannot be loaded is logged and skipped — a broken binding must never
+    fail the job.
+
+    Loading goes through the canonical ``_skill_view`` (frontmatter handling,
+    scope visibility, per-skill injection warning) and each successful load
+    bumps the skill's usage telemetry so the curator sees the skill as active.
+    """
+    # Lazy imports: this module is imported while `skills/` is still loading,
+    # and agent tools pull the skills loader back in.
+    from agent.tools.pub_base.skill_usage import bump_use
+    from agent.tools.skill_tools.skill_view import _INJECTION_PATTERNS, _skill_view
+
+    blocks: list[str] = []
+    for skill_name in skill_names:
+        try:
+            parsed = json.loads(_skill_view(skill_name, caller_scope="background"))
+        except Exception as e:  # noqa: BLE001 - a bad binding must not fail the job
+            logger.warning("Cron: failed to load skill '{}': {}", skill_name, e)
+            continue
+        if not parsed.get("success"):
+            logger.warning(
+                "Cron: skill '{}' is not loadable ({}); the job runs without it",
+                skill_name,
+                parsed.get("error", "unknown error"),
+            )
+            continue
+        content = parsed.get("content", "")
+        if not content:
+            logger.warning("Cron: skill '{}' loaded empty content; skipping", skill_name)
+            continue
+        blocks.append(
+            f'[IMPORTANT: The user has invoked the "{skill_name}" skill. '
+            f"Follow the skill's instructions below.]\n\n{content}"
+        )
+        try:
+            bump_use(skill_name)
+        except Exception as e:  # noqa: BLE001 - telemetry is best-effort
+            logger.debug("Cron: bump_use failed for '{}': {}", skill_name, e)
+
+    if not blocks:
+        return message
+
+    logger.info(
+        "Cron: pre-loaded {} bound skill(s) into the prompt: {}",
+        len(blocks),
+        ", ".join(skill_names),
+    )
+    assembled = "\n\n".join(blocks) + "\n\n" + message
+
+    # Assembled-prompt scan (hermes-agent parity): skill content was vetted at
+    # install time, so this is a warning layer only — the job always runs.
+    lowered = assembled.lower()
+    if any(pattern in lowered for pattern in _INJECTION_PATTERNS):
+        logger.warning(
+            "Cron: assembled prompt (skills + message) contains patterns that "
+            "may indicate prompt injection"
+        )
+    return assembled
+
+
 @dataclass
 class CronJobFailureState:
     """In-memory failure tracking for one cron job (cron breaker, §5.3).
@@ -197,6 +291,8 @@ class CronService:
                                 deliver=j["payload"].get("deliver", False),
                                 channel=j["payload"].get("channel"),
                                 to=j["payload"].get("to"),
+                                # Absent key -> None -> skill-free job (old stores).
+                                skills=_normalize_skills(j["payload"].get("skills")),
                             ),
                             state=CronJobState(
                                 next_run_at_ms=j.get("state", {}).get("nextRunAtMs"),
@@ -246,6 +342,7 @@ class CronService:
                         "deliver": j.payload.deliver,
                         "channel": j.payload.channel,
                         "to": j.payload.to,
+                        "skills": j.payload.skills,
                     },
                     "state": {
                         "nextRunAtMs": j.state.next_run_at_ms,
@@ -466,6 +563,11 @@ class CronService:
         try:
             # --- existing agent invocation logic (unchanged semantics) ---
             message: str = payload.message
+            # Bound skills are pre-loaded into the prompt (never into the tool
+            # set): the cron agent keeps its minimal background tool surface.
+            bound_skills: list[str] = _normalize_skills(payload.skills) or []
+            if bound_skills:
+                message = _assemble_skill_prompt(message, bound_skills)
             channel: str = payload.channel
             to: str = payload.to
 
@@ -620,8 +722,16 @@ class CronService:
         channel: str | None = None,
         to: str | None = None,
         delete_after_run: bool = False,
+        skills: list[str] | None = None,
     ) -> CronJob:
-        """Add a new job."""
+        """Add a new job.
+
+        ``skills`` binds a pre-existing list of skill names to the job: each
+        one's full SKILL.md content is loaded into the prompt whenever the job
+        fires (see ``_assemble_skill_prompt``). ``None``/empty keeps the job
+        skill-free. Names are validated to be plain strings and deduplicated
+        (order preserved).
+        """
         # Auto-start if not running
         if not self._running:
             try:
@@ -650,6 +760,7 @@ class CronService:
                 deliver=deliver,
                 channel=channel,
                 to=to,
+                skills=_normalize_skills(skills),
             ),
             state=CronJobState(next_run_at_ms=_compute_next_run(schedule, now)),
             created_at_ms=now,

@@ -10,6 +10,7 @@ EMA AI Agent 시스템을 위한 경량 파일 기반 cron 서비스입니다. �
 - `cron_jobs.json` (프로젝트 루트) 기반 파일 영속화, 외부 수정 시 자동 재로드
 - 자체 asyncio 이벤트 루프를 가진 전용 백그라운드 서비스 스레드; 자동 재무장 타이머가 가장 이른 예정 시각의 작업에 맞춰 정확히 기상
 - 작업 실행 시 전용 에이전트를 구동 (메인 LLM + 시스템 프롬프트 + Python REPL / 파일 읽기 / 파일 쓰기 도구)
+- 스킬 바인딩: 작업은 스킬 이름(`payload.skills`)을 바인딩할 수 있으며, 매 실행마다 각 스킬의 SKILL.md 내용이 작업 프롬프트에 사전 로드됩니다 — 언제 실행할지는 크론이, 어떻게 실행할지는 스킬이 결정합니다
 - 결과는 `MessageBus` 인바운드 큐를 통해 채널로 전달되고, 브라우저 UI에는 best-effort WebSocket `notification` 이벤트가 전송됨
 - 작업별 실행 로그를 JSON Lines 형식으로 `logs/output/cron/<job_id>.log`에 추가 기록
 - 보호된 시스템 작업 (`payload.kind == "system_event"`)은 제거 불가
@@ -26,6 +27,7 @@ skills/builtin/core/cron/
     ├── __init__.py      # 공개 내보내기: CronService, cron_service, Cron, cron, types
     ├── base.py          # CronService 싱글턴, cron_jobs.json 입출력, 타이머 루프, 작업 실행
     ├── core.py          # Cron 퍼사드 (에이전트용): add_job / list_jobs / remove_job / set_context
+    ├── skill_refs.py    # cron 작업 스킬 참조 유지보수: referenced_skill_names() / rewrite_skill_refs()
     ├── types.py         # 데이터 모델: CronSchedule, CronPayload, CronRunRecord, CronJobState, CronJob, CronStore
     └── README.md        # 이 파일
 ```
@@ -45,10 +47,14 @@ skills/builtin/core/cron/
 
 **결과 전달** (`base.py`의 `_on_cron_job`):
 
-1. `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])`로 새 에이전트를 구성하고, 작업의 `payload.message`를 `HumanMessage`로 하여 실행합니다.
-2. 에이전트의 최종 메시지를 `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` 형태로 메시지 버스에 게시합니다.
-3. 채널 인바운드 컨슈머(`server/trigger/channels/core.py`)가 활성화된 채널마다 해당 메시지를 처리하고, 생성된 답변을 `channel.send(OutboundMessage(...))`로 설정된 `chat_id`에 전달합니다.
-4. 별도로 `_push_cron_notification`이 세션 `default`(`CRON_WS_SESSION_ID`)의 WebSocket으로 `{"event": "notification", "content": "cron: <job name> [<status>]"}`를 전송하여 브라우저 UI의 알림 벨을 실시간으로 갱신합니다. Best-effort: 실패는 로그로 남을 뿐 흐름을 중단하지 않습니다.
+1. **스킬 사전 로드**: 작업이 스킬(`payload.skills`)을 바인딩하면 `_assemble_skill_prompt()`가 각 이름을 `_skill_view(name, caller_scope="background")`로 해석해 내용을 `[IMPORTANT: The user has invoked the "…" skill. …]` 헤더로 감싸 프롬프트 앞에 붙이고 `payload.message`는 마지막에 남깁니다. 로드된 스킬은 사용으로 집계되고(`bump_use`), 로드할 수 없는 이름은 로그 후 건너뛰며, 조립된 프롬프트는 한 번만 주입 패턴을 스캔합니다(경고만). 스킬이 없는 작업은 메시지를 그대로 보냅니다.
+2. 1. `create_agent(system_prompt=build_system_prompt(), model=build_main_llm(), tools=[build_python_repl_tool(), build_read_file_tool(), build_write_file_tool()])`로 새 에이전트를 구성하고, 작업의 `payload.message`를 `HumanMessage`로 하여 실행합니다.
+
+3. 2. 에이전트의 최종 메시지를 `InboundMessage(channel=payload.channel, sender_id="cron tool", chat_id=payload.to, content=result)` 형태로 메시지 버스에 게시합니다.
+
+4. 3. 채널 인바운드 컨슈머(`server/trigger/channels/core.py`)가 활성화된 채널마다 해당 메시지를 처리하고, 생성된 답변을 `channel.send(OutboundMessage(...))`로 설정된 `chat_id`에 전달합니다.
+
+5. 4. 별도로 `_push_cron_notification`이 세션 `default`(`CRON_WS_SESSION_ID`)의 WebSocket으로 `{"event": "notification", "content": "cron: <job name> [<status>]"}`를 전송하여 브라우저 UI의 알림 벨을 실시간으로 갱신합니다. Best-effort: 실패는 로그로 남을 뿐 흐름을 중단하지 않습니다.
 
 > 참고: `deliver` 필드는 작업에 저장되고 API로도 노출되지만, 현재 실행 경로(`_on_cron_job`)는 이 값과 무관하게 결과를 버스에 게시합니다. 메시지가 실제로 사용자에게 도달하는지는 활성화된 채널에 따라 달라집니다 (`plugins/channels/config.json` 참조).
 
@@ -78,7 +84,8 @@ skills/builtin/core/cron/
         "message": "Summarize today's schedule and important events",
         "deliver": false,
         "channel": null,
-        "to": null
+        "to": null,
+        "skills": ["news-digest"]
       },
       "state": {
         "nextRunAtMs": 1756000000000,
@@ -125,6 +132,7 @@ skills/builtin/core/cron/
 | `deliver` | `bool` | 전달 플래그 (기본 `false`; 위 참고 사항 확인 — 현재 실행 경로에서는 읽히지 않음) |
 | `channel` | `str \| null` | 채널 이름, 예: `"qq"` |
 | `to` | `str \| null` | 수신자 식별자 (`chat_id`로 사용) |
+| `skills` | `list[str] \| null` | 매 실행마다 프롬프트에 사전 로드되는 순서 있는 스킬 이름 목록 (`null` = 미바인딩, 키가 없는 옛 저장소는 `null`로 로드) |
 
 **`state`**
 
@@ -146,7 +154,7 @@ Python 쪽 대응 모델(`types.py`)은 snake_case를 사용합니다 (`at_ms`, 
 | 명령 | 설명 |
 |------|------|
 | `cron.set_context(channel, chat_id)` | 세션 컨텍스트 설정 (둘 다 필수이며 비어 있으면 안 됨). 이후 추가되는 작업의 전달 대상이 됨 |
-| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True)` | 작업 추가. `every_seconds` / `cron_expr` / `at` (ISO 날짜시간) 중 하나는 반드시 필요. 사전에 `set_context` 필요. `tz`는 `cron_expr`와만 함께 사용 가능 (기본 `"UTC"`); 시간대 정보가 없는 `at`은 UTC로 간주되며, `at` 작업에는 `delete_after_run=True`가 설정됨. `name`의 기본값은 `message`의 앞 30자 |
+| `cron.add_job(name=None, message, every_seconds=None, cron_expr=None, tz=None, at=None, deliver=True, skills=None)` | 작업 추가. `skills`로 바인딩한 스킬 이름은 매 실행 시 SKILL.md 내용이 사전 로드됩니다(공백 제거·중복 제거·빈 항목 버림). `every_seconds` / `cron_expr` / `at` (ISO 날짜시간) 중 하나는 반드시 필요. 사전에 `set_context` 필요. `tz`는 `cron_expr`와만 함께 사용 가능 (기본 `"UTC"`); 시간대 정보가 없는 `at`은 UTC로 간주되며, `at` 작업에는 `delete_after_run=True`가 설정됨. `name`의 기본값은 `message`의 앞 30자 |
 | `cron.list_jobs()` | 사람이 읽을 수 있는 작업 목록: 스케줄 시각, 시스템 작업의 용도와 보호 플래그, 마지막/다음 실행 시각 |
 | `cron.remove_job(job_id)` | 작업 제거. 보호된 시스템 작업에는 친절한 오류 메시지를 반환 |
 
@@ -158,7 +166,7 @@ Python 쪽 대응 모델(`types.py`)은 snake_case를 사용합니다 (`at_ms`, 
 | `stop()` | 서비스를 중지하고 타이머 태스크를 취소 |
 | `set_on_job(callback)` | 비동기 실행 콜백 등록 (`init()`이 `_on_cron_job`에 연결) |
 | `list_jobs(include_disabled=False)` | 다음 실행 시각 순으로 작업 나열; `include_disabled=True`일 때만 비활성 작업 포함 |
-| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False)` | 작업 추가 (`payload.kind`는 항상 `"agent_turn"`); 서비스 자동 시작; `CronJob` 반환 |
+| `add_job(name, schedule, message, deliver=False, channel=None, to=None, delete_after_run=False, skills=None)` | 작업 추가 (`payload.kind`는 항상 `"agent_turn"`); 서비스 자동 시작; `CronJob` 반환 |
 | `register_system_job(job)` | `id`를 기준으로 시스템 작업을 멱등하게 (재)등록 (현재 저장소 내 호출부 없음) |
 | `remove_job(job_id)` | `"removed"`, `"protected"` (`payload.kind == "system_event"`), `"not_found"` 중 하나 반환 |
 | `enable_job(job_id, enabled=True)` | 활성/비활성화; `nextRunAtMs`를 재계산하거나 비움 |
@@ -171,13 +179,28 @@ Python 쪽 대응 모델(`types.py`)은 snake_case를 사용합니다 (`at_ms`, 
 | 엔드포인트 | 설명 |
 |-----------|------|
 | `GET /cron?include_disabled=false` | 작업 목록 (camelCase JSON) |
-| `POST /cron` | 생성: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run"}` |
+| `POST /cron` | 생성: `{"name", "message", "schedule": {"kind", "atMs"/"everyMs"/"expr"/"tz"}, "deliver", "channel", "to", "delete_after_run", "skills"}` (`skills`는 이름 목록 또는 `null`이어야 하며 그 외에는 `400`) |
 | `PUT /cron` | 수정: 제거 + 재추가로 적용되며 `id`와 `createdAtMs`는 유지됨 |
 | `POST /cron/trigger` | 즉시 실행: `{"id", "force"}` (비활성 상태이고 `force`가 없으면 400) |
 | `POST /cron/enable` | 활성/비활성화: `{"id", "enabled"}` |
 | `POST /cron/failure-state` | 실패 브레이커 상태 조회: `{"id"}` → `{consecutive_failures, last_error, degraded_since, backoff_ms}`; 모르는 작업 → `404`, 한 번도 실패한 적 없는 작업 → 0으로 초기화된 상태 |
 | `POST /cron/reset-failures` | 실패 브레이커 상태 리셋: `{"id"}`; 브레이커 자신이 비활성화한 작업만 재활성화 (운영자의 비활성화는 보존됨) |
 | `DELETE /cron` | 제거: `{"id"}`; 보호된 시스템 작업은 `403` |
+
+## 스킬 바인딩과 참조 유지보수
+
+작업의 `payload.skills`는 순서 있는 스킬 이름 목록입니다. 매 실행마다 각 이름은 SKILL.md 본문으로 해석되어 `payload.message` 앞에 주입됩니다(위 "동작 방식" 참조). 따라서 작업은 첫 모델 호출부터 스킬 지침을 함께 지닙니다 — cron 에이전트에는 `skill_view` 도구가 없고, 필요하지도 않습니다.
+
+스킬을 옮기거나 아카이브하는 모든 동작이 바인딩을 정합하게 유지합니다(`skill_refs.py`):
+
+| 메커니즘 | 함수 | 하는 일 |
+|-----------|------|------|
+| 실행 시 사전 로드 | `_assemble_skill_prompt()` | 바인딩된 스킬을 프롬프트로 로드하고, 사용으로 집계하며, 주입된 내용을 경고 |
+| 통합 / 정리 | `rewrite_skill_refs(consolidated, pruned)` | 통합된 이름을 umbrella로 치환(중복 제거·순서 유지)하고 정리된 이름을 제거합니다. curator가 아카이브 직후에, 그리고 `skill_manage(action="delete")`가 `absorbed_into`와 함께 호출합니다 |
+| 비활동 보호 | `referenced_skill_names()` | 어떤 작업이든 바인딩한 이름의 집합. curator의 90일 전환은 이 집합에 속한 스킬의 아카이브를 거부합니다 |
+| 비우기 | `rewrite_skill_refs(consolidated={}, pruned={…})` | 마지막 이름을 잃은 바인딩 목록은 `null`이 되어 작업이 다시 스킬 없이 실행됩니다 |
+
+`referenced_skill_names()`와 `rewrite_skill_refs()`는 `skills.builtin.core.cron.scripts`에서 재수출됩니다. 저장소는 외과적으로 편집되며(오직 `payload.skills`만 변경), 실제로 변경이 있을 때만 파일을 다시 씁니다.
 
 ## 실패 브레이커
 

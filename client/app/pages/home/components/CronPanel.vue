@@ -61,6 +61,16 @@
               <div class="font-mono">{{ describeSchedule(job) }}</div>
               <div class="truncate">{{ job.payload.message }}</div>
               <div
+                v-if="job.payload.skills?.length"
+                class="flex flex-wrap gap-1">
+                <span
+                  v-for="skillName in job.payload.skills"
+                  :key="skillName"
+                  class="px-1.5 py-0.5 rounded bg-sky-100 dark:bg-sky-900/30 text-sky-600 dark:text-sky-300">
+                  {{ skillName }}
+                </span>
+              </div>
+              <div
                 v-if="job.state?.nextRunAtMs"
                 class="text-gray-400 dark:text-gray-500">
                 {{ t('config.cron.nextRun') }}: {{ formatTime(job.state.nextRunAtMs) }}
@@ -177,6 +187,38 @@
             :placeholder="t('config.cron.messagePlaceholder')" />
         </div>
 
+        <!-- Skill binding (optional): selected skills are pre-loaded before the
+             prompt runs — the cron sets when, the skill sets how. -->
+        <div class="flex flex-col gap-1">
+          <label class="text-sm">{{ t('config.cron.skills') }}</label>
+          <div
+            v-if="!availableSkills.length"
+            class="text-xs text-gray-400 dark:text-gray-500">
+            {{ t('config.cron.skillsEmpty') }}
+          </div>
+          <div
+            v-else
+            class="flex flex-wrap gap-x-4 gap-y-2 max-h-40 overflow-y-auto border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+            <div
+              v-for="skill in availableSkills"
+              :key="skill.name"
+              class="flex items-center gap-1.5">
+              <Checkbox
+                v-model="form.skills"
+                :value="skill.name"
+                :inputId="`cron-skill-${skill.name}`" />
+              <label
+                :for="`cron-skill-${skill.name}`"
+                class="text-xs cursor-pointer select-none">
+                {{ skill.name }}
+              </label>
+            </div>
+          </div>
+          <small class="text-xs text-gray-400 dark:text-gray-500">
+            {{ t('config.cron.skillsHint') }}
+          </small>
+        </div>
+
         <div class="flex items-center gap-2">
           <Checkbox
             v-model="form.deliver"
@@ -241,7 +283,7 @@
 <script lang="ts" setup>
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { CronJob, CronSchedule } from '@/composables/bridge';
+import type { CronJob, CronSchedule, SkillInfo } from '@/composables/bridge';
 import { logUtil } from '~/utils/log';
 import {
   DAY_MS,
@@ -266,6 +308,8 @@ const tr: ScheduleTranslator = (key, named) => t(key, named);
 const loading = ref(false);
 const saving = ref(false);
 const jobs = ref<CronJob[]>([]);
+/** Skills offered by the binding picker (loaded once on mount). */
+const availableSkills = ref<SkillInfo[]>([]);
 /** Set of task ids with an enable/disable toggle in flight (the change event bypasses the debounce directive, so this in-flight guard prevents rapid double clicks) */
 const busyToggleIds = ref<Set<string>>(new Set());
 
@@ -296,6 +340,7 @@ const form = ref({
   everyUnit: 'm' as string,
   expr: '' as string,
   message: '',
+  skills: [] as string[],
   deliver: false,
   channel: '' as string | null,
   to: '' as string | null,
@@ -344,6 +389,7 @@ function resetForm() {
     everyUnit: 'm',
     expr: '',
     message: '',
+    skills: [],
     deliver: false,
     channel: null,
     to: null,
@@ -395,6 +441,7 @@ function openEditJob(job: CronJob) {
     everyUnit,
     expr: s.expr ?? '',
     message: job.payload.message,
+    skills: job.payload.skills ?? [],
     deliver: job.payload.deliver,
     channel: job.payload.channel ?? null,
     to: job.payload.to ?? null,
@@ -419,7 +466,9 @@ async function handleSaveJob() {
       deliver: form.value.deliver,
       channel: form.value.deliver ? form.value.channel : null,
       to: form.value.deliver ? form.value.to : null,
-      delete_after_run: form.value.deleteAfterRun
+      delete_after_run: form.value.deleteAfterRun,
+      // Empty selection clears the binding (null, not []).
+      skills: form.value.skills.length > 0 ? form.value.skills : null
     };
     if (editingId.value) {
       await updateCronJob(editingId.value, payload);
@@ -491,8 +540,22 @@ async function loadJobs() {
   }
 }
 
+/** Load the picker's skill list; a failure leaves the picker empty, never blocks the panel. */
+async function loadSkills() {
+  try {
+    const data = await listSkills();
+    availableSkills.value = data.skills ?? [];
+  } catch (e) {
+    logUtil.e('[CronPanel] Failed to load skills:', e);
+    availableSkills.value = [];
+  }
+}
+
 // The tab's lifetime drives the load.
-onMounted(loadJobs);
+onMounted(() => {
+  loadJobs();
+  loadSkills();
+});
 </script>
 
 <i18n lang="json">
@@ -520,6 +583,9 @@ onMounted(loadJobs);
         "cronExpr": "Cron 表达式",
         "message": "任务消息",
         "messagePlaceholder": "请输入要执行的任务内容",
+        "skills": "绑定技能（可选）",
+        "skillsEmpty": "暂无可用技能",
+        "skillsHint": "选中的技能会在执行前预加载 — 定时任务决定何时执行，技能决定如何执行",
         "deliver": "推送到渠道",
         "channel": "渠道名称",
         "channelPlaceholder": "例如：default",
@@ -560,6 +626,9 @@ onMounted(loadJobs);
         "cronExpr": "Cron expression",
         "message": "Task message",
         "messagePlaceholder": "Enter the task content to execute",
+        "skills": "Skills (optional)",
+        "skillsEmpty": "No skills installed",
+        "skillsHint": "Selected skills are loaded before the prompt runs — the cron sets when, the skill sets how",
         "deliver": "Push to channel",
         "channel": "Channel",
         "channelPlaceholder": "e.g. default",
@@ -600,6 +669,9 @@ onMounted(loadJobs);
         "cronExpr": "Cron 式",
         "message": "タスク内容",
         "messagePlaceholder": "実行するタスクの内容を入力",
+        "skills": "スキル（任意）",
+        "skillsEmpty": "利用可能なスキルがありません",
+        "skillsHint": "選択したスキルは実行前にロードされます — クーロンが実行タイミングを、スキルが実行方法を決定します",
         "deliver": "チャネルへ配信",
         "channel": "チャネル名",
         "channelPlaceholder": "例：default",
@@ -640,6 +712,9 @@ onMounted(loadJobs);
         "cronExpr": "Cron 표현식",
         "message": "작업 내용",
         "messagePlaceholder": "실행할 작업 내용을 입력하세요",
+        "skills": "스킬 (선택)",
+        "skillsEmpty": "사용 가능한 스킬이 없습니다",
+        "skillsHint": "선택한 스킬은 실행 전에 로드됩니다 — 크론이 실행 시점을, 스킬이 실행 방법을 결정합니다",
         "deliver": "채널로 전송",
         "channel": "채널 이름",
         "channelPlaceholder": "예: default",

@@ -177,4 +177,30 @@ def _apply_consolidation(llm_final: str) -> None:
     _merge_umbrella_skills(consolidations)
     _archive_consolidated_sources(consolidations)
     _archive_pruned_skills(prunings, consolidations)
+    _rewrite_cron_skill_refs(consolidations, prunings)
     _schedule_system_prompt_refresh()
+
+
+def _rewrite_cron_skill_refs(consolidations: list, prunings: list) -> None:
+    """Follow the archival above through to cron jobs that bound those skills.
+
+    A consolidated source's name is replaced by its umbrella; a pruned skill is
+    dropped. Runs after the archive phases so a crash in between leaves the
+    files archived and the bindings intact (the next pass rewrites them), never
+    the reverse. Failures are logged by the callee and never raise.
+    """
+    consolidated = {
+        entry.get("from", "").strip(): entry.get("into", "").strip()
+        for entry in consolidations
+        if isinstance(entry, dict) and entry.get("from") and entry.get("into")
+    }
+    pruned = {
+        entry.get("name", "").strip()
+        for entry in prunings
+        if isinstance(entry, dict) and entry.get("name")
+    }
+    if not consolidated and not pruned:
+        return
+    from skills.builtin.core.cron.scripts.skill_refs import rewrite_skill_refs
+
+    rewrite_skill_refs(consolidated=consolidated, pruned=pruned)

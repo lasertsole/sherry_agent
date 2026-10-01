@@ -592,9 +592,9 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 ### 6.2 定时任务工具族
 
 **Zcode** [落盘实测]：`CronCreate` / `CronList` / `CronUpdate` / `CronDelete` + `OffPeakCreate` / `OffPeakList`（6 个工具在 34 工具列表内）。off-peak 是「低谷期跑」的独立概念。
-**Sherry** [实测]：`CRON_SERVICE` 7 键配置齐全（`degrade_backoff_base_ms`、`disabled_threshold = 10`、`max_run_history = 20`、双层退避 base/max）+ `改造计划_Cron_Skill绑定.md` 在推进 cron 与 skill 绑定。
+**Sherry** [实测]：`CRON_SERVICE` 7 键配置齐全（`degrade_backoff_base_ms`、`disabled_threshold = 10`、`max_run_history = 20`、双层退避 base/max）+ cron 与 skill 强绑定已落地（job 可绑定技能并逐次预加载，见 `skills/builtin/core/cron/scripts/`）。
 
-**结论**：**Sherry 服务端能力更强**（降级背压 + 禁用阈值 + skill 绑定计划），Zcode 是工具侧暴露。
+**结论**：**Sherry 服务端能力更强**（降级背压 + 禁用阈值 + skill 绑定），Zcode 是工具侧暴露。
 **可借鉴的只有一点**：把 cron 的触发暴露为 agent 工具（Zcode 侧是 agent 主动管理 cron），让模型能「检查自己的定时任务状态」。`OffPeak` 的低谷期概念 Sherry 暂无对应，可作为低优先候选。
 
 ### 6.3 会话上下文回读

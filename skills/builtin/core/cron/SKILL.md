@@ -20,8 +20,11 @@ if __name__ == "__main__":
     deliver: bool | None = bool(
         "{placeholder}"
     )  # "Whether to deliver the execution result to the user channel (default false)"
+    skills: list[str] | None = [
+        "{placeholder}"
+    ]  # <- Optional skill names to pre-load into the prompt on every run (e.g. ['news-digest']). The cron sets when, the skill sets how.
 
-    res = cron.add_job(name, message, every_seconds, cron_expr, tz, at, deliver)
+    res = cron.add_job(name, message, every_seconds, cron_expr, tz, at, deliver, skills)
     logger.info(res)
 ```
 

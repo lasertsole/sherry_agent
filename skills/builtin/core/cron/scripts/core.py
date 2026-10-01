@@ -60,7 +60,9 @@ class Cron:
         tz: str | None,
         at: str | None,
         deliver: bool = True,
+        skills: list[str] | None = None,
     ) -> str:
+        """Schedule a job; ``skills`` pre-loads those skills' contents each run."""
         if not message:
             return "Error: message is required for add"
         if not self._channel or not self._chat_id:
@@ -105,8 +107,10 @@ class Cron:
             channel=self._channel,
             to=self._chat_id,
             delete_after_run=delete_after,
+            skills=skills,
         )
-        return f"Created job '{job.name}' (id: {job.id})"
+        bound = f" with skills: {', '.join(job.payload.skills)}" if job.payload.skills else ""
+        return f"Created job '{job.name}' (id: {job.id}){bound}"
 
     def _format_timing(self, schedule: CronSchedule) -> str:
         """Format schedule as a human-readable timing string."""
@@ -157,6 +161,8 @@ class Cron:
         for j in jobs:
             timing = self._format_timing(j.schedule)
             parts = [f"- {j.name} (id: {j.id}, {timing})"]
+            if j.payload.skills:
+                parts.append(f"  Skills: {', '.join(j.payload.skills)}")
             if j.payload.kind == "system_event":
                 parts.append(f"  Purpose: {self._system_job_purpose(j)}")
                 parts.append("  Protected: visible for inspection, but cannot be removed.")

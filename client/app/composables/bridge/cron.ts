@@ -28,6 +28,11 @@ export interface CronPayload {
   channel?: string | null;
   /** Optional recipient override (e.g. chat_id / user id). */
   to?: string | null;
+  /**
+   * Ordered skill names pre-loaded into the prompt on every run (null/absent =
+   * skill-free job). The cron sets when, the skill sets how.
+   */
+  skills?: string[] | null;
 }
 
 /** Runtime state of a cron job (camelCase JSON shape matching `CronJobState`). */
@@ -99,6 +104,7 @@ export async function listCronJobs(includeDisabled = false): Promise<CronListRes
  * @param input.channel Target channel id when `deliver` is set.
  * @param input.to Channel recipient (e.g. QQ number) when `deliver` is set.
  * @param input.delete_after_run Whether the job removes itself after its next run.
+ * @param input.skills Skill names whose contents are pre-loaded before the run.
  * @returns `{ success, job?, message? }` from the backend.
  */
 export async function addCronJob(input: {
@@ -109,6 +115,7 @@ export async function addCronJob(input: {
   channel?: string | null;
   to?: string | null;
   delete_after_run?: boolean;
+  skills?: string[] | null;
 }): Promise<CronMutateResponse> {
   return fetchApiPayload<CronMutateResponse>({
     url: '/cron',
@@ -129,6 +136,7 @@ export async function addCronJob(input: {
  * @param patch.channel Target channel id when `deliver` is set.
  * @param patch.to Channel recipient (e.g. QQ number) when `deliver` is set.
  * @param patch.delete_after_run Whether the job removes itself after its next run.
+ * @param patch.skills Skill names whose contents are pre-loaded before the run.
  * @returns `{ success, job?, message? }` from the backend.
  */
 export async function updateCronJob(
@@ -141,6 +149,7 @@ export async function updateCronJob(
     channel?: string | null;
     to?: string | null;
     delete_after_run?: boolean;
+    skills?: string[] | null;
   }
 ): Promise<CronMutateResponse> {
   return fetchApiPayload<CronMutateResponse>({

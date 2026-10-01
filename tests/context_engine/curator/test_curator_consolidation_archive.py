@@ -257,3 +257,110 @@ class TestStructuredSummaryContract:
             {"name": "alpha", "reason": "duplicate of consolidation"},
             {"name": "gamma", "reason": "stale"},
         ]
+
+
+class TestCronBindingsFollowTheRemoval:
+    """Consolidation/pruning must rewrite every cron job that bound the skill.
+
+    The removed skill's directory leaves the live tree, so a job still binding
+    its name would pre-load nothing on every run. The source name is replaced
+    by its umbrella; a pruned name is dropped.
+    """
+
+    @staticmethod
+    def _write_cron_store(tmp_path, monkeypatch, jobs: list[dict]):
+        import json
+
+        from skills.builtin.core.cron.scripts import skill_refs
+
+        store = tmp_path / "cron_jobs.json"
+        store.write_text(json.dumps({"version": 1, "jobs": jobs}), encoding="utf-8")
+        monkeypatch.setattr(skill_refs, "CRON_STORE_PATH", store)
+        return store
+
+    def test_consolidated_name_is_replaced_by_its_umbrella(
+        self, curator_tree, apply_consolidation, monkeypatch, tmp_path
+    ):
+        import json
+
+        store = self._write_cron_store(
+            tmp_path,
+            monkeypatch,
+            [
+                {
+                    "id": "j1",
+                    "name": "n",
+                    "payload": {"kind": "agent_turn", "message": "m", "skills": ["alpha", "keep"]},
+                }
+            ],
+        )
+        _make_skill(curator_tree, "alpha")
+        data_provider.set_skill_write_provider(_DiskWriter(curator_tree.auto))
+
+        apply_consolidation(_LLM_CONSOLIDATE)
+
+        payload = json.loads(store.read_text(encoding="utf-8"))["jobs"][0]["payload"]
+        assert payload["skills"] == ["umbrella", "keep"]
+
+    def test_pruned_name_is_dropped(self, curator_tree, apply_consolidation, monkeypatch, tmp_path):
+        import json
+
+        store = self._write_cron_store(
+            tmp_path,
+            monkeypatch,
+            [
+                {
+                    "id": "j1",
+                    "name": "n",
+                    "payload": {"kind": "agent_turn", "message": "m", "skills": ["beta", "keep"]},
+                }
+            ],
+        )
+        _make_skill(curator_tree, "beta")
+        _seed_record("beta", use_count=1)
+        data_provider.set_skill_write_provider(_DiskWriter(curator_tree.auto))
+
+        apply_consolidation(_LLM_PRUNE)
+
+        payload = json.loads(store.read_text(encoding="utf-8"))["jobs"][0]["payload"]
+        assert payload["skills"] == ["keep"]
+
+    def test_aborted_consolidation_leaves_bindings_alone(
+        self, curator_tree, apply_consolidation, monkeypatch, tmp_path
+    ):
+        """No writer -> the whole apply aborts, so nothing may be rewritten either."""
+
+        store = self._write_cron_store(
+            tmp_path,
+            monkeypatch,
+            [
+                {
+                    "id": "j1",
+                    "name": "n",
+                    "payload": {"kind": "agent_turn", "message": "m", "skills": ["alpha"]},
+                }
+            ],
+        )
+        before = store.read_text(encoding="utf-8")
+        data_provider.set_skill_write_provider(None)
+
+        apply_consolidation(_LLM_CONSOLIDATE)
+
+        assert store.read_text(encoding="utf-8") == before
+
+    def test_cron_store_failure_never_breaks_the_apply(
+        self, curator_tree, apply_consolidation, monkeypatch, tmp_path
+    ):
+        """A corrupt store is logged and skipped — the archival still completes."""
+        from skills.builtin.core.cron.scripts import skill_refs
+
+        bad = tmp_path / "cron_jobs.json"
+        bad.write_text("{not json", encoding="utf-8")
+        monkeypatch.setattr(skill_refs, "CRON_STORE_PATH", bad)
+        _make_skill(curator_tree, "alpha")
+        data_provider.set_skill_write_provider(_DiskWriter(curator_tree.auto))
+
+        apply_consolidation(_LLM_CONSOLIDATE)
+
+        assert (curator_tree.archive / "alpha" / "SKILL.md").is_file()
+        assert bad.read_text(encoding="utf-8") == "{not json", "unreadable store untouched"
