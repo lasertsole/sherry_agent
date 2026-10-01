@@ -18,3 +18,4 @@ PYSEC-2026-2288  # transformers — fix requires the 5.x major line
 PYSEC-2026-2289  # transformers — fix requires the 5.x major line
 PYSEC-2026-2290  # transformers — fix requires the 5.x major line
 PYSEC-2026-3929  # transformers — fix requires the 5.x major line
+CVE-2026-80047   # transformers — fix requires the 5.x major line (load_custom_generate; not called here)
