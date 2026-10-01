@@ -13,6 +13,13 @@
   // 控制台与 info 日志文件的日志级别
   "LOG_LEVEL": "INFO",
 
+  // Process-level default project directory — where the agent works when a
+  // session has no explicit binding. Empty = the repository root (the historical
+  // behaviour). SHERRY_PROJECT_DIR overrides this key for a single launch.
+  // 进程级默认项目目录——会话未显式绑定时 Agent 的工作目录。留空 = 仓库根目录（与历史行为一致）。
+  // 环境变量 SHERRY_PROJECT_DIR 可对单次启动覆盖此键。
+  "project_dir": "",
+
   // subagent
   "SUBAGENT_TODO_DONE_FUNC": "archive",
 

@@ -224,6 +224,76 @@ def resolve_evidence_ledger_path() -> Path:
     return SRC_DIR / "data" / "evidence-ledger.jsonl"
 
 
+#: Warn-once guard for an invalid configured project directory (see
+#: :func:`resolve_default_project_dir`). Tool calls resolve the default on the
+#: cold path, so a bad value would otherwise log per call.
+_warned_invalid_project_dir = False
+
+
+def validate_project_dir(value: str | os.PathLike[str]) -> Path:
+    """Validate a project directory supplied by an operator or a session.
+
+    Returns the resolved absolute directory. Raises ``ValueError`` when the
+    value is empty, relative (there is no stable base to resolve it against),
+    missing, unreadable, not a directory, or a symlink loop — ``Path.resolve``
+    stops silently on loops, so they are surfaced here as an error instead of
+    resolving to something unexpected.
+
+    Deliberately strict for *input* validation; :func:`resolve_default_project_dir`
+    wraps it with the always-boot fallback used at startup.
+    """
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("project directory is empty")
+    path = Path(os.path.expanduser(raw))
+    if not path.is_absolute():
+        raise ValueError(f"project directory must be an absolute path: {raw!r}")
+    try:
+        resolved = path.resolve(strict=True)
+    except (OSError, RuntimeError) as e:
+        raise ValueError(f"project directory cannot be resolved: {raw!r} ({e})") from e
+    if not resolved.is_dir():
+        raise ValueError(f"project directory is not a directory: {raw!r}")
+    return resolved
+
+
+def resolve_default_project_dir() -> Path:
+    """The process-level default project directory.
+
+    Precedence: ``SHERRY_PROJECT_DIR`` (read at call time — tests and operators
+    repoint it, the same contract as :func:`resolve_approval_store_path`) →
+    the ``project_dir`` key of ``sherry.jsonc`` → ``ROOT_DIR``. The final
+    fallback keeps the pre-project-binding behaviour byte-for-byte.
+
+    A configured value that fails :func:`validate_project_dir` never raises
+    here — the server must always boot — but the fallback is *visible*: one
+    warning per process naming the bad value, so a typo cannot silently leave
+    the agent working inside the sherry checkout.
+    """
+    global _warned_invalid_project_dir
+    configured = os.environ.get("SHERRY_PROJECT_DIR", "").strip()
+    source = "SHERRY_PROJECT_DIR"
+    if not configured:
+        configured = str(get_sherry_setting("project_dir") or "").strip()
+        source = "sherry.jsonc project_dir"
+    if not configured:
+        return ROOT_DIR
+    try:
+        return validate_project_dir(configured)
+    except ValueError as e:
+        if not _warned_invalid_project_dir:
+            _warned_invalid_project_dir = True
+            from loguru import logger
+
+            logger.warning(
+                "Invalid {} value ignored (falling back to the repository root {}): {}",
+                source,
+                ROOT_DIR,
+                e,
+            )
+        return ROOT_DIR
+
+
 def resolve_approval_store_path() -> Path:
     """Return the absolute tool-approval store path (``SRC_DIR/data/approvals.json``).
 

@@ -34,6 +34,11 @@ SHERRY_CONFIG_PATH = Path(__file__).resolve().parents[1] / "sherry.jsonc"
 SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "TOOL_CALL_TIMEOUT_MINUTES": 5,
     "LOG_LEVEL": "INFO",
+    # Persisted process-level default project directory ("where the agent
+    # works"). Empty = unset -> ROOT_DIR. SHERRY_PROJECT_DIR still wins over
+    # this key so an operator can repoint a single launch (see
+    # config/path.py::resolve_default_project_dir).
+    "project_dir": "",
     "SUBAGENT_TODO_DONE_FUNC": "archive",
     "WORKSPACE_TEMPLATE_LANG": "en",
     # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off by
