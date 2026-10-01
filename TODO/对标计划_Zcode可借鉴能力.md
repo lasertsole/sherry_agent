@@ -581,7 +581,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 **⚠️ 不可照抄的部分**：Zcode 的 SSRF 防护**只覆盖字面量**——拦 `localhost` / `*.local` / 非公网 IP 字面量 / URL 内嵌凭据 / 单标签主机名；每次 GET 前 `assertWebFetchLiteralEgress` 要求 `ipaddr.js` 的 `range() === "unicast"` 并排除基准测试段 / IPv4-mapped IPv6 / NAT64 前缀，**但域名无 DNS 预检**（源码注释明说依赖 HTTP egress proxy 兜底）→ **不防 DNS rebinding**。
 
 **改造建议**：WebFetch 是真实的能力缺口（Sherry 只能搜、不能读），但**必须独立做 SSRF 设计**：
-1. 复用到本仓库已有的防御方案（见 `TODO/防御计划_CSRF-SSRF-XSS补齐方案.md`），**不要照抄 Zcode 的字面量检查**
+1. 复用本仓库已有的防御方案（`pub/func/validator/public_url.py` 判定 + `safe_fetch.py` 传输：解析后逐地址校验、连接钉在已校验地址上、重定向逐跳复查），**不要照抄 Zcode 的字面量检查**
 2. 强制**解析后 IP 校验**（resolve → 校验 → 连接该 IP，而非校验域名），关闭 DNS rebinding
 3. 重定向策略照抄 Zcode 的同 host 限制（这条是好的）
 4. HTML→Markdown 建议**用现成库**而非手写正则——Zcode 手写转换器是可维护性负担
