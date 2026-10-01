@@ -224,6 +224,12 @@ def test_adversarial_input_scans_in_bounded_time():
     HTML-comment rule spans two markers, and the C2 rule has a separated pair
     (``sliver`` + ``server``), so all three are exercised at the scan window's
     full size.
+
+    The budget is 1s per payload: the slowest shape here measures ~210ms on an
+    idle machine (and 551ms was observed for the same payload on a box under a
+    full parallel test gate), while a quadratic rule on a 64KB blob costs
+    seconds to minutes — so this still fails on the regression it exists for,
+    without failing on load.
     """
     import time
 
@@ -241,4 +247,4 @@ def test_adversarial_input_scans_in_bounded_time():
         start = time.perf_counter()
         scan_for_threats(payload, scope="strict")
         elapsed_ms = (time.perf_counter() - start) * 1000
-        assert elapsed_ms < 500, f"a {len(payload)}-char adversarial blob took {elapsed_ms:.0f}ms"
+        assert elapsed_ms < 1000, f"a {len(payload)}-char adversarial blob took {elapsed_ms:.0f}ms"

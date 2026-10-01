@@ -13,6 +13,7 @@ import os
 import stat
 
 import pytest
+from loguru import logger
 
 from agent.tools.pub_base import rg_resolver
 
@@ -61,6 +62,23 @@ def test_a_candidate_that_is_not_ripgrep_is_rejected(tmp_path, monkeypatch):
     monkeypatch.setenv("SHERRY_RG_PATH", impostor)
 
     assert rg_resolver.resolve_rg() != impostor
+
+
+def test_the_resolved_binary_is_logged_once(tmp_path, monkeypatch):
+    """Operators need to know which engine a live process settled on."""
+    binary = _rg_like(tmp_path)
+    monkeypatch.setenv("SHERRY_RG_PATH", binary)
+    messages: list[str] = []
+    sink = logger.add(lambda message: messages.append(message), level="DEBUG")
+    try:
+        rg_resolver.resolve_rg()
+        rg_resolver.resolve_rg()  # cached: must not log a second time
+    finally:
+        logger.remove(sink)
+
+    resolved = [m for m in messages if "resolved" in m]
+    assert len(resolved) == 1, resolved
+    assert binary in resolved[0]
 
 
 def test_a_missing_candidate_falls_through_to_the_next_tier(tmp_path, monkeypatch):

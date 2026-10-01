@@ -159,6 +159,10 @@ def resolve_rg() -> str | None:
             "ripgrep ('rg') not found or failed its version probe; "
             "searches use the Python fallback (install ripgrep for faster scans)"
         )
+    else:
+        # DEBUG once per process: answering "which rg is my agent actually
+        # using?" otherwise means reproducing the six-tier probe by hand.
+        logger.debug("ripgrep backend resolved: {}", _resolution_cache)
     return _resolution_cache
 
 
