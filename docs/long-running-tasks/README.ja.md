@@ -55,12 +55,12 @@
 | 部分 | 内容 |
 | :--- | :--- |
 | `config/features/agent_side/` | **34** 個のエージェント側設定モジュール（ミドルウェア、ツール、LLM クライアント、メモリ、TaskFlow） |
-| `config/features/infra_side/` | **20** 個のインフラ側設定モジュール（サーバー、キュー、スキル、コンテキストエンジン、ランタイム、モデル価格） |
+| `config/features/infra_side/` | **21** 個のインフラ側設定モジュール（サーバー、キュー、スキル、コンテキストエンジン、ランタイム、モデル価格） |
 | `config/features/_env.py` | 唯一の共有環境ヘルパー |
 
 各モジュールは `class XxxConfig(TypedDict)` とモジュールレベルの定数 `XXX: XxxConfig = {…}` を定義します。環境対応モジュールはビルダー `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` を定義し、`env or os.environ` を読んでインポート時に定数を具体化します。環境ヘルパーは `_env_int(name, default, env)`（`config/features/_env.py:9`）で、`1/true/yes/on` と `0/false/no/off/""` を受け付け、決して例外を投げません。
 
-レジストリは現在 **54 個の feature オブジェクト**を保持します——エージェント側 34 + インフラ側 20——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
+レジストリは現在 **55 個の feature オブジェクト**を保持します——エージェント側 34 + インフラ側 21——各パッケージの `__init__.py` を通じて再エクスポートされ、`config/features/__init__.py` が集約するため、消費側は片方の半分またはレジストリ全体を 1 か所からインポートできます。消費側コードは定数をインポートして直接インデックスします（例：`ITERATION_BUDGET["default_max_iterations"]`）。`get_feature`/`load_feature` アクセサは存在しません。`config/__init__.py:38-39` は `GATEWAY` から `API_HOST`/`API_PORT` を導出します。
 
 本文書に最も関係する定数：
 
@@ -231,7 +231,7 @@ TaskFlow スイートは `tests/agent/tools/taskflow/` にあります（24 個�
 | `test_index_audit.py` | SQLite インデックス更新パスとクエリプラン監査 |
 | `test_update_steps.py` | ステップリスト全置換：追加/削除/書き換え/並べ替えと dispatched/done 安全規則 |
 
-横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証ゲート）、`tests/agent/middlewares/test_completion_drain_gate.py`（無条件のプログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/todolist/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留 flow のプロンプト注入）。
+横断スイート：`tests/agent/middlewares/test_memory_flush.py`（フラッシュ閾値と `append_entries`）、`tests/agent/middlewares/test_lt5_memory_backflow.py`（完了排出時のメモリ照合）、`tests/agent/middlewares/test_subagent_completion_drain_reminder.py`（完了キャリア検証ゲート）、`tests/agent/middlewares/test_completion_drain_gate.py`（無条件のプログラムゲート）、`tests/agent/tools/subagent/test_completion_judge.py` + `test_goal_loop.py`（完了判定器と有界 goal loop）、`tests/agent/tools/test_evidence_auto_record.py` + `test_evidence_stale.py` + `tests/agent/tools/todolist/test_evidence_ledger.py`（evidence 記録、stale イベント、台帳ビュー）、`tests/context_engine/test_session_continuity.py`（継続性の保存/プロンプト）、`tests/agent/middlewares/test_todo_continuation.py`（ターン終了時の継続）、`tests/pub/func/message/test_tool_output_prune.py`（一行要約）、`tests/workspace/test_prompt_builder_taskflow.py`（保留フローのプロンプト注入）、`tests/server/test_session_project.py`（プロジェクトディレクトリ束縛：保留/昇格、起動時のウォームアップ）、`tests/server/test_project_files.py` + `tests/agent/tools/test_session_project_root.py`（ファイルブラウザの `resolve_within` ゲートをツール境界で再実行）（保留 flow のプロンプト注入）。
 
 標準の uv/pytest ツールでこの領域だけを実行：
 
@@ -251,7 +251,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **圧縮前メモリフラッシュは潜在状態。** `Summarization` の本番インスタンス（メイン/サブ）は `memory_store` / `llm_factory` を渡さないため、呼び出し箇所が配線するまでフラッシュは実行されません。コードは実装・テスト済みですが現在は不活性です。
 - **継続性はチャネル依存。** `build_continuity_prompt` は channel id と chat id の両方を必要とするため、チャネルバインディングのないセッションは継続性ブロックを受け取りません。ストレージはディスク上のキー別 JSON であり、データベースではありません。
 - **アクティブ flow スキャンが 3 重複。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync`、`session_continuity._get_active_taskflow_ids_sync` が同じクエリを独立実装しています；同期を保つ必要があります。
-- **レジストリ規模は 54。** 設定レジストリは 54 個の feature オブジェクト（エージェント側 34 + インフラ側 20）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING` と `HTTP_CLIENT` を省いています。
+- **レジストリ規模は 55。** 設定レジストリは 55 個の feature オブジェクト（エージェント側 34 + インフラ側 21）を保持します；インフラ側の契約テストはそのうち 18 個（GATEWAY + 17 のデータ駆動ケース）をカバーし、`MODEL_PRICING`、`HTTP_CLIENT`、`FILE_BROWSER` を省いています。
 - **パッケージ再エクスポートの欠落。** `agent/tools/taskflow/__init__.py` は 11 個の名前しか再エクスポートしません；`taskflow_dispatch` と `taskflow_wait_all` は `build_taskflow_tools()` 経由で到達できますが、パッケージ `__all__` から漏れています。
 - **TaskFlow ブロックは LLM プロンプト専用。** LLM 失敗時に使われる決定論的フォールバック要約は `## Current TaskFlow State` を含みません。
 - **トークン会計は呼び出し側提供。** コストは `taskflow_resume` が `token_usage` 辞書を受け取ったときだけ計算されます；無しで注入されたステップはゼロトークン・ゼロコストに貢献します。

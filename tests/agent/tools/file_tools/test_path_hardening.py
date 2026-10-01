@@ -56,6 +56,10 @@ def virtual_root(tmp_path, monkeypatch):
             return True
 
     monkeypatch.setattr(state_register_mem, "_states", {})
+    # Belt and braces: a session binding left by ANOTHER suite would win over the
+    # env default and send these tools at that root (observed: stray files in the
+    # repo root). Clearing the session's keys makes the fixture self-contained.
+    state_register_mem.clear_session(SESSION)
     monkeypatch.setattr(runtime, "state_register_db", _FakeDB())
     state_register_mem.set_state(SESSION, "caller_scope", "subagent")
     return root

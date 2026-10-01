@@ -37,7 +37,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (54 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (55 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -132,6 +132,45 @@ minimum **before** cancelling the running turn — the cancel-triggered drain th
 claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
 single ordering rule; there is no priority column).
 
+## Project Directory Binding (`runtime/session/project_dir.py`)
+
+Every session has a **project directory**: the root its tools resolve relative
+paths against. Precedence is session binding → `SHERRY_PROJECT_DIR` →
+`sherry.jsonc`'s `project_dir` key → `ROOT_DIR`, so with nothing configured the
+behaviour is byte-for-byte the old behavior. `PUT /sessions/project` binds (or
+clears, with `null`) the session's own value; a choice made while a turn is
+running is PARKED (`PROJECT_DIR_PENDING`) and promoted by
+`turn_runner.on_turn_finished` at the turn boundary — the same park/promote pair
+the thinking/model controls use, including the HITL deferral.
+
+The read rule that keeps this working: **resolve the root per call, never at
+construction time.** Tool objects are process-level singletons
+(`agent/core.py`), so a captured root would freeze every session onto the first
+caller's directory; and a session can switch at a turn boundary, so even a
+per-turn cache would go stale after a HITL resume. The single accessor is
+`agent.tools.pub_base.session_workspace_root(session_id)` feeding
+`resolve_workspace_path(path, root)`; `PathGuard`, the four file tools,
+`terminal`, `python_repl`, `ptc` and the code-intel runners all read it (the
+guard also moves its boundary, keeping its policy: in-root passes, only the
+hard-deny floor rejects outside it).
+
+Derivation: a subagent inherits the parent's binding at spawn
+(`resolve_spawned_workspace_inheritance`) and the value is persisted as the
+CHILD session's own binding, so a child is frozen to the root it started with
+and does not follow a later parent switch. `sessions_spawn(cwd=...)` overrides
+it. The prompt gains a `## Current Working Directory` block naming the effective
+root, and marks an unbound session with 未绑定项目目录 instead of quietly
+pointing the model at the sherry checkout.
+
+File browsing (`GET /project/tree`, `GET /project/file`,
+`server/service/project_files_service.py`) is read-only and hard-refused to the
+session's root: `resolve_within(base, path)` runs the same gate order as the
+tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
+size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
+NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
+(`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
+(`FileViewerPanel`).
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
@@ -171,8 +210,8 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | File | Contents |
 |---|---|
 | `config/features/agent_side/` | 34 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, ...) |
-| `config/features/infra_side/` | 20 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 54 TypedDicts + instances re-exported |
+| `config/features/infra_side/` | 21 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
+| `config/features/__init__.py` | Aggregator — all 55 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
