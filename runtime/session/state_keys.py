@@ -43,6 +43,17 @@ class StateKey(StrEnum):
     # Model choice made mid-turn: parked (same semantics as the thinking twin).
     LLM_MAIN_MODEL_PENDING = "llm_main_model_pending"
 
+    # Per-session project directory (client UI -> /sessions/project): the
+    # absolute, validated working root every tool resolves paths against.
+    # Absent = no explicit binding -> SHERRY_PROJECT_DIR / sherry.jsonc
+    # project_dir / ROOT_DIR (see config.path.resolve_default_project_dir).
+    # Deliberately NOT named "workspace_dir": WORKSPACE_DIR is the persona
+    # directory (config/path.py), and the two must not be confused.
+    PROJECT_DIR = "project_dir"
+    # Directory choice made mid-turn: parked so the in-flight turn keeps reading
+    # the old root; promoted at the turn boundary (same twin pattern as LLM_*).
+    PROJECT_DIR_PENDING = "project_dir_pending"
+
     MULTIMODAL_TRYING_NATIVE = "_multimodal_trying_native"
     MULTIMODAL_NATIVE_MODEL = "_multimodal_native_model"
 

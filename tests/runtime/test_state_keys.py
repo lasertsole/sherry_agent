@@ -29,6 +29,8 @@ EXPECTED_VALUES: dict[str, str] = {
     "LLM_THINKING_ENABLED": "llm_thinking_enabled",
     "LLM_MAIN_MODEL": "llm_main_model",
     "LLM_MAIN_MODEL_PENDING": "llm_main_model_pending",
+    "PROJECT_DIR": "project_dir",
+    "PROJECT_DIR_PENDING": "project_dir_pending",
     "LLM_THINKING_ENABLED_PENDING": "llm_thinking_enabled_pending",
     "MULTIMODAL_TRYING_NATIVE": "_multimodal_trying_native",
     "MULTIMODAL_NATIVE_MODEL": "_multimodal_native_model",

@@ -22,3 +22,4 @@ import server.trigger.http.subagent  # noqa: F401  (side-effect route registrati
 import server.trigger.http.model_config  # noqa: F401  (side-effect route registration)
 import server.trigger.http.lane  # noqa: F401  (side-effect route registration)
 import server.trigger.http.session_settings  # noqa: F401  (side-effect route registration)
+import server.trigger.http.session_project  # noqa: F401  (side-effect route registration)

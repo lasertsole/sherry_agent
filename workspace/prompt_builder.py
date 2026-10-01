@@ -98,6 +98,43 @@ def _build_todo_block(session_id: str) -> str:
         return ""
 
 
+def _build_project_dir_block(session_id: str) -> str:
+    """Render the session's working directory. Returns "" only on failure.
+
+    Reads the register directly (mem → durable mirror), like the workspace
+    snapshot above: a blocking read on this path is pre-existing, and the block
+    is what keeps the model from writing into the sherry checkout by accident
+    when a session runs unbound.
+    """
+    try:
+        from runtime.session.project_dir import current_project_dir, project_dir_source
+
+        root = current_project_dir(session_id)
+        source = project_dir_source(session_id)
+        lines = [f"## Current Working Directory: `{root}`"]
+        if source == "session":
+            lines.append(
+                "The user bound this session to that directory. All relative paths in "
+                "file tools, terminal commands and path checks resolve against it, and "
+                "paths outside it are rejected."
+            )
+        else:
+            # source is "env" (process default configured) or "default" (nothing
+            # configured): the session runs against a root the user did NOT pick
+            # for it, so say so loudly — a silent fallback is how an agent ends
+            # up working inside the sherry repository.
+            lines.append(
+                "**未绑定项目目录 (no project directory bound)**: this session has no explicit "
+                f"project directory, so the process default (`{source}`) is in effect. "
+                "Treat that root as read-only context unless the user asks otherwise, and "
+                "mention it when you are about to write files there."
+            )
+        return "\n".join(lines)
+    except Exception as error:  # a broken block must not break the prompt
+        logger.debug("prompt builder: project-dir block failed ({}); omitting it", error)
+        return ""
+
+
 def _build_boulder_block(session_id: str) -> str:
     """Render the active/paused work pointer. Returns "" on none or any failure."""
     try:
@@ -307,6 +344,12 @@ def build_system_prompt(
     # when the caller did not filter to explicit files.
     if session_id:
         blocks = [
+            # Where the agent works: every file tool, terminal command and path
+            # check resolves against this root, and a silent fallback to the
+            # sherry checkout is exactly what this block exists to surface.
+            # Rebuilt every call (never frozen) because a session can switch
+            # directories at a turn boundary.
+            _build_project_dir_block(session_id),
             _build_todo_block(session_id),
             _build_boulder_block(session_id),
             _build_taskflow_block(session_id) if selected_file_names is None else "",
