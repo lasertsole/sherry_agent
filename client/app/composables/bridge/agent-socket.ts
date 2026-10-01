@@ -36,7 +36,7 @@ import { routeAgentFrame } from './agent-socket-frames';
 
 // Public protocol types stay available at the historical module path
 // (`bridge.ts` re-exports them from here).
-export type { AgentSocket, AgentSocketHandlers, TurnStartedInfo } from './agent-socket-types';
+export type { AgentSocket, AgentSocketHandlers, QueuedAckInfo, TurnStartedInfo } from './agent-socket-types';
 
 /** Registry: exactly one socket per session id. */
 const sockets = new Map<string, SessionAgentSocket>();
@@ -198,6 +198,41 @@ class SessionAgentSocket implements AgentSocket {
 
   private sendStopFrame(): void {
     this.sendFrame(JSON.stringify({ type: 'stop', session_id: this.sessionId }));
+  }
+
+  /**
+   * Void a queued message (toolbar's queue list). The backend answers
+   * `queued_cancelled`; a `false` ack means the row was already delivered.
+   * @param msgId
+   */
+  sendCancelQueued(msgId: string): void {
+    this.sendFrame(JSON.stringify({ type: 'cancel_queued', session_id: this.sessionId, msg_id: msgId }));
+  }
+
+  /**
+   * Edit a queued message's text before it is delivered.
+   * @param msgId
+   * @param message
+   */
+  sendEditQueued(msgId: string, message: string): void {
+    this.sendFrame(
+      JSON.stringify({
+        type: 'edit_queued',
+        session_id: this.sessionId,
+        msg_id: msgId,
+        message
+      })
+    );
+  }
+
+  /**
+   * Interrupt the running turn so this queued message is delivered next. The
+   * backend moves it to the front of the FIFO queue first, then cancels the
+   * turn; `send_now_ack` reports whether the move happened.
+   * @param msgId
+   */
+  sendNow(msgId: string): void {
+    this.sendFrame(JSON.stringify({ type: 'send_now', session_id: this.sessionId, msg_id: msgId }));
   }
 
   private sendFrame(frame: string): void {

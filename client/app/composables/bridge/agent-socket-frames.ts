@@ -84,6 +84,27 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
         });
       }
     },
+    queued_cancelled: data => {
+      ctx.handlers.onQueuedCancelled?.({
+        sessionId: data.session_id ?? ctx.sessionId,
+        msgId: data.msg_id ?? '',
+        ok: data.ok === true
+      });
+    },
+    queued_updated: data => {
+      ctx.handlers.onQueuedUpdated?.({
+        sessionId: data.session_id ?? ctx.sessionId,
+        msgId: data.msg_id ?? '',
+        ok: data.ok === true
+      });
+    },
+    send_now_ack: data => {
+      ctx.handlers.onSendNowAck?.({
+        sessionId: data.session_id ?? ctx.sessionId,
+        msgId: data.msg_id ?? '',
+        ok: data.ok === true
+      });
+    },
     turn_started: data => {
       const turn = { turnId: data.turn_id ?? '', msgIds: data.message_ids ?? [] };
       ctx.setActiveTurn(turn);

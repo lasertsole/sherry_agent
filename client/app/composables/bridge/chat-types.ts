@@ -91,6 +91,16 @@ export interface AgentWsEvent {
    * `done`, `error` and `stopped`). Used to resolve/reject the originating sends.
    */
   message_ids?: string[];
+  /**
+   * Client `msg_id` the queue-management ack is about (carried on
+   * `queued_cancelled` / `queued_updated` / `send_now_ack`).
+   */
+  msg_id?: string;
+  /**
+   * Whether the backend applied a queue-management frame; `false` means the row
+   * was no longer QUEUED. Only present on those ack frames.
+   */
+  ok?: boolean;
   /** Chunk type (only present on "chunk" events). Defaults to "text" for backwards compat. */
   type?: AgentChunkType;
   /** Tool-call metadata (only present on "tool_result" chunks). */

@@ -10,9 +10,10 @@ import { CHAT_ROLE } from '@/types/chat-role';
 import type { MessageItem, HitlRequestData } from '../pages/home/type';
 import type { MultiModalMessage } from '@/types/message';
 import type { ChatController } from './messages';
-import type { AgentChunkType, AgentSocket, QueuedInfo, TurnStartedInfo } from './bridge';
+import type { AgentChunkType, AgentSocket, QueuedAckInfo, QueuedInfo, TurnStartedInfo } from './bridge';
 import type { StreamChunkMeta } from './use-stream-chunks';
 import type { DraftPersistence } from './use-draft-persistence';
+import { logUtil } from '~/utils/log';
 
 /** One locally-registered send, keyed by its protocol `msg_id`. */
 interface SendEntry {
@@ -27,6 +28,8 @@ interface QueueBadge {
   position: number;
   queueSize: number;
   turn: number;
+  /** The message text, so the queue list can show and edit it. */
+  text: string;
 }
 
 /** Generate a protocol `msg_id` (RFC4122 v4 UUID, with a non-crypto fallback). */
@@ -168,12 +171,12 @@ export function useChatStream(deps: ChatStreamDeps) {
    */
   const queueBadges = ref<QueueBadge[]>([]);
 
-  /** Aggregate badge shown in the input toolbar (the queued send closest to running). */
-  const queueBadge = computed<{ position: number; queueSize: number } | null>(() => {
-    if (queueBadges.value.length === 0) return null;
-    const next = queueBadges.value.reduce((min, badge) => (badge.position < min.position ? badge : min));
-    return { position: next.position, queueSize: next.queueSize };
-  });
+  /**
+   * The queued messages as a list, in delivery order. The toolbar renders one
+   * row per entry (position, editable text, send-now, cancel), which replaced
+   * the single aggregate badge the batch drain needed.
+   */
+  const queueBadgeList = computed<QueueBadge[]>(() => [...queueBadges.value].sort((a, b) => a.position - b.position));
 
   /**
    * `queued` frame → queue badge. Only drives THIS instance's badge: matched against the frozen
@@ -184,10 +187,12 @@ export function useChatStream(deps: ChatStreamDeps) {
   const handleQueued = (info: QueuedInfo) => {
     if (info.sessionId !== mySid) return;
     const msgId = info.messageId ?? lastSendMsgId ?? '';
-    const turn = (msgId ? sendByMsgId.get(msgId)?.turnNum : undefined) ?? streamingTurn.value ?? 0;
+    const entry = msgId ? sendByMsgId.get(msgId) : undefined;
+    const turn = entry?.turnNum ?? streamingTurn.value ?? 0;
+    const text = entry?.userMsg.content ?? '';
     queueBadges.value = [
       ...queueBadges.value.filter(badge => badge.msgId !== msgId),
-      { msgId, position: info.position, queueSize: info.queueSize, turn }
+      { msgId, position: info.position, queueSize: info.queueSize, turn, text }
     ];
   };
 
@@ -212,6 +217,65 @@ export function useChatStream(deps: ChatStreamDeps) {
   /** Drop every queue badge unconditionally (used when the stream/session is torn down). */
   const clearQueueBadge = () => {
     queueBadges.value = [];
+  };
+
+  /**
+   * Queue row operations. Each is optimistic — the list updates now and the
+   * backend's ack corrects it — because a queued row is a UI artifact until the
+   * drain reaches it, and waiting a round trip to move a row would feel broken.
+   * @param msgId
+   */
+  const cancelQueuedMessage = (msgId: string) => {
+    socket.sendCancelQueued(msgId);
+    queueBadges.value = queueBadges.value.filter(badge => badge.msgId !== msgId);
+  };
+
+  const editQueuedMessage = (msgId: string, newText: string) => {
+    socket.sendEditQueued(msgId, newText);
+    queueBadges.value = queueBadges.value.map(badge => (badge.msgId === msgId ? { ...badge, text: newText } : badge));
+    const entry = sendByMsgId.get(msgId);
+    if (entry) entry.userMsg.content = newText;
+  };
+
+  const sendNow = (msgId: string) => {
+    socket.sendNow(msgId);
+    // The message is about to be delivered (the turn it was waiting behind is
+    // cancelled), so its row leaves the list now; `send_now_ack` puts it back if
+    // the backend could not honour the move.
+    queueBadges.value = queueBadges.value.filter(badge => badge.msgId !== msgId);
+  };
+
+  /**
+   * `queued_cancelled` ack: a refused cancel means the row was already delivered.
+   * @param info
+   */
+  const handleQueuedCancelled = (info: QueuedAckInfo) => {
+    if (info.sessionId !== mySid) return;
+    if (info.ok) {
+      queueBadges.value = queueBadges.value.filter(badge => badge.msgId !== info.msgId);
+    }
+  };
+
+  /**
+   * `queued_updated` ack: only the failure case needs action (the row left QUEUED).
+   * @param info
+   */
+  const handleQueuedUpdated = (info: QueuedAckInfo) => {
+    if (info.sessionId !== mySid) return;
+    if (!info.ok) {
+      logUtil.w('[queue] edit refused; the message was already delivered', info.msgId);
+    }
+  };
+
+  /**
+   * `send_now_ack` ack: a refused move means the row is still queued, so keep its row.
+   * @param info
+   */
+  const handleSendNowAck = (info: QueuedAckInfo) => {
+    if (info.sessionId !== mySid) return;
+    if (!info.ok) {
+      logUtil.w('[queue] send-now refused; the message stays queued', info.msgId);
+    }
   };
 
   /**
@@ -566,7 +630,13 @@ export function useChatStream(deps: ChatStreamDeps) {
     handleSocketDone,
     handleSocketError,
     reconnectState,
-    queueBadge,
+    queueBadgeList,
+    cancelQueuedMessage,
+    editQueuedMessage,
+    sendNow,
+    handleQueuedCancelled,
+    handleQueuedUpdated,
+    handleSendNowAck,
     clearQueueBadge,
     onStreamReconnecting,
     onStreamReconnected,

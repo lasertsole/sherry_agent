@@ -65,6 +65,7 @@ vi.mock('../messages', async importOriginal => {
 /** The composable instance plus the reactive refs a test asserts on. */
 interface Harness {
   stream: ReturnType<typeof useChatStream>;
+  socket: AgentSocket;
   chatMessages: Ref<MessageItem[]>;
   isSending: Ref<boolean>;
   streamingTurn: Ref<number | null>;
@@ -90,6 +91,9 @@ function makeHarness(): Harness {
     send: vi.fn(() => ({ controller: { closed: false, abort: vi.fn() }, promise: Promise.resolve() })),
     stop: vi.fn(() => Promise.resolve()),
     sendHitlResponse: vi.fn(),
+    sendCancelQueued: vi.fn(),
+    sendEditQueued: vi.fn(),
+    sendNow: vi.fn(),
     dispose: vi.fn()
   };
 
@@ -128,6 +132,7 @@ function makeHarness(): Harness {
 
   return {
     stream: useChatStream(deps),
+    socket,
     chatMessages,
     isSending,
     streamingTurn,
@@ -173,12 +178,14 @@ describe('useChatStream queue badges', () => {
 
     // Backend confirms the queue position for the second send's msg_id.
     queued.onQueued?.({ sessionId: 's1', position: 1, queueSize: 1, messageId: queued.msgId });
-    expect(harness.stream.queueBadge.value).toEqual({ position: 1, queueSize: 1 });
+    expect(harness.stream.queueBadgeList.value).toEqual([
+      { msgId: queued.msgId, position: 1, queueSize: 1, turn: 2, text: 'second' }
+    ]);
 
-    // The running turn's next chunk must NOT clear the queued send's badge
+    // The running turn's next chunk must NOT clear the queued send's row
     // and must still be routed to the running turn (1), not the queued one (2).
     harness.stream.handleSocketChunk('still running', 'text', 's1');
-    expect(harness.stream.queueBadge.value).toEqual({ position: 1, queueSize: 1 });
+    expect(harness.stream.queueBadgeList.value).toHaveLength(1);
     expect(harness.streamingTurn.value).toBe(1);
     expect(harness.appendStreamChunk).toHaveBeenCalledWith('s1', 'still running', 'text', 1, undefined);
   });
@@ -210,20 +217,20 @@ describe('useChatStream queue badges', () => {
     await harness.stream.handleSend('second');
     const queued = state.sends[1]!;
     queued.onQueued?.({ sessionId: 's1', position: 1, queueSize: 1, messageId: queued.msgId });
-    expect(harness.stream.queueBadge.value).not.toBeNull();
+    expect(harness.stream.queueBadgeList.value).toHaveLength(1);
 
-    // The queued batch actually starts: every member badge is cleared and the
-    // trailing member's turn receives the (single) streamed reply.
+    // The queued message's turn actually starts: its row leaves the list and the
+    // turn receives the streamed reply.
     harness.stream.handleTurnStarted({ sessionId: 's1', turnId: 'turn-1', messageIds: [queued.msgId!] });
 
-    expect(harness.stream.queueBadge.value).toBeNull();
+    expect(harness.stream.queueBadgeList.value).toHaveLength(0);
     expect(harness.streamingTurn.value).toBe(2);
 
     harness.stream.handleSocketChunk('batched reply', 'text', 's1');
     expect(harness.appendStreamChunk).toHaveBeenCalledWith('s1', 'batched reply', 'text', 2, undefined);
   });
 
-  it('unifies a multi-message batch onto one turn with a single trailing AI reply', async () => {
+  it('delivers each queued message as its own turn with its own reply', async () => {
     const harness = makeHarness();
 
     await harness.stream.handleSend('first');
@@ -232,27 +239,109 @@ describe('useChatStream queue badges', () => {
     const second = state.sends[1]!;
     const third = state.sends[2]!;
     second.onQueued?.({ sessionId: 's1', position: 1, queueSize: 2, messageId: second.msgId });
-    third.onQueued?.({ sessionId: 's1', position: 2, queueSize: 3, messageId: third.msgId });
-    expect(harness.stream.queueBadge.value).not.toBeNull();
+    third.onQueued?.({ sessionId: 's1', position: 2, queueSize: 2, messageId: third.msgId });
+    expect(harness.stream.queueBadgeList.value.map(b => b.text)).toEqual(['second', 'third']);
+
+    // Per-item drain: the backend starts the queued messages as TWO turns, each
+    // carried by its own `turn_started` frame, and each gets its own answer.
+    harness.stream.handleTurnStarted({
+      sessionId: 's1',
+      turnId: 'turn-2',
+      messageIds: [second.msgId!]
+    });
+    expect(harness.stream.queueBadgeList.value.map(b => b.text)).toEqual(['third']);
+    harness.stream.handleSocketChunk('answer two', 'text', 's1');
 
     harness.stream.handleTurnStarted({
       sessionId: 's1',
-      turnId: 'turn-batch',
-      messageIds: [second.msgId!, third.msgId!]
+      turnId: 'turn-3',
+      messageIds: [third.msgId!]
+    });
+    harness.stream.handleSocketChunk('answer three', 'text', 's1');
+
+    // Each user bubble is followed by its own AI reply — never one merged answer.
+    const rows = harness.chatMessages.value;
+    const userTurns = rows
+      .filter(m => m.role === CHAT_ROLE.USER && (m.content === 'second' || m.content === 'third'))
+      .map(m => m.turn_num);
+    expect(userTurns).toEqual([2, 3]);
+    for (const turn of [2, 3] as const) {
+      const ais = rows.filter(m => m.role === CHAT_ROLE.AI && m.turn_num === turn);
+      expect(ais).toHaveLength(1);
+    }
+    expect(harness.appendStreamChunk).toHaveBeenCalledWith('s1', 'answer two', 'text', 2, undefined);
+    expect(harness.appendStreamChunk).toHaveBeenCalledWith('s1', 'answer three', 'text', 3, undefined);
+    expect(harness.stream.queueBadgeList.value).toHaveLength(0);
+  });
+
+  describe('queue row operations', () => {
+    /**
+     * Queue one message and return its badge row.
+     * @param harness
+     * @param text
+     */
+    const queueOne = async (harness: Harness, text: string) => {
+      await harness.stream.handleSend(text);
+      const send = state.sends[state.sends.length - 1]!;
+      send.onQueued?.({ sessionId: 's1', position: 1, queueSize: 1, messageId: send.msgId });
+      return send;
+    };
+
+    it('cancel sends the frame and drops the row optimistically', async () => {
+      const harness = makeHarness();
+      const send = await queueOne(harness, 'to cancel');
+
+      harness.stream.cancelQueuedMessage(send.msgId!);
+
+      expect(harness.socket.sendCancelQueued).toHaveBeenCalledWith(send.msgId);
+      expect(harness.stream.queueBadgeList.value).toHaveLength(0);
     });
 
-    const rows = harness.chatMessages.value;
-    // Both queued user messages are unified onto the earliest member's turn (2),
-    // matching the single turn the backend persists the batch as.
-    expect(rows.filter(m => m.role === CHAT_ROLE.USER && m.turn_num === 2).map(m => m.content)).toEqual([
-      'second',
-      'third'
-    ]);
-    // Exactly ONE AI placeholder for the batch, at the unified turn, after both users.
-    const ais = rows.filter(m => m.role === CHAT_ROLE.AI && m.turn_num === 2);
-    expect(ais).toHaveLength(1);
-    expect(rows.indexOf(ais[0]!)).toBeGreaterThan(rows.findIndex(m => m.content === 'third'));
-    expect(harness.streamingTurn.value).toBe(2);
-    expect(harness.stream.queueBadge.value).toBeNull();
+    it('edit updates the row and the stored user message', async () => {
+      const harness = makeHarness();
+      const send = await queueOne(harness, 'typo her');
+
+      harness.stream.editQueuedMessage(send.msgId!, 'typo here');
+
+      expect(harness.socket.sendEditQueued).toHaveBeenCalledWith(send.msgId, 'typo here');
+      expect(harness.stream.queueBadgeList.value[0]!.text).toBe('typo here');
+      const row = harness.chatMessages.value.find(m => m.content === 'typo here');
+      expect(row).toBeDefined();
+    });
+
+    it('send-now sends the frame and drops the row', async () => {
+      const harness = makeHarness();
+      const send = await queueOne(harness, 'urgent');
+
+      harness.stream.sendNow(send.msgId!);
+
+      expect(harness.socket.sendNow).toHaveBeenCalledWith(send.msgId);
+      expect(harness.stream.queueBadgeList.value).toHaveLength(0);
+    });
+
+    it('a refused send-now ack leaves the client without a phantom row', async () => {
+      const harness = makeHarness();
+      const send = await queueOne(harness, 'urgent');
+
+      harness.stream.sendNow(send.msgId!);
+      harness.stream.handleSendNowAck({ sessionId: 's1', msgId: send.msgId!, ok: false });
+
+      // The row was dropped optimistically and the backend kept it queued; the
+      // next `queued` frame re-adds it, so the list never shows a stale row.
+      expect(harness.stream.queueBadgeList.value).toHaveLength(0);
+      await queueOne(harness, 'fresh');
+      expect(harness.stream.queueBadgeList.value).toHaveLength(1);
+    });
+
+    it('an ok cancel ack is idempotent and a foreign session is ignored', async () => {
+      const harness = makeHarness();
+      const send = await queueOne(harness, 'x');
+
+      harness.stream.handleQueuedCancelled({ sessionId: 's1', msgId: send.msgId!, ok: true });
+      expect(harness.stream.queueBadgeList.value).toHaveLength(0);
+
+      harness.stream.handleQueuedCancelled({ sessionId: 'other', msgId: 'x', ok: true });
+      expect(harness.stream.queueBadgeList.value).toHaveLength(0);
+    });
   });
 });

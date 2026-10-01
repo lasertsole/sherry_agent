@@ -112,20 +112,52 @@
               }}</span>
             </div>
           </Transition>
-          <!-- Queue badge: shown while the backend has enqueued this send (session busy; browser WS mode);
-              follows the reconnect-banner pattern, disappears when the queued turn starts streaming or ends -->
+          <!-- Queue list: one row per message the backend has enqueued for this busy session
+              (browser WS mode). Each row shows its position, its text (editable before delivery),
+              立刻 (interrupt the running turn and deliver this one next) and cancel. Hidden while a
+              HITL decision occupies the input slot — a decision is what unblocks the session. -->
           <Transition name="reconn-fade">
             <div
-              v-if="queueBadge"
-              class="absolute top-0 left-0 right-0 z-20 flex items-center justify-center gap-2 py-1.5 px-3 text-xs font-medium bg-sky-600/90 text-white shadow-sm"
+              v-if="queueBadgeList.length > 0 && !hitlRequest"
+              class="absolute top-0 left-0 right-0 z-20 bg-sky-600/90 text-white shadow-sm max-h-32 overflow-y-auto"
               role="status"
               aria-live="polite">
-              <i
-                class="pi pi-clock"
-                aria-hidden="true"></i>
-              <span>{{
-                t('chatInput.queued', { position: queueBadge.position, queueSize: queueBadge.queueSize })
-              }}</span>
+              <div
+                v-for="badge in queueBadgeList"
+                :key="badge.msgId"
+                class="flex items-center gap-2 py-1.5 px-3 text-xs font-medium border-b border-white/10 last:border-b-0">
+                <i
+                  class="pi pi-clock"
+                  aria-hidden="true"></i>
+                <span class="shrink-0">
+                  {{
+                    t('chatInput.queuedPosition', {
+                      position: badge.position,
+                      queueSize: badge.queueSize
+                    })
+                  }}
+                </span>
+                <input
+                  v-model="badge.text"
+                  class="flex-1 min-w-0 rounded bg-white/10 px-1.5 py-0.5 outline-none focus:bg-white/20"
+                  :aria-label="t('chatInput.editQueued')"
+                  @keydown.enter="($event.target as HTMLInputElement).blur()"
+                  @blur="editQueuedMessage(badge.msgId, badge.text)" />
+                <button
+                  class="shrink-0 rounded bg-white/20 px-2 py-0.5 font-medium transition-colors hover:bg-white/30"
+                  @click="sendNow(badge.msgId)">
+                  {{ t('chatInput.sendNow') }}
+                </button>
+                <button
+                  class="shrink-0 rounded bg-red-500/40 px-1.5 py-0.5 transition-colors hover:bg-red-500/60"
+                  :aria-label="t('chatInput.cancelQueued')"
+                  @click="cancelQueuedMessage(badge.msgId)">
+                  <i
+                    class="pi pi-times"
+                    style="font-size: 0.6rem"
+                    aria-hidden="true"></i>
+                </button>
+              </div>
             </div>
           </Transition>
           <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
@@ -675,7 +707,13 @@ const {
   handleQueued,
   handleSocketDone,
   reconnectState,
-  queueBadge,
+  queueBadgeList,
+  cancelQueuedMessage,
+  editQueuedMessage,
+  sendNow,
+  handleQueuedCancelled,
+  handleQueuedUpdated,
+  handleSendNowAck,
   clearQueueBadge,
   onStreamReconnecting,
   onStreamReconnected,
@@ -684,12 +722,16 @@ const {
 
 // The page installs the session-level socket handlers ONCE: every frame of the
 // persistent session socket (chunk / hitl_request / turn_started / queued /
-// done) is routed here regardless of which send produced it.
+// queued_cancelled / queued_updated / send_now_ack / done) is routed here
+// regardless of which send produced it.
 agentSocket.setHandlers({
   onChunk: handleSocketChunk,
   onHitl: hitl.handleHitlRequest,
   onTurnStarted: handleTurnStarted,
   onQueued: handleQueued,
+  onQueuedCancelled: handleQueuedCancelled,
+  onQueuedUpdated: handleQueuedUpdated,
+  onSendNowAck: handleSendNowAck,
   onDone: handleSocketDone
 });
 
@@ -886,6 +928,10 @@ onUnmounted(() => {
   "zh": {
     "chatInput": {
       "queued": "已排队 · 第 {position} 位（共 {queueSize} 个）",
+      "queuedPosition": "#{position}/{queueSize}",
+      "sendNow": "立刻",
+      "editQueued": "编辑排队消息",
+      "cancelQueued": "取消排队消息",
       "waitingApproval": "等待审批..."
     },
     "chatBox": {
@@ -912,6 +958,10 @@ onUnmounted(() => {
   "en": {
     "chatInput": {
       "queued": "Queued · position {position} of {queueSize}",
+      "queuedPosition": "#{position}/{queueSize}",
+      "sendNow": "Now",
+      "editQueued": "Edit queued message",
+      "cancelQueued": "Cancel queued message",
       "waitingApproval": "Waiting for approval..."
     },
     "chatBox": {
@@ -938,6 +988,10 @@ onUnmounted(() => {
   "ja": {
     "chatInput": {
       "queued": "順番待ち · {queueSize} 件中 {position} 番目",
+      "queuedPosition": "#{position}/{queueSize}",
+      "sendNow": "今すぐ",
+      "editQueued": "待機中のメッセージを編集",
+      "cancelQueued": "待機中のメッセージを取り消す",
       "waitingApproval": "承認待ち..."
     },
     "chatBox": {
@@ -964,6 +1018,10 @@ onUnmounted(() => {
   "ko": {
     "chatInput": {
       "queued": "대기 중 · {queueSize}개 중 {position}번째",
+      "queuedPosition": "#{position}/{queueSize}",
+      "sendNow": "즉시",
+      "editQueued": "대기 중인 메시지 편집",
+      "cancelQueued": "대기 중인 메시지 취소",
       "waitingApproval": "승인 대기 중..."
     },
     "chatBox": {

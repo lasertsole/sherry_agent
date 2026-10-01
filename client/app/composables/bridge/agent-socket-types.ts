@@ -16,6 +16,16 @@ import type {
   StreamController
 } from './chat-types';
 
+/** Ack payload for the queue-management frames (`queued_cancelled` / `queued_updated` / `send_now_ack`). */
+export interface QueuedAckInfo {
+  /** Session the queued message belongs to. */
+  sessionId: string;
+  /** Client `msg_id` of the queued message the frame was about. */
+  msgId: string;
+  /** Whether the backend applied the change; `false` means the row was no longer QUEUED. */
+  ok: boolean;
+}
+
 /** Notification payload for a `turn_started` frame. */
 export interface TurnStartedInfo {
   /** Session the turn belongs to. */
@@ -39,6 +49,12 @@ export interface AgentSocketHandlers {
   onTurnStarted?: (info: TurnStartedInfo) => void;
   /** `queued` -> queue badge for the (busy) session. */
   onQueued?: OnQueuedCallback;
+  /** `queued_cancelled` -> the queued message was voided (or the cancel failed). */
+  onQueuedCancelled?: (info: QueuedAckInfo) => void;
+  /** `queued_updated` -> the queued message's text was replaced (or the edit failed). */
+  onQueuedUpdated?: (info: QueuedAckInfo) => void;
+  /** `send_now_ack` -> the queued message was moved to the front (or it could not be). */
+  onSendNowAck?: (info: QueuedAckInfo) => void;
   /** `done` -> turn succeeded (carries model metadata). */
   onDone?: OnDoneCallback;
 }
@@ -56,6 +72,12 @@ export interface AgentSocket {
   stop(): Promise<void>;
   /** Send a HITL decision on the SAME socket (never opens a new connection). */
   sendHitlResponse(response: HitlResponse): void;
+  /** Void a queued (not yet delivered) message. */
+  sendCancelQueued(msgId: string): void;
+  /** Replace the text of a queued message. */
+  sendEditQueued(msgId: string, message: string): void;
+  /** Interrupt the running turn and deliver this queued message next. */
+  sendNow(msgId: string): void;
   /** Tear the connection down and settle every pending send (page unmount). */
   dispose(): void;
 }

@@ -52,12 +52,15 @@ import type { SubagentRun } from '../bridge';
 type Api = ReturnType<typeof import('../useSubagentTasks').useSubagentTasks>;
 let useSubagentTasks: () => Api;
 
+// The dynamic import pulls the whole store/composable graph; under a fully
+// parallel suite that transform can exceed vitest's 10s default hook timeout
+// (measured flake), so this hook gets its own budget.
 beforeAll(async () => {
   // One real store instance for the whole file (see the header note).
   setActivePinia(createTestingPinia({ stubActions: false }));
   const mod = await import('../useSubagentTasks');
   useSubagentTasks = mod.useSubagentTasks as () => Api;
-});
+}, 60_000);
 
 /**
  * Build a minimal SubagentRun fixture.
