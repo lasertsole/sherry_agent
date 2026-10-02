@@ -164,6 +164,30 @@ def _rewrite_args(
     return args
 
 
+#: Extra wall clock allowed after the watchdog fires before the pipes are
+#: abandoned (the group kill makes this a formality, not a wait).
+_COMMUNICATE_GRACE_SECONDS = 1.0
+
+
+def _kill_process_group(proc: subprocess.Popen[str]) -> None:
+    """SIGKILL the child AND its group (``start_new_session`` made it a leader).
+
+    Falls back to killing the direct child when the group is unavailable
+    (already reaped, permission, non-POSIX).
+    """
+    import signal
+
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+        return
+    except (AttributeError, ProcessLookupError, PermissionError, OSError):
+        pass
+    try:
+        proc.kill()
+    except OSError:
+        pass
+
+
 def _run_sg(binary: str, args: list[str], timeout_ms: int, cwd: str) -> dict[str, Any]:
     """Run the sg CLI and return ``{ok, records, stdout}`` or ``{ok: False, error}``.
 
@@ -183,12 +207,25 @@ def _run_sg(binary: str, args: list[str], timeout_ms: int, cwd: str) -> dict[str
             text=True,
             cwd=cwd,
             env=scrub_env(os.environ.copy()),
+            # Owning the process GROUP is what makes the deadline enforceable:
+            # a shell wrapper (`sh -c sleep 5`) leaves a grandchild holding the
+            # pipes, and killing only the direct child would leave communicate()
+            # waiting on them.
+            start_new_session=True,
         )
     except (OSError, subprocess.SubprocessError):
         return {"ok": False, "error": "ast-grep binary could not be executed"}
 
     with ProcessWatchdog(timeout_ms / 1000, proc.kill) as dog:
-        stdout, stderr = proc.communicate()
+        try:
+            # Bounded: the watchdog kills the direct child, but a grandchild can
+            # still hold stdout/stderr open — never wait on it past the grace.
+            stdout, stderr = proc.communicate(
+                timeout=timeout_ms / 1000 + _COMMUNICATE_GRACE_SECONDS
+            )
+        except subprocess.TimeoutExpired:
+            _kill_process_group(proc)
+            stdout, stderr = "", ""
     returncode = proc.returncode
     reap_process(proc)
     if dog.fired:
