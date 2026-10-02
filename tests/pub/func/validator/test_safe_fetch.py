@@ -55,9 +55,27 @@ def local_server():
     server.base_url = f"http://127.0.0.1:{server.server_address[1]}"  # type: ignore[attr-defined]
     server.routes = _Handler.routes  # type: ignore[attr-defined]
     server.seen_hosts = _Handler.seen_hosts  # type: ignore[attr-defined]
+
+    stopped = False
+
+    def stop() -> None:
+        """Idempotent: a second ``shutdown()`` on a stopped server is a no-op.
+
+        Teardown must never call it twice — tests that need a dead port stop
+        the server themselves, and a repeated shutdown has been observed to
+        stall the unit group (the dump showed the teardown's second call
+        blocked in ``__is_shut_down.wait()``).
+        """
+        nonlocal stopped
+        if stopped:
+            return
+        stopped = True
+        server.shutdown()
+        server.server_close()
+
+    server.stop = stop  # type: ignore[attr-defined]
     yield server
-    server.shutdown()
-    server.server_close()
+    stop()
 
 
 @pytest.fixture(autouse=True)
@@ -255,8 +273,7 @@ def test_a_streamed_body_over_the_cap_is_refused(local_server, escape_hatch):
 def test_a_dead_host_is_a_network_failure(local_server, escape_hatch):
     """A closed port is not a security refusal and must be reported as such."""
     port = local_server.server_address[1]
-    local_server.shutdown()
-    local_server.server_close()
+    local_server.stop()  # type: ignore[attr-defined]
 
     result = module.safe_fetch(f"http://127.0.0.1:{port}/gone", timeout=2)
 
