@@ -171,6 +171,19 @@ NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
 (`FileViewerPanel`).
 
+Choosing a directory is one action with two runtimes: the desktop build (Tauri)
+opens the OS folder dialog (`app/utils/project-directory.ts` →
+`@tauri-apps/plugin-dialog`), the browser build opens the in-app picker
+(`ProjectDirectoryPicker.vue`) — a browser cannot hand out an absolute path, so
+there is no typing channel. That picker is the one deliberate exception to the
+in-root rule (`GET /system/dirs`, `server/service/system_folders_service.py`):
+it lists the direct **subdirectories** of one absolute path (names only, no
+files, no contents; `FILE_BROWSER` caps the level) and sits behind the same
+gateway auth/CORS/CSRF middleware as every other route. The toolbar's files
+button (`pages/home/index.vue`) exists only while a session is open — the tree
+is session-scoped — and the persisted sidebar body falls back to the session
+list when the last session closes.
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
