@@ -169,19 +169,23 @@ def _rewrite_args(
 _COMMUNICATE_GRACE_SECONDS = 1.0
 
 
-def _kill_process_group(proc: subprocess.Popen[str]) -> None:
+def _kill_process_group(proc: subprocess.Popen[str], pgid: int | None) -> None:
     """SIGKILL the child AND its group (``start_new_session`` made it a leader).
 
-    Falls back to killing the direct child when the group is unavailable
-    (already reaped, permission, non-POSIX).
+    ``pgid`` is captured at spawn time on purpose: by the time this runs,
+    ``communicate`` has usually reaped the direct child already, and
+    ``os.getpgid(proc.pid)`` on a reaped pid fails — a group kill built on it
+    would silently miss the leaked grandchild, which is the process this exists
+    to reach. Falls back to the direct child when no group was captured.
     """
     import signal
 
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-        return
-    except (AttributeError, ProcessLookupError, PermissionError, OSError):
-        pass
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+            return
+        except (AttributeError, ProcessLookupError, PermissionError, OSError):
+            pass
     try:
         proc.kill()
     except OSError:
@@ -216,6 +220,16 @@ def _run_sg(binary: str, args: list[str], timeout_ms: int, cwd: str) -> dict[str
     except (OSError, subprocess.SubprocessError):
         return {"ok": False, "error": "ast-grep binary could not be executed"}
 
+    # The group id while the leader is alive. Read here because it is
+    # unobtainable later: ``communicate`` reaps the child, and a reaped pid has
+    # no readback for getpgid.
+    pgid: int | None = None
+    if os.name == "posix":
+        try:
+            pgid = os.getpgid(proc.pid)
+        except OSError:
+            pgid = None
+
     with ProcessWatchdog(timeout_ms / 1000, proc.kill) as dog:
         try:
             # Bounded: the watchdog kills the direct child, but a grandchild can
@@ -224,7 +238,7 @@ def _run_sg(binary: str, args: list[str], timeout_ms: int, cwd: str) -> dict[str
                 timeout=timeout_ms / 1000 + _COMMUNICATE_GRACE_SECONDS
             )
         except subprocess.TimeoutExpired:
-            _kill_process_group(proc)
+            _kill_process_group(proc, pgid)
             stdout, stderr = "", ""
     returncode = proc.returncode
     reap_process(proc)

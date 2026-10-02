@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from pathlib import Path
 
 import pytest
@@ -71,6 +73,21 @@ def _fixture_project(tmp_path: Path) -> Path:
     return project
 
 
+def _process_alive(pid: int) -> bool:
+    """True only for a signalable, non-zombie process (a zombie is already dead)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    try:
+        state = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8").split(") ")[1][0]
+    except (OSError, IndexError):
+        return False
+    return state != "Z"
+
+
 @pytest.fixture(autouse=True)
 def _isolate(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv("SHERRY_SG_PATH", raising=False)
@@ -103,11 +120,29 @@ class TestRunSg:
         assert result["ok"] is False
         assert "boom" in result["error"]
 
-    def test_timeout_is_error(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        binary = _fake_binary(tmp_path, "#!/bin/sh\nsleep 5\n")
+    def test_timeout_is_error_and_reaps_the_grandchild(self, tmp_path: Path) -> None:
+        """The shape that stalled a whole test group: a shell wrapping a child.
+
+        ``sh`` here runs ``sleep 300`` in the background and waits. The group
+        kill is the only thing that can reach the sleeper — it inherits the
+        pipes, so a reap that stops at the direct child leaves a process
+        holding stdout/stderr open, and whoever reads that pipe next blocks.
+        """
+        pid_file = tmp_path / "grandchild.pid"
+        binary = _fake_binary(
+            tmp_path,
+            f"#!/bin/sh\nsleep 300 &\necho $! > {pid_file}\nwait\n",
+        )
+
         result = runner._run_sg(str(binary), ["run"], 200, str(tmp_path))
+
         assert result["ok"] is False
         assert "timed out" in result["error"]
+        grandchild = int(pid_file.read_text(encoding="utf-8").strip())
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and _process_alive(grandchild):
+            time.sleep(0.1)
+        assert not _process_alive(grandchild), "the pipe-holding grandchild survived the timeout"
 
     def test_unexecutable_binary_is_error(self, tmp_path: Path) -> None:
         result = runner._run_sg(str(tmp_path / "missing"), ["run"], 5000, str(tmp_path))
