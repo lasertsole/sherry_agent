@@ -88,9 +88,14 @@
       "pendingHint": "다음 턴에 적용됩니다",
       "pendingLabel": "대기 중",
       "browse": "폴더 선택…",
-      "manualPlaceholder": "/프로젝트/절대경로",
-      "confirm": "적용",
-      "absoluteRequired": "절대 경로를 입력하세요 (상대 경로는 서버가 거부합니다)"
+      "pickerTitle": "프로젝트 디렉터리 선택",
+      "pickerUp": "상위 폴더",
+      "pickerHome": "홈",
+      "pickerEmpty": "이 폴더에는 하위 폴더가 없습니다",
+      "pickerTruncated": "처음 {shown}개만 표시 (전체 {total}개)",
+      "pickerSelect": "이 폴더 선택",
+      "pickerCancel": "취소",
+      "pickerLoadFailed": "이 폴더를 읽을 수 없습니다"
     },
     "projectFiles": "프로젝트 파일",
     "sessionList": "세션 목록",

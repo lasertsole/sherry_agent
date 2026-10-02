@@ -43,6 +43,7 @@
             class="text-theme-main"
             @click="toggleSidebar" />
           <Button
+            v-if="hasOpenSession"
             :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
             :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
             :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
@@ -320,8 +321,28 @@ const notificationUnread = ref(0);
 
 /** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
 const uiStore = useUiStore();
+/** The shell's route: its `sid` param says which session the main area shows. */
+const route = useRoute();
 /** Whether the sidebar body shows the project file tree. */
 const showFiles = computed(() => uiStore.sidebarBody === 'files');
+
+/**
+ * Whether a session is open in the main area (the route carries its id).
+ *
+ * The session list's landing page has no `sid`: there is no project tree (nor a
+ * session to bind a project directory to) behind the files button, so it stays
+ * hidden there. The body switch is persisted, so leaving the last session while
+ * in files mode falls back to the session list — otherwise the sidebar would
+ * show an empty tree the (hidden) button could no longer switch away from.
+ */
+const hasOpenSession = computed(() => !!String(route.params.sid ?? ''));
+watch(
+  hasOpenSession,
+  open => {
+    if (!open) uiStore.sidebarBody = 'sessions';
+  },
+  { immediate: true }
+);
 
 /** One-time flag: the narrow-screen hint below is shown once per browser. */
 const SIDEBAR_FILES_HINT_KEY = 'sherry.sidebarFilesHintShown';

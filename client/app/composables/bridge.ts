@@ -59,9 +59,15 @@ export {
   getHistory
 } from './bridge/session';
 
-// ── Project files ───────────────────────────────────────
-export type { ProjectTreeEntry, ProjectTreeLevel, ProjectFileContent } from './bridge/project-files';
-export { fetchProjectTree, fetchProjectFile } from './bridge/project-files';
+// ── Project files + system folder picker ────────────────
+export type {
+  ProjectTreeEntry,
+  ProjectTreeLevel,
+  ProjectFileContent,
+  SystemDirEntry,
+  SystemDirLevel
+} from './bridge/project-files';
+export { fetchProjectTree, fetchProjectFile, fetchSystemDirs } from './bridge/project-files';
 
 // ── System prompt ───────────────────────────────────────
 export {

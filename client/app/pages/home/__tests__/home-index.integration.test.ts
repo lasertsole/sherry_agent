@@ -214,4 +214,74 @@ describe('home/index.vue (integration, backend mocked)', () => {
 
     store.allTaskRuns = [];
   });
+
+  it('hides the project-files button while no session is open, and returns the sidebar to the list', () => {
+    // The session list's landing page has no sid: there is no project tree
+    // behind the button, and the persisted body switch must not strand the
+    // sidebar on it either.
+    const originalUi = (globalThis as any).useUiStore;
+    const uiState = reactive({ sidebarCollapsed: false, sidebarBody: 'files' });
+    vi.stubGlobal('useUiStore', () => uiState);
+    try {
+      const wrapper = mountHome();
+
+      const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+      expect(titles).not.toContain('项目文件');
+      expect(titles).not.toContain('会话列表');
+      expect(uiState.sidebarBody).toBe('sessions');
+    } finally {
+      // Restore ONLY the stub this test replaced: vi.unstubAllGlobals() would
+      // also drop the suites' shared store stubs (they are installed the same
+      // way in the setup file), breaking every later test in the file.
+      vi.stubGlobal('useUiStore', originalUi);
+    }
+  });
+
+  it('shows the project-files button once a session is open', () => {
+    const originalRoute = (globalThis as any).useRoute;
+    vi.stubGlobal('useRoute', () => ({
+      path: '/home/s1',
+      fullPath: '/home/s1',
+      params: { sid: 's1' },
+      query: {}
+    }));
+    try {
+      const wrapper = mountHome();
+
+      const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+      expect(titles).toContain('项目文件');
+    } finally {
+      vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
+
+  it('hides the button again when the last session closes, and flips the body back', async () => {
+    const originalUi = (globalThis as any).useUiStore;
+    const originalRoute = (globalThis as any).useRoute;
+    const uiState = reactive({ sidebarCollapsed: false, sidebarBody: 'files' });
+    vi.stubGlobal('useUiStore', () => uiState);
+    const routeState = reactive({
+      path: '/home/s1',
+      fullPath: '/home/s1',
+      params: { sid: 's1' } as Record<string, string>,
+      query: {}
+    });
+    vi.stubGlobal('useRoute', () => routeState);
+    try {
+      const wrapper = mountHome();
+      // In files mode the button names the way BACK, so "会话列表" is its title.
+      expect(wrapper.findAll('.btn').map(b => b.attributes('title'))).toContain('会话列表');
+
+      routeState.params = {};
+      routeState.path = '/home';
+      await nextTick();
+
+      const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+      expect(titles).not.toContain('项目文件');
+      expect(uiState.sidebarBody).toBe('sessions');
+    } finally {
+      vi.stubGlobal('useUiStore', originalUi);
+      vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
 });

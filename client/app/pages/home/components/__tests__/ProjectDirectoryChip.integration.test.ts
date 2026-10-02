@@ -1,12 +1,12 @@
 /**
- * The project-directory chip: three states, a hydrating popover, manual entry
- * and in-place errors.
+ * The project-directory chip: three states, a hydrating popover, and one
+ * "choose a folder" action per runtime.
  *
  * The observable contract: the chip names the bound directory (basename) or
  * warns when nothing is bound, the clock marks a parked choice, opening the
- * popover re-reads the backend, and a submitted path goes straight to the store
- * (which owns validation-by-server and rollback) — the component never invents
- * a path.
+ * popover re-reads the backend, and the action opens the OS folder dialog in
+ * the desktop build — the in-app picker dialog in the browser build (a browser
+ * cannot hand out an absolute path, so there is no typing channel anymore).
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -22,6 +22,8 @@ const bridge = vi.hoisted(() => ({
 
 vi.mock('~/composables/bridge/session', () => bridge);
 
+const pickNative = vi.hoisted(() => vi.fn());
+
 const stubs = {
   ToolbarPopover: {
     name: 'ToolbarPopover',
@@ -32,10 +34,10 @@ const stubs = {
     emits: ['click'],
     template: '<button class="btn" :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>'
   },
-  InputText: {
-    props: ['modelValue'],
-    emits: ['update:modelValue'],
-    template: '<input class="it" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />'
+  ProjectDirectoryPicker: {
+    name: 'ProjectDirectoryPicker',
+    props: ['sessionId', 'initialPath', 'visible'],
+    template: '<div v-if="visible" data-test="picker-stub" :data-session="sessionId" :data-initial="initialPath" />'
   }
 };
 
@@ -60,6 +62,10 @@ describe('ProjectDirectoryChip', () => {
     setActivePinia(createTestingPinia({ stubActions: false }));
     // Drive the REAL store (the global stub in setup.ts serves page-mount suites).
     vi.stubGlobal('useProjectDirectoryStore', () => useProjectDirectoryStore());
+    // `pickProjectDirectory` is auto-imported from utils/; the browser case never
+    // reaches it, the desktop case asserts on it.
+    pickNative.mockReset();
+    vi.stubGlobal('pickProjectDirectory', pickNative);
     bridge.fetchProjectDirectory.mockReset();
     bridge.setProjectDirectory.mockReset();
     bridge.fetchProjectDirectory.mockResolvedValue(stateOf(null));
@@ -94,51 +100,77 @@ describe('ProjectDirectoryChip', () => {
     expect(wrapper.get('[data-test="project-dir-panel"]').text()).toContain('/home/me/b');
   });
 
-  it('submits a manually typed path through the store', async () => {
+  it('offers exactly one action and no path input', async () => {
     const wrapper = await mountChip();
+
+    expect(wrapper.find('[data-test="project-dir-browse"]').exists()).toBe(true);
+    expect(wrapper.find('input').exists()).toBe(false);
+  });
+
+  it('opens the in-app folder picker in the browser build, starting at the bound folder', async () => {
+    bridge.fetchProjectDirectory.mockResolvedValue(stateOf('/home/me/proj-x'));
+    const wrapper = await mountChip();
+    await flushPromises();
+
+    expect(wrapper.find('[data-test="picker-stub"]').exists()).toBe(false);
+    await wrapper.get('[data-test="project-dir-browse"]').trigger('click');
+    await flushPromises();
+
+    const picker = wrapper.get('[data-test="picker-stub"]');
+    expect(picker.attributes('data-session')).toBe('sid-1');
+    expect(picker.attributes('data-initial')).toBe('/home/me/proj-x');
+    expect(pickNative).not.toHaveBeenCalled();
+  });
+
+  it('opens the OS folder dialog in the desktop build and binds the picked path', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    pickNative.mockResolvedValue('/home/me/picked');
     bridge.setProjectDirectory.mockResolvedValue({
       ok: true,
       pending: false,
-      state: stateOf('/home/me/typed')
+      state: stateOf('/home/me/picked')
     });
+    try {
+      const wrapper = await mountChip();
 
-    await wrapper.get('[data-test="project-dir-input"]').setValue('/home/me/typed');
-    await wrapper.get('[data-test="project-dir-confirm"]').trigger('click');
-    await flushPromises();
+      await wrapper.get('[data-test="project-dir-browse"]').trigger('click');
+      await flushPromises();
 
-    expect(bridge.setProjectDirectory).toHaveBeenCalledWith('sid-1', '/home/me/typed');
+      expect(pickNative).toHaveBeenCalledTimes(1);
+      expect(bridge.setProjectDirectory).toHaveBeenCalledWith('sid-1', '/home/me/picked');
+      // The OS dialog owns the flow on desktop: no in-app picker on top of it.
+      expect(wrapper.find('[data-test="picker-stub"]').exists()).toBe(false);
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
   });
 
-  it('rejects a relative path locally, before any request', async () => {
-    const wrapper = await mountChip();
+  it('binds nothing when the OS dialog is cancelled', async () => {
+    (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    pickNative.mockResolvedValue(null);
+    try {
+      const wrapper = await mountChip();
 
-    await wrapper.get('[data-test="project-dir-input"]').setValue('relative/path');
-    await wrapper.get('[data-test="project-dir-confirm"]').trigger('click');
-    await flushPromises();
+      await wrapper.get('[data-test="project-dir-browse"]').trigger('click');
+      await flushPromises();
 
-    expect(bridge.setProjectDirectory).not.toHaveBeenCalled();
-    expect(wrapper.get('[data-test="project-dir-error"]').text()).toContain('绝对路径');
+      expect(bridge.setProjectDirectory).not.toHaveBeenCalled();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
+    }
   });
 
   it('renders a server rejection in place', async () => {
-    const wrapper = await mountChip();
-    bridge.setProjectDirectory.mockRejectedValue(new Error('project directory cannot be resolved'));
-
-    await wrapper.get('[data-test="project-dir-input"]').setValue('/gone/away');
-    await wrapper.get('[data-test="project-dir-confirm"]').trigger('click');
-    await flushPromises();
-
-    expect(wrapper.get('[data-test="project-dir-error"]').text()).toContain('cannot be resolved');
-  });
-
-  it('offers the native picker only inside the Tauri runtime', async () => {
-    const wrapper = await mountChip();
-    expect(wrapper.find('[data-test="project-dir-browse"]').exists()).toBe(false);
-
     (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__ = {};
+    pickNative.mockResolvedValue('/gone/away');
+    bridge.setProjectDirectory.mockRejectedValue(new Error('project directory cannot be resolved'));
     try {
-      const tauriWrapper = await mountChip();
-      expect(tauriWrapper.find('[data-test="project-dir-browse"]').exists()).toBe(true);
+      const wrapper = await mountChip();
+
+      await wrapper.get('[data-test="project-dir-browse"]').trigger('click');
+      await flushPromises();
+
+      expect(wrapper.get('[data-test="project-dir-error"]').text()).toContain('cannot be resolved');
     } finally {
       delete (window as unknown as Record<string, unknown>).__TAURI_INTERNALS__;
     }

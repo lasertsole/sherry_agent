@@ -54,33 +54,16 @@
       </p>
 
       <div class="flex flex-col gap-1">
-        <!-- Manual entry is a first-class channel (the browser build has no native
-             picker); the server validates existence and containment. -->
-        <InputText
-          v-model="manualPath"
-          class="w-full font-mono text-xs"
-          :placeholder="t('toolbar.projectDirectory.manualPlaceholder')"
-          data-test="project-dir-input"
-          spellcheck="false"
-          autocomplete="off" />
-        <div class="flex justify-end gap-2">
-          <Button
-            v-if="canBrowse"
-            :label="t('toolbar.projectDirectory.browse')"
-            icon="pi pi-folder-open"
-            size="small"
-            severity="secondary"
-            text
-            data-test="project-dir-browse"
-            @click="browse" />
-          <Button
-            :label="t('toolbar.projectDirectory.confirm')"
-            icon="pi pi-check"
-            size="small"
-            :disabled="!manualPath.trim()"
-            data-test="project-dir-confirm"
-            @click="confirmManual" />
-        </div>
+        <!-- One action, two runtimes: the desktop build opens the OS folder
+             dialog, the browser build opens the in-app folder picker (a browser
+             cannot hand out an absolute path, so it browses the server's
+             filesystem through `/system/dirs` instead of typing one). -->
+        <Button
+          :label="t('toolbar.projectDirectory.browse')"
+          icon="pi pi-folder-open"
+          size="small"
+          data-test="project-dir-browse"
+          @click="choose" />
       </div>
 
       <p
@@ -91,6 +74,13 @@
       </p>
     </div>
   </ToolbarPopover>
+
+  <!-- Sibling of the popover, not a child of its panel: the panel is v-if-gated
+       and would take the dialog down with it on any outside pointerdown. -->
+  <ProjectDirectoryPicker
+    v-model:visible="pickerOpen"
+    :session-id="sessionId"
+    :initial-path="state.directory ?? ''" />
 </template>
 
 <script setup lang="ts">
@@ -98,6 +88,7 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 // Siblings under pages/home/components are NOT auto-imported (only app/components
 // is), so every component usage needs an explicit import.
+import ProjectDirectoryPicker from './ProjectDirectoryPicker.vue';
 import ToolbarPopover from './ToolbarPopover.vue';
 
 const props = defineProps<{ sessionId: string }>();
@@ -106,8 +97,8 @@ const { t } = useI18n();
 /** Per-session project-directory control store (hydrated from the backend). */
 const store = useProjectDirectoryStore();
 
-/** Manual path input (the popover's editable field). */
-const manualPath = ref('');
+/** Whether the in-app folder picker (browser build) is open. */
+const pickerOpen = ref(false);
 
 const state = computed(() => store.stateFor(props.sessionId));
 const bound = computed(() => !!state.value.directory);
@@ -123,44 +114,35 @@ const triggerTitle = computed(() => {
 });
 
 /**
- * Whether the Tauri-native folder picker is usable in this build. The browser
- * fallback (manual entry) always exists, so this only hides a button.
+ * Whether the Tauri-native folder picker is usable in this build. Where it is
+ * not, the in-app picker dialog takes over, so the action always exists.
  */
 const canBrowse = computed(() => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window);
 
 /**
- * Re-hydrate and prefill the input whenever the panel opens (the server is the
- * only authority on what is currently bound).
+ * Re-hydrate whenever the panel opens (the server is the only authority on what
+ * is currently bound).
  * @param toggle
  */
 const onOpen = (toggle: () => void): void => {
   store.clearError(props.sessionId);
   void store.hydrate(props.sessionId);
-  manualPath.value = state.value.directory ?? '';
   toggle();
 };
 
-/** Open the native folder picker (Tauri only) and apply the picked path. */
-const browse = async (): Promise<void> => {
+/** Open the system folder dialog (desktop) or the in-app folder picker. */
+const choose = async (): Promise<void> => {
+  if (!canBrowse.value) {
+    pickerOpen.value = true;
+    return;
+  }
   try {
     const picked = await pickProjectDirectory();
     if (!picked) return;
     await store.select(props.sessionId, picked);
-    manualPath.value = store.stateFor(props.sessionId).directory ?? picked;
   } catch (e) {
     store.fail(props.sessionId, e instanceof Error ? e.message : String(e));
   }
-};
-
-/** Submit the manually typed absolute path (the server validates it). */
-const confirmManual = async (): Promise<void> => {
-  const value = manualPath.value.trim();
-  if (!value) return;
-  if (!value.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(value)) {
-    store.fail(props.sessionId, t('toolbar.projectDirectory.absoluteRequired'));
-    return;
-  }
-  await store.select(props.sessionId, value);
 };
 
 /** Keep the chip honest when the session id changes (KeepAlive instances). */

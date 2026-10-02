@@ -1,8 +1,12 @@
 /**
- * Project file browser bridge calls (`/project/tree` + `/project/file`).
+ * Project file browser bridge calls (`/project/tree` + `/project/file`) and the
+ * system folder picker (`/system/dirs`).
  *
- * Session-scoped like every other session API: the backend resolves the paths
- * inside that session's project directory only.
+ * The tree calls are session-scoped like every other session API: the backend
+ * resolves the paths inside that session's project directory only. The folder
+ * picker deliberately is not — choosing a NEW project root starts outside the
+ * current one — and answers the directory names of one absolute path, nothing
+ * else (no files, no contents).
  *
  * @module bridge/project-files
  */
@@ -84,4 +88,49 @@ export async function fetchProjectFile(sessionId: string, path: string): Promise
   });
   if (!res) throw new Error('project file request failed');
   return { path, content: res.content ?? '', size: res.size ?? 0 };
+}
+
+/** One subdirectory of a system folder level. */
+export interface SystemDirEntry {
+  name: string;
+  /** Absolute path of the child (what the picker binds when confirmed). */
+  path: string;
+}
+
+/** Response of `GET /system/dirs`. */
+export interface SystemDirLevel {
+  /** Absolute, symlink-resolved path of the level. */
+  path: string;
+  /** Parent directory, or null at the filesystem root (the "go up" stop). */
+  parent: string | null;
+  entries: SystemDirEntry[];
+  truncated: boolean;
+  total: number;
+}
+
+/**
+ * List the subdirectories of one absolute path (the project-directory picker).
+ *
+ * @param path Absolute directory; '' starts at the server user's home.
+ */
+export async function fetchSystemDirs(path = ''): Promise<SystemDirLevel> {
+  const res = await fetchApiPayload<{
+    path?: string;
+    parent?: string | null;
+    entries?: SystemDirEntry[];
+    truncated?: boolean;
+    total?: number;
+  }>({
+    url: '/system/dirs',
+    opts: { path },
+    method: 'get'
+  });
+  if (!res) throw new Error('system folder request failed');
+  return {
+    path: res.path ?? path,
+    parent: res.parent ?? null,
+    entries: res.entries ?? [],
+    truncated: res.truncated === true,
+    total: res.total ?? (res.entries ?? []).length
+  };
 }

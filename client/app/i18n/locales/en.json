@@ -88,9 +88,14 @@
       "pendingHint": "Applies on the next turn",
       "pendingLabel": "Pending",
       "browse": "Choose folder…",
-      "manualPlaceholder": "/absolute/path/to/project",
-      "confirm": "Apply",
-      "absoluteRequired": "Enter an absolute path (the server rejects relative ones)"
+      "pickerTitle": "Choose a project directory",
+      "pickerUp": "Up one level",
+      "pickerHome": "Home",
+      "pickerEmpty": "No subfolders here",
+      "pickerTruncated": "Showing the first {shown} of {total}",
+      "pickerSelect": "Use this folder",
+      "pickerCancel": "Cancel",
+      "pickerLoadFailed": "This folder could not be read"
     },
     "projectFiles": "Project files",
     "sessionList": "Sessions",

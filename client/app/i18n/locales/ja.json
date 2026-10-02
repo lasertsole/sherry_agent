@@ -88,9 +88,14 @@
       "pendingHint": "次のターンで有効になります",
       "pendingLabel": "保留中",
       "browse": "フォルダーを選択…",
-      "manualPlaceholder": "/プロジェクトの/絶対パス",
-      "confirm": "適用",
-      "absoluteRequired": "絶対パスを入力してください（相対パスはサーバーが拒否します）"
+      "pickerTitle": "プロジェクトディレクトリを選択",
+      "pickerUp": "上の階層へ",
+      "pickerHome": "ホーム",
+      "pickerEmpty": "このフォルダーにサブフォルダーはありません",
+      "pickerTruncated": "先頭 {shown} 件のみ表示（全 {total} 件）",
+      "pickerSelect": "このフォルダーを選択",
+      "pickerCancel": "キャンセル",
+      "pickerLoadFailed": "このフォルダーを読み取れませんでした"
     },
     "projectFiles": "プロジェクトファイル",
     "sessionList": "セッション一覧",

@@ -88,9 +88,14 @@
       "pendingHint": "将于下一轮生效",
       "pendingLabel": "待生效",
       "browse": "选择文件夹…",
-      "manualPlaceholder": "/项目的/绝对路径",
-      "confirm": "确定",
-      "absoluteRequired": "请输入绝对路径（服务端会拒绝相对路径）"
+      "pickerTitle": "选择项目目录",
+      "pickerUp": "上一级",
+      "pickerHome": "主目录",
+      "pickerEmpty": "此文件夹内没有子文件夹",
+      "pickerTruncated": "仅显示前 {shown} 个（共 {total} 个）",
+      "pickerSelect": "选择此文件夹",
+      "pickerCancel": "取消",
+      "pickerLoadFailed": "无法读取该文件夹"
     },
     "projectFiles": "项目文件",
     "sessionList": "会话列表",
