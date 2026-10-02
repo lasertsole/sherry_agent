@@ -28,11 +28,14 @@ from openai import APITimeoutError
 from config.features import LLM_CLIENT_DEFAULTS
 from models.LLMs.auxiliary_llm.core import build_auxiliary_llm
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
+pytestmark = [pytest.mark.integration, pytest.mark.timeout(150)]
 
 _AUX_TIMEOUT_SECONDS = 2
-# aux_timeout x (aux_max_retries + 1) + SDK retry backoff + process overhead.
-_BOUNDED_BUDGET_SECONDS = 30
+# aux_timeout x (aux_max_retries + 1) x SDK retries + retry backoff + process
+# overhead. Measured ~20s on an idle machine, so the old 30s left no room for a
+# loaded one — the bound's point is "far below the 600s SDK default", and 60s
+# keeps that while surviving runner-sized stalls.
+_BOUNDED_BUDGET_SECONDS = 60
 _STUB_HOLD_SECONDS = 60
 
 
