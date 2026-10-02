@@ -7,7 +7,11 @@ re-register them here had drifted out of sync with that list.
 """
 
 import asyncio
+import faulthandler
 import logging
+import os
+import threading
+import time
 
 import aiosqlite
 import pytest
@@ -134,3 +138,62 @@ def _close_aiosqlite_connections_at_teardown(monkeypatch):
                 "aiosqlite teardown close skipped (likely already closed)",
                 exc_info=True,
             )
+
+
+def _executor_worker_threads() -> set[threading.Thread]:
+    """Threads owned by a ThreadPoolExecutor, which cannot hang the exit.
+
+    Their workers are non-daemon, but ``concurrent.futures.thread`` registers a
+    ``threading`` atexit handler that wakes every idle worker *before* the
+    interpreter's join runs — so an idle ``asyncio_0`` worker is not a leak,
+    and only genuinely abandoned threads are.
+    """
+    from concurrent.futures import thread as futures_thread
+
+    queues = getattr(futures_thread, "_threads_queues", None)
+    return set(queues) if queues else set()
+
+
+def pytest_sessionfinish(session, exitstatus) -> None:
+    """No session may end with live non-daemon threads.
+
+    CPython's exit joins every non-daemon thread before the interpreter can
+    finish, so a single leaked worker turns a fully *passing* session into a
+    process that prints its summary and then hangs forever — in CI that burned
+    a whole 30-minute job with group A's "5269 passed" as the final log line
+    (neither an aiosqlite connection nor an snkv store had been closed; see
+    ``_close_aiosqlite_connections_at_teardown`` above for the per-test fix).
+
+    Anything that still slips through is reported with its stacks, and the
+    process hard-exits after a short grace so a test leak can never become a
+    hung job.
+    """
+    executor_workers = _executor_worker_threads()
+    survivors = [
+        thread
+        for thread in threading.enumerate()
+        if thread is not threading.main_thread()
+        and not thread.daemon
+        and thread not in executor_workers
+    ]
+    if not survivors:
+        return
+
+    print(
+        f"\n[tests/conftest] {len(survivors)} non-daemon thread(s) outlived the session: "
+        f"{[thread.name for thread in survivors]}\n"
+        "Whoever opened them must close them (see _close_aiosqlite_connections_at_teardown "
+        "for the pattern); exiting anyway so they cannot hang the process.",
+        flush=True,
+    )
+    faulthandler.dump_traceback(all_threads=True)
+
+    status = int(exitstatus)
+
+    def _exit_when_reported() -> None:
+        # Grace for the terminal summary (and any coverage write-out) to reach
+        # the log before the process is taken down.
+        time.sleep(3.0)
+        os._exit(status)
+
+    threading.Thread(target=_exit_when_reported, name="session-hard-exit", daemon=True).start()

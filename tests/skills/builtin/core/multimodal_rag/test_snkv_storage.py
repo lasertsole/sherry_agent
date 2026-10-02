@@ -116,11 +116,17 @@ async def test_lightrag_initializes_with_snkv_backends(tmp_path):
     )
 
     await rag.initialize_storages()
-
-    assert type(rag.text_chunks).__name__ == "SNKVKVStorage"
-    assert type(rag.chunk_entity_relation_graph).__name__ == "SNKVGraphStorage"
-    assert type(rag.entities_vdb).__name__ == "SNKVVectorStorage"
-    assert type(rag.doc_status).__name__ == "SNKVDocStatusStorage"
+    try:
+        assert type(rag.text_chunks).__name__ == "SNKVKVStorage"
+        assert type(rag.chunk_entity_relation_graph).__name__ == "SNKVGraphStorage"
+        assert type(rag.entities_vdb).__name__ == "SNKVVectorStorage"
+        assert type(rag.doc_status).__name__ == "SNKVDocStatusStorage"
+    finally:
+        # SNKV keeps one NON-daemon worker thread per open database; only
+        # finalize_storages() closes them. Left open, those threads outlive the
+        # session and CPython's interpreter exit waits on them forever — CI's
+        # group A printed "5269 passed" and then hung for its whole job budget.
+        await rag.finalize_storages()
 
 
 def test_production_import_path_works():
