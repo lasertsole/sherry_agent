@@ -149,13 +149,12 @@ class TestRegisterIntegration:
         # Verify state register is cleared
         assert sm.get_state("test-session", "key") is None
 
-    def test_multi_session_isolation(self):
+    def test_multi_session_isolation(self, monkeypatch):
         """Verify sessions are properly isolated."""
         from runtime.session.state_register import StateRegisterMeM
         from runtime.session.core import SessionRegister
 
-        if StateRegisterMeM in SessionRegister._instances:
-            del SessionRegister._instances[StateRegisterMeM]
+        monkeypatch.delitem(SessionRegister._instances, StateRegisterMeM, raising=False)
         sm = StateRegisterMeM()
 
         sm.set_state("session-1", "data", "for-1")
