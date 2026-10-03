@@ -189,6 +189,32 @@ async def todo_refresh_processor(
 ws_event_processor_dict["todo_refresh"] = todo_refresh_processor
 
 
+async def taskflow_refresh_processor(
+    session_id: str, content: str | dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reply to a client `taskflow_refresh` frame with the session's flow progress.
+
+    The progress panel's recovery path after a reconnect (and its first load, when
+    no push has arrived yet): the reply carries the same payload the push does, so
+    the client has exactly one shape to render. Fail-open like the todo refresh —
+    an unknown session or any store error logs and returns ``None``.
+    """
+    try:
+        from agent.tools.taskflow.progress_push import progress_payload
+
+        return {
+            "event": "taskflow_updated",
+            "session_id": session_id,
+            "content": progress_payload(session_id),
+        }
+    except Exception as e:
+        logger.warning(f"taskflow_refresh failed: {e}, session_id={session_id}")
+        return None
+
+
+ws_event_processor_dict["taskflow_refresh"] = taskflow_refresh_processor
+
+
 @app.websocket("/sessions/ws")
 async def ws_handler(websocket: WebSocketAdapter):
     logger.info(f"WebSocket handler started: websocket_id={websocket.id}")

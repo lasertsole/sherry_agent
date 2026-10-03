@@ -7,6 +7,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
+from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ._shared import conflict_error, is_terminal, not_found_error, step_status, terminal_error
 
@@ -75,6 +76,7 @@ async def taskflow_cancel(
     except FlowNotFoundError:
         return not_found_error(flow_id)
 
+    await push_taskflow_progress(session_id)
     return (
         f"TaskFlow cancelled: flow_id={flow_id}, revision={updated['expected_revision']}, "
         f"status={updated['status']}, steps_cancelled={cancelled_steps}"

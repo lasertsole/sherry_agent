@@ -7,6 +7,7 @@ from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import TaskFlowStatus
 from ..registry import store_sqlite
+from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
 
@@ -57,6 +58,7 @@ async def taskflow_fail(
     except FlowNotFoundError:
         return not_found_error(flow_id)
 
+    await push_taskflow_progress(session_id)
     return (
         f"TaskFlow failed: flow_id={flow_id}, revision={updated['expected_revision']}, "
         f"status={updated['status']}"

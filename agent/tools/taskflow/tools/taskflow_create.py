@@ -7,6 +7,7 @@ from langchain_core.tools import tool
 from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
+from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowExistsError
 from ._shared import default_state, requester_session_key
 
@@ -62,6 +63,7 @@ async def taskflow_create(
         if deadline_ts
         else ""
     )
+    await push_taskflow_progress(session_id)
     return (
         f"TaskFlow created: flow_id={flow['flow_id']}, status={flow['status']}, "
         f"revision={flow['expected_revision']}{deadline_text}"

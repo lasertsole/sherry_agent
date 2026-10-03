@@ -20,6 +20,7 @@ from typing import Any
 from config.features import TASKFLOW_INFRA
 from ..config import TERMINAL_STATUSES, StepStatus
 from ..registry import store_sqlite
+from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError, UNSET
 
 # Bounded optimistic-lock retries for a mutation whose side effect (a spawned
@@ -439,6 +440,9 @@ async def update_flow_with_conflict_retry(
                 child_session_key=flow_child_session_key,
                 **extra_kwargs,
             )
+            # Reporting hook: a persisted mutation is what the progress panel
+            # shows, so the push travels with the write (best-effort, never raises).
+            await push_taskflow_progress(session_id)
             return updated, None
         except FlowConflictError:
             if attempt == max_attempts:
