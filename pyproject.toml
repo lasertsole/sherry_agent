@@ -25,6 +25,8 @@ dependencies = [
     "nest-asyncio>=1.6.0",
     "pillow>=9.2.0",
     "robyn>=0.84.0",
+    # Login system: HS256 JWT issuing/verification (server/utils/jwt_utils.py).
+    "pyjwt>=2.8",
     "snkv[vector]>=0.7.0",
     "websocket-client>=1.9.0",
     "websockets>=15.0.1",

@@ -37,7 +37,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (55 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (56 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -184,6 +184,53 @@ button (`pages/home/index.vue`) exists only while a session is open — the tree
 is session-scoped — and the persisted sidebar body falls back to the session
 list when the last session closes.
 
+## User Login (`server/service/auth_service.py`)
+
+Opt-in login protection in front of the API, shipped OFF: a default install has
+no account and `auth_settings.enabled = 0`, so nothing changes until someone
+configures it (the plan's R1–R6).
+
+**Two independent auth layers.** `gateway_auth_middleware` (Origin allowlist +
+per-boot token) is unchanged and still the outermost gate;
+`server/trigger/auth_user.py::user_auth_middleware` is the login gate and runs
+last, so an unlisted Origin or a hostile page is refused before a session is
+even looked at. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
+handler) reflects the caller's Origin for allowlisted origins — credentialed
+cross-origin fetches are refused by the browser when the response says `*`.
+
+**Who must log in.** Loopback clients never do (`request.ip_addr`, the socket
+address, not a header) unless `SHERRY_AUTH_REQUIRE_NON_LOOPBACK=0`; enforcement
+requires BOTH the runtime switch in SQLite AND an existing account, so an enabled
+switch can never lock a deployment out of itself. `/auth/status` reports the same
+rule the middleware applies.
+
+**Session.** scrypt-hashed password (`server/utils/password.py`, stdlib only,
+parameters carried in the stored string), HS256 JWT (`server/utils/jwt_utils.py`,
+`algorithms` pinned, `typ` claim separating access/refresh) in two HttpOnly
+cookies: `sherry_session` (Path=/, 12h) and `sherry_refresh` (Path=/auth/refresh,
+7d). The client never sees a token string; `/auth/login` and `/auth/refresh`
+answer `{expires_in, user}` and the browser keeps the cookies. Refresh ROTATES
+(the presented `jti` is blacklisted — a replay gets 401); logout blacklists both
+`jti`s; `auth_service.start_blacklist_cleanup()` prunes expired entries.
+
+**WebSockets** carry no peer address in Robyn, so their gate is a ticket:
+`GET /auth/ws-ticket` makes the loopback decision over HTTP and the handshake
+spends the single-use ticket (`?ticket=`). The client prefetches one per connect
+(`client/app/composables/ws-ticket.ts`, a lazy import so the socket layer does
+not pull the whole auth bridge into every page).
+
+**Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_users`
+(unique username, scrypt hash), `auth_settings` (single row = the runtime
+switch; `SHERRY_AUTH_ENABLED` only *seeds* a fresh row) and
+`auth_jwt_blacklist` (`expires_at` in JWT seconds). Server tests isolate it with
+the autouse `isolated_auth_store` fixture — no test may touch the real file.
+
+**Client**: `pages/login.vue`, `middleware/auth.global.ts` (per-navigation
+`/auth/status` decision), `stores/auth.ts`, `pages/home/components/AccountSettingsPanel.vue`
+(menu → 账户, a right-sidebar tab), `composables/bridge/auth.ts` (raw transport:
+codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
+(`requestApi.refreshSessionOnce`, single-flight).
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
@@ -223,8 +270,8 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | File | Contents |
 |---|---|
 | `config/features/agent_side/` | 34 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, ...) |
-| `config/features/infra_side/` | 21 per-object TypedDicts (gateway, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 55 TypedDicts + instances re-exported |
+| `config/features/infra_side/` | 22 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
+| `config/features/__init__.py` | Aggregator — all 56 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
