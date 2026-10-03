@@ -327,6 +327,19 @@ def e2e_env(monkeypatch, tmp_path):
     # busy signals must agree on ONE dict.
     monkeypatch.setattr(tr, "_get_active_tasks", lambda: active_tasks)
 
+    # Reset at SETUP as well as teardown: residue from an earlier suite must
+    # not decide this test's outcome (the drain-loop wait below is process-global).
+    for task in list(at._INFLIGHT.values()):
+        task.cancel()
+    for task in list(tr._DRAIN_TASKS.values()):
+        task.cancel()
+    for task in list(active_tasks.values()):
+        task.cancel()
+    at._INFLIGHT.clear()
+    tr._DRAIN_TASKS.clear()
+    active_tasks.clear()
+    iqs._SESSION_LOCKS.clear()
+
     # Hermetic user-input queue: submit_user_input / the TurnRunner drain must
     # NEVER touch the real default db (subagent_registry.db).
     user_queue = UserInputQueue(db_path=tmp_path / "e2e-user-input.db")
@@ -623,13 +636,15 @@ async def test_user_race_user_wins_pending_stays(monkeypatch, e2e_env):
 
     release.set()
     await _wait_until(lambda: at._INFLIGHT.get(sid) is None, what="auto turn completed")
-    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="turn runner drain finished")
+    await _wait_until(lambda: "e2e-race" not in tr._DRAIN_TASKS, what="turn runner drain finished")
+    assert tr._DRAIN_TASKS == {}
 
     # Bare-form on_turn_finished on a drained queue is an idempotent no-op
     # (single-flight guard + empty queue): the explicit re-trigger must not
     # resurrect anything.
     await asyncio.wait_for(tr.on_turn_finished(sid), timeout=_TIMEOUT)
-    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="re-trigger drain settled")
+    await _wait_until(lambda: "e2e-race" not in tr._DRAIN_TASKS, what="re-trigger drain settled")
+    assert tr._DRAIN_TASKS == {}
 
     # The drain turn's model call consumed the still-PENDING carrier (drain
     # middleware) alongside the queued user input.
