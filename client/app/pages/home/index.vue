@@ -374,6 +374,10 @@ const SIDEBAR_FILES_HINT_KEY = 'sherry.sidebarFilesHintShown';
  */
 const toggleSidebarBodyWithHint = (): void => {
   uiStore.toggleSidebarBody();
+  // Reveal the body being switched to: with the sidebar collapsed the click would
+  // otherwise look like it did nothing (the folder is the most obvious case — you
+  // ask for the project files and the tree has to appear).
+  uiStore.sidebarCollapsed = false;
   if (uiStore.sidebarBody !== 'files') return;
   try {
     if (window.localStorage.getItem(SIDEBAR_FILES_HINT_KEY)) return;

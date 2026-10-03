@@ -61,8 +61,11 @@ const primevueStub = {
   // by their accessible label (the real PrimeVue Button renders both).
   Button: {
     props: ['label', 'title', 'ariaLabel', 'icon'],
+    emits: ['click'],
+    // Clicks are forwarded like PrimeVue's Button: toolbar switches are only
+    // testable through the real interaction, not through their titles.
     template:
-      '<button class="btn" :title="title || ariaLabel"><i :class="icon"></i><slot /><span>{{ label }}</span></button>'
+      '<button class="btn" :title="title || ariaLabel" @click="$emit(\'click\')"><i :class="icon"></i><slot /><span>{{ label }}</span></button>'
   },
   Menu: { template: '<div class="mnu"></div>', methods: { toggle() {} } },
   ToggleSwitch: { template: '<span class="ts"></span>' },
@@ -307,6 +310,48 @@ describe('home/index.vue (integration, backend mocked)', () => {
       expect(wrapper.findAll('.btn').filter(b => (b.attributes('title') ?? '').includes('项目'))).toHaveLength(0);
       // A persisted "files" body would strand the sidebar: it falls back.
       expect(uiState.sidebarBody).toBe('sessions');
+    } finally {
+      dir.restore();
+      vi.stubGlobal('useUiStore', originalUi);
+      vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
+
+  it('expands a collapsed sidebar when the files switch is clicked', async () => {
+    // A body switch on a collapsed sidebar would look inert: clicking the folder
+    // must reveal the tree it switches to.
+    const originalRoute = (globalThis as any).useRoute;
+    const originalUi = (globalThis as any).useUiStore;
+    vi.stubGlobal('useRoute', () => ({
+      path: '/home/s1',
+      fullPath: '/home/s1',
+      params: { sid: 's1' },
+      query: {}
+    }));
+    const uiState = reactive({
+      sidebarCollapsed: true,
+      sidebarBody: 'sessions' as 'sessions' | 'files',
+      // The real store's own toggle; a bare state stub would make the click a no-op.
+      toggleSidebarBody: () => {
+        uiState.sidebarBody = uiState.sidebarBody === 'sessions' ? 'files' : 'sessions';
+      }
+    });
+    vi.stubGlobal('useUiStore', () => uiState);
+    const dir = stubProjectDirectory('/proj');
+    try {
+      const wrapper = mountHome();
+      // The folder switch shows the project files…
+      await wrapper.get('button[title="项目文件"]').trigger('click');
+
+      expect(uiState.sidebarBody).toBe('files');
+      expect(uiState.sidebarCollapsed).toBe(false);
+
+      // …and the way back reveals the session list the same way.
+      uiState.sidebarCollapsed = true;
+      await wrapper.get('button[title="会话列表"]').trigger('click');
+
+      expect(uiState.sidebarBody).toBe('sessions');
+      expect(uiState.sidebarCollapsed).toBe(false);
     } finally {
       dir.restore();
       vi.stubGlobal('useUiStore', originalUi);
