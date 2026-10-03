@@ -59,6 +59,36 @@ describe('stores/thinking', () => {
     expect(store.current('sid-null')).toBe('high');
   });
 
+  it('hydrate() follows the reported env default for an unset switch', async () => {
+    const store = useThinkingStore();
+    bridge.fetchThinkingState.mockResolvedValueOnce({
+      mode: 'on_off',
+      enabled: null,
+      level: null,
+      // MAIN_LLM_ENABLE_THINKING=true: the model still thinks, so the switch
+      // must read 开启 even though the session never chose explicitly.
+      defaultEnabled: true,
+      defaultLevel: 'high'
+    });
+    await store.hydrate('sid-env');
+    expect(store.current('sid-env')).toBe(true);
+    // The default also covers sessions that have not been hydrated themselves.
+    expect(store.current('sid-other')).toBe(true);
+  });
+
+  it('hydrate() follows the reported default level for an unset selector', async () => {
+    const store = useThinkingStore();
+    bridge.fetchThinkingState.mockResolvedValueOnce({
+      mode: 'levels',
+      enabled: null,
+      level: null,
+      defaultEnabled: true,
+      defaultLevel: 'low'
+    });
+    await store.hydrate('sid-lvl-default');
+    expect(store.current('sid-lvl-default')).toBe('low');
+  });
+
   it('hydrate() ignores empty session ids', async () => {
     const store = useThinkingStore();
     await store.hydrate('');

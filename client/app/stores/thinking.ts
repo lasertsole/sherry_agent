@@ -21,15 +21,26 @@ export const useThinkingStore = defineStore('thinking', () => {
   const bySession = ref<Record<string, ThinkingValue>>({});
   /** sid → the choice was parked mid-turn and lands on the next turn. */
   const pendingBySession = ref<Record<string, boolean>>({});
+  /** What an UNSET on/off control follows (the env flag the backend reports). */
+  const defaultEnabled = ref(false);
+  /** What an UNSET level control follows. */
+  const defaultLevel = ref<'low' | 'high' | 'max'>('high');
 
   /**
-   * Current control position for a session (off / high until hydrated —
-   * matching the server default of thinking enabled at its default level).
+   * The position an unset control follows (until the first hydrate says more).
+   * @returns The mode's default position (off / high before the first read).
+   */
+  function unsetValue(): ThinkingValue {
+    return mode.value === 'levels' ? defaultLevel.value : defaultEnabled.value;
+  }
+
+  /**
+   * Current control position for a session, falling back to the backend's
+   * reported default while the session is not hydrated yet.
    * @param sessionId
    */
   function current(sessionId: string): ThinkingValue {
-    if (mode.value === 'levels') return bySession.value[sessionId] ?? 'high';
-    return bySession.value[sessionId] ?? false;
+    return bySession.value[sessionId] ?? unsetValue();
   }
 
   /**
@@ -40,7 +51,15 @@ export const useThinkingStore = defineStore('thinking', () => {
     if (!sessionId) return;
     const state = await fetchThinkingState(sessionId);
     mode.value = state.mode;
-    const value: ThinkingValue = state.mode === 'levels' ? (state.level ?? 'high') : (state.enabled ?? false);
+    defaultEnabled.value = state.defaultEnabled === true;
+    defaultLevel.value = state.defaultLevel ?? 'high';
+    // Unset follows the BACKEND's default (the env flag / level default it
+    // reports): a hardcoded `false` here showed "off" for a session whose model
+    // was still thinking, so the switch looked ignored.
+    const value: ThinkingValue =
+      state.mode === 'levels'
+        ? (state.level ?? state.defaultLevel ?? 'high')
+        : (state.enabled ?? state.defaultEnabled ?? false);
     bySession.value = { ...bySession.value, [sessionId]: value };
     pendingBySession.value = { ...pendingBySession.value, [sessionId]: state.pending === true };
   }
@@ -61,7 +80,7 @@ export const useThinkingStore = defineStore('thinking', () => {
    */
   async function setValue(sessionId: string, value: ThinkingValue): Promise<void> {
     const previous = bySession.value[sessionId];
-    const fallback: ThinkingValue = previous ?? (mode.value === 'levels' ? 'high' : false);
+    const fallback: ThinkingValue = previous ?? unsetValue();
     const previousPending = pendingBySession.value[sessionId] ?? false;
     bySession.value = { ...bySession.value, [sessionId]: value };
     // Optimistically "parked" until the server says the write landed live.
@@ -75,5 +94,15 @@ export const useThinkingStore = defineStore('thinking', () => {
     }
   }
 
-  return { mode, bySession, pendingBySession, current, hydrate, isPending, setValue };
+  return {
+    mode,
+    bySession,
+    pendingBySession,
+    defaultEnabled,
+    defaultLevel,
+    current,
+    hydrate,
+    isPending,
+    setValue
+  };
 });

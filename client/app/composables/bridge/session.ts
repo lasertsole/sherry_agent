@@ -296,19 +296,30 @@ export interface ThinkingState {
   mode: ThinkingMode;
   enabled: boolean | null;
   level: 'low' | 'high' | 'max' | null;
+  /** What an UNSET on/off control follows (the MAIN_LLM_ENABLE_THINKING env flag). */
+  defaultEnabled?: boolean;
+  /** What an UNSET level control follows (mirrors reasoning_effort's default). */
+  defaultLevel?: 'low' | 'high' | 'max';
   /** True when the choice was parked mid-turn and lands on the next turn. */
   pending?: boolean;
 }
+
+/** The raw wire payload (snake_case backend field names). */
+type ThinkingStatePayload = Omit<ThinkingState, 'defaultEnabled' | 'defaultLevel'> & {
+  success?: boolean;
+  default_enabled?: boolean;
+  default_level?: 'low' | 'high' | 'max';
+};
 
 /**
  * Read the session's explicit thinking choice and the model's control mode.
  *
  * @param sessionId Session whose flag should be read.
- * @returns The current state; null fields = never set, the backend's
- *          MAIN_LLM_ENABLE_THINKING env default applies.
+ * @returns The current state; null fields = never set — the control must then
+ *          display `defaultEnabled` / `defaultLevel`, never a hardcoded guess.
  */
 export async function fetchThinkingState(sessionId: string): Promise<ThinkingState> {
-  const res = await fetchApiPayload<ThinkingState & { success?: boolean }>({
+  const res = await fetchApiPayload<ThinkingStatePayload>({
     url: '/sessions/thinking',
     opts: { session_id: sessionId },
     method: 'get'
@@ -317,6 +328,8 @@ export async function fetchThinkingState(sessionId: string): Promise<ThinkingSta
     mode: res.mode ?? 'on_off',
     enabled: res.enabled ?? null,
     level: res.level ?? null,
+    defaultEnabled: res.default_enabled === true,
+    defaultLevel: res.default_level ?? 'high',
     pending: res.pending === true
   };
 }

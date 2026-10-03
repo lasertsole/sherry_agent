@@ -22,6 +22,7 @@ vi.mock('../requestApi', () => ({
 }));
 
 import * as bridge from '../bridge';
+import { fetchThinkingState } from '../bridge/session';
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -378,6 +379,36 @@ describe('session / system prompt / character / health (browser, via fetchApi)',
       url: '/n_turns_history_messages',
       opts: { session_id: 's1', last_turn_count: 5 },
       method: 'get'
+    });
+  });
+
+  it('fetchThinkingState maps the wire snake_case defaults', async () => {
+    mocks.fetchApi.mockResolvedValueOnce({
+      success: true,
+      mode: 'on_off',
+      enabled: null,
+      level: null,
+      default_enabled: true,
+      default_level: 'max',
+      pending: false
+    });
+    await expect(fetchThinkingState('s1')).resolves.toEqual({
+      mode: 'on_off',
+      enabled: null,
+      level: null,
+      defaultEnabled: true,
+      defaultLevel: 'max',
+      pending: false
+    });
+    // An older payload without the defaults keeps the documented fallbacks.
+    mocks.fetchApi.mockResolvedValueOnce({ success: true, mode: 'levels', enabled: null, level: null });
+    await expect(fetchThinkingState('s2')).resolves.toEqual({
+      mode: 'levels',
+      enabled: null,
+      level: null,
+      defaultEnabled: false,
+      defaultLevel: 'high',
+      pending: false
     });
   });
 
