@@ -27,9 +27,17 @@
            sits on the left; all other function buttons are on the right.
            The button is always visible (after collapsing, the sidebar retracts and this button
            stays in the top-left corner of the session area so it can be expanded again). -->
-      <!-- `@container` + the @max-[620px] variants below: the toolbar's own width is the
-           middle column's width, so when the two sidebars squeeze it the theme switch and
-           the language picker drop out instead of wrapping the button row. -->
+      <!-- `@container` + the @max variants below: the toolbar's own width is the middle
+           column's width, so the row thins out in two steps instead of being squeezed.
+           Below 620px the theme switch and the language picker drop out; below 300px only
+           the two sidebar collapse buttons remain — the row needs ~250px (both collapse
+           buttons plus the folder / bell / menu trio), so anything under that squeezes the
+           row out of the column and a button nobody can reach is worse than a hidden one.
+           Container queries measure the CONTENT box, so the 300 excludes the p-3 padding.
+           The `!` is load-bearing: PrimeVue's own `display` rules are UNLAYERED, and an
+           unlayered rule outranks anything in `@layer utilities`, so a plain
+           `@max-[480px]:hidden` would be dead on a `Button` (probe-verified: the same class
+           hides a plain element and does nothing to `p-button`). -->
       <div
         class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- Left: collapse/expand the sidebar, then the body switch
@@ -49,11 +57,12 @@
             :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
             :aria-pressed="showFiles"
             variant="text"
-            :class="
+            :class="[
               showFiles
                 ? 'bg-theme-main/10 text-theme-main'
-                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
-            "
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
+              '@max-[300px]:hidden!'
+            ]"
             @click="toggleSidebarBodyWithHint" />
         </div>
         <!-- Right: original function button area (the theme switch and the language
@@ -94,7 +103,7 @@
             </Select>
             <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
                  Clicking opens the notification dialog and clears the unread count. -->
-            <div class="relative flex items-center">
+            <div class="relative flex items-center @max-[300px]:hidden!">
               <Button
                 icon="pi pi-bell"
                 :title="t('toolbar.notification')"
@@ -116,6 +125,7 @@
               :title="t('toolbar.settingsMenu')"
               :aria-label="t('toolbar.settingsMenu')"
               variant="text"
+              class="@max-[300px]:hidden!"
               @click="isSettingsMenuOpen = true" />
             <!-- Right sidebar toggle: mirrors the left sidebar's collapse button,
                  sitting at the far right of the toolbar (the sidebar it controls

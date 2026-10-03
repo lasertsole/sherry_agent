@@ -317,6 +317,38 @@ describe('home/index.vue (integration, backend mocked)', () => {
     }
   });
 
+  it('thins the toolbar to the two collapse buttons on a narrow column', () => {
+    // Container queries cannot be evaluated in happy-dom, so this pins the
+    // contract at the class level: the three optional controls carry the narrow
+    // variant (with `!` — PrimeVue's unlayered display rules beat a layered
+    // utility) and the two collapse buttons carry none.
+    const originalRoute = (globalThis as any).useRoute;
+    vi.stubGlobal('useRoute', () => ({
+      path: '/home/s1',
+      fullPath: '/home/s1',
+      params: { sid: 's1' },
+      query: {}
+    }));
+    const dir = stubProjectDirectory('/proj');
+    try {
+      const wrapper = mountHome();
+
+      expect(wrapper.get('button[title="项目文件"]').classes()).toContain('@max-[300px]:hidden!');
+      expect(wrapper.get('button[title="菜单"]').classes()).toContain('@max-[300px]:hidden!');
+      const bell = wrapper.get('button[title="通知"]');
+      expect(bell.element.parentElement?.className ?? '').toContain('@max-[300px]:hidden!');
+      // The two collapse buttons stay in every width.
+      const collapse = wrapper.findAll('button').filter(b => /侧边栏/.test(b.attributes('title') ?? ''));
+      expect(collapse.length).toBe(2);
+      for (const button of collapse) {
+        expect(button.classes().join(' ')).not.toContain('@max-[');
+      }
+    } finally {
+      dir.restore();
+      vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
+
   it('expands a collapsed sidebar when the files switch is clicked', async () => {
     // A body switch on a collapsed sidebar would look inert: clicking the folder
     // must reveal the tree it switches to.
