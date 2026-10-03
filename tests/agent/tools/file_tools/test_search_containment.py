@@ -20,8 +20,6 @@ SESSION = "s-containment"
 
 
 def _require_symlink_support(link: str, target: str) -> None:
-    if not hasattr(os, "symlink"):
-        pytest.skip("os.symlink not supported on this platform")
     try:
         os.symlink(target, link)
     except OSError:

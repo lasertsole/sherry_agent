@@ -1,7 +1,7 @@
 """Unit tests for pub/func/atomic_replace.py.
 
 Covers the atomic move helper, including symlink preservation.
-Symlink tests are guarded by os.symlink availability (Windows may
+Symlink tests skip only when symlink creation actually fails (Windows may
 require admin privileges or Developer Mode).
 """
 
@@ -9,11 +9,6 @@ import os
 import pytest
 
 from pub.func.atomic_replace import atomic_replace
-
-
-def _symlink_supported() -> bool:
-    return hasattr(os, "symlink")
-
 
 pytestmark = [pytest.mark.unit]
 
@@ -50,10 +45,6 @@ class TestAtomicReplace:
 
         assert target.read_text(encoding="utf-8") == "path objects"
 
-    @pytest.mark.skipif(
-        not _symlink_supported(),
-        reason="os.symlink not supported on this platform",
-    )
     def test_symlink_preserved_and_real_file_written(self, tmp_path):
         real = tmp_path / "real_config.yaml"
         real.write_text("original", encoding="utf-8")
