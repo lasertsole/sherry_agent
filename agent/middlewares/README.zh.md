@@ -315,7 +315,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/todo_continuation/core.py` · **类：** `TodoContinuationEnforcer(AgentMiddleware)`
 **钩子：** 仅 `aafter_agent`（异步回合结束钩子）
 
-在主 Agent 列表中注册在**第一位**，因此其 `after_agent` **最后**运行——`after_agent` 钩子按列表逆序执行，enforcer 必须观察真正结束的回合。当会话 todo 列表仍有 `pending` / `in_progress` 项时，它通过服务器侧的自动回合钩子（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`，调用时解析；钩子未注册时降级为 no-op，会话保持可重试）以 fire-and-forget 方式注入续作提示。
+在主 Agent 列表中注册在**第一位**，因此其 `after_agent` **最后**运行——`after_agent` 钩子按列表逆序执行，enforcer 必须观察真正结束的回合。它门控的是整个**计划**：会话的 todo 列表（`pending` / `in_progress`）**以及**未终结的 TaskFlow 流程（`ready` / `blocked` / `dispatched` 步骤，以及步骤都已落定却从未关闭的流程）——任一存在都会让回合继续，指令会列出剩余波次/步骤以及收口所需的看板调用。注入通过服务器侧的自动回合钩子（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`，调用时解析；钩子未注册时降级为 no-op，会话保持可重试）以 fire-and-forget 方式完成。
 
 - 中止类回合错误（用户取消 / 超时，`stagnation_tracker.is_abort_error`）绝不续作；空列表或全部完成的列表会重置停滞追踪器。
 - 停滞处理（`agent/tools/todolist/stagnation_tracker.py`）：列表在多次尝试后仍未变化则进入恢复模式并注入 `_RECOVERY_PROMPT`；`is_in_cooldown` 限制重复注入；只有成功投递后才通过 `mark_injected` 记录触发。

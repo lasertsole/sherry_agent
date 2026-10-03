@@ -62,7 +62,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
   │    → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7)
   │    → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL → MessagePersistence
-  │    → LLMRetry → Summarization → TodoContinuationEnforcer(E3)
+  │    → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
   │    (MessagePersistence flushes tool results the moment they return via
   │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
   │     is also the first after_model hook — new human/ai/tool messages reach

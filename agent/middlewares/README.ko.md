@@ -316,7 +316,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/todo_continuation/core.py` · **클래스:** `TodoContinuationEnforcer(AgentMiddleware)`
 **후크:** `aafter_agent` 전용(비동기 턴 종료 후크)
 
-메인 에이전트 리스트에서 **가장 먼저** 등록되므로 `after_agent`는 **가장 마지막**에 실행됩니다 — `after_agent` 후크는 리스트 역순으로 실행되며, enforcer는 진짜 끝난 턴을 관측해야 합니다. 세션 todo 목록에 아직 `pending` / `in_progress` 항목이 있으면 서버 소유 자동 턴 후크(`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, 호출 시점 해석; 미등록이면 세션을 재시도 가능한 상태로 두는 no-op으로 열화)를 통해 연속 프롬프트를 fire-and-forget으로 주입합니다.
+메인 에이전트 리스트에서 **가장 먼저** 등록되므로 `after_agent`는 **가장 마지막**에 실행됩니다 — `after_agent` 후크는 리스트 역순으로 실행되며, enforcer는 진짜 끝난 턴을 관측해야 합니다. 게이트 대상은 **계획 전체**입니다. 세션 todo 목록(`pending` / `in_progress`)과 **미종료 TaskFlow 플로**(`ready` / `blocked` / `dispatched` 단계, 그리고 모든 단계가 정리됐지만 닫히지 않은 플로) — 어느 하나라도 남으면 턴이 이어지고, 지시문이 남은 웨이브/단계와 마무리에 필요한 보드 호출을 함께 명시합니다. 주입은 서버 소유 자동 턴 후크(`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, 호출 시점 해석; 미등록이면 세션을 재시도 가능한 상태로 두는 no-op으로 열화)를 통해 fire-and-forget으로 수행됩니다.
 
 - 중단류 턴 오류(사용자 취소 / 타임아웃, `stagnation_tracker.is_abort_error`)는 절대 연속하지 않으며, 비어 있거나 전부 완료된 목록은 정체 추적기를 리셋합니다.
 - 정체 처리(`agent/tools/todolist/stagnation_tracker.py`): 여러 시도 후에도 목록이 변하지 않으면 복구 모드에 들어가 `_RECOVERY_PROMPT`를 주입합니다. `is_in_cooldown`이 반복 주입을 제한하고, 전달 성공 후에만 `mark_injected`로 기록합니다.

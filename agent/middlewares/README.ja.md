@@ -316,7 +316,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/todo_continuation/core.py` · **クラス：** `TodoContinuationEnforcer(AgentMiddleware)`
 **フック：** `aafter_agent` のみ（非同期ターン終了フック）
 
-メインエージェントのリストで**最初**に登録されるため、`after_agent` は**最後**に実行されます — `after_agent` フックはリスト逆順に走り、enforcer は本当に終わったターンを観測する必要があるためです。セッションの todo リストにまだ `pending` / `in_progress` 項目がある場合、サーバー側の自動ターンフック（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`、呼び出し時に解決。未登録なら no-op に劣化しセッションは再試行可能なまま）を通じて継続プロンプトを fire-and-forget で注入します。
+メインエージェントのリストで**最初**に登録されるため、`after_agent` は**最後**に実行されます — `after_agent` フックはリスト逆順に走り、enforcer は本当に終わったターンを観測する必要があるためです。ゲートの対象は**計画全体**です。セッションの todo リスト（`pending` / `in_progress`）**と**未終了の TaskFlow フロー（`ready` / `blocked` / `dispatched` のステップ、および全ステップが決着したのに未クローズのフロー）——どちらかが残ればターンは続き、残りのウェーブ/ステップと収束に必要なボード呼び出しを指示に明記します。注入はサーバー側の自動ターンフック（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`、呼び出し時に解決。未登録なら no-op に劣化しセッションは再試行可能なまま）を通じて fire-and-forget で行います。
 
 - 中断クラスのターンエラー（ユーザーキャンセル / タイムアウト、`stagnation_tracker.is_abort_error`）では決して継続しません。空または全完了のリストは停滞トラッカーをリセットします。
 - 停滞処理（`agent/tools/todolist/stagnation_tracker.py`）：複数回の試行後もリストが変わらない場合は復帰モードに入り `_RECOVERY_PROMPT` を注入します。`is_in_cooldown` が繰り返し注入を抑制し、配信成功後にのみ `mark_injected` で記録します。
