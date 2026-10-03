@@ -162,10 +162,18 @@
           </Transition>
           <!-- Chat input box area (fixed h-40, keeping the send button position stable) -->
           <div class="flex flex-col h-40">
-            <!-- Chat tools (hidden while a HITL request occupies the input slot) -->
+            <!-- Chat tools (hidden while a HITL request occupies the input slot).
+                 [@container]: with both sidebars open this row narrows to ~280px
+                 while its content needs ~472px, so below 500px only the three
+                 anchors survive — the media (+) entry, the access-mode list and
+                 the project-directory chip (right side); the task badge, the
+                 context ring, the model picker and the thinking control hide.
+                 `hidden!` is the important form: PrimeVue's own display rules and
+                 the sibling `flex` utility are unlayered/later, so the plain
+                 variant loses the tie. -->
             <div
               v-show="!hitlRequest"
-              class="h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
+              class="@container h-8 px-2 flex items-center gap-3 border-b border-solid border-gray-light dark:border-gray-dark">
               <!-- Media entry: image / audio / video uploads collapsed into one
                    dropdown (same trigger + popup shape as the model picker) -->
               <MediaMenu @select="event => handleOperate('toolBar', event)" />
@@ -176,9 +184,11 @@
                 v-if="mySid"
                 :session-id="mySid" />
               <!-- Running background work of this session (terminal entry): opens a
-                   right-sidebar tab; the badge counts what still owns a slot. -->
+                   right-sidebar tab; the badge counts what still owns a slot.
+                   Thinned away on a narrow column (see the row's @container note). -->
               <TasksButton
                 v-if="mySid"
+                class="@max-[500px]:hidden!"
                 :session-id="mySid"
                 @focus="onTasksFocus" />
               <!-- Per-session model + thinking controls (right side of the media
@@ -190,10 +200,15 @@
                 <!-- Context ring sits immediately left of the model picker (it
                      reports what that model's window holds). -->
                 <ContextUsageButton
+                  class="@max-[500px]:hidden!"
                   :session-id="mySid"
                   :used-tokens="lastPromptTokens" />
-                <SessionModelPicker :session-id="mySid" />
-                <ThinkingToggle :session-id="mySid" />
+                <SessionModelPicker
+                  class="@max-[500px]:hidden!"
+                  :session-id="mySid" />
+                <ThinkingToggle
+                  class="@max-[500px]:hidden!"
+                  :session-id="mySid" />
                 <!-- Project directory: the root every file tool, shell command
                      and path check resolves against. -->
                 <ProjectDirectoryChip :session-id="mySid" />
