@@ -248,6 +248,20 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
 /** Realistic carrier content (matches agent/tools/subagent/announce/completion_message.py format) */
 const CARRIER = '[subagent:研究员 done]\n后台检索已完成，结果已送达主会话。';
 
+describe('ChatBox floating layer (integration, backend mocked)', () => {
+  it('clips its overlays at the column edge (overflow-hidden root)', () => {
+    // Both sidebars open narrow the chat column below the progress float's 320px
+    // panel (measured: 280px column, 52px spill over the session list), so every
+    // overlay anchored here is clipped at the column boundary instead of spilling.
+    // (find, not wrapper.classes(): the template's leading comment makes the root
+    // a fragment, so wrapper.element is not the styled div.)
+    const wrapper = mount(ChatBox, { props: { messages: [base({ id: 1, content: 'hi' })] } });
+    const root = wrapper.find('div.relative.overflow-hidden');
+    expect(root.exists()).toBe(true);
+    expect(root.classes()).toContain('min-h-0');
+  });
+});
+
 describe('ChatBox turn scrubber (integration, backend mocked)', () => {
   it('offers a page of marks and pages through the rest of the session', () => {
     const messages = Array.from({ length: 25 }, (_, i) => [

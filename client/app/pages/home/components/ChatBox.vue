@@ -1,7 +1,11 @@
 <template>
   <!-- Floating layer anchor: the wrapper is relatively positioned and hosts the "scroll to bottom"
-       floating button (absolutely positioned at the bottom center of the chat list) -->
-  <div class="relative flex flex-col flex-1 min-h-0">
+       floating button (absolutely positioned at the bottom center of the chat list).
+       [overflow-hidden]: every overlay anchored here (progress float, turn scrubber, scroll
+       button) is wider than a narrow chat column once both sidebars are open — the plan float's
+       expanded panel is 320px against a ~280px column — and an unclipped overlay spills over the
+       session list. Clipping at the column edge hides the overflow instead. -->
+  <div class="relative flex flex-col flex-1 min-h-0 overflow-hidden">
     <!-- [scrollbar-gutter:stable]: always reserves a gutter for the (classic) scrollbar,
          preventing content from shifting horizontally when switching between the no-scrollbar and
          scrollbar states (e.g. empty state "start a new conversation" → messages accumulate) -->
