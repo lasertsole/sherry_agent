@@ -12,7 +12,10 @@ import sys
 
 import pytest
 
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(120)]
+# The child process imports the whole server (~55 s on an idle machine, and far
+# more when the box is loaded); the inner subprocess timeout is the real bound, so
+# this marker only has to be loose enough not to kill the test mid-import.
+pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
