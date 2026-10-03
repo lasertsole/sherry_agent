@@ -112,12 +112,14 @@
        subscription lifecycle (the inner 前端/后端 tabs stay here; the sidebar owns
        only the outer tab strip). -->
   <div class="flex flex-col h-full min-h-0">
-    <TabView v-model:activeIndex="activeTab">
+    <TabView
+      v-model:activeIndex="activeTab"
+      class="flex-1 min-h-0">
       <!-- ===== Frontend logs Tab ===== -->
       <TabPanel
         value="frontend"
         :header="t('logs.tabs.frontend')">
-        <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-3 h-full">
           <!-- Toolbar: type + per-day bucket dropdown (mirroring the server tab's "file per day" hierarchy) -->
           <div class="flex items-center gap-2 flex-wrap">
             <Select
@@ -199,8 +201,7 @@
           <!-- Frontend log console -->
           <div
             ref="frontendConsoleRef"
-            class="overflow-auto rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 font-mono text-xs leading-relaxed"
-            style="max-height: 60vh; min-height: 40vh"
+            class="flex-1 min-h-0 overflow-auto rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 font-mono text-xs leading-relaxed"
             @scroll="onFrontendScroll">
             <div
               v-if="loadingBucketContent"
@@ -229,7 +230,7 @@
       <TabPanel
         value="backend"
         :header="t('logs.tabs.backend')">
-        <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-3 h-full">
           <!-- Toolbar: type mega-bucket + date column + PID column (each row maps to one real log file, located by date + PID) -->
           <div class="flex items-center gap-2 flex-wrap">
             <Select
@@ -324,8 +325,7 @@
           <!-- Backend log console -->
           <div
             ref="consoleRef"
-            class="overflow-auto rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 font-mono text-xs leading-relaxed"
-            style="max-height: 60vh; min-height: 40vh"
+            class="flex-1 min-h-0 overflow-auto rounded-lg bg-gray-50 dark:bg-gray-800/50 p-3 font-mono text-xs leading-relaxed"
             @scroll="onConsoleScroll">
             <div
               v-if="loadingContent"
@@ -930,3 +930,43 @@ const deactivate = () => {
 onMounted(activate);
 onBeforeUnmount(deactivate);
 </script>
+
+<style scoped>
+/* Fill the tab: the strip keeps its own height and the panels area is what
+   stretches, so the log console below the toolbar rows takes the whole
+   remaining height instead of the old fixed 40-60vh block with dead space
+   underneath. Same chain as ExtendPanel / ConfigPanel, with ONE difference:
+   the panel here SHRINKS as well (`flex: 1 1 auto`) — a log console must never
+   drive the layout with its content, it scrolls inside its own box, so the
+   panel is always exactly the panels-area height. (ExtendPanel is grow-only on
+   purpose: a long channel grid must scroll the panels area instead of being
+   squashed.) */
+:deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* This PrimeVue version renders the strip as .p-tabview-tablist-container
+   (there is no .p-tabview-nav): keep it at its own height so the panels area
+   below is the only thing that scrolls. */
+:deep(.p-tabview-tablist-container) {
+  flex-shrink: 0;
+}
+
+:deep(.p-tabview-panels) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+:deep(.p-tabview-panel) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+</style>
