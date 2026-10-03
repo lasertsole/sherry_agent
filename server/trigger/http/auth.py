@@ -1,6 +1,6 @@
 """Login HTTP routes (``/auth/*``).
 
-Cookie policy (per the plan's §2.2): the access token travels in an HttpOnly
+Cookie policy: the access token travels in an HttpOnly
 ``sherry_session`` cookie scoped to ``/``, the refresh token in an HttpOnly
 ``sherry_refresh`` cookie scoped to ``/auth/refresh`` so it is not attached to
 every request, and the client never sees either string — the login/refresh
@@ -9,7 +9,7 @@ bodies carry only ``expires_in`` and the public user.
 Account management is a trusted-operator action: a caller that is NOT gated by
 the login middleware (loopback, or auth switched off) may manage the single
 account without a session — it must still prove the current password before any
-change (the plan's R4), so R4 holds even for the local operator.
+change, so that rule holds even for the local operator.
 """
 
 from __future__ import annotations
@@ -195,7 +195,7 @@ async def auth_account_handler(request: Request):
 
 @app.delete("/auth/account")
 async def auth_disable_handler(request: Request):
-    """Turn login protection off — the current password is required (R4)."""
+    """Turn login protection off — the current password is required."""
     body = read_body(request) or {}
     acting = await _acting_user(request)
     if acting is None:

@@ -10,7 +10,7 @@
  * The decision comes from the backend (`/auth/status`), never from a token in
  * JS: `auth_required` is true only when protection is on, an account exists and
  * this client is not exempt. A loopback browser (the desktop app, a local dev
- * session) therefore never sees the login page — the plan's R1.
+ * session) therefore never sees the login page.
  *
  * `/login` is the only public page: reaching it while signed in (or while no
  * login is required at all) bounces to /home so a stale bookmark cannot strand

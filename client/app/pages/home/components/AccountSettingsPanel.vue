@@ -199,7 +199,7 @@ async function submitChanges(): Promise<void> {
   currentPassword.value = '';
 }
 
-/** Turn protection on (account exists) or off — both need the password (R4). */
+/** Turn protection on (account exists) or off — both need the password. */
 async function submitSwitch(): Promise<void> {
   successMessage.value = null;
   const ok = auth.authEnabled

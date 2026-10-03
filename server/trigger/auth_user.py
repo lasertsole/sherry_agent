@@ -9,7 +9,7 @@ Order of the gates on every request (see ``server/trigger/core.py``)::
 The two layers answer different questions: the gateway token stops hostile web
 pages and token-less scripts; this one stops a *remote* client that never logged
 in. Loopback clients are exempt (``AUTH["require_auth_non_loopback"]``), which is
-what keeps the desktop app and a local browser friction-free — the plan's R1.
+what keeps the desktop app and a local browser friction-free.
 
 Enforcement is **fail-closed**: any path that is not explicitly public is gated,
 including paths that match no route at all (a 401 is as good as a 404 for an

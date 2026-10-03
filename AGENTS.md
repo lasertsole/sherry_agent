@@ -190,7 +190,7 @@ away (last session closed, binding cleared).
 
 Opt-in login protection in front of the API, shipped OFF: a default install has
 no account and `auth_settings.enabled = 0`, so nothing changes until someone
-configures it (the plan's R1–R6).
+configures it.
 
 **Two independent auth layers.** `gateway_auth_middleware` (Origin allowlist +
 per-boot token) is unchanged and still the outermost gate;

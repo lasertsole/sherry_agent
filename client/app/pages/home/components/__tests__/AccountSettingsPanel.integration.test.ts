@@ -2,9 +2,9 @@
  * The account panel: three states, and the password proofs each action needs.
  *
  * Contract: no account → the setup form (which enables protection); protection
- * on → the change form plus the disable form (both need the current password —
- * the plan's R4); protection off with an account → the re-enable form. Failures
- * render in place, successes confirm in place.
+ * on → the change form plus the disable form (both need the current password);
+ * protection off with an account → the re-enable form. Failures render in
+ * place, successes confirm in place.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';

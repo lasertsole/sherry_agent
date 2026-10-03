@@ -1,6 +1,6 @@
 """Storage for the login feature: users, the runtime switch and the JWT blacklist.
 
-Three tables in ``src/data/auth.db`` (schema per the plan's §10):
+Three tables in ``src/data/auth.db``:
 
 * ``auth_users`` — one row per account; the password column stores the scrypt
   string, never a plaintext or reversible form.
