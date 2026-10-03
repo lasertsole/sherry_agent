@@ -1,10 +1,12 @@
 /**
  * The left sidebar's project file tree (lazy, session-scoped).
  *
- * Contract: an unbound session shows the empty state (never the sherry
- * checkout's own tree), expanding a directory fetches ONE level, the
- * per-level cap surfaces its "showing N of M" hint, and a refusal renders
- * in place instead of silently staying empty.
+ * Contract: the tree lists ONE level at a time, expanding a directory fetches
+ * its children lazily, the per-level cap surfaces its "showing N of M" hint, and
+ * a refusal renders in place instead of silently staying empty.
+ *
+ * The tree is only reachable for a session with a project directory bound (the
+ * toolbar hides the switch otherwise), so there is no unbound state to render.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -52,7 +54,7 @@ const stubs = {
 };
 
 /**
- * Mount with the directory store reporting a bound (or unbound) project.
+ * Mount with the directory store reporting a bound project.
  * @param sessionId
  */
 async function mountTree(sessionId = 'sid-1') {
@@ -92,15 +94,6 @@ describe('ProjectFileTree', () => {
       clearError: () => {}
     }));
     vi.stubGlobal('useRightSidebarStore', () => ({ openTab: rightSidebarBridge.openTab }));
-  });
-
-  it('renders the empty state for an unbound session and fetches nothing', async () => {
-    dirState.directory = null;
-
-    const wrapper = await mountTree();
-
-    expect(wrapper.find('[data-test="project-tree-unbound"]').exists()).toBe(true);
-    expect(bridge.fetchProjectTree).not.toHaveBeenCalled();
   });
 
   it('lists the root level with directories and files', async () => {

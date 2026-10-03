@@ -43,7 +43,7 @@
             class="text-theme-main"
             @click="toggleSidebar" />
           <Button
-            v-if="hasOpenSession"
+            v-if="canShowProjectFiles"
             :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
             :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
             :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
@@ -326,20 +326,38 @@ const route = useRoute();
 /** Whether the sidebar body shows the project file tree. */
 const showFiles = computed(() => uiStore.sidebarBody === 'files');
 
+/** The session the main area shows (the route's `sid`). */
+const openSessionId = computed(() => String(route.params.sid ?? ''));
+
+/** Per-session project directory (hydrated below; the tree needs a bound root). */
+const projectDirectoryStore = useProjectDirectoryStore();
+
 /**
- * Whether a session is open in the main area (the route carries its id).
+ * Whether the project-files button may appear.
  *
- * The session list's landing page has no `sid`: there is no project tree (nor a
- * session to bind a project directory to) behind the files button, so it stays
- * hidden there. The body switch is persisted, so leaving the last session while
- * in files mode falls back to the session list — otherwise the sidebar would
- * show an empty tree the (hidden) button could no longer switch away from.
+ * The tree it opens is session-scoped AND root-scoped: without an open session, or
+ * without a project directory bound to it, there is nothing to show and nobody to
+ * show it to — so the button is absent (not merely disabled), and the sidebar body
+ * falls back to the session list so a persisted "files" state cannot strand the
+ * sidebar on a tree the button can no longer leave.
  */
-const hasOpenSession = computed(() => !!String(route.params.sid ?? ''));
+const canShowProjectFiles = computed(
+  () => !!openSessionId.value && !!projectDirectoryStore.stateFor(openSessionId.value).directory
+);
 watch(
-  hasOpenSession,
-  open => {
-    if (!open) uiStore.sidebarBody = 'sessions';
+  canShowProjectFiles,
+  available => {
+    if (!available) uiStore.sidebarBody = 'sessions';
+  },
+  { immediate: true }
+);
+
+// The chip hydrates its own session, but the button must not depend on the chip
+// having been opened: pull the binding as soon as the route names a session.
+watch(
+  openSessionId,
+  sid => {
+    if (sid) void projectDirectoryStore.hydrate(sid);
   },
   { immediate: true }
 );

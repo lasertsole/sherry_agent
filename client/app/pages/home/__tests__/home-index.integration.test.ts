@@ -106,6 +106,33 @@ function mountHome() {
   });
 }
 
+/**
+ * Stub the project-directory store with a controllable binding.
+ *
+ * The files button needs a session AND a bound directory; the shared setup stub
+ * reports "unbound", so the cases that expect the button have to provide a
+ * binding — and flipping `state.directory` is how the unbound case is driven.
+ * @param initial Bound directory (null = unbound).
+ */
+function stubProjectDirectory(initial: string | null = '/proj') {
+  const original = (globalThis as any).useProjectDirectoryStore;
+  const state = reactive({ directory: initial as string | null });
+  vi.stubGlobal('useProjectDirectoryStore', () => ({
+    stateFor: () => ({
+      directory: state.directory,
+      effective: state.directory ?? '',
+      source: state.directory ? 'session' : 'default',
+      pendingDirectory: null,
+      error: null
+    }),
+    hydrate: async () => {},
+    select: async () => {},
+    fail: () => {},
+    clearError: () => {}
+  }));
+  return { state, restore: () => vi.stubGlobal('useProjectDirectoryStore', original) };
+}
+
 describe('home/index.vue (integration, backend mocked)', () => {
   beforeEach(() => {
     seededFetchApi.mockClear();
@@ -237,7 +264,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
     }
   });
 
-  it('shows the project-files button once a session is open', () => {
+  it('shows the project-files button when the session has a project directory bound', () => {
     const originalRoute = (globalThis as any).useRoute;
     vi.stubGlobal('useRoute', () => ({
       path: '/home/s1',
@@ -245,12 +272,44 @@ describe('home/index.vue (integration, backend mocked)', () => {
       params: { sid: 's1' },
       query: {}
     }));
+    const dir = stubProjectDirectory('/proj');
     try {
       const wrapper = mountHome();
 
       const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
       expect(titles).toContain('项目文件');
     } finally {
+      dir.restore();
+      vi.stubGlobal('useRoute', originalRoute);
+    }
+  });
+
+  it('hides the button — and it cannot be pressed — while the session has no project directory', () => {
+    // No bound root means no tree to open: the control is absent, not disabled,
+    // so there is nothing to click and no empty picker to land on.
+    const originalRoute = (globalThis as any).useRoute;
+    const originalUi = (globalThis as any).useUiStore;
+    vi.stubGlobal('useRoute', () => ({
+      path: '/home/s1',
+      fullPath: '/home/s1',
+      params: { sid: 's1' },
+      query: {}
+    }));
+    const uiState = reactive({ sidebarCollapsed: false, sidebarBody: 'files' });
+    vi.stubGlobal('useUiStore', () => uiState);
+    const dir = stubProjectDirectory(null);
+    try {
+      const wrapper = mountHome();
+
+      const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
+      expect(titles).not.toContain('项目文件');
+      expect(titles).not.toContain('会话列表');
+      expect(wrapper.findAll('.btn').filter(b => (b.attributes('title') ?? '').includes('项目'))).toHaveLength(0);
+      // A persisted "files" body would strand the sidebar: it falls back.
+      expect(uiState.sidebarBody).toBe('sessions');
+    } finally {
+      dir.restore();
+      vi.stubGlobal('useUiStore', originalUi);
       vi.stubGlobal('useRoute', originalRoute);
     }
   });
@@ -267,6 +326,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
       query: {}
     });
     vi.stubGlobal('useRoute', () => routeState);
+    const dir = stubProjectDirectory('/proj');
     try {
       const wrapper = mountHome();
       // In files mode the button names the way BACK, so "会话列表" is its title.
@@ -280,6 +340,7 @@ describe('home/index.vue (integration, backend mocked)', () => {
       expect(titles).not.toContain('项目文件');
       expect(uiState.sidebarBody).toBe('sessions');
     } finally {
+      dir.restore();
       vi.stubGlobal('useUiStore', originalUi);
       vi.stubGlobal('useRoute', originalRoute);
     }

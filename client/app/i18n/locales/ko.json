@@ -202,8 +202,6 @@
   },
   "projectFiles": {
     "refresh": "새로 고침",
-    "unbound": "프로젝트 디렉터리 미설정",
-    "unboundHint": "입력창 위 폴더 컨트롤에서 설정할 수 있습니다.",
     "truncated": "{total}개 중 {shown}개 표시",
     "empty": "빈 디렉터리",
     "noFile": "선택된 파일 없음"

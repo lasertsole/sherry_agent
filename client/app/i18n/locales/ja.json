@@ -202,8 +202,6 @@
   },
   "projectFiles": {
     "refresh": "再読み込み",
-    "unbound": "プロジェクトディレクトリ未設定",
-    "unboundHint": "入力欄の上のフォルダー操作から設定できます。",
     "truncated": "{total} 件中 {shown} 件を表示",
     "empty": "空のディレクトリ",
     "noFile": "ファイルが選択されていません"

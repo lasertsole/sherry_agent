@@ -18,19 +18,8 @@
     </div>
 
     <div class="min-h-0 flex-1 overflow-auto p-2">
-      <!-- Unbound session: never show the sherry checkout's own tree (an
-           implementation leak with no value for the user). -->
       <div
-        v-if="unbound"
-        class="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-gray-500 dark:text-gray-400"
-        data-test="project-tree-unbound">
-        <i class="pi pi-exclamation-triangle text-lg text-amber-500"></i>
-        <p class="m-0">{{ t('projectFiles.unbound') }}</p>
-        <p class="m-0">{{ t('projectFiles.unboundHint') }}</p>
-      </div>
-
-      <div
-        v-else-if="loading && !nodes.length"
+        v-if="loading && !nodes.length"
         class="flex items-center justify-center py-8">
         <ProgressSpinner style="width: 1.5rem; height: 1.5rem" />
       </div>
@@ -101,7 +90,6 @@ const rootLabel = computed(() => {
   const state = projectDirectory.stateFor(props.sessionId);
   return state.directory ?? state.effective ?? '';
 });
-const unbound = computed(() => !projectDirectory.stateFor(props.sessionId).directory);
 
 function toNodes(parent: string, entries: ProjectTreeEntry[]): TreeNode[] {
   return entries.map(entry => ({
@@ -115,7 +103,7 @@ function toNodes(parent: string, entries: ProjectTreeEntry[]): TreeNode[] {
 
 /** Load the tree root (or reload it after a directory switch). */
 async function reload(): Promise<void> {
-  if (!props.sessionId || unbound.value) {
+  if (!props.sessionId) {
     nodes.value = [];
     return;
   }

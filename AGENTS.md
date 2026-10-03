@@ -180,9 +180,11 @@ in-root rule (`GET /system/dirs`, `server/service/system_folders_service.py`):
 it lists the direct **subdirectories** of one absolute path (names only, no
 files, no contents; `FILE_BROWSER` caps the level) and sits behind the same
 gateway auth/CORS/CSRF middleware as every other route. The toolbar's files
-button (`pages/home/index.vue`) exists only while a session is open — the tree
-is session-scoped — and the persisted sidebar body falls back to the session
-list when the last session closes.
+button (`pages/home/index.vue`) exists only while a session is open AND its
+project directory is bound — the tree it opens is scoped to both, so an unbound
+session shows no control at all (nothing to press, no empty picker) — and the
+persisted sidebar body falls back to the session list whenever the button goes
+away (last session closed, binding cleared).
 
 ## User Login (`server/service/auth_service.py`)
 

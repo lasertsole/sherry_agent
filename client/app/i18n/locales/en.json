@@ -202,8 +202,6 @@
   },
   "projectFiles": {
     "refresh": "Refresh",
-    "unbound": "No project directory bound",
-    "unboundHint": "Bind one from the folder chip above the chat input.",
     "truncated": "Showing {shown} of {total} entries",
     "empty": "Empty directory",
     "noFile": "No file selected"
