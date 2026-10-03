@@ -177,6 +177,29 @@
     "fileViewer": "Project files",
     "account": "Account"
   },
+  "progressFloat": {
+    "expand": "Show plan progress",
+    "collapse": "Hide plan progress",
+    "summary": "Plan {done}/{total}",
+    "waveSummary": "Wave {current}/{total}",
+    "todolist": "Todo list",
+    "counts": "{done}/{total}",
+    "waveLabel": "Wave {index}",
+    "current": "current",
+    "cyclic": "cyclic deps",
+    "status": {
+      "pending": "pending",
+      "in_progress": "in progress",
+      "completed": "completed",
+      "cancelled": "cancelled",
+      "ready": "ready",
+      "blocked": "blocked",
+      "dispatched": "dispatched",
+      "done": "done",
+      "failed": "failed",
+      "skipped": "skipped"
+    }
+  },
   "projectFiles": {
     "refresh": "Refresh",
     "unbound": "No project directory bound",

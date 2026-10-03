@@ -377,6 +377,7 @@ import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
 import MediaMenu from '../components/MediaMenu.vue';
+import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
 
 // Image preview
@@ -404,6 +405,8 @@ const mySid = String(route.params.sid ?? '');
 
 const { focusRun } = useSubagentTasks();
 const todoStore = useTodoStore();
+/** TaskFlow wave progress for the floating panel (same init contract). */
+const taskflowStore = useTaskflowStore();
 const rightSidebarStore = useRightSidebarStore();
 /** Per-session project-directory chip store (hydrated on mount + turn start). */
 const projectDirectory = useProjectDirectoryStore();
@@ -456,6 +459,8 @@ onActivated(() => {
   if (mySid) restorePendingHitl(mySid);
   // Pull the session plan snapshot (idempotent singleton listeners + one refresh frame).
   if (mySid) todoStore.init(mySid);
+  // Same pull for the TaskFlow wave board that feeds the floating progress panel.
+  if (mySid) taskflowStore.init(mySid);
 });
 onDeactivated(() => {
   isActive.value = false;

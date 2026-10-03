@@ -167,6 +167,9 @@
       :active-index="activeMarkIndex"
       @jump="scrollToRow" />
 
+    <!-- Plan progress read-out: top-right overlay, collapsed to a pill by default -->
+    <ProgressFloat />
+
     <!-- Older-history loading pill: overlays the top of the list while a scroll-up page request runs -->
     <Transition name="fade">
       <div
@@ -216,6 +219,7 @@ import ChatCopyButton from '@/components/chat/ChatCopyButton.vue';
 import ChatMediaAttachments from '@/components/chat/ChatMediaAttachments.vue';
 import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
 import ChatTurnScrubber from './ChatTurnScrubber.vue';
+import ProgressFloat from './ProgressFloat.vue';
 
 const { t } = useI18n();
 

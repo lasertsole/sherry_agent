@@ -133,7 +133,8 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.setActiveTurn(null);
       ctx.flushStopResolvers();
     },
-    todo_updated: data => emit('ws:todo_updated', data)
+    todo_updated: data => emit('ws:todo_updated', data),
+    taskflow_updated: data => emit('ws:taskflow_updated', data)
   });
   try {
     handler(event);

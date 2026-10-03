@@ -177,6 +177,29 @@
     "fileViewer": "프로젝트 파일",
     "account": "계정"
   },
+  "progressFloat": {
+    "expand": "계획 진행률 보기",
+    "collapse": "계획 진행률 숨기기",
+    "summary": "계획 {done}/{total}",
+    "waveSummary": "웨이브 {current}/{total}",
+    "todolist": "할 일 목록",
+    "counts": "{done}/{total}",
+    "waveLabel": "{index}번째 웨이브",
+    "current": "진행 중",
+    "cyclic": "순환 의존",
+    "status": {
+      "pending": "대기",
+      "in_progress": "진행 중",
+      "completed": "완료",
+      "cancelled": "취소",
+      "ready": "시작 가능",
+      "blocked": "미해제",
+      "dispatched": "파견됨",
+      "done": "완료",
+      "failed": "실패",
+      "skipped": "건너뜀"
+    }
+  },
   "projectFiles": {
     "refresh": "새로 고침",
     "unbound": "프로젝트 디렉터리 미설정",

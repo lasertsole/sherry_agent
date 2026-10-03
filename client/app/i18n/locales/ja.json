@@ -177,6 +177,29 @@
     "fileViewer": "プロジェクトファイル",
     "account": "アカウント"
   },
+  "progressFloat": {
+    "expand": "計画の進捗を表示",
+    "collapse": "計画の進捗を隠す",
+    "summary": "計画 {done}/{total}",
+    "waveSummary": "ウェーブ {current}/{total}",
+    "todolist": "ToDo リスト",
+    "counts": "{done}/{total}",
+    "waveLabel": "第 {index} ウェーブ",
+    "current": "進行中",
+    "cyclic": "循環依存",
+    "status": {
+      "pending": "未着手",
+      "in_progress": "進行中",
+      "completed": "完了",
+      "cancelled": "中止",
+      "ready": "実行可能",
+      "blocked": "未解放",
+      "dispatched": "派遣済み",
+      "done": "完了",
+      "failed": "失敗",
+      "skipped": "スキップ"
+    }
+  },
   "projectFiles": {
     "refresh": "再読み込み",
     "unbound": "プロジェクトディレクトリ未設定",

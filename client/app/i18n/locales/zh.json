@@ -177,6 +177,29 @@
     "fileViewer": "项目文件",
     "account": "账户"
   },
+  "progressFloat": {
+    "expand": "展开计划进度",
+    "collapse": "收起计划进度",
+    "summary": "计划 {done}/{total}",
+    "waveSummary": "波次 {current}/{total}",
+    "todolist": "待办清单",
+    "counts": "{done}/{total}",
+    "waveLabel": "第 {index} 波",
+    "current": "当前",
+    "cyclic": "循环依赖",
+    "status": {
+      "pending": "待办",
+      "in_progress": "进行中",
+      "completed": "已完成",
+      "cancelled": "已取消",
+      "ready": "可开始",
+      "blocked": "未解锁",
+      "dispatched": "已派发",
+      "done": "已完成",
+      "failed": "失败",
+      "skipped": "已跳过"
+    }
+  },
   "projectFiles": {
     "refresh": "刷新",
     "unbound": "未绑定项目目录",
