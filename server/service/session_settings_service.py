@@ -147,6 +147,26 @@ def _session_turn_active(session_id: str) -> bool:
     return False
 
 
+#: The level an always-think session starts at when the user never picked one
+#: (mirrors the ``reasoning_effort`` default in ``models/LLMs/reasoning_payload.py``).
+_DEFAULT_LEVEL = "high"
+
+
+def _default_enabled() -> bool:
+    """The env default (``MAIN_LLM_ENABLE_THINKING``) an unset session follows.
+
+    Read live from the model module (its import-time global) so the payload can
+    never disagree with what ``build_main_llm()`` actually does; a broken import
+    degrades to ``False`` — the same fail-open posture as the rest of the module.
+    """
+    try:
+        from models.LLMs import main_llm as main_llm_module
+
+        return bool(main_llm_module.enable_thinking)
+    except Exception:  # pragma: no cover - defensive
+        return False
+
+
 def get_thinking_state(session_id: str) -> dict:
     """Return ``{"mode", "enabled", "level", "pending"}`` for the session.
 
@@ -155,6 +175,12 @@ def get_thinking_state(session_id: str) -> dict:
     describe the EFFECTIVE next-turn choice (a parked mid-turn selection is what
     the user just picked), while ``pending`` reports that it only lands on the
     next turn. ``mode`` follows the session's model (override-aware).
+
+    ``default_enabled`` / ``default_level`` carry what an UNSET control follows
+    (the env flag and the level default). Without them a client has to guess the
+    env default, and a hardcoded guess of ``false`` shows "thinking off" for a
+    session whose model is still thinking — the mismatch that made a live session
+    look like the switch had been ignored.
     """
     if not session_id or not is_safe_session_id(session_id):
         raise ValueError("invalid session_id")
@@ -163,11 +189,12 @@ def get_thinking_state(session_id: str) -> dict:
     mode = get_thinking_mode(session_id)
     parked, parked_value = _pending_value(session_id, StateKey.LLM_THINKING_ENABLED_PENDING)
     value = parked_value if parked else _read_value(session_id, StateKey.LLM_THINKING_ENABLED)
+    defaults = {"default_enabled": _default_enabled(), "default_level": _DEFAULT_LEVEL}
     if isinstance(value, bool):
-        return {"mode": mode, "enabled": value, "level": None, "pending": parked}
+        return {"mode": mode, "enabled": value, "level": None, "pending": parked, **defaults}
     if isinstance(value, str) and value in _VALID_LEVELS:
-        return {"mode": mode, "enabled": None, "level": value, "pending": parked}
-    return {"mode": mode, "enabled": None, "level": None, "pending": parked}
+        return {"mode": mode, "enabled": None, "level": value, "pending": parked, **defaults}
+    return {"mode": mode, "enabled": None, "level": None, "pending": parked, **defaults}
 
 
 def set_thinking_value(session_id: str, value: bool | str) -> None:

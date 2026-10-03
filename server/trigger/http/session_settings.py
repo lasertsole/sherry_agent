@@ -5,6 +5,7 @@ The client's chat toolbar calls:
     GET /sessions/thinking?session_id=<sid>
         -> {"success": true, "session_id": ..., "mode": "on_off"|"levels",
             "enabled": true|false|null, "level": "low"|"high"|"max"|null,
+           "default_enabled": true|false, "default_level": "low"|"high"|"max",
             "pending": bool}
            null fields = the user never made an explicit choice; the
            MAIN_LLM_ENABLE_THINKING env default applies. "levels" marks an

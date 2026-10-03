@@ -94,6 +94,33 @@ def test_service_unset_returns_nulls(registers):
     assert state["enabled"] is None and state["level"] is None
 
 
+def test_service_reports_the_env_default_an_unset_control_follows(registers, monkeypatch):
+    """An unset switch must carry the env default, not leave the client guessing.
+
+    The client used to hardcode "off" for a null ``enabled``, so a session whose
+    env (MAIN_LLM_ENABLE_THINKING=true) still thought showed a switch reading
+    关闭 while reasoning streamed — the reported bug.
+    """
+    from models.LLMs import main_llm as main_llm_module
+
+    monkeypatch.setattr(main_llm_module, "enable_thinking", True)
+    state = service.get_thinking_state("never-set")
+    assert state["enabled"] is None
+    assert state["default_enabled"] is True
+    assert state["default_level"] == "high"
+
+    monkeypatch.setattr(main_llm_module, "enable_thinking", False)
+    flipped = service.get_thinking_state("never-set")
+    assert flipped["enabled"] is None and flipped["default_enabled"] is False
+
+    # An explicit choice keeps carrying the defaults (they describe the
+    # fallback, not the choice itself).
+    monkeypatch.setattr(service, "get_thinking_mode", lambda *_args: "on_off")
+    service.set_thinking_value("s1", False)
+    chosen = service.get_thinking_state("s1")
+    assert chosen["enabled"] is False and chosen["default_enabled"] is False
+
+
 def test_service_db_read_rehydrates_mem(registers, monkeypatch):
     mem, db = registers
     monkeypatch.setattr(service, "get_thinking_mode", lambda *_args: "levels")
