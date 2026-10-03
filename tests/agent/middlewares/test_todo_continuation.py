@@ -59,6 +59,36 @@ def _patch_todos(monkeypatch: pytest.MonkeyPatch, todos: list[dict]) -> None:
     monkeypatch.setattr(todo_store, "get_todos_sync", lambda session_id: list(todos))
 
 
+def _step(step_id: str, status: str, task: str = "", deps: list[str] | None = None) -> dict:
+    return {
+        "step_id": step_id,
+        "task": task or f"task-{step_id}",
+        "depends_on": list(deps or []),
+        "status": status,
+    }
+
+
+def _flow(steps: list[dict], *, flow_id: str = "flow-1", status: str = "running") -> dict:
+    return {
+        "flow_id": flow_id,
+        "status": status,
+        "state": {"description": f"{flow_id} work", "steps": list(steps)},
+    }
+
+
+def _patch_flows(monkeypatch: pytest.MonkeyPatch, flows: list[dict]) -> None:
+    """Seed the TaskFlow half of the plan (``_active_flows`` reads this lazily)."""
+    from agent.tools.taskflow.registry import store_sqlite as flow_store
+
+    monkeypatch.setattr(flow_store, "get_active_flows_sync", lambda session_id: list(flows))
+
+
+@pytest.fixture(autouse=True)
+def _no_flows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Todo-only by default: every existing case keeps its exact behaviour."""
+    _patch_flows(monkeypatch, [])
+
+
 @pytest.fixture(autouse=True)
 def _clean() -> None:
     st.reset(_SID)
@@ -293,3 +323,132 @@ async def test_non_dict_state_is_noop(spy_auto_turn: list) -> None:
     result = await tc.TodoContinuationEnforcer().aafter_agent(None)
     assert result is None
     assert spy_auto_turn == []
+
+
+# ============================================================================
+# (f) The TaskFlow half of the plan: an open board gates the turn too
+# ============================================================================
+
+
+@pytest.mark.asyncio
+async def test_open_flow_without_todos_still_gates_the_turn(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """The reported gap: a plan that lives only on the board was never gated."""
+    _patch_todos(monkeypatch, [])
+    _patch_flows(
+        monkeypatch,
+        [
+            _flow(
+                [
+                    _step("step-1", "done"),
+                    _step("step-2", "dispatched"),
+                    _step("step-3", "blocked", deps=["step-2"]),
+                ]
+            )
+        ],
+    )
+
+    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    assert result is None
+    assert len(spy_auto_turn) == 1
+    content = spy_auto_turn[0][1].content
+    assert _CONTINUATION_MARKER in content
+    assert "TaskFlow board (open flows)" in content
+    assert "flow-1 [running]" in content
+    assert "1/3 steps done" in content
+    assert "step-2 [dispatched]" in content
+    assert "wave 1" in content and "wave 2" in content
+    # The board's next actions are spelled out, not left to guesswork.
+    assert "taskflow_wait_all" in content
+    assert "taskflow_finish" in content
+
+
+@pytest.mark.asyncio
+async def test_a_settled_but_open_flow_asks_for_closure(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """Every step green is NOT completion: the flow itself has to be closed."""
+    _patch_todos(monkeypatch, [])
+    _patch_flows(monkeypatch, [_flow([_step("step-1", "done"), _step("step-2", "done")])])
+
+    await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    content = spy_auto_turn[0][1].content
+    assert "still open" in content
+    assert "taskflow_finish" in content
+
+
+@pytest.mark.asyncio
+async def test_a_finished_plan_never_nudges(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """No todos and no non-terminal flow: the gate stays silent (and resets)."""
+    _patch_todos(monkeypatch, [])
+    _patch_flows(monkeypatch, [])
+    st._stagnation_count[_SID] = 3
+    st._last_snapshot[_SID] = "stale"
+
+    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    assert result is None
+    assert spy_auto_turn == []
+    assert _SID not in st._stagnation_count
+
+
+@pytest.mark.asyncio
+async def test_todos_and_flows_share_one_directive(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _patch_todos(monkeypatch, [_todo("write the design doc", "pending")])
+    _patch_flows(monkeypatch, [_flow([_step("step-1", "ready")])])
+
+    await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    assert len(spy_auto_turn) == 1
+    content = spy_auto_turn[0][1].content
+    # One directive carries both surfaces: the todo list AND the board.
+    assert "write the design doc" in content
+    assert "flow-1 [running]" in content
+    assert "step-1 [ready]" in content
+    assert "1 remaining" in content
+
+
+@pytest.mark.asyncio
+async def test_a_long_flow_is_clipped_in_the_directive(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    _patch_todos(monkeypatch, [])
+    steps = [_step(f"step-{i}", "ready") for i in range(1, 26)]
+    _patch_flows(monkeypatch, [_flow(steps)])
+
+    await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    content = spy_auto_turn[0][1].content
+    assert "step-20 [ready]" in content
+    assert "step-21 [ready]" not in content
+    assert "+5 more" in content
+
+
+@pytest.mark.asyncio
+async def test_a_broken_taskflow_read_degrades_to_the_todo_half(
+    monkeypatch: pytest.MonkeyPatch, spy_auto_turn: list
+) -> None:
+    """A store error must not break the turn — the gate keeps its todo half."""
+    _patch_todos(monkeypatch, [_todo("build api", "pending")])
+    from agent.tools.taskflow.registry import store_sqlite as flow_store
+
+    def _boom(session_id: str) -> list[dict]:
+        raise RuntimeError("taskflow db is gone")
+
+    monkeypatch.setattr(flow_store, "get_active_flows_sync", _boom)
+
+    result = await tc.TodoContinuationEnforcer().aafter_agent(_state())
+
+    assert result is None
+    assert len(spy_auto_turn) == 1
+    content = spy_auto_turn[0][1].content
+    assert "build api" in content
+    assert "TaskFlow board" not in content

@@ -1,7 +1,10 @@
-"""Todo-continuation enforcer — a turn-end ``after_agent`` middleware.
+"""Plan-continuation enforcer — a turn-end ``after_agent`` middleware.
 
-When a turn ends with incomplete todos, the enforcer injects a continuation
-directive that pulls the model back to work. Delivery reuses the existing
+The gate covers the whole PLAN: the session's todo list AND its non-terminal
+TaskFlow flows. A turn that ends with work left in either surface gets a
+continuation directive that names what remains and the tool call that closes it.
+(The module/class keep their ``todo_continuation`` names for compatibility; the
+todo list is one of the two plan surfaces, not the gate's whole scope.) Delivery reuses the existing
 fire-and-forget auto-turn infrastructure, resolved through ``runtime.hooks``
 (the agent layer must not reach up into the server layer): the prompt is
 handed to the registered trigger as a ``HumanMessage`` and injected on the
@@ -35,6 +38,8 @@ from langchain.agents.middleware import AgentMiddleware
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
+from agent.tools.taskflow.waves import compute_waves, steps_of
+from agent.tools.taskflow.tools._shared import steps_summary
 from runtime import hooks
 
 __all__ = ["TodoContinuationEnforcer"]
@@ -52,8 +57,12 @@ Incomplete tasks remain in your todo list. Continue working on the next pending 
 - Do not stop until all tasks are done
 - If you believe all work is complete, the system is questioning your completion claim.
   Critically re-examine each todo item, verify the work was actually done, and update accordingly.
+- A TaskFlow flow counts as finished only after taskflow_finish accepted it (its
+  gates verify DAG completeness and the evidence) — a run of green steps with the
+  flow still open is NOT completion.
 
-{todo_status}"""
+{todo_status}
+{flow_status}"""
 
 # Recovery directive (behavior contract of this module).
 _RECOVERY_PROMPT = """[SYSTEM DIRECTIVE: RECOVERY MODE]
@@ -69,9 +78,108 @@ Recovery actions:
 
 Do NOT repeat the same actions that led to stagnation.
 
-{todo_status}"""
+{todo_status}
+{flow_status}"""
 
-_INCOMPLETE_STATUSES = ("pending", "in_progress")
+#: Statuses that still need someone to act — the union of the todo vocabulary
+#: (``pending``/``in_progress``) and the TaskFlow step vocabulary
+#: (``ready``/``blocked``/``dispatched``); the gate reads the plan, which uses both.
+_STEP_INCOMPLETE_STATUSES = ("ready", "blocked", "dispatched")
+_INCOMPLETE_STATUSES = ("pending", "in_progress", *_STEP_INCOMPLETE_STATUSES)
+
+
+# ── the plan: todos + non-terminal flows ─────────────────────────────────────
+
+#: Steps per flow rendered into the directive before it is clipped.
+_MAX_STEPS_PER_FLOW = 20
+#: Task text width inside the directive.
+_TASK_WIDTH = 120
+
+
+def _active_flows(session_id: str) -> list[dict]:
+    """The session's non-terminal flows (running/waiting); [] on any failure.
+
+    Imported lazily and defensively: the gate must degrade to the todo half
+    rather than break a turn when the taskflow package is unavailable.
+    """
+    try:
+        from agent.tools.taskflow.registry.store_sqlite import get_active_flows_sync
+
+        return get_active_flows_sync(session_id)
+    except Exception:
+        logger.debug("plan continuation: taskflow read failed; continuing with todos only")
+        return []
+
+
+def _flow_rows(flows: list[dict]) -> list[dict]:
+    """Tracker-shaped rows for the plan snapshot: one per step, plus closure rows.
+
+    A flow whose steps are all settled but whose status is still running/waiting
+    contributes a ``<flow>:finish`` row — the plan is not closed until the flow is
+    (``taskflow_finish`` accepted it, or it was cancelled), and that state is
+    exactly the silent-open-flow case the gate exists for.
+    """
+    rows: list[dict] = []
+    for flow in flows:
+        flow_id = str(flow.get("flow_id") or "")
+        steps = steps_of(flow)
+        for step in steps:
+            rows.append(
+                {
+                    "content": f"{flow_id}/{step.get('step_id')}",
+                    "status": str(step.get("status") or "ready"),
+                }
+            )
+        if steps and all(_step_settled(step) for step in steps):
+            rows.append({"content": f"{flow_id}:finish", "status": "in_progress"})
+    return rows
+
+
+def _step_settled(step: dict) -> bool:
+    """True when a step needs no further action (done or a decision was recorded)."""
+    return str(step.get("status") or "ready") not in _STEP_INCOMPLETE_STATUSES
+
+
+def _build_flow_block(flows: list[dict]) -> str:
+    """Render the TaskFlow half of the directive (empty when nothing is open)."""
+    if not flows:
+        return ""
+    lines = ["TaskFlow board (open flows):"]
+    for flow in flows:
+        flow_id = str(flow.get("flow_id") or "")
+        steps = steps_of(flow)
+        state = flow.get("state") or {}
+        description = str(state.get("description") or "")[:80]
+        counts = steps_summary(steps)
+        lines.append(
+            f"- {flow_id} [{flow.get('status')}] {description} — "
+            f"{counts['done']}/{len(steps)} steps done"
+        )
+        for wave in compute_waves(steps):
+            clipped = wave["steps"][:_MAX_STEPS_PER_FLOW]
+            rendered = "; ".join(
+                f"{s['step_id']} [{s['status']}] {s['task'][:_TASK_WIDTH]}" for s in clipped
+            )
+            extra = wave["total"] - len(clipped)
+            if extra > 0:
+                rendered += f"; … +{extra} more"
+            suffix = " (cyclic deps)" if wave.get("cyclic") else ""
+            lines.append(
+                f"  wave {wave['index']} ({wave['done']}/{wave['total']}){suffix}: {rendered}"
+            )
+        if steps and all(_step_settled(step) for step in steps):
+            lines.append(
+                "  every step is settled but the flow is still open: close it with "
+                "taskflow_finish (or taskflow_cancel if the work is abandoned)"
+            )
+    lines.append(
+        "Board actions: dispatched steps need taskflow_wait_all then taskflow_resume "
+        "to inject their results; ready steps need taskflow_run_task (or "
+        "taskflow_dispatch for a parallel batch); blocked steps wait on a "
+        "dependency — resolve it or cancel that branch."
+    )
+    return "\n".join(lines)
+
 
 # The turn error is recorded by the runtime under one of these optional state
 # keys; none exist in the base AgentState schema, so absence is the normal case.
@@ -114,7 +222,7 @@ def _resolve_hook(name: str) -> Callable[..., Any] | None:
     if fn is None and name not in _hook_misses_logged:
         _hook_misses_logged.add(name)
         logger.debug(
-            "todo continuation: runtime hook {!r} is not registered; "
+            "plan continuation: runtime hook {!r} is not registered; "
             "continuation delivery degrades to a no-op",
             name,
         )
@@ -140,54 +248,69 @@ class TodoContinuationEnforcer(AgentMiddleware):
                 return None
             session_id = str(state.get("session_id") or "")
             if not session_id.strip():
-                logger.debug("todo continuation: no session_id in state; skipping")
+                logger.debug("plan continuation: no session_id in state; skipping")
                 return None
 
             # Abort-class failures (user cancel / timeout) must never continue.
             error = _turn_error(state)
             if error is not None and st.is_abort_error(error):
-                logger.info("todo continuation: abort error for session {}; skipping", session_id)
+                logger.info("plan continuation: abort error for session {}; skipping", session_id)
                 return None
 
             todos = get_todos_sync(session_id)
-            if not todos:
+            flows = _active_flows(session_id)
+            if not todos and not flows:
                 st.reset(session_id)
                 return None
 
-            incomplete = [t for t in todos if t["status"] in _INCOMPLETE_STATUSES]
+            # The plan = todos + the board's open flows; one snapshot drives the
+            # progress check, the stagnation streak and the directive.
+            plan_rows = [
+                {"content": t["content"], "status": t["status"]} for t in todos
+            ] + _flow_rows(flows)
+            incomplete = [row for row in plan_rows if row["status"] in _INCOMPLETE_STATUSES]
             if not incomplete:
                 st.reset(session_id)
                 return None
 
+            flow_block = _build_flow_block(flows)
+            flow_status = f"\n{flow_block}" if flow_block else ""
+
             # Stagnation: unchanged across N attempts → recovery or give up.
-            if st.check_stagnation(session_id, todos):
+            if st.check_stagnation(session_id, plan_rows):
                 if st.should_enter_recovery(session_id):
                     st.enter_recovery(session_id)
                     logger.info(
-                        "todo continuation: recovery mode for session {} ({} remaining)",
+                        "plan continuation: recovery mode for session {} ({} remaining)",
                         session_id,
                         len(incomplete),
                     )
                     await self._inject(
-                        session_id, _RECOVERY_PROMPT.format(todo_status=_build_status_block(todos))
+                        session_id,
+                        _RECOVERY_PROMPT.format(
+                            todo_status=_build_status_block(todos), flow_status=flow_status
+                        ),
                     )
                 return None
 
             if st.is_in_cooldown(session_id):
-                logger.debug("todo continuation: session {} in cooldown; skipping", session_id)
+                logger.debug("plan continuation: session {} in cooldown; skipping", session_id)
                 return None
 
             logger.info(
-                "todo continuation: injecting continuation for session {} ({} remaining)",
+                "plan continuation: injecting continuation for session {} ({} remaining)",
                 session_id,
                 len(incomplete),
             )
             await self._inject(
-                session_id, _CONTINUATION_PROMPT.format(todo_status=_build_status_block(todos))
+                session_id,
+                _CONTINUATION_PROMPT.format(
+                    todo_status=_build_status_block(todos), flow_status=flow_status
+                ),
             )
             return None
         except Exception:
-            logger.exception("todo continuation: failed; continuing without injection")
+            logger.exception("plan continuation: failed; continuing without injection")
             return None
 
     async def _inject(self, session_id: str, prompt: str) -> None:
@@ -213,7 +336,7 @@ class TodoContinuationEnforcer(AgentMiddleware):
             st.mark_injected(session_id)
         except Exception:
             logger.exception(
-                "todo continuation: auto_turn injection failed for session {}; "
+                "plan continuation: auto_turn injection failed for session {}; "
                 "leaving the session retryable",
                 session_id,
             )

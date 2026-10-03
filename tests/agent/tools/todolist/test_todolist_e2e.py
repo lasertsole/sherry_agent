@@ -633,7 +633,17 @@ class TestTodolistFullPipeline:
             _build_status_block(todos) == "[Status: 3/3 completed, 0 remaining]\nRemaining tasks:"
         )
 
-        # All done -> continuation no longer fires.
+        # Every todo is done, but the flow it was tracking was never closed: the
+        # plan gate still fires — for the FLOW, whose steps are all settled while
+        # its status is still running (the todo half alone would have gone quiet).
+        await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
+        assert len(spy_auto_turn) == 1
+        assert "still open" in spy_auto_turn[0][1].content
+
+        # Close the flow -> the plan is complete and the gate goes quiet.
+        spy_auto_turn.clear()
+        finished = await flow_tools["taskflow_finish"].coroutine(flow_id=flow_id, session_id=sid)
+        assert finished.startswith("TaskFlow finished"), finished
         await TodoContinuationEnforcer().aafter_agent({"session_id": sid})
         assert spy_auto_turn == []
 
