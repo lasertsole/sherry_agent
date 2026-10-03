@@ -20,6 +20,17 @@ describe('useChatCardExpansion', () => {
     expect(expandedThinking.has(5)).toBe(false);
   });
 
+  it('toggles injected-card expansion independently from the other sets', () => {
+    const { expandedToolCards, expandedThinking, expandedCarriers, toggleCarrier } = useChatCardExpansion();
+    expect(expandedCarriers.has(7)).toBe(false);
+    toggleCarrier(7);
+    expect(expandedCarriers.has(7)).toBe(true);
+    expect(expandedToolCards.has(7)).toBe(false);
+    expect(expandedThinking.has(7)).toBe(false);
+    toggleCarrier(7);
+    expect(expandedCarriers.has(7)).toBe(false);
+  });
+
   it('keeps separate state per composable instance', () => {
     const a = useChatCardExpansion();
     const b = useChatCardExpansion();

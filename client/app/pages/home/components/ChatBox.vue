@@ -25,26 +25,38 @@
           <div
             v-if="rowGroup(vRow.index).length"
             :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(rowGroup(vRow.index)) }]">
-            <!-- Background-task completion carrier (USER row whose backend origin="subagent_completion"):
-                 rendered as a centered, muted system card OUTSIDE the user bubble flow — the carrier
-                 announces a background subagent completion, it is not something the user said. The
-                 first line "[subagent:<name> <status>]" is self-describing and shown verbatim (no
-                 parsing). USER rows always form singleton turn groups (see turnGroups), so a group
-                 holding a carrier holds nothing else and the two loops below never interleave. -->
+            <!-- Background-task completion carrier / system-message card (USER row whose backend
+                 origin is non-user, e.g. "subagent_completion"): rendered as a centered, muted
+                 system card OUTSIDE the user bubble flow — the carrier announces a background
+                 subagent completion, it is not something the user said. The first line
+                 "[subagent:<name> <status>]" is self-describing and shown verbatim (no parsing).
+                 USER rows always form singleton turn groups (see turnGroups), so a group holding
+                 a carrier holds nothing else and the two loops below never interleave.
+                 Collapsible and COLLAPSED BY DEFAULT: the header names the source, the body (the
+                 full announcement) appears on click, matching the thinking/tool-card idiom. -->
             <div
               v-for="carrier in backgroundCarriers(rowGroup(vRow.index))"
               :key="carrier.id"
               class="background-task-card mx-auto flex w-full max-w-2xl flex-col items-center gap-1.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-4 py-3 text-center dark:border-gray-700 dark:bg-gray-800/30">
-              <span
-                class="flex items-center gap-1.5 text-xs font-medium tracking-wide text-[#9CA3AF] dark:text-[#6B7280]">
+              <button
+                type="button"
+                class="flex w-full cursor-pointer select-none items-center justify-center gap-1.5 text-xs font-medium tracking-wide text-[#9CA3AF] dark:text-[#6B7280]"
+                :aria-expanded="expandedCarriers.has(carrier.id)"
+                @click="toggleCarrier(carrier.id)">
                 <span
                   aria-hidden="true"
                   class="pi pi-server text-[10px]"></span>
                 {{ originLabel(carrier) }}
-              </span>
+                <span
+                  :class="[
+                    'pi pi-chevron-down text-xs transition-transform duration-200',
+                    { 'rotate-180': expandedCarriers.has(carrier.id) }
+                  ]"></span>
+              </button>
               <!-- Carrier body: verbatim plain text ({{ }} interpolation, no markdown round-trip);
                    whitespace preserved so the self-describing first line keeps its own line -->
               <div
+                v-if="expandedCarriers.has(carrier.id)"
                 class="w-full whitespace-pre-wrap break-words text-left text-sm leading-relaxed text-gray-500 dark:text-gray-400">
                 {{ carrier.content }}
               </div>
@@ -290,7 +302,8 @@ const {
 );
 const { failedImageSources, onImageError } = useChatMedia();
 const { copiedMessageId, canCopyMessage, copyMessage } = useMessageCopy();
-const { expandedToolCards, expandedThinking, toggleToolCard, toggleThinking } = useChatCardExpansion();
+const { expandedToolCards, expandedThinking, expandedCarriers, toggleToolCard, toggleThinking, toggleCarrier } =
+  useChatCardExpansion();
 
 /**
  * Header label of a neutral (injector-origin) card, by the row's `origin`.

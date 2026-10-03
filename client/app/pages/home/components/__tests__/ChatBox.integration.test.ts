@@ -283,7 +283,7 @@ describe('ChatBox turn scrubber (integration, backend mocked)', () => {
 });
 
 describe('ChatBox background-task system card (integration, backend mocked)', () => {
-  it('renders a USER message with origin as a centered muted system card, not a user bubble', () => {
+  it('renders a USER message with origin as a centered muted system card, collapsed by default', async () => {
     const wrapper = mount(ChatBox, {
       props: {
         messages: [base({ id: 21, content: CARRIER, origin: 'subagent_completion' })]
@@ -294,9 +294,25 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     expect(card.exists()).toBe(true);
     // Muted label from chat.backgroundMessage (integration stub resolves zh locale)
     expect(wrapper.text()).toContain('后台任务');
-    // Carrier text shown verbatim: the [subagent:...] first line is NOT parsed away
+    // COLLAPSED by default: the header only; the announcement body is not rendered
+    expect(wrapper.text()).not.toContain('[subagent:研究员 done]');
+    expect(wrapper.text()).not.toContain('后台检索已完成，结果已送达主会话。');
+    // The header IS the toggle affordance
+    const header = card.find('button');
+    expect(header.exists()).toBe(true);
+    expect(header.attributes('aria-expanded')).toBe('false');
+
+    await header.trigger('click');
+
+    // Expanded: the carrier text shows verbatim (the [subagent:...] first line is NOT parsed away)
     expect(wrapper.text()).toContain('[subagent:研究员 done]');
     expect(wrapper.text()).toContain('后台检索已完成，结果已送达主会话。');
+    expect(header.attributes('aria-expanded')).toBe('true');
+
+    // Toggling again collapses it back
+    await header.trigger('click');
+    expect(wrapper.text()).not.toContain('后台检索已完成，结果已送达主会话。');
+
     // User-bubble markup absent: no blue bubble, no right-reversed row flow
     expect(wrapper.html()).not.toContain('bg-[#2563EB]');
     expect(wrapper.html()).not.toContain('flex-row-reverse');
@@ -324,13 +340,16 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     ['something_new', '系统消息']
   ])('labels the neutral card with its own source (%s)', (origin, label) => {
     // Every injector tags its rows with an origin, and the card names that
-    // source instead of the generic background-task label.
+    // source instead of the generic background-task label. The generic-origin
+    // card (系统消息) collapses by default exactly like the tagged ones.
     const wrapper = mount(ChatBox, {
       props: { messages: [base({ id: 24, content: '门控正文', origin })] }
     });
 
     expect(wrapper.find('.background-task-card').exists()).toBe(true);
     expect(wrapper.text()).toContain(label);
+    expect(wrapper.find('.background-task-card button').attributes('aria-expanded')).toBe('false');
+    expect(wrapper.text()).not.toContain('门控正文');
     expect(wrapper.html()).not.toContain('bg-[#2563EB]');
   });
 
