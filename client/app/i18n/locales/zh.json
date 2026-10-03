@@ -198,7 +198,9 @@
       "done": "已完成",
       "failed": "失败",
       "skipped": "已跳过"
-    }
+    },
+    "notStarted": "未开始",
+    "needsClosing": "待收口"
   },
   "projectFiles": {
     "refresh": "刷新",

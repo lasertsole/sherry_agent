@@ -198,7 +198,9 @@
       "done": "완료",
       "failed": "실패",
       "skipped": "건너뜀"
-    }
+    },
+    "notStarted": "시작 전",
+    "needsClosing": "마무리 필요"
   },
   "projectFiles": {
     "refresh": "새로 고침",

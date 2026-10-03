@@ -198,7 +198,9 @@
       "done": "完了",
       "failed": "失敗",
       "skipped": "スキップ"
-    }
+    },
+    "notStarted": "未着手",
+    "needsClosing": "クローズ待ち"
   },
   "projectFiles": {
     "refresh": "再読み込み",

@@ -147,12 +147,26 @@ export const useTaskflowStore = defineStore('taskflow', () => {
     totals.value.total > 0 ? Math.round((totals.value.done / totals.value.total) * 100) : 0
   );
 
+  /** Whether any step is actually RUNNING (dispatched = a child agent is on it). */
+  const inFlight = computed(() => flows.value.some(flow => (flow.by_status.dispatched ?? 0) > 0));
+
+  /**
+   * Whether the plan has been started at all.
+   *
+   * A board can be open with nothing behind it yet (steps merely ``ready``): the
+   * panel must not report a "current wave" for work nobody began — only a
+   * finished step or a dispatched one means this plan is under way.
+   */
+  const started = computed(() => inFlight.value || totals.value.done > 0);
+
   return {
     flows,
     totals,
     currentSid,
     subscribed,
     hasProgress,
+    inFlight,
+    started,
     percent,
     clear,
     init,

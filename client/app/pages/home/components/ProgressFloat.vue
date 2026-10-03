@@ -22,7 +22,7 @@
         v-if="store.totals.waves > 0"
         class="text-[11px] text-gray-500 dark:text-gray-400"
         data-test="progress-float-waves">
-        {{ t('progressFloat.waveSummary', { current: wavePosition, total: store.totals.waves }) }}
+        {{ waveChipLabel }}
       </span>
       <i
         :class="['pi text-[10px] text-gray-400', expanded ? 'pi-chevron-up' : 'pi-chevron-down']"
@@ -94,7 +94,7 @@
             <span class="flex items-center gap-1">
               {{ t('progressFloat.waveLabel', { index: wave.index }) }}
               <span
-                v-if="wave.index === flow.current_wave"
+                v-if="store.started && wave.index === flow.current_wave"
                 class="rounded bg-theme-main/10 px-1 text-[9px] text-theme-main"
                 data-test="progress-wave-current">
                 {{ t('progressFloat.current') }}
@@ -161,7 +161,25 @@ const visible = computed(() => store.hasProgress || todoStore.todos.length > 0);
 const summaryText = computed(() => t('progressFloat.summary', { done: store.totals.done, total: store.totals.total }));
 
 /** "wave X of Y" for the pill: X = the first wave with open work. */
-const wavePosition = computed(() => (store.totals.current_wave > 0 ? store.totals.current_wave : store.totals.waves));
+/**
+ * The pill's wave chip, in three honest states instead of one misleading number:
+ *
+ * - nothing started yet (every step merely ``ready``) → "not started": a board
+ *   nobody has begun must not read as "wave 1/1" (it looks like work in flight);
+ * - work under way → "wave X of Y" (X = the first wave with open work);
+ * - every step settled while the flow is still open → "needs closing" (the plan
+ *   gate asks the agent to close it; a wave number would be a lie until then).
+ */
+const waveChipLabel = computed(() => {
+  if (!store.started) return t('progressFloat.notStarted');
+  if (store.totals.current_wave > 0) {
+    return t('progressFloat.waveSummary', {
+      current: store.totals.current_wave,
+      total: store.totals.waves
+    });
+  }
+  return t('progressFloat.needsClosing');
+});
 
 /**
  * Terminal statuses (mirrors the backend vocabulary).

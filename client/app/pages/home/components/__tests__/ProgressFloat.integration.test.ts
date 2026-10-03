@@ -136,6 +136,94 @@ describe('ProgressFloat', () => {
     expect(panel.text()).toContain('第二波任务 C');
   });
 
+  it('says "not started" while every step is merely ready', async () => {
+    // A board nobody has begun must not read as "wave 1/1": that number belongs
+    // to work in flight, and the user read it as exactly that.
+    const wrapper = await mountFloat();
+    handlers().taskflow!(
+      taskflowFrame([
+        makeFlow({
+          done: 0,
+          current_wave: 1,
+          by_status: { ready: 3 },
+          waves: [
+            {
+              index: 1,
+              total: 3,
+              done: 0,
+              by_status: { ready: 3 },
+              steps: [
+                { step_id: 'a', task: 'A', status: 'ready' },
+                { step_id: 'b', task: 'B', status: 'ready' },
+                { step_id: 'c', task: 'C', status: 'ready' }
+              ]
+            }
+          ],
+          total: 3
+        })
+      ])
+    );
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('0/3');
+    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('未开始');
+
+    // …and the panel carries no "current wave" tag either.
+    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="progress-wave-current"]').exists()).toBe(false);
+  });
+
+  it('reports the wave once work is under way, and closure once every step settled', async () => {
+    const wrapper = await mountFloat();
+    // A dispatched step = a child agent is on it → the wave position is real.
+    handlers().taskflow!(
+      taskflowFrame([
+        makeFlow({
+          done: 0,
+          current_wave: 2,
+          by_status: { done: 2, dispatched: 1 },
+          total: 3,
+          waves: [
+            makeFlow().waves[0]!,
+            {
+              index: 2,
+              total: 1,
+              done: 0,
+              by_status: { dispatched: 1 },
+              steps: [{ step_id: 'c', task: 'C', status: 'dispatched' }]
+            }
+          ]
+        })
+      ])
+    );
+    await flushPromises();
+    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('2/2');
+
+    // Every step settled but the flow still open → the number would be a lie.
+    handlers().taskflow!(
+      taskflowFrame([
+        makeFlow({
+          done: 3,
+          current_wave: 0,
+          total: 3,
+          waves: [
+            makeFlow().waves[0]!,
+            {
+              index: 2,
+              total: 1,
+              done: 1,
+              by_status: { done: 1 },
+              steps: [{ step_id: 'c', task: 'C', status: 'done' }]
+            }
+          ]
+        })
+      ])
+    );
+    await flushPromises();
+    expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('待收口');
+  });
+
   it('marks the first wave with open work as the current one', async () => {
     const wrapper = await mountFloat();
     handlers().taskflow!(taskflowFrame([makeFlow()]));
