@@ -355,14 +355,10 @@ class TestExtractAiMessage:
 @pytest.fixture
 def fresh_state(monkeypatch):
     """Provide an isolated StateRegisterMeM patched into the middleware module."""
-    if StateRegisterMeM in SessionRegister._instances:
-        del SessionRegister._instances[StateRegisterMeM]
+    monkeypatch.delitem(SessionRegister._instances, StateRegisterMeM, raising=False)
     reg = StateRegisterMeM()
     monkeypatch.setattr("agent.middlewares.output_repetition_guard.core.state_register_mem", reg)
     yield reg
-    # teardown: remove any state set during the test
-    if StateRegisterMeM in SessionRegister._instances:
-        del SessionRegister._instances[StateRegisterMeM]
 
 
 class TestCrossCallRepetition:

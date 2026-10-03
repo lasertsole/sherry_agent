@@ -249,14 +249,11 @@ pytestmark = [pytest.mark.unit]
 def fresh_state(monkeypatch):
     """Provide an isolated StateRegisterMeM patched into both the wrapper
     and middleware modules."""
-    if StateRegisterMeM in SessionRegister._instances:
-        del SessionRegister._instances[StateRegisterMeM]
+    monkeypatch.delitem(SessionRegister._instances, StateRegisterMeM, raising=False)
     reg = StateRegisterMeM()
     monkeypatch.setattr(_org_module, "state_register_mem", reg)
     monkeypatch.setattr(_wrapper_module, "state_register_mem", reg)
     yield reg
-    if StateRegisterMeM in SessionRegister._instances:
-        del SessionRegister._instances[StateRegisterMeM]
 
 
 # ======================================================================

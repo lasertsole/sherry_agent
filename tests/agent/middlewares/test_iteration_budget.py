@@ -13,10 +13,9 @@ class TestIterationBudget:
     """Test the IterationBudget middleware."""
 
     @pytest.fixture
-    def fresh_state_register(self):
+    def fresh_state_register(self, monkeypatch):
         """Provide a fresh StateRegisterMeM."""
-        if StateRegisterMeM in SessionRegister._instances:
-            del SessionRegister._instances[StateRegisterMeM]
+        monkeypatch.delitem(SessionRegister._instances, StateRegisterMeM, raising=False)
         reg = StateRegisterMeM()
         yield reg
 
