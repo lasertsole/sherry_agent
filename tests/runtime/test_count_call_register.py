@@ -16,10 +16,9 @@ class TestCountCallRegister:
     """Test the count-based callback trigger register."""
 
     @pytest.fixture
-    def reg(self):
+    def reg(self, monkeypatch):
         """Fresh CountCallRegister instance."""
-        if CountCallRegister in SessionRegister._instances:
-            del SessionRegister._instances[CountCallRegister]
+        monkeypatch.delitem(SessionRegister._instances, CountCallRegister, raising=False)
         r = CountCallRegister()
         yield r
         for sid in list(r.session_id_to_counter.keys()):

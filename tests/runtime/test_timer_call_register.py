@@ -31,10 +31,9 @@ class TestTimerCallRegister:
     """Test the countdown timer register (per-generation task names)."""
 
     @pytest.fixture
-    def reg(self) -> Generator[TimerCallRegister]:
+    def reg(self, monkeypatch) -> Generator[TimerCallRegister]:
         """Fresh TimerCallRegister instance; its loop is stopped afterwards."""
-        if TimerCallRegister in SessionRegister._instances:
-            del SessionRegister._instances[TimerCallRegister]
+        monkeypatch.delitem(SessionRegister._instances, TimerCallRegister, raising=False)
         r = TimerCallRegister()
         yield r
         for sid in list(r.session_id_to_timers.keys()):

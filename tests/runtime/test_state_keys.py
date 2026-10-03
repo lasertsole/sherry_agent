@@ -101,11 +101,10 @@ class TestStateKeyValues:
 
 class TestTypedStateFacade:
     @pytest.fixture
-    def mem(self):
+    def mem(self, monkeypatch):
         from runtime.session.core import SessionRegister
 
-        if StateRegisterMeM in SessionRegister._instances:
-            del SessionRegister._instances[StateRegisterMeM]
+        monkeypatch.delitem(SessionRegister._instances, StateRegisterMeM, raising=False)
         return StateRegisterMeM()
 
     def test_facade_roundtrip(self, mem, monkeypatch):

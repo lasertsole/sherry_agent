@@ -15,10 +15,9 @@ class TestStateRegisterMeM:
     """Test in-memory state register."""
 
     @pytest.fixture
-    def reg(self):
+    def reg(self, monkeypatch):
         """Fresh StateRegisterMeM with singleton reset."""
-        if StateRegisterMeM in SessionRegister._instances:
-            del SessionRegister._instances[StateRegisterMeM]
+        monkeypatch.delitem(SessionRegister._instances, StateRegisterMeM, raising=False)
         r = StateRegisterMeM()
         yield r
         for sid in list(r._states.keys()):
