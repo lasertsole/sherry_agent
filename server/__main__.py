@@ -1,5 +1,7 @@
+import asyncio
 import os
 import sys
+
 import nest_asyncio
 from logs import init_logger
 from dotenv import load_dotenv
@@ -171,6 +173,26 @@ if __name__ == "__main__":
     from server.service.lane_lifecycle import install_lane_lifecycle
 
     install_lane_lifecycle()
+
+    # Login protection: create/seed its storage before serving, then start the
+    # janitor that prunes expired token revocations. `SHERRY_AUTH_ENABLED` only
+    # seeds a FRESH row — the runtime switch belongs to the account menu.
+    from config.features import AUTH
+    from server.DAO import auth_store
+    from server.service import auth_service
+
+    try:
+        seeded = asyncio.run(auth_store.seed_auth_enabled_once(AUTH["enabled"]))
+        settings = asyncio.run(auth_store.get_auth_settings())
+        logger.info(
+            "auth: login protection {} (seeded={}, {} user account(s))",
+            "ENABLED" if settings["enabled"] else "disabled",
+            seeded,
+            asyncio.run(auth_store.count_users()),
+        )
+    except Exception:
+        logger.exception("auth: storage initialization failed; login protection unavailable")
+    auth_service.start_blacklist_cleanup()
 
     # Warm the session project-directory cache: the agent-side readers are
     # mem-only, so an unprimed tier after a restart silently serves the process

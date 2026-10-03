@@ -81,6 +81,7 @@ from .agent_side import (
     assert_max_token_valid as assert_max_token_valid,
 )
 from .infra_side import (
+    AUTH as AUTH,
     BUS as BUS,
     CHANNELS as CHANNELS,
     CRASH_LOOP as CRASH_LOOP,
@@ -101,6 +102,7 @@ from .infra_side import (
     SKILLS_TOOLING as SKILLS_TOOLING,
     SKILL_SCANNER as SKILL_SCANNER,
     WS_STREAM as WS_STREAM,
+    AuthConfig as AuthConfig,
     BusConfig as BusConfig,
     ChannelsConfig as ChannelsConfig,
     CrashLoopConfig as CrashLoopConfig,

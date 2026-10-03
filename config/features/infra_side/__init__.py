@@ -3,6 +3,10 @@
 Re-exports every infra-side ``TypedDict`` and its module-level default
 instance so consumers can bind aliases from one place."""
 
+from .auth import (
+    AuthConfig as AuthConfig,
+    AUTH as AUTH,
+)
 from .gateway import (
     GatewayConfig as GatewayConfig,
     GATEWAY as GATEWAY,

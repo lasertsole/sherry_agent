@@ -14,6 +14,7 @@ from server.service.stream_driver import StreamDriver
 from server.service.stream_dispatch import _clear_pending_args
 from server.utils.ws_helpers import send_ws_json
 from server.trigger import auth
+from server.trigger.auth_user import ws_user_check
 from pub.types.message import MultiModalMessage
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
@@ -156,6 +157,13 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
     refusal = auth.check_ws(query_params.get(auth.TOKEN_QUERY_PARAM, None))
     if refusal is not None:
         logger.warning(f"Agent WS connection rejected: {refusal}")
+        await websocket.close()
+        return
+    # Second layer (login gate): a single-use ticket while enforcement is active
+    # — this socket can drive generation, so it is worth the extra check.
+    user_refusal = await ws_user_check(query_params)
+    if user_refusal is not None:
+        logger.warning(f"Agent WS connection rejected: {user_refusal}")
         await websocket.close()
         return
     # Bound before the loop so the receive-loop catch-all can always reference

@@ -9,6 +9,8 @@ from robyn import WebSocketDisconnect, WebSocketAdapter
 from robyn.status_codes import HTTP_500_INTERNAL_SERVER_ERROR
 from runtime import relation_register, clear_all_register_sessions
 from server.trigger import auth
+from server.trigger.auth_user import user_auth_middleware, ws_user_check
+from server.trigger.cors import cors_origin_echo
 from server.trigger.csrf import csrf_guard_middleware
 from server.trigger.security_headers import security_headers
 
@@ -72,6 +74,14 @@ app.before_request()(gateway_auth_middleware)
 # before this layer looks at anything, and a same-origin mutation (the gap this
 # closes) gets its Sec-Fetch-Site / Origin check here.
 app.before_request()(csrf_guard_middleware)
+# The login gate runs LAST of the three: an unlisted Origin or a hostile page is
+# refused before the session is even looked at, and the CSRF guard keeps its say
+# on mutations. Loopback clients and a switched-off login pass straight through
+# (see server/trigger/auth_user.py).
+app.before_request()(user_auth_middleware)
+# Credentialed cross-origin fetches need the exact Origin echoed back, not the
+# multi-origin allowlist's ``*`` (see server/trigger/cors.py).
+app.after_request()(cors_origin_echo)
 
 
 def handle_exception(error: Exception):
@@ -227,6 +237,13 @@ async def handle_connect(websocket: WebSocketAdapter):
     refusal = auth.check_ws(websocket.query_params.get(auth.TOKEN_QUERY_PARAM, None))
     if refusal is not None:
         logger.warning(f"WebSocket connection rejected: {refusal}, websocket_id={websocket.id}")
+        await websocket.close()
+        return
+    user_refusal = await ws_user_check(websocket.query_params)
+    if user_refusal is not None:
+        logger.warning(
+            f"WebSocket connection rejected: {user_refusal}, websocket_id={websocket.id}"
+        )
         await websocket.close()
         return
 

@@ -30,6 +30,7 @@ from loguru import logger
 from robyn import WebSocketDisconnect
 
 from server.trigger import auth
+from server.trigger import auth_user
 
 
 class WSPushChannel:
@@ -96,6 +97,13 @@ class WSPushChannel:
         refusal = auth.check_ws(query_params.get(auth.TOKEN_QUERY_PARAM, None))
         if refusal is not None:
             logger.warning(f"{handler_label} connection rejected: {refusal}")
+            await websocket.close()
+            return
+        # Second layer (login gate): while enforcement is active a single-use
+        # ticket from /auth/ws-ticket is required — sockets carry no peer address.
+        user_refusal = await auth_user.ws_user_check(query_params)
+        if user_refusal is not None:
+            logger.warning(f"{handler_label} connection rejected: {user_refusal}")
             await websocket.close()
             return
         ensure_registered()
