@@ -109,20 +109,24 @@ client/
 │   │   ├── useSubagentTasks.ts    # Background-task facade (Pinia store + fetch/WS/Dexie sync)
 │   │   ├── utils.ts               # max/min + date/time utilities
 │   │   ├── mitt.ts                # mitt event bus instance
+│   │   ├── ws-ticket.ts           # Single-use WebSocket ticket prefetch (lazy import keeps the socket layer out of the auth bridge)
+│   │   ├── use-auth-refresh.ts    # Proactive session refresh (rotates the HttpOnly access cookie before expiry)
 │   │   └── system.ts              # (empty placeholder)
 │   ├── declare/declarations.d.ts  # Type declarations
 │   ├── i18n/locales/              # en.json / ja.json / ko.json / zh.json
 │   ├── layouts/default.vue        # Default layout — full-view wrapper
 │   ├── pages/
 │   │   ├── index.vue              # Renders ChatInputBox (route / redirects to /home via routeRules)
+│   │   ├── login/index.vue        # Login page (username + password; shown only when the gate requires it)
 │   │   └── home/
 │   │       ├── index.vue          # Main chat shell — SessionSidebar + toolbar + nested NuxtPage
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 33 page components:
+│   │       └── components/        # 40 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
+│   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill, live via taskflow_updated)
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (env-config MAIN_LLM profiles, effective next turn)
@@ -130,8 +134,12 @@ client/
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: shield trigger (confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
 │   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands of the session; a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
+│   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
+│   │           ├── ProjectDirectoryPicker.vue # In-app folder picker for the browser build (GET /system/dirs; the desktop build opens the OS dialog)
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
+│   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels)
+│   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
 │   │           ├── ConfigPanel.vue            # System-config tab (.env editor, background, language, ...)
@@ -144,7 +152,9 @@ client/
 │   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationDialog.vue     # Server-push notification list
+│   │           ├── AccountSettingsPanel.vue   # Account tab: set up / change / disable login protection (the current password is required)
 │   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
+│   │           ├── FileViewerPanel.vue        # File viewer tab (GET /project/file, text + image preview)
 │   │           ├── LogsPanel.vue              # Log-viewer tab (server logs + client logs, live stream)
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)
@@ -166,7 +176,16 @@ client/
 │   │   ├── access-mode.ts      # Per-session access mode (confirm changes / auto edit / full access, mirrored from the backend)
 │   │   ├── llm-profiles.ts     # Model profiles from the env config (MAIN_LLM group), for the pickers
 │   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts
+│   │   ├── auth.ts             # Login session state (status / user / 401-refresh-once replay)
+│   │   ├── project-directory.ts # Per-session project directory (binding / parked choice / effective root)
+│   │   ├── file-viewer.ts      # File-viewer tabs (opened path + content cache)
+│   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + waves, refreshed by taskflow_updated)
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
+│   ├── plugins/                   # Nuxt plugins
+│   │   ├── auth-guard.ts          # Global login guard (per-navigation decision from /auth/status)
+│   │   ├── client-log.ts          # Browser console.* capture into the client log store
+│   │   ├── directives.ts          # v-debounce / v-safe-html directive registration
+│   │   └── error-handler.ts       # Global error-handler installation (before the first route mounts)
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API response type definitions
@@ -332,7 +351,7 @@ A 300+ line SCSS mixin library providing utilities for layout, shapes, scrollbar
 
 ### State & Events
 
-- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`)
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), file viewer (`file-viewer.ts`), TaskFlow progress (`taskflow.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
 - **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 

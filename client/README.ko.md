@@ -110,20 +110,24 @@ client/
 │   │   ├── useSubagentTasks.ts    # 백그라운드 작업 파사드(Pinia 스토어 + fetch/WS/Dexie 동기화)
 │   │   ├── utils.ts               # max/min + 날짜/시간 유틸리티
 │   │   ├── mitt.ts                # mitt 이벤트 버스 인스턴스
+│   │   ├── ws-ticket.ts           # WebSocket 일회용 티켓 미리 받기(지연 import로 소켓 계층에서 인증 브리지를 분리)
+│   │   ├── use-auth-refresh.ts    # 세션 선제 갱신(HttpOnly 액세스 쿠키를 만료 전에 교체)
 │   │   └── system.ts              # (빈 플레이스홀더)
 │   ├── declare/declarations.d.ts  # 타입 선언
 │   ├── i18n/locales/              # en.json / ja.json / ko.json / zh.json
 │   ├── layouts/default.vue        # 기본 레이아웃 — 풀뷰 래퍼
 │   ├── pages/
 │   │   ├── index.vue              # ChatInputBox 렌더링(루트 / 는 routeRules에 의해 /home으로 301 리다이렉트)
+│   │   ├── login/index.vue        # 로그인 페이지(사용자 이름 + 비밀번호, 게이트가 요구할 때만 표시)
 │   │   └── home/
 │   │       ├── index.vue          # 메인 채팅 셸 — SessionSidebar + 툴바 + 중첩 NuxtPage
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 33 개의 페이지 컴포넌트:
+│   │       └── components/        # 40 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
+│   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘, taskflow_updated로 실시간 갱신)
 │   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
 │   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
 │   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(환경 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
@@ -131,8 +135,12 @@ client/
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 방패 트리거(변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
 │   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령(팝오버 행은 페이지에 이동을 맡긴다: 실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
+│   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
+│   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
+│   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드)
+│   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
 │   │           ├── ConfigPanel.vue            # 시스템 설정 탭(.env 편집, 배경, 언어 등)
@@ -145,7 +153,9 @@ client/
 │   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationDialog.vue     # 서버 푸시 알림 목록
+│   │           ├── AccountSettingsPanel.vue   # 계정 탭: 로그인 보호 설정 / 변경 / 해제(현재 비밀번호 필요)
 │   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
+│   │           ├── FileViewerPanel.vue        # 파일 뷰어 탭(GET /project/file, 텍스트 + 이미지 미리보기)
 │   │           ├── LogsPanel.vue              # 로그 보기 탭(서버 로그 + 클라이언트 로그, 실시간 스트림)
 │   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
 │   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)
@@ -167,7 +177,16 @@ client/
 │   │   ├── access-mode.ts      # 세션별 접근 모드(변경 전 확인 / 자동 편집 / 전체 접근, 백엔드와 동기화)
 │   │   ├── llm-profiles.ts     # 환경 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
 │   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast
+│   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도)
+│   │   ├── project-directory.ts # 세션별 프로젝트 디렉터리(바인딩 / 보류된 선택 / 적용 루트)
+│   │   ├── file-viewer.ts      # 파일 뷰어 탭(연 경로 + 내용 캐시)
+│   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
+│   ├── plugins/                   # Nuxt 플러그인
+│   │   ├── auth-guard.ts          # 전역 로그인 가드(내비게이션마다 /auth/status로 판정)
+│   │   ├── client-log.ts          # 브라우저 console.* 캡처를 클라이언트 로그로 저장
+│   │   ├── directives.ts          # v-debounce / v-safe-html 디렉티브 등록
+│   │   └── error-handler.ts       # 전역 에러 핸들러 설치(첫 라우트 마운트 전)
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
 │       ├── response.d.ts          # API 응답 타입 정의
@@ -332,7 +351,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`)
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), TaskFlow 진행(`taskflow.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
 - **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 

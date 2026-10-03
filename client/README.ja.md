@@ -110,20 +110,24 @@ client/
 │   │   ├── useSubagentTasks.ts    # バックグラウンドタスク薄いファサード（Pinia ストア + fetch/WS/Dexie 同期）
 │   │   ├── utils.ts               # max/min + 日時ユーティリティ
 │   │   ├── mitt.ts                # mitt イベントバスインスタンス
+│   │   ├── ws-ticket.ts           # WebSocket 単回チケットの先読み（遅延 import で socket 層から認証ブリッジを排除）
+│   │   ├── use-auth-refresh.ts    # セッションの主動更新（HttpOnly アクセス Cookie を期限前にローテーション）
 │   │   └── system.ts              # （空のプレースホルダー）
 │   ├── declare/declarations.d.ts  # 型宣言
 │   ├── i18n/locales/              # en.json / ja.json / ko.json / zh.json
 │   ├── layouts/default.vue        # デフォルトレイアウト — フルビューのラッパー
 │   ├── pages/
 │   │   ├── index.vue              # ChatInputBox を描画（ルート / は routeRules により /home へ 301 リダイレクト）
+│   │   ├── login/index.vue        # ログインページ（ユーザー名 + パスワード。ゲートが要求したときだけ表示）
 │   │   └── home/
 │   │       ├── index.vue          # メインチャットシェル — SessionSidebar + ツールバー + ネストされた NuxtPage
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       └── components/        # 33 のページコンポーネント：
+│   │       └── components/        # 40 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
+│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ、taskflow_updated でライブ更新）
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグルまたは 低/高/最高 ピッカー、次ターンから有効）
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
 │   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（環境設定 MAIN_LLM プロファイル、次ターンから有効）
@@ -131,8 +135,12 @@ client/
 │   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：シールドのトリガー（変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
 │   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド（ポップオーバーの行はページにジャンプを委ねる：実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
+│   │           ├── ProjectDirectoryChip.vue   # セッションのプロジェクトディレクトリ用ツールバー項目（バインド / 解除、保留と拒否のヒント付き）
+│   │           ├── ProjectDirectoryPicker.vue # ブラウザ版の内蔵フォルダピッカー（GET /system/dirs。デスクトップ版は OS ダイアログ）
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
+│   │           ├── ProjectFileTree.vue        # 左サイドバーのプロジェクトファイルツリー（読み取り専用、GET /project/tree、階層ごとに遅延読み込み）
+│   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
 │   │           ├── ConfigPanel.vue            # システム設定タブ（.env 編集、背景、言語など）
@@ -145,7 +153,9 @@ client/
 │   │           ├── SkillsPanel.vue            # スキル管理タブ（一覧 / アップロード / 切替 / ピン留め / 削除 / curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationDialog.vue     # サーバー push 通知リスト
+│   │           ├── AccountSettingsPanel.vue   # アカウントタブ：ログイン保護の設定 / 変更 / 解除（現在のパスワードが必要）
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
+│   │           ├── FileViewerPanel.vue        # ファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
 │   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）
@@ -167,7 +177,16 @@ client/
 │   │   ├── access-mode.ts      # セッション単位のアクセス モード（変更前に確認 / 自動編集 / フルアクセス、バックエンドと同期）
 │   │   ├── llm-profiles.ts     # 環境設定（MAIN_LLM グループ）のモデルプロファイル、ピッカー用
 │   │   ├── connection.ts       # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast
+│   │   ├── auth.ts             # ログインセッション状態（status / user / 401 で一度だけ更新して再送）
+│   │   ├── project-directory.ts # セッションごとのプロジェクトディレクトリ（バインド / 保留中の選択 / 実効ルート）
+│   │   ├── file-viewer.ts      # ファイルビューアタブ（開いたパス + 内容キャッシュ）
+│   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + wave、taskflow_updated で更新）
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
+│   ├── plugins/                   # Nuxt プラグイン
+│   │   ├── auth-guard.ts          # グローバル ログイン ガード（ナビゲーションごとに /auth/status で判定）
+│   │   ├── client-log.ts          # ブラウザ console.* をクライアントログへ取り込む
+│   │   ├── directives.ts          # v-debounce / v-safe-html ディレクティブ登録
+│   │   └── error-handler.ts       # グローバル エラーハンドラの設置（最初のルート描画前）
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、...
 │       ├── response.d.ts          # API レスポンス型定義
@@ -332,7 +351,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 
 ### 状態とイベント
 
-- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）
+- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、TaskFlow 進捗（`taskflow.ts`）
 - **mitt イベントバス**：WS イベント、ストリーム再接続イベント、セッションストリーム中断（`session:abort-stream`）、コンポーネント間通知
 - **connection ストア**（`stores/connection.ts`）：`/sessions/ws` ハートビートとブラウザの online/offline イベントを監視；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
 

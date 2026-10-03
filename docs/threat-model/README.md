@@ -9,12 +9,12 @@ OS-isolation detail.
 
 | # | Boundary | Crossing | Enforced by |
 |---|---|---|---|
-| 1 | User → agent | WebSocket turn | Gateway auth (Origin allowlist + per-boot token) |
+| 1 | User → agent | WebSocket turn | Gateway auth (Origin allowlist + per-boot token); with login protection on, the handshake also spends a single-use ticket minted over HTTP |
 | 2 | LLM → tool | Tool call | HITL approval gate, `agent/middlewares/humanInTheLoop/detection.py` shell blocklist |
 | 3 | Tool output → model context | Tool result | **Untrusted-output fence**, prompt-injection scanner, tool-result eviction |
 | 4 | Child agent → parent | Announce pipeline | Completion gates, `SubagentCompletionDrain` |
 | 5 | MCP server → agent process | Tool result | Untrusted-output fence (`mcp_` prefix rule; no MCP tool ships yet) |
-| 6 | HTTP client → gateway | HTTP route | Gateway auth middleware, typed query-param casting |
+| 6 | HTTP client → gateway | HTTP route | Gateway auth middleware, typed query-param casting; with login protection on, the session gate (`server/trigger/auth_user.py`, fail-closed, loopback exempt) |
 | 7 | Filesystem → agent | File tools | `PathGuard`, `O_NOFOLLOW`, virtual-path resolution |
 | 8 | Sandboxed child → host process | Subprocess spawn | `scrub_env`, `bwrap`/`seatbelt` isolation |
 | 9 | Memory / skill files → system prompt | Prompt assembly | Skill scan gate on install; **write-time injection block pending** |
@@ -46,6 +46,7 @@ OS-isolation detail.
 | Channel identifiers (user / chat) in logs | **Stable pseudonym** at the channel log boundary | Routing tables and reply targets keep the raw value by design |
 | Subprocess env hijack (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV`, …) | **Hijack-variable block**: startup hooks (`PYTHONPATH`, `BASH_ENV`, `ENV`, …) are always dropped; the loader variables (`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`) only under `SHERRY_STRICT_ENV_HIJACK=1`, because container runtimes set them for real | Loader variables are not blocked by default — see the note in the operations section |
 | Cross-site request forgery | **Origin allowlist** plus the **CSRF guard**: `Sec-Fetch-Site: cross-site` is refused on mutating methods, and an `Origin`/`Referer` that is neither loopback nor allowlisted is refused too | A script client sends none of those headers; it is authenticated by the token, not by this guard |
+| Remote access without credentials | **Opt-in login protection**: a scrypt-hashed password, HttpOnly JWT cookies (access + a rotating refresh, both revoked on logout) and a single-use WebSocket ticket; loopback clients stay exempt by socket address | It ships **off** — a default install is protected by the gateway token alone, and the account menu is the switch |
 | Server-side request forgery (SSRF) | **SSRF guard** on every fetched URL: non-global targets (private, loopback, metadata, RFC 2544, IPv6 ULA) are refused, the connection is pinned to the verified address, and each redirect hop is re-checked | Hosts behind a fake-ip proxy resolve public names into the refused range — the documented switch is the escape hatch |
 | XSS in rendered content | Client DOMPurify allowlist + `vue/no-v-html` + **server security headers** (`script-src 'self'`, `object-src 'none'`, `nosniff`, framing) | The CSP is a second layer: the client sanitizer runs in the same context as the payload |
 | Hand-rolled SSRF through `terminal` (a `curl` the model was talked into) | HITL approval patterns for cloud-metadata endpoints and for *written* loopback requests | A pattern, not a boundary: a command can be phrased around it |
@@ -124,16 +125,17 @@ hygiene measure, not a boundary.
 
 ## Network boundary
 
-Three gates stand between the process and the network, each at the boundary its
+Four gates stand between the process and the network, each at the boundary its
 threat is actually reachable from:
 
 | Boundary | Mechanism | Notes |
 |---|---|---|
+| Inbound authentication | `server/trigger/auth_user.py` — once login protection is on and an account exists, every route that is not explicitly public (and every WebSocket, via a single-use ticket) requires a valid session; loopback clients are exempt by socket address | Fail-closed: a path matching no route is gated too, and enforcement needs both the runtime switch and an existing account, so it can never lock a deployment out of itself |
 | Inbound mutations | `server/trigger/csrf.py` — mutating methods (`POST`/`PUT`/`PATCH`/`DELETE`) are refused when `Sec-Fetch-Site: cross-site`, or when an `Origin`/`Referer` is present and is neither loopback nor allowlisted | The browser-set header is what a page cannot forge; the `Origin` gate in `server/trigger/auth.py` stays the first layer, and a client that sends none of the three headers (curl, a test client) passes — the token authenticates it |
 | Inbound responses | `server/trigger/security_headers.py` — `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` on every response, refused ones included | `script-src 'self'` and `object-src 'none'` are the layers that survive a client-side sanitizer bypass; `GATEWAY["csp"]` overrides the policy, the literal `disabled` omits it |
 | Outbound fetches | `pub/func/validator/public_url.py` (verdict) + `pub/func/validator/safe_fetch.py` (transport) | A target whose addresses are not *all* global is refused before a socket opens; the socket is then opened to the verified address itself (the hostname still travels in `Host`/SNI), so a second DNS answer cannot redirect the connection, and every redirect hop repeats the check |
 
-The shell is a fourth path that a network guard cannot see: the HITL approval
+The shell is another path that a network guard cannot see: the HITL approval
 list (`agent/middlewares/humanInTheLoop/detection.py`) carries patterns for cloud
 metadata endpoints (the credential read whose body the model would summarize
 back) and for written requests to loopback. A plain `curl http://127.0.0.1/…`

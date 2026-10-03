@@ -154,7 +154,8 @@ EMA_AI_agent/
 │   ├── sandbox/            # Eval sandbox & tool isolation
 │   ├── token-guard/        # 128K context-window floor
 │   ├── context-governance/ # Persistence, eviction, tail clip, summary filtering
-│   └── long-running-tasks/ # TaskFlow orchestration
+│   ├── long-running-tasks/ # TaskFlow orchestration
+│   └── auth/               # Opt-in login protection (account + session)
 │
 ├── evals/                  # Evaluation framework (dispatcher + 5 suites)
 │   ├── evals.py            # Suite runner: uv run python evals/evals.py [suite]
@@ -283,6 +284,7 @@ Each major subsystem has its own detailed README:
 | **Loop Prevention** | Runaway-loop guards, exponential-backoff breakers, and process crash gating | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
 | **Sandbox** | Terminal & Python REPL confinement: env scrubbing, OS-native isolation, approval gate | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
 | **Threat Model** | Trust boundaries, data classification, per-threat protection status, and the prompt-injection scanner | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
+| **User Login** | Opt-in account protection: loopback clients stay exempt, remote access is gated by a scrypt password and HttpOnly JWT session cookies | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
 | **Long-Running Tasks** | TaskFlow DAG engine, step judge, budgets, deadlines, verified completion gates, and cross-turn memory continuity | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | Hard 128K context-window floor on both LLMs (boot, build, spawn, env write) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | Per-boundary persistence, tool-result & human-message eviction, `read_file` slice, overflow tail clip, summary filtering | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |

@@ -6,12 +6,12 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 | # | 边界 | 跨越点 | 由谁强制 |
 |---|---|---|---|
-| 1 | 用户 → Agent | WebSocket 回合 | 网关鉴权（Origin 允许列表 + 每次启动的 token） |
+| 1 | 用户 → Agent | WebSocket 回合 | 网关鉴权（Origin 允许列表 + 每次启动的 token）；登录保护开启后，握手还需消耗一个经 HTTP 签发的单次票据 |
 | 2 | LLM → 工具 | 工具调用 | HITL 审批门、`agent/middlewares/humanInTheLoop/detection.py` 危险命令清单 |
 | 3 | 工具输出 → 模型上下文 | 工具结果 | **不可信输出围栏**、Prompt 注入扫描器、工具结果驱逐 |
 | 4 | 子 Agent → 父 Agent | announce 管道 | 完成门禁、`SubagentCompletionDrain` |
 | 5 | MCP 服务器 → Agent 进程 | 工具结果 | 不可信输出围栏（`mcp_` 前缀规则；目前没有 MCP 工具） |
-| 6 | HTTP 客户端 → 网关 | HTTP 路由 | 网关鉴权中间件、查询参数类型化转换 |
+| 6 | HTTP 客户端 → 网关 | HTTP 路由 | 网关鉴权中间件、查询参数类型化转换；登录保护开启时还有会话门（`server/trigger/auth_user.py`，fail-closed，loopback 豁免） |
 | 7 | 文件系统 → Agent | 文件工具 | `PathGuard`、`O_NOFOLLOW`、虚拟路径解析 |
 | 8 | 沙箱子进程 → 宿主进程 | 子进程派生 | `scrub_env`、`bwrap`/`seatbelt` 隔离 |
 | 9 | 记忆 / 技能文件 → 系统提示词 | 提示词组装 | 安装时的技能扫描门禁；**写入时注入拦截待实现** |
@@ -43,6 +43,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 日志里的渠道标识（用户 / 聊天） | **稳定假名**：渠道日志边界处替换 | 路由表与回复目标按设计保留原值 |
 | 子进程 env hijack（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`BASH_ENV` 等） | **hijack 变量阻止**：启动钩子（`PYTHONPATH`、`BASH_ENV`、`ENV` 等）始终剔除；加载器变量（`LD_PRELOAD`、`LD_LIBRARY_PATH`、`DYLD_INSERT_LIBRARIES`）仅在 `SHERRY_STRICT_ENV_HIJACK=1` 下剔除——因为容器运行时会真的设置它们 | 加载器变量默认不阻止，理由见运行手册一节 |
 | 跨站请求伪造（CSRF） | **Origin 允许清单** + **CSRF 守卫**：写方法（POST/PUT/PATCH/DELETE）遇 `Sec-Fetch-Site: cross-site` 一律拒绝；`Origin`/`Referer` 存在但不是 loopback 也不在允许清单时同样拒绝 | 脚本客户端三个头都不发（curl、测试客户端）——它靠 token 鉴权，不靠这道守卫 |
+| 无凭据的远程访问 | **可选登录保护**：scrypt 哈希口令、HttpOnly 的 JWT Cookie（访问 + 轮换刷新，登出即吊销两者）与单次 WebSocket 票据；loopback 客户端按套接字地址豁免 | 默认**关闭**——初始安装只由网关 token 保护，账户菜单就是开关 |
 | 服务端请求伪造（SSRF） | **SSRF 判定**覆盖每个被抓取的 URL：非全局目标（私有、loopback、云元数据、RFC 2544、IPv6 ULA）拒绝；连接**钉在已校验的地址**上；每一次重定向逐跳复查 | fake-ip 代理主机会把公网域名解析到被拒网段——用文档化的开关作为逃生口 |
 | 渲染内容中的 XSS | 客户端 DOMPurify 允许清单 + `vue/no-v-html` + **服务端安全响应头**（`script-src 'self'`、`object-src 'none'`、`nosniff`、防嵌套） | CSP 是第二层：客户端净化器与载荷同上下文运行 |
 | 借 `terminal` 手工发起 SSRF（模型被说服执行 `curl`） | HITL 审批模式：云元数据端点、以及**带写入**的 loopback 请求 | 模式是启发式而非边界：命令可以换个说法绕开 |
@@ -96,15 +97,16 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 ## 网络边界
 
-进程与网络之间有三道闸门，各自守在威胁真正可达的那一层：
+进程与网络之间有四道闸门，各自守在威胁真正可达的那一层：
 
 | 边界 | 机制 | 说明 |
 |---|---|---|
+| 入站认证 | `server/trigger/auth_user.py`——登录保护开启且存在账户后，凡未显式公开的路由（以及每个 WebSocket，经单次票据）都需要有效会话；loopback 客户端按套接字地址豁免 | fail-closed：连不匹配任何路由的路径也受理，且生效同时需要运行时开关与已存在的账户，因此不可能把部署锁在门外 |
 | 入站写请求 | `server/trigger/csrf.py`——写方法（`POST`/`PUT`/`PATCH`/`DELETE`）遇 `Sec-Fetch-Site: cross-site` 拒绝；`Origin`/`Referer` 存在但既非 loopback 也不在允许清单时拒绝 | 浏览器设置的头是网页伪造不了的信号；`server/trigger/auth.py` 的 Origin 门仍是第一层；三个头都不发的客户端（curl、测试客户端）放行——认证由 token 承担 |
 | 入站响应 | `server/trigger/security_headers.py`——每个响应（含被拒的响应）都带 `Content-Security-Policy`、`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy` | `script-src 'self'` 与 `object-src 'none'` 是客户端净化器被绕过之后仍然生效的那层；`GATEWAY["csp"]` 可覆盖策略，字面值 `disabled` 则不输出该头 |
 | 出站抓取 | `pub/func/validator/public_url.py`（判定）+ `pub/func/validator/safe_fetch.py`（传输） | 只要解析出的地址**不是全部**全局可达就在开 socket 之前拒绝；随后 socket 直接连到已校验的那个地址（主机名照旧走 `Host`/SNI），因此第二次 DNS 应答无法把连接引向别处；每次重定向逐跳重复这一检查 |
 
-shell 是网络守卫看不见的第四条路径：HITL 审批清单（`agent/middlewares/humanInTheLoop/detection.py`）带了云元数据端点（那种"读了凭据再由模型复述回来"的形状）与**带写入**的 loopback 请求两类模式。而普通的 `curl http://127.0.0.1/…` 读取刻意不拦——为每次本地探测弹审批会训练操作员无脑点过。
+shell 是网络守卫看不见的另一条路径：HITL 审批清单（`agent/middlewares/humanInTheLoop/detection.py`）带了云元数据端点（那种"读了凭据再由模型复述回来"的形状）与**带写入**的 loopback 请求两类模式。而普通的 `curl http://127.0.0.1/…` 读取刻意不拦——为每次本地探测弹审批会训练操作员无脑点过。
 
 ## 安全策略
 

@@ -110,20 +110,24 @@ client/
 │   │   ├── useSubagentTasks.ts    # 后台任务薄封装（Pinia store + fetch/WS/Dexie 同步）
 │   │   ├── utils.ts               # max/min + 日期时间工具
 │   │   ├── mitt.ts                # mitt 事件总线实例
+│   │   ├── ws-ticket.ts           # WebSocket 单次票据预取（惰性 import，避免 socket 层引入认证桥）
+│   │   ├── use-auth-refresh.ts    # 会话主动续期（在 HttpOnly 访问 Cookie 过期前轮换）
 │   │   └── system.ts              #（空占位文件）
 │   ├── declare/declarations.d.ts  # 类型声明
 │   ├── i18n/locales/              # en.json / ja.json / ko.json / zh.json
 │   ├── layouts/default.vue        # 默认布局 —— 全屏视图容器
 │   ├── pages/
 │   │   ├── index.vue              # 渲染 ChatInputBox（路由 / 经 routeRules 301 重定向到 /home）
+│   │   ├── login/index.vue        # 登录页（用户名 + 密码；仅在网关要求登录时出现）
 │   │   └── home/
 │   │       ├── index.vue          # 主聊天外壳 —— SessionSidebar + 工具栏 + 嵌套 NuxtPage
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       └── components/        # 33 个页面组件：
+│   │       └── components/        # 40 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
+│   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊，经 taskflow_updated 实时刷新）
 │   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关或 低/高/最高 选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（环境配置 MAIN_LLM 档案，下一轮生效）
@@ -131,8 +135,12 @@ client/
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：盾牌触发（变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
 │   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令，弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
+│   │           ├── ProjectDirectoryChip.vue   # 会话项目目录的工具栏条目（绑定 / 清除，带续延与拒绝提示）
+│   │           ├── ProjectDirectoryPicker.vue # 浏览器版内置文件夹选择器（GET /system/dirs；桌面版调系统对话框）
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
+│   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载）
+│   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（.env 编辑、背景、语言等）
@@ -145,7 +153,9 @@ client/
 │   │           ├── SkillsPanel.vue            # 技能管理标签页（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationDialog.vue     # 服务端推送通知列表
+│   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 修改 / 关闭登录保护（需当前密码）
 │   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
+│   │           ├── FileViewerPanel.vue        # 文件查看标签页（GET /project/file，文本 + 图片预览）
 │   │           ├── LogsPanel.vue              # 日志查看标签页（服务端日志 + 客户端日志，实时流）
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）
@@ -167,7 +177,16 @@ client/
 │   │   ├── access-mode.ts      # 会话级访问模式（变更前确认 / 自动编辑 / 完全访问，与后端同步）
 │   │   ├── llm-profiles.ts     # 环境配置（MAIN_LLM 分组）的模型档案，供选择器使用
 │   │   ├── connection.ts       # 后端连通性（isOnline / backendStatus）+ 去重 Toast
+│   │   ├── auth.ts             # 登录会话状态（status / user / 401 单次续期重放）
+│   │   ├── project-directory.ts # 每会话项目目录（绑定 / 续延选择 / 生效根）
+│   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
+│   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + wave，由 taskflow_updated 刷新）
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
+│   ├── plugins/                   # Nuxt 插件
+│   │   ├── auth-guard.ts          # 全局登录守卫（每次导航按 /auth/status 决策）
+│   │   ├── client-log.ts          # 浏览器 console.* 捕获写入客户端日志
+│   │   ├── directives.ts          # 注册 v-debounce / v-safe-html 指令
+│   │   └── error-handler.ts       # 全局错误处理安装（首个路由挂载之前）
 │   └── types/
 │       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage、……
 │       ├── response.d.ts          # API 响应类型定义
@@ -332,7 +351,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
 ### 状态与事件
 
-- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）
+- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、TaskFlow 进度（`taskflow.ts`）
 - **mitt 事件总线**：WS 事件、流重连事件、会话流中断（`session:abort-stream`）、跨组件通知
 - **connection store**（`stores/connection.ts`）：监听 `/sessions/ws` 心跳与浏览器 online/offline 事件；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
 

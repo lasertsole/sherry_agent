@@ -6,12 +6,12 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 | # | 경계 | 횡단 지점 | 강제 주체 |
 |---|---|---|---|
-| 1 | 사용자 → 에이전트 | WebSocket 턴 | 게이트웨이 인증(Origin 허용 목록 + 부팅별 token) |
+| 1 | 사용자 → 에이전트 | WebSocket 턴 | 게이트웨이 인증(Origin 허용 목록 + 부팅별 token). 로그인 보호가 켜져 있으면 핸드셰이크가 HTTP로 발급되는 일회용 티켓도 소비합니다 |
 | 2 | LLM → 도구 | 도구 호출 | HITL 승인 게이트, `agent/middlewares/humanInTheLoop/detection.py` 위험 명령 목록 |
 | 3 | 도구 출력 → 모델 컨텍스트 | 도구 결과 | **신뢰 불가 출력 펜스**, Prompt 주입 스캐너, 도구 결과 축출 |
 | 4 | 하위 에이전트 → 상위 에이전트 | announce 파이프라인 | 완료 게이트, `SubagentCompletionDrain` |
 | 5 | MCP 서버 → 에이전트 프로세스 | 도구 결과 | 신뢰 불가 출력 펜스(`mcp_` 접두 규칙; MCP 도구는 아직 없음) |
-| 6 | HTTP 클라이언트 → 게이트웨이 | HTTP 경로 | 게이트웨이 인증 미들웨어, 쿼리 파라미터 타입 변환 |
+| 6 | HTTP 클라이언트 → 게이트웨이 | HTTP 경로 | 게이트웨이 인증 미들웨어, 쿼리 파라미터 타입 변환. 로그인 보호가 켜져 있으면 세션 게이트(`server/trigger/auth_user.py`, fail-closed, loopback 예외)도 함께 |
 | 7 | 파일 시스템 → 에이전트 | 파일 도구 | `PathGuard`, `O_NOFOLLOW`, 가상 경로 해석 |
 | 8 | 샌드박스 자식 프로세스 → 호스트 프로세스 | 자식 프로세스 생성 | `scrub_env`, `bwrap`/`seatbelt` 격리 |
 | 9 | 메모리 / 스킬 파일 → 시스템 프롬프트 | 프롬프트 조립 | 설치 시 스킬 스캔 게이트; **쓰기 시 주입 차단은 미구현** |
@@ -43,6 +43,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 로그 속 채널 식별자(사용자 / 채팅) | **안정된 가명**: 채널 로그 경계에서 치환 | 라우팅 표와 회신 대상은 설계상 원값을 유지합니다 |
 | 자식 프로세스 env hijack(`LD_PRELOAD`, `LD_LIBRARY_PATH`, `BASH_ENV` 등) | **hijack 변수 차단**: 시작 훅(`PYTHONPATH`, `BASH_ENV`, `ENV` 등)은 항상 제거되고, 로더 변수(`LD_PRELOAD`, `LD_LIBRARY_PATH`, `DYLD_INSERT_LIBRARIES`)는 `SHERRY_STRICT_ENV_HIJACK=1` 일 때만 제거됩니다(컨테이너 런타임이 실제로 설정하기 때문) | 로더 변수는 기본적으로 차단되지 않습니다——운영 절 참조 |
 | 크로스 사이트 요청 위조(CSRF) | **Origin 허용 목록**과 더불어 **CSRF 가드**: 변경 메서드(POST/PUT/PATCH/DELETE)는 `Sec-Fetch-Site: cross-site`면 거부하고, `Origin`/`Referer`가 loopback도 허용 목록도 아니면 거부합니다 | 스크립트 클라이언트는 세 헤더를 보내지 않습니다(curl, 테스트 클라이언트) — 인증은 token이 담당합니다 |
+| 자격 증명 없는 원격 접근 | **선택형 로그인 보호**: scrypt 해시 비밀번호, HttpOnly JWT 쿠키(액세스 + 회전하는 리프레시, 로그아웃 시 둘 다 폐기), 일회용 WebSocket 티켓. loopback 클라이언트는 소켓 주소로 예외 | 기본값은 **꺼짐**——기본 설치에서는 게이트웨이 token만 보호하며, 계정 메뉴가 스위치입니다 |
 | 서버 측 요청 위조(SSRF) | **SSRF 판정**이 가져오는 모든 URL에 적용: 비전역 대상(사설, loopback, 클라우드 메타데이터, RFC 2544, IPv6 ULA)은 거부하고, 연결은 **검증된 주소에 고정**되며, 리디렉션은 홉마다 재검증합니다 | fake-ip 프록시 호스트는 공용 이름을 거부 대역으로 해석합니다 — 문서화된 스위치가 우회 경로입니다 |
 | 렌더링 콘텐츠의 XSS | 클라이언트 DOMPurify 허용 목록 + `vue/no-v-html` + **서버 보안 헤더**(`script-src 'self'`, `object-src 'none'`, `nosniff`, 프레이밍 차단) | CSP는 두 번째 층입니다: 클라이언트 정화기는 페이로드와 같은 컨텍스트에서 실행됩니다 |
 | `terminal` 을 통한 수기 SSRF(모델이 설득되어 `curl` 실행) | HITL 승인 패턴: 클라우드 메타데이터 엔드포인트와 **쓰기를 동반한** loopback 요청 | 패턴은 경계가 아니라 휴리스틱입니다: 표현을 바꿔 우회할 수 있습니다 |
@@ -98,15 +99,16 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 ## 네트워크 경계
 
-프로세스와 네트워크 사이에는 세 개의 문이 있고, 각각 위협이 실제로 도달하는 층에 놓여 있습니다:
+프로세스와 네트워크 사이에는 네 개의 문이 있고, 각각 위협이 실제로 도달하는 층에 놓여 있습니다:
 
 | 경계 | 메커니즘 | 비고 |
 |---|---|---|
+| 인바운드 인증 | `server/trigger/auth_user.py`——로그인 보호가 켜져 있고 계정이 있으면 명시적으로 공개된 라우트를 제외한 모든 라우트(그리고 일회용 티켓을 거치는 모든 WebSocket)에 유효한 세션이 필요합니다. loopback 클라이언트는 소켓 주소로 예외 | fail-closed: 어떤 라우트와도 일치하지 않는 경로도 대상이며, 활성화에는 런타임 스위치와 기존 계정이 모두 필요하므로 배포를 스스로 잠글 수 없습니다 |
 | 인바운드 변경 요청 | `server/trigger/csrf.py`——변경 메서드(`POST`/`PUT`/`PATCH`/`DELETE`)는 `Sec-Fetch-Site: cross-site` 면 거부하고, `Origin`/`Referer`가 loopback도 허용 목록도 아니면 거부합니다 | 브라우저가 설정하는 헤더는 페이지가 위조할 수 없는 신호입니다. `server/trigger/auth.py` 의 Origin 게이트가 첫 층으로 남고, 세 헤더를 보내지 않는 클라이언트(curl, 테스트 클라이언트)는 통과합니다——인증은 token이 담당합니다 |
 | 인바운드 응답 | `server/trigger/security_headers.py`——모든 응답(거부된 응답 포함)에 `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy` 를 붙입니다 | `script-src 'self'` 와 `object-src 'none'` 은 클라이언트 정화기가 뚫린 뒤에도 살아 있는 층입니다. `GATEWAY["csp"]` 로 정책을 바꾸고, 리터럴 `disabled` 로 헤더를 생략합니다 |
 | 아웃바운드 가져오기 | `pub/func/validator/public_url.py`(판정) + `pub/func/validator/safe_fetch.py`(전송) | 해석된 주소가 **모두** 전역이 아니면 socket 을 열기 전에 거부합니다. 그런 다음 socket 은 검증된 주소로 직접 연결하고(호스트 이름은 여전히 `Host`/SNI 로 전달), 두 번째 DNS 응답이 연결 대상을 바꿀 수 없습니다. 리디렉션은 홉마다 같은 검사를 반복합니다 |
 
-셸은 네트워크 가드가 볼 수 없는 네 번째 경로입니다. HITL 승인 목록(`agent/middlewares/humanInTheLoop/detection.py`)에는 클라우드 메타데이터 엔드포인트(읽은 자격 증명을 모델이 요약해 돌려주는 형태)와 **쓰기를 동반한** loopback 요청 패턴이 있습니다. 반면 평범한 `curl http://127.0.0.1/…` 읽기는 의도적으로 막지 않습니다——로컬 확인마다 승인을 요구하면 운영자가 습관적으로 통과시키게 됩니다.
+셸은 네트워크 가드가 볼 수 없는 또 다른 경로입니다. HITL 승인 목록(`agent/middlewares/humanInTheLoop/detection.py`)에는 클라우드 메타데이터 엔드포인트(읽은 자격 증명을 모델이 요약해 돌려주는 형태)와 **쓰기를 동반한** loopback 요청 패턴이 있습니다. 반면 평범한 `curl http://127.0.0.1/…` 읽기는 의도적으로 막지 않습니다——로컬 확인마다 승인을 요구하면 운영자가 습관적으로 통과시키게 됩니다.
 
 ## 보안 정책
 
