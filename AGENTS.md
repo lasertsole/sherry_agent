@@ -116,7 +116,11 @@ User message → Robyn WS → agent.core.built_agent() graph
 A message sent while the session is busy is persisted as a `QUEUED` row in
 `user_input_queue` (SQLite, `server/queue/user_input_queue.py`; cap =
 `INPUT_QUEUE["max_active_per_session"]`, dedup by `client_msg_id`) and answered
-by the `queued` WS frame with its FIFO position. The turn runner drains those
+by the `queued` WS frame with its FIFO position. The composer says so: while a
+turn runs, `inputBox.vue`'s placeholder switches from 请输入内容 to
+`chatInput.queueHint` (继续输入消息以排队 — four languages in the component's
+inline block), and that hint is skipped when the box is disabled (a HITL prompt
+takes the input slot; the disabled text wins). The turn runner drains those
 rows **one per turn** (`server/service/turn_runner.py::_drain_loop` claims a
 single row via `claim_next` and `_execute_single` drives it), so N queued
 messages produce N turns and N replies — one answer per user bubble — never one

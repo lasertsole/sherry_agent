@@ -78,10 +78,15 @@ const draft = defineModel<string>('draft', { default: '' });
 /** Whether sending is allowed (non-empty draft; sending during an ongoing generation is allowed — the backend queues it) */
 const sendingAllowed = computed(() => !isEmpty(draft.value));
 
-/** Input placeholder text: generating → "Thinking", disabled → the passed-in approval hint, otherwise the default hint */
+/**
+ * Input placeholder text. Disabled wins over everything (the box is not
+ * editable then, so inviting the user to type would be a lie); otherwise a
+ * running turn shows the queue hint — typing IS allowed and the message is
+ * queued behind it — and the idle state shows the default hint.
+ */
 const placeholderText = computed(() => {
-  if (props.sending) return t('chatInput.thinking');
   if (props.disabled) return props.disabledText || t('chatInput.placeholder');
+  if (props.sending) return t('chatInput.queueHint');
   return t('chatInput.placeholder');
 });
 
@@ -339,7 +344,7 @@ defineExpose({ clearHistory });
   "zh": {
     "chatInput": {
       "placeholder": "请输入内容...",
-      "thinking": "AI 正在思考中...",
+      "queueHint": "继续输入消息以排队",
       "send": "发送",
       "stop": "停止"
     }
@@ -347,7 +352,7 @@ defineExpose({ clearHistory });
   "en": {
     "chatInput": {
       "placeholder": "Type a message...",
-      "thinking": "AI is thinking...",
+      "queueHint": "Keep typing to queue your message",
       "send": "Send",
       "stop": "Stop"
     }
@@ -355,7 +360,7 @@ defineExpose({ clearHistory });
   "ja": {
     "chatInput": {
       "placeholder": "メッセージを入力してください...",
-      "thinking": "AI が考えています...",
+      "queueHint": "続けて入力するとメッセージがキューに追加されます",
       "send": "送信",
       "stop": "停止"
     }
@@ -363,7 +368,7 @@ defineExpose({ clearHistory });
   "ko": {
     "chatInput": {
       "placeholder": "메시지를 입력하세요...",
-      "thinking": "AI가 생각하고 있습니다...",
+      "queueHint": "계속 입력하면 메시지가 대기열에 추가됩니다",
       "send": "보내기",
       "stop": "중지"
     }

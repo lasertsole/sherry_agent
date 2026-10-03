@@ -3,13 +3,32 @@ import { mount } from '@vue/test-utils';
 import inputBox from '@/components/chat/inputBox.vue';
 
 // PrimeVue Button is a Nuxt auto-import; stub it in this environment.
-function mountInput() {
+function mountInput(props: Record<string, unknown> = {}) {
   return mount(inputBox, {
+    props,
     global: { stubs: { Button: { template: '<button class="send-stub">send</button>' } } }
   });
 }
 
 describe('inputBox.vue (integration, backend mocked)', () => {
+  it('tells the user that typing queues a message while the agent is working', () => {
+    // The backend accepts a send during a running turn and QUEUES it, so the
+    // placeholder must say so ("继续输入消息以排队") — the old "AI is thinking..."
+    // only reported busy-ness and hid the queueing affordance.
+    const idle = mountInput({ sending: false });
+    const busy = mountInput({ sending: true });
+
+    expect(idle.find('.inputBox').attributes('placeholder')).toContain('请输入内容');
+    expect(busy.find('.inputBox').attributes('placeholder')).toContain('继续输入消息以排队');
+    // Sending is still allowed while busy (the stop button is the other half).
+    expect(busy.find('.inputBox').attributes('contenteditable')).toBe('true');
+  });
+
+  it('keeps the approval hint ahead of the queue hint when input is disabled', () => {
+    const wrapper = mountInput({ sending: true, disabled: true, disabledText: '等待审批…' });
+
+    expect(wrapper.find('.inputBox').attributes('placeholder')).toBe('等待审批…');
+  });
   it('renders the editable input area and the send button', () => {
     const wrapper = mountInput();
     expect(wrapper.find('.inputBox[contenteditable]').exists()).toBe(true);
