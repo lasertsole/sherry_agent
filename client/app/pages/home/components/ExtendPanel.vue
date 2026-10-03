@@ -58,17 +58,19 @@
 <template>
   <!-- Right-sidebar tab body: mounted with the tab, which drives the load
        (the sidebar owns the tab label and the close button). -->
-  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
-    <TabView v-model:activeIndex="activeTab">
+  <div class="flex flex-col h-full min-h-0 p-4">
+    <TabView
+      v-model:activeIndex="activeTab"
+      class="flex-1 min-h-0">
       <!-- ===== Channels tab ===== -->
       <TabPanel
         value="channel"
         :header="t('extend.tabs.channel')">
-        <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-3 h-full">
           <!-- Loading -->
           <div
             v-if="loading"
-            class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
+            class="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
             <i class="pi pi-spin pi-spinner text-3xl" />
             <span class="text-sm">{{ t('extend.empty') }}</span>
           </div>
@@ -76,7 +78,7 @@
           <!-- Empty state: no channels -->
           <div
             v-else-if="channels.length === 0"
-            class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
+            class="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
             <i class="pi pi-link text-3xl" />
             <span class="text-sm">{{ t('extend.empty') }}</span>
             <span class="text-xs">{{ t('extend.channelHint') }}</span>
@@ -85,7 +87,7 @@
           <!-- Channel grid -->
           <div
             v-else
-            class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+            class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3 flex-1 content-start">
             <div
               v-for="ch in channels"
               :key="ch.name"
@@ -131,10 +133,10 @@
       <TabPanel
         value="mcp"
         :header="t('extend.tabs.mcp')">
-        <div class="flex flex-col gap-3">
+        <div class="flex flex-col gap-3 h-full">
           <!-- Empty state placeholder: no MCP servers configured yet, show a placeholder for now -->
           <div
-            class="flex flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
+            class="flex flex-1 flex-col items-center justify-center gap-2 rounded-lg border border-dashed border-gray-300 dark:border-gray-600 py-16 text-gray-400">
             <i class="pi pi-plug text-3xl" />
             <span class="text-sm">{{ t('extend.empty') }}</span>
             <span class="text-xs">{{ t('extend.mcpHint') }}</span>
@@ -150,6 +152,43 @@
       @saved="loadChannels" />
   </div>
 </template>
+
+<style scoped>
+/* Fill the tab: the strip keeps its own height and the panels area is what
+   stretches (and scrolls), so a short body — an empty state, one channel card —
+   spans the whole tab instead of floating at the top. Same chain as
+   ConfigPanel / PersonaPanel; the panel GROWS but never SHRINKS below its
+   content (`flex: 1 0 auto`), so a long channel grid scrolls instead of being
+   squashed. */
+:deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* This PrimeVue version renders the strip as .p-tabview-tablist-container
+   (there is no .p-tabview-nav): keep it at its own height so the panels area
+   below is the only thing that scrolls. */
+:deep(.p-tabview-tablist-container) {
+  flex-shrink: 0;
+}
+
+:deep(.p-tabview-panels) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+:deep(.p-tabview-panel) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 0 auto;
+  min-height: 0;
+}
+</style>
 
 <script lang="ts" setup>
 import { ref, onMounted } from 'vue';
