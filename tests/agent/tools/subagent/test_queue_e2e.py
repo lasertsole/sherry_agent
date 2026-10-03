@@ -46,6 +46,7 @@ import asyncio
 import itertools
 import json
 import sqlite3
+import sys
 import time
 from typing import Any
 
@@ -299,6 +300,20 @@ def e2e_env(monkeypatch, tmp_path):
     monkeypatch.setattr(session_state, "_get_active_tasks", lambda: active_tasks)
     monkeypatch.setattr(tr, "_get_active_tasks", lambda: active_tasks)
 
+    # Reset at SETUP as well as teardown: residue from an earlier suite must
+    # not decide this test's outcome (the drain-loop wait below is process-global).
+    for task in list(at._INFLIGHT.values()):
+        task.cancel()
+    for task in list(tr._DRAIN_TASKS.values()):
+        task.cancel()
+    for task in list(active_tasks.values()):
+        task.cancel()
+    at._INFLIGHT.clear()
+    tr._DRAIN_TASKS.clear()
+    active_tasks.clear()
+    iqs._SESSION_LOCKS.clear()
+    session_state._HITL_PENDING.clear()
+
     user_queue = UserInputQueue(db_path=tmp_path / "e2e-user-input.db")
     monkeypatch.setattr(iqs, "get_default_queue", lambda: user_queue)
 
@@ -327,6 +342,28 @@ def e2e_env(monkeypatch, tmp_path):
     # the real agent config (thread_id) is required for the real checkpointer.
     monkeypatch.setattr(messages_mod, "build_agent_config", build_agent_config)
     monkeypatch.setattr(agent_core, "built_agent", _fake_built_agent, raising=False)
+    # interrupt_marker (and session_project_service) resolve
+    # ``from agent import core as agent_core`` at CALL time, so patching the
+    # name this module bound is not enough: in a full-suite process the call
+    # can resolve a DIFFERENT object. IMPORT_FROM first does
+    # ``getattr(sys.modules["agent"], "core")`` and only falls back to
+    # ``sys.modules["agent.core"]`` on AttributeError -- and a module __dict__
+    # hit (a stale .core the import machinery cached on the stubbed package)
+    # shadows the stub's module-level __getattr__. Any object left unpatched
+    # here made the marker build a PRODUCTION agent, whose checkpointer is the
+    # on-disk ``src/checkpoints/sqlite.db`` instead of the hermetic
+    # InMemorySaver; that stale namespace already held an
+    # ``interrupted-<thread>-0`` marker, so the idempotency guard skipped the
+    # heal entirely and the transcript never received it. Patch every
+    # resolution target the call could land on; all of it is monkeypatch-scoped.
+    _core_candidates = (
+        agent_core,
+        sys.modules.get("agent.core"),
+        getattr(sys.modules.get("agent"), "core", None),
+    )
+    for _core_module in _core_candidates:
+        if _core_module is not None:
+            monkeypatch.setattr(_core_module, "built_agent", _fake_built_agent, raising=False)
 
     tracked: dict[str, Any] = {}
 
@@ -392,7 +429,8 @@ async def test_ac1_reply_binding_message_sequence(e2e_env):
         lambda: _no_active_rows(e2e_env.user_queue, sid),
         what="all queue rows terminal (Q1 VOIDED, Q2 DELIVERED)",
     )
-    await _wait_until(lambda: tr._DRAIN_TASKS == {}, what="drain loop finished")
+    await _wait_until(lambda: "e2e-ac1" not in tr._DRAIN_TASKS, what="drain loop finished")
+    assert tr._DRAIN_TASKS == {}
 
     assert len(model.received) == 2
     transcript = model.received[1]
