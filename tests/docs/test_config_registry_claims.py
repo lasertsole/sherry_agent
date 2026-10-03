@@ -74,7 +74,7 @@ def test_the_contract_coverage_claim_matches_the_test_file():
     covered = {name for name, *_rest in cases} | {"GATEWAY"}
     omitted = sorted(name for name in dir(infra_side) if name.isupper() and name not in covered)
 
-    expected_covered = 18
+    expected_covered = 19
     assert len(covered) == expected_covered, "contract coverage changed; update the docs claim"
     for doc in _GROUP:
         text = doc.read_text(encoding="utf-8")

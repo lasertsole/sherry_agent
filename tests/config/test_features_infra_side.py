@@ -10,6 +10,7 @@ Covers ``config/features/infra_side/``:
 import pytest
 
 from config.features import infra_side as fs
+from config.features.infra_side.auth import build_auth
 from config.features.infra_side.gateway import _build_gateway
 
 pytestmark = [pytest.mark.unit]
@@ -17,6 +18,26 @@ pytestmark = [pytest.mark.unit]
 # (name, instance, TypedDict, spot-checked defaults; GATEWAY is env-sourced and
 # exercised by the dedicated builder tests instead).
 CASES: list[tuple[str, object, object, dict[str, object]]] = [
+    (
+        "AUTH",
+        fs.AUTH,
+        fs.AuthConfig,
+        {
+            # Shipped defaults: protection off, loopback exempt, HS256, 12h/7d.
+            "enabled": False,
+            "require_auth_non_loopback": True,
+            "session_ttl_seconds": 43200,
+            "refresh_ttl_seconds": 604800,
+            "jwt_algorithm": "HS256",
+            "jwt_secret": "",
+            "cookie_name": "sherry_session",
+            "refresh_cookie_name": "sherry_refresh",
+            "refresh_cookie_path": "/auth/refresh",
+            "cookie_samesite": "strict",
+            "scrypt_n": 16384,
+            "min_password_length": 8,
+        },
+    ),
     ("BUS", fs.BUS, fs.BusConfig, {"queue_maxsize": 1000}),
     (
         "HTTP_UPLOAD",
@@ -210,9 +231,10 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
 
 
 def test_all_features_present() -> None:
-    # 17 data-driven cases plus GATEWAY, which is env-sourced and covered by
-    # the dedicated builder tests below.
-    assert len(CASES) + 1 == 18
+    # 18 data-driven cases plus GATEWAY, which is env-sourced and covered by
+    # the dedicated builder tests below. Pin the count so a new feature object
+    # cannot land without a case here (and without the docs claim moving).
+    assert len(CASES) + 1 == 19
 
 
 @pytest.mark.parametrize(("name", "instance", "typed_dict", "_specimen"), CASES)
@@ -240,6 +262,34 @@ class TestGatewayBuilder:
     def test_empty_env_uses_loopback_defaults(self) -> None:
         built = _build_gateway({})
         assert (built["api_host"], built["api_port"]) == ("127.0.0.1", 8080)
+
+    def test_auth_env_injection(self) -> None:
+        built = build_auth(
+            {
+                "SHERRY_AUTH_ENABLED": "true",
+                "SHERRY_AUTH_REQUIRE_NON_LOOPBACK": "0",
+                "SHERRY_AUTH_SESSION_TTL": "3600",
+                "SHERRY_AUTH_SECRET": "s3cret",
+                "SHERRY_AUTH_COOKIE_SECURE": "yes",
+            }
+        )
+        assert built["enabled"] is True
+        assert built["require_auth_non_loopback"] is False
+        assert built["session_ttl_seconds"] == 3600
+        assert built["jwt_secret"] == "s3cret"
+        assert built["cookie_secure"] is True
+        # The hashing parameters are not env-tunable on purpose.
+        assert built["scrypt_n"] == 16384
+
+    def test_auth_defaults_off_without_env(self) -> None:
+        built = build_auth({})
+        assert built["enabled"] is False
+        assert built["jwt_secret"] == ""
+        assert built["jwt_algorithm"] == "HS256"
+
+    def test_auth_ignores_a_malformed_ttl(self) -> None:
+        built = build_auth({"SHERRY_AUTH_SESSION_TTL": "not-a-number"})
+        assert built["session_ttl_seconds"] == 43200
 
     def test_gateway_keys_match_annotations(self) -> None:
         assert set(fs.GATEWAY) == set(fs.GatewayConfig.__annotations__)
