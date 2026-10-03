@@ -12,10 +12,14 @@ import sys
 
 import pytest
 
-# The child process imports the whole server (~55 s on an idle machine, and far
-# more when the box is loaded); the inner subprocess timeout is the real bound, so
-# this marker only has to be loose enough not to kill the test mid-import.
-pytestmark = [pytest.mark.integration, pytest.mark.timeout(300)]
+# The child process imports the whole server: measured 28-49 s on an idle box and
+# several minutes under load, so the marker only has to be looser than the inner
+# bound (which is the real, bounded failure) — a tighter marker fired mid-import
+# and killed the whole group run.
+pytestmark = [pytest.mark.integration, pytest.mark.timeout(900)]
+
+#: Seconds a child gets to import the server before the test fails (bounded).
+_CHILD_TIMEOUT_S = 600
 
 _REPO_ROOT = os.path.dirname(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -28,7 +32,7 @@ def _run(code: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         cwd=_REPO_ROOT,
-        timeout=120,
+        timeout=_CHILD_TIMEOUT_S,
     )
     assert result.returncode == 0, result.stderr
     return result
