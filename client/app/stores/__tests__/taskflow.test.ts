@@ -69,7 +69,7 @@ describe('stores/taskflow', () => {
     store.subscribe();
     updatedHandler = mittMocks.on.mock.calls.find(c => c[0] === 'ws:taskflow_updated')?.[1] as
       ((payload: unknown) => void) | undefined;
-    reconnectedHandler = mittMocks.on.mock.calls.find(c => c[0] === 'ws:reconnected')?.[1] as (() => void) | undefined;
+    reconnectedHandler = mittMocks.on.mock.calls.find(c => c[0] === 'ws:connected')?.[1] as (() => void) | undefined;
   });
 
   it('registers its listeners exactly once', () => {
@@ -123,7 +123,7 @@ describe('stores/taskflow', () => {
     expect(mittMocks.emit).not.toHaveBeenCalled();
   });
 
-  it('init() pulls a snapshot and a reconnect re-sends the refresh', () => {
+  it('init() pulls a snapshot, and every socket open re-sends the refresh', () => {
     store.init('sid-r');
     expect(mittMocks.emit).toHaveBeenCalledWith('ws:send', {
       event: 'taskflow_refresh',

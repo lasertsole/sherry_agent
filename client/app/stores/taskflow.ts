@@ -96,7 +96,9 @@ export const useTaskflowStore = defineStore('taskflow', () => {
     subscribed.value = true;
     on('ws:taskflow_updated', setPayload);
     // The backend pushes nothing spontaneously after a reconnect: ask for a snapshot.
-    on('ws:reconnected', () => {
+    // `ws:connected` (not `ws:reconnected`): it fires on EVERY socket open, so a
+    // fresh page load recovers the board too, not just a reconnect.
+    on('ws:connected', () => {
       refresh();
     });
   }

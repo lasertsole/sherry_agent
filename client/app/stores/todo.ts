@@ -114,8 +114,10 @@ export const useTodoStore = defineStore('todo', () => {
       setTodos(Array.isArray(list) ? (list as Todo[]) : []);
     });
 
-    // The backend re-sends nothing proactively after a reconnect; ask for a snapshot.
-    on('ws:reconnected', () => {
+    // The backend re-sends nothing proactively on a new socket; ask for a snapshot.
+    // `ws:connected` fires on EVERY open (first load included), `ws:reconnected`
+    // only on a reconnect — the todo dock must be right after a page reload too.
+    on('ws:connected', () => {
       refreshTodos();
     });
   }

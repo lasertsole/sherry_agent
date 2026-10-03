@@ -39,7 +39,7 @@ describe('stores/todo', () => {
     store.subscribe();
     todoUpdatedHandler = mittMocks.on.mock.calls.find(c => c[0] === 'ws:todo_updated')?.[1] as
       ((payload: unknown) => void) | undefined;
-    reconnectedHandler = mittMocks.on.mock.calls.find(c => c[0] === 'ws:reconnected')?.[1] as (() => void) | undefined;
+    reconnectedHandler = mittMocks.on.mock.calls.find(c => c[0] === 'ws:connected')?.[1] as (() => void) | undefined;
     window.history.replaceState({}, '', '/');
   });
 
@@ -56,7 +56,7 @@ describe('stores/todo', () => {
     store.subscribe();
     store.subscribe();
     expect(mittMocks.on.mock.calls.filter(c => c[0] === 'ws:todo_updated')).toHaveLength(1);
-    expect(mittMocks.on.mock.calls.filter(c => c[0] === 'ws:reconnected')).toHaveLength(1);
+    expect(mittMocks.on.mock.calls.filter(c => c[0] === 'ws:connected')).toHaveLength(1);
     expect(todoUpdatedHandler).toBeTypeOf('function');
     expect(reconnectedHandler).toBeTypeOf('function');
   });
@@ -139,7 +139,7 @@ describe('stores/todo', () => {
     expect(store.currentSid).toBe('sid-9');
   });
 
-  it('init() pulls a snapshot for the session; a reconnect re-sends the refresh', () => {
+  it('init() pulls a snapshot for the session; every socket open re-sends the refresh', () => {
     store.init('sid-r');
     expect(mittMocks.emit).toHaveBeenCalledWith('ws:send', {
       event: 'todo_refresh',
