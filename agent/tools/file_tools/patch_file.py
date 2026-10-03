@@ -7,10 +7,19 @@ exact → line_trimmed → whitespace_normalized → indentation_flexible
 Each strategy is tried in order; the first match wins.  When a non-exact
 strategy matches, ``new_string`` is re-indented to preserve the file's
 actual indentation pattern.
+
+Concurrency contract: the read → match → write cycle runs under
+``file_write_lock`` (in-process per-path lock, then the cross-process ``flock``)
+and carries a two-layer CAS: the file must still match the fingerprint taken at
+read time (mtime+size, with a content-hash exemption so a no-op touch is not a
+conflict), and the atomic write re-asserts the revision immediately before the
+replace. A file changed by anyone else is REFUSED with a "re-read and retry"
+error — never silently overwritten, which is what used to happen when two
+agents patched one file and both reported success.
 """
 
+import hashlib
 import json
-import os
 import difflib
 from typing import Annotated, override
 from difflib import SequenceMatcher
@@ -20,14 +29,19 @@ from runtime.session.project_dir import current_project_dir
 from langchain_core.tools import BaseTool
 from langgraph.prebuilt.tool_node import InjectedState
 from agent.tools.pub_base import (
+    FileBusyError,
     PathOutOfBoundsError,
+    StaleWriteError,
     _extract_session_id,
-    _open_no_follow,
+    atomic_write_text_no_follow,
     display_path,
+    file_write_lock,
+    fuzzy_find_and_replace,
+    read_bytes_no_follow,
     resolve_external_path,
     resolve_workspace_path,
+    revision_id,
     safe_error_detail,
-    fuzzy_find_and_replace,
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
 
@@ -146,54 +160,87 @@ class PatchFileTool(BaseTool):
             )
 
         try:
-            fd = _open_no_follow(resolved, os.O_RDONLY)
-            try:
-                with os.fdopen(fd, "r", encoding="utf-8") as f:
-                    fd = -1
-                    content = f.read()
-            finally:
-                if fd >= 0:
-                    os.close(fd)
-        except Exception as e:
-            return json.dumps(
-                {"error": f"Failed to read file: {safe_error_detail(e)}"}, ensure_ascii=False
-            )
+            # One writer per path at a time (in-process and cross-process), so the
+            # read → replace → write cycle below cannot interleave with another
+            # agent's patch of the same file.
+            with file_write_lock(resolved):
+                read_raw, read_stat = read_bytes_no_follow(resolved)
+                content = read_raw.decode("utf-8")
+                if content.startswith("\ufeff"):
+                    content = content[1:]
 
-        if content.startswith("\ufeff"):
-            content = content[1:]
+                new_content, match_count, strategy, error = fuzzy_find_and_replace(
+                    content,
+                    old_string,
+                    new_string,
+                    replace_all,
+                )
 
-        new_content, match_count, strategy, error = fuzzy_find_and_replace(
-            content,
-            old_string,
-            new_string,
-            replace_all,
-        )
+                if error or match_count == 0:
+                    hint = ""
+                    if error and error.startswith("Could not find"):
+                        closest = _find_closest_lines(old_string, content)
+                        if closest:
+                            hint = f"\n\nDid you mean one of these sections?\n{closest}"
+                    return json.dumps(
+                        {
+                            "error": (error or "No match found") + hint,
+                            "path": display_path(resolved, root),
+                            "strategy": strategy,
+                        },
+                        ensure_ascii=False,
+                    )
 
-        if error or match_count == 0:
-            hint = ""
-            if error and error.startswith("Could not find"):
-                closest = _find_closest_lines(old_string, content)
-                if closest:
-                    hint = f"\n\nDid you mean one of these sections?\n{closest}"
+                # Layer 1 of the CAS: the file must still be the one we read.
+                # mtime+size first (cheap); a content hash exempts the case where
+                # they moved but the bytes are identical (touch / formatter no-op).
+                check_raw, check_stat = read_bytes_no_follow(resolved)
+                if (check_stat.st_mtime_ns, check_stat.st_size) != (
+                    read_stat.st_mtime_ns,
+                    read_stat.st_size,
+                ) and hashlib.sha256(check_raw).digest() != hashlib.sha256(read_raw).digest():
+                    return json.dumps(
+                        {
+                            "error": (
+                                "File changed on disk since it was read "
+                                "(another writer touched it)."
+                            ),
+                            "path": display_path(resolved, root),
+                            "hint": "Re-read the file and re-apply the patch.",
+                        },
+                        ensure_ascii=False,
+                    )
+
+                # Layer 2: the atomic write re-asserts the revision right before
+                # the replace, closing the window between the check above and it.
+                atomic_write_text_no_follow(
+                    resolved,
+                    new_content,
+                    expected_revision=revision_id(check_stat),
+                )
+        except StaleWriteError:
             return json.dumps(
                 {
-                    "error": (error or "No match found") + hint,
+                    "error": "File changed on disk since it was read (another writer touched it).",
                     "path": display_path(resolved, root),
-                    "strategy": strategy,
+                    "hint": "Re-read the file and re-apply the patch.",
                 },
                 ensure_ascii=False,
             )
-
-        try:
-            fd = _open_no_follow(resolved, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
-            try:
-                with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-                    fd = -1
-                    f.write(new_content)
-            finally:
-                if fd >= 0:
-                    os.close(fd)
-        except Exception as e:
+        except FileBusyError as e:
+            return json.dumps(
+                {
+                    "error": str(e),
+                    "path": display_path(resolved, root),
+                    "hint": "Another process is writing this file; retry shortly.",
+                },
+                ensure_ascii=False,
+            )
+        except UnicodeDecodeError as e:
+            return json.dumps(
+                {"error": f"Failed to read file: {safe_error_detail(e)}"}, ensure_ascii=False
+            )
+        except OSError as e:
             return json.dumps(
                 {"error": f"Failed to write file: {safe_error_detail(e)}"}, ensure_ascii=False
             )

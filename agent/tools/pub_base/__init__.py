@@ -13,6 +13,15 @@ from .path_utils import (
     PathOutOfBoundsError,
 )
 from .file_utils import SKIP_DIR_NAMES, is_text_file, should_skip_dir
+from .atomic_write import (
+    StaleWriteError,
+    atomic_write_text_no_follow,
+    file_revision,
+    read_bytes_no_follow,
+    revision_id,
+)
+from .path_lock import active_path_locks, path_lock
+from .file_lock import FileBusyError, cross_process_lock, file_write_lock, lock_path_for
 from .text_matcher import fuzzy_find_and_replace, format_no_match_hint
 from .skill_usage import bump_patch, forget, mark_agent_created
 from .skill_provenance import is_background_review
@@ -45,6 +54,17 @@ __all__ = [
     "SKIP_DIR_NAMES",
     "is_text_file",
     "should_skip_dir",
+    "StaleWriteError",
+    "atomic_write_text_no_follow",
+    "file_revision",
+    "read_bytes_no_follow",
+    "revision_id",
+    "active_path_locks",
+    "path_lock",
+    "FileBusyError",
+    "cross_process_lock",
+    "file_write_lock",
+    "lock_path_for",
     "fuzzy_find_and_replace",
     "format_no_match_hint",
     "bump_patch",

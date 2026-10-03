@@ -41,17 +41,7 @@ from pydantic import BaseModel, Field
 from typing import Any, Literal, override
 
 from agent.tools.pub_base.tool_utils import tool_error as _tool_error
-
-# fcntl is Unix-only; on Windows use msvcrt for file locking
-msvcrt = None
-try:
-    import fcntl
-except ImportError:
-    fcntl = None
-    try:
-        import msvcrt
-    except ImportError:  # noqa: S110
-        pass
+from agent.tools.pub_base.file_lock import flock_path
 
 ENTRY_DELIMITER = "\n§\n"
 # Subset of invisible chars for injection detection
@@ -194,36 +184,13 @@ class MemoryStore:
         """Acquire an exclusive file lock for read-modify-write safety.
 
         Uses a separate .lock file so the memory file itself can still be
-        atomically replaced via os.replace().
+        atomically replaced via os.replace(). The locking primitive (fcntl /
+        msvcrt, kernel-released on process death) is the shared one in
+        ``agent.tools.pub_base.file_lock`` — this site blocks indefinitely, its
+        historical behaviour.
         """
-        lock_path = path.with_suffix(path.suffix + ".lock")
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-        if fcntl is None and msvcrt is None:
+        with flock_path(path.with_suffix(path.suffix + ".lock"), timeout_s=None):
             yield
-            return
-
-        if msvcrt and (not lock_path.exists() or lock_path.stat().st_size == 0):
-            lock_path.write_text(" ", encoding="utf-8")
-
-        fd = open(lock_path, "r+" if msvcrt else "a+", encoding="utf-8")
-        try:
-            if fcntl:
-                fcntl.flock(fd, fcntl.LOCK_EX)
-            else:
-                fd.seek(0)
-                msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
-            yield
-        finally:
-            if fcntl:
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            elif msvcrt:
-                try:
-                    fd.seek(0)
-                    msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-                except OSError as e:
-                    logger.debug("msvcrt unlock failed for {}: {}", lock_path, e)
-            fd.close()
 
     @staticmethod
     def _path_for(target: str) -> Path:

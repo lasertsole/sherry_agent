@@ -308,3 +308,19 @@ def resolve_approval_store_path() -> Path:
     if override:
         return Path(override).expanduser()
     return SRC_DIR / "data" / "approvals.json"
+
+
+def file_locks_dir() -> Path:
+    """Return the cross-process file-lock directory (``SRC_DIR/data/locks``).
+
+    The file tools' advisory ``flock`` files live here — one per canonical
+    target path — instead of beside the sources, so a project tree never gains
+    lock-file litter. ``SRC_DIR`` is read at call time (tests repoint it), and
+    ``SHERRY_FILE_LOCKS_DIR`` overrides the location outright (tests need a
+    scratch directory per case). The lock helper creates the directory on
+    demand; nothing needs to pre-create it.
+    """
+    override = os.environ.get("SHERRY_FILE_LOCKS_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return SRC_DIR / "data" / "locks"

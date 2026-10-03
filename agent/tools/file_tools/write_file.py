@@ -1,6 +1,16 @@
-"""write file tool with project root restriction and autopep8 formatting for .py files."""
+"""write file tool with project root restriction and autopep8 formatting for .py files.
+
+Concurrency contract: the main agent and every subagent share one process and
+one tool instance, so two writers can target the same file at once. Every write
+runs under ``file_write_lock`` (in-process per-path lock, then the cross-process
+``flock``) and lands through ``atomic_write_text_no_follow`` — a reader sees the
+old content or the new content, never a torn file, and a crash mid-write cannot
+truncate the target. This tool does NOT read first (a blind overwrite has no
+revision to check), so its conflicts are serialized rather than refused; a busy
+cross-process lock answers with an actionable error instead of writing anyway."""
 
 import asyncio
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -15,10 +25,15 @@ from langchain_community.tools.file_management.write import WriteFileInput
 from langgraph.prebuilt.tool_node import InjectedState
 
 from agent.tools.pub_base import (
+    FileBusyError,
     PathOutOfBoundsError,
+    StaleWriteError,
     _extract_session_id,
     _open_no_follow,
+    atomic_write_text_no_follow,
     display_path,
+    file_write_lock,
+    read_bytes_no_follow,
     resolve_external_path,
     resolve_workspace_path,
     safe_error_detail,
@@ -58,18 +73,6 @@ def _write_text_no_follow(resolved: Path, text: str, append: bool) -> None:
             os.close(fd)
 
 
-def _read_text_no_follow(resolved: Path) -> str:
-    """Read text through ``_open_no_follow`` (used by the .py append+format flow)."""
-    fd = _open_no_follow(resolved, os.O_RDONLY)
-    try:
-        with os.fdopen(fd, "r", encoding="utf-8") as f:
-            fd = -1
-            return f.read()
-    finally:
-        if fd >= 0:
-            os.close(fd)
-
-
 class FormattedWriteFileTool(WriteFileTool):
     """WriteFileTool that auto-formats .py files with autopep8."""
 
@@ -99,13 +102,40 @@ class FormattedWriteFileTool(WriteFileTool):
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
             is_py = resolved.suffix == ".py"
-            if is_py and append:
-                # Append first, then format the entire file
-                _write_text_no_follow(resolved, text, append=True)
-                formatted = _format_py_code(_read_text_no_follow(resolved))
-                _write_text_no_follow(resolved, formatted, append=False)
-            else:
-                _write_text_no_follow(resolved, _format_py_code(text) if is_py else text, append)
+            # One writer per path at a time: in-process (other agents) and
+            # cross-process (a second Sherry process on the same project root).
+            with file_write_lock(resolved):
+                if is_py and append:
+                    # Append then format the WHOLE file: one atomic write of the
+                    # reformatted result instead of the old append+rewrite pair.
+                    existing = ""
+                    with contextlib.suppress(FileNotFoundError):
+                        existing = read_bytes_no_follow(resolved)[0].decode("utf-8")
+                    atomic_write_text_no_follow(resolved, _format_py_code(existing + text))
+                elif append:
+                    # Plain append keeps O_APPEND semantics (crash-tolerant by
+                    # construction); the lock still serializes its writers.
+                    _write_text_no_follow(resolved, text, append=True)
+                else:
+                    atomic_write_text_no_follow(resolved, _format_py_code(text) if is_py else text)
+        except StaleWriteError:
+            return json.dumps(
+                {
+                    "error": "File changed on disk since it was read.",
+                    "path": display_path(resolved, root),
+                    "hint": "Re-read the file and retry the write.",
+                },
+                ensure_ascii=False,
+            )
+        except FileBusyError as e:
+            return json.dumps(
+                {
+                    "error": str(e),
+                    "path": display_path(resolved, root),
+                    "hint": "Another process is writing this file; retry shortly.",
+                },
+                ensure_ascii=False,
+            )
         except Exception as e:
             return "Error: " + safe_error_detail(e)
 

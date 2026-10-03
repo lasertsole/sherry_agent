@@ -34,18 +34,9 @@ from datetime import datetime, UTC
 from pathlib import Path
 from config import AUTO_SKILLS_DIR
 
-logger = logging.getLogger(__name__)
+from .file_lock import flock_path
 
-# fcntl is Unix-only; on Windows use msvcrt for file locking.
-msvcrt = None
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - platform-specific fallback
-    fcntl = None
-    try:
-        import msvcrt
-    except ImportError:  # noqa: S110
-        pass
+logger = logging.getLogger(__name__)
 
 
 STATE_ACTIVE = "active"
@@ -60,35 +51,15 @@ def _usage_file() -> Path:
 
 @contextmanager
 def _usage_file_lock():
-    """Serialize .usage.json read-modify-write cycles across processes."""
+    """Serialize .usage.json read-modify-write cycles across processes.
+
+    Blocks indefinitely (the historical behaviour); the fcntl/msvcrt primitive
+    itself lives in ``file_lock`` so the two copies this module and
+    ``agent.tools.memory`` used to carry stay single-sourced.
+    """
     lock_path = _usage_file().with_suffix(".json.lock")
-    lock_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if fcntl is None and msvcrt is None:
+    with flock_path(lock_path, timeout_s=None):
         yield
-        return
-
-    if msvcrt and (not lock_path.exists() or lock_path.stat().st_size == 0):
-        lock_path.write_text(" ", encoding="utf-8")
-
-    fd = open(lock_path, "r+" if msvcrt else "a+", encoding="utf-8")
-    try:
-        if fcntl:
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        else:
-            fd.seek(0)
-            msvcrt.locking(fd.fileno(), msvcrt.LK_LOCK, 1)
-        yield
-    finally:
-        if fcntl:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        elif msvcrt:
-            try:
-                fd.seek(0)
-                msvcrt.locking(fd.fileno(), msvcrt.LK_UNLCK, 1)
-            except OSError as e:
-                logger.debug("msvcrt unlock failed for %s: %s", lock_path, e)
-        fd.close()
 
 
 def _archive_dir() -> Path:
