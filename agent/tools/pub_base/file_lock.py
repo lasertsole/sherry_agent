@@ -15,6 +15,12 @@ Limits, stated where the code lives:
   that class of change.
 * **Local filesystems** — flock semantics are unreliable over NFS; this guards
   a local project tree, which is what Sherry's tools write.
+* **Never delete a lock file** — the lock lives on the INODE, so unlinking one
+  (a "stale lock cleanup") lets the next writer create a fresh file and take a
+  lock nobody else is excluding against: measured, both holders then proceed.
+  The 0-byte sidecars that accumulate are inert — they carry no ownership state,
+  which is exactly why a crashed holder can never leave a permanent lock and no
+  dead-owner protocol is needed — so leaving them in place IS the design.
 * Lock files live under ``SRC_DIR/data/locks`` (never next to the sources), one
   per canonical target path.
 """
