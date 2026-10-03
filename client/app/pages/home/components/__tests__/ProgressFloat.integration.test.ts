@@ -118,7 +118,7 @@ describe('ProgressFloat', () => {
     expect(wrapper.get('[data-test="progress-float-waves"]').text()).toContain('2/2');
   });
 
-  it('expands on click and lists both halves: todos and waves', async () => {
+  it('expands on click into ONE box: checklist rows and waves under a single header', async () => {
     const wrapper = await mountFloat();
     handlers().taskflow!(taskflowFrame([makeFlow()]));
     handlers().todo!(todoFrame());
@@ -128,12 +128,47 @@ describe('ProgressFloat', () => {
     await flushPromises();
 
     const panel = wrapper.get('[data-test="progress-float-panel"]');
+    // One header for the whole plan — not one per source.
+    expect(panel.findAll('[data-test="progress-float-header"]')).toHaveLength(1);
+    // 1 completed + 1 in-progress todo, plus the flow's 2/3.
+    expect(panel.get('[data-test="progress-float-header"]').text()).toContain('3/5');
     expect(panel.get('[data-test="progress-float-todos"]').text()).toContain('跑测试');
     expect(panel.findAll('[data-test="progress-todo"]')).toHaveLength(2);
     expect(panel.findAll('[data-test="progress-flow"]')).toHaveLength(1);
     expect(panel.findAll('[data-test="progress-wave"]')).toHaveLength(2);
     expect(panel.findAll('[data-test="progress-step"]')).toHaveLength(3);
     expect(panel.text()).toContain('第二波任务 C');
+  });
+
+  it('shows a flow-linked todo once — inside its wave, never as a second row', async () => {
+    // The agent may mirror a TaskFlow step into the checklist (`flow_id` +
+    // `step_id`). Both halves are the same plan item, so the box must not list
+    // it twice ("任务计划 和 计划清单不是一个东西吗").
+    const wrapper = await mountFloat();
+    handlers().taskflow!(taskflowFrame([makeFlow()]));
+    handlers().todo!({
+      event: 'todo_updated',
+      session_id: 'sid-1',
+      content: {
+        todos: [
+          { content: '第二波任务 C', status: 'in_progress', priority: 'high', flow_id: 'flow-1', step_id: 'c' },
+          { content: '独立的清单项', status: 'pending', priority: 'medium' }
+        ]
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
+    await flushPromises();
+
+    const panel = wrapper.get('[data-test="progress-float-panel"]');
+    // Only the unlinked checklist row renders as a checklist row.
+    expect(panel.findAll('[data-test="progress-todo"]')).toHaveLength(1);
+    expect(panel.get('[data-test="progress-float-todos"]').text()).toContain('独立的清单项');
+    // The mirrored step still appears once, inside its wave.
+    expect(panel.findAll('[data-test="progress-step"]')).toHaveLength(3);
+    // And it is counted once: 2 flow steps done + 1 unlinked todo out of 3 + 1.
+    expect(panel.get('[data-test="progress-float-header"]').text()).toContain('2/4');
   });
 
   it('says "not started" while every step is merely ready', async () => {
@@ -300,7 +335,7 @@ describe('ProgressFloat', () => {
     expect(wrapper.find('[data-test="progress-wave-current"]').exists()).toBe(false);
   });
 
-  it('shows only the todo half when no flow is tracked', async () => {
+  it('shows only the checklist when no flow is tracked', async () => {
     const wrapper = await mountFloat();
     handlers().todo!(todoFrame());
     await flushPromises();

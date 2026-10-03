@@ -182,7 +182,6 @@
     "collapse": "計画の進捗を隠す",
     "summary": "計画 {done}/{total}",
     "waveSummary": "ウェーブ {current}/{total}",
-    "todolist": "ToDo リスト",
     "counts": "{done}/{total}",
     "waveLabel": "第 {index} ウェーブ",
     "current": "進行中",

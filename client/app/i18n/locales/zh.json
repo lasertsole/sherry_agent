@@ -182,7 +182,6 @@
     "collapse": "收起计划进度",
     "summary": "计划 {done}/{total}",
     "waveSummary": "波次 {current}/{total}",
-    "todolist": "待办清单",
     "counts": "{done}/{total}",
     "waveLabel": "第 {index} 波",
     "current": "当前",

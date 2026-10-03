@@ -182,7 +182,6 @@
     "collapse": "계획 진행률 숨기기",
     "summary": "계획 {done}/{total}",
     "waveSummary": "웨이브 {current}/{total}",
-    "todolist": "할 일 목록",
     "counts": "{done}/{total}",
     "waveLabel": "{index}번째 웨이브",
     "current": "진행 중",

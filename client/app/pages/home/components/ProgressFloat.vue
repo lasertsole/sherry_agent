@@ -1,7 +1,8 @@
 <template>
   <!-- Floating progress read-out: top-right of the chat list, collapsed to a pill
-       by default. Both halves are pushed over the WebSocket (todo payloads and
-       taskflow wave payloads), so it needs no polling and no navigation. -->
+       by default. ONE plan from two pushed payloads (the todo rows and the
+       taskflow waves over the WebSocket), so it needs no polling and no
+       navigation. -->
   <div
     v-if="visible"
     data-test="progress-float"
@@ -33,48 +34,54 @@
       v-if="expanded"
       data-test="progress-float-panel"
       class="mt-1.5 w-80 max-h-[60vh] overflow-y-auto rounded-lg border border-solid border-gray-200/80 bg-white/95 p-2.5 text-xs shadow-lg backdrop-blur dark:border-gray-700/80 dark:bg-[#131619]/95">
-      <!-- Todo list (its own pushed payload) -->
-      <section
-        v-if="todoStore.todos.length"
-        data-test="progress-float-todos">
-        <header class="mb-1 flex items-center justify-between text-[11px] font-medium text-gray-500 dark:text-gray-400">
-          <span class="flex items-center gap-1.5">
-            <i
-              class="pi pi-list text-[11px]"
-              aria-hidden="true"></i>
-            {{ t('progressFloat.todolist') }}
-          </span>
-          <span>{{ t('progressFloat.counts', { done: todoStore.doneCount, total: todoStore.todos.length }) }}</span>
-        </header>
-        <ul class="m-0 flex list-none flex-col gap-1 p-0">
-          <li
-            v-for="(todo, index) in todoStore.todos"
-            :key="`${todo.flow_id ?? ''}:${todo.step_id ?? ''}:${index}`"
-            class="flex items-start gap-1.5"
-            :data-test="'progress-todo'">
-            <i
-              :class="['pi mt-0.5 text-[11px]', todoIcon(todo.status)]"
-              :title="t(`progressFloat.status.${todo.status}`)"
-              aria-hidden="true"></i>
-            <span
-              class="min-w-0 flex-1 break-words"
-              :class="isTerminal(todo.status) ? 'text-gray-400 line-through dark:text-gray-500' : ''">
-              {{ todo.content }}
-            </span>
-            <span
-              v-if="todo.flow_id"
-              class="shrink-0 text-[10px] text-gray-400">
-              {{ todo.flow_id }}
-            </span>
-          </li>
-        </ul>
-      </section>
+      <!-- ONE box for ONE plan. The checklist rows and the TaskFlow steps are the
+           same running plan (the backend's plan gate reads todos ∪ open flows), so
+           they share a single header and a single list: a todo that mirrors a
+           rendered step is filtered out and appears once, inside its wave. -->
+      <header
+        class="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
+        data-test="progress-float-header">
+        <i
+          class="pi pi-list text-[11px]"
+          aria-hidden="true"></i>
+        {{ t('progressFloat.summary', { done: planDone, total: planTotal }) }}
+      </header>
 
-      <!-- TaskFlow waves (the taskflow payload) -->
+      <!-- Checklist rows that are not part of a tracked flow -->
+      <ul
+        v-if="planTodos.length"
+        class="m-0 flex list-none flex-col gap-1 p-0"
+        data-test="progress-float-todos">
+        <li
+          v-for="(todo, index) in planTodos"
+          :key="`${todo.flow_id ?? ''}:${todo.step_id ?? ''}:${index}`"
+          class="flex items-start gap-1.5"
+          :data-test="'progress-todo'">
+          <i
+            :class="['pi mt-0.5 text-[11px]', todoIcon(todo.status)]"
+            :title="t(`progressFloat.status.${todo.status}`)"
+            aria-hidden="true"></i>
+          <span
+            class="min-w-0 flex-1 break-words"
+            :class="isTerminal(todo.status) ? 'text-gray-400 line-through dark:text-gray-500' : ''">
+            {{ todo.content }}
+          </span>
+          <span
+            v-if="todo.flow_id"
+            class="shrink-0 text-[10px] text-gray-400">
+            {{ todo.flow_id }}
+          </span>
+        </li>
+      </ul>
+
+      <!-- TaskFlow flows: one caption per flow, then its waves and steps -->
       <section
-        v-for="flow in store.flows"
+        v-for="(flow, flowIndex) in store.flows"
         :key="flow.flow_id"
-        class="mt-2 border-t border-solid border-gray-100 pt-2 first:mt-0 first:border-t-0 first:pt-0 dark:border-gray-800"
+        :class="[
+          'border-solid border-gray-100 dark:border-gray-800',
+          planTodos.length > 0 || flowIndex > 0 ? 'mt-2 border-t pt-2' : 'mt-2'
+        ]"
         :data-test="'progress-flow'">
         <header class="mb-1 flex items-center justify-between text-[11px] font-medium text-gray-500 dark:text-gray-400">
           <span class="flex min-w-0 items-center gap-1.5">
@@ -147,18 +154,49 @@ const { t } = useI18n();
 /** Wave/step progress (taskflow payloads). */
 const store = useTaskflowStore();
 store.subscribe();
-/** The todo list half — a separate pushed payload, shown in the same box. */
+/** The checklist half of the same plan — its own pushed payload. */
 const todoStore = useTodoStore();
 todoStore.subscribe();
 
 /** Collapsed by default: the pill is the resting state (it is an overlay). */
 const expanded = ref(false);
 
-/** Show the box only when one of the two halves has something to report. */
+/** Show the box only when the plan has something to report. */
 const visible = computed(() => store.hasProgress || todoStore.todos.length > 0);
 
-/** Aggregate line inside the pill: steps done across every flow. */
-const summaryText = computed(() => t('progressFloat.summary', { done: store.totals.done, total: store.totals.total }));
+/**
+ * Steps already rendered inside a flow block, keyed `flow:step` — the dedupe set.
+ * A todo carrying the same pair is that step, not a second item.
+ */
+const renderedSteps = computed(() => {
+  const keys = new Set<string>();
+  for (const flow of store.flows) {
+    for (const wave of flow.waves) {
+      for (const step of wave.steps) keys.add(`${flow.flow_id}:${step.step_id}`);
+    }
+  }
+  return keys;
+});
+
+/**
+ * Checklist rows shown on their own: todos that are NOT a rendered flow step
+ * (a linked todo would otherwise appear twice — once here, once in its wave).
+ */
+const planTodos = computed(() =>
+  todoStore.todos.filter(
+    todo => !(todo.flow_id && todo.step_id && renderedSteps.value.has(`${todo.flow_id}:${todo.step_id}`))
+  )
+);
+
+/**
+ * Plan-level numbers: every checklist row plus every flow step, counted once —
+ * the same "todos ∪ open flows" span the backend's plan gate reads.
+ */
+const planDone = computed(() => planTodos.value.filter(todo => isTerminal(todo.status)).length + store.totals.done);
+const planTotal = computed(() => planTodos.value.length + store.totals.total);
+
+/** Aggregate line inside the pill — the same numbers as the expanded header. */
+const summaryText = computed(() => t('progressFloat.summary', { done: planDone.value, total: planTotal.value }));
 
 /** "wave X of Y" for the pill: X = the first wave with open work. */
 /**
@@ -182,11 +220,12 @@ const waveChipLabel = computed(() => {
 });
 
 /**
- * Terminal statuses (mirrors the backend vocabulary).
+ * Terminal statuses across BOTH vocabularies the box renders: flow steps
+ * (done/cancelled/skipped) and checklist rows (completed/cancelled).
  * @param status
  */
 function isTerminal(status: string): boolean {
-  return status === 'done' || status === 'cancelled' || status === 'skipped';
+  return status === 'done' || status === 'completed' || status === 'cancelled' || status === 'skipped';
 }
 
 /**

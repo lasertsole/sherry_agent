@@ -182,7 +182,6 @@
     "collapse": "Hide plan progress",
     "summary": "Plan {done}/{total}",
     "waveSummary": "Wave {current}/{total}",
-    "todolist": "Todo list",
     "counts": "{done}/{total}",
     "waveLabel": "Wave {index}",
     "current": "current",
