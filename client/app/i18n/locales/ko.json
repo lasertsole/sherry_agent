@@ -100,7 +100,38 @@
     "projectFiles": "프로젝트 파일",
     "sessionList": "세션 목록",
     "projectFilesHint": "프로젝트 파일",
-    "projectFilesHintDetail": "팁: 왼쪽 사이드바를 접으면 파일 트리와 채팅 공간이 넓어집니다."
+    "projectFilesHintDetail": "팁: 왼쪽 사이드바를 접으면 파일 트리와 채팅 공간이 넓어집니다.",
+    "account": "계정"
+  },
+  "auth": {
+    "login": {
+      "subtitle": "계속하려면 로그인하세요",
+      "username": "사용자 이름",
+      "password": "비밀번호",
+      "submit": "로그인",
+      "failed": "사용자 이름 또는 비밀번호가 올바르지 않습니다"
+    },
+    "account": {
+      "statusOn": "로그인 보호가 켜져 있습니다",
+      "statusOff": "로그인 보호가 꺼져 있습니다",
+      "scopeHint": "켜면 다른 기기에서의 접속에 로그인이 필요합니다. 이 기기는 항상 면제됩니다.",
+      "setupHint": "사용자 이름과 비밀번호를 설정하면 다른 기기에서 로그인이 필요합니다.",
+      "usernamePlaceholder": "사용자 이름",
+      "passwordPlaceholder": "비밀번호 (8자 이상)",
+      "confirmPlaceholder": "비밀번호 확인",
+      "newUsername": "새 사용자 이름 (선택)",
+      "newPassword": "새 비밀번호 (선택, 8자 이상)",
+      "currentPassword": "현재 비밀번호",
+      "changeHint": "사용자 이름/비밀번호 변경 (현재 비밀번호 필요)",
+      "disableHint": "보호를 끄려면 현재 비밀번호가 필요합니다.",
+      "enableHint": "보호를 다시 켜려면 현재 비밀번호가 필요합니다.",
+      "enable": "로그인 보호 켜기",
+      "disable": "로그인 보호 끄기",
+      "save": "저장",
+      "saved": "저장했습니다",
+      "enabled": "로그인 보호를 켰습니다",
+      "disabled": "로그인 보호를 껐습니다"
+    }
   },
   "todolist": {
     "progress": "{done}/{total} 완료",
@@ -143,7 +174,8 @@
     }
   },
   "rightSidebar": {
-    "fileViewer": "프로젝트 파일"
+    "fileViewer": "프로젝트 파일",
+    "account": "계정"
   },
   "projectFiles": {
     "refresh": "새로 고침",

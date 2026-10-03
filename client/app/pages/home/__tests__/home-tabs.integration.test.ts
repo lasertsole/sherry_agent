@@ -212,6 +212,7 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
       ['pi pi-database', 'memory'],
       ['pi pi-heart', 'heartbeat'],
       ['pi pi-clock', 'cron'],
+      ['pi pi-id-card', 'account'],
       ['puzzle-icon', 'extend']
     ];
     const wrapper = mountHome();

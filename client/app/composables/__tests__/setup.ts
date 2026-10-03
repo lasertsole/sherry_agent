@@ -80,6 +80,30 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
 // page mounts without touching the backend.
 (globalThis as any).get_history_by_turn_page = vi.fn(async () => []);
 
+// `useAuthStore` backs the login guard, the account panel and the WS-ticket
+// preparation. The default fake enforces nothing (`authRequired: false`), so
+// suites that mount pages with sockets mint no tickets and touch no network;
+// the auth-specific suites replace it with the real store.
+(globalThis as any).useAuthStore = vi.fn(() => ({
+  user: null,
+  authRequired: false,
+  authEnabled: false,
+  hasAccount: false,
+  checked: false,
+  busy: false,
+  errorCode: null,
+  errorMessage: null,
+  checkAuthStatus: vi.fn(async () => {}),
+  clearError: vi.fn(),
+  disableAuth: vi.fn(async () => true),
+  enableAuth: vi.fn(async () => true),
+  fetchUser: vi.fn(async () => null),
+  login: vi.fn(async () => true),
+  logout: vi.fn(async () => {}),
+  setupAccount: vi.fn(async () => true),
+  updateAccount: vi.fn(async () => true)
+}));
+
 // Nuxt auto-import used by `ModeSwitch.vue` for dark/light theme.
 (globalThis as any).useColorMode = vi.fn(() => ({
   preference: 'light',

@@ -195,3 +195,72 @@ describe('error-handling strategy: boundary toast decision', () => {
     ).toBe(false);
   });
 });
+
+describe('session handling (cookie login)', () => {
+  it('sends credentials on every transport', async () => {
+    stubFetch({ code: 200 });
+    await fetchApi({ url: '/items', method: 'get' });
+    const [[, options]] = (globalThis as any).$fetch.mock.calls;
+    expect(options.credentials).toBe('include');
+  });
+
+  it('rotates the session once and replays the 401 exactly once', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(Object.assign(new Error('unauthorized'), { response: { status: 401 } }))
+      .mockResolvedValueOnce({ code: 200, data: 'replayed' });
+    (globalThis as any).$fetch = fetchMock;
+    const wire = vi.fn().mockResolvedValue({ ok: true });
+    vi.stubGlobal('fetch', wire);
+
+    const result = await fetchApi({ url: '/protected', method: 'get' });
+
+    expect(result).toEqual({ code: 200, data: 'replayed' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(wire).toHaveBeenCalledTimes(1);
+    expect(wire.mock.calls[0]![0]).toContain('/auth/refresh');
+    expect(wire.mock.calls[0]![1]).toMatchObject({ method: 'POST', credentials: 'include' });
+  });
+
+  it('does not replay when the rotation fails', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('unauthorized'), { response: { status: 401 } }));
+    (globalThis as any).$fetch = fetchMock;
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false }));
+
+    expect(await fetchApi({ url: '/protected', method: 'get' })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never rotates for an auth endpoint (a wrong password is not an expired session)', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('unauthorized'), { response: { status: 401 } }));
+    (globalThis as any).$fetch = fetchMock;
+    const wire = vi.fn();
+    vi.stubGlobal('fetch', wire);
+
+    expect(await fetchApi({ url: '/auth/login', method: 'post', opts: { a: 1 } })).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(wire).not.toHaveBeenCalled();
+  });
+
+  it('shares one rotation between concurrent 401s', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(Object.assign(new Error('unauthorized'), { response: { status: 401 } }));
+    (globalThis as any).$fetch = fetchMock;
+    let resolveWire: (value: unknown) => void = () => {};
+    const wire = vi.fn(() => new Promise(resolve => (resolveWire = resolve)));
+    vi.stubGlobal('fetch', wire);
+
+    const first = fetchApi({ url: '/a', method: 'get' });
+    const second = fetchApi({ url: '/b', method: 'get' });
+    await Promise.resolve();
+    resolveWire({ ok: true });
+    await Promise.all([first, second]);
+
+    expect(wire).toHaveBeenCalledTimes(1);
+  });
+});

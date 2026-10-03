@@ -64,6 +64,55 @@ export function withGatewayToken(url: string): string {
   return `${url}${url.includes('?') ? '&' : '?'}token=${encodeURIComponent(memoryToken)}`;
 }
 
+/**
+ * Auth endpoints must never trigger the refresh-and-replay path: a 401 from
+ * `/auth/login` means "wrong password", and replaying a failed refresh would
+ * loop. Their failures are also rendered by the form, so no generic toast.
+ * @param url
+ */
+function isAuthEndpoint(url: unknown): boolean {
+  return String(url ?? '').startsWith('/auth/');
+}
+
+/**
+ * The HTTP status of an ofetch failure (ofetch exposes it in several shapes).
+ * @param error
+ */
+function failureStatus(error: unknown): number | null {
+  const candidate = error as { status?: number; statusCode?: number; response?: { status?: number } };
+  return candidate?.response?.status ?? candidate?.status ?? candidate?.statusCode ?? null;
+}
+
+/** The in-flight session rotation, shared by every 401 that races it. */
+let sessionRefreshInFlight: Promise<boolean> | null = null;
+
+/**
+ * Rotate the session cookie once, no matter how many callers ask at the same
+ * time. Rotation BURNS the presented refresh token, so a concurrent second
+ * request must join the first rotation instead of starting its own.
+ *
+ * Plain `fetch` (not `$fetch`) on purpose: this is infrastructure underneath the
+ * transport — it must not re-enter retries, toasts or this very 401 path.
+ * @returns True when the backend rotated the session.
+ */
+export async function refreshSessionOnce(): Promise<boolean> {
+  if (sessionRefreshInFlight) return sessionRefreshInFlight;
+  sessionRefreshInFlight = (async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include'
+      });
+      return response.ok;
+    } catch {
+      return false;
+    } finally {
+      sessionRefreshInFlight = null;
+    }
+  })();
+  return sessionRefreshInFlight;
+}
+
 /** One-time removal of the legacy localStorage token left by older builds. */
 function purgeLegacyToken(): void {
   try {
@@ -213,9 +262,12 @@ async function requestBaseApi<T = Response>({
   // outer retryFetch only retries on explicit throws such as missing path parameters, so exceptions
   // are caught here and turned into null; failure info is conveyed by the flags + the unified toast.
   let data: T | null;
-  try {
-    const raw = await $fetch<unknown>(requestURL, {
+  const dispatchOnce = () =>
+    $fetch<unknown>(requestURL, {
       method,
+      // The login session travels in HttpOnly cookies, so every API call has to
+      // opt into sending/storing them (cross-origin in the dev setup).
+      credentials: 'include',
       // The ofetch library auto-detects the request URL; for requests whose url already contains a
       // domain, baseURL is not prepended. The fallback (local backend address when VITE_API_BACK_URL
       // is not configured) is shared with the streaming paths via API_BASE_URL (env.ts).
@@ -281,6 +333,25 @@ async function requestBaseApi<T = Response>({
       }
     });
 
+  try {
+    let raw: unknown;
+    try {
+      raw = await dispatchOnce();
+    } catch (error) {
+      // A 401 means the access cookie expired (or was revoked). Rotate once and
+      // replay ONCE with the fresh cookie — the plan's belt-and-braces path for
+      // when the scheduled refresh did not fire (laptop asleep, clock drift).
+      if (failureStatus(error) === 401 && !isAuthEndpoint(requestURL) && (await refreshSessionOnce())) {
+        networkFailed = false;
+        httpFailed = false;
+        requestFailed = false;
+        lastStatus = null;
+        raw = await dispatchOnce();
+      } else {
+        throw error;
+      }
+    }
+
     // Runtime boundary check: reject payloads that cannot satisfy
     // the Response contract before callers consume them.
     data = isApiPayload<T>(raw) ? raw : null;
@@ -305,6 +376,7 @@ async function requestBaseApi<T = Response>({
   // callbacks never trigger a toast directly, avoiding duplicate toasts from retry:3.
   if (
     import.meta.client &&
+    !isAuthEndpoint(requestURL) &&
     shouldRequestFailureToast({ networkFailed, requestFailed, httpFailed, hasData: data !== null })
   ) {
     sendRequestErrorToast(`${requestURL}${lastStatus !== null ? ` (HTTP ${lastStatus})` : ''}`);
@@ -433,6 +505,8 @@ export async function fetchApiRaw(options: RawFetchOptions): Promise<globalThis.
     method: options.method ?? 'get',
     headers,
     body: options.body,
-    signal: options.signal
+    signal: options.signal,
+    // Same cookie policy as the $fetch transport: the session is a cookie.
+    credentials: 'include'
   });
 }

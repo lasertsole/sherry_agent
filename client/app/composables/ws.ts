@@ -97,7 +97,8 @@ export function useWs(options?: { onReconnect?: () => void }): {
   const channel = new WsConnection({
     // Resolved per connect: the gateway token may only arrive after this
     // channel is constructed, and a reconnect must carry the fresh value.
-    url: () => withGatewayToken(`${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`),
+    url: () => appendWsTicket(withGatewayToken(`${WS_BASE_URL}/sessions/ws?session_id=${SESSION_ID}`)),
+    beforeConnect: prepareWsTicket,
     reconnectDelayMs: RECONNECT_DELAY_MS,
     heartbeat: {
       intervalMs: HEARTBEAT_INTERVAL_MS,
@@ -211,7 +212,8 @@ export function useSubagentWs(options?: { onReconnect?: () => void }): {
   subagentChannel?.dispose();
 
   const channel = new WsConnection({
-    url: () => withGatewayToken(`${WS_BASE_URL}/subagents/ws`),
+    url: () => appendWsTicket(withGatewayToken(`${WS_BASE_URL}/subagents/ws`)),
+    beforeConnect: prepareWsTicket,
     reconnectDelayMs: RECONNECT_DELAY_MS,
     onOpen: () => {
       isConnected.value = true;

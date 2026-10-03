@@ -254,7 +254,10 @@ class SessionAgentSocket implements AgentSocket {
     let ws: WebSocket;
     try {
       void ensureGatewayToken();
-      ws = new WebSocket(withGatewayToken(`${WS_BASE_URL}/sessions/agent/ws`));
+      // Prefetch the login gate's single-use ticket (see composables/ws-ticket.ts);
+      // the URL below spends whatever is cached. Loopback clients need none.
+      void prepareWsTicket();
+      ws = new WebSocket(appendWsTicket(withGatewayToken(`${WS_BASE_URL}/sessions/agent/ws`)));
     } catch {
       this.handleConnectionLoss();
       return;

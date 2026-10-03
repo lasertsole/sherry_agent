@@ -113,7 +113,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   heartbeat: defineAsyncComponent(() => import('./HeartbeatPanel.vue')),
   cron: defineAsyncComponent(() => import('./CronPanel.vue')),
   extend: defineAsyncComponent(() => import('./ExtendPanel.vue')),
-  taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue'))
+  taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue')),
+  account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue'))
 };
 
 /**

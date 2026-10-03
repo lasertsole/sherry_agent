@@ -100,7 +100,38 @@
     "projectFiles": "Project files",
     "sessionList": "Sessions",
     "projectFilesHint": "Project files",
-    "projectFilesHintDetail": "Tip: collapse the left sidebar to give the file tree and the chat more room."
+    "projectFilesHintDetail": "Tip: collapse the left sidebar to give the file tree and the chat more room.",
+    "account": "Account"
+  },
+  "auth": {
+    "login": {
+      "subtitle": "Sign in to continue",
+      "username": "Username",
+      "password": "Password",
+      "submit": "Sign in",
+      "failed": "Wrong username or password"
+    },
+    "account": {
+      "statusOn": "Login protection is on",
+      "statusOff": "Login protection is off",
+      "scopeHint": "Once enabled, access from other machines needs a login; this machine never does.",
+      "setupHint": "Set a username and password to require a login from other machines.",
+      "usernamePlaceholder": "Username",
+      "passwordPlaceholder": "Password (min 8 characters)",
+      "confirmPlaceholder": "Confirm password",
+      "newUsername": "New username (optional)",
+      "newPassword": "New password (optional, min 8 characters)",
+      "currentPassword": "Current password",
+      "changeHint": "Change the username or password (current password required)",
+      "disableHint": "Turning protection off requires the current password.",
+      "enableHint": "Turning protection back on requires the current password.",
+      "enable": "Enable login protection",
+      "disable": "Disable login protection",
+      "save": "Save",
+      "saved": "Saved",
+      "enabled": "Login protection enabled",
+      "disabled": "Login protection disabled"
+    }
   },
   "todolist": {
     "progress": "{done}/{total} done",
@@ -143,7 +174,8 @@
     }
   },
   "rightSidebar": {
-    "fileViewer": "Project files"
+    "fileViewer": "Project files",
+    "account": "Account"
   },
   "projectFiles": {
     "refresh": "Refresh",

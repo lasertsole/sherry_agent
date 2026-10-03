@@ -57,6 +57,10 @@ impl PythonBridge {
         let client = Client::builder()
             .timeout(Duration::from_secs(timeout_secs))
             .pool_max_idle_per_host(10)
+            // The login session is an HttpOnly cookie: without a cookie store
+            // the bridge would drop `Set-Cookie` and every authenticated call
+            // would look anonymous to the backend.
+            .cookie_store(true)
             .build()
             .expect("failed to build reqwest client");
 

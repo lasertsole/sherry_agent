@@ -853,7 +853,7 @@ const toggleLive = () => {
   if (live.value) {
     stopLive();
   } else {
-    startLive();
+    void startLive();
   }
 };
 
@@ -862,7 +862,7 @@ const startLive = () => {
   if (!serverSelectedBucketIsCurrent.value || live.value) return;
   live.value = true;
   wsStatus.value = 'connecting';
-  streamHandle = openLogStream(
+  const handle = openLogStream(
     (frame: LogStreamFrame) => {
       if (frame.event === 'ready') {
         wsStatus.value = 'connected';
@@ -883,6 +883,7 @@ const startLive = () => {
       wsStatus.value = 'idle';
     }
   );
+  streamHandle = handle;
 };
 
 /** Stop the live log stream */

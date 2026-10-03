@@ -57,6 +57,8 @@ export interface WsConnectionOptions {
   onClose?: () => void;
   /** Reconnect tick: invoked just before the new connect attempt. */
   onReconnect?: () => void;
+  /** Awaited before the URL is built (the login gate's single-use WS ticket). */
+  beforeConnect?: () => Promise<void>;
   /** Optional heartbeat (session channel only). */
   heartbeat?: WsHeartbeat;
 }
@@ -111,6 +113,14 @@ export class WsConnection {
     if (this.socketInstance) {
       this.socketInstance.close();
       this.socketInstance = null;
+    }
+
+    // Preparation is fire-and-forget: the URL builder uses the ticket that is
+    // already cached, so the socket opens synchronously (the local drivers and
+    // their tests depend on that). A cold cache self-heals — the preparation
+    // lands while this attempt is being refused, and the reconnect spends it.
+    if (this.options.beforeConnect) {
+      void this.options.beforeConnect().catch(() => {});
     }
 
     const resolvedUrl = typeof this.options.url === 'function' ? this.options.url() : this.options.url;

@@ -38,7 +38,8 @@ export const HOME_TOOLBAR_EVENTS = [
   'cron',
   'logs',
   'notification',
-  'extend'
+  'extend',
+  'account'
 ] as const;
 
 /** One toolbar event of the home shell. */
@@ -72,7 +73,8 @@ export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<st
     cron: () => context.openRightTab('cron'),
     logs: () => context.openRightTab('logs'),
     notification: () => context.openDialog('notification'),
-    extend: () => context.openRightTab('extend')
+    extend: () => context.openRightTab('extend'),
+    account: () => context.openRightTab('account')
   };
   return commands;
 }

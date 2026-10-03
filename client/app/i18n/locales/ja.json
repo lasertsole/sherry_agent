@@ -100,7 +100,38 @@
     "projectFiles": "プロジェクトファイル",
     "sessionList": "セッション一覧",
     "projectFilesHint": "プロジェクトファイル",
-    "projectFilesHintDetail": "ヒント：左サイドバーを折りたたむと、ファイルツリーとチャットに余裕ができます。"
+    "projectFilesHintDetail": "ヒント：左サイドバーを折りたたむと、ファイルツリーとチャットに余裕ができます。",
+    "account": "アカウント"
+  },
+  "auth": {
+    "login": {
+      "subtitle": "続けるにはログインしてください",
+      "username": "ユーザー名",
+      "password": "パスワード",
+      "submit": "ログイン",
+      "failed": "ユーザー名またはパスワードが違います"
+    },
+    "account": {
+      "statusOn": "ログイン保護は有効です",
+      "statusOff": "ログイン保護は無効です",
+      "scopeHint": "有効にすると、他の端末からのアクセスにログインが必要になります（この端末は不要）。",
+      "setupHint": "ユーザー名とパスワードを設定すると、他の端末からのアクセスにログインが必要になります。",
+      "usernamePlaceholder": "ユーザー名",
+      "passwordPlaceholder": "パスワード（8文字以上）",
+      "confirmPlaceholder": "パスワードの確認",
+      "newUsername": "新しいユーザー名（任意）",
+      "newPassword": "新しいパスワード（任意・8文字以上）",
+      "currentPassword": "現在のパスワード",
+      "changeHint": "ユーザー名／パスワードの変更（現在のパスワードが必要）",
+      "disableHint": "保護を解除するには現在のパスワードが必要です。",
+      "enableHint": "保護を再度有効にするには現在のパスワードが必要です。",
+      "enable": "ログイン保護を有効にする",
+      "disable": "ログイン保護を解除する",
+      "save": "保存",
+      "saved": "保存しました",
+      "enabled": "ログイン保護を有効にしました",
+      "disabled": "ログイン保護を解除しました"
+    }
   },
   "todolist": {
     "progress": "{done}/{total} 完了",
@@ -143,7 +174,8 @@
     }
   },
   "rightSidebar": {
-    "fileViewer": "プロジェクトファイル"
+    "fileViewer": "プロジェクトファイル",
+    "account": "アカウント"
   },
   "projectFiles": {
     "refresh": "再読み込み",

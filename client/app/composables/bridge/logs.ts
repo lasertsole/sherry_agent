@@ -90,7 +90,10 @@ export function openLogStream(
   // the handshake can carry it as ?token= (the backend closes token-less
   // sockets — see server/trigger/auth.py).
   void ensureGatewayToken();
-  const url = withGatewayToken(`${WS_BASE_URL}/logs/ws`);
+  // The login gate's single-use ticket: prefetched (no-op for loopback clients)
+  // and appended when one is already cached.
+  void prepareWsTicket();
+  const url = appendWsTicket(withGatewayToken(`${WS_BASE_URL}/logs/ws`));
 
   let socket: WebSocket | null = null;
   let closed = false;

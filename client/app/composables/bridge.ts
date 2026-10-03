@@ -59,6 +59,22 @@ export {
   getHistory
 } from './bridge/session';
 
+// ── Login (auth) ────────────────────────────────────────
+export type { AuthStatus, AuthUser } from './bridge/auth';
+export {
+  AuthRequestError,
+  disableAuthRequest,
+  enableAuthRequest,
+  fetchAuthStatus,
+  fetchMe,
+  fetchWsTicket,
+  loginRequest,
+  logoutRequest,
+  refreshRequest,
+  setupAccountRequest,
+  updateAccountRequest
+} from './bridge/auth';
+
 // ── Project files + system folder picker ────────────────
 export type {
   ProjectTreeEntry,

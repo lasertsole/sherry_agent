@@ -16,7 +16,8 @@ export type RightSidebarPanelKind =
   | 'cron'
   | 'extend'
   | 'taskDetail'
-  | 'fileViewer';
+  | 'fileViewer'
+  | 'account';
 
 /**
  * Width an editor panel is opened with when the sidebar is narrower: those
@@ -27,6 +28,7 @@ export const RIGHT_SIDEBAR_WIDE_PANEL_WIDTH = 640;
 
 /** Kinds whose body is a full editor rather than a viewer. */
 const WIDE_PANEL_KINDS: ReadonlySet<RightSidebarPanelKind> = new Set([
+  'account',
   'skills',
   'systemConfig',
   'persona',
