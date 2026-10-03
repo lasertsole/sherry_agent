@@ -231,6 +231,26 @@ the autouse `isolated_auth_store` fixture — no test may touch the real file.
 codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
 (`requestApi.refreshSessionOnce`, single-flight).
 
+## TaskFlow Progress (`agent/tools/taskflow/waves.py`)
+
+Two reporting views, both pushed (never polled) to the chat's floating progress
+panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
+
+* **Todos** — the existing `todo_updated` push from
+  `agent/tools/todolist/service.py::_push_todo_update`.
+* **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
+  (reporting only: the scheduler still unlocks each step on its own
+  `depends_on`; an unknown dep id is ignored and a cycle lands in a trailing wave
+  flagged `cyclic` instead of looping). Every flow mutation calls
+  `progress_push.push_taskflow_progress(session_id)` — wired into the shared
+  `update_flow_with_conflict_retry` plus create / update_steps / finish / fail /
+  cancel / set_waiting — which sends `{"event":"taskflow_updated", …}` to the
+  session's websocket, best-effort and never raising (a dead socket must not break
+  a tool). A reconnecting client asks for a snapshot with `taskflow_refresh`
+  (handled in `server/trigger/core.py`) and gets the identical payload, so the
+  client has one shape to render (`client/app/stores/taskflow.ts`,
+  `pages/home/components/ProgressFloat.vue`).
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
