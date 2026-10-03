@@ -113,7 +113,7 @@ bwrap
 
 与上面的 L1/L2 沙箱相互独立，文件工具（`read_file`、`write_file`、`patch_file`、`search_files` 等）的每个路径都经过 `agent/tools/pub_base/path_utils.py::resolve_external_path()`，它按顺序执行六层检查：
 
-1. **位于 `ROOT_DIR` 之内** —— 作为安全路径直接返回。
+1. **位于 `ROOT_DIR` 或会话的项目目录之内** —— 作为安全路径直接返回。会话绑定的项目目录（其工具解析所用的根）永远不算“外部”：无论工具经由哪条路径来询问，该目录本身及其下所有文件都不会触发审批。
 2. **YOLO 排除列表** —— 安全地板：`~/.ssh/`、`~/.aws/`、`~/.gnupg/`、`~/.config/gcloud/`、`~/.env`、`~/.gitconfig`、`~/.npmrc`、`~/.pypirc`，可通过 `sherry.jsonc` 的 `yolo_deny_paths` 扩展。命中即在此拒绝，后面的任何一层都无法越过：YOLO 模式、allowlist 命中、子代理授权继承都在此止步。
 3. **YOLO 模式** —— 全局放行，直接返回路径。
 4. **会话 allowlist** —— 精确路径条目与目录条目（以 `/` 结尾，匹配该目录及其全部后代）仅在本会话有效，并由子代理继承。

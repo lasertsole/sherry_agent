@@ -6,6 +6,7 @@ from pathlib import Path
 
 from config import ROOT_DIR
 from config.path import resolve_default_project_dir
+from runtime.session.project_dir import current_project_dir
 from runtime.session.state_keys import StateKey
 
 
@@ -384,7 +385,9 @@ def resolve_external_path(
     """Resolve a path that may be outside ROOT_DIR, gated by HITL approval.
 
     Checks (in order):
-    1. Inside ROOT_DIR → return directly (safe path)
+    1. Inside ROOT_DIR **or inside the session's own project directory** →
+       return directly (safe path: the operator pointed the agent at that
+       directory, so neither it nor anything beneath it is "external")
     2. YOLO deny list → deny (security floor: checked before YOLO and allowlist)
     3. YOLO flag (state_register_db) → return
     4. Session allowlist (exact or directory-prefix match) → return
@@ -405,8 +408,19 @@ def resolve_external_path(
         p = ROOT_DIR / p
     resolved = p.resolve()
 
-    # 1. Inside ROOT_DIR — safe path, no approval
+    # 1a. Inside the repository — safe path, and no state lookup (fast path).
     if resolved == ROOT_DIR or resolved.is_relative_to(ROOT_DIR):
+        return resolved
+
+    # 1b. Inside the session's OWN project directory — the operator pointed the
+    #     agent at that directory, so neither it nor anything beneath it is an
+    #     "external file". Checked here as well as in the tools' first
+    #     resolution (``resolve_workspace_path``) because a caller can arrive
+    #     with the process default as its root (cold mem tier, e.g. right after
+    #     a restart); the selected directory must never prompt whichever route a
+    #     tool takes to ask.
+    project_root = current_project_dir(session_id).resolve()
+    if resolved == project_root or resolved.is_relative_to(project_root):
         return resolved
 
     # 2. YOLO deny list — always enforced, even when YOLO/allowlist would allow
@@ -444,7 +458,7 @@ def resolve_external_path(
         description=(
             f"External file access approval\n"
             f"  Path: {resolved}\n"
-            f"  Project root: {ROOT_DIR}\n"
+            f"  Project root: {project_root}\n"
             f"  Intent: {action_desc or 'unspecified'}\n\n"
             f"Options:\n"
             f"  approve      — allow this file only (session-scoped, inherited by subagents)\n"

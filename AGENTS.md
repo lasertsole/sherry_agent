@@ -162,6 +162,14 @@ it. The prompt gains a `## Current Working Directory` block naming the effective
 root, and marks an unbound session with 未绑定项目目录 instead of quietly
 pointing the model at the sherry checkout.
 
+The external-path HITL gate agrees with that root: `resolve_external_path`'s
+first check is "inside `ROOT_DIR` **or inside the session's project directory**"
+(state lookup only on the non-repo branch, so the repo fast path stays
+state-free). Selecting a project directory therefore exempts it and every child
+path from "external file" approvals — including when a caller arrives with the
+process default as its root (cold mem tier right after a restart) — and the
+approval prompt names the session's root, not the checkout.
+
 File browsing (`GET /project/tree`, `GET /project/file`,
 `server/service/project_files_service.py`) is read-only and hard-refused to the
 session's root: `resolve_within(base, path)` runs the same gate order as the

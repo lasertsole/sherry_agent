@@ -381,6 +381,87 @@ class TestExternalSafeFastPath:
         assert resolved == (ROOT_DIR / "subdir").resolve()
 
 
+class TestSessionProjectDirIsNeverExternal:
+    """The operator-selected project directory is NOT an "external" path.
+
+    The tools resolve against the session root, so an in-project path normally
+    never reaches this gate; it can still arrive here after a caller fell back
+    to the process default (cold mem tier, e.g. right after a restart). The
+    selected directory and everything beneath it must stay exempt whichever
+    route a tool takes to ask — that is the difference between "the folder I
+    chose to work in" and "some file outside my project".
+    """
+
+    @staticmethod
+    def _bind(session_id: str, directory: Path) -> None:
+        from runtime.session.state_register import state_register_mem
+        from runtime.session.state_keys import StateKey
+
+        state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(directory))
+
+    def test_inside_the_bound_directory_never_prompts(self, tmp_path, clean_state, mock_interrupt):
+        project = tmp_path.resolve() / "proj"
+        (project / "sub").mkdir(parents=True)
+        target = project / "sub" / "f.txt"
+        target.write_text("x", encoding="utf-8")
+        self._bind("s-bound", project)
+
+        resolved = resolve_external_path(str(target), session_id="s-bound", action_desc="read file")
+
+        assert resolved == target.resolve()
+        assert mock_interrupt.calls == [], "a file inside the selected project must not prompt"
+
+    def test_the_project_directory_itself_is_safe(self, tmp_path, clean_state, mock_interrupt):
+        project = tmp_path.resolve() / "proj"
+        project.mkdir()
+        self._bind("s-bound", project)
+
+        resolved = resolve_external_path(str(project), session_id="s-bound")
+
+        assert resolved == project.resolve()
+        assert mock_interrupt.calls == []
+
+    def test_child_session_inheriting_the_binding_is_exempt(
+        self, tmp_path, clean_state, mock_interrupt
+    ):
+        project = tmp_path.resolve() / "proj"
+        project.mkdir()
+        target = project / "f.txt"
+        target.write_text("x", encoding="utf-8")
+        # A spawned child persists the inherited binding as its own value.
+        self._bind("agent:main:session:s-bound:sub:1", project)
+
+        resolved = resolve_external_path(str(target), session_id="agent:main:session:s-bound:sub:1")
+
+        assert resolved == target.resolve()
+        assert mock_interrupt.calls == []
+
+    def test_outside_both_roots_still_reaches_the_gate(self, tmp_path, clean_state, mock_interrupt):
+        """The control: a path outside the repository AND the bound project still asks."""
+        project = tmp_path.resolve() / "proj"
+        project.mkdir()
+        self._bind("s-bound", project)
+        unrelated = _external(tmp_path, "elsewhere.txt")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        resolved = resolve_external_path(unrelated, session_id="s-bound")
+
+        assert resolved == Path(unrelated)
+        assert len(mock_interrupt.calls) == 1
+
+    def test_prompt_names_the_session_root(self, tmp_path, clean_state, mock_interrupt):
+        project = tmp_path.resolve() / "proj"
+        project.mkdir()
+        self._bind("s-bound", project)
+        unrelated = _external(tmp_path, "elsewhere.txt")
+        mock_interrupt(response={"decisions": [{"type": "approve"}]})
+
+        resolve_external_path(unrelated, session_id="s-bound", action_desc="read file")
+
+        description = mock_interrupt.calls[0]["action_requests"][0]["description"]
+        assert f"Project root: {project}" in description
+
+
 # ── C. YOLO mechanism ───────────────────────────────────────────────────
 
 

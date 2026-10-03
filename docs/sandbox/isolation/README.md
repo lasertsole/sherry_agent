@@ -113,7 +113,7 @@ A `sandbox=False` call is a deliberate bypass request. In a **main-session** gra
 
 Independent of the L1/L2 sandbox above, file tools (`read_file`, `write_file`, `patch_file`, `search_files`, ...) resolve every path through `agent/tools/pub_base/path_utils.py::resolve_external_path()`, which applies six checks in order:
 
-1. **Inside `ROOT_DIR`** — returned directly as a safe path.
+1. **Inside `ROOT_DIR` or the session's project directory** — returned directly as a safe path. The session's bound project directory (the root its tools resolve against) is never "external": neither it nor anything beneath it raises a prompt, whichever route a tool takes to ask.
 2. **YOLO deny list** — the security floor: `~/.ssh/`, `~/.aws/`, `~/.gnupg/`, `~/.config/gcloud/`, `~/.env`, `~/.gitconfig`, `~/.npmrc`, `~/.pypirc`, extendable via `yolo_deny_paths` in `sherry.jsonc`. A hit is rejected here regardless of what follows: YOLO mode, an allowlist match, and subagent authorization inheritance all stop at this gate.
 3. **YOLO mode** — global allow-all returns the path.
 4. **Session allowlist** — exact-path entries and directory entries (trailing `/`, matching the directory and every descendant) are session-scoped and inherited by subagents.
