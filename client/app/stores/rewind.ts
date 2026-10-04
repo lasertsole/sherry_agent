@@ -42,7 +42,10 @@ export const useRewindStore = defineStore('rewind', () => {
     const target = sid || currentSid.value || resolveSid();
     currentSid.value = target;
     if (!target) return;
-    const state = await fetchRewindState(target);
+    // Fail-open: a failed probe (backend down, a test's stubbed fetch) keeps
+    // the last known verdict instead of leaving an unhandled rejection behind
+    // — the control greys out only when the server explicitly says so.
+    const state = await fetchRewindState(target).catch(() => null);
     if (!state) return;
     canRewind.value = state.can_rewind;
     generation.value = state.branch_generation;

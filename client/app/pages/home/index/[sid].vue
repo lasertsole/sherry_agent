@@ -376,6 +376,9 @@ useErrorCaptured();
 
 // components
 import ChatBox from '../components/ChatBox.vue';
+// Stores are NOT auto-imported (unimport only walks `app/composables`), so
+// every store use in a page/component imports explicitly.
+import { useRewindStore } from '@/stores/rewind';
 import TodoDock from '@/components/chat/TodoDock.vue';
 import { ChatInputBox } from '#components';
 // function

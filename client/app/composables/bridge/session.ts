@@ -537,6 +537,8 @@ export async function fetchRewindState(sessionId: string): Promise<{
   branch_generation: number;
   hidden_ranges: Array<[number, number]>;
 } | null> {
+  // Fail-open by contract: a transport failure is "no verdict", never a throw
+  // — the caller keeps the last known state and the control stays as it was.
   const res = await fetchApiPayload<{
     can_rewind?: boolean;
     branch_generation?: number;
@@ -545,7 +547,7 @@ export async function fetchRewindState(sessionId: string): Promise<{
     url: '/sessions/rewind',
     opts: { session_id: sessionId },
     method: 'get'
-  });
+  }).catch(() => null);
   if (!res || res.can_rewind === undefined) return null;
   const ranges = Array.isArray(res.hidden_ranges)
     ? res.hidden_ranges.filter(
