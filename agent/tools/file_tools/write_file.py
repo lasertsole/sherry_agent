@@ -330,9 +330,15 @@ class FormattedWriteFileTool(WriteFileTool):
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = session_id or _extract_session_id(run_manager)
-        return await asyncio.to_thread(
+        result = await asyncio.to_thread(
             self._core, file_path, text, append, session_id, tool_call_id
         )
+        # The client's revert chip is driven by this frame; best-effort by
+        # contract, so a missing socket or a send error changes nothing here.
+        from .snapshot_push import push_file_changes
+
+        await push_file_changes(session_id)
+        return result
 
 
 def build_write_file_tool() -> WriteFileTool:

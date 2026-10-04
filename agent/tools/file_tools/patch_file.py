@@ -320,8 +320,16 @@ class PatchFileTool(BaseTool):
         tool_call_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
+        import asyncio
+
         session_id = session_id or _extract_session_id(run_manager)
-        return self._core(file_path, old_string, new_string, replace_all, session_id, tool_call_id)
+        result = await asyncio.to_thread(
+            self._core, file_path, old_string, new_string, replace_all, session_id, tool_call_id
+        )
+        from .snapshot_push import push_file_changes
+
+        await push_file_changes(session_id)
+        return result
 
 
 def build_patch_file_tool() -> PatchFileTool:

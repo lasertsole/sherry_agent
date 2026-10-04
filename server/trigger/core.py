@@ -215,6 +215,31 @@ async def taskflow_refresh_processor(
 ws_event_processor_dict["taskflow_refresh"] = taskflow_refresh_processor
 
 
+async def file_changes_refresh_processor(
+    session_id: str, content: str | dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reply to a client ``file_changes_refresh`` frame with the revert state.
+
+    The revert chip's recovery path after a reconnect (and its first load): the
+    reply carries the same payload the push does, so the client renders one
+    shape. Fail-open like the other refreshes.
+    """
+    try:
+        from agent.tools.file_tools.snapshot import file_changes_payload
+
+        return {
+            "event": "file_changes_updated",
+            "session_id": session_id,
+            "content": file_changes_payload(session_id),
+        }
+    except Exception as e:
+        logger.warning(f"file_changes_refresh failed: {e}, session_id={session_id}")
+        return None
+
+
+ws_event_processor_dict["file_changes_refresh"] = file_changes_refresh_processor
+
+
 @app.websocket("/sessions/ws")
 async def ws_handler(websocket: WebSocketAdapter):
     logger.info(f"WebSocket handler started: websocket_id={websocket.id}")
