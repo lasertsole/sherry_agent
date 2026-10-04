@@ -86,7 +86,10 @@ export function useStreamChunks(
       reasoning: '',
       id: allocateTempId(),
       turn_num: turnNum,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      // Live row of a running turn: the bubble renders only its tail while it
+      // grows (see ChatBox.renderedBubbleContent) until the turn settles.
+      streaming: true
     };
     const idx = lastSameTurnIdx(turnNum);
     if (idx >= 0) chatMessages.value.splice(idx + 1, 0, msg);
@@ -139,12 +142,16 @@ export function useStreamChunks(
       if (entry.reasoning) {
         const target = sameTurnTailAi(entry.turnNum) ?? pushAiMessage(entry.sid, entry.turnNum);
         target.reasoning = (target.reasoning ?? '') + entry.text;
+        target.streaming = true;
       } else {
         const tail = sameTurnTailAi(entry.turnNum);
         if (tail) {
           tail.content += entry.text;
+          tail.streaming = true;
         } else {
-          pushAiMessage(entry.sid, entry.turnNum).content = entry.text;
+          const created = pushAiMessage(entry.sid, entry.turnNum);
+          created.content = entry.text;
+          created.streaming = true;
         }
       }
       if (drafts.isDraftTurnActive(entry.turnNum)) {
@@ -311,5 +318,19 @@ export function useStreamChunks(
     if (!changed) chatMessages.value = [...chatMessages.value];
   };
 
-  return { appendStreamChunk, markRunningToolsFailed, flushPendingText };
+  /**
+   * Clear the streaming marker on a turn's AI rows: the answer is final, so the
+   * bubble renders it in full (the tail-only preview exists only to keep the
+   * page alive while chunks arrive).
+   * @param turnNum
+   */
+  const markStreamingFinished = (turnNum: number) => {
+    for (const row of chatMessages.value) {
+      if (row.turn_num === turnNum && row.role === CHAT_ROLE.AI && row.streaming) {
+        row.streaming = false;
+      }
+    }
+  };
+
+  return { appendStreamChunk, markRunningToolsFailed, flushPendingText, markStreamingFinished };
 }

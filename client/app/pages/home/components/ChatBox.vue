@@ -137,9 +137,31 @@
                     :copy-label="t('chatBox.copy')"
                     :copied-label="t('chatBox.copied')"
                     @copy="copyMessage(message)" />
+                  <!-- A streaming row renders only its TAIL while it grows: one
+                       multi-thousand-line row being re-laid-out on every flush starved
+                       the page (menus, timers and fetches froze for tens of seconds on
+                       a 2000-line answer). The settled row renders the full text. -->
+                  <div
+                    v-if="bubbleView(message).truncated"
+                    class="mb-1 text-xs text-[#9CA3AF] dark:text-[#6B7280]">
+                    {{ t('chatBox.streamingTail') }}
+                  </div>
                   <!-- The v-safe-html directive handles markdown rendering + DOMPurify allowlist
                    sanitization internally (app/directives/safeHtml.ts) -->
-                  <div v-safe-html="message.content"></div>
+                  <div v-safe-html="bubbleView(message).text"></div>
+                  <!-- Settled long answer: the body above is a preview; this toggles
+                       the full text (see bubbleView for the measured starvation). -->
+                  <button
+                    v-if="bubbleView(message).collapsed || expandedLongMessages.has(message.id)"
+                    type="button"
+                    class="mt-1 cursor-pointer select-none text-xs text-theme-main hover:underline"
+                    @click="toggleLongMessage(message.id)">
+                    {{
+                      bubbleView(message).collapsed
+                        ? t('chatBox.expandFull', { lines: bubbleView(message).lines })
+                        : t('chatBox.collapseFull')
+                    }}
+                  </button>
                   <ChatMediaAttachments
                     :message="message"
                     :failed-sources="failedImageSources"
@@ -306,8 +328,16 @@ const {
 );
 const { failedImageSources, onImageError } = useChatMedia();
 const { copiedMessageId, canCopyMessage, copyMessage } = useMessageCopy();
-const { expandedToolCards, expandedThinking, expandedCarriers, toggleToolCard, toggleThinking, toggleCarrier } =
-  useChatCardExpansion();
+const {
+  expandedToolCards,
+  expandedThinking,
+  expandedCarriers,
+  expandedLongMessages,
+  toggleToolCard,
+  toggleThinking,
+  toggleCarrier,
+  toggleLongMessage
+} = useChatCardExpansion();
 
 /**
  * Header label of a neutral (injector-origin) card, by the row's `origin`.
@@ -329,6 +359,61 @@ const ORIGIN_LABEL_KEYS: Record<string, string> = {
  * @param message Injected USER row (non-user origin).
  */
 const originLabel = (message: MessageItem): string => t(ORIGIN_LABEL_KEYS[message.origin ?? ''] ?? 'chat.originSystem');
+
+//: What a STREAMING bubble renders at most: the tail's characters and lines.
+const STREAM_TAIL_CHARS = 4000;
+const STREAM_TAIL_LINES = 200;
+//: A settled answer past this size renders a head preview plus an expand control.
+const LONG_MESSAGE_CHARS = 4000;
+const LONG_MESSAGE_PREVIEW_LINES = 20;
+
+/** How a bubble renders one message: the text, and which control it needs. */
+interface BubbleView {
+  /** The markdown source this render shows. */
+  text: string;
+  /** Streaming tail-only preview (shows the 流式 hint line). */
+  truncated: boolean;
+  /** Settled long answer shown collapsed (shows the 展开全文 button). */
+  collapsed: boolean;
+  /** Total line count, for the expand label. */
+  lines: number;
+}
+
+/**
+ * The text a bubble renders for one message.
+ *
+ * Streaming rows render only their TAIL once the answer grows past the cap: the
+ * row is re-laid-out on every flush, and one enormous row starves the page
+ * (measured on a 2000-line answer: menus, timers and fetches all froze for tens
+ * of seconds until the page caught up). Settled rows render a head PREVIEW and
+ * an 展开全文 control instead — the starvation comes from having multi-thousand-
+ * line rows at all, and the window usually holds several of them, so the cap has
+ * to apply after the turn ends too (the same collapse idiom the tool cards and
+ * thinking blocks already use). Nothing is lost either way: `message.content`
+ * keeps the full text (copy button, tooltips, history all read it).
+ * @param message
+ */
+const bubbleView = (message: MessageItem): BubbleView => {
+  const content = message.content;
+  const totalLines = content.split('\n').length;
+  if (message.streaming) {
+    if (content.length <= STREAM_TAIL_CHARS) {
+      return { text: content, truncated: false, collapsed: false, lines: totalLines };
+    }
+    let tail = content.slice(-STREAM_TAIL_CHARS);
+    // Start at a line boundary so the markdown structure of the tail is intact.
+    const firstBreak = tail.indexOf('\n');
+    if (firstBreak >= 0) tail = tail.slice(firstBreak + 1);
+    const lines = tail.split('\n');
+    if (lines.length > STREAM_TAIL_LINES) tail = lines.slice(-STREAM_TAIL_LINES).join('\n');
+    return { text: tail, truncated: true, collapsed: false, lines: totalLines };
+  }
+  if (content.length > LONG_MESSAGE_CHARS && !expandedLongMessages.has(message.id)) {
+    const preview = content.split('\n').slice(0, LONG_MESSAGE_PREVIEW_LINES).join('\n');
+    return { text: preview, truncated: false, collapsed: true, lines: totalLines };
+  }
+  return { text: content, truncated: false, collapsed: false, lines: totalLines };
+};
 
 /**
  * Whether the bubble has anything to draw: text, or media attachments (a user
@@ -407,6 +492,9 @@ defineExpose({ scrollToMessage });
       "userInputMeta": "≈ {n} tokens",
       "scrollBottom": "回到最底部",
       "loadingOlder": "正在加载更早的消息",
+      "streamingTail": "正在流式输出，仅显示末尾内容；本轮结束后显示全文",
+      "expandFull": "展开全文（{lines} 行）",
+      "collapseFull": "收起全文",
       "thinking": "思考过程",
       "toolArgs": "调用参数",
       "toolNoOutput": "无输出",
@@ -424,6 +512,9 @@ defineExpose({ scrollToMessage });
       "userInputMeta": "≈ {n} tokens",
       "scrollBottom": "Scroll to bottom",
       "loadingOlder": "Loading earlier messages",
+      "streamingTail": "Streaming — showing the end only; the full text appears when the turn ends",
+      "expandFull": "Show all {lines} lines",
+      "collapseFull": "Collapse",
       "thinking": "Thinking",
       "toolArgs": "Arguments",
       "toolNoOutput": "No output",
@@ -441,6 +532,9 @@ defineExpose({ scrollToMessage });
       "userInputMeta": "≈ {n} トークン",
       "scrollBottom": "最下部へ戻る",
       "loadingOlder": "以前のメッセージを読み込み中",
+      "streamingTail": "ストリーミング中 — 末尾のみ表示しています。ターン終了後に全文を表示します",
+      "expandFull": "全文を表示（{lines} 行）",
+      "collapseFull": "折りたたむ",
       "thinking": "思考",
       "toolArgs": "引数",
       "toolNoOutput": "出力なし",
@@ -458,6 +552,9 @@ defineExpose({ scrollToMessage });
       "userInputMeta": "≈ {n} 토큰",
       "scrollBottom": "맨 아래로",
       "loadingOlder": "이전 메시지 불러오는 중",
+      "streamingTail": "스트리밍 중 — 끝부분만 표시하며, 턴이 끝나면 전체 내용이 표시됩니다",
+      "expandFull": "전체 보기({lines}줄)",
+      "collapseFull": "접기",
       "thinking": "생각",
       "toolArgs": "인자",
       "toolNoOutput": "출력 없음",

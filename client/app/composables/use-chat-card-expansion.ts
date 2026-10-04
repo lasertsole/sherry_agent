@@ -18,6 +18,15 @@ export function useChatCardExpansion() {
   const expandedThinking = reactive(new Set<number>());
 
   /**
+   * Set of LONG message ids whose full text is shown (collapsed by default).
+   * A settled answer past the size cap renders a head preview plus an
+   * 展开全文 control: one multi-thousand-line row starves the page (measured:
+   * menus, timers and fetches frozen for tens of seconds), and the same
+   * collapse idiom already protects the tool cards and thinking blocks.
+   */
+  const expandedLongMessages = reactive(new Set<number>());
+
+  /**
    * Set of injected-row card ids currently expanded (collapsed by default).
    * The background-task completion carrier and the generic system-message card
    * share it — they are one card, labelled by the row's origin.
@@ -60,12 +69,26 @@ export function useChatCardExpansion() {
     }
   };
 
+  /**
+   * Toggle a long message's full-text view
+   * @param id
+   */
+  const toggleLongMessage = (id: number) => {
+    if (expandedLongMessages.has(id)) {
+      expandedLongMessages.delete(id);
+    } else {
+      expandedLongMessages.add(id);
+    }
+  };
+
   return {
     expandedToolCards,
     expandedThinking,
     expandedCarriers,
+    expandedLongMessages,
     toggleToolCard,
     toggleThinking,
-    toggleCarrier
+    toggleCarrier,
+    toggleLongMessage
   };
 }

@@ -401,3 +401,50 @@ describe('ChatBox scroll-up history hooks (integration, backend mocked)', () => 
     expect(wrapper.emitted('reach-top')).toHaveLength(1);
   });
 });
+
+describe('ChatBox streaming bubble (integration, backend mocked)', () => {
+  it('renders only the tail of a very long streaming answer, then the full text when settled', async () => {
+    // A single multi-thousand-line row re-laid-out on every flush starved the
+    // page (menus, timers and fetches froze for tens of seconds on a 2000-line
+    // answer); while the row streams only its tail is rendered.
+    const head = Array.from({ length: 400 }, (_, i) => `head-${i}`).join('\n');
+    const tailLines = Array.from({ length: 400 }, (_, i) => `tail-${i}`).join('\n');
+    const long = `${head}\n${tailLines}`;
+    const streaming = base({ id: 60, role: CHAT_ROLE.AI, content: long, streaming: true });
+
+    const wrapper = mount(ChatBox, { props: { messages: [streaming] } });
+    // The hint explains the preview, the tail is rendered, the head is not.
+    expect(wrapper.text()).toContain('仅显示末尾内容');
+    expect(wrapper.text()).toContain('tail-399');
+    expect(wrapper.text()).not.toContain('head-0');
+    expect(wrapper.text()).not.toContain('tail-0');
+
+    // The turn settles → the row collapses to a head preview with an expand
+    // control (a window usually holds several multi-thousand-line rows; letting
+    // every settled answer render in full is what starved the page).
+    await wrapper.setProps({ messages: [{ ...streaming, streaming: false }] });
+    expect(wrapper.text()).toContain('head-0');
+    expect(wrapper.text()).not.toContain('tail-0');
+    expect(wrapper.text()).not.toContain('仅显示末尾内容');
+    const expand = wrapper.findAll('button').find(b => b.text().includes('展开全文'));
+    expect(expand).toBeTruthy();
+
+    // Expanding renders the full text; collapsing restores the preview.
+    await expand!.trigger('click');
+    expect(wrapper.text()).toContain('tail-0');
+    const collapse = wrapper.findAll('button').find(b => b.text().includes('收起全文'));
+    expect(collapse).toBeTruthy();
+    await collapse!.trigger('click');
+    expect(wrapper.text()).not.toContain('tail-0');
+  });
+
+  it('leaves a short streaming answer untouched', () => {
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 61, role: CHAT_ROLE.AI, content: 'short answer', streaming: true })]
+      }
+    });
+    expect(wrapper.text()).toContain('short answer');
+    expect(wrapper.text()).not.toContain('仅显示末尾内容');
+  });
+});

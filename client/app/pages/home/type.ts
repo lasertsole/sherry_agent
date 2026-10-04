@@ -66,6 +66,13 @@ export interface MessageItem {
   toolResult?: string;
   /** Model thinking/reasoning process (only set for role=AI; appended chunk by chunk when streaming, written in full at once when backfilling history) */
   reasoning?: string | null;
+  /**
+   * Still being streamed (only true for the live AI row of a running turn; never
+   * set on history rows). The bubble uses it to render only the TAIL of a very
+   * long answer while it streams — one enormous row starves the page — and the
+   * full text once the turn settles.
+   */
+  streaming?: boolean;
   /** Model name (only set for role=AI; from the backend done frame / history row's model_name) */
   modelName?: string;
   /** Input token count (only set for role=AI; from the backend done frame / history row's input_tokens) */

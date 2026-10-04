@@ -93,6 +93,8 @@ export interface ChatStreamDeps {
     markRunningToolsFailed: () => void;
     /** Apply buffered streamed text now (called at every terminal boundary). */
     flushPendingText?: () => void;
+    /** Clear the per-row streaming marker once a turn settles (full render). */
+    markStreamingFinished?: (turnNum: number) => void;
   };
   /** HITL approval slice (approval requests surface through the pending card). */
   hitl: {
@@ -403,6 +405,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     // A paused-for-approval turn sends `hitl_request` INSTEAD of `done`, so its
     // card keeps spinning while the human decides, as intended.
     chunks.flushPendingText?.();
+    chunks.markStreamingFinished?.(turn);
     chunks.markRunningToolsFailed();
     if (hitl.isResumeTurn(turn)) {
       hitl.onTurnFinished(turn);
@@ -438,6 +441,7 @@ export function useChatStream(deps: ChatStreamDeps) {
   const settleStuckTurn = (reason: string) => {
     logUtil.e(`[use-chat-stream] settling a stale busy state: ${reason}`);
     chunks.flushPendingText?.();
+    if (streamingTurn.value !== null) chunks.markStreamingFinished?.(streamingTurn.value);
     chunks.markRunningToolsFailed();
     activeAgentController.value = null;
     isSending.value = false;
@@ -501,6 +505,7 @@ export function useChatStream(deps: ChatStreamDeps) {
   const handleSocketError = (err: unknown) => {
     chunks.flushPendingText?.();
     const turn = streamingTurn.value;
+    if (turn !== null) chunks.markStreamingFinished?.(turn);
     activeAgentController.value = null;
     clearQueueBadgeForTurn(turn);
     const aiMsg = turn === null ? undefined : turnTailAi(turn);
@@ -683,6 +688,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     // Session-level stop: one frame halts the session's generation, and every
     // in-flight send of this session settles as aborted on the shared socket.
     chunks.flushPendingText?.();
+    if (streamingTurn.value !== null) chunks.markStreamingFinished?.(streamingTurn.value);
     void socket.stop();
     activeAgentController.value = null;
     // If a HITL resume stream recovery is in flight, abort that controller as well
