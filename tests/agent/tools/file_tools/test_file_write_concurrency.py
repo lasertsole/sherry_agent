@@ -1,6 +1,6 @@
 """File-tool write concurrency: per-path serialization + the two CAS layers.
 
-What this pins, in the words of the plan (``TODO/实施计划_文件写入并发保护.md``):
+What this pins:
 
 * two writers of one path serialize in-process, so a read-modify-write cycle can
   never lose the other's edit;
