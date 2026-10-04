@@ -20,6 +20,7 @@ from .atomic_write import (
     read_bytes_no_follow,
     revision_id,
 )
+from .read_state import licensed_revision, note_edit, note_overwrite, note_read
 from .path_lock import active_path_locks, path_lock
 from .file_lock import FileBusyError, cross_process_lock, file_write_lock, lock_path_for
 from .text_matcher import fuzzy_find_and_replace, format_no_match_hint
@@ -59,6 +60,10 @@ __all__ = [
     "file_revision",
     "read_bytes_no_follow",
     "revision_id",
+    "licensed_revision",
+    "note_edit",
+    "note_overwrite",
+    "note_read",
     "active_path_locks",
     "path_lock",
     "FileBusyError",

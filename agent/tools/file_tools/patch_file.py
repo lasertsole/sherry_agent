@@ -35,8 +35,10 @@ from agent.tools.pub_base import (
     _extract_session_id,
     atomic_write_text_no_follow,
     display_path,
+    file_revision,
     file_write_lock,
     fuzzy_find_and_replace,
+    note_edit,
     read_bytes_no_follow,
     resolve_external_path,
     resolve_workspace_path,
@@ -218,6 +220,11 @@ class PatchFileTool(BaseTool):
                     new_content,
                     expected_revision=revision_id(check_stat),
                 )
+                # A session that already knew the file advances with its own
+                # delta (see pub_base/read_state.py): the patch does not invent a
+                # license for a session that never read the file, but one that is
+                # held stays valid instead of going stale over this edit.
+                note_edit(session_id, resolved, file_revision(resolved))
         except StaleWriteError:
             return json.dumps(
                 {

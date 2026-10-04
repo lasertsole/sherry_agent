@@ -1,4 +1,12 @@
-"""Read file tool with pagination support (offset + limit) and line numbers."""
+"""Read file tool with pagination support (offset + limit) and line numbers.
+
+Read-before-write contract: a COMPLETE read (the first page, nothing truncated)
+licenses ``write_file`` to overwrite exactly this revision of the file — see
+``agent/tools/pub_base/read_state.py``. The revision is taken from the open
+descriptor's ``fstat``, so it describes the bytes actually read; a partial read
+licenses nothing, and a file that changes afterwards makes the license stale,
+which is what refuses the overwrite.
+"""
 
 import json
 import os
@@ -11,8 +19,10 @@ from agent.tools.pub_base import (
     _extract_session_id,
     _open_no_follow,
     display_path,
+    note_read,
     resolve_external_path,
     resolve_workspace_path,
+    revision_id,
     safe_error_detail,
 )
 from langchain_core.callbacks import CallbackManagerForToolRun
@@ -63,7 +73,10 @@ class ReadFileTool(BaseTool):
     args_schema: type[BaseModel] = ReadFileInput
     description: str = (
         "Read a file with pagination and line numbers. "
-        "Use offset and limit to read specific sections of large files."
+        "Use offset and limit to read specific sections of large files. "
+        "Reading the WHOLE file (first page, nothing truncated) is what allows "
+        "write_file to overwrite it later — write_file refuses to replace a file "
+        "this session has not read."
     )
     metadata: dict = {"idempotent": True}
 
@@ -100,6 +113,10 @@ class ReadFileTool(BaseTool):
         try:
             fd = _open_no_follow(resolved, os.O_RDONLY)
             try:
+                # The revision of exactly the bytes about to be read: same
+                # descriptor, so a writer replacing the path mid-read cannot
+                # license content this call never saw.
+                read_stat = os.fstat(fd)
                 with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
                     fd = -1
                     raw = f.read()
@@ -128,6 +145,11 @@ class ReadFileTool(BaseTool):
 
         numbered_content = _add_line_numbers(page_text, offset) if page_text else ""
         truncated = total_lines > end_line
+
+        if offset == 1 and not truncated:
+            # The whole file is in this response: license an overwrite of this
+            # revision (a partial read licenses nothing).
+            note_read(session_id, resolved, revision_id(read_stat))
 
         result = {
             "content": numbered_content,

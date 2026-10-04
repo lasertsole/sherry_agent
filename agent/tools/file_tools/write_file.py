@@ -5,14 +5,22 @@ one tool instance, so two writers can target the same file at once. Every write
 runs under ``file_write_lock`` (in-process per-path lock, then the cross-process
 ``flock``) and lands through ``atomic_write_text_no_follow`` — a reader sees the
 old content or the new content, never a torn file, and a crash mid-write cannot
-truncate the target. This tool does NOT read first (a blind overwrite has no
-revision to check), so its conflicts are serialized rather than refused; a busy
-cross-process lock answers with an actionable error instead of writing anyway."""
+truncate the target.
+
+Read-before-write contract: overwriting an existing file additionally requires
+that THIS session has read it — a complete ``read_file``, a previous whole-file
+write, or a patch/app rendered against a read — tracked in
+``agent/tools/pub_base/read_state.py``. The license's revision is passed to the
+atomic write as ``expected_revision``, so an edit that landed after the read is
+REFUSED ("re-read and retry") instead of silently destroyed; a file this
+session never read is refused outright. ``append`` does not overwrite, so it
+stays licensed-free."""
 
 import asyncio
 import contextlib
 import json
 import os
+import stat
 from pathlib import Path
 from typing import Annotated, override
 
@@ -32,7 +40,11 @@ from agent.tools.pub_base import (
     _open_no_follow,
     atomic_write_text_no_follow,
     display_path,
+    file_revision,
     file_write_lock,
+    licensed_revision,
+    note_edit,
+    note_overwrite,
     read_bytes_no_follow,
     resolve_external_path,
     resolve_workspace_path,
@@ -60,6 +72,39 @@ def _format_py_code(text: str) -> str:
         return text
 
 
+class UnreadFileError(Exception):
+    """An overwrite of a file this session has no read license for."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"File not read in this session: {path}")
+        self.path = path
+
+
+def _overwrite_precondition(session_id: str, resolved: Path) -> str | None:
+    """The revision an overwrite is licensed against; ``None`` = no precondition.
+
+    Only REGULAR files are gated. A symlinked final component is refused by the
+    write itself (``ELOOP``, the established policy) and a directory fails with
+    its own error, so "read it first" would be nonsense for either. A path that
+    does not exist is licensed as ``absent``, so a create is refused by the
+    atomic write when another writer creates the file first — the same gate a
+    stale license hits.
+    :raises UnreadFileError: The file exists and this session never read it.
+    """
+    try:
+        info = resolved.lstat()
+    except FileNotFoundError:
+        return "absent"
+    except OSError:
+        return None  # unreadable metadata: let the write attempt answer
+    if not stat.S_ISREG(info.st_mode):
+        return None
+    license = licensed_revision(session_id, resolved)
+    if license is None:
+        raise UnreadFileError(resolved)
+    return license
+
+
 def _write_text_no_follow(resolved: Path, text: str, append: bool) -> None:
     """Write text through ``_open_no_follow`` so a symlink final component is refused."""
     flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
@@ -77,6 +122,12 @@ class FormattedWriteFileTool(WriteFileTool):
     """WriteFileTool that auto-formats .py files with autopep8."""
 
     args_schema: type[BaseModel] = FormattedWriteFileInput
+    description: str = (
+        "Write file to disk. Creating a file needs nothing else; overwriting a file "
+        "that already exists requires having read it in this session first "
+        "(read_file) — otherwise the call is refused. Set append=true to add to an "
+        "existing file without overwriting it."
+    )
 
     # ── shared core ────────────────────────────────────────────────────────
 
@@ -112,12 +163,38 @@ class FormattedWriteFileTool(WriteFileTool):
                     with contextlib.suppress(FileNotFoundError):
                         existing = read_bytes_no_follow(resolved)[0].decode("utf-8")
                     atomic_write_text_no_follow(resolved, _format_py_code(existing + text))
+                    note_edit(session_id, resolved, file_revision(resolved))
                 elif append:
                     # Plain append keeps O_APPEND semantics (crash-tolerant by
                     # construction); the lock still serializes its writers.
                     _write_text_no_follow(resolved, text, append=True)
+                    note_edit(session_id, resolved, file_revision(resolved))
                 else:
-                    atomic_write_text_no_follow(resolved, _format_py_code(text) if is_py else text)
+                    try:
+                        license = _overwrite_precondition(session_id, resolved)
+                    except UnreadFileError:
+                        return json.dumps(
+                            {
+                                "error": (
+                                    "File exists but has not been read in this session; "
+                                    "refusing to overwrite content the agent has not seen."
+                                ),
+                                "path": display_path(resolved, root),
+                                "hint": (
+                                    "Read it with read_file first, then write — or use "
+                                    "patch_file for a targeted change."
+                                ),
+                            },
+                            ensure_ascii=False,
+                        )
+                    atomic_write_text_no_follow(
+                        resolved,
+                        _format_py_code(text) if is_py else text,
+                        expected_revision=license,
+                    )
+                    # This session authored the whole file: it knows the revision
+                    # it produced, so the next overwrite is licensed against it.
+                    note_overwrite(session_id, resolved, file_revision(resolved))
         except StaleWriteError:
             return json.dumps(
                 {
