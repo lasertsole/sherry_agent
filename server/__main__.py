@@ -194,6 +194,16 @@ if __name__ == "__main__":
         logger.exception("auth: storage initialization failed; login protection unavailable")
     auth_service.start_blacklist_cleanup()
 
+    # Pre-write file snapshots: a daemon thread trims the index and the blobs.
+    # Like the auth cleanup above it must never block boot or shutdown, and it
+    # is a no-op when FILE_SNAPSHOT["enabled"] is false.
+    try:
+        from agent.tools.file_tools.snapshot_gc import start_file_snapshot_gc
+
+        start_file_snapshot_gc()
+    except Exception:
+        logger.exception("file snapshot GC: could not start; snapshots will accumulate")
+
     # Warm the session project-directory cache: the agent-side readers are
     # mem-only, so an unprimed tier after a restart silently serves the process
     # default (see runtime/session/project_dir.py::prime_mem_from_store).
