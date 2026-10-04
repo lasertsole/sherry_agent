@@ -37,7 +37,13 @@ interface CapturedSend {
 
 const state = vi.hoisted(() => ({
   markRunningToolsFailed: vi.fn(),
-  sends: [] as CapturedSend[]
+  sends: [] as CapturedSend[],
+  // Busy watchdog probe: `active` answers, failNext makes the probe throw.
+  turnState: vi.fn(async () => false)
+}));
+
+vi.mock('~/composables/bridge/session', () => ({
+  fetchTurnState: state.turnState
 }));
 
 vi.mock('../messages', async importOriginal => {
@@ -66,6 +72,7 @@ vi.mock('../messages', async importOriginal => {
 interface Harness {
   stream: ReturnType<typeof useChatStream>;
   socket: AgentSocket;
+  drafts: ChatStreamDeps['drafts'];
   chatMessages: Ref<MessageItem[]>;
   isSending: Ref<boolean>;
   streamingTurn: Ref<number | null>;
@@ -133,6 +140,7 @@ function makeHarness(): Harness {
   return {
     stream: useChatStream(deps),
     socket,
+    drafts: deps.drafts,
     chatMessages,
     isSending,
     streamingTurn,
@@ -144,6 +152,9 @@ function makeHarness(): Harness {
 beforeEach(() => {
   state.sends = [];
   state.markRunningToolsFailed.mockClear();
+  state.turnState.mockReset();
+  state.turnState.mockResolvedValue(false);
+  vi.useRealTimers();
 });
 
 describe('useChatStream queue badges', () => {
@@ -343,5 +354,83 @@ describe('useChatStream queue badges', () => {
       harness.stream.handleQueuedCancelled({ sessionId: 'other', msgId: 'x', ok: true });
       expect(harness.stream.queueBadgeList.value).toHaveLength(0);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Busy-state recovery: the composer must never stay "streaming" after the turn
+// ended. Live bug: a long answer was cut at its output cap, the server sent
+// `done`, the page never cleared isSending, and 停止 + "继续输入消息以排队"
+// stayed on until a manual reload.
+// ---------------------------------------------------------------------------
+describe('useChatStream busy-state recovery', () => {
+  it('releases the composer synchronously on done even when the draft write rejects', async () => {
+    const harness = makeHarness();
+    await harness.stream.handleSend('count to 2000');
+    expect(harness.isSending.value).toBe(true);
+    // A failing Dexie commit must not keep the stop button on (the clear used
+    // to live inside its .then, so a rejected write leaked the busy state).
+    (harness.drafts.commitDraftTurn as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('dexie unavailable'));
+
+    state.sends[0]!.onDone?.({ modelName: 'stub', inputTokens: 1, outputTokens: 1 });
+
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+  });
+
+  it('settles and reloads the history when a done frame arrives without a tracked turn', async () => {
+    const harness = makeHarness();
+    // The page believes it is streaming, but its turn pointer is gone.
+    harness.isSending.value = true;
+    harness.streamingTurn.value = null;
+
+    harness.stream.handleSocketDone({ modelName: 'stub' });
+
+    expect(harness.isSending.value).toBe(false);
+    expect(state.markRunningToolsFailed).toHaveBeenCalled();
+  });
+
+  it('watchdog settles the turn once the server reports it is no longer active', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    await harness.stream.handleSend('long answer');
+    expect(harness.isSending.value).toBe(true);
+
+    // Server says: no turn in flight any more (the terminal frame was lost).
+    state.turnState.mockResolvedValue(false);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(harness.isSending.value).toBe(true); // one reading is not enough
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+    expect(state.turnState).toHaveBeenCalled();
+  });
+
+  it('watchdog never settles while the server still reports an active turn', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    await harness.stream.handleSend('long answer');
+    state.turnState.mockResolvedValue(true);
+
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.streamingTurn.value).toBe(1);
+  });
+
+  it('watchdog ignores probe failures and stops after the turn settles', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    await harness.stream.handleSend('x');
+
+    state.turnState.mockRejectedValue(new Error('offline'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(harness.isSending.value).toBe(true);
+
+    // A normal terminal frame settles the turn and silences the watchdog.
+    state.sends[0]!.onDone?.({ modelName: 'stub' });
+    const callsAfterSettle = state.turnState.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(state.turnState.mock.calls.length).toBe(callsAfterSettle);
   });
 });

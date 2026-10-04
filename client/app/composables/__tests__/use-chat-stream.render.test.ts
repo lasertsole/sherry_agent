@@ -132,7 +132,7 @@ function makeHarness() {
 
   const stream = useChatStream(deps);
   const view = useChatTurnGroups(() => chatMessages.value);
-  return { stream, chatMessages, view, streamingTurn };
+  return { stream, chatMessages, view, streamingTurn, chunks };
 }
 
 /**
@@ -246,5 +246,65 @@ describe('live render of consecutively queued sends', () => {
     const live = harness.view.filteredMessages.value.map(m => [m.role, m.content, m.inputTokens, m.outputTokens]);
     const reloaded = persistedView.filteredMessages.value.map(m => [m.role, m.content, m.inputTokens, m.outputTokens]);
     expect(live).toEqual(reloaded);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Streamed-text coalescing: chunks arriving in one frame are applied once, and
+// the flush boundary keeps tool-card interleaving byte-identical. Live bug this
+// targets: one state update (and one full markdown+DOMPurify re-render) per
+// chunk wedged the page on a 2000-line answer.
+// ---------------------------------------------------------------------------
+describe('streamed text coalescing', () => {
+  it('applies a burst of chunks once, in order, and flushes before a tool card', async () => {
+    const harness = makeHarness();
+    await harness.stream.handleSend('go');
+    const turn = harness.streamingTurn.value!;
+
+    // A burst of text chunks inside one frame — nothing rendered yet…
+    harness.stream.handleSocketChunk('line-1\n', 'text', 's1');
+    harness.stream.handleSocketChunk('line-2\n', 'text', 's1');
+    harness.stream.handleSocketChunk('line-3\n', 'text', 's1');
+    // …then a tool card arrives: it must flush the buffered text FIRST so the
+    // row order stays [AI(text), TOOL], exactly as the per-chunk path produced.
+    harness.stream.handleSocketChunk('terminal', 'tool_start', 's1', { tool_id: 't1' } as never);
+    harness.stream.handleSocketChunk('done', 'tool_result', 's1', {
+      tool_id: 't1',
+      tool_name: 'terminal'
+    } as never);
+
+    const rows = harness.chatMessages.value;
+    const textRow = rows.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turn);
+    const toolIdx = rows.findIndex(m => m.role === CHAT_ROLE.TOOL);
+    const textIdx = rows.indexOf(textRow!);
+    expect(textRow?.content).toBe('line-1\nline-2\nline-3\n');
+    expect(textIdx).toBeLessThan(toolIdx);
+  });
+
+  it('flushes the buffered tail before the turn settles', async () => {
+    const harness = makeHarness();
+    await harness.stream.handleSend('go');
+    const turn = harness.streamingTurn.value!;
+
+    harness.stream.handleSocketChunk('tail-text', 'text', 's1');
+    harness.stream.handleSocketDone({ modelName: 'm' });
+
+    const row = harness.chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turn);
+    expect(row?.content).toBe('tail-text');
+  });
+
+  it('buffers reasoning on its own channel and keeps it out of the body', async () => {
+    const harness = makeHarness();
+    await harness.stream.handleSend('go');
+    const turn = harness.streamingTurn.value!;
+
+    harness.stream.handleSocketChunk('think-1 ', 'reasoning', 's1');
+    harness.stream.handleSocketChunk('think-2', 'reasoning', 's1');
+    harness.stream.handleSocketChunk('answer', 'text', 's1');
+    harness.stream.handleSocketDone({ modelName: 'm' });
+
+    const row = harness.chatMessages.value.find(m => m.role === CHAT_ROLE.AI && m.turn_num === turn);
+    expect(row?.reasoning).toBe('think-1 think-2');
+    expect(row?.content).toBe('answer');
   });
 });

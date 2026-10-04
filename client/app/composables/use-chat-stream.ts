@@ -13,6 +13,10 @@ import type { ChatController } from './messages';
 import type { AgentChunkType, AgentSocket, QueuedAckInfo, QueuedInfo, TurnStartedInfo } from './bridge';
 import type { StreamChunkMeta } from './use-stream-chunks';
 import type { DraftPersistence } from './use-draft-persistence';
+// Explicit import (not an auto-import): the busy watchdog's probe must be
+// mockable from tests via vi.mock on a stable specifier.
+// eslint-disable-next-line @typescript-eslint/no-restricted-imports
+import { fetchTurnState } from '~/composables/bridge/session';
 import { logUtil } from '~/utils/log';
 
 /** One locally-registered send, keyed by its protocol `msg_id`. */
@@ -87,6 +91,8 @@ export interface ChatStreamDeps {
       meta?: StreamChunkMeta
     ) => void;
     markRunningToolsFailed: () => void;
+    /** Apply buffered streamed text now (called at every terminal boundary). */
+    flushPendingText?: () => void;
   };
   /** HITL approval slice (approval requests surface through the pending card). */
   hitl: {
@@ -381,11 +387,22 @@ export function useChatStream(deps: ChatStreamDeps) {
    */
   const handleSocketDone = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => {
     const turn = streamingTurn.value;
-    if (turn === null) return;
+    if (turn === null) {
+      // A terminal frame for a turn this page no longer tracks. While the page
+      // still believes it is streaming, that belief is the stale one: the
+      // server just proved the turn ended, so settle instead of leaving 停止
+      // (and the queue placeholder) on for ever — the bug where a long answer
+      // was cut at its output cap and the composer stayed "busy".
+      if (isSending.value) {
+        settleStuckTurn('done frame without a tracked turn');
+      }
+      return;
+    }
     // The graph stopped streaming, so every tool card still spinning never got
     // its result: close them out (the same marking the abort/error paths use).
     // A paused-for-approval turn sends `hitl_request` INSTEAD of `done`, so its
     // card keeps spinning while the human decides, as intended.
+    chunks.flushPendingText?.();
     chunks.markRunningToolsFailed();
     if (hitl.isResumeTurn(turn)) {
       hitl.onTurnFinished(turn);
@@ -394,14 +411,86 @@ export function useChatStream(deps: ChatStreamDeps) {
     }
     attachDoneMeta(turn, meta);
     clearQueueBadgeForTurn(turn);
-    void drafts.commitDraftTurn(mySid, turn).then(() => {
-      drafts.untrackDraftTurn(mySid, turn);
-      dropSendEntries(turn);
-      activeAgentController.value = null;
-      isSending.value = false;
-      streamingTurn.value = null;
-      void loadSessionHistory(mySid);
-    });
+    // Release the composer SYNCHRONOUSLY: the busy state must not depend on the
+    // draft write, whose failure would otherwise leave the stop button on.
+    activeAgentController.value = null;
+    isSending.value = false;
+    streamingTurn.value = null;
+    void drafts
+      .commitDraftTurn(mySid, turn)
+      .then(() => drafts.untrackDraftTurn(mySid, turn))
+      .catch(e => logUtil.e('[use-chat-stream] commitDraftTurn failed:', e))
+      .finally(() => {
+        dropSendEntries(turn);
+        void loadSessionHistory(mySid);
+      });
+  };
+
+  /**
+   * Reconcile a client that believes it is streaming while the server is done.
+   *
+   * Called when a terminal frame arrives without a tracked turn, and by the
+   * watchdog below when the terminal frame never arrived at all. Refreshing the
+   * history is what actually repairs the bubble: the server persisted the
+   * answer, its token line and the final tool states.
+   * @param reason
+   */
+  const settleStuckTurn = (reason: string) => {
+    logUtil.e(`[use-chat-stream] settling a stale busy state: ${reason}`);
+    chunks.flushPendingText?.();
+    chunks.markRunningToolsFailed();
+    activeAgentController.value = null;
+    isSending.value = false;
+    streamingTurn.value = null;
+    stopBusyWatchdog();
+    void loadSessionHistory(mySid);
+  };
+
+  //: How often the watchdog asks whether the turn is really still running, and
+  //: how long after a send the first check waits (a just-submitted turn may not
+  //: have claimed its queue row yet).
+  const WATCHDOG_INTERVAL_MS = 5_000;
+  const WATCHDOG_GRACE_MS = 4_000;
+  let watchdogTimer: ReturnType<typeof setInterval> | null = null;
+  let busySince = 0;
+  let idleReadings = 0;
+
+  /**
+   * While the composer believes it is streaming, ask the server whether the
+   * turn is still running; two consecutive idle answers settle the state.
+   *
+   * The terminal frame is normally enough — this covers the case where it never
+   * reached this page (socket swap mid-turn, dropped frame), which used to
+   * leave 停止 and the queue placeholder stuck until a reload.
+   */
+  const startBusyWatchdog = () => {
+    if (watchdogTimer !== null) return;
+    busySince = Date.now();
+    idleReadings = 0;
+    watchdogTimer = setInterval(() => {
+      void (async () => {
+        if (!isSending.value) {
+          stopBusyWatchdog();
+          return;
+        }
+        if (Date.now() - busySince < WATCHDOG_GRACE_MS) return;
+        try {
+          const active = await fetchTurnState(mySid);
+          idleReadings = active ? 0 : idleReadings + 1;
+          if (idleReadings >= 2) settleStuckTurn('server reports no active turn');
+        } catch {
+          // A failed probe proves nothing; the next tick retries.
+          idleReadings = 0;
+        }
+      })();
+    }, WATCHDOG_INTERVAL_MS);
+  };
+
+  /** Stop the watchdog (a settled turn no longer needs it). */
+  const stopBusyWatchdog = () => {
+    if (watchdogTimer !== null) clearInterval(watchdogTimer);
+    watchdogTimer = null;
+    idleReadings = 0;
   };
 
   /**
@@ -410,6 +499,7 @@ export function useChatStream(deps: ChatStreamDeps) {
    * @param err
    */
   const handleSocketError = (err: unknown) => {
+    chunks.flushPendingText?.();
     const turn = streamingTurn.value;
     activeAgentController.value = null;
     clearQueueBadgeForTurn(turn);
@@ -429,6 +519,7 @@ export function useChatStream(deps: ChatStreamDeps) {
       else schedulePostInterruptReconcile(mySid);
       isSending.value = false;
       streamingTurn.value = null;
+      stopBusyWatchdog();
       return;
     }
     if (aiMsg) {
@@ -444,6 +535,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     if (isResume) hitl.onTurnError();
     isSending.value = false;
     streamingTurn.value = null;
+    stopBusyWatchdog();
   };
 
   /**
@@ -469,6 +561,7 @@ export function useChatStream(deps: ChatStreamDeps) {
       clearTimeout(postInterruptTimer);
       postInterruptTimer = null;
     }
+    stopBusyWatchdog();
   });
 
   /**
@@ -543,6 +636,8 @@ export function useChatStream(deps: ChatStreamDeps) {
     const wasSending = isSending.value;
     isSending.value = true;
     if (!wasSending) streamingTurn.value = turnNum;
+    // Safety net for a terminal frame that never reaches this page.
+    startBusyWatchdog();
 
     // Register this turn as an "active draft turn" so appendStreamChunk can persist accordingly;
     // the first registration immediately writes a "cache-on-send" frame (user message + empty AI placeholder).
@@ -587,6 +682,7 @@ export function useChatStream(deps: ChatStreamDeps) {
   const handleStop = () => {
     // Session-level stop: one frame halts the session's generation, and every
     // in-flight send of this session settles as aborted on the shared socket.
+    chunks.flushPendingText?.();
     void socket.stop();
     activeAgentController.value = null;
     // If a HITL resume stream recovery is in flight, abort that controller as well
@@ -607,6 +703,7 @@ export function useChatStream(deps: ChatStreamDeps) {
     clearQueueBadge();
     streamingTurn.value = null;
     isSending.value = false;
+    stopBusyWatchdog();
   };
 
   return {

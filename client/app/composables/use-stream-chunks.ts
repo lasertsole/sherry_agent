@@ -108,37 +108,110 @@ export function useStreamChunks(
   };
 
   /**
+   * Streamed text/reasoning is buffered here and applied ONCE PER FRAME.
+   *
+   * Applying every chunk immediately re-rendered the whole (growing) bubble —
+   * markdown-it + DOMPurify over the full text, O(n²) across a long answer —
+   * and the virtual list re-measured on each paint (the ResizeObserver storm
+   * seen on a 2000-line stream, which could wedge the page mid-turn and leave
+   * the composer frozen on 停止). Buffering per (turn, channel) and flushing on
+   * an animation frame keeps the rendered result identical while the state
+   * updates drop from one-per-chunk to at most one-per-frame. Tool chunks flush
+   * first, so the interleaving with tool cards never changes.
+   */
+  const pendingText = new Map<string, { sid: string; turnNum: number; text: string; reasoning: boolean }>();
+  let flushHandle: number | ReturnType<typeof setTimeout> | null = null;
+  let lastFlushAt = 0;
+  //: Minimum gap between two text flushes. One flush per frame is still one
+  //: full markdown+DOMPurify pass and one repaint of a growing multi-thousand-
+  //: line bubble per frame; at ~8/s a 30 s answer repaints ~240 times instead of
+  //: ~1800, which is what starved the main thread (menus and timers froze for
+  //: tens of seconds while a 2000-line answer streamed).
+  const FLUSH_MIN_INTERVAL_MS = 120;
+
+  /** Apply every buffered text/reasoning fragment (idempotent, ordered). */
+  const flushPendingText = () => {
+    if (pendingText.size === 0) return;
+    lastFlushAt = Date.now();
+    const entries = [...pendingText.values()];
+    pendingText.clear();
+    for (const entry of entries) {
+      if (entry.reasoning) {
+        const target = sameTurnTailAi(entry.turnNum) ?? pushAiMessage(entry.sid, entry.turnNum);
+        target.reasoning = (target.reasoning ?? '') + entry.text;
+      } else {
+        const tail = sameTurnTailAi(entry.turnNum);
+        if (tail) {
+          tail.content += entry.text;
+        } else {
+          pushAiMessage(entry.sid, entry.turnNum).content = entry.text;
+        }
+      }
+      if (drafts.isDraftTurnActive(entry.turnNum)) {
+        drafts.scheduleDraftWrite(entry.sid, entry.turnNum);
+      }
+    }
+  };
+
+  /**
+   * Queue a fragment; a throttled flush carries everything buffered so far.
+   * @param sid
+   * @param turnNum
+   * @param text
+   * @param reasoning
+   */
+  const bufferText = (sid: string, turnNum: number, text: string, reasoning: boolean) => {
+    const key = `${turnNum}\u0000${reasoning ? 'r' : 't'}`;
+    const entry = pendingText.get(key);
+    if (entry) {
+      entry.text += text;
+    } else {
+      pendingText.set(key, { sid, turnNum, text, reasoning });
+    }
+    if (flushHandle !== null) return;
+    const sinceLast = Date.now() - lastFlushAt;
+    const delay = Math.max(0, FLUSH_MIN_INTERVAL_MS - sinceLast);
+    if (delay === 0 && typeof requestAnimationFrame === 'function') {
+      // Out of the throttle window: lead with a frame so a burst's head shows at once.
+      flushHandle = requestAnimationFrame(() => {
+        flushHandle = null;
+        flushPendingText();
+      });
+      return;
+    }
+    // Inside the window (or no rAF): one trailing flush carries the rest. The
+    // handle is never cancelled — a manual flush simply leaves this timer to
+    // fire on an empty buffer, which is a no-op.
+    flushHandle = setTimeout(
+      () => {
+        flushHandle = null;
+        flushPendingText();
+      },
+      delay === 0 ? 16 : delay
+    );
+  };
+
+  /**
    * Strategy registry for streamed chunk types (`CHUNK_HANDLERS[chunk.type]`).
    *
    * Each handler merges one streamed chunk into `chatMessages` (the single source
    * of truth) and persists the draft at the same cadence as the original branches:
-   * text/reasoning share the debounced append path, discrete tool stages are
-   * committed immediately. The registry is exhaustive over `AgentChunkType`.
+   * text/reasoning share the buffered append path (flushed per frame and at every
+   * terminal boundary), discrete tool stages flush first and then commit
+   * immediately. The registry is exhaustive over `AgentChunkType`.
    */
   const CHUNK_HANDLERS: Record<AgentChunkType, (ctx: ChunkHandlerContext) => void> = {
-    text: ({ sid, content, turnNum, isActiveDraft }) => {
-      const tail = sameTurnTailAi(turnNum);
-      if (tail) {
-        // Tail of same turn is AI → append the body
-        tail.content += content;
-      } else {
-        // Tail is TOOL / not this turn → create a new AI message to carry it
-        pushAiMessage(sid, turnNum).content = content;
-      }
-      if (isActiveDraft) drafts.scheduleDraftWrite(sid, turnNum);
+    text: ({ sid, content, turnNum }) => {
+      bufferText(sid, turnNum, content, false);
     },
-    reasoning: ({ sid, content, turnNum, isActiveDraft }) => {
-      // Model thinking block: appended chunk by chunk into the `reasoning` field of the same-turn tail AI message,
-      // without interfering with body text accumulation.
-      // When the tail is TOOL / not this turn, create a new AI placeholder message to carry it (the body may arrive later).
-      const target = sameTurnTailAi(turnNum) ?? pushAiMessage(sid, turnNum);
-      target.reasoning = (target.reasoning ?? '') + content;
-      // Thinking blocks are discrete stages; debouncing seems intuitive, but thinking content must be persisted in real time
-      // with the stream to support refresh recovery, so it simply shares the text-append debounce path
-      // (thinking blocks are usually not subdivided as frequently as body text).
-      if (isActiveDraft) drafts.scheduleDraftWrite(sid, turnNum);
+    reasoning: ({ sid, content, turnNum }) => {
+      // Model thinking block: appended into the `reasoning` field of the same-turn tail AI message,
+      // without interfering with body text accumulation. Shares the buffered path; the
+      // draft write it schedules keeps thinking content persisted with the stream.
+      bufferText(sid, turnNum, content, true);
     },
     tool_start: ({ sid, content, turnNum, isActiveDraft, meta }) => {
+      flushPendingText();
       chatMessages.value.push({
         session_id: sid,
         role: CHAT_ROLE.TOOL,
@@ -238,5 +311,5 @@ export function useStreamChunks(
     if (!changed) chatMessages.value = [...chatMessages.value];
   };
 
-  return { appendStreamChunk, markRunningToolsFailed };
+  return { appendStreamChunk, markRunningToolsFailed, flushPendingText };
 }

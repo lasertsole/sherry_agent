@@ -335,6 +335,26 @@ export async function fetchThinkingState(sessionId: string): Promise<ThinkingSta
 }
 
 /**
+ * Read whether the session has a turn in flight.
+ *
+ * The composer's watchdog: the backend counts a turn as active while the
+ * in-memory busy signal is set OR a QUEUED/CLAIMED input-queue row exists (a
+ * normal chat stream only shows in the latter). Used to recover a client that
+ * missed the turn's terminal frame, so 停止 cannot stay on for ever.
+ *
+ * @param sessionId Session to ask about.
+ * @returns True while a turn is running.
+ */
+export async function fetchTurnState(sessionId: string): Promise<boolean> {
+  const res = await fetchApiPayload<{ success?: boolean; active?: boolean }>({
+    url: '/sessions/turn_state',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return res.active === true;
+}
+
+/**
  * Persist the session's explicit thinking choice.
  *
  * Switching is allowed at any moment: while a turn is in flight the choice is
