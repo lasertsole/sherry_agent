@@ -7,7 +7,7 @@ target and writes THROUGH it (it exists to preserve managed deployments that
 symlink their config); here the semantics are the opposite, so the helper is
 implemented separately.
 
-Two mechanisms, matching the plan ``TODO/实施计划_文件写入并发保护.md``:
+Three mechanisms:
 
 * **Atomicity (R1)** — a same-directory temporary file is written, flushed and
   ``fsync``-ed, its mode copied from the target (a script's execute bit must
@@ -22,6 +22,10 @@ Two mechanisms, matching the plan ``TODO/实施计划_文件写入并发保护.m
   the helper re-asserts it immediately before the replace, narrowing the
   check-to-write window to the minimum. Unchanged content is never a false
   conflict: the tools compare content hashes before deciding.
+* **Leftover sweeping** — a hard kill between the temporary file's creation and
+  the replace leaves it behind; every failure path unlinks it, so only SIGKILL
+  or power loss can. The next write into the same directory sweeps those
+  (:func:`sweep_stale_temp_files`), which is why the prefix is fixed and dotted.
 """
 
 from __future__ import annotations
@@ -31,6 +35,7 @@ import errno
 import os
 import stat
 import tempfile
+import time
 from pathlib import Path
 
 from loguru import logger
@@ -43,12 +48,19 @@ __all__ = [
     "file_revision",
     "read_bytes_no_follow",
     "revision_id",
+    "sweep_stale_temp_files",
 ]
 
 #: Prefix/suffix of the same-directory temporary file. The dot keeps it out of
-#: globs; the name is recognisable for the stale-file sweep.
+#: globs; the name is what :func:`sweep_stale_temp_files` recognises.
 _TMP_PREFIX = ".sherry-tmp-"
 _TMP_SUFFIX = ".swp"
+
+#: Age at which a leftover temporary file counts as abandoned. Every failure
+#: path inside the write helper unlinks its temporary file, so only a hard kill
+#: (SIGKILL, power loss) can leave one behind — and a file this old cannot
+#: belong to a write still in flight (a live one is seconds old at most).
+_STALE_TMP_AGE_S = 60 * 60.0
 
 #: ``os.replace`` behind a module-level name: tests fault-inject the rename
 #: failure that triggers the in-place fallback (some mounts refuse it).
@@ -125,6 +137,44 @@ def _write_in_place_no_follow(path: Path, text: str) -> None:
             os.close(fd)
 
 
+def sweep_stale_temp_files(directory: Path, *, now: float | None = None) -> int:
+    """Remove abandoned ``.sherry-tmp-*.swp`` files from *directory*.
+
+    Called on the way into every write, so a directory a writer keeps returning
+    to cleans itself one entry at a time; no startup hook or background task is
+    involved. Best-effort by design — never raises, and a failing scan cannot
+    fail the write it precedes. Only regular files past ``_STALE_TMP_AGE_S`` are
+    removed, so a slow-but-live writer (or a symlink someone parked under the
+    prefix) is left alone.
+
+    :param directory: Directory to scan, normally the target's parent.
+    :param now: Injectable clock for tests (defaults to ``time.time()``).
+    :returns: How many files were removed.
+    """
+    removed = 0
+    current = time.time() if now is None else now
+    try:
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                if not (entry.name.startswith(_TMP_PREFIX) and entry.name.endswith(_TMP_SUFFIX)):
+                    continue
+                try:
+                    info = entry.stat(follow_symlinks=False)
+                    if not stat.S_ISREG(info.st_mode):
+                        continue
+                    if current - info.st_mtime < _STALE_TMP_AGE_S:
+                        continue
+                    os.unlink(entry.path)
+                    removed += 1
+                except OSError:
+                    continue
+    except OSError:
+        return removed
+    if removed:
+        logger.debug("swept {} stale temp file(s) in {}", removed, directory)
+    return removed
+
+
 def atomic_write_text_no_follow(
     path: Path,
     text: str,
@@ -141,6 +191,7 @@ def atomic_write_text_no_follow(
     :raises OSError: ``ELOOP`` for a symlinked target (the established policy),
         or any I/O failure. The target is left untouched on every failure path.
     """
+    sweep_stale_temp_files(path.parent)
     target = path.lstat() if path.exists() or path.is_symlink() else None
     if target is not None and stat.S_ISLNK(target.st_mode):
         raise OSError(errno.ELOOP, "Symbolic link not allowed")

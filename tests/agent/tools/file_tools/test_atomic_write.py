@@ -3,13 +3,16 @@
 The helper backs every file-tool write, so the properties pinned here are the
 ones the tools' contract leans on: a reader sees old-or-new content (never a
 torn file), a script's mode survives the inode swap, a symlinked target is
-REFUSED (never followed — unlike ``pub/func/atomic_replace.py``), and an
-optional ``expected_revision`` refuses a write whose target moved underneath it.
+REFUSED (never followed — unlike ``pub/func/atomic_replace.py``), an optional
+``expected_revision`` refuses a write whose target moved underneath it, and a
+kill -9 leftover (``.sherry-tmp-*.swp``) is swept by the next write into the
+directory.
 """
 
 import json
 import os
 import stat
+import time
 
 import pytest
 
@@ -19,6 +22,7 @@ from agent.tools.pub_base.atomic_write import (
     atomic_write_text_no_follow,
     file_revision,
     revision_id,
+    sweep_stale_temp_files,
 )
 
 pytestmark = [pytest.mark.unit, pytest.mark.timeout(60)]
@@ -146,3 +150,57 @@ def test_write_result_is_valid_json_ready(target):
     atomic_write_text_no_follow(target, json.dumps(payload, ensure_ascii=False))
 
     assert json.loads(target.read_text(encoding="utf-8")) == payload
+
+
+def test_sweep_removes_only_old_temp_files(tmp_path):
+    old = tmp_path / ".sherry-tmp-abc.swp"
+    old.write_text("abandoned by a kill -9", encoding="utf-8")
+    two_hours_ago = time.time() - 2 * 60 * 60
+    os.utime(old, (two_hours_ago, two_hours_ago))
+    fresh = tmp_path / ".sherry-tmp-live.swp"
+    fresh.write_text("a write is in flight", encoding="utf-8")
+    unrelated = tmp_path / "other.swp"
+    unrelated.write_text("not ours", encoding="utf-8")
+    wrong_suffix = tmp_path / ".sherry-tmp-x.txt"
+    wrong_suffix.write_text("not ours", encoding="utf-8")
+
+    removed = sweep_stale_temp_files(tmp_path)
+
+    assert removed == 1
+    assert not old.exists()
+    # A live writer's temp file is seconds old: the age threshold keeps the
+    # sweep away from it, and foreign names are never touched.
+    assert fresh.exists()
+    assert unrelated.exists()
+    assert wrong_suffix.exists()
+
+
+def test_sweep_leaves_symlinks_and_missing_directories_alone(tmp_path):
+    victim = tmp_path / "victim.txt"
+    victim.write_text("untouched", encoding="utf-8")
+    link = tmp_path / ".sherry-tmp-link.swp"
+    try:
+        os.symlink(victim, link)
+    except OSError:
+        pytest.skip("cannot create symlink on this platform")
+    long_ago = time.time() - 2 * 60 * 60
+    os.utime(link, (long_ago, long_ago), follow_symlinks=False)
+
+    assert sweep_stale_temp_files(tmp_path) == 0
+    assert link.is_symlink()
+    assert victim.read_text(encoding="utf-8") == "untouched"
+    # A scan that cannot even open the directory reports nothing instead of
+    # failing the write it precedes.
+    assert sweep_stale_temp_files(tmp_path / "missing") == 0
+
+
+def test_a_write_sweeps_the_directory_it_lands_in(target, tmp_path):
+    old = tmp_path / ".sherry-tmp-crashed.swp"
+    old.write_text("left behind", encoding="utf-8")
+    long_ago = time.time() - 2 * 60 * 60
+    os.utime(old, (long_ago, long_ago))
+
+    atomic_write_text_no_follow(target, "new")
+
+    assert target.read_text(encoding="utf-8") == "new"
+    assert not old.exists()
