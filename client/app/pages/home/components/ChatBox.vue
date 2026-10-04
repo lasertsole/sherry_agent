@@ -137,6 +137,14 @@
                     :copy-label="t('chatBox.copy')"
                     :copied-label="t('chatBox.copied')"
                     @copy="copyMessage(message)" />
+                  <ChatFileChangesChip
+                    v-if="showRevertChip(message)"
+                    class="mt-2"
+                    :file-count="fileChanges.fileCount"
+                    :can-revert="fileChanges.canRevert"
+                    :revert-label="t('chatBox.revert')"
+                    :unrevertable-label="t('chatBox.unrevertable')"
+                    @open="openRevertDialog" />
                   <!-- A streaming row renders only its TAIL while it grows: one
                        multi-thousand-line row being re-laid-out on every flush starved
                        the page (menus, timers and fetches froze for tens of seconds on
@@ -238,6 +246,14 @@
         <i class="pi pi-arrow-down text-sm"></i>
       </button>
     </Transition>
+
+    <!-- Two-step revert: preview a plan, then confirm the destructive step. -->
+    <ChatFileRevertDialog
+      :visible="revertDialogOpen"
+      :plan="revertPlan"
+      :applying="revertApplying"
+      @close="closeRevertDialog"
+      @confirm="confirmRevert" />
   </div>
 </template>
 
@@ -246,6 +262,7 @@
 import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString } from '@/common/utils';
+import { useFileChangesStore } from '@/stores/file-changes';
 import { useI18n } from 'vue-i18n';
 // Render subcomponents (explicit imports: bare Vitest mounts have no Nuxt
 // component auto-registration, and the page-level convention is explicit
@@ -254,12 +271,24 @@ import ChatMessageAvatar from '@/components/chat/ChatMessageAvatar.vue';
 import ChatThinkingBlock from '@/components/chat/ChatThinkingBlock.vue';
 import ChatToolCard from '@/components/chat/ChatToolCard.vue';
 import ChatCopyButton from '@/components/chat/ChatCopyButton.vue';
+import ChatFileChangesChip from '@/components/chat/ChatFileChangesChip.vue';
+import ChatFileRevertDialog from '@/components/chat/ChatFileRevertDialog.vue';
 import ChatMediaAttachments from '@/components/chat/ChatMediaAttachments.vue';
 import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
 import ChatTurnScrubber from './ChatTurnScrubber.vue';
 import ProgressFloat from './ProgressFloat.vue';
 
 const { t } = useI18n();
+
+// File-change revert: the chip rides on the newest AI bubble of the turn, and
+// the dialog previews the plan before anything is touched.
+const fileChanges = useFileChangesStore();
+// One listener registration per store instance; the refresh on `ws:connected`
+// is what recovers the chip after a reload or a reconnect.
+fileChanges.subscribe();
+const revertDialogOpen = ref(false);
+const revertPlan = ref<Awaited<ReturnType<typeof fileChanges.revert>> | null>(null);
+const revertApplying = ref(false);
 
 interface Props {
   /** Scroll-up history request in flight (shows the top loading pill). */
@@ -282,6 +311,50 @@ const props = withDefaults(defineProps<Props>(), {
   aiName: '',
   loadingOlder: false
 });
+
+/**
+ * The newest message the chat actually renders (the same accessor the template
+ * uses, so a filtered-out carrier can never be mistaken for the last bubble).
+ */
+const lastVisibleMessage = computed<MessageItem | undefined>(() => {
+  const groups = turnGroups.value;
+  for (let i = groups.length - 1; i >= 0; i--) {
+    const rows = regularMessages(groups[i] as never) as MessageItem[];
+    if (rows.length) return rows[rows.length - 1];
+  }
+  return undefined;
+});
+
+/**
+ * Whether the revert chip belongs on this message: the newest AI bubble of the
+ * rendered conversation (one chip per session, not one per bubble).
+ * @param message
+ */
+const showRevertChip = (message: MessageItem): boolean =>
+  message.role === CHAT_ROLE.AI && lastVisibleMessage.value === message;
+
+/** Open the dialog and load the read-only plan. */
+const openRevertDialog = async (): Promise<void> => {
+  revertDialogOpen.value = true;
+  revertPlan.value = null;
+  revertPlan.value = await fileChanges.revert({ dryRun: true });
+};
+
+const closeRevertDialog = (): void => {
+  revertDialogOpen.value = false;
+  revertPlan.value = null;
+};
+
+/** The destructive step: the plan showed exactly what this will do. */
+const confirmRevert = async (): Promise<void> => {
+  revertApplying.value = true;
+  try {
+    await fileChanges.revert({});
+    closeRevertDialog();
+  } finally {
+    revertApplying.value = false;
+  }
+};
 
 /** User display name: falls back to the i18n default when the prop is empty */
 const resolvedUserName = computed(() => props.userName || t('chatBox.defaultUserName'));
@@ -484,6 +557,8 @@ defineExpose({ scrollToMessage });
 {
   "zh": {
     "chatBox": {
+      "revert": "撤销改动",
+      "unrevertable": "改动不可撤销",
       "copy": "复制",
       "copied": "已复制",
       "defaultUserName": "我",
@@ -504,6 +579,8 @@ defineExpose({ scrollToMessage });
   },
   "en": {
     "chatBox": {
+      "revert": "Undo changes",
+      "unrevertable": "Changes not revertable",
       "copy": "Copy",
       "copied": "Copied",
       "defaultUserName": "Me",
@@ -524,6 +601,8 @@ defineExpose({ scrollToMessage });
   },
   "ja": {
     "chatBox": {
+      "revert": "変更を元に戻す",
+      "unrevertable": "変更は元に戻せません",
       "copy": "コピー",
       "copied": "コピーしました",
       "defaultUserName": "わたし",
@@ -544,6 +623,8 @@ defineExpose({ scrollToMessage });
   },
   "ko": {
     "chatBox": {
+      "revert": "변경 취소",
+      "unrevertable": "변경을 되돌릴 수 없음",
       "copy": "복사",
       "copied": "복사됨",
       "defaultUserName": "나",
