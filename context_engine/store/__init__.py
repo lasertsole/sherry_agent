@@ -6,6 +6,8 @@ from .core import (
     mark_message_ids_persisted as mark_message_ids_persisted,
     is_message_persisted as is_message_persisted,
     get_messages_by_lastest_n_turns as get_messages_by_lastest_n_turns,
+    get_max_message_id as get_max_message_id,
+    message_exists as message_exists,
     get_turns_by_turn_num_scope as get_turns_by_turn_num_scope,
     get_history_by_turn_page as get_history_by_turn_page,
     get_session_ids as get_session_ids,

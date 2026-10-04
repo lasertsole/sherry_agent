@@ -70,6 +70,16 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
         )
         return
 
+    # Fenced against a rewind: this run was spawned into a conversation the user
+    # has since cut away, so its announcement (and its workspace) belongs to an
+    # abandoned branch. Silent — the parent asked for no continuation of it.
+    if _was_rewound_away(run):
+        logger.info(
+            "Announce skipped for run {}: the session was rewound after the run started",
+            run.run_id,
+        )
+        return
+
     # An isolated run works in a private copy: merge it back before anything is
     # reported. Deliberately before the silent-reply return — a silent child's
     # work must still reach the parent tree even when no message is delivered.
@@ -168,6 +178,34 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
         logger.debug("Yield wake check failed for run {}: {}", run.run_id, e)
 
     _schedule_descendant_wake_if_needed(run)
+
+
+def _was_rewound_away(run: SubagentRunRecord) -> bool:
+    """Was the parent conversation rewound after this run was spawned?
+
+    The spawn stamps the parent's branch generation onto the CHILD session
+    (``StateKey.SPAWNED_BRANCH_GENERATION``); a parent whose generation has
+    moved on has cut this run's conversation away, so its announcement belongs
+    to an abandoned branch. Missing stamps fail OPEN (no drop) — the fence is
+    an enhancement, and dropping an announcement that should have been
+    delivered is worse than delivering a stale one.
+    """
+    from runtime import StateKey, state_register_mem
+    from runtime.session.conversation_branch import branch_generation
+    from ..registry.session_keys import normalize_session_key
+
+    parent = normalize_session_key(run.spawned_by or run.requester_session_key)
+    if not parent:
+        return False
+    spawned_at = state_register_mem.get_state(
+        run.child_session_key, StateKey.SPAWNED_BRANCH_GENERATION, None
+    )
+    if spawned_at is None:
+        return False
+    try:
+        return int(spawned_at) < branch_generation(parent)
+    except (TypeError, ValueError):
+        return False
 
 
 def _is_silent_reply(run: SubagentRunRecord) -> bool:

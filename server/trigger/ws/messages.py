@@ -201,6 +201,29 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     decision: str = obj.get("decision", "reject")
                     hitl_message: str = obj.get("message", "")
                     edited_args: dict[str, Any] | None = obj.get("edited_args")
+                    # A rewind clears the pending flag: an approval that arrives
+                    # for an interrupt the user has already cut away must not
+                    # resume it (the fence the generation counter cannot give —
+                    # the graph would happily continue the abandoned branch).
+                    from server.service.turn_runner import is_hitl_pending
+
+                    if not is_hitl_pending(session_id):
+                        logger.info(
+                            f"Agent WS HITL resume refused: session_id={session_id} has no "
+                            "pending approval (likely rewound)"
+                        )
+                        await _send_ws(
+                            websocket,
+                            {
+                                "event": "error",
+                                "session_id": session_id,
+                                "content": (
+                                    "No pending approval for this session "
+                                    "(the conversation may have been rewound)."
+                                ),
+                            },
+                        )
+                        continue
                     logger.info(
                         f"Agent WS HITL resume: session_id={session_id}, decision={decision}"
                     )

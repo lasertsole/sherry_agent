@@ -320,6 +320,21 @@ async def spawn_subagent_direct(
     child_session_key = f"agent:{agent_id}:subagent:{uuid.uuid4()}"
     role, _ = resolve_subagent_capabilities(child_depth)
 
+    # Fencing stamp: the parent's conversation generation at spawn time. The
+    # announce flow drops a run whose stamp is older than the parent's current
+    # generation — a rewind means this run's work was cut away.
+    try:
+        from runtime import StateKey, state_register_mem
+        from runtime.session.conversation_branch import branch_generation
+
+        state_register_mem.set_state(
+            child_session_key,
+            StateKey.SPAWNED_BRANCH_GENERATION,
+            branch_generation(normalize_session_key(requester_session_key)),
+        )
+    except Exception as e:  # noqa: BLE001 — fencing is an enhancement, never a gate
+        logger.debug("spawn: branch-generation stamp failed for {}: {}", child_session_key, e)
+
     # --- Phase 4.1: Workspace isolation (opt-in) ---
     # The child gets a private copy of the project directory and works there;
     # the announce flow merges it back under a lock when the run completes.

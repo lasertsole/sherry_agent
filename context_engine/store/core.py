@@ -749,7 +749,12 @@ def get_turns_by_turn_num_scope(
         # Decode JSON-encoded content and tool_calls back into Python objects.
         result: list[dict] = [_decode_json_columns(dict(row)) for row in rows]
 
-        return result
+        # A rewound conversation hides the cut range from every reader — the
+        # chat page, the prompt, the continuity snapshot — while the rows stay
+        # in SQLite (append-only discipline, R15).
+        from runtime.session.conversation_branch import filter_visible
+
+        return filter_visible(session_id, result)
 
 
 @validate_call
@@ -806,7 +811,12 @@ def get_history_by_turn_page(
         # Decode JSON-encoded content and tool_calls back into Python objects.
         result: list[dict] = [_decode_json_columns(dict(row)) for row in rows]
 
-        return result
+        # A rewound conversation hides the cut range from every reader — the
+        # chat page, the prompt, the continuity snapshot — while the rows stay
+        # in SQLite (append-only discipline, R15).
+        from runtime.session.conversation_branch import filter_visible
+
+        return filter_visible(session_id, result)
 
 
 def get_messages_by_lastest_n_turns(
@@ -823,6 +833,29 @@ def get_messages_by_lastest_n_turns(
         turn_page_num=1,
         only_eligible=only_eligible,
     )
+
+
+def get_max_message_id(session_id: str) -> int:
+    """The newest message id of a session (0 when it has none)."""
+    row = (
+        _shared_db()
+        .execute("SELECT MAX(id) FROM messages WHERE session_id = ?", (session_id,))
+        .fetchone()
+    )
+    return int(row[0]) if row and row[0] is not None else 0
+
+
+def message_exists(session_id: str, message_id: int) -> bool:
+    """Whether *message_id* is a message of this session (the rewind guard)."""
+    row = (
+        _shared_db()
+        .execute(
+            "SELECT 1 FROM messages WHERE id = ? AND session_id = ? LIMIT 1",
+            (message_id, session_id),
+        )
+        .fetchone()
+    )
+    return row is not None
 
 
 def delete_messages_by_session(session_id: str) -> int:
