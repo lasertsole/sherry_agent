@@ -8,6 +8,27 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # 仅忽略「上游永不会发布修复」的依赖。版本精确锁定当前版本号，
+    # 因此任何一次升级都会重新触发告警，逼迫重新评估——而不是永久静音。
+    # 处置依据与逐条 CVE 见 TODO/安全_依赖漏洞处置记录.md。
+    #
+    # 注意：这里刻意不忽略 transformers。它自身 6 个唯一 CVE 里有 4 个在 5.x
+    # 有修复版本，只是需要一次 FunASR/MinerU 的大版本迁移（本轮已明确不做）。
+    # 那属于「延期」而非「不可能」，必须继续告警以保留这笔可见的债务。
+    ignore:
+      # CVE-2026-69112 — 分片 checkpoint weight_map 路径穿越 + DoS。
+      # 1.15.0（当前最新）同样受影响，无修复版本。由 mineru-vl-utils 的
+      # transformers extra 引入，仅在加载分片 checkpoint 时触发。
+      - dependency-name: "accelerate"
+        versions: ["=1.14.0"]
+      # CVE-2025-69872 — 不安全 pickle 反序列化。5.6.3 已是最新且无修复。
+      # 由 llama-cpp-python 与 ragas 引入。
+      - dependency-name: "diskcache"
+        versions: ["=5.6.3"]
+      # CVE-2026-6587 — Multi-Modal Faithfulness Collections 的 SSRF。
+      # 0.4.3 已是最新且无修复。仅被 evals/graph_rag 使用，不在服务运行时。
+      - dependency-name: "ragas"
+        versions: ["=0.4.3"]
     groups:
       # 生产依赖合并一个 PR
       production-deps:
