@@ -30,6 +30,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
 from langchain_community.tools.file_management import WriteFileTool
 from langchain_community.tools.file_management.write import WriteFileInput
+from langchain_core.tools import InjectedToolCallId
 from langgraph.prebuilt.tool_node import InjectedState
 
 from agent.tools.pub_base import (
@@ -55,14 +56,17 @@ from agent.tools.pub_base import (
     sniff_text_encoding,
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
+from .snapshot import capture_pre_write, finalize_capture
 
 SessionId = Annotated[str, InjectedState("session_id")]
+ToolCallId = Annotated[str, InjectedToolCallId]
 
 
 class FormattedWriteFileInput(WriteFileInput):
     """WriteFileInput plus the runtime-injected session id (not LLM-facing)."""
 
     session_id: SessionId = ""
+    tool_call_id: ToolCallId = ""
 
 
 def _format_py_code(text: str) -> str:
@@ -156,6 +160,7 @@ class FormattedWriteFileTool(WriteFileTool):
         text: str,
         append: bool = False,
         session_id: str = "",
+        tool_call_id: str = "",
     ) -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
@@ -214,18 +219,28 @@ class FormattedWriteFileTool(WriteFileTool):
                     existing = ""
                     with contextlib.suppress(FileNotFoundError):
                         existing = decode_text(read_bytes_no_follow(resolved)[0], existing_encoding)
-                    atomic_write_bytes_no_follow(
-                        resolved,
-                        encode_text(_format_py_code(existing + text), existing_encoding),
-                    )
+                    capture = capture_pre_write(resolved, root)
+                    written = encode_text(_format_py_code(existing + text), existing_encoding)
+                    atomic_write_bytes_no_follow(resolved, written)
                     note_edit(session_id, resolved, file_revision(resolved))
+                    finalize_capture(
+                        capture, session_id=session_id, tool_call_id=tool_call_id, written=written
+                    )
                 elif append:
                     # Plain append keeps O_APPEND semantics (crash-tolerant by
                     # construction); the lock still serializes its writers. The
                     # bytes are UTF-8 — a BOM (utf-8-sig) belongs to the file's
                     # first bytes only and is never re-emitted here.
-                    _append_bytes_no_follow(resolved, text.encode("utf-8"))
+                    capture = capture_pre_write(resolved, root)
+                    chunk = text.encode("utf-8")
+                    _append_bytes_no_follow(resolved, chunk)
                     note_edit(session_id, resolved, file_revision(resolved))
+                    finalize_capture(
+                        capture,
+                        session_id=session_id,
+                        tool_call_id=tool_call_id,
+                        written=(capture.before_bytes or b"") + chunk if capture else chunk,
+                    )
                 else:
                     try:
                         license = _overwrite_precondition(session_id, resolved)
@@ -246,11 +261,13 @@ class FormattedWriteFileTool(WriteFileTool):
                         )
                     assert license is not None  # the gate above answered otherwise
                     payload = _format_py_code(text) if is_py else text
+                    written = encode_text(payload, license.encoding)
+                    capture = capture_pre_write(resolved, root)
                     # ``absent`` is a real precondition: a file another writer
                     # creates in the window is refused, not clobbered.
                     atomic_write_bytes_no_follow(
                         resolved,
-                        encode_text(payload, license.encoding),
+                        written,
                         expected_revision=license.revision,
                     )
                     # This session authored the whole file: it knows the revision
@@ -261,6 +278,9 @@ class FormattedWriteFileTool(WriteFileTool):
                         resolved,
                         file_revision(resolved),
                         encoding=license.encoding,
+                    )
+                    finalize_capture(
+                        capture, session_id=session_id, tool_call_id=tool_call_id, written=written
                     )
         except StaleWriteError:
             return json.dumps(
@@ -293,10 +313,11 @@ class FormattedWriteFileTool(WriteFileTool):
         text: str,
         append: bool = False,
         session_id: str = "",
+        tool_call_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = session_id or _extract_session_id(run_manager)
-        return self._core(file_path, text, append, session_id)
+        return self._core(file_path, text, append, session_id, tool_call_id)
 
     @override
     async def _arun(
@@ -305,10 +326,13 @@ class FormattedWriteFileTool(WriteFileTool):
         text: str,
         append: bool = False,
         session_id: str = "",
+        tool_call_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = session_id or _extract_session_id(run_manager)
-        return await asyncio.to_thread(self._core, file_path, text, append, session_id)
+        return await asyncio.to_thread(
+            self._core, file_path, text, append, session_id, tool_call_id
+        )
 
 
 def build_write_file_tool() -> WriteFileTool:

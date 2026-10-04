@@ -13,6 +13,8 @@ place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
 """
 
 from .agent_side import (
+    FILE_SNAPSHOT as FILE_SNAPSHOT,
+    FileSnapshot as FileSnapshot,
     TOKEN_ESTIMATION as TOKEN_ESTIMATION,
     TOOL_GUARDRAILS as TOOL_GUARDRAILS,
     MEDIA_PIPELINE as MEDIA_PIPELINE,

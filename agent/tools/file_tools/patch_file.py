@@ -26,7 +26,7 @@ from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, InjectedToolCallId
 from langgraph.prebuilt.tool_node import InjectedState
 from agent.tools.pub_base import (
     FileBusyError,
@@ -49,8 +49,10 @@ from agent.tools.pub_base import (
     safe_error_detail,
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
+from .snapshot import capture_pre_write, finalize_capture
 
 SessionId = Annotated[str, InjectedState("session_id")]
+ToolCallId = Annotated[str, InjectedToolCallId]
 
 # ── Diff helper ──────────────────────────────────────────────────────────
 
@@ -120,6 +122,7 @@ class PatchFileInput(BaseModel):
         description="If True, replace all occurrences of old_string; otherwise require uniqueness",
     )
     session_id: SessionId = ""
+    tool_call_id: ToolCallId = ""
 
 
 class PatchFileTool(BaseTool):
@@ -141,6 +144,7 @@ class PatchFileTool(BaseTool):
         new_string: str,
         replace_all: bool = False,
         session_id: str = "",
+        tool_call_id: str = "",
     ) -> str:
         # redundant: path_guard middleware handles this — kept as the second line of defense
         try:
@@ -228,11 +232,18 @@ class PatchFileTool(BaseTool):
                         ensure_ascii=False,
                     )
 
+                # The snapshot reuses the bytes this call already read: no
+                # second read, and what it stores is exactly what the write
+                # below replaces.
+                capture = capture_pre_write(
+                    resolved, root, before_bytes=read_raw, before_revision=revision_id(read_stat)
+                )
+                written = encode_text(new_content, read_encoding)
                 # Layer 2: the atomic write re-asserts the revision right before
                 # the replace, closing the window between the check above and it.
                 atomic_write_bytes_no_follow(
                     resolved,
-                    encode_text(new_content, read_encoding),
+                    written,
                     expected_revision=revision_id(check_stat),
                 )
                 # A session that already knew the file advances with its own
@@ -240,6 +251,9 @@ class PatchFileTool(BaseTool):
                 # license for a session that never read the file, but one that is
                 # held stays valid instead of going stale over this edit.
                 note_edit(session_id, resolved, file_revision(resolved))
+                finalize_capture(
+                    capture, session_id=session_id, tool_call_id=tool_call_id, written=written
+                )
         except StaleWriteError:
             return json.dumps(
                 {
@@ -289,10 +303,11 @@ class PatchFileTool(BaseTool):
         new_string: str,
         replace_all: bool = False,
         session_id: str = "",
+        tool_call_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = session_id or _extract_session_id(run_manager)
-        return self._core(file_path, old_string, new_string, replace_all, session_id)
+        return self._core(file_path, old_string, new_string, replace_all, session_id, tool_call_id)
 
     @override
     async def _arun(
@@ -302,10 +317,11 @@ class PatchFileTool(BaseTool):
         new_string: str,
         replace_all: bool = False,
         session_id: str = "",
+        tool_call_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
         session_id = session_id or _extract_session_id(run_manager)
-        return self._core(file_path, old_string, new_string, replace_all, session_id)
+        return self._core(file_path, old_string, new_string, replace_all, session_id, tool_call_id)
 
 
 def build_patch_file_tool() -> PatchFileTool:
