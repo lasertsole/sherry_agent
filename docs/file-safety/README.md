@@ -19,6 +19,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
 - [Resource files & encodings](#%EF%B8%8F-resource-files--encodings)
 - [Snapshots & revert](#-snapshots--revert)
+- [Conversation rewind](#%EF%B8%8F-conversation-rewind)
 - [Boundaries](#-boundaries)
 - [Testing](#-testing)
 - [File Map](#%EF%B8%8F-file-map)
@@ -170,6 +171,36 @@ and a refusal gives the user a way forward instead of just "no".
   and a two-step dialog — the per-file plan first, the destructive confirm
   second. `GET /sessions/file-changes` and `POST /sessions/file-changes/revert`
   call the very same core the agent-side tool does.
+
+## ⏪ Conversation rewind
+
+A rewind cuts the conversation back to a message — the file-tool twin of the
+snapshot revert, for the conversation itself. Nothing is deleted: the store is
+append-only, so the cut is recorded as a hidden id RANGE and every reader
+filters through it (the chat page, the prompt, the continuity snapshot). A
+message sent after the rewind has a larger id and is visible again at once.
+
+- **`POST /sessions/rewind`** (`{session_id, cut_after_message_id}`) applies the
+  cut; **`GET /sessions/rewind`** reports the branch state and whether a rewind
+  is allowed right now. Messages stay in SQLite — `runtime/session/conversation_branch.py`
+  is the record (`hidden_ranges`, `branch_generation`, `rewound_at`), stored in
+  the session state register (memory + `state_register.db`).
+- **The turn boundary is the only safe place for a cut.** Both endpoints refuse
+  while the session has a turn in flight (the same `session_turn_active` check
+  the composer uses), because no fence can stop a tool call that is already
+  running — and `GET` reports the same verdict so the client can grey its
+  control out rather than offer an action that will be refused.
+- **Fencing** keeps work created before the cut from landing after it: a
+  subagent's spawn stamps the parent's `branch_generation` onto the child, and
+  the announce flow drops a run whose stamp is older than the parent's current
+  generation (missing stamp = fail open, so a legitimate announcement is never
+  lost); a compression nudge scheduled before a rewind is dropped when it would
+  run after one; and a rewind clears the HITL pending flag, so an approval that
+  arrives for an interrupt the user already cut away is refused instead of
+  resuming the abandoned branch.
+- **Deliberate deviation**: queued USER messages are not fenced. They are user
+  intent, not branch state — dropping them silently would lose something the
+  user typed, while delivering them answers a message the user still means.
 
 ## 🚧 Boundaries
 
