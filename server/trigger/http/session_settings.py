@@ -30,6 +30,13 @@ The client's chat toolbar calls:
            of the env-configured main LLM (api_key never echoes back —
            ``has_api_key`` reports whether one was stored); ``pending`` as
            above.
+    GET /sessions/turn_state?session_id=<sid>
+        -> {"success": true, "session_id": ..., "active": bool}
+           ``active`` = a turn is in flight (the in-memory busy signal OR a
+           QUEUED/CLAIMED input-queue row — a normal chat stream only shows in
+           the latter). The composer polls this while it believes it is
+           streaming, so a terminal frame lost to a socket swap cannot leave
+           the stop button showing for ever.
     PUT /sessions/model  {"session_id": <sid>, "profile": <profile>|null}
         -> {"success": true, ..., "pending": bool}
            null clears the override ("follow the env config"); 400 for
@@ -51,6 +58,7 @@ from server.service.session_settings_service import (
     apply_thinking_choice,
     get_main_model_state,
     get_thinking_state,
+    session_turn_active,
 )
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, ok, read_body
@@ -88,6 +96,20 @@ async def put_thinking_handler(request):
         return bad_request("invalid session_id or value")
     logger.info("Thinking toggle: session={} value={} pending={}", session_id, value, pending)
     return ok({"success": True, "session_id": session_id, "value": value, "pending": pending})
+
+
+@app.get("/sessions/turn_state")
+async def get_turn_state_handler(request):
+    """Return whether the session has a turn in flight (watchdog for the client)."""
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    try:
+        active = await session_turn_active(session_id)
+    except ValueError:
+        return bad_request("invalid session_id")
+    return ok({"success": True, "session_id": session_id, "active": active})
 
 
 @app.get("/sessions/model")

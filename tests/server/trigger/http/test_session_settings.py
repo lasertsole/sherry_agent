@@ -258,6 +258,55 @@ def _wire_queue(monkeypatch, statuses):
     monkeypatch.setattr(input_queue_service, "get_default_queue", lambda: _FakeQueue(statuses))
 
 
+def test_turn_state_reports_busy_from_either_signal(registers, monkeypatch):
+    """`session_turn_active` = the in-memory signal OR a live queue row.
+
+    The composer's watchdog reads this through GET /sessions/turn_state to
+    recover when a turn's terminal frame never reached the page; if it
+    under-reported, the stop button would stick, and if it over-reported, a
+    finished turn would be declared stuck. Both directions are pinned here.
+    """
+    from server.queue.user_input_queue import UserInputQueueStatus
+
+    # Neither signal → idle.
+    monkeypatch.setattr(service, "_session_turn_active", lambda *_args: False)
+    _wire_queue(monkeypatch, [])
+    assert asyncio.run(service.session_turn_active("s9")) is False
+
+    # In-memory busy wins without consulting the queue.
+    monkeypatch.setattr(service, "_session_turn_active", lambda *_args: True)
+    assert asyncio.run(service.session_turn_active("s9")) is True
+
+    # A normal chat stream only shows in the queue: CLAIMED counts as active…
+    monkeypatch.setattr(service, "_session_turn_active", lambda *_args: False)
+    _wire_queue(monkeypatch, [UserInputQueueStatus.CLAIMED])
+    assert asyncio.run(service.session_turn_active("s9")) is True
+
+    # …while a terminal row does not.
+    _wire_queue(monkeypatch, [UserInputQueueStatus.DELIVERED])
+    assert asyncio.run(service.session_turn_active("s9")) is False
+
+    with pytest.raises(ValueError):
+        asyncio.run(service.session_turn_active("../escape"))
+
+
+def test_turn_state_handler_returns_the_flag(registers, monkeypatch):
+    async def _active(_sid):
+        return True
+
+    monkeypatch.setattr(session_settings_http, "session_turn_active", _active)
+    resp = asyncio.run(
+        session_settings_http.get_turn_state_handler(
+            _FakeRequest(query_params={"session_id": "s1"})
+        )
+    )
+    assert resp.status_code == 200
+    assert '"active": true' in resp.description
+
+    resp = asyncio.run(session_settings_http.get_turn_state_handler(_FakeRequest()))
+    assert resp.status_code == 400
+
+
 def test_apply_write_lands_live_when_idle(registers, monkeypatch):
     _wire_queue(monkeypatch, [])
     monkeypatch.setattr(service, "get_thinking_mode", lambda *_args: "levels")

@@ -147,6 +147,39 @@ def _session_turn_active(session_id: str) -> bool:
     return False
 
 
+async def session_turn_active(session_id: str) -> bool:
+    """Whether the session has a turn in flight — the durable, client-readable form.
+
+    The in-memory signal alone is NOT enough: a normal chat stream never writes
+    ``_active_tasks``/``ANSWERING``, so the live fact is a QUEUED/CLAIMED row in
+    the input queue. Both are checked (the same pair the park decision uses), and
+    the queue rows are read under the session lock so a submit racing this read
+    cannot report "idle" for a turn that is about to start.
+
+    ``GET /sessions/turn_state`` serves this: the composer uses it as a watchdog,
+    so a client that missed the turn's terminal frame (socket swapped, frame
+    dropped) still learns the turn is over instead of showing 停止 for ever.
+    """
+    from agent.tools.subagent.registry.session_state import normalize_session_key
+    from server.queue.user_input_queue import UserInputQueueStatus
+    from server.service.input_queue_service import _get_session_lock, get_default_queue
+
+    if not session_id or not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+    async with _get_session_lock(session_id):
+        if _session_turn_active(session_id):
+            return True
+        try:
+            queue = get_default_queue()
+            rows = await queue.list_active(normalize_session_key(session_id))
+        except Exception:  # pragma: no cover - defensive, queue may be absent
+            return False
+        return any(
+            row.status in (UserInputQueueStatus.QUEUED, UserInputQueueStatus.CLAIMED)
+            for row in rows
+        )
+
+
 #: The level an always-think session starts at when the user never picked one
 #: (mirrors the ``reasoning_effort`` default in ``models/LLMs/reasoning_payload.py``).
 _DEFAULT_LEVEL = "high"
