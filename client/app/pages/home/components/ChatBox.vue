@@ -137,14 +137,6 @@
                     :copy-label="t('chatBox.copy')"
                     :copied-label="t('chatBox.copied')"
                     @copy="copyMessage(message)" />
-                  <ChatFileChangesChip
-                    v-if="showRevertChip(message)"
-                    class="mt-2"
-                    :file-count="fileChanges.fileCount"
-                    :can-revert="fileChanges.canRevert"
-                    :revert-label="t('chatBox.revert')"
-                    :unrevertable-label="t('chatBox.unrevertable')"
-                    @open="openRevertDialog" />
                   <!-- A streaming row renders only its TAIL while it grows: one
                        multi-thousand-line row being re-laid-out on every flush starved
                        the page (menus, timers and fetches froze for tens of seconds on
@@ -199,6 +191,31 @@
                       output: message.outputTokens ?? 0
                     })
                   " />
+                <!-- Row actions: OUTSIDE and BELOW the bubble (not inside it) — the
+                     bubble stays pure content, and the controls read as actions on
+                     the message rather than part of its text. -->
+                <div
+                  v-if="showActionRow(message)"
+                  :class="[
+                    'mt-1 flex items-center gap-2',
+                    message.role === CHAT_ROLE.USER ? 'flex-row-reverse' : 'flex-row'
+                  ]">
+                  <ChatRewindButton
+                    :can-rewind="rewind.enabled"
+                    :busy="rewind.rewinding"
+                    :label="t('chatBox.rewind')"
+                    :confirm-label="t('chatBox.rewindConfirm')"
+                    :disabled-label="t('chatBox.rewindDisabled')"
+                    :disabled-title="t('chatBox.rewindDisabledTitle')"
+                    @rewind="onRewindMessage(message)" />
+                  <ChatFileChangesChip
+                    v-if="showRevertChip(message)"
+                    :file-count="fileChanges.fileCount"
+                    :can-revert="fileChanges.canRevert"
+                    :revert-label="t('chatBox.revert')"
+                    :unrevertable-label="t('chatBox.unrevertable')"
+                    @open="openRevertDialog" />
+                </div>
               </div>
             </div>
           </div>
@@ -263,6 +280,7 @@ import type { MessageItem } from '../type';
 import { CHAT_ROLE } from '../type';
 import { formatCompactTimeString } from '@/common/utils';
 import { useFileChangesStore } from '@/stores/file-changes';
+import { useRewindStore } from '@/stores/rewind';
 import { useI18n } from 'vue-i18n';
 // Render subcomponents (explicit imports: bare Vitest mounts have no Nuxt
 // component auto-registration, and the page-level convention is explicit
@@ -272,6 +290,7 @@ import ChatThinkingBlock from '@/components/chat/ChatThinkingBlock.vue';
 import ChatToolCard from '@/components/chat/ChatToolCard.vue';
 import ChatCopyButton from '@/components/chat/ChatCopyButton.vue';
 import ChatFileChangesChip from '@/components/chat/ChatFileChangesChip.vue';
+import ChatRewindButton from '@/components/chat/ChatRewindButton.vue';
 import ChatFileRevertDialog from '@/components/chat/ChatFileRevertDialog.vue';
 import ChatMediaAttachments from '@/components/chat/ChatMediaAttachments.vue';
 import ChatModelMeta from '@/components/chat/ChatModelMeta.vue';
@@ -286,6 +305,9 @@ const fileChanges = useFileChangesStore();
 // One listener registration per store instance; the refresh on `ws:connected`
 // is what recovers the chip after a reload or a reconnect.
 fileChanges.subscribe();
+const rewind = useRewindStore();
+rewind.subscribe();
+void rewind.refresh();
 const revertDialogOpen = ref(false);
 const revertPlan = ref<Awaited<ReturnType<typeof fileChanges.revert>> | null>(null);
 const revertApplying = ref(false);
@@ -331,7 +353,29 @@ const lastVisibleMessage = computed<MessageItem | undefined>(() => {
  * @param message
  */
 const showRevertChip = (message: MessageItem): boolean =>
-  message.role === CHAT_ROLE.AI && lastVisibleMessage.value === message;
+  message.role === CHAT_ROLE.AI &&
+  lastVisibleMessage.value === message &&
+  // Nothing was written in this session: there is no change to revert, and a
+  // "0 · not revertable" chip would only be noise.
+  fileChanges.fileCount > 0;
+
+/**
+ * Whether this message gets an action row at all: history rows carry a real id
+ * (a live streaming row is a negative temp id, and a tool card carries its own
+ * controls), and only rendered messages have a bubble to sit under.
+ * @param message
+ */
+const showActionRow = (message: MessageItem): boolean =>
+  message.role !== CHAT_ROLE.TOOL && typeof message.id === 'number' && message.id > 0;
+
+/**
+ * Cut the conversation at this message and let the page reload its history.
+ * @param message
+ */
+const onRewindMessage = async (message: MessageItem): Promise<void> => {
+  const ok = await rewind.rewind(message.id);
+  if (ok) emit('rewind');
+};
 
 /** Open the dialog and load the read-only plan. */
 const openRevertDialog = async (): Promise<void> => {
@@ -370,6 +414,7 @@ const userTokenEstimate = (message: MessageItem): number => estimateTextTokens(m
 const emit = defineEmits<{
   (e: 'reach-top'): void;
   (e: 'release-head', messageIds: number[]): void;
+  (e: 'rewind'): void;
 }>();
 
 // View-model: turn grouping, scroll, media URL resolution, card expansion, copy
@@ -557,6 +602,10 @@ defineExpose({ scrollToMessage });
 {
   "zh": {
     "chatBox": {
+      "rewind": "回到这里",
+      "rewindConfirm": "确认回到这里？",
+      "rewindDisabled": "暂时不可回退",
+      "rewindDisabledTitle": "Agent 正在处理消息，轮次结束后可回退",
       "revert": "撤销改动",
       "unrevertable": "改动不可撤销",
       "copy": "复制",
@@ -579,6 +628,10 @@ defineExpose({ scrollToMessage });
   },
   "en": {
     "chatBox": {
+      "rewind": "Back to here",
+      "rewindConfirm": "Cut the conversation here?",
+      "rewindDisabled": "Rewind unavailable",
+      "rewindDisabledTitle": "The agent is busy — rewind once the turn finishes",
       "revert": "Undo changes",
       "unrevertable": "Changes not revertable",
       "copy": "Copy",
@@ -601,6 +654,10 @@ defineExpose({ scrollToMessage });
   },
   "ja": {
     "chatBox": {
+      "rewind": "ここまで戻す",
+      "rewindConfirm": "ここで会話を切り戻しますか？",
+      "rewindDisabled": "巻き戻し不可",
+      "rewindDisabledTitle": "Agent が処理中です。ターン終了後に巻き戻せます",
       "revert": "変更を元に戻す",
       "unrevertable": "変更は元に戻せません",
       "copy": "コピー",
@@ -623,6 +680,10 @@ defineExpose({ scrollToMessage });
   },
   "ko": {
     "chatBox": {
+      "rewind": "여기로 되돌리기",
+      "rewindConfirm": "여기서 대화를 자를까요?",
+      "rewindDisabled": "되돌릴 수 없음",
+      "rewindDisabledTitle": "Agent가 처리 중입니다. 턴이 끝난 뒤 되돌릴 수 있어요",
       "revert": "변경 취소",
       "unrevertable": "변경을 되돌릴 수 없음",
       "copy": "복사",

@@ -524,3 +524,61 @@ export async function setSessionModel(
     pending: res.pending === true
   };
 }
+
+/**
+ * The session's conversation-rewind state (branch generation + whether a
+ * rewind is allowed right now — the server refuses while a turn is running).
+ *
+ * @param sessionId Session to ask about.
+ * @returns The state, or null when the request failed.
+ */
+export async function fetchRewindState(sessionId: string): Promise<{
+  can_rewind: boolean;
+  branch_generation: number;
+  hidden_ranges: Array<[number, number]>;
+} | null> {
+  const res = await fetchApiPayload<{
+    can_rewind?: boolean;
+    branch_generation?: number;
+    hidden_ranges?: Array<[number, number]>;
+  }>({
+    url: '/sessions/rewind',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  if (!res || res.can_rewind === undefined) return null;
+  const ranges = Array.isArray(res.hidden_ranges)
+    ? res.hidden_ranges.filter(
+        pair => Array.isArray(pair) && pair.length === 2 && Number.isFinite(pair[0]) && Number.isFinite(pair[1])
+      )
+    : [];
+  return {
+    can_rewind: res.can_rewind === true,
+    branch_generation: Number(res.branch_generation ?? 0),
+    hidden_ranges: ranges
+  };
+}
+
+/**
+ * Cut the conversation back to `cutAfterMessageId` (that message stays).
+ *
+ * @param sessionId Session to rewind.
+ * @param cutAfterMessageId The last message the active branch keeps.
+ * @returns `{ ok, error? }` — a refusal is reported, never thrown.
+ */
+export async function postRewind(
+  sessionId: string,
+  cutAfterMessageId: number
+): Promise<{ ok: boolean; error?: string }> {
+  try {
+    const res = await fetchApiPayload<{ success?: boolean; error?: string }>({
+      url: '/sessions/rewind',
+      opts: { session_id: sessionId, cut_after_message_id: cutAfterMessageId },
+      method: 'post'
+    });
+    if (res && res.success === true) return { ok: true };
+    return { ok: false, error: String(res?.error ?? 'rewind refused') };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}

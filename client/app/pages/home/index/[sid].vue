@@ -15,7 +15,8 @@
           :ai-name="characterInfo.aiName"
           :loading-older="loadingOlder"
           @reach-top="loadOlderHistory"
-          @release-head="onReleaseHead" />
+          @release-head="onReleaseHead"
+          @rewind="onRewindDone" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -526,6 +527,9 @@ const draft = ref('');
 // ── Slices: lifecycle / drafts / chunk rendering / HITL / streaming ────────
 
 const { characterInfo, ensureSessionCharacter, loadSessionHistory } = useSessionLifecycle(chatMessages);
+const rewind = useRewindStore();
+rewind.subscribe();
+void rewind.refresh();
 
 const drafts = useDraftPersistence(chatMessages);
 
@@ -867,6 +871,35 @@ const doLoadFor = (sid: string) => {
   restorePendingHitl(sid);
   mySidLoaded = true;
 };
+
+/**
+ * A rewind hid part of the conversation.
+ *
+ * Two steps, deliberately: drop the rows the branch now hides from the LOCAL
+ * list first (the merge in loadSessionHistory keeps local rows the server page
+ * no longer returns — that is what makes an optimistic send survive a reload),
+ * then reconcile with the server so the remaining rows get their real state.
+ */
+const pruneHiddenMessages = (): void => {
+  const kept = chatMessages.value.filter(message => !rewind.isHidden(message.id));
+  if (kept.length !== chatMessages.value.length) {
+    chatMessages.value = [...kept];
+  }
+};
+
+const onRewindDone = async (): Promise<void> => {
+  const sid = sessionId.value;
+  if (!sid) return;
+  pruneHiddenMessages();
+  await loadSessionHistory(sid);
+  // The loader merges the local cache with the server page (that is what keeps
+  // an optimistic send alive across a reload), so a row the branch hides can
+  // come back from the cache: prune again on the merged result.
+  pruneHiddenMessages();
+};
+
+// A branch that was already cut (page load, reconnect) hides the same rows.
+watch(() => rewind.hiddenRanges.value, pruneHiddenMessages, { deep: true });
 
 // On first screen, load the current session's history messages and render the merged list into ChatBox
 watch(

@@ -180,3 +180,27 @@ def test_an_announce_from_before_a_rewind_is_dropped():
     )
     assert _was_rewound_away(run) is False
     state_register_mem.delete_state(child, StateKey.SPAWNED_BRANCH_GENERATION)
+
+
+def test_a_pending_interrupt_from_before_a_rewind_is_suppressed(store):
+    """The checkpoint still holds the abandoned branch's approval: hide it."""
+    from datetime import UTC, datetime, timedelta
+    from types import SimpleNamespace
+
+    from server.service.messages import _interrupt_predates_rewind
+
+    old = SimpleNamespace(created_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat())
+    naive = SimpleNamespace(
+        created_at=(datetime.now(UTC) - timedelta(minutes=5)).replace(tzinfo=None).isoformat()
+    )
+
+    assert _interrupt_predates_rewind(SESSION, old) is False  # no rewind yet
+
+    apply_rewind(SESSION, cut_after_message_id=5, tip_message_id=9)
+
+    assert _interrupt_predates_rewind(SESSION, old) is True  # raised before the cut
+    # …and an approval raised after the cut still shows.
+    fresh = SimpleNamespace(created_at=datetime.now(UTC).isoformat())
+    assert _interrupt_predates_rewind(SESSION, fresh) is False
+    assert _interrupt_predates_rewind(SESSION, naive) is True  # naive stamps read as UTC
+    assert _interrupt_predates_rewind(SESSION, SimpleNamespace(created_at=None)) is False
