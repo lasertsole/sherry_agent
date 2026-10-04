@@ -44,6 +44,7 @@ from .path_utils import _open_no_follow
 
 __all__ = [
     "StaleWriteError",
+    "atomic_write_bytes_no_follow",
     "atomic_write_text_no_follow",
     "file_revision",
     "read_bytes_no_follow",
@@ -121,17 +122,17 @@ def read_bytes_no_follow(path: Path) -> tuple[bytes, os.stat_result]:
             os.close(fd)
 
 
-def _write_in_place_no_follow(path: Path, text: str) -> None:
+def _write_bytes_in_place_no_follow(path: Path, data: bytes) -> None:
     """Fallback used when the temp-file + rename path is unsupported.
 
     Keeps the ``O_NOFOLLOW`` refusal; trades atomicity for availability. Only
-    reachable from :func:`atomic_write_text_no_follow`'s rename-failure branch.
+    reachable from :func:`atomic_write_bytes_no_follow`'s rename-failure branch.
     """
     fd = _open_no_follow(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o644)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+        with os.fdopen(fd, "wb") as f:
             fd = -1
-            f.write(text)
+            f.write(data)
     finally:
         if fd >= 0:
             os.close(fd)
@@ -175,15 +176,15 @@ def sweep_stale_temp_files(directory: Path, *, now: float | None = None) -> int:
     return removed
 
 
-def atomic_write_text_no_follow(
+def atomic_write_bytes_no_follow(
     path: Path,
-    text: str,
+    data: bytes,
     expected_revision: str | None = None,
 ) -> None:
-    """Write *text* to *path* atomically, refusing symlinks.
+    """Write *data* to *path* atomically, refusing symlinks.
 
     :param path: Resolved target (callers already passed their own path gates).
-    :param text: Full new content.
+    :param data: Full new content.
     :param expected_revision: When given, the target must still carry this
         revision (:func:`revision_id`) — asserted before the temporary file is
         created AND again right before the replace.
@@ -202,8 +203,8 @@ def atomic_write_text_no_follow(
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix=_TMP_PREFIX, suffix=_TMP_SUFFIX)
     tmp_path = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
-            f.write(text)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
             f.flush()
             os.fsync(f.fileno())
         os.chmod(tmp_path, mode)
@@ -220,10 +221,19 @@ def atomic_write_text_no_follow(
                 path,
                 exc,
             )
-            _write_in_place_no_follow(path, text)
+            _write_bytes_in_place_no_follow(path, data)
             with contextlib.suppress(OSError):
                 tmp_path.unlink()
     except BaseException:
         with contextlib.suppress(OSError):
             tmp_path.unlink()
         raise
+
+
+def atomic_write_text_no_follow(
+    path: Path,
+    text: str,
+    expected_revision: str | None = None,
+) -> None:
+    """UTF-8 :func:`atomic_write_bytes_no_follow` — the file tools' entry point."""
+    atomic_write_bytes_no_follow(path, text.encode("utf-8"), expected_revision=expected_revision)

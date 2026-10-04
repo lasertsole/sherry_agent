@@ -14,6 +14,7 @@ from ..types.registry import SubagentRunRecord, ExecutionStatus, CompletionState
 from .output import build_child_completion_findings
 from .delivery import deliver_subagent_announcement
 from .capture import capture_subagent_completion_reply
+from .workspace_merge import attach_merge_report, merge_isolated_workspace_for_run
 from ..registry import (
     is_delivery_delivered,
     set_run,
@@ -69,6 +70,11 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
         )
         return
 
+    # An isolated run works in a private copy: merge it back before anything is
+    # reported. Deliberately before the silent-reply return — a silent child's
+    # work must still reach the parent tree even when no message is delivered.
+    merge_report = await merge_isolated_workspace_for_run(run)
+
     if _is_silent_reply(run):
         logger.debug("Skipping announce for run {}: silent reply detected", run.run_id)
         from ..registry import mark_delivery_delivered
@@ -98,6 +104,12 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
             )
             if updated:
                 run = updated
+
+    if merge_report is not None:
+        # Surface what the merge did in the reply the parent actually reads.
+        with_merge = attach_merge_report(run, merge_report)
+        if with_merge is not None:
+            run = with_merge
 
     from ..registry.queries import count_active_descendant_runs
 

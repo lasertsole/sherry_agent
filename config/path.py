@@ -324,3 +324,18 @@ def file_locks_dir() -> Path:
     if override:
         return Path(override).expanduser()
     return SRC_DIR / "data" / "locks"
+
+
+def isolated_workspaces_dir() -> Path:
+    """Return the isolated-workspace directory (``SRC_DIR/data/isolated``).
+
+    An isolated subagent works in ``<here>/<run slug>/tree`` — a copy of the
+    parent's project directory — and the merge reads it back on completion.
+    Keeping it under ``src/data`` means an isolation copy never lands inside the
+    user's project. ``SRC_DIR`` is read at call time (tests repoint it), and
+    ``SHERRY_ISOLATED_WORKSPACES_DIR`` overrides the location outright.
+    """
+    override = os.environ.get("SHERRY_ISOLATED_WORKSPACES_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    return SRC_DIR / "data" / "isolated"

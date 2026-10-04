@@ -64,6 +64,13 @@ class SessionsSpawnSchema(BaseModel):
         description="Optional absolute working directory for the subagent. "
         "Omit to inherit the caller's project directory (the default).",
     )
+    isolation: bool = Field(
+        default=False,
+        description="Run the subagent in a private COPY of the project directory and "
+        "merge its file changes back when it completes (conflicts are reported, never "
+        "silently overwritten). Use when parallel subagents would edit overlapping "
+        "files; requires a project directory to copy.",
+    )
 
 
 class SessionsSpawnTool(BaseTool):
@@ -95,6 +102,7 @@ class SessionsSpawnTool(BaseTool):
         functional_role: str | None = None,
         extra_tools: list[str] | None = None,
         cwd: str | None = None,
+        isolation: bool = False,
     ) -> str:
         # Call-time privilege gate: a non-spawning caller (LEAF) must not spawn even
         # if a tool instance leaked into its toolset. Returns through the tool's
@@ -133,6 +141,7 @@ class SessionsSpawnTool(BaseTool):
             goal_max_turns=goal_max_turns,
             functional_role_hint=functional_role,
             extra_tools=extra_tools,
+            isolation=isolation,
         )
 
         parts = [f"Subagent spawned: status={result.status}"]

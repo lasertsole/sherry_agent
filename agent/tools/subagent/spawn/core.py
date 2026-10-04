@@ -17,6 +17,7 @@ import os
 import re
 import uuid
 import asyncio
+from pathlib import Path
 from loguru import logger
 from typing import Any, Literal
 from ..config import get_config
@@ -62,6 +63,17 @@ _VALID_AGENT_ID = re.compile(r"^[a-zA-Z0-9_-]+$")
 # pipeline intersects the final allow-list with can_spawn_children(role) so a
 # LEAF can never be granted recursive spawning.
 _SPAWN_YIELD_TOOLS = ("sessions_spawn", "sessions_yield")
+
+#: Appended to an isolated child's system prompt: it works on a copy, and the
+#: completion merge is what carries its changes back.
+_ISOLATION_PROMPT_NOTE = (
+    "## Isolated Workspace\n"
+    "You are working in a private COPY of the project directory. Your file changes "
+    "are merged back into the original project when your run completes — a file the "
+    "original changed in the meantime is reported as a conflict instead of being "
+    "overwritten. Work as if this directory were the project; do not try to reach "
+    "the original tree."
+)
 
 
 def _extract_result_text(agent_result: dict[str, object] | None) -> str | None:
@@ -200,6 +212,7 @@ async def spawn_subagent_direct(
     goal_max_turns: int | None = None,
     functional_role_hint: str | None = None,
     extra_tools: list[str] | None = None,
+    isolation: bool = False,
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
@@ -231,6 +244,9 @@ async def spawn_subagent_direct(
         functional_role_hint: Functional specialization (general / researcher /
             executor / reviewer / librarian). ``None`` keeps the pre-migration behavior.
         extra_tools: Additional tool names to attach for this spawn only.
+        isolation: Run the child in a private COPY of the project directory and
+            merge its file changes back on completion (``isolation/``). Requires
+            a project directory to copy.
 
     Returns:
         A :class:`SpawnResult` with ``status="accepted"`` on success, or
@@ -304,6 +320,29 @@ async def spawn_subagent_direct(
     child_session_key = f"agent:{agent_id}:subagent:{uuid.uuid4()}"
     role, _ = resolve_subagent_capabilities(child_depth)
 
+    # --- Phase 4.1: Workspace isolation (opt-in) ---
+    # The child gets a private copy of the project directory and works there;
+    # the announce flow merges it back under a lock when the run completes.
+    # Everything downstream (attachments, the child's binding, its tools) sees
+    # the copy and nothing needs to know isolation happened.
+    isolated_workspace = None
+    if isolation:
+        if not cwd:
+            return SpawnResult(
+                status="forbidden",
+                error=(
+                    "isolation requires a project directory to copy: the caller has "
+                    "neither a bound project directory nor an explicit cwd"
+                ),
+            )
+        from ..isolation import create_isolated_workspace
+
+        try:
+            isolated_workspace = create_isolated_workspace(Path(cwd), child_session_key)
+        except OSError as exc:
+            return SpawnResult(status="error", error=f"isolated workspace failed: {exc}")
+        cwd = str(isolated_workspace.tree)
+
     # --- Phase 4.5: Functional role resolution ---
     # GENERAL is the identity role: it loads no definition, so a spawn without a
     # functional-role hint keeps the pre-migration LLM/tool/prompt behavior.
@@ -334,8 +373,6 @@ async def spawn_subagent_direct(
     attachments_root_dir = None
     attachment_prompt_suffix = ""
     if attachments and config.attachments_enabled:
-        from pathlib import Path
-
         workspace = Path(cwd) if cwd else None
         mat_result = await materialize_subagent_attachments(
             attachments,
@@ -346,6 +383,12 @@ async def spawn_subagent_direct(
         )
         if mat_result.status == "error":
             await _rollback_spawn(child_session_key, None, attachments_dir, attachments_root_dir)
+            if isolated_workspace is not None:
+                # A failed spawn must not leave its copy behind: nothing will
+                # ever merge it (no run record), so it is discarded here.
+                from ..isolation import discard_isolated_workspace
+
+                discard_isolated_workspace(isolated_workspace.meta_dir)
             return SpawnResult(status="error", error=mat_result.error)
         if mat_result.status == "ok" and mat_result.abs_dir:
             attachments_dir = mat_result.abs_dir
@@ -481,6 +524,9 @@ async def spawn_subagent_direct(
     if attachment_prompt_suffix:
         system_prompt = f"{system_prompt}\n{attachment_prompt_suffix}"
 
+    if isolated_workspace is not None:
+        system_prompt = f"{system_prompt}\n{_ISOLATION_PROMPT_NOTE}"
+
     if output_schema:
         schema_prompt = build_structured_output_prompt(output_schema)
         if schema_prompt:
@@ -535,6 +581,11 @@ async def spawn_subagent_direct(
         logger.debug("fire_spawned_hook error for run {}: {}", run.run_id, e)
 
     accepted_note = resolve_spawn_accepted_note(requester_session_key)
+    if isolated_workspace is not None:
+        accepted_note = (
+            f"{accepted_note} [isolated workspace: the run works in a private copy; "
+            "its changes are merged back when it completes]"
+        ).strip()
 
     return SpawnResult(
         status="accepted",
