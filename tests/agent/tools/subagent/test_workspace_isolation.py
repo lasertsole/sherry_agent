@@ -193,6 +193,24 @@ def test_an_isolated_run_can_replace_a_file_it_created_in_the_copy(project):
     assert (project / "new.txt").read_text(encoding="utf-8") == "second\n"
 
 
+def test_binary_files_merge_byte_exactly(project):
+    """The copy and the merge are byte-level: resource files survive both."""
+    _seed(project)
+    image = project / "logo.png"
+    original = b"\x89PNG\r\n\x1a\n" + b"\x00" * 24
+    image.write_bytes(original)
+
+    ws = create_isolated_workspace(project, "agent:main:subagent:binary")
+    assert (ws.tree / "logo.png").read_bytes() == original
+
+    replacement = b"\x89PNG\r\n\x1a\n" + b"\xff" * 40
+    (ws.tree / "logo.png").write_bytes(replacement)
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    assert report.applied == ["logo.png"]
+    assert image.read_bytes() == replacement
+
+
 def test_files_the_child_never_touched_are_left_alone(project):
     """A parent edit is only a conflict for a file the child actually changed."""
     _seed(project)

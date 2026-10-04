@@ -18,12 +18,14 @@ from agent.tools.pub_base import (
     PathOutOfBoundsError,
     _extract_session_id,
     _open_no_follow,
+    decode_text,
     display_path,
     note_read,
     resolve_external_path,
     resolve_workspace_path,
     revision_id,
     safe_error_detail,
+    sniff_text_encoding,
 )
 from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
@@ -117,9 +119,9 @@ class ReadFileTool(BaseTool):
                 # descriptor, so a writer replacing the path mid-read cannot
                 # license content this call never saw.
                 read_stat = os.fstat(fd)
-                with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as f:
+                with os.fdopen(fd, "rb") as f:
                     fd = -1
-                    raw = f.read()
+                    data = f.read()
             finally:
                 if fd >= 0:
                     os.close(fd)
@@ -128,8 +130,26 @@ class ReadFileTool(BaseTool):
                 {"error": f"Failed to read file: {safe_error_detail(e)}"}, ensure_ascii=False
             )
 
-        if raw.startswith("\ufeff"):
-            raw = raw[1:]
+        encoding = sniff_text_encoding(data)
+        if encoding is None:
+            # A resource file (image, archive) or text in a codec we do not
+            # edit: refuse with its size instead of returning mojibake — and
+            # never license it, so write_file cannot replace it with text.
+            return json.dumps(
+                {
+                    "error": (
+                        "File is binary or not UTF-8/UTF-16 text "
+                        f"({file_size} bytes); read_file shows text only."
+                    ),
+                    "path": display_path(resolved, root),
+                    "hint": (
+                        "Use terminal (file/xxd/strings, or python) to inspect resource "
+                        "files; write_file and patch_file do not edit them."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        raw = decode_text(data, encoding)
 
         all_lines = raw.splitlines(keepends=True)
         total_lines = len(all_lines)
@@ -148,8 +168,9 @@ class ReadFileTool(BaseTool):
 
         if offset == 1 and not truncated:
             # The whole file is in this response: license an overwrite of this
-            # revision (a partial read licenses nothing).
-            note_read(session_id, resolved, revision_id(read_stat))
+            # revision (a partial read licenses nothing). The codec rides along,
+            # so a later write keeps the file's own encoding.
+            note_read(session_id, resolved, revision_id(read_stat), encoding=encoding)
 
         result = {
             "content": numbered_content,

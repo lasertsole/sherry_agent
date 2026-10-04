@@ -33,13 +33,16 @@ from agent.tools.pub_base import (
     PathOutOfBoundsError,
     StaleWriteError,
     _extract_session_id,
-    atomic_write_text_no_follow,
+    atomic_write_bytes_no_follow,
+    decode_text,
     display_path,
+    encode_text,
     file_revision,
     file_write_lock,
     fuzzy_find_and_replace,
     note_edit,
     read_bytes_no_follow,
+    sniff_text_encoding,
     resolve_external_path,
     resolve_workspace_path,
     revision_id,
@@ -167,9 +170,21 @@ class PatchFileTool(BaseTool):
             # agent's patch of the same file.
             with file_write_lock(resolved):
                 read_raw, read_stat = read_bytes_no_follow(resolved)
-                content = read_raw.decode("utf-8")
-                if content.startswith("\ufeff"):
-                    content = content[1:]
+                if (read_encoding := sniff_text_encoding(read_raw)) is None:
+                    # Binary or a codec we do not edit: patching would rewrite
+                    # the bytes it cannot represent. Refuse, keep the file.
+                    return json.dumps(
+                        {
+                            "error": (
+                                "File is binary or not UTF-8/UTF-16 text; "
+                                "patch_file edits text only."
+                            ),
+                            "path": display_path(resolved, root),
+                            "hint": "Use terminal (cp / python) for resource files.",
+                        },
+                        ensure_ascii=False,
+                    )
+                content = decode_text(read_raw, read_encoding)
 
                 new_content, match_count, strategy, error = fuzzy_find_and_replace(
                     content,
@@ -215,9 +230,9 @@ class PatchFileTool(BaseTool):
 
                 # Layer 2: the atomic write re-asserts the revision right before
                 # the replace, closing the window between the check above and it.
-                atomic_write_text_no_follow(
+                atomic_write_bytes_no_follow(
                     resolved,
-                    new_content,
+                    encode_text(new_content, read_encoding),
                     expected_revision=revision_id(check_stat),
                 )
                 # A session that already knew the file advances with its own

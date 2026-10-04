@@ -22,7 +22,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from typing import Annotated, override
+from typing import Annotated, Literal, override
 
 from pydantic import BaseModel
 
@@ -34,21 +34,25 @@ from langgraph.prebuilt.tool_node import InjectedState
 
 from agent.tools.pub_base import (
     FileBusyError,
+    FileLicense,
     PathOutOfBoundsError,
     StaleWriteError,
     _extract_session_id,
     _open_no_follow,
-    atomic_write_text_no_follow,
+    atomic_write_bytes_no_follow,
+    decode_text,
     display_path,
+    encode_text,
     file_revision,
     file_write_lock,
-    licensed_revision,
+    licensed,
     note_edit,
     note_overwrite,
     read_bytes_no_follow,
     resolve_external_path,
     resolve_workspace_path,
     safe_error_detail,
+    sniff_text_encoding,
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
 
@@ -80,42 +84,57 @@ class UnreadFileError(Exception):
         self.path = path
 
 
-def _overwrite_precondition(session_id: str, resolved: Path) -> str | None:
-    """The revision an overwrite is licensed against; ``None`` = no precondition.
+def _overwrite_precondition(session_id: str, resolved: Path) -> FileLicense | None:
+    """The license an overwrite is checked and encoded against.
 
-    Only REGULAR files are gated. A symlinked final component is refused by the
-    write itself (``ELOOP``, the established policy) and a directory fails with
-    its own error, so "read it first" would be nonsense for either. A path that
-    does not exist is licensed as ``absent``, so a create is refused by the
-    atomic write when another writer creates the file first — the same gate a
-    stale license hits.
+    ``None`` means "no precondition": the write attempt answers with its own
+    error. Only REGULAR files are gated — a symlinked final component is refused
+    by the write itself (``ELOOP``, the established policy) and a directory
+    fails with its own error, so "read it first" would be nonsense for either.
+    A path that does not exist is licensed as ``absent`` (and encoded as
+    UTF-8), so a create is refused by the atomic write when another writer
+    creates the file first — the same gate a stale license hits.
     :raises UnreadFileError: The file exists and this session never read it.
     """
     try:
         info = resolved.lstat()
     except FileNotFoundError:
-        return "absent"
+        return FileLicense(revision="absent")
     except OSError:
         return None  # unreadable metadata: let the write attempt answer
     if not stat.S_ISREG(info.st_mode):
         return None
-    license = licensed_revision(session_id, resolved)
+    license = licensed(session_id, resolved)
     if license is None:
         raise UnreadFileError(resolved)
     return license
 
 
-def _write_text_no_follow(resolved: Path, text: str, append: bool) -> None:
-    """Write text through ``_open_no_follow`` so a symlink final component is refused."""
-    flags = os.O_WRONLY | os.O_CREAT | (os.O_APPEND if append else os.O_TRUNC)
+def _append_bytes_no_follow(resolved: Path, data: bytes) -> None:
+    """Append through ``_open_no_follow`` so a symlink final component is refused."""
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
     fd = _open_no_follow(resolved, flags, 0o644)
     try:
-        with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+        with os.fdopen(fd, "wb") as f:
             fd = -1
-            f.write(text)
+            f.write(data)
     finally:
         if fd >= 0:
             os.close(fd)
+
+
+def _existing_text_encoding(resolved: Path) -> str | None | Literal["absent"]:
+    """Encoding of the existing target: a codec, ``None`` for binary, ``"absent"``.
+
+    ``None`` (binary or not UTF-8/UTF-16) is the caller's refusal signal: the
+    text tools never write into a file they cannot read back, because that is
+    how a resource file gets replaced with mojibake.
+    """
+    try:
+        data, _stat = read_bytes_no_follow(resolved)
+    except FileNotFoundError:
+        return "absent"
+    return sniff_text_encoding(data)
 
 
 class FormattedWriteFileTool(WriteFileTool):
@@ -156,18 +175,56 @@ class FormattedWriteFileTool(WriteFileTool):
             # One writer per path at a time: in-process (other agents) and
             # cross-process (a second Sherry process on the same project root).
             with file_write_lock(resolved):
+                existing_encoding = _existing_text_encoding(resolved)
+                if existing_encoding is None:
+                    # A resource file (image, archive, UTF-16/legacy text): the
+                    # text tools refuse rather than replace it with mojibake.
+                    return json.dumps(
+                        {
+                            "error": (
+                                "Target is a binary or non-UTF-8 file "
+                                "(only UTF-8 and BOM-marked UTF-16 text is edited)."
+                            ),
+                            "path": display_path(resolved, root),
+                            "hint": (
+                                "Use terminal (e.g. cp / python) for resource files; "
+                                "write_file edits text only."
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
+                if append and existing_encoding not in ("utf-8", "utf-8-sig"):
+                    # Appending into UTF-16 would either write UTF-8 bytes into a
+                    # UTF-16 file or plant a second BOM mid-file. A whole-file
+                    # read + write is the safe path, and the license allows it.
+                    return json.dumps(
+                        {
+                            "error": (
+                                "Cannot append to a non-UTF-8 text file "
+                                f"(detected {existing_encoding}); append is UTF-8 only."
+                            ),
+                            "path": display_path(resolved, root),
+                            "hint": "Read the file and write the whole content instead of appending.",
+                        },
+                        ensure_ascii=False,
+                    )
                 if is_py and append:
                     # Append then format the WHOLE file: one atomic write of the
                     # reformatted result instead of the old append+rewrite pair.
                     existing = ""
                     with contextlib.suppress(FileNotFoundError):
-                        existing = read_bytes_no_follow(resolved)[0].decode("utf-8")
-                    atomic_write_text_no_follow(resolved, _format_py_code(existing + text))
+                        existing = decode_text(read_bytes_no_follow(resolved)[0], existing_encoding)
+                    atomic_write_bytes_no_follow(
+                        resolved,
+                        encode_text(_format_py_code(existing + text), existing_encoding),
+                    )
                     note_edit(session_id, resolved, file_revision(resolved))
                 elif append:
                     # Plain append keeps O_APPEND semantics (crash-tolerant by
-                    # construction); the lock still serializes its writers.
-                    _write_text_no_follow(resolved, text, append=True)
+                    # construction); the lock still serializes its writers. The
+                    # bytes are UTF-8 — a BOM (utf-8-sig) belongs to the file's
+                    # first bytes only and is never re-emitted here.
+                    _append_bytes_no_follow(resolved, text.encode("utf-8"))
                     note_edit(session_id, resolved, file_revision(resolved))
                 else:
                     try:
@@ -187,14 +244,24 @@ class FormattedWriteFileTool(WriteFileTool):
                             },
                             ensure_ascii=False,
                         )
-                    atomic_write_text_no_follow(
+                    assert license is not None  # the gate above answered otherwise
+                    payload = _format_py_code(text) if is_py else text
+                    # ``absent`` is a real precondition: a file another writer
+                    # creates in the window is refused, not clobbered.
+                    atomic_write_bytes_no_follow(
                         resolved,
-                        _format_py_code(text) if is_py else text,
-                        expected_revision=license,
+                        encode_text(payload, license.encoding),
+                        expected_revision=license.revision,
                     )
                     # This session authored the whole file: it knows the revision
-                    # it produced, so the next overwrite is licensed against it.
-                    note_overwrite(session_id, resolved, file_revision(resolved))
+                    # it produced, so the next overwrite is licensed against it
+                    # — and in the codec it was written in.
+                    note_overwrite(
+                        session_id,
+                        resolved,
+                        file_revision(resolved),
+                        encoding=license.encoding,
+                    )
         except StaleWriteError:
             return json.dumps(
                 {

@@ -31,24 +31,40 @@ from __future__ import annotations
 
 import threading
 from collections import OrderedDict
+from dataclasses import dataclass
 from pathlib import Path
 
 __all__ = [
+    "FileLicense",
     "forget_all",
     "forget_session",
-    "licensed_revision",
+    "licensed",
     "note_edit",
     "note_overwrite",
     "note_read",
 ]
+
+
+@dataclass(frozen=True)
+class FileLicense:
+    """What a session knows about one file: the revision it saw and its codec.
+
+    The encoding is carried along so a write lands in the file's OWN codec —
+    a UTF-16 config keeps its BOM and byte order instead of silently turning
+    into UTF-8 — and a write with no license (a new file) is UTF-8.
+    """
+
+    revision: str
+    encoding: str = "utf-8"
+
 
 #: Upper bound on remembered licenses (one per session and resolved path). A
 #: forgotten license only costs a re-read, so the cap can stay small; the LRU
 #: order is what decides which one goes.
 _MAX_LICENSES = 4096
 
-#: ``{(session_id, resolved path): revision}`` in LRU order (oldest first).
-_LICENSES: OrderedDict[tuple[str, str], str] = OrderedDict()
+#: ``{(session_id, resolved path): FileLicense}`` in LRU order (oldest first).
+_LICENSES: OrderedDict[tuple[str, str], FileLicense] = OrderedDict()
 _LOCK = threading.Lock()
 
 
@@ -56,23 +72,23 @@ def _key(session_id: str, path: Path) -> tuple[str, str]:
     return (session_id, str(path))
 
 
-def _store(session_id: str, path: Path, revision: str) -> None:
+def _store(session_id: str, path: Path, revision: str, encoding: str) -> None:
     key = _key(session_id, path)
     with _LOCK:
-        _LICENSES[key] = revision
+        _LICENSES[key] = FileLicense(revision=revision, encoding=encoding)
         _LICENSES.move_to_end(key)
         while len(_LICENSES) > _MAX_LICENSES:
             _LICENSES.popitem(last=False)
 
 
-def note_read(session_id: str, path: Path, revision: str) -> None:
+def note_read(session_id: str, path: Path, revision: str, encoding: str = "utf-8") -> None:
     """Record that *session_id* has read the whole of *path* at *revision*."""
-    _store(session_id, path, revision)
+    _store(session_id, path, revision, encoding)
 
 
-def note_overwrite(session_id: str, path: Path, revision: str) -> None:
+def note_overwrite(session_id: str, path: Path, revision: str, encoding: str = "utf-8") -> None:
     """Record a whole-file write by *session_id*: it knows the new *revision*."""
-    _store(session_id, path, revision)
+    _store(session_id, path, revision, encoding)
 
 
 def note_edit(session_id: str, path: Path, revision: str) -> None:
@@ -80,23 +96,24 @@ def note_edit(session_id: str, path: Path, revision: str) -> None:
 
     A session that never read the file keeps no license — its own delta must
     not invent one, or the next overwrite would be licensed off content the
-    session never saw.
+    session never saw. The recorded encoding is kept: an edit does not change
+    a file's codec.
     """
     key = _key(session_id, path)
     with _LOCK:
         if key in _LICENSES:
-            _LICENSES[key] = revision
+            _LICENSES[key] = FileLicense(revision=revision, encoding=_LICENSES[key].encoding)
             _LICENSES.move_to_end(key)
 
 
-def licensed_revision(session_id: str, path: Path) -> str | None:
-    """The revision *session_id* is licensed to overwrite, or ``None``."""
+def licensed(session_id: str, path: Path) -> FileLicense | None:
+    """The license *session_id* holds for *path*, or ``None``."""
     key = _key(session_id, path)
     with _LOCK:
-        revision = _LICENSES.get(key)
-        if revision is not None:
+        entry = _LICENSES.get(key)
+        if entry is not None:
             _LICENSES.move_to_end(key)
-    return revision
+    return entry
 
 
 def forget_session(session_id: str) -> None:

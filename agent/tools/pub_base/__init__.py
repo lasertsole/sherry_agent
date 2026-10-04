@@ -12,7 +12,14 @@ from .path_utils import (
     _open_no_follow,
     PathOutOfBoundsError,
 )
-from .file_utils import SKIP_DIR_NAMES, is_text_file, should_skip_dir
+from .file_utils import (
+    SKIP_DIR_NAMES,
+    decode_text,
+    encode_text,
+    is_text_file,
+    should_skip_dir,
+    sniff_text_encoding,
+)
 from .atomic_write import (
     StaleWriteError,
     atomic_write_bytes_no_follow,
@@ -21,7 +28,7 @@ from .atomic_write import (
     read_bytes_no_follow,
     revision_id,
 )
-from .read_state import licensed_revision, note_edit, note_overwrite, note_read
+from .read_state import FileLicense, licensed, note_edit, note_overwrite, note_read
 from .path_lock import active_path_locks, path_lock
 from .file_lock import (
     FileBusyError,
@@ -61,6 +68,9 @@ __all__ = [
     "PathOutOfBoundsError",
     "SKIP_DIR_NAMES",
     "is_text_file",
+    "sniff_text_encoding",
+    "decode_text",
+    "encode_text",
     "should_skip_dir",
     "StaleWriteError",
     "atomic_write_bytes_no_follow",
@@ -68,7 +78,8 @@ __all__ = [
     "file_revision",
     "read_bytes_no_follow",
     "revision_id",
-    "licensed_revision",
+    "FileLicense",
+    "licensed",
     "note_edit",
     "note_overwrite",
     "note_read",

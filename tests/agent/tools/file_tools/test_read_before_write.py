@@ -256,6 +256,6 @@ def test_the_license_registry_evicts_the_oldest(monkeypatch, project):
 
     # Eviction drops protection, never grants it: the evicted file needs a
     # fresh read before it can be overwritten again.
-    assert read_state.licensed_revision(SESSION, first) is None
-    assert read_state.licensed_revision(SESSION, second) == "mtime:2:size:2"
-    assert read_state.licensed_revision(SESSION, third) == "mtime:3:size:3"
+    assert read_state.licensed(SESSION, first) is None
+    assert read_state.licensed(SESSION, second).revision == "mtime:2:size:2"
+    assert read_state.licensed(SESSION, third).revision == "mtime:3:size:3"
