@@ -899,7 +899,7 @@ const onRewindDone = async (): Promise<void> => {
 };
 
 // A branch that was already cut (page load, reconnect) hides the same rows.
-watch(() => rewind.hiddenRanges.value, pruneHiddenMessages, { deep: true });
+watch(() => rewind.hiddenRanges, pruneHiddenMessages, { deep: true });
 
 // On first screen, load the current session's history messages and render the merged list into ChatBox
 watch(
