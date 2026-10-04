@@ -455,9 +455,46 @@ export function useChatStream(deps: ChatStreamDeps) {
   //: have claimed its queue row yet).
   const WATCHDOG_INTERVAL_MS = 5_000;
   const WATCHDOG_GRACE_MS = 4_000;
+  //: A tick this much later than the interval means the page was not running
+  //: (starved by a heavy render), so the missing terminal frame is re-checked
+  //: immediately and twice: a frozen page cannot run its own watchdog at all.
+  const WATCHDOG_STALLED_FACTOR = 2.5;
   let watchdogTimer: ReturnType<typeof setInterval> | null = null;
   let busySince = 0;
   let idleReadings = 0;
+  let lastWatchdogTickAt = 0;
+  let extraProbeTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** One probe: two consecutive idle answers settle the turn. */
+  const probeTurnState = async () => {
+    if (!isSending.value) return;
+    try {
+      const active = await fetchTurnState(mySid);
+      idleReadings = active ? 0 : idleReadings + 1;
+      if (idleReadings >= 2) settleStuckTurn('server reports no active turn');
+    } catch {
+      // A failed probe proves nothing; the next tick retries.
+      idleReadings = 0;
+    }
+  };
+
+  /**
+   * Probe now and once more shortly after — the recovery path for a page that
+   * just resumed (a frozen page can neither receive nor process the terminal
+   * frame; what it needs is a fresh answer the moment it can run again).
+   * @param reason
+   */
+  const reconcileBusyNow = (reason: string) => {
+    if (!isSending.value) return;
+    logUtil.e(`[use-chat-stream] busy reconcile: ${reason}`);
+    idleReadings = 0;
+    void probeTurnState();
+    if (extraProbeTimer !== null) clearTimeout(extraProbeTimer);
+    extraProbeTimer = setTimeout(() => {
+      extraProbeTimer = null;
+      void probeTurnState();
+    }, 1_200);
+  };
 
   /**
    * While the composer believes it is streaming, ask the server whether the
@@ -471,21 +508,23 @@ export function useChatStream(deps: ChatStreamDeps) {
     if (watchdogTimer !== null) return;
     busySince = Date.now();
     idleReadings = 0;
+    lastWatchdogTickAt = Date.now();
     watchdogTimer = setInterval(() => {
       void (async () => {
+        const now = Date.now();
+        const gap = now - lastWatchdogTickAt;
+        lastWatchdogTickAt = now;
         if (!isSending.value) {
           stopBusyWatchdog();
           return;
         }
-        if (Date.now() - busySince < WATCHDOG_GRACE_MS) return;
-        try {
-          const active = await fetchTurnState(mySid);
-          idleReadings = active ? 0 : idleReadings + 1;
-          if (idleReadings >= 2) settleStuckTurn('server reports no active turn');
-        } catch {
-          // A failed probe proves nothing; the next tick retries.
-          idleReadings = 0;
+        if (now - busySince < WATCHDOG_GRACE_MS) return;
+        if (gap > WATCHDOG_INTERVAL_MS * WATCHDOG_STALLED_FACTOR) {
+          // Ticks were missed: the page was not running. Ask right away, twice.
+          reconcileBusyNow(`watchdog gap ${Math.round(gap / 1000)}s`);
+          return;
         }
+        await probeTurnState();
       })();
     }, WATCHDOG_INTERVAL_MS);
   };
@@ -494,8 +533,24 @@ export function useChatStream(deps: ChatStreamDeps) {
   const stopBusyWatchdog = () => {
     if (watchdogTimer !== null) clearInterval(watchdogTimer);
     watchdogTimer = null;
+    if (extraProbeTimer !== null) clearTimeout(extraProbeTimer);
+    extraProbeTimer = null;
     idleReadings = 0;
   };
+
+  //: The page coming back into view is the natural "I can run again" moment
+  //: after a starved stretch; the WS (re)connect means the transport may have
+  //: missed frames while it was down. Both re-ask instead of waiting a tick.
+  const onVisibilityChange = () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      reconcileBusyNow('page visible again');
+    }
+  };
+  const onSocketConnected = () => reconcileBusyNow('websocket (re)connected');
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  }
+  on('ws:connected', onSocketConnected);
 
   /**
    * Session-level error handler: mark running tools failed and surface the failure
@@ -567,6 +622,10 @@ export function useChatStream(deps: ChatStreamDeps) {
       postInterruptTimer = null;
     }
     stopBusyWatchdog();
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    }
+    off('ws:connected', onSocketConnected);
   });
 
   /**

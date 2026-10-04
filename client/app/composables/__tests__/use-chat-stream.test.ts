@@ -9,15 +9,22 @@
  * badge state; `handleSend` only claims `streamingTurn` when the session was
  * idle, and `turn_started` moves it to the batch's trailing turn.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { ref } from 'vue';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { defineComponent, ref } from 'vue';
 import type { Ref } from 'vue';
+import { mount } from '@vue/test-utils';
 import type { Composer } from 'vue-i18n';
 import { useChatStream, type ChatStreamDeps } from '../use-chat-stream';
 import type { MessageItem } from '../../pages/home/type';
 import type { AgentSocket, OnChunkCallback, OnDoneCallback, OnHitlCallback, OnQueuedCallback } from '../bridge';
 import type { ChatController } from '../messages';
 import { CHAT_ROLE } from '@/types/chat-role';
+
+// The composable subscribes to the shared mitt bus (`on`/`off` are unimported
+// from `../mitt`); the mock captures the handlers so a test can replay the
+// events a real socket/browser would emit.
+const mittMocks = vi.hoisted(() => ({ on: vi.fn(), off: vi.fn(), emit: vi.fn() }));
+vi.mock('@/composables/mitt', () => mittMocks);
 
 // ---------------------------------------------------------------------------
 // Capture the auto-imported `postAgentStream` calls: `use-chat-stream.ts` is
@@ -69,21 +76,27 @@ vi.mock('../messages', async importOriginal => {
 });
 
 /** The composable instance plus the reactive refs a test asserts on. */
-interface Harness {
+interface Harness extends HarnessDeps {
   stream: ReturnType<typeof useChatStream>;
+}
+
+/** The collaborator set a harness is built from, without the composable call. */
+interface HarnessDeps {
+  deps: ChatStreamDeps;
   socket: AgentSocket;
   drafts: ChatStreamDeps['drafts'];
   chatMessages: Ref<MessageItem[]>;
   isSending: Ref<boolean>;
   streamingTurn: Ref<number | null>;
   appendStreamChunk: ReturnType<typeof vi.fn>;
+  markRunningToolsFailed: ReturnType<typeof vi.fn>;
 }
 
 /**
- * Build one `useChatStream` instance with inert collaborators.
- * @returns The composable instance plus the reactive refs a test asserts on.
+ * Build one `useChatStream` dependency set with inert collaborators.
+ * @returns The deps object plus the reactive refs a test asserts on.
  */
-function makeHarness(): Harness {
+function makeDeps(): HarnessDeps {
   const chatMessages = ref<MessageItem[]>([]);
   const sessionId = ref('s1');
   const draft = ref('');
@@ -138,7 +151,7 @@ function makeHarness(): Harness {
   };
 
   return {
-    stream: useChatStream(deps),
+    deps,
     socket,
     drafts: deps.drafts,
     chatMessages,
@@ -149,12 +162,39 @@ function makeHarness(): Harness {
   };
 }
 
+/**
+ * Build one `useChatStream` instance with inert collaborators.
+ * @returns The composable instance plus the reactive refs a test asserts on.
+ */
+function makeHarness(): Harness {
+  const built = makeDeps();
+  return { ...built, stream: useChatStream(built.deps) };
+}
+
+/**
+ * The `ws:connected` handler the most recently built harness registered.
+ * @returns The captured handler (throws when no harness subscribed yet).
+ */
+const lastWsConnectedHandler = (): (() => void) => {
+  const handler = mittMocks.on.mock.calls.filter(c => c[0] === 'ws:connected').at(-1)?.[1] as (() => void) | undefined;
+  if (!handler) throw new Error('no ws:connected handler registered');
+  return handler;
+};
+
 beforeEach(() => {
   state.sends = [];
   state.markRunningToolsFailed.mockClear();
   state.turnState.mockReset();
   state.turnState.mockResolvedValue(false);
+  mittMocks.on.mockClear();
+  mittMocks.off.mockClear();
+  mittMocks.emit.mockClear();
   vi.useRealTimers();
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.restoreAllMocks();
 });
 
 describe('useChatStream queue badges', () => {
@@ -432,5 +472,106 @@ describe('useChatStream busy-state recovery', () => {
     const callsAfterSettle = state.turnState.mock.calls.length;
     await vi.advanceTimersByTimeAsync(20_000);
     expect(state.turnState.mock.calls.length).toBe(callsAfterSettle);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Recovery triggers: a 5s tick is the fallback, but two moments are stronger
+// evidence that the page is runnable again — coming back into view after being
+// starved, and the socket reconnecting (frames may have been lost while it was
+// down). Both re-ask immediately and once more 1.2s later, because a single
+// idle reading could race a just-started turn.
+// ---------------------------------------------------------------------------
+describe('useChatStream busy reconcile triggers', () => {
+  it('settles a stuck turn the moment the page becomes visible again', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    await harness.stream.handleSend('long answer');
+    expect(harness.isSending.value).toBe(true);
+    // The turn is over server-side; the page just never got the frame.
+    state.turnState.mockResolvedValue(false);
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+  });
+
+  it('keeps the composer busy while the server still reports an active turn', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    await harness.stream.handleSend('long answer');
+    state.turnState.mockResolvedValue(true);
+
+    document.dispatchEvent(new Event('visibilitychange'));
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(harness.isSending.value).toBe(true);
+    expect(harness.streamingTurn.value).toBe(1);
+  });
+
+  it('re-probes when the socket (re)connects after a dropped frame', async () => {
+    vi.useFakeTimers();
+    const harness = makeHarness();
+    await harness.stream.handleSend('long answer');
+    state.turnState.mockResolvedValue(false);
+
+    lastWsConnectedHandler()();
+    await vi.advanceTimersByTimeAsync(1_200);
+
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+  });
+
+  it('does not probe on a ws:connected frame while the composer is idle', () => {
+    makeHarness();
+
+    lastWsConnectedHandler()();
+
+    expect(state.turnState).not.toHaveBeenCalled();
+  });
+
+  it('immediately re-probes twice when a watchdog tick runs late (starved page)', async () => {
+    // Timers are faked but Date is real: the test advances the wall clock
+    // without advancing the interval schedule — exactly what a frozen page
+    // produces (the next tick fires far later than its 5s interval).
+    vi.useFakeTimers({ toFake: ['setTimeout', 'setInterval', 'clearTimeout', 'clearInterval'] });
+    let fakeNow = 1_000_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => fakeNow);
+
+    const harness = makeHarness();
+    await harness.stream.handleSend('long answer');
+    state.turnState.mockResolvedValue(false);
+
+    fakeNow += 20_000;
+    await vi.advanceTimersByTimeAsync(5_000);
+    // The late tick probes immediately — one idle reading is not enough.
+    expect(state.turnState).toHaveBeenCalledTimes(1);
+    expect(harness.isSending.value).toBe(true);
+
+    // The follow-up probe 1.2s later is the second reading and settles.
+    await vi.advanceTimersByTimeAsync(1_200);
+    expect(state.turnState).toHaveBeenCalledTimes(2);
+    expect(harness.isSending.value).toBe(false);
+    expect(harness.streamingTurn.value).toBeNull();
+  });
+
+  it('detaches the visibility and bus listeners on unmount', () => {
+    const built = makeDeps();
+    const removeSpy = vi.spyOn(document, 'removeEventListener');
+    const Host = defineComponent({
+      setup() {
+        useChatStream(built.deps);
+        return {};
+      },
+      template: '<div/>'
+    });
+    const wrapper = mount(Host);
+
+    wrapper.unmount();
+
+    expect(mittMocks.off.mock.calls.some(c => c[0] === 'ws:connected')).toBe(true);
+    expect(removeSpy.mock.calls.some(c => c[0] === 'visibilitychange')).toBe(true);
   });
 });
