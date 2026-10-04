@@ -111,6 +111,35 @@ export function useStreamChunks(
   };
 
   /**
+   * Resolve which TOOL row a tool_end/tool_result frame belongs to.
+   *
+   * Position alone is NOT identity: one assistant message may declare N tool
+   * calls, and the backend emits all N `tool_start` frames during that
+   * message's own streaming (messages mode, `stream_dispatch.py` tool_start) and
+   * only afterwards their `tool_end`/`tool_result` frames (updates mode) — so
+   * "the turn's last tool row" is the LAST-DECLARED call, not the one that just
+   * finished. Pairing by `toolId` fixes that.
+   *
+   * The positional fallback is load-bearing, not legacy: history rows carry no
+   * toolId, and the HITL resume path delivers a `tool_result` whose card belongs
+   * to the previous turn.
+   * @param turnNum
+   * @param toolId Tool-call id from the frame metadata, when it has one
+   */
+  const findToolRowIdx = (turnNum: number, toolId?: string): number => {
+    if (toolId) {
+      for (let i = chatMessages.value.length - 1; i >= 0; i--) {
+        const row = chatMessages.value[i];
+        if (!row) continue;
+        if (row.role === CHAT_ROLE.TOOL && row.turn_num === turnNum && row.toolId === toolId) {
+          return i;
+        }
+      }
+    }
+    return findSameTurnToolIdx(turnNum);
+  };
+
+  /**
    * Streamed text/reasoning is buffered here and applied ONCE PER FRAME.
    *
    * Applying every chunk immediately re-rendered the whole (growing) bubble —
@@ -225,6 +254,7 @@ export function useStreamChunks(
         content: '',
         toolName: content,
         toolStatus: 'running',
+        toolId: meta?.tool_id,
         // Args are delivered with meta at tool_start time, so call arguments can be viewed while running
         toolArgs: meta?.args ?? undefined,
         id: allocateTempId(),
@@ -233,9 +263,8 @@ export function useStreamChunks(
       });
       if (isActiveDraft) void drafts.commitDraftTurn(sid, turnNum);
     },
-    tool_end: ({ sid, turnNum, isActiveDraft }) => {
-      // Mark the most recent TOOL message of this turn as completed
-      const targetIdx = findSameTurnToolIdx(turnNum);
+    tool_end: ({ sid, turnNum, isActiveDraft, meta }) => {
+      const targetIdx = findToolRowIdx(turnNum, meta?.tool_id);
       if (targetIdx >= 0) {
         const row = chatMessages.value[targetIdx];
         if (row) row.toolStatus = 'done';
@@ -243,13 +272,13 @@ export function useStreamChunks(
       if (isActiveDraft) void drafts.commitDraftTurn(sid, turnNum);
     },
     tool_result: ({ sid, content, turnNum, isActiveDraft, meta }) => {
-      // Fill the most recent same-turn TOOL message with args and result text, and mark its status per `error`.
+      // Fill the tool card this result belongs to with args and result text, and mark its status per `error`.
       // HITL resume special case: the interrupted tool card was created in the PREVIOUS (generate) turn,
       // while its tool_result arrives with the resume turn number (max+1) — the same-turn search misses it.
       // Fallback: the most recent TOOL card still 'running' (approve path) or 'failed' (reject path —
       // markRunningToolsFailed already ran before the resume frames arrive), so the execution result /
       // rejection notice lands on the card the user actually saw.
-      let targetIdx = findSameTurnToolIdx(turnNum);
+      let targetIdx = findToolRowIdx(turnNum, meta?.tool_id);
       if (targetIdx < 0) {
         for (let i = chatMessages.value.length - 1; i >= 0; i--) {
           const row = chatMessages.value[i];

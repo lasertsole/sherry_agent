@@ -58,6 +58,15 @@ export interface MessageItem {
   timestamp: string;
   /** Tool name (only set when role=TOOL; identifies which tool call) */
   toolName?: string;
+  /**
+   * Backend tool-call id (only set when role=TOOL and the frame carried
+   * `meta.tool_id`). This is the row's identity for pairing: one assistant
+   * message may declare N tool calls, so the backend emits all N `tool_start`
+   * frames first and only then their `tool_end`/`tool_result` frames — position
+   * alone cannot tell them apart. Never set on history rows (the history API
+   * does not expose it), so every lookup must tolerate its absence.
+   */
+  toolId?: string;
   /** Tool status: running=calling, done=completed, failed=rejected/failed, error=execution error (only set when role=TOOL) */
   toolStatus?: 'running' | 'done' | 'failed' | 'error';
   /** Tool call arguments (only set when role=TOOL and a tool_result has been received) */
