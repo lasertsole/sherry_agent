@@ -198,6 +198,7 @@ message sent after the rewind has a larger id and is visible again at once.
   run after one; and a rewind clears the HITL pending flag, so an approval that
   arrives for an interrupt the user already cut away is refused instead of
   resuming the abandoned branch.
+- **Client**: every rendered message row carries a 回到这里 / "Back to here" control OUTSIDE and BELOW its bubble (the bubble stays pure content), two-state on purpose — the first click arms it, the second cuts — and greyed out (never hidden) while the server refuses.
 - **Deliberate deviation**: queued USER messages are not fenced. They are user
   intent, not branch state — dropping them silently would lose something the
   user typed, while delivering them answers a message the user still means.
