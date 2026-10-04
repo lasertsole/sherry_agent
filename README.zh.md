@@ -288,7 +288,7 @@ EMA_AI_agent/
 | **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证，以及改动在锁下合并回主树的隔离子代理工作区 | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证、隔离子代理工作区，以及写前快照与整批拒绝式回退 | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
 
 ## ⚡ 快速开始
 

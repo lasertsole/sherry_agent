@@ -18,6 +18,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
 - [Isolated subagent workspaces](#-isolated-subagent-workspaces)
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
 - [Resource files & encodings](#%EF%B8%8F-resource-files--encodings)
+- [Snapshots & revert](#-snapshots--revert)
 - [Boundaries](#-boundaries)
 - [Testing](#-testing)
 - [File Map](#%EF%B8%8F-file-map)
@@ -124,6 +125,51 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
   write the whole file" instead.
 - The isolated-workspace merge is byte-level throughout, so resource files merge
   exactly even though the text tools will not edit them.
+
+## 🧷 Snapshots & revert
+
+Every write through the file tools captures the OLD bytes before it lands, so
+an agent that breaks a file can be put back — the ZCode model, with two
+additions of our own: the freshness check runs on both the plan and the apply,
+and a refusal gives the user a way forward instead of just "no".
+
+- **Capture** (`snapshot.py`): a content-addressed blob under
+  `SESSIONS_DIR/<session>/file_snapshots/` (writing the same old content twice
+  costs one blob) plus one row in `file-snapshots.db` per write: the before and
+  after revisions, the after-content hash computed from bytes the call already
+  held, `existed_before`, the owning `tool_call_id`, and the capturing process's
+  `pid` + start token. Creating a file costs no read at all; a refused write
+  captures nothing. Fail-open: a broken index warns and the write proceeds.
+- **`file_changes_revert`** plans then applies. One file that moved since its
+  snapshot refuses the WHOLE batch — that rule is the point, because restoring
+  over an edit the revert did not make is exactly the harm this feature exists
+  to prevent. The restored content is the earliest snapshot in scope; the
+  freshness check compares the disk against the path's NEWEST row (checking
+  against the earliest would make any twice-written file unrevertable). A
+  created file is deleted (never left as a 0-byte leftover); a file deleted by
+  someone else is refused rather than resurrected; a collected blob answers
+  `snapshot_expired`. Reverts are one-shot: a second call finds nothing, and
+  there is no redo.
+- **A refusal still leaves a way forward**: inside a git work tree the plan
+  probes three-way-merge feasibility with `git merge-file -p` on temporary
+  copies (`-p` is mandatory — without it git writes the result back into its
+  first argument) and reports the command. The probe never touches the work
+  tree, and its failure is information, never a second refusal.
+- **Retention** (`snapshot_gc.py`) is capped three ways per session (bytes,
+  rows, age) and deletes on identity, not age alone: a row's captured `pid` +
+  start token are checked with `kill(pid, 0)` — `ESRCH` is proven-dead (and
+  deliberately does NOT compare a start time: with no process there is none to
+  compare, and demanding one would make the branch dead code), a matching token
+  is alive, a mismatched one means the pid was recycled, and `EPERM` counts as
+  ALIVE because the process exists. A long turn can therefore still revert its
+  own first write at hour six. Orphan blobs from a crashed capture are swept
+  too. The daemon thread starts beside the auth cleanup at boot.
+- **Client**: `file_changes_updated` is pushed after every write and
+  `file_changes_refresh` answers with the same payload; the chat shows a
+  revert chip (greyed out, never hidden, when a revert is no longer possible)
+  and a two-step dialog — the per-file plan first, the destructive confirm
+  second. `GET /sessions/file-changes` and `POST /sessions/file-changes/revert`
+  call the very same core the agent-side tool does.
 
 ## 🚧 Boundaries
 
