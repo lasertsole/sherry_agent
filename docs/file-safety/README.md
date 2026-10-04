@@ -17,6 +17,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
 - [Read-before-write license](#-read-before-write-license)
 - [Isolated subagent workspaces](#-isolated-subagent-workspaces)
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
+- [Resource files & encodings](#%EF%B8%8F-resource-files--encodings)
 - [Boundaries](#-boundaries)
 - [Testing](#-testing)
 - [File Map](#%EF%B8%8F-file-map)
@@ -97,6 +98,32 @@ A clean merge removes the workspace; a conflicting one keeps `<workspace>/tree` 
 **Row-hash editing (omo's hashline)** is not built: it is finer than a whole-file CAS — only the lines an edit touches are compared — but it requires changing the read tool's own output format, and the four layers above already remove the silent-loss failures it targets.
 
 **Directory `fsync` after the rename** is not enabled. Measured on this device (f2fs): a write costs 1.34 ms with the directory `fsync` and 0.52 ms without — 2.6× the write path, about 0.8 ms absolute per file. What it buys is narrow: the file's data is already `fsync`ed, so a power loss can never leave a torn file — only an edit that silently reverts to its previous content, which is also what every mainstream editor does. A process crash needs nothing at all: the page cache survives. It is one line behind a flag if a deployment ever promises power-loss durability for an acknowledged write.
+
+## 🗂️ Resource files & encodings
+
+The tools edit TEXT, and the license made that load-bearing: a read used to hand
+the model a screenful of replacement characters for a PNG and then license an
+overwrite, so an image could be replaced by mojibake. `file_utils.sniff_text_encoding`
+now decides, from the BOM first and a NUL / UTF-8-decode check second:
+
+- **UTF-8, UTF-8-with-BOM and UTF-16 (LE/BE)** are read and edited normally, and
+  the license carries the codec forward — `write_file` and `patch_file` write
+  back in the file's OWN encoding, so a UTF-16 config keeps its BOM and byte
+  order instead of silently becoming UTF-8, and a big-endian file stays
+  big-endian.
+- **Anything else is a resource file**: `read_file` answers with the size and a
+  `terminal` hint and grants NO license, `patch_file` refuses, and `write_file`
+  refuses before the license is even consulted. That is what keeps an image or
+  an archive from being replaced by text: a binary never holds a license, so
+  nothing can text-write it.
+- **Legacy codecs without a BOM (GBK/GB18030)** are refused, not guessed — a
+  wrong guess that rewrites a file in the wrong codec is worse than an
+  actionable refusal. `terminal` (cp / python) is the escape hatch.
+- **`append` is UTF-8 only**: appending into a UTF-16 file would write UTF-8
+  bytes into it or plant a second BOM mid-file, so it answers with "read it and
+  write the whole file" instead.
+- The isolated-workspace merge is byte-level throughout, so resource files merge
+  exactly even though the text tools will not edit them.
 
 ## 🚧 Boundaries
 
