@@ -363,8 +363,10 @@ const originLabel = (message: MessageItem): string => t(ORIGIN_LABEL_KEYS[messag
 //: What a STREAMING bubble renders at most: the tail's characters and lines.
 const STREAM_TAIL_CHARS = 4000;
 const STREAM_TAIL_LINES = 200;
-//: A settled answer past this size renders a head preview plus an expand control.
-const LONG_MESSAGE_CHARS = 4000;
+//: A settled answer past this many CHARACTERS renders a head preview plus an
+//: expand control (2500 — was 4000; a mid-length answer still costs the layout a
+//: full re-flow on every re-render, and the full text stays one click away).
+const LONG_MESSAGE_CHARS = 2500;
 //: The preview's size in CHARACTERS, not lines: a "20 lines" preview is a
 //: handful of characters for a column of short numbers and thousands of
 //: characters for prose, so the cap has to be the thing that actually bounds

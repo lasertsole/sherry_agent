@@ -442,6 +442,21 @@ describe('ChatBox streaming bubble (integration, backend mocked)', () => {
     expect(wrapper.text()).not.toContain('tail-0');
   });
 
+  it('collapses a settled answer past 2500 CHARACTERS, and leaves 2500 alone', () => {
+    // The trigger counts characters (symbols and spaces included): the boundary
+    // is pinned here so a change to the cap is a deliberate edit.
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 70, role: CHAT_ROLE.AI, content: 'x'.repeat(2500) })] }
+    });
+    expect(wrapper.findAll('button').some(b => b.text().includes('展开全文'))).toBe(false);
+
+    const long = base({ id: 71, role: CHAT_ROLE.AI, content: 'x'.repeat(2501) });
+    const longWrapper = mount(ChatBox, { props: { messages: [long] } });
+    const expand = longWrapper.findAll('button').find(b => b.text().includes('展开全文'));
+    expect(expand).toBeTruthy();
+    expect(expand!.text()).toContain('2501');
+  });
+
   it('leaves a short streaming answer untouched', () => {
     const wrapper = mount(ChatBox, {
       props: {
