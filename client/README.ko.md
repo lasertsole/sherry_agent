@@ -146,7 +146,7 @@ client/
 │   │           ├── ConfigPanel.vue            # 시스템 설정 탭(.env 편집, 배경, 언어 등)
 │   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가, ConfigPanel용)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
-│   │           ├── PersonaPanel.vue           # 시스템 프롬프트 / 페르소나 탭
+│   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 + 프리셋 관리)
 │   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
 │   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)

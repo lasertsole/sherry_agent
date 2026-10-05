@@ -1,6 +1,27 @@
 version: 2
 
+# 本文件由**默认分支（main）**读取（Dependabot 始终读默认分支，无开关可改）。
+# 要让 dev 也收到依赖 PR，唯一手段是在这里为 dev 追加一组条目并设
+# `target-branch: dev`——Dependabot 的唯一性键是
+# (package-ecosystem, directory, target-branch)，故同 ecosystem+directory
+# 不同 target-branch 是两条合法且独立的更新流。
+#
+# 维护代价（知情选择）：下面每个 ecosystem 的配置块都写了两遍。
+# ignore / groups / commit-message / labels 均无跨条目继承机制，只能复制；
+# YAML 锚点在此不可靠，不采用。因此改动依赖忽略清单或分组时，
+# **两处都要改**，否则 dev 会重新为已判定「上游永不会修复」的依赖开 PR。
+#
+# 三条与 target-branch 相关的硬约束（已核实官方文档）：
+#   1. 目标分支必须**已存在**，不会被自动创建（本仓库 dev 已存在）。
+#   2. 分组 PR 的分支名含 target_branch，故 main / dev 复用同一 group
+#      identifier 不会撞名。
+#   3. 设了 target-branch 的条目，其选项**不再适用于 security updates**
+#      （安全更新恒定走默认分支）。故 security-updates 分组只放在 main 侧。
 updates:
+  # ══════════════════════════════════════════════════════════
+  # 第一部分：main（默认分支）—— 不写 target-branch 即为默认分支
+  # ══════════════════════════════════════════════════════════
+
   # ── 后端 Python (uv) ───────────────────────────────────
   - package-ecosystem: "uv"
     directory: "/"
@@ -95,6 +116,100 @@ updates:
   # ── GitHub Actions 版本 ────────────────────────────────
   - package-ecosystem: "github-actions"
     directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 3
+    commit-message:
+      prefix: "deps(ci)"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # ══════════════════════════════════════════════════════════
+  # 第二部分：dev —— 上面三条的逐字副本，仅多一行 target-branch
+  # 改动任一条时必须同步另一条（ignore 漏抄会让已处置的 CVE 重新告警）
+  # ══════════════════════════════════════════════════════════
+
+  # ── 后端 Python (uv) → dev ────────────────────────────
+  - package-ecosystem: "uv"
+    directory: "/"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    # 与上方 main 侧 uv 条目保持逐字一致（含全部 CVE 锁定版本）
+    ignore:
+      - dependency-name: "accelerate"
+        versions: ["=1.14.0"]
+      - dependency-name: "diskcache"
+        versions: ["=5.6.3"]
+      - dependency-name: "ragas"
+        versions: ["=0.4.3"]
+    groups:
+      production-deps:
+        patterns:
+          - "langchain*"
+          - "langgraph*"
+          - "robyn"
+          - "loguru"
+          - "dotenv"
+          - "aiosqlite"
+          - "croniter"
+          - "pillow"
+          - "opencv-python-headless"
+          - "instructor"
+          - "json_repair"
+          - "json5"
+          - "gguf"
+          - "pipmaster"
+          - "snkv"
+          - "websockets"
+          - "websocket-client"
+      dev-deps:
+        dependency-type: "development"
+    commit-message:
+      prefix: "deps(backend)"
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # ── 前端 npm (pnpm) → dev ─────────────────────────────
+  - package-ecosystem: "npm"
+    directory: "/client"
+    target-branch: "dev"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+    groups:
+      nuxt-ecosystem:
+        patterns:
+          - "nuxt"
+          - "vue"
+          - "vue-router"
+          - "@nuxtjs/*"
+          - "@pinia/*"
+          - "pinia*"
+      ui-ecosystem:
+        patterns:
+          - "primevue"
+          - "@primevue/*"
+          - "tailwindcss"
+          - "@tailwindcss/*"
+      dev-tools:
+        dependency-type: "development"
+    commit-message:
+      prefix: "deps(frontend)"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # ── GitHub Actions 版本 → dev ─────────────────────────
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    target-branch: "dev"
     schedule:
       interval: "weekly"
       day: "monday"

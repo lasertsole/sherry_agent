@@ -145,7 +145,7 @@ client/
 │   │           ├── ConfigPanel.vue            # System-config tab (.env editor, background, language, ...)
 │   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add, used by ConfigPanel)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
-│   │           ├── PersonaPanel.vue           # System-prompt / persona tab
+│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设 panel (role setup / operating instructions / soul / user profile + presets)
 │   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
 │   │           ├── CronPanel.vue              # Cron job tab (/cron)

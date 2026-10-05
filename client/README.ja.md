@@ -146,7 +146,7 @@ client/
 │   │           ├── ConfigPanel.vue            # システム設定タブ（.env 編集、背景、言語など）
 │   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加、ConfigPanel 用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
-│   │           ├── PersonaPanel.vue           # システムプロンプト / ペルソナタブ
+│   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセット」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 + プリセット管理）
 │   │           ├── MemoryPanel.vue            # 長期メモリタブ（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md タブ + グローバル ハートビート スイッチ
 │   │           ├── CronPanel.vue              # 定期タスクタブ（/cron）
