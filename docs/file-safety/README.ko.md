@@ -15,7 +15,7 @@
   - [3. 경로별 잠금](#3-경로별-잠금)
   - [4. 잔여 파일 청소](#4-잔여-파일-청소)
 - [읽기 우선 라이선스](#-읽기-우선-라이선스)
-- [격리 서브에이전트 워크스페이스](#-격리-서브에이전트-워크스페이스)
+- [격리 서브에이전트 워크스페이스 (git worktree)](#-격리-서브에이전트-워크스페이스-git-worktree)
 - [대안과 실측](#%EF%B8%8F-대안과-실측)
 - [리소스 파일과 인코딩](#%EF%B8%8F-리소스-파일과-인코딩)
 - [경계](#-경계)
@@ -33,7 +33,7 @@
 3. `patch_file`의 이중 CAS——읽을 때의 지문과, `replace` 직전에 다시 주장되는 `expected_revision`.
 4. `write_file`의 읽기 우선 라이선스——이미 있는 파일은 그것을 읽은 세션만 덮어쓸 수 있습니다(아래 해당 절).
 5. `sweep_stale_temp_files`——`kill -9`가 남긴 것은 그 디렉터리에 대한 다음 쓰기가 청소합니다.
-6. 격리 서브에이전트 워크스페이스——선택적 사설 복사본으로, 변경은 잠금 아래 병합되고 충돌은 보고됩니다.
+6. 격리 서브에이전트 워크스페이스——선택적 git worktree로, 변경은 잠금 아래 병합되고 충돌은 보고됩니다.
 
 ## 🧱 각 계층
 
@@ -80,18 +80,28 @@
 
 레지스트리에는 상한이 있고(4096개, LRU) **영속화되지 않습니다**: 재시작하면 라이선스는 잊히고, 기존 파일에 대한 다음 덮어쓰기는 "먼저 읽으세요"를 돌려줍니다——대가는 다시 읽기 한 번이고, 잃는 편집은 결코 없습니다. 축출은 보호를 떨어뜨릴 뿐, 부여하지 않습니다.
 
-## 🌱 격리 서브에이전트 워크스페이스
+## 🌱 격리 서브에이전트 워크스페이스 (git worktree)
 
-`sessions_spawn(isolation=True)`는 자식에게 프로젝트 디렉터리의 사설 복사본을 줍니다(구현은 `agent/tools/subagent/isolation/`, 워크스페이스는 `src/data/isolated/` 아래, 자식의 cwd는 `<workspace>/tree`). 자식은 복사본 안에서 처음부터 끝까지 일하고——자기 도구, `terminal`, 테스트——실행이 종단에 이르면 완료 메시지 전달 전에 announce 흐름이 복사본을 병합합니다(조용한 자식의 작업도 마찬가지로 병합됩니다).
+`sessions_spawn(isolation=True)`는 자식에게 프로젝트의 **git worktree**를 줍니다(구현은 `agent/tools/subagent/isolation/`, 워크스페이스는 `src/data/isolated/` 아래, 자식의 cwd는 `<workspace>/tree`, 브랜치는 `sherry/<run8>`). 자식은 그곳에서 처음부터 끝까지 일하고——자기 도구, `terminal`, 테스트——실행이 종단에 이르면 완료 메시지 전달 전에 announce 흐름이 트리를 병합합니다(조용한 자식의 작업도 마찬가지로 병합됩니다).
+
+베이스라인은 **더러운 작업 트리**입니다: `git stash create`가 사용자의 미커밋 변경을 트리를 자르는 revision으로 바꿉니다(stash 스택은 그대로). 따라서 자식은 사용자가 실제로 가진 내용을 봅니다——마지막 커밋이 아니라, 그리로 조용히 되돌아가는 일도 결코 없습니다. 체크아웃은 커밋된 내용만 나르므로, 나머지는 실행이 `SUBAGENT_ISOLATION` 두 표에 따라 물질화합니다(프로젝트의 `.worktreeinclude`가 덧붙일 수 있고, 경로 다음 줄에 `# wti=symlink|copy`):
+
+- **심볼릭 링크**——공유 기계 상태: `src/`, `workspace/memory`, `workspace/sessions`, `cron_jobs.json`, `skills/auto`, `client/node_modules`. 모든 트리가 inode 하나를 공유하며, 그것이 SQLite의 `-wal`/`-shm` 일관성과 링크를 통해 잡은 잠금이 부모 쪽 기록자를 배제하는 성질(올바른 의미론)을 성립시킵니다;
+- **복사**——두 트리가 공유해선 안 되는 가변 상태: `.omo`(계획과 진행);
+- **미추적 파일**은 개별 복사됩니다: `git stash create`는 결코 그것들을 나르지 않으므로, 이 단계가 없으면 자식은 사용자가 방금 만든 파일을 보지 못합니다;
+- 물질화되는 것은 git이 실제로 무시하는 경로뿐이며, 캐시(`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build` 등)는 복사도 병합도 되지 않습니다.
+
+저장소가 아닌 프로젝트는 먼저 초기화됩니다: `git init`, 거부 패턴을 `.git/info/exclude`에(**`git add -A` 전에**——비밀·용량·저장소 상태는 그 베이스라인 커밋의 역사에 결코 들어가지 않으며 나중에 지워도 되돌릴 수 없습니다), 커밋 한 번, 그리고 복원 방법을 적은 `.sherry-isolation-repo` 마커(`rm -rf .git .sherry-isolation-repo`). sherry는 결코 push하지 않고, 리모트를 추가하지 않으며, 역사를 다시 쓰지 않습니다.
+
+물질화 링크를 거치는 읽기는 격리 내부로 남습니다: `resolve_external_path`는 그 실행의 매니페스트가 기록한 경로만 면제하므로, 트리 안의 `src/…`는 HITL '외부 파일' 승인을 일으키지 않고 트리 밖을 가리키는 임의의 심볼릭 링크는 여전히 확인을 요구합니다.
 
 병합은 다른 곳과 같은 규칙을 반대 방향으로 적용한 것이며, 부모 루트 단위 `flock` 아래에서 이루어집니다:
 
-- 복사본은 매니페스트(`snapshot.json`)를 지녀 복사 시점의 일반 파일별 revision을 기록합니다;
+- 워크스페이스 매니페스트(`snapshot.json`)는 생성 시점의 일반 파일별 revision을 기록하고(구성은 트리에서, revision은 부모에서, mtime을 정렬해 건드리지 않은 파일이 변경으로 읽히지 않게 합니다) 베이스라인 revision과 브랜치도 기록합니다;
 - 자식이 바꾼 파일은 부모가 아직 스냅샷 revision을 지니는 동안에만 적용됩니다——그렇지 않으면 **충돌**이고, 부모의 파일은 손대지 않은 채 남습니다;
-- 새 파일은 빈 자리에만 만들어집니다; 삭제는 부모가 여전히 일치할 것을 요구합니다; 심볼릭 링크는 결코 관통 병합되지 않습니다(건너뛰고 보고합니다);
-- 캐시(`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build` 등)는 복사도 병합도 되지 않습니다.
+- 새 파일은 빈 자리에만 만들어집니다; 삭제는 부모가 여전히 일치할 것을 요구합니다; 심볼릭 링크는 결코 관통 병합되지 않습니다(건너뛰고 보고합니다).
 
-깨끗한 병합은 워크스페이스를 지웁니다. 충돌이 있는 병합은 `<workspace>/tree`를 검사용으로 남기고 매니페스트를 소비합니다——같은 트리가 두 번 병합될 수 없도록. 부모가 읽는 완료 회신에는 보고가 실립니다(`applied`, `created`, `deleted`, 그리고 경로별 모든 충돌), 병합된 경로는 부모의 증거 원장에서 오래된 것으로 표시됩니다.
+깨끗한 병합은 worktree를 등록 해제하고 그 브랜치를 지우고 워크스페이스를 제거합니다. 충돌이 있는 병합은 `<workspace>/tree`를 검사용으로 남기고 매니페스트를 소비합니다——같은 트리가 두 번 병합될 수 없도록. 부모가 읽는 완료 회신에는 보고가 실립니다(`applied`, `created`, `deleted`, 그리고 경로별 모든 충돌), 병합된 경로는 부모의 증거 원장에서 오래된 것으로 표시됩니다.
 
 ## ⚖️ 대안과 실측
 
@@ -129,7 +139,7 @@
 
 ## 🧪 테스트
 
-`tests/agent/tools/file_tools/`가 쓰기 경로를 고정합니다: `test_atomic_write.py`(원자성, 심볼릭 링크 거부, 두 CAS 계층, 잔여 청소), `test_file_write_concurrency.py`(병렬 패치, 찢어진 읽기 부재), `test_file_lock_cross_process.py`(실제 프로세스 둘, `kill -9` 해제), `test_read_before_write.py`(라이선스 매트릭스). `tests/agent/tools/subagent/test_workspace_isolation.py`는 복사본, 병합 CAS, 충돌, 심볼릭 링크 건너뛰기, 부모 루트 단위 직렬화를 고정합니다.
+`tests/agent/tools/file_tools/`가 쓰기 경로를 고정합니다: `test_atomic_write.py`(원자성, 심볼릭 링크 거부, 두 CAS 계층, 잔여 청소), `test_file_write_concurrency.py`(병렬 패치, 찢어진 읽기 부재), `test_file_lock_cross_process.py`(실제 프로세스 둘, `kill -9` 해제), `test_read_before_write.py`(라이선스 매트릭스). `tests/agent/tools/subagent/test_workspace_isolation.py`는 더러운 베이스라인, auto-init 거부 목록, 물질화(링크·복사·미추적 파일), 외부 경로 면제, 병합 CAS, 충돌, 심볼릭 링크 건너뛰기, 부모 루트 단위 직렬화를 고정합니다.
 
 ## 🗺️ 파일 지도
 
@@ -139,6 +149,8 @@
 | `agent/tools/pub_base/path_lock.py` | 프로세스 내 경로별 잠금 레지스트리 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 읽기 우선 라이선스 레지스트리 |
-| `agent/tools/subagent/isolation/tree.py` | 워크스페이스 복사, 매니페스트, 폐기 |
+| `agent/tools/subagent/isolation/worktree.py` | 더러운 베이스라인, auto-init과 거부 목록, worktree 수명주기 |
+| `agent/tools/subagent/isolation/materialize.py` | 무시·미추적 경로 물질화 |
+| `agent/tools/subagent/isolation/tree.py` | 워크스페이스 worktree, 매니페스트, 폐기 |
 | `agent/tools/subagent/isolation/merge.py` | 잠금·CAS 검증 병합 |
 | `agent/tools/subagent/announce/workspace_merge.py` | 병합 훅 + 완료 회신 속 보고 |

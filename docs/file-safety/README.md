@@ -15,7 +15,7 @@ Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/p
   - [3. Per-path locks](#3-per-path-locks)
   - [4. Leftover sweep](#4-leftover-sweep)
 - [Read-before-write license](#-read-before-write-license)
-- [Isolated subagent workspaces](#-isolated-subagent-workspaces)
+- [Isolated subagent workspaces (git worktrees)](#-isolated-subagent-workspaces-git-worktrees)
 - [Alternatives, measured](#%EF%B8%8F-alternatives-measured)
 - [Resource files & encodings](#%EF%B8%8F-resource-files--encodings)
 - [Boundaries](#-boundaries)
@@ -33,7 +33,7 @@ Six mechanisms answer that, in the order a write meets them:
 3. `patch_file`'s two-layer CAS — a fingerprint at read time, `expected_revision` re-asserted just before the replace.
 4. `write_file`'s read-before-write license — an existing file may only be overwritten by a session that has read it (§ next but one).
 5. `sweep_stale_temp_files` — a `kill -9` leftover is swept by the next write into that directory.
-6. Isolated subagent workspaces — an opt-in private copy whose changes merge back under a lock, conflicts reported.
+6. Isolated subagent workspaces — an opt-in git worktree whose changes merge back under a lock, conflicts reported.
 
 ## 🧱 The Layers
 
@@ -80,18 +80,28 @@ A session's own `append` or `patch_file` ADVANCES a license it already holds and
 
 The registry is capped (4096 entries, LRU) and is **not persisted**: a restart forgets the licenses, and the next overwrite of an existing file answers "read it first" — one extra read, never a lost edit. Eviction drops protection, never grants it.
 
-## 🌱 Isolated subagent workspaces
+## 🌱 Isolated subagent workspaces (git worktrees)
 
-`sessions_spawn(isolation=True)` gives a child its own copy of the project directory (`agent/tools/subagent/isolation/`, workspace under `src/data/isolated/`, the child's cwd is `<workspace>/tree`). The child works end to end in the copy — its tools, its `terminal`, its tests — and the announce flow merges the copy back when the run turns terminal, before the completion message is delivered (a silent child's work merges too).
+`sessions_spawn(isolation=True)` gives a child its own **git worktree** of the project (`agent/tools/subagent/isolation/`, workspace under `src/data/isolated/`, the child's cwd is `<workspace>/tree`, its branch `sherry/<run8>`). The child works end to end there — its tools, its `terminal`, its tests — and the announce flow merges the tree back when the run turns terminal, before the completion message is delivered (a silent child's work merges too).
+
+The baseline is the DIRTY working tree: `git stash create` turns the user's uncommitted edits into the revision the worktree is cut from (the stash stack is left alone), so a child sees what the user actually has — not the last commit, and never a silent rollback to it. A checkout carries committed content only, so the run materializes the rest from the `SUBAGENT_ISOLATION` tables (a project's `.worktreeinclude` extends them, `# wti=symlink|copy` after each path):
+
+- **symlinked** — shared machine state: `src/`, `workspace/memory`, `workspace/sessions`, `cron_jobs.json`, `skills/auto`, `client/node_modules`. One inode serves every tree, which is what keeps SQLite's `-wal`/`-shm` consistent and makes a lock taken through the link exclude the parent's writer (correct);
+- **copied** — live mutable state two trees must not share: `.omo` (task plans, progress);
+- **untracked files** are copied individually: `git stash create` never carries them, so without this step the child would be blind to a file the user just created;
+- only paths git actually IGNORES are materialized, and the caches (`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build`, …) are neither copied nor merged.
+
+A project that is not a repository is initialized first: `git init`, the deny patterns into `.git/info/exclude` **before** `git add -A` (secrets, bulk and repository state can never enter that baseline commit's history — deleting them afterwards would not help), one commit, and a `.sherry-isolation-repo` marker that documents the undo (`rm -rf .git .sherry-isolation-repo`). Sherry never pushes, never adds a remote and never rewrites history.
+
+A read that goes through a materialized link stays inside the run: `resolve_external_path` exempts exactly the paths the run's manifest recorded, so the HITL "external file" prompt does not fire on `src/…` inside the tree while an arbitrary symlink out of it still prompts.
 
 The merge is the same rule as everywhere else, applied in the other direction, under a per-parent-root `flock`:
 
-- the copy carries a manifest (`snapshot.json`) of every regular file's revision at copy time;
+- the workspace manifest (`snapshot.json`) records every regular file's revision at creation (membership from the tree, revisions from the parent, mtimes aligned so an untouched file never reads as changed) plus the baseline revision and branch;
 - a file the child changed is applied only while the parent still holds the snapshot revision — otherwise it is a CONFLICT, and the parent's file is left untouched;
-- a new file is created into empty space only; a deletion requires the parent to still match; symlinks are never merged through (they are skipped and reported);
-- the caches (`node_modules`, `.git`, `.venv`, `__pycache__`, `dist`, `build`, …) are neither copied nor merged.
+- a new file is created into empty space only; a deletion requires the parent to still match; symlinks are never merged through (they are skipped and reported).
 
-A clean merge removes the workspace; a conflicting one keeps `<workspace>/tree` for inspection and consumes the manifest, so nothing can ever merge the same tree twice. The completion reply the parent reads carries the report (`applied`, `created`, `deleted`, and every conflict by path), and the merged paths are marked stale in the parent's evidence ledger.
+A clean merge unregisters the worktree, deletes its branch and removes the workspace; a conflicting one keeps `<workspace>/tree` for inspection and consumes the manifest, so nothing can ever merge the same tree twice. The completion reply the parent reads carries the report (`applied`, `created`, `deleted`, and every conflict by path), and the merged paths are marked stale in the parent's evidence ledger.
 
 ## ⚖️ Alternatives, measured
 
@@ -134,7 +144,7 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 
 ## 🧪 Testing
 
-`tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the copy, the merge CAS, conflicts, symlink skipping and the per-root serialization.
+`tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the dirty baseline, the auto-init deny list, the materialization (links, copies, untracked files), the external-path exemption, the merge CAS, conflicts, symlink skipping and the per-root serialization.
 
 ## 🗺️ File Map
 
@@ -144,6 +154,8 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 | `agent/tools/pub_base/path_lock.py` | In-process per-path lock registry |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecars, `file_write_lock`, `FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | The read-before-write license registry |
-| `agent/tools/subagent/isolation/tree.py` | Workspace copy, manifest, discard |
+| `agent/tools/subagent/isolation/worktree.py` | Dirty baseline, auto-init + deny list, worktree lifecycle |
+| `agent/tools/subagent/isolation/materialize.py` | Ignored / untracked path materialization |
+| `agent/tools/subagent/isolation/tree.py` | Workspace worktree, manifest, discard |
 | `agent/tools/subagent/isolation/merge.py` | The locked, CAS-checked merge-back |
 | `agent/tools/subagent/announce/workspace_merge.py` | Merge hook + report in the completion reply |

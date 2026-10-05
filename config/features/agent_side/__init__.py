@@ -47,6 +47,10 @@ from .max_tokens_boost import (
     MaxTokensBoostConfig as MaxTokensBoostConfig,
     MAX_TOKENS_BOOST as MAX_TOKENS_BOOST,
 )
+from .subagent_isolation import (
+    SubagentIsolationConfig as SubagentIsolationConfig,
+    SUBAGENT_ISOLATION as SUBAGENT_ISOLATION,
+)
 from .subagent_infra import (
     SubagentInfraConfig as SubagentInfraConfig,
     SUBAGENT_INFRA as SUBAGENT_INFRA,

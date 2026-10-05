@@ -15,7 +15,7 @@
   - [3. 按路径锁](#3-按路径锁)
   - [4. 残留清扫](#4-残留清扫)
 - [先读后写许可证](#-先读后写许可证)
-- [隔离子代理工作区](#-隔离子代理工作区)
+- [隔离子代理工作区（git worktree）](#-隔离子代理工作区git-worktree)
 - [备选方案与实测](#%EF%B8%8F-备选方案与实测)
 - [资源文件与编码](#%EF%B8%8F-资源文件与编码)
 - [边界](#-边界)
@@ -33,7 +33,7 @@
 3. `patch_file` 的两层 CAS——读取时指纹、`replace` 前紧贴再断言的 `expected_revision`。
 4. `write_file` 的先读后写许可证——已存在的文件只能被读过它的会话覆盖（见下文对应小节）。
 5. `sweep_stale_temp_files`——`kill -9` 的残留由下一次写入该目录时清扫。
-6. 隔离子代理工作区——可选的私有副本，改动在锁下合并回主树，冲突被如实报告。
+6. 隔离子代理工作区——可选的 git worktree，改动在锁下合并回主树，冲突被如实报告。
 
 ## 🧱 各层机制
 
@@ -80,18 +80,28 @@
 
 注册表有上限（4096 条，LRU），且**不持久化**：重启即遗忘所有许可证，下一次覆盖已存在文件会得到"先读"——代价是一次重读，绝不是丢失编辑。淘汰只会丢掉保护，绝不会发放保护。
 
-## 🌱 隔离子代理工作区
+## 🌱 隔离子代理工作区（git worktree）
 
-`sessions_spawn(isolation=True)` 让子代理获得项目目录的私有副本（实现见 `agent/tools/subagent/isolation/`，工作区位于 `src/data/isolated/`，子代理的 cwd 是 `<workspace>/tree`）。子代理在副本里端到端工作——它的工具、它的 `terminal`、它的测试——运行进入终态时由 announce 流程把副本合并回去，发生在交付完成消息之前（静默的子代理同样合并）。
+`sessions_spawn(isolation=True)` 让子代理获得项目的 **git worktree**（实现见 `agent/tools/subagent/isolation/`，工作区位于 `src/data/isolated/`，子代理的 cwd 是 `<workspace>/tree`，分支为 `sherry/<run8>`）。子代理在那里端到端工作——它的工具、它的 `terminal`、它的测试——运行进入终态时由 announce 流程把树合并回去，发生在交付完成消息之前（静默的子代理同样合并）。
+
+基线是**脏工作区**：`git stash create` 把用户尚未提交的改动变成建树所用的 revision（stash 栈不受影响），因此子代理看到的是用户手里真实的内容——不是最后一次提交，也绝不会静默回退到它。检出只带已提交内容，其余由运行按 `SUBAGENT_ISOLATION` 两张表物化（项目的 `.worktreeinclude` 可以追加，路径下一行写 `# wti=symlink|copy`）：
+
+- **软链**——共享机器状态：`src/`、`workspace/memory`、`workspace/sessions`、`cron_jobs.json`、`skills/auto`、`client/node_modules`。所有树共用一个 inode，这正是 SQLite 的 `-wal`/`-shm` 保持一致、以及经链接取到的锁能排除父树写者的原因（这是正确语义）；
+- **复制**——两棵树绝不能共享的可变状态：`.omo`（计划与进度）；
+- **未跟踪文件**逐个复制：`git stash create` 从不携带它们，少了这一步子代理就看不到用户刚建的文件；
+- 只有 git 真正忽略的路径才会被物化；缓存（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` 等）既不复制也不合并。
+
+不是仓库的项目会先被初始化：`git init`，把拒入规则写进 `.git/info/exclude`（**在** `git add -A` **之前**——秘密、体积与仓库状态永远不会进入那次基线提交的历史，事后删除也救不回来），提交一次，并写下 `.sherry-isolation-repo` 标记说明恢复方式（`rm -rf .git .sherry-isolation-repo`）。sherry 永不 push、不加 remote、不改写历史。
+
+经物化链接的读取仍算隔离内部：`resolve_external_path` 只豁免该运行清单里记录过的路径，所以树内 `src/…` 不会触发 HITL「外部文件」审批，而树外任意软链依然会问。
 
 合并就是把同一套规则反过来用，在按父根取的 `flock` 之下进行：
 
-- 副本携带清单（`snapshot.json`），记录复制时每个普通文件的 revision；
+- 工作区清单（`snapshot.json`）记录创建时每个普通文件的 revision（成员取自检出树、revision 取自父树，并把 mtime 对齐，使未被触碰的文件不会被读成已改），外加基线 revision 与分支；
 - 子代理改过的文件，只有在父树仍持有快照 revision 时才应用——否则记为**冲突**，父树文件保持原样；
-- 新文件只创建到空位上；删除要求父树仍然匹配；符号链接绝不穿透合并（跳过并报告）；
-- 缓存目录（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` 等）既不复制也不合并。
+- 新文件只创建到空位上；删除要求父树仍然匹配；符号链接绝不穿透合并（跳过并报告）。
 
-干净合并会删除工作区；有冲突则保留 `<workspace>/tree` 供检查，并消费掉清单，使同一棵树永远不可能被合并两次。父代理读到的完成回复中附带报告（`applied`、`created`、`deleted`，以及按路径列出的一一冲突），被合并的路径同时会在父会话的证据账本里标记为陈旧。
+干净合并会注销 worktree、删除其分支并移除工作区；有冲突则保留 `<workspace>/tree` 供检查，并消费掉清单，使同一棵树永远不可能被合并两次。父代理读到的完成回复中附带报告（`applied`、`created`、`deleted`，以及按路径列出的一一冲突），被合并的路径同时会在父会话的证据账本里标记为陈旧。
 
 ## ⚖️ 备选方案与实测
 
@@ -126,7 +136,7 @@
 
 ## 🧪 测试
 
-`tests/agent/tools/file_tools/` 钉住写路径：`test_atomic_write.py`（原子性、软链拒绝、两层 CAS、残留清扫）、`test_file_write_concurrency.py`（并发补丁、无撕裂读）、`test_file_lock_cross_process.py`（两个真实进程、`kill -9` 释放）、`test_read_before_write.py`（许可证矩阵）。`tests/agent/tools/subagent/test_workspace_isolation.py` 钉住副本、合并 CAS、冲突、软链跳过与按父根串行化。
+`tests/agent/tools/file_tools/` 钉住写路径：`test_atomic_write.py`（原子性、软链拒绝、两层 CAS、残留清扫）、`test_file_write_concurrency.py`（并发补丁、无撕裂读）、`test_file_lock_cross_process.py`（两个真实进程、`kill -9` 释放）、`test_read_before_write.py`（许可证矩阵）。`tests/agent/tools/subagent/test_workspace_isolation.py` 钉住脏基线、auto-init 的拒入清单、物化（软链、复制、未跟踪文件）、外部路径豁免、合并 CAS、冲突、软链跳过与按父根串行化。
 
 ## 🗺️ 文件地图
 
@@ -136,6 +146,8 @@
 | `agent/tools/pub_base/path_lock.py` | 进程内按路径锁注册表 |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 先读后写许可证注册表 |
-| `agent/tools/subagent/isolation/tree.py` | 工作区副本、清单、销毁 |
+| `agent/tools/subagent/isolation/worktree.py` | 脏基线、auto-init 与拒入清单、worktree 生命周期 |
+| `agent/tools/subagent/isolation/materialize.py` | 忽略/未跟踪路径物化 |
+| `agent/tools/subagent/isolation/tree.py` | 工作区 worktree、清单、销毁 |
 | `agent/tools/subagent/isolation/merge.py` | 加锁、CAS 校验的合并回主树 |
 | `agent/tools/subagent/announce/workspace_merge.py` | 合并钩子 + 完成回复中的报告 |

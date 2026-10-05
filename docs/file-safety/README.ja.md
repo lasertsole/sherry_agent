@@ -15,7 +15,7 @@
   - [3. パス単位ロック](#3-パス単位ロック)
   - [4. 残留ファイルの掃除](#4-残留ファイルの掃除)
 - [読み取り先行ライセンス](#-読み取り先行ライセンス)
-- [隔離サブエージェントワークスペース](#-隔離サブエージェントワークスペース)
+- [隔離サブエージェントワークスペース（git worktree）](#-隔離サブエージェントワークスペースgit-worktree)
 - [代替案と実測](#%EF%B8%8F-代替案と実測)
 - [リソースファイルとエンコーディング](#%EF%B8%8F-リソースファイルとエンコーディング)
 - [境界](#-境界)
@@ -33,7 +33,7 @@
 3. `patch_file` の二層 CAS——読み取り時のフィンガープリントと、`replace` 直前に再表明される `expected_revision`。
 4. `write_file` の読み取り先行ライセンス——既存ファイルを上書きできるのは、それを読んだセッションだけ（後述の専用節）。
 5. `sweep_stale_temp_files`——`kill -9` の置き土産は、そのディレクトリへの次の書き込みが掃除する。
-6. 隔離サブエージェントワークスペース——任意参加の私有コピー。変更はロックの下でマージされ、衝突は報告される。
+6. 隔離サブエージェントワークスペース——任意参加の git worktree。変更はロックの下でマージされ、衝突は報告される。
 
 ## 🧱 各レイヤー
 
@@ -80,18 +80,28 @@
 
 レジストリには上限があり（4096 件、LRU）、**永続化されません**：再起動でライセンスは忘れられ、既存ファイルへの次の上書きは「まず読む」を返します——代償は再読 1 回で、失う編集は決してありません。追い出しは保護を落とすだけで、与えはしません。
 
-## 🌱 隔離サブエージェントワークスペース
+## 🌱 隔離サブエージェントワークスペース（git worktree）
 
-`sessions_spawn(isolation=True)` は子にプロジェクトディレクトリの私有コピーを与えます（実装は `agent/tools/subagent/isolation/`、ワークスペースは `src/data/isolated/` 配下、子の cwd は `<workspace>/tree`）。子はコピーの中で端から端まで働き——自らのツール、`terminal`、テスト——実行が終端に達したとき、完了メッセージの配達の前に announce フローがコピーをマージします（静かな子の仕事も同様にマージされます）。
+`sessions_spawn(isolation=True)` は子にプロジェクトの **git worktree** を与えます（実装は `agent/tools/subagent/isolation/`、ワークスペースは `src/data/isolated/` 配下、子の cwd は `<workspace>/tree`、ブランチは `sherry/<run8>`）。子はそこで端から端まで働き——自らのツール、`terminal`、テスト——実行が終端に達したとき、完了メッセージの配達の前に announce フローがツリーをマージします（静かな子の仕事も同様にマージされます）。
+
+ベースラインは**ダーティな作業ツリー**です：`git stash create` がユーザーの未コミット変更を、ツリーを切る revision に変えます（stash スタックはそのまま）。したがって子はユーザーが実際に持っている内容を見ます——最後のコミットではなく、そこへ静かに巻き戻ることも決してありません。チェックアウトはコミット済みの内容しか運ばないため、残りは実行が `SUBAGENT_ISOLATION` の二つの表に従って物化します（プロジェクトの `.worktreeinclude` が追記でき、パスの次の行に `# wti=symlink|copy`）：
+
+- **シンボリックリンク**——共有されるマシン状態：`src/`、`workspace/memory`、`workspace/sessions`、`cron_jobs.json`、`skills/auto`、`client/node_modules`。全ツリーが一つの inode を共有し、それが SQLite の `-wal`/`-shm` の整合と、リンク越しに取ったロックが親の書き手を排除すること（正しい意味論）を成立させます；
+- **コピー**——二つのツリーが共有してはならない可変状態：`.omo`（計画と進捗）；
+- **未追跡ファイル**は個別にコピーされます：`git stash create` は決してそれらを運ばないため、この段がなければ子はユーザーが今作ったファイルを見られません；
+- 物化されるのは git が実際に無視しているパスだけであり、キャッシュ（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` など）はコピーもマージもされません。
+
+リポジトリでないプロジェクトは先に初期化されます：`git init`、拒否パターンを `.git/info/exclude` へ（**`git add -A` の前に**——秘密・容量・リポジトリ状態はそのベースラインコミットの履歴に決して入らず、後から消しても救えません）、一度のコミット、そして復元方法を記した `.sherry-isolation-repo` マーカー（`rm -rf .git .sherry-isolation-repo`）。sherry は決して push せず、リモートを追加せず、履歴を書き換えません。
+
+物化リンクを経由する読み取りは隔離の内側のままです：`resolve_external_path` はその実行のマニフェストが記録したパスだけを免除するので、ツリー内の `src/…` は HITL の「外部ファイル」承認を起こさず、ツリー外への任意のシンボリックリンクは依然として確認を求めます。
 
 マージは他の場所と同一の規則を逆向きに適用するもので、親ルート単位の `flock` の下で行います：
 
-- コピーはマニフェスト（`snapshot.json`）を携え、コピー時点の通常ファイルごとの revision を記録します；
+- ワークスペースのマニフェスト（`snapshot.json`）は作成時点の通常ファイルごとの revision を記録し（メンバーはツリーから、revision は親から、mtime を揃えて未変更ファイルが変更と読まれないように）、ベースライン revision とブランチも記録します；
 - 子が変更したファイルは、親がまだスナップショット revision を保つ間だけ適用されます——そうでなければ**衝突**で、親のファイルは手つかずのままです；
-- 新規ファイルは空きにのみ作成されます；削除は親が依然一致することを要します；シンボリックリンクは決して貫通マージされません（スキップして報告）；
-- キャッシュ（`node_modules`、`.git`、`.venv`、`__pycache__`、`dist`、`build` など）はコピーもマージもされません。
+- 新規ファイルは空きにのみ作成されます；削除は親が依然一致することを要します；シンボリックリンクは決して貫通マージされません（スキップして報告）。
 
-きれいなマージはワークスペースを削除します。衝突のあるマージは `<workspace>/tree` を検査用に残し、マニフェストを消費します——これにより同じツリーが二度マージされることは決してありません。親が読む完了返信には報告が添えられ（`applied`、`created`、`deleted`、そしてパスごとの全衝突）、マージされたパスは親の証跡台帳で古いものとして印されます。
+きれいなマージは worktree を登録解除し、そのブランチを削除してワークスペースを消します。衝突のあるマージは `<workspace>/tree` を検査用に残し、マニフェストを消費します——同じツリーが二度マージされることは決してありません。親が読む完了返信には報告が添えられ（`applied`、`created`、`deleted`、そしてパスごとの全衝突）、マージされたパスは親の証跡台帳で古いものとして印されます。
 
 ## ⚖️ 代替案と実測
 
@@ -130,7 +140,7 @@
 
 ## 🧪 テスト
 
-`tests/agent/tools/file_tools/` が書き込み経路を固定します：`test_atomic_write.py`（原子性、シンボリックリンク拒否、二層 CAS、残留掃除）、`test_file_write_concurrency.py`（並行パッチ、破れ読みの不在）、`test_file_lock_cross_process.py`（実プロセス 2 つ、`kill -9` での解放）、`test_read_before_write.py`（ライセンスのマトリクス）。`tests/agent/tools/subagent/test_workspace_isolation.py` はコピー、マージ CAS、衝突、シンボリックリンクのスキップ、親ルート単位の直列化を固定します。
+`tests/agent/tools/file_tools/` が書き込み経路を固定します：`test_atomic_write.py`（原子性、シンボリックリンク拒否、二層 CAS、残留掃除）、`test_file_write_concurrency.py`（並行パッチ、破れ読みの不在）、`test_file_lock_cross_process.py`（実プロセス 2 つ、`kill -9` での解放）、`test_read_before_write.py`（ライセンスのマトリクス）。`tests/agent/tools/subagent/test_workspace_isolation.py` はダーティなベースライン、auto-init の拒否リスト、物化（リンク・コピー・未追跡ファイル）、外部パス免除、マージ CAS、衝突、シンボリックリンクのスキップ、親ルート単位の直列化を固定します。
 
 ## 🗺️ ファイルマップ
 
@@ -140,6 +150,8 @@
 | `agent/tools/pub_base/path_lock.py` | プロセス内パス単位ロックのレジストリ |
 | `agent/tools/pub_base/file_lock.py` | `flock` sidecar、`file_write_lock`、`FileBusyError` |
 | `agent/tools/pub_base/read_state.py` | 読み取り先行ライセンスのレジストリ |
-| `agent/tools/subagent/isolation/tree.py` | ワークスペースのコピー、マニフェスト、破棄 |
+| `agent/tools/subagent/isolation/worktree.py` | ダーティなベースライン、auto-init と拒否リスト、worktree ライフサイクル |
+| `agent/tools/subagent/isolation/materialize.py` | 無視・未追跡パスの物化 |
+| `agent/tools/subagent/isolation/tree.py` | ワークスペースの worktree、マニフェスト、破棄 |
 | `agent/tools/subagent/isolation/merge.py` | ロック付き・CAS 検証済みのマージバック |
 | `agent/tools/subagent/announce/workspace_merge.py` | マージフック + 完了返信内の報告 |

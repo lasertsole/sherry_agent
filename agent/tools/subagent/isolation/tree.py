@@ -1,10 +1,13 @@
-"""Create and discard the isolated copy a subagent works in.
+"""Create and discard the worktree an isolated subagent works in.
 
-The copy carries a manifest — every regular file with its revision at copy time
-— because the merge back (``merge.py``) needs to know, per file, whether the
-parent changed since (conflict) or the child changed (apply). The manifest walk
-skips the same heavy directories the copy skips, and symlinks are never
-followed: a link is copied as a link and left alone by the merge.
+The run's tree is a ``git worktree`` of the parent project, cut from a DIRTY
+baseline (``git stash create``) so the child starts from exactly what the user's
+working tree holds; ignored paths a checkout cannot carry are materialized
+afterwards (``materialize.py``). A manifest records every regular file with its
+revision at creation time — because the merge back (``merge.py``) needs to know,
+per file, whether the parent changed since (conflict) or the child changed
+(apply) — plus the baseline revision and branch, so the worktree can be
+unregistered when the run ends.
 """
 
 from __future__ import annotations
@@ -14,7 +17,6 @@ import json
 import os
 import shutil
 import stat
-import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,6 +26,17 @@ from loguru import logger
 from config.path import isolated_workspaces_dir
 from agent.tools.pub_base import revision_id
 
+from .materialize import copy_untracked_files, materialize_ignored_paths
+from .skipnames import (
+    IGNORED_DIR_NAMES as _IGNORED_DIR_NAMES,
+    ignored_dir_names as ignored_dir_names,
+)
+from .worktree import create_worktree, remove_worktree
+
+#: Repository state that materializes as a FILE (a linked worktree's ``.git``):
+#: skipped by name wherever it appears.
+_VCS_FILE_NAMES = frozenset({".git"})
+
 __all__ = [
     "IsolatedWorkspace",
     "SYMLINK_PREFIX",
@@ -31,6 +44,7 @@ __all__ = [
     "discard_isolated_workspace",
     "ignored_dir_names",
     "isolated_workspace_meta",
+    "materialized_paths",
     "scan_manifest",
 ]
 
@@ -48,35 +62,6 @@ MERGED_NAME = "merged.json"
 TREE_DIRNAME = "tree"
 #: Manifest schema version (a future format change refuses old manifests).
 MANIFEST_VERSION = 1
-
-#: Directories never copied and never merged: dependency caches and VCS state
-#: are large, machine-specific, and meaningless to merge file by file.
-_IGNORED_DIR_NAMES = frozenset(
-    {
-        ".git",
-        ".hg",
-        ".svn",
-        "node_modules",
-        ".venv",
-        "venv",
-        "__pycache__",
-        ".mypy_cache",
-        ".pytest_cache",
-        ".ruff_cache",
-        ".tox",
-        ".cache",
-        "dist",
-        "build",
-        ".next",
-        ".nuxt",
-        "target",
-    }
-)
-
-
-def ignored_dir_names() -> frozenset[str]:
-    """Directory names the copy and the merge both skip."""
-    return _IGNORED_DIR_NAMES
 
 
 @dataclass(frozen=True)
@@ -134,6 +119,11 @@ def scan_manifest(root: Path) -> dict[str, str]:
         dirnames[:] = [name for name in dirnames if name not in _IGNORED_DIR_NAMES]
         base = Path(dirpath)
         for name in filenames:
+            if name in _VCS_FILE_NAMES:
+                # A worktree's `.git` is a FILE (a link back to the parent's
+                # repository), so the directory-name filter above does not catch
+                # it; it is repository state, never a merge candidate.
+                continue
             path = base / name
             try:
                 info = path.lstat()
@@ -146,82 +136,13 @@ def scan_manifest(root: Path) -> dict[str, str]:
     return manifest
 
 
-def _prune_ignored(root: Path) -> None:
-    """Remove every ignored directory from a freshly copied tree (never descends)."""
-    for dirpath, dirnames, _files in os.walk(root, topdown=True, followlinks=False):
-        base = Path(dirpath)
-        keep: list[str] = []
-        for name in dirnames:
-            if name in _IGNORED_DIR_NAMES:
-                shutil.rmtree(base / name, ignore_errors=True)
-            else:
-                keep.append(name)
-        dirnames[:] = keep
-
-
-def _copy_tree(src: Path, dst: Path) -> str:
-    """Copy *src* into *dst*; returns the method used (for the log line).
-
-    ``rsync -a`` first (it applies the ignore list natively), then
-    ``cp -a --reflink=auto`` (copy-on-write on btrfs/XFS, a plain C-speed copy
-    elsewhere) with the ignored directories pruned afterwards, then
-    ``shutil.copytree``. Symlinks are preserved as links on every path.
-    """
-    if shutil.which("rsync"):
-        try:
-            completed = subprocess.run(
-                [
-                    "rsync",
-                    "-a",
-                    *[f"--exclude={name}" for name in sorted(_IGNORED_DIR_NAMES)],
-                    f"{src}{os.sep}",
-                    str(dst),
-                ],
-                capture_output=True,
-                timeout=600,
-            )
-            if completed.returncode == 0:
-                return "rsync -a"
-            logger.debug(
-                "rsync copy failed (rc={}): {}",
-                completed.returncode,
-                completed.stderr.decode("utf-8", "replace").strip()[:200],
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            logger.debug("rsync copy unavailable: {}", exc)
-    if os.name == "posix":
-        try:
-            completed = subprocess.run(
-                ["cp", "-a", "--reflink=auto", f"{src}{os.sep}.", str(dst)],
-                capture_output=True,
-                timeout=300,
-            )
-            if completed.returncode == 0:
-                _prune_ignored(dst)
-                return "cp --reflink=auto"
-            logger.debug(
-                "cp copy failed (rc={}): {}",
-                completed.returncode,
-                completed.stderr.decode("utf-8", "replace").strip()[:200],
-            )
-        except (OSError, subprocess.SubprocessError) as exc:
-            logger.debug("cp copy unavailable: {}", exc)
-    shutil.copytree(
-        src,
-        dst,
-        symlinks=True,
-        ignore=lambda _dir, names: [n for n in names if n in _IGNORED_DIR_NAMES],
-    )
-    return "copytree"
-
-
 def create_isolated_workspace(parent_root: Path, child_session_key: str) -> IsolatedWorkspace:
-    """Copy *parent_root* into a private workspace and return it.
+    """Cut a worktree of *parent_root* for one run and materialize its ignored paths.
 
     :param parent_root: The parent's project directory (must exist).
     :param child_session_key: The child's session key (names the workspace).
-    :raises OSError: The copy failed — the caller refuses the spawn rather than
-        running the child in the shared tree by accident.
+    :raises OSError: The worktree could not be created — the caller refuses the
+        spawn rather than running the child in the shared tree by accident.
     """
     root = Path(parent_root).resolve()
     if not root.is_dir():
@@ -232,19 +153,29 @@ def create_isolated_workspace(parent_root: Path, child_session_key: str) -> Isol
         # A retry of the same spawn (or a crash's leftover): start clean, the
         # previous tree is never merged implicitly.
         shutil.rmtree(meta_dir, ignore_errors=True)
+    meta_dir.mkdir(parents=True, exist_ok=True)
     tree = meta_dir / TREE_DIRNAME
-    tree.mkdir(parents=True, exist_ok=True)
 
-    method = _copy_tree(root, tree)
+    created = create_worktree(root, tree, child_session_key)
+    materialized = materialize_ignored_paths(root, tree)
+    # `git stash create` never carries untracked files: without them the child
+    # would not see a file the user just created.
+    untracked = copy_untracked_files(root, tree)
+    _align_mtimes_with_parent(root, tree)
     manifest = scan_manifest(tree)
     (meta_dir / SNAPSHOT_NAME).write_text(
         json.dumps(
             {
                 "version": MANIFEST_VERSION,
+                "backend": "worktree",
                 "parent_root": str(root),
                 "child_session_key": child_session_key,
                 "created_at": time.time(),
-                "copy_method": method,
+                "base_sha": created.base_sha,
+                "branch": created.branch,
+                "initialized_repo": created.initialized_repo,
+                "materialized": materialized,
+                "untracked": untracked,
                 "revisions": manifest,
             },
             ensure_ascii=False,
@@ -252,15 +183,73 @@ def create_isolated_workspace(parent_root: Path, child_session_key: str) -> Isol
         encoding="utf-8",
     )
     logger.info(
-        "Isolated workspace created: child={} parent={} files={} method={}",
+        "Isolated worktree created: child={} parent={} base={} files={} materialized={}",
         child_session_key,
         root,
+        created.base_sha[:12],
         len(manifest),
-        method,
+        len(materialized),
     )
     return IsolatedWorkspace(meta_dir=meta_dir, tree=tree, parent_root=root)
 
 
+def _align_mtimes_with_parent(root: Path, tree: Path) -> None:
+    """Give every checked-out file its parent counterpart's mtime.
+
+    A revision is ``mtime:ms:size``, and a checkout stamps its own mtimes — so
+    without this step every file the child never touched would read as CHANGED
+    at merge time. Aligning the times makes the tree a true replica of the
+    parent (what the merge's per-file CAS assumes), while a child's edit still
+    moves the revision through its own write.
+    """
+    for dirpath, dirnames, filenames in os.walk(tree, followlinks=False):
+        dirnames[:] = [name for name in dirnames if name not in _IGNORED_DIR_NAMES]
+        base = Path(dirpath)
+        for name in filenames:
+            if name in _VCS_FILE_NAMES:
+                continue
+            candidate = base / name
+            counterpart = root / candidate.relative_to(tree)
+            try:
+                if candidate.is_symlink() or not counterpart.is_file():
+                    continue
+                info = counterpart.stat()
+                os.utime(candidate, (info.st_atime, info.st_mtime), follow_symlinks=False)
+            except OSError:
+                continue
+
+
+def _manifest_meta(meta_dir: Path) -> dict[str, object]:
+    """Read a workspace manifest (``{}`` when it is unreadable)."""
+    try:
+        return dict(json.loads((meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return {}
+
+
+def materialized_paths(project_root: str | Path) -> frozenset[str]:
+    """Paths a run's manifest materialized into its tree (empty when not isolated).
+
+    Used by the external-path gate: a read that goes THROUGH one of these links
+    leaves the isolated tree on purpose, so it is not an "external file" read.
+    """
+    meta_dir = isolated_workspace_meta(project_root)
+    if meta_dir is None:
+        return frozenset()
+    raw = _manifest_meta(meta_dir).get("materialized") or []
+    return frozenset(str(entry) for entry in raw)
+
+
 def discard_isolated_workspace(meta_dir: Path) -> None:
-    """Remove a workspace directory (but never the parent tree)."""
+    """Remove a workspace directory (but never the parent tree).
+
+    The worktree registration and its branch belong to the parent repository, so
+    they are dropped first — deleting the directory alone would leave a stale
+    ``.git/worktrees`` entry (and a stray branch) behind for every run.
+    """
+    meta = _manifest_meta(meta_dir)
+    parent_root = meta.get("parent_root")
+    branch = str(meta.get("branch") or "")
+    if parent_root and branch:
+        remove_worktree(Path(str(parent_root)), meta_dir / TREE_DIRNAME, branch)
     shutil.rmtree(meta_dir, ignore_errors=True)

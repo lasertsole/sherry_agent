@@ -63,8 +63,9 @@ def test_the_copy_is_faithful_and_the_manifest_records_it(project):
     assert ws.tree.name == "tree"
     assert (ws.tree / "a.txt").read_text(encoding="utf-8") == "a-v1\n"
     assert (ws.tree / "notes" / "n.txt").is_file()
-    # The execute bit travels with the copy…
-    assert stat.S_IMODE((ws.tree / "run.sh").stat().st_mode) == 0o755
+    # The execute bit travels with the checkout (group/other bits follow the
+    # process umask, exactly as `git checkout` gives them)…
+    assert stat.S_IMODE((ws.tree / "run.sh").stat().st_mode) & 0o100
     # …and the heavy caches do not.
     assert not (ws.tree / "node_modules").exists()
 
@@ -265,3 +266,142 @@ def test_merges_of_one_parent_root_serialize(project, monkeypatch):
         assert order[index + 1].replace("exit", "enter", 1) == order[index]
     assert (project / "a.txt").read_text(encoding="utf-8") == "from the first\n"
     assert (project / "notes" / "n.txt").read_text(encoding="utf-8") == "from the second\n"
+
+
+# ---------------------------------------------------------------------------
+# The worktree backend: baseline, auto-init, materialization, exemption
+# ---------------------------------------------------------------------------
+
+
+def _git(root, *args, check=False):
+    """Run git in *root* and return the completed process (text mode)."""
+    import subprocess
+
+    return subprocess.run(
+        ["git", *args], cwd=str(root), capture_output=True, text=True, check=check
+    )
+
+
+def test_the_worktree_starts_from_the_dirty_working_tree(project):
+    """Uncommitted edits are the baseline: the child sees them, HEAD does not."""
+    _seed(project)
+    _git(project, "init", "-q")
+    _git(project, "add", "-A")
+    _git(project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed")
+    (project / "a.txt").write_text("edited but uncommitted\n", encoding="utf-8")
+
+    ws = create_isolated_workspace(project, "agent:main:subagent:dirty")
+
+    # The child sees the user's working-tree content, not the committed one.
+    assert (ws.tree / "a.txt").read_text(encoding="utf-8") == "edited but uncommitted\n"
+    manifest = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))
+    assert manifest["backend"] == "worktree"
+    assert manifest["base_sha"]
+    assert manifest["branch"].startswith("sherry/")
+    # The user's stash stack is untouched by `git stash create`.
+    assert _git(project, "stash", "list").stdout.strip() == ""
+
+
+def test_auto_init_never_commits_secrets_and_writes_its_marker(project):
+    """The deny list must land BEFORE `git add -A` — history keeps what it took."""
+    _seed(project)
+    (project / ".env").write_text("API_KEY=sk-real-secret\n", encoding="utf-8")
+    (project / ".env.example").write_text("API_KEY=\n", encoding="utf-8")
+    (project / "cert.pem").write_text("-----BEGIN CERTIFICATE-----\n", encoding="utf-8")
+
+    ws = create_isolated_workspace(project, "agent:main:subagent:init")
+
+    # The repository was created here, and the baseline commit holds the sources…
+    committed = _git(project, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
+    assert "a.txt" in committed
+    assert ".env.example" in committed  # the intentional sample stays
+    # …but no secret of any kind.
+    assert ".env" not in committed
+    assert "cert.pem" not in committed
+    # And the child's tree does not carry them either (they were never checked out).
+    manifest = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))
+    assert manifest["initialized_repo"] is True
+    marker = project / ".sherry-isolation-repo"
+    assert marker.is_file()
+    assert "rm -rf" in marker.read_text(encoding="utf-8")
+
+
+def test_ignored_paths_are_materialized_as_links_and_copies(project):
+    """Links for shared state, copies for mutable per-run state."""
+    _seed(project)
+    (project / ".gitignore").write_text("src/\n.omo/\n", encoding="utf-8")
+    (project / "src" / "data").mkdir(parents=True)
+    (project / "src" / "data" / "state.db").write_text("db", encoding="utf-8")
+    (project / ".omo").mkdir()
+    (project / ".omo" / "boulder.json").write_text("{}", encoding="utf-8")
+    # A project declaration adds a path of its own and retargets one default
+    # (mode after the path, gitignore-glob syntax).
+    (project / ".worktreeinclude").write_text("logs/\n# wti=copy\n", encoding="utf-8")
+    (project / ".gitignore").write_text("src/\n.omo/\nlogs/\n", encoding="utf-8")
+    (project / "logs").mkdir()
+    (project / "logs" / "app.log").write_text("line\n", encoding="utf-8")
+
+    ws = create_isolated_workspace(project, "agent:main:subagent:include")
+
+    # src/ is linked: the same inode serves both trees (SQLite WAL stays coherent).
+    assert (ws.tree / "src").is_symlink()
+    assert (ws.tree / "src" / "data" / "state.db").read_text(encoding="utf-8") == "db"
+    # .omo/ is copied: a mutable file two trees must not share.
+    assert not (ws.tree / ".omo").is_symlink()
+    assert (ws.tree / ".omo" / "boulder.json").read_text(encoding="utf-8") == "{}"
+    # logs/ came from the project's own declaration, in copy mode.
+    assert not (ws.tree / "logs").is_symlink()
+    assert (ws.tree / "logs" / "app.log").is_file()
+
+    manifest = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))
+    assert set(manifest["materialized"]) >= {"src", ".omo", "logs"}
+
+
+def test_a_tracked_path_is_never_replaced_by_a_link(project):
+    """The intersection rule: only git-ignored declarations are materialized."""
+    _seed(project)
+    (project / ".worktreeinclude").write_text("notes/\n", encoding="utf-8")
+    _git(project, "init", "-q")
+    _git(project, "add", "-A")
+    _git(project, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "seed")
+
+    ws = create_isolated_workspace(project, "agent:main:subagent:tracked")
+
+    assert (ws.tree / "notes").is_dir()
+    assert not (ws.tree / "notes").is_symlink()
+    manifest = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))
+    assert "notes" not in manifest["materialized"]
+
+
+def test_materialized_links_are_exempt_from_the_external_path_gate(project, monkeypatch):
+    """A read through a recorded link is internal; an unrecorded link is not."""
+    _seed(project)
+    (project / ".gitignore").write_text("src/\n", encoding="utf-8")
+    (project / "src").mkdir()
+    (project / "src" / "data.db").write_text("db", encoding="utf-8")
+
+    ws = create_isolated_workspace(project, "agent:main:subagent:exempt")
+    from agent.tools.pub_base.path_utils import _is_materialized_link_path
+
+    # The child's project root is the worktree; src/ inside it is a recorded link.
+    assert _is_materialized_link_path(ws.tree / "src" / "data.db", ws.tree)
+    # A file that is merely under the tree is not a "materialized" path.
+    assert not _is_materialized_link_path(ws.tree / "a.txt", ws.tree)
+    # Nor is anything outside the tree.
+    assert not _is_materialized_link_path(project / "src" / "data.db", ws.tree)
+
+
+def test_discarding_a_workspace_unregisters_the_worktree_and_branch(project):
+    """A kept (conflicting) tree must not leave a stale worktree registration."""
+    _seed(project)
+    ws = create_isolated_workspace(project, "agent:main:subagent:discard")
+    branch = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))["branch"]
+    assert branch in _git(project, "branch", "--list").stdout
+
+    from agent.tools.subagent.isolation import discard_isolated_workspace
+
+    discard_isolated_workspace(ws.meta_dir)
+
+    assert not ws.meta_dir.exists()
+    assert _git(project, "worktree", "list").stdout.count("\n") == 1  # only the main tree
+    assert branch not in _git(project, "branch", "--list").stdout

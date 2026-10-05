@@ -376,6 +376,34 @@ def _is_subagent(session_id: str) -> bool:
     return scope == "subagent"
 
 
+def _is_materialized_link_path(path: Path, project_root: Path) -> bool:
+    """True when *path* sits under the project root through a materialized link.
+
+    The check is textual (normalized, symlinks NOT followed): the path must be
+    below the session's project root, and its first components must match an
+    entry the isolated run's manifest materialized. A link the run did not
+    record — or a path that merely resolves outside the root — is external.
+    """
+    try:
+        rel = Path(os.path.normpath(path.absolute())).relative_to(project_root)
+    except ValueError:
+        return False
+    if not rel.parts:
+        return False
+
+    # Lazy import: the isolation package is a sibling of this one, and only an
+    # isolated run ever reaches this branch.
+    from agent.tools.subagent.isolation import materialized_paths
+
+    for entry in materialized_paths(project_root):
+        try:
+            if Path(os.path.normpath(path.absolute())).is_relative_to(project_root / entry):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
 def resolve_external_path(
     file_path: str,
     *,
@@ -421,6 +449,15 @@ def resolve_external_path(
     #     tool takes to ask.
     project_root = current_project_dir(session_id).resolve()
     if resolved == project_root or resolved.is_relative_to(project_root):
+        return resolved
+
+    # 1c. Inside the session's project dir but reached THROUGH a materialized
+    #     isolation link: a worktree cannot carry ignored paths, so the run's
+    #     manifest records the ones its tree links to (``src/``, the session
+    #     workspace, …). Following such a link stays inside the isolation, so it
+    #     is not an "external file" read; only a RECORDED materialization
+    #     qualifies, so an arbitrary symlink out of the tree still prompts.
+    if _is_materialized_link_path(p, project_root):
         return resolved
 
     # 2. YOLO deny list — always enforced, even when YOLO/allowlist would allow
