@@ -7,14 +7,14 @@
   <div
     data-test="progress-float"
     class="pointer-events-auto absolute top-3 right-3 z-20 flex flex-col items-end">
-    <!-- Collapsed = translucent (the chat stays visible through it); expanded = fully
-         opaque. The background alpha animates over 0.3 s in both directions
+    <!-- Collapsed = quite transparent (alpha .3 — the chat shows through it); expanded
+         = fully opaque. The background alpha animates over 0.3 s in both directions
          (`transition-colors duration-300`; the panel below is opaque by itself). -->
     <button
       type="button"
       data-test="progress-float-trigger"
       class="flex items-center gap-2 rounded-full border border-solid border-gray-200/80 px-2.5 py-1 text-xs shadow-sm backdrop-blur transition-colors duration-300 hover:bg-white dark:border-gray-700/80 dark:hover:bg-[#181c20]"
-      :class="expanded ? 'bg-white dark:bg-[#131619]' : 'bg-white/70 dark:bg-[#131619]/70'"
+      :class="expanded ? 'bg-white dark:bg-[#131619]' : 'bg-white/30 dark:bg-[#131619]/30'"
       :title="expanded ? t('progressFloat.collapse') : t('progressFloat.expand')"
       :aria-label="expanded ? t('progressFloat.collapse') : t('progressFloat.expand')"
       :aria-expanded="expanded"

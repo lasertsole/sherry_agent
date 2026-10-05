@@ -145,7 +145,7 @@ describe('ProgressFloat', () => {
     const wrapper = await mountFloat();
     const pill = wrapper.get('[data-test="progress-float-trigger"]');
 
-    expect(pill.classes()).toContain('bg-white/70');
+    expect(pill.classes()).toContain('bg-white/30');
     expect(pill.classes()).toContain('transition-colors');
     expect(pill.classes()).toContain('duration-300');
 
@@ -153,7 +153,7 @@ describe('ProgressFloat', () => {
     await flushPromises();
 
     expect(pill.classes()).toContain('bg-white');
-    expect(pill.classes()).not.toContain('bg-white/70');
+    expect(pill.classes()).not.toContain('bg-white/30');
     const panel = wrapper.get('[data-test="progress-float-panel"]');
     expect(panel.classes()).toContain('bg-white');
     expect(panel.classes()).not.toContain('bg-white/95');
@@ -161,7 +161,7 @@ describe('ProgressFloat', () => {
     // Collapsing restores the translucent pill.
     await pill.trigger('click');
     await flushPromises();
-    expect(pill.classes()).toContain('bg-white/70');
+    expect(pill.classes()).toContain('bg-white/30');
   });
 
   it('collapses to a pill by default, with the pushed numbers on it', async () => {
