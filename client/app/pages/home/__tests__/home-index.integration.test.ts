@@ -281,6 +281,9 @@ describe('home/index.vue (integration, backend mocked)', () => {
 
       const titles = wrapper.findAll('.btn').map(b => b.attributes('title'));
       expect(titles).toContain('项目文件');
+      // Order in the left group: the project-directory button sits right of the
+      // sidebar toggle, the bell after it (they swapped).
+      expect(titles.indexOf('项目文件')).toBeLessThan(titles.indexOf('通知'));
     } finally {
       dir.restore();
       vi.stubGlobal('useRoute', originalRoute);
