@@ -50,8 +50,9 @@
             variant="text"
             class="text-theme-main"
             @click="toggleSidebar" />
-          <!-- Current session's preset: the label names it, the popup lists the
-               catalogue and previews the chosen preset's content in tabs. -->
+          <!-- Current session's preset (icon-only): the popup VIEWS the preset the
+               session was created with — its content in tabs, no other preset
+               selectable or viewable. -->
           <SessionPresetButton
             v-if="currentSessionId"
             :session-id="currentSessionId" />

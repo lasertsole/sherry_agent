@@ -13,7 +13,7 @@
  * keys fall back to the key itself (missing-key behavior). A tiny `{name}`
  * interpolator covers parameterized keys (e.g. `chatBox.modelMeta`).
  */
-import { getCurrentInstance } from 'vue';
+import { getCurrentInstance, reactive } from 'vue';
 import enMessages from '@/i18n/locales/en.json';
 import jaMessages from '@/i18n/locales/ja.json';
 import koMessages from '@/i18n/locales/ko.json';
@@ -54,8 +54,12 @@ function deepMerge(target: Dict, source: Dict): void {
   }
 }
 
-/** The locale the suites run in; a test switches it to exercise other languages. */
-const currentLocale = { value: 'zh' };
+/**
+ * The locale the suites run in; a test switches it to exercise other languages.
+ * Reactive: components that watch `locale.value` (e.g. the preset viewer, which
+ * reloads a language template when the locale changes) must see the switch.
+ */
+const currentLocale = reactive({ value: 'zh' });
 
 /**
  * Local scope overlay: `<i18n lang="json">` block messages attached to the

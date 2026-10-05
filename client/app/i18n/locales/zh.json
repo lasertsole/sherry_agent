@@ -240,6 +240,9 @@
     "selectHint": "新建会话需要先选择一个预设；人格与提示词在会话创建后即固定，之后修改预设不影响已创建的会话。",
     "create": "创建会话",
     "applyFailed": "预设应用失败，请检查后端连接后重试",
-    "empty": "（空）"
+    "empty": "（空）",
+    "currentWithName": "当前会话预设：{name}",
+    "unboundHint": "此会话创建时未选择预设",
+    "missing": "该预设已被删除"
   }
 }

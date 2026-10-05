@@ -240,6 +240,9 @@
     "selectHint": "Creating a session requires choosing a preset. The persona and prompt are fixed once the session starts, so later preset changes do not affect existing sessions.",
     "create": "Create session",
     "applyFailed": "Applying the preset failed — check the backend connection and retry",
-    "empty": "(empty)"
+    "empty": "(empty)",
+    "currentWithName": "Session preset: {name}",
+    "unboundHint": "This session was created without a preset",
+    "missing": "This preset has been deleted"
   }
 }
