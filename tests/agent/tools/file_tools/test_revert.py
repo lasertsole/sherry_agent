@@ -7,6 +7,7 @@ even feasible. A clean revert restores each path to its EARLIEST snapshot and
 consumes the rows (so a second revert finds nothing — there is no redo).
 """
 
+import asyncio
 import hashlib
 import json
 import subprocess
@@ -317,3 +318,62 @@ def test_digest_of_restored_content_matches_the_blob(project):
         == hashlib.sha256(payload.encode("utf-8")).hexdigest()
     )
     assert Path(target).read_text(encoding="utf-8") == payload
+
+
+def test_the_revert_notice_names_the_files_and_is_an_ai_message(monkeypatch):
+    """The conversation is never cut: the agent is TOLD what was undone."""
+    from langchain_core.messages import AIMessage
+
+    from agent.tools.file_tools import revert as revert_mod
+
+    captured: dict = {}
+
+    class _Graph:
+        async def aupdate_state(self, config, values):  # noqa: ANN001
+            captured["config"] = config
+            captured["values"] = values
+
+    async def _built_agent() -> _Graph:
+        return _Graph()
+
+    monkeypatch.setattr("agent.core.built_agent", _built_agent)
+
+    ok = asyncio.run(revert_mod.append_revert_notice("s-notice", ["/proj/a.txt", "/proj/b.txt"]))
+
+    assert ok is True
+    message = captured["values"]["messages"][0]
+    assert isinstance(message, AIMessage)
+    assert message.content.startswith("<revert>user had revert editing")
+    assert "/proj/a.txt" in message.content
+    assert "/proj/b.txt" in message.content
+    assert message.content.endswith("</revert>")
+
+
+def test_the_notice_is_skipped_without_files():
+    from agent.tools.file_tools.revert import append_revert_notice
+
+    assert asyncio.run(append_revert_notice("s", [])) is False
+    assert asyncio.run(append_revert_notice("", ["/a"])) is False
+
+
+def test_the_notice_never_raises(monkeypatch):
+    from agent.tools.file_tools import revert as revert_mod
+
+    async def _boom() -> None:
+        raise RuntimeError("graph unavailable")
+
+    monkeypatch.setattr("agent.core.built_agent", _boom)
+
+    assert asyncio.run(revert_mod.append_revert_notice("s", ["/a"])) is False
+
+
+def test_a_successful_revert_reports_the_paths_it_undid(project):
+    target = project / "undone.txt"
+    target.write_text("v0\n", encoding="utf-8")
+    _read("undone.txt")
+    _write("undone.txt", "v1\n", "call-u")
+
+    result = _revert()
+
+    assert result["success"] is True
+    assert result["reverted_paths"] == [str(target)]

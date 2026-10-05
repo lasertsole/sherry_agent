@@ -56,20 +56,29 @@ def test_the_state_payload_lists_what_can_be_reverted(project):
     assert state["changes"][0]["tool_call_id"] == "call-1"
 
 
-def test_the_service_reverts_through_the_same_core(project):
+def test_the_service_reverts_through_the_same_core(project, monkeypatch):
     _write_and_read("a.txt", "changed\n", "call-1")
+    noticed: list[tuple[str, list[str]]] = []
 
-    result = revert_session_file_changes(SESSION)
+    async def _capture_notice(session_id: str, paths: list[str]) -> bool:
+        noticed.append((session_id, paths))
+        return True
+
+    monkeypatch.setattr("agent.tools.file_tools.revert.append_revert_notice", _capture_notice)
+
+    result = asyncio.run(revert_session_file_changes(SESSION))
 
     assert result["success"] is True
     assert (path_utils.ROOT_DIR / "a.txt").read_text(encoding="utf-8") == "original\n"
     assert file_changes_state(SESSION)["canRevert"] is False
+    # The agent is told what was undone — the conversation itself is untouched.
+    assert noticed == [(SESSION, [str(path_utils.ROOT_DIR / "a.txt")])]
 
 
 def test_the_service_honours_dry_run(project):
     _write_and_read("a.txt", "changed\n", "call-1")
 
-    result = revert_session_file_changes(SESSION, dry_run=True)
+    result = asyncio.run(revert_session_file_changes(SESSION, dry_run=True))
 
     assert result["dry_run"] is True
     assert (path_utils.ROOT_DIR / "a.txt").read_text(encoding="utf-8") == "changed\n"

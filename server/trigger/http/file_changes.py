@@ -54,8 +54,7 @@ async def post_file_changes_revert_handler(request):
         return bad_request("'to_tool_call_id' must be a string")
     dry_run = bool(body.get("dry_run", False))
     try:
-        payload = await asyncio.to_thread(
-            revert_session_file_changes,
+        payload = await revert_session_file_changes(
             session_id,
             paths=[str(p) for p in paths] if paths else None,
             to_tool_call_id=to_tool_call_id,

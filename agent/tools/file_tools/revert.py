@@ -49,6 +49,7 @@ __all__ = [
     "FileChangesRevertInput",
     "RevertAction",
     "RevertPlan",
+    "append_revert_notice",
     "build_file_changes_revert_tool",
     "revert_file_changes",
 ]
@@ -385,6 +386,48 @@ def _execute(action: RevertAction, session_id: str) -> tuple[bool, str]:
     return True, "no change"
 
 
+#: The tag the conversation notice is wrapped in — the agent next reads this
+#: message and knows the user undid its edits without the history being cut.
+REVERT_NOTICE_TAG = "revert"
+
+
+def _revert_notice_text(paths: list[str]) -> str:
+    """The message body: one path per line inside the ``<revert>`` tag."""
+    listing = "\n".join(paths)
+    return f"<{REVERT_NOTICE_TAG}>user had revert editing\n{listing}</{REVERT_NOTICE_TAG}>"
+
+
+async def append_revert_notice(session_id: str, paths: list[str]) -> bool:
+    """Append the ``<revert>`` AIMessage to the session's conversation.
+
+    The user's requirement in one sentence: reverting files must NOT remove
+    conversation history, but the agent must still learn that its edits were
+    undone. So this injects one AIMessage into the graph state — the model sees
+    it on the next turn, the persistence layer mirrors it into the store and the
+    chat renders it — and the message body names the files that were reverted.
+
+    Best-effort by contract: a failed notice never fails the revert.
+    """
+    if not session_id or not paths:
+        return False
+    try:
+        from langchain_core.messages import AIMessage
+
+        from agent import core as agent_core
+        from pub.func import build_agent_config
+
+        graph = await agent_core.built_agent()
+        if graph is None:
+            return False
+        notice = AIMessage(content=_revert_notice_text(paths))
+        await graph.aupdate_state(build_agent_config(session_id=session_id), {"messages": [notice]})
+        logger.info("Revert notice appended: session={} files={}", session_id, len(paths))
+        return True
+    except Exception as exc:  # noqa: BLE001 — the notice is best-effort
+        logger.warning("revert notice failed for {}: {}", session_id, exc)
+        return False
+
+
 def _write_journal(session_id: str, plan: RevertPlan, results: list[dict]) -> None:
     """Best-effort journal of what a revert did (inspection, not recovery)."""
     from config.path import session_file_snapshots_dir
@@ -449,9 +492,17 @@ def revert_file_changes(
     _write_journal(session_id, plan, results)
     if all(entry["ok"] for entry in results):
         delete_rows(consumed)
+    reverted_paths = [
+        entry["path"]
+        for entry in results
+        if entry["ok"] and entry.get("action") in ("restore", "delete")
+    ]
     return {
         "success": all(entry["ok"] for entry in results),
         "files": results,
+        # Consumed by the async callers (the tool's _arun, the HTTP service):
+        # the conversation notice is appended there, never from this sync core.
+        "reverted_paths": reverted_paths,
     }
 
 
@@ -498,17 +549,16 @@ class FileChangesRevertTool(BaseTool):
         import asyncio
 
         session_id = session_id or _extract_session_id(run_manager)
-        return await asyncio.to_thread(
-            lambda: json.dumps(
-                revert_file_changes(
-                    session_id,
-                    paths=paths,
-                    to_tool_call_id=to_tool_call_id,
-                    dry_run=dry_run,
-                ),
-                ensure_ascii=False,
-            )
+        payload = await asyncio.to_thread(
+            revert_file_changes,
+            session_id,
+            paths=paths,
+            to_tool_call_id=to_tool_call_id,
+            dry_run=dry_run,
         )
+        if payload.get("success") and not dry_run:
+            await append_revert_notice(session_id, payload.get("reverted_paths") or [])
+        return json.dumps(payload, ensure_ascii=False)
 
 
 def build_file_changes_revert_tool() -> BaseTool:

@@ -289,9 +289,15 @@ def test_a_gc_tick_never_raises(sessions_dir, monkeypatch):
 
 
 def test_the_daemon_thread_is_idempotent(monkeypatch):
+    """The started thread must not touch the store from the test process:
+    a live sweeper racing temp directories kept wedging the suite."""
     from config.features import FILE_SNAPSHOT
 
+    from agent.tools.file_tools import snapshot_gc as gc_mod
+
     monkeypatch.setitem(FILE_SNAPSHOT, "gc_interval_seconds", 3600)
+    monkeypatch.setattr(gc_mod, "run_snapshot_gc", lambda **_: None)  # no store I/O
+
     started = start_file_snapshot_gc()
     again = start_file_snapshot_gc()
 

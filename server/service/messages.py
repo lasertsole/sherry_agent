@@ -540,29 +540,6 @@ the WebSocket layer can forward it to the client for human approval.
 """
 
 
-def _interrupt_predates_rewind(session_id: str, state: Any) -> bool:
-    """Was the checkpoint's snapshot taken before this session's last rewind?"""
-    created_at = getattr(state, "created_at", None)
-    if not created_at:
-        return False
-    try:
-        from datetime import UTC, datetime
-
-        from runtime.session.conversation_branch import rewound_at
-
-        rewound = rewound_at(session_id)
-        if not rewound:
-            return False
-        stamp = created_at if isinstance(created_at, str) else str(created_at)
-        created = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=UTC)
-        return created.timestamp() < rewound
-    except Exception as exc:  # noqa: BLE001 — a fence must never break the read
-        logger.debug("pending-interrupt rewind check failed for {}: {}", session_id, exc)
-        return False
-
-
 async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
     """Return the pending HITL interrupt payload for a session, or ``None``.
 
@@ -581,18 +558,6 @@ async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
             return None
         config = build_agent_config(session_id)
         state = await agent.aget_state(config=config)
-
-        # A rewind abandons the branch a pending interrupt belongs to: the
-        # checkpoint still holds it, so it is filtered out here rather than
-        # re-shown to a user who has already cut that conversation away. The
-        # comparison is checkpoint-created-at vs rewound-at, so a NEW approval
-        # raised after the rewind still shows (its checkpoint is younger).
-        if _interrupt_predates_rewind(session_id, state):
-            logger.info(
-                f"Pending HITL interrupt suppressed for {session_id}: "
-                "the conversation was rewound after it was raised"
-            )
-            return None
 
         # Scan EVERY task of the superstep: a graph that resumed several
         # parallel branches carries one task each, and stopping at the first

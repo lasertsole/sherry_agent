@@ -54,17 +54,6 @@ class StateKey(StrEnum):
     # the old root; promoted at the turn boundary (same twin pattern as LLM_*).
     PROJECT_DIR_PENDING = "project_dir_pending"
 
-    # Conversation rewind (client UI -> /sessions/rewind): JSON of
-    # {"hidden_ranges": [[after_id, up_to_id], ...], "branch_generation": int,
-    # "rewound_at": float}. Messages are never deleted — reads filter through
-    # runtime.session.conversation_branch.filter_visible.
-    CONVERSATION_BRANCH = "conversation_branch"
-    # Fencing for subagent work (written on the CHILD session at spawn): the
-    # parent's branch generation when the run was created. An announce whose
-    # stamp is older than the parent's current generation belongs to a branch
-    # the user has cut away (see runtime.session.conversation_branch).
-    SPAWNED_BRANCH_GENERATION = "spawned_branch_generation"
-
     MULTIMODAL_TRYING_NATIVE = "_multimodal_trying_native"
     MULTIMODAL_NATIVE_MODEL = "_multimodal_native_model"
 

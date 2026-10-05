@@ -1,5 +1,4 @@
 import asyncio
-import time
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any, override
@@ -379,10 +378,6 @@ _NUDGE_MEMORY_LOCK_KEY = StateKey.NUDGE_REVIEW_MEMORY_LOCK
 _PLAN_EXTRACTION_FIRED_KEY = StateKey.NUDGE_PLAN_EXTRACTION_FIRED
 _PLAN_EXTRACTION_ENABLED = NUDGE["plan_extraction_enabled"]
 
-#: When the currently scheduled nudge batch was created (the rewind fence reads
-#: it: a rewind AFTER this instant invalidates the batch).
-_scheduled_at: float = 0.0
-
 # Keeps scheduled nudge coroutines referenced until they complete (asyncio
 # holds only weak references to tasks).
 _COMPRESSION_NUDGE_TASKS: set[asyncio.Task[None]] = set()
@@ -438,22 +433,8 @@ async def _run_compression_nudges(
     need_plan: bool,
     messages: list[BaseMessage],
 ) -> None:
-    """Run the scheduled nudges sequentially under the NUDGE lane (fail-open).
-
-    Fenced against a rewind that lands while the nudge is in flight: a nudge is
-    an injection into the conversation, and after a rewind the conversation it
-    was built for no longer exists. The stamp is taken at SCHEDULING time, so
-    only a rewind that happened after that point drops the nudge.
-    """
+    """Run the scheduled nudges sequentially under the NUDGE lane (fail-open)."""
     try:
-        from runtime.session.conversation_branch import rewound_at
-
-        if rewound_at(session_id) > _scheduled_at:
-            logger.info(
-                "compression nudges: dropped for session {} (rewound after scheduling)",
-                session_id,
-            )
-            return
         # Call-time import keeps the patch seam on
         # ``agent.middlewares.system_prompt.core._get_and_reload_system_prompt``
         # effective (same contract as before the package move).
@@ -494,10 +475,6 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
 
     need_plan = _PLAN_EXTRACTION_ENABLED and _detect_todo_all_complete(session_id)
 
-    global _scheduled_at
-    from runtime.session.conversation_branch import rewound_at
-
-    _scheduled_at = max(rewound_at(session_id), time.time())
     coro = _run_compression_nudges(session_id, need_plan, list(messages))
     try:
         task = asyncio.create_task(coro)

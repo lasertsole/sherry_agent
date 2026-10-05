@@ -749,12 +749,7 @@ def get_turns_by_turn_num_scope(
         # Decode JSON-encoded content and tool_calls back into Python objects.
         result: list[dict] = [_decode_json_columns(dict(row)) for row in rows]
 
-        # A rewound conversation hides the cut range from every reader — the
-        # chat page, the prompt, the continuity snapshot — while the rows stay
-        # in SQLite (append-only discipline, R15).
-        from runtime.session.conversation_branch import filter_visible
-
-        return filter_visible(session_id, result)
+        return result
 
 
 @validate_call
@@ -811,12 +806,7 @@ def get_history_by_turn_page(
         # Decode JSON-encoded content and tool_calls back into Python objects.
         result: list[dict] = [_decode_json_columns(dict(row)) for row in rows]
 
-        # A rewound conversation hides the cut range from every reader — the
-        # chat page, the prompt, the continuity snapshot — while the rows stay
-        # in SQLite (append-only discipline, R15).
-        from runtime.session.conversation_branch import filter_visible
-
-        return filter_visible(session_id, result)
+        return result
 
 
 def get_messages_by_lastest_n_turns(
