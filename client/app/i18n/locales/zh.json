@@ -171,6 +171,30 @@
     },
     "env": {
       "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+    },
+    "tabs": {
+      "role": "角色配置",
+      "agents": "运行守则",
+      "soul": "人格灵魂",
+      "user": "用户信息"
+    },
+    "role": {
+      "aiLine": "你将扮演{name}。",
+      "userLine": "用户将扮演{name}。",
+      "assistant": "AI 角色",
+      "aiName": "AI 名称",
+      "userRole": "用户角色",
+      "userName": "用户名称"
+    },
+    "persona": {
+      "preset": {
+        "title": "预设",
+        "defaultName": "橘雪莉",
+        "defaultBadge": "默认",
+        "builtinCodingName": "编程助手",
+        "builtinBadge": "内置",
+        "emptyList": "暂无预设"
+      }
     }
   },
   "rightSidebar": {
@@ -207,5 +231,15 @@
     "truncated": "仅显示 {total} 项中的 {shown} 项",
     "empty": "空目录",
     "noFile": "未选择文件"
+  },
+  "personaPreset": {
+    "current": "当前会话预设",
+    "unbound": "未选择",
+    "contentTitle": "预设内容",
+    "selectTitle": "选择预设",
+    "selectHint": "新建会话需要先选择一个预设；人格与提示词在会话创建后即固定，之后修改预设不影响已创建的会话。",
+    "create": "创建会话",
+    "applyFailed": "预设应用失败，请检查后端连接后重试",
+    "empty": "（空）"
   }
 }

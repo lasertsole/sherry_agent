@@ -50,6 +50,11 @@
             variant="text"
             class="text-theme-main"
             @click="toggleSidebar" />
+          <!-- Current session's preset: the label names it, the popup lists the
+               catalogue and previews the chosen preset's content in tabs. -->
+          <SessionPresetButton
+            v-if="currentSessionId"
+            :session-id="currentSessionId" />
           <Button
             v-if="canShowProjectFiles"
             :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
@@ -197,6 +202,12 @@
     <NotificationDialog
       v-model="dialogs.visible.notification"
       @changed="(n: number) => (notificationUnread = n)" />
+
+    <!-- Mandatory preset choice for 新建对话: a session is created only after a
+         preset is picked and applied (persona files + character). Owned by the
+         shell so every entry point (left sidebar, chat empty state, toolbar
+         command) shares one dialog and one creation path. -->
+    <NewSessionPresetDialog v-model:visible="newSession.dialogOpen" />
   </div>
 </template>
 
@@ -210,6 +221,8 @@ useErrorCaptured();
 // components
 import SessionSidebar from './components/SessionSidebar.vue';
 import RightSidebar from './components/RightSidebar.vue';
+import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
+import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
 import AsyncChunkFallback from '@/components/AsyncChunkFallback.vue';
@@ -405,6 +418,8 @@ const { sidebarCollapsed: isSidebarCollapsed } = storeToRefs(uiStore);
 
 /** Right sidebar (viewer + tool tabs): collapse flag + the tab actions the menu uses */
 const rightSidebarStore = useRightSidebarStore();
+/** Mandatory new-session preset dialog state (shared with every 新建对话 entry point). */
+const newSession = useNewSessionStore();
 const { collapsed: isRightSidebarCollapsed } = storeToRefs(rightSidebarStore);
 
 /**

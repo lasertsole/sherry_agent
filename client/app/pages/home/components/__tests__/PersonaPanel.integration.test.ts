@@ -208,21 +208,22 @@ describe('PersonaPanel role tab', () => {
     expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeDefined();
   });
 
-  it('lists both built-in entries without a delete button and loads 编程助手', async () => {
+  it('lists the built-ins with 编程助手 first and loads it without any role', async () => {
     const wrapper = await mountPanel();
 
     const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
-    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual(['builtin-sherry', 'builtin-coding']);
+    // 编程助手 is the default and leads the list; 橘雪莉 follows as the role-play built-in.
+    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual(['builtin-coding', 'builtin-sherry']);
     // Non-deletable: the virtual rows never carry a delete button.
     for (const row of builtinRows) expect(row.findAll('button')).toHaveLength(0);
 
     await wrapper.get('[data-test="builtin-coding"]').trigger('click');
     await flushPromises();
 
-    // Operating rules from the template; soul and user profile cleared.
+    // Operating rules from the template; soul, user profile and BOTH role names empty.
     const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
     expect(textareas).toEqual(['TPL-AGENTS', '', '']);
-    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('编程助手');
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
     expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('');
 
     await buttonByText(wrapper, '应用').trigger('click');
@@ -232,11 +233,11 @@ describe('PersonaPanel role tab', () => {
     expect(payload['AGENTS.md']).toBe('TPL-AGENTS');
     expect(payload['SOUL.md']).toBe('');
     expect(payload['USER.md']).toBe('');
-    // Only the AI role is stated: an empty user name contributes no line.
-    expect(payload['ROLE.md']).toBe('# ROLE.md\n\n你将扮演编程助手。\n');
+    // Neither role is named: an EMPTY ROLE.md, so the prompt gains no ROLE block.
+    expect(payload['ROLE.md']).toBe('');
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
-      aiName: '编程助手',
+      aiName: '',
       aiAvatar: '/avatar/assistant.jpg',
       userName: '',
       userAvatar: '/avatar/user.jpg'

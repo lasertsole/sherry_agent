@@ -255,6 +255,23 @@ export interface PresetCharacter {
   aiAvatar: string;
 }
 
+/**
+ * Per-session persona preset binding: which preset the session was created with.
+ *
+ * Purely local bookkeeping — the persona itself is frozen into the session's
+ * prompt snapshot at its first build, so this row only powers the display (the
+ * top-bar preset button). A session created before the binding existed has no
+ * row and reads as "未选择".
+ */
+export interface SessionPresetBinding {
+  /** Session id (primary key) */
+  session_id: string;
+  /** Preset id at binding time: a built-in id ('sherry' | 'coding') or `user:<dexie id>` */
+  preset_id: string;
+  /** Preset display name at binding time (fallback when a user preset was deleted) */
+  preset_name: string;
+}
+
 /** Primary key of the global pending profile in the character table (not a real session ID) */
 export const GLOBAL_SESSION_KEY = '__global__';
 
@@ -289,6 +306,8 @@ class HistoryDb extends Dexie {
   sessionTitles!: Table<SessionTitleOverride, string>;
   /** AI persona preset table (auto-increment primary key id; name uniqueness is validated at the application layer, see {@link PersonaPreset}) */
   personaPresets!: Table<PersonaPreset, number>;
+  /** Per-session persona preset binding (primary key session_id, see {@link SessionPresetBinding}) */
+  sessionPresets!: Table<SessionPresetBinding, string>;
 
   constructor() {
     super('ema-history-cache');
@@ -314,6 +333,13 @@ class HistoryDb extends Dexie {
       // AI persona presets (auto-increment primary key id; indexes support listing by creation
       // time and by name).
       personaPresets: '++id, name, createdAt, updatedAt'
+    });
+    // version(2): the per-session persona preset binding. Dexie merges schemas
+    // across versions, so the version(1) tables above stay as declared; this
+    // bump only adds the new table (an existing database gets it created on the
+    // first open after the upgrade).
+    this.version(2).stores({
+      sessionPresets: 'session_id'
     });
   }
 }
@@ -464,6 +490,33 @@ export async function readCachedSessionMetaList(): Promise<CachedSessionMeta[]> 
  */
 export async function clearCachedSessionMeta(sessionId: string): Promise<void> {
   await db.sessions.delete(sessionId);
+}
+
+/**
+ * Write (cache / overwrite) a session's persona preset binding.
+ *
+ * @param binding Binding entry (`session_id` is the primary key)
+ */
+export async function cacheSessionPreset(binding: SessionPresetBinding): Promise<void> {
+  await db.sessionPresets.put(binding);
+}
+
+/**
+ * Read a session's persona preset binding (returns `undefined` when none exists).
+ *
+ * @param sessionId Session ID
+ */
+export async function readCachedSessionPreset(sessionId: string): Promise<SessionPresetBinding | undefined> {
+  return await db.sessionPresets.get(sessionId);
+}
+
+/**
+ * Clear a session's persona preset binding (cleaned up when the session is deleted).
+ *
+ * @param sessionId Session ID
+ */
+export async function clearCachedSessionPreset(sessionId: string): Promise<void> {
+  await db.sessionPresets.delete(sessionId);
 }
 
 /**

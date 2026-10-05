@@ -178,7 +178,7 @@
                not Dexie rows). 橘雪莉 = the shipped default; 编程助手 = a plain
                assistant template (operating rules only, no soul / user profile). -->
           <div
-            v-for="builtin in builtinPresets"
+            v-for="builtin in BUILTIN_PRESETS"
             :key="builtin.id"
             role="button"
             tabindex="0"
@@ -368,24 +368,13 @@ const cropVisible = ref(false);
 const cropSource = ref('');
 const cropTarget = ref<'user' | 'assistant'>('user');
 
-/** Built-in (non-deletable) persona entries of the preset list. */
-type BuiltinPresetId = 'sherry' | 'coding';
-
-/**
- * The virtual rows of the list: not Dexie records, so they could never be
- * renamed or deleted — 橘雪莉 (the shipped default) and 编程助手 (a plain
- * coding-assistant template).
- */
-const builtinPresets: ReadonlyArray<{ id: BuiltinPresetId; nameKey: string; badgeKey: string }> = [
-  { id: 'sherry', nameKey: 'config.persona.preset.defaultName', badgeKey: 'config.persona.preset.defaultBadge' },
-  { id: 'coding', nameKey: 'config.persona.preset.builtinCodingName', badgeKey: 'config.persona.preset.builtinBadge' }
-];
-
 // Preset state machine: editingPresetId = the user preset currently loaded into the
 // editor (null = built-in / new mode); activeBuiltin = which virtual built-in entry
-// is loaded ('sherry' starts highlighted, null while editing a user preset).
+// is loaded. The DEFAULT preset (编程助手) starts highlighted; the list itself
+// (BUILTIN_PRESETS + the saved presets) is defined in the shared catalogue, so the
+// new-session dialog and the top-bar viewer render the identical order and badges.
 const editingPresetId = ref<number | null>(null);
-const activeBuiltin = ref<BuiltinPresetId | null>('sherry');
+const activeBuiltin = ref<BuiltinPresetId | null>(DEFAULT_PRESET_ID);
 
 // Name dialog (save current content as a new preset) state.
 const showNameDialog = ref(false);
@@ -479,23 +468,9 @@ const fillCharacter = (character: PresetCharacter) => {
 };
 
 /**
- * ROLE.md content, composed from the two role names in the CURRENT UI language
- * (the templates in `workspace/template/<lang>/ROLE.md` carry the same shape).
- * A blank name contributes NO line — an empty file means "no role statement",
- * which is what the 编程助手 built-in asks for on the user side.
- * @returns The role statement file's full text ('' when neither role is named).
- */
-const roleFileContent = (): string => {
-  const lines: string[] = [];
-  const aiName = charAssistant.value.name.trim();
-  const userName = charUser.value.name.trim();
-  if (aiName) lines.push(t('config.role.aiLine', { name: aiName }));
-  if (userName) lines.push(t('config.role.userLine', { name: userName }));
-  return lines.length > 0 ? `# ${ROLE_FILE}\n\n${lines.join('\n')}\n` : '';
-};
-
-/**
- * File map for the persona API: the two edited files + the composed role file.
+ * File map for the persona API: the edited files + the composed role file
+ * (`composeRoleFile` in the shared catalogue states the roles, in the current UI
+ * language, and omits a blank name entirely).
  * @returns The full apply payload written through `writeSystemPrompt`.
  */
 const buildApplyContent = (): Record<string, string> => {
@@ -503,7 +478,7 @@ const buildApplyContent = (): Record<string, string> => {
   for (const tab of tabs) {
     fileToContent[tab.file] = editContent.value[tab.key] ?? '';
   }
-  fileToContent[ROLE_FILE] = roleFileContent();
+  fileToContent[ROLE_FILE] = composeRoleFile(buildPresetCharacter(), t);
   return fileToContent;
 };
 
@@ -614,31 +589,21 @@ const restoreDefault = async (tab: PersonaTab) => {
 };
 
 /**
- * Click a built-in entry: load its shipped template.
- * - 橘雪莉 → the full language template (rules + soul + user profile) plus the
- *   default names/avatars;
- * - 编程助手 → the operating rules only: empty soul and user profile, the
- *   assistant's own name as the AI role, and NO user role — a plain coding
- *   assistant (no role-play).
+ * Click a built-in entry: load its shipped template through the shared catalogue
+ * (the same payload the new-session dialog and the top-bar viewer use).
+ * - 编程助手 → the operating rules only: empty soul and user profile, and BOTH
+ *   role names empty — a plain coding assistant, no role statement at all;
+ * - 橘雪莉 → the full language template plus the default names/avatars.
  * @param id Which built-in entry was clicked.
  */
 const selectBuiltin = async (id: BuiltinPresetId) => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
   try {
-    const content = await readSystemPromptTemplate(locale.value);
-    if (id === 'coding') {
-      fillTabs({ 'AGENTS.md': content['AGENTS.md'] ?? '', 'SOUL.md': '', 'USER.md': '' });
-      fillCharacter({
-        aiName: t('config.persona.preset.builtinCodingName'),
-        aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
-        userName: '',
-        userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar
-      });
-    } else {
-      fillTabs(content);
-      restoreRoleDefault();
-    }
+    const template = await readSystemPromptTemplate(locale.value);
+    const payload = builtinPayload(id, template, t);
+    fillTabs(payload.content);
+    fillCharacter(payload.character);
     editingPresetId.value = null;
     activeBuiltin.value = id;
   } catch (e) {
@@ -817,15 +782,9 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "恢复默认",
         "preset": {
-          "title": "预设",
           "savePreset": "保存预设",
           "apply": "应用",
           "editingBadge": "编辑中",
-          "defaultBadge": "默认",
-          "emptyList": "暂无预设",
-          "defaultName": "橘雪莉",
-          "builtinCodingName": "编程助手",
-          "builtinBadge": "内置",
           "nameDialog": {
             "title": "保存为预设",
             "placeholder": "输入预设名称",
@@ -848,31 +807,19 @@ const handleApply = async () => {
           }
         }
       },
-      "tabs": {
-        "role": "角色配置",
-        "agents": "运行守则",
-        "soul": "人格灵魂",
-        "user": "用户信息"
-      },
       "desc": {
         "role": "AI 与用户各自的扮演角色（名字与头像）",
         "agents": "Agent 的运行守则与安全边界",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
       },
-      "role": {
-        "assistant": "AI 角色",
-        "aiName": "AI 名称",
-        "userRole": "用户角色",
-        "userName": "用户名称",
-        "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
-        "noFileChosen": "可选择新的头像图片",
-        "aiLine": "你将扮演{name}。",
-        "userLine": "用户将扮演{name}。"
-      },
       "uploadAvatar": "上传头像",
       "crop": {
         "title": "裁剪头像"
+      },
+      "role": {
+        "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
+        "noFileChosen": "可选择新的头像图片"
       }
     }
   },
@@ -881,15 +828,9 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "Restore Default",
         "preset": {
-          "title": "Presets",
           "savePreset": "Save Preset",
           "apply": "Apply",
           "editingBadge": "Editing",
-          "defaultBadge": "Default",
-          "emptyList": "No presets yet",
-          "defaultName": "Tachibana Sherry",
-          "builtinCodingName": "Coding Assistant",
-          "builtinBadge": "Built-in",
           "nameDialog": {
             "title": "Save as Preset",
             "placeholder": "Enter preset name",
@@ -912,31 +853,19 @@ const handleApply = async () => {
           }
         }
       },
-      "tabs": {
-        "role": "Character Setup",
-        "agents": "Operating Instructions",
-        "soul": "Soul",
-        "user": "User Profile"
-      },
       "desc": {
         "role": "Who the AI and the user each play (names and avatars)",
         "agents": "The agent's operating instructions and safety boundaries",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
       },
-      "role": {
-        "assistant": "AI Role",
-        "aiName": "AI Name",
-        "userRole": "User Role",
-        "userName": "User Name",
-        "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
-        "noFileChosen": "Select an avatar image file",
-        "aiLine": "You will play {name}.",
-        "userLine": "The user will play {name}."
-      },
       "uploadAvatar": "Upload Avatar",
       "crop": {
         "title": "Crop Avatar"
+      },
+      "role": {
+        "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
+        "noFileChosen": "Select an avatar image file"
       }
     }
   },
@@ -945,15 +874,9 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "デフォルトに戻す",
         "preset": {
-          "title": "プリセット",
           "savePreset": "プリセット保存",
           "apply": "適用",
           "editingBadge": "編集中",
-          "defaultBadge": "デフォルト",
-          "emptyList": "プリセットなし",
-          "defaultName": "橘雪莉",
-          "builtinCodingName": "コーディングアシスタント",
-          "builtinBadge": "内蔵",
           "nameDialog": {
             "title": "プリセットとして保存",
             "placeholder": "プリセット名を入力",
@@ -976,31 +899,19 @@ const handleApply = async () => {
           }
         }
       },
-      "tabs": {
-        "role": "キャラクター設定",
-        "agents": "操作指示",
-        "soul": "人格・魂",
-        "user": "ユーザー情報"
-      },
       "desc": {
         "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
         "agents": "Agent の操作指示と安全境界",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
       },
-      "role": {
-        "assistant": "AI ロール",
-        "aiName": "AI 名前",
-        "userRole": "ユーザーロール",
-        "userName": "ユーザー名",
-        "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
-        "noFileChosen": "新しいアバター画像を選択できます",
-        "aiLine": "あなたは{name}を演じます。",
-        "userLine": "ユーザーは{name}を演じます。"
-      },
       "uploadAvatar": "アバターをアップロード",
       "crop": {
         "title": "アバターをトリミング"
+      },
+      "role": {
+        "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
+        "noFileChosen": "新しいアバター画像を選択できます"
       }
     }
   },
@@ -1009,15 +920,9 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "기본값 복원",
         "preset": {
-          "title": "프리셋",
           "savePreset": "프리셋 저장",
           "apply": "적용",
           "editingBadge": "편집 중",
-          "defaultBadge": "기본",
-          "emptyList": "프리셋 없음",
-          "defaultName": "橘雪莉",
-          "builtinCodingName": "코딩 어시스턴트",
-          "builtinBadge": "내장",
           "nameDialog": {
             "title": "프리셋으로 저장",
             "placeholder": "프리셋 이름 입력",
@@ -1040,31 +945,19 @@ const handleApply = async () => {
           }
         }
       },
-      "tabs": {
-        "role": "캐릭터 설정",
-        "agents": "운영 지침",
-        "soul": "인격·영혼",
-        "user": "사용자 정보"
-      },
       "desc": {
         "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
         "agents": "Agent의 운영 지침과 안전 경계",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
       },
-      "role": {
-        "assistant": "AI 역할",
-        "aiName": "AI 이름",
-        "userRole": "사용자 역할",
-        "userName": "사용자 이름",
-        "charNote": "이름과 아바타 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다. 역할 이름은 시스템 프롬프트에도 기록됩니다.",
-        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다",
-        "aiLine": "당신은 {name} 역할을 연기합니다.",
-        "userLine": "사용자는 {name} 역할을 연기합니다."
-      },
       "uploadAvatar": "아바타 업로드",
       "crop": {
         "title": "아바타 자르기"
+      },
+      "role": {
+        "charNote": "이름과 아바타 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다. 역할 이름은 시스템 프롬프트에도 기록됩니다.",
+        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다"
       }
     }
   }

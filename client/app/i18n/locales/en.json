@@ -171,6 +171,30 @@
     },
     "env": {
       "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+    },
+    "tabs": {
+      "role": "Character Setup",
+      "agents": "Operating Instructions",
+      "soul": "Soul",
+      "user": "User Profile"
+    },
+    "role": {
+      "aiLine": "You will play {name}.",
+      "userLine": "The user will play {name}.",
+      "assistant": "AI Role",
+      "aiName": "AI Name",
+      "userRole": "User Role",
+      "userName": "User Name"
+    },
+    "persona": {
+      "preset": {
+        "title": "Presets",
+        "defaultName": "Tachibana Sherry",
+        "defaultBadge": "Default",
+        "builtinCodingName": "Coding Assistant",
+        "builtinBadge": "Built-in",
+        "emptyList": "No presets yet"
+      }
     }
   },
   "rightSidebar": {
@@ -207,5 +231,15 @@
     "truncated": "Showing {shown} of {total} entries",
     "empty": "Empty directory",
     "noFile": "No file selected"
+  },
+  "personaPreset": {
+    "current": "Session preset",
+    "unbound": "Not chosen",
+    "contentTitle": "Preset content",
+    "selectTitle": "Choose a preset",
+    "selectHint": "Creating a session requires choosing a preset. The persona and prompt are fixed once the session starts, so later preset changes do not affect existing sessions.",
+    "create": "Create session",
+    "applyFailed": "Applying the preset failed — check the backend connection and retry",
+    "empty": "(empty)"
   }
 }

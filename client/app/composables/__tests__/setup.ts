@@ -326,6 +326,16 @@ vi.stubGlobal('useAccessModeStore', () =>
   })
 );
 
+// `useNewSessionStore` gates session creation behind the mandatory preset dialog
+// (mounted in the shell); the default is a closed dialog a suite can open.
+vi.stubGlobal('useNewSessionStore', () =>
+  Vue.reactive({
+    dialogOpen: false,
+    openDialog: () => {},
+    closeDialog: () => {}
+  })
+);
+
 // `useFileViewerStore` caches file previews for the right sidebar's viewer tab;
 // the default is an empty cache that always misses.
 vi.stubGlobal('useFileViewerStore', () =>

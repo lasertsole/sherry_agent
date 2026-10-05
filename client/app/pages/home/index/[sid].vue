@@ -380,7 +380,7 @@ import { ChatInputBox } from '#components';
 // function
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { useRoute, useRouter } from 'vue-router';
+import { useRoute } from 'vue-router';
 import type { MessageItem } from '../type.ts';
 import { CHAT_ROLE } from '@/types/chat-role';
 import { buildSessionToolbarCommands } from '../session-toolbar';
@@ -392,6 +392,7 @@ import AccessModePicker from '../components/AccessModePicker.vue';
 import SessionModelPicker from '../components/SessionModelPicker.vue';
 import ProjectDirectoryChip from '../components/ProjectDirectoryChip.vue';
 import MediaMenu from '../components/MediaMenu.vue';
+import { useNewSessionStore } from '~/stores/new-session';
 import { useTaskflowStore } from '~/stores/taskflow';
 import { useTodoStore } from '~/stores/todo';
 
@@ -400,7 +401,6 @@ const { openPreview } = useImagePreview();
 
 const { t } = useI18n();
 const route = useRoute();
-const router = useRouter();
 
 /** Current session ID (from the [sid] route param) */
 const sessionId = computed(() => String(route.params.sid ?? ''));
@@ -423,6 +423,8 @@ const todoStore = useTodoStore();
 /** TaskFlow wave progress for the floating panel (same init contract). */
 const taskflowStore = useTaskflowStore();
 const rightSidebarStore = useRightSidebarStore();
+/** Mandatory new-session preset dialog (owned by the shell). */
+const newSession = useNewSessionStore();
 /** Per-session project-directory chip store (hydrated on mount + turn start). */
 const projectDirectory = useProjectDirectoryStore();
 
@@ -830,17 +832,13 @@ const handleOperate = (type: string, event: string) => {
   sessionToolbarCommands[event]?.();
 };
 
-/** Create session: generate a random session_id, create a new session window and switch to it */
+/**
+ * Create session: the mandatory preset dialog (mounted in the shell) picks the
+ * preset, applies it and creates the session — this entry point only opens it,
+ * so the empty state and the toolbar command share one implementation.
+ */
 const handleCreateSession = () => {
-  const newSessionId = crypto.randomUUID();
-  router.push({ name: 'home-sid', params: { sid: newSessionId } });
-  // New session: immediately create and lock a character snapshot from the current global profile, ensuring avatar/name display correctly
-  ensureSessionCharacter(newSessionId);
-  // Persist the placeholder session (same behavior as home/index.vue) so a new session created from the toolbar/empty state survives a refresh
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const createTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  cacheSessionMeta({ id: newSessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
+  newSession.openDialog();
 };
 
 /**

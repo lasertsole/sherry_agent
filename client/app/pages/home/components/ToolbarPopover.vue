@@ -7,16 +7,18 @@
       :toggle="toggle"
       :open="open" />
 
-    <!-- Panel: always ABOVE the trigger (these live in the bottom toolbar, where a
-         downward panel covers the input box and can run past the window edge), and
-         horizontally clamped into the viewport — a trigger near the left edge would
-         otherwise push a right-aligned panel out of the window. -->
+    <!-- Panel: ABOVE the trigger by default (these live in the bottom toolbar, where a
+         downward panel covers the input box and can run past the window edge); the
+         TOP toolbar passes placement="down" instead. Either way it is horizontally
+         clamped into the viewport — a trigger near the left edge would otherwise push
+         a right-aligned panel out of the window. -->
     <div
       v-if="open"
       ref="panelRef"
       data-test="toolbar-popover"
       role="dialog"
-      class="absolute bottom-full z-50 mb-2 max-h-[70vh] overflow-y-auto rounded-lg border border-solid border-gray-100 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-[#1a1d21]"
+      class="absolute z-50 max-h-[70vh] overflow-y-auto rounded-lg border border-solid border-gray-100 bg-white p-2 shadow-lg dark:border-gray-700 dark:bg-[#1a1d21]"
+      :class="placement === 'down' ? 'top-full mt-1' : 'bottom-full mb-2'"
       :style="panelStyle"
       @pointerdown.stop>
       <slot />
@@ -27,6 +29,13 @@
 <script setup lang="ts">
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { anchorPanelLeft } from '~/utils/toolbar-popover';
+
+/**
+ * Where the panel grows: "up" (the default — the session toolbar sits at the
+ * bottom, a downward panel would cover the input box) or "down" (the top bar).
+ */
+const props = withDefaults(defineProps<{ placement?: 'up' | 'down' }>(), { placement: 'up' });
+const placement = props.placement;
 
 const open = ref(false);
 const panelRef = ref<HTMLElement>();

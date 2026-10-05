@@ -14,7 +14,13 @@
  * interpolator covers parameterized keys (e.g. `chatBox.modelMeta`).
  */
 import { getCurrentInstance } from 'vue';
+import enMessages from '@/i18n/locales/en.json';
+import jaMessages from '@/i18n/locales/ja.json';
+import koMessages from '@/i18n/locales/ko.json';
 import zhMessages from '@/i18n/locales/zh.json';
+
+/** The central dictionaries, keyed by locale (a test switches `locale.value`). */
+const CENTRAL_MESSAGES: Record<string, Dict> = { en: enMessages, ja: jaMessages, ko: koMessages, zh: zhMessages };
 
 type Dict = { [key: string]: unknown };
 
@@ -76,7 +82,10 @@ export function useI18n() {
   const overlay = localOverlay();
   return {
     t: (key: string, params?: Record<string, unknown>) => {
-      let text = lookupTree(overlay, key) ?? lookupTree(zhMessages, key) ?? key;
+      // Central keys resolve in the CURRENT locale (falling back to zh), so a
+      // locale-switching test observes the same text the app would render.
+      const central = CENTRAL_MESSAGES[currentLocale.value] ?? zhMessages;
+      let text = lookupTree(overlay, key) ?? lookupTree(central, key) ?? lookupTree(zhMessages, key) ?? key;
       if (params) {
         for (const [name, value] of Object.entries(params)) {
           text = text.replaceAll(`{${name}}`, String(value));

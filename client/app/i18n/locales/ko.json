@@ -171,6 +171,30 @@
     },
     "env": {
       "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
+    },
+    "tabs": {
+      "role": "캐릭터 설정",
+      "agents": "운영 지침",
+      "soul": "인격·영혼",
+      "user": "사용자 정보"
+    },
+    "role": {
+      "aiLine": "당신은 {name} 역할을 연기합니다.",
+      "userLine": "사용자는 {name} 역할을 연기합니다.",
+      "assistant": "AI 역할",
+      "aiName": "AI 이름",
+      "userRole": "사용자 역할",
+      "userName": "사용자 이름"
+    },
+    "persona": {
+      "preset": {
+        "title": "프리셋",
+        "defaultName": "橘雪莉",
+        "defaultBadge": "기본",
+        "builtinCodingName": "코딩 어시스턴트",
+        "builtinBadge": "내장",
+        "emptyList": "프리셋 없음"
+      }
     }
   },
   "rightSidebar": {
@@ -207,5 +231,15 @@
     "truncated": "{total}개 중 {shown}개 표시",
     "empty": "빈 디렉터리",
     "noFile": "선택된 파일 없음"
+  },
+  "personaPreset": {
+    "current": "현재 세션 프리셋",
+    "unbound": "선택 안 함",
+    "contentTitle": "프리셋 내용",
+    "selectTitle": "프리셋 선택",
+    "selectHint": "새 세션을 만들려면 프리셋을 선택해야 합니다. 인격과 프롬프트는 세션 생성 시 고정되며, 이후 프리셋 변경은 기존 세션에 영향을 주지 않습니다.",
+    "create": "세션 만들기",
+    "applyFailed": "프리셋 적용에 실패했습니다. 백엔드 연결을 확인한 후 다시 시도하세요",
+    "empty": "(비어 있음)"
   }
 }

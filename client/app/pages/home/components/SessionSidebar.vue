@@ -179,14 +179,32 @@ export async function ensureSessionCharacter(sessionId: string) {
 import HistoryItem from './HistoryItem.vue';
 import ProjectFileTree from './ProjectFileTree.vue';
 // function
-import { computed, onMounted, watch } from 'vue';
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SessionRecord } from '../type.ts';
 // `useVirtualRows` and the row builders come from Nuxt's composable
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
+import { useNewSessionStore } from '@/stores/new-session';
 
 const { t } = useI18n();
+
+/** Mandatory new-session preset dialog (shared with `[sid].vue`'s entry points). */
+const newSession = useNewSessionStore();
+
+/**
+ * A session was created through the preset dialog (mounted in the shell): show
+ * its row here without a reload. Guarded by id — the placeholder also arrives
+ * through `loadSessionList` on the next list refresh.
+ * @param meta Placeholder entry of the new session.
+ */
+const onSessionCreated = (meta: unknown) => {
+  const row = meta as SessionRecord | null;
+  if (!row?.id || historyList.value.some(item => item.id === row.id)) return;
+  historyList.value = [row, ...historyList.value];
+};
+on('session:created', onSessionCreated);
+onBeforeUnmount(() => off('session:created', onSessionCreated));
 const router = useRouter();
 const route = useRoute();
 const localePath = useLocalePath();
@@ -347,25 +365,14 @@ const loadSessionList = async () => {
   }
 };
 
-/** Add new session: generate random session_id, add to list and route to new session page (KeepAlive caches by sid) */
+/**
+ * Add new session: the mandatory preset dialog does the work (persona apply +
+ * session creation); this button only opens it. The dialog announces the created
+ * session over mitt (`session:created`) and this list picks the row up, so the
+ * sidebar reflects it without a reload.
+ */
 const handleCreateSession = () => {
-  const sessionId = crypto.randomUUID();
-  const now = new Date();
-  const pad = (n: number) => String(n).padStart(2, '0');
-  const createTime = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const newSession: SessionRecord = {
-    id: sessionId,
-    title: t('history.newSession'),
-    createTime
-  };
-  historyList.value = [newSession, ...historyList.value];
-  currentSessionId.value = sessionId;
-  // New session: immediately create and lock character snapshot with current global profile, ensure avatar/name display correctly
-  ensureSessionCharacter(sessionId);
-  // Persist placeholder session (written to IndexedDB on creation), ensure this empty session remains in list after refresh/reopen
-  // (server session list is derived from message table, no records before messages sent, can only recover from local placeholders).
-  cacheSessionMeta({ id: sessionId, title: t('history.newSession'), createTime, updatedAt: Date.now() });
-  router.push(localePath(`/home/${sessionId}`));
+  newSession.openDialog();
 };
 
 /**
@@ -422,6 +429,8 @@ const handleDeleteSession = async (id: string) => {
     selectedSessionIds.value = selectedSessionIds.value.filter(sid => sid !== id);
     // Synchronously clear this session's character snapshot cache
     clearCachedCharacter(id);
+    // …and its persona preset binding
+    clearCachedSessionPreset(id);
     // Synchronously clear local placeholder session cache (IndexedDB), avoid remaining placeholders after deletion
     clearCachedSessionMeta(id);
     // Synchronously clear custom title overlay (IndexedDB), avoid leaving orphan overlay records after deletion
@@ -503,6 +512,8 @@ const doBatchDeleteSessions = async () => {
       historyList.value = historyList.value.filter(s => !deleted.includes(s.id));
       // Synchronously clear deleted sessions' character snapshot cache
       for (const id of deleted) clearCachedCharacter(id);
+      // …and their persona preset bindings
+      for (const id of deleted) clearCachedSessionPreset(id);
       // Synchronously clear deleted sessions' custom title overlay (IndexedDB), avoid leaving orphan overlay records
       for (const id of deleted) await clearSessionTitleOverride(id);
       // Deleted sessions may still be streaming (inactive instances in KeepAlive cache with streams not aborted),

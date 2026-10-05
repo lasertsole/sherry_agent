@@ -171,6 +171,30 @@
     },
     "env": {
       "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+    },
+    "tabs": {
+      "role": "キャラクター設定",
+      "agents": "操作指示",
+      "soul": "人格・魂",
+      "user": "ユーザー情報"
+    },
+    "role": {
+      "aiLine": "あなたは{name}を演じます。",
+      "userLine": "ユーザーは{name}を演じます。",
+      "assistant": "AI ロール",
+      "aiName": "AI 名前",
+      "userRole": "ユーザーロール",
+      "userName": "ユーザー名"
+    },
+    "persona": {
+      "preset": {
+        "title": "プリセット",
+        "defaultName": "橘雪莉",
+        "defaultBadge": "デフォルト",
+        "builtinCodingName": "コーディングアシスタント",
+        "builtinBadge": "内蔵",
+        "emptyList": "プリセットなし"
+      }
     }
   },
   "rightSidebar": {
@@ -207,5 +231,15 @@
     "truncated": "{total} 件中 {shown} 件を表示",
     "empty": "空のディレクトリ",
     "noFile": "ファイルが選択されていません"
+  },
+  "personaPreset": {
+    "current": "このセッションのプリセット",
+    "unbound": "未選択",
+    "contentTitle": "プリセット内容",
+    "selectTitle": "プリセットを選択",
+    "selectHint": "新しいセッションの作成にはプリセットの選択が必要です。人格とプロンプトはセッション作成時に固定され、後からプリセットを変更しても既存のセッションには影響しません。",
+    "create": "セッションを作成",
+    "applyFailed": "プリセットの適用に失敗しました。バックエンド接続を確認して再試行してください",
+    "empty": "（空）"
   }
 }
