@@ -397,7 +397,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数�
 
 **想定実行時間**（単独、実バックエンド）：単純タスク約 30–60 秒、複雑な最悪ケース約 10 分、同時タスク約 2–9 分。この予算を超える場合は通常の遅さではなく実際のハングであり、テストごとの timeout が制限します（単純 300 秒 / 同時 600 秒）。
 
-**CI：** `.github/workflows/ci.yml` は `main` への push/PR ごとに `uv run python tests/run_tests_split.py` を実行し、スイートを **3 つの逐次 pytest プロセス**（並列には決してしない）で走らせます：A = `unit`、B = `integration` + `module` + `system`、C = `regression`。`--with-llm-e2e` は別のより遅い job として維持してください（API トークンを消費するため、他のスイートと並列に実行しないでください）。
+**CI：** `.github/workflows/ci.yml` は `main` または `dev` への push/PR ごとに `uv run python tests/run_tests_split.py` を実行し、スイートを **3 つの逐次 pytest プロセス**（並列には決してしない）で走らせます：A = `unit`、B = `integration` + `module` + `system`、C = `regression`。`--with-llm-e2e` は別のより遅い job として維持してください（API トークンを消費するため、他のスイートと並列に実行しないでください）。
 
 > **注意：** `tests/full/` は上記の標準グループ外の補助/実験ディレクトリです。実 LLM を駆動するファイルはすべて `llm_e2e` タグが付いているため、既定の addopts で選択解除され、split runner も収集しません（さらに `tests/full/` を `--ignore` します）。手動実行：`uv run --no-sync pytest -m llm_e2e tests/full/<file>`。hermetic なテストはここに置きません — real-graph HITL テストは `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py` に移動し、標準グループで実行されます。
 

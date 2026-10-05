@@ -397,7 +397,7 @@ Seven tests across four files in `tests/agent/tools/subagent/` (`test_real_e2e.p
 
 **Expected runtimes** (solo, real backend): simple task ≈ 30–60 s; complex worst case ≈ 10 min; concurrent tasks ≈ 2–9 min. A run that exceeds these budgets is a real hang, not normal slowness — the per-test timeout bounds it (300 s simple / 600 s concurrent).
 
-**CI:** `.github/workflows/ci.yml` runs `uv run python tests/run_tests_split.py` on every push/PR to `main`, executing the suite as **three sequential pytest processes** (never parallel): A = `unit`, B = `integration` + `module` + `system`, C = `regression`. The `--with-llm-e2e` suite stays a separate, slower job (it costs API tokens; never run it in parallel with other suites).
+**CI:** `.github/workflows/ci.yml` runs `uv run python tests/run_tests_split.py` on every push/PR to `main` or `dev`, executing the suite as **three sequential pytest processes** (never parallel): A = `unit`, B = `integration` + `module` + `system`, C = `regression`. The `--with-llm-e2e` suite stays a separate, slower job (it costs API tokens; never run it in parallel with other suites).
 
 > **Note:** `tests/full/` is an auxiliary/experimental directory outside the standard groups above. Every file there that drives a live LLM is tagged `llm_e2e`, so the default addopts deselect it and the split runner never collects it (it also `--ignore`s `tests/full/`). Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>`. Hermetic tests do not belong there — the real-graph HITL test now lives at `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py` and runs in the standard groups.
 
