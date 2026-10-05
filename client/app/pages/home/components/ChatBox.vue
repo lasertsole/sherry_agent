@@ -154,7 +154,7 @@
                   <button
                     v-if="bubbleView(message).collapsed || expandedLongMessages.has(message.id)"
                     type="button"
-                    class="mt-1 cursor-pointer select-none text-xs text-theme-main hover:underline"
+                    class="mt-1 cursor-pointer select-none text-xs text-[#2563EB] hover:underline"
                     @click="toggleLongMessage(message.id)">
                     {{
                       bubbleView(message).collapsed
