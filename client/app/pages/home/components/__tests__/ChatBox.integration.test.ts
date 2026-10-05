@@ -428,6 +428,10 @@ describe('ChatBox streaming bubble (integration, backend mocked)', () => {
     expect(wrapper.text()).not.toContain('仅显示末尾内容');
     const expand = wrapper.findAll('button').find(b => b.text().includes('展开全文'));
     expect(expand).toBeTruthy();
+    // The control names the CHARACTER count (symbols and spaces included), not
+    // the line count: "20 lines" bounds nothing when the lines are numbers.
+    expect(expand!.text()).toContain(String(long.length));
+    expect(expand!.text()).toContain('字');
 
     // Expanding renders the full text; collapsing restores the preview.
     await expand!.trigger('click');

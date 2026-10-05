@@ -158,7 +158,7 @@
                     @click="toggleLongMessage(message.id)">
                     {{
                       bubbleView(message).collapsed
-                        ? t('chatBox.expandFull', { lines: bubbleView(message).lines })
+                        ? t('chatBox.expandFull', { chars: bubbleView(message).chars })
                         : t('chatBox.collapseFull')
                     }}
                   </button>
@@ -365,7 +365,14 @@ const STREAM_TAIL_CHARS = 4000;
 const STREAM_TAIL_LINES = 200;
 //: A settled answer past this size renders a head preview plus an expand control.
 const LONG_MESSAGE_CHARS = 4000;
-const LONG_MESSAGE_PREVIEW_LINES = 20;
+//: The preview's size in CHARACTERS, not lines: a "20 lines" preview is a
+//: handful of characters for a column of short numbers and thousands of
+//: characters for prose, so the cap has to be the thing that actually bounds
+//: the rendered block. Every symbol and space counts (`String.length`).
+const LONG_MESSAGE_PREVIEW_CHARS = 1000;
+//: The preview's row guard, for the same reason the streaming tail has one: a
+//: thousand characters of one-digit lines is a thousand laid-out rows.
+const LONG_MESSAGE_PREVIEW_LINES = 60;
 
 /** How a bubble renders one message: the text, and which control it needs. */
 interface BubbleView {
@@ -375,8 +382,8 @@ interface BubbleView {
   truncated: boolean;
   /** Settled long answer shown collapsed (shows the 展开全文 button). */
   collapsed: boolean;
-  /** Total line count, for the expand label. */
-  lines: number;
+  /** Total character count (symbols and spaces included), for the expand label. */
+  chars: number;
 }
 
 /**
@@ -387,32 +394,42 @@ interface BubbleView {
  * (measured on a 2000-line answer: menus, timers and fetches all froze for tens
  * of seconds until the page caught up). Settled rows render a head PREVIEW and
  * an 展开全文 control instead — the starvation comes from having multi-thousand-
- * line rows at all, and the window usually holds several of them, so the cap has
- * to apply after the turn ends too (the same collapse idiom the tool cards and
- * thinking blocks already use). Nothing is lost either way: `message.content`
- * keeps the full text (copy button, tooltips, history all read it).
+ * character rows at all, and the window usually holds several of them, so the cap
+ * has to apply after the turn ends too (the same collapse idiom the tool cards
+ * and thinking blocks already use). Both caps count CHARACTERS, symbols and
+ * spaces included, because that is what bounds the rendered block: "20 lines" is
+ * a few characters for a column of short numbers and thousands for prose.
+ * Nothing is lost either way: `message.content` keeps the full text (copy
+ * button, tooltips, history all read it).
  * @param message
  */
 const bubbleView = (message: MessageItem): BubbleView => {
   const content = message.content;
-  const totalLines = content.split('\n').length;
+  const totalChars = content.length;
   if (message.streaming) {
-    if (content.length <= STREAM_TAIL_CHARS) {
-      return { text: content, truncated: false, collapsed: false, lines: totalLines };
+    if (totalChars <= STREAM_TAIL_CHARS) {
+      return { text: content, truncated: false, collapsed: false, chars: totalChars };
     }
     let tail = content.slice(-STREAM_TAIL_CHARS);
     // Start at a line boundary so the markdown structure of the tail is intact.
     const firstBreak = tail.indexOf('\n');
     if (firstBreak >= 0) tail = tail.slice(firstBreak + 1);
-    const lines = tail.split('\n');
-    if (lines.length > STREAM_TAIL_LINES) tail = lines.slice(-STREAM_TAIL_LINES).join('\n');
-    return { text: tail, truncated: true, collapsed: false, lines: totalLines };
+    // The character cap bounds the block; this one bounds the ROW count, which
+    // is what actually starves layout (4000 characters of one-digit lines is
+    // 2000 rows).
+    const tailLines = tail.split('\n');
+    if (tailLines.length > STREAM_TAIL_LINES) tail = tailLines.slice(-STREAM_TAIL_LINES).join('\n');
+    return { text: tail, truncated: true, collapsed: false, chars: totalChars };
   }
-  if (content.length > LONG_MESSAGE_CHARS && !expandedLongMessages.has(message.id)) {
-    const preview = content.split('\n').slice(0, LONG_MESSAGE_PREVIEW_LINES).join('\n');
-    return { text: preview, truncated: false, collapsed: true, lines: totalLines };
+  if (totalChars > LONG_MESSAGE_CHARS && !expandedLongMessages.has(message.id)) {
+    const previewLines = content.slice(0, LONG_MESSAGE_PREVIEW_CHARS).split('\n');
+    const preview =
+      previewLines.length > LONG_MESSAGE_PREVIEW_LINES
+        ? previewLines.slice(0, LONG_MESSAGE_PREVIEW_LINES).join('\n')
+        : previewLines.join('\n');
+    return { text: preview, truncated: false, collapsed: true, chars: totalChars };
   }
-  return { text: content, truncated: false, collapsed: false, lines: totalLines };
+  return { text: content, truncated: false, collapsed: false, chars: totalChars };
 };
 
 /**
@@ -493,7 +510,7 @@ defineExpose({ scrollToMessage });
       "scrollBottom": "回到最底部",
       "loadingOlder": "正在加载更早的消息",
       "streamingTail": "正在流式输出，仅显示末尾内容；本轮结束后显示全文",
-      "expandFull": "展开全文（{lines} 行）",
+      "expandFull": "展开全文（{chars} 字）",
       "collapseFull": "收起全文",
       "thinking": "思考过程",
       "toolArgs": "调用参数",
@@ -513,7 +530,7 @@ defineExpose({ scrollToMessage });
       "scrollBottom": "Scroll to bottom",
       "loadingOlder": "Loading earlier messages",
       "streamingTail": "Streaming — showing the end only; the full text appears when the turn ends",
-      "expandFull": "Show all {lines} lines",
+      "expandFull": "Show all {chars} characters",
       "collapseFull": "Collapse",
       "thinking": "Thinking",
       "toolArgs": "Arguments",
@@ -533,7 +550,7 @@ defineExpose({ scrollToMessage });
       "scrollBottom": "最下部へ戻る",
       "loadingOlder": "以前のメッセージを読み込み中",
       "streamingTail": "ストリーミング中 — 末尾のみ表示しています。ターン終了後に全文を表示します",
-      "expandFull": "全文を表示（{lines} 行）",
+      "expandFull": "全文を表示（{chars} 文字）",
       "collapseFull": "折りたたむ",
       "thinking": "思考",
       "toolArgs": "引数",
@@ -553,7 +570,7 @@ defineExpose({ scrollToMessage });
       "scrollBottom": "맨 아래로",
       "loadingOlder": "이전 메시지 불러오는 중",
       "streamingTail": "스트리밍 중 — 끝부분만 표시하며, 턴이 끝나면 전체 내용이 표시됩니다",
-      "expandFull": "전체 보기({lines}줄)",
+      "expandFull": "전체 보기({chars}자)",
       "collapseFull": "접기",
       "thinking": "생각",
       "toolArgs": "인자",
