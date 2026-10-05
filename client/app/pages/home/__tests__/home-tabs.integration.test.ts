@@ -30,8 +30,9 @@ vi.stubGlobal('useUiStore', () => uiState);
 // the command wiring can be asserted without rendering the panels.
 const rightSidebarState = reactive({
   collapsed: ref(true),
-  tabs: ref<Array<{ id: string; kind: string }>>([]),
+  tabs: ref<Array<{ id: string; kind: string; scope: string }>>([]),
   activeTabId: ref<string | null>(null),
+  activeScope: ref('global'),
   width: ref(420),
   setWidth: () => {},
   fitToViewport: () => {},
@@ -42,6 +43,8 @@ const rightSidebarState = reactive({
     rightSidebarState.collapsed = false;
   },
   openTab: vi.fn((kind: string) => `tab-${kind}`),
+  tabsInScope: () => [],
+  setActiveScope: () => {},
   activateTab: () => {},
   closeTab: () => {}
 });

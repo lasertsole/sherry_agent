@@ -32,15 +32,33 @@
       v-if="contentMounted"
       class="flex flex-col h-full"
       :style="{ width: `${store.width}px` }">
-      <!-- Tab strip: one button per open tab (each with its own ×). Tabs are
-           added from the top toolbar and the settings menu. -->
-      <!-- Strip height matches the session toolbar / the left sidebar's logo row, so
-           all three columns share one header line. -->
+      <!-- Strip: a TOP-LEVEL group tab row (当前会话 / 全局 — the tabs' scope)
+           over the tab list of the active group. Two compact rows keep the whole
+           header at the shared h-15, so all three columns still share one header
+           line. Tabs are added from the top toolbar and the settings menu. -->
       <div
-        class="shrink-0 flex items-center gap-1 px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
-        <div class="flex-1 min-w-0 flex items-center gap-1 overflow-x-auto">
+        class="shrink-0 flex flex-col px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
+        <div
+          class="flex h-6 items-end gap-3"
+          data-test="scope-tabs">
           <button
-            v-for="tab in tabs"
+            v-for="scope in SCOPES"
+            :key="scope"
+            type="button"
+            class="h-6 border-b-2 border-solid border-transparent pb-0.5 text-xs transition-colors"
+            :class="
+              scope === store.activeScope
+                ? 'border-theme-main font-medium text-theme-main'
+                : 'text-gray-500 dark:text-gray-400 hover:text-theme-main'
+            "
+            :data-test="`scope-tab-${scope}`"
+            @click="store.setActiveScope(scope)">
+            {{ t(`rightSidebar.scopes.${scope}`) }}
+          </button>
+        </div>
+        <div class="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto">
+          <button
+            v-for="tab in store.tabsInScope(store.activeScope)"
             :key="tab.id"
             type="button"
             class="group shrink-0 flex items-center gap-1 h-7 px-2 rounded-md text-xs transition-colors"
@@ -57,6 +75,12 @@
               :aria-label="t('rightSidebar.closeTab')"
               @click.stop="store.closeTab(tab.id)"></i>
           </button>
+          <span
+            v-if="store.tabsInScope(store.activeScope).length === 0"
+            class="text-xs text-gray-400 dark:text-gray-500"
+            data-test="scope-empty">
+            {{ t('rightSidebar.scopeEmpty') }}
+          </span>
         </div>
       </div>
 
@@ -93,12 +117,16 @@ import { useI18n } from 'vue-i18n';
 import {
   RIGHT_SIDEBAR_PANEL_MIN_HEIGHT,
   RIGHT_SIDEBAR_PANEL_MIN_WIDTH,
-  type RightSidebarPanelKind
+  type RightSidebarPanelKind,
+  type RightSidebarScope
 } from '~/stores/right-sidebar';
 
 const { t } = useI18n({ useScope: 'local' });
 
 const store = useRightSidebarStore();
+
+/** The group tabs, in display order (session first, then the global tools). */
+const SCOPES: ReadonlyArray<RightSidebarScope> = ['session', 'global'];
 
 /** Lazy panel components: the chunk loads when a tab of that kind first mounts. */
 const PANELS: Record<RightSidebarPanelKind, Component> = {
@@ -114,7 +142,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   cron: defineAsyncComponent(() => import('./CronPanel.vue')),
   extend: defineAsyncComponent(() => import('./ExtendPanel.vue')),
   taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue')),
-  account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue'))
+  account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue')),
+  sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue'))
 };
 
 /**
@@ -128,9 +157,16 @@ const emit = defineEmits<{ saved: [] }>();
 const PANEL_MIN_WIDTH = RIGHT_SIDEBAR_PANEL_MIN_WIDTH;
 const PANEL_MIN_HEIGHT = RIGHT_SIDEBAR_PANEL_MIN_HEIGHT;
 
-/** The active tab's kind, or null (no tabs / stale id). */
-const activeKind = computed<RightSidebarPanelKind | null>(
-  () => store.tabs.find(tab => tab.id === store.activeTabId)?.kind ?? null
+/** The active tab, or null (no tabs / stale id). */
+const activeTab = computed(() => store.tabs.find(tab => tab.id === store.activeTabId) ?? null);
+
+/**
+ * The active tab's kind, or null. Null also when the active tab belongs to the
+ * OTHER group than the one being browsed: a group switch shows that group's tabs
+ * (its empty state when it has none), never the other group's panel.
+ */
+const activeKind = computed<RightSidebarPanelKind | null>(() =>
+  activeTab.value && activeTab.value.scope === store.activeScope ? activeTab.value.kind : null
 );
 
 /** The panel component to render (null → the empty state). */
@@ -141,7 +177,6 @@ const activeTabPayload = computed<{ path: string } | undefined>(
 );
 
 /** Keep the store usable from the template without unwrapping refs manually. */
-const tabs = computed(() => store.tabs);
 const collapsed = computed(() => store.collapsed);
 
 /**
@@ -240,7 +275,13 @@ onBeforeUnmount(() => {
       "resize": "拖动调整宽度",
       "stats": "统计",
       "closeTab": "关闭标签页",
-      "empty": "暂无标签页，从菜单或工具栏添加"
+      "empty": "暂无标签页，从菜单或工具栏添加",
+      "sessionPreset": "会话预设",
+      "scopes": {
+        "session": "当前会话",
+        "global": "全局"
+      },
+      "scopeEmpty": "该分组暂无标签页"
     }
   },
   "en": {
@@ -258,7 +299,13 @@ onBeforeUnmount(() => {
       "resize": "Drag to resize",
       "stats": "Statistics",
       "closeTab": "Close tab",
-      "empty": "No tabs yet — add one from the menu or toolbar"
+      "empty": "No tabs yet — add one from the menu or toolbar",
+      "sessionPreset": "Session preset",
+      "scopes": {
+        "session": "This session",
+        "global": "Global"
+      },
+      "scopeEmpty": "No tabs in this group"
     }
   },
   "ja": {
@@ -276,7 +323,13 @@ onBeforeUnmount(() => {
       "resize": "ドラッグで幅を変更",
       "stats": "統計",
       "closeTab": "タブを閉じる",
-      "empty": "タブがありません。メニューまたはツールバーから追加"
+      "empty": "タブがありません。メニューまたはツールバーから追加",
+      "sessionPreset": "セッションのプリセット",
+      "scopes": {
+        "session": "現在のセッション",
+        "global": "グローバル"
+      },
+      "scopeEmpty": "このグループにタブはありません"
     }
   },
   "ko": {
@@ -294,7 +347,13 @@ onBeforeUnmount(() => {
       "resize": "드래그하여 너비 조절",
       "stats": "통계",
       "closeTab": "탭 닫기",
-      "empty": "탭이 없습니다. 메뉴 또는 툴바에서 추가"
+      "empty": "탭이 없습니다. 메뉴 또는 툴바에서 추가",
+      "sessionPreset": "세션 프리셋",
+      "scopes": {
+        "session": "현재 세션",
+        "global": "전역"
+      },
+      "scopeEmpty": "이 그룹에 탭이 없습니다"
     }
   }
 }

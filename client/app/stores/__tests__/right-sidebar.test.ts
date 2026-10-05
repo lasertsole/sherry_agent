@@ -32,6 +32,35 @@ describe('stores/right-sidebar', () => {
     expect(store.collapsed).toBe(false);
   });
 
+  it('files every tab under a group scope and shows the tab s group on open', () => {
+    const store = useRightSidebarStore();
+
+    // Every pre-existing tool is a GLOBAL tab; only the session preset view is
+    // session-scoped, and the strip starts on 全局.
+    expect(store.activeScope).toBe('global');
+    const logs = store.openTab('logs');
+    expect(store.tabs.find(tab => tab.id === logs)?.scope).toBe('global');
+    expect(store.tabsInScope('global').map(tab => tab.kind)).toEqual(['logs']);
+
+    store.setActiveScope('session');
+    expect(store.activeScope).toBe('session');
+    expect(store.tabsInScope('session')).toEqual([]);
+
+    // Opening a tab jumps to its own group (and so does activating a closed one).
+    const preset = store.openTab('sessionPreset');
+    expect(store.activeScope).toBe('session');
+    expect(store.tabsInScope('session').map(tab => tab.kind)).toEqual(['sessionPreset']);
+
+    store.setActiveScope('global');
+    store.activateTab(preset);
+    expect(store.activeScope).toBe('session');
+
+    // Closing the session tab falls back to the neighbour and ITS group.
+    store.closeTab(preset);
+    expect(store.activeTabId).toBe(logs);
+    expect(store.activeScope).toBe('global');
+  });
+
   it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
     // The menu must never stack a second 系统配置 next to the open one — the
     // click belongs to the tab that already exists.

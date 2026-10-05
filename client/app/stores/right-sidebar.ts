@@ -17,7 +17,38 @@ export type RightSidebarPanelKind =
   | 'extend'
   | 'taskDetail'
   | 'fileViewer'
-  | 'account';
+  | 'account'
+  /** The session's own persona preset (read-only), the only SESSION-scoped panel. */
+  | 'sessionPreset';
+
+/**
+ * Which group a tab belongs to: the CURRENT SESSION's own views (things derived
+ * from the active session, e.g. its persona preset) versus the process-wide
+ * tools (viewers and settings editors), which apply everywhere.
+ */
+export type RightSidebarScope = 'session' | 'global';
+
+/**
+ * Scope per panel kind — the strip groups tabs by this, and callers never pass a
+ * scope (a kind has exactly one home). Everything except the session preset
+ * viewer is global, which is why an existing strip is unchanged by the grouping.
+ */
+const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
+  logs: 'global',
+  stats: 'global',
+  knowledgeGraph: 'global',
+  skills: 'global',
+  systemConfig: 'global',
+  persona: 'global',
+  memory: 'global',
+  heartbeat: 'global',
+  cron: 'global',
+  extend: 'global',
+  taskDetail: 'global',
+  fileViewer: 'global',
+  account: 'global',
+  sessionPreset: 'session'
+};
 
 /**
  * Width an editor panel is opened with when the sidebar is narrower: those
@@ -74,6 +105,8 @@ export interface RightSidebarTab {
   id: string;
   /** Which panel component the tab renders. */
   kind: RightSidebarPanelKind;
+  /** Which group tab the tab sits under (当前会话 / 全局). */
+  scope: RightSidebarScope;
   /**
    * Per-instance data for kinds that need it (the file viewer's relative path).
    * The tab id is already the instance key, so the payload rides the tab itself
@@ -101,6 +134,11 @@ export const useRightSidebarStore = defineStore(
     const tabs = ref<RightSidebarTab[]>([]);
     /** Active tab id, or null when nothing is open. */
     const activeTabId = ref<string | null>(null);
+    /**
+     * Which group tab is shown. 全局 by default: every pre-existing panel is a
+     * global tool, so an untouched sidebar keeps exactly its old behaviour.
+     */
+    const activeScope = ref<RightSidebarScope>('global');
     /** Panel width in px (draggable, clamped; persisted). */
     const width = ref(RIGHT_SIDEBAR_DEFAULT_WIDTH);
 
@@ -148,19 +186,45 @@ export const useRightSidebarStore = defineStore(
      */
     function openTab(kind: RightSidebarPanelKind, payload?: { path: string }): string {
       const path = payload?.path ?? null;
+      const scope = SCOPE_BY_KIND[kind];
       const existing = tabs.value.find(tab => tab.kind === kind && (tab.payload?.path ?? null) === path);
       if (existing) {
         activeTabId.value = existing.id;
+        activeScope.value = existing.scope;
         expand();
         if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));
         return existing.id;
       }
       const id = `${kind}-${++tabSeq}`;
-      tabs.value = [...tabs.value, payload ? { id, kind, payload } : { id, kind }];
+      tabs.value = [...tabs.value, payload ? { id, kind, scope, payload } : { id, kind, scope }];
       activeTabId.value = id;
+      activeScope.value = scope;
       expand();
       if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));
       return id;
+    }
+
+    /**
+     * Tabs of one group (the strip renders the active group's list).
+     * @param scope Group to list.
+     * @returns The tabs of that scope, in strip order.
+     */
+    function tabsInScope(scope: RightSidebarScope): RightSidebarTab[] {
+      return tabs.value.filter(tab => tab.scope === scope);
+    }
+
+    /**
+     * Show a group tab. When the active tab lives in the OTHER group the group's
+     * first tab is activated, so the body always belongs to the group on screen
+     * (an empty group shows its empty state instead).
+     * @param scope Group to show.
+     */
+    function setActiveScope(scope: RightSidebarScope): void {
+      activeScope.value = scope;
+      const active = tabs.value.find(tab => tab.id === activeTabId.value);
+      if (active && active.scope === scope) return;
+      const first = tabs.value.find(tab => tab.scope === scope);
+      if (first) activeTabId.value = first.id;
     }
 
     /**
@@ -168,7 +232,10 @@ export const useRightSidebarStore = defineStore(
      * @param id Tab id.
      */
     function activateTab(id: string): void {
-      if (tabs.value.some(tab => tab.id === id)) activeTabId.value = id;
+      const tab = tabs.value.find(candidate => candidate.id === id);
+      if (!tab) return;
+      activeTabId.value = id;
+      activeScope.value = tab.scope;
     }
 
     /**
@@ -185,6 +252,7 @@ export const useRightSidebarStore = defineStore(
       if (activeTabId.value === id) {
         const neighbour = remaining[index] ?? remaining[index - 1] ?? null;
         activeTabId.value = neighbour?.id ?? null;
+        if (neighbour) activeScope.value = neighbour.scope;
       }
     }
 
@@ -192,12 +260,15 @@ export const useRightSidebarStore = defineStore(
       collapsed,
       tabs,
       activeTabId,
+      activeScope,
       width,
       toggle,
       expand,
       setWidth,
       fitToViewport,
       openTab,
+      tabsInScope,
+      setActiveScope,
       activateTab,
       closeTab
     };

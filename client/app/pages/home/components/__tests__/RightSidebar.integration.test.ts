@@ -10,14 +10,17 @@ import { RIGHT_SIDEBAR_PANEL_MIN_HEIGHT, RIGHT_SIDEBAR_PANEL_MIN_WIDTH } from '@
 // component reads `store.tabs` as an array while the test mutates the refs.
 let sidebarApi: {
   collapsed: boolean;
-  tabs: Array<{ id: string; kind: string }>;
+  tabs: Array<{ id: string; kind: string; scope: 'session' | 'global' }>;
   activeTabId: string | null;
+  activeScope: 'session' | 'global';
   width: number;
   toggle: ReturnType<typeof vi.fn>;
   expand: ReturnType<typeof vi.fn>;
   setWidth: ReturnType<typeof vi.fn>;
   fitToViewport: ReturnType<typeof vi.fn>;
   openTab: ReturnType<typeof vi.fn>;
+  tabsInScope: (scope: 'session' | 'global') => Array<{ id: string; kind: string; scope: string }>;
+  setActiveScope: (scope: 'session' | 'global') => void;
   activateTab: ReturnType<typeof vi.fn>;
   closeTab: ReturnType<typeof vi.fn>;
 };
@@ -29,14 +32,19 @@ beforeEach(() => {
   vi.stubGlobal('innerWidth', VIEWPORT_WIDTH);
   sidebarApi = reactive({
     collapsed: ref(true),
-    tabs: ref<Array<{ id: string; kind: string }>>([]),
+    tabs: ref<Array<{ id: string; kind: string; scope: 'session' | 'global' }>>([]),
     activeTabId: ref<string | null>(null),
+    activeScope: ref<'session' | 'global'>('global'),
     width: ref(420),
     toggle: vi.fn(),
     expand: vi.fn(),
     setWidth: vi.fn(),
     fitToViewport: vi.fn(),
     openTab: vi.fn(),
+    tabsInScope: scope => sidebarApi.tabs.filter(tab => tab.scope === scope),
+    setActiveScope: vi.fn(scope => {
+      sidebarApi.activeScope = scope;
+    }),
     activateTab: vi.fn(),
     closeTab: vi.fn()
   }) as typeof sidebarApi;
@@ -135,7 +143,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
   it('keeps the body mounted through the collapse animation, then drops it', async () => {
     sidebarApi.collapsed = false;
-    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs' }];
+    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];
     sidebarApi.activeTabId = 'logs-1';
     const wrapper = mountSidebar();
     await flushPromises();
@@ -156,8 +164,8 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
   it('renders one strip button per tab and activates on click', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [
-      { id: 'logs-1', kind: 'logs' },
-      { id: 'stats-1', kind: 'stats' }
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' }
     ];
     sidebarApi.activeTabId = 'logs-1';
     const wrapper = mountSidebar();
@@ -174,11 +182,40 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(sidebarApi.activateTab).toHaveBeenCalledWith('stats-1');
   });
 
+  it('splits the strip into 当前会话 / 全局 group tabs', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'sessionPreset-1', kind: 'sessionPreset', scope: 'session' },
+      { id: 'logs-1', kind: 'logs', scope: 'global' }
+    ];
+    sidebarApi.activeTabId = 'logs-1';
+    const wrapper = mountSidebar();
+    await flushPromises();
+
+    // 全局 is the default group: the pre-existing tools are unchanged by grouping.
+    const scopeTabs = wrapper.findAll('[data-test^="scope-tab-"]');
+    expect(scopeTabs.map(tab => tab.attributes('data-test'))).toEqual(['scope-tab-session', 'scope-tab-global']);
+    // Only the active group's tabs render.
+    expect(wrapper.text()).toContain('日志查看');
+    expect(wrapper.text()).not.toContain('会话预设');
+
+    await wrapper.get('[data-test="scope-tab-session"]').trigger('click');
+    await flushPromises();
+    expect(sidebarApi.setActiveScope).toHaveBeenCalledWith('session');
+    expect(wrapper.text()).toContain('会话预设');
+    expect(wrapper.text()).not.toContain('日志查看');
+
+    // An empty group says so instead of showing nothing at all.
+    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];
+    await nextTick();
+    expect(wrapper.get('[data-test="scope-empty"]').exists()).toBe(true);
+  });
+
   it('switches the mounted panel with the active tab', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [
-      { id: 'logs-1', kind: 'logs' },
-      { id: 'stats-1', kind: 'stats' }
+      { id: 'logs-1', kind: 'logs', scope: 'global' },
+      { id: 'stats-1', kind: 'stats', scope: 'global' }
     ];
     sidebarApi.activeTabId = 'stats-1';
     const wrapper = mountSidebar();
@@ -190,7 +227,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
   it('closes a tab from its × without activating it', async () => {
     sidebarApi.collapsed = false;
-    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs' }];
+    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];
     sidebarApi.activeTabId = 'logs-1';
     const wrapper = mountSidebar();
 
@@ -202,7 +239,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
   it('carries no add / collapse controls: both live in the top toolbar', () => {
     sidebarApi.collapsed = false;
-    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs' }];
+    sidebarApi.tabs = [{ id: 'logs-1', kind: 'logs', scope: 'global' }];
     sidebarApi.activeTabId = 'logs-1';
     const wrapper = mountSidebar();
 
@@ -217,9 +254,9 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
   it('labels every tool tab from the same kind vocabulary', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [
-      { id: 'skills-1', kind: 'skills' },
-      { id: 'systemConfig-1', kind: 'systemConfig' },
-      { id: 'cron-1', kind: 'cron' }
+      { id: 'skills-1', kind: 'skills', scope: 'global' },
+      { id: 'systemConfig-1', kind: 'systemConfig', scope: 'global' },
+      { id: 'cron-1', kind: 'cron', scope: 'global' }
     ];
     sidebarApi.activeTabId = 'skills-1';
     const wrapper = mountSidebar();
@@ -231,7 +268,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
   it('relays a panel save to the shell', async () => {
     sidebarApi.collapsed = false;
-    sidebarApi.tabs = [{ id: 'systemConfig-1', kind: 'systemConfig' }];
+    sidebarApi.tabs = [{ id: 'systemConfig-1', kind: 'systemConfig', scope: 'global' }];
     sidebarApi.activeTabId = 'systemConfig-1';
     const wrapper = mountSidebar();
     await flushPromises();
@@ -243,7 +280,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
   it('renders the knowledge-graph panel for its tab', async () => {
     sidebarApi.collapsed = false;
-    sidebarApi.tabs = [{ id: 'kg-1', kind: 'knowledgeGraph' }];
+    sidebarApi.tabs = [{ id: 'kg-1', kind: 'knowledgeGraph', scope: 'global' }];
     sidebarApi.activeTabId = 'kg-1';
     const wrapper = mountSidebar();
 
@@ -253,7 +290,7 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
   it('scrolls the panel body on both axes below the panel minimum size', async () => {
     sidebarApi.collapsed = false;
-    sidebarApi.tabs = [{ id: 'stats-1', kind: 'stats' }];
+    sidebarApi.tabs = [{ id: 'stats-1', kind: 'stats', scope: 'global' }];
     sidebarApi.activeTabId = 'stats-1';
     const wrapper = mountSidebar();
 

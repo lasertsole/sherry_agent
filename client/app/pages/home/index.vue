@@ -50,12 +50,22 @@
             variant="text"
             class="text-theme-main"
             @click="toggleSidebar" />
-          <!-- Current session's preset (icon-only): the popup VIEWS the preset the
-               session was created with — its content in tabs, no other preset
-               selectable or viewable. -->
-          <SessionPresetButton
-            v-if="currentSessionId"
-            :session-id="currentSessionId" />
+          <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
+               Clicking opens the notification dialog and clears the unread count. -->
+          <div class="relative flex items-center @max-[300px]:hidden!">
+            <Button
+              icon="pi pi-bell"
+              :title="t('toolbar.notification')"
+              :aria-label="t('toolbar.notification')"
+              variant="text"
+              @click="handleOperate('headerBar', 'notification')" />
+            <span
+              v-if="notificationUnread > 0"
+              class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
+              :title="t('toolbar.notification')">
+              {{ notificationUnread > 99 ? '99+' : notificationUnread }}
+            </span>
+          </div>
           <Button
             v-if="canShowProjectFiles"
             :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
@@ -107,22 +117,12 @@
                 <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
               </template>
             </Select>
-            <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
-                 Clicking opens the notification dialog and clears the unread count. -->
-            <div class="relative flex items-center @max-[300px]:hidden!">
-              <Button
-                icon="pi pi-bell"
-                :title="t('toolbar.notification')"
-                :aria-label="t('toolbar.notification')"
-                variant="text"
-                @click="handleOperate('headerBar', 'notification')" />
-              <span
-                v-if="notificationUnread > 0"
-                class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
-                :title="t('toolbar.notification')">
-                {{ notificationUnread > 99 ? '99+' : notificationUnread }}
-              </span>
-            </div>
+            <!-- Session preset (icon-only): opens the preset VIEW as a right-sidebar
+                 tab in the 当前会话 group (no popup — the tab survives outside clicks
+                 and resizes with the panel). -->
+            <SessionPresetButton
+              v-if="currentSessionId"
+              :session-id="currentSessionId" />
             <!-- Settings menu entry: the three-bars button. All other functions
                  (Skills / Knowledge Graph / System Config / Extend) have been moved from the top
                  bar into the large dialog nine-grid that this button pops open. -->

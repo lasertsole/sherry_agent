@@ -394,12 +394,15 @@ vi.stubGlobal('useRightSidebarStore', () =>
     collapsed: true,
     tabs: [],
     activeTabId: null,
+    activeScope: 'global',
     width: 420,
     toggle: () => {},
     expand: () => {},
     setWidth: () => {},
     fitToViewport: () => {},
     openTab: () => 'test-tab',
+    tabsInScope: () => [],
+    setActiveScope: () => {},
     activateTab: () => {},
     closeTab: () => {}
   })
