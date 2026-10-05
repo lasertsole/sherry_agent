@@ -199,7 +199,8 @@
       "skipped": "skipped"
     },
     "notStarted": "Not started",
-    "needsClosing": "Needs closing"
+    "needsClosing": "Needs closing",
+    "empty": "No tasks in progress"
   },
   "projectFiles": {
     "refresh": "Refresh",

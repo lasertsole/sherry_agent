@@ -2,9 +2,10 @@
  * The floating plan-progress read-out.
  *
  * Contract: it is an overlay in the chat area's top-right, collapsed to a pill by
- * default (the panel is only rendered after a click), it shows nothing at all when
- * neither half has data, and every number it displays comes from the pushed
- * payloads — a WebSocket frame re-renders it without a reload.
+ * default (the panel is only rendered after a click), it is PERMANENT — it stays
+ * on screen with no plan at all, the panel then carrying the empty state — and
+ * every number it displays comes from the pushed payloads: a WebSocket frame
+ * re-renders it without a reload.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -101,10 +102,40 @@ describe('ProgressFloat', () => {
     // only wiring this suite needs (the mitt mock is what feeds frames in).
   });
 
-  it('renders nothing while no plan work exists', async () => {
+  it('stays on screen with no plan work, and the panel says there is none', async () => {
+    // The float used to disappear when neither half had data; the user asked for
+    // it to be permanent (始终显示，哪怕没执行任务). It must never leave the screen.
     const wrapper = await mountFloat();
 
-    expect(wrapper.find('[data-test="progress-float"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="progress-float"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="progress-float-summary"]').text()).toContain('0/0');
+    // No wave chip without waves — an idle pill must not read "wave 0/0".
+    expect(wrapper.find('[data-test="progress-float-waves"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
+    await flushPromises();
+
+    const panel = wrapper.get('[data-test="progress-float-panel"]');
+    expect(panel.get('[data-test="progress-float-empty"]').text()).toBe('暂无进行中的任务');
+    // Empty state replaces the plan body — no header, no rows, no flows.
+    expect(panel.find('[data-test="progress-float-header"]').exists()).toBe(false);
+    expect(panel.findAll('[data-test="progress-todo"]')).toHaveLength(0);
+    expect(panel.findAll('[data-test="progress-flow"]')).toHaveLength(0);
+  });
+
+  it('leaves the empty state and grows the plan when the first frame lands', async () => {
+    const wrapper = await mountFloat();
+    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="progress-float-empty"]').exists()).toBe(true);
+
+    handlers().taskflow!(taskflowFrame([makeFlow()]));
+    await flushPromises();
+
+    const panel = wrapper.get('[data-test="progress-float-panel"]');
+    expect(panel.find('[data-test="progress-float-empty"]').exists()).toBe(false);
+    expect(panel.get('[data-test="progress-float-header"]').text()).toContain('2/3');
+    expect(panel.findAll('[data-test="progress-flow"]')).toHaveLength(1);
   });
 
   it('collapses to a pill by default, with the pushed numbers on it', async () => {

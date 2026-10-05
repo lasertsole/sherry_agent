@@ -2,9 +2,9 @@
   <!-- Floating progress read-out: top-right of the chat list, collapsed to a pill
        by default. ONE plan from two pushed payloads (the todo rows and the
        taskflow waves over the WebSocket), so it needs no polling and no
-       navigation. -->
+       navigation. It is PERMANENT — it stays on screen with no plan at all (the
+       panel then shows the empty state), so the control never disappears. -->
   <div
-    v-if="visible"
     data-test="progress-float"
     class="pointer-events-auto absolute top-3 right-3 z-20 flex flex-col items-end">
     <button
@@ -16,9 +16,13 @@
       :aria-expanded="expanded"
       @click="expanded = !expanded">
       <i
-        class="pi pi-chart-line text-[11px] text-theme-main"
+        :class="['pi pi-chart-line text-[11px]', hasPlan ? 'text-theme-main' : 'text-gray-400']"
         aria-hidden="true"></i>
-      <span data-test="progress-float-summary">{{ summaryText }}</span>
+      <span
+        data-test="progress-float-summary"
+        :class="hasPlan ? '' : 'text-gray-400 dark:text-gray-500'"
+        >{{ summaryText }}</span
+      >
       <span
         v-if="store.totals.waves > 0"
         class="text-[11px] text-gray-500 dark:text-gray-400"
@@ -39,6 +43,7 @@
            they share a single header and a single list: a todo that mirrors a
            rendered step is filtered out and appears once, inside its wave. -->
       <header
+        v-if="hasPlan"
         class="mb-1 flex items-center gap-1.5 text-[11px] font-medium text-gray-500 dark:text-gray-400"
         data-test="progress-float-header">
         <i
@@ -139,6 +144,14 @@
           </ul>
         </div>
       </section>
+
+      <!-- No plan: the panel says so instead of opening as a bare box -->
+      <p
+        v-if="!hasPlan"
+        class="m-0 text-[11px] text-gray-400 dark:text-gray-500"
+        data-test="progress-float-empty">
+        {{ t('progressFloat.empty') }}
+      </p>
     </div>
   </div>
 </template>
@@ -161,8 +174,12 @@ todoStore.subscribe();
 /** Collapsed by default: the pill is the resting state (it is an overlay). */
 const expanded = ref(false);
 
-/** Show the box only when the plan has something to report. */
-const visible = computed(() => store.hasProgress || todoStore.todos.length > 0);
+/**
+ * Whether the plan has anything to report. The FLOAT is permanent (it stays on
+ * screen with no plan — 始终显示), so this only switches the panel body between
+ * the plan view and the empty-state line.
+ */
+const hasPlan = computed(() => store.hasProgress || todoStore.todos.length > 0);
 
 /**
  * Steps already rendered inside a flow block, keyed `flow:step` — the dedupe set.
@@ -223,6 +240,7 @@ const waveChipLabel = computed(() => {
  * Terminal statuses across BOTH vocabularies the box renders: flow steps
  * (done/cancelled/skipped) and checklist rows (completed/cancelled).
  * @param status
+ * @returns True when the status counts as finished.
  */
 function isTerminal(status: string): boolean {
   return status === 'done' || status === 'completed' || status === 'cancelled' || status === 'skipped';
@@ -231,6 +249,7 @@ function isTerminal(status: string): boolean {
 /**
  * Status → glyph + tone (the same vocabulary the todo dock uses).
  * @param status
+ * @returns The `pi` icon classes for the status.
  */
 function todoIcon(status: string): string {
   switch (status) {
@@ -254,6 +273,7 @@ function todoIcon(status: string): string {
 /**
  * Percentage of finished steps in one wave.
  * @param wave
+ * @returns 0–100, rounded; 0 for a wave with no steps.
  */
 function wavePercent(wave: FlowWave): number {
   return wave.total > 0 ? Math.round((wave.done / wave.total) * 100) : 0;

@@ -127,7 +127,7 @@ client/
 │   │       └── components/        # 40 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
-│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ、taskflow_updated でライブ更新）
+│   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグルまたは 低/高/最高 ピッカー、次ターンから有効）
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
 │   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（環境設定 MAIN_LLM プロファイル、次ターンから有効）

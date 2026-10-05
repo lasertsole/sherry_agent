@@ -127,7 +127,7 @@ client/
 │   │       └── components/        # 40 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
-│   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘, taskflow_updated로 실시간 갱신)
+│   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
 │   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
 │   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
 │   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(환경 설정 MAIN_LLM 프로필, 다음 턴부터 적용)

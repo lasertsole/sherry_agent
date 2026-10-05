@@ -199,7 +199,8 @@
       "skipped": "건너뜀"
     },
     "notStarted": "시작 전",
-    "needsClosing": "마무리 필요"
+    "needsClosing": "마무리 필요",
+    "empty": "진행 중인 작업이 없습니다"
   },
   "projectFiles": {
     "refresh": "새로 고침",

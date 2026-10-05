@@ -199,7 +199,8 @@
       "skipped": "已跳过"
     },
     "notStarted": "未开始",
-    "needsClosing": "待收口"
+    "needsClosing": "待收口",
+    "empty": "暂无进行中的任务"
   },
   "projectFiles": {
     "refresh": "刷新",

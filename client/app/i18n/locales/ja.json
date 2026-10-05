@@ -199,7 +199,8 @@
       "skipped": "スキップ"
     },
     "notStarted": "未着手",
-    "needsClosing": "クローズ待ち"
+    "needsClosing": "クローズ待ち",
+    "empty": "実行中のタスクはありません"
   },
   "projectFiles": {
     "refresh": "再読み込み",
