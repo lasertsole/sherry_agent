@@ -6,13 +6,18 @@ from workspace import ALL_SYSTEM_FILE_NAMES
 from workspace.file_sync import ensure_workspace_system_files
 from server.service.file_store import FileStore
 
-# AGENTS.md is injected into the system prompt by prompt_builder but is **not**
-# editable through the /system_prompt API: the persona dialog UI no longer exposes
-# it, and the backend must reject any write attempt (defense in depth). The template
-# read is filtered the same way so the API can never leak/extend its edit surface.
+# Every system file that reaches the system prompt is editable through the
+# /system_prompt API, AGENTS.md included: the persona panel exposes it as the
+# 运行守则 tab again (restored 2026-10-05 on the user's request — it had been
+# API-protected after the edit chain was removed, "defense in depth"). What stays
+# protected is the AGENT side, which is where the injection risk actually lives:
+# the memory-write guard (agent/tools/memory.py) and the threat scanner
+# (agent/security/threat_patterns.py) still refuse "overwrite/modify AGENTS.md"
+# content, so untrusted text cannot make the agent rewrite its own rules — only
+# the human UI writes here.
 # IDENTITY.md was removed entirely (dropped from ALL_SYSTEM_FILE_NAMES + templates),
 # so it is absent from both the injection chain and this file whitelist.
-EDITABLE_SYSTEM_FILE_NAMES = [name for name in ALL_SYSTEM_FILE_NAMES if name != "AGENTS.md"]
+EDITABLE_SYSTEM_FILE_NAMES = list(ALL_SYSTEM_FILE_NAMES)
 
 
 class _WorkplaceFileStore(FileStore):

@@ -311,6 +311,13 @@ interface PersonaTab {
 
 const tabs: PersonaTab[] = [
   {
+    key: 'AGENTS.md',
+    file: 'AGENTS.md',
+    i18nKey: 'config.tabs.agents',
+    i18nDescKey: 'config.desc.agents',
+    readFn: readSystemPrompt
+  },
+  {
     key: 'SOUL.md',
     file: 'SOUL.md',
     i18nKey: 'config.tabs.soul',
@@ -770,7 +777,7 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "恢复默认",
         "preset": {
-          "title": "预设人格",
+          "title": "预设",
           "savePreset": "保存预设",
           "apply": "应用",
           "editingBadge": "编辑中",
@@ -801,11 +808,13 @@ const handleApply = async () => {
       },
       "tabs": {
         "role": "角色配置",
+        "agents": "运行守则",
         "soul": "人格灵魂",
         "user": "用户信息"
       },
       "desc": {
         "role": "AI 与用户各自的扮演角色（名字与头像）",
+        "agents": "Agent 的运行守则与安全边界",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
       },
@@ -830,7 +839,7 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "Restore Default",
         "preset": {
-          "title": "Preset Personas",
+          "title": "Presets",
           "savePreset": "Save Preset",
           "apply": "Apply",
           "editingBadge": "Editing",
@@ -861,11 +870,13 @@ const handleApply = async () => {
       },
       "tabs": {
         "role": "Character Setup",
+        "agents": "Operating Instructions",
         "soul": "Soul",
         "user": "User Profile"
       },
       "desc": {
         "role": "Who the AI and the user each play (names and avatars)",
+        "agents": "The agent's operating instructions and safety boundaries",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
       },
@@ -890,7 +901,7 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "デフォルトに戻す",
         "preset": {
-          "title": "プリセット人格",
+          "title": "プリセット",
           "savePreset": "プリセット保存",
           "apply": "適用",
           "editingBadge": "編集中",
@@ -921,11 +932,13 @@ const handleApply = async () => {
       },
       "tabs": {
         "role": "キャラクター設定",
+        "agents": "操作指示",
         "soul": "人格・魂",
         "user": "ユーザー情報"
       },
       "desc": {
         "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
+        "agents": "Agent の操作指示と安全境界",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
       },
@@ -950,7 +963,7 @@ const handleApply = async () => {
       "persona": {
         "restoreDefault": "기본값 복원",
         "preset": {
-          "title": "프리셋 페르소나",
+          "title": "프리셋",
           "savePreset": "프리셋 저장",
           "apply": "적용",
           "editingBadge": "편집 중",
@@ -981,11 +994,13 @@ const handleApply = async () => {
       },
       "tabs": {
         "role": "캐릭터 설정",
+        "agents": "운영 지침",
         "soul": "인격·영혼",
         "user": "사용자 정보"
       },
       "desc": {
         "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
+        "agents": "Agent의 운영 지침과 안전 경계",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
       },

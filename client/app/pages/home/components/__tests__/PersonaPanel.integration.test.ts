@@ -65,6 +65,7 @@ const db = vi.hoisted(() => {
 
 vi.mock('@/composables/db', () => db);
 
+const AGENTS = '# AGENTS.md\noperating instructions';
 const SOUL = '# SOUL.md\nsoul body';
 const USER = '# USER.md\nuser body';
 
@@ -112,8 +113,9 @@ async function mountPanel() {
 
 /**
  * The stub button carrying the given visible label.
- * @param wrapper
- * @param text
+ * @param wrapper Mounted panel wrapper.
+ * @param text Visible button label.
+ * @returns The matching button wrapper.
  */
 function buttonByText(wrapper: VueWrapper, text: string) {
   const button = wrapper.findAll('button').find(b => b.text() === text);
@@ -126,8 +128,14 @@ describe('PersonaPanel role tab', () => {
     db.rows.length = 0;
     written = null;
     vi.clearAllMocks();
-    bridge.readSystemPrompt.mockImplementation(async () => written ?? { 'SOUL.md': SOUL, 'USER.md': USER });
-    bridge.readSystemPromptTemplate.mockResolvedValue({ 'SOUL.md': 'TPL-SOUL', 'USER.md': 'TPL-USER' });
+    bridge.readSystemPrompt.mockImplementation(
+      async () => written ?? { 'AGENTS.md': AGENTS, 'SOUL.md': SOUL, 'USER.md': USER }
+    );
+    bridge.readSystemPromptTemplate.mockResolvedValue({
+      'AGENTS.md': 'TPL-AGENTS',
+      'SOUL.md': 'TPL-SOUL',
+      'USER.md': 'TPL-USER'
+    });
     bridge.writeSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
       written = map;
     });
@@ -141,7 +149,7 @@ describe('PersonaPanel role tab', () => {
     const wrapper = await mountPanel();
 
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers).toEqual(['角色配置', '人格灵魂', '用户信息']);
+    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {
@@ -155,6 +163,7 @@ describe('PersonaPanel role tab', () => {
     expect(bridge.writeSystemPrompt).toHaveBeenCalledTimes(1);
     const payload = bridge.writeSystemPrompt.mock.calls[0]![0] as Record<string, string>;
     expect(payload['ROLE.md']).toBe('# ROLE.md\n\n你将扮演小樱。\n用户将扮演小明。\n');
+    expect(payload['AGENTS.md']).toBe(AGENTS);
     expect(payload['SOUL.md']).toBe(SOUL);
     expect(payload['USER.md']).toBe(USER);
 
@@ -203,8 +212,8 @@ describe('PersonaPanel role tab', () => {
     expect(db.createPersonaPreset).toHaveBeenCalledTimes(1);
     const [name, content, character] = db.createPersonaPreset.mock.calls[0]!;
     expect(name).toBe('我的预设');
-    // The preset stores the two edited files; ROLE.md is recomposed on apply.
-    expect(content).toEqual({ 'SOUL.md': SOUL, 'USER.md': USER });
+    // The preset stores the edited files; ROLE.md is recomposed on apply.
+    expect(content).toEqual({ 'AGENTS.md': AGENTS, 'SOUL.md': SOUL, 'USER.md': USER });
     expect(character).toEqual({
       aiName: '小樱',
       aiAvatar: '/avatar/assistant.jpg',

@@ -154,24 +154,32 @@ class TestServiceWiring:
 
         assert (tmp_path / name).read_text(encoding="utf-8") == "content"
 
-    def test_workplace_rejects_agents_write(self, tmp_path, monkeypatch):
-        """AGENTS.md is injected into the system prompt but must not be writable
-        through the /system_prompt API (frontend edit chain removed; defense in depth)."""
+    def test_workplace_writes_agents_md(self, tmp_path, monkeypatch):
+        """AGENTS.md is editable through the /system_prompt API again (the persona
+        panel's 运行守则 tab; restored 2026-10-05). The anti-injection guards stay
+        agent-side — memory writes and scanned tool output still refuse this pattern."""
         from server.service import workplace as workplace_service
 
         monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
         monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
 
-        for call in (
-            lambda: workplace_service.write_system_prompt_file({"AGENTS.md": "x"}),
-            lambda: workplace_service.update_system_prompt_file({"AGENTS.md": "x"}),
-        ):
-            with pytest.raises(ValueError, match="Invalid file name: AGENTS.md"):
-                call()
+        workplace_service.write_system_prompt_file({"AGENTS.md": "# AGENTS.md\nrules\n"})
+        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "# AGENTS.md\nrules\n"
 
-        # The protected file stays untouched (and is not even exposed by reads).
-        assert not (tmp_path / "AGENTS.md").exists()
-        assert "AGENTS.md" not in workplace_service.read_system_prompt_file()
+        workplace_service.update_system_prompt_file({"AGENTS.md": "# AGENTS.md\nnew\n"})
+        assert (tmp_path / "AGENTS.md").read_text(encoding="utf-8") == "# AGENTS.md\nnew\n"
+        assert "AGENTS.md" in workplace_service.read_system_prompt_file()
+
+    def test_workplace_rejects_unknown_name(self, tmp_path, monkeypatch):
+        """The whitelist still bounds the API surface: names outside the system file set are refused."""
+        from server.service import workplace as workplace_service
+
+        monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
+        monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
+
+        with pytest.raises(ValueError, match="Invalid file name: HACK.md"):
+            workplace_service.write_system_prompt_file({"HACK.md": "x"})
+        assert not (tmp_path / "HACK.md").exists()
 
     def test_workplace_error_wording(self, tmp_path, monkeypatch):
         from server.service import workplace as workplace_service

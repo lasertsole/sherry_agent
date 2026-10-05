@@ -146,7 +146,7 @@ client/
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（.env 编辑、背景、语言等）
 │   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增，供 ConfigPanel 使用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
-│   │           ├── PersonaPanel.vue           # 系统提示词 / AI人格标签页
+│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 + 预设管理）
 │   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页 + 全局心跳开关
 │   │           ├── CronPanel.vue              # 定时任务标签页（/cron）
