@@ -4,7 +4,6 @@ from .file_tools import (
     build_write_file_tool as build_write_file_tool,
     build_patch_file_tool as build_patch_file_tool,
     build_search_files_tool as build_search_files_tool,
-    build_file_changes_revert_tool as build_file_changes_revert_tool,
 )
 from .skill_tools import (
     build_skill_list_tool as build_skill_list_tool,
@@ -45,7 +44,6 @@ _MAIN_TOOLS_BUILDERS: list[Callable[[], BaseTool | list[BaseTool]]] = [
     build_write_file_tool,
     build_patch_file_tool,
     build_search_files_tool,
-    build_file_changes_revert_tool,
     build_memory_tool,
     build_web_search_tool,
     build_terminal_tool,

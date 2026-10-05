@@ -140,8 +140,3 @@ from .ptc import (
     PTC as PTC,
     PtcConfig as PtcConfig,
 )
-
-from .file_snapshot import (
-    FileSnapshot as FileSnapshot,
-    FILE_SNAPSHOT as FILE_SNAPSHOT,
-)

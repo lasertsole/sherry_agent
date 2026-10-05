@@ -34,9 +34,6 @@ async def clear_session(session_id: str) -> None:
          with another session through boulder ``session_ids`` are retained).
       6. The in-memory session state via ``clear_all_register_sessions``.
       7. The session's variables from the ``state_register_db`` SQLite store.
-      8. The session's file-snapshot rows (``file-snapshots.db``) — the blobs
-         went with step 4; without this the index keeps orphan rows that no
-         revert can ever use.
 
     Raises:
         ValueError: If ``session_id`` is not a single safe path segment
@@ -94,13 +91,3 @@ async def clear_session(session_id: str) -> None:
 
     # (6) In-memory register sessions (e.g. StateRegisterMeM) and state_register_db — delete every keyed variable for this session.
     clear_all_register_sessions(session_id=session_id, clear_persistent_states=True)
-
-    # (8) File-snapshot rows: the blob tree went with the session folder in
-    # step 4, so the index rows would be unrevertable orphans from here on.
-    try:
-        from agent.tools.file_tools.snapshot import delete_snapshots_by_session
-
-        purged_rows = await asyncio.to_thread(delete_snapshots_by_session, session_id)
-        logger.debug(f"Cleared {purged_rows} file-snapshot row(s) for session_id={session_id}")
-    except Exception as e:
-        logger.warning(f"Failed to clear file snapshots for session_id={session_id}: {e}")

@@ -310,31 +310,6 @@ def resolve_approval_store_path() -> Path:
     return SRC_DIR / "data" / "approvals.json"
 
 
-def file_snapshots_db() -> Path:
-    """Return the pre-write snapshot index database (``SRC_DIR/data/file-snapshots.db``).
-
-    Sherry-owned runtime state, never inside the user's project (the same rule
-    the lock directory follows). ``SHERRY_FILE_SNAPSHOTS_DB`` overrides the
-    location for tests and operators.
-    """
-    override = os.environ.get("SHERRY_FILE_SNAPSHOTS_DB", "").strip()
-    if override:
-        return Path(override).expanduser()
-    return SRC_DIR / "data" / "file-snapshots.db"
-
-
-def session_file_snapshots_dir(session_id: str) -> Path | None:
-    """Return the session's snapshot blob directory, or ``None`` for an unsafe id.
-
-    Layout: ``SESSIONS_DIR/<session_id>/file_snapshots/<sha[:2]>/<sha>.blob`` —
-    a sibling of the session's plans, so ``clear_session``'s directory removal
-    takes the blobs with it.
-    """
-    if not is_safe_session_segment(session_id):
-        return None
-    return SESSIONS_DIR / session_id / "file_snapshots"
-
-
 def file_locks_dir() -> Path:
     """Return the cross-process file-lock directory (``SRC_DIR/data/locks``).
 

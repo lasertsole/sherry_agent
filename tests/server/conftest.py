@@ -64,24 +64,3 @@ def _never_touch_the_real_auth_db(isolated_auth_store) -> Iterator[None]:
     future test could write a row there.
     """
     yield
-
-
-@pytest.fixture(autouse=True)
-def _never_touch_the_real_snapshot_store(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-) -> Iterator[None]:
-    """Every server test runs against a tmp file-snapshot store.
-
-    Same contract as the auth store above: the real ``src/data/file-snapshots.db``
-    and ``workspace/sessions/<id>/file_snapshots`` trees are never touched, and a
-    stale row from an earlier test can never look like this session's change.
-    """
-    from agent.tools.file_tools import snapshot as snapshot_mod
-    from config import path as path_mod
-
-    db_dir = tmp_path / "file-snapshots-db"
-    monkeypatch.setattr(snapshot_mod, "_DB_DIR", db_dir)
-    monkeypatch.setattr(snapshot_mod, "_DB_PATH", db_dir / "file-snapshots.db")
-    monkeypatch.setattr(snapshot_mod, "_sync_tables_ready", False)
-    monkeypatch.setattr(path_mod, "SESSIONS_DIR", tmp_path / "sessions")
-    yield

@@ -92,8 +92,7 @@ export function useWs(options?: { onReconnect?: () => void }): {
   const handleSessionFrame = createWsMessageHandler<{ content?: unknown }>({
     notification: data => emit('ws:notification', data.content ?? ''),
     todo_updated: data => emit('ws:todo_updated', data),
-    taskflow_updated: data => emit('ws:taskflow_updated', data),
-    file_changes_updated: data => emit('ws:file_changes_updated', data)
+    taskflow_updated: data => emit('ws:taskflow_updated', data)
   });
 
   const channel = new WsConnection({

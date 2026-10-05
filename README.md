@@ -288,7 +288,7 @@ Each major subsystem has its own detailed README:
 | **Long-Running Tasks** | TaskFlow DAG engine, step judge, budgets, deadlines, verified completion gates, and cross-turn memory continuity | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | Hard 128K context-window floor on both LLMs (boot, build, spawn, env write) | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | Per-boundary persistence, tool-result & human-message eviction, `read_file` slice, overflow tail clip, summary filtering | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **File Safety** | Atomic writes, two-layer CAS, per-path and cross-process locks, the read-before-write license for `write_file`, isolated subagent workspaces, and pre-write snapshots with a batch-refusing revert | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **File Safety** | Atomic writes, two-layer CAS, per-path and cross-process locks, the read-before-write license for `write_file`, and isolated subagent workspaces | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
 
 ## ⚡ Quick Start
 
