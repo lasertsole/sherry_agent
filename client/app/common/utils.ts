@@ -26,6 +26,21 @@ export function formatElapsed(startedAtMs: number | null | undefined, nowMs: num
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
+/**
+ * A tool's measured execution time, ZCode's `formatDuration` rules:
+ * `<1s → "850ms"`, `<10s → "1.2s"`, otherwise whole seconds `"12s"`.
+ * Language-independent by design (only the surrounding labels are i18n).
+ * @param durationMs Milliseconds, or null/undefined/negative when unknown.
+ * @returns The formatted duration, or '' when unknown (callers render nothing).
+ */
+export function formatToolDuration(durationMs: number | null | undefined): string {
+  if (durationMs == null || Number.isNaN(Number(durationMs)) || durationMs < 0) return '';
+  const ms = Math.round(Number(durationMs));
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 10000) return `${(ms / 1000).toFixed(1)}s`;
+  return `${Math.round(ms / 1000)}s`;
+}
+
 export const formatCompactTimeString = (timeStr: string | number, format: string = 'YYYY-MM-DD HH:mm'): string => {
   if (!timeStr) return '';
 

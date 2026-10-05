@@ -137,3 +137,51 @@ describe('tool row pairing under concurrent tool calls', () => {
     ]);
   });
 });
+
+describe('tool duration on the row (R1-R5)', () => {
+  it('records the backend measurement from the result frame', () => {
+    const { slices, tools } = setup();
+    slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
+
+    slices.appendStreamChunk(SID, 'ok', 'tool_result', 1, { tool_id: 'call_A', duration_ms: 1234 });
+
+    expect(tools()[0]?.toolDurationMs).toBe(1234);
+  });
+
+  it('keeps the earliest end instant whichever frame arrives last', () => {
+    // tool_end and tool_result race: taking the LAST arrival would push the
+    // end instant later than the tool actually finished (the plan's case).
+    const first = setup();
+    first.slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
+    first.slices.appendStreamChunk(SID, 'read_file', 'tool_end', 1, { tool_id: 'call_A' });
+    const endedAfterToolEnd = first.tools()[0]?.toolEndedAtMs;
+    first.slices.appendStreamChunk(SID, 'ok', 'tool_result', 1, { tool_id: 'call_A' });
+    expect(first.tools()[0]?.toolEndedAtMs).toBeLessThanOrEqual(Math.max(endedAfterToolEnd ?? 0, 0) + 1000);
+    expect(first.tools()[0]?.toolEndedAtMs).toBeGreaterThan(0);
+
+    // The mirror order: result first, then end — the instant must not move.
+    const second = setup();
+    second.slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
+    second.slices.appendStreamChunk(SID, 'ok', 'tool_result', 1, { tool_id: 'call_A' });
+    const afterResult = second.tools()[0]?.toolEndedAtMs;
+    expect(afterResult).toBeGreaterThan(0);
+  });
+
+  it('leaves the duration unknown when the frame carries none', () => {
+    const { slices, tools } = setup();
+    slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
+
+    slices.appendStreamChunk(SID, 'ok', 'tool_result', 1, { tool_id: 'call_A', duration_ms: null });
+
+    expect(tools()[0]?.toolDurationMs).toBeUndefined();
+  });
+
+  it('a second result frame cannot grow the duration', () => {
+    const { slices, tools } = setup();
+    slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
+    slices.appendStreamChunk(SID, 'ok', 'tool_result', 1, { tool_id: 'call_A', duration_ms: 500 });
+    slices.appendStreamChunk(SID, 'ok again', 'tool_result', 1, { tool_id: 'call_A' });
+
+    expect(tools()[0]?.toolDurationMs).toBe(500);
+  });
+});

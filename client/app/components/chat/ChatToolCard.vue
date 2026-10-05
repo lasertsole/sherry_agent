@@ -18,6 +18,14 @@
       <span
         v-else
         class="pi pi-check text-xs text-green-500"></span>
+      <!-- Duration: a live ticker while running (the same 1s cadence the
+           toolbar's running-commands entry uses), the measured value once
+           settled, nothing while unknown (a HITL denial or old data) -->
+      <span
+        v-if="durationText"
+        class="text-xs tabular-nums text-gray-400 dark:text-gray-500"
+        >{{ durationText }}</span
+      >
       <span
         v-if="expandable"
         :class="[
@@ -57,7 +65,9 @@
 </template>
 
 <script setup lang="ts">
+import { computed, onUnmounted, ref } from 'vue';
 import type { MessageItem } from '~/pages/home/type';
+import { formatElapsed, formatToolDuration } from '~/common/utils';
 
 interface Props {
   /** The TOOL-role message rendered as a card */
@@ -77,8 +87,36 @@ interface Props {
   /** Localized "No output" label */
   noOutputLabel: string;
 }
-defineProps<Props>();
+const props = defineProps<Props>();
 defineEmits<{ toggle: [] }>();
+
+/**
+ * The duration shown next to the status glyph.
+ *
+ * Running: the backend's measurement only arrives with the result frame, so the
+ * card counts locally from the row's own start (its `timestamp`, the same
+ * derivation the toolbar's running-commands entry uses). Settled: the measured
+ * `toolDurationMs` — the authoritative value, present on history replay too.
+ */
+const nowMs = ref(Date.now());
+let ticker: ReturnType<typeof setInterval> | null = null;
+if (props.message.toolStatus === 'running') {
+  ticker = setInterval(() => {
+    nowMs.value = Date.now();
+  }, 1000);
+  onUnmounted(() => {
+    if (ticker !== null) clearInterval(ticker);
+  });
+}
+
+const durationText = computed(() => {
+  if (props.message.toolStatus === 'running') {
+    const startedAtMs = Date.parse(props.message.timestamp);
+    if (Number.isNaN(startedAtMs)) return '';
+    return formatElapsed(startedAtMs, nowMs.value) || '';
+  }
+  return formatToolDuration(props.message.toolDurationMs);
+});
 
 /**
  * Format the tool args object into readable JSON text

@@ -14,6 +14,21 @@ export interface StreamChunkMeta {
   tool_name?: string;
   args?: Record<string, unknown>;
   error?: boolean;
+  /** Tool execution duration in ms, from the backend's monotonic measurement. */
+  duration_ms?: number | null;
+}
+
+/**
+ * Record the earliest end instant for a tool row: `tool_end` and `tool_result`
+ * arrive in an unspecified order, and taking the LAST one would push the end
+ * time later than the tool actually finished (the plan's dedicated case).
+ * @param row
+ */
+function noteToolEnded(row: MessageItem): void {
+  const now = Date.now();
+  if (row.toolEndedAtMs === undefined || now < row.toolEndedAtMs) {
+    row.toolEndedAtMs = now;
+  }
 }
 
 /** Per-chunk-type context shared by every CHUNK_HANDLERS entry. */
@@ -267,7 +282,10 @@ export function useStreamChunks(
       const targetIdx = findToolRowIdx(turnNum, meta?.tool_id);
       if (targetIdx >= 0) {
         const row = chatMessages.value[targetIdx];
-        if (row) row.toolStatus = 'done';
+        if (row) {
+          row.toolStatus = 'done';
+          noteToolEnded(row);
+        }
       }
       if (isActiveDraft) void drafts.commitDraftTurn(sid, turnNum);
     },
@@ -295,6 +313,12 @@ export function useStreamChunks(
         if (meta?.args) targetRow.toolArgs = meta.args;
         targetRow.toolResult = content;
         targetRow.toolStatus = meta?.error ? 'error' : 'done';
+        // The backend's authoritative measurement (tool_end may never carry
+        // one), plus the local end instant for the running ticker to freeze on.
+        if (typeof meta?.duration_ms === 'number') {
+          targetRow.toolDurationMs = meta.duration_ms;
+        }
+        noteToolEnded(targetRow);
       }
       // tool_result is a discrete stage: persist immediately (keep preceding content whether success or error)
       if (isActiveDraft) void drafts.commitDraftTurn(sid, turnNum);

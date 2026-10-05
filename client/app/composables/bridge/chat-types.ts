@@ -116,6 +116,11 @@ export interface AgentWsEvent {
   tool_name?: string;
   args?: Record<string, unknown>;
   error?: boolean;
+  /**
+   * Tool execution duration in ms (only present on "tool_result" chunks; null
+   * when the start was never seen). Measured monotonically on the backend.
+   */
+  duration_ms?: number | null;
   /** Model name (carried only on done frames; from the backend model_name) */
   model_name?: string;
   /** Input token count (carried only on done frames; from the backend input_tokens) */
@@ -190,7 +195,14 @@ export type OnChunkCallback = (
   content: string,
   type: AgentChunkType,
   sessionId: string,
-  meta?: { tool_id?: string; tool_name?: string; args?: Record<string, unknown>; error?: boolean }
+  meta?: {
+    tool_id?: string;
+    tool_name?: string;
+    args?: Record<string, unknown>;
+    error?: boolean;
+    /** Tool execution duration in ms (present on `tool_result` frames). */
+    duration_ms?: number | null;
+  }
 ) => void;
 
 /** HITL interrupt callback: invoked when the agent pauses for human approval. */

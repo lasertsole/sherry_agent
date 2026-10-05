@@ -197,6 +197,10 @@ def build_schema_v1(db: sqlite3.Connection) -> None:
         cache_read_tokens INTEGER,
         origin TEXT,
         reasoning_tokens INTEGER,
+        -- Tool execution wall-clock, in whole milliseconds. Produced by a
+        -- ``time.monotonic()`` difference in message_persistence (never a wall
+        -- clock subtraction: an NTP step must not make a duration negative).
+        tool_duration_ms INTEGER,
         idempotency_key TEXT,
         context_eligible INTEGER NOT NULL DEFAULT 1,
         parent_message_id INTEGER,
@@ -361,6 +365,7 @@ _HEAL_MESSAGE_COLUMN_DDL: tuple[tuple[str, str], ...] = (
     ("cache_read_tokens", "ALTER TABLE messages ADD COLUMN cache_read_tokens INTEGER"),
     ("origin", "ALTER TABLE messages ADD COLUMN origin TEXT"),
     ("reasoning_tokens", "ALTER TABLE messages ADD COLUMN reasoning_tokens INTEGER"),
+    ("tool_duration_ms", "ALTER TABLE messages ADD COLUMN tool_duration_ms INTEGER"),
     ("idempotency_key", "ALTER TABLE messages ADD COLUMN idempotency_key TEXT"),
     (
         "context_eligible",

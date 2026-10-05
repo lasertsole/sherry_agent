@@ -67,6 +67,10 @@ export interface MessageItem {
    * does not expose it), so every lookup must tolerate its absence.
    */
   toolId?: string;
+  /** Tool execution duration in ms (only set when role=TOOL; measured by the backend, monotonic) */
+  toolDurationMs?: number;
+  /** Earliest completion instant, epoch ms — freezes the running ticker (never on history rows) */
+  toolEndedAtMs?: number;
   /** Tool status: running=calling, done=completed, failed=rejected/failed, error=execution error (only set when role=TOOL) */
   toolStatus?: 'running' | 'done' | 'failed' | 'error';
   /** Tool call arguments (only set when role=TOOL and a tool_result has been received) */

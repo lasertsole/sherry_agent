@@ -99,7 +99,10 @@ export const toMessageItems = (rows: CachedMessage[]): MessageItem[] => {
         toolStatus,
         // Retrieve real execution parameters from paired ai row
         toolArgs: callInfo?.args,
-        toolResult: normalizeContent(row.content)
+        toolResult: normalizeContent(row.content),
+        // NULL (old rows, a tool that never returned) stays undefined: the card
+        // shows nothing rather than a fake 0.
+        toolDurationMs: typeof row.tool_duration_ms === 'number' ? row.tool_duration_ms : undefined
       };
     }
 

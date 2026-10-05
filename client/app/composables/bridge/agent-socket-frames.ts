@@ -65,7 +65,8 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
           tool_id: data.tool_id,
           tool_name: data.tool_name,
           args: data.args,
-          error: data.error
+          error: data.error,
+          duration_ms: data.duration_ms
         }
       );
     },

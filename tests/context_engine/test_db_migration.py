@@ -75,6 +75,7 @@ EXPECTED_MESSAGE_COLUMNS = frozenset(
         "cache_read_tokens",
         "origin",
         "reasoning_tokens",
+        "tool_duration_ms",
         "idempotency_key",
         "context_eligible",
         "parent_message_id",

@@ -18,6 +18,7 @@ from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 
 from .stream_dispatch import (
     StreamTurn,
+    _consume_tool_duration,
     _normalize_text,
     _pop_pending_args,
 )
@@ -432,6 +433,11 @@ class _ResumeTurn(StreamTurn):
         ):
             return []
         _hitl_args = _pop_pending_args(self.session_id, msg_chunk.tool_call_id)
+        # The interrupted tool never executed: the gap between its tool_start
+        # and this denial is approval time, which the duration contract
+        # deliberately excludes. The stale start entry is released here so it
+        # cannot linger for the life of the process.
+        _consume_tool_duration(self.session_id, msg_chunk.tool_call_id)
         return [
             {
                 "type": "tool_result",

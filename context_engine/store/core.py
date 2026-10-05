@@ -176,6 +176,7 @@ class AIMessageRowBuilder(MessageRowBuilder):
             "output_tokens": output_tokens,
             "reasoning_tokens": reasoning_tokens,
             "cache_read_tokens": cache_read_tokens,
+            "tool_duration_ms": None,
             "origin": None,
         }
 
@@ -237,8 +238,24 @@ class HumanMessageRowBuilder(MessageRowBuilder):
             "output_tokens": None,
             "reasoning_tokens": None,
             "cache_read_tokens": None,
+            "tool_duration_ms": None,
             "origin": origin,
         }
+
+
+def _tool_duration_of(msg: BaseMessage) -> int | None:
+    """The tool's measured duration (ms) off the message, or ``None``.
+
+    Written by ``message_persistence`` at tool-return time. Values are clamped
+    at 0 there; anything unparsable is treated as unknown, never as 0.
+    """
+    raw = (getattr(msg, "additional_kwargs", None) or {}).get("tool_duration_ms")
+    if raw is None:
+        return None
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return None
 
 
 class ToolMessageRowBuilder(MessageRowBuilder):
@@ -253,6 +270,11 @@ class ToolMessageRowBuilder(MessageRowBuilder):
             "tool_calls": None,
             "tool_name": getattr(msg, "name", None),
             "tool_status": getattr(msg, "status", "success"),
+            # The authoritative duration: stamped by message_persistence's
+            # wrap_tool_call (the moment the tool returned), copied here so the
+            # history replays it. Absent (old rows, a tool that never returned)
+            # stays NULL and the client shows nothing rather than 0.
+            "tool_duration_ms": _tool_duration_of(msg),
             "finish_reason": None,
             "reasoning": None,
             "reasoning_content": None,
@@ -428,6 +450,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
                     output_tokens,
                     reasoning_tokens,
                     cache_read_tokens,
+                    tool_duration_ms,
                     origin,
                     idempotency_key,
                     context_eligible,
@@ -454,6 +477,7 @@ def _persist_batch(session_id: str, pending: list[BaseMessage]) -> None:
                     :output_tokens,
                     :reasoning_tokens,
                     :cache_read_tokens,
+                    :tool_duration_ms,
                     :origin,
                     :idempotency_key,
                     :context_eligible,

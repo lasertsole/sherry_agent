@@ -34,6 +34,8 @@ export interface CachedMessage {
   tool_calls: string | null;
   tool_status: string | null;
   tool_name: string | null;
+  /** Tool execution duration in ms (NULL on rows written before the column) */
+  tool_duration_ms?: number | null;
   finish_reason: string | null;
   reasoning: string | null;
   reasoning_content: string | null;

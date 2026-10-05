@@ -55,6 +55,68 @@ _pending_args: dict[str, dict[str, dict]] = {}
 # it parses to a dict.
 _pending_raw: dict[str, dict[str, list[str]]] = {}
 
+# Tool execution start times per [bare session id][tool_id], in
+# ``time.monotonic()`` seconds. Captured when the tool_start frame goes out and
+# consumed when its ToolMessage arrives, so ``tool_result`` carries the
+# execution segment only: approval waits and queue time happen outside this
+# window by construction (the frame is emitted when the tool actually starts).
+# Monotonic, never wall clock — a backward NTP step must not produce a negative
+# duration — and per session, so two sessions on one process never cross-read.
+_tool_started_at: dict[str, dict[str, float]] = {}
+
+
+def _stamped_or_measured_duration(session_id: str, tm: ToolMessage) -> int | None:
+    """The persisted stamp when present, else this path's own measurement.
+
+    Either way the start entry is consumed (``_consume_tool_duration`` pops),
+    so an interrupted tool cannot leave a timer behind.
+    """
+    measured = _consume_tool_duration(session_id, tm.tool_call_id)
+    stamped = (getattr(tm, "additional_kwargs", None) or {}).get("tool_duration_ms")
+    if stamped is None:
+        return measured
+    try:
+        return max(0, int(stamped))
+    except (TypeError, ValueError):
+        return measured
+
+
+def _now_monotonic() -> float:
+    """Clock indirection: tests inject a fake here instead of patching ``time``
+    (loguru reads the same global clock while logging, which would consume a
+    scripted iterator)."""
+    return time.monotonic()
+
+
+def _note_tool_started(session_id: str, tool_id: str | None) -> None:
+    """Record when a tool's execution started (no-op without an id)."""
+    if not session_id or not tool_id:
+        return
+    _tool_started_at.setdefault(session_id, {})[tool_id] = _now_monotonic()
+
+
+def _consume_tool_duration(session_id: str, tool_id: str | None) -> int | None:
+    """Milliseconds since :func:`_note_tool_started`, or ``None`` when unknown.
+
+    Consuming pops the entry: a repeated result for the same tool id (a retried
+    frame) reports ``None`` instead of a growing number, and the per-session
+    bucket is dropped once empty so a long-lived process does not accumulate.
+    """
+    if not session_id or not tool_id:
+        return None
+    bucket = _tool_started_at.get(session_id)
+    if not bucket:
+        return None
+    started = bucket.pop(tool_id, None)
+    if not bucket:
+        _tool_started_at.pop(session_id, None)
+    if started is None:
+        return None
+    # round, not truncate: 0.85 s is 850 ms, not 849 (float 0.85*1000 is
+    # 849.9999…; truncation would systematically under-report).
+    return max(0, round((_now_monotonic() - started) * 1000))
+
+
 # Markers some providers (e.g. MiniMax) emit in the partial text right before
 # cutting the stream on a safety-filter hit, without a content_filter
 # finish_reason.
@@ -249,6 +311,37 @@ class StreamTurn:
         """Frames for a non-stream (ainvoke) result; updates meta accumulators."""
         return []
 
+    def _tool_result_frames(self, tm: ToolMessage) -> list[dict]:
+        """The ``tool_result`` + ``tool_end`` frames for one returned ToolMessage.
+
+        Extracted from the updates loop so the wire shape — including the
+        additive ``duration_ms`` — is testable without driving a whole stream.
+        """
+        tool_id = tm.tool_call_id
+        name = state_register_mem.get_state(self.session_id, "current_tool_name", "")
+        args = _pop_pending_args(self.session_id, tool_id)
+        self._partial_tool_calls.pop(tool_id, None)
+        return [
+            {
+                "type": "tool_result",
+                "content": _normalize_text(tm.content),
+                "tool_id": tool_id,
+                "tool_name": name,
+                "args": args,
+                "error": bool(getattr(tm, "status", None) == "error"),
+                # Additive field (old clients ignore it): the tool's execution
+                # segment in ms. The PERSISTED value wins when the middleware
+                # stamped one (it is the number history replay will show, so
+                # live and replay agree); the frame-path measurement is the
+                # fallback for messages the middleware never saw.
+                "duration_ms": _stamped_or_measured_duration(self.session_id, tm),
+            },
+            # Robust tool_end: emitted here on the REAL ToolMessage, independent
+            # of whether the model emitted adjacent text (image/vision tools
+            # produce no text, and the old gating left their card running).
+            {"type": "tool_end", "content": name},
+        ]
+
     def _final_frames(self) -> list[dict]:
         """Frames yielded after normal completion (generate: the meta chunk)."""
         return []
@@ -383,27 +476,8 @@ class StreamTurn:
                                 for tm in msgs:
                                     if not isinstance(tm, ToolMessage):
                                         continue
-                                    tool_id = tm.tool_call_id
-                                    name = state_register_mem.get_state(
-                                        self.session_id, "current_tool_name", ""
-                                    )
-                                    args = _pop_pending_args(self.session_id, tool_id)
-                                    self._partial_tool_calls.pop(tool_id, None)
-                                    yield {
-                                        "type": "tool_result",
-                                        "content": _normalize_text(tm.content),
-                                        "tool_id": tool_id,
-                                        "tool_name": name,
-                                        "args": args,
-                                        "error": bool(getattr(tm, "status", None) == "error"),
-                                    }
-                                    # Robust tool_end: emitted here on the REAL ToolMessage,
-                                    # independent of whether the model emitted adjacent text.
-                                    # Image/vision tools often produce only a tool call chunk
-                                    # with no text, so the old messages-mode gating on
-                                    # `msg_chunk.content` never fired, leaving the card
-                                    # permanently "running" (the stuck-tool bug).
-                                    yield {"type": "tool_end", "content": name}
+                                    for frame in self._tool_result_frames(tm):
+                                        yield frame
                                     state_register_mem.set_state(
                                         self.session_id, "current_tool_id", ""
                                     )
@@ -563,6 +637,7 @@ class StreamTurn:
                                         self.session_id, "current_tool_name", ""
                                     )
                                     self._note_tool_start(tool_name)
+                                    _note_tool_started(self.session_id, eff_tool_id)
                                     yield {
                                         "type": "tool_start",
                                         "content": tool_name,

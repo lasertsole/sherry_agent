@@ -129,6 +129,8 @@ class TestUpdatesMode:
                 "tool_name": "bash",
                 "args": {"cmd": "ls"},
                 "error": False,
+                # No tool_start ran in this turn: the duration is unknown.
+                "duration_ms": None,
             },
             {"type": "tool_end", "content": "bash"},
         ]
@@ -219,7 +221,9 @@ class TestMessagesMode:
         assert starts[0]["args"] == {}  # tool_start fires on the first (empty-args) chunk
         # the streamed fragments accumulated into the stash by tool_result time
         results = [f for f in frames if f["type"] == "tool_result"]
-        assert results == [
+        # The duration is a real measurement (tool_start was noted above), so it
+        # is normalized here; the dedicated duration tests pin its value.
+        assert [dict(r, duration_ms=0) for r in results] == [
             {
                 "type": "tool_result",
                 "content": "done",
@@ -227,8 +231,10 @@ class TestMessagesMode:
                 "tool_name": "bash",
                 "args": {"cmd": "ls"},
                 "error": False,
+                "duration_ms": 0,
             }
         ]
+        assert all(isinstance(r["duration_ms"], int) and r["duration_ms"] >= 0 for r in results)
 
     def test_model_metadata_captured_from_chunks(self):
         turn = _PlainTurn(

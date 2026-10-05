@@ -35,6 +35,7 @@ tombstoned, so the same messages are retried at the next boundary.
 """
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any, override
 
@@ -125,6 +126,35 @@ def _iter_tool_messages(response: Any) -> Iterator[ToolMessage]:
     elif isinstance(response, (list, tuple)):
         for item in response:
             yield from _iter_tool_messages(item)
+
+
+def _now_monotonic() -> float:
+    """Clock indirection: tests inject a fake here instead of patching ``time``
+    (loguru reads the same global clock while logging, which would consume a
+    scripted iterator)."""
+    return time.monotonic()
+
+
+def _stamp_tool_duration(response: Any, started: float) -> None:
+    """Record the tool's wall-clock duration on every ToolMessage it returned.
+
+    ``time.monotonic()`` deliberately: a wall-clock subtraction goes negative
+    when NTP steps the clock back mid-call (ZCode ships that defect — three of
+    its call sites subtract ``Date.now()`` unguarded), while a monotonic delta
+    cannot. The value rides in ``additional_kwargs`` so the row builder can put
+    it in ``messages.tool_duration_ms`` — one authoritative measurement, read
+    back by history replay.
+    """
+    # round, not truncate: 0.85 s is 850 ms, not 849 (float 0.85*1000 is
+    # 849.9999…; truncation would systematically under-report).
+    elapsed = max(0, round((_now_monotonic() - started) * 1000))
+    for message in _iter_tool_messages(response):
+        try:
+            kwargs = getattr(message, "additional_kwargs", None)
+            if isinstance(kwargs, dict):
+                kwargs["tool_duration_ms"] = elapsed
+        except Exception as exc:  # noqa: BLE001 — timing must never fail a tool
+            logger.debug("tool duration stamp skipped: {}", exc)
 
 
 class MessagePersistenceMiddleware(AgentMiddleware):
@@ -222,7 +252,9 @@ class MessagePersistenceMiddleware(AgentMiddleware):
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
         """Run the tool, flush its ToolMessages, return the response untouched."""
+        started = time.monotonic()
         response = handler(request)
+        _stamp_tool_duration(response, started)
         session_id = self._resolve_session_id(request.state)
         if session_id is not None:
             self._persist_sync(session_id, list(_iter_tool_messages(response)), "tool return")
@@ -235,7 +267,9 @@ class MessagePersistenceMiddleware(AgentMiddleware):
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
         """Async twin of :meth:`wrap_tool_call`."""
+        started = time.monotonic()
         response = await handler(request)
+        _stamp_tool_duration(response, started)
         session_id = self._resolve_session_id(request.state)
         if session_id is not None:
             await self._persist_async(
