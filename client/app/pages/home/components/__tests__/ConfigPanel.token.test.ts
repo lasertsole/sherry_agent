@@ -87,7 +87,8 @@ async function mountWithEnvTab() {
   });
   const vm = wrapper.vm as unknown as ConfigPanelVm;
 
-  vm.activeTab = 2;
+  // Tabs are now [background, env, sherry]: the role config moved to 预设.
+  vm.activeTab = 1;
   await flushPromises();
 
   expect(vm.envGroups).toHaveLength(1);
@@ -113,7 +114,7 @@ describe('ConfigPanel per-area saving', () => {
     // handleSave is the env-area handler behind that other-group button.
     expect(typeof (wrapper.vm as unknown as { handleSave?: unknown }).handleSave).toBe('function');
 
-    // Character tab: the shared footer is back.
+    // Background tab: the shared footer is back.
     vm.activeTab = 0;
     await flushPromises();
     expect(wrapper.findAll('button').filter(b => b.text() === '取消')).toHaveLength(1);

@@ -247,6 +247,7 @@ EMA_AI_agent/
 │   ├── SOUL.md             # 性格反差、语言风格
 │   ├── AGENTS.md           # 工具使用优先级、安全边界
 │   ├── USER.md             # 用户偏好与已知信息
+│   ├── ROLE.md             # 角色声明：AI 扮演谁、用户扮演谁
 │   ├── HEARTBEAT.md        # Heartbeat 服务的待办任务
 │   ├── prompt_builder.py   # 档案到系统提示词的构建器
 │   ├── file_sync.py        # 工作区模板懒同步（按语言）
@@ -428,6 +429,7 @@ Agent 的行为由 `workspace/` 下的文件驱动：
 - **SOUL.md**：定义性格反差、语言风格与行为逻辑。
 - **AGENTS.md**：定义工具使用优先级、安全边界与伦理准则。
 - **USER.md**：存储用户相关的交互偏好与已知信息。
+- **ROLE.md**：声明 AI 扮演谁、用户扮演谁（“用户将扮演…”句式）；由「预设」面板按当前界面语言生成，并随预设一同保存。
 - **HEARTBEAT.md**：列出 Heartbeat 定时服务的待办任务。
 - **prompt_builder.py**：将档案文件构建为系统提示词。
 - **file_sync.py**：按需从 `workspace/template/<lang>/`（由 `WORKSPACE_TEMPLATE_LANG` 选择）懒拷贝缺失的人设文件，且绝不覆盖用户修改。

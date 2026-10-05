@@ -67,7 +67,10 @@ export function clampSidebarWidth(
 
 /** One open tab of the right sidebar. */
 export interface RightSidebarTab {
-  /** Unique per tab instance: the same panel can be added more than once. */
+  /**
+   * Unique per tab. A kind appears at most once per payload: the strip never
+   * shows two tabs of the same panel unless the payloads differ (two files).
+   */
   id: string;
   /** Which panel component the tab renders. */
   kind: RightSidebarPanelKind;
@@ -131,16 +134,27 @@ export const useRightSidebarStore = defineStore(
     }
 
     /**
-     * Add a tab of the given kind, activate it and expand the sidebar.
-     * Always a NEW tab (and a fresh panel instance) so the same panel can be
-     * opened twice — e.g. one log view per source. An editor kind also widens
-     * the sidebar up to its usable floor (never narrows it).
-     * @param kind Panel kind to add.
+     * Open a tab of the given kind, activate it and expand the sidebar.
+     *
+     * DEDUPLICATED: a tab that already exists for the same kind AND the same
+     * payload is ACTIVATED (and re-widened for editor kinds) instead of added a
+     * second time — clicking the menu entry of an already-open panel must show
+     * that panel, not stack a twin. Two tabs of one kind can only coexist with
+     * DISTINCT payloads (two files in the viewer), which are not duplicates.
+     * @param kind Panel kind to open.
      * @param payload
      * @param payload.path
-     * @returns The new tab id.
+     * @returns The tab id (the existing tab's id when it was reused).
      */
     function openTab(kind: RightSidebarPanelKind, payload?: { path: string }): string {
+      const path = payload?.path ?? null;
+      const existing = tabs.value.find(tab => tab.kind === kind && (tab.payload?.path ?? null) === path);
+      if (existing) {
+        activeTabId.value = existing.id;
+        expand();
+        if (WIDE_PANEL_KINDS.has(kind)) setWidth(Math.max(width.value, RIGHT_SIDEBAR_WIDE_PANEL_WIDTH));
+        return existing.id;
+      }
       const id = `${kind}-${++tabSeq}`;
       tabs.value = [...tabs.value, payload ? { id, kind, payload } : { id, kind }];
       activeTabId.value = id;

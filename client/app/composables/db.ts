@@ -223,6 +223,9 @@ export interface CachedSubagentRun {
  * persona dialog tabs and the backend `/system_prompt` API). Uniqueness of `name` is
  * validated at the application layer (trim + case-insensitive), not by the database
  * (Dexie has no unique indexes).
+ *
+ * ROLE.md is deliberately NOT part of `content`: its role statement is recomposed
+ * from {@link PersonaPreset.character} in the active UI language on apply.
  */
 export interface PersonaPreset {
   /** Auto-increment primary key assigned by Dexie on insert */
@@ -231,10 +234,25 @@ export interface PersonaPreset {
   name: string;
   /** Persona file contents keyed by exact basenames: 'SOUL.md' | 'USER.md' */
   content: Record<string, string>;
+  /**
+   * Character display info captured with the preset (both role names + avatars) —
+   * the 角色配置 part of the preset. Optional: presets saved before the role tab
+   * moved into the persona panel carry none, and applying one leaves the current
+   * character untouched.
+   */
+  character?: PresetCharacter;
   /** Creation time (epoch ms) */
   createdAt: number;
   /** Last content-update time (epoch ms) */
   updatedAt: number;
+}
+
+/** Character display snapshot a persona preset carries (the roles: who plays whom). */
+export interface PresetCharacter {
+  userName: string;
+  userAvatar: string;
+  aiName: string;
+  aiAvatar: string;
 }
 
 /** Primary key of the global pending profile in the character table (not a real session ID) */
@@ -676,29 +694,39 @@ export async function findPersonaPresetByName(name: string): Promise<PersonaPres
  *
  * @param name    Preset display name (stored trimmed)
  * @param content Persona file contents keyed by 'SOUL.md' / 'USER.md'
+ * @param character Character display info (both role names + avatars) to store with the preset
  * @returns       Auto-increment id of the newly created preset
  */
-export async function createPersonaPreset(name: string, content: Record<string, string>): Promise<number> {
+export async function createPersonaPreset(
+  name: string,
+  content: Record<string, string>,
+  character?: PresetCharacter
+): Promise<number> {
   const trimmedName = name.trim();
   const existing = await findPersonaPresetByName(trimmedName);
   if (existing) {
     throw new Error(`Persona preset name duplicate: "${trimmedName}"`);
   }
   const now = Date.now();
-  return await db.personaPresets.add({ name: trimmedName, content, createdAt: now, updatedAt: now });
+  return await db.personaPresets.add({ name: trimmedName, content, character, createdAt: now, updatedAt: now });
 }
 
 /**
  * Overwrite a persona preset's content ("direct overwrite" semantics).
  *
- * Only `content` and `updatedAt` are written — the preset's `name` is never changed
- * (the name stays the identity of the preset; renaming is not supported).
+ * Only `content`, `character` and `updatedAt` are written — the preset's `name` is
+ * never changed (the name stays the identity of the preset; renaming is not supported).
  *
  * @param id      Persona preset id
  * @param content New persona file contents (keyed by 'SOUL.md' / 'USER.md')
+ * @param character Character display info to store with the preset
  */
-export async function updatePersonaPreset(id: number, content: Record<string, string>): Promise<void> {
-  await db.personaPresets.update(id, { content, updatedAt: Date.now() });
+export async function updatePersonaPreset(
+  id: number,
+  content: Record<string, string>,
+  character?: PresetCharacter
+): Promise<void> {
+  await db.personaPresets.update(id, { content, character, updatedAt: Date.now() });
 }
 
 /**

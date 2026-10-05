@@ -5,6 +5,7 @@ import {
   RIGHT_SIDEBAR_DEFAULT_WIDTH,
   RIGHT_SIDEBAR_MAX_WIDTH,
   RIGHT_SIDEBAR_MIN_WIDTH,
+  RIGHT_SIDEBAR_WIDE_PANEL_WIDTH,
   clampSidebarWidth,
   useRightSidebarStore
 } from '../right-sidebar';
@@ -31,15 +32,35 @@ describe('stores/right-sidebar', () => {
     expect(store.collapsed).toBe(false);
   });
 
-  it('openTab() allows the same panel twice with distinct ids', () => {
+  it('openTab() reuses an existing tab of the same kind instead of duplicating it', () => {
+    // The menu must never stack a second 系统配置 next to the open one — the
+    // click belongs to the tab that already exists.
     const store = useRightSidebarStore();
 
-    const first = store.openTab('logs');
-    const second = store.openTab('logs');
+    const logs = store.openTab('logs');
+    store.openTab('stats');
+    const again = store.openTab('logs');
 
-    expect(first).not.toBe(second);
-    expect(store.tabs).toHaveLength(2);
-    expect(store.activeTabId).toBe(second);
+    expect(again).toBe(logs);
+    expect(store.tabs.map(t => t.kind)).toEqual(['logs', 'stats']);
+    expect(store.activeTabId).toBe(logs);
+  });
+
+  it('openTab() re-expands and re-widens when it reuses a tab', () => {
+    const store = useRightSidebarStore();
+    // The widened width is still clamped to the viewport (happy-dom's window).
+    const wide = clampSidebarWidth(RIGHT_SIDEBAR_WIDE_PANEL_WIDTH);
+    const first = store.openTab('systemConfig');
+    expect(store.width).toBe(wide);
+
+    store.toggle();
+    expect(store.collapsed).toBe(true);
+    store.setWidth(RIGHT_SIDEBAR_MIN_WIDTH, 2000);
+
+    expect(store.openTab('systemConfig')).toBe(first);
+    expect(store.tabs).toHaveLength(1);
+    expect(store.collapsed).toBe(false);
+    expect(store.width).toBe(wide);
   });
 
   it('openTab() carries a per-instance payload (two file tabs, two paths)', () => {
@@ -52,6 +73,17 @@ describe('stores/right-sidebar', () => {
     expect(tabs.map(t => t.payload?.path)).toEqual(['src/main.py', 'README.md']);
     expect(first).not.toBe(second);
     expect(store.tabs.find(t => t.id === second)?.payload?.path).toBe('README.md');
+  });
+
+  it('openTab() reuses the same file tab (same path is the same tab)', () => {
+    const store = useRightSidebarStore();
+
+    const first = store.openTab('fileViewer', { path: 'src/main.py' });
+    store.openTab('fileViewer', { path: 'README.md' });
+
+    expect(store.openTab('fileViewer', { path: 'src/main.py' })).toBe(first);
+    expect(store.tabs).toHaveLength(2);
+    expect(store.activeTabId).toBe(first);
   });
 
   it('activateTab() switches to an open tab only', () => {
@@ -70,7 +102,7 @@ describe('stores/right-sidebar', () => {
     const store = useRightSidebarStore();
     const first = store.openTab('logs');
     const second = store.openTab('stats');
-    const third = store.openTab('logs');
+    const third = store.openTab('memory');
 
     store.activateTab(second);
     store.closeTab(second);

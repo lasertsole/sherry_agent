@@ -247,6 +247,7 @@ EMA_AI_agent/
 │   ├── SOUL.md             # 성격 대비, 말투
 │   ├── AGENTS.md           # 도구 사용 우선순위, 안전 경계
 │   ├── USER.md             # 사용자별 상호작용 선호
+│   ├── ROLE.md             # 역할 선언: AI와 사용자가 각각 연기하는 상대
 │   ├── HEARTBEAT.md        # heartbeat 서비스의 미완료 작업
 │   ├── prompt_builder.py   # 프로파일 → 프롬프트 빌더
 │   ├── file_sync.py        # 워크스페이스 템플릿 지연 동기화(언어별)
@@ -428,6 +429,7 @@ uv run python evals/evals.py graph_rag      # 이름으로 단일 스위트 실�
 - **SOUL.md**: 성격 대비, 말투, 행동 논리를 정의합니다.
 - **AGENTS.md**: 도구 사용 우선순위, 안전 경계, 윤리 지침을 정의합니다.
 - **USER.md**: 사용자별 상호작용 선호도와 알려진 정보를 저장합니다.
+- **ROLE.md**: AI와 사용자가 각각 누구를 연기하는지 선언합니다("사용자는 … 역할을 연기합니다" 형식). 프리셋 패널이 현재 UI 언어로 생성하며 프리셋에 함께 저장됩니다.
 - **HEARTBEAT.md**: heartbeat 예약 서비스의 미완료 작업을 나열합니다.
 - **prompt_builder.py**: 프로파일 파일로부터 시스템 프롬프트를 만듭니다.
 - **file_sync.py**: 누락된 페르소나 파일을 `workspace/template/<lang>/`(`WORKSPACE_TEMPLATE_LANG`으로 선택)에서 지연 복사하며, 사용자의 수정을 절대 덮어쓰지 않습니다.

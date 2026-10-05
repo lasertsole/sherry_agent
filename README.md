@@ -247,6 +247,7 @@ EMA_AI_agent/
 │   ├── SOUL.md             # Personality contrasts, speech style
 │   ├── AGENTS.md           # Tool usage priorities, safety boundaries
 │   ├── USER.md             # User-specific interaction preferences
+│   ├── ROLE.md             # Role statement: who the AI plays, who the user plays
 │   ├── HEARTBEAT.md        # Pending tasks for heartbeat service
 │   ├── prompt_builder.py   # Profile-to-prompt builder
 │   ├── file_sync.py        # Lazy workspace template sync (per language)
@@ -428,6 +429,7 @@ The Agent's behavior is driven by the files under `workspace/`:
 - **SOUL.md**: Defines personality contrasts, speech style, and behavioral logic.
 - **AGENTS.md**: Defines tool usage priorities, safety boundaries, and ethical guidelines.
 - **USER.md**: Stores user-specific interaction preferences and known facts.
+- **ROLE.md**: States who the AI plays and who the user plays ("用户将扮演…" style); composed by the 预设 (presets) panel in the active UI language and saved inside persona presets.
 - **HEARTBEAT.md**: Lists pending tasks for the heartbeat scheduled service.
 - **prompt_builder.py**: Builds the system prompt from the profile files.
 - **file_sync.py**: Lazily copies any missing persona files from `workspace/template/<lang>/` (selected via `WORKSPACE_TEMPLATE_LANG`) without ever overwriting user edits.

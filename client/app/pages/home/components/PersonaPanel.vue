@@ -15,6 +15,109 @@
           <TabView
             v-model:activeIndex="activeTab"
             class="flex min-h-0 flex-1 flex-col">
+            <!-- FIRST tab: the role config (who the AI plays, who the user plays).
+                 Part of the preset: 保存预设 stores the names + avatars with the
+                 persona files, and 应用 writes the composed ROLE.md so the role
+                 statement reaches the system prompt. -->
+            <TabPanel
+              value="role"
+              :header="t('config.tabs.role')">
+              <div
+                class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto"
+                data-test="persona-role-tab">
+                <div class="flex items-center justify-between">
+                  <span class="text-sm text-gray-500 dark:text-gray-400">{{ t('config.desc.role') }}</span>
+                  <Button
+                    :label="t('config.persona.restoreDefault')"
+                    icon="pi pi-refresh"
+                    severity="secondary"
+                    text
+                    size="small"
+                    @click="restoreRoleDefault" />
+                </div>
+                <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
+
+                <!-- AI role -->
+                <div class="flex flex-col gap-2">
+                  <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{
+                    t('config.role.assistant')
+                  }}</span>
+                  <div class="flex items-center gap-3">
+                    <img
+                      v-if="charAssistant.avatar"
+                      :src="charAssistant.avatar"
+                      alt="assistant avatar"
+                      class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
+                    <div
+                      v-else
+                      class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
+                      <i class="pi pi-user" />
+                    </div>
+                    <div class="flex flex-col gap-2 flex-1">
+                      <InputText
+                        v-model="charAssistant.name"
+                        data-test="persona-role-ai-name"
+                        :placeholder="t('config.role.aiName')"
+                        class="w-full" />
+                      <FileUpload
+                        mode="basic"
+                        :choose-label="t('config.uploadAvatar')"
+                        accept="image/*"
+                        customUpload
+                        :auto="false"
+                        @select="onAssistAvatarSelect">
+                        <template #filelabel="{ files }">
+                          <span class="text-xs text-gray-400">
+                            {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                          </span>
+                        </template>
+                      </FileUpload>
+                    </div>
+                  </div>
+                </div>
+
+                <Divider />
+
+                <!-- User role -->
+                <div class="flex flex-col gap-2">
+                  <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{
+                    t('config.role.userRole')
+                  }}</span>
+                  <div class="flex items-center gap-3">
+                    <img
+                      v-if="charUser.avatar"
+                      :src="charUser.avatar"
+                      alt="user avatar"
+                      class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
+                    <div
+                      v-else
+                      class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
+                      <i class="pi pi-user" />
+                    </div>
+                    <div class="flex flex-col gap-2 flex-1">
+                      <InputText
+                        v-model="charUser.name"
+                        data-test="persona-role-user-name"
+                        :placeholder="t('config.role.userName')"
+                        class="w-full" />
+                      <FileUpload
+                        mode="basic"
+                        :choose-label="t('config.uploadAvatar')"
+                        accept="image/*"
+                        customUpload
+                        :auto="false"
+                        @select="onUserAvatarSelect">
+                        <template #filelabel="{ files }">
+                          <span class="text-xs text-gray-400">
+                            {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                          </span>
+                        </template>
+                      </FileUpload>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </TabPanel>
             <TabPanel
               v-for="tab in tabs"
               :key="tab.key"
@@ -169,13 +272,24 @@
         </div>
       </template>
     </Dialog>
+
+    <!-- Avatar crop (role tab): 1:1, output 512×512 — moved here with the role config -->
+    <AvatarCropDialog
+      v-model="cropVisible"
+      :src="cropSource"
+      :aspect-ratio="1"
+      :output-width="512"
+      :output-height="512"
+      :header="cropVisible ? t('config.crop.title') : ''"
+      @cropped="onCropConfirmed" />
   </div>
 </template>
 
 <script lang="ts" setup>
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { PersonaPreset } from '@/composables/db';
+import AvatarCropDialog from './AvatarCropDialog.vue';
+import type { PersonaPreset, PresetCharacter } from '@/composables/db';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n({ useScope: 'local' });
@@ -212,6 +326,9 @@ const tabs: PersonaTab[] = [
   }
 ] as const;
 
+/** The role statement file the role tab owns (composed, not a textarea tab). */
+const ROLE_FILE = 'ROLE.md';
+
 const activeTab = ref(0);
 const loading = ref(false);
 const saving = ref(false);
@@ -219,6 +336,25 @@ const restoring = ref(false);
 const applying = ref(false);
 const editContent = ref<Record<string, string>>({});
 const originalContent = ref<Record<string, string>>({});
+
+// ── Role config (the first tab): both role names + avatars ─────────────────
+// The names are display info (Dexie global profile, locked per session on first
+// open) AND prompt content: 应用 composes ROLE.md from them in the active UI
+// language, so the agent reads who it plays and who the user plays.
+const charAssistant = ref({ name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar });
+const charUser = ref({ name: DEFAULT_CACHED_CHARACTER.userName, avatar: DEFAULT_CACHED_CHARACTER.userAvatar });
+/** Snapshot of the loaded character (Dexie writes only happen when something changed). */
+const originalChar = ref<PresetCharacter>({
+  aiName: DEFAULT_CACHED_CHARACTER.aiName,
+  aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+  userName: DEFAULT_CACHED_CHARACTER.userName,
+  userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar
+});
+
+// Avatar crop state (1:1; the crop dialog itself is shared with the background editor)
+const cropVisible = ref(false);
+const cropSource = ref('');
+const cropTarget = ref<'user' | 'assistant'>('user');
 
 // Preset state machine: editingPresetId = the user preset currently loaded into the
 // editor (null = default/new mode); activeDefault = the virtual "Sherry" entry highlight.
@@ -263,6 +399,18 @@ const loadContent = async () => {
     }
     editContent.value = { ...content };
     originalContent.value = { ...content };
+
+    // Role names/avatars come from the local Dexie global profile (the same row
+    // the old 系统配置-角色配置 tab edited); ROLE.md itself is NOT parsed back —
+    // the compose direction is one-way (names -> sentence).
+    const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
+    fillCharacter({
+      aiName: charData?.aiName?.trim() ? charData.aiName : DEFAULT_CACHED_CHARACTER.aiName,
+      aiAvatar: charData?.aiAvatar ?? DEFAULT_CACHED_CHARACTER.aiAvatar,
+      userName: charData?.userName?.trim() ? charData.userName : DEFAULT_CACHED_CHARACTER.userName,
+      userAvatar: charData?.userAvatar ?? DEFAULT_CACHED_CHARACTER.userAvatar
+    });
+    originalChar.value = buildPresetCharacter();
   } catch (e) {
     logUtil.e('[PersonaPanel] Failed to load content:', e);
   } finally {
@@ -270,12 +418,15 @@ const loadContent = async () => {
   }
 };
 
-/** All tabs non-empty (trimmed) and each within the char limit — gates save & apply. */
-const allTabsValid = computed(() =>
-  tabs.every(tab => {
-    const v = editContent.value[tab.file] ?? '';
-    return v.trim().length > 0 && v.length <= MAX_CHARS;
-  })
+/** All file tabs non-empty (trimmed) and within the char limit, and both role names named. */
+const allTabsValid = computed(
+  () =>
+    charAssistant.value.name.trim().length > 0 &&
+    charUser.value.name.trim().length > 0 &&
+    tabs.every(tab => {
+      const v = editContent.value[tab.file] ?? '';
+      return v.trim().length > 0 && v.length <= MAX_CHARS;
+    })
 );
 
 /** Enablement for both the 保存预设 ("Save Preset") and 应用 ("Apply") buttons. */
@@ -283,8 +434,57 @@ const actionEnabled = computed(
   () => allTabsValid.value && !loading.value && !saving.value && !applying.value && !restoring.value
 );
 
-/** Current editor content as a file->content map (all persona files). */
-const buildContent = (): Record<string, string> => {
+/**
+ * The role names + avatars as one snapshot (the preset's `character` block).
+ * @returns The current role state.
+ */
+const buildPresetCharacter = (): PresetCharacter => ({
+  aiName: charAssistant.value.name,
+  aiAvatar: charAssistant.value.avatar,
+  userName: charUser.value.name,
+  userAvatar: charUser.value.avatar
+});
+
+/**
+ * Current role state from a preset / the defaults / the loaded profile.
+ * @param character Role names + avatars to load into the tab.
+ */
+const fillCharacter = (character: PresetCharacter) => {
+  charAssistant.value = { name: character.aiName, avatar: character.aiAvatar };
+  charUser.value = { name: character.userName, avatar: character.userAvatar };
+};
+
+/**
+ * ROLE.md content, composed from the two role names in the CURRENT UI language
+ * (the templates in `workspace/template/<lang>/ROLE.md` carry the same shape).
+ * @returns The role statement file's full text.
+ */
+const roleFileContent = (): string => {
+  const aiLine = t('config.role.aiLine', { name: charAssistant.value.name.trim() });
+  const userLine = t('config.role.userLine', { name: charUser.value.name.trim() });
+  return `# ${ROLE_FILE}\n\n${aiLine}\n${userLine}\n`;
+};
+
+/**
+ * File map for the persona API: the two edited files + the composed role file.
+ * @returns The full apply payload written through `writeSystemPrompt`.
+ */
+const buildApplyContent = (): Record<string, string> => {
+  const fileToContent: Record<string, string> = {};
+  for (const tab of tabs) {
+    fileToContent[tab.file] = editContent.value[tab.key] ?? '';
+  }
+  fileToContent[ROLE_FILE] = roleFileContent();
+  return fileToContent;
+};
+
+/**
+ * File map stored in a preset: only the files the user edits. ROLE.md is
+ * recomposed from the preset's `character` on apply, so a stale sentence can
+ * never be replayed (and never drifts from the names).
+ * @returns The file map stored in a persona preset.
+ */
+const buildPresetContent = (): Record<string, string> => {
   const fileToContent: Record<string, string> = {};
   for (const tab of tabs) {
     fileToContent[tab.file] = editContent.value[tab.key] ?? '';
@@ -293,13 +493,83 @@ const buildContent = (): Record<string, string> => {
 };
 
 /**
- * Fill all tabs with the given file->content map.
- * @param content
+ * Fill all file tabs with the given file->content map.
+ * @param content File basename -> content (extra files, e.g. ROLE.md, are ignored here).
+ * @returns Nothing.
  */
 const fillTabs = (content: Record<string, string>) => {
   for (const tab of tabs) {
     editContent.value[tab.key] = content[tab.file] ?? '';
   }
+};
+
+/**
+ * Localized label for the avatar FileUpload (`#filelabel` slot, replacing the
+ * browser-native "No file chosen"): file selected → its name; otherwise the prompt.
+ * @param files Selected files from the FileUpload event.
+ * @returns The label text for the upload row.
+ */
+const avatarFileLabel = (files: File[]): string => {
+  if (files.length > 0) return files[0]?.name ?? '';
+  return t('config.role.noFileChosen');
+};
+
+/**
+ * Reads an uploaded image file as a base64 data URL.
+ * @param file Image file to read.
+ * @returns The data URL, or '' when the reader produced no string.
+ */
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+const onUserAvatarSelect = (event: { files: File[] }) => {
+  const file = event.files?.[0];
+  if (!file) return;
+  void openAvatarCrop('user', file);
+};
+
+const onAssistAvatarSelect = (event: { files: File[] }) => {
+  const file = event.files?.[0];
+  if (!file) return;
+  void openAvatarCrop('assistant', file);
+};
+
+/**
+ * Open the 1:1 crop dialog for an avatar pick.
+ * @param target Which role the avatar belongs to.
+ * @param file
+ */
+const openAvatarCrop = async (target: 'user' | 'assistant', file: File) => {
+  try {
+    cropTarget.value = target;
+    cropSource.value = await readFileAsDataUrl(file);
+    cropVisible.value = true;
+  } catch (e) {
+    logUtil.e('[PersonaPanel] Image read failed:', e);
+  }
+};
+
+/**
+ * Apply the crop result to the role the dialog was opened for.
+ * @param dataUrl
+ */
+const onCropConfirmed = (dataUrl: string) => {
+  if (cropTarget.value === 'user') {
+    charUser.value.avatar = dataUrl;
+  } else {
+    charAssistant.value.avatar = dataUrl;
+  }
+  cropVisible.value = false;
+};
+
+/** Reset the role tab to the built-in default names + avatars (mirrors 恢复默认). */
+const restoreRoleDefault = () => {
+  fillCharacter({ ...DEFAULT_CACHED_CHARACTER });
 };
 
 const restoreDefault = async (tab: PersonaTab) => {
@@ -314,13 +584,14 @@ const restoreDefault = async (tab: PersonaTab) => {
   }
 };
 
-/** Click the virtual default entry: load the persona template into all tabs. */
+/** Click the virtual default entry: load the persona template + the default character. */
 const selectDefault = async () => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
   try {
     const content = await readSystemPromptTemplate(locale.value);
     fillTabs(content);
+    restoreRoleDefault();
     editingPresetId.value = null;
     activeDefault.value = true;
   } catch (e) {
@@ -337,6 +608,9 @@ const selectDefault = async () => {
 const selectPreset = (preset: PersonaPreset) => {
   if (loading.value || restoring.value || preset.id === undefined) return;
   fillTabs(preset.content);
+  // Presets saved before the role tab existed carry no character block: leave
+  // the current roles untouched rather than silently resetting them.
+  if (preset.character) fillCharacter(preset.character);
   editingPresetId.value = preset.id;
   activeDefault.value = false;
 };
@@ -363,7 +637,7 @@ const overwriteEditingPreset = async () => {
   if (id === null) return;
   saving.value = true;
   try {
-    const ok = await update(id, buildContent());
+    const ok = await update(id, buildPresetContent(), buildPresetCharacter());
     if (ok) {
       toastSuccess(t('config.persona.preset.toast.presetSaved'));
     } else {
@@ -384,7 +658,7 @@ const confirmSavePreset = async () => {
   }
   saving.value = true;
   try {
-    const result = await create(name, buildContent());
+    const result = await create(name, buildPresetContent(), buildPresetCharacter());
     if (result.ok) {
       showNameDialog.value = false;
       // The just-created preset becomes the edited one (its entry is highlighted).
@@ -438,22 +712,46 @@ const doRemovePreset = async (preset: PersonaPreset) => {
   }
 };
 
-/** Click 应用 ("Apply"): full-write all persona files; success → toast + saved + close, failure → stay open. */
+/**
+ * Write the role names/avatars to the local Dexie global profile when they
+ * changed — the "global pending profile" new sessions copy their display
+ * snapshot from, exactly as the old 系统配置-角色配置 tab wrote it.
+ */
+const persistCharacter = async () => {
+  const current = buildPresetCharacter();
+  const changed =
+    current.userName !== originalChar.value.userName ||
+    current.userAvatar !== originalChar.value.userAvatar ||
+    current.aiName !== originalChar.value.aiName ||
+    current.aiAvatar !== originalChar.value.aiAvatar;
+  if (!changed) return;
+  await cacheCharacter({
+    session_id: GLOBAL_SESSION_KEY,
+    userName: current.userName,
+    userAvatar: current.userAvatar,
+    aiName: current.aiName,
+    aiAvatar: current.aiAvatar
+  });
+  originalChar.value = current;
+};
+
+/** Click 应用 ("Apply"): full-write the persona files (incl. the composed ROLE.md) + the role profile; success → toast + saved + close, failure → stay open. */
 const handleApply = async () => {
   if (!actionEnabled.value) return;
   applying.value = true;
   try {
-    const snapshot = buildContent();
+    const snapshot = buildApplyContent();
     await writeSystemPrompt(snapshot);
     // Verify the write actually landed: in browser mode fetchApi swallows request
     // failures (retries 3x, then resolves null instead of throwing), so a failed
     // PUT would otherwise be indistinguishable from success here. Read the files
     // back and compare; any read failure or mismatch → treat the apply as failed.
     const written = await readSystemPrompt();
-    const verified = !!written && tabs.every(tab => written[tab.file] === snapshot[tab.file]);
+    const verified = !!written && Object.entries(snapshot).every(([file, content]) => written[file] === content);
     if (!verified) {
       throw new Error('[PersonaPanel] applied content verification failed');
     }
+    await persistCharacter();
     emits('saved');
     toastSuccess(t('config.persona.preset.toast.applySuccess'));
   } catch (e) {
@@ -502,12 +800,28 @@ const handleApply = async () => {
         }
       },
       "tabs": {
+        "role": "角色配置",
         "soul": "人格灵魂",
         "user": "用户信息"
       },
       "desc": {
+        "role": "AI 与用户各自的扮演角色（名字与头像）",
         "soul": "Agent人格、语气、性格",
         "user": "用户信息和偏好"
+      },
+      "role": {
+        "assistant": "AI 角色",
+        "aiName": "AI 名称",
+        "userRole": "用户角色",
+        "userName": "用户名称",
+        "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
+        "noFileChosen": "可选择新的头像图片",
+        "aiLine": "你将扮演{name}。",
+        "userLine": "用户将扮演{name}。"
+      },
+      "uploadAvatar": "上传头像",
+      "crop": {
+        "title": "裁剪头像"
       }
     }
   },
@@ -546,12 +860,28 @@ const handleApply = async () => {
         }
       },
       "tabs": {
+        "role": "Character Setup",
         "soul": "Soul",
         "user": "User Profile"
       },
       "desc": {
+        "role": "Who the AI and the user each play (names and avatars)",
         "soul": "Agent personality, tone, character",
         "user": "User info and preferences"
+      },
+      "role": {
+        "assistant": "AI Role",
+        "aiName": "AI Name",
+        "userRole": "User Role",
+        "userName": "User Name",
+        "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
+        "noFileChosen": "Select an avatar image file",
+        "aiLine": "You will play {name}.",
+        "userLine": "The user will play {name}."
+      },
+      "uploadAvatar": "Upload Avatar",
+      "crop": {
+        "title": "Crop Avatar"
       }
     }
   },
@@ -590,12 +920,28 @@ const handleApply = async () => {
         }
       },
       "tabs": {
+        "role": "キャラクター設定",
         "soul": "人格・魂",
         "user": "ユーザー情報"
       },
       "desc": {
+        "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
         "soul": "Agent 人格、トーン、性格",
         "user": "ユーザー情報と好み"
+      },
+      "role": {
+        "assistant": "AI ロール",
+        "aiName": "AI 名前",
+        "userRole": "ユーザーロール",
+        "userName": "ユーザー名",
+        "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
+        "noFileChosen": "新しいアバター画像を選択できます",
+        "aiLine": "あなたは{name}を演じます。",
+        "userLine": "ユーザーは{name}を演じます。"
+      },
+      "uploadAvatar": "アバターをアップロード",
+      "crop": {
+        "title": "アバターをトリミング"
       }
     }
   },
@@ -634,12 +980,28 @@ const handleApply = async () => {
         }
       },
       "tabs": {
+        "role": "캐릭터 설정",
         "soul": "인격·영혼",
         "user": "사용자 정보"
       },
       "desc": {
+        "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
         "soul": "Agent 인격, 어조, 성격",
         "user": "사용자 정보 및 선호도"
+      },
+      "role": {
+        "assistant": "AI 역할",
+        "aiName": "AI 이름",
+        "userRole": "사용자 역할",
+        "userName": "사용자 이름",
+        "charNote": "이름과 아바타 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다. 역할 이름은 시스템 프롬프트에도 기록됩니다.",
+        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다",
+        "aiLine": "당신은 {name} 역할을 연기합니다.",
+        "userLine": "사용자는 {name} 역할을 연기합니다."
+      },
+      "uploadAvatar": "아바타 업로드",
+      "crop": {
+        "title": "아바타 자르기"
       }
     }
   }

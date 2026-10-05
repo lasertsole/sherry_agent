@@ -247,6 +247,7 @@ EMA_AI_agent/
 │   ├── SOUL.md             # 性格の対比、話し方
 │   ├── AGENTS.md           # ツール使用の優先順位、安全境界
 │   ├── USER.md             # ユーザー固有の対話設定
+│   ├── ROLE.md             # 役割宣言：AI とユーザーがそれぞれ演じる相手
 │   ├── HEARTBEAT.md        # Heartbeat サービスの未完了タスク
 │   ├── prompt_builder.py   # プロファイルからプロンプトを構築
 │   ├── file_sync.py        # ワークスペーステンプレートの遅延同期（言語別）
@@ -428,6 +429,7 @@ uv run python evals/evals.py graph_rag      # 名前で単一スイートを実�
 - **SOUL.md**：性格の対比、話し方、行動ロジックを定義。
 - **AGENTS.md**：ツール使用の優先順位、安全境界、倫理ガイドラインを定義。
 - **USER.md**：ユーザー固有の対話設定や既知情報を保存。
+- **ROLE.md**：AI とユーザーがそれぞれ誰を演じるかを宣言（「ユーザーは…を演じます」形式）。プリセットパネルが現在の UI 言語で生成し、プリセットに含めて保存します。
 - **HEARTBEAT.md**：Heartbeat 定時サービスの未完了タスクを列挙。
 - **prompt_builder.py**：プロファイルファイルからシステムプロンプトを構築。
 - **file_sync.py**：不足しているペルソナファイルを `workspace/template/<lang>/`（`WORKSPACE_TEMPLATE_LANG` で選択）から遅延コピー。ユーザーの編集を上書きすることはありません。

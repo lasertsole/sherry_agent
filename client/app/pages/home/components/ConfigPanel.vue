@@ -12,91 +12,6 @@
         v-model:activeIndex="activeTab"
         class="flex-1 min-h-0">
         <TabPanel
-          value="character"
-          :header="t('config.tabs.character')">
-          <div class="flex flex-col gap-5">
-            <p class="m-0 text-xs font-medium text-red-600 dark:text-red-400">{{ t('config.role.charNote') }}</p>
-
-            <!-- AI role configuration -->
-            <div class="flex flex-col gap-2">
-              <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('config.role.assistant') }}</span>
-              <div class="flex items-center gap-3">
-                <img
-                  v-if="charAssistant.avatar"
-                  :src="assistantAvatarUrl"
-                  alt="assistant avatar"
-                  class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                <div
-                  v-else
-                  class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                  <i class="pi pi-user" />
-                </div>
-                <div class="flex flex-col gap-2 flex-1">
-                  <InputText
-                    v-model="charAssistant.name"
-                    :placeholder="t('config.role.aiName')"
-                    class="w-full" />
-                  <FileUpload
-                    mode="basic"
-                    :choose-label="t('config.uploadAvatar')"
-                    accept="image/*"
-                    customUpload
-                    :auto="false"
-                    @select="onAssistAvatarSelect">
-                    <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
-                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
-                    <template #filelabel="{ files }">
-                      <span class="text-xs text-gray-400">
-                        {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
-                      </span>
-                    </template>
-                  </FileUpload>
-                </div>
-              </div>
-            </div>
-
-            <Divider />
-
-            <!-- User role configuration -->
-            <div class="flex flex-col gap-2">
-              <span class="text-sm font-medium text-gray-600 dark:text-gray-300">{{ t('config.role.userRole') }}</span>
-              <div class="flex items-center gap-3">
-                <img
-                  v-if="charUser.avatar"
-                  :src="userAvatarUrl"
-                  alt="user avatar"
-                  class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                <div
-                  v-else
-                  class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                  <i class="pi pi-user" />
-                </div>
-                <div class="flex flex-col gap-2 flex-1">
-                  <InputText
-                    v-model="charUser.name"
-                    :placeholder="t('config.role.userName')"
-                    class="w-full" />
-                  <FileUpload
-                    mode="basic"
-                    :choose-label="t('config.uploadAvatar')"
-                    accept="image/*"
-                    customUpload
-                    :auto="false"
-                    @select="onUserAvatarSelect">
-                    <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
-                           replaced with localized text: file selected → show the file name; otherwise → prompt to upload a new avatar -->
-                    <template #filelabel="{ files }">
-                      <span class="text-xs text-gray-400">
-                        {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
-                      </span>
-                    </template>
-                  </FileUpload>
-                </div>
-              </div>
-            </div>
-          </div>
-        </TabPanel>
-        <TabPanel
           value="background"
           :header="t('config.background.title')">
           <div class="flex flex-col gap-5">
@@ -283,10 +198,11 @@
     </template>
 
     <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
-         scrolls), and only the character / background / sherry tabs use it — every
-         env item saves or applies on its own inside its own group card. -->
+         scrolls), and only the background / sherry tabs use it — every env item
+         saves or applies on its own inside its own group card.
+         (角色配置 moved to the 预设 panel together with the persona presets.) -->
     <div
-      v-if="activeTab !== 2"
+      v-if="activeTab !== 1"
       class="shrink-0 flex gap-2 justify-end">
       <Button
         :label="t('config.cancel')"
@@ -510,40 +426,17 @@ const resetSherryState = () => {
 // non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
 // in pure SPA mode and data stayed undefined forever → the || { groups: [] } fallback kicked in and rendered
 // the misleading "No .env file found" message.
-// Instead, the env tab (activeTab===2) is watched in setup scope; the callback runs
+// Instead, the env tab (activeTab===1) is watched in setup scope; the callback runs
 // in a setup context where getCurrentInstance() stays alive → useFetch actually issues GET /env and loads the real .env groups.
 watch(
   activeTab,
   tab => {
-    if (tab === 2) void loadEnvConfig();
-    if (tab === 3) void loadSherryConfig();
+    if (tab === 1) void loadEnvConfig();
+    if (tab === 2) void loadSherryConfig();
   },
   // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
   { flush: 'post' }
 );
-
-// ── Character config state ─────────────────────────────────────
-// Character avatar/name are saved entirely locally on the frontend: written to the global pending profile in Dexie (the GLOBAL_SESSION_KEY row).
-// The avatar can be a base64 data URL (`data:image/...;base64,...`, user-defined) or a `/avatar/xxx.jpg`
-// relative URL (built-in default); both render directly in `<img>`.
-// Saving only updates the global profile and never touches the snapshots already locked in per session → only new sessions pick up the new values.
-
-const charUser = ref<{ name: string; avatar: string }>({
-  name: DEFAULT_CACHED_CHARACTER.userName,
-  avatar: DEFAULT_CACHED_CHARACTER.userAvatar
-});
-const charAssistant = ref<{ name: string; avatar: string }>({
-  name: DEFAULT_CACHED_CHARACTER.aiName,
-  avatar: DEFAULT_CACHED_CHARACTER.aiAvatar
-});
-const originalChar = ref<{ user: { name: string; avatar: string }; assistant: { name: string; avatar: string } }>({
-  user: { name: DEFAULT_CACHED_CHARACTER.userName, avatar: DEFAULT_CACHED_CHARACTER.userAvatar },
-  assistant: { name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar }
-});
-
-// The avatar is already a full image address (base64 data URL or /avatar/xxx.jpg relative URL) and renders directly (no need to prepend a static/ path)
-const userAvatarUrl = computed(() => charUser.value.avatar);
-const assistantAvatarUrl = computed(() => charAssistant.value.avatar);
 
 /**
  * Reads an uploaded image file as a base64 data URL
@@ -559,31 +452,26 @@ const readFileAsDataUrl = (file: File): Promise<string> =>
 
 /**
  * Footer save availability. The footer is hidden on the env tab (every item
- * there saves/applies on its own), so only the character / background /
- * sherry tabs reach this.
+ * there saves/applies on its own), so only the background / sherry tabs reach this.
  */
 const canSave = computed(() => {
   if (loading.value || saving.value) return false;
   // Sherry config: saveable only when there are changes.
-  if (activeTab.value === 3) return sherryHasChanges.value;
-  // Character config: both character names must be non-empty.
-  if (activeTab.value === 0) {
-    return charUser.value.name.trim().length > 0 && charAssistant.value.name.trim().length > 0;
-  }
+  if (activeTab.value === 2) return sherryHasChanges.value;
   // Background: nothing extra to validate.
   return true;
 });
 
-// ── Image crop handling (reuses AvatarCropDialog: avatars 1:1, background adapted to the screen) ──
-// After an image is selected, the crop dialog opens: avatars are forced to a 1:1 square (512×512);
-// the background is cropped and output at the **actual aspect ratio of the current chat window/screen** so it fits any ratio (16:9, 16:10, 3:2, 21:9…);
-// and since rendering uses `background-size: cover`, edges get cut off under cover unless the crop ratio == the window ratio.
+// ── Image crop handling (background only; the role avatars moved to the 预设 panel) ──
+// After an image is selected, the crop dialog opens; the background is cropped and
+// output at the **actual aspect ratio of the current chat window/screen** so it fits
+// any ratio (16:9, 16:10, 3:2, 21:9…); since rendering uses `background-size: cover`,
+// edges get cut off under cover unless the crop ratio == the window ratio.
 // The ratio/size are **snapshotted** once at the moment the dialog opens (avoids the crop box jumping while the window is being dragged).
 const cropVisible = ref(false);
 const cropSource = ref('');
-const cropTarget = ref<'user' | 'assistant' | 'background'>('user');
 
-/** Crop box aspect ratio and output size (snapshotted when the crop box opens; avatars fixed at 1:1) */
+/** Crop box aspect ratio and output size (snapshotted when the crop box opens) */
 const cropAspectRatio = ref(1);
 const cropOutput = ref({ width: 512, height: 512 });
 
@@ -600,34 +488,14 @@ const getBackgroundCrop = () => {
   return { width: w, height: h };
 };
 /** Crop dialog title */
-const cropTitle = computed(() =>
-  cropTarget.value === 'background' ? t('config.background.cropTitle') : t('config.crop.title')
-);
+const cropTitle = computed(() => t('config.background.cropTitle'));
 
-const onUserAvatarSelect = (event: { files: File[] }) => {
-  const file = event.files?.[0];
-  if (!file) return;
-  openCrop('user', file);
-};
-
-const onAssistAvatarSelect = (event: { files: File[] }) => {
-  const file = event.files?.[0];
-  if (!file) return;
-  openCrop('assistant', file);
-};
-
-const openCrop = async (target: 'user' | 'assistant' | 'background', file: File) => {
+const openCrop = async (file: File) => {
   try {
-    cropTarget.value = target;
-    // Snapshot the crop ratio/output size when the dialog opens: background adapts to the current window ratio, avatar fixed square
-    if (target === 'background') {
-      const { width, height } = getBackgroundCrop();
-      cropAspectRatio.value = width / height;
-      cropOutput.value = { width, height };
-    } else {
-      cropAspectRatio.value = 1;
-      cropOutput.value = { width: 512, height: 512 };
-    }
+    // Snapshot the crop ratio/output size when the dialog opens: background adapts to the current window ratio
+    const { width, height } = getBackgroundCrop();
+    cropAspectRatio.value = width / height;
+    cropOutput.value = { width, height };
     cropSource.value = await readFileAsDataUrl(file);
     cropVisible.value = true;
   } catch (e) {
@@ -636,13 +504,7 @@ const openCrop = async (target: 'user' | 'assistant' | 'background', file: File)
 };
 
 const onCropConfirmed = (dataUrl: string) => {
-  if (cropTarget.value === 'background') {
-    backgroundUrl.value = dataUrl;
-  } else if (cropTarget.value === 'user') {
-    charUser.value.avatar = dataUrl;
-  } else {
-    charAssistant.value.avatar = dataUrl;
-  }
+  backgroundUrl.value = dataUrl;
   cropVisible.value = false;
 };
 
@@ -688,14 +550,14 @@ const backgroundAspect = computed(() => {
 });
 
 /**
- * Opens the crop dialog after a background image is selected (16:9, reuses the avatar crop UI); only the cropped result becomes the background
+ * Opens the crop dialog after a background image is selected; only the cropped result becomes the background
  * @param event
  * @param event.files
  */
 const onBackgroundSelect = (event: { files: File[] }) => {
   const file = event.files?.[0];
   if (!file) return;
-  openCrop('background', file);
+  void openCrop(file);
 };
 
 /**
@@ -709,35 +571,9 @@ const fileLabelText = (files: File[]): string => {
   return t('config.background.noFileChosen');
 };
 
-/**
- * Localized label for the avatar FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
- * file selected → show the file name; otherwise → prompt to upload a new avatar.
- * @param files
- */
-const avatarFileLabel = (files: File[]): string => {
-  if (files.length > 0) return files[0]?.name ?? '';
-  return t('config.role.noFileChosen');
-};
-
 const loadContent = async () => {
   loading.value = true;
   try {
-    const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
-
-    // Read character config from the local Dexie global profile (falls back to the built-in defaults when no record exists: Tono Hanna / Tachibana Sherry + default avatars)
-    charUser.value = {
-      name: charData?.userName?.trim() ? charData.userName : DEFAULT_CACHED_CHARACTER.userName,
-      avatar: charData?.userAvatar ?? DEFAULT_CACHED_CHARACTER.userAvatar
-    };
-    charAssistant.value = {
-      name: charData?.aiName?.trim() ? charData.aiName : DEFAULT_CACHED_CHARACTER.aiName,
-      avatar: charData?.aiAvatar ?? DEFAULT_CACHED_CHARACTER.aiAvatar
-    };
-    originalChar.value = {
-      user: { name: charUser.value.name, avatar: charUser.value.avatar },
-      assistant: { name: charAssistant.value.name, avatar: charAssistant.value.avatar }
-    };
-
     // Read the global background config from local Dexie (falls back to empty string + opacity 0 when unset)
     const bgConfig = (await readBackgroundConfig()) ?? { backgroundUrl: '', backgroundOpacity: 0 };
     backgroundUrl.value = bgConfig.backgroundUrl;
@@ -750,11 +586,6 @@ const loadContent = async () => {
   }
 };
 
-/**
- * Footer handler (character / background / sherry tabs): writes the local
- * Dexie settings and the sherry.jsonc diff, then closes the dialog. The env
- * tab has no footer — every item there saves/applies on its own.
- */
 /**
  * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
  * The model groups carry their own 保存/应用 inside the panel, so the env tab
@@ -785,34 +616,6 @@ const saveDialogSettings = async () => {
   if (loading.value || saving.value) return;
   saving.value = true;
   try {
-    // Character config: only when name or avatar changed, write the changes to the local Dexie global profile.
-    // This write only affects the global profile and never touches the snapshots locked in per session → only affects new sessions.
-    const userChanged =
-      charUser.value.name !== originalChar.value.user.name || charUser.value.avatar !== originalChar.value.user.avatar;
-    const assistantChanged =
-      charAssistant.value.name !== originalChar.value.assistant.name ||
-      charAssistant.value.avatar !== originalChar.value.assistant.avatar;
-    if (userChanged || assistantChanged) {
-      const existing = (await readCachedCharacter(GLOBAL_SESSION_KEY)) ?? {
-        session_id: GLOBAL_SESSION_KEY,
-        userName: '',
-        userAvatar: '',
-        aiName: '',
-        aiAvatar: ''
-      };
-      await cacheCharacter({
-        session_id: GLOBAL_SESSION_KEY,
-        userName: userChanged ? charUser.value.name : existing.userName,
-        userAvatar: userChanged ? charUser.value.avatar : existing.userAvatar,
-        aiName: assistantChanged ? charAssistant.value.name : existing.aiName,
-        aiAvatar: assistantChanged ? charAssistant.value.avatar : existing.aiAvatar
-      });
-      originalChar.value = {
-        user: { name: charUser.value.name, avatar: charUser.value.avatar },
-        assistant: { name: charAssistant.value.name, avatar: charAssistant.value.avatar }
-      };
-    }
-
     // Background image: only when changed, write to the local Dexie global row
     // (an empty string clears the background). setBackground updates the shared
     // singleton reactively, so the change takes effect without a refresh.
@@ -825,7 +628,7 @@ const saveDialogSettings = async () => {
 
     // Sherry config: same contract as the env tab — abort on save failure
     // without closing the dialog.
-    if (activeTab.value === 3 && sherryHasChanges.value) {
+    if (activeTab.value === 2 && sherryHasChanges.value) {
       const ok = await persistSherryChanges();
       if (!ok) {
         sherryLoadError.value = t('config.sherry.saveFailed');
@@ -858,15 +661,6 @@ onBeforeUnmount(onHide);
 {
   "zh": {
     "config": {
-      "uploadAvatar": "上传头像",
-      "role": {
-        "assistant": "AI 角色",
-        "aiName": "AI 名称",
-        "userRole": "用户角色",
-        "userName": "用户名称",
-        "charNote": "修改头像与名字仅在新建会话后生效，旧会话不受影响。",
-        "noFileChosen": "可选择新的头像图片"
-      },
       "background": {
         "title": "背景图片",
         "upload": "上传背景",
@@ -891,11 +685,7 @@ onBeforeUnmount(onHide);
         "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
         "noConfigFile": "未找到 sherry.jsonc 文件。"
       },
-      "crop": {
-        "title": "裁剪头像"
-      },
       "tabs": {
-        "character": "角色配置",
         "env": "环境配置",
         "sherry": "应用配置"
       }
@@ -903,15 +693,6 @@ onBeforeUnmount(onHide);
   },
   "en": {
     "config": {
-      "uploadAvatar": "Upload Avatar",
-      "role": {
-        "assistant": "AI Role",
-        "aiName": "AI Name",
-        "userRole": "User Role",
-        "userName": "User Name",
-        "charNote": "Changes to the avatar and name only take effect in new sessions; existing sessions are not affected.",
-        "noFileChosen": "Select an avatar image file"
-      },
       "background": {
         "title": "Background Image",
         "upload": "Upload Background",
@@ -936,11 +717,7 @@ onBeforeUnmount(onHide);
         "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
         "noConfigFile": "No sherry.jsonc file found."
       },
-      "crop": {
-        "title": "Crop Avatar"
-      },
       "tabs": {
-        "character": "Character Setup",
         "env": "Environment",
         "sherry": "App Config"
       }
@@ -948,15 +725,6 @@ onBeforeUnmount(onHide);
   },
   "ja": {
     "config": {
-      "uploadAvatar": "アバターをアップロード",
-      "role": {
-        "assistant": "AI ロール",
-        "aiName": "AI 名前",
-        "userRole": "ユーザーロール",
-        "userName": "ユーザー名",
-        "charNote": "アバターと名前の変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。",
-        "noFileChosen": "新しいアバター画像を選択できます"
-      },
       "background": {
         "title": "背景画像",
         "upload": "背景をアップロード",
@@ -981,11 +749,7 @@ onBeforeUnmount(onHide);
         "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
         "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
       },
-      "crop": {
-        "title": "アバターをトリミング"
-      },
       "tabs": {
-        "character": "キャラクター設定",
         "env": "環境設定",
         "sherry": "アプリ設定"
       }
@@ -993,15 +757,6 @@ onBeforeUnmount(onHide);
   },
   "ko": {
     "config": {
-      "uploadAvatar": "아바타 업로드",
-      "role": {
-        "assistant": "AI 역할",
-        "aiName": "AI 이름",
-        "userRole": "사용자 역할",
-        "userName": "사용자 이름",
-        "charNote": "아바타와 이름 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다.",
-        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다"
-      },
       "background": {
         "title": "배경 이미지",
         "upload": "배경 업로드",
@@ -1026,11 +781,7 @@ onBeforeUnmount(onHide);
         "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
         "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
       },
-      "crop": {
-        "title": "아바타 자르기"
-      },
       "tabs": {
-        "character": "캐릭터 설정",
         "env": "환경 설정",
         "sherry": "앱 설정"
       }
