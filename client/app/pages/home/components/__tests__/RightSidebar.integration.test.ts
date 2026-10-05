@@ -195,6 +195,15 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     // 全局 is the default group: the pre-existing tools are unchanged by grouping.
     const scopeTabs = wrapper.findAll('[data-test^="scope-tab-"]');
     expect(scopeTabs.map(tab => tab.attributes('data-test'))).toEqual(['scope-tab-session', 'scope-tab-global']);
+    // Pills: the active group carries the filled capsule, both animate the swap
+    // (happy-dom computes no stylesheet, so this is the class contract).
+    expect(scopeTabs[1]!.classes()).toContain('bg-white');
+    expect(scopeTabs[1]!.classes()).toContain('rounded-full');
+    expect(scopeTabs[0]!.classes()).not.toContain('bg-white');
+    for (const tab of scopeTabs) {
+      expect(tab.classes()).toContain('transition-all');
+      expect(tab.classes()).toContain('duration-300');
+    }
     // Only the active group's tabs render.
     expect(wrapper.text()).toContain('日志查看');
     expect(wrapper.text()).not.toContain('会话预设');

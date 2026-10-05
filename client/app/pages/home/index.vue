@@ -50,6 +50,20 @@
             variant="text"
             class="text-theme-main"
             @click="toggleSidebar" />
+          <Button
+            v-if="canShowProjectFiles"
+            :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
+            :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
+            :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
+            :aria-pressed="showFiles"
+            variant="text"
+            :class="[
+              showFiles
+                ? 'bg-theme-main/10 text-theme-main'
+                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
+              '@max-[300px]:hidden!'
+            ]"
+            @click="toggleSidebarBodyWithHint" />
           <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
                Clicking opens the notification dialog and clears the unread count. -->
           <div class="relative flex items-center @max-[300px]:hidden!">
@@ -66,20 +80,6 @@
               {{ notificationUnread > 99 ? '99+' : notificationUnread }}
             </span>
           </div>
-          <Button
-            v-if="canShowProjectFiles"
-            :icon="showFiles ? 'pi pi-folder-open' : 'pi pi-folder'"
-            :title="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
-            :aria-label="showFiles ? t('toolbar.sessionList') : t('toolbar.projectFiles')"
-            :aria-pressed="showFiles"
-            variant="text"
-            :class="[
-              showFiles
-                ? 'bg-theme-main/10 text-theme-main'
-                : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800',
-              '@max-[300px]:hidden!'
-            ]"
-            @click="toggleSidebarBodyWithHint" />
         </div>
         <!-- Right: original function button area (the theme switch and the language
              picker are the first to go when the column gets narrow) -->

@@ -32,24 +32,25 @@
       v-if="contentMounted"
       class="flex flex-col h-full"
       :style="{ width: `${store.width}px` }">
-      <!-- Strip: a TOP-LEVEL group tab row (当前会话 / 全局 — the tabs' scope)
-           over the tab list of the active group. Two compact rows keep the whole
-           header at the shared h-15, so all three columns still share one header
-           line. Tabs are added from the top toolbar and the settings menu. -->
+      <!-- Strip: the group pills (当前会话 / 全局 — the tabs' scope) are FIXED at the
+           left of the single tab row, and the active group's tab list scrolls to
+           their right. The row keeps the shared h-15, so all three columns still
+           share one header line. Tabs are added from the top toolbar and the
+           settings menu. -->
       <div
-        class="shrink-0 flex flex-col px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
+        class="shrink-0 flex items-center gap-2 px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
         <div
-          class="flex h-6 items-end gap-3"
+          class="flex shrink-0 items-center gap-0.5 rounded-full border border-solid border-gray-200/80 bg-gray-100/80 p-0.5 dark:border-gray-700/80 dark:bg-gray-800/80"
           data-test="scope-tabs">
           <button
             v-for="scope in SCOPES"
             :key="scope"
             type="button"
-            class="h-6 border-b-2 border-solid border-transparent pb-0.5 text-xs transition-colors"
+            class="h-6 rounded-full px-2.5 text-xs transition-all duration-300"
             :class="
               scope === store.activeScope
-                ? 'border-theme-main font-medium text-theme-main'
-                : 'text-gray-500 dark:text-gray-400 hover:text-theme-main'
+                ? 'bg-white font-medium text-theme-main shadow-sm dark:bg-[#2a2a36]'
+                : 'text-gray-500 hover:text-theme-main dark:text-gray-400'
             "
             :data-test="`scope-tab-${scope}`"
             @click="store.setActiveScope(scope)">
