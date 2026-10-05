@@ -7,10 +7,14 @@
   <div
     data-test="progress-float"
     class="pointer-events-auto absolute top-3 right-3 z-20 flex flex-col items-end">
+    <!-- Collapsed = translucent (the chat stays visible through it); expanded = fully
+         opaque. The background alpha animates over 0.3 s in both directions
+         (`transition-colors duration-300`; the panel below is opaque by itself). -->
     <button
       type="button"
       data-test="progress-float-trigger"
-      class="flex items-center gap-2 rounded-full border border-solid border-gray-200/80 bg-white/90 px-2.5 py-1 text-xs shadow-sm backdrop-blur transition-colors hover:bg-white dark:border-gray-700/80 dark:bg-[#131619]/90 dark:hover:bg-[#181c20]"
+      class="flex items-center gap-2 rounded-full border border-solid border-gray-200/80 px-2.5 py-1 text-xs shadow-sm backdrop-blur transition-colors duration-300 hover:bg-white dark:border-gray-700/80 dark:hover:bg-[#181c20]"
+      :class="expanded ? 'bg-white dark:bg-[#131619]' : 'bg-white/70 dark:bg-[#131619]/70'"
       :title="expanded ? t('progressFloat.collapse') : t('progressFloat.expand')"
       :aria-label="expanded ? t('progressFloat.collapse') : t('progressFloat.expand')"
       :aria-expanded="expanded"
@@ -37,7 +41,7 @@
     <div
       v-if="expanded"
       data-test="progress-float-panel"
-      class="mt-1.5 w-80 max-h-[60vh] overflow-y-auto rounded-lg border border-solid border-gray-200/80 bg-white/95 p-2.5 text-xs shadow-lg backdrop-blur dark:border-gray-700/80 dark:bg-[#131619]/95">
+      class="mt-1.5 w-80 max-h-[60vh] overflow-y-auto rounded-lg border border-solid border-gray-200/80 bg-white p-2.5 text-xs shadow-lg backdrop-blur dark:border-gray-700/80 dark:bg-[#131619]">
       <!-- ONE box for ONE plan. The checklist rows and the TaskFlow steps are the
            same running plan (the backend's plan gate reads todos ∪ open flows), so
            they share a single header and a single list: a todo that mirrors a

@@ -138,6 +138,32 @@ describe('ProgressFloat', () => {
     expect(panel.findAll('[data-test="progress-flow"]')).toHaveLength(1);
   });
 
+  it('is translucent while collapsed, opaque when expanded, over a 0.3s transition', async () => {
+    // Class contract (happy-dom computes no stylesheet): the pill carries the
+    // alpha variant + the transition, and swaps to the solid background on expand;
+    // the panel itself is solid (it only exists while expanded).
+    const wrapper = await mountFloat();
+    const pill = wrapper.get('[data-test="progress-float-trigger"]');
+
+    expect(pill.classes()).toContain('bg-white/70');
+    expect(pill.classes()).toContain('transition-colors');
+    expect(pill.classes()).toContain('duration-300');
+
+    await pill.trigger('click');
+    await flushPromises();
+
+    expect(pill.classes()).toContain('bg-white');
+    expect(pill.classes()).not.toContain('bg-white/70');
+    const panel = wrapper.get('[data-test="progress-float-panel"]');
+    expect(panel.classes()).toContain('bg-white');
+    expect(panel.classes()).not.toContain('bg-white/95');
+
+    // Collapsing restores the translucent pill.
+    await pill.trigger('click');
+    await flushPromises();
+    expect(pill.classes()).toContain('bg-white/70');
+  });
+
   it('collapses to a pill by default, with the pushed numbers on it', async () => {
     const wrapper = await mountFloat();
     handlers().taskflow!(taskflowFrame([makeFlow()]));
