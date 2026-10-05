@@ -174,20 +174,25 @@
       <div class="flex w-full min-h-0 flex-col gap-2 md:w-[300px] md:shrink-0">
         <span class="text-sm font-semibold">{{ t('config.persona.preset.title') }}</span>
         <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:max-h-none">
-          <!-- Virtual read-only entry: the default persona (Sherry) -->
+          <!-- Virtual read-only entries: the built-in personas (no delete button,
+               not Dexie rows). 橘雪莉 = the shipped default; 编程助手 = a plain
+               assistant template (operating rules only, no soul / user profile). -->
           <div
+            v-for="builtin in builtinPresets"
+            :key="builtin.id"
             role="button"
             tabindex="0"
             class="flex cursor-pointer items-center justify-between gap-2 rounded-lg border border-solid border-gray-light bg-white px-3 py-2 text-sm text-theme-main transition-colors dark:border-[#555] dark:bg-[#2a2a36]/[0.6]"
             :class="{
-              'bg-[#c1d6e5]!': activeDefault,
-              'md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]': !activeDefault
+              'bg-[#c1d6e5]!': activeBuiltin === builtin.id,
+              'md:hover:bg-[#e4efff] md:dark:hover:bg-[#c1d6e5]': activeBuiltin !== builtin.id
             }"
-            @click="selectDefault">
-            <span class="truncate">{{ t('config.persona.preset.defaultName') }}</span>
+            :data-test="`builtin-${builtin.id}`"
+            @click="selectBuiltin(builtin.id)">
+            <span class="truncate">{{ t(builtin.nameKey) }}</span>
             <span
               class="shrink-0 rounded-full bg-gray-200 px-2 py-0.5 text-xs text-gray-600 dark:bg-gray-700 dark:text-gray-300">
-              {{ t('config.persona.preset.defaultBadge') }}
+              {{ t(builtin.badgeKey) }}
             </span>
           </div>
           <div
@@ -363,10 +368,24 @@ const cropVisible = ref(false);
 const cropSource = ref('');
 const cropTarget = ref<'user' | 'assistant'>('user');
 
+/** Built-in (non-deletable) persona entries of the preset list. */
+type BuiltinPresetId = 'sherry' | 'coding';
+
+/**
+ * The virtual rows of the list: not Dexie records, so they could never be
+ * renamed or deleted — 橘雪莉 (the shipped default) and 编程助手 (a plain
+ * coding-assistant template).
+ */
+const builtinPresets: ReadonlyArray<{ id: BuiltinPresetId; nameKey: string; badgeKey: string }> = [
+  { id: 'sherry', nameKey: 'config.persona.preset.defaultName', badgeKey: 'config.persona.preset.defaultBadge' },
+  { id: 'coding', nameKey: 'config.persona.preset.builtinCodingName', badgeKey: 'config.persona.preset.builtinBadge' }
+];
+
 // Preset state machine: editingPresetId = the user preset currently loaded into the
-// editor (null = default/new mode); activeDefault = the virtual "Sherry" entry highlight.
+// editor (null = built-in / new mode); activeBuiltin = which virtual built-in entry
+// is loaded ('sherry' starts highlighted, null while editing a user preset).
 const editingPresetId = ref<number | null>(null);
-const activeDefault = ref(false);
+const activeBuiltin = ref<BuiltinPresetId | null>('sherry');
 
 // Name dialog (save current content as a new preset) state.
 const showNameDialog = ref(false);
@@ -379,7 +398,7 @@ const { presets, create, update, remove } = usePersonaPresets();
 const onDialogShow = () => {
   void loadContent();
   editingPresetId.value = null;
-  activeDefault.value = true;
+  activeBuiltin.value = 'sherry';
   showNameDialog.value = false;
   presetName.value = '';
 };
@@ -425,16 +444,14 @@ const loadContent = async () => {
   }
 };
 
-/** All file tabs non-empty (trimmed) and within the char limit, and both role names named. */
-const allTabsValid = computed(
-  () =>
-    charAssistant.value.name.trim().length > 0 &&
-    charUser.value.name.trim().length > 0 &&
-    tabs.every(tab => {
-      const v = editContent.value[tab.file] ?? '';
-      return v.trim().length > 0 && v.length <= MAX_CHARS;
-    })
-);
+/**
+ * Gate for 保存预设 / 应用: every file tab within the char limit. Empty content
+ * is LEGAL — the 编程助手 built-in ships an empty soul / user profile (a plain
+ * assistant without role-play) and an empty user role name means "the user
+ * plays nothing" — so no non-empty requirement remains. The backend accepts
+ * blank persona writes for the same reason.
+ */
+const allTabsValid = computed(() => tabs.every(tab => (editContent.value[tab.file] ?? '').length <= MAX_CHARS));
 
 /** Enablement for both the 保存预设 ("Save Preset") and 应用 ("Apply") buttons. */
 const actionEnabled = computed(
@@ -464,12 +481,17 @@ const fillCharacter = (character: PresetCharacter) => {
 /**
  * ROLE.md content, composed from the two role names in the CURRENT UI language
  * (the templates in `workspace/template/<lang>/ROLE.md` carry the same shape).
- * @returns The role statement file's full text.
+ * A blank name contributes NO line — an empty file means "no role statement",
+ * which is what the 编程助手 built-in asks for on the user side.
+ * @returns The role statement file's full text ('' when neither role is named).
  */
 const roleFileContent = (): string => {
-  const aiLine = t('config.role.aiLine', { name: charAssistant.value.name.trim() });
-  const userLine = t('config.role.userLine', { name: charUser.value.name.trim() });
-  return `# ${ROLE_FILE}\n\n${aiLine}\n${userLine}\n`;
+  const lines: string[] = [];
+  const aiName = charAssistant.value.name.trim();
+  const userName = charUser.value.name.trim();
+  if (aiName) lines.push(t('config.role.aiLine', { name: aiName }));
+  if (userName) lines.push(t('config.role.userLine', { name: userName }));
+  return lines.length > 0 ? `# ${ROLE_FILE}\n\n${lines.join('\n')}\n` : '';
 };
 
 /**
@@ -591,16 +613,34 @@ const restoreDefault = async (tab: PersonaTab) => {
   }
 };
 
-/** Click the virtual default entry: load the persona template + the default character. */
-const selectDefault = async () => {
+/**
+ * Click a built-in entry: load its shipped template.
+ * - 橘雪莉 → the full language template (rules + soul + user profile) plus the
+ *   default names/avatars;
+ * - 编程助手 → the operating rules only: empty soul and user profile, the
+ *   assistant's own name as the AI role, and NO user role — a plain coding
+ *   assistant (no role-play).
+ * @param id Which built-in entry was clicked.
+ */
+const selectBuiltin = async (id: BuiltinPresetId) => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
   try {
     const content = await readSystemPromptTemplate(locale.value);
-    fillTabs(content);
-    restoreRoleDefault();
+    if (id === 'coding') {
+      fillTabs({ 'AGENTS.md': content['AGENTS.md'] ?? '', 'SOUL.md': '', 'USER.md': '' });
+      fillCharacter({
+        aiName: t('config.persona.preset.builtinCodingName'),
+        aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+        userName: '',
+        userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar
+      });
+    } else {
+      fillTabs(content);
+      restoreRoleDefault();
+    }
     editingPresetId.value = null;
-    activeDefault.value = true;
+    activeBuiltin.value = id;
   } catch (e) {
     logUtil.e('[PersonaPanel] Failed to load persona template:', e);
   } finally {
@@ -619,7 +659,7 @@ const selectPreset = (preset: PersonaPreset) => {
   // the current roles untouched rather than silently resetting them.
   if (preset.character) fillCharacter(preset.character);
   editingPresetId.value = preset.id;
-  activeDefault.value = false;
+  activeBuiltin.value = null;
 };
 
 /**
@@ -670,7 +710,7 @@ const confirmSavePreset = async () => {
       showNameDialog.value = false;
       // The just-created preset becomes the edited one (its entry is highlighted).
       editingPresetId.value = result.id;
-      activeDefault.value = false;
+      activeBuiltin.value = null;
       toastSuccess(t('config.persona.preset.toast.presetSaved'));
     } else if (result.reason === 'duplicate') {
       nameError.value = 'duplicate';
@@ -715,7 +755,7 @@ const doRemovePreset = async (preset: PersonaPreset) => {
   if (editingPresetId.value === id) {
     // The deleted preset was being edited: reset the edit state (no entry highlighted).
     editingPresetId.value = null;
-    activeDefault.value = false;
+    activeBuiltin.value = null;
   }
 };
 
@@ -784,6 +824,8 @@ const handleApply = async () => {
           "defaultBadge": "默认",
           "emptyList": "暂无预设",
           "defaultName": "橘雪莉",
+          "builtinCodingName": "编程助手",
+          "builtinBadge": "内置",
           "nameDialog": {
             "title": "保存为预设",
             "placeholder": "输入预设名称",
@@ -846,6 +888,8 @@ const handleApply = async () => {
           "defaultBadge": "Default",
           "emptyList": "No presets yet",
           "defaultName": "Tachibana Sherry",
+          "builtinCodingName": "Coding Assistant",
+          "builtinBadge": "Built-in",
           "nameDialog": {
             "title": "Save as Preset",
             "placeholder": "Enter preset name",
@@ -908,6 +952,8 @@ const handleApply = async () => {
           "defaultBadge": "デフォルト",
           "emptyList": "プリセットなし",
           "defaultName": "橘雪莉",
+          "builtinCodingName": "コーディングアシスタント",
+          "builtinBadge": "内蔵",
           "nameDialog": {
             "title": "プリセットとして保存",
             "placeholder": "プリセット名を入力",
@@ -970,6 +1016,8 @@ const handleApply = async () => {
           "defaultBadge": "기본",
           "emptyList": "프리셋 없음",
           "defaultName": "橘雪莉",
+          "builtinCodingName": "코딩 어시스턴트",
+          "builtinBadge": "내장",
           "nameDialog": {
             "title": "프리셋으로 저장",
             "placeholder": "프리셋 이름 입력",

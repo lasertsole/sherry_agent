@@ -27,6 +27,10 @@ class _WorkplaceFileStore(FileStore):
         self.file_names = list(EDITABLE_SYSTEM_FILE_NAMES)
         self.max_content_length = 2_000
         self.error_noun = "file"
+        # Emptying a persona file is a legal state here, not an error: the
+        # 编程助手 built-in preset ships an empty soul / user profile (no
+        # role-play), and an empty file simply drops out of the assembled prompt.
+        self.allow_empty = True
 
     def _before_read(self) -> None:
         # Lazy-ensure the persona files exist before reading (they may be deleted

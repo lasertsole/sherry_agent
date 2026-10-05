@@ -191,12 +191,68 @@ describe('PersonaPanel role tab', () => {
     expect(payload['ROLE.md']).toBe('# ROLE.md\n\nYou will play Sakura.\nThe user will play Akira.\n');
   });
 
-  it('blocks save/apply while a role name is empty', async () => {
+  it('keeps save/apply enabled with an empty user role (no role-play is legal)', async () => {
     const wrapper = await mountPanel();
-    await wrapper.get('[data-test="persona-role-ai-name"]').setValue('   ');
+    await wrapper.get('[data-test="persona-role-user-name"]').setValue('');
+
+    expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeUndefined();
+    expect(buttonByText(wrapper, '保存预设').attributes('disabled')).toBeUndefined();
+  });
+
+  it('still blocks save/apply past the char limit', async () => {
+    // An oversized file loaded from the backend (e.g. hand-edited) must not be re-saved.
+    const huge = 'x'.repeat(2500);
+    bridge.readSystemPrompt.mockResolvedValueOnce({ 'SOUL.md': huge, 'USER.md': USER, 'AGENTS.md': AGENTS });
+    const wrapper = await mountPanel();
 
     expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeDefined();
-    expect(buttonByText(wrapper, '保存预设').attributes('disabled')).toBeDefined();
+  });
+
+  it('lists both built-in entries without a delete button and loads 编程助手', async () => {
+    const wrapper = await mountPanel();
+
+    const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
+    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual(['builtin-sherry', 'builtin-coding']);
+    // Non-deletable: the virtual rows never carry a delete button.
+    for (const row of builtinRows) expect(row.findAll('button')).toHaveLength(0);
+
+    await wrapper.get('[data-test="builtin-coding"]').trigger('click');
+    await flushPromises();
+
+    // Operating rules from the template; soul and user profile cleared.
+    const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
+    expect(textareas).toEqual(['TPL-AGENTS', '', '']);
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('编程助手');
+    expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('');
+
+    await buttonByText(wrapper, '应用').trigger('click');
+    await flushPromises();
+
+    const payload = bridge.writeSystemPrompt.mock.calls[0]![0] as Record<string, string>;
+    expect(payload['AGENTS.md']).toBe('TPL-AGENTS');
+    expect(payload['SOUL.md']).toBe('');
+    expect(payload['USER.md']).toBe('');
+    // Only the AI role is stated: an empty user name contributes no line.
+    expect(payload['ROLE.md']).toBe('# ROLE.md\n\n你将扮演编程助手。\n');
+    expect(db.cacheCharacter).toHaveBeenCalledWith({
+      session_id: '__global__',
+      aiName: '编程助手',
+      aiAvatar: '/avatar/assistant.jpg',
+      userName: '',
+      userAvatar: '/avatar/user.jpg'
+    });
+  });
+
+  it('loads the full template for the 橘雪莉 built-in', async () => {
+    const wrapper = await mountPanel();
+    await wrapper.get('[data-test="builtin-coding"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="builtin-sherry"]').trigger('click');
+    await flushPromises();
+
+    const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
+    expect(textareas).toEqual(['TPL-AGENTS', 'TPL-SOUL', 'TPL-USER']);
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
   });
 
   it('saves the role config with the preset and restores it on selection', async () => {

@@ -29,6 +29,13 @@ class FileStore:
     file_names: list[str]
     max_content_length: int
     error_noun: str = "file"
+    # Whether an empty (or whitespace-only) entry is legal for this store. False
+    # everywhere except the workplace persona files: clearing a persona file is a
+    # legitimate state there — the 编程助手 built-in preset ships an empty soul /
+    # user profile (a plain assistant, no role-play) — while an empty memory or
+    # heartbeat file carries no meaning. An emptied persona file simply drops out
+    # of the assembled prompt and can be refilled from the language templates.
+    allow_empty: bool = False
 
     def _before_read(self) -> None:
         """Optional pre-read hook (ensure persona files exist / mkdir)."""
@@ -44,7 +51,7 @@ class FileStore:
             raise ValueError(f"Invalid {self.error_noun} name: {file_name}")
         elif not isinstance(content, str):
             raise ValueError(f"Invalid content type for {self.error_noun}: {file_name}")
-        elif len(content.strip()) == 0:
+        elif len(content.strip()) == 0 and not self.allow_empty:
             raise ValueError(f"Content is empty for {self.error_noun}: {file_name}")
         elif self._content_length(content) > self.max_content_length:
             raise ValueError(f"Content too long for {self.error_noun}: {file_name}")

@@ -48,6 +48,15 @@ class TestValidation:
         with pytest.raises(ValueError, match="Content is empty for file: A.md"):
             store.write_files({"A.md": "   "})
 
+    def test_allow_empty_store_accepts_blank_content(self, tmp_path):
+        """`allow_empty` (workplace persona files): '' and whitespace are legal writes."""
+        store = _TmpStore(tmp_path)
+        store.allow_empty = True
+        store.write_files({"A.md": "", "B.md": "   "})
+
+        assert (tmp_path / "A.md").read_text(encoding="utf-8") == ""
+        assert (tmp_path / "B.md").read_text(encoding="utf-8") == "   "
+
     def test_too_long_message(self, tmp_path):
         store = _TmpStore(tmp_path, max_len=5)
         with pytest.raises(ValueError, match="Content too long for file: A.md"):
@@ -180,6 +189,27 @@ class TestServiceWiring:
         with pytest.raises(ValueError, match="Invalid file name: HACK.md"):
             workplace_service.write_system_prompt_file({"HACK.md": "x"})
         assert not (tmp_path / "HACK.md").exists()
+
+    def test_workplace_accepts_empty_persona_content(self, tmp_path, monkeypatch):
+        """Clearing a persona file is legal (the 编程助手 built-in ships an empty soul /
+        user profile): the file is emptied and simply drops out of the prompt."""
+        from server.service import workplace as workplace_service
+
+        monkeypatch.setattr(workplace_service, "WORKSPACE_DIR", tmp_path)
+        monkeypatch.setattr(workplace_service, "ensure_workspace_system_files", lambda: None)
+        (tmp_path / "SOUL.md").write_text("# SOUL.md\npersonality\n", encoding="utf-8")
+
+        workplace_service.write_system_prompt_file({"SOUL.md": ""})
+
+        assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == ""
+
+    def test_memory_store_still_rejects_empty_content(self, tmp_path, monkeypatch):
+        """The allow_empty relaxation is workspace-only: blank memory writes stay refused."""
+        from server.service import memory as memory_service
+
+        monkeypatch.setattr(memory_service, "MEMORY_DIR", tmp_path)
+        with pytest.raises(ValueError, match="Content is empty for memory file: MEMORY.md"):
+            memory_service.write_memory_files({"MEMORY.md": "  "})
 
     def test_workplace_error_wording(self, tmp_path, monkeypatch):
         from server.service import workplace as workplace_service

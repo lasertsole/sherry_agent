@@ -93,3 +93,38 @@ def test_role_statement_reaches_the_system_prompt(tmp_path, monkeypatch):
 
     assert "你将扮演橘雪莉。" in prompt
     assert "用户将扮演远野汉娜。" in prompt
+
+
+def test_emptied_persona_file_drops_out_of_the_prompt(tmp_path, monkeypatch):
+    """An EMPTY persona file contributes nothing (the 编程助手 built-in ships an
+    empty soul / user profile: a plain assistant, no role-play).
+
+    Distinct from a missing file: the file exists and is legitimately blank, so
+    the prompt simply has no SOUL/USER block — the same `parts` filter that
+    drops absent files drops blank ones.
+    """
+    from workspace.prompt_builder import build_system_prompt
+
+    class FakeMemoryStore:
+        """Stand-in for agent.tools.memory.memory_store (no live reads)."""
+
+        def format_for_system_prompt(self, target: str):
+            """No memory blocks in this test."""
+            return None
+
+    (tmp_path / "AGENTS.md").write_text("# AGENTS.md\nrules\n", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text("", encoding="utf-8")
+    (tmp_path / "USER.md").write_text("\n  \n", encoding="utf-8")
+
+    monkeypatch.setattr("workspace.prompt_builder.WORKSPACE_DIR", tmp_path)
+    monkeypatch.setattr(
+        "workspace.prompt_builder.ALL_SYSTEM_FILE_NAMES", ["AGENTS.md", "SOUL.md", "USER.md"]
+    )
+    monkeypatch.setattr("workspace.prompt_builder.get_skills_text", lambda *a, **k: "")
+    monkeypatch.setattr("agent.tools.memory.memory_store", FakeMemoryStore())
+
+    prompt = build_system_prompt()
+
+    assert "# AGENTS.md\nrules" in prompt
+    assert "SOUL" not in prompt
+    assert "USER" not in prompt
