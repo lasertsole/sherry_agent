@@ -349,6 +349,16 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 - 聊天背景图片配置（全局 Pinia store `stores/chat-background.ts`）
 - `clientLog.ts` 将捕获的浏览器 `console.*` 输出持久化到 `all` / `log` / `error` 分桶结构
 
+### 工具调用耗时（`ChatToolCard.vue`）
+
+每张工具卡都会显示这次调用花了多久，与后端测量的口径完全一致：
+
+- 运行中：1 秒一跳的计时器在走（`formatElapsed`，与工具栏"运行中命令"入口同一套惯例）；
+- 完成后：定格为实测值（`formatToolDuration`：`<1s → 850ms`、`<10s → 1.2s`、其余整秒）；
+- 未知则留空——本功能之前的历史卡片、或被人工拒绝的调用，**不显示**耗时，而不是显示假的 `0ms`。
+
+数字来自两个永远一致的来源：流式 `tool_result` 帧携带 `duration_ms`，历史行携带 `messages.tool_duration_ms`（中间件的权威测量，帧在有戳记时优先采用）。审批等待与排队时间天然不在窗口内。
+
 ### 状态与事件
 
 - **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、TaskFlow 进度（`taskflow.ts`）

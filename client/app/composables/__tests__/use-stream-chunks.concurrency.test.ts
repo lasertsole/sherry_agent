@@ -138,7 +138,7 @@ describe('tool row pairing under concurrent tool calls', () => {
   });
 });
 
-describe('tool duration on the row (R1-R5)', () => {
+describe('tool duration on the row', () => {
   it('records the backend measurement from the result frame', () => {
     const { slices, tools } = setup();
     slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
@@ -150,7 +150,7 @@ describe('tool duration on the row (R1-R5)', () => {
 
   it('keeps the earliest end instant whichever frame arrives last', () => {
     // tool_end and tool_result race: taking the LAST arrival would push the
-    // end instant later than the tool actually finished (the plan's case).
+    // end instant later than the tool actually finished, inflating the duration.
     const first = setup();
     first.slices.appendStreamChunk(SID, 'read_file', 'tool_start', 1, { tool_id: 'call_A' });
     first.slices.appendStreamChunk(SID, 'read_file', 'tool_end', 1, { tool_id: 'call_A' });

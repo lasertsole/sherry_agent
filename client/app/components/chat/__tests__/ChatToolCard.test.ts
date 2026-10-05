@@ -1,6 +1,6 @@
 /**
  * The tool card's duration badge — the ONLY tool-card rendering point in the
- * client (R7): the thinking stream and the conversation stream share this
+ * client: the thinking stream and the conversation stream share this
  * component, so wiring it once covers both. The static guard at the bottom
  * turns red the day a second rendering point appears.
  */
@@ -74,7 +74,7 @@ describe('ChatToolCard duration', () => {
   });
 });
 
-describe('render-point uniqueness (R7 guard)', () => {
+describe('render-point uniqueness guard', () => {
   /**
    * Every file under the client's app/ that renders `<ChatToolCard`.
    * @param dir

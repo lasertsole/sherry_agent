@@ -21,7 +21,7 @@ export interface StreamChunkMeta {
 /**
  * Record the earliest end instant for a tool row: `tool_end` and `tool_result`
  * arrive in an unspecified order, and taking the LAST one would push the end
- * time later than the tool actually finished (the plan's dedicated case).
+ * time later than the tool actually finished, inflating the duration.
  * @param row
  */
 function noteToolEnded(row: MessageItem): void {

@@ -349,6 +349,16 @@ A 300+ line SCSS mixin library providing utilities for layout, shapes, scrollbar
 - Chat background image config (global Pinia store `stores/chat-background.ts`)
 - `clientLog.ts` persists captured browser `console.*` output into an `all` / `log` / `error` bucket structure
 
+### Tool-call durations (`ChatToolCard.vue`)
+
+Every tool card shows how long the call took, on the same contract the backend measures with:
+
+- while the tool runs, a 1-second ticker counts up (`formatElapsed`, the same idiom as the toolbar's running-commands entry);
+- once it settles, the card freezes on the measured value (`formatToolDuration`: `<1s → 850ms`, `<10s → 1.2s`, else whole seconds);
+- unknown stays blank — a card from before this feature, or a call the human denied, shows NO duration rather than a fake `0ms`.
+
+The number comes from two sources that always agree: the live `tool_result` frame carries `duration_ms`, and history rows carry `messages.tool_duration_ms` (the middleware's authoritative measurement, which the frame prefers when present). Approval waits and queue time are outside the window by construction.
+
 ### State & Events
 
 - **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), file viewer (`file-viewer.ts`), TaskFlow progress (`taskflow.ts`)

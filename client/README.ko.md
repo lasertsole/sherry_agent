@@ -349,6 +349,16 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 - 채팅 배경 이미지 설정(전역 Pinia 스토어 `stores/chat-background.ts`)
 - `clientLog.ts`가 캡처한 브라우저 `console.*` 출력을 `all` / `log` / `error` 버킷 구조로 영속화
 
+### 도구 호출 소요 시간(`ChatToolCard.vue`)
+
+모든 도구 카드는 그 호출이 얼마나 걸렸는지 백엔드와 같은 기준으로 보여 줍니다:
+
+- 실행 중에는 1초 간격 타이머가 올라갑니다(`formatElapsed`, 툴바의 "실행 중 명령" 항목과 같은 관례);
+- 완료되면 측정값으로 고정됩니다(`formatToolDuration`: `<1s → 850ms`, `<10s → 1.2s`, 그 이상은 정수 초);
+- 알 수 없으면 비워 둡니다——이 기능 이전의 카드나 사람이 거부한 호출에는 가짜 `0ms` 대신 **아무것도 표시하지 않습니다**.
+
+숫자는 항상 일치하는 두 경로에서 옵니다: 라이브 `tool_result` 프레임이 `duration_ms`를 싣고, 기록 행이 `messages.tool_duration_ms`를 싣습니다(미들웨어의 권위 있는 측정이며, 프레임은 각인이 있으면 그것을 우선합니다). 승인 대기와 큐 대기는 구조상 창 밖입니다.
+
 ### 상태와 이벤트
 
 - **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), TaskFlow 진행(`taskflow.ts`)

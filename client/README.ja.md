@@ -349,6 +349,16 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 - チャット背景画像設定（グローバル Pinia ストア `stores/chat-background.ts`）
 - `clientLog.ts` が取得したブラウザ `console.*` 出力を `all` / `log` / `error` のバケット構造に永続化
 
+### ツール呼び出しの所要時間（`ChatToolCard.vue`）
+
+すべてのツールカードが、その呼び出しにかかった時間をバックエンドと同じ口径で表示します：
+
+- 実行中は 1 秒刻みのタイマーが進みます（`formatElapsed`、ツールバーの「実行中コマンド」入口と同じ流儀）；
+- 完了すると計測値で固定されます（`formatToolDuration`：`<1s → 850ms`、`<10s → 1.2s`、それ以上は整数秒）；
+- 不明なときは空欄のまま——この機能より前のカードや、人が拒否した呼び出しには、偽の `0ms` ではなく**何も表示しません**。
+
+数値は常に一致する二つの経路から来ます：ライブの `tool_result` フレームが `duration_ms` を運び、履歴行が `messages.tool_duration_ms` を運びます（ミドルウェアの権威ある計測で、フレームは刻印があるときそれを優先します）。承認待ちとキュー待ちは構造上ウィンドウの外です。
+
 ### 状態とイベント
 
 - **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、TaskFlow 進捗（`taskflow.ts`）

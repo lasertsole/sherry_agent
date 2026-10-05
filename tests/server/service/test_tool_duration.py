@@ -3,9 +3,9 @@
 Two measurements, one authority: the stream's ``tool_result.duration_ms`` is
 what the running card shows, and the persisted ``messages.tool_duration_ms``
 (measured by ``message_persistence`` at tool-return time) is what history
-replay shows. Both are ``time.monotonic()`` differences clamped at 0 — the plan
-calls this out as the one high-risk item, because a wall-clock subtraction goes
-negative when NTP steps the clock back (ZCode ships that defect unguarded).
+replay shows. Both are ``time.monotonic()`` differences, rounded, clamped at 0 —
+never a wall-clock subtraction, which would go negative when NTP steps the clock
+back (ZCode ships that defect unguarded).
 """
 
 import pytest
@@ -44,7 +44,7 @@ def test_a_tool_reports_its_execution_milliseconds(monkeypatch):
 
 
 def test_a_backward_wall_clock_step_cannot_make_a_negative_duration(monkeypatch):
-    """The plan's regression case: wall clock rewinds, monotonic does not."""
+    """Wall clock rewinds, monotonic does not: the duration stays positive."""
     _clock(monkeypatch, 100.0, 100.25)
     wall = iter([1000.0, 995.0])  # NTP stepped the clock back 5s mid-call
     monkeypatch.setattr(sd.time, "time", lambda: next(wall))
@@ -167,7 +167,7 @@ def test_the_column_round_trips_through_mes_memory(tmp_path, monkeypatch):
 
 
 def test_a_legacy_database_without_the_column_reads_back_null(tmp_path, monkeypatch):
-    """R6: an old database heals by ADD COLUMN and old rows read as NULL."""
+    """An old database heals by ADD COLUMN, and its rows read back NULL."""
     import sqlite3
 
     import context_engine.store.core as core
