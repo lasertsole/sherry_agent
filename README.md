@@ -31,7 +31,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 
 ### 2. 🛠️ Dynamic Skill System
 - **SKILL.md Standard**: skills are Markdown files with YAML frontmatter (`name`, `description`, optional `scope: all | main_only | subagent_only`) — the loader auto-discovers every `SKILL.md` under `skills/`
-- **Built-in Skills** ([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub` (GitHub skill installer), `skill_creator` (generates new skills), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `code_wiki`, `llm_wiki`
+- **Built-in Skills** ([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub` (GitHub skill installer), `skill_creator` (generates new skills), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `code_wiki`, `llm_wiki`
 - **Skill Management Tools**: the agent can list, view, and manage skills at runtime; third-party uploads (`skills/plugins/`) stay inactive until explicitly enabled
 - **SkillSpector Security Scanning** ([server/service/skill_scanner.py](server/service/skill_scanner.py)): third-party skills are scanned by NVIDIA SkillSpector (static YARA/rule analysis + optional LLM semantic analysis via the auxiliary LLM) before activation; flagged skills are blocked from installation
 - **Skill Curator**: the context-engine curator thread maintains auto-learned skills under `skills/auto/` — see the [Experience README](docs/experience/README.md)
@@ -47,6 +47,7 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 - **Swarm Mode**: batch sub-task execution with FIFO scheduling and configurable concurrency
 - **Verified completion**: every spawn runs an auxiliary-LLM completion judge between child turns; a `continue` verdict injects the judge's follow-up prompt as the next turn, bounded by the configured `COMPLETION_JUDGE["goal_max_turns"]` budget (default 5)
 - **Functional Roles (opt-in)**: `sessions_spawn(functional_role=...)` specializes a worker (general / researcher / executor / reviewer / librarian); the role drives the LLM tier, the tool allow-list, and the child's system-prompt sections
+- **Isolated Worktrees (opt-in)**: `sessions_spawn(isolation=True)` gives the child its own git worktree of the project (`agent/tools/subagent/isolation/`), cut from the **dirty** baseline (`git stash create`, so uncommitted edits are visible to the child) and merged back at announce time under a per-root lock — see the [File Safety README](docs/file-safety/README.md)
 - ▶️ _See the [Subagent System README](agent/tools/subagent/README.md) for the full architecture_
 
 ### 4. 🌐 Multi-Channel Access
@@ -65,6 +66,15 @@ The Agent's character, **Sherry** (Tachibana Sherry), is a self-proclaimed girl 
 ### 6. ⏰ Scheduled & Proactive Behavior
 - **Cron Service** ([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): one-shot (`at`), interval (`every`), or cron-expression (`cron`, via croniter + timezone) agent tasks, persisted to a JSON job store with per-job run history and delivery to channels
 - **Heartbeat Service** ([skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)): periodic wake-up (default 30 min) that checks `HEARTBEAT.md` for pending tasks, lets an LLM decide skip/run, and passes results through a notification gate
+
+### 7. ⚙️ Runtime, Concurrency & Session Control
+- **Project Directory Binding** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): every session has a project directory that its tools resolve relative paths against — session binding → `SHERRY_PROJECT_DIR` → `project_dir` in `sherry.jsonc` → `ROOT_DIR`. `PUT /sessions/project` binds or clears it (`null`), and a choice made mid-turn is parked and promoted at the turn boundary. The root is resolved **per call**, never cached, so a process-level tool singleton never freezes a session onto the first caller's directory; a subagent inherits the parent's binding at spawn and stays frozen to the root it started with. The prompt gains a `## Current Working Directory` block naming the effective root
+- **Read-only File Browsing**: `GET /project/tree` and `GET /project/file` serve a lazy tree and a viewer hard-refused outside the session's root (they deliberately bypass the agent's external-file approval flow), with `FILE_BROWSER` bounding read size, encoding, depth and entries per level. The in-app directory picker (`GET /system/dirs`, a deliberate exception that lists one absolute path's **subdirectories only**) backs the browser build, while the desktop build opens the OS folder dialog
+- **Concurrency Lanes** ([runtime/lane/core.py](runtime/lane/core.py)): four process-level lanes, each an `asyncio.Semaphore` with active/queued counters, queue over-limit work FIFO instead of rejecting it — `MAIN` (main-agent turns, CPU-scaled 12–16), `SUBAGENT` (spawns and steers, 8), `NUDGE` (nudge/persistence calls, 4), `NESTED` (`sessions_send` reply turns, serial, 1). Startup validation enforces `main >= subagent + nudge`; `GET /lane-status` reports each lane's `{name, max_concurrent, active, queued}`
+- **Queued User Input**: a message sent while a turn is running is persisted as a `QUEUED` row (dedup by `client_msg_id`, capped by `INPUT_QUEUE["max_active_per_session"]`) and answered with its FIFO position. The turn runner drains **one row per turn**, so N queued messages produce N turns and N replies — never one merged answer — and a HITL-pending session drains nothing until the resume completes. The client can `cancel_queued`, `edit_queued`, or `send_now` a queued row
+- **TaskFlow Progress Waves** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): a flow's steps are grouped into longest-path DAG levels for the floating progress panel (reporting only — the scheduler still unlocks each step on its own `depends_on`; an unknown dep is ignored and a cycle lands in a trailing wave flagged `cyclic`). Every flow mutation pushes a `taskflow_updated` frame, best-effort, and a reconnecting client re-asks with `taskflow_refresh` for the identical payload
+- **Tool Duration**: every tool call is timed once, at tool-return time (`time.monotonic()`, clamped at 0) by the message-persistence wrapper, stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]` and persisted to `messages.tool_duration_ms`; the live card shows a running ticker and the measured value once settled. Approval waits and queue time are outside the window by construction
+- **Per-Session Model & Thinking**: `PUT /sessions/thinking` and `PUT /sessions/model` override the reasoning toggle and the main model for one session (the client prefetches a single-use `GET /auth/ws-ticket` when login is enabled), and the thinking-control middleware swaps the request model for the `build_main_llm(thinking=...)` variant built from it — falling back to the env default when the session carries no explicit choice
 
 ---
 
@@ -101,15 +111,22 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 EMA_AI_agent/
 ├── agent/                  # Agent core logic
 │   ├── core.py             # Main agent loop (LangChain create_agent → LangGraph graph)
+│   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
 │   ├── wrapper/            # Graph-level wrappers (repetition guard, context limit)
 │   ├── checkpointer/       # Thread-safe async SQLite checkpointers
 │   ├── middlewares/        # Middleware pipeline (summarization, guardrails, HITL, ...)
+│   ├── prompt_data_provider.py # Runtime PromptDataProvider implementation (owner side)
+│   ├── skill_write_provider.py  # Runtime SkillWriteProvider implementation (owner side)
 │   └── tools/              # Agent-accessible tools
+│       ├── taskflow/       # Task orchestration engine (DAG, budget, deadline, step judge)
 │       ├── subagent/       # Multi-level subagent system (spawn/registry/swarm/...)
+│       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
 │       ├── todolist/       # Session-scoped todo planning layer
 │       │   └── knowledge/  # Plan knowledge base + `knowledge` tool
 │       ├── file_tools/     # File I/O tools (read, write, patch, search)
 │       ├── skill_tools/    # Skill management tools (list, view, manage)
+│       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
+│       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
 │       ├── pub_base/       # Shared tool utilities & infrastructure (BaseSQLiteRepository, path utils)
 │       ├── mcp_plugin.py   # MCP tool integration
 │       ├── web_search.py   # Web search tool (Tavily)
@@ -124,6 +141,7 @@ EMA_AI_agent/
 │
 ├── channels/               # Channel interface definitions
 │   ├── base.py             # Abstract channel base
+│   ├── deps.py             # Dependency-injection seams for channel wiring
 │   ├── manager.py          # Channel lifecycle manager
 │   └── registry.py         # Channel registration
 │
@@ -155,6 +173,11 @@ EMA_AI_agent/
 │   ├── token-guard/        # 128K context-window floor
 │   ├── context-governance/ # Persistence, eviction, tail clip, summary filtering
 │   ├── long-running-tasks/ # TaskFlow orchestration
+│   ├── subagent/           # Subagent design invariants & completion gates
+│   ├── code-intel/         # Code retrieval layers
+│   ├── ptc/                # Programmatic tool calling
+│   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # Opt-in login protection (account + session)
 │
 ├── evals/                  # Evaluation framework (dispatcher + 5 suites)
@@ -169,6 +192,7 @@ EMA_AI_agent/
 │
 ├── logs/                   # Logging system
 │   ├── logger.py           # Log configuration (loguru)
+│   ├── curator/            # Curator run logs
 │   └── output/             # Log output directory
 │
 ├── models/                 # Model wrappers & weights
@@ -197,12 +221,16 @@ EMA_AI_agent/
 │       ├── bus.py          # Message bus data models
 │       └── client.py       # Client data models
 │
-├── runtime/                # Runtime state & utilities
+├── runtime/                # Runtime state, lanes & cross-boundary seams
+│   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
+│   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
+│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / NUDGE / NESTED)
 │   ├── session/            # Session-scoped registers
 │   │   ├── core.py         # Singleton SessionRegister base + per-session cleanup
 │   │   ├── relation_register.py # Session/socket relation registry
 │   │   ├── state_register.py   # State registry
 │   │   ├── state_keys.py       # Typed StateKey registry + TypedState facade
+│   │   ├── project_dir.py  # Per-session project-directory binding resolution
 │   │   ├── count_call_register.py # Usage/statistics counters
 │   │   ├── timer_call_register.py # Timer registry
 │   │   └── _callback_executor.py # Async callback executor
@@ -213,6 +241,8 @@ EMA_AI_agent/
 ├── server/                 # Robyn backend service
 │   ├── __main__.py         # Server entry point (python -m server)
 │   ├── DAO/                # Data access objects
+│   ├── queue/              # Persisted user-input queue store
+│   ├── utils/              # Shared backend helpers (JWT, password hashing, atomic I/O, WS)
 │   ├── service/            # Business logic services (incl. skill_scanner.py)
 │   └── trigger/            # Route & handler registration
 │       ├── http/           # HTTP endpoint triggers
@@ -227,7 +257,8 @@ EMA_AI_agent/
 │   ├── plugins/            # Third-party uploaded skills (inactive by default)
 │   └── builtin/            # Built-in skills
 │       ├── core/           # cron, heartbeat, clawhub, skill_creator, image_to_text,
-│       │                   # speech_to_text, video_text_to_text, multimodal_rag
+│       │                   # speech_to_text, video_text_to_text, multimodal_rag,
+│       │                   # taskflow, todolist, ulw-execute
 │       ├── text_to_image/  # Text-to-image skill
 │       ├── code_wiki/      # Codebase wiki generation skill
 │       └── llm_wiki/       # Markdown knowledge-base skill
@@ -245,6 +276,7 @@ EMA_AI_agent/
 │
 ├── workspace/              # Character profile & behavior definition
 │   ├── SOUL.md             # Personality contrasts, speech style
+│   ├── IDENTITY.md         # Core identity card
 │   ├── AGENTS.md           # Tool usage priorities, safety boundaries
 │   ├── USER.md             # User-specific interaction preferences
 │   ├── ROLE.md             # Role statement: who the AI plays, who the user plays
@@ -252,6 +284,7 @@ EMA_AI_agent/
 │   ├── prompt_builder.py   # Profile-to-prompt builder
 │   ├── file_sync.py        # Lazy workspace template sync (per language)
 │   ├── template/           # Persona templates (en / zh / ja / ko)
+│   ├── sessions/           # Per-session runtime workspace data
 │   └── memory/             # Long-term memory storage
 │
 ├── .env.example            # Environment variable template
@@ -350,7 +383,7 @@ uv run python -m server
 The backend listens on **http://127.0.0.1:8080** with a WebSocket endpoint at `/sessions/ws`.
 
 ### 5. (Optional) Desktop Client
-The Tauri 2 + Nuxt 4 client lives in [client/](client/) and requires Node.js 18+, pnpm, and Rust:
+The Tauri 2 + Nuxt 4 client lives in [client/](client/) and requires Node.js 20+, pnpm, and Rust (CI pins Node 22):
 
 ```bash
 cd client
@@ -389,7 +422,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # args after `--` are fo
 
 ### Real-LLM e2e tests (`llm_e2e` marker)
 
-Seven tests across four files in `tests/agent/tools/subagent/` (`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`) call **real LLM APIs**. They are:
+Eight tests across five files call **real LLM APIs**: seven in `tests/agent/tools/subagent/` (`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`) plus the multimodal-RAG pipeline test in `tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py`. They are:
 
 - **deselected by default** (`-m "not llm_e2e"` — set both in `pyproject.toml` addopts and by the runner),
 - bounded by `@pytest.mark.timeout` budgets (pytest-timeout): 300 s per simple test, 600 s for the concurrent test,

@@ -31,7 +31,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 
 ### 2. 🛠️ 동적 스킬 시스템
 - **SKILL.md 표준**: 스킬은 YAML 프론트매터(`name`, `description`, 선택적 `scope: all | main_only | subagent_only`)를 가진 Markdown 파일이며, 로더가 `skills/` 하위의 모든 `SKILL.md`를 자동으로 발견합니다
-- **내장 스킬**([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub`(GitHub 스킬 설치기), `skill_creator`(새 스킬 생성), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `code_wiki`, `llm_wiki`
+- **내장 스킬**([skills/builtin/](skills/builtin/)): `cron`, `heartbeat`, `clawhub`(GitHub 스킬 설치기), `skill_creator`(새 스킬 생성), `image_to_text`, `speech_to_text`, `video_text_to_text`, `text_to_image`, `multimodal_rag`, `taskflow`, `todolist`, `ulw-execute`, `code_wiki`, `llm_wiki`
 - **스킬 관리 도구**: 에이전트가 런타임에 스킬을 나열, 조회, 관리할 수 있습니다. 서드파티 업로드 스킬(`skills/plugins/`)은 명시적으로 활성화될 때까지 비활성 상태로 유지됩니다
 - **SkillSpector 보안 스캔**([server/service/skill_scanner.py](server/service/skill_scanner.py)): 서드파티 스킬은 활성화 전에 NVIDIA SkillSpector로 스캔됩니다(정적 YARA/룰 분석 + auxiliary LLM을 통한 선택적 LLM 시맨틱 분석). 플래그가 지정된 스킬은 설치가 차단됩니다
 - **스킬 큐레이터**: context engine의 curator 스레드가 `skills/auto/` 하위의 자동 학습 스킬을 관리 — 자세한 내용은 [Experience README](docs/experience/README.ko.md)
@@ -47,6 +47,7 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 - **Swarm 모드**: FIFO 스케줄링과 설정 가능한 동시성으로 배치 서브태스크 실행
 - **검증된 완료**: 모든 spawn이 자식 턴 사이에 보조 LLM 완료 판정기를 실행합니다; `continue` 판정은 판정기의 후속 프롬프트를 다음 턴으로 주입하며, 설정된 `COMPLETION_JUDGE["goal_max_turns"]` 예산(기본 5)으로 상한이 정해집니다
 - **기능 역할(옵트인)**: `sessions_spawn(functional_role=...)`로 워커를 전문화(general / researcher / executor / reviewer / librarian)합니다. 역할이 LLM 계층, 도구 allow-list, 자식 시스템 프롬프트 섹션을 결정합니다
+- **격리 워크트리(옵트인)**: `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 자체 git 워크트리(`agent/tools/subagent/isolation/`)를 제공합니다. 이 워크트리는 **더티** 기준선(`git stash create`, 따라서 커밋되지 않은 수정도 자식에게 보임)에서 잘라내고, announce 시점에 루트별 잠금 아래에서 다시 병합합니다. 자세한 내용은 [File Safety README](docs/file-safety/README.md) 참조
 - ▶️ _전체 아키텍처는 [Subagent System README](agent/tools/subagent/README.md) 참조_
 
 ### 4. 🌐 멀티채널 접근
@@ -65,6 +66,15 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 ### 6. ⏰ 예약 및 능동적 행동
 - **Cron 서비스**([skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)): 1회성(`at`), 간격(`every`), cron 표현식(`cron`, croniter + 타임존 기반) 에이전트 작업을 JSON 작업 스토어에 영구 저장하고, 작업별 실행 이력과 채널 전달 지원
 - **Heartbeat 서비스**([skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)): 주기적 웨이크업(기본 30분)으로 `HEARTBEAT.md`의 미완료 작업을 확인하고, LLM이 skip/run을 판단하며, 결과는 알림 게이트를 통과
+
+### 7. ⚙️ 런타임, 동시성 및 세션 제어
+- **프로젝트 디렉터리 바인딩** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): 모든 세션에는 프로젝트 디렉터리가 있으며, 도구는 이를 기준으로 상대 경로를 해석한다 — 세션 바인딩 → `SHERRY_PROJECT_DIR` → `sherry.jsonc`의 `project_dir` → `ROOT_DIR`. `PUT /sessions/project`로 바인딩하거나(`null`로) 해제하며, 턴 도중에 내린 선택은 보류되었다가 턴 경계에서 승격된다. 루트는 **호출마다** 해석되고 캐시되지 않으므로, 프로세스 레벨 도구 싱글턴이 어떤 세션을 첫 호출자의 디렉터리에 고정시키는 일이 없다. 서브에이전트는 생성 시 부모의 바인딩을 상속하고 시작 시점의 루트에 고정된다. 프롬프트에는 유효한 루트를 밝히는 `## Current Working Directory` 블록이 추가된다
+- **읽기 전용 파일 탐색**: `GET /project/tree`와 `GET /project/file`는 지연 로드 트리와 뷰어를 제공하며, 세션 루트 밖은 강하게 거부한다(에이전트의 외부 파일 승인 흐름을 의도적으로 우회한다). `FILE_BROWSER`가 읽기 크기, 인코딩, 깊이, 레벨당 항목 수를 제한한다. 인앱 디렉터리 선택기(`GET /system/dirs`, 단일 절대 경로의 **직접 하위 디렉터리만** 나열하는 의도적 예외)는 브라우저 빌드를 지원하고, 데스크톱 빌드는 OS 폴더 대화상자를 연다
+- **동시성 레인** ([runtime/lane/core.py](runtime/lane/core.py)): 프로세스 레벨 레인 4개로, 각각 active/queued 카운터를 가진 `asyncio.Semaphore`이며, 한도 초과 작업은 거부되지 않고 FIFO로 대기한다 — `MAIN`(메인 에이전트 턴, CPU 비례 12–16), `SUBAGENT`(스폰과 스티어, 8), `NUDGE`(nudge/영속화 호출, 4), `NESTED`(`sessions_send` 응답 턴, 직렬, 1). 시작 시 검증이 `main >= subagent + nudge`를 강제하며, `GET /lane-status`가 레인별 `{name, max_concurrent, active, queued}`를 보고한다
+- **대기 중인 사용자 입력**: 턴이 실행되는 동안 보낸 메시지는 `QUEUED` 행으로 영속화되고(`client_msg_id`로 중복 제거, `INPUT_QUEUE["max_active_per_session"]`이 상한), FIFO 위치와 함께 응답된다. 턴 러너는 **턴마다 한 행만** 꺼내므로, 대기 중인 N개의 메시지는 N개의 턴과 N개의 응답을 만든다 — 하나로 합쳐지지 않는다 — 그리고 HITL 대기 중인 세션은 재개가 완료될 때까지 아무것도 꺼내지 않는다. 클라이언트는 대기 행에 `cancel_queued`, `edit_queued`, `send_now`를 적용할 수 있다
+- **TaskFlow 진행 웨이브** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): 흐름의 단계들을 최장 경로 DAG 레벨로 묶어 플로팅 진행 패널에 표시한다(표시 전용 — 스케줄러는 여전히 각자의 `depends_on`에 따라 단계별 해제를 유지한다. 알 수 없는 의존성은 무시되고, 사이클은 `cyclic`로 표시된 마지막 웨이브에 놓인다). 흐름이 변경될 때마다 `taskflow_updated` 프레임을 최선 effort로 푸시하며, 재접속한 클라이언트는 `taskflow_refresh`로 완전히 동일한 페이로드를 다시 요청할 수 있다
+- **도구 소요 시간**: 모든 도구 호출은 도구 반환 시점에 한 번만 측정된다(`time.monotonic()` 사용, 0으로 클램프), 메시지 영속화 래퍼가 이를 처리해 `ToolMessage.additional_kwargs["tool_duration_ms"]`에 기록하고 `messages.tool_duration_ms`에 영속화한다. 실시간 카드는 실행 중 티커를, 종료 후에는 측정값을 보여준다. 설계상 승인 대기 시간과 대기열 시간은 이 측정 구간에 포함되지 않는다
+- **세션별 모델 및 사고**: `PUT /sessions/thinking`과 `PUT /sessions/model`이 단일 세션의 사고 토글과 메인 모델을 재정의한다(로그인이 활성화된 경우 클라이언트는 단회용 `GET /auth/ws-ticket`을 미리 가져온다). 사고 제어 미들웨어는 이에 맞춰 요청 모델을 `build_main_llm(thinking=...)` 변수로 교체하며, 세션에 명시적 선택이 없으면 환경 변수 기본값으로 폴백한다
 
 ---
 
@@ -101,15 +111,22 @@ EMA AI Agent는 장기 기억과 복잡한 추론 능력을 갖춘 고도로 의
 EMA_AI_agent/
 ├── agent/                  # 에이전트 코어 로직
 │   ├── core.py             # 메인 에이전트 루프(LangChain create_agent → LangGraph 그래프)
+│   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
 │   ├── wrapper/            # 그래프 레벨 래퍼(반복 가드, 컨텍스트 한도)
 │   ├── checkpointer/       # 스레드 세이프 비동기 SQLite 체크포인터
 │   ├── middlewares/        # 미들웨어 파이프라인(요약, 가드레일, HITL 등)
+│   ├── prompt_data_provider.py # Runtime PromptDataProvider implementation (owner side)
+│   ├── skill_write_provider.py  # Runtime SkillWriteProvider implementation (owner side)
 │   └── tools/              # 에이전트가 사용하는 도구
+│       ├── taskflow/       # Task orchestration engine (DAG, budget, deadline, step judge)
 │       ├── subagent/       # 멀티레벨 서브에이전트 시스템(spawn/registry/swarm 등)
+│       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
 │       ├── todolist/       # 세션 범위 todo 계획 레이어
 │       │   └── knowledge/  # Plan 지식 베이스 + `knowledge` 도구
 │       ├── file_tools/     # 파일 I/O 도구(읽기, 쓰기, 패치, 검색)
 │       ├── skill_tools/    # 스킬 관리 도구(나열, 조회, 관리)
+│       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
+│       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
 │       ├── pub_base/       # 공유 도구 유틸리티 및 기반 (BaseSQLiteRepository, 경로 유틸)
 │       ├── mcp_plugin.py   # MCP 도구 통합
 │       ├── web_search.py   # 웹 검색 도구(Tavily)
@@ -124,6 +141,7 @@ EMA_AI_agent/
 │
 ├── channels/               # 채널 인터페이스 정의
 │   ├── base.py             # 추상 채널 기반 클래스
+│   ├── deps.py             # Dependency-injection seams for channel wiring
 │   ├── manager.py          # 채널 라이프사이클 매니저
 │   └── registry.py         # 채널 등록
 │
@@ -155,6 +173,11 @@ EMA_AI_agent/
 │   ├── token-guard/        # 128K 컨텍스트 윈도우 하한
 │   ├── context-governance/ # 영속화, 축출, 테일 클립, 요약 필터링
 │   ├── long-running-tasks/ # TaskFlow 오케스트레이션
+│   ├── subagent/           # Subagent design invariants & completion gates
+│   ├── code-intel/         # Code retrieval layers
+│   ├── ptc/                # Programmatic tool calling
+│   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 선택형 로그인 보호(계정과 세션)
 │
 ├── evals/                  # 평가 프레임워크(dispatcher + 5개 스위트)
@@ -169,6 +192,7 @@ EMA_AI_agent/
 │
 ├── logs/                   # 로깅 시스템
 │   ├── logger.py           # 로그 설정(loguru)
+│   ├── curator/            # Curator run logs
 │   └── output/             # 로그 출력 디렉터리
 │
 ├── models/                 # 모델 래퍼 및 가중치
@@ -197,12 +221,16 @@ EMA_AI_agent/
 │       ├── bus.py          # 메시지 버스 데이터 모델
 │       └── client.py       # 클라이언트 데이터 모델
 │
-├── runtime/                # 런타임 상태 및 유틸리티
+├── runtime/                # Runtime state, lanes & cross-boundary seams
+│   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
+│   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
+│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / NUDGE / NESTED)
 │   ├── session/            # 세션 단위 레지스트리
 │   │   ├── core.py         # 싱글톤 SessionRegister 기반 + 세션별 정리
 │   │   ├── relation_register.py # 세션/socket 관계 레지스트리
 │   │   ├── state_register.py   # 상태 레지스트리
 │   │   ├── state_keys.py       # 타입 지정 StateKey 레지스트리 + TypedState 파사드
+│   │   ├── project_dir.py  # Per-session project-directory binding resolution
 │   │   ├── count_call_register.py # 사용량/통계 카운터
 │   │   ├── timer_call_register.py # 타이머 레지스트리
 │   │   └── _callback_executor.py # 비동기 콜백 실행기
@@ -213,6 +241,8 @@ EMA_AI_agent/
 ├── server/                 # Robyn 백엔드 서비스
 │   ├── __main__.py         # 서버 엔트리포인트(python -m server)
 │   ├── DAO/                # 데이터 접근 객체
+│   ├── queue/              # Persisted user-input queue store
+│   ├── utils/              # Shared backend helpers (JWT, password hashing, atomic I/O, WS)
 │   ├── service/            # 비즈니스 로직 서비스(skill_scanner.py 포함)
 │   └── trigger/            # 라우트 및 핸들러 등록
 │       ├── http/           # HTTP 엔드포인트 트리거
@@ -227,7 +257,8 @@ EMA_AI_agent/
 │   ├── plugins/            # 서드파티 업로드 스킬(기본 비활성)
 │   └── builtin/            # 내장 스킬
 │       ├── core/           # cron, heartbeat, clawhub, skill_creator, image_to_text,
-│       │                   # speech_to_text, video_text_to_text, multimodal_rag
+│       │                   # speech_to_text, video_text_to_text, multimodal_rag,
+│       │                   # taskflow, todolist, ulw-execute
 │       ├── text_to_image/  # Text-to-image 스킬
 │       ├── code_wiki/      # 코드베이스 wiki 생성 스킬
 │       └── llm_wiki/       # Markdown 지식베이스 스킬
@@ -245,6 +276,7 @@ EMA_AI_agent/
 │
 ├── workspace/              # 캐릭터 프로파일 및 행동 정의
 │   ├── SOUL.md             # 성격 대비, 말투
+│   ├── IDENTITY.md         # Core identity card
 │   ├── AGENTS.md           # 도구 사용 우선순위, 안전 경계
 │   ├── USER.md             # 사용자별 상호작용 선호
 │   ├── ROLE.md             # 역할 선언: AI와 사용자가 각각 연기하는 상대
@@ -252,6 +284,7 @@ EMA_AI_agent/
 │   ├── prompt_builder.py   # 프로파일 → 프롬프트 빌더
 │   ├── file_sync.py        # 워크스페이스 템플릿 지연 동기화(언어별)
 │   ├── template/           # 페르소나 템플릿(en / zh / ja / ko)
+│   ├── sessions/           # Per-session runtime workspace data
 │   └── memory/             # 장기 기억 저장소
 │
 ├── .env.example            # 환경 변수 템플릿
@@ -350,7 +383,7 @@ uv run python -m server
 백엔드는 **http://127.0.0.1:8080** 에서 리슨하며 WebSocket 엔드포인트는 `/sessions/ws`입니다.
 
 ### 5. (선택) 데스크톱 클라이언트
-Tauri 2 + Nuxt 4 클라이언트는 [client/](client/)에 있으며 Node.js 18+, pnpm, Rust가 필요합니다:
+Tauri 2 + Nuxt 4 클라이언트는 [client/](client/)에 있으며 Node.js 20+, pnpm, Rust가 필요합니다(CI는 Node 22를 고정합니다):
 
 ```bash
 cd client
@@ -389,7 +422,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 뒤 인자는 pyt
 
 ### 실제 LLM e2e 테스트(`llm_e2e` marker)
 
-`tests/agent/tools/subagent/`의 네 테스트 파일(`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`)에 있는 일곱 개의 테스트가 **실제 LLM API**를 호출합니다. 이들은:
+다섯 개 파일에 걸친 여덟 개의 테스트가 **실제 LLM API**를 호출합니다: `tests/agent/tools/subagent/`의 일곱 개(`test_real_e2e.py`, `test_spawn_direct_e2e.py`, `test_code_intel_researcher_e2e.py`, `test_ptc_executor_e2e.py`)와 `tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py`의 multimodal-RAG 파이프라인 테스트입니다. 이들은:
 
 - **기본적으로 선택 해제**되며(`-m "not llm_e2e"`, `pyproject.toml` addopts와 runner 양쪽에 설정),
 - `@pytest.mark.timeout` 예산(pytest-timeout)으로 제한됩니다: 단순 테스트 300초, 동시 테스트 600초,

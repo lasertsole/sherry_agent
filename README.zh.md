@@ -31,7 +31,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 
 ### 2. 🛠️ 动态技能系统
 - **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
-- **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`code_wiki`、`llm_wiki`
+- **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
 - **技能管理工具**：Agent 可在运行时列出、查看、管理技能；第三方上传的技能（`skills/plugins/`）默认停用，需显式启用
 - **SkillSpector 安全扫描**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：第三方技能在启用前由 NVIDIA SkillSpector 扫描（静态 YARA/规则分析 + 可选的 LLM 语义分析，使用 auxiliary LLM）；被标记的技能将被禁止安装
 - **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](docs/experience/README.zh.md)
@@ -47,6 +47,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 - **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
 - **验证式完成**：每次 spawn 都会在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由配置的 `COMPLETION_JUDGE["goal_max_turns"]` 预算限定（默认 5）
 - **功能角色（可选）**：`sessions_spawn(functional_role=...)` 可让 worker 专业化（general / researcher / executor / reviewer / librarian）；该角色决定 LLM 层级、工具 allow-list 与子代理系统提示词段落
+- **隔离工作树（可选）**：`sessions_spawn(isolation=True)` 让子代理拥有项目专属的 git worktree（`agent/tools/subagent/isolation/`），基于**脏**基线切出（`git stash create`，因此未提交的改动对子代理可见），并在 announce 时于每根目录锁下合并回去 —— 详见 [File Safety README](docs/file-safety/README.md)
 - ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
 
 ### 4. 🌐 多渠道接入
@@ -65,6 +66,15 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ### 6. ⏰ 定时与主动行为
 - **Cron 服务**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：支持一次性（`at`）、间隔（`every`）与 cron 表达式（`cron`，基于 croniter + 时区）三类定时任务，持久化到 JSON 任务文件，带运行历史与渠道投递
 - **Heartbeat 服务**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：周期性唤醒（默认 30 分钟），检查 `HEARTBEAT.md` 中的待办任务，由 LLM 决定 skip/run，结果经过通知门控过滤
+
+### 7. ⚙️ 运行时、并发与会话控制
+- **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录
+- **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框
+- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
+- **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
+- **TaskFlow 进度波次** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py))：一个流程的步骤被按最长路径 DAG 层级分组，用于浮动进度面板（仅用于展示——调度器仍按各自的 `depends_on` 逐个解锁步骤；未知依赖被忽略，环则落入一个标记为 `cyclic` 的末尾波次）。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
+- **工具耗时**：每次工具调用仅在工具返回时被计时一次（使用 `time.monotonic()`，下限钳制为 0），由消息持久化包装器完成，写入 `ToolMessage.additional_kwargs["tool_duration_ms"]` 并持久化到 `messages.tool_duration_ms`；实时卡片在运行中显示计时器，结束后显示实测值。按设计，审批等待和排队时间不计入该窗口
+- **会话级模型与思考**：`PUT /sessions/thinking` 与 `PUT /sessions/model` 为单个会话覆盖思考开关和主模型（启用登录时，客户端会预取一次性使用的 `GET /auth/ws-ticket`），思考控制中间件据此将请求模型替换为 `build_main_llm(thinking=...)` 变体——会话没有显式选择时回退到环境变量默认值
 
 ---
 
@@ -101,15 +111,22 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 EMA_AI_agent/
 ├── agent/                  # Agent 核心逻辑
 │   ├── core.py             # 主 Agent 循环（LangChain create_agent → LangGraph 图）
+│   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
 │   ├── wrapper/            # 图级包装器（重复防护、上下文上限）
 │   ├── checkpointer/       # 线程安全异步 SQLite checkpointer
 │   ├── middlewares/        # 中间件流水线（摘要、护栏、HITL 等）
+│   ├── prompt_data_provider.py # Runtime PromptDataProvider implementation (owner side)
+│   ├── skill_write_provider.py  # Runtime SkillWriteProvider implementation (owner side)
 │   └── tools/              # Agent 可用工具
+│       ├── taskflow/       # Task orchestration engine (DAG, budget, deadline, step judge)
 │       ├── subagent/       # 多层级子代理系统（spawn/registry/swarm 等）
+│       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
 │       ├── todolist/       # 会话级 todo 规划层
 │       │   └── knowledge/  # Plan 知识库 + `knowledge` 工具
 │       ├── file_tools/     # 文件 I/O 工具（读、写、补丁、搜索）
 │       ├── skill_tools/    # 技能管理工具（列表、查看、管理）
+│       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
+│       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
 │       ├── pub_base/       # 共享工具基础组件（BaseSQLiteRepository、路径工具）
 │       ├── mcp_plugin.py   # MCP 工具集成
 │       ├── web_search.py   # 联网搜索工具（Tavily）
@@ -124,6 +141,7 @@ EMA_AI_agent/
 │
 ├── channels/               # 渠道接口定义
 │   ├── base.py             # 渠道抽象基类
+│   ├── deps.py             # Dependency-injection seams for channel wiring
 │   ├── manager.py          # 渠道生命周期管理器
 │   └── registry.py         # 渠道注册
 │
@@ -155,6 +173,11 @@ EMA_AI_agent/
 │   ├── token-guard/        # 128K 上下文窗口下限
 │   ├── context-governance/ # 持久化、驱逐、尾部裁剪与摘要过滤
 │   ├── long-running-tasks/ # TaskFlow 编排
+│   ├── subagent/           # Subagent design invariants & completion gates
+│   ├── code-intel/         # Code retrieval layers
+│   ├── ptc/                # Programmatic tool calling
+│   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── threat-model/       # Trust boundaries & prompt-injection scanner
 │   └── auth/               # 可选登录保护（账户与会话）
 │
 ├── evals/                  # 评估框架（dispatcher + 5 个套件）
@@ -169,6 +192,7 @@ EMA_AI_agent/
 │
 ├── logs/                   # 日志系统
 │   ├── logger.py           # 日志配置（loguru）
+│   ├── curator/            # Curator run logs
 │   └── output/             # 日志输出目录
 │
 ├── models/                 # 模型封装与权重
@@ -197,12 +221,16 @@ EMA_AI_agent/
 │       ├── bus.py          # 消息总线数据模型
 │       └── client.py       # 客户端数据模型
 │
-├── runtime/                # 运行时状态与工具
+├── runtime/                # Runtime state, lanes & cross-boundary seams
+│   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
+│   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
+│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / NUDGE / NESTED)
 │   ├── session/            # 会话级寄存器
 │   │   ├── core.py         # 单例 SessionRegister 基类 + 按会话清理
 │   │   ├── relation_register.py # 会话/socket 关系注册表
 │   │   ├── state_register.py   # 状态注册表
 │   │   ├── state_keys.py       # 类型化 StateKey 注册表 + TypedState 门面
+│   │   ├── project_dir.py  # Per-session project-directory binding resolution
 │   │   ├── count_call_register.py # 用量/统计计数器
 │   │   ├── timer_call_register.py # 定时器注册表
 │   │   └── _callback_executor.py # 异步回调执行器
@@ -213,6 +241,8 @@ EMA_AI_agent/
 ├── server/                 # Robyn 后端服务
 │   ├── __main__.py         # 服务入口（python -m server）
 │   ├── DAO/                # 数据访问对象
+│   ├── queue/              # Persisted user-input queue store
+│   ├── utils/              # Shared backend helpers (JWT, password hashing, atomic I/O, WS)
 │   ├── service/            # 业务逻辑服务（含 skill_scanner.py）
 │   └── trigger/            # 路由与处理器注册
 │       ├── http/           # HTTP 端点触发器
@@ -227,7 +257,8 @@ EMA_AI_agent/
 │   ├── plugins/            # 第三方上传技能（默认停用）
 │   └── builtin/            # 内置技能
 │       ├── core/           # cron、heartbeat、clawhub、skill_creator、image_to_text、
-│       │                   # speech_to_text、video_text_to_text、multimodal_rag
+│       │                   # speech_to_text、video_text_to_text、multimodal_rag、
+│       │                   # taskflow, todolist, ulw-execute
 │       ├── text_to_image/  # 文生图技能
 │       ├── code_wiki/      # 代码库 wiki 生成技能
 │       └── llm_wiki/       # Markdown 知识库技能
@@ -245,6 +276,7 @@ EMA_AI_agent/
 │
 ├── workspace/              # 角色档案与行为定义
 │   ├── SOUL.md             # 性格反差、语言风格
+│   ├── IDENTITY.md         # Core identity card
 │   ├── AGENTS.md           # 工具使用优先级、安全边界
 │   ├── USER.md             # 用户偏好与已知信息
 │   ├── ROLE.md             # 角色声明：AI 扮演谁、用户扮演谁
@@ -252,6 +284,7 @@ EMA_AI_agent/
 │   ├── prompt_builder.py   # 档案到系统提示词的构建器
 │   ├── file_sync.py        # 工作区模板懒同步（按语言）
 │   ├── template/           # 人设模板（en / zh / ja / ko）
+│   ├── sessions/           # Per-session runtime workspace data
 │   └── memory/             # 长期记忆存储
 │
 ├── .env.example            # 环境变量模板
@@ -350,7 +383,7 @@ uv run python -m server
 后端监听 **http://127.0.0.1:8080**，WebSocket 端点为 `/sessions/ws`。
 
 ### 5. （可选）桌面客户端
-Tauri 2 + Nuxt 4 客户端位于 [client/](client/)，需要 Node.js 18+、pnpm 与 Rust：
+Tauri 2 + Nuxt 4 客户端位于 [client/](client/)，需要 Node.js 20+、pnpm 与 Rust（CI 固定 Node 22）：
 
 ```bash
 cd client
@@ -389,7 +422,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数�
 
 ### 真实 LLM e2e 测试（`llm_e2e` marker）
 
-`tests/agent/tools/subagent/` 中的四个测试文件（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`）包含七个会调用**真实 LLM API** 的测试。它们：
+五个文件中的八个测试会调用**真实 LLM API**：其中七个位于 `tests/agent/tools/subagent/`（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`），外加 `tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py` 中的 multimodal-RAG 流水线测试。它们：
 
 - **默认被取消选择**（`-m "not llm_e2e"`，同时写在 `pyproject.toml` addopts 与 runner 中），
 - 受 `@pytest.mark.timeout` 预算约束（pytest-timeout）：简单测试 300 秒，并发测试 600 秒，

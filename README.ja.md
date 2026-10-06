@@ -31,7 +31,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 
 ### 2. 🛠️ 動的スキルシステム
 - **SKILL.md 標準**：スキルは YAML フロントマター（`name`、`description`、オプションで `scope: all | main_only | subagent_only`）を持つ Markdown ファイルで、ローダーが `skills/` 配下のすべての `SKILL.md` を自動検出します
-- **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`code_wiki`、`llm_wiki`
+- **内蔵スキル**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub スキルインストーラー）、`skill_creator`（新スキル自動生成）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
 - **スキル管理ツール**：エージェントは実行時にスキルの一覧表示・閲覧・管理が可能。サードパーティ製アップロードスキル（`skills/plugins/`）は明示的に有効化するまで非アクティブ
 - **SkillSpector セキュリティスキャン**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：サードパーティスキルは有効化前に NVIDIA SkillSpector でスキャン（静的 YARA/ルール解析 + auxiliary LLM によるオプションの LLM 意味解析）。検出されたスキルはインストールがブロックされます
 - **スキルキュレーター**：context engine の curator スレッドが `skills/auto/` 配下の自動学習スキルを管理 — 詳細は [Experience README](docs/experience/README.ja.md)
@@ -47,6 +47,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 - **Swarm モード**：FIFO スケジューリングと設定可能な同時実行数によるバッチサブタスク実行
 - **検証された完了**：すべての spawn が子ターン間に補助 LLM の完了判定器を実行します；`continue` 判定は判定器のフォローアッププロンプトを次のターンとして注入し、設定された `COMPLETION_JUDGE["goal_max_turns"]` 予算（既定 5）で上限が決まります
 - **機能ロール（オプトイン）**：`sessions_spawn(functional_role=...)` でワーカーを特化（general / researcher / executor / reviewer / librarian）。ロールが LLM 層、ツール allow-list、子のシステムプロンプトセクションを決定します
+- **隔離ワークツリー（オプトイン）**：`sessions_spawn(isolation=True)` は子にプロジェクトの専用 git ワークツリー（`agent/tools/subagent/isolation/`）を与え、**ダーティ**なベースライン（`git stash create`、コミットされていない編集が子から見える）から切り出して、announce 時に root 単位のロックの下でマージバックします — 詳細は [File Safety README](docs/file-safety/README.md)
 - ▶️ _完全なアーキテクチャは [Subagent System README](agent/tools/subagent/README.md) を参照_
 
 ### 4. 🌐 マルチチャンネルアクセス
@@ -65,6 +66,15 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 ### 6. ⏰ 定時実行と能動的行動
 - **Cron サービス**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：一回限り（`at`）、間隔（`every`）、cron 式（`cron`、croniter + タイムゾーン）の 3 種類のエージェントタスクをスケジュール。JSON ジョブストアに永続化し、実行履歴とチャンネル配信に対応
 - **Heartbeat サービス**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：定期的なウェイクアップ（デフォルト 30 分）で `HEARTBEAT.md` の未完了タスクを確認し、LLM が skip/run を判断、結果は通知ゲートを通過
+
+### 7. ⚙️ ランタイム・並行性・セッション制御
+- **プロジェクトディレクトリのバインド** ([runtime/session/project_dir.py](runtime/session/project_dir.py)): すべてのセッションはプロジェクトディレクトリを持ち、ツールはそこを基準に相対パスを解決する — セッションバインド → `SHERRY_PROJECT_DIR` → `sherry.jsonc` の `project_dir` → `ROOT_DIR`。`PUT /sessions/project` でバインドまたは解除（`null`）でき、ターン実行中の選択は保留されターン境界で昇格される。ルートは**呼び出しごとに**解決されキャッシュされないため、プロセスレベルのツールシングルトンが最初の呼び出し元のディレクトリにセッションを固定してしまうことはない。サブエージェントは spawn 時に親のバインドを継承し、開始時点のルートに固定される。プロンプトには有効なルートを示す `## Current Working Directory` ブロックが追加される
+- **読み取り専用のファイル閲覧**: `GET /project/tree` と `GET /project/file` は遅延読み込みツリーとビューアを提供し、セッションルートの外側は強制拒否される（エージェントの外部ファイル承認フローは意図的にバイパスされる）。読み取りサイズ・エンコーディング・深さ・レベルあたりのエントリ数は `FILE_BROWSER` が制限する。アプリ内ディレクトリピッカー（`GET /system/dirs`、単一の絶対パスの**直下のサブディレクトリのみ**を列挙する意図的な例外）はブラウザビルドを支え、デスクトップビルドは OS のフォルダーダイアログを開く
+- **並行レーン** ([runtime/lane/core.py](runtime/lane/core.py)): プロセスレベルのレーン 4 本で、いずれも active/queued カウンターを持つ `asyncio.Semaphore` であり、上限超過の作業は拒否されるのではなく FIFO でキューに入る — `MAIN`（メインエージェントのターン、CPU 比例 12–16）、`SUBAGENT`（spawn と steer、8）、`NUDGE`（nudge/永続化呼び出し、4）、`NESTED`（`sessions_send` の応答ターン、直列、1）。起動時の検証が `main >= subagent + nudge` を強制し、`GET /lane-status` がレーンごとの `{name, max_concurrent, active, queued}` を返す
+- **キューされたユーザー入力**: ターン実行中に送られたメッセージは `QUEUED` 行として永続化され（`client_msg_id` で重複排除、上限は `INPUT_QUEUE["max_active_per_session"]`）、FIFO の位置とともに応答される。ターンランナーは**1 ターンにつき 1 行だけ**を取り出すため、キューされた N 件のメッセージは N ターンと N 応答を生む — ひとつにまとめられることはない — また HITL 待ちのセッションは再開が完了するまで何も取り出さない。クライアントはキュー行に `cancel_queued`、`edit_queued`、`send_now` を適用できる
+- **TaskFlow の進捗ウェーブ** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py)): フローのステップは最長経路の DAG レベルにまとめられ、フローティング進捗パネルに表示される（表示専用 — スケジューラは依然として各ステップの `depends_on` ごとに解錠する。未知の依存は無視され、閉路は `cyclic` と表示された末尾のウェーブに置かれる）。フローの変更ごとに `taskflow_updated` フレームをベストエフォートでプッシュし、再接続したクライアントは `taskflow_refresh` で完全に同一のペイロードを再取得できる
+- **ツール所要時間**: すべてのツール呼び出しは、ツール返却時点で一度だけ計測される（`time.monotonic()` を使い 0 にクランプ）。メッセージ永続化ラッパーがこれを測定して `ToolMessage.additional_kwargs["tool_duration_ms"]` に記録し `messages.tool_duration_ms` に永続化する。ライブカードは実行中にティッカーを、確定後に実測値を表示する。設計上、承認待ち時間とキュー待機時間はこの窓に含まれない
+- **セッションごとのモデルと思考**: `PUT /sessions/thinking` と `PUT /sessions/model` は単一セッションの思考トグルとメインモデルを上書きする（ログインが有効な場合、クライアントは単回限りの `GET /auth/ws-ticket` を先取りする）。思考制御ミドルウェアはそれに基づいてリクエストモデルを `build_main_llm(thinking=...)` のバリアントに差し替え、セッションに明示的な選択がなければ環境変数の既定値へフォールバックする
 
 ---
 
@@ -101,15 +111,22 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 EMA_AI_agent/
 ├── agent/                  # エージェントコアロジック
 │   ├── core.py             # メインエージェントループ（LangChain create_agent → LangGraph グラフ）
+│   ├── security/           # 秘匿化、PII、脅威パターン、信頼できない出力のラッピング
 │   ├── wrapper/            # グラフレベルラッパー（繰り返しガード、コンテキスト上限）
 │   ├── checkpointer/       # スレッドセーフ非同期 SQLite チェックポインター
 │   ├── middlewares/        # ミドルウェアパイプライン（要約、ガードレール、HITL など）
+│   ├── prompt_data_provider.py # ランタイム PromptDataProvider 実装（オーナー側）
+│   ├── skill_write_provider.py  # ランタイム SkillWriteProvider 実装（オーナー側）
 │   └── tools/              # エージェント利用可能なツール
+│       ├── taskflow/       # タスクオーケストレーションエンジン（DAG、予算、デッドライン、ステップ判定器）
 │       ├── subagent/       # マルチレベルサブエージェントシステム（spawn/registry/swarm など）
+│       │   └── isolation/  # オプトインの git ワークツリー隔離バックエンド（spawn された子用）
 │       ├── todolist/       # セッションスコープの todo 計画レイヤー
 │       │   └── knowledge/  # Plan ナレッジベース + `knowledge` ツール
 │       ├── file_tools/     # ファイル I/O ツール（読み・書き・パッチ・検索）
 │       ├── skill_tools/    # スキル管理ツール（一覧・閲覧・管理）
+│       ├── code_intel/     # コード検索（ripgrep、tree-sitter、ast-grep、LSP、セマンティック）
+│       ├── ptc/            # プログラム的ツール呼び出し（`execute_code` 子プロセスブリッジ）
 │       ├── pub_base/       # 共有ツールユーティリティと基盤（BaseSQLiteRepository、パスユーティリティ）
 │       ├── mcp_plugin.py   # MCP ツール統合
 │       ├── web_search.py   # Web 検索ツール（Tavily）
@@ -124,6 +141,7 @@ EMA_AI_agent/
 │
 ├── channels/               # チャンネルインターフェース定義
 │   ├── base.py             # 抽象チャンネル基底クラス
+│   ├── deps.py             # チャンネル配線の依存性注入シーム
 │   ├── manager.py          # チャンネルライフサイクルマネージャー
 │   └── registry.py         # チャンネル登録
 │
@@ -155,6 +173,11 @@ EMA_AI_agent/
 │   ├── token-guard/        # 128K コンテキストウィンドウ下限
 │   ├── context-governance/ # 永続化、退避、テールクリップ、要約フィルタリング
 │   ├── long-running-tasks/ # TaskFlow オーケストレーション
+│   ├── subagent/           # サブエージェント設計の不変条件と完了ゲート
+│   ├── code-intel/         # コード検索レイヤー
+│   ├── ptc/                # プログラム的ツール呼び出し
+│   ├── file-safety/        # アトミック書き込み、CAS、ロック、ワークツリー隔離
+│   ├── threat-model/       # 信頼境界と prompt インジェクションスキャナ
 │   └── auth/               # オプトインのログイン保護（アカウントとセッション）
 │
 ├── evals/                  # 評価フレームワーク（dispatcher + 5 スイート）
@@ -169,6 +192,7 @@ EMA_AI_agent/
 │
 ├── logs/                   # ロギングシステム
 │   ├── logger.py           # ログ設定（loguru）
+│   ├── curator/            # Curator 実行ログ
 │   └── output/             # ログ出力ディレクトリ
 │
 ├── models/                 # モデルラッパーと重み
@@ -197,12 +221,16 @@ EMA_AI_agent/
 │       ├── bus.py          # メッセージバスデータモデル
 │       └── client.py       # クライアントデータモデル
 │
-├── runtime/                # ランタイム状態とユーティリティ
+├── runtime/                # ランタイム状態、レーン、そして境界を越えるシーム
+│   ├── hooks.py            # プロセスレベルのコールバックレジストリ（agent/skills が解決する server 所有フック）
+│   ├── data_provider.py    # Prompt/スキル書き込みプロバイダーレジストリ（agent 所有、workspace/context_engine が読む）
+│   ├── lane/               # プロセスレベルの並行レーン（MAIN / SUBAGENT / NUDGE / NESTED）
 │   ├── session/            # セッション単位レジストリ
 │   │   ├── core.py         # シングルトン SessionRegister 基底 + セッション単位のクリーンアップ
 │   │   ├── relation_register.py # セッション/socket 関係レジストリ
 │   │   ├── state_register.py   # ステートレジストリ
 │   │   ├── state_keys.py       # 型付き StateKey レジストリ + TypedState ファサード
+│   │   ├── project_dir.py  # セッション単位のプロジェクトディレクトリバインド解決
 │   │   ├── count_call_register.py # 使用量/統計カウンター
 │   │   ├── timer_call_register.py # タイマーレジストリ
 │   │   └── _callback_executor.py # 非同期コールバック実行器
@@ -213,6 +241,8 @@ EMA_AI_agent/
 ├── server/                 # Robyn バックエンドサービス
 │   ├── __main__.py         # サーバーエントリーポイント（python -m server）
 │   ├── DAO/                # データアクセスオブジェクト
+│   ├── queue/              # 永続化されたユーザー入力キューストア
+│   ├── utils/              # 共有バックエンドヘルパー（JWT、パスワードハッシュ、アトミック I/O、WS）
 │   ├── service/            # ビジネスロジックサービス（skill_scanner.py を含む）
 │   └── trigger/            # ルートとハンドラーの登録
 │       ├── http/           # HTTP エンドポイントトリガー
@@ -227,7 +257,8 @@ EMA_AI_agent/
 │   ├── plugins/            # サードパーティアップロードスキル（デフォルトで非アクティブ）
 │   └── builtin/            # 内蔵スキル
 │       ├── core/           # cron、heartbeat、clawhub、skill_creator、image_to_text、
-│       │                   # speech_to_text、video_text_to_text、multimodal_rag
+│       │                   # speech_to_text、video_text_to_text、multimodal_rag、
+│       │                   # taskflow、todolist、ulw-execute
 │       ├── text_to_image/  # Text-to-Image スキル
 │       ├── code_wiki/      # コードベース wiki 生成スキル
 │       └── llm_wiki/       # Markdown ナレッジベーススキル
@@ -245,6 +276,7 @@ EMA_AI_agent/
 │
 ├── workspace/              # キャラクタープロファイルと行動定義
 │   ├── SOUL.md             # 性格の対比、話し方
+│   ├── IDENTITY.md         # コア・アイデンティティカード
 │   ├── AGENTS.md           # ツール使用の優先順位、安全境界
 │   ├── USER.md             # ユーザー固有の対話設定
 │   ├── ROLE.md             # 役割宣言：AI とユーザーがそれぞれ演じる相手
@@ -252,6 +284,7 @@ EMA_AI_agent/
 │   ├── prompt_builder.py   # プロファイルからプロンプトを構築
 │   ├── file_sync.py        # ワークスペーステンプレートの遅延同期（言語別）
 │   ├── template/           # ペルソナテンプレート（en / zh / ja / ko）
+│   ├── sessions/           # セッション単位のランタイムワークスペースデータ
 │   └── memory/             # 長期記憶ストレージ
 │
 ├── .env.example            # 環境変数テンプレート
@@ -350,7 +383,7 @@ uv run python -m server
 バックエンドは **http://127.0.0.1:8080** でリッスンし、WebSocket エンドポイントは `/sessions/ws` です。
 
 ### 5. （オプション）デスクトップクライアント
-Tauri 2 + Nuxt 4 クライアントは [client/](client/) にあります。Node.js 18+、pnpm、Rust が必要です：
+Tauri 2 + Nuxt 4 クライアントは [client/](client/) にあり、Node.js 20+、pnpm、Rust が必要です（CI は Node 22 を固定）：
 
 ```bash
 cd client
@@ -389,7 +422,7 @@ uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 以降の引数�
 
 ### 実 LLM e2e テスト（`llm_e2e` marker）
 
-`tests/agent/tools/subagent/` の 4 つのテストファイル（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`）にある 7 つのテストが**実 LLM API** を呼び出します。これらは：
+5 つのファイルにまたがる 8 つのテストが**実 LLM API** を呼び出します：`tests/agent/tools/subagent/` の 7 つ（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`）に加えて、`tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py` のマルチモーダル RAG パイプラインテストです。これらは：
 
 - **既定で選択解除**され（`-m "not llm_e2e"`、`pyproject.toml` の addopts と runner の両方で設定）、
 - `@pytest.mark.timeout` の予算（pytest-timeout）で制限され：単純テスト 300 秒、同時テスト 600 秒、
