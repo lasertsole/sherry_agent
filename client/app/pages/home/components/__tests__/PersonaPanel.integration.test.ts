@@ -150,7 +150,9 @@ describe('PersonaPanel role tab', () => {
     const wrapper = await mountPanel();
 
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息']);
+    // Role first, the three persona files, then the agent-config tabs
+    // (工具 / 中间件 / 子代理模型) the preset also carries.
+    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '子代理模型']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {

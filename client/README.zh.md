@@ -185,6 +185,7 @@ client/
 │   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
 │   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
+│   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 子代理模型）按会话镜像
 │   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + wave，由 taskflow_updated 刷新）
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   ├── plugins/                   # Nuxt 插件

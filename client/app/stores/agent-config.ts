@@ -1,0 +1,137 @@
+import { defineStore } from 'pinia';
+import type {
+  AgentCatalog,
+  AgentConfig,
+  AgentMiddlewareEntry,
+  AgentRoleEntry,
+  AgentToolEntry
+} from '~/composables/bridge/agent-config';
+// Stable module specifiers so tests can vi.mock the bridge; the unimport
+// injection is compile-time and leaves bare symbols unmockable.
+/* eslint-disable @typescript-eslint/no-restricted-imports */
+import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composables/bridge/agent-config';
+/* eslint-enable @typescript-eslint/no-restricted-imports */
+
+/**
+ * The 预设-工具/中间件/子代理模型 three tabs' state.
+ *
+ * Two halves:
+ *
+ * - the CATALOG (tools grouped, middleware lock flags, subagent roles) is
+ *   process-wide and fetched once — the client never hardcodes backend names;
+ * - the CONFIG is per session and mirrored from the backend on tab open; a save
+ *   writes the whole payload back (`PUT /sessions/agent_config`), which lands
+ *   live or is parked until the turn boundary (`pending`).
+ *
+ * A missing config key means "no opinion": every tool on, every middleware on,
+ * every role on its `model_tier` — the backend contract the payload mirrors.
+ */
+export const useAgentConfigStore = defineStore('agentConfig', () => {
+  /** The tool / middleware / role lists (empty until the first load). */
+  const catalog = ref<AgentCatalog>({ tools: [], middlewares: [], subagent_roles: [] });
+  /** True once the catalogue has been fetched (success or not). */
+  const catalogLoaded = ref(false);
+  /** sid → the session's own config as the backend reports it. */
+  const bySession = ref<Record<string, AgentConfig>>({});
+  /** sid → the last write was parked mid-turn and lands on the next turn. */
+  const pendingBySession = ref<Record<string, boolean>>({});
+  /** sid → the session has been hydrated at least once. */
+  const hydrated = ref<Record<string, boolean>>({});
+
+  /** Tools grouped by the catalogue's group ids, in first-seen order. */
+  const toolGroups = computed<Array<{ group: string; tools: AgentToolEntry[] }>>(() => {
+    const groups: Array<{ group: string; tools: AgentToolEntry[] }> = [];
+    for (const tool of catalog.value.tools) {
+      const bucket = groups.find(entry => entry.group === tool.group);
+      if (bucket) bucket.tools.push(tool);
+      else groups.push({ group: tool.group, tools: [tool] });
+    }
+    return groups;
+  });
+
+  /** Middleware entries split by the lock flag (the UI renders them apart). */
+  const middlewares = computed<{ gateable: AgentMiddlewareEntry[]; locked: AgentMiddlewareEntry[] }>(() => ({
+    gateable: catalog.value.middlewares.filter(entry => entry.gateable && !entry.required),
+    locked: catalog.value.middlewares.filter(entry => entry.required)
+  }));
+
+  /** The subagent roles in catalogue order. */
+  const subagentRoles = computed<AgentRoleEntry[]>(() => catalog.value.subagent_roles);
+
+  /**
+   * Load the catalogue once (idempotent; a failure leaves it empty and the
+   * caller retries on the next open).
+   */
+  async function loadCatalog(): Promise<void> {
+    if (catalogLoaded.value) return;
+    const loaded = await fetchAgentCatalog();
+    catalog.value = loaded;
+    catalogLoaded.value = true;
+  }
+
+  /**
+   * Pull one session's config (a parked choice wins, as the backend reports it).
+   * @param sessionId
+   */
+  async function hydrate(sessionId: string): Promise<void> {
+    if (!sessionId) return;
+    const state = await fetchAgentConfig(sessionId);
+    bySession.value = { ...bySession.value, [sessionId]: state.config };
+    pendingBySession.value = { ...pendingBySession.value, [sessionId]: state.pending };
+    hydrated.value = { ...hydrated.value, [sessionId]: true };
+  }
+
+  /**
+   * The session's own config ({} = every default).
+   * @param sessionId
+   */
+  function configOf(sessionId: string): AgentConfig {
+    return bySession.value[sessionId] ?? {};
+  }
+
+  /**
+   * Enabled tool names, expanded to ALL when the session has no opinion.
+   * @param sessionId
+   */
+  function enabledTools(sessionId: string): string[] {
+    const configured = configOf(sessionId).tools;
+    if (!Array.isArray(configured)) return catalog.value.tools.map(tool => tool.name);
+    return configured;
+  }
+
+  /**
+   * Whether the session's choice is parked (lands on the next turn).
+   * @param sessionId
+   */
+  function isPending(sessionId: string): boolean {
+    return pendingBySession.value[sessionId] === true;
+  }
+
+  /**
+   * Write the session's agent config and mirror what the backend stored.
+   * @param sessionId
+   * @param config
+   */
+  async function save(sessionId: string, config: AgentConfig): Promise<void> {
+    const state = await setAgentConfig(sessionId, config);
+    bySession.value = { ...bySession.value, [sessionId]: state.config };
+    pendingBySession.value = { ...pendingBySession.value, [sessionId]: state.pending };
+  }
+
+  return {
+    catalog,
+    catalogLoaded,
+    bySession,
+    pendingBySession,
+    hydrated,
+    toolGroups,
+    middlewares,
+    subagentRoles,
+    loadCatalog,
+    hydrate,
+    configOf,
+    enabledTools,
+    isPending,
+    save
+  };
+});

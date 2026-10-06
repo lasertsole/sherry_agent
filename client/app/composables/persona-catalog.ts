@@ -8,7 +8,12 @@
  * language templates at use time, they are never Dexie rows, and therefore can
  * be neither renamed nor deleted.
  */
-import type { PersonaPreset, PresetCharacter } from '@/composables/db';
+import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
+// Stable module specifiers so tests can vi.mock the bridge / logger.
+/* eslint-disable @typescript-eslint/no-restricted-imports */
+import { setAgentConfig } from '~/composables/bridge/agent-config';
+import { logUtil } from '~/utils/log';
+/* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /** Built-in entry ids (the virtual, non-deletable presets). */
 export type BuiltinPresetId = 'sherry' | 'coding';
@@ -115,12 +120,18 @@ export function composeRoleFile(character: PresetCharacter, t: TranslateFn): str
   return lines.length > 0 ? `# ROLE.md\n\n${lines.join('\n')}\n` : '';
 }
 
-/** Payload every apply path writes: the persona files + the character block. */
+/** Payload every apply path writes: the persona files + the character + the agent config. */
 export interface PersonaPresetPayload {
   /** File basename → content (AGENTS.md / SOUL.md / USER.md / ROLE.md). */
   content: Record<string, string>;
   /** Role names + avatars (written to the Dexie global profile). */
   character: PresetCharacter;
+  /**
+   * The 工具 / 中间件 / 子代理模型 selection (written to the session's agent config
+   * when the apply path knows its session). `{}` = every default: all tools, all
+   * switches on, every role on its `model_tier`.
+   */
+  agent?: AgentConfig;
 }
 
 /**
@@ -159,7 +170,9 @@ export function builtinPayload(
           'USER.md': template['USER.md'] ?? ''
         };
   content['ROLE.md'] = composeRoleFile(character, t);
-  return { content, character };
+  // Neither built-in pins a tool / middleware / model choice: `{}` means every
+  // default, so a built-in keeps behaving exactly like a session without a config.
+  return { content, character, agent: {} };
 }
 
 /**
@@ -183,6 +196,7 @@ export async function loadPresetPayload(
   const stored = preset.content ?? {};
   const character: PresetCharacter = preset.character ?? { ...DEFAULT_CACHED_CHARACTER };
   return {
+    agent: preset.agent ?? {},
     content: {
       'AGENTS.md': stored['AGENTS.md'] ?? '',
       'SOUL.md': stored['SOUL.md'] ?? '',
@@ -195,11 +209,15 @@ export async function loadPresetPayload(
 
 /**
  * Write a preset payload: the persona files through the API (read back and
- * verified) and the character into the Dexie global profile new sessions copy.
+ * verified), the character into the Dexie global profile new sessions copy, and
+ * — when the caller names the session — the agent config (工具 / 中间件 /
+ * 子代理模型) into that session's own registers.
  * @param payload Payload to apply.
- * @throws When the write cannot be verified (the caller surfaces the failure).
+ * @param sessionId Session to write the agent config for; omitted = files and
+ *   character only (no session exists yet).
+ * @throws When the file write cannot be verified (the caller surfaces the failure).
  */
-export async function applyPresetPayload(payload: PersonaPresetPayload): Promise<void> {
+export async function applyPresetPayload(payload: PersonaPresetPayload, sessionId?: string): Promise<void> {
   await writeSystemPrompt(payload.content);
   const written = await readSystemPrompt();
   const verified = !!written && Object.entries(payload.content).every(([file, content]) => written[file] === content);
@@ -211,4 +229,13 @@ export async function applyPresetPayload(payload: PersonaPresetPayload): Promise
     aiName: payload.character.aiName,
     aiAvatar: payload.character.aiAvatar
   });
+  if (sessionId) {
+    // A failure here must not undo the persona write (the session then runs
+    // with every default, which is exactly a preset without an agent block).
+    try {
+      await setAgentConfig(sessionId, payload.agent ?? {});
+    } catch (e) {
+      logUtil.e('[persona-catalog] agent config write failed:', e);
+    }
+  }
 }

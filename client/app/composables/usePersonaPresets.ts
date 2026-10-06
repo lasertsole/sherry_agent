@@ -1,5 +1,5 @@
 import { ref } from 'vue';
-import type { PersonaPreset, PresetCharacter } from '@/composables/db';
+import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
 import { logUtil } from '~/utils/log';
 
 /**
@@ -67,14 +67,16 @@ const refresh = async (): Promise<void> => {
  * @param name Preset display name (must be unique)
  * @param content Field map persisted into the Dexie personaPresets table
  * @param character Character display info (role names + avatars) stored with the preset
+ * @param agent
  */
 const create = async (
   name: string,
   content: Record<string, string>,
-  character?: PresetCharacter
+  character?: PresetCharacter,
+  agent?: AgentConfig
 ): Promise<PersonaPresetCreateResult> => {
   try {
-    const id = await createPersonaPreset(name, content, character);
+    const id = await createPersonaPreset(name, content, character, agent);
     await refresh();
     return { ok: true, id };
   } catch (e) {
@@ -94,10 +96,16 @@ const create = async (
  * @param id Preset row id in the Dexie personaPresets table
  * @param content Field map replacing the stored content
  * @param character Character display info stored with the preset
+ * @param agent
  */
-const update = async (id: number, content: Record<string, string>, character?: PresetCharacter): Promise<boolean> => {
+const update = async (
+  id: number,
+  content: Record<string, string>,
+  character?: PresetCharacter,
+  agent?: AgentConfig
+): Promise<boolean> => {
   try {
-    await updatePersonaPreset(id, content, character);
+    await updatePersonaPreset(id, content, character, agent);
     await refresh();
     return true;
   } catch (e) {

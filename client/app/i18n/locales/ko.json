@@ -144,6 +144,78 @@
     "collapse": "계획 접기"
   },
   "config": {
+    "agent": {
+      "tabs": {
+        "tools": "도구",
+        "middlewares": "미들웨어",
+        "subagents": "서브에이전트 모델"
+      },
+      "tools": {
+        "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
+        "count": "{selected}/{total} 선택",
+        "selectAll": "모두 켜기",
+        "clearAll": "모두 끄기",
+        "selectGroup": "전체",
+        "clearGroup": "지우기"
+      },
+      "toolGroup": {
+        "files": "파일",
+        "terminal": "터미널과 코드",
+        "tasks": "작업과 계획",
+        "memory": "기억과 검색",
+        "skills": "스킬",
+        "subagents": "서브에이전트",
+        "interaction": "상호작용",
+        "web": "웹",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
+        "lockedTitle": "시스템 필수(잠금)",
+        "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "계획 이어가기",
+          "desc": "계획(todo / 플로우)이 끝나지 않은 동안 턴을 이어갑니다"
+        },
+        "TaskIntentMiddleware": {
+          "name": "작업 의도 유도",
+          "desc": "작업 요청을 감지해 오케스트레이션 프롬프트를 주입합니다"
+        },
+        "ProjectDirNoticeMiddleware": {
+          "name": "디렉터리 변경 알림",
+          "desc": "작업 디렉터리가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
+        },
+        "MultimodalProcessor": {
+          "name": "멀티모달 전처리",
+          "desc": "업로드된 이미지 / 오디오 / 비디오를 저장하고 전처리합니다"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "완료 결과 주입",
+          "desc": "서브에이전트 완료 결과를 메인 세션에 주입합니다"
+        }
+      },
+      "subagents": {
+        "hint": "기능 역할마다 사용할 모델(환경 구성 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
+        "followTier": "역할 기본값 따르기",
+        "tier": "역할 기본값: {tier}",
+        "tierDepth": "역할 정의 없음: 깊이 기본값"
+      },
+      "role": {
+        "general": "범용",
+        "researcher": "리서처",
+        "executor": "실행자",
+        "reviewer": "리뷰어",
+        "librarian": "사서"
+      },
+      "viewer": {
+        "tools": "도구 {selected}/{total}",
+        "middlewares": "꺼진 미들웨어: {names}",
+        "middlewaresNone": "미들웨어: 모두 켜짐",
+        "models": "서브에이전트 모델: {names}"
+      }
+    },
     "llm": {
       "add": "모델 추가",
       "count": "{n} / {max}",

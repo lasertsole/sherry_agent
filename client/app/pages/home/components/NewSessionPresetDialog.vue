@@ -110,9 +110,11 @@ const confirm = async () => {
   creating.value = true;
   try {
     const payload = await loadPresetPayload(entry, locale.value, t);
-    await applyPresetPayload(payload);
-
+    // The id is minted first so the apply can also write the preset's agent
+    // config (工具 / 中间件 / 子代理模型) into THIS session's registers.
     const sessionId = crypto.randomUUID();
+    await applyPresetPayload(payload, sessionId);
+
     await cacheSessionPreset({ session_id: sessionId, preset_id: entry.id, preset_name: entryName(entry, t) });
     await ensureSessionCharacter(sessionId);
 

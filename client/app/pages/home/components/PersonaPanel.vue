@@ -169,6 +169,178 @@
                   style="overflow: auto" />
               </div>
             </TabPanel>
+
+            <!-- 工具 tab: which main-agent tools this preset/session enables.
+                 The catalogue comes from the backend (GET /agent/catalog) — the
+                 client never hardcodes tool names. All checked = the default. -->
+            <TabPanel
+              value="agentTools"
+              :header="t('config.agent.tabs.tools')"
+              data-test="persona-agent-tools-tab">
+              <div
+                class="flex min-h-0 flex-1 flex-col gap-2"
+                data-test="agent-tools-tab">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t('config.agent.tools.hint') }}
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">
+                      {{
+                        t('config.agent.tools.count', {
+                          selected: agentEnabledTools.length,
+                          total: agentStore.catalog.tools.length
+                        })
+                      }}
+                    </span>
+                    <Button
+                      :label="t('config.agent.tools.selectAll')"
+                      severity="secondary"
+                      text
+                      size="small"
+                      data-test="agent-tools-all"
+                      @click="selectAllTools" />
+                    <Button
+                      :label="t('config.agent.tools.clearAll')"
+                      severity="secondary"
+                      text
+                      size="small"
+                      data-test="agent-tools-none"
+                      @click="clearAllTools" />
+                  </div>
+                </div>
+                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                  <div
+                    v-for="group in agentStore.toolGroups"
+                    :key="group.group"
+                    class="mb-3 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
+                    <div class="mb-1 flex items-center justify-between gap-2">
+                      <span class="text-xs font-semibold text-gray-600 dark:text-gray-300">
+                        {{ t(`config.agent.toolGroup.${group.group}`) }}
+                      </span>
+                      <Button
+                        :label="
+                          agentGroupFullySelected(group)
+                            ? t('config.agent.tools.clearGroup')
+                            : t('config.agent.tools.selectGroup')
+                        "
+                        severity="secondary"
+                        text
+                        size="small"
+                        :data-test="`agent-tool-group-${group.group}`"
+                        @click="toggleToolGroup(group)" />
+                    </div>
+                    <div class="flex flex-wrap gap-x-4 gap-y-1">
+                      <label
+                        v-for="tool in group.tools"
+                        :key="tool.name"
+                        class="flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                        <Checkbox
+                          :model-value="agentToolSelected(tool.name)"
+                          binary
+                          :data-test="`agent-tool-${tool.name}`"
+                          @update:model-value="toggleTool(tool.name)" />
+                        <span class="font-mono">{{ tool.name }}</span>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </TabPanel>
+
+            <!-- 中间件 tab: the optional chain entries can be switched off; the
+                 safety baseline is shown locked (the backend refuses to store a
+                 required name as disabled). -->
+            <TabPanel
+              value="agentMiddlewares"
+              :header="t('config.agent.tabs.middlewares')"
+              data-test="persona-agent-middlewares-tab">
+              <div
+                class="flex min-h-0 flex-1 flex-col gap-2"
+                data-test="agent-middlewares-tab">
+                <span class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('config.agent.middlewares.hint') }}
+                </span>
+                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                  <div
+                    v-for="entry in agentStore.middlewares.gateable"
+                    :key="entry.name"
+                    class="mb-1 flex items-center justify-between gap-2 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+                    <div class="min-w-0">
+                      <div class="truncate text-sm text-theme-main">
+                        {{ t(`config.agent.middleware.${entry.name}.name`) }}
+                      </div>
+                      <div class="truncate text-xs text-gray-400">
+                        {{ t(`config.agent.middleware.${entry.name}.desc`) }}
+                      </div>
+                    </div>
+                    <ToggleSwitch
+                      :model-value="agentMiddlewareEnabled(entry.name)"
+                      :data-test="`agent-middleware-${entry.name}`"
+                      @update:model-value="toggleMiddleware(entry.name)" />
+                  </div>
+                  <div class="mt-3">
+                    <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                      {{ t('config.agent.middlewares.lockedTitle') }}
+                    </div>
+                    <div class="flex flex-wrap gap-1">
+                      <span
+                        v-for="entry in agentStore.middlewares.locked"
+                        :key="entry.name"
+                        class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
+                        :title="t('config.agent.middlewares.lockedHint')">
+                        <i class="pi pi-lock text-[9px]" />
+                        {{ entry.name }}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </TabPanel>
+
+            <!-- 子代理模型 tab: one picker per functional role; the options are
+                 the environment-config model profiles (the same list the
+                 session-model picker uses) plus "follow the role tier". -->
+            <TabPanel
+              value="agentSubagents"
+              :header="t('config.agent.tabs.subagents')"
+              data-test="persona-agent-subagents-tab">
+              <div
+                class="flex min-h-0 flex-1 flex-col gap-2"
+                data-test="agent-subagents-tab">
+                <span class="text-sm text-gray-500 dark:text-gray-400">
+                  {{ t('config.agent.subagents.hint') }}
+                </span>
+                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                  <div
+                    v-for="role in agentStore.subagentRoles"
+                    :key="role.role"
+                    class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+                    <div class="min-w-0">
+                      <div class="truncate text-sm text-theme-main">
+                        {{ t(`config.agent.role.${role.role}`) }}
+                        <span class="ml-1 font-mono text-[11px] text-gray-400">{{ role.role }}</span>
+                      </div>
+                      <div class="truncate text-xs text-gray-400">
+                        {{
+                          role.model_tier
+                            ? t('config.agent.subagents.tier', { tier: role.model_tier })
+                            : t('config.agent.subagents.tierDepth')
+                        }}
+                      </div>
+                    </div>
+                    <Select
+                      :model-value="agentRoleModelId(role.role)"
+                      :options="agentRoleModelOptions"
+                      option-label="label"
+                      option-value="value"
+                      class="w-56"
+                      :data-test="`agent-role-model-${role.role}`"
+                      @update:model-value="value => setRoleModel(role.role, value)" />
+                  </div>
+                </div>
+              </div>
+            </TabPanel>
           </TabView>
           <div class="flex justify-end">
             <Button
@@ -306,7 +478,8 @@
 import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AvatarCropDialog from './AvatarCropDialog.vue';
-import type { PersonaPreset, PresetCharacter } from '@/composables/db';
+import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
+import type { SessionModelProfile } from '~/composables/bridge/session';
 // DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
 // ~/composables/defaultCharacter.
 import { logUtil } from '~/utils/log';
@@ -367,6 +540,193 @@ const originalContent = ref<Record<string, string>>({});
 // The names are display info (Dexie global profile, locked per session on first
 // open) AND prompt content: 应用 composes ROLE.md from them in the active UI
 // language, so the agent reads who it plays and who the user plays.
+/** One catalogue tool-group row the 工具 tab renders. */
+interface AgentToolGroupEntry {
+  group: string;
+  tools: Array<{ name: string }>;
+}
+
+/** One env-config model profile row (the shape `useLlmProfilesStore` exposes). */
+interface AgentProfileEntry {
+  id: string;
+  label: string;
+  params: Record<string, string>;
+}
+
+// ── 工具 / 中间件 / 子代理模型 drafts (the preset's `agent` block) ──────────
+// The catalog (tool groups, middleware lock flags, roles) comes from the backend
+// once; the drafts below are what 保存预设 stores and 应用 writes to the session.
+const agentStore = useAgentConfigStore();
+const llmProfiles = useLlmProfilesStore();
+const route = useRoute();
+/** The session an 应用 targets (the open chat's sid; empty on the bare shell). */
+const panelSessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
+
+/** Enabled tool names (catalog order); the draft starts all-selected. */
+const agentTools = ref<string[]>([]);
+/** Gateable middleware names turned OFF. */
+const agentDisabledMiddlewares = ref<string[]>([]);
+/** role → chosen env-config profile id (`''` = follow the role tier). */
+const agentRoleModels = ref<Record<string, string>>({});
+
+/** Tool names currently enabled, in catalogue order. */
+const agentEnabledTools = computed<string[]>(() => {
+  const all = agentStore.catalog.tools.map(tool => tool.name);
+  if (agentTools.value.length === 0) return all;
+  const selected = new Set(agentTools.value);
+  return all.filter(name => selected.has(name));
+});
+
+/** Select-options: "follow the role tier" + every env-config profile. */
+const agentRoleModelOptions = computed<Array<{ label: string; value: string }>>(() => [
+  { label: t('config.agent.subagents.followTier'), value: '' },
+  ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
+]);
+
+/**
+ * Whether one tool is checked.
+ * @param name
+ */
+const agentToolSelected = (name: string): boolean => agentEnabledTools.value.includes(name);
+
+/**
+ * Whether every tool of a group is checked.
+ * @param group
+ * @param group.tools
+ */
+const agentGroupFullySelected = (group: { tools: Array<{ name: string }> }): boolean =>
+  group.tools.every(tool => agentToolSelected(tool.name));
+
+/**
+ * Whether a gateable middleware runs for this draft.
+ * @param name
+ */
+const agentMiddlewareEnabled = (name: string): boolean => !agentDisabledMiddlewares.value.includes(name);
+
+/**
+ * Toggle one tool.
+ * @param name Tool name.
+ */
+const toggleTool = (name: string): void => {
+  const current = agentEnabledTools.value;
+  agentTools.value = current.includes(name) ? current.filter(candidate => candidate !== name) : [...current, name];
+};
+
+/**
+ * Select / clear a whole group.
+ * @param groupEntry Catalogue group entry.
+ */
+const toggleToolGroup = (groupEntry: AgentToolGroupEntry): void => {
+  const names = groupEntry.tools.map(tool => tool.name);
+  if (agentGroupFullySelected(groupEntry)) {
+    agentTools.value = agentEnabledTools.value.filter(name => !names.includes(name));
+    return;
+  }
+  agentTools.value = [...new Set([...agentEnabledTools.value, ...names])];
+};
+
+/** Check every catalogue tool. */
+const selectAllTools = (): void => {
+  agentTools.value = agentStore.catalog.tools.map(tool => tool.name);
+};
+
+/** Uncheck every tool. */
+const clearAllTools = (): void => {
+  agentTools.value = [];
+};
+
+/**
+ * Toggle one gateable middleware.
+ * @param name Middleware name.
+ */
+const toggleMiddleware = (name: string): void => {
+  agentDisabledMiddlewares.value = agentDisabledMiddlewares.value.includes(name)
+    ? agentDisabledMiddlewares.value.filter(candidate => candidate !== name)
+    : [...agentDisabledMiddlewares.value, name];
+};
+
+/**
+ * The profile id a role's picker shows (`''` = follow the tier).
+ * @param role
+ */
+const agentRoleModelId = (role: string): string => agentRoleModels.value[role] ?? '';
+
+/**
+ * Point one role at an env-config profile (or back at its tier).
+ * @param role Functional role.
+ * @param profileId Chosen profile id (`''` = follow the tier).
+ */
+const setRoleModel = (role: string, profileId: string): void => {
+  agentRoleModels.value = { ...agentRoleModels.value, [role]: String(profileId ?? '') };
+};
+
+/**
+ * Build the payload from the drafts.
+ * @returns The `agent` block ({} when everything is at its default).
+ */
+const buildAgentDraft = (): AgentConfig => {
+  const allTools = agentStore.catalog.tools.map(tool => tool.name);
+  const everyToolOn = agentEnabledTools.value.length === allTools.length;
+  const models: Record<string, SessionModelProfile | null> = {};
+  for (const role of agentStore.subagentRoles) {
+    const profileId = agentRoleModels.value[role.role] ?? '';
+    if (!profileId) {
+      models[role.role] = null;
+      continue;
+    }
+    const profile = llmProfiles.byId('MAIN_LLM', profileId);
+    models[role.role] = profile ? descriptorForProfile(profile) : null;
+  }
+  const anyModel = Object.values(models).some(value => value !== null);
+  const block: AgentConfig = {};
+  if (!everyToolOn) block.tools = agentEnabledTools.value;
+  if (agentDisabledMiddlewares.value.length > 0) {
+    block.middlewares_disabled = [...agentDisabledMiddlewares.value];
+  }
+  if (anyModel) block.subagent_models = models;
+  return block;
+};
+
+/**
+ * The bridge descriptor for one env-config profile (the same shape the session
+ * model picker sends).
+ * @param profileEntry Env-config profile row.
+ */
+const descriptorForProfile = (profileEntry: AgentProfileEntry): SessionModelProfile => {
+  const params = profileEntry.params;
+  const pick = (...keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const value = params[key];
+      if (value) return value;
+    }
+    return undefined;
+  };
+  return {
+    id: profileEntry.id,
+    label: profileEntry.label,
+    provider: pick('MAIN_LLM_PROVIDER', 'PROVIDER'),
+    model: pick('MAIN_LLM_NAME', 'MAIN_LLM_API_NAME', 'NAME', 'MODEL') ?? profileEntry.label,
+    base_url: pick('MAIN_LLM_API_BASE', 'MAIN_LLM_BASE_URL', 'BASE_URL'),
+    api_key: pick('MAIN_LLM_API_KEY', 'API_KEY')
+  };
+};
+
+/**
+ * Load an `agent` block into the drafts (a preset selection, a session hydrate).
+ * @param block Stored / effective config ({} = every default).
+ */
+const fillAgentDraft = (block: AgentConfig | undefined): void => {
+  const allTools = agentStore.catalog.tools.map(tool => tool.name);
+  const configured = Array.isArray(block?.tools) ? block?.tools : null;
+  agentTools.value = configured ? allTools.filter(name => configured.includes(name)) : [...allTools];
+  agentDisabledMiddlewares.value = [...(block?.middlewares_disabled ?? [])];
+  const models: Record<string, string> = {};
+  for (const [role, profile] of Object.entries(block?.subagent_models ?? {})) {
+    models[role] = profile?.id ?? '';
+  }
+  agentRoleModels.value = models;
+};
+
 const charAssistant = ref({ name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar });
 const charUser = ref({ name: DEFAULT_CACHED_CHARACTER.userName, avatar: DEFAULT_CACHED_CHARACTER.userAvatar });
 /** Snapshot of the loaded character (Dexie writes only happen when something changed). */
@@ -428,6 +788,17 @@ const loadContent = async () => {
     }
     editContent.value = { ...content };
     originalContent.value = { ...content };
+
+    // The three agent tabs: the catalogue first (the drafts are expressed in
+    // catalogue order), then the OPEN session's own config when there is one
+    // (a session-less panel — the bare shell — edits the every-default draft).
+    await agentStore.loadCatalog();
+    if (panelSessionId.value) {
+      await agentStore.hydrate(panelSessionId.value);
+      fillAgentDraft(agentStore.configOf(panelSessionId.value));
+    } else {
+      fillAgentDraft({});
+    }
 
     // Role names/avatars come from the local Dexie global profile (the same row
     // the old 系统配置-角色配置 tab edited); ROLE.md itself is NOT parsed back —
@@ -634,6 +1005,7 @@ const selectBuiltin = async (id: BuiltinPresetId) => {
     const payload = builtinPayload(id, template, t);
     fillTabs(payload.content);
     fillCharacter(payload.character);
+    fillAgentDraft(payload.agent);
     editingPresetId.value = null;
     activeBuiltin.value = id;
   } catch (e) {
@@ -653,6 +1025,8 @@ const selectPreset = (preset: PersonaPreset) => {
   // Presets saved before the role tab existed carry no character block: leave
   // the current roles untouched rather than silently resetting them.
   if (preset.character) fillCharacter(preset.character);
+  // Same tolerance for the agent block: an old preset = every default.
+  fillAgentDraft(preset.agent);
   editingPresetId.value = preset.id;
   activeBuiltin.value = null;
 };
@@ -679,7 +1053,7 @@ const overwriteEditingPreset = async () => {
   if (id === null) return;
   saving.value = true;
   try {
-    const ok = await update(id, buildPresetContent(), buildPresetCharacter());
+    const ok = await update(id, buildPresetContent(), buildPresetCharacter(), buildAgentDraft());
     if (ok) {
       toastSuccess(t('config.persona.preset.toast.presetSaved'));
     } else {
@@ -700,7 +1074,7 @@ const confirmSavePreset = async () => {
   }
   saving.value = true;
   try {
-    const result = await create(name, buildPresetContent(), buildPresetCharacter());
+    const result = await create(name, buildPresetContent(), buildPresetCharacter(), buildAgentDraft());
     if (result.ok) {
       showNameDialog.value = false;
       // The just-created preset becomes the edited one (its entry is highlighted).
@@ -794,6 +1168,12 @@ const handleApply = async () => {
       throw new Error('[PersonaPanel] applied content verification failed');
     }
     await persistCharacter();
+    // The agent config lands on the SESSION (this preset's 工具 / 中间件 /
+    // 子代理模型 go live for the open chat; the backend parks it until the turn
+    // boundary when one is in flight). A session-less panel skips it.
+    if (panelSessionId.value) {
+      await agentStore.save(panelSessionId.value, buildAgentDraft());
+    }
     emits('saved');
     toastSuccess(t('config.persona.preset.toast.applySuccess'));
   } catch (e) {

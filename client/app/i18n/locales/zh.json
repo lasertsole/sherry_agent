@@ -144,6 +144,78 @@
     "collapse": "收起计划"
   },
   "config": {
+    "agent": {
+      "tabs": {
+        "tools": "工具",
+        "middlewares": "中间件",
+        "subagents": "子代理模型"
+      },
+      "tools": {
+        "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
+        "count": "已选 {selected}/{total}",
+        "selectAll": "全部启用",
+        "clearAll": "全部禁用",
+        "selectGroup": "全选",
+        "clearGroup": "清空"
+      },
+      "toolGroup": {
+        "files": "文件读写",
+        "terminal": "终端与代码",
+        "tasks": "任务与计划",
+        "memory": "记忆与检索",
+        "skills": "技能",
+        "subagents": "子代理",
+        "interaction": "交互",
+        "web": "网络",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
+        "lockedTitle": "系统必需（锁定）",
+        "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "计划续跑",
+          "desc": "计划（待办/任务流）未完成时自动继续下一轮"
+        },
+        "TaskIntentMiddleware": {
+          "name": "任务意图引导",
+          "desc": "识别工作型请求并注入编排提示"
+        },
+        "ProjectDirNoticeMiddleware": {
+          "name": "目录切换通知",
+          "desc": "工作目录变化时在用户消息前插入一条通知"
+        },
+        "MultimodalProcessor": {
+          "name": "多模态预处理",
+          "desc": "上传的图片/音频/视频入库与降级处理"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "子代理完成注入",
+          "desc": "子代理完成后把结果注入主会话"
+        }
+      },
+      "subagents": {
+        "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
+        "followTier": "跟随角色默认",
+        "tier": "角色默认：{tier}",
+        "tierDepth": "无角色定义：按深度默认"
+      },
+      "role": {
+        "general": "通用",
+        "researcher": "研究员",
+        "executor": "执行者",
+        "reviewer": "审查者",
+        "librarian": "图书管理员"
+      },
+      "viewer": {
+        "tools": "工具 {selected}/{total}",
+        "middlewares": "关闭的中间件：{names}",
+        "middlewaresNone": "中间件：全部开启",
+        "models": "子代理模型：{names}"
+      }
+    },
     "llm": {
       "add": "添加模型",
       "count": "{n} / {max}",

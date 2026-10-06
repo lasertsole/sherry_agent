@@ -185,6 +185,7 @@ client/
 │   │   ├── file-viewer.ts      # ファイルビューアタブ（開いたパス + 内容キャッシュ）
 │   │   ├── new-session.ts      # 新規セッションのプリセット選択ダイアログ状態（すべての「新規チャット」入口）
 │   │   ├── notification.ts     # 通知リスト + 未読バッジ（タブを閉じてもカウント継続）
+│   │   ├── agent-config.ts     # プリセットの agent 設定（ツール / ミドルウェア / サブエージェント モデル）をセッション単位で保持
 │   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + wave、taskflow_updated で更新）
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
 │   ├── plugins/                   # Nuxt プラグイン

@@ -144,6 +144,78 @@
     "collapse": "Collapse plan"
   },
   "config": {
+    "agent": {
+      "tabs": {
+        "tools": "Tools",
+        "middlewares": "Middlewares",
+        "subagents": "Subagent models"
+      },
+      "tools": {
+        "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
+        "count": "{selected}/{total} selected",
+        "selectAll": "Enable all",
+        "clearAll": "Disable all",
+        "selectGroup": "All",
+        "clearGroup": "Clear"
+      },
+      "toolGroup": {
+        "files": "Files",
+        "terminal": "Terminal & code",
+        "tasks": "Tasks & planning",
+        "memory": "Memory & search",
+        "skills": "Skills",
+        "subagents": "Subagents",
+        "interaction": "Interaction",
+        "web": "Web",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
+        "lockedTitle": "System-required (locked)",
+        "lockedHint": "A safety net or a logical necessity — disabling it would strip protection"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "Plan continuation",
+          "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
+        },
+        "TaskIntentMiddleware": {
+          "name": "Task-intent steering",
+          "desc": "Detects work requests and injects the orchestration prompt"
+        },
+        "ProjectDirNoticeMiddleware": {
+          "name": "Directory-change notice",
+          "desc": "Inserts a notice before the user message when the working directory moved"
+        },
+        "MultimodalProcessor": {
+          "name": "Multimodal preprocessing",
+          "desc": "Persists and prepares uploaded images / audio / video"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "Completion injection",
+          "desc": "Injects a finished subagent's result into the main session"
+        }
+      },
+      "subagents": {
+        "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier.",
+        "followTier": "Follow the role default",
+        "tier": "Role default: {tier}",
+        "tierDepth": "No role definition: depth default"
+      },
+      "role": {
+        "general": "General",
+        "researcher": "Researcher",
+        "executor": "Executor",
+        "reviewer": "Reviewer",
+        "librarian": "Librarian"
+      },
+      "viewer": {
+        "tools": "Tools {selected}/{total}",
+        "middlewares": "Disabled middlewares: {names}",
+        "middlewaresNone": "Middlewares: all on",
+        "models": "Subagent models: {names}"
+      }
+    },
     "llm": {
       "add": "Add model",
       "count": "{n} / {max}",

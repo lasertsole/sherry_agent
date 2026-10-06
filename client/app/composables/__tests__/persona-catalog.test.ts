@@ -24,6 +24,9 @@ const bridge = vi.hoisted(() => ({
 }));
 vi.mock('~/composables/bridge', () => bridge);
 
+const agentBridge = vi.hoisted(() => ({ setAgentConfig: vi.fn(async () => ({ config: {}, pending: false })) }));
+vi.mock('~/composables/bridge/agent-config', () => agentBridge);
+
 const db = vi.hoisted(() => ({
   DEFAULT_CACHED_CHARACTER: {
     aiName: '橘雪莉',
@@ -171,6 +174,49 @@ describe('persona catalogue', () => {
       userName: '',
       userAvatar: ''
     });
+  });
+
+  it('carries an empty agent block on both built-ins (every default)', () => {
+    for (const id of ['coding', 'sherry'] as const) {
+      const payload = builtinPayload(id, TEMPLATE, t);
+      expect(payload.agent).toEqual({});
+    }
+  });
+
+  it('writes the agent block to the session when the apply names one', async () => {
+    const written: Record<string, string> = {};
+    bridge.writeSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
+      Object.assign(written, map);
+    });
+    bridge.readSystemPrompt.mockImplementation(async () => ({ ...written }));
+    agentBridge.setAgentConfig.mockClear();
+
+    await applyPresetPayload(
+      {
+        content: { 'AGENTS.md': 'A' },
+        character: {
+          aiName: '',
+          aiAvatar: '',
+          userName: '',
+          userAvatar: ''
+        },
+        agent: { tools: ['read_file'], middlewares_disabled: ['TaskIntentMiddleware'] }
+      },
+      'sess-new'
+    );
+
+    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith('sess-new', {
+      tools: ['read_file'],
+      middlewares_disabled: ['TaskIntentMiddleware']
+    });
+
+    // Without a session the call is skipped (no session exists yet).
+    agentBridge.setAgentConfig.mockClear();
+    await applyPresetPayload({
+      content: { 'AGENTS.md': 'A' },
+      character: { aiName: '', aiAvatar: '', userName: '', userAvatar: '' }
+    });
+    expect(agentBridge.setAgentConfig).not.toHaveBeenCalled();
   });
 
   it('throws when the write cannot be verified (the caller surfaces it)', async () => {

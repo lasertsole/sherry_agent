@@ -1,6 +1,10 @@
 import Dexie, { type IndexableType, type Table } from 'dexie';
 import { toRaw } from 'vue';
 import type { MessageItem } from '@/pages/home/type';
+import type { AgentConfig } from './bridge/agent-config';
+
+/** The preset's agent block (工具 / 中间件 / 子代理模型) — re-exported for consumers. */
+export type { AgentConfig };
 
 /** Lower bound of the compound index (smallest encoded value sharing the same session_id prefix) */
 const MIN_KEY = Dexie.minKey as IndexableType;
@@ -241,6 +245,14 @@ export interface PersonaPreset {
    * character untouched.
    */
   character?: PresetCharacter;
+  /**
+   * Agent config captured with the preset (预设 的工具 / 中间件 / 子代理模型 tabs):
+   * the enabled tool list, the disabled middleware names and the per-role model
+   * profiles. Optional — presets saved before those tabs existed carry none, and
+   * applying one writes "every default" (all tools, all switches on, role tiers).
+   * It rides along without a Dexie version bump: it is not an indexed field.
+   */
+  agent?: AgentConfig;
   /** Creation time (epoch ms) */
   createdAt: number;
   /** Last content-update time (epoch ms) */
@@ -748,12 +760,14 @@ export async function findPersonaPresetByName(name: string): Promise<PersonaPres
  * @param name    Preset display name (stored trimmed)
  * @param content Persona file contents keyed by 'SOUL.md' / 'USER.md'
  * @param character Character display info (both role names + avatars) to store with the preset
+ * @param agent
  * @returns       Auto-increment id of the newly created preset
  */
 export async function createPersonaPreset(
   name: string,
   content: Record<string, string>,
-  character?: PresetCharacter
+  character?: PresetCharacter,
+  agent?: AgentConfig
 ): Promise<number> {
   const trimmedName = name.trim();
   const existing = await findPersonaPresetByName(trimmedName);
@@ -761,7 +775,14 @@ export async function createPersonaPreset(
     throw new Error(`Persona preset name duplicate: "${trimmedName}"`);
   }
   const now = Date.now();
-  return await db.personaPresets.add({ name: trimmedName, content, character, createdAt: now, updatedAt: now });
+  return await db.personaPresets.add({
+    name: trimmedName,
+    content,
+    character,
+    agent,
+    createdAt: now,
+    updatedAt: now
+  });
 }
 
 /**
@@ -773,13 +794,15 @@ export async function createPersonaPreset(
  * @param id      Persona preset id
  * @param content New persona file contents (keyed by 'SOUL.md' / 'USER.md')
  * @param character Character display info to store with the preset
+ * @param agent
  */
 export async function updatePersonaPreset(
   id: number,
   content: Record<string, string>,
-  character?: PresetCharacter
+  character?: PresetCharacter,
+  agent?: AgentConfig
 ): Promise<void> {
-  await db.personaPresets.update(id, { content, character, updatedAt: Date.now() });
+  await db.personaPresets.update(id, { content, character, agent, updatedAt: Date.now() });
 }
 
 /**

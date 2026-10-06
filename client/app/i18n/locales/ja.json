@@ -144,6 +144,78 @@
     "collapse": "計画を折りたたむ"
   },
   "config": {
+    "agent": {
+      "tabs": {
+        "tools": "ツール",
+        "middlewares": "ミドルウェア",
+        "subagents": "サブエージェント モデル"
+      },
+      "tools": {
+        "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
+        "count": "{selected}/{total} 選択",
+        "selectAll": "すべて有効",
+        "clearAll": "すべて無効",
+        "selectGroup": "全選択",
+        "clearGroup": "クリア"
+      },
+      "toolGroup": {
+        "files": "ファイル",
+        "terminal": "ターミナルとコード",
+        "tasks": "タスクと計画",
+        "memory": "記憶と検索",
+        "skills": "スキル",
+        "subagents": "サブエージェント",
+        "interaction": "対話",
+        "web": "ウェブ",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
+        "lockedTitle": "システム必須（ロック）",
+        "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "計画の継続",
+          "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
+        },
+        "TaskIntentMiddleware": {
+          "name": "タスク意図の誘導",
+          "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
+        },
+        "ProjectDirNoticeMiddleware": {
+          "name": "ディレクトリ変更通知",
+          "desc": "作業ディレクトリが変わったときユーザー メッセージの前に通知を挿入します"
+        },
+        "MultimodalProcessor": {
+          "name": "マルチモーダル前処理",
+          "desc": "アップロードされた画像 / 音声 / 動画を保存・前処理します"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "完了結果の注入",
+          "desc": "サブエージェントの完了結果をメイン セッションに注入します"
+        }
+      },
+      "subagents": {
+        "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
+        "followTier": "ロール既定に従う",
+        "tier": "ロール既定: {tier}",
+        "tierDepth": "ロール定義なし: 深度の既定"
+      },
+      "role": {
+        "general": "汎用",
+        "researcher": "リサーチャー",
+        "executor": "実行者",
+        "reviewer": "レビュアー",
+        "librarian": "ライブラリアン"
+      },
+      "viewer": {
+        "tools": "ツール {selected}/{total}",
+        "middlewares": "無効なミドルウェア: {names}",
+        "middlewaresNone": "ミドルウェア: すべて有効",
+        "models": "サブエージェント モデル: {names}"
+      }
+    },
     "llm": {
       "add": "モデルを追加",
       "count": "{n} / {max}",

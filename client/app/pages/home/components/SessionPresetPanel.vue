@@ -63,6 +63,29 @@
             :data-test="`session-preset-content-${item.file}`"
             >{{ payload.content[item.file] || t('personaPreset.empty') }}</pre>
         </TabPanel>
+        <!-- The preset's 工具 / 中间件 / 子代理模型 selection, summarised read-only
+             (the session's own config is the live truth; this is what the preset
+             carries and writes on apply). -->
+        <TabPanel
+          value="agent"
+          :header="t('config.agent.tabs.tools')">
+          <div
+            class="flex flex-col gap-1 text-xs"
+            data-test="session-preset-agent-summary">
+            <div class="flex gap-1.5">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('config.agent.tabs.tools') }}</span>
+              <span>{{ agentSummary.tools }}</span>
+            </div>
+            <div class="flex gap-1.5">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('config.agent.tabs.middlewares') }}</span>
+              <span>{{ agentSummary.middlewares }}</span>
+            </div>
+            <div class="flex gap-1.5">
+              <span class="text-gray-500 dark:text-gray-400">{{ t('config.agent.tabs.subagents') }}</span>
+              <span>{{ agentSummary.models }}</span>
+            </div>
+          </div>
+        </TabPanel>
       </TabView>
     </div>
   </div>
@@ -78,6 +101,7 @@ import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n();
 const route = useRoute();
+const agentStore = useAgentConfigStore();
 
 /**
  * The persona files previewed as tabs, each with the i18n key suffix of its tab
@@ -91,6 +115,28 @@ const PREVIEW_FILES: ReadonlyArray<{ file: string; tabKey: string }> = [
 
 /** The saved presets (shared singleton); built-ins come from the catalogue. */
 const { presets } = usePersonaPresets();
+
+/**
+ * Read-only summary of the preset's agent block: the tool count (the total comes
+ * from the catalogue, so "no config" reads as every tool), the disabled
+ * middleware names and the per-role model labels.
+ */
+const agentSummary = computed<{ tools: string; middlewares: string; models: string }>(() => {
+  const block = payload.value?.agent ?? {};
+  const total = agentStore.catalog.tools.length;
+  const selected = Array.isArray(block.tools) ? block.tools.length : total;
+  const disabled = block.middlewares_disabled ?? [];
+  const models = Object.entries(block.subagent_models ?? {})
+    .filter(([, profile]) => !!profile)
+    .map(([role, profile]) => `${role} → ${profile?.label || profile?.model || ''}`);
+  return {
+    tools: t('config.agent.viewer.tools', { selected, total }),
+    middlewares: disabled.length
+      ? t('config.agent.viewer.middlewares', { names: disabled.join(', ') })
+      : t('config.agent.viewer.middlewaresNone'),
+    models: models.length ? t('config.agent.viewer.models', { names: models.join('; ') }) : '—'
+  };
+});
 
 /** Session whose binding is shown — the tab stays open across session switches. */
 const sessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
@@ -157,6 +203,9 @@ const loadBinding = async () => {
 watch(
   [sessionId, () => locale.value],
   () => {
+    // The catalogue backs the agent summary's "n / total" tool count; both are
+    // cheap and idempotent, so the watcher reloads them with the binding.
+    void agentStore.loadCatalog();
     void loadBinding();
   },
   { immediate: true }
