@@ -276,7 +276,8 @@ the model/thinking controls)::
   `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
   `schedule_compression_nudges`; the panel's switch is DISABLED while the draft has memory off —
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
-  nudge back.
+  nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
+  情感陪伴 pin `nudge: false`.
 - **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
   `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
@@ -296,8 +297,10 @@ the model/thinking controls)::
   pickers). It is a PRESET-level field (`PersonaPreset.main_model`, applied through
   `PUT /sessions/model` so the session-model control stays the single owner of that key) rather
   than part of the agent payload. The 当前会话预设 viewer puts 代理模型 FIRST (the session's own
-  model pair is what it is opened for): 主代理 mirrors the session-model control read-only,
-  子代理 stays editable.
+  model pair is what it is opened for), and BOTH of its sub-tabs write through the
+  session-model store — 主代理 is literally the same control as the toolbar's model switch
+  (one store, one endpoint, so the two can never disagree; the toolbar shows the parked
+  change with its 下一轮生效 badge) and 子代理 keeps the role pickers.
 - Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
   应用 writes it to the open session (the new-session dialog writes it for the session it just
   created), and the read-only 当前会话预设 tab summarises it (skills read-only there, the
