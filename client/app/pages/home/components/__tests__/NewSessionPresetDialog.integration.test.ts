@@ -108,7 +108,7 @@ describe('NewSessionPresetDialog', () => {
     vi.clearAllMocks();
   });
 
-  it('lists the four built-ins with 编程助手 preselected', async () => {
+  it('lists the four built-ins with 全量 preselected', async () => {
     db.presets.push({
       id: 7,
       name: '我的预设',
@@ -127,7 +127,7 @@ describe('NewSessionPresetDialog', () => {
       'new-session-preset-option-user:7'
     ]);
     // The default preset is preselected, so 创建会话 is immediately actionable.
-    expect(rows[1]!.find('i.pi-check').exists()).toBe(true);
+    expect(rows[3]!.find('i.pi-check').exists()).toBe(true);
     expect(buttonByText(wrapper, '创建会话').attributes('disabled')).toBeUndefined();
   });
 

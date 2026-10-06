@@ -102,15 +102,15 @@ describe('persona catalogue', () => {
     vi.clearAllMocks();
   });
 
-  it('lists 纯净 / 编程助手 / 情感陪伴 / 全量, with 编程助手 the default', () => {
+  it('lists 纯净 / 编程助手 / 情感陪伴 / 全量, with 全量 the default', () => {
     expect(BUILTIN_PRESETS.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
-    expect(DEFAULT_PRESET_ID).toBe('coding');
+    expect(DEFAULT_PRESET_ID).toBe('sherry');
     const entries = catalogEntries([]);
     expect(entries.map(entry => entry.id)).toEqual(['pure', 'coding', 'companion', 'sherry']);
     expect(entries.every(entry => entry.builtin)).toBe(true);
     expect(entries.map(entry => entryName(entry, t))).toEqual(['纯净', '编程助手', '情感陪伴', '全量']);
     // Only the default carries the 默认 badge; the other three read 内置.
-    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '默认', '内置', '内置']);
+    expect(entries.map(entry => t(entry.badgeKey ?? ''))).toEqual(['内置', '内置', '内置', '默认']);
   });
 
   it('appends the saved presets after the built-ins', () => {
@@ -172,14 +172,16 @@ describe('persona catalogue', () => {
     expect(payload.agent).toEqual({});
   });
 
-  it('builds the 纯净 payload with no persona at all and the required tools only', () => {
+  it('builds the 纯净 payload with no persona, the required tools and no switches', () => {
     const payload = builtinPayload('pure', TEMPLATE, t, FACTS);
 
     // Every file empty — including the operating rules — and nobody named.
     expect(payload.content).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
     expect(payload.character).toEqual({ aiName: '', aiAvatar: '', userName: '', userAvatar: '' });
-    // The catalogue's locked set is the whole tool list this preset enables.
-    expect(payload.agent).toEqual({ tools: ['read_file', 'terminal', 'message_search'] });
+    // The catalogue's locked set is the whole tool list this preset enables…
+    expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search']);
+    // …and every optional middleware is off too.
+    expect(payload.agent!.middlewares_disabled).toEqual(FACTS.gateableMiddlewares);
   });
 
   it('builds the 情感陪伴 payload on the full persona with the orchestration off', () => {

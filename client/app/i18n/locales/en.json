@@ -151,7 +151,8 @@
       "tabs": {
         "tools": "Tools",
         "middlewares": "Middlewares",
-        "subagents": "Subagent models"
+        "subagents": "Subagent models",
+        "skills": "Skills"
       },
       "tools": {
         "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",

@@ -214,6 +214,16 @@
             </div>
           </div>
         </TabPanel>
+
+        <!-- 技能 tab: an EMPTY placeholder, mirroring the editor's tab set (a
+             per-preset skill selection is not designed yet). -->
+        <TabPanel
+          value="agentSkills"
+          :header="t('config.agent.tabs.skills')">
+          <div
+            class="min-h-0 overflow-y-auto text-xs"
+            data-test="session-preset-skills-tab" />
+        </TabPanel>
       </TabView>
     </div>
   </div>

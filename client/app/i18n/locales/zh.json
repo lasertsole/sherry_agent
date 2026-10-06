@@ -151,7 +151,8 @@
       "tabs": {
         "tools": "工具",
         "middlewares": "中间件",
-        "subagents": "子代理模型"
+        "subagents": "子代理模型",
+        "skills": "技能"
       },
       "tools": {
         "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",

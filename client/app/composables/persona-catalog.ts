@@ -42,13 +42,14 @@ export interface PresetEntry {
  * The built-in entries, in display order — the whole spectrum, read top to
  * bottom:
  *
- * - 纯净 (`pure`): nobody named, no persona content at all, and only the
- *   catalogue's REQUIRED tools — the bare floor a session can run on;
- * - 编程助手 (`coding`): the default — the operating-rules template, empty soul /
- *   user profile, no roles, every tool on;
+ * - 纯净 (`pure`): nobody named, no persona content at all, only the catalogue's
+ *   REQUIRED tools and every optional middleware off — the bare floor a session
+ *   can run on;
+ * - 编程助手 (`coding`): the operating-rules template, empty soul / user profile,
+ *   no roles, every tool on;
  * - 情感陪伴 (`companion`): the full role-play persona with the orchestration
  *   surfaces switched off (no 任务与计划 / 子代理 tools, no optional middleware);
- * - 全量 (`sherry`): the same full persona with every tool and switch on.
+ * - 全量 (`sherry`): the DEFAULT — the full persona with every tool and switch on.
  *
  * The `sherry` ID is kept as-is: sessions already bound to this built-in store
  * it in their 当前会话预设 binding, and only the LABEL became 全量 (the shipped
@@ -67,7 +68,7 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
   {
     id: 'coding',
     nameKey: 'config.persona.preset.builtinCodingName',
-    badgeKey: 'config.persona.preset.defaultBadge'
+    badgeKey: 'config.persona.preset.builtinBadge'
   },
   {
     id: 'companion',
@@ -77,12 +78,12 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
   {
     id: 'sherry',
     nameKey: 'config.persona.preset.defaultName',
-    badgeKey: 'config.persona.preset.builtinBadge'
+    badgeKey: 'config.persona.preset.defaultBadge'
   }
 ];
 
-/** The preset a session gets when nothing else is chosen. */
-export const DEFAULT_PRESET_ID: BuiltinPresetId = 'coding';
+/** The preset a session gets when nothing else is chosen (the full 全量 setup). */
+export const DEFAULT_PRESET_ID: BuiltinPresetId = 'sherry';
 
 /**
  * The preset id a saved preset binds as.
@@ -179,7 +180,8 @@ export function presetCatalogFacts(store: {
  * The agent block a built-in pins ({} = every default).
  *
  * - 纯净: only the catalogue's required tools — the locked set the service would
- *   refuse to drop anyway, so the preset states the floor explicitly;
+ *   refuse to drop anyway, so the preset states the floor explicitly — and every
+ *   optional middleware off;
  * - 情感陪伴: every tool EXCEPT the 任务与计划 / 子代理 groups, and every optional
  *   middleware off;
  * - 编程助手 / 全量: no opinion (every tool, every switch on).
@@ -200,7 +202,7 @@ export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFact
       ? facts.tools.filter(tool => tool.required === true)
       : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group));
   const block: AgentConfig = { tools: tools.map(tool => tool.name) };
-  if (id === 'companion' && facts.gateableMiddlewares.length > 0) {
+  if (facts.gateableMiddlewares.length > 0) {
     block.middlewares_disabled = [...facts.gateableMiddlewares];
   }
   return block;
@@ -224,7 +226,8 @@ export interface PersonaPresetPayload {
  * The payload of a built-in entry, composed from the language template.
  *
  * - 纯净: EVERY persona file empty (no operating rules either) and nobody named
- *   — the clean slate — plus the required-tools-only agent block;
+ *   — the clean slate — plus an agent block that keeps only the required tools
+ *   and turns every optional middleware off;
  * - 编程助手: the operating rules only — soul and user profile EMPTY, and BOTH
  *   role names empty (no role statement: the prompt gains no ROLE block);
  * - 情感陪伴 / 全量: the full template plus the shipped default names.

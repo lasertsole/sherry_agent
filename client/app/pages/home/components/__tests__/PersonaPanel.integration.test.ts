@@ -182,7 +182,7 @@ describe('PersonaPanel role tab', () => {
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     // Role first, the three persona files, then the agent-config tabs
     // (工具 / 中间件 / 子代理模型) the preset also carries.
-    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '子代理模型']);
+    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '子代理模型', '技能']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {
@@ -312,11 +312,13 @@ describe('PersonaPanel role tab', () => {
     expect(textareas).toEqual(['', '', '']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
     expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
-    // The tools draft is the catalogue's locked set — nothing else stays on.
+    // The tools draft is the catalogue's locked set — nothing else stays on…
     const toolsTab = wrapper.get('[data-test="agent-tools-tab"]');
     expect(toolsTab.text()).toContain('已选 1/3');
     expect(wrapper.get('[data-test="agent-tool-read_file"]').attributes('disabled')).toBeDefined();
     expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
+    // …and every optional middleware switch is off as well.
+    expect(wrapper.get('[data-test="agent-middleware-TaskIntentMiddleware"]').attributes('model-value')).toBe('false');
   });
 
   it('loads 情感陪伴 with the orchestration groups off and the optional switch off', async () => {

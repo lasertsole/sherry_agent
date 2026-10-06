@@ -205,7 +205,7 @@ describe('PersonaPanel agent-config tabs', () => {
     const panel = await mountPanel();
 
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers.slice(-3)).toEqual(['工具', '中间件', '子代理模型']);
+    expect(headers.slice(-4)).toEqual(['工具', '中间件', '子代理模型', '技能']);
 
     // Tools grouped, every catalogue tool present with a checkbox…
     expect(panel.find('[data-test="agent-tool-read_file"]').exists()).toBe(true);

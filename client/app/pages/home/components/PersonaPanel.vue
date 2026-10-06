@@ -367,6 +367,18 @@
                 </div>
               </div>
             </TabPanel>
+
+            <!-- 技能 tab: a per-preset skill selection is not designed yet, so this
+                 is deliberately an EMPTY placeholder panel — the tab exists so the
+                 preset's shape is already stable when it lands. -->
+            <TabPanel
+              value="agentSkills"
+              :header="t('config.agent.tabs.skills')"
+              data-test="persona-agent-skills-tab">
+              <div
+                class="flex min-h-0 flex-1 flex-col"
+                data-test="agent-skills-tab" />
+            </TabPanel>
           </TabView>
           <div class="flex justify-end">
             <Button
@@ -787,7 +799,7 @@ const cropTarget = ref<'user' | 'assistant'>('user');
 
 // Preset state machine: editingPresetId = the user preset currently loaded into the
 // editor (null = built-in / new mode); activeBuiltin = which virtual built-in entry
-// is loaded. The DEFAULT preset (编程助手) starts highlighted; the list itself
+// is loaded. The DEFAULT preset (全量) starts highlighted; the list itself
 // (BUILTIN_PRESETS + the saved presets) is defined in the shared catalogue, so the
 // new-session dialog and the top-bar viewer render the identical order and badges.
 const editingPresetId = ref<number | null>(null);
