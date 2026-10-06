@@ -159,7 +159,8 @@
         "selectAll": "Enable all",
         "clearAll": "Disable all",
         "selectGroup": "All",
-        "clearGroup": "Clear"
+        "clearGroup": "Clear",
+        "requiredHint": "Required — cannot be disabled"
       },
       "toolGroup": {
         "files": "Files",

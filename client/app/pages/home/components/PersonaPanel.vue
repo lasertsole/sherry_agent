@@ -218,7 +218,15 @@
                       <span class="text-xs font-semibold text-gray-600 dark:text-gray-300">
                         {{ t(`config.agent.toolGroup.${group.group}`) }}
                       </span>
+                      <span
+                        v-if="agentGroupFullyRequired(group)"
+                        class="inline-flex items-center gap-1 text-[11px] text-gray-400"
+                        :data-test="`agent-tool-group-locked-${group.group}`">
+                        <i class="pi pi-lock text-[9px]" />
+                        {{ t('config.agent.tools.requiredHint') }}
+                      </span>
                       <Button
+                        v-else
                         :label="
                           agentGroupFullySelected(group)
                             ? t('config.agent.tools.clearGroup')
@@ -230,18 +238,35 @@
                         :data-test="`agent-tool-group-${group.group}`"
                         @click="toggleToolGroup(group)" />
                     </div>
+                    <!-- Three row shapes: a required tool is locked on (no switch); a
+                         bulk-only group's tools render as plain chips because its
+                         header owns the only toggle; everything else is a checkbox. -->
                     <div class="flex flex-wrap gap-x-4 gap-y-1">
                       <label
                         v-for="tool in group.tools"
                         :key="tool.name"
-                        class="flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300"
-                        :title="tool.description || tool.name">
+                        class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300"
+                        :class="agentToolRowInteractive(group, tool) ? 'cursor-pointer' : 'cursor-default'"
+                        :title="toolTooltip(tool)">
                         <Checkbox
+                          v-if="!isBulkOnlyToolGroup(group.group)"
                           :model-value="agentToolSelected(tool.name)"
                           binary
+                          :disabled="tool.required === true"
                           :data-test="`agent-tool-${tool.name}`"
                           @update:model-value="toggleTool(tool.name)" />
-                        <span class="font-mono">{{ tool.name }}</span>
+                        <i
+                          v-if="tool.required"
+                          class="pi pi-lock text-[9px] text-gray-400" />
+                        <span
+                          class="font-mono"
+                          :class="{
+                            'text-gray-400 line-through':
+                              isBulkOnlyToolGroup(group.group) && !agentToolSelected(tool.name)
+                          }"
+                          :data-test="isBulkOnlyToolGroup(group.group) ? `agent-tool-bulk-${tool.name}` : undefined">
+                          {{ tool.name }}
+                        </span>
                       </label>
                     </div>
                   </div>
@@ -481,7 +506,7 @@ import { useI18n } from 'vue-i18n';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
 import type { SessionModelProfile } from '~/composables/bridge/session';
-import { FOLLOW_TIER_ID } from '~/stores/agent-config';
+import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
 // DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
 // ~/composables/defaultCharacter.
 import { logUtil } from '~/utils/log';
@@ -545,7 +570,7 @@ const originalContent = ref<Record<string, string>>({});
 /** One catalogue tool-group row the 工具 tab renders. */
 interface AgentToolGroupEntry {
   group: string;
-  tools: Array<{ name: string }>;
+  tools: Array<{ name: string; description?: string; required?: boolean }>;
 }
 
 // ── 工具 / 中间件 / 子代理模型 drafts (the preset's `agent` block) ──────────
@@ -564,12 +589,18 @@ const agentDisabledMiddlewares = ref<string[]>([]);
 /** role → chosen env-config profile id (`''` = follow the role tier). */
 const agentRoleModels = ref<Record<string, string>>({});
 
-/** Tool names currently enabled, in catalogue order. */
+/** Required tool names from the catalogue, in catalogue order. */
+const agentRequiredToolNames = computed<string[]>(() =>
+  agentStore.catalog.tools.filter(tool => tool.required === true).map(tool => tool.name)
+);
+
+/** Tool names currently enabled, in catalogue order (required tools always on). */
 const agentEnabledTools = computed<string[]>(() => {
   const all = agentStore.catalog.tools.map(tool => tool.name);
+  const required = new Set(agentRequiredToolNames.value);
   if (agentTools.value.length === 0) return all;
   const selected = new Set(agentTools.value);
-  return all.filter(name => selected.has(name));
+  return all.filter(name => selected.has(name) || required.has(name));
 });
 
 /** Select-options: "follow the role tier" + every env-config profile. */
@@ -593,28 +624,63 @@ const agentGroupFullySelected = (group: { tools: Array<{ name: string }> }): boo
   group.tools.every(tool => agentToolSelected(tool.name));
 
 /**
+ * Whether a group is entirely required (its select-all toggle is pointless: the
+ * membership can never change, so the header shows the locked hint instead).
+ * @param group Catalogue group entry.
+ * @param group.tools
+ */
+const agentGroupFullyRequired = (group: AgentToolGroupEntry): boolean =>
+  group.tools.length > 0 && group.tools.every(tool => tool.required === true);
+
+/**
+ * Whether a row carries its own switch (required = locked on; a bulk-only group
+ * moves as a whole through its header toggle only).
+ * @param group Catalogue group entry.
+ * @param group.tools
+ * @param tool Catalogue tool entry.
+ * @param tool.required
+ */
+const agentToolRowInteractive = (group: AgentToolGroupEntry, tool: { required?: boolean }): boolean =>
+  tool.required !== true && !isBulkOnlyToolGroup(group.group);
+
+/**
+ * The hover text of one tool row: the backend description, plus the locked
+ * explanation for a required tool.
+ * @param tool Catalogue tool entry.
+ * @param tool.name
+ * @param tool.description
+ * @param tool.required
+ */
+const toolTooltip = (tool: { name: string; description?: string; required?: boolean }): string => {
+  const description = tool.description || tool.name;
+  return tool.required === true ? `${description}\n${t('config.agent.tools.requiredHint')}` : description;
+};
+
+/**
  * Whether a gateable middleware runs for this draft.
  * @param name
  */
 const agentMiddlewareEnabled = (name: string): boolean => !agentDisabledMiddlewares.value.includes(name);
 
 /**
- * Toggle one tool.
+ * Toggle one tool (a required tool is locked on and ignores the click).
  * @param name Tool name.
  */
 const toggleTool = (name: string): void => {
+  if (agentRequiredToolNames.value.includes(name)) return;
   const current = agentEnabledTools.value;
   agentTools.value = current.includes(name) ? current.filter(candidate => candidate !== name) : [...current, name];
 };
 
 /**
- * Select / clear a whole group.
+ * Select / clear a whole group (clearing never drops a required tool).
  * @param groupEntry Catalogue group entry.
  */
 const toggleToolGroup = (groupEntry: AgentToolGroupEntry): void => {
   const names = groupEntry.tools.map(tool => tool.name);
   if (agentGroupFullySelected(groupEntry)) {
-    agentTools.value = agentEnabledTools.value.filter(name => !names.includes(name));
+    const required = new Set(agentRequiredToolNames.value);
+    agentTools.value = agentEnabledTools.value.filter(name => !names.includes(name) || required.has(name));
     return;
   }
   agentTools.value = [...new Set([...agentEnabledTools.value, ...names])];
@@ -625,9 +691,9 @@ const selectAllTools = (): void => {
   agentTools.value = agentStore.catalog.tools.map(tool => tool.name);
 };
 
-/** Uncheck every tool. */
+/** Uncheck every optional tool (the required set stays on). */
 const clearAllTools = (): void => {
-  agentTools.value = [];
+  agentTools.value = [...agentRequiredToolNames.value];
 };
 
 /**

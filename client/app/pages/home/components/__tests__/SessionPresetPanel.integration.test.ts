@@ -59,17 +59,38 @@ vi.stubGlobal('useLlmProfilesStore', () => profilesState.current);
  * save spy that records what the tab wrote.
  * @param config The session's stored config ({} = every default).
  * @param pending Whether the backend reported a parked choice.
+ * @param catalogue Optional catalogue override (tools + their rendered groups).
+ * @param catalogue.tools
+ * @param catalogue.groups
  */
-function makeAgentStore(config: Record<string, unknown> = {}, pending = false) {
+function makeAgentStore(
+  config: Record<string, unknown> = {},
+  pending = false,
+  catalogue?: {
+    tools?: Array<Record<string, unknown>>;
+    groups?: Array<{ group: string; tools: Array<Record<string, unknown>> }>;
+  }
+) {
   const saved: Array<Record<string, unknown>> = [];
+  const tools = catalogue?.tools ?? [
+    { name: 'read_file', group: 'files' },
+    { name: 'terminal', group: 'terminal' }
+  ];
+  const groups = catalogue?.groups ?? [
+    {
+      group: 'files',
+      tools: [{ name: 'read_file', group: 'files', description: 'Read a file with pagination.' }]
+    },
+    {
+      group: 'terminal',
+      tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
+    }
+  ];
   return {
     saved,
     store: reactive({
       catalog: {
-        tools: [
-          { name: 'read_file', group: 'files' },
-          { name: 'terminal', group: 'terminal' }
-        ],
+        tools,
         middlewares: [
           { name: 'HumanInTheLoop', required: true, gateable: false },
           { name: 'TaskIntentMiddleware', required: false, gateable: true }
@@ -77,16 +98,7 @@ function makeAgentStore(config: Record<string, unknown> = {}, pending = false) {
         subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }]
       },
       catalogLoaded: true,
-      toolGroups: [
-        {
-          group: 'files',
-          tools: [{ name: 'read_file', group: 'files', description: 'Read a file with pagination.' }]
-        },
-        {
-          group: 'terminal',
-          tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
-        }
-      ],
+      toolGroups: groups,
       middlewares: {
         gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }],
         locked: [{ name: 'HumanInTheLoop', required: true, gateable: false }]
@@ -95,7 +107,15 @@ function makeAgentStore(config: Record<string, unknown> = {}, pending = false) {
       loadCatalog: vi.fn(async () => undefined),
       hydrate: vi.fn(async () => undefined),
       configOf: () => config as never,
-      enabledTools: () => (Array.isArray(config.tools) ? config.tools : ['read_file', 'terminal']) as never,
+      // Mirrors the real store: a configured subset plus the required tools.
+      enabledTools: () => {
+        const selected = Array.isArray(config.tools)
+          ? new Set(config.tools as string[])
+          : new Set(tools.map(tool => tool.name as string));
+        return tools
+          .filter(tool => selected.has(tool.name as string) || tool.required === true)
+          .map(tool => tool.name as string) as never;
+      },
       disabledMiddlewares: () => (config.middlewares_disabled ?? []) as never,
       isPending: () => pending,
       save: vi.fn(async (_sid: string, next: Record<string, unknown>) => {
@@ -260,6 +280,47 @@ describe('SessionPresetButton', () => {
     expect(panel.text()).toContain('HumanInTheLoop');
     // Neither write path was touched (read-only).
     expect((agentStoreState.current as { save: ReturnType<typeof vi.fn> }).save).not.toHaveBeenCalled();
+  });
+
+  it('marks required tools locked-on and renders a bulk-only group as chips', async () => {
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    agentStoreState.current = makeAgentStore({ tools: ['terminal'] }, false, {
+      tools: [
+        { name: 'read_file', group: 'files', required: true },
+        { name: 'terminal', group: 'terminal' },
+        { name: 'taskflow_create', group: 'tasks' }
+      ],
+      groups: [
+        {
+          group: 'files',
+          tools: [{ name: 'read_file', group: 'files', description: 'Read a file.', required: true }]
+        },
+        {
+          group: 'terminal',
+          tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
+        },
+        {
+          group: 'tasks',
+          tools: [{ name: 'taskflow_create', group: 'tasks', description: 'Create a flow.' }]
+        }
+      ]
+    }).store;
+
+    const wrapper = await mountPanel();
+    const panel = wrapper.get('[data-test="session-preset-panel"]');
+
+    // The required tool reads as enabled (the session never had it listed) with
+    // its row disabled, locked and explained.
+    const readFile = panel.get('[data-test="session-preset-tool-read_file"]');
+    expect(readFile.attributes('disabled')).toBeDefined();
+    expect((readFile.element as HTMLInputElement).checked).toBe(true);
+    expect(readFile.element.closest('label')?.querySelector('.pi-lock')).not.toBeNull();
+    expect(readFile.element.closest('label')?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
+    // A fully required group says so instead of offering any control.
+    expect(panel.find('[data-test="session-preset-tool-group-locked-files"]').exists()).toBe(true);
+    // A bulk-only group has no per-tool switch: a chip, struck through when off.
+    expect(panel.find('[data-test="session-preset-tool-taskflow_create"]').exists()).toBe(false);
+    expect(panel.get('[data-test="session-preset-tool-bulk-taskflow_create"]').classes()).toContain('line-through');
   });
 
   it('writes a per-role model choice to the SESSION, merged and parked-ready', async () => {

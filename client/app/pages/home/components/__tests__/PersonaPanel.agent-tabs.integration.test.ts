@@ -83,9 +83,10 @@ const stubs = {
   },
   Checkbox: {
     name: 'Checkbox',
-    props: ['modelValue'],
+    props: ['modelValue', 'disabled'],
     emits: ['update:modelValue'],
-    template: `<button class="cb" @click="$emit('update:modelValue', !modelValue)">C</button>`
+    // `data-checked` mirrors the bound value for DOM-level assertions.
+    template: `<button class="cb" :disabled="disabled" :data-checked="modelValue" @click="$emit('update:modelValue', !modelValue)">C</button>`
   },
   ToggleSwitch: {
     name: 'ToggleSwitch',
@@ -111,20 +112,46 @@ const stubs = {
   AvatarCropDialog: { name: 'AvatarCropDialog', template: '<div class="acd" />' }
 };
 
+/** The default catalogue: two optional tools in an optional group + terminal. */
+const DEFAULT_TOOLS = [
+  { name: 'read_file', group: 'files' },
+  { name: 'write_file', group: 'files' },
+  { name: 'terminal', group: 'terminal' }
+];
+
+const DEFAULT_GROUPS = [
+  {
+    group: 'files',
+    tools: [
+      { name: 'read_file', group: 'files', description: 'Read a file with pagination.' },
+      { name: 'write_file', group: 'files', description: 'Write file to disk.' }
+    ]
+  },
+  {
+    group: 'terminal',
+    tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
+  }
+];
+
 /**
  * A functional store double: a real catalogue + the drafts a save receives.
- * @param overrides Per-test overrides (hydrated session config).
+ * @param overrides Per-test overrides (hydrated config, a custom catalogue).
  * @param overrides.config
+ * @param overrides.tools
+ * @param overrides.groups
  */
-function makeAgentStore(overrides: { config?: Record<string, unknown> } = {}) {
+function makeAgentStore(
+  overrides: {
+    config?: Record<string, unknown>;
+    tools?: Array<Record<string, unknown>>;
+    groups?: Array<{ group: string; tools: Array<Record<string, unknown>> }>;
+  } = {}
+) {
   const saved: Array<Record<string, unknown>> = [];
+  const tools = overrides.tools ?? DEFAULT_TOOLS;
   const store = reactive({
     catalog: {
-      tools: [
-        { name: 'read_file', group: 'files' },
-        { name: 'write_file', group: 'files' },
-        { name: 'terminal', group: 'terminal' }
-      ],
+      tools,
       middlewares: [
         { name: 'HumanInTheLoop', required: true, gateable: false },
         { name: 'TaskIntentMiddleware', required: false, gateable: true }
@@ -132,19 +159,7 @@ function makeAgentStore(overrides: { config?: Record<string, unknown> } = {}) {
       subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }]
     },
     catalogLoaded: true,
-    toolGroups: [
-      {
-        group: 'files',
-        tools: [
-          { name: 'read_file', group: 'files', description: 'Read a file with pagination.' },
-          { name: 'write_file', group: 'files', description: 'Write file to disk.' }
-        ]
-      },
-      {
-        group: 'terminal',
-        tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
-      }
-    ],
+    toolGroups: overrides.groups ?? DEFAULT_GROUPS,
     middlewares: {
       gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }],
       locked: [{ name: 'HumanInTheLoop', required: true, gateable: false }]
@@ -153,7 +168,7 @@ function makeAgentStore(overrides: { config?: Record<string, unknown> } = {}) {
     loadCatalog: vi.fn(async () => undefined),
     hydrate: vi.fn(async () => undefined),
     configOf: () => (overrides.config ?? {}) as never,
-    enabledTools: () => ['read_file', 'write_file', 'terminal'],
+    enabledTools: () => tools.map(tool => tool.name) as never,
     isPending: () => false,
     save: vi.fn(async (_sid: string, config: Record<string, unknown>) => {
       saved.push(config);
@@ -260,5 +275,80 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(checkboxes.length).toBe(3);
     const checked = checkboxes.filter(c => c.props('modelValue') === true);
     expect(checked.length).toBe(1);
+  });
+
+  it('locks required tools on and moves a bulk-only group as a whole', async () => {
+    agentStore.state = makeAgentStore({
+      tools: [
+        { name: 'read_file', group: 'files', required: true },
+        { name: 'terminal', group: 'terminal' },
+        { name: 'taskflow_create', group: 'tasks' },
+        { name: 'todowrite', group: 'tasks' }
+      ],
+      groups: [
+        {
+          group: 'files',
+          tools: [{ name: 'read_file', group: 'files', description: 'Read a file.', required: true }]
+        },
+        {
+          group: 'terminal',
+          tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
+        },
+        {
+          group: 'tasks',
+          tools: [
+            { name: 'taskflow_create', group: 'tasks', description: 'Create a flow.' },
+            { name: 'todowrite', group: 'tasks', description: 'Write todos.' }
+          ]
+        }
+      ]
+    }).store;
+    const panel = await mountPanel();
+
+    // Required row: locked ON (disabled + checked) with a lock glyph and the hint.
+    const requiredBox = panel.get('[data-test="agent-tool-read_file"]');
+    expect(requiredBox.attributes('disabled')).toBeDefined();
+    expect(requiredBox.attributes('data-checked')).toBe('true');
+    const requiredRow = requiredBox.element.closest('label');
+    expect(requiredRow?.querySelector('.pi-lock')).not.toBeNull();
+    expect(requiredRow?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
+    // Clicking it changes nothing (the draft never drops a required tool).
+    await requiredBox.trigger('click');
+    await flushPromises();
+    expect(panel.get('[data-test="agent-tool-read_file"]').attributes('data-checked')).toBe('true');
+    // A fully required group has no select-all toggle — a locked hint instead.
+    expect(panel.find('[data-test="agent-tool-group-files"]').exists()).toBe(false);
+    expect(panel.find('[data-test="agent-tool-group-locked-files"]').exists()).toBe(true);
+    // A bulk-only group carries NO per-tool switch, only chips + the group toggle.
+    expect(panel.find('[data-test="agent-tool-taskflow_create"]').exists()).toBe(false);
+    expect(panel.find('[data-test="agent-tool-bulk-taskflow_create"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-tool-group-tasks"]').exists()).toBe(true);
+
+    // 全部禁用 keeps the required tool on and leaves the rest off.
+    await panel.get('[data-test="agent-tools-none"]').trigger('click');
+    await flushPromises();
+    expect(panel.get('[data-test="agent-tool-read_file"]').attributes('data-checked')).toBe('true');
+    expect(panel.get('[data-test="agent-tool-terminal"]').attributes('data-checked')).toBe('false');
+    const chip = () => panel.get('[data-test="agent-tool-bulk-taskflow_create"]').classes();
+    expect(chip()).toContain('line-through');
+
+    // The group toggle selects / clears the whole membership (chips mirror it).
+    await panel.get('[data-test="agent-tool-group-tasks"]').trigger('click');
+    await flushPromises();
+    expect(chip()).not.toContain('line-through');
+    await panel.get('[data-test="agent-tool-group-tasks"]').trigger('click');
+    await flushPromises();
+    expect(chip()).toContain('line-through');
+
+    // A draft can never be saved with a required tool missing (the backend would
+    // refuse the payload): clearing everything still stores the required set.
+    const saveButton = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存预设');
+    await saveButton!.trigger('click');
+    await flushPromises();
+    await panel.find('.dlg .it').setValue('仅必需');
+    const confirm = panel.findAllComponents({ name: 'Button' }).find(b => b.props('label') === '保存');
+    await confirm!.trigger('click');
+    await flushPromises();
+    expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({ tools: ['read_file'] });
   });
 });

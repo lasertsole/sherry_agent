@@ -33,6 +33,21 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
  */
 export const FOLLOW_TIER_ID = 'tier';
 
+/**
+ * Groups the 工具 tab offers as select-all / clear-all only — their membership
+ * moves together (the backend owns the list: ``agent.tools.catalog.BULK_ONLY_GROUPS``,
+ * mirrored here because the catalogue response itself is per-tool).
+ */
+export const BULK_ONLY_TOOL_GROUPS = ['tasks', 'subagents'] as const;
+
+/**
+ * Whether a group is bulk-only (no per-tool switches in the UI).
+ * @param group Group id.
+ */
+export function isBulkOnlyToolGroup(group: string): boolean {
+  return (BULK_ONLY_TOOL_GROUPS as readonly string[]).includes(group);
+}
+
 export const useAgentConfigStore = defineStore('agentConfig', () => {
   /** The tool / middleware / role lists (empty until the first load). */
   const catalog = ref<AgentCatalog>({ tools: [], middlewares: [], subagent_roles: [] });
@@ -97,13 +112,16 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
   }
 
   /**
-   * Enabled tool names, expanded to ALL when the session has no opinion.
+   * Enabled tool names, expanded to ALL when the session has no opinion. The
+   * catalogue's required tools are always unioned in — the backend refuses a
+   * stored list that omits one, so a legacy payload still reads as the effective
+   * set (in catalogue order).
    * @param sessionId
    */
   function enabledTools(sessionId: string): string[] {
     const configured = configOf(sessionId).tools;
-    if (!Array.isArray(configured)) return catalog.value.tools.map(tool => tool.name);
-    return configured;
+    const selected = new Set(Array.isArray(configured) ? configured : catalog.value.tools.map(tool => tool.name));
+    return catalog.value.tools.filter(tool => selected.has(tool.name) || tool.required === true).map(tool => tool.name);
   }
 
   /**

@@ -159,7 +159,8 @@
         "selectAll": "すべて有効",
         "clearAll": "すべて無効",
         "selectGroup": "全選択",
-        "clearGroup": "クリア"
+        "clearGroup": "クリア",
+        "requiredHint": "必須（解除できません）"
       },
       "toolGroup": {
         "files": "ファイル",

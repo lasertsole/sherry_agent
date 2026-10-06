@@ -159,7 +159,8 @@
         "selectAll": "全部启用",
         "clearAll": "全部禁用",
         "selectGroup": "全选",
-        "clearGroup": "清空"
+        "clearGroup": "清空",
+        "requiredHint": "必需，不可取消"
       },
       "toolGroup": {
         "files": "文件读写",

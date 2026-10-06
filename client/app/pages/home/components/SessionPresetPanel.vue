@@ -88,21 +88,45 @@
               v-for="group in agentStore.toolGroups"
               :key="group.group"
               class="mb-2 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
-              <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                {{ t(`config.agent.toolGroup.${group.group}`) }}
+              <div class="mb-1 flex items-center justify-between gap-2">
+                <span class="text-xs font-semibold text-gray-500 dark:text-gray-400">
+                  {{ t(`config.agent.toolGroup.${group.group}`) }}
+                </span>
+                <span
+                  v-if="agentGroupFullyRequired(group)"
+                  class="inline-flex items-center gap-1 text-[11px] text-gray-400"
+                  :data-test="`session-preset-tool-group-locked-${group.group}`">
+                  <i class="pi pi-lock text-[9px]" />
+                  {{ t('config.agent.tools.requiredHint') }}
+                </span>
               </div>
+              <!-- Same three row shapes as the editor: required locked on with a lock
+                   glyph, a bulk-only group as plain chips, the rest as disabled
+                   checkboxes (this whole tab is read-only). -->
               <div class="flex flex-wrap gap-x-4 gap-y-1">
                 <label
                   v-for="tool in group.tools"
                   :key="tool.name"
                   class="flex items-center gap-1.5 text-gray-600 dark:text-gray-300"
-                  :title="tool.description || tool.name">
+                  :title="toolTooltip(tool)">
                   <Checkbox
+                    v-if="!isBulkOnlyToolGroup(group.group)"
                     :model-value="sessionEnabledTools.includes(tool.name)"
                     binary
                     disabled
                     :data-test="`session-preset-tool-${tool.name}`" />
-                  <span class="font-mono">{{ tool.name }}</span>
+                  <i
+                    v-if="tool.required"
+                    class="pi pi-lock text-[9px] text-gray-400" />
+                  <span
+                    class="font-mono"
+                    :class="{
+                      'text-gray-400 line-through':
+                        isBulkOnlyToolGroup(group.group) && !sessionEnabledTools.includes(tool.name)
+                    }"
+                    :data-test="isBulkOnlyToolGroup(group.group) ? `session-preset-tool-bulk-${tool.name}` : undefined">
+                    {{ tool.name }}
+                  </span>
                 </label>
               </div>
             </div>
@@ -201,7 +225,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import type { SessionPresetBinding } from '@/composables/db';
 import type { PersonaPresetPayload } from '@/composables/persona-catalog';
-import { FOLLOW_TIER_ID } from '~/stores/agent-config';
+import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n();
@@ -234,6 +258,28 @@ const roleModelOptions = computed<Array<{ label: string; value: string }>>(() =>
   { label: t('config.agent.subagents.followTier'), value: FOLLOW_TIER_ID },
   ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
 ]);
+
+/**
+ * Whether a group's membership is entirely required (nothing to switch anywhere,
+ * so the header says so instead of showing a count).
+ * @param group Catalogue group entry.
+ * @param group.tools
+ */
+const agentGroupFullyRequired = (group: { tools: Array<{ required?: boolean }> }): boolean =>
+  group.tools.length > 0 && group.tools.every(tool => tool.required === true);
+
+/**
+ * The hover text of one tool row: the backend description, plus the locked
+ * explanation for a required tool.
+ * @param tool Catalogue tool entry.
+ * @param tool.name
+ * @param tool.description
+ * @param tool.required
+ */
+const toolTooltip = (tool: { name: string; description?: string; required?: boolean }): string => {
+  const description = tool.description || tool.name;
+  return tool.required === true ? `${description}\n${t('config.agent.tools.requiredHint')}` : description;
+};
 
 /**
  * The profile id a role currently points at ('' = follow the role tier).

@@ -159,7 +159,8 @@
         "selectAll": "모두 켜기",
         "clearAll": "모두 끄기",
         "selectGroup": "전체",
-        "clearGroup": "지우기"
+        "clearGroup": "지우기",
+        "requiredHint": "필수 — 해제할 수 없음"
       },
       "toolGroup": {
         "files": "파일",

@@ -26,6 +26,8 @@ export interface AgentToolEntry {
    * shown as a hover tooltip so a long catalogue stays readable.
    */
   description?: string;
+  /** Locked on: a session config may not drop it (the backend refuses one that does). */
+  required?: boolean;
 }
 
 /** One middleware of the main chain. */
