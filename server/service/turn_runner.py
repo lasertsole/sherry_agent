@@ -259,16 +259,14 @@ async def on_turn_finished(
                     f"TurnRunner: promoted parked control choice(s) for {session_id}: {promoted}"
                 )
         # The project directory parks/promotes exactly like the controls above:
-        # same turn boundary, same HITL deferral, one extra key.
+        # same turn boundary, same HITL deferral, one extra key. The promotion
+        # itself is silent — the agent hears about the new root from
+        # ProjectDirNoticeMiddleware, which compares it against the root the
+        # agent was last told about at the START of the next turn.
         try:
             promoted_dir = await asyncio.to_thread(_promote_pending_project_dir, session_id)
             if promoted_dir:
                 logger.info("TurnRunner: promoted the parked project directory for {}", session_id)
-                # The model must learn about the change: the turn starting now
-                # already resolves against the new root.
-                from server.service.session_project_service import announce_project_switch
-
-                await announce_project_switch(session_id, promoted_dir)
         except Exception as e:  # pragma: no cover - promotion must never break the turn
             logger.warning(f"TurnRunner: project-dir promotion failed for {session_id}: {e}")
 

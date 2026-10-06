@@ -35,6 +35,7 @@ from .middlewares import (
     _MAIN_REQUIRED,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
+from .middlewares.project_dir_notice import ProjectDirNoticeMiddleware
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.thinking_control import ThinkingControlMiddleware
@@ -164,6 +165,14 @@ def _build_middlewares(
         # @dynamic_prompt middleware INSTANCE (not a constructor):
         # the outermost wrap_model_call layer in this list.
         system_prompt_injection,
+        # Working-directory change notice: a before_agent node, so it runs once
+        # per turn and BEFORE every before_model hook. The notice is spliced in
+        # FRONT of the turn's human message (the one other middlewares rely on
+        # staying last: TaskIntent's steering check, ContextEviction's
+        # trailing-message tag), which is why it sits next to the prompt
+        # injection — the prompt renders the CURRENT root, this layer explains
+        # why it moved.
+        ProjectDirNoticeMiddleware(),
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
         ToolGuardrails(),

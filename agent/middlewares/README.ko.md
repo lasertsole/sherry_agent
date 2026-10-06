@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 단계에 개입하는 `AgentMiddleware` 컴포넌트 — 컨텍스트 엔지니어링, 멀티모달 입력 처리, 반복 예산, 도구 가드레일, 트랜스크립트 복구, 하트비트 스테일니스 감지, 휴먼인더루프 승인, 모델 경계와 도구 반환 두 시점의 메시지 영속화(`MessagePersistenceMiddleware`), 컨텍스트 요약, 모델 폴백이 있는 분류 기반 LLM 오류 재시도(`LLMRetryMiddleware`) — 그리고 출력 반복 가드와 스트림 수준 그래프 래퍼(`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
+EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 단계에 개입하는 `AgentMiddleware` 컴포넌트 — 컨텍스트 엔지니어링, 멀티모달 입력 처리, 반복 예산, 도구 가드레일, 트랜스크립트 복구, 작업 디렉터리 변경 알림, 하트비트 스테일니스 감지, 휴먼인더루프 승인, 모델 경계와 도구 반환 두 시점의 메시지 영속화(`MessagePersistenceMiddleware`), 컨텍스트 요약, 모델 폴백이 있는 분류 기반 LLM 오류 재시도(`LLMRetryMiddleware`) — 그리고 출력 반복 가드와 스트림 수준 그래프 래퍼(`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > 이 문서의 모든 서술은 소스 코드를 기준으로 검증되었습니다(설치된 `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, 그리고 `agent/middlewares/` 하위 모듈). 아래에 등장하는 클래스명·파일명·기본값·상태 키는 모두 실제 코드에 존재합니다.
 
@@ -17,6 +17,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 - [미들웨어 체인](#미들웨어-체인)
 - [미들웨어 레퍼런스](#미들웨어-레퍼런스)
   - [system_prompt_injection](#system_prompt_injection)
+  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -89,6 +90,9 @@ middleware = [
     # enforcer가 턴 종료 시 가장 마지막에 실행되어, 진짜 끝난 턴을 관측합니다.
     TodoContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
+    # 작업 디렉터리 변경 알림: 턴 시작 시 프로젝트 디렉터리가 마지막으로 알린
+    # 루트와 다르면 HumanMessage 바로 앞에 AIMessage 하나를 삽입한다
+    ProjectDirNoticeMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -152,7 +156,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 요약 트리거가 토큰 전용이 아니라 메시지 수(40) **또는** 토큰 수(컨텍스트 윈도우의 80%).
 - 더 타이트한 반복 예산(90 대신 60).
-- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `TodoContinuationEnforcer`도 없음.
+- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `ProjectDirNoticeMiddleware`, `TodoContinuationEnforcer`도 없음.
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
 - `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
@@ -196,6 +200,22 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **영속화는 더 이상 압축 파이프라인에 속하지 않습니다.** `MessagePersistenceMiddleware`가 각 모델 경계마다 새 메시지를 MesMemory로 플러시합니다(아래 섹션 참고); 메모리 리뷰 / 플랜 추출 nudge는 여전히 `Summarization`이 compact 접점에서 스케줄합니다. `system_prompt_injection`는 어떤 라이프사이클 후크(`before_agent` / `after_agent` / `before_model` / `after_model`)도 오버라이드하지 않습니다; 역할은 시스템 프롬프트 래핑뿐입니다.
 
 > 이 문서의 이전 버전은 지식 그래프 유지관리(`after_turn`)와 `MemoryCache`를 언급했습니다. **현재 코드에는 둘 다 존재하지 않습니다.** 시스템 프롬프트는 상태 레지스터와 `build_system_prompt()`에서 공급되며, 미들웨어 계층 어디에도 지식 그래프 호출은 없습니다.
+
+### ProjectDirNoticeMiddleware
+
+**모듈:** `agent/middlewares/project_dir_notice/core.py` · **클래스:** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**훅:** `before_agent` / `abefore_agent` — `before_agent` 노드는 턴마다 한 번, 모든 `before_model` 훅보다 먼저 실행된다
+
+`system_prompt_injection` 바로 뒤에 등록된다. 프롬프트는 **현재** 작업 디렉터리를 렌더링하고, 이 계층이 디렉터리가 이동했음을 에이전트에게 알린다. 이것이 없으면 프로젝트 디렉터리를 바꾼 뒤 도착한 요청이 옛 트리를 기준으로 처리되었다 — 대화 기록에 변경 기록이 남지 않기 때문이다.
+
+1. 유효 루트(`runtime.session.project_dir.current_project_dir` — 세션 바인딩, 없으면 프로세스 기본값)를 읽고 `StateKey.PROJECT_DIR_ANNOUNCED`(에이전트에게 마지막으로 알린 루트)와 비교한다.
+2. 세션의 첫 턴(기준선 없음): 루트를 조용히 기록한다 — 일어나지 않은 변경에는 알림이 필요 없다.
+3. 루트가 같으면: 아무것도 하지 않는다.
+4. 루트가 다르면: 알림 `AIMessage` **하나**를 만들어 그 턴의 `HumanMessage` **바로 앞**에 삽입하고 기준선을 갱신한다. `messages` 리듀서는 추가만 하므로 갱신은 목록 전체 재작성(`RemoveMessage(REMOVE_ALL_MESSAGES)` + 재작성된 목록)이다. 바인딩 해제는 일반 전환이 아니라 "프로젝트 디렉터리 미바인딩" 문구를 사용해, 파일을 건드리기 전에 어느 프로젝트에서 작업할지 사용자에게 묻게 한다.
+
+병합은 구조적으로 보장된다 — 의미 있는 것은 전송 시점의 비교뿐이다: 두 메시지 사이에 몇 번을 바꾸든 알림은 하나이고 최종 루트를 가리키며, 원래 루트로 돌아오면 알림이 없고, 기준선은 턴이 실제로 시작될 때만 전진한다. 값은 두 상태 레지스터에 모두 기록되고(`record_announced_project_dir`) `prime_mem_from_store()`가 시작 시 다시 워밍하므로, 재시작으로 인해 에이전트가 알아야 할 변경이 조용히 재기준화되지 않는다.
+
+`HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
 
 ### MultimodalProcessor
 

@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, heartbeat staleness detection, human-in-the-loop approvals, message persistence at every model boundary and tool return (`MessagePersistenceMiddleware`), context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
+The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shape every model call and tool call — context engineering, multimodal input handling, iteration budgets, tool guardrails, transcript repair, working-directory change notices, heartbeat staleness detection, human-in-the-loop approvals, message persistence at every model boundary and tool return (`MessagePersistenceMiddleware`), context summarization, and classified LLM error retry with model fallback (`LLMRetryMiddleware`) — plus an output repetition guard and stream-level graph wrappers (`RepetitionGuardWrapper`, `ContextLimitGuardWrapper`).
 
 > Every claim in this document was verified against the source code (installed `langchain 1.3.9`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, and the modules under `agent/middlewares/`). Class names, file names, defaults, and state keys below all exist in code.
 
@@ -17,6 +17,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
 - [Middleware Chain](#middleware-chain)
 - [Middleware Reference](#middleware-reference)
   - [system_prompt_injection](#system_prompt_injection)
+  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -89,6 +90,10 @@ middleware = [
     # enforcer runs LAST at turn end and observes the truly finished turn.
     TodoContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt: system prompt injection
+    # working-directory change notice: at each turn start, splice an AIMessage
+    # in front of the human message when the project directory moved since the
+    # agent was last told (one notice, naming the final root)
+    ProjectDirNoticeMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -152,7 +157,7 @@ Differences vs the main agent:
 
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
-- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `TodoContinuationEnforcer`.
+- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `TodoContinuationEnforcer`, no `ProjectDirNoticeMiddleware`.
 - No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
 - No `ContextEvictionMiddleware`: child transcripts keep their full tool results (no eviction files, no read_file slice) and oversized human messages are never tagged/truncated.
 - `OutputRepetitionGuard` runs as a real middleware here.
@@ -196,6 +201,22 @@ Second in the list, right after `TodoContinuationEnforcer` (which implements no 
 **Persistence is no longer part of the compression pipeline.** `MessagePersistenceMiddleware` flushes every new message to MesMemory at each model boundary (see its section below); the memory-review / plan-extraction nudges are still scheduled by `Summarization` from the compact seam. `system_prompt_injection` overrides none of the lifecycle hooks (`before_agent` / `after_agent` / `before_model` / `after_model`); its only job is the system-prompt wrap.
 
 > The previous version of this document claimed knowledge-graph maintenance (`after_turn`) and a `MemoryCache`. **Neither exists in the current code.** System prompts come from the state registers and `build_system_prompt()`; there is no knowledge-graph call anywhere in the middleware layer.
+
+### ProjectDirNoticeMiddleware
+
+**Module:** `agent/middlewares/project_dir_notice/core.py` · **Class:** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**Hooks:** `before_agent` / `abefore_agent` — a `before_agent` node runs once per turn, BEFORE any `before_model` hook
+
+Registered right after `system_prompt_injection`: the prompt renders the CURRENT working directory, and this layer tells the agent that it moved. Without it, a request arriving after a project-directory switch was answered against the old tree — the transcript carried no record of the change.
+
+1. Read the effective root (`runtime.session.project_dir.current_project_dir` — the session binding, else the process default) and compare it with `StateKey.PROJECT_DIR_ANNOUNCED`, the root the agent was last told about.
+2. First turn of a session (no baseline): record the root silently — a change that never happened needs no notice.
+3. Same root: nothing to do.
+4. Different root: build ONE notice `AIMessage` and splice it immediately BEFORE the turn's `HumanMessage`, then advance the baseline. The update is a whole-list rewrite (`RemoveMessage(REMOVE_ALL_MESSAGES)` + the rewritten list), because the `messages` reducer only appends. Unbinding gets the "no project directory bound" wording instead of a plain switch, so the agent asks which project to work in before touching files.
+
+Coalescing is by construction — only the comparison at send time matters: any number of switches between two messages produce a single notice naming the FINAL root, a switch that ends where it started produces none, and the baseline advances only when a turn actually starts. The value is written to both state registers (`record_announced_project_dir`) and `prime_mem_from_store()` re-warms it at startup, so a restart cannot silently re-baseline a change the agent still needs to hear about.
+
+The `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notice instead. Fail-open: any error is logged and the hook returns `None`.
 
 ### MultimodalProcessor
 

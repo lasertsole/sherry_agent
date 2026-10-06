@@ -21,6 +21,7 @@ from .tool_call_normalize import ToolCallNormalize as ToolCallNormalize
 from .path_guard import PathGuard as PathGuard
 from .heartbeat_staleness import HeartbeatStaleness as HeartbeatStaleness
 from .media_pipeline import MultimodalProcessor as MultimodalProcessor
+from .project_dir_notice import ProjectDirNoticeMiddleware as ProjectDirNoticeMiddleware
 from .humanInTheLoop import HumanInTheLoop as HumanInTheLoop, HITLConfig as HITLConfig
 
 from . import llm_capability_cache as llm_capability_cache

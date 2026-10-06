@@ -53,6 +53,10 @@ class StateKey(StrEnum):
     # Directory choice made mid-turn: parked so the in-flight turn keeps reading
     # the old root; promoted at the turn boundary (same twin pattern as LLM_*).
     PROJECT_DIR_PENDING = "project_dir_pending"
+    # The root the AGENT was last told about: compared against the live binding
+    # at send time, so exactly one notice message names the final root after any
+    # number of switches (and a switch back to the old root sends none).
+    PROJECT_DIR_ANNOUNCED = "project_dir_announced"
 
     MULTIMODAL_TRYING_NATIVE = "_multimodal_trying_native"
     MULTIMODAL_NATIVE_MODEL = "_multimodal_native_model"

@@ -31,9 +31,14 @@ from runtime.session.state_keys import StateKey
 
 __all__ = [
     "ProjectDirSource",
+    "PROJECT_DIR_NOTICE_METADATA",
+    "PROJECT_DIR_NOTICE_ORIGIN",
+    "announced_project_dir",
     "current_project_dir",
+    "project_dir_notice_text",
     "project_dir_source",
     "read_project_dir",
+    "record_announced_project_dir",
     "prime_mem_from_store",
     "read_project_dir_durable",
     "write_project_dir",
@@ -46,6 +51,65 @@ ProjectDirSource = str  # Literal["session", "env", "default"] — kept as str f
 
 _SESSION = "session"
 _DEFAULT = "default"
+
+#: ``origin`` of the injected working-directory notice. A non-``user`` origin is
+#: what the chat renders as a neutral card rather than a bubble the user wrote.
+PROJECT_DIR_NOTICE_ORIGIN = "project_dir"
+#: Metadata carried by the notice message (frozen shape: ``internal`` marks it a
+#: system directive for every consumer, as with the other injected carriers).
+PROJECT_DIR_NOTICE_METADATA = {"origin": PROJECT_DIR_NOTICE_ORIGIN, "internal": True}
+
+
+def announced_project_dir(session_id: str | None) -> str | None:
+    """The root the agent was last TOLD about (mem tier); ``None`` = never told.
+
+    Mem-only like :func:`read_project_dir` — this runs at the start of a turn.
+    The durable mirror is warmed at startup by :func:`prime_mem_from_store`, so
+    the value survives a restart without a per-turn SQLite read.
+    """
+    if not session_id:
+        return None
+    from runtime.session.state_register import state_register_mem
+
+    raw = state_register_mem.get_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, None)
+    return raw if isinstance(raw, str) and raw.strip() else None
+
+
+def record_announced_project_dir(session_id: str, directory: str | Path) -> None:
+    """Remember the root the agent has been told about (mem + durable mirror).
+
+    Writes both tiers: the mem value serves the next turn's comparison, the
+    mirror lets :func:`prime_mem_from_store` restore it after a restart (a lost
+    baseline would make the next message silently re-baseline and skip a notice
+    the agent still needs).
+    """
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    value = str(directory)
+    state_register_mem.set_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, value)
+    state_register_db.set_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, value)
+
+
+def project_dir_notice_text(previous: str, directory: str, *, bound: bool) -> str:
+    """The body of a working-directory change notice.
+
+    ``bound`` distinguishes a switch to another project from an UNBINDING (the
+    session falls back to the process default, which the agent must not treat as
+    a project it may write into).
+    """
+    if not bound:
+        return (
+            f"[项目目录已解除绑定 / no project directory bound] The session no longer has a "
+            f"bound project directory, so it resolves against the process default `{directory}` "
+            f"(previously `{previous}`). Ask the user which project to work in before creating "
+            "or changing files."
+        )
+    return (
+        f"[项目目录已切换 / working directory changed] The working directory moved from `{previous}` "
+        f"to `{directory}`. Relative paths in file tools, terminal commands and path checks now "
+        "resolve against it, and paths outside it are rejected."
+    )
 
 
 def read_project_dir(session_id: str | None) -> Path | None:
@@ -151,6 +215,10 @@ def prime_mem_from_store() -> int:
     browser served the sherry checkout while ``GET /sessions/project`` still
     reported the session's real binding (it reads the durable tier directly).
 
+    The notice baseline (``PROJECT_DIR_ANNOUNCED``) is warmed in the same pass:
+    a lost baseline would make the next message silently re-baseline, and the
+    agent would never hear about a directory change that predates the restart.
+
     Called once at server startup. Returns the number of bindings warmed;
     failures are swallowed — a broken mirror must not stop the boot.
     """
@@ -160,14 +228,24 @@ def prime_mem_from_store() -> int:
     warmed = 0
     try:
         for session_id in state_register_db.get_all_session_ids():
-            if state_register_mem.get_state(session_id, StateKey.PROJECT_DIR, None) is not None:
-                continue
-            raw = state_register_db.get_state(session_id, StateKey.PROJECT_DIR, None)
-            directory = _as_dir(raw)
-            if directory is None:
-                continue
-            state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(directory))
-            warmed += 1
+            if state_register_mem.get_state(session_id, StateKey.PROJECT_DIR, None) is None:
+                directory = _as_dir(
+                    state_register_db.get_state(session_id, StateKey.PROJECT_DIR, None)
+                )
+                if directory is not None:
+                    state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(directory))
+                    warmed += 1
+            if (
+                state_register_mem.get_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, None)
+                is None
+            ):
+                announced = state_register_db.get_state(
+                    session_id, StateKey.PROJECT_DIR_ANNOUNCED, None
+                )
+                if isinstance(announced, str) and announced.strip():
+                    state_register_mem.set_state(
+                        session_id, StateKey.PROJECT_DIR_ANNOUNCED, announced
+                    )
     except Exception as exc:  # noqa: BLE001 - boot must not depend on the mirror
         from loguru import logger
 

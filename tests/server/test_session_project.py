@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 
 import server.trigger.http.session_project as project_api
+from runtime.session.project_dir import read_project_dir_durable
 from runtime.session.state_keys import StateKey
 from runtime.session.state_register import state_register_mem
 from server.service import session_project_service as svc
@@ -514,32 +515,22 @@ def test_prime_mem_from_store_ignores_blank_values(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# The switch is announced into the transcript
+# The switch is NOT announced by the service (the notice moved to send time)
 # ---------------------------------------------------------------------------
 
 
-class _FakeGraph:
-    """Captures ``aupdate_state`` calls (the announcement's only side effect)."""
-
-    def __init__(self) -> None:
-        self.updates: list[dict] = []
-
-    async def aupdate_state(self, config, values) -> None:  # noqa: ANN001
-        self.updates.append(values)
-
-
 @pytest.mark.asyncio
-async def test_a_live_switch_is_announced_into_the_transcript(project: Path, monkeypatch):
-    """The model must learn about the change: the transcript records it."""
-    # The real helper (captured before patching) drives the message shape.
-    real_announce = svc.announce_project_switch
-    announced: list[str | None] = []
+async def test_a_live_switch_only_binds_and_leaves_the_notice_to_the_middleware(
+    project: Path, monkeypatch
+):
+    """A switch must not inject anything by itself.
 
-    async def record(session_id, directory, *, graph=None):  # noqa: ANN001
-        announced.append(directory)
-        return True
-
-    monkeypatch.setattr(svc, "announce_project_switch", record)
+    The agent is told at SEND time, by ``ProjectDirNoticeMiddleware``: it
+    compares the live root against ``StateKey.PROJECT_DIR_ANNOUNCED`` and
+    splices one notice in front of the next user message. A switch-time
+    announcement here would double the notice (and fire once per switch, with
+    no comparison at all).
+    """
     monkeypatch.setattr(
         "server.service.session_settings_service._session_turn_active",
         lambda _sid: False,
@@ -548,58 +539,34 @@ async def test_a_live_switch_is_announced_into_the_transcript(project: Path, mon
 
     await svc.apply_project_choice_async(SESSION, str(project))
 
-    assert announced == [str(project.resolve())], "a live switch announces the new root"
-
-    graph = _FakeGraph()
-    assert await real_announce(SESSION, str(project), graph=graph) is True
-    message = graph.updates[0]["messages"][0]
-    assert "项目目录已切换" in message.content
-    assert str(project) in message.content
-    assert message.metadata["origin"] == "project_dir", "renders as a system card"
-    assert message.metadata["internal"] is True
+    assert read_project_dir_durable(SESSION) == Path(str(project)).resolve()
+    assert state_register_mem.get_state(SESSION, StateKey.PROJECT_DIR_ANNOUNCED, None) is None, (
+        "the notice baseline belongs to the middleware, never to the switch"
+    )
 
 
-@pytest.mark.asyncio
-async def test_the_notice_covers_unbinding_too():
-    graph = _FakeGraph()
-
-    await svc.announce_project_switch(SESSION, None, graph=graph)
-
-    text = graph.updates[0]["messages"][0].content
-    assert "解除绑定" in text
-    assert "process default" in text
+def test_the_service_no_longer_exposes_a_switch_time_announcement():
+    """Guard the removal: nothing may reintroduce a per-switch transcript write."""
+    assert not hasattr(svc, "announce_project_switch")
 
 
-@pytest.mark.asyncio
-async def test_a_failed_announcement_never_raises():
-    class _BrokenGraph:
-        async def aupdate_state(self, config, values) -> None:  # noqa: ANN001
-            raise RuntimeError("checkpointer down")
-
-    assert await svc.announce_project_switch(SESSION, "/tmp/x", graph=_BrokenGraph()) is False
-
-
-def test_turn_runner_announces_a_promotion(monkeypatch):
-    """The boundary promotion announces the new root to the model."""
+def test_turn_runner_promotes_a_parked_choice(monkeypatch):
+    """The boundary promotion stays; it is silent by design."""
     import asyncio as _asyncio
 
     import server.service.turn_runner as turn_runner
 
-    announced: list[tuple[str, str]] = []
-    monkeypatch.setattr(turn_runner, "_promote_pending_project_dir", lambda _sid: "/tmp/new-root")
+    promoted: list[str] = []
+    monkeypatch.setattr(
+        turn_runner,
+        "_promote_pending_project_dir",
+        lambda session_id: promoted.append(session_id) or "/tmp/new-root",
+    )
     monkeypatch.setattr(turn_runner, "is_hitl_pending", lambda _sid: False)
     monkeypatch.setattr(
         turn_runner, "promote_pending_settings", lambda _sid: _asyncio.sleep(0, result=[])
     )
 
-    import server.service.session_project_service as project_svc
-
-    async def fake_announce(session_id, directory, *, graph=None):  # noqa: ANN001
-        announced.append((session_id, directory))
-        return True
-
-    monkeypatch.setattr(project_svc, "announce_project_switch", fake_announce)
-
     _asyncio.run(turn_runner.on_turn_finished(SESSION))
 
-    assert announced == [(SESSION, "/tmp/new-root")]
+    assert promoted == [SESSION], "the parked directory is promoted at the turn boundary"

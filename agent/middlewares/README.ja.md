@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び出しのすべてに関わる `AgentMiddleware` コンポーネント — コンテキストエンジニアリング、マルチモーダル入力処理、反復予算、ツールガードレール、トランスクリプト修復、ハートビートスタイルネス検知、ヒューマンインザループ承認、モデル境界とツール復帰の二段タイミングでのメッセージ永続化（`MessagePersistenceMiddleware`）、コンテキスト要約、モデルフォールバック付きの分類済み LLM エラーリトライ（`LLMRetryMiddleware`）— に加え、出力繰り返しガードとストリームレベルのグラフラッパー（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
+EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び出しのすべてに関わる `AgentMiddleware` コンポーネント — コンテキストエンジニアリング、マルチモーダル入力処理、反復予算、ツールガードレール、トランスクリプト修復、作業ディレクトリ変更通知、ハートビートスタイルネス検知、ヒューマンインザループ承認、モデル境界とツール復帰の二段タイミングでのメッセージ永続化（`MessagePersistenceMiddleware`）、コンテキスト要約、モデルフォールバック付きの分類済み LLM エラーリトライ（`LLMRetryMiddleware`）— に加え、出力繰り返しガードとストリームレベルのグラフラッパー（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本ドキュメントの記述はすべてソースコードに対して検証済みです（インストール済み `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、および `agent/middlewares/` 配下の各モジュール）。以下に登場するクラス名・ファイル名・デフォルト値・状態キーはすべて実在します。
 
@@ -17,6 +17,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 - [ミドルウェアチェーン](#ミドルウェアチェーン)
 - [ミドルウェアリファレンス](#ミドルウェアリファレンス)
   - [system_prompt_injection](#system_prompt_injection)
+  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -89,6 +90,10 @@ middleware = [
     # ターン終了時に最後に実行され、本当に終わったターンを観測する。
     TodoContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt：システムプロンプト注入
+    # 作業ディレクトリ変更通知: ターン開始時に、プロジェクト ディレクトリが前回
+    # 伝えたルートから動いていれば HumanMessage の直前に AIMessage を挿入する
+    # （通知は 1 つだけ、最終ルートを記載）
+    ProjectDirNoticeMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -152,7 +157,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 要約トリガーはトークンのみではなく、メッセージ数（40）**または**トークン数（コンテキストウィンドウの 80 %）。
 - より厳しい反復予算（90 ではなく 60）。
-- `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`TodoContinuationEnforcer` もなし。
+- `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`ProjectDirNoticeMiddleware`、`TodoContinuationEnforcer` もなし。
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
 - `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
@@ -196,6 +201,22 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **永続化は圧縮パイプラインから出ました。** `MessagePersistenceMiddleware` が各モデル境界で新規メッセージを MesMemory へフラッシュします（下のセクション参照）；メモリレビュー / プラン抽出の nudge は引き続き `Summarization` が compact 接縫からスケジュールします。`system_prompt_injection` はどのライフサイクルフック（`before_agent` / `after_agent` / `before_model` / `after_model`）もオーバーライドしません；役割はシステムプロンプトのラップだけです。
 
 > 本ドキュメントの旧版はナレッジグラフ保守（`after_turn`）と `MemoryCache` を主張していました。**現在のコードにはどちらも存在しません。** システムプロンプトは状態レジスタと `build_system_prompt()` から供給され、ミドルウェア層のどこにもナレッジグラフ呼び出しはありません。
+
+### ProjectDirNoticeMiddleware
+
+**モジュール:** `agent/middlewares/project_dir_notice/core.py` · **クラス:** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**フック:** `before_agent` / `abefore_agent` — `before_agent` ノードはターンごとに 1 回、すべての `before_model` フックより前に実行される
+
+`system_prompt_injection` の直後に登録される。プロンプトは**現在**の作業ディレクトリを描画し、この層が「移動した」ことをエージェントに伝える。これがないと、プロジェクト ディレクトリを切り替えた後に届いたリクエストは古いツリーに対して回答されていた — 会話履歴に変更の記録が残らないため。
+
+1. 有効ルート（`runtime.session.project_dir.current_project_dir` — セッション バインド、なければプロセス既定値）を読み、`StateKey.PROJECT_DIR_ANNOUNCED`（前回エージェントに伝えたルート）と比較する。
+2. セッションの初回ターン（ベースラインなし）: ルートを黙って記録する — 起きていない変更に通知は不要。
+3. ルートが同じ: 何もしない。
+4. ルートが違う: **1 つ**の通知 `AIMessage` を作り、そのターンの `HumanMessage` の**直前**に挿入してベースラインを進める。`messages` リデューサは追記のみなので、更新はリスト全体の書き換え（`RemoveMessage(REMOVE_ALL_MESSAGES)` + 書き換え後のリスト）になる。バインド解除は通常の切り替えではなく「プロジェクト ディレクトリ未バインド」の文言を使い、ファイルに触る前にどのプロジェクトで作業するかをユーザーに尋ねさせる。
+
+合流は構造的に成立する — 意味を持つのは送信時点の比較だけ: 2 つのメッセージ間で何度切り替えても通知は 1 つだけで最終ルートを指し、元のルートに戻した場合は通知が出ず、ベースラインはターンが実際に始まったときにだけ進む。値は両方の状態レジスタに書き込まれ（`record_announced_project_dir`）、`prime_mem_from_store()` が起動時に再ウォームするため、再起動でエージェントが知るべき変更が黙って再ベースライン化されることはない。
+
+`HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
 
 ### MultimodalProcessor
 

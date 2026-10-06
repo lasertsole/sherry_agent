@@ -18,6 +18,7 @@ pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 EXPECTED_ORDER = [
     "TodoContinuationEnforcer",
     "system_prompt_injection",
+    "ProjectDirNoticeMiddleware",
     "MultimodalProcessor",
     "IterationBudget",
     "ToolGuardrails",

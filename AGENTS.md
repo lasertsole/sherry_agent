@@ -59,10 +59,18 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
-  │    system_prompt_injection (@dynamic_prompt) → MultimodalProcessor → IterationBudget → ToolGuardrails
-  │    → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain → TaskIntent(E7)
-  │    → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL → MessagePersistence
-  │    → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
+  │    system_prompt_injection (@dynamic_prompt) → ProjectDirNotice → MultimodalProcessor → IterationBudget
+  │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
+  │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
+  │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
+  │    (ProjectDirNotice is a before_agent node: once per turn it compares the
+  │     session's effective root with PROJECT_DIR_ANNOUNCED (the root the agent
+  │     was last told about) and, when they differ, splices ONE notice AIMessage
+  │     immediately before the turn's HumanMessage — several switches coalesce
+  │     into the final root, switching back sends none, the first turn baselines
+  │     silently; the human message keeps its LAST place for TaskIntent and
+  │     ContextEviction. It replaced the old switch-time aupdate_state
+  │     announcement, which fired per switch and as a HumanMessage)
   │    (MessagePersistence flushes tool results the moment they return via
   │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
   │     is also the first after_model hook — new human/ai/tool messages reach
@@ -146,6 +154,16 @@ clears, with `null`) the session's own value; a choice made while a turn is
 running is PARKED (`PROJECT_DIR_PENDING`) and promoted by
 `turn_runner.on_turn_finished` at the turn boundary — the same park/promote pair
 the thinking/model controls use, including the HITL deferral.
+
+The agent is told about a change **at send time**, not at switch time:
+`ProjectDirNoticeMiddleware` (`agent/middlewares/project_dir_notice/`) compares
+the effective root against `StateKey.PROJECT_DIR_ANNOUNCED` — the root the agent
+was last told about — and splices ONE notice `AIMessage` immediately before the
+turn's HumanMessage when they differ. Any number of switches between two
+messages coalesce into the single notice naming the FINAL root, a switch back to
+the announced root sends nothing, and the first turn of a session only records
+the baseline (silently). The value is mirrored durably and re-warmed by
+`prime_mem_from_store()`, so a restart cannot lose it.
 
 The read rule that keeps this working: **resolve the root per call, never at
 construction time.** Tool objects are process-level singletons

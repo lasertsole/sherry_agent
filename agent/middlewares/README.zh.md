@@ -5,7 +5,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、心跳卡死检测、人工审批、模型边界与工具返回双时机落库（`MessagePersistenceMiddleware`）、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
+EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 `AgentMiddleware` 组件——上下文工程、多模态输入处理、迭代预算、工具护栏、对话记录修复、工作目录变更通知、心跳卡死检测、人工审批、模型边界与工具返回双时机落库（`MessagePersistenceMiddleware`）、上下文摘要，以及带模型回退的分类式 LLM 错误重试（`LLMRetryMiddleware`）——外加输出重复防护与流式图包装器（`RepetitionGuardWrapper`、`ContextLimitGuardWrapper`）。
 
 > 本文档中的每一项陈述都已对照源代码核实（已安装的 `langchain 1.3.9`、`agent/core.py`、`agent/tools/subagent/spawn/core.py` 以及 `agent/middlewares/` 下的各模块）。下文出现的类名、文件名、默认值与状态键均真实存在于代码中。
 
@@ -17,6 +17,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 - [中间件链](#中间件链)
 - [中间件参考](#中间件参考)
   - [system_prompt_injection](#system_prompt_injection)
+  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -89,6 +90,9 @@ middleware = [
     # 最后运行，从而观察到真正结束的回合。
     TodoContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt：系统提示词注入
+    # 工作目录变更通知：每轮开始时若项目目录与上次告知 Agent 的根不同，
+    # 就在 HumanMessage 之前插入一条 AIMessage（只发一条，写最终根）
+    ProjectDirNoticeMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -151,7 +155,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
-- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`TodoContinuationEnforcer`。
+- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`TodoContinuationEnforcer`、`ProjectDirNoticeMiddleware`。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
@@ -195,6 +199,22 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **持久化已不再属于压缩管线。** `MessagePersistenceMiddleware` 在每个模型边界把新消息落库到 MesMemory（见下文小节）；记忆复盘 / 计划提取两个 nudge 仍由 `Summarization` 从 compact 接缝调度。`system_prompt_injection` 不重写任何生命周期钩子（`before_agent` / `after_agent` / `before_model` / `after_model`）；它只负责系统提示词包装。
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
+
+### ProjectDirNoticeMiddleware
+
+**模块：** `agent/middlewares/project_dir_notice/core.py` · **类：** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**钩子：** `before_agent` / `abefore_agent` —— `before_agent` 节点每轮只运行一次，且在任何 `before_model` 钩子之前
+
+注册在 `system_prompt_injection` 之后：提示词渲染的是**当前**工作目录，这一层负责告诉 Agent 目录变过。没有它时，切换项目目录之后到达的请求仍会按旧目录作答——对话历史里没有任何变更记录。
+
+1. 读取生效根（`runtime.session.project_dir.current_project_dir`——会话绑定，否则进程默认值），与 `StateKey.PROJECT_DIR_ANNOUNCED`（上次告知 Agent 的根）比较。
+2. 会话第一轮（无基线）：静默记录当前根——没有发生过的变更无需通知。
+3. 根相同：什么都不做。
+4. 根不同：构造**一条**通知 `AIMessage`，紧插在本轮 `HumanMessage` **之前**，然后推进基线。该更新是整表重写（`RemoveMessage(REMOVE_ALL_MESSAGES)` + 重写后的列表），因为 `messages` reducer 只会追加。解除绑定走「未绑定项目目录」文案而非普通切换文案，让 Agent 在动文件之前先问用户要在哪个项目里工作。
+
+合并是结构性的——只有发送时刻的比较有意义：两条消息之间切换任意多次只产生一条通知且只写最终根；切回原根不产生通知；基线仅在本轮真正开始时才推进。该值双写两个状态寄存器（`record_announced_project_dir`），并由 `prime_mem_from_store()` 在启动时回填，因此重启不会把 Agent 仍需知晓的变更静默重新基线化。
+
+`HumanMessage` 始终保持在**最后**：`TaskIntentMiddleware` 只在最后一条人类消息确实位于末尾时注入引导，`ContextEvictionMiddleware` 需要给末尾人类消息打标记。没有人类消息的历史（恢复轮 / 载体轮）改为追加通知。失败开放：任何异常只记日志，钩子返回 `None`。
 
 ### MultimodalProcessor
 
