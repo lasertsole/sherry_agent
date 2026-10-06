@@ -17,13 +17,15 @@ const base = (over: Partial<MessageItem>): MessageItem => ({
 });
 
 describe('ChatBox.vue (integration, backend mocked)', () => {
-  it('renders a single AI message with name "橘雪莉" and sanitized markdown', () => {
+  it('renders a single AI message with the neutral default name and sanitized markdown', () => {
     const wrapper = mount(ChatBox, {
       props: {
         messages: [base({ id: 1, role: CHAT_ROLE.AI, content: '**bold** world' })]
       }
     });
-    expect(wrapper.text()).toContain('橘雪莉');
+    // No character name on the prop → the neutral default label (改自 橘雪莉:
+    // the persona name must never stand in for a nameless preset).
+    expect(wrapper.text()).toContain('雪莉');
     expect(wrapper.text()).toContain('world');
     // markdown-it turns **bold** into <strong> inside the sanitized v-html
     expect(wrapper.find('.w-fit').html()).toContain('<strong>bold</strong>');

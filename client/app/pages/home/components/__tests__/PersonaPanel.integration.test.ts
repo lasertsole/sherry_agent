@@ -325,6 +325,22 @@ describe('PersonaPanel role tab', () => {
     expect(wrapper.get('[alt="user avatar"]').attributes('src')).toBe(DEFAULT_USER_AVATAR);
   });
 
+  it('prefills an explicitly empty role name as empty (a nameless preset)', async () => {
+    db.readCachedCharacter.mockImplementation(async () => ({
+      aiName: '',
+      aiAvatar: '',
+      userName: '',
+      userAvatar: ''
+    }));
+
+    const wrapper = await mountPanel();
+
+    // The inputs stay empty (their placeholder shows); substituting 橘雪莉/远野汉娜
+    // here made the panel disagree with the preset it had just applied.
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
+    expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('');
+  });
+
   it('resets both role names to the built-in defaults with 恢复默认', async () => {
     const wrapper = await mountPanel();
     await wrapper.get('[data-test="persona-role-ai-name"]').setValue('小樱');

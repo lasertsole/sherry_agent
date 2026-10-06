@@ -152,7 +152,9 @@ describe('home/index.vue (integration, backend mocked)', () => {
     // in [sid].vue behind the nested NuxtPage and no longer mounts on the shell.
     expect(wrapper.text()).toContain('第一次对话');
     // Branding present in the sidebar LOGO area.
-    expect(wrapper.text()).toContain('🍊橘雪莉');
+    // The logo label falls back to the neutral default name when the session has
+    // no character name (it is the persona name only when the persona sets one).
+    expect(wrapper.text()).toContain('🍊雪莉');
   });
 
   it('puts the right-sidebar toggle to the right of the settings menu button', () => {

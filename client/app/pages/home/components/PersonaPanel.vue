@@ -804,10 +804,13 @@ const loadContent = async () => {
     // the old 系统配置-角色配置 tab edited); ROLE.md itself is NOT parsed back —
     // the compose direction is one-way (names -> sentence).
     const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
+    // An explicitly EMPTY name/avatar stays empty (the input shows its
+    // placeholder): 编程助手 ships no names on purpose, and prefilling 橘雪莉
+    // here made the panel disagree with the preset it had just applied.
     fillCharacter({
-      aiName: charData?.aiName?.trim() ? charData.aiName : DEFAULT_CACHED_CHARACTER.aiName,
+      aiName: charData?.aiName ?? DEFAULT_CACHED_CHARACTER.aiName,
       aiAvatar: charData?.aiAvatar ?? DEFAULT_CACHED_CHARACTER.aiAvatar,
-      userName: charData?.userName?.trim() ? charData.userName : DEFAULT_CACHED_CHARACTER.userName,
+      userName: charData?.userName ?? DEFAULT_CACHED_CHARACTER.userName,
       userAvatar: charData?.userAvatar ?? DEFAULT_CACHED_CHARACTER.userAvatar
     });
     originalChar.value = buildPresetCharacter();

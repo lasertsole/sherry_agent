@@ -17,7 +17,7 @@
     "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
   },
   "chatBox": {
-    "defaultAiName": "橘雪莉"
+    "defaultAiName": "雪莉"
   },
   "chat": {
     "backgroundMessage": "后台任务",

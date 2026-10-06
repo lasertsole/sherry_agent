@@ -34,16 +34,24 @@ export function useSessionLifecycle(chatMessages: Ref<MessageItem[]>) {
   });
 
   /**
-   * Map a character snapshot to `characterInfo` (empty segments fall back to built-in defaults).
+   * Map a character snapshot to `characterInfo`: only MISSING fields fall back to
+   * the built-in character — an explicitly empty name/avatar is a preset decision
+   * (编程助手 names nobody) and is kept as-is.
    * @param snap
    */
   const applyCharacterSnapshot = (snap?: Pick<CachedCharacter, 'userName' | 'userAvatar' | 'aiName' | 'aiAvatar'>) => {
     const defaultInfo = defaultCharacter();
+    // Only a MISSING field (undefined, an old row) falls back to the built-in
+    // character. An explicitly EMPTY name or avatar is a preset decision — the
+    // 编程助手 preset names nobody and shows the neutral placeholder — so it must
+    // survive as-is: substituting 橘雪莉/远野汉娜 here displayed a persona the
+    // user never chose (the chat's own generic labels and the placeholder
+    // silhouette cover the empty case).
     characterInfo.value = snap
       ? {
-          userName: snap.userName?.trim() ? snap.userName : defaultInfo.userName,
+          userName: snap.userName ?? defaultInfo.userName,
           userAvatar: snap.userAvatar ?? defaultInfo.userAvatar,
-          aiName: snap.aiName?.trim() ? snap.aiName : defaultInfo.aiName,
+          aiName: snap.aiName ?? defaultInfo.aiName,
           aiAvatar: snap.aiAvatar ?? defaultInfo.aiAvatar
         }
       : defaultInfo;
