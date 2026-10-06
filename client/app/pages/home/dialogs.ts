@@ -1,25 +1,15 @@
 import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 
 /**
- * Home-shell dialog registry + toolbar command registry.
+ * Home-shell toolbar command registry.
  *
- * `HOME_DIALOG_IDS` lists every dialog the shell still owns (fed to
- * `useDialogManager`) and `HOME_TOOLBAR_EVENTS` + `buildHomeToolbarCommands`
- * map a toolbar event to the command it runs.
- *
- * NO dialog is left: every entry — the log viewer, the statistics charts, the
+ * `HOME_TOOLBAR_EVENTS` + `buildHomeToolbarCommands` map a toolbar event to the
+ * command it runs. Every entry — the log viewer, the statistics charts, the
  * knowledge graph, the notification list and the skill / system-config /
  * persona / memory / heartbeat / cron / extend editors — opens a tab in the
- * collapsible right sidebar, so a tool stays open next to the chat. The registry
- * stays (empty) so a future dialog is one id here plus one mount in the shell;
- * the notification store keeps the badge live while its tab is closed.
+ * collapsible right sidebar, so a tool stays open next to the chat (the
+ * notification store keeps its badge live while that tab is closed).
  */
-
-/**
- * Dialog ids owned by the home shell (currently none, so the derived id type
- * would be `never` — both come back with the first dialog entry).
- */
-export const HOME_DIALOG_IDS = [] as const;
 
 /**
  * Toolbar event vocabulary: every `headerTools` entry (the nine-grid, see
@@ -47,11 +37,7 @@ export type HomeToolbarEvent = (typeof HOME_TOOLBAR_EVENTS)[number];
 
 /** What a toolbar command may do: open a right-sidebar tab. */
 export interface HomeToolbarContext {
-  /**
-   * Open a right-sidebar tab for the given panel kind. (A `openDialog` member
-   * belongs here again the day `HOME_DIALOG_IDS` gains an entry; no command
-   * uses one today.)
-   */
+  /** Open a right-sidebar tab for the given panel kind. */
   openRightTab: (kind: RightSidebarPanelKind) => void;
 }
 

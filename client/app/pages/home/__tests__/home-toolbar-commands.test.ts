@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { headerTools } from '../config';
-import { buildHomeToolbarCommands, HOME_DIALOG_IDS, HOME_TOOLBAR_EVENTS } from '../dialogs';
+import { buildHomeToolbarCommands, HOME_TOOLBAR_EVENTS } from '../dialogs';
 import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 
 /**
@@ -52,14 +52,6 @@ describe('buildHomeToolbarCommands', () => {
     expect(headerTools.map(tool => tool.event)).toContain('logs');
     // … while the notification list stays the one top-bar-only command.
     expect(commands).toHaveProperty('notification');
-  });
-
-  it('leaves the dialog registry empty: every entry is a tab', () => {
-    expect(HOME_DIALOG_IDS).toHaveLength(0);
-    for (const [event, kind] of TAB_EVENTS) {
-      expect(HOME_DIALOG_IDS).not.toContain(event);
-      expect(HOME_DIALOG_IDS).not.toContain(kind);
-    }
   });
 
   it('is a no-op registry entry for an unknown event', () => {

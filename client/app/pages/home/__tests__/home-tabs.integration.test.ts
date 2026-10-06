@@ -153,9 +153,8 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
 
     await clickIconButton(wrapper, 'pi pi-bell');
 
-    // No dialog anywhere: the bell routes into the right sidebar's strip.
+    // The bell routes into the right sidebar's strip (never a dialog).
     expect(rightSidebarState.openTab).toHaveBeenCalledWith('notification');
-    expect(wrapper.find('[data-test$="-dialog"]').exists()).toBe(false);
   });
 
   it('drops the theme switch and the language picker when the middle column is squeezed', async () => {
@@ -212,39 +211,6 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
       await flushPromises();
 
       expect(rightSidebarState.openTab).toHaveBeenCalledWith(kind);
-      // The tool tiles never open a dialog any more.
-      expect(wrapper.find(`[data-test="${kind}-dialog"]`).exists()).toBe(false);
     }
-  });
-
-  it('mounts no tool dialog at all — every entry is a right-sidebar tab', async () => {
-    const wrapper = mountHome();
-    await flushPromises();
-
-    await clickIconButton(wrapper, 'pi pi-bars');
-
-    const rendered = wrapper.findAll('[data-test$="-dialog"]').map(n => n.attributes('data-test'));
-    expect(rendered).toEqual([]);
-    expect(rendered).not.toContain('notification-dialog');
-    expect(rendered).not.toContain('skills-dialog');
-    expect(rendered).not.toContain('config-dialog');
-    expect(rendered).not.toContain('persona-dialog');
-    expect(rendered).not.toContain('memory-dialog');
-    expect(rendered).not.toContain('heartbeat-dialog');
-    expect(rendered).not.toContain('cron-dialog');
-    expect(rendered).not.toContain('extend-dialog');
-    expect(rendered).not.toContain('stats-dialog');
-    expect(rendered).not.toContain('logs-dialog');
-  });
-
-  it('keeps the notification badge on the store, not on a mounted dialog', async () => {
-    // The badge must survive the tab being closed, which is why the state (and
-    // the ws:notification subscription) lives in the notification store.
-    const wrapper = mountHome();
-    await flushPromises();
-
-    const bell = wrapper.findAllComponents({ name: 'Button' }).find(b => b.props('icon') === 'pi pi-bell');
-    expect(bell, 'top-bar bell').toBeTruthy();
-    expect(wrapper.find('[data-test="notification-dialog"]').exists()).toBe(false);
   });
 });
