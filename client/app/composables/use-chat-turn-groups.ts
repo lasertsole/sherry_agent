@@ -89,14 +89,42 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
    * have already been filtered out, so `user → AI placeholder (filtered) → user` become directly
    * adjacent in render order; the second user row correctly starts a new turn.
    */
+  /**
+   * Injected carrier: a message whose backend origin is an internal source
+   * (e.g. "subagent_completion", "project_dir"). Carriers render as a centered,
+   * muted system card instead of a bubble — they are neither something the user
+   * said nor the assistant's reply. Two shapes exist: a USER row (the
+   * background-task completion carrier, a TaskIntent directive) and an AI row
+   * (the working-directory notice, spliced in front of the turn's human
+   * message). User-origin rows ("user") and legacy rows without origin
+   * (TEXT NULL = a real user message / a model answer) keep the bubble flow.
+   * @param message
+   */
+  const isBackgroundTask = (message: MessageItem): boolean =>
+    (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) && !!message.origin && message.origin !== 'user';
+
   const turnGroups = computed<MessageItem[][]>(() => {
     const groups: MessageItem[][] = [];
     for (const item of filteredMessages.value) {
       const last = groups.length ? groups[groups.length - 1] : null;
       const prevRole = last ? (last[last.length - 1]?.role ?? null) : null;
-      // New turn: first message, this row is a user (always forms its own group), or the previous
-      // row is a user (separating the AI reply from the user bubble)
-      if (item.role === CHAT_ROLE.USER || groups.length === 0 || prevRole === CHAT_ROLE.USER) {
+      // New turn: first message, this row is an injected carrier (see below), this row is a user
+      // (always forms its own group), or the previous row is a user (separating the AI reply from
+      // the user bubble).
+      //
+      // CARRIERS OPEN THEIR OWN GROUP: ChatBox renders a group's carriers in a separate loop
+      // hoisted to the TOP of that group, so a carrier that merged into the previous group would
+      // be displayed above that group's answer instead of right where it belongs — the
+      // working-directory notice sits immediately before its human message and must stay there
+      // (letting it merge showed the card one turn early, separated from the request it explains).
+      // A USER carrier already opens its own group through the user rule, so this only changes AI
+      // carriers.
+      if (
+        item.role === CHAT_ROLE.USER ||
+        isBackgroundTask(item) ||
+        groups.length === 0 ||
+        prevRole === CHAT_ROLE.USER
+      ) {
         groups.push([item]);
       } else {
         // Consecutive AI/TOOL rows → merge into the last non-user group
@@ -115,27 +143,13 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
   const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && group[0]?.role !== CHAT_ROLE.USER;
 
   /**
-   * Injected carrier: a message whose backend origin is an internal source
-   * (e.g. "subagent_completion", "project_dir"). Carriers render as a centered,
-   * muted system card instead of a bubble — they are neither something the user
-   * said nor the assistant's reply. Two shapes exist: a USER row (the
-   * background-task completion carrier, a TaskIntent directive) and an AI row
-   * (the working-directory notice, spliced in front of the turn's human
-   * message). User-origin rows ("user") and legacy rows without origin
-   * (TEXT NULL = a real user message / a model answer) keep the bubble flow.
-   * @param message
-   */
-  const isBackgroundTask = (message: MessageItem): boolean =>
-    (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) && !!message.origin && message.origin !== 'user';
-
-  /**
    * Messages of a turn group that render as regular rows (background-task carriers excluded).
    * @param group
    */
   const regularMessages = (group: MessageItem[]): MessageItem[] => group.filter(m => !isBackgroundTask(m));
 
   /**
-   * Background-task carriers of a turn group (USER rows always form singleton groups).
+   * Background-task carriers of a turn group (they always form singleton groups).
    * @param group
    */
   const backgroundCarriers = (group: MessageItem[]): MessageItem[] => group.filter(isBackgroundTask);

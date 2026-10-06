@@ -86,6 +86,31 @@ describe('useChatTurnGroups', () => {
     expect(regularMessages(group).map(m => m.id)).toEqual([2, 3, 4]);
   });
 
+  it('gives every carrier its own turn group, so a notice stays right above its human message', () => {
+    // Realistic tail of a session: the notice row sorts immediately BEFORE the
+    // human row of the same turn — it must NOT merge into the previous answer's
+    // group, because ChatBox hoists a group's carriers to the top: merging put the
+    // card above the previous answer and detached it from the request it explains.
+    const { turnGroups } = useChatTurnGroups(() => [
+      msg({ id: 70, role: CHAT_ROLE.AI, turn_num: 72, content: '上一轮回答' }),
+      msg({ id: 71, role: CHAT_ROLE.AI, turn_num: 73, origin: 'project_dir', content: '目录已切换' }),
+      msg({ id: 72, role: CHAT_ROLE.USER, turn_num: 73, content: '现在呢' }),
+      msg({ id: 73, role: CHAT_ROLE.AI, turn_num: 73, content: '' }),
+      msg({ id: 74, role: CHAT_ROLE.TOOL, turn_num: 74, content: 'pwd' }),
+      msg({ id: 75, role: CHAT_ROLE.AI, turn_num: 75, content: '/tmp' })
+    ]);
+
+    expect(turnGroups.value.map(g => g.map(m => m.id))).toEqual([[70], [71], [72], [74, 75]]);
+
+    // A USER carrier keeps its own group exactly as before (it never shared one).
+    const { turnGroups: withUserCarrier } = useChatTurnGroups(() => [
+      msg({ id: 1, role: CHAT_ROLE.AI, content: '回答' }),
+      msg({ id: 2, origin: 'subagent_completion', content: '完成载体' }),
+      msg({ id: 3, role: CHAT_ROLE.AI, content: '下一轮' })
+    ]);
+    expect(withUserCarrier.value.map(g => g.map(m => m.id))).toEqual([[1], [2], [3]]);
+  });
+
   it('reacts to a messages getter backed by a ref', () => {
     const source = ref<MessageItem[]>([msg({ id: 1, role: CHAT_ROLE.USER })]);
     const { turnGroups } = useChatTurnGroups(() => source.value);

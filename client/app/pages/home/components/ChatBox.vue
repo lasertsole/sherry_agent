@@ -35,9 +35,11 @@
                  something the user said nor the assistant's reply. The completion carrier's
                  first line "[subagent:<name> <status>]" is self-describing and shown verbatim
                  (no parsing); the directory notice carries its full switch sentence.
-                 USER carriers form singleton turn groups (see turnGroups); an AI carrier sits
-                 at the end of the previous turn's group (the notice is spliced in FRONT of the
-                 turn's human message), and the two loops below never interleave either way.
+                 Every carrier forms its OWN turn group (see turnGroups), so a group holding a
+                 carrier holds nothing else and the two loops below never interleave — that is
+                 what keeps the directory notice directly above the human message it explains
+                 (it sorts immediately before that message) instead of drifting up into the
+                 previous turn's answer.
                  Collapsible and COLLAPSED BY DEFAULT: the header names the source, the body (the
                  full announcement) appears on click, matching the thinking/tool-card idiom. -->
             <div
