@@ -78,9 +78,24 @@ def test_a_config_without_tools_means_every_tool():
 
 
 def test_the_enabled_set_is_read_from_the_register():
+    from agent.tools.catalog import REQUIRED_TOOLS
+
     _set_config({"tools": ["read_file", "terminal"]})
 
-    assert enabled_tool_names(SESSION) == frozenset({"read_file", "terminal"})
+    # The stored subset UNIONed with the always-on required set: the single guard
+    # for a register value written before a tool became required.
+    assert enabled_tool_names(SESSION) == REQUIRED_TOOLS | {"read_file", "terminal"}
+
+
+def test_a_required_tool_missing_from_the_stored_subset_is_still_enabled():
+    """A legacy payload cannot strip a required tool (service rejects new ones)."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    assert len(REQUIRED_TOOLS) > 0, "the fixture below assumes a non-empty required set"
+    _set_config({"tools": ["web_search"]})
+    enabled = enabled_tool_names(SESSION)
+
+    assert enabled == REQUIRED_TOOLS | {"web_search"}
 
 
 def test_a_broken_register_read_is_fail_open(monkeypatch):
@@ -131,12 +146,17 @@ def test_an_unset_config_passes_the_request_through_untouched():
 async def test_the_async_path_narrows_too():
     _set_config({"tools": ["web_search"]})
     middleware = ToolSelectionMiddleware()
-    request = _Request({"session_id": SESSION}, [_Tool("read_file"), _Tool("web_search")])
+    request = _Request(
+        {"session_id": SESSION},
+        [_Tool("read_file"), _Tool("web_search"), _Tool("memory")],
+    )
 
     async def handler(req):
         return [tool.name for tool in req.tools]
 
-    assert await middleware.awrap_model_call(request, handler) == ["web_search"]
+    # read_file rides along — a required tool is never narrowed away — while the
+    # optional `memory`, absent from the stored subset, is dropped.
+    assert await middleware.awrap_model_call(request, handler) == ["read_file", "web_search"]
 
 
 def test_a_disabled_tool_is_refused_at_execution():
@@ -145,7 +165,7 @@ def test_a_disabled_tool_is_refused_at_execution():
     ran: list[str] = []
 
     result = middleware.wrap_tool_call(
-        _ToolCallRequest(SESSION, "terminal"),
+        _ToolCallRequest(SESSION, "memory"),
         lambda req: ran.append(req.tool_call["name"]),  # type: ignore[arg-type,return-value]
     )
 
@@ -153,6 +173,19 @@ def test_a_disabled_tool_is_refused_at_execution():
     assert getattr(result, "status", None) == "error"
     assert "disabled for this session" in str(result.content)
     assert getattr(result, "tool_call_id", None) == "call-1"
+
+
+def test_a_required_tool_is_never_refused_at_execution():
+    """Even a stale/absent entry for a required tool executes (the union guard)."""
+    _set_config({"tools": ["web_search"]})
+    middleware = ToolSelectionMiddleware()
+
+    result = middleware.wrap_tool_call(
+        _ToolCallRequest(SESSION, "read_file"),
+        lambda _req: "ran",  # type: ignore[arg-type,return-value]
+    )
+
+    assert result == "ran"
 
 
 @pytest.mark.asyncio

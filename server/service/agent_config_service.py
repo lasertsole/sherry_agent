@@ -56,6 +56,13 @@ def _tool_names() -> set[str]:
     return {name for names_in_group in TOOL_GROUPS.values() for name in names_in_group}
 
 
+def _required_tool_names() -> set[str]:
+    """Tools every payload must keep (the catalogue's own required set)."""
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    return set(REQUIRED_TOOLS)
+
+
 def _gateable_middleware_names() -> set[str]:
     from agent.middlewares.catalog import GATEABLE_MIDDLEWARES
 
@@ -112,6 +119,12 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
             missing = sorted(set(wanted) - known)
             if missing:
                 raise AgentConfigError(f"unknown tool(s): {', '.join(missing)}")
+            # REQUIRED tools can never be left out (the 工具 tab shows them locked).
+            dropped_required = sorted(_required_tool_names() - set(wanted))
+            if dropped_required:
+                raise AgentConfigError(
+                    f"required tool(s) cannot be disabled: {', '.join(dropped_required)}"
+                )
             # Dedup, keep the caller's order (the UI sends catalogue order).
             cleaned["tools"] = list(dict.fromkeys(wanted))
 

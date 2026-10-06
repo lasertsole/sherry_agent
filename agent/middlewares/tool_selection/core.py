@@ -48,6 +48,11 @@ def _session_id_of(state: Any) -> str | None:
 def enabled_tool_names(session_id: str | None) -> frozenset[str] | None:
     """The session's enabled tool names, or ``None`` when unset (= all enabled).
 
+    REQUIRED tools are unioned back in (``agent.tools.catalog.REQUIRED_TOOLS``):
+    the service rejects a payload that omits one and the catalogue marks it
+    locked, but a register value written before a tool became required must not
+    be able to strip it either — this is the single guard for that path.
+
     Mem-register only: this runs on the model hot path, so no blocking I/O, and
     any failure degrades to ``None`` (all tools) rather than an empty set — a
     broken config must not leave a session tool-less.
@@ -55,6 +60,7 @@ def enabled_tool_names(session_id: str | None) -> frozenset[str] | None:
     if not session_id:
         return None
     try:
+        from agent.tools.catalog import REQUIRED_TOOLS
         from runtime import StateKey, state_register_mem
 
         raw = state_register_mem.get_state(session_id, StateKey.AGENT_CONFIG, None)
@@ -63,7 +69,8 @@ def enabled_tool_names(session_id: str | None) -> frozenset[str] | None:
         names = raw.get("tools")
         if not isinstance(names, list):
             return None
-        return frozenset(str(name) for name in names if isinstance(name, str) and name)
+        stored = frozenset(str(name) for name in names if isinstance(name, str) and name)
+        return stored | REQUIRED_TOOLS
     except Exception:  # noqa: BLE001 - never break a turn over the config read
         logger.exception("ToolSelectionMiddleware: config read failed; offering every tool")
         return None

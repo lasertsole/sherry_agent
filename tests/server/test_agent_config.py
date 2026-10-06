@@ -140,6 +140,68 @@ def test_every_main_tool_lands_in_a_named_group():
         assert len(entry["description"]) <= 240, f"{name}'s description is not bounded"
 
 
+def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
+    from agent.tools.catalog import (
+        BULK_ONLY_GROUPS,
+        REQUIRED_TOOLS,
+        TOOL_GROUPS,
+        TOOL_ORDER,
+        tool_catalog,
+        tool_required,
+    )
+
+    entries = tool_catalog(tools=_real_builder_tools())
+    # Group order: the catalogue's TOOL_ORDER decides where a group renders, so
+    # the core working sets (skills / code / files / asking the user) come first
+    # and memory lands fifth — the order the 预设-工具 tab shows.
+    rendered: list[str] = []
+    for entry in entries:
+        if not rendered or rendered[-1] != entry["group"]:
+            rendered.append(entry["group"])
+    expected = [group for group in TOOL_ORDER if group in set(rendered)]
+    assert rendered == expected, "the group order must follow TOOL_ORDER"
+    assert rendered[:5] == ["skills", "terminal", "files", "interaction", "memory"]
+
+    # Entirely-required groups: nothing there can be switched off.
+    for group in ("skills", "terminal", "files", "interaction"):
+        assert all(tool_required(name) for name in TOOL_GROUPS[group]), group
+
+    # 记忆与检索: `message_search` is locked, `memory` stays switchable.
+    assert tool_required("message_search") is True
+    assert tool_required("memory") is False
+
+    # The flag the client renders comes from the same predicate, on every entry.
+    flags = {entry["name"]: entry["required"] for entry in entries}
+    assert all(flags[name] == tool_required(name) for name in flags)
+    assert {name for name, required in flags.items() if required} == set(REQUIRED_TOOLS)
+    assert set(REQUIRED_TOOLS) <= {entry["name"] for entry in entries}
+
+    # Bulk-only groups are real groups, and none of them is entirely required
+    # (a group whose membership can never change has nothing to switch).
+    assert BULK_ONLY_GROUPS <= set(TOOL_GROUPS)
+    for group in BULK_ONLY_GROUPS:
+        assert not all(tool_required(name) for name in TOOL_GROUPS[group]), group
+
+
+def test_sanitize_refuses_a_payload_that_drops_a_required_tool(real_tool_names, monkeypatch):
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    optional = sorted(real_tool_names - set(REQUIRED_TOOLS))[:1] or ["web_search"]
+
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config({"tools": optional})
+
+    message = str(exc.value)
+    assert "required tool(s) cannot be disabled" in message
+    for name in sorted(set(REQUIRED_TOOLS) & real_tool_names):
+        assert name in message, f"{name} must be named in the rejection"
+
+    # The full set (required + the optional pick) is accepted as-is.
+    cleaned = service.sanitize_agent_config({"tools": [*sorted(REQUIRED_TOOLS), *optional]})
+    assert set(cleaned["tools"]) >= set(REQUIRED_TOOLS)
+
+
 def test_the_middleware_catalog_marks_the_required_set():
     from agent.middlewares.catalog import (
         MIDDLEWARE_ORDER,
@@ -178,11 +240,24 @@ def test_the_middleware_catalog_marks_the_required_set():
 # ----------------------------------------------------------------------
 
 
+def _tool_selection(*optional: str) -> list[str]:
+    """A VALID ``tools`` payload: every required name plus the given optional ones.
+
+    The service rejects a payload that omits a required tool, so any test that
+    just wants "a tool subset" must start from the required set.
+    """
+    from agent.tools.catalog import REQUIRED_TOOLS
+
+    return [*sorted(REQUIRED_TOOLS), *optional]
+
+
 def test_sanitize_accepts_a_partial_payload_and_dedups_tools(real_tool_names, monkeypatch):
     monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
-    cleaned = service.sanitize_agent_config({"tools": ["read_file", "terminal", "read_file"]})
+    payload = _tool_selection("web_search")
+    cleaned = service.sanitize_agent_config({"tools": [*payload, "web_search"]})
 
-    assert cleaned == {"tools": ["read_file", "terminal"]}
+    # Deduplicated, caller order preserved (the required prefix stays first here).
+    assert cleaned == {"tools": payload}
     assert service.sanitize_agent_config({}) == {}
 
 
@@ -249,12 +324,13 @@ async def test_an_idle_session_writes_live_and_clears_the_parked_key(
     registers, real_tool_names, monkeypatch
 ):
     monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
-    cleaned, pending = await service.apply_agent_config_choice("sess-a", {"tools": ["read_file"]})
+    payload = {"tools": _tool_selection("web_search")}
+    cleaned, pending = await service.apply_agent_config_choice("sess-a", payload)
 
     assert pending is False
-    assert cleaned == {"tools": ["read_file"]}
+    assert cleaned == payload
     state = service.get_agent_config_state("sess-a")
-    assert state == {"config": {"tools": ["read_file"]}, "pending": False}
+    assert state == {"config": payload, "pending": False}
 
 
 @pytest.mark.asyncio
@@ -327,15 +403,14 @@ def test_put_handler_round_trips_a_valid_config(registers, real_tool_names, monk
     import json
 
     monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    payload = {"tools": _tool_selection("web_search")}
 
-    request = _FakeRequest(
-        body={"session_id": "sess-ok", "config": {"tools": ["read_file", "terminal"]}}
-    )
+    request = _FakeRequest(body={"session_id": "sess-ok", "config": payload})
 
     response = asyncio.run(agent_config_http.put_agent_config_handler(request))
 
     assert response.status_code == 200
-    assert json.loads(response.description)["config"] == {"tools": ["read_file", "terminal"]}
+    assert json.loads(response.description)["config"] == payload
 
 
 def test_get_handler_requires_a_session_id():
