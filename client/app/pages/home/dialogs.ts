@@ -15,11 +15,11 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
  * the notification store keeps the badge live while its tab is closed.
  */
 
-/** Dialog ids owned by the home shell (currently none). */
+/**
+ * Dialog ids owned by the home shell (currently none, so the derived id type
+ * would be `never` — both come back with the first dialog entry).
+ */
 export const HOME_DIALOG_IDS = [] as const;
-
-/** One dialog id of the home shell. */
-export type HomeDialogId = (typeof HOME_DIALOG_IDS)[number];
 
 /**
  * Toolbar event vocabulary: every `headerTools` entry (the nine-grid, see
