@@ -338,7 +338,7 @@
     "noFile": "No file selected"
   },
   "personaPreset": {
-    "current": "Session preset",
+    "current": "Session preset & role",
     "unbound": "Not chosen",
     "contentTitle": "Preset content",
     "selectTitle": "Choose a preset",
@@ -346,7 +346,7 @@
     "create": "Create session",
     "applyFailed": "Applying the preset failed — check the backend connection and retry",
     "empty": "(empty)",
-    "currentWithName": "Session preset: {name}",
+    "currentWithName": "Session preset & role: {name}",
     "unboundHint": "This session was created without a preset",
     "missing": "This preset has been deleted"
   }

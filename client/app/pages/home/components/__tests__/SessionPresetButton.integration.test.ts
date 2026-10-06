@@ -63,7 +63,7 @@ describe('SessionPresetButton', () => {
 
     const trigger = wrapper.get('[data-test="session-preset-trigger"]');
     expect(trigger.text()).toBe('');
-    expect(trigger.attributes('title')).toBe('当前会话预设：编程助手');
+    expect(trigger.attributes('title')).toBe('当前会话预设角色：编程助手');
     expect(trigger.classes()).toContain('@max-[300px]:hidden!');
   });
 

@@ -338,7 +338,7 @@
     "noFile": "선택된 파일 없음"
   },
   "personaPreset": {
-    "current": "현재 세션 프리셋",
+    "current": "현재 세션 프리셋과 역할",
     "unbound": "선택 안 함",
     "contentTitle": "프리셋 내용",
     "selectTitle": "프리셋 선택",
@@ -346,7 +346,7 @@
     "create": "세션 만들기",
     "applyFailed": "프리셋 적용에 실패했습니다. 백엔드 연결을 확인한 후 다시 시도하세요",
     "empty": "(비어 있음)",
-    "currentWithName": "현재 세션 프리셋: {name}",
+    "currentWithName": "현재 세션 프리셋과 역할: {name}",
     "unboundHint": "이 세션은 프리셋 없이 만들어졌습니다",
     "missing": "이 프리셋은 삭제되었습니다"
   }

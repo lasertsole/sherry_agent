@@ -338,7 +338,7 @@
     "noFile": "未选择文件"
   },
   "personaPreset": {
-    "current": "当前会话预设",
+    "current": "当前会话预设角色",
     "unbound": "未选择",
     "contentTitle": "预设内容",
     "selectTitle": "选择预设",
@@ -346,7 +346,7 @@
     "create": "创建会话",
     "applyFailed": "预设应用失败，请检查后端连接后重试",
     "empty": "（空）",
-    "currentWithName": "当前会话预设：{name}",
+    "currentWithName": "当前会话预设角色：{name}",
     "unboundHint": "此会话创建时未选择预设",
     "missing": "该预设已被删除"
   }

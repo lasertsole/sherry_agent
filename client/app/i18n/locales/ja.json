@@ -338,7 +338,7 @@
     "noFile": "ファイルが選択されていません"
   },
   "personaPreset": {
-    "current": "このセッションのプリセット",
+    "current": "現在のセッションのプリセットと役割",
     "unbound": "未選択",
     "contentTitle": "プリセット内容",
     "selectTitle": "プリセットを選択",
@@ -346,7 +346,7 @@
     "create": "セッションを作成",
     "applyFailed": "プリセットの適用に失敗しました。バックエンド接続を確認して再試行してください",
     "empty": "（空）",
-    "currentWithName": "このセッションのプリセット：{name}",
+    "currentWithName": "現在のセッションのプリセットと役割：{name}",
     "unboundHint": "このセッションはプリセット未選択で作成されました",
     "missing": "このプリセットは削除されました"
   }
