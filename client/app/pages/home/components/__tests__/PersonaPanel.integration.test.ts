@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
+import { reactive } from 'vue';
 import { locale as i18nLocale } from 'vue-i18n';
 import PersonaPanel from '@/pages/home/components/PersonaPanel.vue';
 import { DEFAULT_AI_AVATAR, DEFAULT_PLACEHOLDER_AVATAR, DEFAULT_USER_AVATAR } from '~/composables/defaultCharacter';
@@ -105,6 +106,35 @@ const stubs = {
 
 /** The last payload written through `writeSystemPrompt` (the apply verification reads it back). */
 let written: Record<string, string> | null = null;
+
+/**
+ * An agent-config store double whose catalogue carries one REQUIRED tool, one
+ * plain optional tool and one bulk-only group (子代理) — enough for the two new
+ * built-in presets to derive their agent blocks from.
+ */
+function makeCatalogStore() {
+  const readFile = { name: 'read_file', group: 'files', required: true };
+  const webSearch = { name: 'web_search', group: 'web' };
+  const spawn = { name: 'sessions_spawn', group: 'subagents' };
+  const tools = [readFile, webSearch, spawn];
+  return reactive({
+    catalog: { tools, middlewares: [], subagent_roles: [] },
+    catalogLoaded: true,
+    toolGroups: [
+      { group: 'files', tools: [readFile] },
+      { group: 'web', tools: [webSearch] },
+      { group: 'subagents', tools: [spawn] }
+    ],
+    middlewares: { gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }], locked: [] },
+    subagentRoles: [],
+    loadCatalog: async () => {},
+    hydrate: async () => {},
+    configOf: () => ({}),
+    enabledTools: () => tools.map(tool => tool.name),
+    isPending: () => false,
+    save: async () => {}
+  });
+}
 
 async function mountPanel() {
   const wrapper = mount(PersonaPanel, { global: { stubs } });
@@ -211,12 +241,17 @@ describe('PersonaPanel role tab', () => {
     expect(buttonByText(wrapper, '应用').attributes('disabled')).toBeDefined();
   });
 
-  it('lists the built-ins with 编程助手 first and loads it without any role', async () => {
+  it('lists the four built-ins and loads 编程助手 without any role', async () => {
     const wrapper = await mountPanel();
 
     const builtinRows = wrapper.findAll('[data-test^="builtin-"]');
-    // 编程助手 is the default and leads the list; 橘雪莉 follows as the role-play built-in.
-    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual(['builtin-coding', 'builtin-sherry']);
+    // The whole spectrum, top to bottom: 纯净 / 编程助手 (the default) / 情感陪伴 / 全量.
+    expect(builtinRows.map(row => row.attributes('data-test'))).toEqual([
+      'builtin-pure',
+      'builtin-coding',
+      'builtin-companion',
+      'builtin-sherry'
+    ]);
     // Non-deletable: the virtual rows never carry a delete button.
     for (const row of builtinRows) expect(row.findAll('button')).toHaveLength(0);
 
@@ -253,7 +288,7 @@ describe('PersonaPanel role tab', () => {
     });
   });
 
-  it('loads the full template for the 橘雪莉 built-in', async () => {
+  it('loads the full template for the 全量 built-in', async () => {
     const wrapper = await mountPanel();
     await wrapper.get('[data-test="builtin-coding"]').trigger('click');
     await flushPromises();
@@ -263,6 +298,45 @@ describe('PersonaPanel role tab', () => {
     const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
     expect(textareas).toEqual(['TPL-AGENTS', 'TPL-SOUL', 'TPL-USER']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
+  });
+
+  it('loads 纯净 as an empty persona with the required tools only', async () => {
+    vi.stubGlobal('useAgentConfigStore', () => makeCatalogStore());
+    const wrapper = await mountPanel();
+
+    await wrapper.get('[data-test="builtin-pure"]').trigger('click');
+    await flushPromises();
+
+    // Nobody named and NO persona content — the operating rules included.
+    const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
+    expect(textareas).toEqual(['', '', '']);
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
+    expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
+    // The tools draft is the catalogue's locked set — nothing else stays on.
+    const toolsTab = wrapper.get('[data-test="agent-tools-tab"]');
+    expect(toolsTab.text()).toContain('已选 1/3');
+    expect(wrapper.get('[data-test="agent-tool-read_file"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
+  });
+
+  it('loads 情感陪伴 with the orchestration groups off and the optional switch off', async () => {
+    vi.stubGlobal('useAgentConfigStore', () => makeCatalogStore());
+    const wrapper = await mountPanel();
+
+    await wrapper.get('[data-test="builtin-companion"]').trigger('click');
+    await flushPromises();
+
+    // The full role-play persona is loaded…
+    const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
+    expect(textareas).toEqual(['TPL-AGENTS', 'TPL-SOUL', 'TPL-USER']);
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
+    // …while 子代理 / 任务与计划 stay out and every optional middleware is off.
+    expect(wrapper.get('[data-test="agent-tools-tab"]').text()).toContain('已选 2/3');
+    expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
+    // This suite does not register PrimeVue globally, so the switch's bound
+    // value lands as the kebab attribute (the real component reads the same prop).
+    const middleware = wrapper.get('[data-test="agent-middleware-TaskIntentMiddleware"]');
+    expect(middleware.attributes('model-value')).toBe('false');
   });
 
   it('saves the role config with the preset and restores it on selection', async () => {

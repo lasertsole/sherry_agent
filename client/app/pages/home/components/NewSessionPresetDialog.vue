@@ -78,6 +78,9 @@ const localePath = useLocalePath();
 /** The saved presets (shared singleton); built-ins come from the catalogue. */
 const { presets } = usePersonaPresets();
 
+/** The agent-config store: its catalogue is what 纯净 / 情感陪伴 derive from. */
+const agentStore = useAgentConfigStore();
+
 /** Built-ins + saved presets, in the shared display order. */
 const entries = computed(() => catalogEntries(presets.value));
 
@@ -109,7 +112,10 @@ const confirm = async () => {
   if (!entry || creating.value) return;
   creating.value = true;
   try {
-    const payload = await loadPresetPayload(entry, locale.value, t);
+    // The tool catalogue comes first: 纯净 / 情感陪伴 derive their agent block
+    // from it (a preset applied without it would silently write the wrong set).
+    await agentStore.loadCatalog();
+    const payload = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
     // The id is minted first so the apply can also write the preset's agent
     // config (工具 / 中间件 / 子代理模型) into THIS session's registers.
     const sessionId = crypto.randomUUID();

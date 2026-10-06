@@ -355,7 +355,10 @@ const loadBinding = async () => {
       boundPresetMissing.value = true;
       return;
     }
-    payload.value = await loadPresetPayload(entry, locale.value, t);
+    // The catalogue backs both the agent tabs and a built-in preset's agent
+    // block (纯净 / 情感陪伴 derive theirs from it); loading is idempotent.
+    await agentStore.loadCatalog();
+    payload.value = await loadPresetPayload(entry, locale.value, t, presetCatalogFacts(agentStore));
   } catch (e) {
     logUtil.e('[SessionPresetPanel] Failed to load the preset content:', e);
     payload.value = null;

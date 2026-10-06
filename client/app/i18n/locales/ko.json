@@ -268,7 +268,9 @@
     "persona": {
       "preset": {
         "title": "프리셋",
-        "defaultName": "橘雪莉",
+        "builtinPureName": "순수",
+        "builtinCompanionName": "감정 동반",
+        "defaultName": "전체",
         "defaultBadge": "기본",
         "builtinCodingName": "코딩 어시스턴트",
         "builtinBadge": "내장",

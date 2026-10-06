@@ -6,6 +6,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
+import { reactive } from 'vue';
 import NewSessionPresetDialog from '@/pages/home/components/NewSessionPresetDialog.vue';
 import type { PersonaPreset } from '@/composables/db';
 
@@ -18,6 +19,11 @@ vi.mock('~/composables/bridge', () => bridge);
 
 const mitt = vi.hoisted(() => ({ emit: vi.fn(), on: vi.fn(), off: vi.fn() }));
 vi.mock('@/composables/mitt', () => mitt);
+
+const agentBridge = vi.hoisted(() => ({
+  setAgentConfig: vi.fn(async () => ({ config: {}, pending: false }))
+}));
+vi.mock('~/composables/bridge/agent-config', () => agentBridge);
 
 const sidebar = vi.hoisted(() => ({ ensureSessionCharacter: vi.fn(async () => undefined) }));
 vi.mock('@/pages/home/components/SessionSidebar.vue', () => sidebar);
@@ -102,7 +108,7 @@ describe('NewSessionPresetDialog', () => {
     vi.clearAllMocks();
   });
 
-  it('lists the catalogue with 编程助手 first and preselected', async () => {
+  it('lists the four built-ins with 编程助手 preselected', async () => {
     db.presets.push({
       id: 7,
       name: '我的预设',
@@ -114,12 +120,14 @@ describe('NewSessionPresetDialog', () => {
 
     const rows = wrapper.findAll('[data-test^="new-session-preset-option-"]');
     expect(rows.map(row => row.attributes('data-test'))).toEqual([
+      'new-session-preset-option-pure',
       'new-session-preset-option-coding',
+      'new-session-preset-option-companion',
       'new-session-preset-option-sherry',
       'new-session-preset-option-user:7'
     ]);
     // The default preset is preselected, so 创建会话 is immediately actionable.
-    expect(rows[0]!.find('i.pi-check').exists()).toBe(true);
+    expect(rows[1]!.find('i.pi-check').exists()).toBe(true);
     expect(buttonByText(wrapper, '创建会话').attributes('disabled')).toBeUndefined();
   });
 
@@ -150,7 +158,7 @@ describe('NewSessionPresetDialog', () => {
     expect(db.cacheSessionPreset).toHaveBeenCalledWith({
       session_id: sessionId,
       preset_id: 'sherry',
-      preset_name: '橘雪莉'
+      preset_name: '全量'
     });
     expect(sidebar.ensureSessionCharacter).toHaveBeenCalledWith(sessionId);
     expect((db.cacheSessionMeta.mock.calls[0]![0] as { id: string }).id).toBe(sessionId);
@@ -159,6 +167,51 @@ describe('NewSessionPresetDialog', () => {
     expect(mitt.emit).toHaveBeenCalledWith('session:created', expect.objectContaining({ id: sessionId }));
     expect(router.push).toHaveBeenCalledWith(`/home/${sessionId}`);
     expect(wrapper.emitted('update:visible')?.at(-1)).toEqual([false]);
+  });
+
+  it('applies 纯净 as an empty persona with the required tools only', async () => {
+    // Its agent block is derived from the backend catalogue, so the dialog needs
+    // one: the store stub carries the tool list a real response would.
+    vi.stubGlobal('useAgentConfigStore', () =>
+      reactive({
+        catalog: {
+          tools: [
+            { name: 'read_file', group: 'files', required: true },
+            { name: 'web_search', group: 'web' },
+            { name: 'sessions_spawn', group: 'subagents' }
+          ],
+          middlewares: [],
+          subagent_roles: []
+        },
+        middlewares: { gateable: [], locked: [] },
+        loadCatalog: async () => {}
+      })
+    );
+    const { wrapper, written } = await mountDialog();
+    // The write IS the read-back here: every file legitimately lands empty.
+    bridge.readSystemPrompt.mockImplementation(async () => ({ ...TEMPLATE, ...written }));
+
+    await wrapper.get('[data-test="new-session-preset-option-pure"]').trigger('click');
+    await buttonByText(wrapper, '创建会话').trigger('click');
+    await flushPromises();
+
+    // Nobody named, nothing written — the operating rules included.
+    expect(written).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
+    expect(db.cacheCharacter).toHaveBeenCalledWith({
+      session_id: '__global__',
+      aiName: '',
+      aiAvatar: '',
+      userName: '',
+      userAvatar: ''
+    });
+    // …and the session is left with the catalogue's locked tools and nothing else.
+    const sessionId = (db.cacheSessionPreset.mock.calls[0]![0] as { session_id: string }).session_id;
+    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, { tools: ['read_file'] });
+    expect(db.cacheSessionPreset).toHaveBeenCalledWith({
+      session_id: sessionId,
+      preset_id: 'pure',
+      preset_name: '纯净'
+    });
   });
 
   it('keeps the dialog open when the apply cannot be verified', async () => {

@@ -268,7 +268,9 @@
     "persona": {
       "preset": {
         "title": "预设",
-        "defaultName": "橘雪莉",
+        "builtinPureName": "纯净",
+        "builtinCompanionName": "情感陪伴",
+        "defaultName": "全量",
         "defaultBadge": "默认",
         "builtinCodingName": "编程助手",
         "builtinBadge": "内置",

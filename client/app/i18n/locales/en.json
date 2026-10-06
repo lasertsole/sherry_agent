@@ -268,7 +268,9 @@
     "persona": {
       "preset": {
         "title": "Presets",
-        "defaultName": "Tachibana Sherry",
+        "builtinPureName": "Pure",
+        "builtinCompanionName": "Companion",
+        "defaultName": "Full",
         "defaultBadge": "Default",
         "builtinCodingName": "Coding Assistant",
         "builtinBadge": "Built-in",

@@ -16,7 +16,7 @@ import { logUtil } from '~/utils/log';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
 /** Built-in entry ids (the virtual, non-deletable presets). */
-export type BuiltinPresetId = 'sherry' | 'coding';
+export type BuiltinPresetId = 'pure' | 'coding' | 'companion' | 'sherry';
 
 /** Translate function shape the catalogue needs (a component's `t`). */
 export type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
@@ -39,9 +39,20 @@ export interface PresetEntry {
 }
 
 /**
- * The built-in entries, in display order: 编程助手 FIRST — it is the default
- * preset (a new session starts as a plain coding assistant), 橘雪莉 stays as
- * the role-play built-in behind it.
+ * The built-in entries, in display order — the whole spectrum, read top to
+ * bottom:
+ *
+ * - 纯净 (`pure`): nobody named, no persona content at all, and only the
+ *   catalogue's REQUIRED tools — the bare floor a session can run on;
+ * - 编程助手 (`coding`): the default — the operating-rules template, empty soul /
+ *   user profile, no roles, every tool on;
+ * - 情感陪伴 (`companion`): the full role-play persona with the orchestration
+ *   surfaces switched off (no 任务与计划 / 子代理 tools, no optional middleware);
+ * - 全量 (`sherry`): the same full persona with every tool and switch on.
+ *
+ * The `sherry` ID is kept as-is: sessions already bound to this built-in store
+ * it in their 当前会话预设 binding, and only the LABEL became 全量 (the shipped
+ * character is still 橘雪莉 — the preset names the configuration, not the role).
  */
 export const BUILTIN_PRESETS: ReadonlyArray<{
   id: BuiltinPresetId;
@@ -49,9 +60,19 @@ export const BUILTIN_PRESETS: ReadonlyArray<{
   badgeKey: string;
 }> = [
   {
+    id: 'pure',
+    nameKey: 'config.persona.preset.builtinPureName',
+    badgeKey: 'config.persona.preset.builtinBadge'
+  },
+  {
     id: 'coding',
     nameKey: 'config.persona.preset.builtinCodingName',
     badgeKey: 'config.persona.preset.defaultBadge'
+  },
+  {
+    id: 'companion',
+    nameKey: 'config.persona.preset.builtinCompanionName',
+    badgeKey: 'config.persona.preset.builtinBadge'
   },
   {
     id: 'sherry',
@@ -120,6 +141,71 @@ export function composeRoleFile(character: PresetCharacter, t: TranslateFn): str
   return lines.length > 0 ? `# ROLE.md\n\n${lines.join('\n')}\n` : '';
 }
 
+/**
+ * The catalogue facts a built-in preset's agent block is computed from — the
+ * same `GET /agent/catalog` response the three tabs render, so the client never
+ * hardcodes tool names (a tool added to the backend lands in these presets too).
+ */
+export interface PresetCatalogFacts {
+  /** Every main-agent tool: name, group id, and the lock flag. */
+  tools: ReadonlyArray<{ name: string; group: string; required?: boolean }>;
+  /** The gateable (switchable) middleware names. */
+  gateableMiddlewares: readonly string[];
+}
+
+/** Tool groups 情感陪伴 keeps OFF entirely: the orchestration surfaces. */
+export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
+
+/**
+ * The catalogue facts of a loaded agent-config store.
+ * @param store The store (usually `useAgentConfigStore()`).
+ * @param store.catalog
+ * @param store.catalog.tools
+ * @param store.middlewares
+ * @param store.middlewares.gateable
+ * @returns The facts (empty lists until the catalogue has loaded).
+ */
+export function presetCatalogFacts(store: {
+  catalog: { tools: PresetCatalogFacts['tools'] };
+  middlewares: { gateable: ReadonlyArray<{ name: string }> };
+}): PresetCatalogFacts {
+  return {
+    tools: store.catalog.tools,
+    gateableMiddlewares: store.middlewares.gateable.map(entry => entry.name)
+  };
+}
+
+/**
+ * The agent block a built-in pins ({} = every default).
+ *
+ * - 纯净: only the catalogue's required tools — the locked set the service would
+ *   refuse to drop anyway, so the preset states the floor explicitly;
+ * - 情感陪伴: every tool EXCEPT the 任务与计划 / 子代理 groups, and every optional
+ *   middleware off;
+ * - 编程助手 / 全量: no opinion (every tool, every switch on).
+ *
+ * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
+ * silent fallback to `{}` would apply the opposite of what the preset promises.
+ * @param id Built-in entry id.
+ * @param facts The loaded catalogue.
+ * @returns The agent block for the session config.
+ */
+export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFacts): AgentConfig {
+  if (id !== 'pure' && id !== 'companion') return {};
+  if (facts.tools.length === 0) {
+    throw new Error('[persona-catalog] the tool catalogue is unavailable; cannot compose the preset');
+  }
+  const tools =
+    id === 'pure'
+      ? facts.tools.filter(tool => tool.required === true)
+      : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group));
+  const block: AgentConfig = { tools: tools.map(tool => tool.name) };
+  if (id === 'companion' && facts.gateableMiddlewares.length > 0) {
+    block.middlewares_disabled = [...facts.gateableMiddlewares];
+  }
+  return block;
+}
+
 /** Payload every apply path writes: the persona files + the character + the agent config. */
 export interface PersonaPresetPayload {
   /** File basename → content (AGENTS.md / SOUL.md / USER.md / ROLE.md). */
@@ -137,42 +223,48 @@ export interface PersonaPresetPayload {
 /**
  * The payload of a built-in entry, composed from the language template.
  *
+ * - 纯净: EVERY persona file empty (no operating rules either) and nobody named
+ *   — the clean slate — plus the required-tools-only agent block;
  * - 编程助手: the operating rules only — soul and user profile EMPTY, and BOTH
- *   role names empty (no role statement: the prompt gains no ROLE block).
- * - 橘雪莉: the full template plus the shipped default names.
+ *   role names empty (no role statement: the prompt gains no ROLE block);
+ * - 情感陪伴 / 全量: the full template plus the shipped default names.
  * @param id Built-in entry id.
  * @param template The language template (`readSystemPromptTemplate`), already fetched.
  * @param t The component's translate function.
+ * @param facts The loaded catalogue (drives 纯净 / 情感陪伴's agent block).
  * @returns The apply payload (ROLE.md composed from the character).
  */
 export function builtinPayload(
   id: BuiltinPresetId,
   template: Record<string, string>,
-  t: TranslateFn
+  t: TranslateFn,
+  facts: PresetCatalogFacts
 ): PersonaPresetPayload {
-  const character: PresetCharacter =
-    id === 'coding'
-      ? {
-          aiName: '',
-          // Empty avatars: 编程助手 names nobody and ships no avatar — both roles
-          // render the neutral gray placeholder (DEFAULT_PLACEHOLDER_AVATAR).
-          aiAvatar: '',
-          userName: '',
-          userAvatar: ''
-        }
-      : { ...DEFAULT_CACHED_CHARACTER };
-  const content: Record<string, string> =
-    id === 'coding'
-      ? { 'AGENTS.md': template['AGENTS.md'] ?? '', 'SOUL.md': '', 'USER.md': '' }
-      : {
-          'AGENTS.md': template['AGENTS.md'] ?? '',
-          'SOUL.md': template['SOUL.md'] ?? '',
-          'USER.md': template['USER.md'] ?? ''
-        };
+  const named = id === 'companion' || id === 'sherry';
+  const character: PresetCharacter = named
+    ? { ...DEFAULT_CACHED_CHARACTER }
+    : {
+        // 纯净 / 编程助手 name nobody — both roles render the neutral gray
+        // placeholder (DEFAULT_PLACEHOLDER_AVATAR) instead of an avatar.
+        aiName: '',
+        aiAvatar: '',
+        userName: '',
+        userAvatar: ''
+      };
+  let content: Record<string, string>;
+  if (id === 'pure') {
+    content = { 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '' };
+  } else if (id === 'coding') {
+    content = { 'AGENTS.md': template['AGENTS.md'] ?? '', 'SOUL.md': '', 'USER.md': '' };
+  } else {
+    content = {
+      'AGENTS.md': template['AGENTS.md'] ?? '',
+      'SOUL.md': template['SOUL.md'] ?? '',
+      'USER.md': template['USER.md'] ?? ''
+    };
+  }
   content['ROLE.md'] = composeRoleFile(character, t);
-  // Neither built-in pins a tool / middleware / model choice: `{}` means every
-  // default, so a built-in keeps behaving exactly like a session without a config.
-  return { content, character, agent: {} };
+  return { content, character, agent: builtinAgentConfig(id, facts) };
 }
 
 /**
@@ -180,16 +272,18 @@ export function builtinPayload(
  * @param entry Catalogue entry.
  * @param locale Current UI locale (selects the language template for built-ins).
  * @param t The component's translate function.
+ * @param facts The loaded catalogue (built-ins' agent blocks are derived from it).
  * @returns The payload (persona files incl. ROLE.md + the character block).
  */
 export async function loadPresetPayload(
   entry: PresetEntry,
   locale: string,
-  t: TranslateFn
+  t: TranslateFn,
+  facts: PresetCatalogFacts
 ): Promise<PersonaPresetPayload> {
   if (entry.builtin) {
     const template = await readSystemPromptTemplate(locale);
-    return builtinPayload(entry.id as BuiltinPresetId, template, t);
+    return builtinPayload(entry.id as BuiltinPresetId, template, t, facts);
   }
   const preset = entry.userPreset;
   if (!preset) throw new Error(`[persona-catalog] unknown preset entry: ${entry.id}`);

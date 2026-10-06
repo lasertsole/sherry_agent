@@ -385,8 +385,10 @@
         <span class="text-sm font-semibold">{{ t('config.persona.preset.title') }}</span>
         <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:max-h-none">
           <!-- Virtual read-only entries: the built-in personas (no delete button,
-               not Dexie rows). 橘雪莉 = the shipped default; 编程助手 = a plain
-               assistant template (operating rules only, no soul / user profile). -->
+               not Dexie rows) — 纯净 (nothing named, no persona content, required
+               tools only), 编程助手 (the default: operating rules only, no soul /
+               user profile), 情感陪伴 (full persona, orchestration off) and 全量
+               (full persona, everything on). -->
           <div
             v-for="builtin in BUILTIN_PRESETS"
             :key="builtin.id"
@@ -846,8 +848,9 @@ const loadContent = async () => {
     // the compose direction is one-way (names -> sentence).
     const charData = await readCachedCharacter(GLOBAL_SESSION_KEY);
     // An explicitly EMPTY name/avatar stays empty (the input shows its
-    // placeholder): 编程助手 ships no names on purpose, and prefilling 橘雪莉
-    // here made the panel disagree with the preset it had just applied.
+    // placeholder): the nameless built-ins (纯净 / 编程助手) ship no names on
+    // purpose, and prefilling the shipped character here made the panel disagree
+    // with the preset it had just applied.
     fillCharacter({
       aiName: charData?.aiName ?? DEFAULT_CACHED_CHARACTER.aiName,
       aiAvatar: charData?.aiAvatar ?? DEFAULT_CACHED_CHARACTER.aiAvatar,
@@ -1036,17 +1039,22 @@ const restoreDefault = async (tab: PersonaTab) => {
 /**
  * Click a built-in entry: load its shipped template through the shared catalogue
  * (the same payload the new-session dialog and the top-bar viewer use).
+ * - 纯净 → nobody named, no persona content, and only the required tools;
  * - 编程助手 → the operating rules only: empty soul and user profile, and BOTH
  *   role names empty — a plain coding assistant, no role statement at all;
- * - 橘雪莉 → the full language template plus the default names/avatars.
+ * - 情感陪伴 / 全量 → the full language template plus the default names/avatars
+ *   (情感陪伴 also pins the orchestration surfaces off).
  * @param id Which built-in entry was clicked.
  */
 const selectBuiltin = async (id: BuiltinPresetId) => {
   if (restoring.value || loading.value) return;
   restoring.value = true;
   try {
+    // The catalogue feeds 纯净 / 情感陪伴's agent block; it is fetched once per
+    // process (the panel already awaited it during load, so this is a cache hit).
+    await agentStore.loadCatalog();
     const template = await readSystemPromptTemplate(locale.value);
-    const payload = builtinPayload(id, template, t);
+    const payload = builtinPayload(id, template, t, presetCatalogFacts(agentStore));
     fillTabs(payload.content);
     fillCharacter(payload.character);
     fillAgentDraft(payload.agent);
