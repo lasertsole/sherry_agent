@@ -1,11 +1,18 @@
 <template>
   <aside
-    class="relative h-full overflow-hidden"
+    class="h-full overflow-hidden"
     :class="[
-      collapsed ? 'w-0' : 'border-l border-solid border-gray-light dark:border-gray-dark',
+      store.maximized
+        ? // `fixed` must REPLACE `relative`: both are the same-specificity
+          // position utility, and the sheet's order (relative after fixed) would
+          // otherwise keep the panel in flow and leave it at its min width.
+          'fixed inset-0 z-40 bg-white dark:bg-[#181820]'
+        : collapsed
+          ? 'relative w-0'
+          : 'relative border-l border-solid border-gray-light dark:border-gray-dark',
       dragging ? '' : 'transition-all duration-300'
     ]"
-    :style="collapsed ? undefined : { width: `${store.width}px` }">
+    :style="collapsed || store.maximized ? undefined : { width: `${store.width}px` }">
     <!-- Resize handle on the left edge: dragging left widens the panel (it is
          right-anchored); the store clamps every step to the allowed band. The
          grip pill is the affordance — an 8px edge alone reads as a border, so
@@ -13,7 +20,7 @@
          greys are mode-independent: the theme accent resolves to white on a
          dark-mode build, which disappears over a light panel. -->
     <div
-      v-if="!collapsed"
+      v-if="!collapsed && !store.maximized"
       class="group absolute left-0 top-0 h-full w-2 z-10 flex items-center justify-center cursor-col-resize"
       :class="{ 'bg-gray-400/20': dragging }"
       role="separator"
@@ -31,7 +38,7 @@
     <div
       v-if="contentMounted"
       class="flex flex-col h-full"
-      :style="{ width: `${store.width}px` }">
+      :style="store.maximized ? { width: '100%' } : { width: `${store.width}px` }">
       <!-- Strip: the group pills (当前会话 / 全局 — the tabs' scope) are FIXED at the
            left of the single tab row, and the active group's tab list scrolls to
            their right. The row keeps the shared h-15, so all three columns still
@@ -39,6 +46,22 @@
            settings menu. -->
       <div
         class="shrink-0 flex items-center gap-2 px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
+        <!-- Maximize / restore, LEFT of the group pills: the panel fills the whole
+             viewport so a wide editor (环境配置, 预设, 技能) does not have to be read
+             through its narrow column; the same button restores the previous
+             layout (nothing else is mutated — the panel becomes a fixed overlay). -->
+        <button
+          type="button"
+          class="shrink-0 flex h-6 w-6 items-center justify-center rounded-md text-gray-500 transition-colors hover:bg-gray-100 hover:text-theme-main dark:text-gray-400 dark:hover:bg-gray-800"
+          data-test="sidebar-maximize"
+          :title="t(store.maximized ? 'rightSidebar.restore' : 'rightSidebar.maximize')"
+          :aria-label="t(store.maximized ? 'rightSidebar.restore' : 'rightSidebar.maximize')"
+          :aria-pressed="store.maximized"
+          @click="store.toggleMaximized()">
+          <i
+            :class="store.maximized ? 'pi pi-window-minimize' : 'pi pi-window-maximize'"
+            class="text-xs"></i>
+        </button>
         <div
           class="flex shrink-0 items-center gap-0.5 rounded-full border border-solid border-gray-200/80 bg-gray-100/80 p-0.5 dark:border-gray-700/80 dark:bg-gray-800/80"
           data-test="scope-tabs">
@@ -269,6 +292,8 @@ onBeforeUnmount(() => {
       "systemConfig": "系统配置",
       "persona": "预设",
       "notification": "通知",
+      "maximize": "放大到整个视口",
+      "restore": "还原面板宽度",
       "memory": "记忆",
       "heartbeat": "心跳",
       "cron": "定时任务",
@@ -294,6 +319,8 @@ onBeforeUnmount(() => {
       "systemConfig": "System Config",
       "persona": "Presets",
       "notification": "Notifications",
+      "maximize": "Expand to the full viewport",
+      "restore": "Restore the panel width",
       "memory": "Memory",
       "heartbeat": "Heartbeat",
       "cron": "Scheduled Tasks",
@@ -319,6 +346,8 @@ onBeforeUnmount(() => {
       "systemConfig": "システム設定",
       "persona": "プリセット",
       "notification": "通知",
+      "maximize": "ビューポート全体に拡大",
+      "restore": "パネル幅に戻す",
       "memory": "メモリ",
       "heartbeat": "ハートビート",
       "cron": "定期タスク",
@@ -344,6 +373,8 @@ onBeforeUnmount(() => {
       "systemConfig": "시스템 설정",
       "persona": "프리셋",
       "notification": "알림",
+      "maximize": "뷰포트 전체로 확대",
+      "restore": "패널 너비로 복원",
       "memory": "메모리",
       "heartbeat": "하트비트",
       "cron": "예약 작업",

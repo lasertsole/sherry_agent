@@ -143,6 +143,12 @@ export const useRightSidebarStore = defineStore(
     const activeScope = ref<RightSidebarScope>('global');
     /** Panel width in px (draggable, clamped; persisted). */
     const width = ref(RIGHT_SIDEBAR_DEFAULT_WIDTH);
+    /**
+     * Whether the panel fills the whole viewport (the strip's 放大 button).
+     * Persisted like ``collapsed``: the choice is a workspace mode, not a
+     * transient hover, and a reload should not silently undo it.
+     */
+    const maximized = ref(false);
 
     /** Collapse/expand the sidebar (top-bar toggle). */
     function toggle(): void {
@@ -152,6 +158,12 @@ export const useRightSidebarStore = defineStore(
     /** Expand without toggling (used when a menu entry opens a tab). */
     function expand(): void {
       collapsed.value = false;
+    }
+
+    /** Maximize / restore the panel (fills the viewport while maximized). */
+    function toggleMaximized(): void {
+      maximized.value = !maximized.value;
+      if (maximized.value) expand();
     }
 
     /**
@@ -264,7 +276,9 @@ export const useRightSidebarStore = defineStore(
       activeTabId,
       activeScope,
       width,
+      maximized,
       toggle,
+      toggleMaximized,
       expand,
       setWidth,
       fitToViewport,
@@ -277,7 +291,7 @@ export const useRightSidebarStore = defineStore(
   },
   {
     persist: {
-      pick: ['collapsed', 'width']
+      pick: ['collapsed', 'width', 'maximized']
     }
   }
 );

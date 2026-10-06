@@ -14,7 +14,9 @@ let sidebarApi: {
   activeTabId: string | null;
   activeScope: 'session' | 'global';
   width: number;
+  maximized: boolean;
   toggle: ReturnType<typeof vi.fn>;
+  toggleMaximized: ReturnType<typeof vi.fn>;
   expand: ReturnType<typeof vi.fn>;
   setWidth: ReturnType<typeof vi.fn>;
   fitToViewport: ReturnType<typeof vi.fn>;
@@ -36,7 +38,11 @@ beforeEach(() => {
     activeTabId: ref<string | null>(null),
     activeScope: ref<'session' | 'global'>('global'),
     width: ref(420),
+    maximized: ref(false),
     toggle: vi.fn(),
+    toggleMaximized: vi.fn(() => {
+      sidebarApi.maximized = !sidebarApi.maximized;
+    }),
     expand: vi.fn(),
     setWidth: vi.fn(),
     fitToViewport: vi.fn(),
@@ -244,6 +250,39 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
 
     expect(sidebarApi.closeTab).toHaveBeenCalledWith('logs-1');
     expect(sidebarApi.activateTab).not.toHaveBeenCalled();
+  });
+
+  it('maximizes to the whole viewport from the button LEFT of the group pills', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [{ id: 't1', kind: 'stats', scope: 'global' }];
+    const wrapper = mount(RightSidebar);
+    await nextTick();
+
+    // Placement: the button precedes the pills inside the strip row.
+    const strip = wrapper.get('[data-test="scope-tabs"]');
+    const button = wrapper.get('[data-test="sidebar-maximize"]');
+    expect(button.element.compareDocumentPosition(strip.element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    await button.trigger('click');
+    expect(sidebarApi.toggleMaximized).toHaveBeenCalledTimes(1);
+    await nextTick();
+
+    // Maximized: a fixed, full-viewport overlay without the drag handle.
+    const aside = wrapper.get('aside');
+    expect(aside.classes()).toContain('fixed');
+    expect(aside.classes()).toContain('inset-0');
+    expect(aside.attributes('style') ?? '').not.toContain('width');
+    expect(wrapper.find('[role="separator"]').exists()).toBe(false);
+    // The body fills the overlay rather than the stored width.
+    expect(wrapper.find('[data-test="scope-tabs"]').exists()).toBe(true);
+
+    // The same button restores the previous layout.
+    await button.trigger('click');
+    await nextTick();
+    expect(sidebarApi.maximized).toBe(false);
+    expect(wrapper.get('aside').classes()).not.toContain('fixed');
+    expect(wrapper.get('aside').attributes('style') ?? '').toContain('width: 420px');
+    expect(wrapper.find('[role="separator"]').exists()).toBe(true);
   });
 
   it('carries no add / collapse controls: both live in the top toolbar', () => {

@@ -22,6 +22,21 @@ describe('stores/right-sidebar', () => {
     expect(store.activeTabId).toBeNull();
   });
 
+  it('toggleMaximized() flips the mode and expands a collapsed panel', () => {
+    const store = useRightSidebarStore();
+    store.collapsed = true;
+
+    store.toggleMaximized();
+    expect(store.maximized).toBe(true);
+    expect(store.collapsed).toBe(false);
+
+    store.toggleMaximized();
+    expect(store.maximized).toBe(false);
+    // Collapse is NOT restored: the toggle only ever expands, mirroring its
+    // sibling controls (a user who collapsed first keeps the panel visible).
+    expect(store.collapsed).toBe(false);
+  });
+
   it('openTab() adds, activates and expands', () => {
     const store = useRightSidebarStore();
 
