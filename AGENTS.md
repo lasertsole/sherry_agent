@@ -222,12 +222,15 @@ away (last session closed, binding cleared).
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
-The 预设 panel's last four tabs (工具 / 中间件 / 子代理模型 / 技能) cover one JSON payload per
-session, stored under `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`,
-promoted at the turn boundary like the model/thinking controls)::
+The 预设角色 panel (the 菜单 entry renamed from 预设; it leads the nine-grid, and the right
+sidebar's tab label — global and 当前会话 alike — carries the same name) covers one JSON payload
+per session in its last four tabs (工具 / 中间件 / 代理模型 / 技能), stored under
+`StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
+the model/thinking controls)::
 
     {"tools": [...]|null, "middlewares_disabled": [...],
-     "subagent_models": {"<role>": {profile}|null}, "skills": [...]|null}
+     "subagent_models": {"<role>": {profile}|null}, "skills": [...]|null,
+     "middleware_options": {"Summarization": {"nudge": bool}}}
 
 - `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
   (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
@@ -253,7 +256,11 @@ promoted at the turn boundary like the model/thinking controls)::
   per-tool switch).
 - **Skills** (`AGENT_CONFIG["skills"]`): the names whose `<available_skills>` index entries enter
   the system prompt — `null`/absent = every skill (today's behaviour), an explicit list is EXACT
-  (an empty list means no skill at all). `workspace/prompt_builder.build_system_prompt` reads the
+  (an empty list means only the required chain). `skills/loader.py::REQUIRED_SKILLS` is the
+  multimedia chain (`image_to_text` / `speech_to_text` / `video_text_to_text` / `text_to_image`):
+  the catalogue marks it `required`, serves it FIRST (the 技能 tab renders those rows as locked
+  chips with no checkbox), the service 400s on a payload that drops one, and
+  `build_system_prompt` unions them back for a stale register value. `workspace/prompt_builder.build_system_prompt` reads the
   session's selection through `runtime/session/agent_config_view.py::session_skill_names` and
   passes `exact=` to `skills.loader.get_skills_text`; an explicit argument still outranks it.
   Because the index lives INSIDE the cached system prompt (`system_prompt_injection`'s three-tier
@@ -261,6 +268,15 @@ promoted at the turn boundary like the model/thinking controls)::
   lands — at the live write and at the turn-boundary promotion for a parked one
   (`session_settings_service.promote_pending_settings_sync`) — and it deletes only
   `StateKey.SYSTEM_PROMPT`, never the frozen persona snapshot.
+- **Middleware options** (`AGENT_CONFIG["middleware_options"]`): a REQUIRED entry cannot be
+  switched off, so its tuning rides here — today exactly one pair, `Summarization.nudge` (the
+  中间件 tab renders it as its own section with a switch). The service rejects an unknown section /
+  option / non-boolean value and refuses `nudge: true` beside a payload whose tool list omits
+  `memory` (the nudge writes memory THROUGH that tool). At runtime
+  `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
+  `schedule_compression_nudges`; the panel's switch is DISABLED while the draft has memory off —
+  a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
+  nudge back.
 - **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
   `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
@@ -275,21 +291,31 @@ promoted at the turn boundary like the model/thinking controls)::
   requester session and the child LLM is built with `build_main_llm_for_profile` (provider /
   key / base_url can change), with the role's `model_tier` as the fallback. `steer` re-reads the
   same profile so a steered run keeps its model.
+- **代理模型** is the 子代理模型 tab renamed, split into 主代理 (the main agent's model — a profile
+  picker whose "follow the environment config" entry maps to `null`) and 子代理 (the per-role
+  pickers). It is a PRESET-level field (`PersonaPreset.main_model`, applied through
+  `PUT /sessions/model` so the session-model control stays the single owner of that key) rather
+  than part of the agent payload. The 当前会话预设 viewer puts 代理模型 FIRST (the session's own
+  model pair is what it is opened for): 主代理 mirrors the session-model control read-only,
+  子代理 stays editable.
 - Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
   应用 writes it to the open session (the new-session dialog writes it for the session it just
   created), and the read-only 当前会话预设 tab summarises it (skills read-only there, the
   subagent-model picker editable).
 - **The agent-config tabs split into sub-tabs** where the catalogue has two natures: 工具 =
-  内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag). The pills are a VIEW
-  filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
+  内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag), 代理模型 = 主代理 /
+  子代理. The pills are a VIEW filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
 - **Four built-in presets**, in display order — the whole spectrum
   (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
-  persona file empty, only the catalogue's REQUIRED tools and every optional middleware off),
-  编程助手 (the operating-rules template, empty soul / user profile, no roles, every tool on),
-  情感陪伴 (the full role-play persona with the 任务与计划 / 子代理 tool groups off, every
-  optional middleware off and the task-orchestration sections stripped out of 运行守则 —
-  `stripTaskSections`, a per-language heading/label filter pinned by a test that reads the four
-  shipped templates) and 全量 (the DEFAULT — the same full persona with everything on).
+  persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
+  off), 编程助手 (the operating-rules template, empty soul / user profile, no roles, every tool
+  EXCEPT the memory store, the required skills plus `CODING_SKILLS` — code-wiki / taskflow /
+  ulw-execute / todolist — and every optional middleware on), 情感陪伴 (the full role-play
+  persona with the 任务与计划 / 子代理 tool groups off, every optional middleware off, the
+  mirror-image skill set — the required chain plus every skill 编程助手 does NOT pick — and the
+  task-orchestration sections stripped out of 运行守则 — `stripTaskSections`, a per-language
+  heading/label filter pinned by a test that reads the four shipped templates) and 全量 (the
+  DEFAULT — the same full persona with everything on and every skill in the index).
   Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
   (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
   throws instead of silently applying every tool. The `sherry` id names 全量 (the label
