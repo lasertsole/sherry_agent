@@ -6,22 +6,22 @@
     class="flex justify-center items-center w-10 h-10 rounded-full overflow-hidden shrink-0"
     :class="hidden ? 'opacity-0' : 'bg-gray-100 dark:bg-gray-800'"
     :aria-hidden="hidden ? 'true' : undefined">
+    <!-- An empty src means "this role has no avatar of its own" (the role tab's reset
+         clears it, 编程助手 ships none): the neutral gray silhouette renders instead of
+         a bare glyph, matching the placeholder the role tab shows. -->
     <img
-      v-if="src"
       :class="['w-full h-full object-cover', { hidden }]"
-      :src="src"
+      :src="src || DEFAULT_PLACEHOLDER_AVATAR"
       :alt="alt"
       loading="lazy"
       decoding="async" />
-    <span
-      v-else
-      :class="['pi pi-user', { hidden }]"></span>
   </div>
 </template>
 
 <script setup lang="ts">
+// DEFAULT_PLACEHOLDER_AVATAR is auto-imported from ~/composables/defaultCharacter.
 interface Props {
-  /** Avatar URL; when empty the user icon fallback is rendered */
+  /** Avatar URL; when empty the neutral placeholder silhouette is rendered */
   src: string;
   /** Alt text for the avatar image */
   alt: string;

@@ -104,7 +104,7 @@ client/
 │   │   ├── clientLog.ts           # クライアント側 console.* 取得を Dexie に永続化（all/log/error）
 │   │   ├── env.ts                 # バックエンド .env の読み書き（GET/PUT /env）
 │   │   ├── workspace.ts           # システムプロンプトハンドラ（/system_prompt GET/POST/PATCH）
-│   │   ├── defaultCharacter.ts    # 内蔵デフォルトキャラクター（名前 + /avatar/*.jpg）
+│   │   ├── defaultCharacter.ts    # 内蔵デフォルトキャラクター（名前 + /avatar/*.jpg と default.svg プレースホルダー）
 │   │   ├── sessionFilter.ts       # クライアント側セッションリストフィルタ（キーワード + 日付範囲）
 │   │   ├── useImagePreview.ts     # 画像プレビューオーバーレイ状態
 │   │   ├── useSubagentTasks.ts    # バックグラウンドタスク薄いファサード（Pinia ストア + fetch/WS/Dexie 同期）

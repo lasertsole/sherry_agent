@@ -28,6 +28,17 @@ export const DEFAULT_USER_AVATAR = '/avatar/user.jpg';
 /** Assistant default avatar relative URL (corresponds to `client/public/avatar/assistant.jpg`). */
 export const DEFAULT_AI_AVATAR = '/avatar/assistant.jpg';
 
+/**
+ * Neutral placeholder avatar (`client/public/avatar/default.svg`): the gray
+ * head-and-shoulders silhouette a phone shows for an unknown caller.
+ *
+ * Every render site falls back to it when a role has no avatar of its own — an
+ * EMPTY avatar field means "no avatar", never "no image": the role tab's reset
+ * button clears the field to it, and 编程助手's preset carries empty avatars so
+ * the plain assistant shows the placeholder on both sides.
+ */
+export const DEFAULT_PLACEHOLDER_AVATAR = '/avatar/default.svg';
+
 /** User default name. */
 export const DEFAULT_USER_NAME = '远野汉娜';
 

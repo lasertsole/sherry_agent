@@ -118,9 +118,10 @@ describe('persona catalogue', () => {
     });
     expect(payload.character).toEqual({
       aiName: '',
-      aiAvatar: '/avatar/assistant.jpg',
+      // No avatar of its own: both roles render the neutral placeholder.
+      aiAvatar: '',
       userName: '',
-      userAvatar: '/avatar/user.jpg'
+      userAvatar: ''
     });
   });
 
@@ -166,9 +167,9 @@ describe('persona catalogue', () => {
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
       aiName: '',
-      aiAvatar: '/avatar/assistant.jpg',
+      aiAvatar: '',
       userName: '',
-      userAvatar: '/avatar/user.jpg'
+      userAvatar: ''
     });
   });
 

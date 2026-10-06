@@ -103,7 +103,7 @@ client/
 │   │   ├── clientLog.ts           # Client-side console.* capture persisted to Dexie (all/log/error)
 │   │   ├── env.ts                 # Read/write backend .env (GET/PUT /env)
 │   │   ├── workspace.ts           # System prompt handlers (/system_prompt GET/POST/PATCH)
-│   │   ├── defaultCharacter.ts    # Built-in default character (names + /avatar/*.jpg)
+│   │   ├── defaultCharacter.ts    # Built-in default character (names + /avatar/*.jpg and the default.svg placeholder)
 │   │   ├── sessionFilter.ts       # Client-side session list filter (keyword + date range)
 │   │   ├── useImagePreview.ts     # Image preview overlay state
 │   │   ├── useSubagentTasks.ts    # Background-task facade (Pinia store + fetch/WS/Dexie sync)

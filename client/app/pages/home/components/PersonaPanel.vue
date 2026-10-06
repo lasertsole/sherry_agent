@@ -43,35 +43,42 @@
                     t('config.role.assistant')
                   }}</span>
                   <div class="flex items-center gap-3">
+                    <!-- An empty avatar field means "no avatar of its own": the neutral
+                         gray silhouette renders in its place (never a broken image). -->
                     <img
-                      v-if="charAssistant.avatar"
-                      :src="charAssistant.avatar"
+                      :src="charAssistant.avatar || DEFAULT_PLACEHOLDER_AVATAR"
                       alt="assistant avatar"
                       class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                    <div
-                      v-else
-                      class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                      <i class="pi pi-user" />
-                    </div>
                     <div class="flex flex-col gap-2 flex-1">
                       <InputText
                         v-model="charAssistant.name"
                         data-test="persona-role-ai-name"
                         :placeholder="t('config.role.aiName')"
                         class="w-full" />
-                      <FileUpload
-                        mode="basic"
-                        :choose-label="t('config.uploadAvatar')"
-                        accept="image/*"
-                        customUpload
-                        :auto="false"
-                        @select="onAssistAvatarSelect">
-                        <template #filelabel="{ files }">
-                          <span class="text-xs text-gray-400">
-                            {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
-                          </span>
-                        </template>
-                      </FileUpload>
+                      <div class="flex items-center gap-2">
+                        <FileUpload
+                          mode="basic"
+                          :choose-label="t('config.uploadAvatar')"
+                          accept="image/*"
+                          customUpload
+                          :auto="false"
+                          @select="onAssistAvatarSelect">
+                          <template #filelabel="{ files }">
+                            <span class="text-xs text-gray-400">
+                              {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                            </span>
+                          </template>
+                        </FileUpload>
+                        <Button
+                          :label="t('config.role.resetAvatar')"
+                          icon="pi pi-replay"
+                          severity="secondary"
+                          text
+                          size="small"
+                          :disabled="!charAssistant.avatar"
+                          data-test="persona-role-ai-avatar-reset"
+                          @click="resetAvatar('assistant')" />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -85,34 +92,39 @@
                   }}</span>
                   <div class="flex items-center gap-3">
                     <img
-                      v-if="charUser.avatar"
-                      :src="charUser.avatar"
+                      :src="charUser.avatar || DEFAULT_PLACEHOLDER_AVATAR"
                       alt="user avatar"
                       class="w-14 h-14 rounded-full object-cover border border-gray-300 dark:border-gray-700" />
-                    <div
-                      v-else
-                      class="w-14 h-14 rounded-full bg-gray-200 dark:bg-gray-700 flex items-center justify-center text-gray-400">
-                      <i class="pi pi-user" />
-                    </div>
                     <div class="flex flex-col gap-2 flex-1">
                       <InputText
                         v-model="charUser.name"
                         data-test="persona-role-user-name"
                         :placeholder="t('config.role.userName')"
                         class="w-full" />
-                      <FileUpload
-                        mode="basic"
-                        :choose-label="t('config.uploadAvatar')"
-                        accept="image/*"
-                        customUpload
-                        :auto="false"
-                        @select="onUserAvatarSelect">
-                        <template #filelabel="{ files }">
-                          <span class="text-xs text-gray-400">
-                            {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
-                          </span>
-                        </template>
-                      </FileUpload>
+                      <div class="flex items-center gap-2">
+                        <FileUpload
+                          mode="basic"
+                          :choose-label="t('config.uploadAvatar')"
+                          accept="image/*"
+                          customUpload
+                          :auto="false"
+                          @select="onUserAvatarSelect">
+                          <template #filelabel="{ files }">
+                            <span class="text-xs text-gray-400">
+                              {{ avatarFileLabel(Array.isArray(files) ? files : []) }}
+                            </span>
+                          </template>
+                        </FileUpload>
+                        <Button
+                          :label="t('config.role.resetAvatar')"
+                          icon="pi pi-replay"
+                          severity="secondary"
+                          text
+                          size="small"
+                          :disabled="!charUser.avatar"
+                          data-test="persona-role-user-avatar-reset"
+                          @click="resetAvatar('user')" />
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -295,6 +307,8 @@ import { ref, computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { PersonaPreset, PresetCharacter } from '@/composables/db';
+// DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
+// ~/composables/defaultCharacter.
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n({ useScope: 'local' });
@@ -576,6 +590,22 @@ const restoreRoleDefault = () => {
   fillCharacter({ ...DEFAULT_CACHED_CHARACTER });
 };
 
+/**
+ * Clear ONE role's avatar back to the neutral placeholder ("reset to the
+ * default avatar"): the field becomes empty — an empty avatar means "no avatar
+ * of its own" and every render site falls back to the auto-imported
+ * `DEFAULT_PLACEHOLDER_AVATAR` gray silhouette. The name is left untouched, so
+ * this is the per-avatar sibling of 恢复默认.
+ * @param target Which role the avatar belongs to.
+ */
+const resetAvatar = (target: 'user' | 'assistant') => {
+  if (target === 'user') {
+    charUser.value.avatar = '';
+    return;
+  }
+  charAssistant.value.avatar = '';
+};
+
 const restoreDefault = async (tab: PersonaTab) => {
   restoring.value = true;
   try {
@@ -819,7 +849,8 @@ const handleApply = async () => {
       },
       "role": {
         "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
-        "noFileChosen": "可选择新的头像图片"
+        "noFileChosen": "可选择新的头像图片",
+        "resetAvatar": "重置头像"
       }
     }
   },
@@ -865,7 +896,8 @@ const handleApply = async () => {
       },
       "role": {
         "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
-        "noFileChosen": "Select an avatar image file"
+        "noFileChosen": "Select an avatar image file",
+        "resetAvatar": "Reset avatar"
       }
     }
   },
@@ -911,7 +943,8 @@ const handleApply = async () => {
       },
       "role": {
         "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
-        "noFileChosen": "新しいアバター画像を選択できます"
+        "noFileChosen": "新しいアバター画像を選択できます",
+        "resetAvatar": "アバターをリセット"
       }
     }
   },
@@ -957,7 +990,8 @@ const handleApply = async () => {
       },
       "role": {
         "charNote": "이름과 아바타 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다. 역할 이름은 시스템 프롬프트에도 기록됩니다.",
-        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다"
+        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다",
+        "resetAvatar": "아바타 초기화"
       }
     }
   }

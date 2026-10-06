@@ -143,9 +143,11 @@ export function builtinPayload(
     id === 'coding'
       ? {
           aiName: '',
-          aiAvatar: DEFAULT_CACHED_CHARACTER.aiAvatar,
+          // Empty avatars: 编程助手 names nobody and ships no avatar — both roles
+          // render the neutral gray placeholder (DEFAULT_PLACEHOLDER_AVATAR).
+          aiAvatar: '',
           userName: '',
-          userAvatar: DEFAULT_CACHED_CHARACTER.userAvatar
+          userAvatar: ''
         }
       : { ...DEFAULT_CACHED_CHARACTER };
   const content: Record<string, string> =

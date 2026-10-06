@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import ChatBox from '@/pages/home/components/ChatBox.vue';
+import { DEFAULT_PLACEHOLDER_AVATAR } from '~/composables/defaultCharacter';
 import { CHAT_ROLE, type MessageItem } from '@/pages/home/type';
 import { TURN_SCRUBBER_PAGE_SIZE } from '@/composables/use-chat-virtual-list';
 import { useImagePreview } from '@/composables/useImagePreview';
@@ -135,15 +136,18 @@ describe('ChatBox.vue (integration, backend mocked)', () => {
         ]
       }
     });
-    // 2 avatars exist (one per message)
-    const avatars = wrapper.findAll('.pi-user');
-    expect(avatars).toHaveLength(2);
+    // 2 avatars exist (one per message), rendered as images — an empty avatar prop
+    // falls back to the neutral placeholder silhouette, never a bare glyph.
+    const slots = wrapper.findAll('div[class*="w-10"][class*="rounded-full"]');
+    expect(slots).toHaveLength(2);
+    const avatars = slots.map(slot => slot.find('img'));
+    expect(avatars.every(a => a.exists())).toBe(true);
+    expect(avatars[0]!.attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
     // first avatar visible, second hidden (previous message shares the role)
-    expect(avatars[0].classes()).not.toContain('hidden');
-    expect(avatars[1].classes()).toContain('hidden');
+    expect(avatars[0]!.classes()).not.toContain('hidden');
+    expect(avatars[1]!.classes()).toContain('hidden');
     // The hidden slot keeps its 40px but goes fully transparent: the placeholder disc
     // would otherwise show as an empty grey circle next to every consecutive message.
-    const slots = wrapper.findAll('div[class*="w-10"][class*="rounded-full"]');
     expect(slots[0]!.classes()).toContain('bg-gray-100');
     expect(slots[1]!.classes()).toContain('opacity-0');
     expect(slots[1]!.classes()).not.toContain('bg-gray-100');

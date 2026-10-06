@@ -14,6 +14,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 import { locale as i18nLocale } from 'vue-i18n';
 import PersonaPanel from '@/pages/home/components/PersonaPanel.vue';
+import { DEFAULT_AI_AVATAR, DEFAULT_PLACEHOLDER_AVATAR, DEFAULT_USER_AVATAR } from '~/composables/defaultCharacter';
 
 const bridge = vi.hoisted(() => ({
   readSystemPrompt: vi.fn(),
@@ -225,6 +226,12 @@ describe('PersonaPanel role tab', () => {
     expect(textareas).toEqual(['TPL-AGENTS', '', '']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('');
     expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('');
+    // No avatars either: both sides show the neutral gray placeholder, which also
+    // means the per-avatar reset buttons start disabled (nothing to clear).
+    expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
+    expect(wrapper.get('[alt="user avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
+    expect(wrapper.get('[data-test="persona-role-ai-avatar-reset"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[data-test="persona-role-user-avatar-reset"]').attributes('disabled')).toBeDefined();
 
     await buttonByText(wrapper, '应用').trigger('click');
     await flushPromises();
@@ -238,9 +245,9 @@ describe('PersonaPanel role tab', () => {
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
       aiName: '',
-      aiAvatar: '/avatar/assistant.jpg',
+      aiAvatar: '',
       userName: '',
-      userAvatar: '/avatar/user.jpg'
+      userAvatar: ''
     });
   });
 
@@ -298,6 +305,22 @@ describe('PersonaPanel role tab', () => {
 
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('艾拉');
     expect((wrapper.get('[data-test="persona-role-user-name"]').element as HTMLInputElement).value).toBe('诺亚');
+  });
+
+  it('resets one avatar to the neutral placeholder on 重置头像, leaving the name alone', async () => {
+    const wrapper = await mountPanel();
+    // A fresh panel carries the shipped default photos.
+    expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_AI_AVATAR);
+    expect(wrapper.get('[alt="user avatar"]').attributes('src')).toBe(DEFAULT_USER_AVATAR);
+
+    await wrapper.get('[data-test="persona-role-ai-avatar-reset"]').trigger('click');
+
+    // The cleared field renders the gray silhouette and the button turns off.
+    expect(wrapper.get('[alt="assistant avatar"]').attributes('src')).toBe(DEFAULT_PLACEHOLDER_AVATAR);
+    expect(wrapper.get('[data-test="persona-role-ai-avatar-reset"]').attributes('disabled')).toBeDefined();
+    // Only the avatar moved: the name and the other role are untouched.
+    expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
+    expect(wrapper.get('[alt="user avatar"]').attributes('src')).toBe(DEFAULT_USER_AVATAR);
   });
 
   it('resets both role names to the built-in defaults with 恢复默认', async () => {

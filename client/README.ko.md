@@ -104,7 +104,7 @@ client/
 │   │   ├── clientLog.ts           # 클라이언트 console.* 캡처를 Dexie에 영속화(all/log/error)
 │   │   ├── env.ts                 # 백엔드 .env 읽기/쓰기(GET/PUT /env)
 │   │   ├── workspace.ts           # 시스템 프롬프트 핸들러(/system_prompt GET/POST/PATCH)
-│   │   ├── defaultCharacter.ts    # 내장 기본 캐릭터(이름 + /avatar/*.jpg)
+│   │   ├── defaultCharacter.ts    # 내장 기본 캐릭터(이름 + /avatar/*.jpg 및 default.svg 자리 표시자)
 │   │   ├── sessionFilter.ts       # 클라이언트 측 세션 목록 필터(키워드 + 날짜 범위)
 │   │   ├── useImagePreview.ts     # 이미지 미리보기 오버레이 상태
 │   │   ├── useSubagentTasks.ts    # 백그라운드 작업 파사드(Pinia 스토어 + fetch/WS/Dexie 동기화)

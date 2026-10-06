@@ -104,7 +104,7 @@ client/
 │   │   ├── clientLog.ts           # 客户端 console.* 捕获并持久化到 Dexie（all/log/error）
 │   │   ├── env.ts                 # 读写后端 .env（GET/PUT /env）
 │   │   ├── workspace.ts           # 系统提示词处理器（/system_prompt GET/POST/PATCH）
-│   │   ├── defaultCharacter.ts    # 内置默认角色（名称 + /avatar/*.jpg）
+│   │   ├── defaultCharacter.ts    # 内置默认角色（名称 + /avatar/*.jpg 与 default.svg 占位头像）
 │   │   ├── sessionFilter.ts       # 客户端会话列表过滤（关键词 + 日期范围）
 │   │   ├── useImagePreview.ts     # 图片预览浮层状态
 │   │   ├── useSubagentTasks.ts    # 后台任务薄封装（Pinia store + fetch/WS/Dexie 同步）
