@@ -290,7 +290,7 @@ onBeforeUnmount(() => {
       "logs": "日志查看",
       "skills": "技能",
       "systemConfig": "系统配置",
-      "persona": "预设",
+      "persona": "预设角色",
       "notification": "通知",
       "maximize": "放大到整个视口",
       "restore": "还原面板宽度",
@@ -304,7 +304,7 @@ onBeforeUnmount(() => {
       "stats": "统计",
       "closeTab": "关闭标签页",
       "empty": "暂无标签页，从菜单或工具栏添加",
-      "sessionPreset": "会话预设",
+      "sessionPreset": "预设角色",
       "scopes": {
         "session": "当前会话",
         "global": "全局"
@@ -317,7 +317,7 @@ onBeforeUnmount(() => {
       "logs": "Logs",
       "skills": "Skills",
       "systemConfig": "System Config",
-      "persona": "Presets",
+      "persona": "Presets & Role",
       "notification": "Notifications",
       "maximize": "Expand to the full viewport",
       "restore": "Restore the panel width",
@@ -331,7 +331,7 @@ onBeforeUnmount(() => {
       "stats": "Statistics",
       "closeTab": "Close tab",
       "empty": "No tabs yet — add one from the menu or toolbar",
-      "sessionPreset": "Session preset",
+      "sessionPreset": "Presets & Role",
       "scopes": {
         "session": "This session",
         "global": "Global"
@@ -344,7 +344,7 @@ onBeforeUnmount(() => {
       "logs": "ログ表示",
       "skills": "スキル",
       "systemConfig": "システム設定",
-      "persona": "プリセット",
+      "persona": "プリセットと役割",
       "notification": "通知",
       "maximize": "ビューポート全体に拡大",
       "restore": "パネル幅に戻す",
@@ -358,7 +358,7 @@ onBeforeUnmount(() => {
       "stats": "統計",
       "closeTab": "タブを閉じる",
       "empty": "タブがありません。メニューまたはツールバーから追加",
-      "sessionPreset": "セッションのプリセット",
+      "sessionPreset": "プリセットと役割",
       "scopes": {
         "session": "現在のセッション",
         "global": "グローバル"
@@ -371,7 +371,7 @@ onBeforeUnmount(() => {
       "logs": "로그 보기",
       "skills": "스킬",
       "systemConfig": "시스템 설정",
-      "persona": "프리셋",
+      "persona": "프리셋과 역할",
       "notification": "알림",
       "maximize": "뷰포트 전체로 확대",
       "restore": "패널 너비로 복원",
@@ -385,7 +385,7 @@ onBeforeUnmount(() => {
       "stats": "통계",
       "closeTab": "탭 닫기",
       "empty": "탭이 없습니다. 메뉴 또는 툴바에서 추가",
-      "sessionPreset": "세션 프리셋",
+      "sessionPreset": "프리셋과 역할",
       "scopes": {
         "session": "현재 세션",
         "global": "전역"

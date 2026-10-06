@@ -46,6 +46,8 @@ export interface AgentSkillEntry {
   description?: string;
   /** False = an uploaded third-party skill (`skills/plugins/`). */
   builtin: boolean;
+  /** Locked on: the multimedia chain, which no session config may drop. */
+  required?: boolean;
 }
 
 /** One functional subagent role. */
@@ -76,9 +78,15 @@ export interface AgentConfig {
   subagent_models?: Record<string, SessionModelProfile | null>;
   /**
    * Skill names whose index entries enter the system prompt, or null/absent for
-   * every skill. An EMPTY list is a legal, explicit choice: no skill at all.
+   * every skill. An EMPTY list is a legal, explicit choice — nothing beyond the
+   * required multimedia chain enters the index.
    */
   skills?: string[] | null;
+  /**
+   * Per-middleware options of REQUIRED entries (they cannot be switched off, so
+   * their tuning lives here). Today: `Summarization.nudge`.
+   */
+  middleware_options?: { Summarization?: { nudge?: boolean } };
 }
 
 export interface AgentConfigState {

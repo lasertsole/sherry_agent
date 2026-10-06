@@ -17,6 +17,7 @@ const CATALOG = {
     { name: 'terminal', group: 'terminal' }
   ],
   skills: [
+    { name: 'image_to_text', builtin: true, description: 'media', required: true },
     { name: 'alpha', builtin: true, description: 'a' },
     { name: 'beta', builtin: true, description: 'b' },
     { name: 'uploaded', builtin: false, description: 'c' }
@@ -84,7 +85,7 @@ describe('agent-config store', () => {
     await store.loadCatalog();
     await store.hydrate('s1');
 
-    expect(store.skills.builtin.map(skill => skill.name)).toEqual(['alpha', 'beta']);
+    expect(store.skills.builtin.map(skill => skill.name)).toEqual(['image_to_text', 'alpha', 'beta']);
     expect(store.skills.thirdParty.map(skill => skill.name)).toEqual(['uploaded']);
     // No opinion = null (the caller expands it to every skill)…
     expect(store.selectedSkills('s1')).toBeNull();
@@ -93,11 +94,28 @@ describe('agent-config store', () => {
     // stays empty (it means "no skill in the index", not "all of them").
     bridge.fetchAgentConfig.mockResolvedValue({ config: { skills: ['uploaded', 'alpha'] }, pending: false });
     await store.hydrate('s2');
-    expect(store.selectedSkills('s2')).toEqual(['alpha', 'uploaded']);
+    // Catalogue order, with the required chain unioned back in.
+    expect(store.selectedSkills('s2')).toEqual(['image_to_text', 'alpha', 'uploaded']);
 
     bridge.fetchAgentConfig.mockResolvedValue({ config: { skills: [] }, pending: false });
     await store.hydrate('s3');
-    expect(store.selectedSkills('s3')).toEqual([]);
+    // The required chain survives an explicit "nothing else" selection.
+    expect(store.selectedSkills('s3')).toEqual(['image_to_text']);
+  });
+
+  it('reads the Summarization nudge option (default on)', async () => {
+    const store = useAgentConfigStore();
+    await store.loadCatalog();
+
+    expect(store.nudgeEnabled('s1')).toBe(true);
+    bridge.fetchAgentConfig.mockResolvedValue({
+      config: { middleware_options: { Summarization: { nudge: false } } },
+      pending: false
+    });
+    await store.hydrate('s2');
+
+    expect(store.nudgeEnabled('s2')).toBe(false);
+    expect(store.nudgeEnabled('s3')).toBe(true);
   });
 
   it('unions the catalogue’s required tools into the effective set', async () => {

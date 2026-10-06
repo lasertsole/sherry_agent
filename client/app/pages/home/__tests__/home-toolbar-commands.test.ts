@@ -50,6 +50,10 @@ describe('buildHomeToolbarCommands', () => {
     for (const tool of headerTools) expect(commands).toHaveProperty(tool.event);
     // The log viewer is a nine-grid entry like the other tools …
     expect(headerTools.map(tool => tool.event)).toContain('logs');
+    // 预设角色 leads the nine-grid (its panel is where a session's identity is
+    // set up), and every tile keeps a distinct event.
+    expect(headerTools[0]!.event).toBe('persona');
+    expect(new Set(headerTools.map(tool => tool.event)).size).toBe(headerTools.length);
     // … while the notification list stays the one top-bar-only command.
     expect(commands).toHaveProperty('notification');
   });

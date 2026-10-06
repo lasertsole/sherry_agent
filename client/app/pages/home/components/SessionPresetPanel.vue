@@ -35,6 +35,80 @@
         {{ t('personaPreset.contentTitle') }}
       </div>
       <TabView class="session-preset-preview">
+        <!-- 代理模型 tab (FIRST: the session's own model pair is what this viewer is
+             opened for): 主代理 mirrored read-only from the session-model control,
+             子代理 editable — a change parks until the next turn. -->
+        <TabPanel
+          value="agentSubagents"
+          :header="t('config.agent.tabs.subagents')">
+          <div
+            class="flex min-h-0 flex-col gap-2 text-xs"
+            data-test="session-preset-models-tab">
+            <div class="flex items-center gap-1">
+              <button
+                v-for="scope in AGENT_MODEL_SCOPES"
+                :key="scope"
+                type="button"
+                class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                :class="
+                  modelScope === scope
+                    ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+                "
+                :data-test="`session-preset-models-scope-${scope}`"
+                @click="modelScope = scope">
+                {{ t(`config.agent.models.scope_${scope}`) }}
+              </button>
+            </div>
+            <template v-if="modelScope === 'main'">
+              <div class="mb-2 text-gray-400">{{ t('config.agent.models.mainHint') }}</div>
+              <div
+                class="flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+                <span class="min-w-0 truncate text-theme-main">{{ mainModelLabel }}</span>
+                <span class="shrink-0 text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
+              </div>
+            </template>
+            <template v-else>
+              <div class="mb-2 flex items-center gap-2 text-gray-400">
+                <span>{{ t('config.agent.subagents.sessionHint') }}</span>
+                <span
+                  v-if="agentStore.isPending(sessionId)"
+                  class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                  data-test="session-preset-models-pending">
+                  <i class="pi pi-clock text-[9px]" />
+                  {{ t('sessionModelPicker.pending') }}
+                </span>
+              </div>
+              <div
+                v-for="role in agentStore.subagentRoles"
+                :key="role.role"
+                class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+                <div class="min-w-0">
+                  <div class="truncate text-theme-main">
+                    {{ t(`config.agent.role.${role.role}`) }}
+                    <span class="ml-1 font-mono text-[11px] text-gray-400">{{ role.role }}</span>
+                  </div>
+                  <div class="truncate text-gray-400">
+                    {{
+                      role.model_tier
+                        ? t('config.agent.subagents.tier', { tier: role.model_tier })
+                        : t('config.agent.subagents.tierDepth')
+                    }}
+                  </div>
+                </div>
+                <Select
+                  :model-value="roleModelId(role.role)"
+                  :options="roleModelOptions"
+                  option-label="label"
+                  option-value="value"
+                  class="w-52"
+                  :data-test="`session-preset-role-model-${role.role}`"
+                  @update:model-value="value => setRoleModel(role.role, value)" />
+              </div>
+            </template>
+          </div>
+        </TabPanel>
+
         <TabPanel
           value="role"
           :header="t('config.tabs.role')">
@@ -63,10 +137,11 @@
             :data-test="`session-preset-content-${item.file}`"
             >{{ payload.content[item.file] || t('personaPreset.empty') }}</pre>
         </TabPanel>
-        <!-- The SESSION's own agent config, in the same three tabs the 预设 panel
-             edits: 工具 / 中间件 are read-only here (change them in 菜单-预设), while
-             子代理模型 is EDITABLE — a choice lands on the main agent's next turn
-             through the same park/promote path as the main-model switch. -->
+        <!-- The SESSION's own agent config, in the same four tabs the 预设角色
+             panel edits: 工具 / 中间件 / 技能 are read-only here (change them in
+             菜单-预设角色), while the 子代理 model pickers are EDITABLE — a choice
+             lands on the main agent's next turn through the same park/promote
+             path as the main-model switch. -->
         <TabPanel
           value="agentTools"
           :header="t('config.agent.tabs.tools')">
@@ -162,6 +237,30 @@
             class="min-h-0 overflow-y-auto text-xs"
             data-test="session-preset-middlewares-tab">
             <div class="mb-2 text-gray-400">{{ t('config.agent.readonlyHint') }}</div>
+            <!-- The Summarization middleware cannot be switched off; its nudge
+                 option is the row the session config can pin. -->
+            <div
+              class="mb-2 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]"
+              data-test="session-preset-middleware-option-Summarization">
+              <div class="flex items-center justify-between gap-2">
+                <div class="min-w-0">
+                  <div class="flex items-center gap-1 truncate text-theme-main">
+                    <i class="pi pi-lock text-[9px] text-gray-400" />
+                    {{ t('config.agent.middleware.Summarization.name') }}
+                  </div>
+                  <div class="truncate text-gray-400">
+                    {{ t('config.agent.middlewares.nudgeDesc') }}
+                  </div>
+                </div>
+                <label class="flex shrink-0 items-center gap-1.5 text-gray-600 dark:text-gray-300">
+                  {{ t('config.agent.middlewares.nudgeLabel') }}
+                  <ToggleSwitch
+                    :model-value="sessionNudgeEnabled"
+                    disabled
+                    data-test="session-preset-middleware-nudge" />
+                </label>
+              </div>
+            </div>
             <div
               v-for="entry in agentStore.middlewares.gateable"
               :key="entry.name"
@@ -188,51 +287,6 @@
                   {{ entry.name }}
                 </span>
               </div>
-            </div>
-          </div>
-        </TabPanel>
-
-        <TabPanel
-          value="agentSubagents"
-          :header="t('config.agent.tabs.subagents')">
-          <div
-            class="min-h-0 overflow-y-auto text-xs"
-            data-test="session-preset-subagents-tab">
-            <div class="mb-2 flex items-center gap-2 text-gray-400">
-              <span>{{ t('config.agent.subagents.sessionHint') }}</span>
-              <span
-                v-if="agentStore.isPending(sessionId)"
-                class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                data-test="session-preset-models-pending">
-                <i class="pi pi-clock text-[9px]" />
-                {{ t('sessionModelPicker.pending') }}
-              </span>
-            </div>
-            <div
-              v-for="role in agentStore.subagentRoles"
-              :key="role.role"
-              class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
-              <div class="min-w-0">
-                <div class="truncate text-theme-main">
-                  {{ t(`config.agent.role.${role.role}`) }}
-                  <span class="ml-1 font-mono text-[11px] text-gray-400">{{ role.role }}</span>
-                </div>
-                <div class="truncate text-gray-400">
-                  {{
-                    role.model_tier
-                      ? t('config.agent.subagents.tier', { tier: role.model_tier })
-                      : t('config.agent.subagents.tierDepth')
-                  }}
-                </div>
-              </div>
-              <Select
-                :model-value="roleModelId(role.role)"
-                :options="roleModelOptions"
-                option-label="label"
-                option-value="value"
-                class="w-52"
-                :data-test="`session-preset-role-model-${role.role}`"
-                @update:model-value="value => setRoleModel(role.role, value)" />
             </div>
           </div>
         </TabPanel>
@@ -304,6 +358,7 @@ import { useRoute } from 'vue-router';
 import type { SessionPresetBinding } from '@/composables/db';
 import type { PersonaPresetPayload } from '@/composables/persona-catalog';
 import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
+import { ENV_MODEL_ID } from '~/stores/session-model';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n();
@@ -327,6 +382,30 @@ const llmProfiles = useLlmProfilesStore();
 
 /** The session's EFFECTIVE agent config (the session is the live truth here). */
 const sessionEnabledTools = computed<string[]>(() => (sessionId.value ? agentStore.enabledTools(sessionId.value) : []));
+
+/** The two 代理模型 sub-tabs (mirroring the editor). */
+const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
+const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
+
+/** The session's main-model control (its own store: the toolbar picker's key). */
+const sessionModel = useSessionModelStore();
+
+/** The 主代理 row's text: the env default (with its model) or the profile label. */
+const mainModelLabel = computed<string>(() => {
+  const sid = sessionId.value;
+  if (!sid) return t('config.agent.models.followEnv');
+  const current = sessionModel.currentId(sid);
+  if (current === ENV_MODEL_ID) {
+    const envModel = sessionModel.envModel.model;
+    return `${t('config.agent.models.followEnv')}${envModel ? ` · ${envModel}` : ''}`;
+  }
+  return llmProfiles.listFor('MAIN_LLM').find(profile => profile.id === current)?.label ?? current;
+});
+
+/** Whether the session's summarization nudges run (default on). */
+const sessionNudgeEnabled = computed<boolean>(() =>
+  sessionId.value ? agentStore.nudgeEnabled(sessionId.value) : true
+);
 
 /** The session's EFFECTIVE skill selection (null = no opinion = every skill). */
 const sessionEnabledSkills = computed<string[]>(() => {
@@ -513,7 +592,12 @@ watch(
     // The catalogue backs the tabs; the per-session config is what the three
     // agent tabs display (and 子代理模型 edits) — both are cheap and idempotent.
     void agentStore.loadCatalog();
-    if (sessionId.value) void agentStore.hydrate(sessionId.value);
+    if (sessionId.value) {
+      void agentStore.hydrate(sessionId.value);
+      // The 主代理 sub-tab mirrors the session-model control (the toolbar
+      // picker's own store), so hydrate that one too.
+      void sessionModel.hydrate(sessionId.value);
+    }
     void loadBinding();
   },
   { immediate: true }

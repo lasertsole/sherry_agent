@@ -76,7 +76,7 @@
     "knowledgeGraph": "지식 그래프",
     "stats": "통계",
     "systemConfig": "시스템 설정",
-    "persona": "프리셋",
+    "persona": "프리셋과 역할",
     "memory": "메모리",
     "heartbeat": "하트비트",
     "cron": "크론 작업",
@@ -151,8 +151,14 @@
       "tabs": {
         "tools": "도구",
         "middlewares": "미들웨어",
-        "subagents": "서브에이전트 모델",
+        "subagents": "에이전트 모델",
         "skills": "스킬"
+      },
+      "models": {
+        "scope_main": "메인 에이전트",
+        "scope_subagent": "서브에이전트",
+        "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 환경 설정을 따릅니다.",
+        "followEnv": "환경 설정 따르기"
       },
       "tools": {
         "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
@@ -187,7 +193,10 @@
       "middlewares": {
         "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
         "lockedTitle": "시스템 필수(잠금)",
-        "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다"
+        "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다",
+        "nudgeLabel": "nudge 사용",
+        "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
+        "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -209,6 +218,10 @@
         "SubagentCompletionDrainMiddleware": {
           "name": "완료 결과 주입",
           "desc": "서브에이전트 완료 결과를 메인 세션에 주입합니다"
+        },
+        "Summarization": {
+          "name": "요약 압축",
+          "desc": "컨텍스트 압축, 오버플로 처리, 압축 후 nudge"
         }
       },
       "subagents": {
@@ -231,7 +244,7 @@
         "middlewaresNone": "미들웨어: 모두 켜짐",
         "models": "서브에이전트 모델: {names}"
       },
-      "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋」에서 하세요"
+      "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋과 역할」에서 하세요"
     },
     "llm": {
       "add": "모델 추가",
@@ -278,7 +291,7 @@
     },
     "persona": {
       "preset": {
-        "title": "프리셋",
+        "title": "프리셋과 역할",
         "builtinPureName": "순수",
         "builtinCompanionName": "감정 동반",
         "defaultName": "전체",

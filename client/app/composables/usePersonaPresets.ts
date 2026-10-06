@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
+import type { SessionModelProfile } from '@/composables/bridge/session';
 import { logUtil } from '~/utils/log';
 
 /**
@@ -68,15 +69,17 @@ const refresh = async (): Promise<void> => {
  * @param content Field map persisted into the Dexie personaPresets table
  * @param character Character display info (role names + avatars) stored with the preset
  * @param agent
+ * @param mainModel Main-agent model choice (null = follow the environment config)
  */
 const create = async (
   name: string,
   content: Record<string, string>,
   character?: PresetCharacter,
-  agent?: AgentConfig
+  agent?: AgentConfig,
+  mainModel?: SessionModelProfile | null
 ): Promise<PersonaPresetCreateResult> => {
   try {
-    const id = await createPersonaPreset(name, content, character, agent);
+    const id = await createPersonaPreset(name, content, character, agent, mainModel);
     await refresh();
     return { ok: true, id };
   } catch (e) {
@@ -97,15 +100,17 @@ const create = async (
  * @param content Field map replacing the stored content
  * @param character Character display info stored with the preset
  * @param agent
+ * @param mainModel Main-agent model choice (null = follow the environment config)
  */
 const update = async (
   id: number,
   content: Record<string, string>,
   character?: PresetCharacter,
-  agent?: AgentConfig
+  agent?: AgentConfig,
+  mainModel?: SessionModelProfile | null
 ): Promise<boolean> => {
   try {
-    await updatePersonaPreset(id, content, character, agent);
+    await updatePersonaPreset(id, content, character, agent, mainModel);
     await refresh();
     return true;
   } catch (e) {

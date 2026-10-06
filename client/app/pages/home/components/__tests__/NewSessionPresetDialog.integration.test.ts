@@ -25,6 +25,15 @@ const agentBridge = vi.hoisted(() => ({
 }));
 vi.mock('~/composables/bridge/agent-config', () => agentBridge);
 
+const sessionBridge = vi.hoisted(() => ({
+  setSessionModel: vi.fn(async () => ({
+    override: null,
+    env_model: { provider: null, model: null },
+    pending: false
+  }))
+}));
+vi.mock('~/composables/bridge/session', () => sessionBridge);
+
 const sidebar = vi.hoisted(() => ({ ensureSessionCharacter: vi.fn(async () => undefined) }));
 vi.mock('@/pages/home/components/SessionSidebar.vue', () => sidebar);
 
@@ -181,7 +190,8 @@ describe('NewSessionPresetDialog', () => {
             { name: 'sessions_spawn', group: 'subagents' }
           ],
           middlewares: [],
-          subagent_roles: []
+          subagent_roles: [],
+          skills: [{ name: 'image_to_text', builtin: true, required: true }]
         },
         middlewares: { gateable: [], locked: [] },
         loadCatalog: async () => {}
@@ -206,7 +216,12 @@ describe('NewSessionPresetDialog', () => {
     });
     // …and the session is left with the catalogue's locked tools and nothing else.
     const sessionId = (db.cacheSessionPreset.mock.calls[0]![0] as { session_id: string }).session_id;
-    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, { tools: ['read_file'] });
+    expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, {
+      tools: ['read_file'],
+      skills: ['image_to_text']
+    });
+    // No built-in pins a main model: the apply writes "follow the env config".
+    expect(sessionBridge.setSessionModel).toHaveBeenCalledWith(sessionId, null);
     expect(db.cacheSessionPreset).toHaveBeenCalledWith({
       session_id: sessionId,
       preset_id: 'pure',

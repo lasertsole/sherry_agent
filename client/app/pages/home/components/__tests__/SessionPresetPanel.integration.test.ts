@@ -97,6 +97,7 @@ function makeAgentStore(
         ],
         subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
         skills: [
+          { name: 'image_to_text', builtin: true, description: 'Media in.', required: true },
           { name: 'alpha', builtin: true, description: 'Shipped skill.' },
           { name: 'uploaded', builtin: false, description: 'Uploaded skill.' }
         ]
@@ -109,7 +110,10 @@ function makeAgentStore(
       },
       subagentRoles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
       skills: {
-        builtin: [{ name: 'alpha', builtin: true, description: 'Shipped skill.' }],
+        builtin: [
+          { name: 'image_to_text', builtin: true, description: 'Media in.', required: true },
+          { name: 'alpha', builtin: true, description: 'Shipped skill.' }
+        ],
         thirdParty: [{ name: 'uploaded', builtin: false, description: 'Uploaded skill.' }]
       },
       loadCatalog: vi.fn(async () => undefined),
@@ -125,6 +129,7 @@ function makeAgentStore(
           .map(tool => tool.name as string) as never;
       },
       selectedSkills: () => (Array.isArray(config.skills) ? config.skills : null) as never,
+      nudgeEnabled: () => config.middleware_options?.Summarization?.nudge !== false,
       disabledMiddlewares: () => (config.middlewares_disabled ?? []) as never,
       isPending: () => pending,
       save: vi.fn(async (_sid: string, next: Record<string, unknown>) => {
@@ -354,12 +359,48 @@ describe('SessionPresetButton', () => {
     expect((agentStoreState.current as { save: ReturnType<typeof vi.fn> }).save).not.toHaveBeenCalled();
   });
 
+  it('leads with the 代理模型 tab, mirrors 主代理 read-only and shows the nudge row', async () => {
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    agentStoreState.current = makeAgentStore({
+      tools: ['terminal'],
+      middleware_options: { Summarization: { nudge: false } }
+    }).store;
+
+    const wrapper = await mountPanel();
+    const panel = wrapper.get('[data-test="session-preset-panel"]');
+
+    // 代理模型 leads the whole strip (the session's own model pair is what the
+    // viewer is opened for), ahead of the persona tabs too.
+    const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
+    expect(headers).toEqual(['代理模型', '角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '技能']);
+
+    // 主代理 is a read-only mirror of the session-model control (the stub reports
+    // "env" with no model configured).
+    expect(panel.get('[data-test="session-preset-models-scope-main"]').text()).toBe('主代理');
+    expect(panel.text()).toContain('跟随环境配置');
+    // 子代理 keeps the editable role pickers.
+    await panel.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
+    await flushPromises();
+    expect(panel.find('[data-test="session-preset-role-model-researcher"]').exists()).toBe(true);
+
+    // The nudge row mirrors the session's option, read-only.
+    // (PrimeVue is unresolved in this suite, so the bound value lands as the
+    // kebab attribute — the same convention the middleware switch uses.)
+    // (This suite's switch stub renders an input, so the state reads as `.checked`.)
+    const nudge = panel.get('[data-test="session-preset-middleware-nudge"]');
+    expect(nudge.attributes('disabled')).toBeDefined();
+    expect((nudge.element as HTMLInputElement).checked).toBe(false);
+  });
+
   it('writes a per-role model choice to the SESSION, merged and parked-ready', async () => {
     db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
     agentStoreState.current = makeAgentStore({ tools: ['terminal'] }).store;
 
     const store = agentStoreState.current as { save: ReturnType<typeof vi.fn> };
     const wrapper = await mountPanel();
+    // The 代理模型 tab leads with 主代理; the role pickers sit under 子代理.
+    await wrapper.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
+    await flushPromises();
     const picker = wrapper.get('[data-test="session-preset-role-model-researcher"]');
     await picker.setValue('p1');
     await flushPromises();
@@ -379,6 +420,8 @@ describe('SessionPresetButton', () => {
     agentStoreState.current = makeAgentStore({}, true).store;
 
     const wrapper = await mountPanel();
+    await wrapper.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
+    await flushPromises();
 
     expect(wrapper.find('[data-test="session-preset-models-pending"]').exists()).toBe(true);
     expect(wrapper.text()).toContain('下一轮生效');
@@ -396,7 +439,7 @@ describe('SessionPresetButton', () => {
     await flushPromises();
 
     expect(bridge.readSystemPromptTemplate).toHaveBeenLastCalledWith('en');
-    // And the panel's own labels follow the locale.
-    expect(wrapper.get('[data-test="session-preset-panel"]').text()).toContain('Session preset');
+    // And the panel's own labels follow the locale (the viewer's tab is 预设角色).
+    expect(wrapper.get('[data-test="session-preset-panel"]').text()).toContain('Presets & Role');
   });
 });

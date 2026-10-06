@@ -9,9 +9,11 @@
  * be neither renamed nor deleted.
  */
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
+import type { SessionModelProfile } from '~/composables/bridge/session';
 // Stable module specifiers so tests can vi.mock the bridge / logger.
 /* eslint-disable @typescript-eslint/no-restricted-imports */
 import { setAgentConfig } from '~/composables/bridge/agent-config';
+import { setSessionModel } from '~/composables/bridge/session';
 import { logUtil } from '~/utils/log';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 
@@ -152,7 +154,15 @@ export interface PresetCatalogFacts {
   tools: ReadonlyArray<{ name: string; group: string; required?: boolean }>;
   /** The gateable (switchable) middleware names. */
   gateableMiddlewares: readonly string[];
+  /** Every skill the index can contain, with its lock flag (required first). */
+  skills: ReadonlyArray<{ name: string; required?: boolean }>;
 }
+
+/** Tools 编程助手 turns off on top of its own selection (the memory store). */
+export const CODING_DISABLED_TOOLS: readonly string[] = ['memory'];
+
+/** Skills 编程助手 keeps besides the required chain (the work flow tools). */
+export const CODING_SKILLS: readonly string[] = ['code-wiki', 'taskflow', 'ulw-execute', 'todolist'];
 
 /** Tool groups 情感陪伴 keeps OFF entirely: the orchestration surfaces. */
 export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
@@ -232,29 +242,34 @@ export function stripTaskSections(text: string, locale: string): string {
  * @param store The store (usually `useAgentConfigStore()`).
  * @param store.catalog
  * @param store.catalog.tools
+ * @param store.catalog.skills
  * @param store.middlewares
  * @param store.middlewares.gateable
  * @returns The facts (empty lists until the catalogue has loaded).
  */
 export function presetCatalogFacts(store: {
-  catalog: { tools: PresetCatalogFacts['tools'] };
+  catalog: { tools: PresetCatalogFacts['tools']; skills: PresetCatalogFacts['skills'] };
   middlewares: { gateable: ReadonlyArray<{ name: string }> };
 }): PresetCatalogFacts {
   return {
     tools: store.catalog.tools,
-    gateableMiddlewares: store.middlewares.gateable.map(entry => entry.name)
+    gateableMiddlewares: store.middlewares.gateable.map(entry => entry.name),
+    skills: store.catalog.skills
   };
 }
 
 /**
  * The agent block a built-in pins ({} = every default).
  *
- * - 纯净: only the catalogue's required tools — the locked set the service would
- *   refuse to drop anyway, so the preset states the floor explicitly — and every
- *   optional middleware off;
- * - 情感陪伴: every tool EXCEPT the 任务与计划 / 子代理 groups, and every optional
- *   middleware off;
- * - 编程助手 / 全量: no opinion (every tool, every switch on).
+ * - 纯净: only the catalogue's required tools and skills — the locked set the
+ *   service would refuse to drop anyway, so the preset states the floor
+ *   explicitly — and every optional middleware off;
+ * - 编程助手: every tool except the memory store, the required skills plus the
+ *   four work-flow skills (`CODING_SKILLS`), and every optional middleware on;
+ * - 情感陪伴: every tool EXCEPT the 任务与计划 / 子代理 groups, every optional
+ *   middleware off, and every NON-required skill except 编程助手's four (the two
+ *   presets split the index between them);
+ * - 全量: no opinion (every tool, every switch on, every skill in the index).
  *
  * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
  * silent fallback to `{}` would apply the opposite of what the preset promises.
@@ -263,19 +278,43 @@ export function presetCatalogFacts(store: {
  * @returns The agent block for the session config.
  */
 export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFacts): AgentConfig {
-  if (id !== 'pure' && id !== 'companion') return {};
-  if (facts.tools.length === 0) {
+  if (id !== 'pure' && id !== 'coding' && id !== 'companion') return {};
+  if (facts.tools.length === 0 || facts.skills.length === 0) {
     throw new Error('[persona-catalog] the tool catalogue is unavailable; cannot compose the preset');
   }
-  const tools =
+  const block: AgentConfig = {};
+  block.tools =
     id === 'pure'
-      ? facts.tools.filter(tool => tool.required === true)
-      : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group));
-  const block: AgentConfig = { tools: tools.map(tool => tool.name) };
-  if (facts.gateableMiddlewares.length > 0) {
+      ? facts.tools.filter(tool => tool.required === true).map(tool => tool.name)
+      : id === 'coding'
+        ? facts.tools.filter(tool => !CODING_DISABLED_TOOLS.includes(tool.name)).map(tool => tool.name)
+        : facts.tools.filter(tool => !COMPANION_DISABLED_TOOL_GROUPS.includes(tool.group)).map(tool => tool.name);
+  block.skills = builtinSkills(id, facts.skills).map(skill => skill.name);
+  if (id !== 'coding' && facts.gateableMiddlewares.length > 0) {
     block.middlewares_disabled = [...facts.gateableMiddlewares];
   }
   return block;
+}
+
+/**
+ * The skills a built-in keeps in the index (catalogue order, required always in).
+ * @param id Built-in entry id.
+ * @param skills The catalogue's skill list.
+ * @returns The kept skills.
+ */
+function builtinSkills(id: BuiltinPresetId, skills: PresetCatalogFacts['skills']): PresetCatalogFacts['skills'] {
+  const required = skills.filter(skill => skill.required === true);
+  const optional = skills.filter(skill => skill.required !== true);
+  if (id === 'pure' || id === 'sherry') {
+    // 纯净 keeps the locked floor only; 全量 has no opinion (every skill).
+    return id === 'pure' ? required : skills;
+  }
+  const codingPicks = new Set(CODING_SKILLS);
+  const picked =
+    id === 'coding'
+      ? optional.filter(skill => codingPicks.has(skill.name))
+      : optional.filter(skill => !codingPicks.has(skill.name));
+  return [...required, ...picked];
 }
 
 /** Payload every apply path writes: the persona files + the character + the agent config. */
@@ -291,6 +330,13 @@ export interface PersonaPresetPayload {
    * prompt's index.
    */
   agent?: AgentConfig;
+  /**
+   * The model the MAIN agent runs on in sessions from this preset: a profile
+   * descriptor, or ``null`` to follow the environment config. `undefined` =
+   * the preset has no opinion (an older saved preset) and the session keeps
+   * whatever model it has.
+   */
+  mainModel?: SessionModelProfile | null;
 }
 
 /**
@@ -343,7 +389,9 @@ export function builtinPayload(
     };
   }
   content['ROLE.md'] = composeRoleFile(character, t);
-  return { content, character, agent: builtinAgentConfig(id, facts) };
+  // No built-in pins a model: `null` = follow the environment config, which is
+  // also what the panel's 主代理 sub-tab starts at.
+  return { content, character, agent: builtinAgentConfig(id, facts), mainModel: null };
 }
 
 /**
@@ -370,6 +418,9 @@ export async function loadPresetPayload(
   const character: PresetCharacter = preset.character ?? { ...DEFAULT_CACHED_CHARACTER };
   return {
     agent: preset.agent ?? {},
+    // A preset saved before the 主代理 sub-tab existed has no choice: null = the
+    // environment config, which is what its draft displayed too.
+    mainModel: preset.main_model ?? null,
     content: {
       'AGENTS.md': stored['AGENTS.md'] ?? '',
       'SOUL.md': stored['SOUL.md'] ?? '',
@@ -409,6 +460,15 @@ export async function applyPresetPayload(payload: PersonaPresetPayload, sessionI
       await setAgentConfig(sessionId, payload.agent ?? {});
     } catch (e) {
       logUtil.e('[persona-catalog] agent config write failed:', e);
+    }
+    // The main model rides its own endpoint (the session-model control owns
+    // that key); `undefined` = the preset has no opinion, so nothing is written.
+    if (payload.mainModel !== undefined) {
+      try {
+        await setSessionModel(sessionId, payload.mainModel);
+      } catch (e) {
+        logUtil.e('[persona-catalog] main-model write failed:', e);
+      }
     }
   }
 }

@@ -212,12 +212,12 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     }
     // Only the active group's tabs render.
     expect(wrapper.text()).toContain('日志查看');
-    expect(wrapper.text()).not.toContain('会话预设');
+    expect(wrapper.text()).not.toContain('预设角色');
 
     await wrapper.get('[data-test="scope-tab-session"]').trigger('click');
     await flushPromises();
     expect(sidebarApi.setActiveScope).toHaveBeenCalledWith('session');
-    expect(wrapper.text()).toContain('会话预设');
+    expect(wrapper.text()).toContain('预设角色');
     expect(wrapper.text()).not.toContain('日志查看');
 
     // An empty group says so instead of showing nothing at all.

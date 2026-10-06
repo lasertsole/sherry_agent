@@ -76,7 +76,7 @@
     "knowledgeGraph": "ナレッジグラフ",
     "stats": "統計",
     "systemConfig": "システム設定",
-    "persona": "プリセット",
+    "persona": "プリセットと役割",
     "memory": "記憶",
     "heartbeat": "ハートビート",
     "cron": "クーロンタスク",
@@ -151,8 +151,14 @@
       "tabs": {
         "tools": "ツール",
         "middlewares": "ミドルウェア",
-        "subagents": "サブエージェント モデル",
+        "subagents": "エージェントモデル",
         "skills": "スキル"
+      },
+      "models": {
+        "scope_main": "メインエージェント",
+        "scope_subagent": "サブエージェント",
+        "mainHint": "メインエージェントが使うモデル。既定では環境設定に従います。",
+        "followEnv": "環境設定に従う"
       },
       "tools": {
         "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
@@ -187,7 +193,10 @@
       "middlewares": {
         "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
         "lockedTitle": "システム必須（ロック）",
-        "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます"
+        "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
+        "nudgeLabel": "nudge を有効化",
+        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
+        "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -209,6 +218,10 @@
         "SubagentCompletionDrainMiddleware": {
           "name": "完了結果の注入",
           "desc": "サブエージェントの完了結果をメイン セッションに注入します"
+        },
+        "Summarization": {
+          "name": "要約圧縮",
+          "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
         }
       },
       "subagents": {
@@ -231,7 +244,7 @@
         "middlewaresNone": "ミドルウェア: すべて有効",
         "models": "サブエージェント モデル: {names}"
       },
-      "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセット」で行います"
+      "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
     },
     "llm": {
       "add": "モデルを追加",
@@ -278,7 +291,7 @@
     },
     "persona": {
       "preset": {
-        "title": "プリセット",
+        "title": "プリセットと役割",
         "builtinPureName": "純粋",
         "builtinCompanionName": "寄り添い",
         "defaultName": "フル",

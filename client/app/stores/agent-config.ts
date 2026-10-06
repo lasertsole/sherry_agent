@@ -143,7 +143,22 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
     const configured = configOf(sessionId).skills;
     if (!Array.isArray(configured)) return null;
     const wanted = new Set(configured);
-    return catalog.value.skills.filter(skill => wanted.has(skill.name)).map(skill => skill.name);
+    // The REQUIRED chain is always in, exactly like the required tools: the
+    // backend refuses a stored list that omits one, so a legacy value reads as
+    // the effective set.
+    return catalog.value.skills
+      .filter(skill => wanted.has(skill.name) || skill.required === true)
+      .map(skill => skill.name);
+  }
+
+  /**
+   * Whether the summarization nudges run for this session (the one option the
+   * required Summarization middleware exposes; default on).
+   * @param sessionId
+   */
+  function nudgeEnabled(sessionId: string): boolean {
+    const value = configOf(sessionId).middleware_options?.Summarization?.nudge;
+    return typeof value === 'boolean' ? value : true;
   }
 
   /**
@@ -189,6 +204,7 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
     configOf,
     enabledTools,
     selectedSkills,
+    nudgeEnabled,
     disabledMiddlewares,
     isPending,
     save

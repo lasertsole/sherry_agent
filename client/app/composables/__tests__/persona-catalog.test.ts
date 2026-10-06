@@ -107,11 +107,28 @@ const FACTS = {
     { name: 'todoread', group: 'tasks' },
     { name: 'sessions_spawn', group: 'subagents' }
   ],
-  gateableMiddlewares: ['TodoContinuationEnforcer', 'TaskIntentMiddleware', 'SubagentCompletionDrainMiddleware']
+  gateableMiddlewares: ['TodoContinuationEnforcer', 'TaskIntentMiddleware', 'SubagentCompletionDrainMiddleware'],
+  // The required multimedia chain first (the backend serves it that way), then
+  // the four work-flow skills 编程助手 picks and two it does not.
+  skills: [
+    { name: 'image_to_text', required: true },
+    { name: 'speech_to_text', required: true },
+    { name: 'text_to_image', required: true },
+    { name: 'video_text_to_text', required: true },
+    { name: 'clawhub' },
+    { name: 'code-wiki' },
+    { name: 'cron' },
+    { name: 'taskflow' },
+    { name: 'todolist' },
+    { name: 'ulw-execute' }
+  ]
 };
 
-/** Every built-in composes with the catalogue; these ids pin no agent block. */
-const NO_AGENT: PresetCatalogFacts = { tools: [], gateableMiddlewares: [] };
+/** Facts without a catalogue (全量 still composes; the rest throw). */
+const NO_AGENT: PresetCatalogFacts = { tools: [], gateableMiddlewares: [], skills: [] };
+
+/** The required skill names of {@link FACTS} (kept by every preset). */
+const REQUIRED_SKILLS = ['image_to_text', 'speech_to_text', 'text_to_image', 'video_text_to_text'];
 
 const userPreset = (overrides: Partial<PersonaPreset> = {}): PersonaPreset => ({
   id: 7,
@@ -167,7 +184,7 @@ describe('persona catalogue', () => {
   });
 
   it('builds the 编程助手 payload with no roles and no soul / user profile', () => {
-    const payload = builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh');
+    const payload = builtinPayload('coding', TEMPLATE, t, FACTS, 'zh');
 
     expect(payload.content).toEqual({
       'AGENTS.md': TEMPLATE['AGENTS.md'],
@@ -182,6 +199,21 @@ describe('persona catalogue', () => {
       userName: '',
       userAvatar: ''
     });
+    // Its agent block: every tool but the memory store, the required skills plus
+    // the four work-flow ones, and every optional middleware left ON.
+    expect(payload.agent!.tools).toEqual([
+      'read_file',
+      'terminal',
+      'message_search',
+      'web_search',
+      'taskflow_create',
+      'todoread',
+      'sessions_spawn'
+    ]);
+    expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'code-wiki', 'taskflow', 'todolist', 'ulw-execute']);
+    expect(payload.agent!.middlewares_disabled).toBeUndefined();
+    // No built-in pins a model: null = follow the environment config.
+    expect(payload.mainModel).toBeNull();
   });
 
   it('builds the 全量 payload from the full template and the default roles', () => {
@@ -203,8 +235,10 @@ describe('persona catalogue', () => {
     // Every file empty — including the operating rules — and nobody named.
     expect(payload.content).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
     expect(payload.character).toEqual({ aiName: '', aiAvatar: '', userName: '', userAvatar: '' });
-    // The catalogue's locked set is the whole tool list this preset enables…
+    // The catalogue's locked sets are the whole tool / skill list this preset
+    // enables…
     expect(payload.agent!.tools).toEqual(['read_file', 'terminal', 'message_search']);
+    expect(payload.agent!.skills).toEqual(REQUIRED_SKILLS);
     // …and every optional middleware is off too.
     expect(payload.agent!.middlewares_disabled).toEqual(FACTS.gateableMiddlewares);
   });
@@ -222,6 +256,9 @@ describe('persona catalogue', () => {
     }
     // The disabled groups are the orchestration surfaces.
     expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
+    // The skills are the mirror image of 编程助手: the required chain plus every
+    // skill 编程助手 does NOT pick (clawhub / cron here).
+    expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'clawhub', 'cron']);
   });
 
   it('strips the task-orchestration content out of 情感陪伴\u2019s 运行守则', () => {
@@ -239,7 +276,7 @@ describe('persona catalogue', () => {
     expect(builtinPayload('sherry', TEMPLATE_WITH_TASKS, t, FACTS, 'zh').content['AGENTS.md']).toContain(
       '任务管理与编排'
     );
-    expect(builtinPayload('coding', TEMPLATE_WITH_TASKS, t, NO_AGENT, 'zh').content['AGENTS.md']).toContain(
+    expect(builtinPayload('sherry', TEMPLATE_WITH_TASKS, t, NO_AGENT, 'zh').content['AGENTS.md']).toContain(
       '任务管理与编排'
     );
   });
@@ -261,12 +298,12 @@ describe('persona catalogue', () => {
     }
   });
 
-  it('refuses to compose 纯净 / 情感陪伴 without the catalogue', () => {
+  it('refuses to compose a preset whose restriction needs the catalogue', () => {
     // A silent `{}` would apply the OPPOSITE of what these presets promise.
-    expect(() => builtinPayload('pure', TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
-    expect(() => builtinPayload('companion', TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
-    // The two unopinionated built-ins never need it.
-    expect(builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
+    for (const id of ['pure', 'coding', 'companion'] as const) {
+      expect(() => builtinPayload(id, TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
+    }
+    // 全量 has no opinion at all, so it never needs the catalogue.
     expect(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
   });
 
@@ -283,7 +320,7 @@ describe('persona catalogue', () => {
   it('loads a built-in payload from the language template and a saved preset from its row', async () => {
     bridge.readSystemPromptTemplate.mockResolvedValue(TEMPLATE);
 
-    const builtin = await loadPresetPayload(catalogEntries([])[1]!, 'zh', t, NO_AGENT);
+    const builtin = await loadPresetPayload(catalogEntries([])[3]!, 'zh', t, NO_AGENT);
     expect(bridge.readSystemPromptTemplate).toHaveBeenCalledWith('zh');
     expect(builtin.content['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
 
@@ -303,26 +340,26 @@ describe('persona catalogue', () => {
       Object.assign(written, map);
     });
     bridge.readSystemPrompt.mockImplementation(async () => ({ ...written }));
-    const payload = builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh');
+    const payload = builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh');
 
     await applyPresetPayload(payload);
 
     expect(bridge.writeSystemPrompt).toHaveBeenCalledWith(payload.content);
+    // The applied character is 全量's shipped default (both roles named).
     expect(db.cacheCharacter).toHaveBeenCalledWith({
       session_id: '__global__',
-      aiName: '',
-      aiAvatar: '',
-      userName: '',
-      userAvatar: ''
+      aiName: '橘雪莉',
+      aiAvatar: '/avatar/assistant.jpg',
+      userName: '远野汉娜',
+      userAvatar: '/avatar/user.jpg'
     });
   });
 
-  it('pins an agent block only where a preset restricts something', () => {
-    expect(builtinPayload('pure', TEMPLATE, t, FACTS, 'zh').agent).not.toEqual({});
-    expect(builtinPayload('companion', TEMPLATE, t, FACTS, 'zh').agent).not.toEqual({});
-    for (const id of ['coding', 'sherry'] as const) {
-      expect(builtinPayload(id, TEMPLATE, t, FACTS).agent).toEqual({});
+  it('pins an agent block on every preset except 全量', () => {
+    for (const id of ['pure', 'coding', 'companion'] as const) {
+      expect(builtinPayload(id, TEMPLATE, t, FACTS, 'zh').agent).not.toEqual({});
     }
+    expect(builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh').agent).toEqual({});
   });
 
   it('writes the agent block to the session when the apply names one', async () => {
@@ -365,7 +402,7 @@ describe('persona catalogue', () => {
     bridge.writeSystemPrompt.mockResolvedValue(undefined);
     bridge.readSystemPrompt.mockResolvedValue({ 'AGENTS.md': 'something else' });
 
-    await expect(applyPresetPayload(builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh'))).rejects.toThrow(
+    await expect(applyPresetPayload(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh'))).rejects.toThrow(
       'applied content verification failed'
     );
     expect(db.cacheCharacter).not.toHaveBeenCalled();

@@ -286,6 +286,7 @@ vi.stubGlobal('useAgentConfigStore', () =>
     configOf: () => ({}),
     enabledTools: () => [],
     selectedSkills: () => null,
+    nudgeEnabled: () => true,
     isPending: () => false,
     save: async () => {}
   })

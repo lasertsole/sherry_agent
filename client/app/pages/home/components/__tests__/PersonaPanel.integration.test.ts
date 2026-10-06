@@ -101,7 +101,19 @@ const stubs = {
     emits: ['update:visible'],
     template: `<div class="dlg" v-if="visible"><slot /><slot name="footer" /></div>`
   },
-  AvatarCropDialog: { name: 'AvatarCropDialog', template: '<div class="acd" />' }
+  AvatarCropDialog: { name: 'AvatarCropDialog', template: '<div class="acd" />' },
+  Select: {
+    name: 'Select',
+    props: ['modelValue', 'options', 'optionLabel', 'optionValue'],
+    emits: ['update:modelValue'],
+    template: `<select class="sel" :value="modelValue" @change="$emit('update:modelValue', $event.target.value)"><option v-for="o in options" :key="o.value" :value="o.value">{{ o.label }}</option></select>`
+  },
+  Checkbox: {
+    name: 'Checkbox',
+    props: ['modelValue', 'disabled'],
+    emits: ['update:modelValue'],
+    template: `<button class="cb" :disabled="disabled" @click="$emit('update:modelValue', !modelValue)">C</button>`
+  }
 };
 
 /** The last payload written through `writeSystemPrompt` (the apply verification reads it back). */
@@ -111,34 +123,72 @@ let written: Record<string, string> | null = null;
  * An agent-config store double whose catalogue carries one REQUIRED tool, one
  * plain optional tool and one bulk-only group (子代理) — enough for the two new
  * built-in presets to derive their agent blocks from.
+ * @param catalogue
+ * @param catalogue.tools
+ * @param catalogue.skills
  */
-function makeCatalogStore() {
-  const readFile = { name: 'read_file', group: 'files', required: true };
-  const webSearch = { name: 'web_search', group: 'web' };
-  const spawn = { name: 'sessions_spawn', group: 'subagents' };
-  const tools = [readFile, webSearch, spawn];
-  const skills = [
+function makeCatalogStore(catalogue?: {
+  tools?: Array<{ name: string; group: string; required?: boolean }>;
+  skills?: Array<{ name: string; builtin: boolean; description?: string; required?: boolean }>;
+}) {
+  const tools = catalogue?.tools ?? [
+    { name: 'read_file', group: 'files', required: true },
+    { name: 'web_search', group: 'web' },
+    { name: 'sessions_spawn', group: 'subagents' }
+  ];
+  const skills = catalogue?.skills ?? [
     { name: 'alpha', builtin: true, description: 'Built-in skill.' },
     { name: 'uploaded', builtin: false, description: 'Third-party skill.' }
   ];
+  const groups: Array<{ group: string; tools: typeof tools }> = [];
+  for (const tool of tools) {
+    const bucket = groups.find(entry => entry.group === tool.group);
+    if (bucket) bucket.tools.push(tool);
+    else groups.push({ group: tool.group, tools: [tool] });
+  }
   return reactive({
     catalog: { tools, middlewares: [], subagent_roles: [], skills },
     catalogLoaded: true,
-    toolGroups: [
-      { group: 'files', tools: [readFile] },
-      { group: 'web', tools: [webSearch] },
-      { group: 'subagents', tools: [spawn] }
-    ],
+    toolGroups: groups,
     middlewares: { gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }], locked: [] },
     subagentRoles: [],
-    skills: { builtin: skills.filter(skill => skill.builtin), thirdParty: skills.filter(skill => !skill.builtin) },
+    skills: {
+      builtin: skills.filter(skill => skill.builtin),
+      thirdParty: skills.filter(skill => !skill.builtin)
+    },
     loadCatalog: async () => {},
     hydrate: async () => {},
     configOf: () => ({}),
     enabledTools: () => tools.map(tool => tool.name),
     selectedSkills: () => null,
+    nudgeEnabled: () => true,
     isPending: () => false,
     save: async () => {}
+  });
+}
+
+/**
+ * A catalogue wide enough for EVERY built-in's derivation (tools + skills +
+ * the work-flow skills 编程助手 picks), installed for the whole suite: a preset
+ * click throws without one, and these tests are not about the derivation.
+ */
+function makeWideCatalogStore() {
+  return makeCatalogStore({
+    tools: [
+      { name: 'read_file', group: 'files', required: true },
+      { name: 'terminal', group: 'terminal', required: true },
+      { name: 'message_search', group: 'memory', required: true },
+      { name: 'memory', group: 'memory' },
+      { name: 'web_search', group: 'web' }
+    ],
+    skills: [
+      { name: 'image_to_text', builtin: true, required: true },
+      { name: 'speech_to_text', builtin: true, required: true },
+      { name: 'text_to_image', builtin: true, required: true },
+      { name: 'video_text_to_text', builtin: true, required: true },
+      { name: 'clawhub', builtin: true },
+      { name: 'code-wiki', builtin: true }
+    ]
   });
 }
 
@@ -173,6 +223,7 @@ describe('PersonaPanel role tab', () => {
       'SOUL.md': 'TPL-SOUL',
       'USER.md': 'TPL-USER'
     });
+    vi.stubGlobal('useAgentConfigStore', () => makeWideCatalogStore());
     bridge.writeSystemPrompt.mockImplementation(async (map: Record<string, string>) => {
       written = map;
     });
@@ -188,7 +239,7 @@ describe('PersonaPanel role tab', () => {
     const headers = wrapper.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     // Role first, the three persona files, then the agent-config tabs
     // (工具 / 中间件 / 子代理模型) the preset also carries.
-    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '子代理模型', '技能']);
+    expect(headers).toEqual(['角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '代理模型', '技能']);
   });
 
   it('composes ROLE.md from both role names on 应用 and persists the character', async () => {
@@ -370,6 +421,96 @@ describe('PersonaPanel role tab', () => {
     // value lands as the kebab attribute (the real component reads the same prop).
     const middleware = wrapper.get('[data-test="agent-middleware-TaskIntentMiddleware"]');
     expect(middleware.attributes('model-value')).toBe('false');
+  });
+
+  it('gates the Summarization nudge on the memory tool and stores it when off', async () => {
+    // A catalogue whose memory tool can be toggled (and is on by default), with a
+    // real switch stub: this suite renders PrimeVue components unresolved, so the
+    // toggle needs one to be drivable.
+    vi.stubGlobal('useAgentConfigStore', () =>
+      makeCatalogStore({
+        tools: [
+          { name: 'read_file', group: 'files', required: true },
+          { name: 'memory', group: 'memory' }
+        ],
+        skills: [{ name: 'image_to_text', builtin: true, required: true }]
+      })
+    );
+    const wrapper = mount(PersonaPanel, {
+      global: {
+        stubs: {
+          ...stubs,
+          ToggleSwitch: {
+            name: 'ToggleSwitch',
+            props: ['modelValue', 'disabled'],
+            emits: ['update:modelValue'],
+            template: `<button class="ts" :disabled="disabled" @click="$emit('update:modelValue', !modelValue)">T</button>`
+          }
+        }
+      }
+    });
+    await flushPromises();
+
+    // With memory ON the switch is live and on (the default)…
+    expect(wrapper.get('[data-test="agent-middleware-nudge"]').attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('[data-test="agent-nudge-blocked"]').exists()).toBe(false);
+
+    // …turning the memory tool off disables it and explains why.
+    await wrapper.get('[data-test="agent-tool-memory"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.get('[data-test="agent-middleware-nudge"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.get('[data-test="agent-nudge-blocked"]').text()).toContain('memory');
+
+    // Back on, then switch the nudge itself off: THAT is what the draft stores
+    // (the memory gate is a display/run-time condition, not a silent write).
+    await wrapper.get('[data-test="agent-tool-memory"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="agent-middleware-nudge"]').trigger('click');
+    await flushPromises();
+    await buttonByText(wrapper, '保存预设').trigger('click');
+    await flushPromises();
+    await wrapper.get('.dlg input').setValue('静默预设');
+    await buttonByText(wrapper, '保存').trigger('click');
+    await flushPromises();
+
+    expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({
+      middleware_options: { Summarization: { nudge: false } }
+    });
+  });
+
+  it('carries the main-agent model through save, select and apply', async () => {
+    vi.stubGlobal('useAgentConfigStore', () => makeWideCatalogStore());
+    const profile = {
+      id: 'p1',
+      label: '测试档案',
+      params: { MAIN_LLM_NAME: 'glm-4.6', MAIN_LLM_PROVIDER: 'zhipu', MAIN_LLM_API_KEY: 'k' }
+    };
+    vi.stubGlobal('useLlmProfilesStore', () =>
+      reactive({
+        listFor: () => [profile],
+        byId: (_group: string, id: string | null) => (id === 'p1' ? profile : undefined),
+        toSessionProfile: () => ({
+          id: 'p1',
+          label: '测试档案',
+          provider: 'zhipu',
+          model: 'glm-4.6',
+          api_key: 'k'
+        })
+      })
+    );
+    const wrapper = await mountPanel();
+
+    // Pick a profile on the 主代理 sub-tab, then save: the preset stores it.
+    await wrapper.get('[data-test="agent-main-model"]').setValue('p1');
+    await flushPromises();
+    await buttonByText(wrapper, '保存预设').trigger('click');
+    await flushPromises();
+    await wrapper.get('.dlg input').setValue('带模型预设');
+    await buttonByText(wrapper, '保存').trigger('click');
+    await flushPromises();
+
+    const stored = db.createPersonaPreset.mock.calls[0]!;
+    expect(stored[4]).toEqual({ id: 'p1', label: '测试档案', provider: 'zhipu', model: 'glm-4.6', api_key: 'k' });
   });
 
   it('saves the role config with the preset and restores it on selection', async () => {

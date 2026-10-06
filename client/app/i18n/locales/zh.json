@@ -76,7 +76,7 @@
     "knowledgeGraph": "知识图谱",
     "stats": "统计",
     "systemConfig": "系统配置",
-    "persona": "预设",
+    "persona": "预设角色",
     "memory": "记忆",
     "heartbeat": "心跳",
     "cron": "定时任务",
@@ -151,8 +151,14 @@
       "tabs": {
         "tools": "工具",
         "middlewares": "中间件",
-        "subagents": "子代理模型",
+        "subagents": "代理模型",
         "skills": "技能"
+      },
+      "models": {
+        "scope_main": "主代理",
+        "scope_subagent": "子代理",
+        "mainHint": "主代理（main agent）使用的模型；默认跟随环境配置。",
+        "followEnv": "跟随环境配置"
       },
       "tools": {
         "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
@@ -187,7 +193,10 @@
       "middlewares": {
         "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
         "lockedTitle": "系统必需（锁定）",
-        "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭"
+        "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
+        "nudgeLabel": "启用 nudge",
+        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
+        "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -209,6 +218,10 @@
         "SubagentCompletionDrainMiddleware": {
           "name": "子代理完成注入",
           "desc": "子代理完成后把结果注入主会话"
+        },
+        "Summarization": {
+          "name": "摘要压缩",
+          "desc": "上下文压缩、溢出处理与压缩后的 nudge"
         }
       },
       "subagents": {
@@ -231,7 +244,7 @@
         "middlewaresNone": "中间件：全部开启",
         "models": "子代理模型：{names}"
       },
-      "readonlyHint": "只读：如需修改请到「菜单-预设」"
+      "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
     },
     "llm": {
       "add": "添加模型",
@@ -278,7 +291,7 @@
     },
     "persona": {
       "preset": {
-        "title": "预设",
+        "title": "预设角色",
         "builtinPureName": "纯净",
         "builtinCompanionName": "情感陪伴",
         "defaultName": "全量",

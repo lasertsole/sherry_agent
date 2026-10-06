@@ -23,6 +23,15 @@ export const tools: Tool[] = [
 ];
 
 export const headerTools: Tool[] = [
+  // FIRST: the preset panel is where a session's identity is set up, so it
+  // leads the grid (its own name is 预设角色 / Presets & Role).
+  {
+    toolName: 'toolbar.persona',
+    icon: 'pi pi-user',
+    title: 'toolbar.persona',
+    event: 'persona',
+    label: 'toolbar.persona'
+  },
   {
     toolName: 'toolbar.skills',
     icon: 'pi pi-bolt',
@@ -64,13 +73,6 @@ export const headerTools: Tool[] = [
     title: 'toolbar.systemConfig',
     event: 'systemConfig',
     label: 'toolbar.systemConfig'
-  },
-  {
-    toolName: 'toolbar.persona',
-    icon: 'pi pi-user',
-    title: 'toolbar.persona',
-    event: 'persona',
-    label: 'toolbar.persona'
   },
   {
     toolName: 'toolbar.memory',

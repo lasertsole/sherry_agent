@@ -327,6 +327,37 @@
                       :data-test="`agent-middleware-${entry.name}`"
                       @update:model-value="toggleMiddleware(entry.name)" />
                   </div>
+                  <!-- Required, yet configurable: a REQUIRED middleware cannot be
+                       switched off, so it exposes its own options here instead. -->
+                  <div
+                    class="mb-1 mt-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]"
+                    data-test="agent-middleware-option-Summarization">
+                    <div class="flex items-center justify-between gap-2">
+                      <div class="min-w-0">
+                        <div class="flex items-center gap-1 truncate text-sm text-theme-main">
+                          <i class="pi pi-lock text-[9px] text-gray-400" />
+                          {{ t('config.agent.middleware.Summarization.name') }}
+                        </div>
+                        <div class="truncate text-xs text-gray-400">
+                          {{ t('config.agent.middlewares.nudgeDesc') }}
+                        </div>
+                      </div>
+                      <label class="flex shrink-0 items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                        {{ t('config.agent.middlewares.nudgeLabel') }}
+                        <ToggleSwitch
+                          :model-value="agentNudgeActive"
+                          :disabled="!agentMemoryToolOn"
+                          data-test="agent-middleware-nudge"
+                          @update:model-value="agentNudge = $event" />
+                      </label>
+                    </div>
+                    <div
+                      v-if="!agentMemoryToolOn"
+                      class="mt-1 text-[11px] text-amber-600 dark:text-amber-400"
+                      data-test="agent-nudge-blocked">
+                      {{ t('config.agent.middlewares.nudgeNeedMemory') }}
+                    </div>
+                  </div>
                   <div class="mt-3">
                     <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
                       {{ t('config.agent.middlewares.lockedTitle') }}
@@ -346,47 +377,78 @@
               </div>
             </TabPanel>
 
-            <!-- 子代理模型 tab: one picker per functional role; the options are
-                 the environment-config model profiles (the same list the
-                 session-model picker uses) plus "follow the role tier". -->
+            <!-- 代理模型 tab: the main agent's model and one picker per functional
+                 subagent role. Both lists are the environment-config model
+                 profiles (the same list the session-model picker uses). -->
             <TabPanel
               value="agentSubagents"
               :header="t('config.agent.tabs.subagents')"
               data-test="persona-agent-subagents-tab">
               <div
                 class="flex min-h-0 flex-1 flex-col gap-2"
-                data-test="agent-subagents-tab">
-                <span class="text-sm text-gray-500 dark:text-gray-400">
-                  {{ t('config.agent.subagents.hint') }}
-                </span>
-                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
-                  <div
-                    v-for="role in agentStore.subagentRoles"
-                    :key="role.role"
-                    class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
-                    <div class="min-w-0">
-                      <div class="truncate text-sm text-theme-main">
-                        {{ t(`config.agent.role.${role.role}`) }}
-                        <span class="ml-1 font-mono text-[11px] text-gray-400">{{ role.role }}</span>
-                      </div>
-                      <div class="truncate text-xs text-gray-400">
-                        {{
-                          role.model_tier
-                            ? t('config.agent.subagents.tier', { tier: role.model_tier })
-                            : t('config.agent.subagents.tierDepth')
-                        }}
-                      </div>
-                    </div>
-                    <Select
-                      :model-value="agentRoleModelId(role.role)"
-                      :options="agentRoleModelOptions"
-                      option-label="label"
-                      option-value="value"
-                      class="w-56"
-                      :data-test="`agent-role-model-${role.role}`"
-                      @update:model-value="value => setRoleModel(role.role, value)" />
-                  </div>
+                data-test="agent-models-tab">
+                <div class="flex items-center gap-1">
+                  <button
+                    v-for="scope in AGENT_MODEL_SCOPES"
+                    :key="scope"
+                    type="button"
+                    class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                    :class="
+                      modelScope === scope
+                        ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+                    "
+                    :data-test="`agent-models-scope-${scope}`"
+                    @click="modelScope = scope">
+                    {{ t(`config.agent.models.scope_${scope}`) }}
+                  </button>
                 </div>
+                <template v-if="modelScope === 'main'">
+                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t('config.agent.models.mainHint') }}
+                  </span>
+                  <Select
+                    :model-value="agentMainModelId"
+                    :options="agentMainModelOptions"
+                    option-label="label"
+                    option-value="value"
+                    class="w-full"
+                    data-test="agent-main-model"
+                    @update:model-value="agentMainModel = String($event ?? '')" />
+                </template>
+                <template v-else>
+                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t('config.agent.subagents.hint') }}
+                  </span>
+                  <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                    <div
+                      v-for="role in agentStore.subagentRoles"
+                      :key="role.role"
+                      class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+                      <div class="min-w-0">
+                        <div class="truncate text-sm text-theme-main">
+                          {{ t(`config.agent.role.${role.role}`) }}
+                          <span class="ml-1 font-mono text-[11px] text-gray-400">{{ role.role }}</span>
+                        </div>
+                        <div class="truncate text-xs text-gray-400">
+                          {{
+                            role.model_tier
+                              ? t('config.agent.subagents.tier', { tier: role.model_tier })
+                              : t('config.agent.subagents.tierDepth')
+                          }}
+                        </div>
+                      </div>
+                      <Select
+                        :model-value="agentRoleModelId(role.role)"
+                        :options="agentRoleModelOptions"
+                        option-label="label"
+                        option-value="value"
+                        class="w-56"
+                        :data-test="`agent-role-model-${role.role}`"
+                        @update:model-value="value => setRoleModel(role.role, value)" />
+                    </div>
+                  </div>
+                </template>
               </div>
             </TabPanel>
 
@@ -455,14 +517,26 @@
                   <label
                     v-for="skill in agentVisibleSkills"
                     :key="skill.name"
-                    class="flex cursor-pointer items-center gap-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
-                    :title="skill.description || skill.name">
+                    class="flex items-center gap-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
+                    :class="skill.required === true ? 'cursor-default' : 'cursor-pointer'"
+                    :title="skillTooltip(skill)">
                     <Checkbox
+                      v-if="skill.required !== true"
                       :model-value="agentSkillSelected(skill.name)"
                       binary
                       :data-test="`agent-skill-${skill.name}`"
                       @update:model-value="toggleSkill(skill.name)" />
-                    <span class="font-mono">{{ skill.name }}</span>
+                    <i
+                      v-if="skill.required === true"
+                      class="pi pi-lock text-[9px] text-gray-400" />
+                    <span
+                      class="font-mono"
+                      :class="{
+                        'text-gray-400 line-through': skill.required !== true && !agentSkillSelected(skill.name)
+                      }"
+                      :data-test="skill.required === true ? `agent-skill-locked-${skill.name}` : undefined">
+                      {{ skill.name }}
+                    </span>
                   </label>
                 </div>
               </div>
@@ -609,6 +683,7 @@ import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
 import type { SessionModelProfile } from '~/composables/bridge/session';
 import { FOLLOW_TIER_ID, isBulkOnlyToolGroup } from '~/stores/agent-config';
+import { ENV_MODEL_ID } from '~/stores/session-model';
 // DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
 // ~/composables/defaultCharacter.
 import { logUtil } from '~/utils/log';
@@ -680,6 +755,8 @@ interface AgentToolGroupEntry {
 // once; the drafts below are what 保存预设 stores and 应用 writes to the session.
 const agentStore = useAgentConfigStore();
 const llmProfiles = useLlmProfilesStore();
+/** The session's main-model control (its own store: the toolbar picker's key). */
+const sessionModel = useSessionModelStore();
 const route = useRoute();
 /** The session an 应用 targets (the open chat's sid; empty on the bare shell). */
 const panelSessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
@@ -692,6 +769,10 @@ const agentDisabledMiddlewares = ref<string[]>([]);
 const agentRoleModels = ref<Record<string, string>>({});
 /** Skill names whose index entries enter the prompt (`null` = every skill). */
 const agentSkills = ref<string[] | null>(null);
+/** Main-agent model for this preset (`ENV_MODEL_ID` = follow the env config). */
+const agentMainModel = ref<string>(ENV_MODEL_ID);
+/** Whether the summarization nudges run (the Summarization middleware option). */
+const agentNudge = ref(true);
 
 /** Required tool names from the catalogue, in catalogue order. */
 const agentRequiredToolNames = computed<string[]>(() =>
@@ -712,6 +793,45 @@ const agentRoleModelOptions = computed<Array<{ label: string; value: string }>>(
   { label: t('config.agent.subagents.followTier'), value: FOLLOW_TIER_ID },
   ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
 ]);
+
+/** Select-options: "follow the environment config" + every env-config profile. */
+const agentMainModelOptions = computed<Array<{ label: string; value: string }>>(() => [
+  { label: t('config.agent.models.followEnv'), value: ENV_MODEL_ID },
+  ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
+]);
+
+/** The profile id the 主代理 picker shows (an unknown id falls back to env). */
+const agentMainModelId = computed<string>(() =>
+  llmProfiles.byId('MAIN_LLM', agentMainModel.value) ? agentMainModel.value : ENV_MODEL_ID
+);
+
+/** Whether the memory tool is on in this draft (the nudge's precondition). */
+const agentMemoryToolOn = computed<boolean>(() => agentToolSelected(MEMORY_TOOL_NAME));
+
+/** The nudge switch's effective state: off without the memory tool. */
+const agentNudgeActive = computed<boolean>(() => agentNudge.value && agentMemoryToolOn.value);
+
+/**
+ * The skill's profile descriptor for the main-model payload (null = env).
+ * @returns The chosen profile, or null to follow the environment config.
+ */
+const agentMainModelProfile = (): SessionModelProfile | null => {
+  const profile = llmProfiles.byId('MAIN_LLM', agentMainModelId.value);
+  return profile ? llmProfiles.toSessionProfile(profile) : null;
+};
+
+/**
+ * The hover text of one skill row: the SKILL.md description, plus the locked
+ * explanation for a required skill.
+ * @param skill Catalogue skill entry.
+ * @param skill.name
+ * @param skill.description
+ * @param skill.required
+ */
+const skillTooltip = (skill: { name: string; description?: string; required?: boolean }): string => {
+  const description = skill.description || skill.name;
+  return skill.required === true ? `${description}\n${t('config.agent.tools.requiredHint')}` : description;
+};
 
 /**
  * Whether one tool is checked.
@@ -742,8 +862,17 @@ const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
 /** The two 技能 sub-tabs: shipped skills and uploaded third-party ones. */
 const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
 
+/** The two 代理模型 sub-tabs: the main agent and the functional subagents. */
+const AGENT_MODEL_SCOPES = ['main', 'subagent'] as const;
+
+/** Which 代理模型 sub-tab is on screen. */
+const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
+
 /** Group id the catalogue gives tools that arrive from an MCP server. */
 const MCP_TOOL_GROUP = 'mcp';
+
+/** Tool the nudge option depends on (it writes memory through it). */
+const MEMORY_TOOL_NAME = 'memory';
 
 /** Which 工具 sub-tab is on screen (a view filter — the draft stays whole). */
 const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
@@ -792,12 +921,12 @@ const agentToolChipTestId = (
   return isBulkOnlyToolGroup(group.group) ? `agent-tool-bulk-${tool.name}` : undefined;
 };
 
-/** Skill names the draft keeps (every catalogue skill when it has no opinion). */
+/** Skill names the draft keeps (required always in; every skill with no opinion). */
 const agentEnabledSkills = computed<string[]>(() => {
-  const all = agentStore.catalog.skills.map(skill => skill.name);
-  if (agentSkills.value === null) return all;
+  const all = agentStore.catalog.skills;
+  if (agentSkills.value === null) return all.map(skill => skill.name);
   const selected = new Set(agentSkills.value);
-  return all.filter(name => selected.has(name));
+  return all.filter(skill => selected.has(skill.name) || skill.required === true).map(skill => skill.name);
 });
 
 /**
@@ -811,6 +940,7 @@ const agentSkillSelected = (name: string): boolean => agentEnabledSkills.value.i
  * @param name Skill name.
  */
 const toggleSkill = (name: string): void => {
+  if (agentStore.catalog.skills.some(skill => skill.name === name && skill.required === true)) return;
   const current = agentEnabledSkills.value;
   agentSkills.value = current.includes(name) ? current.filter(candidate => candidate !== name) : [...current, name];
 };
@@ -932,8 +1062,17 @@ const buildAgentDraft = (): AgentConfig => {
   }
   if (anyModel) block.subagent_models = models;
   // `null` = no opinion (every skill stays in the index) and collapses away; an
-  // explicit list — including the empty "no skill" choice — is stored as-is.
+  // explicit list — including the empty "only the required chain" choice — is
+  // stored as-is.
   if (agentSkills.value !== null) block.skills = [...agentSkills.value];
+  // Required middlewares have no on/off switch, so the nudge rides its own
+  // options section — and only when the user turned it OFF (absent = the
+  // default: on). The memory-tool gate is a DISPLAY/run-time condition: a draft
+  // without the memory tool stores nothing extra, so re-enabling the tool brings
+  // the nudge back instead of silently pinning it off.
+  if (!agentNudge.value) {
+    block.middleware_options = { Summarization: { nudge: false } };
+  }
   return block;
 };
 
@@ -952,6 +1091,7 @@ const fillAgentDraft = (block: AgentConfig | undefined): void => {
   }
   agentRoleModels.value = models;
   agentSkills.value = Array.isArray(block?.skills) ? [...block.skills] : null;
+  agentNudge.value = block?.middleware_options?.Summarization?.nudge !== false;
 };
 
 const charAssistant = ref({ name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar });
@@ -1242,6 +1382,7 @@ const selectBuiltin = async (id: BuiltinPresetId) => {
     fillTabs(payload.content);
     fillCharacter(payload.character);
     fillAgentDraft(payload.agent);
+    agentMainModel.value = payload.mainModel?.id ?? ENV_MODEL_ID;
     editingPresetId.value = null;
     activeBuiltin.value = id;
   } catch (e) {
@@ -1263,6 +1404,8 @@ const selectPreset = (preset: PersonaPreset) => {
   if (preset.character) fillCharacter(preset.character);
   // Same tolerance for the agent block: an old preset = every default.
   fillAgentDraft(preset.agent);
+  // Same tolerance for the model: an old preset leaves the picker at "follow env".
+  agentMainModel.value = preset.main_model?.id ?? ENV_MODEL_ID;
   editingPresetId.value = preset.id;
   activeBuiltin.value = null;
 };
@@ -1289,7 +1432,13 @@ const overwriteEditingPreset = async () => {
   if (id === null) return;
   saving.value = true;
   try {
-    const ok = await update(id, buildPresetContent(), buildPresetCharacter(), buildAgentDraft());
+    const ok = await update(
+      id,
+      buildPresetContent(),
+      buildPresetCharacter(),
+      buildAgentDraft(),
+      agentMainModelProfile()
+    );
     if (ok) {
       toastSuccess(t('config.persona.preset.toast.presetSaved'));
     } else {
@@ -1310,7 +1459,13 @@ const confirmSavePreset = async () => {
   }
   saving.value = true;
   try {
-    const result = await create(name, buildPresetContent(), buildPresetCharacter(), buildAgentDraft());
+    const result = await create(
+      name,
+      buildPresetContent(),
+      buildPresetCharacter(),
+      buildAgentDraft(),
+      agentMainModelProfile()
+    );
     if (result.ok) {
       showNameDialog.value = false;
       // The just-created preset becomes the edited one (its entry is highlighted).
@@ -1409,6 +1564,9 @@ const handleApply = async () => {
     // boundary when one is in flight). A session-less panel skips it.
     if (panelSessionId.value) {
       await agentStore.save(panelSessionId.value, buildAgentDraft());
+      // The main model rides its own endpoint (the session-model control owns
+      // that key); the write parks mid-turn exactly like the config above.
+      await sessionModel.select(panelSessionId.value, agentMainModelProfile());
     }
     emits('saved');
     toastSuccess(t('config.persona.preset.toast.applySuccess'));

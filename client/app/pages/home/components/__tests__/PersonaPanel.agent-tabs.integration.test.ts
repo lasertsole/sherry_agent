@@ -158,6 +158,7 @@ function makeAgentStore(
       ],
       subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
       skills: [
+        { name: 'image_to_text', builtin: true, description: 'Media in.', required: true },
         { name: 'alpha', builtin: true, description: 'Shipped skill.' },
         { name: 'uploaded', builtin: false, description: 'Uploaded skill.' }
       ]
@@ -170,7 +171,10 @@ function makeAgentStore(
     },
     subagentRoles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
     skills: {
-      builtin: [{ name: 'alpha', builtin: true, description: 'Shipped skill.' }],
+      builtin: [
+        { name: 'image_to_text', builtin: true, description: 'Media in.', required: true },
+        { name: 'alpha', builtin: true, description: 'Shipped skill.' }
+      ],
       thirdParty: [{ name: 'uploaded', builtin: false, description: 'Uploaded skill.' }]
     },
     loadCatalog: vi.fn(async () => undefined),
@@ -178,6 +182,7 @@ function makeAgentStore(
     configOf: () => (overrides.config ?? {}) as never,
     enabledTools: () => tools.map(tool => tool.name) as never,
     selectedSkills: () => (Array.isArray(overrides.config?.skills) ? overrides.config?.skills : null) as never,
+    nudgeEnabled: () => true,
     isPending: () => false,
     save: vi.fn(async (_sid: string, config: Record<string, unknown>) => {
       saved.push(config);
@@ -214,7 +219,7 @@ describe('PersonaPanel agent-config tabs', () => {
     const panel = await mountPanel();
 
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
-    expect(headers.slice(-4)).toEqual(['工具', '中间件', '子代理模型', '技能']);
+    expect(headers.slice(-4)).toEqual(['工具', '中间件', '代理模型', '技能']);
     // The 技能 tab belongs to the same agent-config group and carries its own
     // two sub-tabs; the 工具 tab splits the built-in groups from MCP.
     expect(panel.find('[data-test="agent-skills-tab"]').exists()).toBe(true);
@@ -234,8 +239,13 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(panel.find('[data-test="agent-middleware-TaskIntentMiddleware"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-middleware-HumanInTheLoop"]').exists()).toBe(false);
     expect(panel.text()).toContain('HumanInTheLoop');
-    // The role picker offers the role + its tier state.
+    // The 代理模型 tab leads with 主代理 and keeps the per-role pickers under 子代理.
+    expect(panel.find('[data-test="agent-main-model"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-role-model-researcher"]').exists()).toBe(false);
+    await panel.get('[data-test="agent-models-scope-subagent"]').trigger('click');
+    await flushPromises();
     expect(panel.find('[data-test="agent-role-model-researcher"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-main-model"]').exists()).toBe(false);
   });
 
   it('stores the draft in a saved preset and collapses "all on" to an empty block', async () => {
@@ -294,7 +304,10 @@ describe('PersonaPanel agent-config tabs', () => {
     const toolBoxes = panel.get('[data-test="agent-tools-tab"]').findAllComponents({ name: 'Checkbox' });
     expect(toolBoxes.length).toBe(3);
     expect(toolBoxes.filter(c => c.props('modelValue') === true).length).toBe(1);
-    // The skills draft followed the same block: only `uploaded` stays in the index.
+    // The skills draft followed the same block: only `uploaded` stays in the index
+    // — and the required media skill is a locked chip, so it has NO checkbox.
+    expect(panel.find('[data-test="agent-skill-image_to_text"]').exists()).toBe(false);
+    expect(panel.get('[data-test="agent-skill-locked-image_to_text"]').text()).toBe('image_to_text');
     const skillBoxes = panel.get('[data-test="agent-skills-tab"]').findAllComponents({ name: 'Checkbox' });
     expect(skillBoxes.filter(c => c.props('modelValue') === true).length).toBe(0);
     // `uploaded` is a third-party skill: its row lives in the second sub-tab.

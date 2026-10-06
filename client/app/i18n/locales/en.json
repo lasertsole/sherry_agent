@@ -76,7 +76,7 @@
     "knowledgeGraph": "Knowledge Graph",
     "stats": "Statistics",
     "systemConfig": "System Config",
-    "persona": "Presets",
+    "persona": "Presets & Role",
     "memory": "Memory",
     "heartbeat": "Heartbeat",
     "cron": "Cron Tasks",
@@ -151,8 +151,14 @@
       "tabs": {
         "tools": "Tools",
         "middlewares": "Middlewares",
-        "subagents": "Subagent models",
+        "subagents": "Agent models",
         "skills": "Skills"
+      },
+      "models": {
+        "scope_main": "Main agent",
+        "scope_subagent": "Subagent",
+        "mainHint": "The model the main agent runs on; follows the environment config by default.",
+        "followEnv": "Follow the environment config"
       },
       "tools": {
         "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
@@ -187,7 +193,10 @@
       "middlewares": {
         "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
         "lockedTitle": "System-required (locked)",
-        "lockedHint": "A safety net or a logical necessity — disabling it would strip protection"
+        "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
+        "nudgeLabel": "Enable nudge",
+        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
+        "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -209,6 +218,10 @@
         "SubagentCompletionDrainMiddleware": {
           "name": "Completion injection",
           "desc": "Injects a finished subagent's result into the main session"
+        },
+        "Summarization": {
+          "name": "Summarization",
+          "desc": "Context compression, overflow handling and the post-compression nudges"
         }
       },
       "subagents": {
@@ -231,7 +244,7 @@
         "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
       },
-      "readonlyHint": "Read-only — change it in 菜单-预设 (Presets)"
+      "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
     },
     "llm": {
       "add": "Add model",
@@ -278,7 +291,7 @@
     },
     "persona": {
       "preset": {
-        "title": "Presets",
+        "title": "Presets & Role",
         "builtinPureName": "Pure",
         "builtinCompanionName": "Companion",
         "defaultName": "Full",

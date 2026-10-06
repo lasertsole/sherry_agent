@@ -2,6 +2,7 @@ import Dexie, { type IndexableType, type Table } from 'dexie';
 import { toRaw } from 'vue';
 import type { MessageItem } from '@/pages/home/type';
 import type { AgentConfig } from './bridge/agent-config';
+import type { SessionModelProfile } from './bridge/session';
 
 /** The preset's agent block (工具 / 中间件 / 子代理模型) — re-exported for consumers. */
 export type { AgentConfig };
@@ -253,6 +254,13 @@ export interface PersonaPreset {
    * It rides along without a Dexie version bump: it is not an indexed field.
    */
   agent?: AgentConfig;
+  /**
+   * The MAIN agent's model choice (the 代理模型 tab's 主代理 sub-tab): a profile
+   * descriptor, or null for "follow the environment config". Optional — a preset
+   * saved before the sub-tab existed leaves the session's model untouched.
+   * Non-indexed, so it rides along without a Dexie version bump.
+   */
+  main_model?: SessionModelProfile | null;
   /** Creation time (epoch ms) */
   createdAt: number;
   /** Last content-update time (epoch ms) */
@@ -761,13 +769,15 @@ export async function findPersonaPresetByName(name: string): Promise<PersonaPres
  * @param content Persona file contents keyed by 'SOUL.md' / 'USER.md'
  * @param character Character display info (both role names + avatars) to store with the preset
  * @param agent
+ * @param mainModel Main-agent model choice (null = follow the environment config)
  * @returns       Auto-increment id of the newly created preset
  */
 export async function createPersonaPreset(
   name: string,
   content: Record<string, string>,
   character?: PresetCharacter,
-  agent?: AgentConfig
+  agent?: AgentConfig,
+  mainModel?: SessionModelProfile | null
 ): Promise<number> {
   const trimmedName = name.trim();
   const existing = await findPersonaPresetByName(trimmedName);
@@ -780,6 +790,7 @@ export async function createPersonaPreset(
     content,
     character,
     agent,
+    main_model: mainModel,
     createdAt: now,
     updatedAt: now
   });
@@ -795,14 +806,22 @@ export async function createPersonaPreset(
  * @param content New persona file contents (keyed by 'SOUL.md' / 'USER.md')
  * @param character Character display info to store with the preset
  * @param agent
+ * @param mainModel Main-agent model choice (null = follow the environment config)
  */
 export async function updatePersonaPreset(
   id: number,
   content: Record<string, string>,
   character?: PresetCharacter,
-  agent?: AgentConfig
+  agent?: AgentConfig,
+  mainModel?: SessionModelProfile | null
 ): Promise<void> {
-  await db.personaPresets.update(id, { content, character, agent, updatedAt: Date.now() });
+  await db.personaPresets.update(id, {
+    content,
+    character,
+    agent,
+    main_model: mainModel,
+    updatedAt: Date.now()
+  });
 }
 
 /**
