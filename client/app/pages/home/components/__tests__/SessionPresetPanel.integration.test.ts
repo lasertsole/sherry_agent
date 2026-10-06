@@ -78,8 +78,14 @@ function makeAgentStore(config: Record<string, unknown> = {}, pending = false) {
       },
       catalogLoaded: true,
       toolGroups: [
-        { group: 'files', tools: [{ name: 'read_file', group: 'files' }] },
-        { group: 'terminal', tools: [{ name: 'terminal', group: 'terminal' }] }
+        {
+          group: 'files',
+          tools: [{ name: 'read_file', group: 'files', description: 'Read a file with pagination.' }]
+        },
+        {
+          group: 'terminal',
+          tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
+        }
       ],
       middlewares: {
         gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }],
@@ -245,6 +251,8 @@ describe('SessionPresetButton', () => {
     expect(readFile.attributes('disabled')).toBeDefined();
     expect((terminal.element as HTMLInputElement).checked).toBe(true);
     expect((readFile.element as HTMLInputElement).checked).toBe(false);
+    // Hovering a row shows the backend's tool description.
+    expect(readFile.element.closest('label')?.getAttribute('title')).toBe('Read a file with pagination.');
     // Middlewares: a disabled switch mirroring the disabled set + the locked list.
     const switchEl = panel.get('[data-test="session-preset-middleware-TaskIntentMiddleware"]');
     expect(switchEl.attributes('disabled')).toBeDefined();

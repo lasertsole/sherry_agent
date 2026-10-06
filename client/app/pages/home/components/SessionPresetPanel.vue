@@ -95,7 +95,8 @@
                 <label
                   v-for="tool in group.tools"
                   :key="tool.name"
-                  class="flex items-center gap-1.5 text-gray-600 dark:text-gray-300">
+                  class="flex items-center gap-1.5 text-gray-600 dark:text-gray-300"
+                  :title="tool.description || tool.name">
                   <Checkbox
                     :model-value="sessionEnabledTools.includes(tool.name)"
                     binary

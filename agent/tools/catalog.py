@@ -64,8 +64,27 @@ def _group_of(name: str) -> str:
     return _FALLBACK_GROUP
 
 
+#: Longest description the catalogue serves (the UI shows it as a hover tooltip;
+#: a docstring's first line is what a reader needs, and the full text stays in
+#: the source).
+_DESCRIPTION_MAX_CHARS = 240
+
+
+def _description_of(tool: Any) -> str:
+    """The tool's own first description line, bounded (``""`` when it has none).
+
+    Served verbatim — it is the truest summary of what the tool does, including
+    runtime state the client cannot know (``web_search`` reports a missing API
+    key in its own description).
+    """
+    raw = getattr(tool, "description", "") or ""
+    first_line = str(raw).strip().split("\n", 1)[0].strip()
+    return first_line[:_DESCRIPTION_MAX_CHARS]
+
+
 def tool_catalog(tools: list[Any] | None = None) -> list[dict[str, str]]:
-    """``[{"name": ..., "group": ...}]`` for every main-agent tool, in build order.
+    """``[{"name": ..., "group": ..., "description": ...}]`` for every main-agent
+    tool, in build order.
 
     ``tools`` injects the tool list (tests that run where ``agent.tools`` is
     stubbed, e.g. beside the subagent suite, pass the REAL builders' output);
@@ -75,4 +94,11 @@ def tool_catalog(tools: list[Any] | None = None) -> list[dict[str, str]]:
         from . import build_main_tools  # lazy: the package is stubbed in some test processes
 
         tools = build_main_tools()
-    return [{"name": tool.name, "group": _group_of(tool.name)} for tool in tools]
+    return [
+        {
+            "name": tool.name,
+            "group": _group_of(tool.name),
+            "description": _description_of(tool),
+        }
+        for tool in tools
+    ]

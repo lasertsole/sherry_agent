@@ -230,7 +230,9 @@ promoted at the turn boundary like the model/thinking controls)::
 
 - `GET /agent/catalog` is the client's only source of tool / middleware / role names
   (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
-  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`). `GET|PUT /sessions/agent_config`
+  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`); each tool entry also carries the
+  tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
+  it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
   reads/writes the payload; the service rejects an unknown tool / role, and any
   system-required middleware name, with a 400 that names it.
 - **Tools** are applied per call by `ToolSelectionMiddleware`

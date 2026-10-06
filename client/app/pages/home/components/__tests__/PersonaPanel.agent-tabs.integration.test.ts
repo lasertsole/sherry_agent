@@ -136,11 +136,14 @@ function makeAgentStore(overrides: { config?: Record<string, unknown> } = {}) {
       {
         group: 'files',
         tools: [
-          { name: 'read_file', group: 'files' },
-          { name: 'write_file', group: 'files' }
+          { name: 'read_file', group: 'files', description: 'Read a file with pagination.' },
+          { name: 'write_file', group: 'files', description: 'Write file to disk.' }
         ]
       },
-      { group: 'terminal', tools: [{ name: 'terminal', group: 'terminal' }] }
+      {
+        group: 'terminal',
+        tools: [{ name: 'terminal', group: 'terminal', description: 'Run shell commands.' }]
+      }
     ],
     middlewares: {
       gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }],
@@ -192,6 +195,9 @@ describe('PersonaPanel agent-config tabs', () => {
     // Tools grouped, every catalogue tool present with a checkbox…
     expect(panel.find('[data-test="agent-tool-read_file"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-tool-terminal"]').exists()).toBe(true);
+    // …and each row carries the backend description as its hover tooltip.
+    const row = panel.get('[data-test="agent-tool-read_file"]').element.closest('label');
+    expect(row?.getAttribute('title')).toBe('Read a file with pagination.');
     // …the gateable middleware has a switch and the required one is LOCKED (no
     // switch, listed under the locked set instead).
     expect(panel.find('[data-test="agent-middleware-TaskIntentMiddleware"]').exists()).toBe(true);

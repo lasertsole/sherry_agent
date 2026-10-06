@@ -21,6 +21,11 @@ export interface AgentToolEntry {
   name: string;
   /** Group id (`files`, `terminal`, `tasks`, ...) — the UI's section key. */
   group: string;
+  /**
+   * The tool's own first description line (english, served by the backend) —
+   * shown as a hover tooltip so a long catalogue stays readable.
+   */
+  description?: string;
 }
 
 /** One middleware of the main chain. */

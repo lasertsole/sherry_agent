@@ -133,6 +133,11 @@ def test_every_main_tool_lands_in_a_named_group():
     for name in names:
         entry = next(e for e in entries if e["name"] == name)
         assert entry["group"], f"{name} has no group"
+        # The hover tooltip's text: the tool's own first description line, and
+        # every shipped tool has one.
+        assert entry["description"], f"{name} has no description"
+        assert "\n" not in entry["description"], f"{name}'s description must be one line"
+        assert len(entry["description"]) <= 240, f"{name}'s description is not bounded"
 
 
 def test_the_middleware_catalog_marks_the_required_set():

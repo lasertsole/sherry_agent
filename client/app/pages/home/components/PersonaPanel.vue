@@ -234,7 +234,8 @@
                       <label
                         v-for="tool in group.tools"
                         :key="tool.name"
-                        class="flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
+                        class="flex cursor-pointer items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300"
+                        :title="tool.description || tool.name">
                         <Checkbox
                           :model-value="agentToolSelected(tool.name)"
                           binary
