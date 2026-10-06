@@ -1,4 +1,4 @@
-"""Per-session agent configuration — 预设 的三栏（工具 / 中间件 / 子代理模型）。
+"""Per-session agent configuration — 预设 的四栏（工具 / 中间件 / 子代理模型 / 技能）。
 
 One JSON payload under ``StateKey.AGENT_CONFIG`` (parked twin
 ``AGENT_CONFIG_PENDING`` for a mid-turn write, promoted by the same
@@ -7,15 +7,24 @@ One JSON payload under ``StateKey.AGENT_CONFIG`` (parked twin
     {
       "tools": ["read_file", ...] | null,        # null = every tool enabled
       "middlewares_disabled": ["TaskIntentMiddleware"],   # [] = every switch on
-      "subagent_models": {"researcher": {<profile>} | null}
+      "subagent_models": {"researcher": {<profile>} | null},
+      "skills": ["skill-a", ...] | null          # null = every skill in the index
     }
 
 Validation is the whole point of this module: a payload naming an unknown tool,
-an unknown role, or a REQUIRED middleware is rejected loudly (400), so a typo can
+skill or role, or a REQUIRED middleware, is rejected loudly (400), so a typo can
 never silently widen what a session may do. ``subagent_models`` descriptors go
 through the same sanitizer the main-model override uses (``model`` required,
 optional fields whitelisted), which means a role can point at another provider /
 key, not merely at another model name.
+
+``skills`` is the one field that changes the SYSTEM PROMPT (the
+``<available_skills>`` index), which ``system_prompt_injection`` caches per
+session in mem + db: :func:`invalidate_session_prompt` therefore clears that
+cache whenever a payload lands — at the live write AND when a parked choice is
+promoted at the turn boundary (``session_settings_service`` calls it from the
+promotion loop). Without it a skill change would only take effect after the next
+context compression.
 """
 
 from __future__ import annotations
@@ -24,17 +33,18 @@ from typing import Any
 
 from loguru import logger
 
-from runtime import StateKey
+from runtime import StateKey, state_register_db, state_register_mem
 
 __all__ = [
     "AgentConfigError",
     "apply_agent_config_choice",
     "get_agent_config_state",
+    "invalidate_session_prompt",
     "sanitize_agent_config",
 ]
 
 #: Top-level payload keys (unknown keys are rejected).
-_CONFIG_FIELDS = ("tools", "middlewares_disabled", "subagent_models")
+_CONFIG_FIELDS = ("tools", "middlewares_disabled", "subagent_models", "skills")
 
 
 class AgentConfigError(ValueError):
@@ -61,6 +71,32 @@ def _required_tool_names() -> set[str]:
     from agent.tools.catalog import REQUIRED_TOOLS
 
     return set(REQUIRED_TOOLS)
+
+
+def _skill_names() -> set[str]:
+    """Every skill the index can contain (the catalogue's own list)."""
+    from skills.loader import skills_catalog
+
+    return {entry["name"] for entry in skills_catalog()}
+
+
+def invalidate_session_prompt(session_id: str) -> None:
+    """Drop the cached system prompt of *session_id* (mem + db tiers).
+
+    Called after an agent-config payload lands: ``skills`` feeds the
+    ``<available_skills>`` index inside that prompt, and the three-tier cache in
+    ``agent.middlewares.system_prompt`` would otherwise keep serving the old
+    index until a compression happens to rewrite it. Deleting only the
+    ``SYSTEM_PROMPT`` key leaves the frozen persona snapshot (``workspace``)
+    alone — the persona stays fixed per session by design.
+
+    Best-effort: a register failure must never fail the config write itself.
+    """
+    for register in (state_register_mem, state_register_db):
+        try:
+            register.delete_state(session_id, StateKey.SYSTEM_PROMPT)
+        except Exception:  # noqa: BLE001 - a cache clear cannot break the write
+            logger.exception("agent_config: failed to clear the cached system prompt")
 
 
 def _gateable_middleware_names() -> set[str]:
@@ -145,6 +181,21 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
             )
         cleaned["middlewares_disabled"] = list(dict.fromkeys(wanted))
 
+    if "skills" in payload:
+        skills = payload["skills"]
+        if skills is None:
+            cleaned["skills"] = None
+        else:
+            if not isinstance(skills, list) or any(not isinstance(s, str) for s in skills):
+                raise AgentConfigError("'skills' must be a list of names or null")
+            known_skills = _skill_names()
+            wanted_skills = [s.strip() for s in skills if s.strip()]
+            unknown_skills = sorted(set(wanted_skills) - known_skills)
+            if unknown_skills:
+                raise AgentConfigError(f"unknown skill(s): {', '.join(unknown_skills)}")
+            # An EMPTY list is a legal, explicit choice: no skill in the index.
+            cleaned["skills"] = list(dict.fromkeys(wanted_skills))
+
     if "subagent_models" in payload:
         models = payload["subagent_models"]
         if not isinstance(models, dict):
@@ -206,12 +257,20 @@ async def apply_agent_config_choice(session_id: str, payload: object) -> tuple[d
         value=cleaned,
         write_live=_write_live,
     )
+    # The skills selection is part of the system prompt: a LIVE write must drop
+    # the cached prompt now. A parked one is invalidated at promotion instead
+    # (the live key still holds the old value until then, so clearing early
+    # would only rebuild the same prompt).
+    if not pending:
+        invalidate_session_prompt(session_id)
     logger.info(
-        "Agent config {} for session {}: tools={} middlewares_disabled={} subagent_models={}",
+        "Agent config {} for session {}: tools={} middlewares_disabled={} "
+        "subagent_models={} skills={}",
         "parked" if pending else "applied",
         session_id,
         None if cleaned.get("tools") is None else len(cleaned["tools"]),
         len(cleaned.get("middlewares_disabled") or []),
         len(cleaned.get("subagent_models") or {}),
+        None if cleaned.get("skills") is None else len(cleaned["skills"]),
     )
     return cleaned, pending

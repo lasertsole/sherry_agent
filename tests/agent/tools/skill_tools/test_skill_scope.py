@@ -161,6 +161,18 @@ class TestGetSkillsTextScope:
         assert "shared_tool" in xml
         assert "mainly" not in xml
 
+    def test_exact_selection_honours_an_empty_list(self):
+        """The session's own selection is exact: unchecking everything selects none."""
+        # Historical contract: an empty list (exact=False) still means "every skill".
+        assert get_skills_text(selected_skill_names=[]) == get_skills_text(caller_scope="main")
+
+        xml = get_skills_text(selected_skill_names=[], exact=True)
+        assert xml == "<available_skills>\n</available_skills>"
+
+        xml = get_skills_text(selected_skill_names=["shared_tool"], exact=True)
+        assert "<name>shared_tool</name>" in xml
+        assert "<name>mainly</name>" not in xml
+
     def test_xml_structure_preserved(self):
         xml = get_skills_text(caller_scope="subagent")
         assert xml.startswith("<available_skills>")

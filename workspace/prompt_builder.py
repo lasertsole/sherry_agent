@@ -290,7 +290,17 @@ def build_system_prompt(
     # Compose the skill prompt from the selected skills (or all of them when
     # None). caller_scope="main": the main agent sees every skill except those
     # frontmatter-scoped "subagent_only".
-    skill_paths: str = get_skills_text(selected_skill_names, caller_scope="main")
+    #
+    # The session's own selection (预设-技能 tab → AGENT_CONFIG["skills"]) is the
+    # second source, and it is EXACT: a session that unchecked everything gets an
+    # empty index, not every skill back. An explicit argument outranks it (the
+    # caller knows best), and `None` on both sides keeps today's behaviour.
+    selection = selected_skill_names
+    if selection is None and session_id:
+        from runtime.session.agent_config_view import session_skill_names
+
+        selection = session_skill_names(session_id)
+    skill_paths: str = get_skills_text(selection, caller_scope="main", exact=selection is not None)
 
     # --- Workspace persona block --------------------------------------
     # Why the workspace snapshot is frozen per session:

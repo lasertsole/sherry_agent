@@ -390,6 +390,13 @@ def promote_pending_settings_sync(session_id: str) -> list[str]:
             _write_value(session_id, live_key, value)
         _delete_value(session_id, pending_key)
         promoted.append(str(live_key))
+        if live_key == StateKey.AGENT_CONFIG:
+            # The promoted payload carries the skills selection, which lives
+            # inside the cached system prompt — drop it so the next turn rebuilds
+            # the <available_skills> index from the new value.
+            from server.service.agent_config_service import invalidate_session_prompt
+
+            invalidate_session_prompt(session_id)
     return promoted
 
 

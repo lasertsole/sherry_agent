@@ -2,11 +2,14 @@
 
 GET /agent/catalog
     -> {"success": true,
-        "tools": [{"name": ..., "group": ...}, ...],
+        "tools": [{"name": ..., "group": ..., "description": ..., "required": bool}, ...],
         "middlewares": [{"name": ..., "required": bool, "gateable": bool}, ...],
-        "subagent_roles": [{"role": ..., "model_tier": ..., "description": ...}, ...]}
-       The three lists the preset panel renders. The client NEVER hardcodes
-       tool / middleware / role names: this endpoint is the single source.
+        "subagent_roles": [{"role": ..., "model_tier": ..., "description": ...}, ...],
+        "skills": [{"name": ..., "description": ..., "builtin": bool}, ...]}
+       The four lists the preset panel renders. The client NEVER hardcodes
+       tool / middleware / role / skill names: this endpoint is the single
+       source. ``skills`` carries the ACTIVE skills the index can contain (an
+       inactive uploaded skill is toggled in 菜单-技能).
 
 GET /sessions/agent_config?session_id=<sid>
     -> {"success": true, "session_id": ..., "config": {...}, "pending": bool}
@@ -37,11 +40,12 @@ from server.trigger.http.helpers import bad_request, ok, read_body
 
 
 def _agent_catalog() -> dict:
-    """Build the three lists (imported lazily: agent modules are heavy)."""
+    """Build the four lists (imported lazily: agent modules are heavy)."""
     from agent.middlewares.catalog import middleware_catalog
     from agent.tools.catalog import tool_catalog
     from agent.tools.subagent.roles import load_all_role_definitions
     from agent.tools.subagent.types.functional_role import FunctionalRole
+    from skills.loader import skills_catalog
 
     roles: list[dict] = []
     definitions = load_all_role_definitions()  # {FunctionalRole: RoleDefinition}
@@ -60,12 +64,13 @@ def _agent_catalog() -> dict:
         "tools": tool_catalog(),
         "middlewares": middleware_catalog(),
         "subagent_roles": roles,
+        "skills": skills_catalog(),
     }
 
 
 @app.get("/agent/catalog")
 async def get_agent_catalog_handler(request):  # noqa: ARG001 - no query params
-    """Return the tool / middleware / subagent-role lists the preset panel renders."""
+    """Return the tool / middleware / role / skill lists the preset panel renders."""
     catalog = await asyncio.to_thread(_agent_catalog)
     return ok({"success": True, **catalog})
 

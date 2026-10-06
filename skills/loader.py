@@ -169,9 +169,42 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     return skills
 
 
+#: Longest skill description served to the client (same bound the tool
+#: catalogue uses: the UI shows it as a hover tooltip, and the full text stays
+#: in the SKILL.md).
+_DESCRIPTION_MAX_CHARS = 240
+
+
+def skills_catalog(caller_scope: str = "main") -> list[dict[str, Any]]:
+    """The skills the 技能 tab lists: ``[{name, description, builtin}, ...]``.
+
+    Only what the index can actually contain: skills VISIBLE to *caller_scope*
+    and currently active (an inactive uploaded skill is toggled in 菜单-技能, and
+    listing it here would let a preset select something the index never shows).
+    ``builtin`` is the 第三方 split — everything outside ``skills/plugins/``.
+
+    @param caller_scope The perspective the list is filtered for (main/subagent).
+    @returns The catalogue, sorted by name (as :func:`scan_skills` returns it).
+    """
+    catalog: list[dict[str, Any]] = []
+    for skill in scan_skills():
+        if not skill.get("active", True) or not _skill_visible_to(skill, caller_scope):
+            continue
+        catalog.append(
+            {
+                "name": str(skill.get("name", "")),
+                "description": str(skill.get("description", ""))[:_DESCRIPTION_MAX_CHARS],
+                "builtin": not _is_third_party(str(skill.get("location", ""))),
+            }
+        )
+    return catalog
+
+
 def get_skills_text(
     selected_skill_names: list[str] | None = None,
     caller_scope: str = "main",
+    *,
+    exact: bool = False,
 ) -> str:
     """
     Get the skills XML.
@@ -180,21 +213,23 @@ def get_skills_text(
         scoped "main_only" are invisible to subagents; "subagent_only" skills are
         invisible to main (see the ``scope:`` frontmatter field; default "all"
         makes them visible to both).
+    :param exact: when True the list is AUTHORITATIVE — an empty list selects no
+        skill at all. The session's own selection (预设-技能 tab) is exact: it
+        may legitimately hold every skill unchecked. When False (the historical
+        contract) an empty/absent list means "every visible skill", which the
+        delegate path relies on for its own empty fallback.
     :return: skills xml
     """
     skills: list[dict[str, Any]] = scan_skills()
 
+    select_all = selected_skill_names is None or (len(selected_skill_names) == 0 and not exact)
+    selected = None if select_all else set(selected_skill_names)
     final_skills: list[dict[str, Any]] = []
-    if selected_skill_names is not None and len(selected_skill_names) > 0:
-        for s in skills:
-            if s["name"] in selected_skill_names and _skill_visible_to(s, caller_scope):
-                final_skills.append(s)
-
-    # If selected_skill_names is empty, select all by default
-    else:
-        for s in skills:
-            if _skill_visible_to(s, caller_scope):
-                final_skills.append(s)
+    for s in skills:
+        if not _skill_visible_to(s, caller_scope):
+            continue
+        if selected is None or s["name"] in selected:
+            final_skills.append(s)
 
     # Filter out inactive skills (uploaded third-party skills default to inactive).
     final_skills = [s for s in final_skills if s.get("active", True)]

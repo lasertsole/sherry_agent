@@ -178,6 +178,38 @@ class TestScanSkillsBehavior:
         names = [s["name"] for s in loader_mod.scan_skills(use_cache=False)]
         assert names == sorted(names)
 
+    def test_skills_catalog_lists_active_visible_skills_with_the_builtin_flag(
+        self, skills_tree, monkeypatch
+    ):
+        """The 技能 tab's source: only what the index can contain, + the 第三方 split."""
+        state_file = skills_tree / "skills_state.json"
+        state_file.write_text(json.dumps({"uploaded_one": {"active": True}}), encoding="utf-8")
+        monkeypatch.setattr(loader_mod, "read_skills_snapshot", lambda: None)
+
+        catalog = loader_mod.skills_catalog()
+
+        # The INACTIVE uploaded skill is absent (the index never shows it) …
+        assert [entry["name"] for entry in catalog] == ["alpha", "beta", "uploaded_one"]
+        assert {entry["name"]: entry["builtin"] for entry in catalog} == {
+            "alpha": True,
+            "beta": True,
+            "uploaded_one": False,
+        }
+        assert all(isinstance(entry["description"], str) for entry in catalog)
+
+    def test_skills_catalog_hides_subagent_only_skills_from_main(self, skills_tree, monkeypatch):
+        monkeypatch.setattr(loader_mod, "read_skills_snapshot", lambda: None)
+        skill_md = skills_tree / "skills" / "builtin" / "core" / "beta" / "SKILL.md"
+        skill_md.write_text(
+            "---\nname: beta\ndescription: d\nscope: subagent_only\n---\nbody", encoding="utf-8"
+        )
+
+        assert [entry["name"] for entry in loader_mod.skills_catalog()] == ["alpha"]
+        assert [entry["name"] for entry in loader_mod.skills_catalog("subagent")] == [
+            "alpha",
+            "beta",
+        ]
+
     def test_cache_hit_returns_snapshot_without_scan(self, skills_tree, monkeypatch):
         """use_cache=True with a snapshot file returns its content verbatim."""
         snapshot_file = skills_tree / "skills" / "skills_snapshot.json"

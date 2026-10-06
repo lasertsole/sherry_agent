@@ -66,10 +66,27 @@ def real_tool_names():
     return {name for names_in_group in TOOL_GROUPS.values() for name in names_in_group}
 
 
+from runtime.session.state_keys import StateKey
 from server.service import agent_config_service as service
 from server.trigger.http import agent_config as agent_config_http
 
 pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
+
+
+@pytest.fixture
+def real_skill_names(monkeypatch):
+    """Real skill names, minus the per-process snapshot cache.
+
+    ``scan_skills`` reads ``skills_snapshot.json`` (a process-level cache of the
+    live tree); the sanitizer tests only need A stable name set, so the fixture
+    resolves the catalogue once and the tests patch ``_skill_names`` with it.
+    """
+    from skills.loader import skills_catalog
+
+    names = {entry["name"] for entry in skills_catalog()}
+    if not names:  # pragma: no cover - a tree without skills is a broken checkout
+        names = {"clawhub"}
+    return names
 
 
 class _FakeRequest:
@@ -106,7 +123,11 @@ def registers(monkeypatch):
     import server.service.session_settings_service as settings_service
 
     mem, db = _FakeRegister(), _FakeRegister()
+    # Both tiers: the service's system-prompt invalidation walks them (a real-db
+    # write from a test would be exactly the isolation failure the fixture exists
+    # to prevent).
     monkeypatch.setattr(service, "state_register_mem", mem, raising=False)
+    monkeypatch.setattr(service, "state_register_db", db, raising=False)
     monkeypatch.setattr(settings_service, "state_register_mem", mem)
     monkeypatch.setattr(settings_service, "state_register_db", db)
     monkeypatch.setattr(settings_service, "is_session_busy", lambda sid: False)
@@ -361,12 +382,69 @@ def test_get_agent_config_state_is_empty_for_an_unset_session(registers):
     assert service.get_agent_config_state("sess-none") == {"config": {}, "pending": False}
 
 
+def test_sanitize_accepts_a_skill_selection_and_an_empty_one(real_skill_names, monkeypatch):
+    monkeypatch.setattr(service, "_skill_names", lambda: real_skill_names)
+    picked = sorted(real_skill_names)[:2]
+
+    cleaned = service.sanitize_agent_config({"skills": [*picked, picked[0]]})
+
+    # Deduplicated, caller order preserved…
+    assert cleaned["skills"] == picked
+    # …and an EMPTY list is a legal, explicit choice (no skill in the index).
+    assert service.sanitize_agent_config({"skills": []}) == {"skills": []}
+    assert service.sanitize_agent_config({"skills": None}) == {"skills": None}
+
+
+def test_sanitize_rejects_an_unknown_skill_name(real_skill_names, monkeypatch):
+    monkeypatch.setattr(service, "_skill_names", lambda: real_skill_names)
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config({"skills": ["not_a_skill"]})
+
+    assert "not_a_skill" in str(exc.value)
+    with pytest.raises(service.AgentConfigError):
+        service.sanitize_agent_config({"skills": "alpha"})
+
+
+@pytest.mark.asyncio
+async def test_a_live_write_clears_the_cached_system_prompt(registers):
+    """The skills selection lives inside the cached prompt: a live write drops it."""
+    mem, db = registers
+    mem.set_state("sess-p", str(StateKey.SYSTEM_PROMPT), "CACHED-PROMPT")
+    db.set_state("sess-p", str(StateKey.SYSTEM_PROMPT), "CACHED-PROMPT")
+
+    _cleaned, pending = await service.apply_agent_config_choice("sess-p", {"skills": []})
+
+    assert pending is False
+    assert mem.get_state("sess-p", str(StateKey.SYSTEM_PROMPT), None) is None
+    assert db.get_state("sess-p", str(StateKey.SYSTEM_PROMPT), None) is None
+
+
+@pytest.mark.asyncio
+async def test_a_parked_write_clears_it_at_promotion(registers, monkeypatch):
+    """Mid-turn the cache must survive (the live key is still the old value)."""
+    import server.service.session_settings_service as settings_service
+
+    mem, db = registers
+    monkeypatch.setattr(settings_service, "_session_turn_active", lambda _sid: True)
+    mem.set_state("sess-q", str(StateKey.SYSTEM_PROMPT), "CACHED-PROMPT")
+
+    _cleaned, pending = await service.apply_agent_config_choice("sess-q", {"skills": ["clawhub"]})
+
+    assert pending is True
+    assert mem.get_state("sess-q", str(StateKey.SYSTEM_PROMPT), None) == "CACHED-PROMPT"
+
+    promoted = settings_service.promote_pending_settings_sync("sess-q")
+
+    assert "agent_config" in promoted
+    assert mem.get_state("sess-q", str(StateKey.SYSTEM_PROMPT), None) is None
+
+
 # ----------------------------------------------------------------------
 # HTTP boundary
 # ----------------------------------------------------------------------
 
 
-def test_catalog_handler_serves_the_three_lists(real_tool_names, monkeypatch):
+def test_catalog_handler_serves_the_four_lists(real_tool_names, monkeypatch):
     import json
 
     import agent.tools.catalog as catalog_module
@@ -386,6 +464,10 @@ def test_catalog_handler_serves_the_three_lists(real_tool_names, monkeypatch):
     middleware_names = {entry["name"] for entry in data["middlewares"]}
     assert "HumanInTheLoop" in middleware_names
     assert any(role["role"] == "researcher" for role in data["subagent_roles"])
+    # The 技能 tab renders from the same response: name + description + the
+    # 内置/第三方 split, never a client-side hardcoded name.
+    assert data["skills"], "the catalogue must carry the skill list"
+    assert all({"name", "description", "builtin"} <= set(entry) for entry in data["skills"])
 
 
 def test_put_handler_rejects_a_required_middleware_with_400(registers):

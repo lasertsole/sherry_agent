@@ -239,3 +239,92 @@ class TestMemoryNotCached:
         fake_mem.facts = None
         without_facts = build_system_prompt(session_id="sess-facts-empty")
         assert "FACTS-V1" not in without_facts
+
+
+class TestSessionSkillSelection:
+    """The session's 预设-技能 selection drives the ``<available_skills>`` index.
+
+    The seam under test: ``build_system_prompt`` must hand the session's own
+    names to ``get_skills_text`` with ``exact=True`` (an explicit empty list
+    selects NO skill), while a session without a selection keeps the
+    every-skill behaviour.
+    """
+
+    @staticmethod
+    def _recorder(monkeypatch):
+        calls: list[dict] = []
+
+        def fake_get_skills_text(selected_skill_names=None, caller_scope="main", **kwargs):
+            calls.append(
+                {
+                    "names": selected_skill_names,
+                    "caller_scope": caller_scope,
+                    **kwargs,
+                }
+            )
+            return "SKILLS-BLOCK"
+
+        monkeypatch.setattr("workspace.prompt_builder.get_skills_text", fake_get_skills_text)
+        return calls
+
+    def test_no_selection_means_every_skill(self, workspace, monkeypatch):
+        from workspace.prompt_builder import build_system_prompt
+
+        calls = self._recorder(monkeypatch)
+
+        build_system_prompt(session_id="sess-skills-none")
+
+        assert calls[-1]["names"] is None
+        assert calls[-1]["exact"] is False
+
+    def test_the_session_selection_is_read_from_the_register(self, workspace, monkeypatch):
+        from runtime.session.state_register import state_register_mem
+        from runtime.session.state_keys import StateKey
+        from workspace.prompt_builder import build_system_prompt
+
+        calls = self._recorder(monkeypatch)
+        state_register_mem.set_state(
+            "sess-skills-picked", StateKey.AGENT_CONFIG, {"skills": ["alpha", "beta"]}
+        )
+
+        build_system_prompt(session_id="sess-skills-picked")
+
+        assert calls[-1]["names"] == ["alpha", "beta"]
+        assert calls[-1]["exact"] is True
+
+    def test_an_empty_selection_is_exact(self, workspace, monkeypatch):
+        """Unchecking everything must NOT fall back to every skill."""
+        from runtime.session.state_register import state_register_mem
+        from runtime.session.state_keys import StateKey
+        from workspace.prompt_builder import build_system_prompt
+
+        calls = self._recorder(monkeypatch)
+        state_register_mem.set_state("sess-skills-empty", StateKey.AGENT_CONFIG, {"skills": []})
+
+        build_system_prompt(session_id="sess-skills-empty")
+
+        assert calls[-1]["names"] == []
+        assert calls[-1]["exact"] is True
+
+    def test_an_explicit_argument_outranks_the_session(self, workspace, monkeypatch):
+        from runtime.session.state_register import state_register_mem
+        from runtime.session.state_keys import StateKey
+        from workspace.prompt_builder import build_system_prompt
+
+        calls = self._recorder(monkeypatch)
+        state_register_mem.set_state(
+            "sess-skills-arg", StateKey.AGENT_CONFIG, {"skills": ["alpha"]}
+        )
+
+        build_system_prompt(selected_skill_names=["gamma"], session_id="sess-skills-arg")
+
+        assert calls[-1]["names"] == ["gamma"]
+
+    def test_a_caller_without_a_session_stays_unfiltered(self, workspace, monkeypatch):
+        from workspace.prompt_builder import build_system_prompt
+
+        calls = self._recorder(monkeypatch)
+
+        build_system_prompt()
+
+        assert calls[-1]["names"] is None
