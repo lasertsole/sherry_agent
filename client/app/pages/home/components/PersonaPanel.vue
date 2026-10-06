@@ -965,6 +965,18 @@ const handleApply = async () => {
 </i18n>
 
 <style scoped>
+/* The strip's own surface must wrap EVERY tab. The theme paints the background
+   and the bottom border on the tab ROW, whose box is capped at the scroller's
+   width — a row that overflows (four tabs are wider than a narrow sidebar) then
+   scrolls its last tabs onto bare panel background, with the underline cut off
+   at the row's edge. `max-content` grows the row with its tabs (so added tabs
+   stay wrapped) and `min-width: 100%` keeps the underline spanning the panel
+   when a tab is removed. */
+:deep(.p-tabview-tablist) {
+  width: max-content;
+  min-width: 100%;
+}
+
 /* 让面板内容区成为 flex 列容器：根布局用 flex-1 精确填充内容区高度，
    内部 flex 链（TabView → panels → panel → textarea）自适应伸缩，
    避免 72vh 等固定高度把内容区撑出垂直滚动条。 */
