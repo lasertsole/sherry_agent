@@ -226,14 +226,17 @@ The 预设 panel's last four tabs (工具 / 中间件 / 子代理模型 / 技能
 session, stored under `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`,
 promoted at the turn boundary like the model/thinking controls)::
 
-    {"tools": [...]|null, "middlewares_disabled": [...], "subagent_models": {"<role>": {profile}|null}}
+    {"tools": [...]|null, "middlewares_disabled": [...],
+     "subagent_models": {"<role>": {profile}|null}, "skills": [...]|null}
 
-- `GET /agent/catalog` is the client's only source of tool / middleware / role names
+- `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
   (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
-  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`); each tool entry also carries the
+  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
+  the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
+  false` = under `skills/plugins/`); each tool entry also carries the
   tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
   it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
-  reads/writes the payload; the service rejects an unknown tool / role, and any
+  reads/writes the payload; the service rejects an unknown tool / skill / role, and any
   system-required middleware name, with a 400 that names it.
 - **Tools** are applied per call by `ToolSelectionMiddleware`
   (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
@@ -243,10 +246,21 @@ promoted at the turn boundary like the model/thinking controls)::
   payload obeys: `TOOL_ORDER` (group render order — 技能 / 终端与代码 / 文件读写 / 交互 first,
   memory fifth, then the task and delegation surfaces), `REQUIRED_TOOLS` (the file tools, code
   execution, the three skill tools, `question` and `message_search` — the 工具 tab shows those
-  rows locked, the service 400s on a payload that omits one, and `enabled_tool_names()` unions
+  rows as locked chips with NO checkbox, the service 400s on a payload that omits one, and
+  `enabled_tool_names()` unions
   them back in so an older register value cannot strip them either), and `BULK_ONLY_GROUPS`
   (`tasks` and `subagents` move as a whole in the UI — select-all / clear-all only, never a
   per-tool switch).
+- **Skills** (`AGENT_CONFIG["skills"]`): the names whose `<available_skills>` index entries enter
+  the system prompt — `null`/absent = every skill (today's behaviour), an explicit list is EXACT
+  (an empty list means no skill at all). `workspace/prompt_builder.build_system_prompt` reads the
+  session's selection through `runtime/session/agent_config_view.py::session_skill_names` and
+  passes `exact=` to `skills.loader.get_skills_text`; an explicit argument still outranks it.
+  Because the index lives INSIDE the cached system prompt (`system_prompt_injection`'s three-tier
+  cache), `agent_config_service.invalidate_session_prompt` clears that cache whenever a payload
+  lands — at the live write and at the turn-boundary promotion for a parked one
+  (`session_settings_service.promote_pending_settings_sync`) — and it deletes only
+  `StateKey.SYSTEM_PROMPT`, never the frozen persona snapshot.
 - **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
   `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
@@ -263,14 +277,19 @@ promoted at the turn boundary like the model/thinking controls)::
   same profile so a steered run keeps its model.
 - Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
   应用 writes it to the open session (the new-session dialog writes it for the session it just
-  created), and the read-only 当前会话预设 tab summarises it. The 技能 tab is an intentionally
-  EMPTY placeholder in both (`agentSkills`): a per-preset skill selection is not designed yet.
+  created), and the read-only 当前会话预设 tab summarises it (skills read-only there, the
+  subagent-model picker editable).
+- **The agent-config tabs split into sub-tabs** where the catalogue has two natures: 工具 =
+  内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag). The pills are a VIEW
+  filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
 - **Four built-in presets**, in display order — the whole spectrum
   (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
   persona file empty, only the catalogue's REQUIRED tools and every optional middleware off),
   编程助手 (the operating-rules template, empty soul / user profile, no roles, every tool on),
-  情感陪伴 (the full role-play persona with the 任务与计划 / 子代理 tool groups off and every
-  optional middleware off) and 全量 (the DEFAULT — the same full persona with everything on).
+  情感陪伴 (the full role-play persona with the 任务与计划 / 子代理 tool groups off, every
+  optional middleware off and the task-orchestration sections stripped out of 运行守则 —
+  `stripTaskSections`, a per-language heading/label filter pinned by a test that reads the four
+  shipped templates) and 全量 (the DEFAULT — the same full persona with everything on).
   Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
   (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
   throws instead of silently applying every tool. The `sherry` id names 全量 (the label
