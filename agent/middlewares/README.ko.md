@@ -227,7 +227,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/tool_selection/core.py` · **클래스:** `ToolSelectionMiddleware(AgentMiddleware)`
 **훅:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call` (항상 켜짐 — 스위치를 가진 쪽이 아니라 스위치를 적용하는 쪽)
 
-세션 자체의 도구 집합을 적용합니다(프리셋-도구 탭 → `AGENT_CONFIG["tools"]`, `PUT /sessions/agent_config`가 기록). 컴파일된 그래프는 모든 세션이 공유하고 `ToolNode`는 프로세스 전역 도구 목록을 보유하므로, 선택은 **호출 시점**에 적용됩니다:
+세션 자체의 도구 집합을 적용합니다(프리셋과 역할-도구 탭 → `AGENT_CONFIG["tools"]`, `PUT /sessions/agent_config`가 기록). 컴파일된 그래프는 모든 세션이 공유하고 `ToolNode`는 프로세스 전역 도구 목록을 보유하므로, 선택은 **호출 시점**에 적용됩니다:
 
 1. `wrap_model_call`: 세션에 선택이 있으면 `request.override(tools=<활성 부분집합>)` — langchain은 호출마다 `request.tools`로 도구 스키마를 다시 바인딩하므로 꺼진 도구는 모델에 아예 제시되지 않습니다.
 2. `wrap_tool_call`: **꺼진 도구** 호출은 실행하지 않고 error `ToolMessage`로 거부합니다 — 체크포인트에 전환 이전 호출이 남아 있을 수 있고 모델이 이름을 지어낼 수도 있는데, `ToolNode`는 둘 다 그대로 실행합니다.
@@ -238,7 +238,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### The per-session middleware switches
 
-`GET /agent/catalog`가 체인을 반환하고, 프리셋-미들웨어 탭은 **선택 항목 3개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
+`GET /agent/catalog`가 체인을 반환하고, 프리셋과 역할-미들웨어 탭은 **선택 항목 3개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
 
 | 끌 수 있음 | 끄면 |
 | --- | --- |

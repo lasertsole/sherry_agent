@@ -146,9 +146,9 @@ client/
 │   │           ├── ConfigPanel.vue            # 시스템 설정 탭(.env 편집, 배경, 언어 등)
 │   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가, ConfigPanel용)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
-│   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 + 프리셋 관리)
+│   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
 │   │           ├── SessionPresetButton.vue    # 상단 바 보기 전용 진입점: 현재 세션의 프리셋 탭 열기
-│   │           ├── SessionPresetPanel.vue     # 「현재 세션」탭: 세션 자체의 프리셋(읽기 전용)
+│   │           ├── SessionPresetPanel.vue     # 「현재 세션」탭: 세션 자체의 프리셋(읽기 전용, 에이전트 모델 탭이 첫 번째)
 │   │           ├── NewSessionPresetDialog.vue # 「새 대화」마다 필수인 프리셋 선택 대화상자(적용 후 세션 생성)
 │   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
@@ -185,7 +185,7 @@ client/
 │   │   ├── file-viewer.ts      # 파일 뷰어 탭(연 경로 + 내용 캐시)
 │   │   ├── new-session.ts      # 새 세션 프리셋 선택 대화상자 상태(모든 「새 대화」 진입점)
 │   │   ├── notification.ts     # 알림 목록 + 미읽음 배지(탭을 닫아도 계속 집계)
-│   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 서브에이전트 모델)을 세션별로 보관; 필수 도구는 잠겨 해제 불가, 작업과 계획 / 서브에이전트 두 그룹은 일괄 선택만
+│   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 에이전트 모델 / 스킬)을 세션별로 보관; 필수 도구와 필수 스킬은 잠겨 해제 불가, 작업과 계획 / 서브에이전트 두 그룹은 일괄 선택만
 │   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   ├── plugins/                   # Nuxt 플러그인

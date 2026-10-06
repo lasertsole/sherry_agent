@@ -146,9 +146,9 @@ client/
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（.env 编辑、背景、语言等）
 │   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增，供 ConfigPanel 使用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
-│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 + 预设管理）
+│   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
 │   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
-│   │           ├── SessionPresetPanel.vue     # 「当前会话」标签页：本会话自己的预设，只读
+│   │           ├── SessionPresetPanel.vue     # 「当前会话」标签页：本会话自己的预设，只读（代理模型排在第一页）
 │   │           ├── NewSessionPresetDialog.vue # 每次「新建对话」必选的预设选择对话框（先应用预设，再创建会话）
 │   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页 + 全局心跳开关
@@ -185,7 +185,7 @@ client/
 │   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
 │   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
-│   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 子代理模型）按会话镜像；必需工具锁定不可取消，任务与计划 / 子代理两组只支持整体勾选
+│   │   ├── agent-config.ts     # 预设的 agent 配置（工具 / 中间件 / 代理模型 / 技能）按会话镜像；必需工具与必需技能锁定不可取消，任务与计划 / 子代理两组只支持整体勾选
 │   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + wave，由 taskflow_updated 刷新）
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   ├── plugins/                   # Nuxt 插件

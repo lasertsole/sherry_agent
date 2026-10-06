@@ -145,9 +145,9 @@ client/
 │   │           ├── ConfigPanel.vue            # System-config tab (.env editor, background, language, ...)
 │   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add, used by ConfigPanel)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
-│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设 panel (role setup / operating instructions / soul / user profile + presets)
+│   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
 │   │           ├── SessionPresetButton.vue    # Top-bar view-only entry: opens the current session's preset tab
-│   │           ├── SessionPresetPanel.vue     # 当前会话 tab: the session's own preset, read-only
+│   │           ├── SessionPresetPanel.vue     # 当前会话 tab: the session's own preset, read-only (代理模型 leads its tab strip)
 │   │           ├── NewSessionPresetDialog.vue # Mandatory preset-choice dialog behind every 新建对话 (applies the preset, then creates the session)
 │   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
@@ -184,7 +184,7 @@ client/
 │   │   ├── file-viewer.ts      # File-viewer tabs (opened path + content cache)
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
-│   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / subagent models) per session; required tools stay locked and the tasks/subagents groups move as a whole
+│   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / agent models / skills) per session; required tools and skills stay locked, the tasks/subagents groups move as a whole
 │   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + waves, refreshed by taskflow_updated)
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   ├── plugins/                   # Nuxt plugins

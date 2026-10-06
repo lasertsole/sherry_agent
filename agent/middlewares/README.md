@@ -228,7 +228,7 @@ The `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when
 **Module:** `agent/middlewares/tool_selection/core.py` · **Class:** `ToolSelectionMiddleware(AgentMiddleware)`
 **Hooks:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call` (always on — it applies the session's switch rather than having one)
 
-Runs the session's own tool set (预设-工具 tab → `AGENT_CONFIG["tools"]`, written by `PUT /sessions/agent_config`). The compiled graph is shared by every session and its `ToolNode` holds the full process-wide tool list, so the selection is applied **at call time**:
+Runs the session's own tool set (预设角色-工具 tab → `AGENT_CONFIG["tools"]`, written by `PUT /sessions/agent_config`). The compiled graph is shared by every session and its `ToolNode` holds the full process-wide tool list, so the selection is applied **at call time**:
 
 1. `wrap_model_call`: when the session has a selection, `request.override(tools=<the enabled subset>)` — langchain re-binds the tool schema from `request.tools` per call, so a disabled tool is never offered to the model.
 2. `wrap_tool_call`: a call to a DISABLED tool is refused with an error `ToolMessage` instead of being executed — a stale checkpoint can hold a call that predates the switch, and a model can hallucinate a name; the `ToolNode` would run either happily.
@@ -239,7 +239,7 @@ Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. F
 
 ### The per-session middleware switches
 
-`GET /agent/catalog` lists the chain; the 预设-中间件 tab may turn **three optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
+`GET /agent/catalog` lists the chain; the 预设角色-中间件 tab may turn **three optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
 
 | Gateable | Effect of turning it off |
 | --- | --- |

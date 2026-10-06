@@ -228,7 +228,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール:** `agent/middlewares/tool_selection/core.py` · **クラス:** `ToolSelectionMiddleware(AgentMiddleware)`
 **フック:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`（常時有効 — スイッチを持つ側ではなく、スイッチを適用する側）
 
-セッション自身のツール セットを適用します（プリセット-ツール タブ → `AGENT_CONFIG["tools"]`、`PUT /sessions/agent_config` が書き込み）。コンパイル済みグラフは全セッションで共有され、`ToolNode` はプロセス全体のツール一覧を保持するため、選択は**呼び出し時**に効きます:
+セッション自身のツール セットを適用します（プリセットと役割-ツール タブ → `AGENT_CONFIG["tools"]`、`PUT /sessions/agent_config` が書き込み）。コンパイル済みグラフは全セッションで共有され、`ToolNode` はプロセス全体のツール一覧を保持するため、選択は**呼び出し時**に効きます:
 
 1. `wrap_model_call`: セッションに選択があるとき `request.override(tools=<有効なサブセット>)` — langchain は呼び出しごとに `request.tools` からツール スキーマを再バインドするので、無効なツールはモデルに提示されません。
 2. `wrap_tool_call`: **無効なツール**への呼び出しは実行せずエラー `ToolMessage` で拒否します — チェックポイントに切替前の呼び出しが残っていたり、モデルが名前を捏造したりしても、`ToolNode` はそのまま実行してしまうからです。
@@ -239,7 +239,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### The per-session middleware switches
 
-`GET /agent/catalog` がチェーンを返し、プリセット-ミドルウェア タブは**任意の 3 項目**をオフにできます（`AGENT_CONFIG["middlewares_disabled"]`）。各項目は自分のフック入口で `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（mem のみ、フェイル オープン）により早期リターンします:
+`GET /agent/catalog` がチェーンを返し、プリセットと役割-ミドルウェア タブは**任意の 3 項目**をオフにできます（`AGENT_CONFIG["middlewares_disabled"]`）。各項目は自分のフック入口で `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（mem のみ、フェイル オープン）により早期リターンします:
 
 | 無効化可能 | オフにしたときの効果 |
 | --- | --- |

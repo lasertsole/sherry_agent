@@ -226,18 +226,18 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/tool_selection/core.py` · **类：** `ToolSelectionMiddleware(AgentMiddleware)`
 **钩子：** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`（常驻——它是"应用开关"的那一层，自身没有开关）
 
-执行本会话自己的工具集（预设-工具栏 → `AGENT_CONFIG["tools"]`，由 `PUT /sessions/agent_config` 写入）。编译好的图被所有会话共享、`ToolNode` 持有进程级全量工具，因此选择在**调用期**生效：
+执行本会话自己的工具集（预设角色-工具栏 → `AGENT_CONFIG["tools"]`，由 `PUT /sessions/agent_config` 写入）。编译好的图被所有会话共享、`ToolNode` 持有进程级全量工具，因此选择在**调用期**生效：
 
 1. `wrap_model_call`：会话有选择时 `request.override(tools=<启用的子集>)`——langchain 每次调用都按 `request.tools` 重新绑定工具 schema，被关掉的工具根本不会出现在模型面前。
 2. `wrap_tool_call`：对**已关闭工具**的调用直接返回 error `ToolMessage` 拒绝执行——旧 checkpoint 可能残留切换前的调用、模型也可能编造工具名，两种情况 `ToolNode` 都会照跑。
 
-`agent/tools/catalog.py::REQUIRED_TOOLS` 会并回启用集合（预设-工具栏把这些行显示为锁定）：服务端已拒绝省略必需项的新载荷，这里是第二道保险——切换前写入的旧寄存器值同样无法把它剔掉。
+`agent/tools/catalog.py::REQUIRED_TOOLS` 会并回启用集合（预设角色-工具栏把这些行显示为锁定）：服务端已拒绝省略必需项的新载荷，这里是第二道保险——切换前写入的旧寄存器值同样无法把它剔掉。
 
 未配置（或 `tools: null`）= 全开，与旧行为逐字节一致。失败开放：寄存器读不到或载荷损坏时记日志并原样放行。
 
 ### The per-session middleware switches
 
-`GET /agent/catalog` 返回整条链；预设-中间件栏可关闭其中的**三个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
+`GET /agent/catalog` 返回整条链；预设角色-中间件栏可关闭其中的**三个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
 
 | 可关闭项 | 关闭后的效果 |
 | --- | --- |
