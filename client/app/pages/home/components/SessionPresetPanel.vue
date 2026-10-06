@@ -42,7 +42,7 @@
           value="agentSubagents"
           :header="t('config.agent.tabs.subagents')">
           <div
-            class="flex min-h-0 flex-col gap-2 text-xs"
+            class="flex min-h-0 min-w-0 flex-col gap-2 text-xs"
             data-test="session-preset-models-tab">
             <div class="flex items-center gap-1">
               <button
@@ -164,11 +164,11 @@
           value="agentTools"
           :header="t('config.agent.tabs.tools')">
           <div
-            class="min-h-0 overflow-y-auto text-xs"
+            class="min-h-0 min-w-0 overflow-y-auto text-xs"
             data-test="session-preset-tools-tab">
-            <div class="mb-2 flex items-center justify-between gap-2">
-              <span class="text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
-              <span class="text-gray-400">
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <span class="min-w-0 flex-1 text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
+              <span class="shrink-0 text-gray-400">
                 {{
                   t('config.agent.tools.count', {
                     selected: sessionEnabledTools.length,
@@ -252,7 +252,7 @@
           value="agentMiddlewares"
           :header="t('config.agent.tabs.middlewares')">
           <div
-            class="min-h-0 overflow-y-auto text-xs"
+            class="min-h-0 min-w-0 overflow-y-auto text-xs"
             data-test="session-preset-middlewares-tab">
             <div class="mb-2 text-gray-400">{{ t('config.agent.readonlyHint') }}</div>
             <!-- The Summarization middleware cannot be switched off; its nudge
@@ -315,11 +315,11 @@
           value="agentSkills"
           :header="t('config.agent.tabs.skills')">
           <div
-            class="min-h-0 overflow-y-auto text-xs"
+            class="min-h-0 min-w-0 overflow-y-auto text-xs"
             data-test="session-preset-skills-tab">
-            <div class="mb-2 flex items-center justify-between gap-2">
-              <span class="text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
-              <span class="text-gray-400">
+            <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+              <span class="min-w-0 flex-1 text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
+              <span class="shrink-0 text-gray-400">
                 {{
                   t('config.agent.skills.count', {
                     selected: sessionEnabledSkills.length,

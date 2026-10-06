@@ -1,9 +1,13 @@
 <template>
   <!-- Right-sidebar tab body: mounted/unmounted with the tab, which drives the load
        (the sidebar owns the tab label and the close button). The two columns below
-       stay md:flex-row and stack when the panel is narrow. -->
-  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
-    <div class="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
+       become a row only when the PANEL is wide enough (`@2xl` container query) and
+       stack otherwise. -->
+  <div class="@container flex flex-col h-full min-h-0 overflow-y-auto p-4">
+    <!-- `@container` + the layout variants below: the ROW layout needs the panel's own
+         width (the sidebar is resizable), not the viewport's — a narrow sidebar keeps
+         the stacked layout instead of crushing the editor column into a sliver. -->
+    <div class="flex min-h-0 flex-1 flex-col gap-3 @2xl:flex-row">
       <!-- Left column: existing 3-tab persona editor + save-preset action -->
       <div class="flex min-w-0 min-h-0 flex-1 flex-col gap-3">
         <div
@@ -178,13 +182,13 @@
               :header="t('config.agent.tabs.tools')"
               data-test="persona-agent-tools-tab">
               <div
-                class="flex min-h-0 flex-1 flex-col gap-2"
+                class="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
                 data-test="agent-tools-tab">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                  <span class="min-w-0 flex-1 text-sm text-gray-500 dark:text-gray-400">
                     {{ t('config.agent.tools.hint') }}
                   </span>
-                  <div class="flex items-center gap-2">
+                  <div class="flex shrink-0 items-center gap-2">
                     <span class="text-xs text-gray-400">
                       {{
                         t('config.agent.tools.count', {
@@ -226,7 +230,7 @@
                     {{ t(`config.agent.tools.scope_${scope}`) }}
                   </button>
                 </div>
-                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
                   <div
                     v-if="agentVisibleToolGroups.length === 0"
                     class="px-3 py-1 text-xs text-gray-400"
@@ -304,12 +308,12 @@
               :header="t('config.agent.tabs.middlewares')"
               data-test="persona-agent-middlewares-tab">
               <div
-                class="flex min-h-0 flex-1 flex-col gap-2"
+                class="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
                 data-test="agent-middlewares-tab">
                 <span class="text-sm text-gray-500 dark:text-gray-400">
                   {{ t('config.agent.middlewares.hint') }}
                 </span>
-                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
                   <div
                     v-for="entry in agentStore.middlewares.gateable"
                     :key="entry.name"
@@ -385,7 +389,7 @@
               :header="t('config.agent.tabs.subagents')"
               data-test="persona-agent-subagents-tab">
               <div
-                class="flex min-h-0 flex-1 flex-col gap-2"
+                class="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
                 data-test="agent-models-tab">
                 <div class="flex items-center gap-1">
                   <button
@@ -420,7 +424,7 @@
                   <span class="text-sm text-gray-500 dark:text-gray-400">
                     {{ t('config.agent.subagents.hint') }}
                   </span>
-                  <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                  <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
                     <div
                       v-for="role in agentStore.subagentRoles"
                       :key="role.role"
@@ -460,13 +464,13 @@
               :header="t('config.agent.tabs.skills')"
               data-test="persona-agent-skills-tab">
               <div
-                class="flex min-h-0 flex-1 flex-col gap-2"
+                class="flex min-h-0 min-w-0 flex-1 flex-col gap-2"
                 data-test="agent-skills-tab">
-                <div class="flex items-center justify-between gap-2">
-                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                <div class="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                  <span class="min-w-0 flex-1 text-sm text-gray-500 dark:text-gray-400">
                     {{ t('config.agent.skills.hint') }}
                   </span>
-                  <div class="flex items-center gap-2">
+                  <div class="flex shrink-0 items-center gap-2">
                     <span class="text-xs text-gray-400">
                       {{
                         t('config.agent.skills.count', {
@@ -507,7 +511,7 @@
                     {{ t(`config.agent.skills.scope_${scope}`) }}
                   </button>
                 </div>
-                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                <div class="min-h-0 min-w-0 flex-1 overflow-y-auto pr-1">
                   <div
                     v-if="agentVisibleSkills.length === 0"
                     class="px-3 py-1 text-xs text-gray-400"
@@ -555,9 +559,9 @@
       </div>
 
       <!-- Right column: persona preset list -->
-      <div class="flex w-full min-h-0 flex-col gap-2 md:w-[300px] md:shrink-0">
+      <div class="flex w-full min-h-0 flex-col gap-2 @2xl:w-[300px] @2xl:shrink-0">
         <span class="text-sm font-semibold">{{ t('config.persona.preset.title') }}</span>
-        <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:max-h-none">
+        <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto @2xl:max-h-none">
           <!-- Virtual read-only entries: the built-in personas (no delete button,
                not Dexie rows) — 纯净 (nothing named, no persona content, required
                tools only), 编程助手 (the default: operating rules only, no soul /
