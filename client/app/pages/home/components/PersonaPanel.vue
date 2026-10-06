@@ -1,15 +1,20 @@
 <template>
   <!-- Right-sidebar tab body: mounted/unmounted with the tab, which drives the load
-       (the sidebar owns the tab label and the close button). The two columns below
-       become a row only when the PANEL is wide enough (`@2xl` container query) and
-       stack otherwise. -->
-  <div class="@container flex flex-col h-full min-h-0 overflow-y-auto p-4">
-    <!-- `@container` + the layout variants below: the ROW layout needs the panel's own
-         width (the sidebar is resizable), not the viewport's — a narrow sidebar keeps
-         the stacked layout instead of crushing the editor column into a sliver. -->
-    <div class="flex min-h-0 flex-1 flex-col gap-3 @2xl:flex-row">
-      <!-- Left column: existing 3-tab persona editor + save-preset action -->
-      <div class="flex min-w-0 min-h-0 flex-1 flex-col gap-3">
+       (the sidebar owns the tab label and the close button). The two columns stay
+       side by side (the editor scrolls sideways when the sidebar is narrow). -->
+  <div class="flex flex-col h-full min-h-0 overflow-y-auto p-4">
+    <!-- Side-by-side, always: the editor column keeps its working width as a FLOOR
+         and scrolls sideways when the sidebar is narrower, instead of reflowing or
+         squeezing its rows. See the column's own note. -->
+    <div class="flex min-h-0 flex-1 flex-col gap-3 md:flex-row">
+      <!-- Left column: the persona editor + save-preset action. `min-w-0` lets the
+           flex item be narrower than its content, `overflow-x-auto` turns that into a
+           horizontal scrollbar, and the `min-w-[420px]` floor on the children keeps
+           the editor readable (the rows truncate) instead of collapsing into a
+           one-character-per-line sliver. -->
+      <div
+        class="flex min-w-0 min-h-0 flex-1 flex-col gap-3 overflow-x-auto"
+        data-test="persona-editor-column">
         <div
           v-if="loading"
           class="flex items-center justify-center py-8">
@@ -18,7 +23,7 @@
         <template v-else>
           <TabView
             v-model:activeIndex="activeTab"
-            class="flex min-h-0 flex-1 flex-col">
+            class="flex min-h-0 min-w-[420px] flex-1 flex-col">
             <!-- FIRST tab: the role config (who the AI plays, who the user plays).
                  Part of the preset: 保存预设 stores the names + avatars with the
                  persona files, and 应用 writes the composed ROLE.md so the role
@@ -546,7 +551,7 @@
               </div>
             </TabPanel>
           </TabView>
-          <div class="flex justify-end">
+          <div class="flex min-w-[420px] justify-end">
             <Button
               :label="t('config.persona.preset.savePreset')"
               icon="pi pi-save"
@@ -559,9 +564,9 @@
       </div>
 
       <!-- Right column: persona preset list -->
-      <div class="flex w-full min-h-0 flex-col gap-2 @2xl:w-[300px] @2xl:shrink-0">
+      <div class="flex w-full min-h-0 flex-col gap-2 md:w-[300px] md:shrink-0">
         <span class="text-sm font-semibold">{{ t('config.persona.preset.title') }}</span>
-        <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto @2xl:max-h-none">
+        <div class="flex max-h-[60vh] min-h-0 flex-1 flex-col gap-1 overflow-y-auto md:max-h-none">
           <!-- Virtual read-only entries: the built-in personas (no delete button,
                not Dexie rows) — 纯净 (nothing named, no persona content, required
                tools only), 编程助手 (the default: operating rules only, no soul /

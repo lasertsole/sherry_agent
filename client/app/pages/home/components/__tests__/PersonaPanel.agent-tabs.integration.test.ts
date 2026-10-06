@@ -388,26 +388,29 @@ describe('PersonaPanel agent-config tabs', () => {
     expect(db.createPersonaPreset.mock.calls[0]![3]).toEqual({ tools: ['read_file'] });
   });
 
-  it('keys the two-column layout off the panel width, not the viewport', async () => {
-    // The right sidebar is resizable, so a VIEWPORT breakpoint (`md:flex-row`)
-    // turned the layout into a row inside a narrow column and crushed the editor
-    // into a sliver whose nowrap rows overflowed. The row layout must follow the
-    // panel's own width instead (`@container` + `@2xl:`), which is what makes the
-    // narrow case stack the preset list below the editor.
+  it('keeps the side-by-side layout and lets the editor column scroll sideways', async () => {
+    // A narrow sidebar must NOT reflow the panel (that crushed the editor) nor push
+    // its rows outside: the row layout stays, the editor column is the horizontal
+    // scroll container, and its children keep a readable floor.
     const panel = await mountPanel();
     const body = panel.get('[data-test="agent-tools-tab"]').element as HTMLElement;
-    const root = body.closest('div[class*="@container"]') as HTMLElement | null;
+    const root = body.closest('div[class*="md:flex-row"]') as HTMLElement | null;
 
-    expect(root, 'the panel root is a container-query context').not.toBeNull();
-    expect(root!.className).toContain('@container');
-    expect(root!.querySelector('[class*="@2xl:flex-row"]')).not.toBeNull();
-    expect(root!.querySelector('[class*="md:flex-row"]')).toBeNull();
-    // Every agent tab body can shrink with the column, so its truncating rows do
-    // not push the panel wider than the sidebar.
+    expect(root, 'the panel keeps the two-column row').not.toBeNull();
+    expect(root!.querySelector('[class*="@2xl:flex-row"]')).toBeNull();
+
+    const column = panel.get('[data-test="persona-editor-column"]');
+    expect(column.classes()).toContain('overflow-x-auto');
+    expect(column.classes()).toContain('min-w-0');
+    // The editor keeps a floor, so the scrollbar has something to reveal.
+    expect(column.find('[class*="min-w-[420px]"]').exists()).toBe(true);
+
+    // Every agent tab body can still shrink with the column, so its truncating rows
+    // do not push the column wider on their own.
     for (const tab of ['tools', 'middlewares', 'models', 'skills']) {
-      const body = panel.find(`[data-test="agent-${tab}-tab"]`);
-      expect(body.exists(), tab).toBe(true);
-      expect(body.classes(), tab).toContain('min-w-0');
+      const tabBody = panel.find(`[data-test="agent-${tab}-tab"]`);
+      expect(tabBody.exists(), tab).toBe(true);
+      expect(tabBody.classes(), tab).toContain('min-w-0');
     }
   });
 });
