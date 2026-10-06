@@ -269,7 +269,12 @@ export function presetCatalogFacts(store: {
  * - 情感陪伴: every tool EXCEPT the 任务与计划 / 子代理 groups, every optional
  *   middleware off, and every NON-required skill except 编程助手's four (the two
  *   presets split the index between them);
- * - 全量: no opinion (every tool, every switch on, every skill in the index).
+ * - 全量: no opinion (every tool, every switch on, every skill in the index, and
+ *   the Summarization nudge left ON).
+ *
+ * The compression nudge (`middleware_options.Summarization.nudge`) is pinned OFF
+ * by the three restricted presets and left at its default by 全量 — it is the
+ * full-setup preset that keeps it.
  *
  * A restriction that cannot be computed (the catalogue never loaded) THROWS: a
  * silent fallback to `{}` would apply the opposite of what the preset promises.
@@ -293,6 +298,8 @@ export function builtinAgentConfig(id: BuiltinPresetId, facts: PresetCatalogFact
   if (id !== 'coding' && facts.gateableMiddlewares.length > 0) {
     block.middlewares_disabled = [...facts.gateableMiddlewares];
   }
+  // Only 全量 leaves the compression nudge on (its absence = the default).
+  block.middleware_options = { Summarization: { nudge: false } };
   return block;
 }
 

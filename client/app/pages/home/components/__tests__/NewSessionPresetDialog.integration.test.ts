@@ -218,7 +218,8 @@ describe('NewSessionPresetDialog', () => {
     const sessionId = (db.cacheSessionPreset.mock.calls[0]![0] as { session_id: string }).session_id;
     expect(agentBridge.setAgentConfig).toHaveBeenCalledWith(sessionId, {
       tools: ['read_file'],
-      skills: ['image_to_text']
+      skills: ['image_to_text'],
+      middleware_options: { Summarization: { nudge: false } }
     });
     // No built-in pins a main model: the apply writes "follow the env config".
     expect(sessionBridge.setSessionModel).toHaveBeenCalledWith(sessionId, null);

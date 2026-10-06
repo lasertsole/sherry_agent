@@ -374,10 +374,12 @@ describe('SessionPresetButton', () => {
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     expect(headers).toEqual(['代理模型', '角色配置', '运行守则', '人格灵魂', '用户信息', '工具', '中间件', '技能']);
 
-    // 主代理 is a read-only mirror of the session-model control (the stub reports
-    // "env" with no model configured).
+    // 主代理 is the SAME control as the toolbar's model switch: a picker bound to
+    // the session-model store (the stub reports "env" with no model configured).
     expect(panel.get('[data-test="session-preset-models-scope-main"]').text()).toBe('主代理');
     expect(panel.text()).toContain('跟随环境配置');
+    const mainPicker = panel.get('[data-test="session-preset-main-model"]');
+    expect((mainPicker.element as HTMLSelectElement).value).toBe('env');
     // 子代理 keeps the editable role pickers.
     await panel.get('[data-test="session-preset-models-scope-subagent"]').trigger('click');
     await flushPromises();
@@ -390,6 +392,46 @@ describe('SessionPresetButton', () => {
     const nudge = panel.get('[data-test="session-preset-middleware-nudge"]');
     expect(nudge.attributes('disabled')).toBeDefined();
     expect((nudge.element as HTMLInputElement).checked).toBe(false);
+  });
+
+  it('switches the session main model from the 主代理 picker, through the same store', async () => {
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    const selectCalls: Array<[string, unknown]> = [];
+    const profiles = makeProfilesStore();
+    vi.stubGlobal('useLlmProfilesStore', () => profiles);
+    vi.stubGlobal('useSessionModelStore', () =>
+      reactive({
+        currentId: () => 'env',
+        envModel: { provider: 'zhipu', model: 'glm-4.6' },
+        isPending: () => false,
+        hydrate: async () => {},
+        select: async (sid: string, profile: unknown) => {
+          selectCalls.push([sid, profile]);
+        }
+      })
+    );
+
+    const wrapper = await mountPanel();
+    const picker = wrapper.get('[data-test="session-preset-main-model"]');
+    await picker.setValue('p1');
+    await flushPromises();
+
+    // The store's own write path (optimistic + rollback + parking) does the work,
+    // so the toolbar switch and this row can never disagree.
+    expect(selectCalls).toHaveLength(1);
+    expect(selectCalls[0]![0]).toBe('sid-1');
+    expect(selectCalls[0]![1]).toEqual({
+      id: 'p1',
+      label: '测试档案',
+      provider: 'zhipu',
+      model: 'glm-4.6',
+      api_key: 'k'
+    });
+
+    // Back to "follow the environment config" writes null.
+    await picker.setValue('env');
+    await flushPromises();
+    expect(selectCalls[1]).toEqual(['sid-1', null]);
   });
 
   it('writes a per-role model choice to the SESSION, merged and parked-ready', async () => {

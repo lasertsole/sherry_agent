@@ -212,6 +212,8 @@ describe('persona catalogue', () => {
     ]);
     expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'code-wiki', 'taskflow', 'todolist', 'ulw-execute']);
     expect(payload.agent!.middlewares_disabled).toBeUndefined();
+    // Every restricted preset turns the compression nudge off (only 全量 keeps it).
+    expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
     // No built-in pins a model: null = follow the environment config.
     expect(payload.mainModel).toBeNull();
   });
@@ -254,8 +256,9 @@ describe('persona catalogue', () => {
     for (const name of ['taskflow_create', 'todoread', 'sessions_spawn']) {
       expect(payload.agent!.tools).not.toContain(name);
     }
-    // The disabled groups are the orchestration surfaces.
+    // The disabled groups are the orchestration surfaces, and its nudge is off.
     expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
+    expect(payload.agent!.middleware_options).toEqual({ Summarization: { nudge: false } });
     // The skills are the mirror image of 编程助手: the required chain plus every
     // skill 编程助手 does NOT pick (clawhub / cron here).
     expect(payload.agent!.skills).toEqual([...REQUIRED_SKILLS, 'clawhub', 'cron']);
@@ -357,7 +360,12 @@ describe('persona catalogue', () => {
 
   it('pins an agent block on every preset except 全量', () => {
     for (const id of ['pure', 'coding', 'companion'] as const) {
-      expect(builtinPayload(id, TEMPLATE, t, FACTS, 'zh').agent).not.toEqual({});
+      const payload = builtinPayload(id, TEMPLATE, t, FACTS, 'zh');
+      expect(payload.agent).not.toEqual({});
+      // …and the nudge is the one option only 全量 leaves alone (absent = on).
+      expect(payload.agent!.middleware_options).toEqual(
+        id === 'sherry' ? undefined : { Summarization: { nudge: false } }
+      );
     }
     expect(builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh').agent).toEqual({});
   });

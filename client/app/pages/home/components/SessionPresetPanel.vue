@@ -61,11 +61,29 @@
               </button>
             </div>
             <template v-if="modelScope === 'main'">
-              <div class="mb-2 text-gray-400">{{ t('config.agent.models.mainHint') }}</div>
+              <div class="mb-2 flex items-center gap-2 text-gray-400">
+                <span>{{ t('config.agent.models.mainHint') }}</span>
+                <span
+                  v-if="sessionModel.isPending(sessionId)"
+                  class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                  data-test="session-preset-main-model-pending">
+                  <i class="pi pi-clock text-[9px]" />
+                  {{ t('sessionModelPicker.pending') }}
+                </span>
+              </div>
               <div
                 class="flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
                 <span class="min-w-0 truncate text-theme-main">{{ mainModelLabel }}</span>
-                <span class="shrink-0 text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
+                <!-- The SAME control as the toolbar's model switch (one store, one
+                     endpoint): a change here moves that picker, and vice versa. -->
+                <Select
+                  :model-value="sessionModel.currentId(sessionId)"
+                  :options="mainModelOptions"
+                  option-label="label"
+                  option-value="value"
+                  class="w-52"
+                  data-test="session-preset-main-model"
+                  @update:model-value="chooseMainModel" />
               </div>
             </template>
             <template v-else>
@@ -389,6 +407,27 @@ const modelScope = ref<(typeof AGENT_MODEL_SCOPES)[number]>('main');
 
 /** The session's main-model control (its own store: the toolbar picker's key). */
 const sessionModel = useSessionModelStore();
+
+/** Select-options: "follow the environment config" + every env-config profile. */
+const mainModelOptions = computed<Array<{ label: string; value: string }>>(() => [
+  { label: t('config.agent.models.followEnv'), value: ENV_MODEL_ID },
+  ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
+]);
+
+/**
+ * Point the session at an env-config profile (or back at the environment
+ * config). Writes through the session-model store — the same optimistic +
+ * rollback path the toolbar's model switch uses, so the two stay in step and a
+ * mid-turn change parks until the next turn.
+ * @param profileId Chosen profile id (the env sentinel = follow the env config).
+ */
+const chooseMainModel = async (profileId: string): Promise<void> => {
+  const sid = sessionId.value;
+  if (!sid) return;
+  const chosen = String(profileId ?? '');
+  const profile = chosen && chosen !== ENV_MODEL_ID ? llmProfiles.byId('MAIN_LLM', chosen) : undefined;
+  await sessionModel.select(sid, profile ? llmProfiles.toSessionProfile(profile) : null);
+};
 
 /** The 主代理 row's text: the env default (with its model) or the profile label. */
 const mainModelLabel = computed<string>(() => {
