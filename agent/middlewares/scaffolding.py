@@ -38,7 +38,9 @@ from .llm_retry import LLMRetryMiddleware
 from .max_tokens_boost import MaxTokensBoostMiddleware
 from .message_persistence import MessagePersistenceMiddleware
 from .output_repetition_guard import OutputRepetitionGuard
+from .media_pipeline import MultimodalProcessor
 from .path_guard import PathGuard
+from .project_dir_notice import ProjectDirNoticeMiddleware
 from .summarization import Summarization
 from .tool_call_normalize import ToolCallNormalize
 from .tool_guardrails import ToolGuardrails
@@ -85,6 +87,12 @@ _MAIN_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
     RequiredMiddlewareEntry(HeartbeatStaleness, ()),
     # Transcript repair (tool_use / tool_result pairing).
     RequiredMiddlewareEntry(ToolCallNormalize, ()),
+    # Working-directory change notice — the prompt renders the current root, so
+    # without this layer the agent silently keeps answering from the old tree.
+    RequiredMiddlewareEntry(ProjectDirNoticeMiddleware, ()),
+    # Multimodal preprocessing — uploaded media must be persisted and paired with
+    # the native/skill path; a turn without it loses the attachments.
+    RequiredMiddlewareEntry(MultimodalProcessor, ()),
 )
 
 # ---------------------------------------------------------------------------

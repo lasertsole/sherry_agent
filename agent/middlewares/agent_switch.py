@@ -38,5 +38,15 @@ def disabled_middlewares(session_id: str | None) -> frozenset[str]:
 
 
 def middleware_enabled(session_id: str | None, name: str) -> bool:
-    """Whether *name* should run for this session (default: yes)."""
+    """Whether *name* should run for this session (default: yes).
+
+    A REQUIRED entry is always enabled: the payload cannot name one (the service
+    rejects it) and the chain cannot drop one (``scaffolding`` fails the build),
+    but a register value written before an entry became required must not be able
+    to switch it off either — this is the single guard that covers every path.
+    """
+    from agent.middlewares.catalog import middleware_required
+
+    if middleware_required(name):
+        return True
     return name not in disabled_middlewares(session_id)

@@ -223,22 +223,30 @@ def test_a_disabled_task_intent_middleware_never_steers():
     assert asyncio.run(middleware.abefore_model(state)) is None
 
 
-def test_a_disabled_multimodal_processor_leaves_the_message_untouched():
-    from agent.middlewares.media_pipeline import MultimodalProcessor
+def test_a_required_entry_cannot_be_disabled_by_a_stale_payload():
+    """ProjectDirNoticeMiddleware / MultimodalProcessor are REQUIRED now.
 
-    processor = MultimodalProcessor()
-    content = [
-        {"type": "text", "text": "看看这张图"},
-        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
-    ]
-    state = {"session_id": SESSION, "messages": [HumanMessage(content=content)]}
-    _set_config({"middlewares_disabled": ["MultimodalProcessor"]})
+    The service rejects a payload naming them and the chain cannot drop them, but
+    a register value written BEFORE they became required must not switch them off
+    either — ``middleware_enabled`` is the single guard covering that path, and
+    the directory notice keeps firing despite the stale entry.
+    """
+    _set_config({"middlewares_disabled": ["ProjectDirNoticeMiddleware", "MultimodalProcessor"]})
 
-    processor._before_agent_impl(state)
+    assert middleware_enabled(SESSION, "ProjectDirNoticeMiddleware") is True
+    assert middleware_enabled(SESSION, "MultimodalProcessor") is True
 
-    # The processor would have rewritten the content list into a text block +
-    # media hints; with the switch off it must not be touched at all.
-    assert state["messages"][0].content == content
+    state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR_ANNOUNCED, "/tmp/old-root")
+    state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR, "/tmp/new-root")
+    from agent.middlewares.project_dir_notice import ProjectDirNoticeMiddleware
+
+    update = asyncio.run(
+        ProjectDirNoticeMiddleware().abefore_agent(
+            {"session_id": SESSION, "messages": [HumanMessage("你好")]}
+        )
+    )
+
+    assert update is not None, "a required middleware must run despite a stale disabled entry"
 
 
 def test_a_disabled_completion_drain_never_touches_the_queue(monkeypatch):
@@ -274,18 +282,3 @@ def test_a_disabled_todo_continuation_never_reads_the_plan(monkeypatch):
     asyncio.run(TodoContinuationEnforcer().aafter_agent({"session_id": SESSION, "messages": []}))
 
     assert calls == [], "a disabled continuation must not read the todo list"
-
-
-def test_a_disabled_directory_notice_never_announces():
-    from agent.middlewares.project_dir_notice import ProjectDirNoticeMiddleware
-
-    _set_config({"middlewares_disabled": ["ProjectDirNoticeMiddleware"]})
-    state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR_ANNOUNCED, "/tmp/old-root")
-    state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR, "/tmp/new-root")
-    middleware = ProjectDirNoticeMiddleware()
-
-    update = asyncio.run(
-        middleware.abefore_agent({"session_id": SESSION, "messages": [HumanMessage("你好")]})
-    )
-
-    assert update is None

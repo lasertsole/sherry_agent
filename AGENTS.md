@@ -240,11 +240,14 @@ promoted at the turn boundary like the model/thinking controls)::
   what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
   checkpoint or a hallucinated name would otherwise still run — the ToolNode holds the full
   list). Unset config = every tool.
-- **Middlewares**: five optional entries are switchable
-  (`TodoContinuationEnforcer`, `TaskIntentMiddleware`, `ProjectDirNoticeMiddleware`,
-  `MultimodalProcessor`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
-  `agent/middlewares/agent_switch.py::middleware_enabled`. The twelve `_MAIN_REQUIRED` safety
-  entries plus `system_prompt_injection` and `ThinkingControlMiddleware` are LOCKED — chain
+- **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
+  `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
+  `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
+  every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
+  `ProjectDirNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
+  build now fails without them (`scaffolding._MAIN_REQUIRED`, 14 entries) and the service
+  rejects a payload naming one. Together with `system_prompt_injection`,
+  `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
   membership and order never change.
 - **Subagent models**: `subagent_models[role]` is a profile descriptor (the same shape as the
   session main-model override); at spawn `resolve_role_model_profile` reads it for the

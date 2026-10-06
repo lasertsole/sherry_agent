@@ -235,17 +235,15 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### The per-session middleware switches
 
-`GET /agent/catalog` 返回整条链；预设-中间件栏可关闭其中的**五个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
+`GET /agent/catalog` 返回整条链；预设-中间件栏可关闭其中的**三个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
 
 | 可关闭项 | 关闭后的效果 |
 | --- | --- |
 | `TodoContinuationEnforcer` | 计划（待办 / 任务流）未完成也不再自动续跑 |
 | `TaskIntentMiddleware` | 不再注入任务意图引导 |
-| `ProjectDirNoticeMiddleware` | 不再通知工作目录变更 |
-| `MultimodalProcessor` | 上传的多媒体不再预处理 |
 | `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话 |
 
-其余全部锁定（前端只读展示）：12 个 `_MAIN_REQUIRED` 安全项，外加 `system_prompt_injection`（关掉即无系统提示词）与 `ThinkingControlMiddleware`（它就是模型/思考开关本身）。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
+其余全部锁定（前端只读展示）：**14** 个 `_MAIN_REQUIRED` 安全项——原 12 项加上 `ProjectDirNoticeMiddleware`（提示词渲染的是当前根，没有这条通知 agent 会继续按旧目录作答）与 `MultimodalProcessor`（缺它即丢附件）——外加 `system_prompt_injection`（关掉即无系统提示词）、`ThinkingControlMiddleware`（它就是模型/思考开关）与 `ToolSelectionMiddleware`（它负责应用工具选择）。历史载荷里若点名了必需项会被忽略：`middleware_enabled()` 对必需项一律返回 `True`。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
 
 ### MultimodalProcessor
 

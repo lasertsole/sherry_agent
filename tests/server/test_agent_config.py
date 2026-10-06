@@ -151,7 +151,7 @@ def test_the_middleware_catalog_marks_the_required_set():
     catalog = {entry["name"]: entry for entry in middleware_catalog()}
     assert list(catalog) == list(MIDDLEWARE_ORDER)
 
-    # Safety baseline / logical necessities are locked, the five optional
+    # Safety baseline / logical necessities are locked, the optional
     # entries are the gateable ones — and the two sets never overlap.
     assert catalog["HumanInTheLoop"]["required"] is True
     assert catalog["Summarization"]["required"] is True
@@ -159,6 +159,12 @@ def test_the_middleware_catalog_marks_the_required_set():
     assert catalog["ThinkingControlMiddleware"]["required"] is True
     assert catalog["TaskIntentMiddleware"]["required"] is False
     assert catalog["TaskIntentMiddleware"]["gateable"] is True
+
+    # Promoted to the safety baseline (project-dir notice + media preprocessing):
+    # locked in the UI, rejected by the service, always on in the chain.
+    for name in ("ProjectDirNoticeMiddleware", "MultimodalProcessor"):
+        assert catalog[name]["required"] is True, name
+        assert catalog[name]["gateable"] is False, name
 
     for name in MIDDLEWARE_ORDER:
         assert not (middleware_required(name) and middleware_gateable(name)), name

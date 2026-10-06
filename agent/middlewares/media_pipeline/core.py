@@ -70,10 +70,6 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
             err_text: str = "Not pass session_id"
             logger.error(err_text)
             raise RuntimeError(err_text)
-        from agent.middlewares.agent_switch import middleware_enabled
-
-        if not middleware_enabled(session_id, type(self).__name__):
-            return None  # 会话配置（预设-中间件）关闭该中间件时，本钩子整体 no-op。
         if not is_safe_session_id(session_id):
             err_text = f"Unsafe session_id: {session_id!r}"
             logger.error(err_text)

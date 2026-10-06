@@ -236,17 +236,15 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 ### The per-session middleware switches
 
-`GET /agent/catalog`가 체인을 반환하고, 프리셋-미들웨어 탭은 **선택 항목 5개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
+`GET /agent/catalog`가 체인을 반환하고, 프리셋-미들웨어 탭은 **선택 항목 3개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
 
 | 끌 수 있음 | 끄면 |
 | --- | --- |
 | `TodoContinuationEnforcer` | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
 | `TaskIntentMiddleware` | 작업 의도 유도 메시지를 주입하지 않음 |
-| `ProjectDirNoticeMiddleware` | 작업 디렉터리 변경 알림을 보내지 않음 |
-| `MultimodalProcessor` | 업로드된 미디어를 전처리하지 않음 |
 | `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음 |
 
-나머지는 모두 잠금(UI는 읽기 전용 표시): `_MAIN_REQUIRED` 12개 안전 항목에 더해 `system_prompt_injection`(없으면 지시 없는 턴)과 `ThinkingControlMiddleware`(그 자체가 모델/사고 제어). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
+나머지는 모두 잠금(UI는 읽기 전용 표시): **14개** `_MAIN_REQUIRED` 안전 항목 — 기존 12개에 `ProjectDirNoticeMiddleware`(프롬프트가 현재 루트를 렌더링하므로 알림이 없으면 옛 트리 기준으로 계속 답한다)와 `MultimodalProcessor`(없으면 첨부가 사라진다) 추가 — 에 더해 `system_prompt_injection`(없으면 지시 없는 턴), `ThinkingControlMiddleware`(그 자체가 모델/사고 제어), `ToolSelectionMiddleware`(도구 선택을 적용하는 쪽). 필수 항목을 지정한 오래된 페이로드는 무시됩니다(`middleware_enabled()`는 필수 항목에 항상 `True`). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
 
 ### MultimodalProcessor
 

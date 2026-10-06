@@ -243,11 +243,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | --- | --- |
 | `TodoContinuationEnforcer` | 計画（todo / フロー）が未完了でもターンを継続しない |
 | `TaskIntentMiddleware` | タスク意図の誘導メッセージを注入しない |
-| `ProjectDirNoticeMiddleware` | 作業ディレクトリ変更の通知を出さない |
-| `MultimodalProcessor` | アップロードされたメディアを前処理しない |
 | `SubagentCompletionDrainMiddleware` | サブエージェントの完了結果を注入しない |
 
-それ以外はすべてロック（UI は読み取り専用で表示）: 12 個の `_MAIN_REQUIRED` 安全項目に加え、`system_prompt_injection`（なければ指示が無いターンになる）と `ThinkingControlMiddleware`（それ自体がモデル/思考コントロール）。チェーンの構成と順序は決して変わらず（`scaffolding` と順序契約テストが引き続き固定）、ゲートされるのは挙動のみ。名前は `agent/middlewares/catalog.py::MIDDLEWARE_ORDER` にクラス名で登録されています。
+それ以外はすべてロック（UI は読み取り専用で表示）: **14 個**の `_MAIN_REQUIRED` 安全項目 — 従来の 12 個に `ProjectDirNoticeMiddleware`（プロンプトは現在のルートを描画するため、通知が無いと古いツリーのまま回答し続ける）と `MultimodalProcessor`（無いと添付が失われる）を追加 — に加え、`system_prompt_injection`（無ければ指示が無いターン）、`ThinkingControlMiddleware`（それ自体がモデル/思考コントロール）、`ToolSelectionMiddleware`（ツール選択の適用側）。必須項目を名指しした古いペイロードは無視されます（`middleware_enabled()` は必須項目に常に `True` を返します）。チェーンの構成と順序は決して変わらず（`scaffolding` と順序契約テストが引き続き固定）、ゲートされるのは挙動のみ。名前は `agent/middlewares/catalog.py::MIDDLEWARE_ORDER` にクラス名で登録されています。
 
 ### MultimodalProcessor
 

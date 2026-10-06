@@ -208,6 +208,10 @@ class TestRoleAgnosticDesign:
             "ContextEvictionMiddleware",
             "PathGuard",
             "LLMRetryMiddleware",
+            # Required for the main agent only: a child's transcript has no
+            # working-directory notice to inject and no media intake of its own.
+            "ProjectDirNoticeMiddleware",
+            "MultimodalProcessor",
         }
         main_only = MAIN_REQUIRED_CLASSES - SUBAGENT_REQUIRED_CLASSES
         assert {cls.__name__ for cls in main_only} == expected_main_only

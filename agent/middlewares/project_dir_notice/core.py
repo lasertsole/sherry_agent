@@ -40,7 +40,6 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, Remove
 from langgraph.graph.message import REMOVE_ALL_MESSAGES
 from loguru import logger
 
-from agent.middlewares.agent_switch import middleware_enabled
 from runtime.session.project_dir import (
     PROJECT_DIR_NOTICE_METADATA,
     announced_project_dir,
@@ -85,9 +84,6 @@ class ProjectDirNoticeMiddleware(AgentMiddleware):
             session_id = str((state or {}).get("session_id") or "").strip()
             if not session_id:
                 return None
-            if not middleware_enabled(session_id, type(self).__name__):
-                return None  # 会话配置（预设-中间件）关闭该中间件时，本钩子整体 no-op
-
             directory = str(current_project_dir(session_id))
             previous = announced_project_dir(session_id)
 

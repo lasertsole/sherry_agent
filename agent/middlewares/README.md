@@ -237,17 +237,15 @@ Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. F
 
 ### The per-session middleware switches
 
-`GET /agent/catalog` lists the chain; the 预设-中间件 tab may turn **five optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
+`GET /agent/catalog` lists the chain; the 预设-中间件 tab may turn **three optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
 
 | Gateable | Effect of turning it off |
 | --- | --- |
 | `TodoContinuationEnforcer` | the plan (todos / flows) no longer keeps the turn alive |
 | `TaskIntentMiddleware` | no task-intent steering message |
-| `ProjectDirNoticeMiddleware` | no working-directory change notice |
-| `MultimodalProcessor` | uploaded media is no longer preprocessed |
 | `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected |
 
-Everything else is LOCKED (the UI shows it read-only): the twelve `_MAIN_REQUIRED` safety entries plus `system_prompt_injection` (a turn without it has no instructions) and `ThinkingControlMiddleware` (it IS the model/thinking control). Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
+Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_REQUIRED` safety entries — the original twelve plus `ProjectDirNoticeMiddleware` (the prompt renders the current root, so without the notice the agent keeps answering from the old tree) and `MultimodalProcessor` (a turn without it loses the attachments) — plus `system_prompt_injection` (a turn without it has no instructions), `ThinkingControlMiddleware` (it IS the model/thinking control) and `ToolSelectionMiddleware` (it applies the tool selection). A stale payload naming a required entry is ignored: `middleware_enabled()` answers `True` for it. Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
 
 ### MultimodalProcessor
 
