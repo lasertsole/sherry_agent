@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       └── components/        # 40 のページコンポーネント：
+│   │       └── components/        # 43 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
 │   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
@@ -147,12 +147,15 @@ client/
 │   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加、ConfigPanel 用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
 │   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセット」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 + プリセット管理）
+│   │           ├── SessionPresetButton.vue    # トップバーの閲覧専用入口：現在のセッションのプリセットタブを開く
+│   │           ├── SessionPresetPanel.vue     # 「現在のセッション」タブ：そのセッション自身のプリセット（閲覧専用）
+│   │           ├── NewSessionPresetDialog.vue # 「新規チャット」ごとに必須のプリセット選択ダイアログ（適用後にセッション作成）
 │   │           ├── MemoryPanel.vue            # 長期メモリタブ（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md タブ + グローバル ハートビート スイッチ
 │   │           ├── CronPanel.vue              # 定期タスクタブ（/cron）
 │   │           ├── SkillsPanel.vue            # スキル管理タブ（一覧 / アップロード / 切替 / ピン留め / 削除 / curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
-│   │           ├── NotificationDialog.vue     # サーバー push 通知リスト
+│   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：ログイン保護の設定 / 変更 / 解除（現在のパスワードが必要）
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
 │   │           ├── FileViewerPanel.vue        # ファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
@@ -180,6 +183,8 @@ client/
 │   │   ├── auth.ts             # ログインセッション状態（status / user / 401 で一度だけ更新して再送）
 │   │   ├── project-directory.ts # セッションごとのプロジェクトディレクトリ（バインド / 保留中の選択 / 実効ルート）
 │   │   ├── file-viewer.ts      # ファイルビューアタブ（開いたパス + 内容キャッシュ）
+│   │   ├── new-session.ts      # 新規セッションのプリセット選択ダイアログ状態（すべての「新規チャット」入口）
+│   │   ├── notification.ts     # 通知リスト + 未読バッジ（タブを閉じてもカウント継続）
 │   │   ├── taskflow.ts         # TaskFlow 進捗（セッションごとの flow + wave、taskflow_updated で更新）
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
 │   ├── plugins/                   # Nuxt プラグイン
@@ -361,7 +366,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 
 ### 状態とイベント
 
-- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、TaskFlow 進捗（`taskflow.ts`）
+- **Pinia**（`stores/`）：UI 状態（`ui.ts`：サイドバー / todo ドック折りたたみを永続化）、バックグラウンドタスク（`subagent.ts`）、セッション計画（`todo.ts`）、接続性（`connection.ts`）、チャット背景（`chat-background.ts`）、セッション制御（`thinking.ts` / `session-model.ts`）、モデルプロファイル（`llm-profiles.ts`）、右サイドバー（`right-sidebar.ts`）、コンテキスト計量（`context-usage.ts`）、実行中コマンド（`running-commands.ts`）、アクセス モード（`access-mode.ts`）、ログイン セッション（`auth.ts`）、プロジェクト ディレクトリ（`project-directory.ts`）、ファイル ビューア（`file-viewer.ts`）、新規セッションのプリセット選択（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 進捗（`taskflow.ts`）
 - **mitt イベントバス**：WS イベント、ストリーム再接続イベント、セッションストリーム中断（`session:abort-stream`）、コンポーネント間通知
 - **connection ストア**（`stores/connection.ts`）：`/sessions/ws` ハートビートとブラウザの online/offline イベントを監視；`isOnline` / `backendStatus` を公開し、`app.vue` のグローバル接続バナーを駆動
 

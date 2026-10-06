@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 40 개의 페이지 컴포넌트:
+│   │       └── components/        # 43 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
@@ -147,12 +147,15 @@ client/
 │   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가, ConfigPanel용)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
 │   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 + 프리셋 관리)
+│   │           ├── SessionPresetButton.vue    # 상단 바 보기 전용 진입점: 현재 세션의 프리셋 탭 열기
+│   │           ├── SessionPresetPanel.vue     # 「현재 세션」탭: 세션 자체의 프리셋(읽기 전용)
+│   │           ├── NewSessionPresetDialog.vue # 「새 대화」마다 필수인 프리셋 선택 대화상자(적용 후 세션 생성)
 │   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
 │   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
 │   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
-│   │           ├── NotificationDialog.vue     # 서버 푸시 알림 목록
+│   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
 │   │           ├── AccountSettingsPanel.vue   # 계정 탭: 로그인 보호 설정 / 변경 / 해제(현재 비밀번호 필요)
 │   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
 │   │           ├── FileViewerPanel.vue        # 파일 뷰어 탭(GET /project/file, 텍스트 + 이미지 미리보기)
@@ -180,6 +183,8 @@ client/
 │   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도)
 │   │   ├── project-directory.ts # 세션별 프로젝트 디렉터리(바인딩 / 보류된 선택 / 적용 루트)
 │   │   ├── file-viewer.ts      # 파일 뷰어 탭(연 경로 + 내용 캐시)
+│   │   ├── new-session.ts      # 새 세션 프리셋 선택 대화상자 상태(모든 「새 대화」 진입점)
+│   │   ├── notification.ts     # 알림 목록 + 미읽음 배지(탭을 닫아도 계속 집계)
 │   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   ├── plugins/                   # Nuxt 플러그인
@@ -361,7 +366,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), TaskFlow 진행(`taskflow.ts`)
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
 - **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 

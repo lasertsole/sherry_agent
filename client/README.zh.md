@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       └── components/        # 40 个页面组件：
+│   │       └── components/        # 43 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
@@ -147,12 +147,15 @@ client/
 │   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增，供 ConfigPanel 使用）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 + 预设管理）
+│   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
+│   │           ├── SessionPresetPanel.vue     # 「当前会话」标签页：本会话自己的预设，只读
+│   │           ├── NewSessionPresetDialog.vue # 每次「新建对话」必选的预设选择对话框（先应用预设，再创建会话）
 │   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页 + 全局心跳开关
 │   │           ├── CronPanel.vue              # 定时任务标签页（/cron）
 │   │           ├── SkillsPanel.vue            # 技能管理标签页（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
-│   │           ├── NotificationDialog.vue     # 服务端推送通知列表
+│   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
 │   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 修改 / 关闭登录保护（需当前密码）
 │   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
 │   │           ├── FileViewerPanel.vue        # 文件查看标签页（GET /project/file，文本 + 图片预览）
@@ -180,6 +183,8 @@ client/
 │   │   ├── auth.ts             # 登录会话状态（status / user / 401 单次续期重放）
 │   │   ├── project-directory.ts # 每会话项目目录（绑定 / 续延选择 / 生效根）
 │   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
+│   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
+│   │   ├── notification.ts     # 通知列表 + 未读徽标（标签页关闭时仍保持计数）
 │   │   ├── taskflow.ts         # TaskFlow 进度（每会话 flow + wave，由 taskflow_updated 刷新）
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   ├── plugins/                   # Nuxt 插件
@@ -361,7 +366,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 
 ### 状态与事件
 
-- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、TaskFlow 进度（`taskflow.ts`）
+- **Pinia**（`stores/`）：UI 状态（`ui.ts`：侧边栏 / 计划停靠折叠持久化）、后台任务（`subagent.ts`）、会话计划（`todo.ts`）、连通性（`connection.ts`）、聊天背景（`chat-background.ts`）、会话开关（`thinking.ts` / `session-model.ts`）、模型档案（`llm-profiles.ts`）、右侧栏（`right-sidebar.ts`）、上下文计量（`context-usage.ts`）、运行中的命令（`running-commands.ts`）、访问模式（`access-mode.ts`）、登录会话（`auth.ts`）、项目目录（`project-directory.ts`）、文件查看（`file-viewer.ts`）、新建会话预设选择（`new-session.ts`）、通知（`notification.ts`）、TaskFlow 进度（`taskflow.ts`）
 - **mitt 事件总线**：WS 事件、流重连事件、会话流中断（`session:abort-stream`）、跨组件通知
 - **connection store**（`stores/connection.ts`）：监听 `/sessions/ws` 心跳与浏览器 online/offline 事件；暴露 `isOnline` / `backendStatus` 并驱动 `app.vue` 的全局连接横幅
 
