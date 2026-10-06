@@ -16,6 +16,9 @@
     "maxVideos": "최대 {count}개의 비디오를 업로드할 수 있습니다",
     "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다"
   },
+  "sessionModelPicker": {
+    "pending": "다음 턴에 적용"
+  },
   "chatBox": {
     "defaultAiName": "셰리"
   },
@@ -200,7 +203,8 @@
         "hint": "기능 역할마다 사용할 모델(환경 구성 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
         "followTier": "역할 기본값 따르기",
         "tier": "역할 기본값: {tier}",
-        "tierDepth": "역할 정의 없음: 깊이 기본값"
+        "tierDepth": "역할 정의 없음: 깊이 기본값",
+        "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
       },
       "role": {
         "general": "범용",
@@ -214,7 +218,8 @@
         "middlewares": "꺼진 미들웨어: {names}",
         "middlewaresNone": "미들웨어: 모두 켜짐",
         "models": "서브에이전트 모델: {names}"
-      }
+      },
+      "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋」에서 하세요"
     },
     "llm": {
       "add": "모델 추가",

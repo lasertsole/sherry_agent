@@ -480,6 +480,7 @@ import { useI18n } from 'vue-i18n';
 import AvatarCropDialog from './AvatarCropDialog.vue';
 import type { AgentConfig, PersonaPreset, PresetCharacter } from '@/composables/db';
 import type { SessionModelProfile } from '~/composables/bridge/session';
+import { FOLLOW_TIER_ID } from '~/stores/agent-config';
 // DEFAULT_CACHED_CHARACTER / DEFAULT_PLACEHOLDER_AVATAR are auto-imported from
 // ~/composables/defaultCharacter.
 import { logUtil } from '~/utils/log';
@@ -546,13 +547,6 @@ interface AgentToolGroupEntry {
   tools: Array<{ name: string }>;
 }
 
-/** One env-config model profile row (the shape `useLlmProfilesStore` exposes). */
-interface AgentProfileEntry {
-  id: string;
-  label: string;
-  params: Record<string, string>;
-}
-
 // ── 工具 / 中间件 / 子代理模型 drafts (the preset's `agent` block) ──────────
 // The catalog (tool groups, middleware lock flags, roles) comes from the backend
 // once; the drafts below are what 保存预设 stores and 应用 writes to the session.
@@ -579,7 +573,7 @@ const agentEnabledTools = computed<string[]>(() => {
 
 /** Select-options: "follow the role tier" + every env-config profile. */
 const agentRoleModelOptions = computed<Array<{ label: string; value: string }>>(() => [
-  { label: t('config.agent.subagents.followTier'), value: '' },
+  { label: t('config.agent.subagents.followTier'), value: FOLLOW_TIER_ID },
   ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
 ]);
 
@@ -649,7 +643,7 @@ const toggleMiddleware = (name: string): void => {
  * The profile id a role's picker shows (`''` = follow the tier).
  * @param role
  */
-const agentRoleModelId = (role: string): string => agentRoleModels.value[role] ?? '';
+const agentRoleModelId = (role: string): string => agentRoleModels.value[role] || FOLLOW_TIER_ID;
 
 /**
  * Point one role at an env-config profile (or back at its tier).
@@ -657,7 +651,11 @@ const agentRoleModelId = (role: string): string => agentRoleModels.value[role] ?
  * @param profileId Chosen profile id (`''` = follow the tier).
  */
 const setRoleModel = (role: string, profileId: string): void => {
-  agentRoleModels.value = { ...agentRoleModels.value, [role]: String(profileId ?? '') };
+  const chosen = String(profileId ?? '');
+  agentRoleModels.value = {
+    ...agentRoleModels.value,
+    [role]: chosen === FOLLOW_TIER_ID ? '' : chosen
+  };
 };
 
 /**
@@ -675,7 +673,7 @@ const buildAgentDraft = (): AgentConfig => {
       continue;
     }
     const profile = llmProfiles.byId('MAIN_LLM', profileId);
-    models[role.role] = profile ? descriptorForProfile(profile) : null;
+    models[role.role] = profile ? llmProfiles.toSessionProfile(profile) : null;
   }
   const anyModel = Object.values(models).some(value => value !== null);
   const block: AgentConfig = {};
@@ -685,30 +683,6 @@ const buildAgentDraft = (): AgentConfig => {
   }
   if (anyModel) block.subagent_models = models;
   return block;
-};
-
-/**
- * The bridge descriptor for one env-config profile (the same shape the session
- * model picker sends).
- * @param profileEntry Env-config profile row.
- */
-const descriptorForProfile = (profileEntry: AgentProfileEntry): SessionModelProfile => {
-  const params = profileEntry.params;
-  const pick = (...keys: string[]): string | undefined => {
-    for (const key of keys) {
-      const value = params[key];
-      if (value) return value;
-    }
-    return undefined;
-  };
-  return {
-    id: profileEntry.id,
-    label: profileEntry.label,
-    provider: pick('MAIN_LLM_PROVIDER', 'PROVIDER'),
-    model: pick('MAIN_LLM_NAME', 'MAIN_LLM_API_NAME', 'NAME', 'MODEL') ?? profileEntry.label,
-    base_url: pick('MAIN_LLM_API_BASE', 'MAIN_LLM_BASE_URL', 'BASE_URL'),
-    api_key: pick('MAIN_LLM_API_KEY', 'API_KEY')
-  };
 };
 
 /**

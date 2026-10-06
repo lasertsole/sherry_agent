@@ -16,6 +16,9 @@
     "maxVideos": "You can upload at most {count} video files",
     "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
   },
+  "sessionModelPicker": {
+    "pending": "Applies next turn"
+  },
   "chatBox": {
     "defaultAiName": "Sherry"
   },
@@ -200,7 +203,8 @@
         "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier.",
         "followTier": "Follow the role default",
         "tier": "Role default: {tier}",
-        "tierDepth": "No role definition: depth default"
+        "tierDepth": "No role definition: depth default",
+        "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
       },
       "role": {
         "general": "General",
@@ -214,7 +218,8 @@
         "middlewares": "Disabled middlewares: {names}",
         "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
-      }
+      },
+      "readonlyHint": "Read-only — change it in 菜单-预设 (Presets)"
     },
     "llm": {
       "add": "Add model",

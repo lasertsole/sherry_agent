@@ -63,26 +63,129 @@
             :data-test="`session-preset-content-${item.file}`"
             >{{ payload.content[item.file] || t('personaPreset.empty') }}</pre>
         </TabPanel>
-        <!-- The preset's 工具 / 中间件 / 子代理模型 selection, summarised read-only
-             (the session's own config is the live truth; this is what the preset
-             carries and writes on apply). -->
+        <!-- The SESSION's own agent config, in the same three tabs the 预设 panel
+             edits: 工具 / 中间件 are read-only here (change them in 菜单-预设), while
+             子代理模型 is EDITABLE — a choice lands on the main agent's next turn
+             through the same park/promote path as the main-model switch. -->
         <TabPanel
-          value="agent"
+          value="agentTools"
           :header="t('config.agent.tabs.tools')">
           <div
-            class="flex flex-col gap-1 text-xs"
-            data-test="session-preset-agent-summary">
-            <div class="flex gap-1.5">
-              <span class="text-gray-500 dark:text-gray-400">{{ t('config.agent.tabs.tools') }}</span>
-              <span>{{ agentSummary.tools }}</span>
+            class="min-h-0 overflow-y-auto text-xs"
+            data-test="session-preset-tools-tab">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
+              <span class="text-gray-400">
+                {{
+                  t('config.agent.tools.count', {
+                    selected: sessionEnabledTools.length,
+                    total: agentStore.catalog.tools.length
+                  })
+                }}
+              </span>
             </div>
-            <div class="flex gap-1.5">
-              <span class="text-gray-500 dark:text-gray-400">{{ t('config.agent.tabs.middlewares') }}</span>
-              <span>{{ agentSummary.middlewares }}</span>
+            <div
+              v-for="group in agentStore.toolGroups"
+              :key="group.group"
+              class="mb-2 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
+              <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                {{ t(`config.agent.toolGroup.${group.group}`) }}
+              </div>
+              <div class="flex flex-wrap gap-x-4 gap-y-1">
+                <label
+                  v-for="tool in group.tools"
+                  :key="tool.name"
+                  class="flex items-center gap-1.5 text-gray-600 dark:text-gray-300">
+                  <Checkbox
+                    :model-value="sessionEnabledTools.includes(tool.name)"
+                    binary
+                    disabled
+                    :data-test="`session-preset-tool-${tool.name}`" />
+                  <span class="font-mono">{{ tool.name }}</span>
+                </label>
+              </div>
             </div>
-            <div class="flex gap-1.5">
-              <span class="text-gray-500 dark:text-gray-400">{{ t('config.agent.tabs.subagents') }}</span>
-              <span>{{ agentSummary.models }}</span>
+          </div>
+        </TabPanel>
+
+        <TabPanel
+          value="agentMiddlewares"
+          :header="t('config.agent.tabs.middlewares')">
+          <div
+            class="min-h-0 overflow-y-auto text-xs"
+            data-test="session-preset-middlewares-tab">
+            <div class="mb-2 text-gray-400">{{ t('config.agent.readonlyHint') }}</div>
+            <div
+              v-for="entry in agentStore.middlewares.gateable"
+              :key="entry.name"
+              class="mb-1 flex items-center justify-between gap-2 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+              <div class="min-w-0">
+                <div class="truncate text-theme-main">{{ t(`config.agent.middleware.${entry.name}.name`) }}</div>
+                <div class="truncate text-gray-400">{{ t(`config.agent.middleware.${entry.name}.desc`) }}</div>
+              </div>
+              <ToggleSwitch
+                :model-value="!sessionDisabledMiddlewares.includes(entry.name)"
+                disabled
+                :data-test="`session-preset-middleware-${entry.name}`" />
+            </div>
+            <div class="mt-3">
+              <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                {{ t('config.agent.middlewares.lockedTitle') }}
+              </div>
+              <div class="flex flex-wrap gap-1">
+                <span
+                  v-for="entry in agentStore.middlewares.locked"
+                  :key="entry.name"
+                  class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
+                  <i class="pi pi-lock text-[9px]" />
+                  {{ entry.name }}
+                </span>
+              </div>
+            </div>
+          </div>
+        </TabPanel>
+
+        <TabPanel
+          value="agentSubagents"
+          :header="t('config.agent.tabs.subagents')">
+          <div
+            class="min-h-0 overflow-y-auto text-xs"
+            data-test="session-preset-subagents-tab">
+            <div class="mb-2 flex items-center gap-2 text-gray-400">
+              <span>{{ t('config.agent.subagents.sessionHint') }}</span>
+              <span
+                v-if="agentStore.isPending(sessionId)"
+                class="inline-flex shrink-0 items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                data-test="session-preset-models-pending">
+                <i class="pi pi-clock text-[9px]" />
+                {{ t('sessionModelPicker.pending') }}
+              </span>
+            </div>
+            <div
+              v-for="role in agentStore.subagentRoles"
+              :key="role.role"
+              class="mb-2 flex items-center justify-between gap-3 rounded-lg border border-solid border-gray-light px-3 py-2 dark:border-[#555]">
+              <div class="min-w-0">
+                <div class="truncate text-theme-main">
+                  {{ t(`config.agent.role.${role.role}`) }}
+                  <span class="ml-1 font-mono text-[11px] text-gray-400">{{ role.role }}</span>
+                </div>
+                <div class="truncate text-gray-400">
+                  {{
+                    role.model_tier
+                      ? t('config.agent.subagents.tier', { tier: role.model_tier })
+                      : t('config.agent.subagents.tierDepth')
+                  }}
+                </div>
+              </div>
+              <Select
+                :model-value="roleModelId(role.role)"
+                :options="roleModelOptions"
+                option-label="label"
+                option-value="value"
+                class="w-52"
+                :data-test="`session-preset-role-model-${role.role}`"
+                @update:model-value="value => setRoleModel(role.role, value)" />
             </div>
           </div>
         </TabPanel>
@@ -97,6 +200,7 @@ import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 import type { SessionPresetBinding } from '@/composables/db';
 import type { PersonaPresetPayload } from '@/composables/persona-catalog';
+import { FOLLOW_TIER_ID } from '~/stores/agent-config';
 import { logUtil } from '~/utils/log';
 
 const { t, locale } = useI18n();
@@ -116,27 +220,45 @@ const PREVIEW_FILES: ReadonlyArray<{ file: string; tabKey: string }> = [
 /** The saved presets (shared singleton); built-ins come from the catalogue. */
 const { presets } = usePersonaPresets();
 
+const llmProfiles = useLlmProfilesStore();
+
+/** The session's EFFECTIVE agent config (the session is the live truth here). */
+const sessionEnabledTools = computed<string[]>(() => (sessionId.value ? agentStore.enabledTools(sessionId.value) : []));
+const sessionDisabledMiddlewares = computed<string[]>(() =>
+  sessionId.value ? agentStore.disabledMiddlewares(sessionId.value) : []
+);
+
+/** Select options: "follow the role tier" + every env-config profile. */
+const roleModelOptions = computed<Array<{ label: string; value: string }>>(() => [
+  { label: t('config.agent.subagents.followTier'), value: FOLLOW_TIER_ID },
+  ...llmProfiles.listFor('MAIN_LLM').map(profile => ({ label: profile.label, value: profile.id }))
+]);
+
 /**
- * Read-only summary of the preset's agent block: the tool count (the total comes
- * from the catalogue, so "no config" reads as every tool), the disabled
- * middleware names and the per-role model labels.
+ * The profile id a role currently points at ('' = follow the role tier).
+ * @param role
  */
-const agentSummary = computed<{ tools: string; middlewares: string; models: string }>(() => {
-  const block = payload.value?.agent ?? {};
-  const total = agentStore.catalog.tools.length;
-  const selected = Array.isArray(block.tools) ? block.tools.length : total;
-  const disabled = block.middlewares_disabled ?? [];
-  const models = Object.entries(block.subagent_models ?? {})
-    .filter(([, profile]) => !!profile)
-    .map(([role, profile]) => `${role} → ${profile?.label || profile?.model || ''}`);
-  return {
-    tools: t('config.agent.viewer.tools', { selected, total }),
-    middlewares: disabled.length
-      ? t('config.agent.viewer.middlewares', { names: disabled.join(', ') })
-      : t('config.agent.viewer.middlewaresNone'),
-    models: models.length ? t('config.agent.viewer.models', { names: models.join('; ') }) : '—'
-  };
-});
+const roleModelId = (role: string): string =>
+  agentStore.configOf(sessionId.value).subagent_models?.[role]?.id ?? FOLLOW_TIER_ID;
+
+/**
+ * Point one role at an env-config profile (or back at its tier) and write it to
+ * the SESSION: the whole payload is merged (tools / middlewares preserved) and
+ * the backend parks it until the turn boundary when a turn is in flight — the
+ * same contract as switching the main model.
+ * @param role Functional role.
+ * @param profileId Chosen profile id ('' = follow the role tier).
+ */
+const setRoleModel = async (role: string, profileId: string): Promise<void> => {
+  const sid = sessionId.value;
+  if (!sid) return;
+  const chosen = String(profileId ?? '');
+  const profile = chosen && chosen !== FOLLOW_TIER_ID ? llmProfiles.byId('MAIN_LLM', chosen) : undefined;
+  const current = agentStore.configOf(sid);
+  const models = { ...(current.subagent_models ?? {}) };
+  models[role] = profile ? llmProfiles.toSessionProfile(profile) : null;
+  await agentStore.save(sid, { ...current, subagent_models: models });
+};
 
 /** Session whose binding is shown — the tab stays open across session switches. */
 const sessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
@@ -203,9 +325,10 @@ const loadBinding = async () => {
 watch(
   [sessionId, () => locale.value],
   () => {
-    // The catalogue backs the agent summary's "n / total" tool count; both are
-    // cheap and idempotent, so the watcher reloads them with the binding.
+    // The catalogue backs the tabs; the per-session config is what the three
+    // agent tabs display (and 子代理模型 edits) — both are cheap and idempotent.
     void agentStore.loadCatalog();
+    if (sessionId.value) void agentStore.hydrate(sessionId.value);
     void loadBinding();
   },
   { immediate: true }

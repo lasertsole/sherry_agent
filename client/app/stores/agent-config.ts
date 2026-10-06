@@ -26,6 +26,13 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
  * A missing config key means "no opinion": every tool on, every middleware on,
  * every role on its `model_tier` — the backend contract the payload mirrors.
  */
+/**
+ * Sentinel id of the "follow the role's model_tier" option. A NON-empty value on
+ * purpose: PrimeVue's Select renders an empty-string value as an empty box, so the
+ * picker would look unset instead of showing its default entry.
+ */
+export const FOLLOW_TIER_ID = 'tier';
+
 export const useAgentConfigStore = defineStore('agentConfig', () => {
   /** The tool / middleware / role lists (empty until the first load). */
   const catalog = ref<AgentCatalog>({ tools: [], middlewares: [], subagent_roles: [] });
@@ -100,6 +107,15 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
   }
 
   /**
+   * Gateable middleware names the session turned OFF ([] = every switch on).
+   * @param sessionId
+   */
+  function disabledMiddlewares(sessionId: string): string[] {
+    const disabled = configOf(sessionId).middlewares_disabled;
+    return Array.isArray(disabled) ? disabled : [];
+  }
+
+  /**
    * Whether the session's choice is parked (lands on the next turn).
    * @param sessionId
    */
@@ -131,6 +147,7 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
     hydrate,
     configOf,
     enabledTools,
+    disabledMiddlewares,
     isPending,
     save
   };

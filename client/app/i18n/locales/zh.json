@@ -16,6 +16,9 @@
     "maxVideos": "最多只能上传 {count} 段视频",
     "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
   },
+  "sessionModelPicker": {
+    "pending": "下一轮生效"
+  },
   "chatBox": {
     "defaultAiName": "雪莉"
   },
@@ -200,7 +203,8 @@
         "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
         "followTier": "跟随角色默认",
         "tier": "角色默认：{tier}",
-        "tierDepth": "无角色定义：按深度默认"
+        "tierDepth": "无角色定义：按深度默认",
+        "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
       },
       "role": {
         "general": "通用",
@@ -214,7 +218,8 @@
         "middlewares": "关闭的中间件：{names}",
         "middlewaresNone": "中间件：全部开启",
         "models": "子代理模型：{names}"
-      }
+      },
+      "readonlyHint": "只读：如需修改请到「菜单-预设」"
     },
     "llm": {
       "add": "添加模型",

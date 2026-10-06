@@ -1,4 +1,5 @@
 import { defineStore } from 'pinia';
+import type { SessionModelProfile } from '~/composables/bridge/session';
 
 /**
  * Per-group model profiles for the environment-config panel.
@@ -141,6 +142,30 @@ export const useLlmProfilesStore = defineStore(
     const byId = (group: string, id: string | null): LlmProfile | undefined =>
       id === null ? undefined : listFor(group).find(p => p.id === id);
 
+    /**
+     * The bridge descriptor for one profile — the shape `PUT /sessions/model` and
+     * `AGENT_CONFIG.subagent_models` accept (env-config parameter keys mapped to
+     * their transport fields).
+     * @param profile Env-config profile row.
+     */
+    const toSessionProfile = (profile: LlmProfile): SessionModelProfile => {
+      const pick = (...keys: string[]): string | undefined => {
+        for (const key of keys) {
+          const value = profile.params[key];
+          if (value) return value;
+        }
+        return undefined;
+      };
+      return {
+        id: profile.id,
+        label: profile.label,
+        provider: pick('MAIN_LLM_PROVIDER', 'PROVIDER'),
+        model: pick('MAIN_LLM_NAME', 'MAIN_LLM_API_NAME', 'NAME', 'MODEL') ?? profile.label,
+        base_url: pick('MAIN_LLM_API_BASE', 'MAIN_LLM_BASE_URL', 'BASE_URL'),
+        api_key: pick('MAIN_LLM_API_KEY', 'API_KEY')
+      };
+    };
+
     /** Test seam: drop all client-side profiles and active markers. */
     const _resetForTest = (): void => {
       byGroup.value = {};
@@ -158,6 +183,7 @@ export const useLlmProfilesStore = defineStore(
       remove,
       setActive,
       byId,
+      toSessionProfile,
       _resetForTest
     };
   },

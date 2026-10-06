@@ -16,6 +16,9 @@
     "maxVideos": "最大 {count} 個の動画をアップロードできます",
     "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています"
   },
+  "sessionModelPicker": {
+    "pending": "次のターンで反映"
+  },
   "chatBox": {
     "defaultAiName": "シェリー"
   },
@@ -200,7 +203,8 @@
         "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
         "followTier": "ロール既定に従う",
         "tier": "ロール既定: {tier}",
-        "tierDepth": "ロール定義なし: 深度の既定"
+        "tierDepth": "ロール定義なし: 深度の既定",
+        "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
       },
       "role": {
         "general": "汎用",
@@ -214,7 +218,8 @@
         "middlewares": "無効なミドルウェア: {names}",
         "middlewaresNone": "ミドルウェア: すべて有効",
         "models": "サブエージェント モデル: {names}"
-      }
+      },
+      "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセット」で行います"
     },
     "llm": {
       "add": "モデルを追加",
