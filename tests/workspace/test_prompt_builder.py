@@ -280,6 +280,7 @@ class TestSessionSkillSelection:
     def test_the_session_selection_is_read_from_the_register(self, workspace, monkeypatch):
         from runtime.session.state_register import state_register_mem
         from runtime.session.state_keys import StateKey
+        from skills.loader import REQUIRED_SKILLS
         from workspace.prompt_builder import build_system_prompt
 
         calls = self._recorder(monkeypatch)
@@ -289,13 +290,15 @@ class TestSessionSkillSelection:
 
         build_system_prompt(session_id="sess-skills-picked")
 
-        assert calls[-1]["names"] == ["alpha", "beta"]
+        assert calls[-1]["names"] == sorted({"alpha", "beta", *REQUIRED_SKILLS})
         assert calls[-1]["exact"] is True
 
     def test_an_empty_selection_is_exact(self, workspace, monkeypatch):
-        """Unchecking everything must NOT fall back to every skill."""
+        """Unchecking everything must NOT fall back to every skill — the media
+        chain is all that remains (the legal minimum)."""
         from runtime.session.state_register import state_register_mem
         from runtime.session.state_keys import StateKey
+        from skills.loader import REQUIRED_SKILLS
         from workspace.prompt_builder import build_system_prompt
 
         calls = self._recorder(monkeypatch)
@@ -303,12 +306,13 @@ class TestSessionSkillSelection:
 
         build_system_prompt(session_id="sess-skills-empty")
 
-        assert calls[-1]["names"] == []
+        assert calls[-1]["names"] == sorted(REQUIRED_SKILLS)
         assert calls[-1]["exact"] is True
 
     def test_an_explicit_argument_outranks_the_session(self, workspace, monkeypatch):
         from runtime.session.state_register import state_register_mem
         from runtime.session.state_keys import StateKey
+        from skills.loader import REQUIRED_SKILLS
         from workspace.prompt_builder import build_system_prompt
 
         calls = self._recorder(monkeypatch)
@@ -318,7 +322,24 @@ class TestSessionSkillSelection:
 
         build_system_prompt(selected_skill_names=["gamma"], session_id="sess-skills-arg")
 
-        assert calls[-1]["names"] == ["gamma"]
+        assert calls[-1]["names"] == sorted({"gamma", *REQUIRED_SKILLS})
+
+    def test_the_required_multimedia_skills_are_unioned_back_in(self, workspace, monkeypatch):
+        """A session config cannot drop the media chain (image/audio/video/text_to_image)."""
+        from runtime.session.state_register import state_register_mem
+        from runtime.session.state_keys import StateKey
+        from skills.loader import REQUIRED_SKILLS
+        from workspace.prompt_builder import build_system_prompt
+
+        calls = self._recorder(monkeypatch)
+        state_register_mem.set_state(
+            "sess-skills-req", StateKey.AGENT_CONFIG, {"skills": ["alpha"]}
+        )
+
+        build_system_prompt(session_id="sess-skills-req")
+
+        assert calls[-1]["names"] == sorted({"alpha", *REQUIRED_SKILLS})
+        assert calls[-1]["exact"] is True
 
     def test_a_caller_without_a_session_stays_unfiltered(self, workspace, monkeypatch):
         from workspace.prompt_builder import build_system_prompt

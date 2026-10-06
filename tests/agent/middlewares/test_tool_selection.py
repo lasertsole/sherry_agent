@@ -238,6 +238,41 @@ def test_the_switch_is_fail_open_on_a_broken_read(monkeypatch):
     assert middleware_enabled(SESSION, "TaskIntentMiddleware") is True
 
 
+def test_the_middleware_option_reader_defaults_and_reads_the_register():
+    from agent.middlewares.agent_switch import middleware_option
+
+    # No session / no config / malformed payload → the default (True = on).
+    assert middleware_option(None, "Summarization", "nudge") is True
+    assert middleware_option(SESSION, "Summarization", "nudge") is True
+    _set_config({"middleware_options": "nope"})
+    assert middleware_option(SESSION, "Summarization", "nudge") is True
+
+    # An explicit false wins; an unknown option name falls back to the default.
+    _set_config({"middleware_options": {"Summarization": {"nudge": False}}})
+    assert middleware_option(SESSION, "Summarization", "nudge") is False
+    assert middleware_option(SESSION, "Summarization", "other") is True
+    assert middleware_option(SESSION, "Summarization", "other", default=False) is False
+
+
+def test_a_disabled_session_skips_the_compression_nudges(monkeypatch):
+    """预设-中间件 → Summarization → nudge off: nothing is dispatched."""
+    import agent.middlewares.summarization.nudges as nudges
+
+    _set_config({"middleware_options": {"Summarization": {"nudge": False}}})
+    ran: list[str] = []
+    monkeypatch.setattr(nudges, "_nudge_memory", lambda *a, **k: ran.append("memory"))
+
+    class _Loop:
+        @staticmethod
+        def get_running_loop():
+            raise RuntimeError("no loop")
+
+    scheduled = nudges.schedule_compression_nudges(SESSION, [])
+
+    assert scheduled is False
+    assert ran == []
+
+
 def test_a_disabled_task_intent_middleware_never_steers():
     from agent.middlewares.task_intent import TaskIntentMiddleware
 

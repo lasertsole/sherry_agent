@@ -197,6 +197,31 @@ class TestScanSkillsBehavior:
         }
         assert all(isinstance(entry["description"], str) for entry in catalog)
 
+    def test_skills_catalog_marks_the_multimedia_chain_required_and_lists_it_first(
+        self, skills_tree, monkeypatch
+    ):
+        monkeypatch.setattr(loader_mod, "read_skills_snapshot", lambda: None)
+        _write_skill(skills_tree, "skills/builtin/core/image_to_text", "image_to_text")
+        _write_skill(skills_tree, "skills/builtin/core/text_to_image", "text_to_image")
+
+        catalog = loader_mod.skills_catalog()
+
+        # Required first (the locked rows lead the list), then the rest by name.
+        assert [entry["name"] for entry in catalog] == [
+            "image_to_text",
+            "text_to_image",
+            "alpha",
+            "beta",
+        ]
+        assert {entry["name"]: entry["required"] for entry in catalog} == {
+            "image_to_text": True,
+            "text_to_image": True,
+            "alpha": False,
+            "beta": False,
+        }
+        assert loader_mod.skill_required("speech_to_text") is True
+        assert loader_mod.skill_required("alpha") is False
+
     def test_skills_catalog_hides_subagent_only_skills_from_main(self, skills_tree, monkeypatch):
         monkeypatch.setattr(loader_mod, "read_skills_snapshot", lambda: None)
         skill_md = skills_tree / "skills" / "builtin" / "core" / "beta" / "SKILL.md"

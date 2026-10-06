@@ -261,6 +261,13 @@ def test_the_middleware_catalog_marks_the_required_set():
 # ----------------------------------------------------------------------
 
 
+def _skill_selection(*optional: str) -> list[str]:
+    """A VALID ``skills`` payload: the required media chain plus the given names."""
+    from skills.loader import REQUIRED_SKILLS
+
+    return [*sorted(REQUIRED_SKILLS), *optional]
+
+
 def _tool_selection(*optional: str) -> list[str]:
     """A VALID ``tools`` payload: every required name plus the given optional ones.
 
@@ -383,16 +390,43 @@ def test_get_agent_config_state_is_empty_for_an_unset_session(registers):
 
 
 def test_sanitize_accepts_a_skill_selection_and_an_empty_one(real_skill_names, monkeypatch):
-    monkeypatch.setattr(service, "_skill_names", lambda: real_skill_names)
-    picked = sorted(real_skill_names)[:2]
+    from skills.loader import REQUIRED_SKILLS
 
-    cleaned = service.sanitize_agent_config({"skills": [*picked, picked[0]]})
+    monkeypatch.setattr(service, "_skill_names", lambda: real_skill_names)
+    picked = _skill_selection("clawhub")
+
+    cleaned = service.sanitize_agent_config({"skills": [*picked, *sorted(REQUIRED_SKILLS)]})
 
     # Deduplicated, caller order preserved…
     assert cleaned["skills"] == picked
-    # …and an EMPTY list is a legal, explicit choice (no skill in the index).
-    assert service.sanitize_agent_config({"skills": []}) == {"skills": []}
+    # …and "only the required chain" is the legal minimum (nothing else).
+    assert service.sanitize_agent_config({"skills": sorted(REQUIRED_SKILLS)}) == {
+        "skills": sorted(REQUIRED_SKILLS)
+    }
     assert service.sanitize_agent_config({"skills": None}) == {"skills": None}
+
+
+def _required_skill_names() -> set[str]:
+    from skills.loader import REQUIRED_SKILLS
+
+    return set(REQUIRED_SKILLS)
+
+
+def test_sanitize_requires_the_multimedia_skills(real_skill_names, monkeypatch):
+    from skills.loader import REQUIRED_SKILLS
+
+    monkeypatch.setattr(service, "_skill_names", lambda: real_skill_names)
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config({"skills": ["clawhub"]})
+
+    message = str(exc.value)
+    assert "required skill(s) cannot be dropped" in message
+    for name in sorted(REQUIRED_SKILLS):
+        assert name in message, name
+
+    # Including them is accepted verbatim (order preserved).
+    payload = [*sorted(REQUIRED_SKILLS), "clawhub"]
+    assert service.sanitize_agent_config({"skills": payload}) == {"skills": payload}
 
 
 def test_sanitize_rejects_an_unknown_skill_name(real_skill_names, monkeypatch):
@@ -412,7 +446,9 @@ async def test_a_live_write_clears_the_cached_system_prompt(registers):
     mem.set_state("sess-p", str(StateKey.SYSTEM_PROMPT), "CACHED-PROMPT")
     db.set_state("sess-p", str(StateKey.SYSTEM_PROMPT), "CACHED-PROMPT")
 
-    _cleaned, pending = await service.apply_agent_config_choice("sess-p", {"skills": []})
+    _cleaned, pending = await service.apply_agent_config_choice(
+        "sess-p", {"skills": sorted(_required_skill_names())}
+    )
 
     assert pending is False
     assert mem.get_state("sess-p", str(StateKey.SYSTEM_PROMPT), None) is None
@@ -428,7 +464,9 @@ async def test_a_parked_write_clears_it_at_promotion(registers, monkeypatch):
     monkeypatch.setattr(settings_service, "_session_turn_active", lambda _sid: True)
     mem.set_state("sess-q", str(StateKey.SYSTEM_PROMPT), "CACHED-PROMPT")
 
-    _cleaned, pending = await service.apply_agent_config_choice("sess-q", {"skills": ["clawhub"]})
+    _cleaned, pending = await service.apply_agent_config_choice(
+        "sess-q", {"skills": _skill_selection("clawhub")}
+    )
 
     assert pending is True
     assert mem.get_state("sess-q", str(StateKey.SYSTEM_PROMPT), None) == "CACHED-PROMPT"
@@ -437,6 +475,43 @@ async def test_a_parked_write_clears_it_at_promotion(registers, monkeypatch):
 
     assert "agent_config" in promoted
     assert mem.get_state("sess-q", str(StateKey.SYSTEM_PROMPT), None) is None
+
+
+def test_sanitize_accepts_the_nudge_option_and_rejects_bad_shapes(registers):
+    # Only the whitelisted (middleware, option) pairs, booleans only.
+    assert service.sanitize_agent_config(
+        {"middleware_options": {"Summarization": {"nudge": False}}}
+    ) == {"middleware_options": {"Summarization": {"nudge": False}}}
+
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config({"middleware_options": {"PathGuard": {"nudge": True}}})
+    assert "PathGuard" in str(exc.value)
+
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config({"middleware_options": {"Summarization": {"speed": 1}}})
+    assert "speed" in str(exc.value)
+
+    with pytest.raises(service.AgentConfigError):
+        service.sanitize_agent_config({"middleware_options": {"Summarization": {"nudge": "yes"}}})
+
+
+def test_the_nudge_option_requires_the_memory_tool(real_tool_names, monkeypatch):
+    """The nudge writes to memory with the `memory` tool — no tool, no nudge."""
+    monkeypatch.setattr(service, "_tool_names", lambda: real_tool_names)
+    without_memory = [name for name in _tool_selection() if name != "memory"]
+
+    with pytest.raises(service.AgentConfigError) as exc:
+        service.sanitize_agent_config(
+            {"tools": without_memory, "middleware_options": {"Summarization": {"nudge": True}}}
+        )
+    assert "memory" in str(exc.value)
+
+    # Disabled is always fine, and an absent `tools` key means "every tool"
+    # (memory included), so the option is accepted there too.
+    service.sanitize_agent_config(
+        {"tools": without_memory, "middleware_options": {"Summarization": {"nudge": False}}}
+    )
+    service.sanitize_agent_config({"middleware_options": {"Summarization": {"nudge": True}}})
 
 
 # ----------------------------------------------------------------------

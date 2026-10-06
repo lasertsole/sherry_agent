@@ -44,7 +44,20 @@ __all__ = [
 ]
 
 #: Top-level payload keys (unknown keys are rejected).
-_CONFIG_FIELDS = ("tools", "middlewares_disabled", "subagent_models", "skills")
+_CONFIG_FIELDS = (
+    "tools",
+    "middlewares_disabled",
+    "subagent_models",
+    "skills",
+    "middleware_options",
+)
+
+#: Per-middleware options a REQUIRED entry exposes (middleware -> option -> default).
+#: Required entries cannot be switched off, so their tuning rides here instead;
+#: ``Summarization``'s nudge is the first (a second option means a new row here).
+_MIDDLEWARE_OPTIONS: dict[str, dict[str, bool]] = {
+    "Summarization": {"nudge": True},
+}
 
 
 class AgentConfigError(ValueError):
@@ -78,6 +91,13 @@ def _skill_names() -> set[str]:
     from skills.loader import skills_catalog
 
     return {entry["name"] for entry in skills_catalog()}
+
+
+def _required_skill_names() -> set[str]:
+    """Skills every payload must keep (the multimedia chain)."""
+    from skills.loader import REQUIRED_SKILLS
+
+    return set(REQUIRED_SKILLS)
 
 
 def invalidate_session_prompt(session_id: str) -> None:
@@ -193,8 +213,47 @@ def sanitize_agent_config(payload: object) -> dict[str, Any]:
             unknown_skills = sorted(set(wanted_skills) - known_skills)
             if unknown_skills:
                 raise AgentConfigError(f"unknown skill(s): {', '.join(unknown_skills)}")
+            # The multimedia chain is REQUIRED (locked in the UI). The union in
+            # workspace.prompt_builder covers older register values; a NEW payload
+            # that omits one is refused outright, mirroring the required tools.
+            dropped_skills = sorted(_required_skill_names() - set(wanted_skills))
+            if dropped_skills:
+                raise AgentConfigError(
+                    f"required skill(s) cannot be dropped: {', '.join(dropped_skills)}"
+                )
             # An EMPTY list is a legal, explicit choice: no skill in the index.
             cleaned["skills"] = list(dict.fromkeys(wanted_skills))
+
+    if "middleware_options" in payload:
+        options = payload["middleware_options"]
+        if not isinstance(options, dict):
+            raise AgentConfigError("'middleware_options' must be an object")
+        unknown_mw = sorted(set(options) - set(_MIDDLEWARE_OPTIONS))
+        if unknown_mw:
+            raise AgentConfigError(f"unknown middleware option section(s): {', '.join(unknown_mw)}")
+        cleaned_options: dict[str, dict[str, bool]] = {}
+        for middleware, section in options.items():
+            if not isinstance(section, dict):
+                raise AgentConfigError(f"middleware_options.{middleware} must be an object")
+            known = _MIDDLEWARE_OPTIONS[middleware]
+            unknown = sorted(set(section) - set(known))
+            if unknown:
+                raise AgentConfigError(f"unknown option(s) for {middleware}: {', '.join(unknown)}")
+            entry: dict[str, bool] = {}
+            for option, value in section.items():
+                if not isinstance(value, bool):
+                    raise AgentConfigError(
+                        f"middleware_options.{middleware}.{option} must be a boolean"
+                    )
+                entry[option] = value
+            cleaned_options[middleware] = entry
+        # The nudge writes to memory with the `memory` tool: enabling it while the
+        # payload switches that tool off is a contradiction, not a preference.
+        nudge = cleaned_options.get("Summarization", {}).get("nudge")
+        tools_list = cleaned.get("tools")
+        if nudge is True and isinstance(tools_list, list) and "memory" not in tools_list:
+            raise AgentConfigError("Summarization.nudge requires the 'memory' tool to be enabled")
+        cleaned["middleware_options"] = cleaned_options
 
     if "subagent_models" in payload:
         models = payload["subagent_models"]

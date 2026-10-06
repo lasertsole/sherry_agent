@@ -300,6 +300,13 @@ def build_system_prompt(
         from runtime.session.agent_config_view import session_skill_names
 
         selection = session_skill_names(session_id)
+    if selection is not None:
+        # The media chain (image/audio/video → text, text → image) is REQUIRED:
+        # a session config may not drop it, and a register value written before
+        # the rule existed cannot either — same guard as the required tools.
+        from skills.loader import REQUIRED_SKILLS
+
+        selection = sorted(set(selection) | REQUIRED_SKILLS)
     skill_paths: str = get_skills_text(selection, caller_scope="main", exact=selection is not None)
 
     # --- Workspace persona block --------------------------------------

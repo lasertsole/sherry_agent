@@ -460,7 +460,16 @@ def schedule_compression_nudges(session_id: str, messages: Sequence[BaseMessage]
     completion cycle). While a nudge is in flight, dispatch is skipped
     entirely — nothing is queued. With no running event loop (the sync
     compression path outside an async caller) scheduling is skipped entirely.
+
+    A session may turn the nudges OFF (预设-中间件 → Summarization → nudge, the
+    one option a REQUIRED middleware exposes; the service only accepts it beside
+    an enabled ``memory`` tool, which is what the memory review writes with).
     """
+    from agent.middlewares.agent_switch import middleware_option
+
+    if not middleware_option(session_id, "Summarization", "nudge"):
+        logger.debug("compression nudges: disabled by the session config ({})", session_id)
+        return False
     try:
         asyncio.get_running_loop()
     except RuntimeError:

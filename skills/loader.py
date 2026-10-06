@@ -174,29 +174,55 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
 #: in the SKILL.md).
 _DESCRIPTION_MAX_CHARS = 240
 
+#: Skills no session config may drop: the multimedia handling chain. A user can
+#: send an image / an audio clip / a video at any moment, and these are what turn
+#: it into something the model can read (or, for ``text_to_image``, what lets it
+#: answer with one) — 预设-技能 shows them as locked rows and
+#: ``agent_config_service`` refuses a payload that omits one.
+REQUIRED_SKILLS: frozenset[str] = frozenset(
+    {
+        "image_to_text",
+        "speech_to_text",
+        "video_text_to_text",
+        "text_to_image",
+    }
+)
+
+
+def skill_required(name: str) -> bool:
+    """Whether *name* may never be left out of a session's skill index."""
+    return name in REQUIRED_SKILLS
+
 
 def skills_catalog(caller_scope: str = "main") -> list[dict[str, Any]]:
-    """The skills the 技能 tab lists: ``[{name, description, builtin}, ...]``.
+    """The skills the 技能 tab lists: ``[{name, description, builtin, required}, ...]``.
 
     Only what the index can actually contain: skills VISIBLE to *caller_scope*
     and currently active (an inactive uploaded skill is toggled in 菜单-技能, and
     listing it here would let a preset select something the index never shows).
-    ``builtin`` is the 第三方 split — everything outside ``skills/plugins/``.
+    ``builtin`` is the 第三方 split — everything outside ``skills/plugins/`` —
+    and ``required`` mirrors :data:`REQUIRED_SKILLS`.
+
+    Required skills come FIRST: the UI renders this order, and the locked
+    multimedia rows belong at the top where they read as the baseline.
 
     @param caller_scope The perspective the list is filtered for (main/subagent).
-    @returns The catalogue, sorted by name (as :func:`scan_skills` returns it).
+    @returns The catalogue, required-first, then by name.
     """
     catalog: list[dict[str, Any]] = []
     for skill in scan_skills():
         if not skill.get("active", True) or not _skill_visible_to(skill, caller_scope):
             continue
+        name = str(skill.get("name", ""))
         catalog.append(
             {
-                "name": str(skill.get("name", "")),
+                "name": name,
                 "description": str(skill.get("description", ""))[:_DESCRIPTION_MAX_CHARS],
                 "builtin": not _is_third_party(str(skill.get("location", ""))),
+                "required": skill_required(name),
             }
         )
+    catalog.sort(key=lambda entry: (not entry["required"], entry["name"]))
     return catalog
 
 
