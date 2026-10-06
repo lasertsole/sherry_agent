@@ -24,6 +24,7 @@
     "originTaskIntent": "任务意图",
     "originQualityGate": "质量门控",
     "originTodoNudge": "待办提醒",
+    "originProjectDir": "项目目录切换",
     "originSystem": "系统消息",
     "tokenGuard": {
       "title": "模型配置不达标",

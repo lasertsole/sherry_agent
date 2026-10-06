@@ -216,6 +216,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 合流は構造的に成立する — 意味を持つのは送信時点の比較だけ: 2 つのメッセージ間で何度切り替えても通知は 1 つだけで最終ルートを指し、元のルートに戻した場合は通知が出ず、ベースラインはターンが実際に始まったときにだけ進む。値は両方の状態レジスタに書き込まれ（`record_announced_project_dir`）、`prime_mem_from_store()` が起動時に再ウォームするため、再起動でエージェントが知るべき変更が黙って再ベースライン化されることはない。
 
+通知は `metadata={"origin": "project_dir", "internal": True}` を伴い、永続化層はその origin を AI 行に保持するため、チャットはアシスタントの吹き出しではなく中立のシステム カード（ラベル **作業ディレクトリ**、フォルダー アイコン）として描画します — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` は USER 行と同様に AI 行の非 `user` origin もキャリアとして扱います。
+
 `HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
 
 ### MultimodalProcessor

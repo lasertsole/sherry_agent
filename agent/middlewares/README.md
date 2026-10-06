@@ -216,6 +216,8 @@ Registered right after `system_prompt_injection`: the prompt renders the CURRENT
 
 Coalescing is by construction — only the comparison at send time matters: any number of switches between two messages produce a single notice naming the FINAL root, a switch that ends where it started produces none, and the baseline advances only when a turn actually starts. The value is written to both state registers (`record_announced_project_dir`) and `prime_mem_from_store()` re-warms it at startup, so a restart cannot silently re-baseline a change the agent still needs to hear about.
 
+The notice carries `metadata={"origin": "project_dir", "internal": True}` and the persistence layer keeps that origin on the AI row, so the chat renders it as a neutral system card (label **Working directory**, folder glyph) instead of an assistant bubble — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` treats a non-`user` origin as a carrier on AI rows as well as USER rows.
+
 The `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notice instead. Fail-open: any error is logged and the hook returns `None`.
 
 ### MultimodalProcessor

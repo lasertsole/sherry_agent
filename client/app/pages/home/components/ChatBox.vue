@@ -29,13 +29,15 @@
           <div
             v-if="rowGroup(vRow.index).length"
             :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(rowGroup(vRow.index)) }]">
-            <!-- Background-task completion carrier / system-message card (USER row whose backend
-                 origin is non-user, e.g. "subagent_completion"): rendered as a centered, muted
-                 system card OUTSIDE the user bubble flow — the carrier announces a background
-                 subagent completion, it is not something the user said. The first line
-                 "[subagent:<name> <status>]" is self-describing and shown verbatim (no parsing).
-                 USER rows always form singleton turn groups (see turnGroups), so a group holding
-                 a carrier holds nothing else and the two loops below never interleave.
+            <!-- Injected-carrier / system-message card (a row whose backend origin is non-user,
+                 e.g. "subagent_completion" on a USER row, "project_dir" on an AI row): rendered
+                 as a centered, muted system card OUTSIDE the bubble flow — it is neither
+                 something the user said nor the assistant's reply. The completion carrier's
+                 first line "[subagent:<name> <status>]" is self-describing and shown verbatim
+                 (no parsing); the directory notice carries its full switch sentence.
+                 USER carriers form singleton turn groups (see turnGroups); an AI carrier sits
+                 at the end of the previous turn's group (the notice is spliced in FRONT of the
+                 turn's human message), and the two loops below never interleave either way.
                  Collapsible and COLLAPSED BY DEFAULT: the header names the source, the body (the
                  full announcement) appears on click, matching the thinking/tool-card idiom. -->
             <div
@@ -49,7 +51,7 @@
                 @click="toggleCarrier(carrier.id)">
                 <span
                   aria-hidden="true"
-                  class="pi pi-server text-[10px]"></span>
+                  :class="['text-[10px]', originIcon(carrier)]"></span>
                 {{ originLabel(carrier) }}
                 <span
                   :class="[
@@ -342,21 +344,34 @@ const {
 /**
  * Header label of a neutral (injector-origin) card, by the row's `origin`.
  *
- * Injected rows are not the user's words: the backend tags each producer with
- * an origin (`subagent_completion`, `task_intent`, `quality_gate`,
- * `todo_continuation`, ...) and the card says which one it was. An unknown
- * non-user origin still renders neutrally, under the generic label.
+ * Injected rows are not the user's words and not the assistant's reply: the
+ * backend tags each producer with an origin (`subagent_completion`,
+ * `task_intent`, `quality_gate`, `todo_continuation`, `project_dir`, ...) and
+ * the card says which one it was. An unknown non-user origin still renders
+ * neutrally, under the generic label.
  */
 const ORIGIN_LABEL_KEYS: Record<string, string> = {
   subagent_completion: 'chat.backgroundMessage',
   task_intent: 'chat.originTaskIntent',
   quality_gate: 'chat.originQualityGate',
-  todo_continuation: 'chat.originTodoNudge'
+  todo_continuation: 'chat.originTodoNudge',
+  project_dir: 'chat.originProjectDir'
+};
+
+/** Glyph per origin; the default (background tasks) is the server icon. */
+const ORIGIN_ICONS: Record<string, string> = {
+  project_dir: 'pi pi-folder'
 };
 
 /**
+ * Header glyph of a neutral card, by the row's `origin`.
+ * @param message Injected row (non-user origin).
+ */
+const originIcon = (message: MessageItem): string => ORIGIN_ICONS[message.origin ?? ''] ?? 'pi pi-server';
+
+/**
  * Header text of a neutral card.
- * @param message Injected USER row (non-user origin).
+ * @param message Injected row (non-user origin).
  */
 const originLabel = (message: MessageItem): string => t(ORIGIN_LABEL_KEYS[message.origin ?? ''] ?? 'chat.originSystem');
 

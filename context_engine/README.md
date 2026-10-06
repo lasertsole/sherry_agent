@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_name    TEXT,               -- AI messages: model that produced the response
     input_tokens  INTEGER,            -- AI messages: usage_metadata input tokens
     output_tokens INTEGER,            -- AI messages: usage_metadata output tokens
-    origin        TEXT                -- Human-message origin: "user" (WS/channel user input), "task_intent" (steering injection), "subagent_completion" (completion carrier), "cron" (cron-delivered turn), "heartbeat" (reserved); NULL = legacy (read as a user message)
+    origin        TEXT                -- Injected-message origin: "user" (WS/channel user input), "task_intent" (steering injection), "subagent_completion" (completion carrier), "cron" (cron-delivered turn), "heartbeat" (reserved), "project_dir" (working-directory notice); NULL = legacy human row or a plain AI/tool row
 );
 ```
 
@@ -161,7 +161,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` messages persist `tool_calls` (JSON), chain-of-thought from `additional_kwargs["reasoning_content"]` (stored in the `reasoning` column), plus `model_name` / `input_tokens` / `output_tokens` from response & usage metadata (all optional, `None` when absent)
 - `human` messages persist multimodal file references from `additional_kwargs` into the `images` / `audios` / `videos` columns (JSON lists, `None` when empty)
 - `tool` messages persist `tool_call_id`, `tool_name`, and `tool_status` (defaults to `"success"`)
-- A `human` message's origin is persisted from its `metadata.origin`: the transport entry stamps `"user"` (WS/channel user input), TaskIntent stamps `"task_intent"`, cron queue rows stamp `"cron"` plus `internal`; the frozen completion carrier (`internal: true` + `provenance: "subagent_completion"`) is tagged `origin = 'subagent_completion'`; every other human row defaults to `"user"` (never an empty string, never JSON). `ai`/`tool` rows keep `origin = NULL` — origin describes the human request source only. NULL is legacy compatibility for rows written before origin tagging and is read as a user message.
+- A `human` message's origin is persisted from its `metadata.origin`: the transport entry stamps `"user"` (WS/channel user input), TaskIntent stamps `"task_intent"`, cron queue rows stamp `"cron"` plus `internal`; the frozen completion carrier (`internal: true` + `provenance: "subagent_completion"`) is tagged `origin = 'subagent_completion'`; every other human row defaults to `"user"` (never an empty string, never JSON). `tool` rows keep `origin = NULL`; an **`ai` row carries one only when the message was injected with it** — the working-directory notice (`origin = "project_dir"`, an AI carrier the chat renders as a neutral system card); a model answer stays NULL. NULL on a human row is legacy compatibility for rows written before origin tagging and is read as a user message.
 
 ### 2. History Retrieval
 

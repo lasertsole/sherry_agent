@@ -163,7 +163,11 @@ turn's HumanMessage when they differ. Any number of switches between two
 messages coalesce into the single notice naming the FINAL root, a switch back to
 the announced root sends nothing, and the first turn of a session only records
 the baseline (silently). The value is mirrored durably and re-warmed by
-`prime_mem_from_store()`, so a restart cannot lose it.
+`prime_mem_from_store()`, so a restart cannot lose it. The notice carries
+`metadata={"origin": "project_dir", "internal": True}`: the message store keeps
+that origin on the AI row (`_row_origin` in `context_engine/store/core.py`), and
+the chat renders a non-`user` origin as a neutral system card (label 项目目录切换 /
+Working directory) instead of an assistant bubble.
 
 The read rule that keeps this working: **resolve the root per call, never at
 construction time.** Tool objects are process-level singletons

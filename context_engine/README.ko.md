@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_name    TEXT,               -- AI 메시지: 응답을 생성한 모델
     input_tokens  INTEGER,            -- AI 메시지: usage_metadata 입력 토큰
     output_tokens INTEGER,            -- AI 메시지: usage_metadata 출력 토큰
-    origin        TEXT                -- human 메시지 출처: "user"(WS/채널 사용자 입력), "task_intent"(스티어링 주입), "subagent_completion"(완료 캐리어), "cron"(Cron 전달 턴), "heartbeat"(예약); NULL = 레거시 행(user로 읽음)
+    origin        TEXT                -- 주입 메시지 출처: "user"(WS/채널 사용자 입력), "task_intent"(스티어링 주입), "subagent_completion"(완료 캐리어), "cron"(Cron 전달 턴), "heartbeat"(예약), "project_dir"(작업 디렉터리 변경 알림); NULL = 레거시 human 행 또는 일반 ai/tool 행
 );
 ```
 
@@ -158,7 +158,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` 메시지는 `tool_calls`(JSON), `additional_kwargs["reasoning_content"]`의 사고 연쇄(`reasoning` 컬럼에 저장), 응답/사용량 메타데이터의 `model_name` / `input_tokens` / `output_tokens`를 영속화합니다 (모두 선택적이며 없으면 `None`)
 - `human` 메시지는 `additional_kwargs`의 멀티모달 파일 참조를 `images` / `audios` / `videos` 컬럼에 영속화합니다 (JSON 목록, 비어 있으면 `None`)
 - `tool` 메시지는 `tool_call_id`, `tool_name`, `tool_status`(기본 `"success"`)를 영속화합니다
-- `human` 메시지의 출처는 `metadata.origin`에서 영속화됩니다: 전송 진입점은 `"user"`(WS/채널 사용자 입력)를, TaskIntent는 `"task_intent"`를, cron 큐 행은 `"cron"` + `internal`을 각인합니다. 동결된 완료 캐리어(`internal: true` + `provenance: "subagent_completion"`)는 `origin = 'subagent_completion'`으로 태그됩니다. 그 외 human 행은 `"user"`로 기본 설정됩니다(빈 문자열도, JSON도 아님). `ai`/`tool` 행의 `origin`은 `NULL`로 유지됩니다 — origin은 human 요청 출처만 나타냅니다. NULL은 origin 태깅 이전에 기록된 레거시 행과의 호환 값이며 user 메시지로 읽습니다.
+- `human` 메시지의 출처는 `metadata.origin`에서 영속화됩니다: 전송 진입점은 `"user"`(WS/채널 사용자 입력)를, TaskIntent는 `"task_intent"`를, cron 큐 행은 `"cron"` + `internal`을 각인합니다. 동결된 완료 캐리어(`internal: true` + `provenance: "subagent_completion"`)는 `origin = 'subagent_completion'`으로 태그됩니다. 그 외 human 행은 `"user"`로 기본 설정됩니다(빈 문자열도, JSON도 아님). `tool` 행의 `origin`은 `NULL`로 유지됩니다. **`ai` 행은 주입되면서 출처가 함께 붙은 경우에만 값을 가집니다** — 작업 디렉터리 변경 알림(`origin = "project_dir"`, 클라이언트가 중립 시스템 카드로 렌더링하는 AI 캐리어). 모델 답변은 NULL로 유지됩니다. human 행의 NULL은 origin 태깅 이전에 기록된 레거시 행과의 호환 값이며 user 메시지로 읽습니다.
 
 ### 2. 히스토리 조회
 

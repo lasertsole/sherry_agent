@@ -91,30 +91,34 @@ describe('i18n chat.backgroundMessage (subagent-origin-tagging Task 5)', () => {
   // One label per injector origin: the neutral card names its source, so a gate
   // message never reads as a background task (nor as a message the user wrote).
   it('all four locales define the per-origin neutral-card labels', () => {
-    const keys = ['originTaskIntent', 'originQualityGate', 'originTodoNudge', 'originSystem'];
+    const keys = ['originTaskIntent', 'originQualityGate', 'originTodoNudge', 'originProjectDir', 'originSystem'];
     const expected: Record<string, Record<string, string>> = {
       en: {
         originTaskIntent: 'Task intent',
         originQualityGate: 'Quality gate',
         originTodoNudge: 'Todo nudge',
+        originProjectDir: 'Working directory',
         originSystem: 'System message'
       },
       zh: {
         originTaskIntent: '任务意图',
         originQualityGate: '质量门控',
         originTodoNudge: '待办提醒',
+        originProjectDir: '项目目录切换',
         originSystem: '系统消息'
       },
       ja: {
         originTaskIntent: 'タスク意図',
         originQualityGate: '品質ゲート',
         originTodoNudge: 'TODO リマインダー',
+        originProjectDir: '作業ディレクトリ',
         originSystem: 'システム メッセージ'
       },
       ko: {
         originTaskIntent: '작업 의도',
         originQualityGate: '품질 게이트',
         originTodoNudge: '할 일 알림',
+        originProjectDir: '작업 디렉터리',
         originSystem: '시스템 메시지'
       }
     };

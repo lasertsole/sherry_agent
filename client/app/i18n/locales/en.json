@@ -24,6 +24,7 @@
     "originTaskIntent": "Task intent",
     "originQualityGate": "Quality gate",
     "originTodoNudge": "Todo nudge",
+    "originProjectDir": "Working directory",
     "originSystem": "System message",
     "tokenGuard": {
       "title": "Model Config Below Minimum",

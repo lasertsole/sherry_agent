@@ -115,14 +115,18 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
   const turnSpacingClass = (group: MessageItem[]): boolean => group.length > 1 && group[0]?.role !== CHAT_ROLE.USER;
 
   /**
-   * Background-task completion carrier: a USER-role message whose backend origin is
-   * an internal source (e.g. "subagent_completion"). Carriers render as a centered, muted
-   * system card instead of the regular user bubble; user-origin rows ("user") and legacy
-   * rows without origin (TEXT NULL = a real user message) keep the user-bubble rendering.
+   * Injected carrier: a message whose backend origin is an internal source
+   * (e.g. "subagent_completion", "project_dir"). Carriers render as a centered,
+   * muted system card instead of a bubble — they are neither something the user
+   * said nor the assistant's reply. Two shapes exist: a USER row (the
+   * background-task completion carrier, a TaskIntent directive) and an AI row
+   * (the working-directory notice, spliced in front of the turn's human
+   * message). User-origin rows ("user") and legacy rows without origin
+   * (TEXT NULL = a real user message / a model answer) keep the bubble flow.
    * @param message
    */
   const isBackgroundTask = (message: MessageItem): boolean =>
-    message.role === CHAT_ROLE.USER && !!message.origin && message.origin !== 'user';
+    (message.role === CHAT_ROLE.USER || message.role === CHAT_ROLE.AI) && !!message.origin && message.origin !== 'user';
 
   /**
    * Messages of a turn group that render as regular rows (background-task carriers excluded).

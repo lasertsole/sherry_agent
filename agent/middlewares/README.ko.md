@@ -215,6 +215,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 병합은 구조적으로 보장된다 — 의미 있는 것은 전송 시점의 비교뿐이다: 두 메시지 사이에 몇 번을 바꾸든 알림은 하나이고 최종 루트를 가리키며, 원래 루트로 돌아오면 알림이 없고, 기준선은 턴이 실제로 시작될 때만 전진한다. 값은 두 상태 레지스터에 모두 기록되고(`record_announced_project_dir`) `prime_mem_from_store()`가 시작 시 다시 워밍하므로, 재시작으로 인해 에이전트가 알아야 할 변경이 조용히 재기준화되지 않는다.
 
+알림은 `metadata={"origin": "project_dir", "internal": True}`를 가지며, 영속화 계층이 그 origin을 AI 행에 유지하므로 채팅은 어시스턴트 말풍선이 아니라 중립 시스템 카드(라벨 **작업 디렉터리**, 폴더 글리프)로 렌더링합니다 — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask`는 USER 행과 마찬가지로 AI 행의 비 `user` origin도 캐리어로 취급합니다.
+
 `HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
 
 ### MultimodalProcessor

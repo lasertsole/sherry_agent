@@ -214,6 +214,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 合并是结构性的——只有发送时刻的比较有意义：两条消息之间切换任意多次只产生一条通知且只写最终根；切回原根不产生通知；基线仅在本轮真正开始时才推进。该值双写两个状态寄存器（`record_announced_project_dir`），并由 `prime_mem_from_store()` 在启动时回填，因此重启不会把 Agent 仍需知晓的变更静默重新基线化。
 
+该通知携带 `metadata={"origin": "project_dir", "internal": True}`，落库时该 origin 保留在 AI 行上，客户端因此把它渲染为中性系统卡片（标签**项目目录切换**、文件夹图标）而不是助手气泡——`client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` 现在对 AI 行与 USER 行一视同仁：非 `user` 的 origin 都按载体处理。
+
 `HumanMessage` 始终保持在**最后**：`TaskIntentMiddleware` 只在最后一条人类消息确实位于末尾时注入引导，`ContextEvictionMiddleware` 需要给末尾人类消息打标记。没有人类消息的历史（恢复轮 / 载体轮）改为追加通知。失败开放：任何异常只记日志，钩子返回 `None`。
 
 ### MultimodalProcessor

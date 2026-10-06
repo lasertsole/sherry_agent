@@ -332,6 +332,30 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     expect(wrapper.html()).not.toContain('flex-row-reverse');
   });
 
+  it('renders an AI row with origin as the same card — never as the assistant reply', async () => {
+    const notice =
+      '[项目目录已切换 / working directory changed] The working directory moved from `/tmp/a` to `/tmp/b`.';
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 31, role: CHAT_ROLE.AI, content: notice, origin: 'project_dir' })]
+      }
+    });
+
+    const card = wrapper.find('.background-task-card');
+    expect(card.exists()).toBe(true);
+    // The per-origin label names the source (zh stub: 项目目录切换, not 后台任务)
+    expect(wrapper.text()).toContain('项目目录切换');
+    expect(wrapper.text()).not.toContain('后台任务');
+    // Collapsed by default; expanding shows the verbatim notice
+    expect(wrapper.text()).not.toContain('working directory moved');
+    const header = card.find('button');
+    await header.trigger('click');
+    expect(wrapper.text()).toContain('working directory moved');
+    // No assistant bubble: the AI display name/avatar is not attached to it
+    expect(wrapper.text()).not.toContain('橘雪莉');
+    expect(wrapper.find('.w-fit').exists()).toBe(false);
+  });
+
   it('keeps the legacy user bubble for a USER message without origin', () => {
     const wrapper = mount(ChatBox, {
       props: {

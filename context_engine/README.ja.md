@@ -116,7 +116,7 @@ CREATE TABLE IF NOT EXISTS messages (
     model_name    TEXT,               -- AI メッセージ：レスポンスを生成したモデル
     input_tokens  INTEGER,            -- AI メッセージ：usage_metadata の入力トークン
     output_tokens INTEGER,            -- AI メッセージ：usage_metadata の出力トークン
-    origin        TEXT                -- human メッセージの送信元: "user"（WS/チャネルのユーザー入力）、"task_intent"（ステアリング注入）、"subagent_completion"（完了キャリア）、"cron"（Cron 配信ターン）、"heartbeat"（予約）; NULL = 旧行（user として読み取り）
+    origin        TEXT                -- 注入メッセージの送信元: "user"（WS/チャネルのユーザー入力）、"task_intent"（ステアリング注入）、"subagent_completion"（完了キャリア）、"cron"（Cron 配信ターン）、"heartbeat"（予約）、"project_dir"（作業ディレクトリ変更通知）; NULL = 旧 human 行 または通常の ai/tool 行
 );
 ```
 
@@ -158,7 +158,7 @@ await add_messages("session_001", [user_msg, ai_msg])
 - `ai` メッセージは `tool_calls`（JSON）、`additional_kwargs["reasoning_content"]` からの思考連鎖（`reasoning` 列に保存）、レスポンス/使用量メタデータの `model_name` / `input_tokens` / `output_tokens` を永続化します（いずれも省略可能で、欠落時は `None`）
 - `human` メッセージは `additional_kwargs` 内のマルチモーダルファイル参照を `images` / `audios` / `videos` 列に永続化します（JSON リスト、空の場合は `None`）
 - `tool` メッセージは `tool_call_id`、`tool_name`、`tool_status`（デフォルト `"success"`）を永続化します
-- `human` メッセージの送信元は `metadata.origin` から永続化されます：トランスポート入口は `"user"`（WS/チャネルのユーザー入力）を、TaskIntent は `"task_intent"` を、cron キュー行は `"cron"` + `internal` を刻印します。凍結された完了キャリア（`internal: true` + `provenance: "subagent_completion"`）は `origin = 'subagent_completion'` としてタグ付けされます。それ以外の human 行は `"user"` にフォールバックします（空文字列にも JSON にもなりません）。`ai`/`tool` 行の `origin` は `NULL` のままです — origin は human リクエストの送信元のみを表します。NULL は origin タグ導入前に書かれた旧行との互換値で、user メッセージとして読み取られます。
+- `human` メッセージの送信元は `metadata.origin` から永続化されます：トランスポート入口は `"user"`（WS/チャネルのユーザー入力）を、TaskIntent は `"task_intent"` を、cron キュー行は `"cron"` + `internal` を刻印します。凍結された完了キャリア（`internal: true` + `provenance: "subagent_completion"`）は `origin = 'subagent_completion'` としてタグ付けされます。それ以外の human 行は `"user"` にフォールバックします（空文字列にも JSON にもなりません）。`tool` 行の `origin` は `NULL` のままです。**`ai` 行が値を持つのは、注入時に送信元が付与された場合だけ**です — 作業ディレクトリ変更通知（`origin = "project_dir"`、クライアントが中立のシステム カードとして描画する AI キャリア）。モデルの回答は NULL のままです。human 行の NULL は origin タグ導入前に書かれた旧行との互換値で、user メッセージとして読み取られます。
 
 ### 2. 履歴取得
 

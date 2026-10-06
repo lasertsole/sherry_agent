@@ -24,6 +24,7 @@
     "originTaskIntent": "タスク意図",
     "originQualityGate": "品質ゲート",
     "originTodoNudge": "TODO リマインダー",
+    "originProjectDir": "作業ディレクトリ",
     "originSystem": "システム メッセージ",
     "tokenGuard": {
       "title": "モデル設定が最小値未満",

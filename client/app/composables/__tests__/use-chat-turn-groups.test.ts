@@ -65,20 +65,24 @@ describe('useChatTurnGroups', () => {
     expect(turnSpacingClass([msg({ id: 1, role: CHAT_ROLE.USER }), msg({ id: 2, role: CHAT_ROLE.AI })])).toBe(false);
   });
 
-  it('splits subagent-completion carriers (USER rows with a non-user origin) out of the bubble flow', () => {
+  it('splits injected carriers (a non-user origin) out of the bubble flow', () => {
     const { isBackgroundTask, regularMessages, backgroundCarriers } = useChatTurnGroups(() => []);
     const carrier = msg({ id: 1, origin: 'subagent_completion' });
     const legacy = msg({ id: 2, origin: undefined });
     const explicitUser = msg({ id: 3, origin: 'user' });
     const ai = msg({ id: 4, role: CHAT_ROLE.AI });
+    // The working-directory notice is an AI row: it must render as a card too,
+    // never as the assistant's reply.
+    const aiCarrier = msg({ id: 5, role: CHAT_ROLE.AI, origin: 'project_dir' });
 
     expect(isBackgroundTask(carrier)).toBe(true);
     expect(isBackgroundTask(legacy)).toBe(false);
     expect(isBackgroundTask(explicitUser)).toBe(false);
     expect(isBackgroundTask(ai)).toBe(false);
+    expect(isBackgroundTask(aiCarrier)).toBe(true);
 
-    const group = [carrier, legacy, explicitUser, ai];
-    expect(backgroundCarriers(group).map(m => m.id)).toEqual([1]);
+    const group = [carrier, legacy, explicitUser, ai, aiCarrier];
+    expect(backgroundCarriers(group).map(m => m.id)).toEqual([1, 5]);
     expect(regularMessages(group).map(m => m.id)).toEqual([2, 3, 4]);
   });
 

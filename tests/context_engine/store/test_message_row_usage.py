@@ -71,3 +71,23 @@ def test_without_any_cache_field_the_column_stays_null():
     )
 
     assert row["cache_read_tokens"] is None
+
+
+# ---------------------------------------------------------------------------
+# Origin of injected AI carriers
+# ---------------------------------------------------------------------------
+
+
+def test_a_plain_answer_keeps_the_origin_column_null():
+    """The chat renders a non-user origin as a neutral card: a model answer has none."""
+    assert _row(AIMessage("普通回答"))["origin"] is None
+
+
+def test_an_injected_ai_carrier_persists_its_metadata_origin():
+    """ProjectDirNoticeMiddleware tags its notice; the column must survive into the row."""
+    message = AIMessage(
+        "[项目目录已切换] the working directory moved",
+        metadata={"origin": "project_dir", "internal": True},
+    )
+
+    assert _row(message)["origin"] == "project_dir"

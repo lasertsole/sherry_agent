@@ -101,6 +101,20 @@ def get_max_turn_num(session_id: str) -> int:
     return _message_repository.max_turn_num(session_id)
 
 
+def _row_origin(msg: BaseMessage) -> str | None:
+    """The explicit ``metadata.origin`` of an injected message, else ``None``.
+
+    Every injector that wants its row rendered as a neutral system card tags the
+    message it appends (``{"origin": "...", "internal": True}``): TaskIntent, the
+    todo nudge, the subagent-completion carrier, the working-directory notice.
+    The chat branches on this column, so it must survive into the row for AI
+    carriers too — a regular model answer carries no origin and stays NULL.
+    """
+    meta: dict[str, Any] = getattr(msg, "metadata", None) or {}
+    explicit = meta.get("origin")
+    return str(explicit) if explicit is not None else None
+
+
 class MessageRowBuilder(ABC):
     @abstractmethod
     def build(self, msg: BaseMessage, session_id: str) -> dict | None: ...
@@ -154,6 +168,13 @@ class AIMessageRowBuilder(MessageRowBuilder):
             response_metadata.get("stop_reason")
         )
 
+        # Injected AI carriers declare their origin in ``metadata`` (the
+        # ProjectDirNoticeMiddleware notice is one): the chat renders a non-user
+        # origin as a neutral system card instead of an assistant bubble, the
+        # same contract the human carriers use. A regular model answer carries no
+        # origin and stays NULL (`_row_origin` returns None for it).
+        origin = _row_origin(msg)
+
         return {
             "session_id": session_id,
             "turn_num": 0,
@@ -177,7 +198,7 @@ class AIMessageRowBuilder(MessageRowBuilder):
             "reasoning_tokens": reasoning_tokens,
             "cache_read_tokens": cache_read_tokens,
             "tool_duration_ms": None,
-            "origin": None,
+            "origin": origin,
         }
 
 
@@ -205,16 +226,16 @@ class HumanMessageRowBuilder(MessageRowBuilder):
         # (strict bool, not merely truthy) AND provenance must be exactly
         # "subagent_completion". Every other human row is a user message, so a
         # legacy/unmarked human row also reads back as "user" (NULL = legacy
-        # compatibility for rows written before this contract). AI/tool rows
-        # keep NULL: origin describes the human request source only.
+        # compatibility for rows written before this contract). Tool rows keep
+        # NULL; AI rows carry an origin only when the message was injected with
+        # one (see ``_row_origin``), so a model answer stays NULL.
         meta: dict[str, Any] = getattr(msg, "metadata", None) or {}
-        explicit_origin = meta.get("origin")
-        if explicit_origin is not None:
-            origin: str | None = str(explicit_origin)
-        elif meta.get("internal") is True and meta.get("provenance") == "subagent_completion":
-            origin = "subagent_completion"
-        else:
-            origin = "user"
+        origin: str | None = _row_origin(msg)
+        if origin is None:
+            if meta.get("internal") is True and meta.get("provenance") == "subagent_completion":
+                origin = "subagent_completion"
+            else:
+                origin = "user"
 
         return {
             "session_id": session_id,
