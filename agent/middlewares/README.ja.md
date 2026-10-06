@@ -233,11 +233,13 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. `wrap_model_call`: セッションに選択があるとき `request.override(tools=<有効なサブセット>)` — langchain は呼び出しごとに `request.tools` からツール スキーマを再バインドするので、無効なツールはモデルに提示されません。
 2. `wrap_tool_call`: **無効なツール**への呼び出しは実行せずエラー `ToolMessage` で拒否します — チェックポイントに切替前の呼び出しが残っていたり、モデルが名前を捏造したりしても、`ToolNode` はそのまま実行してしまうからです。
 
+`agent/tools/catalog.py::REQUIRED_TOOLS` は有効集合に合流されます（ツール タブでは該当行がロック表示）: 必須項目を欠いた新しいペイロードはすでにサービスが拒否しますが、ツールが必須になる前に書かれたレジスタ値でも外せないようにする第二のガードです。
+
 未設定（または `tools: null`）= 全ツールで、従来の動作とバイト単位で同一。フェイル オープン: レジスタが読めない / ペイロードが壊れている場合はログしてそのまま通します。
 
 ### The per-session middleware switches
 
-`GET /agent/catalog` がチェーンを返し、プリセット-ミドルウェア タブは**任意の 5 項目**をオフにできます（`AGENT_CONFIG["middlewares_disabled"]`）。各項目は自分のフック入口で `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（mem のみ、フェイル オープン）により早期リターンします:
+`GET /agent/catalog` がチェーンを返し、プリセット-ミドルウェア タブは**任意の 3 項目**をオフにできます（`AGENT_CONFIG["middlewares_disabled"]`）。各項目は自分のフック入口で `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（mem のみ、フェイル オープン）により早期リターンします:
 
 | 無効化可能 | オフにしたときの効果 |
 | --- | --- |

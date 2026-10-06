@@ -231,6 +231,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. `wrap_model_call`：会话有选择时 `request.override(tools=<启用的子集>)`——langchain 每次调用都按 `request.tools` 重新绑定工具 schema，被关掉的工具根本不会出现在模型面前。
 2. `wrap_tool_call`：对**已关闭工具**的调用直接返回 error `ToolMessage` 拒绝执行——旧 checkpoint 可能残留切换前的调用、模型也可能编造工具名，两种情况 `ToolNode` 都会照跑。
 
+`agent/tools/catalog.py::REQUIRED_TOOLS` 会并回启用集合（预设-工具栏把这些行显示为锁定）：服务端已拒绝省略必需项的新载荷，这里是第二道保险——切换前写入的旧寄存器值同样无法把它剔掉。
+
 未配置（或 `tools: null`）= 全开，与旧行为逐字节一致。失败开放：寄存器读不到或载荷损坏时记日志并原样放行。
 
 ### The per-session middleware switches

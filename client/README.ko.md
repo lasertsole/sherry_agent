@@ -185,7 +185,7 @@ client/
 │   │   ├── file-viewer.ts      # 파일 뷰어 탭(연 경로 + 내용 캐시)
 │   │   ├── new-session.ts      # 새 세션 프리셋 선택 대화상자 상태(모든 「새 대화」 진입점)
 │   │   ├── notification.ts     # 알림 목록 + 미읽음 배지(탭을 닫아도 계속 집계)
-│   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 서브에이전트 모델)을 세션별로 보관
+│   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 서브에이전트 모델)을 세션별로 보관; 필수 도구는 잠겨 해제 불가, 작업과 계획 / 서브에이전트 두 그룹은 일괄 선택만
 │   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   ├── plugins/                   # Nuxt 플러그인

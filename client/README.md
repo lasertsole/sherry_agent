@@ -184,7 +184,7 @@ client/
 │   │   ├── file-viewer.ts      # File-viewer tabs (opened path + content cache)
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
-│   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / subagent models) per session
+│   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / subagent models) per session; required tools stay locked and the tasks/subagents groups move as a whole
 │   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + waves, refreshed by taskflow_updated)
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   ├── plugins/                   # Nuxt plugins

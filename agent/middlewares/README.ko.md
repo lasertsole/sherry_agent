@@ -232,6 +232,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 1. `wrap_model_call`: 세션에 선택이 있으면 `request.override(tools=<활성 부분집합>)` — langchain은 호출마다 `request.tools`로 도구 스키마를 다시 바인딩하므로 꺼진 도구는 모델에 아예 제시되지 않습니다.
 2. `wrap_tool_call`: **꺼진 도구** 호출은 실행하지 않고 error `ToolMessage`로 거부합니다 — 체크포인트에 전환 이전 호출이 남아 있을 수 있고 모델이 이름을 지어낼 수도 있는데, `ToolNode`는 둘 다 그대로 실행합니다.
 
+`agent/tools/catalog.py::REQUIRED_TOOLS`는 활성 집합에 다시 합쳐집니다(도구 탭은 해당 행을 잠금 표시): 필수 항목을 빠뜨린 새 페이로드는 이미 서비스가 거부하지만, 도구가 필수가 되기 전에 기록된 레지스터 값으로도 벗겨낼 수 없게 하는 두 번째 가드입니다.
+
 미설정(또는 `tools: null`) = 모든 도구, 기존 동작과 바이트 단위로 동일. 실패 개방: 레지스터를 읽지 못하거나 페이로드가 손상되면 로그 후 그대로 통과시킵니다.
 
 ### The per-session middleware switches

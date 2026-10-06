@@ -239,7 +239,14 @@ promoted at the turn boundary like the model/thinking controls)::
   (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
   what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
   checkpoint or a hallucinated name would otherwise still run — the ToolNode holds the full
-  list). Unset config = every tool.
+  list). Unset config = every tool. `agent/tools/catalog.py` carries the three rules the
+  payload obeys: `TOOL_ORDER` (group render order — 技能 / 终端与代码 / 文件读写 / 交互 first,
+  memory fifth, then the task and delegation surfaces), `REQUIRED_TOOLS` (the file tools, code
+  execution, the three skill tools, `question` and `message_search` — the 工具 tab shows those
+  rows locked, the service 400s on a payload that omits one, and `enabled_tool_names()` unions
+  them back in so an older register value cannot strip them either), and `BULK_ONLY_GROUPS`
+  (`tasks` and `subagents` move as a whole in the UI — select-all / clear-all only, never a
+  per-tool switch).
 - **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
   `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for

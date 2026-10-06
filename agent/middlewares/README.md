@@ -233,6 +233,8 @@ Runs the session's own tool set (预设-工具 tab → `AGENT_CONFIG["tools"]`, 
 1. `wrap_model_call`: when the session has a selection, `request.override(tools=<the enabled subset>)` — langchain re-binds the tool schema from `request.tools` per call, so a disabled tool is never offered to the model.
 2. `wrap_tool_call`: a call to a DISABLED tool is refused with an error `ToolMessage` instead of being executed — a stale checkpoint can hold a call that predates the switch, and a model can hallucinate a name; the `ToolNode` would run either happily.
 
+`agent/tools/catalog.py::REQUIRED_TOOLS` is unioned back into the enabled set (the 工具 tab shows those rows locked): the service already refuses a payload that omits one, this is the second guard so a register value written before a tool became required cannot strip it either.
+
 Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. Fail-open: an unreadable register or a malformed payload logs and passes the request through.
 
 ### The per-session middleware switches
