@@ -161,7 +161,17 @@
         "clearAll": "Disable all",
         "selectGroup": "All",
         "clearGroup": "Clear",
-        "requiredHint": "Required — cannot be disabled"
+        "requiredHint": "Required — cannot be disabled",
+        "scope_builtin": "Built-in",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)"
+      },
+      "skills": {
+        "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index.",
+        "count": "{selected}/{total} selected",
+        "scope_builtin": "Built-in",
+        "scope_thirdparty": "Third-party",
+        "empty": "No skills yet"
       },
       "toolGroup": {
         "files": "Files",

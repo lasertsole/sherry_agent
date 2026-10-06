@@ -95,7 +95,11 @@ function makeAgentStore(
           { name: 'HumanInTheLoop', required: true, gateable: false },
           { name: 'TaskIntentMiddleware', required: false, gateable: true }
         ],
-        subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }]
+        subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
+        skills: [
+          { name: 'alpha', builtin: true, description: 'Shipped skill.' },
+          { name: 'uploaded', builtin: false, description: 'Uploaded skill.' }
+        ]
       },
       catalogLoaded: true,
       toolGroups: groups,
@@ -104,6 +108,10 @@ function makeAgentStore(
         locked: [{ name: 'HumanInTheLoop', required: true, gateable: false }]
       },
       subagentRoles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
+      skills: {
+        builtin: [{ name: 'alpha', builtin: true, description: 'Shipped skill.' }],
+        thirdParty: [{ name: 'uploaded', builtin: false, description: 'Uploaded skill.' }]
+      },
       loadCatalog: vi.fn(async () => undefined),
       hydrate: vi.fn(async () => undefined),
       configOf: () => config as never,
@@ -116,6 +124,7 @@ function makeAgentStore(
           .filter(tool => selected.has(tool.name as string) || tool.required === true)
           .map(tool => tool.name as string) as never;
       },
+      selectedSkills: () => (Array.isArray(config.skills) ? config.skills : null) as never,
       disabledMiddlewares: () => (config.middlewares_disabled ?? []) as never,
       isPending: () => pending,
       save: vi.fn(async (_sid: string, next: Record<string, unknown>) => {
@@ -309,11 +318,10 @@ describe('SessionPresetButton', () => {
     const wrapper = await mountPanel();
     const panel = wrapper.get('[data-test="session-preset-panel"]');
 
-    // The required tool reads as enabled (the session never had it listed) with
-    // its row disabled, locked and explained.
-    const readFile = panel.get('[data-test="session-preset-tool-read_file"]');
-    expect(readFile.attributes('disabled')).toBeDefined();
-    expect((readFile.element as HTMLInputElement).checked).toBe(true);
+    // The required tool is a locked chip with NO checkbox (it can never be off).
+    expect(panel.find('[data-test="session-preset-tool-read_file"]').exists()).toBe(false);
+    const readFile = panel.get('[data-test="session-preset-tool-locked-read_file"]');
+    expect(readFile.text()).toBe('read_file');
     expect(readFile.element.closest('label')?.querySelector('.pi-lock')).not.toBeNull();
     expect(readFile.element.closest('label')?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
     // A fully required group says so instead of offering any control.
@@ -321,6 +329,29 @@ describe('SessionPresetButton', () => {
     // A bulk-only group has no per-tool switch: a chip, struck through when off.
     expect(panel.find('[data-test="session-preset-tool-taskflow_create"]').exists()).toBe(false);
     expect(panel.get('[data-test="session-preset-tool-bulk-taskflow_create"]').classes()).toContain('line-through');
+  });
+
+  it('shows the session skills READ-ONLY with the two sub-tabs', async () => {
+    db.readCachedSessionPreset.mockResolvedValue({ session_id: 'sid-1', preset_id: 'coding', preset_name: '编程助手' });
+    agentStoreState.current = makeAgentStore({ tools: ['terminal'], skills: ['alpha'] }).store;
+
+    const wrapper = await mountPanel();
+    const panel = wrapper.get('[data-test="session-preset-panel"]');
+
+    // The session's own selection: alpha checked (and disabled), the other off.
+    const alpha = panel.get('[data-test="session-preset-skill-alpha"]');
+    expect(alpha.attributes('disabled')).toBeDefined();
+    expect((alpha.element as HTMLInputElement).checked).toBe(true);
+    expect(panel.text()).toContain('已选 1/2');
+    // The third-party sub-tab carries its own list (and its own state).
+    await panel.get('[data-test="session-preset-skills-scope-thirdparty"]').trigger('click');
+    await flushPromises();
+    const uploaded = panel.get('[data-test="session-preset-skill-uploaded"]');
+    expect(uploaded.attributes('disabled')).toBeDefined();
+    expect((uploaded.element as HTMLInputElement).checked).toBe(false);
+    expect(panel.find('[data-test="session-preset-skill-alpha"]').exists()).toBe(false);
+    // Nothing was written (read-only).
+    expect((agentStoreState.current as { save: ReturnType<typeof vi.fn> }).save).not.toHaveBeenCalled();
   });
 
   it('writes a per-role model choice to the SESSION, merged and parked-ready', async () => {

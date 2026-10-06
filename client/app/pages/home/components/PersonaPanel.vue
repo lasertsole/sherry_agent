@@ -209,9 +209,32 @@
                       @click="clearAllTools" />
                   </div>
                 </div>
+                <!-- Two sub-tabs: the built-in groups and the MCP servers' tools. -->
+                <div class="flex items-center gap-1">
+                  <button
+                    v-for="scope in AGENT_TOOL_SCOPES"
+                    :key="scope"
+                    type="button"
+                    class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                    :class="
+                      toolScope === scope
+                        ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+                    "
+                    :data-test="`agent-tools-scope-${scope}`"
+                    @click="toolScope = scope">
+                    {{ t(`config.agent.tools.scope_${scope}`) }}
+                  </button>
+                </div>
                 <div class="min-h-0 flex-1 overflow-y-auto pr-1">
                   <div
-                    v-for="group in agentStore.toolGroups"
+                    v-if="agentVisibleToolGroups.length === 0"
+                    class="px-3 py-1 text-xs text-gray-400"
+                    data-test="agent-tools-empty">
+                    {{ t('config.agent.tools.mcpEmpty') }}
+                  </div>
+                  <div
+                    v-for="group in agentVisibleToolGroups"
                     :key="group.group"
                     class="mb-3 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
                     <div class="mb-1 flex items-center justify-between gap-2">
@@ -238,21 +261,21 @@
                         :data-test="`agent-tool-group-${group.group}`"
                         @click="toggleToolGroup(group)" />
                     </div>
-                    <!-- Three row shapes: a required tool is locked on (no switch); a
-                         bulk-only group's tools render as plain chips because its
-                         header owns the only toggle; everything else is a checkbox. -->
+                    <!-- Two row shapes: a switch (checkbox) for anything the preset may
+                         narrow, and a plain chip for what it may not — a REQUIRED tool
+                         (no checkbox at all, just the lock) or a bulk-only group's
+                         membership (the header owns its only toggle). -->
                     <div class="flex flex-wrap gap-x-4 gap-y-1">
                       <label
                         v-for="tool in group.tools"
                         :key="tool.name"
                         class="flex items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300"
-                        :class="agentToolRowInteractive(group, tool) ? 'cursor-pointer' : 'cursor-default'"
+                        :class="agentToolSwitchVisible(group, tool) ? 'cursor-pointer' : 'cursor-default'"
                         :title="toolTooltip(tool)">
                         <Checkbox
-                          v-if="!isBulkOnlyToolGroup(group.group)"
+                          v-if="agentToolSwitchVisible(group, tool)"
                           :model-value="agentToolSelected(tool.name)"
                           binary
-                          :disabled="tool.required === true"
                           :data-test="`agent-tool-${tool.name}`"
                           @update:model-value="toggleTool(tool.name)" />
                         <i
@@ -261,10 +284,9 @@
                         <span
                           class="font-mono"
                           :class="{
-                            'text-gray-400 line-through':
-                              isBulkOnlyToolGroup(group.group) && !agentToolSelected(tool.name)
+                            'text-gray-400 line-through': !tool.required && !agentToolSelected(tool.name)
                           }"
-                          :data-test="isBulkOnlyToolGroup(group.group) ? `agent-tool-bulk-${tool.name}` : undefined">
+                          :data-test="agentToolChipTestId(group, tool)">
                           {{ tool.name }}
                         </span>
                       </label>
@@ -368,16 +390,82 @@
               </div>
             </TabPanel>
 
-            <!-- 技能 tab: a per-preset skill selection is not designed yet, so this
-                 is deliberately an EMPTY placeholder panel — the tab exists so the
-                 preset's shape is already stable when it lands. -->
+            <!-- 技能 tab: which skills' index entries (`<available_skills>` in the
+                 system prompt) this preset keeps. Two sub-tabs split the shipped
+                 skills from the uploaded third-party ones. -->
             <TabPanel
               value="agentSkills"
               :header="t('config.agent.tabs.skills')"
               data-test="persona-agent-skills-tab">
               <div
-                class="flex min-h-0 flex-1 flex-col"
-                data-test="agent-skills-tab" />
+                class="flex min-h-0 flex-1 flex-col gap-2"
+                data-test="agent-skills-tab">
+                <div class="flex items-center justify-between gap-2">
+                  <span class="text-sm text-gray-500 dark:text-gray-400">
+                    {{ t('config.agent.skills.hint') }}
+                  </span>
+                  <div class="flex items-center gap-2">
+                    <span class="text-xs text-gray-400">
+                      {{
+                        t('config.agent.skills.count', {
+                          selected: agentEnabledSkills.length,
+                          total: agentStore.catalog.skills.length
+                        })
+                      }}
+                    </span>
+                    <Button
+                      :label="t('config.agent.tools.selectAll')"
+                      severity="secondary"
+                      text
+                      size="small"
+                      data-test="agent-skills-all"
+                      @click="selectAllSkills" />
+                    <Button
+                      :label="t('config.agent.tools.clearAll')"
+                      severity="secondary"
+                      text
+                      size="small"
+                      data-test="agent-skills-none"
+                      @click="clearAllSkills" />
+                  </div>
+                </div>
+                <div class="flex items-center gap-1">
+                  <button
+                    v-for="scope in AGENT_SKILL_SCOPES"
+                    :key="scope"
+                    type="button"
+                    class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                    :class="
+                      skillsScope === scope
+                        ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
+                        : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+                    "
+                    :data-test="`agent-skills-scope-${scope}`"
+                    @click="skillsScope = scope">
+                    {{ t(`config.agent.skills.scope_${scope}`) }}
+                  </button>
+                </div>
+                <div class="min-h-0 flex-1 overflow-y-auto pr-1">
+                  <div
+                    v-if="agentVisibleSkills.length === 0"
+                    class="px-3 py-1 text-xs text-gray-400"
+                    data-test="agent-skills-empty">
+                    {{ t('config.agent.skills.empty') }}
+                  </div>
+                  <label
+                    v-for="skill in agentVisibleSkills"
+                    :key="skill.name"
+                    class="flex cursor-pointer items-center gap-1.5 py-0.5 text-xs text-gray-600 dark:text-gray-300"
+                    :title="skill.description || skill.name">
+                    <Checkbox
+                      :model-value="agentSkillSelected(skill.name)"
+                      binary
+                      :data-test="`agent-skill-${skill.name}`"
+                      @update:model-value="toggleSkill(skill.name)" />
+                    <span class="font-mono">{{ skill.name }}</span>
+                  </label>
+                </div>
+              </div>
             </TabPanel>
           </TabView>
           <div class="flex justify-end">
@@ -602,6 +690,8 @@ const agentTools = ref<string[]>([]);
 const agentDisabledMiddlewares = ref<string[]>([]);
 /** role → chosen env-config profile id (`''` = follow the role tier). */
 const agentRoleModels = ref<Record<string, string>>({});
+/** Skill names whose index entries enter the prompt (`null` = every skill). */
+const agentSkills = ref<string[] | null>(null);
 
 /** Required tool names from the catalogue, in catalogue order. */
 const agentRequiredToolNames = computed<string[]>(() =>
@@ -646,16 +736,94 @@ const agentGroupFullySelected = (group: { tools: Array<{ name: string }> }): boo
 const agentGroupFullyRequired = (group: AgentToolGroupEntry): boolean =>
   group.tools.length > 0 && group.tools.every(tool => tool.required === true);
 
+/** The two 工具 sub-tabs: the built-in groups and the MCP servers' tools. */
+const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
+
+/** The two 技能 sub-tabs: shipped skills and uploaded third-party ones. */
+const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
+
+/** Group id the catalogue gives tools that arrive from an MCP server. */
+const MCP_TOOL_GROUP = 'mcp';
+
+/** Which 工具 sub-tab is on screen (a view filter — the draft stays whole). */
+const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
+
+/** Which 技能 sub-tab is on screen. */
+const skillsScope = ref<(typeof AGENT_SKILL_SCOPES)[number]>('builtin');
+
+/** The tool groups of the active sub-tab. */
+const agentVisibleToolGroups = computed<AgentToolGroupEntry[]>(() =>
+  agentStore.toolGroups.filter(group =>
+    toolScope.value === MCP_TOOL_GROUP ? group.group === MCP_TOOL_GROUP : group.group !== MCP_TOOL_GROUP
+  )
+);
+
+/** The skills of the active sub-tab. */
+const agentVisibleSkills = computed(() =>
+  skillsScope.value === 'builtin' ? agentStore.skills.builtin : agentStore.skills.thirdParty
+);
+
 /**
- * Whether a row carries its own switch (required = locked on; a bulk-only group
- * moves as a whole through its header toggle only).
+ * Whether a row carries its own switch: a required tool is locked on (no
+ * checkbox at all) and a bulk-only group moves as a whole through its header
+ * toggle only.
  * @param group Catalogue group entry.
  * @param group.tools
  * @param tool Catalogue tool entry.
  * @param tool.required
  */
-const agentToolRowInteractive = (group: AgentToolGroupEntry, tool: { required?: boolean }): boolean =>
+const agentToolSwitchVisible = (group: AgentToolGroupEntry, tool: { required?: boolean }): boolean =>
   tool.required !== true && !isBulkOnlyToolGroup(group.group);
+
+/**
+ * The ``data-test`` of a tool row's chip (switch rows carry it on the checkbox).
+ * @param group Catalogue group entry.
+ * @param group.tools
+ * @param tool Catalogue tool entry.
+ * @param tool.name
+ * @param tool.required
+ * @returns The chip's test id, or ``undefined`` for a switch row.
+ */
+const agentToolChipTestId = (
+  group: AgentToolGroupEntry,
+  tool: { name: string; required?: boolean }
+): string | undefined => {
+  if (tool.required === true) return `agent-tool-locked-${tool.name}`;
+  return isBulkOnlyToolGroup(group.group) ? `agent-tool-bulk-${tool.name}` : undefined;
+};
+
+/** Skill names the draft keeps (every catalogue skill when it has no opinion). */
+const agentEnabledSkills = computed<string[]>(() => {
+  const all = agentStore.catalog.skills.map(skill => skill.name);
+  if (agentSkills.value === null) return all;
+  const selected = new Set(agentSkills.value);
+  return all.filter(name => selected.has(name));
+});
+
+/**
+ * Whether one skill is checked.
+ * @param name
+ */
+const agentSkillSelected = (name: string): boolean => agentEnabledSkills.value.includes(name);
+
+/**
+ * Toggle one skill's index entry (the draft starts as "no opinion" = all on).
+ * @param name Skill name.
+ */
+const toggleSkill = (name: string): void => {
+  const current = agentEnabledSkills.value;
+  agentSkills.value = current.includes(name) ? current.filter(candidate => candidate !== name) : [...current, name];
+};
+
+/** Keep every skill in the index (the draft collapses back to "no opinion"). */
+const selectAllSkills = (): void => {
+  agentSkills.value = null;
+};
+
+/** Drop every skill's index entry (an explicit, legal empty selection). */
+const clearAllSkills = (): void => {
+  agentSkills.value = [];
+};
 
 /**
  * The hover text of one tool row: the backend description, plus the locked
@@ -763,6 +931,9 @@ const buildAgentDraft = (): AgentConfig => {
     block.middlewares_disabled = [...agentDisabledMiddlewares.value];
   }
   if (anyModel) block.subagent_models = models;
+  // `null` = no opinion (every skill stays in the index) and collapses away; an
+  // explicit list — including the empty "no skill" choice — is stored as-is.
+  if (agentSkills.value !== null) block.skills = [...agentSkills.value];
   return block;
 };
 
@@ -780,6 +951,7 @@ const fillAgentDraft = (block: AgentConfig | undefined): void => {
     models[role] = profile?.id ?? '';
   }
   agentRoleModels.value = models;
+  agentSkills.value = Array.isArray(block?.skills) ? [...block.skills] : null;
 };
 
 const charAssistant = ref({ name: DEFAULT_CACHED_CHARACTER.aiName, avatar: DEFAULT_CACHED_CHARACTER.aiAvatar });
@@ -1066,7 +1238,7 @@ const selectBuiltin = async (id: BuiltinPresetId) => {
     // process (the panel already awaited it during load, so this is a cache hit).
     await agentStore.loadCatalog();
     const template = await readSystemPromptTemplate(locale.value);
-    const payload = builtinPayload(id, template, t, presetCatalogFacts(agentStore));
+    const payload = builtinPayload(id, template, t, presetCatalogFacts(agentStore), locale.value);
     fillTabs(payload.content);
     fillCharacter(payload.character);
     fillAgentDraft(payload.agent);

@@ -158,6 +158,76 @@ export interface PresetCatalogFacts {
 export const COMPANION_DISABLED_TOOL_GROUPS: readonly string[] = ['tasks', 'subagents'];
 
 /**
+ * The 运行守则 sections 情感陪伴 drops, per UI language: the task-orchestration
+ * doctrine (编排者信条 / 何时创建 Todo / 委派 / 转换屏障 / 完成契约 / 反模式) and
+ * the two task bullets of the first section. A companion preset is not an
+ * orchestrator, so the text that would steer it into planning-and-delegating is
+ * removed rather than left to fight the preset's tool set.
+ *
+ * Matched by the literal heading/label text the shipped templates use
+ * (`workspace/template/<lang>/AGENTS.md`); `persona-catalog.test.ts` reads those
+ * files and fails when a reworded template stops matching.
+ */
+export const COMPANION_DROPPED_SECTIONS: Record<string, { sections: string[]; bullets: string[] }> = {
+  zh: { sections: ['任务管理与编排'], bullets: ['任务分配', '任务执行'] },
+  en: { sections: ['Task Management & Orchestration'], bullets: ['Task assignment', 'Task execution'] },
+  ja: { sections: ['タスク管理とオーケストレーション'], bullets: ['タスクの割り当て', 'タスクの実行'] },
+  ko: { sections: ['작업 관리 및 오케스트레이션'], bullets: ['작업 분배', '작업 실행'] }
+};
+
+/**
+ * Strip the task / orchestration content out of one 运行守则 template (see
+ * {@link COMPANION_DROPPED_SECTIONS}).
+ *
+ * A dropped SECTION runs from its heading to the next heading of the same or a
+ * higher level (the shipped templates end with it). A dropped BULLET is one
+ * ``- **label**`` line anywhere; a section left without any content is dropped
+ * as well, so the empty husk of 运行守则 does not survive. Unknown languages and
+ * templates without a match come back untouched.
+ * @param text The AGENTS.md template.
+ * @param locale UI locale selecting the match list.
+ * @returns The text without the task-orchestration content.
+ */
+export function stripTaskSections(text: string, locale: string): string {
+  const rules = COMPANION_DROPPED_SECTIONS[locale.split('-')[0] ?? ''];
+  if (!rules) return text;
+  const lines = text.split('\n');
+  const kept: string[] = [];
+  let dropping: number | null = null; // heading level currently being dropped
+  for (const line of lines) {
+    const heading = /^(#+)\s+(.*)$/.exec(line);
+    if (heading) {
+      const level = heading[1]!.length;
+      if (dropping !== null && level <= dropping) dropping = null;
+      if (dropping === null && rules.sections.some(title => heading[2]!.startsWith(title))) {
+        dropping = level;
+        continue;
+      }
+    }
+    if (dropping !== null) continue;
+    const bullet = /^-\s+\*\*(.+?)\*\*/.exec(line);
+    if (bullet && rules.bullets.some(label => bullet[1]!.startsWith(label))) continue;
+    kept.push(line);
+  }
+  // A section whose bullets all went away leaves a bare heading behind: drop
+  // those second-level headings too (the file title stays regardless).
+  const out: string[] = [];
+  for (let index = 0; index < kept.length; index += 1) {
+    const line = kept[index]!;
+    const heading = /^(#+)\s+/.exec(line);
+    if (heading && heading[1]!.length > 1) {
+      const rest = kept.slice(index + 1).filter(candidate => candidate.trim() !== '');
+      if (rest.length === 0 || /^#+\s+/.test(rest[0]!)) continue;
+    }
+    out.push(line);
+  }
+  return `${out
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim()}\n`;
+}
+
+/**
  * The catalogue facts of a loaded agent-config store.
  * @param store The store (usually `useAgentConfigStore()`).
  * @param store.catalog
@@ -215,9 +285,10 @@ export interface PersonaPresetPayload {
   /** Role names + avatars (written to the Dexie global profile). */
   character: PresetCharacter;
   /**
-   * The 工具 / 中间件 / 子代理模型 selection (written to the session's agent config
-   * when the apply path knows its session). `{}` = every default: all tools, all
-   * switches on, every role on its `model_tier`.
+   * The 工具 / 中间件 / 子代理模型 / 技能 selection (written to the session's agent
+   * config when the apply path knows its session). `{}` = every default: all
+   * tools, all switches on, every role on its `model_tier`, every skill in the
+   * prompt's index.
    */
   agent?: AgentConfig;
 }
@@ -230,18 +301,22 @@ export interface PersonaPresetPayload {
  *   and turns every optional middleware off;
  * - 编程助手: the operating rules only — soul and user profile EMPTY, and BOTH
  *   role names empty (no role statement: the prompt gains no ROLE block);
- * - 情感陪伴 / 全量: the full template plus the shipped default names.
+ * - 情感陪伴: the full template with the task-orchestration content stripped
+ *   from 运行守则 (a companion is not an orchestrator) plus the default names;
+ * - 全量: the full template plus the shipped default names.
  * @param id Built-in entry id.
  * @param template The language template (`readSystemPromptTemplate`), already fetched.
  * @param t The component's translate function.
  * @param facts The loaded catalogue (drives 纯净 / 情感陪伴's agent block).
+ * @param locale UI locale (selects 情感陪伴's section-strip list).
  * @returns The apply payload (ROLE.md composed from the character).
  */
 export function builtinPayload(
   id: BuiltinPresetId,
   template: Record<string, string>,
   t: TranslateFn,
-  facts: PresetCatalogFacts
+  facts: PresetCatalogFacts,
+  locale: string
 ): PersonaPresetPayload {
   const named = id === 'companion' || id === 'sherry';
   const character: PresetCharacter = named
@@ -254,14 +329,15 @@ export function builtinPayload(
         userName: '',
         userAvatar: ''
       };
+  const rules = template['AGENTS.md'] ?? '';
   let content: Record<string, string>;
   if (id === 'pure') {
     content = { 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '' };
   } else if (id === 'coding') {
-    content = { 'AGENTS.md': template['AGENTS.md'] ?? '', 'SOUL.md': '', 'USER.md': '' };
+    content = { 'AGENTS.md': rules, 'SOUL.md': '', 'USER.md': '' };
   } else {
     content = {
-      'AGENTS.md': template['AGENTS.md'] ?? '',
+      'AGENTS.md': id === 'companion' ? stripTaskSections(rules, locale) : rules,
       'SOUL.md': template['SOUL.md'] ?? '',
       'USER.md': template['USER.md'] ?? ''
     };
@@ -286,7 +362,7 @@ export async function loadPresetPayload(
 ): Promise<PersonaPresetPayload> {
   if (entry.builtin) {
     const template = await readSystemPromptTemplate(locale);
-    return builtinPayload(entry.id as BuiltinPresetId, template, t, facts);
+    return builtinPayload(entry.id as BuiltinPresetId, template, t, facts, locale);
   }
   const preset = entry.userPreset;
   if (!preset) throw new Error(`[persona-catalog] unknown preset entry: ${entry.id}`);

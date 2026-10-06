@@ -272,7 +272,7 @@ vi.mock('@tanstack/vue-virtual', async () => {
 // state; suites that exercise the tabs override it per file.
 vi.stubGlobal('useAgentConfigStore', () =>
   Vue.reactive({
-    catalog: { tools: [], middlewares: [], subagent_roles: [] },
+    catalog: { tools: [], middlewares: [], subagent_roles: [], skills: [] },
     catalogLoaded: false,
     bySession: {},
     pendingBySession: {},
@@ -280,10 +280,12 @@ vi.stubGlobal('useAgentConfigStore', () =>
     toolGroups: [],
     middlewares: { gateable: [], locked: [] },
     subagentRoles: [],
+    skills: { builtin: [], thirdParty: [] },
     loadCatalog: async () => {},
     hydrate: async () => {},
     configOf: () => ({}),
     enabledTools: () => [],
+    selectedSkills: () => null,
     isPending: () => false,
     save: async () => {}
   })

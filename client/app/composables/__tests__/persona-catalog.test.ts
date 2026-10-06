@@ -15,8 +15,11 @@ import {
   entryName,
   loadPresetPayload,
   presetCatalogFacts,
+  stripTaskSections,
   userPresetEntryId
 } from '@/composables/persona-catalog';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { PersonaPreset } from '@/composables/db';
 import type { PresetCatalogFacts } from '@/composables/persona-catalog';
 
@@ -68,6 +71,28 @@ const TEMPLATE = {
   'SOUL.md': '# SOUL.md\nsoul',
   'USER.md': '# USER.md\nuser',
   'ROLE.md': 'ignored — composed'
+};
+
+/** A 运行守则 template shaped like the shipped ones (task content included). */
+const TEMPLATE_WITH_TASKS = {
+  ...TEMPLATE,
+  'AGENTS.md': [
+    '# AGENTS.md',
+    '',
+    '## 运行守则',
+    '- **任务分配**：先规划。',
+    '- **任务执行**：按规则执行。',
+    '',
+    '## 边界',
+    '- **隐私保护**：尊重隐私。',
+    '',
+    '## 任务管理与编排（CRITICAL）',
+    '',
+    '### 编排者信条（MANDATORY）',
+    '',
+    '你是 ORCHESTRATOR，绝非实现者。',
+    ''
+  ].join('\n')
 };
 
 /** The catalogue facts the built-in agent blocks derive from (a real subset). */
@@ -142,7 +167,7 @@ describe('persona catalogue', () => {
   });
 
   it('builds the 编程助手 payload with no roles and no soul / user profile', () => {
-    const payload = builtinPayload('coding', TEMPLATE, t, NO_AGENT);
+    const payload = builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh');
 
     expect(payload.content).toEqual({
       'AGENTS.md': TEMPLATE['AGENTS.md'],
@@ -160,7 +185,7 @@ describe('persona catalogue', () => {
   });
 
   it('builds the 全量 payload from the full template and the default roles', () => {
-    const payload = builtinPayload('sherry', TEMPLATE, t, FACTS);
+    const payload = builtinPayload('sherry', TEMPLATE, t, FACTS, 'zh');
 
     expect(payload.content['AGENTS.md']).toBe(TEMPLATE['AGENTS.md']);
     expect(payload.content['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
@@ -173,7 +198,7 @@ describe('persona catalogue', () => {
   });
 
   it('builds the 纯净 payload with no persona, the required tools and no switches', () => {
-    const payload = builtinPayload('pure', TEMPLATE, t, FACTS);
+    const payload = builtinPayload('pure', TEMPLATE, t, FACTS, 'zh');
 
     // Every file empty — including the operating rules — and nobody named.
     expect(payload.content).toEqual({ 'AGENTS.md': '', 'SOUL.md': '', 'USER.md': '', 'ROLE.md': '' });
@@ -185,7 +210,7 @@ describe('persona catalogue', () => {
   });
 
   it('builds the 情感陪伴 payload on the full persona with the orchestration off', () => {
-    const payload = builtinPayload('companion', TEMPLATE, t, FACTS);
+    const payload = builtinPayload('companion', TEMPLATE, t, FACTS, 'zh');
 
     expect(payload.content['SOUL.md']).toBe(TEMPLATE['SOUL.md']);
     expect(payload.character.aiName).toBe('橘雪莉');
@@ -199,13 +224,50 @@ describe('persona catalogue', () => {
     expect(COMPANION_DISABLED_TOOL_GROUPS).toEqual(['tasks', 'subagents']);
   });
 
+  it('strips the task-orchestration content out of 情感陪伴\u2019s 运行守则', () => {
+    const payload = builtinPayload('companion', TEMPLATE_WITH_TASKS, t, FACTS, 'zh');
+
+    expect(payload.content['AGENTS.md']).not.toContain('任务管理与编排');
+    expect(payload.content['AGENTS.md']).not.toContain('ORCHESTRATOR');
+    expect(payload.content['AGENTS.md']).not.toContain('任务分配');
+    expect(payload.content['AGENTS.md']).not.toContain('任务执行');
+    // The emptied 运行守则 heading goes with its bullets; 边界 stays intact.
+    expect(payload.content['AGENTS.md']).not.toContain('## 运行守则');
+    expect(payload.content['AGENTS.md']).toContain('## 边界');
+    expect(payload.content['AGENTS.md']).toContain('隐私保护');
+    // The other built-ins keep the template verbatim.
+    expect(builtinPayload('sherry', TEMPLATE_WITH_TASKS, t, FACTS, 'zh').content['AGENTS.md']).toContain(
+      '任务管理与编排'
+    );
+    expect(builtinPayload('coding', TEMPLATE_WITH_TASKS, t, NO_AGENT, 'zh').content['AGENTS.md']).toContain(
+      '任务管理与编排'
+    );
+  });
+
+  it('reads the shipped templates and drops their task sections in all four languages', () => {
+    // Self-guarding: a reworded template heading turns this red instead of
+    // silently shipping the orchestration doctrine to a companion session.
+    for (const lang of ['zh', 'en', 'ja', 'ko']) {
+      const path = join(process.cwd(), '..', 'workspace', 'template', lang, 'AGENTS.md');
+      const template = readFileSync(path, 'utf8');
+      const stripped = stripTaskSections(template, lang);
+
+      expect(stripped, lang).not.toMatch(/ORCHESTRATOR|ORCHESTRATOR|オーケストレーター|오케스트레이터/);
+      expect(stripped, lang).not.toMatch(/NEVER THE IMPLEMENTER|実装者では|구현자가/);
+      expect(stripped.length, lang).toBeLessThan(template.length);
+      expect(stripped, lang).toContain('# AGENTS.md');
+      // The 边界 section survives in every language (its last bullet).
+      expect(stripped.split('\n').filter(line => line.startsWith('- ')).length, lang).toBe(4);
+    }
+  });
+
   it('refuses to compose 纯净 / 情感陪伴 without the catalogue', () => {
     // A silent `{}` would apply the OPPOSITE of what these presets promise.
-    expect(() => builtinPayload('pure', TEMPLATE, t, NO_AGENT)).toThrow('tool catalogue is unavailable');
-    expect(() => builtinPayload('companion', TEMPLATE, t, NO_AGENT)).toThrow('tool catalogue is unavailable');
+    expect(() => builtinPayload('pure', TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
+    expect(() => builtinPayload('companion', TEMPLATE, t, NO_AGENT, 'zh')).toThrow('tool catalogue is unavailable');
     // The two unopinionated built-ins never need it.
-    expect(builtinPayload('coding', TEMPLATE, t, NO_AGENT).agent).toEqual({});
-    expect(builtinPayload('sherry', TEMPLATE, t, NO_AGENT).agent).toEqual({});
+    expect(builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
+    expect(builtinPayload('sherry', TEMPLATE, t, NO_AGENT, 'zh').agent).toEqual({});
   });
 
   it('reads the facts off an agent-config store', () => {
@@ -241,7 +303,7 @@ describe('persona catalogue', () => {
       Object.assign(written, map);
     });
     bridge.readSystemPrompt.mockImplementation(async () => ({ ...written }));
-    const payload = builtinPayload('coding', TEMPLATE, t, NO_AGENT);
+    const payload = builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh');
 
     await applyPresetPayload(payload);
 
@@ -256,8 +318,8 @@ describe('persona catalogue', () => {
   });
 
   it('pins an agent block only where a preset restricts something', () => {
-    expect(builtinPayload('pure', TEMPLATE, t, FACTS).agent).not.toEqual({});
-    expect(builtinPayload('companion', TEMPLATE, t, FACTS).agent).not.toEqual({});
+    expect(builtinPayload('pure', TEMPLATE, t, FACTS, 'zh').agent).not.toEqual({});
+    expect(builtinPayload('companion', TEMPLATE, t, FACTS, 'zh').agent).not.toEqual({});
     for (const id of ['coding', 'sherry'] as const) {
       expect(builtinPayload(id, TEMPLATE, t, FACTS).agent).toEqual({});
     }
@@ -303,7 +365,7 @@ describe('persona catalogue', () => {
     bridge.writeSystemPrompt.mockResolvedValue(undefined);
     bridge.readSystemPrompt.mockResolvedValue({ 'AGENTS.md': 'something else' });
 
-    await expect(applyPresetPayload(builtinPayload('coding', TEMPLATE, t, NO_AGENT))).rejects.toThrow(
+    await expect(applyPresetPayload(builtinPayload('coding', TEMPLATE, t, NO_AGENT, 'zh'))).rejects.toThrow(
       'applied content verification failed'
     );
     expect(db.cacheCharacter).not.toHaveBeenCalled();

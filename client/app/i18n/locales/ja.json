@@ -161,7 +161,17 @@
         "clearAll": "すべて無効",
         "selectGroup": "全選択",
         "clearGroup": "クリア",
-        "requiredHint": "必須（解除できません）"
+        "requiredHint": "必須（解除できません）",
+        "scope_builtin": "内蔵",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）"
+      },
+      "skills": {
+        "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。",
+        "count": "{selected}/{total} 選択",
+        "scope_builtin": "内蔵",
+        "scope_thirdparty": "サードパーティ",
+        "empty": "スキルはまだありません"
       },
       "toolGroup": {
         "files": "ファイル",

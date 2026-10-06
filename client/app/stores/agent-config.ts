@@ -4,6 +4,7 @@ import type {
   AgentConfig,
   AgentMiddlewareEntry,
   AgentRoleEntry,
+  AgentSkillEntry,
   AgentToolEntry
 } from '~/composables/bridge/agent-config';
 // Stable module specifiers so tests can vi.mock the bridge; the unimport
@@ -17,7 +18,8 @@ import { fetchAgentCatalog, fetchAgentConfig, setAgentConfig } from '~/composabl
  *
  * Two halves:
  *
- * - the CATALOG (tools grouped, middleware lock flags, subagent roles) is
+ * - the CATALOG (tools grouped, middleware lock flags, subagent roles, the skill
+ *   list split 内置 / 第三方) is
  *   process-wide and fetched once — the client never hardcodes backend names;
  * - the CONFIG is per session and mirrored from the backend on tab open; a save
  *   writes the whole payload back (`PUT /sessions/agent_config`), which lands
@@ -49,8 +51,8 @@ export function isBulkOnlyToolGroup(group: string): boolean {
 }
 
 export const useAgentConfigStore = defineStore('agentConfig', () => {
-  /** The tool / middleware / role lists (empty until the first load). */
-  const catalog = ref<AgentCatalog>({ tools: [], middlewares: [], subagent_roles: [] });
+  /** The tool / middleware / role / skill lists (empty until the first load). */
+  const catalog = ref<AgentCatalog>({ tools: [], middlewares: [], subagent_roles: [], skills: [] });
   /** True once the catalogue has been fetched (success or not). */
   const catalogLoaded = ref(false);
   /** sid → the session's own config as the backend reports it. */
@@ -79,6 +81,12 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
 
   /** The subagent roles in catalogue order. */
   const subagentRoles = computed<AgentRoleEntry[]>(() => catalog.value.subagent_roles);
+
+  /** The skills split into the two 技能 sub-tabs (内置 / 第三方), each by name. */
+  const skills = computed<{ builtin: AgentSkillEntry[]; thirdParty: AgentSkillEntry[] }>(() => ({
+    builtin: catalog.value.skills.filter(skill => skill.builtin),
+    thirdParty: catalog.value.skills.filter(skill => !skill.builtin)
+  }));
 
   /**
    * Load the catalogue once (idempotent; a failure leaves it empty and the
@@ -125,6 +133,20 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
   }
 
   /**
+   * The session's skill selection, expanded to ALL when it has no opinion.
+   * Unlike :func:`enabledTools` this returns a plain list: an EMPTY selection is
+   * a real choice ("no skill in the index"), so the caller must be able to tell
+   * it apart from "no opinion" (``null``).
+   * @param sessionId
+   */
+  function selectedSkills(sessionId: string): string[] | null {
+    const configured = configOf(sessionId).skills;
+    if (!Array.isArray(configured)) return null;
+    const wanted = new Set(configured);
+    return catalog.value.skills.filter(skill => wanted.has(skill.name)).map(skill => skill.name);
+  }
+
+  /**
    * Gateable middleware names the session turned OFF ([] = every switch on).
    * @param sessionId
    */
@@ -161,10 +183,12 @@ export const useAgentConfigStore = defineStore('agentConfig', () => {
     toolGroups,
     middlewares,
     subagentRoles,
+    skills,
     loadCatalog,
     hydrate,
     configOf,
     enabledTools,
+    selectedSkills,
     disabledMiddlewares,
     isPending,
     save

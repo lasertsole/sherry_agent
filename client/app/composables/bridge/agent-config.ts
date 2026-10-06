@@ -1,10 +1,10 @@
 /**
- * Per-session agent configuration bridge (预设 的工具 / 中间件 / 子代理模型 三栏).
+ * Per-session agent configuration bridge (预设 的工具 / 中间件 / 子代理模型 / 技能 四栏).
  *
  * Three calls, mirroring `GET /agent/catalog` and `GET|PUT /sessions/agent_config`:
  *
- * - {@link fetchAgentCatalog} — the tool / middleware / subagent-role lists the
- *   panel renders. The client never hardcodes backend names; this is the source.
+ * - {@link fetchAgentCatalog} — the tool / middleware / subagent-role / skill
+ *   lists the panel renders. The client never hardcodes backend names.
  * - {@link fetchAgentConfig} / {@link setAgentConfig} — the session's own
  *   selection. A write while a turn is in flight is PARKED by the backend and
  *   applies from the next turn (`pending: true`), exactly like the model and
@@ -39,6 +39,15 @@ export interface AgentMiddlewareEntry {
   gateable: boolean;
 }
 
+/** One skill the 技能 tab offers (the ``<available_skills>`` index's members). */
+export interface AgentSkillEntry {
+  name: string;
+  /** The SKILL.md description (bounded) — the row's hover tooltip. */
+  description?: string;
+  /** False = an uploaded third-party skill (`skills/plugins/`). */
+  builtin: boolean;
+}
+
 /** One functional subagent role. */
 export interface AgentRoleEntry {
   role: string;
@@ -51,6 +60,7 @@ export interface AgentCatalog {
   tools: AgentToolEntry[];
   middlewares: AgentMiddlewareEntry[];
   subagent_roles: AgentRoleEntry[];
+  skills: AgentSkillEntry[];
 }
 
 /**
@@ -64,6 +74,11 @@ export interface AgentConfig {
   middlewares_disabled?: string[];
   /** Per-role model profiles; null = follow the role's tier. */
   subagent_models?: Record<string, SessionModelProfile | null>;
+  /**
+   * Skill names whose index entries enter the system prompt, or null/absent for
+   * every skill. An EMPTY list is a legal, explicit choice: no skill at all.
+   */
+  skills?: string[] | null;
 }
 
 export interface AgentConfigState {
@@ -72,7 +87,7 @@ export interface AgentConfigState {
   pending: boolean;
 }
 
-/** Fetch the tool / middleware / role catalogue (one call, three lists). */
+/** Fetch the tool / middleware / role / skill catalogue (one call, four lists). */
 export async function fetchAgentCatalog(): Promise<AgentCatalog> {
   const res = await fetchApiPayload<AgentCatalog & { success?: boolean }>({
     url: '/agent/catalog',
@@ -81,7 +96,8 @@ export async function fetchAgentCatalog(): Promise<AgentCatalog> {
   return {
     tools: res.tools ?? [],
     middlewares: res.middlewares ?? [],
-    subagent_roles: res.subagent_roles ?? []
+    subagent_roles: res.subagent_roles ?? [],
+    skills: res.skills ?? []
   };
 }
 

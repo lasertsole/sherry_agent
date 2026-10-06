@@ -161,7 +161,17 @@
         "clearAll": "全部禁用",
         "selectGroup": "全选",
         "clearGroup": "清空",
-        "requiredHint": "必需，不可取消"
+        "requiredHint": "必需，不可取消",
+        "scope_builtin": "内置",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）"
+      },
+      "skills": {
+        "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。",
+        "count": "已选 {selected}/{total}",
+        "scope_builtin": "内置",
+        "scope_thirdparty": "第三方",
+        "empty": "暂无技能"
       },
       "toolGroup": {
         "files": "文件读写",

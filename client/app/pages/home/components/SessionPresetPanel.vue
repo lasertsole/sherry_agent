@@ -84,8 +84,31 @@
                 }}
               </span>
             </div>
+            <!-- Two sub-tabs, mirroring the editor: built-in groups and MCP tools. -->
+            <div class="mb-2 flex items-center gap-1">
+              <button
+                v-for="scope in AGENT_TOOL_SCOPES"
+                :key="scope"
+                type="button"
+                class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                :class="
+                  toolScope === scope
+                    ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+                "
+                :data-test="`session-preset-tools-scope-${scope}`"
+                @click="toolScope = scope">
+                {{ t(`config.agent.tools.scope_${scope}`) }}
+              </button>
+            </div>
             <div
-              v-for="group in agentStore.toolGroups"
+              v-if="visibleToolGroups.length === 0"
+              class="px-3 py-1 text-gray-400"
+              data-test="session-preset-tools-empty">
+              {{ t('config.agent.tools.mcpEmpty') }}
+            </div>
+            <div
+              v-for="group in visibleToolGroups"
               :key="group.group"
               class="mb-2 rounded-lg border border-solid border-gray-light p-2 dark:border-[#555]">
               <div class="mb-1 flex items-center justify-between gap-2">
@@ -100,9 +123,9 @@
                   {{ t('config.agent.tools.requiredHint') }}
                 </span>
               </div>
-              <!-- Same three row shapes as the editor: required locked on with a lock
-                   glyph, a bulk-only group as plain chips, the rest as disabled
-                   checkboxes (this whole tab is read-only). -->
+              <!-- Same two row shapes as the editor: a required tool is a locked
+                   chip with NO checkbox, a bulk-only group's membership is plain
+                   chips; everything else is a disabled checkbox (read-only tab). -->
               <div class="flex flex-wrap gap-x-4 gap-y-1">
                 <label
                   v-for="tool in group.tools"
@@ -110,7 +133,7 @@
                   class="flex items-center gap-1.5 text-gray-600 dark:text-gray-300"
                   :title="toolTooltip(tool)">
                   <Checkbox
-                    v-if="!isBulkOnlyToolGroup(group.group)"
+                    v-if="agentToolSwitchVisible(group, tool)"
                     :model-value="sessionEnabledTools.includes(tool.name)"
                     binary
                     disabled
@@ -121,10 +144,9 @@
                   <span
                     class="font-mono"
                     :class="{
-                      'text-gray-400 line-through':
-                        isBulkOnlyToolGroup(group.group) && !sessionEnabledTools.includes(tool.name)
+                      'text-gray-400 line-through': !tool.required && !sessionEnabledTools.includes(tool.name)
                     }"
-                    :data-test="isBulkOnlyToolGroup(group.group) ? `session-preset-tool-bulk-${tool.name}` : undefined">
+                    :data-test="viewerToolChipTestId(group, tool)">
                     {{ tool.name }}
                   </span>
                 </label>
@@ -215,14 +237,60 @@
           </div>
         </TabPanel>
 
-        <!-- 技能 tab: an EMPTY placeholder, mirroring the editor's tab set (a
-             per-preset skill selection is not designed yet). -->
+        <!-- 技能 tab: which skill index entries the SESSION keeps in its system
+             prompt (read-only here — the 预设 panel edits it). -->
         <TabPanel
           value="agentSkills"
           :header="t('config.agent.tabs.skills')">
           <div
             class="min-h-0 overflow-y-auto text-xs"
-            data-test="session-preset-skills-tab" />
+            data-test="session-preset-skills-tab">
+            <div class="mb-2 flex items-center justify-between gap-2">
+              <span class="text-gray-400">{{ t('config.agent.readonlyHint') }}</span>
+              <span class="text-gray-400">
+                {{
+                  t('config.agent.skills.count', {
+                    selected: sessionEnabledSkills.length,
+                    total: agentStore.catalog.skills.length
+                  })
+                }}
+              </span>
+            </div>
+            <div class="mb-2 flex items-center gap-1">
+              <button
+                v-for="scope in AGENT_SKILL_SCOPES"
+                :key="scope"
+                type="button"
+                class="rounded-full px-2.5 py-0.5 text-xs transition-colors"
+                :class="
+                  skillsScope === scope
+                    ? 'bg-[#c1d6e5] text-theme-main dark:bg-[#41556b]'
+                    : 'bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400'
+                "
+                :data-test="`session-preset-skills-scope-${scope}`"
+                @click="skillsScope = scope">
+                {{ t(`config.agent.skills.scope_${scope}`) }}
+              </button>
+            </div>
+            <div
+              v-if="visibleSkills.length === 0"
+              class="px-3 py-1 text-gray-400"
+              data-test="session-preset-skills-empty">
+              {{ t('config.agent.skills.empty') }}
+            </div>
+            <label
+              v-for="skill in visibleSkills"
+              :key="skill.name"
+              class="flex items-center gap-1.5 py-0.5 text-gray-600 dark:text-gray-300"
+              :title="skill.description || skill.name">
+              <Checkbox
+                :model-value="sessionEnabledSkills.includes(skill.name)"
+                binary
+                disabled
+                :data-test="`session-preset-skill-${skill.name}`" />
+              <span class="font-mono">{{ skill.name }}</span>
+            </label>
+          </div>
         </TabPanel>
       </TabView>
     </div>
@@ -259,6 +327,63 @@ const llmProfiles = useLlmProfilesStore();
 
 /** The session's EFFECTIVE agent config (the session is the live truth here). */
 const sessionEnabledTools = computed<string[]>(() => (sessionId.value ? agentStore.enabledTools(sessionId.value) : []));
+
+/** The session's EFFECTIVE skill selection (null = no opinion = every skill). */
+const sessionEnabledSkills = computed<string[]>(() => {
+  if (!sessionId.value) return [];
+  const configured = agentStore.selectedSkills(sessionId.value);
+  return configured ?? agentStore.catalog.skills.map(skill => skill.name);
+});
+
+/** The two 工具 / 技能 sub-tabs, mirroring the editor. */
+const AGENT_TOOL_SCOPES = ['builtin', 'mcp'] as const;
+const AGENT_SKILL_SCOPES = ['builtin', 'thirdparty'] as const;
+const MCP_TOOL_GROUP = 'mcp';
+const toolScope = ref<(typeof AGENT_TOOL_SCOPES)[number]>('builtin');
+const skillsScope = ref<(typeof AGENT_SKILL_SCOPES)[number]>('builtin');
+
+/** The tool groups of the active sub-tab. */
+const visibleToolGroups = computed(() =>
+  agentStore.toolGroups.filter(group =>
+    toolScope.value === MCP_TOOL_GROUP ? group.group === MCP_TOOL_GROUP : group.group !== MCP_TOOL_GROUP
+  )
+);
+
+/** The skills of the active sub-tab. */
+const visibleSkills = computed(() =>
+  skillsScope.value === 'builtin' ? agentStore.skills.builtin : agentStore.skills.thirdParty
+);
+
+/**
+ * Whether a row carries a checkbox (a required tool and a bulk-only group's
+ * membership never do — the editor renders the same two shapes).
+ * @param group Catalogue group entry.
+ * @param group.group
+ * @param group.tools
+ * @param tool Catalogue tool entry.
+ * @param tool.required
+ */
+const agentToolSwitchVisible = (
+  group: { group: string; tools: Array<{ required?: boolean }> },
+  tool: { required?: boolean }
+): boolean => tool.required !== true && !isBulkOnlyToolGroup(group.group);
+
+/**
+ * The chip's ``data-test`` (switch rows carry the id on their checkbox).
+ * @param group Catalogue group entry.
+ * @param group.group
+ * @param group.tools
+ * @param tool Catalogue tool entry.
+ * @param tool.name
+ * @param tool.required
+ */
+const viewerToolChipTestId = (
+  group: { group: string; tools: Array<{ required?: boolean }> },
+  tool: { name: string; required?: boolean }
+): string | undefined => {
+  if (tool.required === true) return `session-preset-tool-locked-${tool.name}`;
+  return isBulkOnlyToolGroup(group.group) ? `session-preset-tool-bulk-${tool.name}` : undefined;
+};
 const sessionDisabledMiddlewares = computed<string[]>(() =>
   sessionId.value ? agentStore.disabledMiddlewares(sessionId.value) : []
 );

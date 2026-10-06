@@ -117,8 +117,12 @@ function makeCatalogStore() {
   const webSearch = { name: 'web_search', group: 'web' };
   const spawn = { name: 'sessions_spawn', group: 'subagents' };
   const tools = [readFile, webSearch, spawn];
+  const skills = [
+    { name: 'alpha', builtin: true, description: 'Built-in skill.' },
+    { name: 'uploaded', builtin: false, description: 'Third-party skill.' }
+  ];
   return reactive({
-    catalog: { tools, middlewares: [], subagent_roles: [] },
+    catalog: { tools, middlewares: [], subagent_roles: [], skills },
     catalogLoaded: true,
     toolGroups: [
       { group: 'files', tools: [readFile] },
@@ -127,10 +131,12 @@ function makeCatalogStore() {
     ],
     middlewares: { gateable: [{ name: 'TaskIntentMiddleware', required: false, gateable: true }], locked: [] },
     subagentRoles: [],
+    skills: { builtin: skills.filter(skill => skill.builtin), thirdParty: skills.filter(skill => !skill.builtin) },
     loadCatalog: async () => {},
     hydrate: async () => {},
     configOf: () => ({}),
     enabledTools: () => tools.map(tool => tool.name),
+    selectedSkills: () => null,
     isPending: () => false,
     save: async () => {}
   });
@@ -315,7 +321,9 @@ describe('PersonaPanel role tab', () => {
     // The tools draft is the catalogue's locked set — nothing else stays on…
     const toolsTab = wrapper.get('[data-test="agent-tools-tab"]');
     expect(toolsTab.text()).toContain('已选 1/3');
-    expect(wrapper.get('[data-test="agent-tool-read_file"]').attributes('disabled')).toBeDefined();
+    // A required tool carries NO checkbox — a locked chip instead.
+    expect(wrapper.find('[data-test="agent-tool-read_file"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="agent-tool-locked-read_file"]').text()).toBe('read_file');
     expect(wrapper.get('[data-test="agent-tool-bulk-sessions_spawn"]').classes()).toContain('line-through');
     // …and every optional middleware switch is off as well.
     expect(wrapper.get('[data-test="agent-middleware-TaskIntentMiddleware"]').attributes('model-value')).toBe('false');
@@ -323,14 +331,37 @@ describe('PersonaPanel role tab', () => {
 
   it('loads 情感陪伴 with the orchestration groups off and the optional switch off', async () => {
     vi.stubGlobal('useAgentConfigStore', () => makeCatalogStore());
+    // A 运行守则 shaped like the shipped templates, task doctrine included.
+    bridge.readSystemPromptTemplate.mockResolvedValue({
+      'AGENTS.md': [
+        '# AGENTS.md',
+        '',
+        '## 运行守则',
+        '- **任务分配**：先规划。',
+        '',
+        '## 边界',
+        '- **隐私保护**：尊重隐私。',
+        '',
+        '## 任务管理与编排（CRITICAL）',
+        '你是 ORCHESTRATOR，绝非实现者。',
+        ''
+      ].join('\n'),
+      'SOUL.md': 'TPL-SOUL',
+      'USER.md': 'TPL-USER'
+    });
     const wrapper = await mountPanel();
 
     await wrapper.get('[data-test="builtin-companion"]').trigger('click');
     await flushPromises();
 
-    // The full role-play persona is loaded…
+    // The role-play persona is loaded, with the task doctrine stripped out…
     const textareas = wrapper.findAll('textarea').map(t => (t.element as HTMLTextAreaElement).value);
-    expect(textareas).toEqual(['TPL-AGENTS', 'TPL-SOUL', 'TPL-USER']);
+    expect(textareas[0]).toContain('## 边界');
+    expect(textareas[0]).toContain('隐私保护');
+    expect(textareas[0]).not.toContain('任务管理与编排');
+    expect(textareas[0]).not.toContain('任务分配');
+    expect(textareas[0]).not.toContain('ORCHESTRATOR');
+    expect(textareas.slice(1)).toEqual(['TPL-SOUL', 'TPL-USER']);
     expect((wrapper.get('[data-test="persona-role-ai-name"]').element as HTMLInputElement).value).toBe('橘雪莉');
     // …while 子代理 / 任务与计划 stay out and every optional middleware is off.
     expect(wrapper.get('[data-test="agent-tools-tab"]').text()).toContain('已选 2/3');

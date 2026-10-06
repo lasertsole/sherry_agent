@@ -156,7 +156,11 @@ function makeAgentStore(
         { name: 'HumanInTheLoop', required: true, gateable: false },
         { name: 'TaskIntentMiddleware', required: false, gateable: true }
       ],
-      subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }]
+      subagent_roles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
+      skills: [
+        { name: 'alpha', builtin: true, description: 'Shipped skill.' },
+        { name: 'uploaded', builtin: false, description: 'Uploaded skill.' }
+      ]
     },
     catalogLoaded: true,
     toolGroups: overrides.groups ?? DEFAULT_GROUPS,
@@ -165,10 +169,15 @@ function makeAgentStore(
       locked: [{ name: 'HumanInTheLoop', required: true, gateable: false }]
     },
     subagentRoles: [{ role: 'researcher', model_tier: 'auxiliary', description: 'r' }],
+    skills: {
+      builtin: [{ name: 'alpha', builtin: true, description: 'Shipped skill.' }],
+      thirdParty: [{ name: 'uploaded', builtin: false, description: 'Uploaded skill.' }]
+    },
     loadCatalog: vi.fn(async () => undefined),
     hydrate: vi.fn(async () => undefined),
     configOf: () => (overrides.config ?? {}) as never,
     enabledTools: () => tools.map(tool => tool.name) as never,
+    selectedSkills: () => (Array.isArray(overrides.config?.skills) ? overrides.config?.skills : null) as never,
     isPending: () => false,
     save: vi.fn(async (_sid: string, config: Record<string, unknown>) => {
       saved.push(config);
@@ -206,6 +215,13 @@ describe('PersonaPanel agent-config tabs', () => {
 
     const headers = panel.findAllComponents({ name: 'TabPanel' }).map(c => c.props('header'));
     expect(headers.slice(-4)).toEqual(['工具', '中间件', '子代理模型', '技能']);
+    // The 技能 tab belongs to the same agent-config group and carries its own
+    // two sub-tabs; the 工具 tab splits the built-in groups from MCP.
+    expect(panel.find('[data-test="agent-skills-tab"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-skills-scope-builtin"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-skills-scope-thirdparty"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-tools-scope-builtin"]').exists()).toBe(true);
+    expect(panel.find('[data-test="agent-tools-scope-mcp"]').exists()).toBe(true);
 
     // Tools grouped, every catalogue tool present with a checkbox…
     expect(panel.find('[data-test="agent-tool-read_file"]').exists()).toBe(true);
@@ -257,7 +273,11 @@ describe('PersonaPanel agent-config tabs', () => {
       name: '瘦身预设',
       content: { 'AGENTS.md': 'A', 'SOUL.md': 'S', 'USER.md': 'U' },
       character: { aiName: '艾拉', aiAvatar: '', userName: '诺亚', userAvatar: '' },
-      agent: { tools: ['terminal'], middlewares_disabled: ['TaskIntentMiddleware'] },
+      agent: {
+        tools: ['terminal'],
+        middlewares_disabled: ['TaskIntentMiddleware'],
+        skills: ['uploaded']
+      },
       createdAt: 0,
       updatedAt: 0
     });
@@ -270,11 +290,19 @@ describe('PersonaPanel agent-config tabs', () => {
     await row!.trigger('click');
     await flushPromises();
 
-    // Only `terminal` stays checked; the middleware switch sits OFF.
-    const checkboxes = panel.findAllComponents({ name: 'Checkbox' });
-    expect(checkboxes.length).toBe(3);
-    const checked = checkboxes.filter(c => c.props('modelValue') === true);
-    expect(checked.length).toBe(1);
+    // Only `terminal` stays checked among the tools; the middleware switch sits OFF.
+    const toolBoxes = panel.get('[data-test="agent-tools-tab"]').findAllComponents({ name: 'Checkbox' });
+    expect(toolBoxes.length).toBe(3);
+    expect(toolBoxes.filter(c => c.props('modelValue') === true).length).toBe(1);
+    // The skills draft followed the same block: only `uploaded` stays in the index.
+    const skillBoxes = panel.get('[data-test="agent-skills-tab"]').findAllComponents({ name: 'Checkbox' });
+    expect(skillBoxes.filter(c => c.props('modelValue') === true).length).toBe(0);
+    // `uploaded` is a third-party skill: its row lives in the second sub-tab.
+    await panel.get('[data-test="agent-skills-scope-thirdparty"]').trigger('click');
+    await flushPromises();
+    const thirdParty = panel.get('[data-test="agent-skills-tab"]').findAllComponents({ name: 'Checkbox' });
+    expect(thirdParty.length).toBe(1);
+    expect(thirdParty[0]!.props('modelValue')).toBe(true);
   });
 
   it('locks required tools on and moves a bulk-only group as a whole', async () => {
@@ -305,17 +333,12 @@ describe('PersonaPanel agent-config tabs', () => {
     }).store;
     const panel = await mountPanel();
 
-    // Required row: locked ON (disabled + checked) with a lock glyph and the hint.
-    const requiredBox = panel.get('[data-test="agent-tool-read_file"]');
-    expect(requiredBox.attributes('disabled')).toBeDefined();
-    expect(requiredBox.attributes('data-checked')).toBe('true');
-    const requiredRow = requiredBox.element.closest('label');
-    expect(requiredRow?.querySelector('.pi-lock')).not.toBeNull();
-    expect(requiredRow?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
-    // Clicking it changes nothing (the draft never drops a required tool).
-    await requiredBox.trigger('click');
-    await flushPromises();
-    expect(panel.get('[data-test="agent-tool-read_file"]').attributes('data-checked')).toBe('true');
+    // Required row: a locked chip with NO checkbox at all, plus the hint.
+    expect(panel.find('[data-test="agent-tool-read_file"]').exists()).toBe(false);
+    const requiredRow = panel.get('[data-test="agent-tool-locked-read_file"]');
+    expect(requiredRow.text()).toBe('read_file');
+    expect(requiredRow.element.closest('label')?.querySelector('.pi-lock')).not.toBeNull();
+    expect(requiredRow.element.closest('label')?.getAttribute('title')).toBe('Read a file.\n必需，不可取消');
     // A fully required group has no select-all toggle — a locked hint instead.
     expect(panel.find('[data-test="agent-tool-group-files"]').exists()).toBe(false);
     expect(panel.find('[data-test="agent-tool-group-locked-files"]').exists()).toBe(true);
@@ -327,7 +350,7 @@ describe('PersonaPanel agent-config tabs', () => {
     // 全部禁用 keeps the required tool on and leaves the rest off.
     await panel.get('[data-test="agent-tools-none"]').trigger('click');
     await flushPromises();
-    expect(panel.get('[data-test="agent-tool-read_file"]').attributes('data-checked')).toBe('true');
+    expect(panel.get('[data-test="agent-tool-locked-read_file"]').text()).toBe('read_file');
     expect(panel.get('[data-test="agent-tool-terminal"]').attributes('data-checked')).toBe('false');
     const chip = () => panel.get('[data-test="agent-tool-bulk-taskflow_create"]').classes();
     expect(chip()).toContain('line-through');

@@ -16,6 +16,11 @@ const CATALOG = {
     { name: 'write_file', group: 'files' },
     { name: 'terminal', group: 'terminal' }
   ],
+  skills: [
+    { name: 'alpha', builtin: true, description: 'a' },
+    { name: 'beta', builtin: true, description: 'b' },
+    { name: 'uploaded', builtin: false, description: 'c' }
+  ],
   middlewares: [
     { name: 'HumanInTheLoop', required: true, gateable: false },
     { name: 'TaskIntentMiddleware', required: false, gateable: true }
@@ -72,6 +77,27 @@ describe('agent-config store', () => {
     expect(bridge.setAgentConfig).toHaveBeenCalledWith('s1', { tools: ['read_file'] });
     expect(store.enabledTools('s1')).toEqual(['read_file']);
     expect(store.isPending('s1')).toBe(false);
+  });
+
+  it('splits the skills into 内置 / 第三方 and reports the session selection', async () => {
+    const store = useAgentConfigStore();
+    await store.loadCatalog();
+    await store.hydrate('s1');
+
+    expect(store.skills.builtin.map(skill => skill.name)).toEqual(['alpha', 'beta']);
+    expect(store.skills.thirdParty.map(skill => skill.name)).toEqual(['uploaded']);
+    // No opinion = null (the caller expands it to every skill)…
+    expect(store.selectedSkills('s1')).toBeNull();
+
+    // …an explicit selection is filtered to catalogue order, and an EMPTY one
+    // stays empty (it means "no skill in the index", not "all of them").
+    bridge.fetchAgentConfig.mockResolvedValue({ config: { skills: ['uploaded', 'alpha'] }, pending: false });
+    await store.hydrate('s2');
+    expect(store.selectedSkills('s2')).toEqual(['alpha', 'uploaded']);
+
+    bridge.fetchAgentConfig.mockResolvedValue({ config: { skills: [] }, pending: false });
+    await store.hydrate('s3');
+    expect(store.selectedSkills('s3')).toEqual([]);
   });
 
   it('unions the catalogue’s required tools into the effective set', async () => {
