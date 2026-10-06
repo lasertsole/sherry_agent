@@ -285,6 +285,10 @@ class TaskIntentMiddleware(AgentMiddleware):
 
     async def abefore_model(self, state, runtime=None) -> dict[str, Any] | None:
         """Inject a steering message, or return ``None`` (no-op)."""
+        from agent.middlewares.agent_switch import middleware_enabled
+
+        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
+            return None  # 会话配置（预设-中间件）关闭该中间件时，本钩子整体 no-op。
         try:
             messages = state.get("messages", []) if isinstance(state, dict) else []
             if not messages:

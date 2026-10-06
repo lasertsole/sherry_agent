@@ -19,6 +19,7 @@ EXPECTED_ORDER = [
     "TodoContinuationEnforcer",
     "system_prompt_injection",
     "ProjectDirNoticeMiddleware",
+    "ToolSelectionMiddleware",
     "MultimodalProcessor",
     "IterationBudget",
     "ToolGuardrails",

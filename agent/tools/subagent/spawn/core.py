@@ -37,7 +37,11 @@ from .depth import (
     validate_concurrent_children,
 )
 from .target_policy import validate_target_policy
-from .plan import resolve_run_timeout_seconds, resolve_model_and_thinking_plan
+from .plan import (
+    resolve_model_and_thinking_plan,
+    resolve_role_model_profile,
+    resolve_run_timeout_seconds,
+)
 from .task_name import normalize_subagent_task_name
 from .system_prompt import build_subagent_system_prompt
 from .initial_message import build_subagent_initial_user_message
@@ -364,6 +368,10 @@ async def spawn_subagent_direct(
     resolved_model_tier = model_plan.model_tier
     thinking_resolved = model_plan.thinking_override
 
+    # The requester session may pin a MODEL per functional role (预设-子代理模型):
+    # a profile descriptor that outranks the role's model_tier. None = tier.
+    role_model_profile = resolve_role_model_profile(requester_session_key, functional_role)
+
     # --- Phase 6: Origin routing ---
     child_origin = resolve_requester_origin_for_child(requester_session_key, agent_id=agent_id)
     child_scopes = resolve_least_privilege_scopes(agent_id, role)
@@ -564,6 +572,7 @@ async def spawn_subagent_direct(
             timeout_seconds=timeout_seconds,
             model_override=resolved_model,
             model_tier=resolved_model_tier,
+            model_profile=role_model_profile,
             extra_tools=extra_tool_names,
             output_schema=output_schema,
             goal_max_turns=effective_goal_max_turns,
@@ -604,6 +613,7 @@ async def _execute_subagent_with_lane(
     timeout_seconds: float,
     model_override: str | None = None,
     model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
     extra_tools: list[str] | None = None,
     output_schema: dict | None = None,
     goal_max_turns: int = 5,
@@ -637,6 +647,7 @@ async def _execute_subagent_with_lane(
                 timeout_seconds=timeout_seconds,
                 model_override=model_override,
                 model_tier=model_tier,
+                model_profile=model_profile,
                 extra_tools=extra_tools,
                 output_schema=output_schema,
                 goal_max_turns=goal_max_turns,
@@ -657,6 +668,7 @@ async def _execute_subagent(
     timeout_seconds: float,
     model_override: str | None = None,
     model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
     extra_tools: list[str] | None = None,
     output_schema: dict | None = None,
     *,
@@ -721,6 +733,7 @@ async def _execute_subagent(
             functional_role=run.functional_role,
             model_override=model_override,
             model_tier=model_tier,
+            model_profile=model_profile,
             extra_tools=extra_tools,
             session_id=run.child_session_key,
         )
@@ -981,12 +994,16 @@ async def _build_child_agent(
     functional_role: FunctionalRole = FunctionalRole.GENERAL,
     model_override: str | None = None,
     model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
     extra_tools: list[str] | None = None,
     session_id: str = "",
 ):
     """Construct a LangGraph agent for the child sub-agent with filtered tools and role-appropriate LLM.
 
     The LLM selection logic is:
+      - *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
+        it is a full profile descriptor, so the child can run on another provider /
+        key entirely. A build failure logs and falls through to the tier.
       - If *model_override* is provided, attempt to resolve it by name; on failure fall through.
       - A non-GENERAL *functional_role* with *model_tier* "main"/"auxiliary" picks that LLM.
       - Otherwise the depth role decides: ORCHESTRATOR gets the main LLM, LEAF the auxiliary one.
@@ -1107,15 +1124,38 @@ async def _build_child_agent(
             return build_main_llm()
         return build_auxiliary_llm()
 
-    if model_override:
+    child_llm = None
+    if model_profile and model_profile.get("model"):
         try:
-            from models import build_llm_by_name
+            from models import build_main_llm_for_profile
 
-            child_llm = build_llm_by_name(model_override)
-        except (ImportError, AttributeError):
+            child_llm = build_main_llm_for_profile(
+                provider=model_profile.get("provider"),
+                model=model_profile["model"],
+                api_key=model_profile.get("api_key"),
+                base_url=model_profile.get("base_url"),
+            )
+            logger.info(
+                "Subagent role model: functional_role={} model={} provider={}",
+                functional_role,
+                model_profile["model"],
+                model_profile.get("provider"),
+            )
+        except Exception as exc:  # noqa: BLE001 - a bad profile must not kill the spawn
+            logger.warning(
+                "Subagent role model profile failed ({}); falling back to the role tier", exc
+            )
+            child_llm = None
+    if child_llm is None:
+        if model_override:
+            try:
+                from models import build_llm_by_name
+
+                child_llm = build_llm_by_name(model_override)
+            except (ImportError, AttributeError):
+                child_llm = _select_child_llm()
+        else:
             child_llm = _select_child_llm()
-    else:
-        child_llm = _select_child_llm()
 
     child_checkpointer = await build_async_sqlite_checkpointer()
     await child_checkpointer.setup()

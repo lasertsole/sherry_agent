@@ -36,6 +36,7 @@ from .middlewares import (
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.project_dir_notice import ProjectDirNoticeMiddleware
+from .middlewares.tool_selection import ToolSelectionMiddleware
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.thinking_control import ThinkingControlMiddleware
@@ -173,6 +174,11 @@ def _build_middlewares(
         # injection — the prompt renders the CURRENT root, this layer explains
         # why it moved.
         ProjectDirNoticeMiddleware(),
+        # Per-session tool set (预设-工具 tab): narrows request.tools before the
+        # model is bound and refuses a disabled tool at execution. Registered as
+        # a real middleware (not gated) because it HAS no switch of its own — it
+        # is what applies the switch, and an unset config is a no-op.
+        ToolSelectionMiddleware(),
         MultimodalProcessor(),
         IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
         ToolGuardrails(),

@@ -59,7 +59,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
-  │    system_prompt_injection (@dynamic_prompt) → ProjectDirNotice → MultimodalProcessor → IterationBudget
+  │    system_prompt_injection (@dynamic_prompt) → ProjectDirNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
@@ -219,6 +219,39 @@ project directory is bound — the tree it opens is scoped to both, so an unboun
 session shows no control at all (nothing to press, no empty picker) — and the
 persisted sidebar body falls back to the session list whenever the button goes
 away (last session closed, binding cleared).
+
+## Per-Session Agent Config (`server/service/agent_config_service.py`)
+
+The 预设 panel's last three tabs (工具 / 中间件 / 子代理模型) edit one JSON payload per
+session, stored under `StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`,
+promoted at the turn boundary like the model/thinking controls)::
+
+    {"tools": [...]|null, "middlewares_disabled": [...], "subagent_models": {"<role>": {profile}|null}}
+
+- `GET /agent/catalog` is the client's only source of tool / middleware / role names
+  (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
+  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`). `GET|PUT /sessions/agent_config`
+  reads/writes the payload; the service rejects an unknown tool / role, and any
+  system-required middleware name, with a 400 that names it.
+- **Tools** are applied per call by `ToolSelectionMiddleware`
+  (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
+  what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
+  checkpoint or a hallucinated name would otherwise still run — the ToolNode holds the full
+  list). Unset config = every tool.
+- **Middlewares**: five optional entries are switchable
+  (`TodoContinuationEnforcer`, `TaskIntentMiddleware`, `ProjectDirNoticeMiddleware`,
+  `MultimodalProcessor`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
+  `agent/middlewares/agent_switch.py::middleware_enabled`. The twelve `_MAIN_REQUIRED` safety
+  entries plus `system_prompt_injection` and `ThinkingControlMiddleware` are LOCKED — chain
+  membership and order never change.
+- **Subagent models**: `subagent_models[role]` is a profile descriptor (the same shape as the
+  session main-model override); at spawn `resolve_role_model_profile` reads it for the
+  requester session and the child LLM is built with `build_main_llm_for_profile` (provider /
+  key / base_url can change), with the role's `model_tier` as the fallback. `steer` re-reads the
+  same profile so a steered run keeps its model.
+- Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
+  应用 writes it to the open session (the new-session dialog writes it for the session it just
+  created), and the read-only 当前会话预设 tab summarises it.
 
 ## User Login (`server/service/auth_service.py`)
 

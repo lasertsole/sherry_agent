@@ -133,6 +133,7 @@ async def steer_subagent_run(
         steer_message += f"\n\n[Previous Output (for context)]\n{frozen_fallback}"
 
     from ..spawn.core import _build_child_agent
+    from ..spawn.plan import resolve_role_model_profile
     from agent.tools import build_main_tools
 
     try:
@@ -142,6 +143,10 @@ async def steer_subagent_run(
             tool_allow=updated.inherited_tool_allow,
             tool_deny=updated.inherited_tool_deny,
             role=updated.role,
+            functional_role=updated.functional_role,
+            # A steered run keeps the requester's per-role model choice; without
+            # this the rebuild would silently fall back to the role tier.
+            model_profile=resolve_role_model_profile(updated.spawned_by, updated.functional_role),
         )
     except Exception as e:
         logger.error("Failed to rebuild child agent for steer {}: {}", run_id, e)

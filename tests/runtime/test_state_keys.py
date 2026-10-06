@@ -33,6 +33,8 @@ EXPECTED_VALUES: dict[str, str] = {
     "PROJECT_DIR_PENDING": "project_dir_pending",
     "PROJECT_DIR_ANNOUNCED": "project_dir_announced",
     "LLM_THINKING_ENABLED_PENDING": "llm_thinking_enabled_pending",
+    "AGENT_CONFIG": "agent_config",
+    "AGENT_CONFIG_PENDING": "agent_config_pending",
     "MULTIMODAL_TRYING_NATIVE": "_multimodal_trying_native",
     "MULTIMODAL_NATIVE_MODEL": "_multimodal_native_model",
     "HEARTBEAT_ITER": "heartbeat_iter",

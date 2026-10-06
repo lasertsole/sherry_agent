@@ -18,6 +18,8 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 - [ミドルウェアリファレンス](#ミドルウェアリファレンス)
   - [system_prompt_injection](#system_prompt_injection)
   - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [ToolSelectionMiddleware](#toolselectionmiddleware)
+  - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -94,6 +96,7 @@ middleware = [
     # 伝えたルートから動いていれば HumanMessage の直前に AIMessage を挿入する
     # （通知は 1 つだけ、最終ルートを記載）
     ProjectDirNoticeMiddleware(),
+    ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -219,6 +222,32 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 通知は `metadata={"origin": "project_dir", "internal": True}` を伴い、永続化層はその origin を AI 行に保持するため、チャットはアシスタントの吹き出しではなく中立のシステム カード（ラベル **作業ディレクトリ**、フォルダー アイコン）として描画します — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` は USER 行と同様に AI 行の非 `user` origin もキャリアとして扱います。
 
 `HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
+
+### ToolSelectionMiddleware
+
+**モジュール:** `agent/middlewares/tool_selection/core.py` · **クラス:** `ToolSelectionMiddleware(AgentMiddleware)`
+**フック:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`（常時有効 — スイッチを持つ側ではなく、スイッチを適用する側）
+
+セッション自身のツール セットを適用します（プリセット-ツール タブ → `AGENT_CONFIG["tools"]`、`PUT /sessions/agent_config` が書き込み）。コンパイル済みグラフは全セッションで共有され、`ToolNode` はプロセス全体のツール一覧を保持するため、選択は**呼び出し時**に効きます:
+
+1. `wrap_model_call`: セッションに選択があるとき `request.override(tools=<有効なサブセット>)` — langchain は呼び出しごとに `request.tools` からツール スキーマを再バインドするので、無効なツールはモデルに提示されません。
+2. `wrap_tool_call`: **無効なツール**への呼び出しは実行せずエラー `ToolMessage` で拒否します — チェックポイントに切替前の呼び出しが残っていたり、モデルが名前を捏造したりしても、`ToolNode` はそのまま実行してしまうからです。
+
+未設定（または `tools: null`）= 全ツールで、従来の動作とバイト単位で同一。フェイル オープン: レジスタが読めない / ペイロードが壊れている場合はログしてそのまま通します。
+
+### The per-session middleware switches
+
+`GET /agent/catalog` がチェーンを返し、プリセット-ミドルウェア タブは**任意の 5 項目**をオフにできます（`AGENT_CONFIG["middlewares_disabled"]`）。各項目は自分のフック入口で `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（mem のみ、フェイル オープン）により早期リターンします:
+
+| 無効化可能 | オフにしたときの効果 |
+| --- | --- |
+| `TodoContinuationEnforcer` | 計画（todo / フロー）が未完了でもターンを継続しない |
+| `TaskIntentMiddleware` | タスク意図の誘導メッセージを注入しない |
+| `ProjectDirNoticeMiddleware` | 作業ディレクトリ変更の通知を出さない |
+| `MultimodalProcessor` | アップロードされたメディアを前処理しない |
+| `SubagentCompletionDrainMiddleware` | サブエージェントの完了結果を注入しない |
+
+それ以外はすべてロック（UI は読み取り専用で表示）: 12 個の `_MAIN_REQUIRED` 安全項目に加え、`system_prompt_injection`（なければ指示が無いターンになる）と `ThinkingControlMiddleware`（それ自体がモデル/思考コントロール）。チェーンの構成と順序は決して変わらず（`scaffolding` と順序契約テストが引き続き固定）、ゲートされるのは挙動のみ。名前は `agent/middlewares/catalog.py::MIDDLEWARE_ORDER` にクラス名で登録されています。
 
 ### MultimodalProcessor
 

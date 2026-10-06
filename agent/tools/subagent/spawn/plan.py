@@ -39,6 +39,49 @@ def split_model_ref(model_ref: str | None) -> tuple[str | None, str | None]:
     return None, model_ref
 
 
+def resolve_role_model_profile(
+    requester_session_key: str | None, functional_role: object
+) -> dict[str, str] | None:
+    """The requester session's model profile for one functional role, or ``None``.
+
+    The 预设-子代理模型 tab stores ``AGENT_CONFIG["subagent_models"]`` as
+    ``{role: {model, provider?, api_key?, base_url?}}`` (written by
+    ``PUT /sessions/agent_config``); a role WITHOUT an entry follows its
+    ``model_tier`` as before. Mem-only (the spawn runs on the agent loop) and
+    fail-open: an unreadable register or a malformed payload means "use the
+    tier", never "spawn without a model".
+    """
+    if not requester_session_key:
+        return None
+    try:
+        from runtime import StateKey, state_register_mem
+
+        from ..registry.session_state import normalize_session_key
+
+        raw = state_register_mem.get_state(
+            normalize_session_key(requester_session_key), StateKey.AGENT_CONFIG, None
+        )
+        if not isinstance(raw, dict):
+            return None
+        models = raw.get("subagent_models")
+        if not isinstance(models, dict):
+            return None
+        role_value = getattr(functional_role, "value", str(functional_role))
+        profile = models.get(role_value)
+        if (
+            isinstance(profile, dict)
+            and isinstance(profile.get("model"), str)
+            and profile["model"].strip()
+        ):
+            return {str(k): str(v) for k, v in profile.items() if isinstance(v, str)}
+        return None
+    except Exception:  # noqa: BLE001 - never break a spawn over the config read
+        from loguru import logger
+
+        logger.exception("resolve_role_model_profile: config read failed; using the role tier")
+        return None
+
+
 class ModelThinkingPlan:
     """Resolved model and thinking configuration for a sub-agent run."""
 

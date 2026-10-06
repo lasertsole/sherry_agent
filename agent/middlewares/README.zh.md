@@ -18,6 +18,8 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 - [中间件参考](#中间件参考)
   - [system_prompt_injection](#system_prompt_injection)
   - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [ToolSelectionMiddleware](#toolselectionmiddleware)
+  - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -93,6 +95,7 @@ middleware = [
     # 工作目录变更通知：每轮开始时若项目目录与上次告知 Agent 的根不同，
     # 就在 HumanMessage 之前插入一条 AIMessage（只发一条，写最终根）
     ProjectDirNoticeMiddleware(),
+    ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -217,6 +220,32 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 该通知携带 `metadata={"origin": "project_dir", "internal": True}`，落库时该 origin 保留在 AI 行上，客户端因此把它渲染为中性系统卡片（标签**项目目录切换**、文件夹图标）而不是助手气泡——`client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` 现在对 AI 行与 USER 行一视同仁：非 `user` 的 origin 都按载体处理。
 
 `HumanMessage` 始终保持在**最后**：`TaskIntentMiddleware` 只在最后一条人类消息确实位于末尾时注入引导，`ContextEvictionMiddleware` 需要给末尾人类消息打标记。没有人类消息的历史（恢复轮 / 载体轮）改为追加通知。失败开放：任何异常只记日志，钩子返回 `None`。
+
+### ToolSelectionMiddleware
+
+**模块：** `agent/middlewares/tool_selection/core.py` · **类：** `ToolSelectionMiddleware(AgentMiddleware)`
+**钩子：** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call`（常驻——它是"应用开关"的那一层，自身没有开关）
+
+执行本会话自己的工具集（预设-工具栏 → `AGENT_CONFIG["tools"]`，由 `PUT /sessions/agent_config` 写入）。编译好的图被所有会话共享、`ToolNode` 持有进程级全量工具，因此选择在**调用期**生效：
+
+1. `wrap_model_call`：会话有选择时 `request.override(tools=<启用的子集>)`——langchain 每次调用都按 `request.tools` 重新绑定工具 schema，被关掉的工具根本不会出现在模型面前。
+2. `wrap_tool_call`：对**已关闭工具**的调用直接返回 error `ToolMessage` 拒绝执行——旧 checkpoint 可能残留切换前的调用、模型也可能编造工具名，两种情况 `ToolNode` 都会照跑。
+
+未配置（或 `tools: null`）= 全开，与旧行为逐字节一致。失败开放：寄存器读不到或载荷损坏时记日志并原样放行。
+
+### The per-session middleware switches
+
+`GET /agent/catalog` 返回整条链；预设-中间件栏可关闭其中的**五个可选项**（`AGENT_CONFIG["middlewares_disabled"]`），每一项都在自己的钩子入口通过 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`（仅 mem、失败开放）提前返回：
+
+| 可关闭项 | 关闭后的效果 |
+| --- | --- |
+| `TodoContinuationEnforcer` | 计划（待办 / 任务流）未完成也不再自动续跑 |
+| `TaskIntentMiddleware` | 不再注入任务意图引导 |
+| `ProjectDirNoticeMiddleware` | 不再通知工作目录变更 |
+| `MultimodalProcessor` | 上传的多媒体不再预处理 |
+| `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话 |
+
+其余全部锁定（前端只读展示）：12 个 `_MAIN_REQUIRED` 安全项，外加 `system_prompt_injection`（关掉即无系统提示词）与 `ThinkingControlMiddleware`（它就是模型/思考开关本身）。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
 
 ### MultimodalProcessor
 

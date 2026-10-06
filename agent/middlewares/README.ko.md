@@ -18,6 +18,8 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 - [미들웨어 레퍼런스](#미들웨어-레퍼런스)
   - [system_prompt_injection](#system_prompt_injection)
   - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [ToolSelectionMiddleware](#toolselectionmiddleware)
+  - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -93,6 +95,7 @@ middleware = [
     # 작업 디렉터리 변경 알림: 턴 시작 시 프로젝트 디렉터리가 마지막으로 알린
     # 루트와 다르면 HumanMessage 바로 앞에 AIMessage 하나를 삽입한다
     ProjectDirNoticeMiddleware(),
+    ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -218,6 +221,32 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 알림은 `metadata={"origin": "project_dir", "internal": True}`를 가지며, 영속화 계층이 그 origin을 AI 행에 유지하므로 채팅은 어시스턴트 말풍선이 아니라 중립 시스템 카드(라벨 **작업 디렉터리**, 폴더 글리프)로 렌더링합니다 — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask`는 USER 행과 마찬가지로 AI 행의 비 `user` origin도 캐리어로 취급합니다.
 
 `HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
+
+### ToolSelectionMiddleware
+
+**모듈:** `agent/middlewares/tool_selection/core.py` · **클래스:** `ToolSelectionMiddleware(AgentMiddleware)`
+**훅:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call` (항상 켜짐 — 스위치를 가진 쪽이 아니라 스위치를 적용하는 쪽)
+
+세션 자체의 도구 집합을 적용합니다(프리셋-도구 탭 → `AGENT_CONFIG["tools"]`, `PUT /sessions/agent_config`가 기록). 컴파일된 그래프는 모든 세션이 공유하고 `ToolNode`는 프로세스 전역 도구 목록을 보유하므로, 선택은 **호출 시점**에 적용됩니다:
+
+1. `wrap_model_call`: 세션에 선택이 있으면 `request.override(tools=<활성 부분집합>)` — langchain은 호출마다 `request.tools`로 도구 스키마를 다시 바인딩하므로 꺼진 도구는 모델에 아예 제시되지 않습니다.
+2. `wrap_tool_call`: **꺼진 도구** 호출은 실행하지 않고 error `ToolMessage`로 거부합니다 — 체크포인트에 전환 이전 호출이 남아 있을 수 있고 모델이 이름을 지어낼 수도 있는데, `ToolNode`는 둘 다 그대로 실행합니다.
+
+미설정(또는 `tools: null`) = 모든 도구, 기존 동작과 바이트 단위로 동일. 실패 개방: 레지스터를 읽지 못하거나 페이로드가 손상되면 로그 후 그대로 통과시킵니다.
+
+### The per-session middleware switches
+
+`GET /agent/catalog`가 체인을 반환하고, 프리셋-미들웨어 탭은 **선택 항목 5개**를 끌 수 있습니다(`AGENT_CONFIG["middlewares_disabled"]`). 각 항목은 자기 훅 입구에서 `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)`(mem 전용, 실패 개방)으로 조기 반환합니다:
+
+| 끌 수 있음 | 끄면 |
+| --- | --- |
+| `TodoContinuationEnforcer` | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
+| `TaskIntentMiddleware` | 작업 의도 유도 메시지를 주입하지 않음 |
+| `ProjectDirNoticeMiddleware` | 작업 디렉터리 변경 알림을 보내지 않음 |
+| `MultimodalProcessor` | 업로드된 미디어를 전처리하지 않음 |
+| `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음 |
+
+나머지는 모두 잠금(UI는 읽기 전용 표시): `_MAIN_REQUIRED` 12개 안전 항목에 더해 `system_prompt_injection`(없으면 지시 없는 턴)과 `ThinkingControlMiddleware`(그 자체가 모델/사고 제어). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
 
 ### MultimodalProcessor
 

@@ -52,10 +52,11 @@ _OVERRIDE_FIELDS = ("id", "label", "provider", "model", "base_url", "api_key")
 #: Upper bound per string field (credentials/urls stay far below this).
 _MAX_FIELD_LEN = 512
 
-#: (live key, pending key) twins for the two controls.
+#: (live key, pending key) twins for the per-session controls.
 _SETTINGS_KEYS: tuple[tuple[StateKey, StateKey], ...] = (
     (StateKey.LLM_THINKING_ENABLED, StateKey.LLM_THINKING_ENABLED_PENDING),
     (StateKey.LLM_MAIN_MODEL, StateKey.LLM_MAIN_MODEL_PENDING),
+    (StateKey.AGENT_CONFIG, StateKey.AGENT_CONFIG_PENDING),
 )
 
 

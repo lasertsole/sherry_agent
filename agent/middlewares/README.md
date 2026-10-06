@@ -18,6 +18,8 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
 - [Middleware Reference](#middleware-reference)
   - [system_prompt_injection](#system_prompt_injection)
   - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [ToolSelectionMiddleware](#toolselectionmiddleware)
+  - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
   - [IterationBudget](#iterationbudget)
   - [ToolGuardrails](#toolguardrails)
@@ -94,6 +96,7 @@ middleware = [
     # in front of the human message when the project directory moved since the
     # agent was last told (one notice, naming the final root)
     ProjectDirNoticeMiddleware(),
+    ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
     ToolGuardrails(),
@@ -219,6 +222,32 @@ Coalescing is by construction — only the comparison at send time matters: any 
 The notice carries `metadata={"origin": "project_dir", "internal": True}` and the persistence layer keeps that origin on the AI row, so the chat renders it as a neutral system card (label **Working directory**, folder glyph) instead of an assistant bubble — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` treats a non-`user` origin as a carrier on AI rows as well as USER rows.
 
 The `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notice instead. Fail-open: any error is logged and the hook returns `None`.
+
+### ToolSelectionMiddleware
+
+**Module:** `agent/middlewares/tool_selection/core.py` · **Class:** `ToolSelectionMiddleware(AgentMiddleware)`
+**Hooks:** `wrap_model_call` / `awrap_model_call` + `wrap_tool_call` / `awrap_tool_call` (always on — it applies the session's switch rather than having one)
+
+Runs the session's own tool set (预设-工具 tab → `AGENT_CONFIG["tools"]`, written by `PUT /sessions/agent_config`). The compiled graph is shared by every session and its `ToolNode` holds the full process-wide tool list, so the selection is applied **at call time**:
+
+1. `wrap_model_call`: when the session has a selection, `request.override(tools=<the enabled subset>)` — langchain re-binds the tool schema from `request.tools` per call, so a disabled tool is never offered to the model.
+2. `wrap_tool_call`: a call to a DISABLED tool is refused with an error `ToolMessage` instead of being executed — a stale checkpoint can hold a call that predates the switch, and a model can hallucinate a name; the `ToolNode` would run either happily.
+
+Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. Fail-open: an unreadable register or a malformed payload logs and passes the request through.
+
+### The per-session middleware switches
+
+`GET /agent/catalog` lists the chain; the 预设-中间件 tab may turn **five optional entries** off (`AGENT_CONFIG["middlewares_disabled"]`), each of which early-returns from every hook via `agent/middlewares/agent_switch.py::middleware_enabled(session_id, name)` (mem-only, fail-open):
+
+| Gateable | Effect of turning it off |
+| --- | --- |
+| `TodoContinuationEnforcer` | the plan (todos / flows) no longer keeps the turn alive |
+| `TaskIntentMiddleware` | no task-intent steering message |
+| `ProjectDirNoticeMiddleware` | no working-directory change notice |
+| `MultimodalProcessor` | uploaded media is no longer preprocessed |
+| `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected |
+
+Everything else is LOCKED (the UI shows it read-only): the twelve `_MAIN_REQUIRED` safety entries plus `system_prompt_injection` (a turn without it has no instructions) and `ThinkingControlMiddleware` (it IS the model/thinking control). Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
 
 ### MultimodalProcessor
 
