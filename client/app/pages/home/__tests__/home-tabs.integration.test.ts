@@ -87,25 +87,6 @@ vi.mock('@/composables/db', async importOriginal => {
   };
 });
 
-// The notification list is the shell's only remaining dialog (PrimeVue + its ws
-// subscription). Replace that lazy module with an inert stub so this suite exercises
-// the shell's registry wiring, not the dialog internals: a rendered stub proves the
-// dialog was opened. The tool panels are lazily imported by RightSidebar and are not
-// rendered here, because this suite's store double never adds a tab to the strip.
-const { dialogStub } = vi.hoisted(() => ({
-  dialogStub: (tag: string) => ({
-    name: `stub-${tag}`,
-    props: ['modelValue'],
-    emits: ['update:modelValue', 'changed', 'saved'],
-    template: `<div data-test="${tag}" :data-open="String(modelValue)"><slot /></div>`
-  })
-}));
-
-vi.mock('@/pages/home/components/NotificationDialog.vue', () => ({
-  __esModule: true,
-  default: dialogStub('notification-dialog')
-}));
-
 const seededFetchApi = vi.hoisted(() =>
   vi.fn(async (opts?: { url?: string }) =>
     opts?.url === '/sessions' ? [{ session_id: 's1', last_time: '20260617104200', title: '第一次对话' }] : []
@@ -166,15 +147,15 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     uiState.sidebarCollapsed = false;
   });
 
-  it('opens the notification dialog from the top-bar bell command', async () => {
+  it('opens the notification TAB from the top-bar bell command', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    expect(wrapper.find('[data-test="notification-dialog"]').attributes('data-open')).toBe('false');
-
     await clickIconButton(wrapper, 'pi pi-bell');
 
-    expect(wrapper.find('[data-test="notification-dialog"]').attributes('data-open')).toBe('true');
+    // No dialog anywhere: the bell routes into the right sidebar's strip.
+    expect(rightSidebarState.openTab).toHaveBeenCalledWith('notification');
+    expect(wrapper.find('[data-test$="-dialog"]').exists()).toBe(false);
   });
 
   it('drops the theme switch and the language picker when the middle column is squeezed', async () => {
@@ -236,13 +217,15 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     }
   });
 
-  it('mounts no tool dialog at all: the notification list is the only one left', async () => {
+  it('mounts no tool dialog at all — every entry is a right-sidebar tab', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
     await clickIconButton(wrapper, 'pi pi-bars');
 
     const rendered = wrapper.findAll('[data-test$="-dialog"]').map(n => n.attributes('data-test'));
+    expect(rendered).toEqual([]);
+    expect(rendered).not.toContain('notification-dialog');
     expect(rendered).not.toContain('skills-dialog');
     expect(rendered).not.toContain('config-dialog');
     expect(rendered).not.toContain('persona-dialog');
@@ -254,15 +237,14 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     expect(rendered).not.toContain('logs-dialog');
   });
 
-  it('closes the notification dialog through its own update:modelValue (v-model close path)', async () => {
+  it('keeps the notification badge on the store, not on a mounted dialog', async () => {
+    // The badge must survive the tab being closed, which is why the state (and
+    // the ws:notification subscription) lives in the notification store.
     const wrapper = mountHome();
     await flushPromises();
 
-    await clickIconButton(wrapper, 'pi pi-bell');
-    const dialog = wrapper.findComponent({ name: 'stub-notification-dialog' });
-    dialog.vm.$emit('update:modelValue', false);
-    await flushPromises();
-
-    expect(wrapper.find('[data-test="notification-dialog"]').attributes('data-open')).toBe('false');
+    const bell = wrapper.findAllComponents({ name: 'Button' }).find(b => b.props('icon') === 'pi pi-bell');
+    expect(bell, 'top-bar bell').toBeTruthy();
+    expect(wrapper.find('[data-test="notification-dialog"]').exists()).toBe(false);
   });
 });

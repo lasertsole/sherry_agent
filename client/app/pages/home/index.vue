@@ -65,7 +65,7 @@
             ]"
             @click="toggleSidebarBodyWithHint" />
           <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
-               Clicking opens the notification dialog and clears the unread count. -->
+               Clicking opens the notification TAB (全局); opening it clears the badge. -->
           <div class="relative flex items-center @max-[300px]:hidden!">
             <Button
               icon="pi pi-bell"
@@ -74,10 +74,10 @@
               variant="text"
               @click="handleOperate('headerBar', 'notification')" />
             <span
-              v-if="notificationUnread > 0"
+              v-if="notifications.unreadCount > 0"
               class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
               :title="t('toolbar.notification')">
-              {{ notificationUnread > 99 ? '99+' : notificationUnread }}
+              {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
             </span>
           </div>
         </div>
@@ -190,19 +190,9 @@
          outside the KeepAlive'd session page, its tabs survive session switches. -->
     <RightSidebar @saved="loadCharacter" />
 
-    <!-- Dialogs are lazily loaded (defineAsyncComponent below): `v-if` is what makes the
-         laziness real — an async component that is always rendered would fetch its chunk as
-         soon as this page mounts. NotificationDialog is mounted permanently instead: its
-         ws:notification subscription and unread badge must stay live while the dialog is
-         closed, so the async chunk is still loaded off the critical path but the component
-         never unmounts. Every other toolbar / settings-menu entry is a right-sidebar tab
-         (see dialogs.ts), so those panels mount and unmount with their tab. -->
-
-    <!-- Notification dialog (listens to ws:notification, merges consecutive identical
-       notifications, reports the unread count via changed) -->
-    <NotificationDialog
-      v-model="dialogs.visible.notification"
-      @changed="(n: number) => (notificationUnread = n)" />
+    <!-- Every toolbar / settings-menu entry is a right-sidebar tab (see dialogs.ts), so
+         the panels mount and unmount with their tab; the notification badge keeps counting
+         because its state lives in the notification STORE, not in the panel. -->
 
     <!-- Mandatory preset choice for 新建对话: a session is created only after a
          preset is picked and applied (persona files + character). Owned by the
@@ -226,28 +216,13 @@ import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
 import ModeSwitch from './components/ModeSwitch.vue';
-import AsyncChunkFallback from '@/components/AsyncChunkFallback.vue';
 // function
-import { computed, defineAsyncComponent, onMounted, type Component } from 'vue';
+import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import { useChatBackgroundStore } from '~/stores/chat-background';
 import { headerTools } from './config';
-import { buildHomeToolbarCommands, HOME_DIALOG_IDS } from './dialogs';
-
-/**
- * Wrap a dialog `import()` in an async component.
- *
- * The remaining dialog (the notification list) is code-split so its module
- * graph is not part of the initial `/home` chunk. The `loadingComponent`
- * covers the first-open chunk fetch; `delay: 150` avoids a spinner flash on
- * fast (cached) loads.
- * @param loader Dynamic import of the dialog SFC
- */
-const lazyDialog = (loader: () => Promise<{ default: Component }>) =>
-  defineAsyncComponent({ loader, loadingComponent: AsyncChunkFallback, delay: 150 });
-
-const NotificationDialog = lazyDialog(() => import('./components/NotificationDialog.vue'));
+import { buildHomeToolbarCommands } from './dialogs';
 
 const { t, locale, setLocale } = useI18n();
 
@@ -328,20 +303,19 @@ const resolvePageKey = (route: { path: string; params: Record<string, unknown> }
   return route.path.includes('/tasks/') ? `tasks-${sid}` : sid;
 };
 
-/** Every dialog the shell owns, with its visibility flag + open/close actions (registry-driven) */
-const dialogs = useDialogManager(HOME_DIALOG_IDS);
+/**
+ * Notification state: the badge reads the shared store, whose subscription keeps
+ * counting while the notification tab is closed (registered below).
+ */
+const notifications = useNotificationStore();
 
 /**
- * Toolbar command registry: event → command (dialogs + right-sidebar tabs).
+ * Toolbar command registry: event → command (every entry opens a right-sidebar tab).
  * `handleOperate` is a lookup, so a new toolbar entry only needs a registry row.
  */
 const toolbarCommands = buildHomeToolbarCommands({
-  openDialog: dialogs.open,
   openRightTab: kind => rightSidebarStore.openTab(kind)
 });
-
-/** Notification badge unread count (reported by NotificationDialog) */
-const notificationUnread = ref(0);
 
 /** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
 const uiStore = useUiStore();
@@ -473,5 +447,11 @@ const toggleSidebar = () => {
 // done inside the SessionSidebar component)
 onMounted(() => {
   chatBackgroundStore.loadBackground();
+  // The notification badge must keep counting while its tab is closed, so the
+  // listener lives in the store (registered once) and the session socket is
+  // established here — the notification TAB is lazily mounted and would
+  // otherwise be the first to open it.
+  notifications.subscribe();
+  useWs();
 });
 </script>

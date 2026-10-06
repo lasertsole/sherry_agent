@@ -326,6 +326,24 @@ vi.stubGlobal('useAccessModeStore', () =>
   })
 );
 
+// `useNotificationStore` holds the heartbeat / cron notification list and the
+// unread badge (the shell subscribes to it on mount, the panel renders it), so
+// the default stub carries the whole surface either side touches.
+vi.stubGlobal('useNotificationStore', () =>
+  Vue.reactive({
+    items: [],
+    list: [],
+    unreadCount: 0,
+    subscribed: true,
+    panelVisible: false,
+    handleNotification: () => {},
+    markRead: () => {},
+    clearAll: () => {},
+    subscribe: () => {},
+    setPanelVisible: () => {}
+  })
+);
+
 // `useNewSessionStore` gates session creation behind the mandatory preset dialog
 // (mounted in the shell); the default is a closed dialog a suite can open.
 vi.stubGlobal('useNewSessionStore', () =>

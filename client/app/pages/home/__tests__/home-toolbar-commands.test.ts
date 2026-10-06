@@ -1,11 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
 import { headerTools } from '../config';
-import { buildHomeToolbarCommands, HOME_DIALOG_IDS, HOME_TOOLBAR_EVENTS, type HomeDialogId } from '../dialogs';
+import { buildHomeToolbarCommands, HOME_DIALOG_IDS, HOME_TOOLBAR_EVENTS } from '../dialogs';
 import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 
 /**
- * Every toolbar entry that must open a right-sidebar tab, and the panel kind it
- * must open: the three viewers plus all seven settings-menu editors.
+ * Every toolbar entry and the panel kind it opens: the three viewers, the seven
+ * settings-menu editors and the notification list (a top-bar-only button).
  */
 const TAB_EVENTS: ReadonlyArray<[string, RightSidebarPanelKind]> = [
   ['logs', 'logs'],
@@ -17,51 +17,26 @@ const TAB_EVENTS: ReadonlyArray<[string, RightSidebarPanelKind]> = [
   ['memory', 'memory'],
   ['heartbeat', 'heartbeat'],
   ['cron', 'cron'],
-  ['extend', 'extend']
+  ['extend', 'extend'],
+  ['notification', 'notification']
 ];
 
-/** The one entry that still opens a dialog, and the dialog it must open. */
-const DIALOG_EVENTS: ReadonlyArray<[string, HomeDialogId]> = [['notification', 'notification']];
-
 function buildCommands() {
-  return buildHomeToolbarCommands({
-    openDialog: vi.fn(),
-    openRightTab: vi.fn()
-  });
+  return buildHomeToolbarCommands({ openRightTab: vi.fn() });
 }
 
 describe('buildHomeToolbarCommands', () => {
-  it('routes every viewer and settings entry to its own right-sidebar tab', () => {
-    const openDialog = vi.fn();
+  it('routes every toolbar entry — notification included — to its own right-sidebar tab', () => {
     const openRightTab = vi.fn();
-    const commands = buildHomeToolbarCommands({ openDialog, openRightTab });
+    const commands = buildHomeToolbarCommands({ openRightTab });
 
     for (const [event, kind] of TAB_EVENTS) {
-      openDialog.mockClear();
       openRightTab.mockClear();
 
       commands[event]?.();
 
       expect(openRightTab).toHaveBeenCalledTimes(1);
       expect(openRightTab).toHaveBeenCalledWith(kind);
-      expect(openDialog).not.toHaveBeenCalled();
-    }
-  });
-
-  it('routes the notification list to its dialog instead of a tab', () => {
-    const openDialog = vi.fn();
-    const openRightTab = vi.fn();
-    const commands = buildHomeToolbarCommands({ openDialog, openRightTab });
-
-    for (const [event, dialog] of DIALOG_EVENTS) {
-      openDialog.mockClear();
-      openRightTab.mockClear();
-
-      commands[event]?.();
-
-      expect(openDialog).toHaveBeenCalledTimes(1);
-      expect(openDialog).toHaveBeenCalledWith(dialog);
-      expect(openRightTab).not.toHaveBeenCalled();
     }
   });
 
@@ -79,10 +54,8 @@ describe('buildHomeToolbarCommands', () => {
     expect(commands).toHaveProperty('notification');
   });
 
-  it('keeps the dialog registry down to the entries that really are dialogs', () => {
-    for (const [, dialog] of DIALOG_EVENTS) expect(HOME_DIALOG_IDS).toContain(dialog);
-    // Tab entries must NOT be dialogs any more (no dead registry rows), and no
-    // tab kind may hide in the dialog registry either.
+  it('leaves the dialog registry empty: every entry is a tab', () => {
+    expect(HOME_DIALOG_IDS).toHaveLength(0);
     for (const [event, kind] of TAB_EVENTS) {
       expect(HOME_DIALOG_IDS).not.toContain(event);
       expect(HOME_DIALOG_IDS).not.toContain(kind);
@@ -94,10 +67,8 @@ describe('buildHomeToolbarCommands', () => {
 
     expect(commands['does-not-exist']).toBeUndefined();
 
-    const openDialog = vi.fn();
     const openRightTab = vi.fn();
-    buildHomeToolbarCommands({ openDialog, openRightTab })['does-not-exist']?.();
-    expect(openDialog).not.toHaveBeenCalled();
+    buildHomeToolbarCommands({ openRightTab })['does-not-exist']?.();
     expect(openRightTab).not.toHaveBeenCalled();
   });
 });

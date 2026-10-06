@@ -18,6 +18,7 @@ export type RightSidebarPanelKind =
   | 'taskDetail'
   | 'fileViewer'
   | 'account'
+  | 'notification'
   /** The session's own persona preset (read-only), the only SESSION-scoped panel. */
   | 'sessionPreset';
 
@@ -47,6 +48,7 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   taskDetail: 'global',
   fileViewer: 'global',
   account: 'global',
+  notification: 'global',
   sessionPreset: 'session'
 };
 

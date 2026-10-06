@@ -144,6 +144,7 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   extend: defineAsyncComponent(() => import('./ExtendPanel.vue')),
   taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue')),
   account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue')),
+  notification: defineAsyncComponent(() => import('./NotificationPanel.vue')),
   sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue'))
 };
 
@@ -267,6 +268,7 @@ onBeforeUnmount(() => {
       "skills": "技能",
       "systemConfig": "系统配置",
       "persona": "预设",
+      "notification": "通知",
       "memory": "记忆",
       "heartbeat": "心跳",
       "cron": "定时任务",
@@ -291,6 +293,7 @@ onBeforeUnmount(() => {
       "skills": "Skills",
       "systemConfig": "System Config",
       "persona": "Presets",
+      "notification": "Notifications",
       "memory": "Memory",
       "heartbeat": "Heartbeat",
       "cron": "Scheduled Tasks",
@@ -315,6 +318,7 @@ onBeforeUnmount(() => {
       "skills": "スキル",
       "systemConfig": "システム設定",
       "persona": "プリセット",
+      "notification": "通知",
       "memory": "メモリ",
       "heartbeat": "ハートビート",
       "cron": "定期タスク",
@@ -339,6 +343,7 @@ onBeforeUnmount(() => {
       "skills": "스킬",
       "systemConfig": "시스템 설정",
       "persona": "프리셋",
+      "notification": "알림",
       "memory": "메모리",
       "heartbeat": "하트비트",
       "cron": "예약 작업",
