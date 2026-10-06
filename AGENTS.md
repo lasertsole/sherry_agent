@@ -264,6 +264,16 @@ promoted at the turn boundary like the model/thinking controls)::
 - Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
   应用 writes it to the open session (the new-session dialog writes it for the session it just
   created), and the read-only 当前会话预设 tab summarises it.
+- **Four built-in presets**, in display order — the whole spectrum
+  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
+  persona file empty, and only the catalogue's REQUIRED tools), 编程助手 (the default: the
+  operating-rules template, empty soul / user profile, no roles, every tool on), 情感陪伴 (the
+  full role-play persona with the 任务与计划 / 子代理 tool groups off and every optional
+  middleware off) and 全量 (the same full persona with everything on). Their agent blocks are
+  DERIVED from `GET /agent/catalog` at apply time (`builtinAgentConfig`), never hardcoded — a
+  preset whose restriction cannot be computed throws instead of silently applying every tool.
+  The `sherry` id names 全量 (the label changed; sessions already bound to it keep the stored
+  name), and its shipped character is still 橘雪莉.
 
 ## User Login (`server/service/auth_service.py`)
 
