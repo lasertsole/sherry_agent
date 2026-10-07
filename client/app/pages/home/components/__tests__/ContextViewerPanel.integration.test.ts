@@ -30,7 +30,12 @@ const payload = () => ({
   tool_selection: true,
   messages: [
     { role: 'human', content: '你好', origin: 'user' },
-    { role: 'ai', content: '', tool_calls: [{ name: 'read_file', args: '{"path":"a.py"}' }] },
+    {
+      role: 'ai',
+      content: '',
+      reasoning: '先读文件再改。',
+      tool_calls: [{ name: 'read_file', args: '{"path":"a.py"}' }]
+    },
     { role: 'tool', content: 'FILE BODY', tool_call_id: 'c1' },
     {
       role: 'human',
@@ -97,6 +102,21 @@ describe('ContextViewerPanel', () => {
     // The tool call is listed next to the (empty) AI row.
     expect(wrapper.get('[data-test="context-message-1"]').text()).toContain('read_file');
     expect(wrapper.get('[data-test="context-message-2"]').text()).toContain('FILE BODY');
+  });
+
+  it("shows an AI row's thinking as a collapsed block that opens on click", async () => {
+    const wrapper = await mountPanel();
+
+    const toggle = wrapper.get('[data-test="context-reasoning-1"]');
+    expect(toggle.text()).toContain('思考过程');
+    // Collapsed by default: the text is not rendered yet.
+    expect(wrapper.find('[data-test="context-reasoning-body"]').exists()).toBe(false);
+
+    await toggle.trigger('click');
+    expect(wrapper.get('[data-test="context-reasoning-body"]').text()).toBe('先读文件再改。');
+
+    // A row without reasoning has no block.
+    expect(wrapper.find('[data-test="context-reasoning-0"]').exists()).toBe(false);
   });
 
   it('lists the tool definitions and opens a schema on demand', async () => {

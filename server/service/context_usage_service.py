@@ -238,14 +238,25 @@ def _message_payload(message: Any) -> dict[str, Any]:
     ``origin``/``internal`` ride along because injected carriers (the workspace
     notices, task-intent directives, subagent completions) are indistinguishable
     from user text by content alone — the viewer should say what they are.
+
+    Reasoning rides along too: a thinking model's chain-of-thought arrives under
+    ``additional_kwargs["reasoning_content"]`` (the same field the persistence
+    layer reads for the chat's collapsible 思考过程 block), and WITHOUT it an AI
+    row that only thought and called a tool looks empty in the viewer.
     """
-    text, truncated = _clip(_message_text(getattr(message, "content", "")))
+    raw_text = _message_text(getattr(message, "content", ""))
+    text, truncated = _clip(raw_text)
     metadata: dict[str, Any] = getattr(message, "metadata", None) or {}
     payload: dict[str, Any] = {
         "role": str(getattr(message, "type", "") or "unknown"),
         "content": text,
         "truncated": truncated,
     }
+    additional: dict[str, Any] = getattr(message, "additional_kwargs", None) or {}
+    reasoning = str(additional.get("reasoning_content") or "").strip()
+    if reasoning:
+        payload["reasoning"], reasoning_clipped = _clip(reasoning)
+        payload["truncated"] = truncated or reasoning_clipped
     origin = str(metadata.get("origin") or "").strip()
     if origin:
         payload["origin"] = origin

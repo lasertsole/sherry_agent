@@ -156,6 +156,29 @@
                   v-if="message.content"
                   class="m-0 mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-gray-600 dark:text-gray-300"
                   >{{ message.content }}</pre>
+                <!-- The model's chain-of-thought: a collapsed block per row, the
+                     same shape the chat's 思考过程 uses (a thinking-only row would
+                     otherwise read as empty, and the content it produced is short). -->
+                <div
+                  v-if="message.reasoning"
+                  class="mt-0.5">
+                  <button
+                    type="button"
+                    class="flex cursor-pointer items-center gap-1 text-[10px] text-gray-400 hover:text-[#2563EB] dark:text-gray-500 dark:hover:text-[#60A5FA]"
+                    :aria-expanded="openReasoning.has(index)"
+                    :data-test="`context-reasoning-${index}`"
+                    @click="toggleReasoning(index)">
+                    <i
+                      class="pi text-[9px] transition-transform duration-200"
+                      :class="openReasoning.has(index) ? 'pi-chevron-down' : 'pi-chevron-right'" />
+                    {{ t('contextViewer.reasoning') }}
+                  </button>
+                  <pre
+                    v-if="openReasoning.has(index)"
+                    class="m-0 mt-0.5 max-h-[30vh] overflow-auto whitespace-pre-wrap break-words rounded bg-white/70 px-2 py-1 font-mono text-[10px] text-gray-500 dark:bg-gray-900/40 dark:text-gray-400"
+                    data-test="context-reasoning-body"
+                    >{{ message.reasoning }}</pre>
+                </div>
                 <div
                   v-for="call in message.tool_calls ?? []"
                   :key="call.name"
@@ -210,10 +233,18 @@ const open = ref<Record<'system' | 'tools' | 'messages', boolean>>({
 });
 /** Tool schemas are opened one at a time (they are long). */
 const openTools = ref<Set<string>>(new Set());
+/** Reasoning blocks, by message index (a thought is long; opened on demand). */
+const openReasoning = ref<Set<number>>(new Set());
 let timer: ReturnType<typeof setInterval> | null = null;
 
 const toggleSection = (key: 'system' | 'tools' | 'messages'): void => {
   open.value = { ...open.value, [key]: !open.value[key] };
+};
+const toggleReasoning = (index: number): void => {
+  const next = new Set(openReasoning.value);
+  if (next.has(index)) next.delete(index);
+  else next.add(index);
+  openReasoning.value = next;
 };
 const toggleTool = (name: string): void => {
   const next = new Set(openTools.value);
@@ -350,6 +381,7 @@ watch(sessionId, () => {
       "hasSchema": "有参数",
       "noSchema": "无参数",
       "emptyPart": "（空）",
+      "reasoning": "思考过程",
       "stateError": "读取消息列表失败：{error}"
     }
   },
@@ -375,6 +407,7 @@ watch(sessionId, () => {
       "hasSchema": "with args",
       "noSchema": "no args",
       "emptyPart": "(empty)",
+      "reasoning": "Thinking",
       "stateError": "Reading the message list failed: {error}"
     }
   },
@@ -400,6 +433,7 @@ watch(sessionId, () => {
       "hasSchema": "引数あり",
       "noSchema": "引数なし",
       "emptyPart": "（空）",
+      "reasoning": "思考プロセス",
       "stateError": "メッセージ一覧の読み取りに失敗: {error}"
     }
   },
@@ -425,6 +459,7 @@ watch(sessionId, () => {
       "hasSchema": "인자 있음",
       "noSchema": "인자 없음",
       "emptyPart": "(비어 있음)",
+      "reasoning": "사고 과정",
       "stateError": "메시지 목록 읽기 실패: {error}"
     }
   }

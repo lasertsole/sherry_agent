@@ -311,7 +311,9 @@ export interface ContextMessage {
   internal?: boolean;
   tool_calls?: Array<{ name: string; args: string }>;
   tool_call_id?: string;
-  /** The row was clipped to the served bound. */
+  /** The AI row's chain-of-thought (`additional_kwargs.reasoning_content`). */
+  reasoning?: string;
+  /** The row (or its reasoning) was clipped to the served bound. */
   truncated?: boolean;
 }
 

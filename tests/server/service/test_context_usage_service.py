@@ -331,6 +331,34 @@ def test_inspect_serves_prompt_tools_and_the_live_transcript(_inspect_env, monke
     assert payload["state_error"] == ""
 
 
+def test_inspect_serves_each_row_reasoning(_inspect_env, monkeypatch):
+    from langchain_core.messages import AIMessage
+
+    async def thinking_state(session_id: str):
+        return [
+            AIMessage(
+                content="",
+                additional_kwargs={"reasoning_content": "先看文件，再改一行。"},
+                tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "c1"}],
+            ),
+            AIMessage(content="答完了", additional_kwargs={}),
+        ]
+
+    monkeypatch.setattr(service, "read_state_messages", thinking_state)
+    monkeypatch.setattr("agent.tools.build_main_tools", lambda: [])
+    monkeypatch.setattr(
+        "agent.middlewares.tool_selection.core.enabled_tool_names", lambda sid: None
+    )
+
+    payload = asyncio.run(service.get_context_content("s1"))
+
+    # A thinking-only row would otherwise read as empty.
+    assert payload["messages"][0]["content"] == ""
+    assert payload["messages"][0]["reasoning"] == "先看文件，再改一行。"
+    # A row without reasoning carries no field at all (the panel hides the block).
+    assert "reasoning" not in payload["messages"][1]
+
+
 def test_inspect_clips_a_giant_message_and_counts_it(_inspect_env, monkeypatch):
     from langchain_core.messages import HumanMessage
 
