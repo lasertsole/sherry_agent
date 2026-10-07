@@ -17,6 +17,11 @@ const bridge = vi.hoisted(() => ({
 }));
 vi.mock('~/composables/bridge/git', () => bridge);
 
+// The component's bare `toastError`/`toastSuccess` resolve to an injected import
+// of this module (not a runtime global), so intercepting them needs a mock.
+const toasts = vi.hoisted(() => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+vi.mock('~/composables/toast', () => toasts);
+
 const gitDiffStore = vi.hoisted(() => ({ open: vi.fn() }));
 vi.stubGlobal('useGitDiffStore', () => gitDiffStore);
 const sidebarStore = vi.hoisted(() => ({ openTab: vi.fn() }));
@@ -332,5 +337,41 @@ describe('GitGraphPanel', () => {
     expect(label.attributes('disabled')).toBeDefined();
     await label.trigger('click');
     expect(bridge.checkoutGitRef).not.toHaveBeenCalled();
+  });
+
+  it('renders a page payload without the branches field at all', async () => {
+    // A component instance kept across an HMR update can still hold an OLDER page
+    // object: reading `branches.length` off it took the whole panel's render down,
+    // which silently killed row clicks and branch switches until a full reload.
+    const payload = page({ commits: [commit('aaaa1111')] });
+    delete (payload as Record<string, unknown>).branches;
+
+    const wrapper = await mountPanel([payload]);
+
+    expect(wrapper.get('[data-test="git-branch"]').text()).toBe('main');
+    expect(wrapper.get('[data-test="git-branch"]').attributes('disabled')).toBeDefined();
+    expect(wrapper.findAll('[data-test^="git-commit-"]')).toHaveLength(1);
+  });
+
+  it("keeps the page and shows git's reason when a checkout is refused", async () => {
+    toasts.toastError.mockClear();
+    const wrapper = await mountPanel([
+      page({ branch: 'main', branches: ['main', 'feature'], commits: [commit('aaaa1111')] })
+    ]);
+    bridge.checkoutGitRef.mockRejectedValueOnce(
+      new Error('error: Your local changes to the following files would be overwritten by checkout: src/app.ts')
+    );
+
+    await wrapper.get('[data-test="git-branch"]').trigger('click');
+    const items = wrapper.findComponent({ name: 'ContextMenu' }).props('model') as Array<Record<string, unknown>>;
+    (items[1]!.command as () => void)();
+    await flushPromises();
+
+    expect(bridge.checkoutGitRef).toHaveBeenCalledWith('sid-1', 'feature');
+    // The refusal names git's own reason as the toast's detail, and the panel
+    // keeps rendering the page it had (a null here used to brick the render).
+    expect(toasts.toastError).toHaveBeenCalledWith('切换分支失败', expect.stringContaining('would be overwritten'));
+    expect(wrapper.get('[data-test="git-branch"]').text()).toBe('main');
+    expect(wrapper.findAll('[data-test^="git-commit-"]')).toHaveLength(1);
   });
 });

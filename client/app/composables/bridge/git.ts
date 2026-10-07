@@ -1,16 +1,24 @@
 /**
- * Git-graph bridge (the left sidebar's read-only history panel).
+ * Git-graph bridge (the left sidebar's history panel).
  *
  * One call: {@link fetchGitGraph} mirrors `GET /git/graph` — one page of the
- * session project's history plus the header facts (branch, dirty count). The
- * backend answers `available: false` with a reason (`not-a-repository` /
- * `git-unavailable`) instead of an error, so the panel can show its own empty
- * state without a toast.
+ * session project's history plus the header facts (branch, dirty count, the
+ * local branches). The backend answers `available: false` with a reason
+ * (`not-a-repository` / `git-unavailable`) instead of an error, so the panel can
+ * show its own empty state without a toast.
+ *
+ * EVERY failure THROWS — the two write actions (`reset` / `checkout`) go through
+ * the raw transport so a refusal's server-side `reason` (git's own stderr, e.g.
+ * "Your local changes would be overwritten by checkout") reaches the caller's
+ * toast, and the reads reject instead of handing back a null payload: a null
+ * assigned to the panel's `page` used to brick its render entirely.
  *
  * @module bridge/git
  */
 // ``fetchApiPayload`` is auto-imported from ~/composables/requestApi (the bridge
-// convention: no explicit import of an auto-imported symbol).
+// convention: no explicit import of an auto-imported symbol); the raw transport
+// is imported explicitly, as in bridge/auth.ts.
+import { fetchApiRaw } from '../requestApi';
 
 /** One ref chip on a commit row (head / branch / tag / remote). */
 export interface GitRefEntry {
@@ -85,6 +93,48 @@ function toPage(res: Record<string, unknown> & { success?: boolean }): GitGraphP
 }
 
 /**
+ * A raw git response → the page, or a thrown refusal carrying the server's reason.
+ *
+ * The write actions answer the refreshed page on success and `{success: false,
+ * reason}` (git's stderr for a 409) on a refusal; the reason is the only useful
+ * thing to show the user, and the raw transport is what keeps it readable.
+ * @param response The untouched response of the write action.
+ * @param action Action name, used when the body carries no reason at all.
+ */
+async function readPage(response: globalThis.Response, action: string): Promise<GitGraphPage> {
+  interface RefusalBody {
+    success?: boolean;
+    reason?: string;
+    message?: string;
+    [key: string]: unknown;
+  }
+  let body: RefusalBody | null = null;
+  try {
+    body = (await response.json()) as RefusalBody;
+  } catch {
+    // A body that is not JSON (an empty error page) leaves `body` null.
+  }
+  if (!response.ok || body?.success === false) {
+    throw new Error(String(body?.reason || body?.message || `git ${action} failed (HTTP ${response.status})`));
+  }
+  return toPage(body ?? {});
+}
+
+/**
+ * The declared payload of a read, refusing a null one.
+ *
+ * `fetchApiPayload` resolves to `null` for a failed request (the legacy bridge
+ * contract) — for these callers that must become a rejection, because the panel
+ * assigns the result to its state and a null page throws on the next render.
+ * @param res Payload (null on failure).
+ * @param what What was being read (names the error).
+ */
+function requirePayload<T>(res: T | null, what: string): T {
+  if (!res) throw new Error(`git ${what} failed`);
+  return res;
+}
+
+/**
  * Read one page of the session project's git history.
  * @param sessionId Session whose project directory is read.
  * @param options Paging (`limit` commits from `skip`).
@@ -104,7 +154,7 @@ export async function fetchGitGraph(
     },
     method: 'get'
   });
-  return toPage(res);
+  return toPage(requirePayload(res, 'graph'));
 }
 
 /**
@@ -112,32 +162,37 @@ export async function fetchGitGraph(
  * @param sessionId Session whose project directory is written.
  * @param hash Target commit (any revision git can resolve to a commit).
  * @param mode `soft` keeps the changes staged, `mixed` unstages them, `hard` discards them.
+ * @throws Error carrying git's own refusal (e.g. an unknown commit or a 409).
  */
 export async function resetGitBranch(
   sessionId: string,
   hash: string,
   mode: 'soft' | 'mixed' | 'hard'
 ): Promise<GitGraphPage> {
-  const res = await fetchApiPayload<Record<string, unknown> & { success?: boolean }>({
+  const resp = await fetchApiRaw({
     url: '/git/reset',
-    opts: { session_id: sessionId, hash, mode },
-    method: 'post'
+    method: 'post',
+    body: JSON.stringify({ session_id: sessionId, hash, mode }),
+    contentType: 'application/json'
   });
-  return toPage(res);
+  return readPage(resp, 'reset');
 }
 
 /**
  * Check out a branch (or any ref git can resolve).
  * @param sessionId Session whose project directory is written.
  * @param ref Branch / tag / revision to check out.
+ * @throws Error carrying git's own refusal — a dirty tree that a checkout would
+ *   clobber comes back verbatim, so the toast can say which files block it.
  */
 export async function checkoutGitRef(sessionId: string, ref: string): Promise<GitGraphPage> {
-  const res = await fetchApiPayload<Record<string, unknown> & { success?: boolean }>({
+  const resp = await fetchApiRaw({
     url: '/git/checkout',
-    opts: { session_id: sessionId, ref },
-    method: 'post'
+    method: 'post',
+    body: JSON.stringify({ session_id: sessionId, ref }),
+    contentType: 'application/json'
   });
-  return toPage(res);
+  return readPage(resp, 'checkout');
 }
 
 /** One file a commit touched (the status is git's own letter). */
@@ -203,6 +258,7 @@ export async function fetchCommitFiles(sessionId: string, hash: string): Promise
     opts: { session_id: sessionId, hash },
     method: 'get'
   });
+  requirePayload(res, 'commit');
   return {
     hash: String(res.hash ?? ''),
     short: String(res.short ?? ''),
@@ -226,6 +282,7 @@ export async function fetchCommitDiff(sessionId: string, hash: string, path: str
     opts: { session_id: sessionId, hash, path },
     method: 'get'
   });
+  requirePayload(res, 'commit file');
   return {
     hash: String(res.hash ?? ''),
     path: String(res.path ?? path),

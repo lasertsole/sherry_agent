@@ -250,7 +250,13 @@ from the commit's own blobs (`<parent>:<old_path>` / `<hash>:<path>`) and are al
 by `difflib` opcodes, so a change reads as remove-left / add-right (red / green
 tints), an added or deleted file is a SINGLE column, a rename follows its old path,
 and a binary or oversized blob (2 MB / 4000-row caps) is flagged instead of decoded.
-A path that is not part of the commit is a 404, never an empty diff. The header's
+A path that is not part of the commit is a 404, never an empty diff. On the
+client side every git call THROWS on failure (`bridge/git.ts`): the two write
+actions go through the raw transport so a refusal reaches the toast with git's
+own reason (a checkout blocked by a dirty tree names the files), and a failed
+read rejects rather than resolving the shared client's null payload — a null
+assigned to the panel's page threw on every later render, which left the panel
+visibly dead (no row expansion, no branch switch) until a reload. The header's
 branch label is also the **branch switcher** (VS Code's graph has the same
 dropdown): clicking it lists the page's `branches` — local refs, most recently
 committed first, clipped by `GIT_GRAPH["max_branches"]` — with the current one

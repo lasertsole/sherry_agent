@@ -448,8 +448,12 @@ const branchLabel = computed<string>(() => {
   return t('gitGraph.noCommits');
 });
 
-/** The local branches the switcher offers (empty for an unusable repository). */
-const branches = computed<string[]>(() => (page.value.available ? page.value.branches : []));
+/** The local branches the switcher offers (empty for an unusable repository).
+ *  Tolerant of a page without the field: an instance kept across an HMR update,
+ *  or any older payload, must not take the whole panel's render down. */
+const branches = computed<string[]>(() =>
+  page.value.available && Array.isArray(page.value.branches) ? page.value.branches : []
+);
 
 /** The explanation shown when the project directory is not a repository. */
 const unavailableText = computed<string>(() =>
@@ -555,6 +559,10 @@ const copyAndToast = async (text: string, label: string): Promise<void> => {
 
 /**
  * Run a write action (reset / checkout) and repaint from its answer.
+ *
+ * The action THROWS on a refusal (the bridge turns the server's `reason` into the
+ * error message), so the page is never assigned a null — and the toast shows
+ * git's own words when it has any (a blocked checkout names the files).
  * @param action The bridge call that performs it.
  * @param failure Toast text for a refusal.
  */
@@ -565,7 +573,8 @@ const runAction = async (action: () => Promise<GitGraphPage>, failure: string): 
     expanded.value = '';
   } catch (e) {
     logUtil.e('[GitGraphPanel] git action failed:', e);
-    toastError(failure);
+    const reason = e instanceof Error ? e.message : '';
+    toastError(failure, reason && reason !== failure ? reason : undefined);
   } finally {
     loading.value = false;
   }
