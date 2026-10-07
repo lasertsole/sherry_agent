@@ -152,13 +152,10 @@
                     >truncated</span
                   >
                 </div>
-                <pre
-                  v-if="message.content"
-                  class="m-0 mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-gray-600 dark:text-gray-300"
-                  >{{ message.content }}</pre>
-                <!-- The model's chain-of-thought: a collapsed block per row, the
-                     same shape the chat's 思考过程 uses (a thinking-only row would
-                     otherwise read as empty, and the content it produced is short). -->
+                <!-- The model's chain-of-thought: a collapsed block per row, ABOVE
+                     the reply it produced — the order the chat shows it in (think,
+                     then answer), and the order it was actually generated in. A
+                     thinking-only row would otherwise read as empty. -->
                 <div
                   v-if="message.reasoning"
                   class="mt-0.5">
@@ -179,6 +176,11 @@
                     data-test="context-reasoning-body"
                     >{{ message.reasoning }}</pre>
                 </div>
+                <pre
+                  v-if="message.content"
+                  class="m-0 mt-0.5 whitespace-pre-wrap break-words font-mono text-[11px] text-gray-600 dark:text-gray-300"
+                  data-test="context-content"
+                  >{{ message.content }}</pre>
                 <div
                   v-for="call in message.tool_calls ?? []"
                   :key="call.name"

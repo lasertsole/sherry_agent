@@ -119,6 +119,23 @@ describe('ContextViewerPanel', () => {
     expect(wrapper.find('[data-test="context-reasoning-0"]').exists()).toBe(false);
   });
 
+  it('puts the thinking ABOVE the reply it produced', async () => {
+    const wrapper = await mountPanel();
+    bridge.fetchContextInspect.mockResolvedValueOnce({
+      ...payload(),
+      messages: [{ role: 'ai', content: '答复正文', reasoning: '先想后答' }]
+    });
+    await (wrapper.vm as unknown as { load: () => Promise<void> }).load();
+    await flushPromises();
+
+    const row = wrapper.get('[data-test="context-message-0"]');
+    const reasoning = row.get('[data-test="context-reasoning-0"]').element;
+    const content = row.get('[data-test="context-content"]').element;
+    // The chat shows 思考过程 above the answer; the viewer must read the same way
+    // (and that is the order the row was generated in).
+    expect(reasoning.compareDocumentPosition(content) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   it('lists the tool definitions and opens a schema on demand', async () => {
     const wrapper = await mountPanel();
 
