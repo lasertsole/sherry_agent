@@ -276,3 +276,206 @@ class TestWriteActions:
         )
         assert checked.status_code == 409
         assert "success" in checked.description
+
+
+class TestCommitDetail:
+    """Clicking a commit row: the file list, then one file's aligned diff."""
+
+    @pytest.fixture
+    def detail_repo(self, tmp_path, monkeypatch):
+        """A commit that modifies, adds, deletes and renames a file."""
+        root = tmp_path / "detail"
+        root.mkdir()
+        _git(root, "init", "-q", "-b", "main")
+        _git(root, "config", "user.email", "tester@example.com")
+        _git(root, "config", "user.name", "Tester")
+        (root / "keep.txt").write_text("one\ntwo\nthree\n", encoding="utf-8")
+        (root / "gone.txt").write_text("bye\n", encoding="utf-8")
+        (root / "old-name.txt").write_text("renamed\n", encoding="utf-8")
+        _git(root, "add", ".")
+        _git(root, "commit", "-q", "-m", "base")
+        (root / "keep.txt").write_text("one\nTWO\nthree\nfour\n", encoding="utf-8")
+        (root / "gone.txt").unlink()
+        _git(root, "mv", "old-name.txt", "new-name.txt")
+        (root / "added.txt").write_text("fresh\n", encoding="utf-8")
+        _git(root, "add", "-A")
+        _git(root, "commit", "-q", "-m", "mix")
+        monkeypatch.setattr(service, "current_project_dir", lambda _sid: root)
+        return root
+
+    def test_the_file_list_carries_each_status(self, detail_repo):
+        detail = service.read_commit_files("sess-git", "HEAD")
+
+        by_path = {item.path: item.status for item in detail.files}
+        assert by_path["keep.txt"] == "M"
+        assert by_path["gone.txt"] == "D"
+        assert by_path["added.txt"] == "A"
+        assert by_path["new-name.txt"] == "R"
+        renamed = next(item for item in detail.files if item.path == "new-name.txt")
+        assert renamed.old_path == "old-name.txt"
+        assert detail.subject == "mix"
+        assert detail.parents and len(detail.parents) == 1
+
+    def test_a_modified_file_aligns_old_and_new_lines(self, detail_repo):
+        diff = service.read_commit_diff("sess-git", "HEAD", "keep.txt")
+
+        assert diff.status == "M"
+        assert diff.old_label.endswith(":keep.txt") and diff.new_label.endswith(":keep.txt")
+        # The changed line pairs up: remove on the left, add on the right.
+        changed = [
+            (row.left, row.right) for row in diff.rows if row.left and row.left["kind"] == "remove"
+        ]
+        assert changed and changed[0][1] is not None and changed[0][1]["kind"] == "add"
+        # The untouched lines ride both columns with their own numbering.
+        same = next(row for row in diff.rows if row.left and row.left["kind"] == "same")
+        assert same.right is not None and same.right["text"] == same.left["text"]
+        assert same.left["n"] == 1 and same.right["n"] == 1
+        # The extra line at the end shows up as an addition on the right only.
+        assert any(
+            row.left is None and row.right and row.right["kind"] == "add" for row in diff.rows
+        )
+
+    def test_an_added_file_is_one_column_only(self, detail_repo):
+        diff = service.read_commit_diff("sess-git", "HEAD", "added.txt")
+
+        assert diff.status == "A"
+        assert diff.old_label == ""
+        assert all(row.left is None for row in diff.rows)
+        assert [row.right["kind"] for row in diff.rows if row.right] == ["add"]
+
+    def test_a_deleted_file_is_one_column_only(self, detail_repo):
+        diff = service.read_commit_diff("sess-git", "HEAD", "gone.txt")
+
+        assert diff.status == "D"
+        assert diff.new_label == ""
+        assert all(row.right is None for row in diff.rows)
+        assert [row.left["kind"] for row in diff.rows if row.left] == ["remove"]
+
+    def test_a_renamed_file_reads_the_old_path_as_its_left_side(self, detail_repo):
+        diff = service.read_commit_diff("sess-git", "HEAD", "new-name.txt")
+
+        assert diff.status == "R"
+        assert diff.old_path == "old-name.txt"
+        assert "old-name.txt" in diff.old_label
+        # Identical contents: every row is an unchanged pair.
+        assert diff.rows and all(
+            (row.left or {}).get("kind") == "same" and (row.right or {}).get("kind") == "same"
+            for row in diff.rows
+        )
+
+    def test_a_binary_file_is_flagged_instead_of_decoded(self, detail_repo):
+        (detail_repo / "blob.bin").write_bytes(b"\x00\x01\x02binary")
+        _git(detail_repo, "add", ".")
+        _git(detail_repo, "commit", "-q", "-m", "binary")
+
+        files = service.read_commit_files("sess-git", "HEAD")
+        assert any(item.path == "blob.bin" for item in files.files)
+
+        diff = service.read_commit_diff("sess-git", "HEAD", "blob.bin")
+
+        assert diff.binary is True
+        assert diff.rows == []
+
+    def test_the_row_cap_clips_a_long_diff_and_says_so(self, detail_repo, monkeypatch):
+        (detail_repo / "wide.txt").write_text(
+            "".join(f"line {index}\n" for index in range(20)), encoding="utf-8"
+        )
+        _git(detail_repo, "add", ".")
+        _git(detail_repo, "commit", "-q", "-m", "wide")
+        monkeypatch.setitem(service.GIT_GRAPH, "max_diff_rows", 5)
+
+        diff = service.read_commit_diff("sess-git", "HEAD", "wide.txt")
+
+        assert diff.status == "A"
+        assert len(diff.rows) == 5
+        assert diff.truncated is True
+
+    def test_the_byte_cap_flags_a_big_side_instead_of_truncating(self, detail_repo, monkeypatch):
+        (detail_repo / "big.txt").write_text("x" * 4096, encoding="utf-8")
+        _git(detail_repo, "add", ".")
+        _git(detail_repo, "commit", "-q", "-m", "big")
+        monkeypatch.setitem(service.GIT_GRAPH, "max_diff_bytes", 16)
+
+        diff = service.read_commit_diff("sess-git", "HEAD", "big.txt")
+
+        assert diff.status == "A"
+        assert diff.rows == []
+        assert diff.notice == "too-large"
+
+    def test_the_routes_answer_the_list_and_the_diff(self, detail_repo):
+        listed = asyncio.run(
+            git_http.git_commit_handler(_FakeRequest({"session_id": "sess-git", "hash": "HEAD"}))
+        )
+        assert listed.status_code == 200
+        data = json.loads(listed.description)
+        assert {item["path"] for item in data["files"]} >= {"keep.txt", "added.txt", "gone.txt"}
+
+        diffed = asyncio.run(
+            git_http.git_commit_file_handler(
+                _FakeRequest({"session_id": "sess-git", "hash": "HEAD", "path": "keep.txt"})
+            )
+        )
+        assert diffed.status_code == 200
+        payload = json.loads(diffed.description)
+        assert payload["status"] == "M"
+        assert payload["rows"] and payload["rows"][0]["left"]["text"] == "one"
+
+        # Missing arguments are refused before git runs.
+        assert asyncio.run(git_http.git_commit_handler(_FakeRequest({}))).status_code == 400
+        assert (
+            asyncio.run(
+                git_http.git_commit_file_handler(_FakeRequest({"session_id": "sess-git"}))
+            ).status_code
+            == 400
+        )
+
+    def test_a_non_ascii_path_is_never_git_quoted(self, detail_repo):
+        old = "文档 说明.md"
+        new = "文档 说明书.md"
+        (detail_repo / old).write_text("内容\n", encoding="utf-8")
+        _git(detail_repo, "add", ".")
+        _git(detail_repo, "commit", "-q", "-m", "chinese file")
+        _git(detail_repo, "mv", old, new)
+        _git(detail_repo, "commit", "-q", "-m", "chinese rename")
+
+        files = service.read_commit_files("sess-git", "HEAD")
+        renamed = next(item for item in files.files if item.status == "R")
+        assert (renamed.old_path, renamed.path) == (old, new)
+
+        # The entry lookup behind the diff view needs the decoded name, not
+        # `"\\346\\226\\207"` — the quoted form used to hide the status.
+        diff = service.read_commit_diff("sess-git", "HEAD", new)
+        assert diff.status == "R"
+        assert diff.old_label.endswith(f":{old}") and diff.new_label.endswith(f":{new}")
+        assert diff.rows and all((row.left or {}).get("kind") == "same" for row in diff.rows)
+
+    def test_a_deleted_non_ascii_file_keeps_its_single_column(self, detail_repo):
+        name = "旧 报告.md"
+        (detail_repo / name).write_text("old line\n", encoding="utf-8")
+        _git(detail_repo, "add", ".")
+        _git(detail_repo, "commit", "-q", "-m", "with chinese file")
+        (detail_repo / name).unlink()
+        _git(detail_repo, "add", "-A")
+        _git(detail_repo, "commit", "-q", "-m", "drop chinese file")
+
+        diff = service.read_commit_diff("sess-git", "HEAD", name)
+
+        assert diff.status == "D"
+        assert diff.new_label == ""
+        assert all(row.right is None for row in diff.rows)
+        assert [row.left["kind"] for row in diff.rows if row.left] == ["remove"]
+
+    def test_a_path_outside_the_commit_is_refused(self, detail_repo):
+        with pytest.raises(service.GitActionError) as excinfo:
+            service.read_commit_diff("sess-git", "HEAD", "never-touched.txt")
+
+        assert excinfo.value.status == 404
+
+        refused = asyncio.run(
+            git_http.git_commit_file_handler(
+                _FakeRequest(
+                    {"session_id": "sess-git", "hash": "HEAD", "path": "never-touched.txt"}
+                )
+            )
+        )
+        assert refused.status_code == 404

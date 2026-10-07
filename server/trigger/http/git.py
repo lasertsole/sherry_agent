@@ -18,6 +18,7 @@ with one ``{hash, short, parents, author, date, refs, subject}`` per commit.
 """
 
 import asyncio
+from urllib.parse import unquote
 
 from loguru import logger
 
@@ -25,6 +26,8 @@ from config.features import GIT_GRAPH
 from server.service.git_graph_service import (
     GitActionError,
     checkout_ref,
+    read_commit_diff,
+    read_commit_files,
     read_graph,
     reset_to,
 )
@@ -130,3 +133,93 @@ async def git_checkout_handler(request):
         )
         return _refusal(exc)
     return ok(_page_payload(session_id, page))
+
+
+@app.get("/git/commit")
+async def git_commit_handler(request):
+    """One commit's metadata + the files it touched.
+
+    Query: ``session_id`` (required), ``hash`` (required). Answers
+    ``{hash, short, author, date, parents, subject, files: [{status, path, old_path}]}``;
+    a commit git does not know is a 404.
+    """
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    commit_hash = query.get("hash", "") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    if not commit_hash:
+        return bad_request("hash is required")
+    try:
+        detail = await asyncio.to_thread(read_commit_files, session_id, commit_hash)
+    except GitActionError as exc:
+        logger.info(
+            "git commit refused: session={} hash={} reason={}",
+            session_id,
+            commit_hash[:12],
+            exc.reason,
+        )
+        return _refusal(exc)
+    return ok(
+        {
+            "success": True,
+            "session_id": session_id,
+            "hash": detail.hash,
+            "short": detail.short,
+            "author": detail.author,
+            "date": detail.date,
+            "parents": detail.parents,
+            "subject": detail.subject,
+            "files": [
+                {"status": item.status, "path": item.path, "old_path": item.old_path}
+                for item in detail.files
+            ],
+        }
+    )
+
+
+@app.get("/git/commit/file")
+async def git_commit_file_handler(request):
+    """One file's diff inside one commit, pre-aligned for the two-column view.
+
+    Query: ``session_id``, ``hash``, ``path`` (all required). Answers
+    ``{status, old_label, new_label, rows: [{left, right}], truncated, binary,
+    notice}`` — each side is ``{n, text, kind}`` with ``kind`` one of
+    same / add / remove, and a side is ``null`` when the other column runs alone
+    (an added or deleted file).
+    """
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    commit_hash = query.get("hash", "") or ""
+    rel_path = unquote(query.get("path", "") or "")
+    if not session_id:
+        return bad_request("session_id is required")
+    if not commit_hash or not rel_path:
+        return bad_request("hash and path are required")
+    try:
+        diff = await asyncio.to_thread(read_commit_diff, session_id, commit_hash, rel_path)
+    except GitActionError as exc:
+        logger.info(
+            "git commit file refused: session={} hash={} path={} reason={}",
+            session_id,
+            commit_hash[:12],
+            rel_path[:60],
+            exc.reason,
+        )
+        return _refusal(exc)
+    return ok(
+        {
+            "success": True,
+            "session_id": session_id,
+            "hash": diff.hash,
+            "path": diff.path,
+            "old_path": diff.old_path,
+            "status": diff.status,
+            "old_label": diff.old_label,
+            "new_label": diff.new_label,
+            "rows": [{"left": row.left, "right": row.right} for row in diff.rows],
+            "truncated": diff.truncated,
+            "binary": diff.binary,
+            "notice": diff.notice,
+        }
+    )

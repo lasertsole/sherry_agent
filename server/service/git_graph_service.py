@@ -19,6 +19,7 @@ layer), matching the file-browser service.
 
 from __future__ import annotations
 
+import difflib
 import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,7 +29,17 @@ from loguru import logger
 from config.features import GIT_GRAPH
 from runtime.session.project_dir import current_project_dir, project_dir_source
 
-__all__ = ["GitActionError", "GraphPage", "read_graph", "reset_to", "checkout_ref"]
+__all__ = [
+    "CommitDetail",
+    "CommitDiff",
+    "GitActionError",
+    "GraphPage",
+    "read_commit_diff",
+    "read_commit_files",
+    "read_graph",
+    "reset_to",
+    "checkout_ref",
+]
 
 #: Field separator inside one commit record (ASCII unit separator) and the
 #: record separator between commits — byte values git never puts in a subject.
@@ -280,3 +291,273 @@ def checkout_ref(session_id: str, ref: str) -> GraphPage:
         raise GitActionError(_stderr_tail(result), 409)
     logger.info("git graph: checked out {} in {}", clean_ref, root)
     return read_graph(session_id)
+
+
+@dataclass(frozen=True)
+class CommitFile:
+    """One file a commit touched."""
+
+    status: str
+    path: str
+    old_path: str = ""
+
+
+@dataclass(frozen=True)
+class CommitDetail:
+    """A commit's metadata plus the files it touched."""
+
+    hash: str
+    short: str
+    author: str
+    date: str
+    parents: list[str]
+    subject: str
+    files: list[CommitFile]
+
+
+@dataclass(frozen=True)
+class DiffRow:
+    """One aligned row of a side-by-side diff (a side may be absent)."""
+
+    left: dict | None
+    right: dict | None
+
+
+@dataclass(frozen=True)
+class CommitDiff:
+    """One file's diff inside one commit, pre-aligned for the two-column view."""
+
+    hash: str
+    path: str
+    old_path: str
+    status: str
+    old_label: str
+    new_label: str
+    rows: list[DiffRow]
+    truncated: bool = False
+    binary: bool = False
+    notice: str = ""
+
+
+def _parse_name_status(raw: str) -> list[CommitFile]:
+    """Parse ``--name-status -z`` output: ``<status>NUL<path>NUL`` per entry.
+
+    ``-z`` is what keeps a non-ASCII or space-bearing path intact — the default
+    line format quotes such a path (``"\\345\\256\\236"``) and the quoting then
+    breaks both the display and the entry lookup behind the diff view. Renames
+    and copies carry two paths, old first.
+    """
+    tokens = raw.split("\0")
+    files: list[CommitFile] = []
+    index = 0
+    while index < len(tokens):
+        status = tokens[index].strip()
+        index += 1
+        if not status:
+            continue
+        if status[0] in ("R", "C"):
+            old_path = tokens[index] if index < len(tokens) else ""
+            new_path = tokens[index + 1] if index + 1 < len(tokens) else ""
+            index += 2
+            files.append(CommitFile(status=status[0], path=new_path, old_path=old_path))
+            continue
+        files.append(
+            CommitFile(status=status[0], path=tokens[index] if index < len(tokens) else "")
+        )
+        index += 1
+    return files
+
+
+def _parents_of(root: Path, hash: str) -> list[str]:
+    """The commit's parent hashes (empty for a root commit)."""
+    show = _run(root, ["rev-list", "--parents", "-n1", hash])
+    if show is None or show.returncode != 0:
+        return []
+    parts = show.stdout.split()
+    return [part for part in parts[1:] if part]
+
+
+def read_commit_files(session_id: str, hash: str) -> CommitDetail:
+    """One commit's metadata + the files it touched (the graph row's expansion)."""
+    clean = hash.strip()
+    if not clean or clean.startswith("-"):
+        raise GitActionError("invalid commit")
+    root = current_project_dir(session_id)
+    _require_repository(root)
+    meta = _run(
+        root,
+        [
+            "show",
+            "--no-patch",
+            f"--pretty=format:%H{_FIELD}%an{_FIELD}%aI{_FIELD}%s",
+            clean,
+        ],
+    )
+    if meta is None:
+        raise GitActionError("git is not available on the server", 503)
+    if meta.returncode != 0:
+        raise GitActionError(f"unknown commit: {clean}", 404)
+    fields = meta.stdout.split(_FIELD)
+    names = _run(root, ["show", "--name-status", "--format=", "-M", "-z", clean])
+    files: list[CommitFile] = []
+    if names is not None and names.returncode == 0:
+        files = _parse_name_status(names.stdout)
+    full = fields[0] if fields else clean
+    return CommitDetail(
+        hash=full,
+        short=full[:8],
+        author=_text(fields[1]) if len(fields) > 1 else "",
+        date=_text(fields[2]) if len(fields) > 2 else "",
+        parents=_parents_of(root, clean),
+        subject=_text(fields[3]) if len(fields) > 3 else "",
+        files=files,
+    )
+
+
+def _blob(root: Path, revision: str) -> tuple[str | None, str]:
+    """The text of ``revision`` (``<hash>:<path>``); ``(None, reason)`` when unusable."""
+    probe = _run(root, ["cat-file", "-s", revision])
+    if probe is None:
+        return None, "git-unavailable"
+    if probe.returncode != 0:
+        return None, "missing"
+    try:
+        size = int(probe.stdout.strip() or "0")
+    except ValueError:
+        return None, "missing"
+    if size > GIT_GRAPH["max_diff_bytes"]:
+        return None, "too-large"
+    blob = subprocess.run(
+        ["git", "show", revision],
+        cwd=str(root),
+        capture_output=True,
+        timeout=GIT_GRAPH["timeout_s"],
+    )
+    if blob.returncode != 0:
+        return None, "missing"
+    if b"\x00" in blob.stdout[:8192]:
+        return None, "binary"
+    try:
+        return blob.stdout.decode("utf-8"), ""
+    except UnicodeDecodeError:
+        return None, "binary"
+
+
+def _aligned_rows(old_text: str, new_text: str) -> tuple[list[DiffRow], bool]:
+    """Align two texts into side-by-side rows (the stdlib's diff opcodes)."""
+    old_lines = old_text.splitlines()
+    new_lines = new_text.splitlines()
+    matcher = difflib.SequenceMatcher(a=old_lines, b=new_lines, autojunk=False)
+    rows: list[DiffRow] = []
+    truncated = False
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal":
+            for offset in range(i2 - i1):
+                if len(rows) >= GIT_GRAPH["max_diff_rows"]:
+                    return rows, True
+                rows.append(
+                    DiffRow(
+                        left={"n": i1 + offset + 1, "text": old_lines[i1 + offset], "kind": "same"},
+                        right={
+                            "n": j1 + offset + 1,
+                            "text": new_lines[j1 + offset],
+                            "kind": "same",
+                        },
+                    )
+                )
+            continue
+        # replace / delete / insert: pair the two sides line by line so the
+        # changed block reads as "old | new" (VS Code's alignment).
+        removed = old_lines[i1:i2]
+        added = new_lines[j1:j2]
+        for offset in range(max(len(removed), len(added))):
+            if len(rows) >= GIT_GRAPH["max_diff_rows"]:
+                truncated = True
+                break
+            left = (
+                {"n": i1 + offset + 1, "text": removed[offset], "kind": "remove"}
+                if offset < len(removed)
+                else None
+            )
+            right = (
+                {"n": j1 + offset + 1, "text": added[offset], "kind": "add"}
+                if offset < len(added)
+                else None
+            )
+            rows.append(DiffRow(left=left, right=right))
+        if truncated:
+            break
+    return rows, truncated
+
+
+def read_commit_diff(session_id: str, hash: str, path: str) -> CommitDiff:
+    """One file's diff inside one commit, aligned for the two-column view.
+
+    The sides come from the commit's own blobs (``<parent>:<path>`` and
+    ``<hash>:<path>``) rather than a textual patch, which is what makes an added
+    or deleted file render as a SINGLE column and a rename follow its old path.
+    """
+    clean = hash.strip()
+    target = path.strip()
+    if not clean or clean.startswith("-") or not target:
+        raise GitActionError("invalid commit or path")
+    root = current_project_dir(session_id)
+    _require_repository(root)
+    detail = read_commit_files(session_id, clean)
+    entry = next(
+        (item for item in detail.files if item.path == target or item.old_path == target), None
+    )
+    if entry is None:
+        raise GitActionError(f"path is not part of the commit: {target}", 404)
+    status = entry.status
+    old_path = entry.old_path if entry.old_path else target
+    parent = detail.parents[0] if detail.parents else ""
+
+    old_text = ""
+    new_text = ""
+    notice = ""
+    if status != "A" and parent:
+        old_text, reason = _blob(root, f"{parent}:{old_path}")
+        if old_text is None and reason == "binary":
+            return CommitDiff(
+                hash=detail.hash,
+                path=target,
+                old_path=old_path,
+                status=status,
+                old_label=f"{parent[:8]}:{old_path}",
+                new_label=f"{detail.short}:{target}",
+                rows=[],
+                binary=True,
+            )
+        if old_text is None and reason == "too-large":
+            notice = "too-large"
+        old_text = old_text or ""
+    if status != "D":
+        new_text, reason = _blob(root, f"{detail.hash}:{target}")
+        if new_text is None and reason == "binary":
+            return CommitDiff(
+                hash=detail.hash,
+                path=target,
+                old_path=old_path,
+                status=status,
+                old_label=f"{parent[:8]}:{old_path}" if parent else "",
+                new_label=f"{detail.short}:{target}",
+                rows=[],
+                binary=True,
+            )
+        if new_text is None and reason == "too-large":
+            notice = "too-large"
+        new_text = new_text or ""
+
+    rows, truncated = _aligned_rows(old_text, new_text)
+    return CommitDiff(
+        hash=detail.hash,
+        path=target,
+        old_path=old_path,
+        status=status,
+        old_label=f"{parent[:8]}:{old_path}" if parent and status != "A" else "",
+        new_label=f"{detail.short}:{target}" if status != "D" else "",
+        rows=rows,
+        truncated=truncated,
+        notice=notice,
+    )
