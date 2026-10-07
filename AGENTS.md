@@ -246,7 +246,8 @@ The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed
 `hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
 with git's own stderr surfacing as a 409 — and clicking a row opens a DRAWER of
 the files that commit touched directly under that row (an accordion, never a block
-parked at the end of the list; `GET /git/commit`: metadata plus `--name-status -M -z`,
+parked at the end of the list — a click elsewhere in that drawer replays the row's
+own contextmenu, so the SAME action menu opens anchored at the row's right edge; `GET /git/commit`: metadata plus `--name-status -M -z`,
 NUL-framed so a non-ASCII path is never quoted and the entry lookup behind the
 diff still matches). Clicking one of those files opens its diff in a right-sidebar
 tab (`GET /git/commit/file`, `GitDiffPanel.vue`, one tab per file): both sides come

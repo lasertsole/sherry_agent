@@ -10,6 +10,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import GitGraphPanel from '@/pages/home/components/GitGraphPanel.vue';
 
+// Every `.show(event)` the panel anchors the popup with (see the stub below).
+const menuShots = vi.hoisted(() => [] as MouseEvent[]);
+
 const bridge = vi.hoisted(() => ({
   fetchGitGraph: vi.fn(),
   fetchCommitFiles: vi.fn(),
@@ -75,12 +78,18 @@ const stubs = {
     template: `<button class="btn" @click="$emit('click')">{{ label }}</button>`
   },
   ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="spin" />' },
-  // The popup is only inspected through its `model` (items + commands); the
-  // panel anchors it with `.show(event)`.
+  // The popup is only inspected through its `model` (items + commands) and the
+  // events the panel anchors it with (`.show(event)`): the stub records both.
   ContextMenu: {
     name: 'ContextMenu',
     props: ['model'],
-    methods: { show: vi.fn() },
+    setup() {
+      return {
+        show: (event: MouseEvent) => {
+          menuShots.push(event);
+        }
+      };
+    },
     template: '<div data-test="git-menu" />'
   }
 };
@@ -393,6 +402,49 @@ describe('GitGraphPanel', () => {
     expect(label.attributes('disabled')).toBeDefined();
     await label.trigger('click');
     expect(bridge.checkoutGitRef).not.toHaveBeenCalled();
+  });
+
+  it("opens the row's action menu from the drawer's background, not from its files", async () => {
+    const wrapper = await mountPanel([page({ commits: [commit('aaaa1111', ['bbbb2222'])] })]);
+    bridge.fetchCommitFiles.mockResolvedValueOnce({
+      hash: 'aaaa1111',
+      short: 'aaaa1111',
+      author: 'Tester',
+      date: '2026-10-07T10:00:00+08:00',
+      parents: ['bbbb2222'],
+      subject: 'subject aaaa',
+      files: [{ status: 'M', path: 'src/app.ts', old_path: '' }]
+    });
+    await wrapper.get('[data-test="git-commit-aaaa1111"]').trigger('click');
+    await flushPromises();
+
+    const menu = () => wrapper.findComponent({ name: 'ContextMenu' }).props('model') as Array<Record<string, unknown>>;
+    menuShots.length = 0;
+    const drawer = wrapper.get('[data-test="git-detail"]');
+
+    // The reference: what the row's own right-click shows.
+    const row = wrapper.get('[data-test="git-commit-aaaa1111"]');
+    await row.trigger('contextmenu');
+    const rightClickItems = menu().map(item => item.label);
+    expect(rightClickItems.length).toBeGreaterThan(2);
+    const afterRightClick = menuShots.length;
+
+    // A click on a FILE keeps its own meaning (open the diff) — no menu.
+    await wrapper.get('[data-test="git-file-M-src/app.ts"]').trigger('click');
+    expect(menuShots.length).toBe(afterRightClick);
+
+    // A click elsewhere in the drawer opens the SAME menu the right-click shows,
+    // anchored at the row's RIGHT edge (the geometry the panel positions by).
+    (row.element as HTMLElement).getBoundingClientRect = () =>
+      ({ right: 400, top: 100, height: 22, left: 0, bottom: 122, width: 400, x: 0, y: 100 }) as DOMRect;
+    await drawer.trigger('click');
+
+    expect(menuShots.length).toBe(afterRightClick + 1);
+    expect(menu().map(item => item.label)).toEqual(rightClickItems);
+    expect(menuShots.at(-1)?.clientX).toBe(400);
+    expect(menuShots.at(-1)?.clientY).toBe(111);
+    // The click did not toggle the drawer shut either.
+    expect(wrapper.find('[data-test="git-detail"]').exists()).toBe(true);
   });
 
   it('renders a page payload without the branches field at all', async () => {

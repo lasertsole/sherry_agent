@@ -143,11 +143,14 @@
           </div>
 
           <!-- The drawer of the clicked row: the commit's metadata, then the
-               files it touched — clicking a file opens its diff in a tab. -->
+               files it touched — clicking a file opens its diff in a tab, and a
+               click anywhere else in the drawer opens the row's own action menu
+               (the right-click menu), anchored at the row's RIGHT edge. -->
           <div
             v-if="expanded === row.commit.hash"
             class="flex flex-col gap-1 border-b border-solid border-gray-100 bg-gray-50/60 px-3 py-1.5 pl-6 text-[11px] text-gray-500 dark:border-gray-800 dark:bg-gray-800/30 dark:text-gray-400"
-            data-test="git-detail">
+            data-test="git-detail"
+            @click="openRowMenuFromDrawer(row, $event)">
             <span class="text-xs text-theme-main">{{ row.commit.subject }}</span>
             <span
               class="break-all font-mono"
@@ -694,6 +697,32 @@ const openRefMenu = (event: Event, ref: GitRefEntry): void => {
   }
   menuItems.value = items;
   menuRef.value?.show(event);
+};
+
+/**
+ * Open the row's action menu from a click on the drawer's background.
+ *
+ * The drawer and its row are one v-for item, so the drawer's previous sibling IS
+ * the row: a synthetic ``contextmenu`` on it re-enters the SAME handler the
+ * right-click uses (one menu definition, never two), and its coordinates put the
+ * panel just right of the row — PrimeVue positions by ``pageX/pageY`` and flips
+ * only when the viewport would clip it.
+ * @param row The row whose drawer was clicked.
+ * @param event The click (its coordinates are the fallback anchor).
+ */
+const openRowMenuFromDrawer = (row: GraphRow, event: MouseEvent): void => {
+  const rowEl = (event.currentTarget as HTMLElement | null)?.previousElementSibling as HTMLElement | null;
+  const rect = rowEl?.getBoundingClientRect();
+  // `bubbles: false`: the row's own listener runs, and no ancestor sees a
+  // contextmenu it never had.
+  rowEl?.dispatchEvent(
+    new MouseEvent('contextmenu', {
+      bubbles: false,
+      cancelable: true,
+      clientX: rect ? rect.right : event.clientX,
+      clientY: rect ? rect.top + rect.height / 2 : event.clientY
+    })
+  );
 };
 
 /**
