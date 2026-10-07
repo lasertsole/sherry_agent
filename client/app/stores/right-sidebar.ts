@@ -133,8 +133,13 @@ export interface RightSidebarTab {
    * Per-instance data for kinds that need it (the file viewer's relative path).
    * The tab id is already the instance key, so the payload rides the tab itself
    * rather than a parallel path-by-tab map.
+   *
+   * ``instance`` is what lets TWINS coexist for one kind: the toolbox's browser
+   * and terminal (and the file viewer's second file) open once per distinct
+   * instance key, while the settings entries keep deduping on their empty
+   * payload. The panel reads it back to key its own state.
    */
-  payload?: { path: string; hash?: string };
+  payload?: { path?: string; hash?: string; instance?: string };
 }
 
 let tabSeq = 0;
@@ -215,17 +220,27 @@ export const useRightSidebarStore = defineStore(
      * DISTINCT payloads (two files in the viewer), which are not duplicates.
      * @param kind Panel kind to open.
      * @param payload The panel's identity: its `path` (and, for a commit diff, the
-     *   `hash` it was opened from).
+     *   `hash` it was opened from), plus an `instance` key for kinds allowed to
+     *   run several twins (the toolbox's browser / terminal).
      * @param payload.path
      * @param payload.hash
+     * @param payload.instance
      * @returns The tab id (the existing tab's id when it was reused).
      */
-    function openTab(kind: RightSidebarPanelKind, payload?: { path: string; hash?: string }): string {
+    function openTab(
+      kind: RightSidebarPanelKind,
+      payload?: { path?: string; hash?: string; instance?: string }
+    ): string {
       const path = payload?.path ?? null;
       const hash = payload?.hash ?? null;
+      const instance = payload?.instance ?? null;
       const scope = SCOPE_BY_KIND[kind];
       const existing = tabs.value.find(
-        tab => tab.kind === kind && (tab.payload?.path ?? null) === path && (tab.payload?.hash ?? null) === hash
+        tab =>
+          tab.kind === kind &&
+          (tab.payload?.path ?? null) === path &&
+          (tab.payload?.hash ?? null) === hash &&
+          (tab.payload?.instance ?? null) === instance
       );
       if (existing) {
         activeTabId.value = existing.id;

@@ -91,9 +91,9 @@
                 ? 'bg-theme-main/10 text-theme-main'
                 : 'text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800'
             "
-            :title="t(`rightSidebar.${tab.kind}`)"
+            :title="tabLabel(tab)"
             @click="store.activateTab(tab.id)">
-            <span class="truncate max-w-24">{{ t(`rightSidebar.${tab.kind}`) }}</span>
+            <span class="truncate max-w-24">{{ tabLabel(tab) }}</span>
             <i
               class="pi pi-times text-[10px] opacity-60 hover:opacity-100"
               :aria-label="t('rightSidebar.closeTab')"
@@ -149,6 +149,21 @@ const { t } = useI18n({ useScope: 'local' });
 
 const store = useRightSidebarStore();
 
+/**
+ * A tab's strip label: its kind's name, plus `` N`` when several tabs of that
+ * kind are open (the toolbox opens a browser / terminal per click, and two tabs
+ * both reading 浏览器 would be indistinguishable).
+ * @param tab
+ * @param tab.id
+ * @param tab.kind
+ */
+const tabLabel = (tab: { id: string; kind: RightSidebarPanelKind }): string => {
+  const sameKind = store.tabs.filter(candidate => candidate.kind === tab.kind);
+  const base = t(`rightSidebar.${tab.kind}`);
+  if (sameKind.length <= 1) return base;
+  return `${base} ${sameKind.findIndex(candidate => candidate.id === tab.id) + 1}`;
+};
+
 /** The group tabs, in display order (session first, then the global tools). */
 const SCOPES: ReadonlyArray<RightSidebarScope> = ['session', 'global'];
 
@@ -200,8 +215,9 @@ const activeKind = computed<RightSidebarPanelKind | null>(() =>
 
 /** The panel component to render (null → the empty state). */
 const activePanel = computed<Component | null>(() => (activeKind.value ? PANELS[activeKind.value] : null));
-/** The active tab's own data (e.g. the file viewer's path); undefined for others. */
-const activeTabPayload = computed<{ path: string } | undefined>(
+/** The active tab's own data (the file viewer's path, a toolbox panel's
+ *  instance key…); undefined for the kinds that carry none. */
+const activeTabPayload = computed<{ path?: string; hash?: string; instance?: string } | undefined>(
   () => store.tabs.find(tab => tab.id === store.activeTabId)?.payload
 );
 

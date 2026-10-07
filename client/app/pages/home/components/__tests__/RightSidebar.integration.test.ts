@@ -188,6 +188,23 @@ describe('RightSidebar.vue (integration, store mocked)', () => {
     expect(sidebarApi.activateTab).toHaveBeenCalledWith('stats-1');
   });
 
+  it('numbers twin tabs so two browsers are told apart', async () => {
+    sidebarApi.collapsed = false;
+    sidebarApi.tabs = [
+      { id: 'browser-1', kind: 'browser', scope: 'session', payload: { instance: 'browser#1' } },
+      { id: 'browser-2', kind: 'browser', scope: 'session', payload: { instance: 'browser#2' } },
+      { id: 'terminal-1', kind: 'terminal', scope: 'session', payload: { instance: 'terminal#1' } }
+    ];
+    sidebarApi.activeTabId = 'browser-1';
+    // The strip renders the ACTIVE group, and these are session tabs.
+    sidebarApi.activeScope = 'session';
+    const wrapper = mountSidebar();
+
+    // Two tabs of one kind read `浏览器 1` / `浏览器 2`; a lone tab keeps the
+    // plain name (no pointless suffix).
+    expect(wrapper.findAll('button.group').map(b => b.text())).toEqual(['浏览器 1', '浏览器 2', '终端']);
+  });
+
   it('splits the strip into 当前会话 / 全局 group tabs', async () => {
     sidebarApi.collapsed = false;
     sidebarApi.tabs = [

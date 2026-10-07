@@ -273,8 +273,11 @@ under Project Directory Binding: the next turn's transcript gets one
 `git_head` card before the human message.
 
 The taskbar's **hammer button opens a two-entry toolbox** (浏览器 / 终端) as the
-same dialog shape the settings menu uses, and both entries are right-sidebar tabs
-in the SESSION group (`toolboxTools` in `pages/home/config.ts`, wired through the
+same dialog shape the settings menu uses, and both entries open a right-sidebar tab
+in the SESSION group PER CLICK (a fresh `instance` key in the tab payload — the
+strip numbers the twins 浏览器 1 / 浏览器 2, and each panel keeps its own history /
+scrollback under `<sessionId>::<instance>`); the settings entries keep deduping on
+their empty payload (`toolboxTools` in `pages/home/config.ts`, wired through the
 same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
 grids and the commands in step). The browser is an address bar over an iframe with
 a per-session history (back / forward / reload; sites that refuse framing stay

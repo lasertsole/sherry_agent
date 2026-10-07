@@ -53,8 +53,8 @@ describe('BrowserPanel', () => {
 
   it('walks the history with the back and forward buttons', async () => {
     const store = useToolboxStore();
-    store.navigate('sid-1', 'a.com');
-    store.navigate('sid-1', 'b.com');
+    store.navigate('sid-1::browser', 'a.com');
+    store.navigate('sid-1::browser', 'b.com');
     const wrapper = mount(BrowserPanel, { global: { stubs } });
     await flushPromises();
 
@@ -70,7 +70,7 @@ describe('BrowserPanel', () => {
 
   it('re-mounts the frame on reload so the same URL is fetched again', async () => {
     const store = useToolboxStore();
-    store.navigate('sid-1', 'a.com');
+    store.navigate('sid-1::browser', 'a.com');
     const wrapper = mount(BrowserPanel, { global: { stubs } });
 
     const before = wrapper.get('[data-test="browser-frame"]').element as HTMLIFrameElement;
@@ -167,6 +167,35 @@ describe('TerminalPanel', () => {
 
     expect(wrapper.find('[data-test="terminal-entry-0"]').exists()).toBe(false);
     expect(wrapper.get('[data-test="terminal-empty"]').exists()).toBe(true);
+  });
+
+  it('keeps two terminal instances apart (the toolbox opens one per click)', async () => {
+    bridge.runTerminalCommand.mockResolvedValue({
+      cwd: '/tmp/project',
+      command: 'ls',
+      exit_code: 0,
+      output: 'x',
+      truncated: false,
+      duration_ms: 1
+    });
+    const first = mount(TerminalPanel, {
+      props: { payload: { instance: 'terminal#1' } },
+      global: { stubs }
+    });
+    const second = mount(TerminalPanel, {
+      props: { payload: { instance: 'terminal#2' } },
+      global: { stubs }
+    });
+    await flushPromises();
+
+    await first.get('[data-test="terminal-input"]').setValue('ls');
+    await first.get('[data-test="terminal-input"]').trigger('keyup.enter');
+    await flushPromises();
+
+    expect(first.get('[data-test="terminal-entry-0"]').exists()).toBe(true);
+    // The other instance kept its own (empty) scrollback.
+    expect(second.find('[data-test="terminal-entry-0"]').exists()).toBe(false);
+    expect(second.get('[data-test="terminal-empty"]').exists()).toBe(true);
   });
 
   it('does not run an empty line', async () => {

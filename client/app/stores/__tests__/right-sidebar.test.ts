@@ -73,12 +73,17 @@ describe('stores/right-sidebar', () => {
 
     // The toolbox panels are session-scoped as well (the terminal's cwd IS the
     // session's project directory) and dedupe by kind.
-    const browser = store.openTab('browser');
+    const browser = store.openTab('browser', { instance: 'browser#1' });
     expect(store.tabs.find(tab => tab.id === browser)?.scope).toBe('session');
-    expect(store.openTab('browser')).toBe(browser);
-    const terminal = store.openTab('terminal');
+    // Same instance → the same tab; a NEW instance key → a twin (the toolbox
+    // opens one browser / terminal per click).
+    expect(store.openTab('browser', { instance: 'browser#1' })).toBe(browser);
+    const secondBrowser = store.openTab('browser', { instance: 'browser#2' });
+    expect(secondBrowser).not.toBe(browser);
+    expect(store.tabs.filter(tab => tab.kind === 'browser')).toHaveLength(2);
+    const terminal = store.openTab('terminal', { instance: 'terminal#1' });
     expect(store.tabs.find(tab => tab.id === terminal)?.scope).toBe('session');
-    expect(store.openTab('terminal')).toBe(terminal);
+    expect(store.openTab('terminal', { instance: 'terminal#1' })).toBe(terminal);
 
     // The context viewer is session-scoped too, and every click (any figure in
     // any bubble) lands in ONE instance: no payload, so the kind dedupes.

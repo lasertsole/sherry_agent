@@ -40,8 +40,28 @@ export type HomeToolbarEvent = (typeof HOME_TOOLBAR_EVENTS)[number];
 
 /** What a toolbar command may do: open a right-sidebar tab. */
 export interface HomeToolbarContext {
-  /** Open a right-sidebar tab for the given panel kind. */
-  openRightTab: (kind: RightSidebarPanelKind) => void;
+  /**
+   * Open a right-sidebar tab for the given panel kind.
+   * @param kind Panel to open.
+   * @param payload Optional identity.
+   * @param payload.instance An instance key makes the tab a TWIN (the toolbox's
+   *   browser / terminal open one per click) instead of activating an existing
+   *   tab of that kind.
+   */
+  openRightTab: (kind: RightSidebarPanelKind, payload?: { instance?: string }) => void;
+}
+
+/** Monotonic counter behind the toolbox's per-click instance keys. */
+let toolboxInstanceSeq = 0;
+
+/**
+ * A fresh instance key for one toolbox panel (per page load — the tabs
+ * themselves are in-memory too).
+ * @param kind
+ */
+function nextToolboxInstance(kind: string): string {
+  toolboxInstanceSeq += 1;
+  return `${kind}#${toolboxInstanceSeq}`;
 }
 
 /**
@@ -66,8 +86,10 @@ export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<st
     notification: () => context.openRightTab('notification'),
     extend: () => context.openRightTab('extend'),
     account: () => context.openRightTab('account'),
-    browser: () => context.openRightTab('browser'),
-    terminal: () => context.openRightTab('terminal')
+    // The toolbox panels open a NEW tab per click: several browsers / terminals
+    // side by side is the point (each keeps its own page / scrollback).
+    browser: () => context.openRightTab('browser', { instance: nextToolboxInstance('browser') }),
+    terminal: () => context.openRightTab('terminal', { instance: nextToolboxInstance('terminal') })
   };
   return commands;
 }

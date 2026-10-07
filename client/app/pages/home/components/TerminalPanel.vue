@@ -30,7 +30,7 @@
         :title="t('terminal.clear')"
         :aria-label="t('terminal.clear')"
         data-test="terminal-clear"
-        @click="store.clearTerminal(sessionId)" />
+        @click="store.clearTerminal(stateKey)" />
     </div>
 
     <!-- Scrollback: every run with its command, output and exit code. -->
@@ -115,8 +115,15 @@ import { logUtil } from '~/utils/log';
 
 const { t } = useI18n({ useScope: 'local' });
 
+const props = defineProps<{ payload?: { instance?: string } }>();
+
 const route = useRoute();
 const sessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
+/** The instance key the toolbox gave this tab (one per click). */
+const instanceKey = computed(() => props.payload?.instance ?? 'terminal');
+/** THIS panel's identity: the session plus that key — several browsers /
+ *  terminals coexist, each with its own history / scrollback. */
+const stateKey = computed(() => `${sessionId.value}::${instanceKey.value}`);
 const store = useToolboxStore();
 
 /** The input line's text. */
@@ -126,16 +133,16 @@ const running = ref(false);
 const logRef = ref<HTMLElement | null>(null);
 
 /** The session's scrollback (kept in the store: the panel remounts per tab). */
-const entries = computed(() => store.terminalFor(sessionId.value));
+const entries = computed(() => store.terminalFor(stateKey.value));
 /** The directory the prompt shows — refreshed on open and after every run. */
-const cwd = computed(() => store.terminalCwd[sessionId.value] ?? '');
+const cwd = computed(() => store.terminalCwd[stateKey.value] ?? '');
 
 /** Read the directory the terminal runs in (fail-open: the prompt stays blank). */
 const loadInfo = async (): Promise<void> => {
   if (!sessionId.value) return;
   try {
     const info = await fetchTerminalInfo(sessionId.value);
-    store.setTerminalCwd(sessionId.value, info.cwd);
+    store.setTerminalCwd(stateKey.value, info.cwd);
   } catch (e) {
     logUtil.e('[TerminalPanel] Failed to read the terminal cwd:', e);
   }
@@ -158,7 +165,7 @@ const run = async (): Promise<void> => {
   running.value = true;
   try {
     const result: TerminalRun = await runTerminalCommand(sessionId.value, line);
-    store.recordRun(sessionId.value, {
+    store.recordRun(stateKey.value, {
       command: line,
       output: result.output,
       exitCode: result.exit_code,

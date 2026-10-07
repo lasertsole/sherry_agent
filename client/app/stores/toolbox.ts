@@ -2,7 +2,8 @@ import { defineStore } from 'pinia';
 
 /**
  * Toolbox state: the browser panel's URL history and the user terminal's log,
- * both kept PER SESSION.
+ * kept per PANEL INSTANCE (a ``sessionId::instance`` key — the toolbox opens
+ * several browsers / terminals per session).
  *
  * They live in a store rather than in the components because the right sidebar
  * unmounts a panel when its tab is not active (no KeepAlive, on purpose — that
@@ -54,88 +55,88 @@ export const useToolboxStore = defineStore('toolbox', () => {
   const terminalCwd = ref<Record<string, string>>({});
 
   /**
-   * The session's browser state (created on first use).
-   * @param sessionId
+   * One browser panel's state (created on first use).
+   * @param key The panel's identity (``sessionId::instance``).
    */
-  function browserFor(sessionId: string): BrowserState {
-    return browser.value[sessionId] ?? EMPTY_BROWSER;
+  function browserFor(key: string): BrowserState {
+    return browser.value[key] ?? EMPTY_BROWSER;
   }
 
   /**
    * Navigate to an address (dropping any forward history, like a browser).
-   * @param sessionId
+   * @param key The panel's identity.
    * @param input Raw address-bar text.
    */
-  function navigate(sessionId: string, input: string): void {
+  function navigate(key: string, input: string): void {
     const url = normalizeUrl(input);
     if (!url) return;
-    const current = browserFor(sessionId);
+    const current = browserFor(key);
     const history = [...current.history.slice(0, current.index + 1), url];
-    browser.value = { ...browser.value, [sessionId]: { url, history, index: history.length - 1 } };
+    browser.value = { ...browser.value, [key]: { url, history, index: history.length - 1 } };
   }
 
   /**
    * Step through the visited history.
-   * @param sessionId
+   * @param key The panel's identity.
    * @param stepValue -1 for back, +1 for forward.
    */
-  function step(sessionId: string, stepValue: -1 | 1): void {
-    const current = browserFor(sessionId);
+  function step(key: string, stepValue: -1 | 1): void {
+    const current = browserFor(key);
     const next = current.index + stepValue;
     if (next < 0 || next >= current.history.length) return;
     browser.value = {
       ...browser.value,
-      [sessionId]: { url: current.history[next] ?? '', history: current.history, index: next }
+      [key]: { url: current.history[next] ?? '', history: current.history, index: next }
     };
   }
 
   /**
    * Whether the session can go back / forward (the toolbar's disabled state).
-   * @param sessionId
+   * @param key The panel's identity.
    */
-  const canGoBack = (sessionId: string): boolean => browserFor(sessionId).index > 0;
-  const canGoForward = (sessionId: string): boolean => {
-    const state = browserFor(sessionId);
+  const canGoBack = (key: string): boolean => browserFor(key).index > 0;
+  const canGoForward = (key: string): boolean => {
+    const state = browserFor(key);
     return state.index >= 0 && state.index < state.history.length - 1;
   };
 
   /**
    * The session's terminal scrollback.
-   * @param sessionId
+   * @param key The panel's identity.
    */
-  function terminalFor(sessionId: string): TerminalEntry[] {
-    return terminal.value[sessionId] ?? [];
+  function terminalFor(key: string): TerminalEntry[] {
+    return terminal.value[key] ?? [];
   }
 
   /**
    * Append one finished run and remember the directory it ran in.
-   * @param sessionId
+   * @param key The panel's identity.
    * @param entry The run's result.
    */
-  function recordRun(sessionId: string, entry: TerminalEntry): void {
+  function recordRun(key: string, entry: TerminalEntry): void {
     terminal.value = {
       ...terminal.value,
-      [sessionId]: [...terminalFor(sessionId), entry]
+      [key]: [...terminalFor(key), entry]
     };
-    terminalCwd.value = { ...terminalCwd.value, [sessionId]: entry.cwd };
+    terminalCwd.value = { ...terminalCwd.value, [key]: entry.cwd };
   }
 
   /**
    * Remember the prompt directory (read once per panel open, or after a run).
-   * @param sessionId
+   * @param key The panel's identity.
    * @param cwd
    */
-  function setTerminalCwd(sessionId: string, cwd: string): void {
+  function setTerminalCwd(key: string, cwd: string): void {
     if (!cwd) return;
-    terminalCwd.value = { ...terminalCwd.value, [sessionId]: cwd };
+    terminalCwd.value = { ...terminalCwd.value, [key]: cwd };
   }
 
   /**
    * Forget the session's scrollback (the panel's 清空 button).
-   * @param sessionId
+   * @param key The panel's identity.
    */
-  function clearTerminal(sessionId: string): void {
-    terminal.value = { ...terminal.value, [sessionId]: [] };
+  function clearTerminal(key: string): void {
+    terminal.value = { ...terminal.value, [key]: [] };
   }
 
   return {

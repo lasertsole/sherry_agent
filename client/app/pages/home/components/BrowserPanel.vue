@@ -16,7 +16,7 @@
         :title="t('browser.back')"
         :aria-label="t('browser.back')"
         data-test="browser-back"
-        @click="store.step(sessionId, -1)" />
+        @click="store.step(stateKey, -1)" />
       <Button
         icon="pi pi-arrow-right"
         size="small"
@@ -26,7 +26,7 @@
         :title="t('browser.forward')"
         :aria-label="t('browser.forward')"
         data-test="browser-forward"
-        @click="store.step(sessionId, 1)" />
+        @click="store.step(stateKey, 1)" />
       <Button
         icon="pi pi-refresh"
         size="small"
@@ -98,8 +98,15 @@ import { useToolboxStore } from '~/stores/toolbox';
 
 const { t } = useI18n({ useScope: 'local' });
 
+const props = defineProps<{ payload?: { instance?: string } }>();
+
 const route = useRoute();
 const sessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
+/** The instance key the toolbox gave this tab (one per click). */
+const instanceKey = computed(() => props.payload?.instance ?? 'browser');
+/** THIS panel's identity: the session plus that key — several browsers /
+ *  terminals coexist, each with its own history / scrollback. */
+const stateKey = computed(() => `${sessionId.value}::${instanceKey.value}`);
 const store = useToolboxStore();
 
 /** A few one-click targets for the empty state (the address bar takes any URL). */
@@ -109,9 +116,9 @@ const QUICK_LINKS: ReadonlyArray<{ label: string; url: string }> = [
   { label: 'localhost:8080', url: 'http://127.0.0.1:8080' }
 ];
 
-const pageUrl = computed(() => store.browserFor(sessionId.value).url);
-const canBack = computed(() => store.canGoBack(sessionId.value));
-const canForward = computed(() => store.canGoForward(sessionId.value));
+const pageUrl = computed(() => store.browserFor(stateKey.value).url);
+const canBack = computed(() => store.canGoBack(stateKey.value));
+const canForward = computed(() => store.canGoForward(stateKey.value));
 /** The address bar mirrors the page, but only after a navigation settles — a
  *  half-typed URL must not be overwritten while the user is typing. */
 const address = ref(pageUrl.value);
@@ -124,7 +131,7 @@ const frameKey = ref(0);
 
 /** Navigate to what the address bar holds. */
 const go = (): void => {
-  store.navigate(sessionId.value, address.value);
+  store.navigate(stateKey.value, address.value);
 };
 /** Re-enter the current URL (the panel's 刷新). */
 const reload = (): void => {
@@ -136,7 +143,7 @@ const reload = (): void => {
  */
 const quickLink = (url: string): void => {
   address.value = url;
-  store.navigate(sessionId.value, url);
+  store.navigate(stateKey.value, url);
 };
 </script>
 

@@ -40,8 +40,29 @@ describe('buildHomeToolbarCommands', () => {
       commands[event]?.();
 
       expect(openRightTab).toHaveBeenCalledTimes(1);
-      expect(openRightTab).toHaveBeenCalledWith(kind);
+      if (kind === 'browser' || kind === 'terminal') {
+        // The toolbox panels are TWINS: each click carries a fresh instance key
+        // (the panel keys its own history / scrollback by it).
+        const [calledKind, payload] = openRightTab.mock.calls[0] as [string, { instance?: string }];
+        expect(calledKind).toBe(kind);
+        expect(String(payload?.instance)).toContain(kind);
+      } else {
+        expect(openRightTab).toHaveBeenCalledWith(kind);
+      }
     }
+  });
+
+  it('gives every toolbox click its own instance key', () => {
+    const openRightTab = vi.fn();
+    const commands = buildHomeToolbarCommands({ openRightTab });
+
+    commands.browser?.();
+    commands.browser?.();
+    commands.terminal?.();
+
+    const instances = openRightTab.mock.calls.map(call => (call[1] as { instance?: string }).instance);
+    expect(new Set(instances).size).toBe(3);
+    expect(instances.filter(instance => String(instance).startsWith('browser#'))).toHaveLength(2);
   });
 
   it('registers exactly the toolbar event vocabulary', () => {

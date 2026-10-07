@@ -279,7 +279,8 @@ const notifications = useNotificationStore();
  * `handleOperate` is a lookup, so a new toolbar entry only needs a registry row.
  */
 const toolbarCommands = buildHomeToolbarCommands({
-  openRightTab: kind => rightSidebarStore.openTab(kind)
+  openRightTab: (kind, payload) =>
+    payload ? rightSidebarStore.openTab(kind, payload) : rightSidebarStore.openTab(kind)
 });
 
 /** Global UI store (unified entry for sidebar collapse / settings menu / theme) */
