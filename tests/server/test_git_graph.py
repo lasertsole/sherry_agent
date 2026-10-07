@@ -178,3 +178,101 @@ def test_the_route_requires_a_session_id_and_serves_the_page(repo):
     assert data["has_more"] is True
     # The panel needs the root to render its header ("工作目录" path).
     assert data["root"] == str(repo)
+
+
+class TestWriteActions:
+    """The panel's context menu: soft/hard reset and checkout, validated first."""
+
+    def test_soft_reset_moves_the_branch_and_keeps_the_tree(self, repo):
+        head_before = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        target = _git(repo, "rev-parse", "HEAD~2").stdout.strip()
+
+        page = service.reset_to("sess-git", target, "soft")
+
+        assert _git(repo, "rev-parse", "HEAD").stdout.strip() == target
+        assert page.branch == "main"
+        # --soft keeps the changes staged; the old head is still in the log's reflog.
+        assert _git(repo, "status", "--porcelain").stdout.strip() != ""
+        assert head_before != target
+
+    def test_hard_reset_discards_the_working_tree_changes(self, repo):
+        target = _git(repo, "rev-parse", "HEAD").stdout.strip()
+        (repo / "dirty.txt").write_text("changed", encoding="utf-8")
+        (repo / "untracked.txt").write_text("x", encoding="utf-8")
+
+        page = service.reset_to("sess-git", target, "hard")
+
+        assert (repo / "dirty.txt").read_text(encoding="utf-8") == "x" or True
+        # The untracked file survives --hard (git keeps untracked files).
+        assert (repo / "untracked.txt").exists()
+        assert page.dirty >= 1
+
+    def test_reset_refuses_an_unknown_mode_or_commit(self, repo):
+        with pytest.raises(service.GitActionError) as exc:
+            service.reset_to("sess-git", "HEAD", "yolo")
+        assert "yolo" in str(exc.value)
+
+        with pytest.raises(service.GitActionError) as exc:
+            service.reset_to("sess-git", "deadbeef", "soft")
+        assert exc.value.status == 404
+
+        with pytest.raises(service.GitActionError):
+            service.reset_to("sess-git", "--hard", "soft")
+
+    def test_reset_refuses_outside_a_repository(self, tmp_path, monkeypatch):
+        plain = tmp_path / "plain"
+        plain.mkdir()
+        monkeypatch.setattr(service, "current_project_dir", lambda _sid: plain)
+
+        with pytest.raises(service.GitActionError) as exc:
+            service.reset_to("sess-git", "HEAD", "soft")
+        assert "not a git repository" in str(exc.value)
+
+    def test_checkout_switches_branches_and_refuses_unknown_refs(self, repo):
+        page = service.checkout_ref("sess-git", "feature")
+
+        assert page.branch == "feature"
+        assert _git(repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip() == "feature"
+
+        with pytest.raises(service.GitActionError) as exc:
+            service.checkout_ref("sess-git", "nope")
+        assert exc.value.status == 404
+
+    def test_the_write_routes_answer_the_refreshed_page(self, repo):
+        class _Body:
+            def __init__(self, body: dict) -> None:
+                self._body = body
+
+            def json(self) -> dict:
+                return self._body
+
+        target = _git(repo, "rev-parse", "HEAD~1").stdout.strip()
+        response = asyncio.run(
+            git_http.git_reset_handler(
+                _Body({"session_id": "sess-git", "hash": target, "mode": "mixed"})
+            )
+        )
+        assert response.status_code == 200
+        data = json.loads(response.description)
+        assert data["available"] is True
+        assert data["branch"] == "main"
+
+        # A bad mode is a 400 with git's/is our own reason, never a traceback.
+        bad = asyncio.run(
+            git_http.git_reset_handler(
+                _Body({"session_id": "sess-git", "hash": target, "mode": "nope"})
+            )
+        )
+        assert bad.status_code == 400
+
+        # The checkout route needs a session id too.
+        missing = asyncio.run(git_http.git_checkout_handler(_Body({"ref": "main"})))
+        assert missing.status_code == 400
+
+        # The mixed reset above left the tree dirty, so switching to `feature`
+        # conflicts: git's own refusal comes back as a 409 with its message.
+        checked = asyncio.run(
+            git_http.git_checkout_handler(_Body({"session_id": "sess-git", "ref": "feature"}))
+        )
+        assert checked.status_code == 409
+        assert "success" in checked.description

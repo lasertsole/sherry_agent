@@ -28,7 +28,7 @@ from loguru import logger
 from config.features import GIT_GRAPH
 from runtime.session.project_dir import current_project_dir, project_dir_source
 
-__all__ = ["GraphPage", "read_graph"]
+__all__ = ["GitActionError", "GraphPage", "read_graph", "reset_to", "checkout_ref"]
 
 #: Field separator inside one commit record (ASCII unit separator) and the
 #: record separator between commits — byte values git never puts in a subject.
@@ -36,6 +36,15 @@ _FIELD = "\x1f"
 _RECORD = "\x1e"
 
 _PRETTY = f"%H{_FIELD}%P{_FIELD}%an{_FIELD}%aI{_FIELD}%D{_FIELD}%s{_RECORD}"
+
+
+class GitActionError(Exception):
+    """A refused / failed write with a client-safe message and an HTTP status."""
+
+    def __init__(self, reason: str, status: int = 400) -> None:
+        super().__init__(reason)
+        self.reason = reason
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -199,3 +208,75 @@ def read_graph(session_id: str, limit: int | None = None, skip: int = 0) -> Grap
         commits=commits[:page_size],
         has_more=has_more,
     )
+
+
+def _stderr_tail(completed: subprocess.CompletedProcess[str] | None) -> str:
+    """A bounded, single-line git error message for the client."""
+    if completed is None:
+        return "git did not answer in time"
+    text = (completed.stderr or completed.stdout or "").strip().replace("\n", " ")
+    return text[: GIT_GRAPH["max_text_chars"]] or "git refused the operation"
+
+
+def _require_repository(root: Path) -> None:
+    """Refuse a write outside a usable repository (the read paths say so in JSON)."""
+    probe = _run(root, ["rev-parse", "--is-inside-work-tree"])
+    if probe is None:
+        raise GitActionError("git is not available on the server", 503)
+    if probe.returncode != 0 or probe.stdout.strip() != "true":
+        raise GitActionError("the working directory is not a git repository", 400)
+
+
+#: ``git reset`` modes the panel may ask for (``--hard`` discards the working
+#: tree changes; the UI warns, the backend only validates the mode).
+_RESET_MODES: frozenset[str] = frozenset({"soft", "mixed", "hard"})
+
+
+def reset_to(session_id: str, target: str, mode: str) -> GraphPage:
+    """Move the current branch to *target* (``git reset --<mode> <target>``).
+
+    The panel's 回退 action. The target must resolve to a COMMIT in this
+    repository, and ``mode`` must be one of soft / mixed / hard — anything else
+    is refused before git runs, so a crafted request cannot smuggle flags.
+    Returns the refreshed page so the caller repaints in one round trip.
+    """
+    if mode not in _RESET_MODES:
+        raise GitActionError(f"unknown reset mode: {mode}")
+    clean_target = target.strip()
+    if not clean_target or clean_target.startswith("-"):
+        raise GitActionError("invalid commit")
+    root = current_project_dir(session_id)
+    _require_repository(root)
+    verify = _run(root, ["rev-parse", "--verify", f"{clean_target}^{{commit}}"])
+    if verify is None:
+        raise GitActionError("git is not available on the server", 503)
+    if verify.returncode != 0:
+        raise GitActionError(f"unknown commit: {clean_target}", 404)
+    result = _run(root, ["reset", f"--{mode}", clean_target])
+    if result is None or result.returncode != 0:
+        raise GitActionError(_stderr_tail(result), 409)
+    logger.info("git graph: reset --{} to {} in {}", mode, clean_target[:8], root)
+    return read_graph(session_id)
+
+
+def checkout_ref(session_id: str, ref: str) -> GraphPage:
+    """Check out a branch (or any resolvable ref): the panel's 切换分支 action.
+
+    A conflicting checkout fails inside git and its stderr comes back as-is; a
+    ref git does not know is refused before anything is touched.
+    """
+    clean_ref = ref.strip()
+    if not clean_ref or clean_ref.startswith("-"):
+        raise GitActionError("invalid ref")
+    root = current_project_dir(session_id)
+    _require_repository(root)
+    verify = _run(root, ["rev-parse", "--verify", f"{clean_ref}^{{commit}}"])
+    if verify is None:
+        raise GitActionError("git is not available on the server", 503)
+    if verify.returncode != 0:
+        raise GitActionError(f"unknown ref: {clean_ref}", 404)
+    result = _run(root, ["checkout", clean_ref])
+    if result is None or result.returncode != 0:
+        raise GitActionError(_stderr_tail(result), 409)
+    logger.info("git graph: checked out {} in {}", clean_ref, root)
+    return read_graph(session_id)
