@@ -15,49 +15,62 @@
       <!-- LOGO area -->
       <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
       <!-- Left-sidebar body switch: the session list (default) or the session's
-           工作目录 — TWO collapsible sections (file tree + git graph), each with
-           its own header that toggles and its own scroller. The LOGO above stays
-           in every body. -->
+           工作目录 — TWO collapsible sections in one SHARED header row (文件树 /
+           Git Graph sit side by side, each header toggling its panel), with the
+           open panels stacked in a vertical Splitter: drag the gutter to give
+           either one more room. The LOGO above stays in every body. -->
       <div
         v-if="sidebarBody === 'files'"
-        class="flex min-h-0 flex-1 flex-col gap-2">
-        <section class="flex min-h-0 flex-1 flex-col">
+        class="flex min-h-0 flex-1 flex-col">
+        <div class="mb-1 flex shrink-0 items-center gap-1">
           <button
+            v-for="section in sidebarSections"
+            :key="section.id"
             type="button"
-            class="flex w-full shrink-0 items-center gap-1.5 rounded px-1 py-1 text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/60"
-            :aria-expanded="ui.filesSectionOpen"
-            data-test="sidebar-files-toggle"
-            @click="ui.toggleFilesSection()">
+            class="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1.5 py-1 text-xs transition-colors"
+            :class="
+              section.open
+                ? 'text-gray-600 dark:text-gray-300'
+                : 'text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800/60'
+            "
+            :aria-expanded="section.open"
+            :data-test="`sidebar-${section.id}-toggle`"
+            @click="section.toggle()">
             <i
-              class="pi pi-chevron-down text-[10px] transition-transform duration-200"
-              :class="{ '-rotate-90': !ui.filesSectionOpen }" />
-            <i class="pi pi-folder text-theme-main" />
-            <span>{{ t('projectFiles.title') }}</span>
+              class="pi text-[10px] transition-transform duration-200"
+              :class="section.open ? 'pi-chevron-down' : 'pi-chevron-right'" />
+            <i :class="[section.icon, 'text-theme-main']" />
+            <span class="truncate">{{ t(section.label) }}</span>
           </button>
-          <ProjectFileTree
-            v-if="ui.filesSectionOpen"
-            class="min-h-0 flex-1"
-            :session-id="routeSessionId" />
-        </section>
+        </div>
 
-        <section class="flex min-h-0 flex-1 flex-col">
-          <button
-            type="button"
-            class="flex w-full shrink-0 items-center gap-1.5 rounded px-1 py-1 text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/60"
-            :aria-expanded="ui.gitSectionOpen"
-            data-test="sidebar-git-toggle"
-            @click="ui.toggleGitSection()">
-            <i
-              class="pi pi-chevron-down text-[10px] transition-transform duration-200"
-              :class="{ '-rotate-90': !ui.gitSectionOpen }" />
-            <i class="pi pi-sitemap text-theme-main" />
-            <span>{{ t('gitGraph.title') }}</span>
-          </button>
-          <GitGraphPanel
+        <Splitter
+          v-if="ui.filesSectionOpen || ui.gitSectionOpen"
+          layout="vertical"
+          class="min-h-0 flex-1"
+          data-test="sidebar-splitter"
+          @resizeend="onSplitResize">
+          <SplitterPanel
+            v-if="ui.filesSectionOpen"
+            :size="ui.gitSectionOpen ? ui.filesSplitSize : 100"
+            :min-size="15">
+            <div class="flex h-full min-h-0 flex-col">
+              <ProjectFileTree
+                class="min-h-0 flex-1"
+                :session-id="routeSessionId" />
+            </div>
+          </SplitterPanel>
+          <SplitterPanel
             v-if="ui.gitSectionOpen"
-            class="min-h-0 flex-1"
-            :session-id="routeSessionId" />
-        </section>
+            :size="ui.filesSectionOpen ? 100 - ui.filesSplitSize : 100"
+            :min-size="15">
+            <div class="flex h-full min-h-0 flex-col">
+              <GitGraphPanel
+                class="min-h-0 flex-1"
+                :session-id="routeSessionId" />
+            </div>
+          </SplitterPanel>
+        </Splitter>
       </div>
       <template v-else>
         <!-- New chat -->
@@ -257,6 +270,39 @@ const collapsed = defineModel<boolean>('collapsed', { default: false });
 
 /** Which body the sidebar shows; the top bar's folder button flips it. */
 const ui = useUiStore();
+
+/** The two 工作目录 sections: their headers share one row, each toggles its panel. */
+const sidebarSections = computed<Array<{ id: string; icon: string; label: string; open: boolean; toggle: () => void }>>(
+  () => [
+    {
+      id: 'files',
+      icon: 'pi pi-folder',
+      label: 'projectFiles.title',
+      open: ui.filesSectionOpen,
+      toggle: () => ui.toggleFilesSection()
+    },
+    {
+      id: 'git',
+      icon: 'pi pi-sitemap',
+      label: 'gitGraph.title',
+      open: ui.gitSectionOpen,
+      toggle: () => ui.toggleGitSection()
+    }
+  ]
+);
+
+/**
+ * Remember the split the gutter was dragged to (PrimeVue reports the panel sizes).
+ * @param event The Splitter resizeend event.
+ * @param event.sizes Panel shares in per cent, in panel order.
+ */
+const onSplitResize = (event: { sizes: number[] }): void => {
+  // The first panel is the file tree whenever it is open; with it collapsed the
+  // single panel owns the body and there is nothing to remember.
+  if (ui.filesSectionOpen && ui.gitSectionOpen && Array.isArray(event.sizes) && event.sizes[0] !== undefined) {
+    ui.setFilesSplitSize(event.sizes[0]);
+  }
+};
 const sidebarBody = computed(() => ui.sidebarBody);
 /** The session in view — the tree belongs to that session's project directory. */
 const routeSessionId = computed(() => String(route.params.sid ?? ''));

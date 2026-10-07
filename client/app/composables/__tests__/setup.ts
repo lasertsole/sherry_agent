@@ -130,6 +130,7 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
     sidebarBody: 'sessions',
     filesSectionOpen: true,
     gitSectionOpen: true,
+    filesSplitSize: 50,
     setTheme: (value: string) => {
       const colorMode = (globalThis as any).useColorMode?.();
       if (colorMode) colorMode.preference = value;
@@ -148,6 +149,9 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
     },
     toggleGitSection: () => {
       state.gitSectionOpen = !state.gitSectionOpen;
+    },
+    setFilesSplitSize: (size: number) => {
+      state.filesSplitSize = size;
     }
   });
   return state;

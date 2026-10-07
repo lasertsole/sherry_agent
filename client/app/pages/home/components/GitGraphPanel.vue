@@ -2,7 +2,7 @@
   <div class="flex h-full min-h-0 flex-col">
     <!-- Header: current branch (or the detached HEAD) + the dirty count + refresh. -->
     <div
-      class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-100 px-3 py-2 text-xs dark:border-gray-800">
+      class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-100 px-3 py-1.5 text-xs dark:border-gray-800">
       <i class="pi pi-sitemap text-theme-main"></i>
       <span
         class="truncate font-mono text-gray-500 dark:text-gray-400"
@@ -54,72 +54,91 @@
         <div
           v-for="row in rows"
           :key="row.commit.hash"
-          class="cursor-pointer px-2 py-1 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-          :class="{ 'bg-gray-50 dark:bg-gray-800/60': expanded === row.commit.hash }"
+          class="flex cursor-pointer items-center gap-1.5 px-2 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+          :style="{ height: `${ROW_HEIGHT}px` }"
+          :class="{ 'bg-gray-100 dark:bg-gray-800/80': expanded === row.commit.hash }"
           :data-test="`git-commit-${row.commit.hash}`"
-          :title="row.commit.subject"
-          @click="toggleRow(row.commit.hash)">
-          <div class="flex items-center gap-2">
-            <!-- The lane cell: one SVG per row, drawn from the lane state
-                 entering and leaving that row (see graphRows). -->
-            <svg
-              class="shrink-0"
-              :width="row.width"
-              :height="ROW_HEIGHT"
-              :viewBox="`0 0 ${row.width} ${ROW_HEIGHT}`"
-              aria-hidden="true">
-              <path
-                v-for="(d, index) in row.paths"
-                :key="index"
-                :d="d"
-                fill="none"
-                :stroke="laneColor(row.pathColors[index] ?? 0)"
-                stroke-width="1.5"
-                stroke-linecap="round" />
+          :title="`${row.commit.subject}\n${row.commit.author} · ${compactDate(row.commit.date)}`"
+          @click="toggleRow(row.commit.hash)"
+          @contextmenu.prevent="openCommitMenu($event, row)">
+          <!-- The lane cell: one SVG per row, drawn from the lane state entering
+               and leaving that row (see graphRows — VS Code's own geometry). -->
+          <svg
+            class="shrink-0 overflow-visible"
+            :width="row.width"
+            :height="ROW_HEIGHT"
+            :viewBox="`0 0 ${row.width} ${ROW_HEIGHT}`"
+            aria-hidden="true">
+            <path
+              v-for="(segment, index) in row.paths"
+              :key="index"
+              :d="segment.d"
+              fill="none"
+              :stroke="segment.color"
+              :stroke-width="NODE_STROKE"
+              stroke-linecap="round" />
+            <circle
+              v-if="row.head"
+              :cx="laneX(row.lane)"
+              :cy="NODE_Y"
+              :r="CIRCLE_RADIUS + 3"
+              fill="none"
+              :stroke="row.color"
+              :stroke-width="NODE_STROKE" />
+            <template v-if="row.merge">
               <circle
                 :cx="laneX(row.lane)"
-                :cy="ROW_HEIGHT / 2"
-                r="3.5"
-                :fill="laneColor(row.lane)"
-                stroke="white"
-                stroke-width="1" />
-            </svg>
-            <div class="min-w-0 flex-1">
-              <div class="truncate text-xs text-theme-main">{{ row.commit.subject }}</div>
-              <div class="flex min-w-0 items-center gap-1.5 text-[11px] text-gray-400">
-                <span class="shrink-0 font-mono">{{ row.commit.short }}</span>
-                <span class="truncate">{{ row.commit.author }}</span>
-                <span class="ml-auto shrink-0">{{ compactDate(row.commit.date) }}</span>
-              </div>
-            </div>
-          </div>
+                :cy="NODE_Y"
+                :r="CIRCLE_RADIUS + 2"
+                class="fill-white dark:fill-[#1f1f28]"
+                :stroke="row.color"
+                :stroke-width="NODE_STROKE" />
+              <circle
+                :cx="laneX(row.lane)"
+                :cy="NODE_Y"
+                :r="CIRCLE_RADIUS - 1"
+                :fill="row.color" />
+            </template>
+            <circle
+              v-else
+              :cx="laneX(row.lane)"
+              :cy="NODE_Y"
+              :r="CIRCLE_RADIUS + 1"
+              :fill="row.color"
+              class="stroke-white dark:stroke-[#1f1f28]"
+              :stroke-width="NODE_STROKE" />
+          </svg>
+          <!-- Ref chips lead the row, like VS Code's SCM graph. -->
+          <span
+            v-for="ref in row.commit.refs"
+            :key="`${ref.kind}:${ref.name}`"
+            class="shrink-0 rounded px-1 font-mono text-[10px] leading-4"
+            :class="refClass(ref.kind)"
+            :data-test="`git-ref-${ref.kind}-${ref.name}`"
+            @contextmenu.prevent.stop="openRefMenu($event, ref)">
+            {{ ref.name }}
+          </span>
+          <span class="min-w-0 flex-1 truncate text-xs text-theme-main">{{ row.commit.subject }}</span>
+          <span class="shrink-0 font-mono text-[10px] text-gray-400">{{ row.commit.short }}</span>
+        </div>
 
-          <!-- Ref chips (branch / tag / remote / HEAD) sit under the row so a
-               long subject keeps the full width. -->
-          <div
-            v-if="row.commit.refs.length > 0"
-            class="mt-0.5 flex flex-wrap gap-1 pl-1">
-            <span
-              v-for="ref in row.commit.refs"
-              :key="`${ref.kind}:${ref.name}`"
-              class="rounded-full px-1.5 py-0.5 font-mono text-[10px]"
-              :class="refClass(ref.kind)">
-              {{ ref.name }}
+        <!-- Expanded detail (click): the full hash, the parents and the timestamp. -->
+        <div
+          v-if="expandedRow"
+          class="flex flex-col gap-0.5 border-y border-solid border-gray-100 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
+          data-test="git-detail">
+          <span
+            class="break-all font-mono"
+            data-test="git-detail-hash"
+            >{{ expandedRow.commit.hash }}</span
+          >
+          <span v-if="expandedRow.commit.parents.length">
+            {{ t('gitGraph.parents') }}:
+            <span class="font-mono">
+              {{ expandedRow.commit.parents.map(p => p.slice(0, 8)).join(', ') }}
             </span>
-          </div>
-
-          <!-- Expanded detail: the full hash, the parents and the timestamp. -->
-          <div
-            v-if="expanded === row.commit.hash"
-            class="mt-1 flex flex-col gap-0.5 rounded border border-solid border-gray-100 p-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
-            data-test="git-detail">
-            <span class="break-all font-mono">{{ row.commit.hash }}</span>
-            <span v-if="row.commit.parents.length">
-              {{ t('gitGraph.parents') }}:
-              <span class="font-mono">{{ row.commit.parents.map(p => p.slice(0, 8)).join(', ') }}</span>
-            </span>
-            <span>{{ row.commit.author }} · {{ compactDate(row.commit.date) }}</span>
-          </div>
+          </span>
+          <span>{{ expandedRow.commit.author }} · {{ compactDate(expandedRow.commit.date) }}</span>
         </div>
 
         <div
@@ -137,17 +156,24 @@
         </div>
       </template>
     </div>
+
+    <!-- Right-click menu: commit actions on a row, ref actions on a chip. The
+         two reset actions go through PrimeVue's confirmation dialog. -->
+    <ContextMenu
+      ref="menuRef"
+      :model="menuItems"
+      data-test="git-context-menu" />
   </div>
 </template>
 
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { GitCommitEntry, GitGraphPage } from '~/composables/bridge/git';
-// Stable module specifier so tests can vi.mock the bridge (the unimport
+import type { GitCommitEntry, GitGraphPage, GitRefEntry } from '~/composables/bridge/git';
+// Stable module specifiers so tests can vi.mock the bridge (the unimport
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
-import { fetchGitGraph } from '~/composables/bridge/git';
+import { checkoutGitRef, fetchGitGraph, resetGitBranch } from '~/composables/bridge/git';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 import { logUtil } from '~/utils/log';
 
@@ -155,14 +181,26 @@ const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ sessionId: string }>();
 
-/** Row height in px (the SVG's viewBox height; the row's own height follows it). */
-const ROW_HEIGHT = 34;
-/** Lane pitch and the left gutter of the lane cell. */
-const LANE_WIDTH = 14;
-const LANE_GUTTER = 6;
+// The graph geometry and palette are VS Code's own (scmHistory.ts):
+// SWIMLANE_HEIGHT / SWIMLANE_WIDTH / SWIMLANE_CURVE_RADIUS / CIRCLE_RADIUS /
+// CIRCLE_STROKE_WIDTH, and the five rotating scmGraph.foreground colours — so a
+// history here reads like the SCM graph the user already knows.
+/** Row height (SWIMLANE_HEIGHT) and the lane pitch (SWIMLANE_WIDTH). */
+const ROW_HEIGHT = 22;
+const LANE_WIDTH = 11;
+/** Corner radius of a branch/merge curve. */
+const CURVE_RADIUS = 5;
+/** Node circle radius and the stroke width of lines and rings. */
+const CIRCLE_RADIUS = 4;
+const NODE_STROKE = 2;
+/** y of the node inside its row (VS Code draws it at SWIMLANE_WIDTH). */
+const NODE_Y = LANE_WIDTH;
 
-/** Lane colours, indexed by lane (a small palette; VS Code-ish hues). */
-const LANE_COLORS = ['#4e79a7', '#f28e2b', '#59a14f', '#e15759', '#b07aa1', '#76b7b2', '#edc948', '#ff9da7'];
+/** The graph foreground rotation (VS Code's scmGraph.foreground1..5). */
+const LANE_COLORS = ['#FFB000', '#DC267F', '#994F00', '#40B0A6', '#B66DFF'];
+
+/** How many commits one page holds (the backend clamps harder). */
+const PAGE_SIZE = 40;
 
 /** Empty page: what the template renders before the first load settles. */
 const EMPTY_PAGE: GitGraphPage = {
@@ -181,112 +219,161 @@ const EMPTY_PAGE: GitGraphPage = {
 const page = ref<GitGraphPage>({ ...EMPTY_PAGE });
 const loading = ref(false);
 const expanded = ref('');
+const menuRef = ref<{ show: (event: Event) => void } | null>(null);
+const confirm = useConfirm();
 
-/** One rendered row: the commit plus the lane geometry computed for it. */
+/** A lane being tracked: the hash it waits for and its branch colour. */
+interface Lane {
+  id: string;
+  color: string;
+}
+
+/** One rendered row: the commit, the lane state around it and its drawing. */
 interface GraphRow {
   commit: GitCommitEntry;
-  /** Lane the commit's node sits in. */
+  /** Lane the commit's node sits in (its index in the row's input lanes). */
   lane: number;
-  /** Lane count of the row (its SVG width follows it). */
-  laneCount: number;
-  /** SVG path data per drawn segment, with the lane each one belongs to. */
-  paths: string[];
-  pathColors: number[];
+  /** The node's colour. */
+  color: string;
+  /** SVG segments of the row, each with the lane colour it belongs to. */
+  paths: Array<{ d: string; color: string }>;
+  /** True for a merge (more than one parent) — a ring, like VS Code. */
+  merge: boolean;
+  /** True when the row carries the HEAD ref — an extra outer ring. */
+  head: boolean;
+  /** Lane cell width for this row. */
   width: number;
 }
 
 /**
- * Lane x for one lane index.
+ * Lane x for one lane index (VS Code: `SWIMLANE_WIDTH * (index + 1)`).
  * @param lane Lane index.
  */
-const laneX = (lane: number): number => LANE_GUTTER + lane * LANE_WIDTH;
+const laneX = (lane: number): number => LANE_WIDTH * (lane + 1);
 
 /**
- * Colour for one lane.
- * @param lane Lane index.
+ * A straight running lane through the row.
+ * @param x
  */
-const laneColor = (lane: number): string => LANE_COLORS[lane % LANE_COLORS.length]!;
+const vertical = (x: number): string => `M ${x} 0 V ${ROW_HEIGHT}`;
 
 /**
- * Lay the commits out into lanes — the classic walk: each lane holds the hash it
- * is still waiting for, a commit takes the lane that expects it (or opens a new
- * one at the right edge), its first parent inherits that lane and extra parents
- * (a merge) open their own. The row's SVG is then drawn from the lane state
- * entering and leaving it, so a branch and a merge both read as lines.
+ * A lane that ENDS at this row's node (this commit is what it waited for).
+ * @param x
+ */
+const intoNode = (x: number): string => `M ${x} 0 V ${NODE_Y}`;
+
+/**
+ * The S-curve a lane draws while its index shifts: two quarter arcs joined by a
+ * horizontal run — the shape VS Code's renderer builds with
+ * `A ${r} ${r} 0 0 1 … H … A ${r} ${r} 0 0 0 …` (the sweeps flip with the
+ * direction, so an up-shift mirrors the down-shift).
+ * @param fromX Lane x at the top of the row.
+ * @param toX Lane x at the bottom.
+ */
+const shiftCurve = (fromX: number, toX: number): string => {
+  const right = toX > fromX;
+  const sweepOut = right ? 1 : 0;
+  const sweepIn = right ? 0 : 1;
+  const arcX = fromX + (right ? CURVE_RADIUS : -CURVE_RADIUS);
+  const joinX = toX + (right ? -CURVE_RADIUS : CURVE_RADIUS);
+  return (
+    `M ${fromX} 0 A ${CURVE_RADIUS} ${CURVE_RADIUS} 0 0 ${sweepOut} ${arcX} ${CURVE_RADIUS}` +
+    ` H ${joinX} A ${CURVE_RADIUS} ${CURVE_RADIUS} 0 0 ${sweepIn} ${toX} ${CURVE_RADIUS * 2}` +
+    ` V ${ROW_HEIGHT}`
+  );
+};
+
+/**
+ * The merge edge: from the node down to the lane an extra parent just opened,
+ * using the same two-arc form but starting at the node's y (VS Code's merge
+ * line, which ends at `SWIMLANE_WIDTH * 2`).
+ * @param fromX The node's lane x.
+ * @param toX The parent's lane x.
+ */
+const mergeCurve = (fromX: number, toX: number): string => {
+  const right = toX > fromX;
+  const sweep = right ? 1 : 0;
+  const arcX = fromX + (right ? CURVE_RADIUS : -CURVE_RADIUS);
+  const joinX = toX + (right ? -CURVE_RADIUS : CURVE_RADIUS);
+  return (
+    `M ${fromX} ${NODE_Y} A ${CURVE_RADIUS} ${CURVE_RADIUS} 0 0 ${sweep} ${arcX} ${NODE_Y + CURVE_RADIUS}` +
+    ` H ${joinX} A ${CURVE_RADIUS} ${CURVE_RADIUS} 0 0 ${sweep} ${toX} ${ROW_HEIGHT}`
+  );
+};
+
+/**
+ * Lay the commits into lanes and draw each row — the walk VS Code's
+ * `toISCMHistoryItemViewModelArray` performs: each row's input lanes are the
+ * previous row's output, the FIRST parent inherits the node's lane and colour,
+ * and every extra parent opens a NEW lane at the right edge with the next colour
+ * in the rotation (which is what keeps a branch's colour stable as lanes shift).
  * @param commits Page commits, newest first.
  * @returns The rows with their geometry.
  */
 function graphRows(commits: GitCommitEntry[]): GraphRow[] {
-  let lanes: string[] = [];
+  let lanes: Lane[] = [];
+  let colorIndex = 0;
   const rows: GraphRow[] = [];
 
   for (const commit of commits) {
-    const before = [...lanes];
-    let lane = before.indexOf(commit.hash);
+    const input = lanes.map(lane => ({ ...lane }));
+    let lane = input.findIndex(entry => entry.id === commit.hash);
     if (lane === -1) {
-      // A tip no lane was waiting for (a second branch head): open a new lane.
-      lane = before.length;
-      before.push(commit.hash);
+      // A tip no lane was waiting for (a second branch head): it opens one.
+      lane = input.length;
+      input.push({ id: commit.hash, color: LANE_COLORS[colorIndex]! });
     }
+    const color = input[lane]!.color;
 
-    // The state LEAVING the row: the first parent continues in this lane, every
-    // other parent gets a lane of its own right after it (deduplicated), and a
-    // lane whose expectation is exhausted is dropped.
-    const after = [...before];
-    after[lane] = commit.parents[0] ?? '';
-    let insertAt = lane + 1;
+    const output = input.map(entry => ({ ...entry }));
+    output[lane] = { id: commit.parents[0] ?? '', color };
     for (const parent of commit.parents.slice(1)) {
-      if (parent && !after.includes(parent)) {
-        after.splice(insertAt, 0, parent);
-        insertAt += 1;
-      }
+      if (!parent || output.some(entry => entry.id === parent)) continue;
+      colorIndex = (colorIndex + 1) % LANE_COLORS.length;
+      output.push({ id: parent, color: LANE_COLORS[colorIndex]! });
     }
-    lanes = after.filter(name => name !== '');
+    const next = output.filter(entry => entry.id !== '');
 
-    const laneCount = Math.max(before.length, after.length);
-    const mid = ROW_HEIGHT / 2;
-    const paths: string[] = [];
-    const pathColors: number[] = [];
-    for (let index = 0; index < laneCount; index += 1) {
-      const above = index < before.length;
-      const below = index < after.length;
+    const paths: Array<{ d: string; color: string }> = [];
+    input.forEach((entry, index) => {
+      const target = output.findIndex(candidate => candidate.id === entry.id);
       const x = laneX(index);
-      if (above && below) {
-        paths.push(`M ${x} 0 L ${x} ${ROW_HEIGHT}`);
-        pathColors.push(index);
-      } else if (above) {
-        // Ends here: this commit is what the lane was waiting for.
-        paths.push(`M ${x} 0 L ${x} ${mid}`);
-        pathColors.push(index);
-      } else if (below) {
-        // Starts here (a new tip, or a merge parent): drop from the node's row.
-        paths.push(`M ${x} ${mid} L ${x} ${ROW_HEIGHT}`);
-        pathColors.push(index);
+      if (target === -1) {
+        // The lane's expectation is this commit: it runs into the node row.
+        paths.push({ d: intoNode(x), color: entry.color });
+      } else if (target === index) {
+        paths.push({ d: vertical(x), color: entry.color });
+      } else {
+        paths.push({ d: shiftCurve(x, laneX(target)), color: entry.color });
       }
-    }
-    // Merge edges: from the node to each extra parent's lane.
-    for (const parent of commit.parents.slice(1)) {
-      const target = after.indexOf(parent);
-      if (target === -1 || target === lane) continue;
-      paths.push(
-        `M ${laneX(lane)} ${mid} C ${laneX(lane)} ${ROW_HEIGHT}, ${laneX(target)} ${ROW_HEIGHT}, ${laneX(target)} ${mid}`
-      );
-      pathColors.push(target);
-    }
+    });
+    // Lanes PAST the input's length are the extra parents this commit just
+    // opened (the node's own lane continues into its first parent, so it is not
+    // a new lane): each one gets a merge edge from the node.
+    output.forEach((entry, index) => {
+      if (index < input.length) return;
+      paths.push({ d: mergeCurve(laneX(lane), laneX(index)), color: entry.color });
+    });
 
+    lanes = next;
     rows.push({
       commit,
       lane,
-      laneCount,
+      color,
       paths,
-      pathColors,
-      width: laneX(laneCount) + LANE_GUTTER
+      merge: commit.parents.length > 1,
+      head: commit.refs.some(ref => ref.kind === 'head'),
+      width: laneX(Math.max(input.length, next.length) - 1) + LANE_WIDTH
     });
   }
   return rows;
 }
 
 const rows = computed<GraphRow[]>(() => graphRows(page.value.commits));
+
+/** The row whose detail block is open (undefined once a refresh drops it). */
+const expandedRow = computed<GraphRow | undefined>(() => rows.value.find(row => row.commit.hash === expanded.value));
 
 /** Branch text: the branch name, or a short hash for a detached HEAD. */
 const branchLabel = computed<string>(() => {
@@ -332,13 +419,138 @@ const toggleRow = (hash: string): void => {
   expanded.value = expanded.value === hash ? '' : hash;
 };
 
+/**
+ * Copy a value and confirm it with a toast.
+ * @param text Value to copy.
+ * @param label What was copied (named in the toast).
+ */
+const copyAndToast = async (text: string, label: string): Promise<void> => {
+  const ok = await copyTextToClipboard(text);
+  if (ok) toastSuccess(t('gitGraph.copied', { what: label }));
+  else toastError(t('gitGraph.copyFailed'));
+};
+
+/**
+ * Run a write action (reset / checkout) and repaint from its answer.
+ * @param action The bridge call that performs it.
+ * @param failure Toast text for a refusal.
+ */
+const runAction = async (action: () => Promise<GitGraphPage>, failure: string): Promise<void> => {
+  loading.value = true;
+  try {
+    page.value = await action();
+    expanded.value = '';
+  } catch (e) {
+    logUtil.e('[GitGraphPanel] git action failed:', e);
+    toastError(failure);
+  } finally {
+    loading.value = false;
+  }
+};
+
+/**
+ * Move the current branch (the 回退 actions), behind a confirmation dialog.
+ * @param row The right-clicked row.
+ * @param mode `soft` keeps the changes staged, `hard` discards them.
+ */
+const resetTo = (row: GraphRow, mode: 'soft' | 'hard'): void => {
+  const hard = mode === 'hard';
+  confirm.require({
+    header: hard ? t('gitGraph.confirmHardTitle') : t('gitGraph.confirmSoftTitle'),
+    message: hard
+      ? t('gitGraph.confirmHardMessage', {
+          branch: page.value.branch || 'HEAD',
+          hash: row.commit.short,
+          count: page.value.dirty
+        })
+      : t('gitGraph.confirmSoftMessage', {
+          branch: page.value.branch || 'HEAD',
+          hash: row.commit.short
+        }),
+    acceptProps: {
+      label: t('gitGraph.resetAction', {
+        mode: hard ? t('gitGraph.modeHard') : t('gitGraph.modeSoft')
+      }),
+      severity: hard ? 'danger' : 'primary',
+      icon: 'pi pi-history'
+    },
+    rejectProps: { label: t('common.cancel'), severity: 'secondary' },
+    accept: () => {
+      void runAction(
+        () => resetGitBranch(props.sessionId, row.commit.hash, hard ? 'hard' : 'soft'),
+        t('gitGraph.resetFailed')
+      );
+    }
+  });
+};
+
+/** Items the ContextMenu renders (rebuilt per right-click). */
+const menuItems = ref<Array<Record<string, unknown>>>([]);
+
+/**
+ * Open the context menu for a commit row.
+ * @param event The contextmenu event (anchors the popup).
+ * @param row The right-clicked row.
+ */
+const openCommitMenu = (event: Event, row: GraphRow): void => {
+  menuItems.value = [
+    {
+      label: t('gitGraph.copyHash'),
+      icon: 'pi pi-hashtag',
+      command: () => void copyAndToast(row.commit.hash, t('gitGraph.copyHash'))
+    },
+    {
+      label: t('gitGraph.copySubject'),
+      icon: 'pi pi-copy',
+      command: () => void copyAndToast(row.commit.subject, t('gitGraph.copySubject'))
+    },
+    { separator: true },
+    {
+      label: t('gitGraph.menuResetSoft'),
+      icon: 'pi pi-history',
+      command: () => resetTo(row, 'soft')
+    },
+    {
+      label: t('gitGraph.menuResetHard'),
+      icon: 'pi pi-exclamation-triangle',
+      command: () => resetTo(row, 'hard')
+    }
+  ];
+  menuRef.value?.show(event);
+};
+
+/**
+ * Open the context menu for a ref chip: a branch can be checked out, every chip
+ * can be copied.
+ * @param event The contextmenu event (anchors the popup).
+ * @param ref The right-clicked ref chip.
+ */
+const openRefMenu = (event: Event, ref: GitRefEntry): void => {
+  const items: Array<Record<string, unknown>> = [
+    {
+      label: t('gitGraph.copyRef'),
+      icon: 'pi pi-copy',
+      command: () => void copyAndToast(ref.name, t('gitGraph.copyRef'))
+    }
+  ];
+  if (ref.kind === 'branch' || ref.kind === 'head') {
+    items.unshift({
+      label: t('gitGraph.checkoutBranch'),
+      icon: 'pi pi-sign-in',
+      command: () => void runAction(() => checkoutGitRef(props.sessionId, ref.name), t('gitGraph.checkoutFailed'))
+    });
+  }
+  menuItems.value = items;
+  menuRef.value?.show(event);
+};
+
 /** (Re)load the first page. */
 const reload = async (): Promise<void> => {
   if (!props.sessionId) return;
   loading.value = true;
   expanded.value = '';
   try {
-    page.value = await fetchGitGraph(props.sessionId, { limit: 40, skip: 0 });
+    page.value = await fetchGitGraph(props.sessionId, { limit: PAGE_SIZE, skip: 0 });
   } catch (e) {
     logUtil.e('[GitGraphPanel] Failed to load the git graph:', e);
     page.value = { ...EMPTY_PAGE, available: false, reason: 'not-a-repository' };
@@ -353,7 +565,7 @@ const loadMore = async (): Promise<void> => {
   loading.value = true;
   try {
     const next = await fetchGitGraph(props.sessionId, {
-      limit: 40,
+      limit: PAGE_SIZE,
       skip: page.value.commits.length
     });
     page.value = { ...next, commits: [...page.value.commits, ...next.commits] };
@@ -389,7 +601,24 @@ watch(
       "notARepository": "当前工作目录不是 Git 仓库",
       "gitMissing": "服务器上没有找到 git 可执行文件",
       "unavailableShort": "不可用",
-      "parents": "父提交"
+      "parents": "父提交",
+      "copied": "已复制{what}",
+      "copyFailed": "复制失败",
+      "copyHash": "复制提交哈希",
+      "copySubject": "复制提交信息",
+      "copyRef": "复制引用名",
+      "checkoutBranch": "切换到此分支",
+      "checkoutFailed": "切换分支失败",
+      "menuResetSoft": "软回退到此提交（保留改动）",
+      "menuResetHard": "硬回退到此提交（丢弃改动）",
+      "resetAction": "{mode}回退",
+      "modeSoft": "软",
+      "modeHard": "硬",
+      "resetFailed": "回退失败",
+      "confirmSoftTitle": "软回退分支",
+      "confirmSoftMessage": "把 {branch} 移动到 {hash}？已提交的更改会回到暂存区，工作区内容保留。",
+      "confirmHardTitle": "硬回退分支（危险）",
+      "confirmHardMessage": "把 {branch} 移动到 {hash}？当前 {count} 项未提交改动会被丢弃，无法恢复。"
     }
   },
   "en": {
@@ -402,7 +631,24 @@ watch(
       "notARepository": "The working directory is not a Git repository",
       "gitMissing": "No git executable on the server",
       "unavailableShort": "unavailable",
-      "parents": "Parents"
+      "parents": "Parents",
+      "copied": "Copied {what}",
+      "copyFailed": "Copy failed",
+      "copyHash": "Copy commit hash",
+      "copySubject": "Copy commit message",
+      "copyRef": "Copy ref name",
+      "checkoutBranch": "Check out this branch",
+      "checkoutFailed": "Checkout failed",
+      "menuResetSoft": "Reset here — soft (keep changes)",
+      "menuResetHard": "Reset here — hard (discard changes)",
+      "resetAction": "Reset ({mode})",
+      "modeSoft": "soft",
+      "modeHard": "hard",
+      "resetFailed": "Reset failed",
+      "confirmSoftTitle": "Soft-reset the branch",
+      "confirmSoftMessage": "Move {branch} to {hash}? The committed changes return to the index and the working tree keeps its files.",
+      "confirmHardTitle": "Hard-reset the branch (dangerous)",
+      "confirmHardMessage": "Move {branch} to {hash}? {count} uncommitted change(s) will be discarded and cannot be recovered."
     }
   },
   "ja": {
@@ -415,7 +661,24 @@ watch(
       "notARepository": "作業ディレクトリは Git リポジトリではありません",
       "gitMissing": "サーバーに git 実行ファイルが見つかりません",
       "unavailableShort": "利用不可",
-      "parents": "親コミット"
+      "parents": "親コミット",
+      "copied": "{what}をコピーしました",
+      "copyFailed": "コピーに失敗しました",
+      "copyHash": "コミット ハッシュをコピー",
+      "copySubject": "コミット メッセージをコピー",
+      "copyRef": "参照名をコピー",
+      "checkoutBranch": "このブランチに切り替え",
+      "checkoutFailed": "ブランチの切り替えに失敗しました",
+      "menuResetSoft": "ここへソフト リセット（変更を保持）",
+      "menuResetHard": "ここへハード リセット（変更を破棄）",
+      "resetAction": "{mode} リセット",
+      "modeSoft": "ソフト",
+      "modeHard": "ハード",
+      "resetFailed": "リセットに失敗しました",
+      "confirmSoftTitle": "ブランチをソフト リセット",
+      "confirmSoftMessage": "{branch} を {hash} に移動しますか？コミット済みの変更はステージに戻り、作業ツリーは保持されます。",
+      "confirmHardTitle": "ブランチをハード リセット（危険）",
+      "confirmHardMessage": "{branch} を {hash} に移動しますか？未コミットの {count} 件の変更は破棄され、復元できません。"
     }
   },
   "ko": {
@@ -428,7 +691,24 @@ watch(
       "notARepository": "작업 디렉터리가 Git 저장소가 아닙니다",
       "gitMissing": "서버에 git 실행 파일이 없습니다",
       "unavailableShort": "사용 불가",
-      "parents": "부모 커밋"
+      "parents": "부모 커밋",
+      "copied": "{what} 복사됨",
+      "copyFailed": "복사 실패",
+      "copyHash": "커밋 해시 복사",
+      "copySubject": "커밋 메시지 복사",
+      "copyRef": "참조 이름 복사",
+      "checkoutBranch": "이 브랜치로 전환",
+      "checkoutFailed": "브랜치 전환 실패",
+      "menuResetSoft": "여기로 소프트 리셋(변경 유지)",
+      "menuResetHard": "여기로 하드 리셋(변경 버림)",
+      "resetAction": "{mode} 리셋",
+      "modeSoft": "소프트",
+      "modeHard": "하드",
+      "resetFailed": "리셋 실패",
+      "confirmSoftTitle": "브랜치 소프트 리셋",
+      "confirmSoftMessage": "{branch}을(를) {hash}로 이동할까요? 커밋된 변경은 스테이지로 돌아가고 작업 트리는 유지됩니다.",
+      "confirmHardTitle": "브랜치 하드 리셋(위험)",
+      "confirmHardMessage": "{branch}을(를) {hash}로 이동할까요? 미커밋 변경 {count}건이 버려지고 복구할 수 없습니다."
     }
   }
 }

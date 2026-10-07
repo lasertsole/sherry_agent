@@ -98,9 +98,11 @@ describe('GitGraphPanel', () => {
     expect(wrapper.get('[data-test="git-dirty"]').text()).toContain('2');
     const rows = wrapper.findAll('[data-test^="git-commit-"]');
     expect(rows).toHaveLength(3);
-    // Every row keeps a single lane: one vertical line plus the node dot.
+    // Every row keeps a single lane: one vertical line plus the node dot
+    // (VS Code's geometry: LANE_WIDTH 11 → 22px for one lane).
     const first = rows[0]!;
-    expect(first.find('svg').attributes('width')).toBe('26');
+    expect(first.find('svg').attributes('width')).toBe('22');
+    expect(first.find('svg').attributes('height')).toBe('22');
     expect(first.findAll('path')).toHaveLength(1);
     expect(first.find('circle').exists()).toBe(true);
   });
@@ -118,9 +120,19 @@ describe('GitGraphPanel', () => {
     ]);
 
     const rows = wrapper.findAll('[data-test^="git-commit-"]');
-    // The merge row carries two lanes plus the edge to the second parent.
-    expect(rows[0]!.findAll('path')).toHaveLength(3);
-    expect(Number(rows[0]!.find('svg').attributes('width'))).toBeGreaterThan(20);
+    // The merge row carries two lanes plus the edge to the second parent, and a
+    // merge node is drawn as a ring (an outer circle + an inner dot).
+    // Two segments: the lane running into the node plus the merge edge to the
+    // lane the second parent opened (the edge is a two-arc curve).
+    const mergePaths = rows[0]!.findAll('path').map(path => path.attributes('d')!);
+    expect(mergePaths).toHaveLength(2);
+    expect(mergePaths.some(d => d.includes('A 5 5'))).toBe(true);
+    expect(Number(rows[0]!.find('svg').attributes('width'))).toBeGreaterThan(22);
+    // A merge node is a ring: an outer circle (r=6) plus a small filled dot (r=3).
+    const circles = rows[0]!.findAll('circle');
+    expect(circles).toHaveLength(2);
+    expect(circles[0]!.attributes('r')).toBe('6');
+    expect(circles[1]!.attributes('r')).toBe('3');
     // The two heads below keep their own lanes (the merge target stays compact).
     expect(rows[2]!.findAll('path').length).toBeGreaterThanOrEqual(1);
   });
@@ -188,13 +200,12 @@ describe('GitGraphPanel', () => {
       })
     ]);
 
-    const chips = wrapper.findAll('[data-test="git-commit-aaaa1111"] span.font-mono');
-    const texts = chips.map(chip => chip.text());
-    expect(texts).toEqual(['aaaa1111', 'main', 'v1', 'origin/main']);
+    const chips = wrapper.findAll('[data-test="git-commit-aaaa1111"] [data-test^="git-ref-"]');
+    expect(chips.map(chip => chip.text())).toEqual(['main', 'v1', 'origin/main']);
     const classes = chips.map(chip => chip.classes().join(' '));
-    expect(classes[1]).toContain('bg-[#c1d6e5]');
-    expect(classes[2]).toContain('amber');
-    expect(classes[3]).toContain('text-gray-500');
+    expect(classes[0]).toContain('bg-[#c1d6e5]');
+    expect(classes[1]).toContain('amber');
+    expect(classes[2]).toContain('text-gray-500');
   });
 
   it('reloads when the session changes', async () => {

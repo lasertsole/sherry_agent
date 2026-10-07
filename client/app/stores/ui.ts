@@ -22,6 +22,8 @@ export const useUiStore = defineStore(
     /** The 工作目录 body's two sections (file tree / git graph), each collapsible. */
     const filesSectionOpen = ref(true);
     const gitSectionOpen = ref(true);
+    /** Share of the body's height the file-tree section keeps (the draggable split). */
+    const filesSplitSize = ref(50);
     const setTheme = (value: string) => {
       colorMode.preference = value;
     };
@@ -40,6 +42,13 @@ export const useUiStore = defineStore(
     const toggleGitSection = () => {
       gitSectionOpen.value = !gitSectionOpen.value;
     };
+    /**
+     * Remember the split the user dragged (clamped so neither section vanishes).
+     * @param size New share of the file-tree section, in per cent.
+     */
+    const setFilesSplitSize = (size: number) => {
+      filesSplitSize.value = Math.min(85, Math.max(15, Math.round(size)));
+    };
     return {
       sidebarCollapsed,
       settingsMenuOpen,
@@ -47,17 +56,26 @@ export const useUiStore = defineStore(
       sidebarBody,
       filesSectionOpen,
       gitSectionOpen,
+      filesSplitSize,
       setTheme,
       toggleSidebar,
       toggleTodoDock,
       toggleSidebarBody,
       toggleFilesSection,
-      toggleGitSection
+      toggleGitSection,
+      setFilesSplitSize
     };
   },
   {
     persist: {
-      pick: ['sidebarCollapsed', 'todoDockCollapsed', 'sidebarBody', 'filesSectionOpen', 'gitSectionOpen']
+      pick: [
+        'sidebarCollapsed',
+        'todoDockCollapsed',
+        'sidebarBody',
+        'filesSectionOpen',
+        'gitSectionOpen',
+        'filesSplitSize'
+      ]
     }
   }
 );
