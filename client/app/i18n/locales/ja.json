@@ -28,6 +28,7 @@
     "originQualityGate": "品質ゲート",
     "originTodoNudge": "TODO リマインダー",
     "originProjectDir": "作業ディレクトリ",
+    "originGitHead": "Git ブランチ切替",
     "originSystem": "システム メッセージ",
     "tokenGuard": {
       "title": "モデル設定が最小値未満",
@@ -207,9 +208,9 @@
           "name": "タスク意図の誘導",
           "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
         },
-        "ProjectDirNoticeMiddleware": {
-          "name": "ディレクトリ変更通知",
-          "desc": "作業ディレクトリが変わったときユーザー メッセージの前に通知を挿入します"
+        "WorkspaceNoticeMiddleware": {
+          "name": "ワークスペース変更通知",
+          "desc": "作業ディレクトリまたは git ブランチ/HEAD が変わったときユーザー メッセージの前に通知を挿入します"
         },
         "MultimodalProcessor": {
           "name": "マルチモーダル前処理",

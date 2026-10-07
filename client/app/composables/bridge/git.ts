@@ -52,6 +52,8 @@ export interface GitGraphPage {
   commits: GitCommitEntry[];
   /** True when another page exists. */
   hasMore: boolean;
+  /** Local branches, most recently committed first (the branch switcher's list). */
+  branches: string[];
 }
 
 /**
@@ -77,7 +79,8 @@ function toPage(res: Record<string, unknown> & { success?: boolean }): GitGraphP
     dirty: Number(res.dirty ?? 0),
     dirty_capped: res.dirty_capped === true,
     commits: Array.isArray(res.commits) ? (res.commits as GitCommitEntry[]) : [],
-    hasMore: res.has_more === true
+    hasMore: res.has_more === true,
+    branches: Array.isArray(res.branches) ? (res.branches as string[]) : []
   };
 }
 

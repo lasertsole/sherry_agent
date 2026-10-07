@@ -1,14 +1,26 @@
 <template>
   <div class="flex h-full min-h-0 flex-col">
-    <!-- Header: current branch (or the detached HEAD) + the dirty count + refresh. -->
+    <!-- Header: current branch (or the detached HEAD) + the dirty count + refresh.
+         The branch is also the switcher's trigger (VS Code's graph has the same
+         dropdown): clicking it lists the local branches, the current one marked,
+         and picking another checks it out. -->
     <div
       class="flex shrink-0 items-center gap-2 border-b border-solid border-gray-100 px-3 py-1.5 text-xs dark:border-gray-800">
       <i class="pi pi-sitemap text-theme-main"></i>
-      <span
-        class="truncate font-mono text-gray-500 dark:text-gray-400"
+      <button
+        type="button"
+        class="flex min-w-0 items-center gap-1 rounded px-1 py-0.5 font-mono text-gray-500 hover:bg-gray-100 disabled:cursor-default disabled:hover:bg-transparent dark:text-gray-400 dark:hover:bg-gray-800/70"
+        :disabled="branches.length === 0"
+        :title="branches.length ? t('gitGraph.switchBranch') : branchLabel"
+        :aria-label="t('gitGraph.switchBranch')"
         data-test="git-branch"
-        >{{ branchLabel }}</span
-      >
+        @click="openBranchMenu($event)">
+        <span class="truncate">{{ branchLabel }}</span>
+        <span
+          v-if="branches.length"
+          class="pi pi-chevron-down shrink-0 text-[10px]"
+          aria-hidden="true"></span>
+      </button>
       <span
         v-if="page.available && page.dirty > 0"
         class="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
@@ -252,7 +264,8 @@ const EMPTY_PAGE: GitGraphPage = {
   dirty: 0,
   dirty_capped: false,
   commits: [],
-  hasMore: false
+  hasMore: false,
+  branches: []
 };
 
 const page = ref<GitGraphPage>({ ...EMPTY_PAGE });
@@ -434,6 +447,9 @@ const branchLabel = computed<string>(() => {
   if (page.value.detached && first) return `HEAD @ ${first.short}`;
   return t('gitGraph.noCommits');
 });
+
+/** The local branches the switcher offers (empty for an unusable repository). */
+const branches = computed<string[]>(() => (page.value.available ? page.value.branches : []));
 
 /** The explanation shown when the project directory is not a repository. */
 const unavailableText = computed<string>(() =>
@@ -651,6 +667,24 @@ const openRefMenu = (event: Event, ref: GitRefEntry): void => {
   menuRef.value?.show(event);
 };
 
+/**
+ * Open the branch switcher: every local branch, the current one ticked and
+ * disabled, the rest switching on click (VS Code's graph dropdown switches
+ * without a confirmation dialog; ``git`` itself refuses a checkout that would
+ * clobber local changes, and that refusal surfaces as the failure toast).
+ * @param event The click on the branch label (anchors the popup).
+ */
+const openBranchMenu = (event: Event): void => {
+  const current = page.value.detached ? '' : page.value.branch;
+  menuItems.value = branches.value.map(name => ({
+    label: name,
+    icon: name === current ? 'pi pi-check' : 'pi pi-code-branch',
+    disabled: name === current,
+    command: () => void runAction(() => checkoutGitRef(props.sessionId, name), t('gitGraph.checkoutFailed'))
+  }));
+  menuRef.value?.show(event);
+};
+
 /** (Re)load the first page. */
 const reload = async (): Promise<void> => {
   if (!props.sessionId) return;
@@ -717,6 +751,7 @@ watch(
       "copyHash": "复制提交哈希",
       "copySubject": "复制提交信息",
       "copyRef": "复制引用名",
+      "switchBranch": "切换分支",
       "checkoutBranch": "切换到此分支",
       "checkoutFailed": "切换分支失败",
       "menuResetSoft": "软回退到此提交（保留改动）",
@@ -750,6 +785,7 @@ watch(
       "copyHash": "Copy commit hash",
       "copySubject": "Copy commit message",
       "copyRef": "Copy ref name",
+      "switchBranch": "Switch branch",
       "checkoutBranch": "Check out this branch",
       "checkoutFailed": "Checkout failed",
       "menuResetSoft": "Reset here — soft (keep changes)",
@@ -783,6 +819,7 @@ watch(
       "copyHash": "コミット ハッシュをコピー",
       "copySubject": "コミット メッセージをコピー",
       "copyRef": "参照名をコピー",
+      "switchBranch": "ブランチを切り替え",
       "checkoutBranch": "このブランチに切り替え",
       "checkoutFailed": "ブランチの切り替えに失敗しました",
       "menuResetSoft": "ここへソフト リセット（変更を保持）",
@@ -816,6 +853,7 @@ watch(
       "copyHash": "커밋 해시 복사",
       "copySubject": "커밋 메시지 복사",
       "copyRef": "참조 이름 복사",
+      "switchBranch": "브랜치 전환",
       "checkoutBranch": "이 브랜치로 전환",
       "checkoutFailed": "브랜치 전환 실패",
       "menuResetSoft": "여기로 소프트 리셋(변경 유지)",

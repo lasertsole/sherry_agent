@@ -93,11 +93,14 @@ export function useChatTurnGroups(messages: () => MessageItem[] | undefined) {
    * Injected carrier: a message whose backend origin is an internal source
    * (e.g. "subagent_completion", "project_dir"). Carriers render as a centered,
    * muted system card instead of a bubble — they are neither something the user
-   * said nor the assistant's reply. Two shapes exist: a USER row (the
-   * background-task completion carrier, a TaskIntent directive) and an AI row
-   * (the working-directory notice, spliced in front of the turn's human
-   * message). User-origin rows ("user") and legacy rows without origin
-   * (TEXT NULL = a real user message / a model answer) keep the bubble flow.
+   * said nor the assistant's reply. EVERY current producer emits a USER row:
+   * the background-task completion carrier, a TaskIntent directive, the todo
+   * nudge, the cron input and both workspace notices (working directory and git
+   * branch, spliced in front of the turn's human message). An AI row with an
+   * origin is legacy-only — the working-directory notice used to be an AIMessage
+   * — and stays handled so those stored rows keep rendering as cards.
+   * User-origin rows ("user") and legacy rows without origin (TEXT NULL = a real
+   * user message / a model answer) keep the bubble flow.
    * @param message
    */
   const isBackgroundTask = (message: MessageItem): boolean =>

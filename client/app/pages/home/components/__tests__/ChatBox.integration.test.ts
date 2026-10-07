@@ -338,13 +338,13 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     expect(wrapper.html()).not.toContain('flex-row-reverse');
   });
 
-  it('renders an AI row with origin as the same card — never as the assistant reply', async () => {
+  it('renders a HUMAN row with origin as the same card — never as a user bubble', async () => {
+    // The workspace notices are HumanMessages tagged with their origin (the
+    // injected-carrier role), so a real user bubble must never be drawn for one.
     const notice =
       '[项目目录已切换 / working directory changed] The working directory moved from `/tmp/a` to `/tmp/b`.';
     const wrapper = mount(ChatBox, {
-      props: {
-        messages: [base({ id: 31, role: CHAT_ROLE.AI, content: notice, origin: 'project_dir' })]
-      }
+      props: { messages: [base({ id: 31, content: notice, origin: 'project_dir' })] }
     });
 
     const card = wrapper.find('.background-task-card');
@@ -354,8 +354,47 @@ describe('ChatBox background-task system card (integration, backend mocked)', ()
     expect(wrapper.text()).not.toContain('后台任务');
     // Collapsed by default; expanding shows the verbatim notice
     expect(wrapper.text()).not.toContain('working directory moved');
-    const header = card.find('button');
-    await header.trigger('click');
+    await card.find('button').trigger('click');
+    expect(wrapper.text()).toContain('working directory moved');
+    // No user bubble: no blue bubble and no right-reversed row flow
+    expect(wrapper.html()).not.toContain('bg-[#2563EB]');
+    expect(wrapper.html()).not.toContain('flex-row-reverse');
+  });
+
+  it('renders the git-branch notice as its own card, labelled by its origin', async () => {
+    const notice =
+      '[Git 分支/HEAD 已变化 / git branch changed] The repository at `/tmp/a` moved from `main@1a2b3c4d` to `dev@5e6f7a8b`.';
+    const wrapper = mount(ChatBox, {
+      props: { messages: [base({ id: 32, content: notice, origin: 'git_head' })] }
+    });
+
+    expect(wrapper.find('.background-task-card').exists()).toBe(true);
+    expect(wrapper.text()).toContain('Git 分支切换');
+    expect(wrapper.text()).not.toContain('项目目录切换');
+    expect(wrapper.html()).not.toContain('bg-[#2563EB]');
+    expect(wrapper.text()).not.toContain('dev@5e6f7a8b');
+    await wrapper.find('.background-task-card button').trigger('click');
+    expect(wrapper.text()).toContain('dev@5e6f7a8b');
+  });
+
+  it('renders an AI row with origin as the same card — never as the assistant reply', async () => {
+    // Legacy shape: rows stored while the notice was still an AIMessage keep
+    // rendering as cards instead of looking like the assistant's answer.
+    const notice =
+      '[项目目录已切换 / working directory changed] The working directory moved from `/tmp/a` to `/tmp/b`.';
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [base({ id: 33, role: CHAT_ROLE.AI, content: notice, origin: 'project_dir' })]
+      }
+    });
+
+    const card = wrapper.find('.background-task-card');
+    expect(card.exists()).toBe(true);
+    // The per-origin label names the source (zh stub: 项目目录切换, not 后台任务)
+    expect(wrapper.text()).toContain('项目目录切换');
+    expect(wrapper.text()).not.toContain('后台任务');
+    // Collapsed by default; expanding shows the verbatim notice
+    await card.find('button').trigger('click');
     expect(wrapper.text()).toContain('working directory moved');
     // No assistant bubble: the AI display name/avatar is not attached to it
     expect(wrapper.text()).not.toContain('橘雪莉');

@@ -30,7 +30,7 @@
             v-if="rowGroup(vRow.index).length"
             :class="['flex flex-col min-w-0', { 'gap-3': turnSpacingClass(rowGroup(vRow.index)) }]">
             <!-- Injected-carrier / system-message card (a row whose backend origin is non-user,
-                 e.g. "subagent_completion" on a USER row, "project_dir" on an AI row): rendered
+                 e.g. "subagent_completion" and the injected notices "project_dir" / "git_head"): rendered
                  as a centered, muted system card OUTSIDE the bubble flow — it is neither
                  something the user said nor the assistant's reply. The completion carrier's
                  first line "[subagent:<name> <status>]" is self-describing and shown verbatim
@@ -357,12 +357,14 @@ const ORIGIN_LABEL_KEYS: Record<string, string> = {
   task_intent: 'chat.originTaskIntent',
   quality_gate: 'chat.originQualityGate',
   todo_continuation: 'chat.originTodoNudge',
-  project_dir: 'chat.originProjectDir'
+  project_dir: 'chat.originProjectDir',
+  git_head: 'chat.originGitHead'
 };
 
 /** Glyph per origin; the default (background tasks) is the server icon. */
 const ORIGIN_ICONS: Record<string, string> = {
-  project_dir: 'pi pi-folder'
+  project_dir: 'pi pi-folder',
+  git_head: 'pi pi-code-branch'
 };
 
 /**

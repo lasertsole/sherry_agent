@@ -28,6 +28,7 @@
     "originQualityGate": "품질 게이트",
     "originTodoNudge": "할 일 알림",
     "originProjectDir": "작업 디렉터리",
+    "originGitHead": "Git 브랜치 전환",
     "originSystem": "시스템 메시지",
     "tokenGuard": {
       "title": "모델 설정이 최소값 미만",
@@ -207,9 +208,9 @@
           "name": "작업 의도 유도",
           "desc": "작업 요청을 감지해 오케스트레이션 프롬프트를 주입합니다"
         },
-        "ProjectDirNoticeMiddleware": {
-          "name": "디렉터리 변경 알림",
-          "desc": "작업 디렉터리가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
+        "WorkspaceNoticeMiddleware": {
+          "name": "워크스페이스 변경 알림",
+          "desc": "작업 디렉터리나 git 브랜치/HEAD가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
         },
         "MultimodalProcessor": {
           "name": "멀티모달 전처리",

@@ -10,7 +10,11 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import GitGraphPanel from '@/pages/home/components/GitGraphPanel.vue';
 
-const bridge = vi.hoisted(() => ({ fetchGitGraph: vi.fn(), fetchCommitFiles: vi.fn() }));
+const bridge = vi.hoisted(() => ({
+  fetchGitGraph: vi.fn(),
+  fetchCommitFiles: vi.fn(),
+  checkoutGitRef: vi.fn()
+}));
 vi.mock('~/composables/bridge/git', () => bridge);
 
 const gitDiffStore = vi.hoisted(() => ({ open: vi.fn() }));
@@ -53,6 +57,7 @@ function page(overrides: Record<string, unknown> = {}) {
     dirty_capped: false,
     commits: [],
     hasMore: false,
+    branches: [],
     ...overrides
   };
 }
@@ -64,7 +69,15 @@ const stubs = {
     emits: ['click'],
     template: `<button class="btn" @click="$emit('click')">{{ label }}</button>`
   },
-  ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="spin" />' }
+  ProgressSpinner: { name: 'ProgressSpinner', template: '<div class="spin" />' },
+  // The popup is only inspected through its `model` (items + commands); the
+  // panel anchors it with `.show(event)`.
+  ContextMenu: {
+    name: 'ContextMenu',
+    props: ['model'],
+    methods: { show: vi.fn() },
+    template: '<div data-test="git-menu" />'
+  }
 };
 
 /**
@@ -281,5 +294,43 @@ describe('GitGraphPanel', () => {
 
     expect(bridge.fetchGitGraph).toHaveBeenCalledTimes(2);
     expect(bridge.fetchGitGraph).toHaveBeenLastCalledWith('sid-2', { limit: 40, skip: 0 });
+  });
+
+  it('lists the local branches behind the header and checks one out on click', async () => {
+    const wrapper = await mountPanel([
+      page({ branch: 'main', branches: ['main', 'feature', 'dev'], commits: [commit('aaaa1111')] })
+    ]);
+    const switcher = wrapper.get('[data-test="git-branch"]');
+    expect(switcher.element.tagName).toBe('BUTTON');
+    expect(switcher.text()).toBe('main');
+
+    await switcher.trigger('click');
+    const items = wrapper.findComponent({ name: 'ContextMenu' }).props('model') as Array<Record<string, unknown>>;
+
+    // Every local branch is offered, the current one ticked and inert.
+    expect(items.map(item => item.label)).toEqual(['main', 'feature', 'dev']);
+    expect(items[0]!.disabled).toBe(true);
+    expect(items[0]!.icon).toBe('pi pi-check');
+    expect(items[1]!.disabled).toBe(false);
+
+    // Picking another branch checks it out and repaints from the answer.
+    bridge.checkoutGitRef.mockResolvedValueOnce(
+      page({ branch: 'feature', branches: ['main', 'feature', 'dev'], commits: [commit('aaaa1111')] })
+    );
+    (items[1]!.command as () => void)();
+    await flushPromises();
+
+    expect(bridge.checkoutGitRef).toHaveBeenCalledWith('sid-1', 'feature');
+    expect(wrapper.get('[data-test="git-branch"]').text()).toBe('feature');
+  });
+
+  it('leaves the header inert when there is no repository or no branch', async () => {
+    const wrapper = await mountPanel([page({ available: false, reason: 'not-a-repository', branches: [] })]);
+
+    // No branches → no switcher: the label is plain text and clicking is a no-op.
+    const label = wrapper.get('[data-test="git-branch"]');
+    expect(label.attributes('disabled')).toBeDefined();
+    await label.trigger('click');
+    expect(bridge.checkoutGitRef).not.toHaveBeenCalled();
   });
 });

@@ -28,6 +28,7 @@
     "originQualityGate": "质量门控",
     "originTodoNudge": "待办提醒",
     "originProjectDir": "项目目录切换",
+    "originGitHead": "Git 分支切换",
     "originSystem": "系统消息",
     "tokenGuard": {
       "title": "模型配置不达标",
@@ -207,9 +208,9 @@
           "name": "任务意图引导",
           "desc": "识别工作型请求并注入编排提示"
         },
-        "ProjectDirNoticeMiddleware": {
-          "name": "目录切换通知",
-          "desc": "工作目录变化时在用户消息前插入一条通知"
+        "WorkspaceNoticeMiddleware": {
+          "name": "工作区变更通知",
+          "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
         },
         "MultimodalProcessor": {
           "name": "多模态预处理",

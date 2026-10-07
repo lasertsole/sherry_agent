@@ -28,6 +28,7 @@
     "originQualityGate": "Quality gate",
     "originTodoNudge": "Todo nudge",
     "originProjectDir": "Working directory",
+    "originGitHead": "Git branch switch",
     "originSystem": "System message",
     "tokenGuard": {
       "title": "Model Config Below Minimum",
@@ -207,9 +208,9 @@
           "name": "Task-intent steering",
           "desc": "Detects work requests and injects the orchestration prompt"
         },
-        "ProjectDirNoticeMiddleware": {
-          "name": "Directory-change notice",
-          "desc": "Inserts a notice before the user message when the working directory moved"
+        "WorkspaceNoticeMiddleware": {
+          "name": "Workspace-change notice",
+          "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
         },
         "MultimodalProcessor": {
           "name": "Multimodal preprocessing",
