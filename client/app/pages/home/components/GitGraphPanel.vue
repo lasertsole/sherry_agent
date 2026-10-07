@@ -39,7 +39,11 @@
         @click="reload" />
     </div>
 
-    <div class="min-h-0 flex-1 overflow-auto">
+    <div
+      ref="listRef"
+      class="min-h-0 flex-1 overflow-auto"
+      data-test="git-scroll"
+      @scroll.passive="onListScroll">
       <div
         v-if="loading && rows.length === 0"
         class="flex items-center justify-center py-8">
@@ -63,147 +67,159 @@
       </p>
 
       <template v-else>
-        <div
+        <!-- Each row and its drawer are one v-for item: clicking a row opens the
+             commit's file list DIRECTLY UNDER that row (the detail is the row's
+             next sibling, never a block parked at the bottom of the list). -->
+        <template
           v-for="row in rows"
-          :key="row.commit.hash"
-          class="flex cursor-pointer items-center gap-1.5 px-2 hover:bg-gray-50 dark:hover:bg-gray-800/60"
-          :style="{ height: `${ROW_HEIGHT}px` }"
-          :class="{ 'bg-gray-100 dark:bg-gray-800/80': expanded === row.commit.hash }"
-          :data-test="`git-commit-${row.commit.hash}`"
-          :title="`${row.commit.subject}\n${row.commit.author} · ${compactDate(row.commit.date)}`"
-          @click="toggleRow(row.commit.hash)"
-          @contextmenu.prevent="openCommitMenu($event, row)">
-          <!-- The lane cell: one SVG per row, drawn from the lane state entering
-               and leaving that row (see graphRows — VS Code's own geometry). -->
-          <svg
-            class="shrink-0 overflow-visible"
-            :width="row.width"
-            :height="ROW_HEIGHT"
-            :viewBox="`0 0 ${row.width} ${ROW_HEIGHT}`"
-            aria-hidden="true">
-            <path
-              v-for="(segment, index) in row.paths"
-              :key="index"
-              :d="segment.d"
-              fill="none"
-              :stroke="segment.color"
-              :stroke-width="NODE_STROKE"
-              stroke-linecap="round" />
-            <circle
-              v-if="row.head"
-              :cx="laneX(row.lane)"
-              :cy="NODE_Y"
-              :r="CIRCLE_RADIUS + 3"
-              fill="none"
-              :stroke="row.color"
-              :stroke-width="NODE_STROKE" />
-            <template v-if="row.merge">
+          :key="row.commit.hash">
+          <div
+            class="flex cursor-pointer items-center gap-1.5 px-2 hover:bg-gray-50 dark:hover:bg-gray-800/60"
+            :style="{ height: `${ROW_HEIGHT}px` }"
+            :class="{ 'bg-gray-100 dark:bg-gray-800/80': expanded === row.commit.hash }"
+            :data-test="`git-commit-${row.commit.hash}`"
+            :title="`${row.commit.subject}\n${row.commit.author} · ${compactDate(row.commit.date)}`"
+            @click="toggleRow(row.commit.hash)"
+            @contextmenu.prevent="openCommitMenu($event, row)">
+            <!-- The lane cell: one SVG per row, drawn from the lane state entering
+                 and leaving that row (see graphRows — VS Code's own geometry). -->
+            <svg
+              class="shrink-0 overflow-visible"
+              :width="row.width"
+              :height="ROW_HEIGHT"
+              :viewBox="`0 0 ${row.width} ${ROW_HEIGHT}`"
+              aria-hidden="true">
+              <path
+                v-for="(segment, index) in row.paths"
+                :key="index"
+                :d="segment.d"
+                fill="none"
+                :stroke="segment.color"
+                :stroke-width="NODE_STROKE"
+                stroke-linecap="round" />
               <circle
+                v-if="row.head"
                 :cx="laneX(row.lane)"
                 :cy="NODE_Y"
-                :r="CIRCLE_RADIUS + 2"
-                class="fill-white dark:fill-[#1f1f28]"
+                :r="CIRCLE_RADIUS + 3"
+                fill="none"
                 :stroke="row.color"
                 :stroke-width="NODE_STROKE" />
+              <template v-if="row.merge">
+                <circle
+                  :cx="laneX(row.lane)"
+                  :cy="NODE_Y"
+                  :r="CIRCLE_RADIUS + 2"
+                  class="fill-white dark:fill-[#1f1f28]"
+                  :stroke="row.color"
+                  :stroke-width="NODE_STROKE" />
+                <circle
+                  :cx="laneX(row.lane)"
+                  :cy="NODE_Y"
+                  :r="CIRCLE_RADIUS - 1"
+                  :fill="row.color" />
+              </template>
               <circle
+                v-else
                 :cx="laneX(row.lane)"
                 :cy="NODE_Y"
-                :r="CIRCLE_RADIUS - 1"
-                :fill="row.color" />
-            </template>
-            <circle
-              v-else
-              :cx="laneX(row.lane)"
-              :cy="NODE_Y"
-              :r="CIRCLE_RADIUS + 1"
-              :fill="row.color"
-              class="stroke-white dark:stroke-[#1f1f28]"
-              :stroke-width="NODE_STROKE" />
-          </svg>
-          <!-- Ref chips lead the row, like VS Code's SCM graph. -->
-          <span
-            v-for="ref in row.commit.refs"
-            :key="`${ref.kind}:${ref.name}`"
-            class="shrink-0 rounded px-1 font-mono text-[10px] leading-4"
-            :class="refClass(ref.kind)"
-            :data-test="`git-ref-${ref.kind}-${ref.name}`"
-            @contextmenu.prevent.stop="openRefMenu($event, ref)">
-            {{ ref.name }}
-          </span>
-          <span class="min-w-0 flex-1 truncate text-xs text-theme-main">{{ row.commit.subject }}</span>
-          <span class="shrink-0 font-mono text-[10px] text-gray-400">{{ row.commit.short }}</span>
-        </div>
-
-        <!-- Expanded detail (click a row): the commit's metadata, then the files
-             it touched — clicking a file opens its diff in a right-sidebar tab. -->
-        <div
-          v-if="expandedRow"
-          class="flex flex-col gap-1 border-y border-solid border-gray-100 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
-          data-test="git-detail">
-          <span class="text-xs text-theme-main">{{ expandedRow.commit.subject }}</span>
-          <span
-            class="break-all font-mono"
-            data-test="git-detail-hash">
-            {{ expandedRow.commit.hash }}
-          </span>
-          <span v-if="expandedRow.commit.parents.length">
-            {{ t('gitGraph.parents') }}:
-            <span class="font-mono">
-              {{ expandedRow.commit.parents.map(p => p.slice(0, 8)).join(', ') }}
+                :r="CIRCLE_RADIUS + 1"
+                :fill="row.color"
+                class="stroke-white dark:stroke-[#1f1f28]"
+                :stroke-width="NODE_STROKE" />
+            </svg>
+            <!-- Ref chips lead the row, like VS Code's SCM graph. -->
+            <span
+              v-for="ref in row.commit.refs"
+              :key="`${ref.kind}:${ref.name}`"
+              class="shrink-0 rounded px-1 font-mono text-[10px] leading-4"
+              :class="refClass(ref.kind)"
+              :data-test="`git-ref-${ref.kind}-${ref.name}`"
+              @contextmenu.prevent.stop="openRefMenu($event, ref)">
+              {{ ref.name }}
             </span>
-          </span>
-          <span>{{ expandedRow.commit.author }} · {{ compactDate(expandedRow.commit.date) }}</span>
-
-          <div
-            v-if="filesState === 'loading'"
-            class="flex items-center gap-2 py-1">
-            <ProgressSpinner style="width: 1rem; height: 1rem" />
-            <span>{{ t('gitGraph.loadingFiles') }}</span>
+            <span class="min-w-0 flex-1 truncate text-xs text-theme-main">{{ row.commit.subject }}</span>
+            <span class="shrink-0 font-mono text-[10px] text-gray-400">{{ row.commit.short }}</span>
           </div>
-          <p
-            v-else-if="filesState === 'error'"
-            class="m-0 text-red-500 dark:text-red-400"
-            data-test="git-files-error">
-            {{ t('gitGraph.filesFailed') }}
-          </p>
-          <template v-else>
-            <div
-              v-if="commitFiles.length === 0"
-              class="text-gray-400"
-              data-test="git-files-empty">
-              {{ t('gitGraph.noFiles') }}
-            </div>
-            <button
-              v-for="file in commitFiles"
-              :key="`${file.status}:${file.path}`"
-              type="button"
-              class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800/70"
-              :data-test="`git-file-${file.status}-${file.path}`"
-              @click.stop="openDiff(expandedRow.commit, file)">
-              <span
-                class="w-4 shrink-0 rounded text-center font-mono text-[10px] leading-4"
-                :class="statusClass(file.status)">
-                {{ file.status }}
-              </span>
-              <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-theme-main">
-                {{ file.old_path ? `${file.old_path} → ${file.path}` : file.path }}
-              </span>
-            </button>
-          </template>
-        </div>
 
+          <!-- The drawer of the clicked row: the commit's metadata, then the
+               files it touched — clicking a file opens its diff in a tab. -->
+          <div
+            v-if="expanded === row.commit.hash"
+            class="flex flex-col gap-1 border-b border-solid border-gray-100 bg-gray-50/60 px-3 py-1.5 pl-6 text-[11px] text-gray-500 dark:border-gray-800 dark:bg-gray-800/30 dark:text-gray-400"
+            data-test="git-detail">
+            <span class="text-xs text-theme-main">{{ row.commit.subject }}</span>
+            <span
+              class="break-all font-mono"
+              data-test="git-detail-hash">
+              {{ row.commit.hash }}
+            </span>
+            <span v-if="row.commit.parents.length">
+              {{ t('gitGraph.parents') }}:
+              <span class="font-mono">
+                {{ row.commit.parents.map(p => p.slice(0, 8)).join(', ') }}
+              </span>
+            </span>
+            <span>{{ row.commit.author }} · {{ compactDate(row.commit.date) }}</span>
+
+            <div
+              v-if="filesState === 'loading'"
+              class="flex items-center gap-2 py-1">
+              <ProgressSpinner style="width: 1rem; height: 1rem" />
+              <span>{{ t('gitGraph.loadingFiles') }}</span>
+            </div>
+            <p
+              v-else-if="filesState === 'error'"
+              class="m-0 text-red-500 dark:text-red-400"
+              data-test="git-files-error">
+              {{ t('gitGraph.filesFailed') }}
+            </p>
+            <template v-else>
+              <div
+                v-if="commitFiles.length === 0"
+                class="text-gray-400"
+                data-test="git-files-empty">
+                {{ t('gitGraph.noFiles') }}
+              </div>
+              <button
+                v-for="file in commitFiles"
+                :key="`${file.status}:${file.path}`"
+                type="button"
+                class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800/70"
+                :data-test="`git-file-${file.status}-${file.path}`"
+                @click.stop="openDiff(row.commit, file)">
+                <span
+                  class="w-4 shrink-0 rounded text-center font-mono text-[10px] leading-4"
+                  :class="statusClass(file.status)">
+                  {{ file.status }}
+                </span>
+                <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-theme-main">
+                  {{ file.old_path ? `${file.old_path} → ${file.path}` : file.path }}
+                </span>
+              </button>
+            </template>
+          </div>
+        </template>
+
+        <!-- Paging is driven by the scroll position (see onListScroll): this row
+             only reports it — a spinner while the next page is in flight, a retry
+             when a page failed, and a hint otherwise. -->
         <div
           v-if="page.hasMore"
-          class="p-2">
-          <Button
-            :label="t('gitGraph.loadMore')"
-            size="small"
-            text
-            severity="secondary"
-            :loading="loading"
-            class="w-full"
-            data-test="git-load-more"
-            @click="loadMore" />
+          class="flex items-center justify-center gap-2 py-2 text-[11px] text-gray-400 dark:text-gray-500"
+          data-test="git-more">
+          <ProgressSpinner
+            v-if="loading"
+            style="width: 1rem; height: 1rem" />
+          <button
+            v-else-if="loadFailed"
+            type="button"
+            class="cursor-pointer underline"
+            data-test="git-more-retry"
+            @click="loadMore">
+            {{ t('gitGraph.loadRetry') }}
+          </button>
+          <span v-else>{{ t('gitGraph.scrollForMore') }}</span>
         </div>
       </template>
     </div>
@@ -218,7 +234,7 @@
 </template>
 
 <script lang="ts" setup>
-import { computed, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { GitCommitEntry, GitCommitFile, GitGraphPage, GitRefEntry } from '~/composables/bridge/git';
 // Stable module specifiers so tests can vi.mock the bridge (the unimport
@@ -276,9 +292,16 @@ const filesState = ref<'idle' | 'loading' | 'error'>('idle');
 const rightSidebar = useRightSidebarStore();
 const gitDiff = useGitDiffStore();
 const loading = ref(false);
+/** The last page request failed: the pager row offers a retry instead of a hint. */
+const loadFailed = ref(false);
+/** The scrolling list (the paging trigger reads its scroll position). */
+const listRef = ref<HTMLElement | null>(null);
 const expanded = ref('');
 const menuRef = ref<{ show: (event: Event) => void } | null>(null);
 const confirm = useConfirm();
+
+/** How close to the end of the list (px) the next page starts loading. */
+const LOAD_MORE_THRESHOLD_PX = 160;
 
 /** A lane being tracked: the hash it waits for and its branch colour. */
 interface Lane {
@@ -435,9 +458,6 @@ const commitFiles = computed<GitCommitFile[]>(() => {
   const hash = expanded.value;
   return hash ? (filesByHash.value[hash] ?? []) : [];
 });
-
-/** The row whose detail block is open (undefined once a refresh drops it). */
-const expandedRow = computed<GraphRow | undefined>(() => rows.value.find(row => row.commit.hash === expanded.value));
 
 /** Branch text: the branch name, or a short hash for a detached HEAD. */
 const branchLabel = computed<string>(() => {
@@ -699,8 +719,10 @@ const reload = async (): Promise<void> => {
   if (!props.sessionId) return;
   loading.value = true;
   expanded.value = '';
+  loadFailed.value = false;
   try {
     page.value = await fetchGitGraph(props.sessionId, { limit: PAGE_SIZE, skip: 0 });
+    void fillViewport();
   } catch (e) {
     logUtil.e('[GitGraphPanel] Failed to load the git graph:', e);
     page.value = { ...EMPTY_PAGE, available: false, reason: 'not-a-repository' };
@@ -709,7 +731,13 @@ const reload = async (): Promise<void> => {
   }
 };
 
-/** Append the next page. */
+/**
+ * Append the next page — driven by the scroll position, never by a button.
+ *
+ * Called from {@link onListScroll} (the list is near its end) and from
+ * {@link fillViewport} (a viewport taller than the loaded history). A failure
+ * sets ``loadFailed`` so the pager row can offer a retry.
+ */
 const loadMore = async (): Promise<void> => {
   if (!props.sessionId || loading.value) return;
   loading.value = true;
@@ -719,11 +747,45 @@ const loadMore = async (): Promise<void> => {
       skip: page.value.commits.length
     });
     page.value = { ...next, commits: [...page.value.commits, ...next.commits] };
+    loadFailed.value = false;
+    void fillViewport();
   } catch (e) {
     logUtil.e('[GitGraphPanel] Failed to load more commits:', e);
+    loadFailed.value = true;
   } finally {
     loading.value = false;
   }
+};
+
+/**
+ * Paging trigger: load the next page once the list is scrolled near its end.
+ *
+ * The scroll is the whole interface — there is no button to press — so the
+ * listener is passive and cheap: it only asks when the remaining scroll room is
+ * inside {@link LOAD_MORE_THRESHOLD_PX}, and `loadMore` itself refuses while a
+ * request is in flight.
+ */
+const onListScroll = (): void => {
+  const el = listRef.value;
+  if (!el || loading.value || !page.value.hasMore) return;
+  if (el.scrollHeight - el.scrollTop - el.clientHeight <= LOAD_MORE_THRESHOLD_PX) {
+    void loadMore();
+  }
+};
+
+/**
+ * Keep loading while the viewport is taller than the loaded history, so a short
+ * first page never leaves an unscrollable list behind (there would be nothing to
+ * scroll, and therefore nothing to trigger the next page).
+ *
+ * The real-height guard is load-bearing: a collapsed/hidden container reports 0
+ * for both dimensions, and treating that as "not full" would loop forever.
+ */
+const fillViewport = async (): Promise<void> => {
+  await nextTick();
+  const el = listRef.value;
+  if (!el || el.clientHeight <= 0 || loading.value || !page.value.hasMore) return;
+  if (el.scrollHeight <= el.clientHeight + 1) void loadMore();
 };
 
 onMounted(() => {
@@ -745,7 +807,8 @@ watch(
     "gitGraph": {
       "refresh": "刷新",
       "dirty": "未提交 {count}",
-      "loadMore": "加载更多",
+      "scrollForMore": "向下滚动加载更多",
+      "loadRetry": "加载失败，点击重试",
       "empty": "暂无提交",
       "noCommits": "无提交",
       "notARepository": "当前工作目录不是 Git 仓库",
@@ -779,7 +842,8 @@ watch(
     "gitGraph": {
       "refresh": "Refresh",
       "dirty": "{count} uncommitted",
-      "loadMore": "Load more",
+      "scrollForMore": "Scroll for more",
+      "loadRetry": "Loading failed — click to retry",
       "empty": "No commits yet",
       "noCommits": "no commits",
       "notARepository": "The working directory is not a Git repository",
@@ -813,7 +877,8 @@ watch(
     "gitGraph": {
       "refresh": "更新",
       "dirty": "未コミット {count}",
-      "loadMore": "さらに読み込む",
+      "scrollForMore": "下にスクロールで追加読み込み",
+      "loadRetry": "読み込みに失敗 — クリックで再試行",
       "empty": "コミットがまだありません",
       "noCommits": "コミットなし",
       "notARepository": "作業ディレクトリは Git リポジトリではありません",
@@ -847,7 +912,8 @@ watch(
     "gitGraph": {
       "refresh": "새로고침",
       "dirty": "미커밋 {count}",
-      "loadMore": "더 불러오기",
+      "scrollForMore": "아래로 스크롤하면 더 불러옵니다",
+      "loadRetry": "불러오기 실패 — 클릭하여 재시도",
       "empty": "아직 커밋이 없습니다",
       "noCommits": "커밋 없음",
       "notARepository": "작업 디렉터리가 Git 저장소가 아닙니다",

@@ -50,28 +50,39 @@ describe('stores/right-sidebar', () => {
   it('files every tab under a group scope and shows the tab s group on open', () => {
     const store = useRightSidebarStore();
 
-    // Every pre-existing tool is a GLOBAL tab; only the session preset view is
-    // session-scoped, and the strip starts on 全局.
+    // Every settings/runtime tool is a GLOBAL tab; the things read from the
+    // active session (its preset, a file of its project directory) are session
+    // tabs, and the strip starts on 全局.
     expect(store.activeScope).toBe('global');
     const logs = store.openTab('logs');
     expect(store.tabs.find(tab => tab.id === logs)?.scope).toBe('global');
     expect(store.tabsInScope('global').map(tab => tab.kind)).toEqual(['logs']);
+    expect(store.openTab('fileViewer', { path: 'src/main.py' })).not.toBe(logs);
+    expect(store.tabs.find(tab => tab.kind === 'fileViewer')?.scope).toBe('session');
+    expect(store.activeScope).toBe('session');
+    store.setActiveScope('global');
 
     store.setActiveScope('session');
     expect(store.activeScope).toBe('session');
-    expect(store.tabsInScope('session')).toEqual([]);
+    expect(store.tabsInScope('session').map(tab => tab.kind)).toEqual(['fileViewer']);
 
     // Opening a tab jumps to its own group (and so does activating a closed one).
     const preset = store.openTab('sessionPreset');
     expect(store.activeScope).toBe('session');
-    expect(store.tabsInScope('session').map(tab => tab.kind)).toEqual(['sessionPreset']);
+    expect(store.tabsInScope('session').map(tab => tab.kind)).toEqual(['fileViewer', 'sessionPreset']);
 
     store.setActiveScope('global');
     store.activateTab(preset);
     expect(store.activeScope).toBe('session');
 
-    // Closing the session tab falls back to the neighbour and ITS group.
+    // Closing the session tab falls back to the neighbour and ITS group: the
+    // session preset's left neighbour is the session-scoped file viewer.
     store.closeTab(preset);
+    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.kind).toBe('fileViewer');
+    expect(store.activeScope).toBe('session');
+
+    // Closing that too lands back on the global tab.
+    store.closeTab(store.activeTabId!);
     expect(store.activeTabId).toBe(logs);
     expect(store.activeScope).toBe('global');
   });

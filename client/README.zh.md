@@ -160,7 +160,7 @@ client/
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
 │   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 修改 / 关闭登录保护（需当前密码）
 │   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
-│   │           ├── FileViewerPanel.vue        # 文件查看标签页（GET /project/file，文本 + 图片预览）
+│   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file，文本 + 图片预览）
 │   │           ├── LogsPanel.vue              # 日志查看标签页（服务端日志 + 客户端日志，实时流）
 │   │           ├── StatsPanel.vue             # 统计标签页（@antv/g2，经 GChart.vue）
 │   │           ├── KnowledgeGraphPanel.vue    # 知识图谱标签页（@antv/g6、文档上传）

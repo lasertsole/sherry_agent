@@ -160,7 +160,7 @@ client/
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
 │   │           ├── AccountSettingsPanel.vue   # アカウントタブ：ログイン保護の設定 / 変更 / 解除（現在のパスワードが必要）
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
-│   │           ├── FileViewerPanel.vue        # ファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
+│   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
 │   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）
 │   │           ├── StatsPanel.vue             # 統計タブ（@antv/g2、GChart.vue 経由）
 │   │           ├── KnowledgeGraphPanel.vue    # ナレッジグラフタブ（@antv/g6、ドキュメントアップロード）

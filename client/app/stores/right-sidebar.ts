@@ -19,22 +19,24 @@ export type RightSidebarPanelKind =
   | 'fileViewer'
   | 'account'
   | 'notification'
-  /** The session's own persona preset (read-only), the only SESSION-scoped panel. */
+  /** The session's own persona preset (read-only). */
   | 'sessionPreset'
   /** One file's diff from one commit of the session project (opened from the git graph). */
   | 'gitDiff';
 
 /**
- * Which group a tab belongs to: the CURRENT SESSION's own views (things derived
- * from the active session, e.g. its persona preset) versus the process-wide
- * tools (viewers and settings editors), which apply everywhere.
+ * Which group a tab belongs to: the CURRENT SESSION's own views (things read from
+ * the active session — its persona preset, a file of its project directory, a
+ * commit diff of that directory) versus the process-wide tools (settings editors
+ * and the runtime viewers), which apply everywhere.
  */
 export type RightSidebarScope = 'session' | 'global';
 
 /**
  * Scope per panel kind — the strip groups tabs by this, and callers never pass a
- * scope (a kind has exactly one home). Everything except the session preset
- * viewer is global, which is why an existing strip is unchanged by the grouping.
+ * scope (a kind has exactly one home). What a session's own directory produced is
+ * session-scoped: the preset viewer, the file viewer (a file of that directory)
+ * and a commit diff read from it.
  */
 const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   logs: 'global',
@@ -48,7 +50,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   cron: 'global',
   extend: 'global',
   taskDetail: 'global',
-  fileViewer: 'global',
+  // A file opened from the session's file tree belongs to that session, exactly
+  // like the diff read from the same directory (gitDiff below).
+  fileViewer: 'session',
   account: 'global',
   notification: 'global',
   sessionPreset: 'session',

@@ -187,22 +187,78 @@ describe('GitGraphPanel', () => {
     expect(wrapper.find('[data-test="git-detail"]').exists()).toBe(false);
   });
 
-  it('appends the next page and keeps the loaded commits', async () => {
+  it('loads the next page when the list is scrolled near its end', async () => {
     const wrapper = await mountPanel([
       page({ commits: [commit('aaaa1111')], hasMore: true }),
       page({ commits: [commit('bbbb2222')], hasMore: false })
     ]);
 
     expect(wrapper.findAll('[data-test^="git-commit-"]')).toHaveLength(1);
-    const more = wrapper.get('[data-test="git-load-more"]');
-    await more.trigger('click');
+    const scroller = wrapper.get('[data-test="git-scroll"]');
+    // happy-dom has no layout: give the list a real height and park it at the end.
+    Object.defineProperty(scroller.element, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scroller.element, 'clientHeight', { value: 400, configurable: true });
+    Object.defineProperty(scroller.element, 'scrollTop', { value: 700, configurable: true });
+    await scroller.trigger('scroll');
     await flushPromises();
 
     const hashes = wrapper.findAll('[data-test^="git-commit-"]').map(row => row.attributes('data-test'));
     expect(hashes).toEqual(['git-commit-aaaa1111', 'git-commit-bbbb2222']);
-    expect(wrapper.find('[data-test="git-load-more"]').exists()).toBe(false);
+    expect(wrapper.find('[data-test="git-more"]').exists()).toBe(false);
     // The second call asked for the offset after what is already loaded.
     expect(bridge.fetchGitGraph).toHaveBeenLastCalledWith('sid-1', { limit: 40, skip: 1 });
+  });
+
+  it('does not load a page while the list is still far from its end', async () => {
+    const wrapper = await mountPanel([page({ commits: [commit('aaaa1111')], hasMore: true })]);
+
+    const scroller = wrapper.get('[data-test="git-scroll"]');
+    Object.defineProperty(scroller.element, 'scrollHeight', { value: 4000, configurable: true });
+    Object.defineProperty(scroller.element, 'clientHeight', { value: 400, configurable: true });
+    Object.defineProperty(scroller.element, 'scrollTop', { value: 100, configurable: true });
+    await scroller.trigger('scroll');
+    await flushPromises();
+
+    expect(bridge.fetchGitGraph).toHaveBeenCalledTimes(1);
+  });
+
+  it('offers a retry in the pager row when a page fails to load', async () => {
+    const wrapper = await mountPanel([
+      page({ commits: [commit('aaaa1111')], hasMore: true }),
+      page({ commits: [commit('bbbb2222')], hasMore: false })
+    ]);
+    bridge.fetchGitGraph.mockRejectedValueOnce(new Error('boom'));
+    const scroller = wrapper.get('[data-test="git-scroll"]');
+    Object.defineProperty(scroller.element, 'scrollHeight', { value: 1000, configurable: true });
+    Object.defineProperty(scroller.element, 'clientHeight', { value: 400, configurable: true });
+    Object.defineProperty(scroller.element, 'scrollTop', { value: 700, configurable: true });
+
+    await scroller.trigger('scroll');
+    await flushPromises();
+
+    // The failure is visible and actionable instead of a silent dead end.
+    const retry = wrapper.get('[data-test="git-more-retry"]');
+    await retry.trigger('click');
+    await flushPromises();
+
+    expect(wrapper.findAll('[data-test^="git-commit-"]')).toHaveLength(2);
+    expect(wrapper.find('[data-test="git-more"]').exists()).toBe(false);
+  });
+
+  it('opens the file list UNDER the clicked row, not at the end of the list', async () => {
+    const wrapper = await mountPanel([page({ commits: [commit('aaaa1111'), commit('bbbb2222'), commit('cccc3333')] })]);
+
+    await wrapper.get('[data-test="git-commit-bbbb2222"]').trigger('click');
+    await flushPromises();
+
+    const row = wrapper.get('[data-test="git-commit-bbbb2222"]');
+    const detail = wrapper.get('[data-test="git-detail"]');
+    // The drawer is the row's next sibling — an accordion, not a block parked
+    // after the whole list.
+    expect(row.element.nextElementSibling).toBe(detail.element);
+    expect(detail.element.parentElement?.lastElementChild).not.toBe(detail.element);
+    // And the last row still follows it.
+    expect(wrapper.get('[data-test="git-commit-cccc3333"]').element.parentElement).toBe(detail.element.parentElement);
   });
 
   it('renders one empty state per refusal', async () => {
@@ -216,7 +272,7 @@ describe('GitGraphPanel', () => {
     const empty = await mountPanel([page({ commits: [], available: true })]);
     expect(empty.get('[data-test="git-empty"]').text()).toBe('暂无提交');
     expect(empty.get('[data-test="git-branch"]').text()).toBe('main');
-    expect(empty.find('[data-test="git-load-more"]').exists()).toBe(false);
+    expect(empty.find('[data-test="git-more"]').exists()).toBe(false);
   });
 
   it('shows ref chips with one tint per kind', async () => {

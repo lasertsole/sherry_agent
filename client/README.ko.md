@@ -160,7 +160,7 @@ client/
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
 │   │           ├── AccountSettingsPanel.vue   # 계정 탭: 로그인 보호 설정 / 변경 / 해제(현재 비밀번호 필요)
 │   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
-│   │           ├── FileViewerPanel.vue        # 파일 뷰어 탭(GET /project/file, 텍스트 + 이미지 미리보기)
+│   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file, 텍스트 + 이미지 미리보기)
 │   │           ├── LogsPanel.vue              # 로그 보기 탭(서버 로그 + 클라이언트 로그, 실시간 스트림)
 │   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
 │   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)

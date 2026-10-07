@@ -159,7 +159,7 @@ client/
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
 │   │           ├── AccountSettingsPanel.vue   # Account tab: set up / change / disable login protection (the current password is required)
 │   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
-│   │           ├── FileViewerPanel.vue        # File viewer tab (GET /project/file, text + image preview)
+│   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file, text + image preview)
 │   │           ├── LogsPanel.vue              # Log-viewer tab (server logs + client logs, live stream)
 │   │           ├── StatsPanel.vue             # Statistics tab (@antv/g2 via GChart.vue)
 │   │           ├── KnowledgeGraphPanel.vue    # Knowledge-graph tab (@antv/g6, document upload)

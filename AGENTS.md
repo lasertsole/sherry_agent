@@ -220,12 +220,15 @@ tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
 size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
 NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
-(`FileViewerPanel`). The sidebar's 工作目录 body stacks TWO collapsible sections —
+(`FileViewerPanel`, a SESSION-scoped tab: a file of the session's directory belongs
+to that session, so it opens under 当前会话 like the commit diff). The sidebar's 工作目录 body stacks TWO collapsible sections —
 文件树 and the read-only **Git Graph** (`GET /git/graph`,
 `server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
 bounds the page size, the served text and the git timeout): one
 `git log --all --date-order` page (newest first, `limit`/`skip`, one extra commit
-to report `has_more`) plus the current branch and a capped dirty count, with
+to report `has_more`; the panel appends the next page when the list is scrolled
+near its end — there is no load-more button, and a page that fails offers a retry
+in the same row) plus the current branch and a capped dirty count, with
 refs parsed to `head`/`branch`/`tag`/`remote` chips. A directory that is not a
 repository (or a host without git) answers `available: false` with a reason
 instead of an error, so the panel renders its own empty state. The client lays
@@ -241,8 +244,9 @@ of undefined (reading 'style')` when the sections were toggled quickly — the
 single-panel cases render a plain container instead.
 The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed`/
 `hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
-with git's own stderr surfacing as a 409 — and clicking a row expands the files
-that commit touched (`GET /git/commit`: metadata plus `--name-status -M -z`,
+with git's own stderr surfacing as a 409 — and clicking a row opens a DRAWER of
+the files that commit touched directly under that row (an accordion, never a block
+parked at the end of the list; `GET /git/commit`: metadata plus `--name-status -M -z`,
 NUL-framed so a non-ASCII path is never quoted and the entry lookup behind the
 diff still matches). Clicking one of those files opens its diff in a right-sidebar
 tab (`GET /git/commit/file`, `GitDiffPanel.vue`, one tab per file): both sides come
