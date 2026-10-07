@@ -25,7 +25,9 @@ const stubs = {
     name: 'Button',
     props: ['icon', 'title', 'disabled', 'loading'],
     emits: ['click'],
-    template: '<button class="btn" :disabled="disabled" @click="$emit(\'click\')" />'
+    // A DECLARED prop does not fall through to the DOM, so the title is bound
+    // explicitly (the devtools assertion reads it).
+    template: '<button class="btn" :title="title" :disabled="disabled" @click="$emit(\'click\')" />'
   },
   InputText: {
     name: 'InputText',
@@ -66,6 +68,93 @@ describe('BrowserPanel', () => {
 
     await wrapper.get('[data-test="browser-forward"]').trigger('click');
     expect(wrapper.get('[data-test="browser-frame"]').attributes('src')).toBe('https://b.com');
+  });
+
+  it('switches to a fixed device frame and resizes it from the handles', async () => {
+    const store = useToolboxStore();
+    store.navigate('sid-1::browser', 'example.com');
+    const wrapper = mount(BrowserPanel, { global: { stubs } });
+
+    // Free size is off until the toggle is pressed: the page fills the panel.
+    expect(wrapper.find('[data-test="browser-free-frame"]').exists()).toBe(false);
+
+    await wrapper.get('[data-test="browser-free-size"]').trigger('click');
+
+    // The frame renders at ZCode's device default (393×852) with eight handles.
+    const frame = wrapper.get('[data-test="browser-free-frame"]');
+    expect(frame.attributes('style')).toContain('width: 393px');
+    expect(frame.attributes('style')).toContain('height: 852px');
+    expect(wrapper.findAll('[data-test^="browser-resize-"]')).toHaveLength(8);
+    // The frame scales down to fit the panel (no layout in happy-dom → scale 1).
+    expect(wrapper.get('[data-responsive-width]').attributes('data-responsive-width')).toBe('393');
+
+    // The right-hand edge handle grows the frame by the pointer delta.
+    await wrapper.get('[data-test="browser-resize-right"]').trigger('pointerdown', {
+      clientX: 100,
+      clientY: 100,
+      pointerId: 1,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1
+    });
+    await wrapper.get('[data-test="browser-resize-right"]').trigger('pointermove', {
+      clientX: 160,
+      clientY: 100,
+      pointerId: 1,
+      pointerType: 'mouse',
+      buttons: 1
+    });
+    await wrapper.get('[data-test="browser-resize-right"]').trigger('pointerup', { pointerId: 1 });
+
+    expect(store.browserFor('sid-1::browser').viewport).toEqual({ width: 453, height: 852 });
+
+    // A drag past the floor clamps at ZCode's minimum (320×320).
+    await wrapper.get('[data-test="browser-resize-right"]').trigger('pointerdown', {
+      clientX: 0,
+      clientY: 0,
+      pointerId: 2,
+      pointerType: 'mouse',
+      button: 0,
+      buttons: 1
+    });
+    await wrapper.get('[data-test="browser-resize-right"]').trigger('pointermove', {
+      clientX: -5000,
+      clientY: 0,
+      pointerId: 2,
+      pointerType: 'mouse',
+      buttons: 1
+    });
+    await wrapper.get('[data-test="browser-resize-right"]').trigger('pointerup', { pointerId: 2 });
+    expect(store.browserFor('sid-1::browser').viewport.width).toBe(320);
+
+    // Keyboard resize: Shift+ArrowRight moves 10px (the handles are focusable).
+    const handle = wrapper.get('[data-test="browser-resize-right"]');
+    await handle.trigger('keydown', { key: 'ArrowRight', shiftKey: true });
+    expect(store.browserFor('sid-1::browser').viewport.width).toBe(330);
+
+    // Leaving free size restores the full-panel page.
+    await wrapper.get('[data-test="browser-free-size"]').trigger('click');
+    expect(wrapper.find('[data-test="browser-free-frame"]').exists()).toBe(false);
+    expect(wrapper.get('[data-test="browser-frame"]').exists()).toBe(true);
+  });
+
+  it('opens the page in a real window for devtools (an iframe cannot host them)', async () => {
+    const store = useToolboxStore();
+    store.navigate('sid-1::browser', 'example.com');
+    const opened: string[] = [];
+    vi.stubGlobal('open', (url: string) => {
+      opened.push(url);
+      return null;
+    });
+    const wrapper = mount(BrowserPanel, { global: { stubs } });
+
+    const button = wrapper.get('[data-test="browser-devtools"]');
+    expect(button.attributes('title')).toContain('跨域 iframe');
+    await button.trigger('click');
+
+    expect(opened).toEqual(['https://example.com']);
+    vi.unstubAllGlobals();
+    vi.stubGlobal('useRightSidebarStore', () => ({}));
   });
 
   it('re-mounts the frame on reload so the same URL is fetched again', async () => {

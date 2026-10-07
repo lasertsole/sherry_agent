@@ -11,7 +11,15 @@ import { defineStore } from 'pinia';
  * every tab switch would be unusable.
  */
 
-/** One browser tab's navigation state (per session). */
+/** The emulated frame of one browser instance (free-size mode). */
+export interface BrowserViewport {
+  /** Width in CSS px. */
+  width: number;
+  /** Height in CSS px. */
+  height: number;
+}
+
+/** One browser tab's navigation + free-size state (per instance). */
 export interface BrowserState {
   /** The current page URL (empty until the user types one). */
   url: string;
@@ -19,6 +27,37 @@ export interface BrowserState {
   history: string[];
   /** Index inside `history` (the current page). */
   index: number;
+  /** Free-size mode: the page renders in a fixed emulated frame the user resizes. */
+  responsive: boolean;
+  /** That frame's size (only meaningful while `responsive`). */
+  viewport: BrowserViewport;
+}
+
+/**
+ * Free-size bounds, mirroring ZCode's ``BROWSER_VIEWPORT_LIMITS``: its device
+ * emulation and its agent-side ``setViewportSize`` share one safe band, and so
+ * does this panel (the same numbers, so a size means the same thing in both).
+ */
+export const BROWSER_VIEWPORT_LIMITS = {
+  minWidth: 320,
+  maxWidth: 3840,
+  minHeight: 320,
+  maxHeight: 2160
+} as const;
+
+/** The frame a browser instance starts free-size mode with (ZCode's default). */
+export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = { width: 393, height: 852 };
+
+/**
+ * Clamp a requested frame size into :data:`BROWSER_VIEWPORT_LIMITS`.
+ * @param viewport Requested size in CSS px.
+ */
+export function clampBrowserViewport(viewport: BrowserViewport): BrowserViewport {
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, Math.round(value)));
+  return {
+    width: clamp(viewport.width, BROWSER_VIEWPORT_LIMITS.minWidth, BROWSER_VIEWPORT_LIMITS.maxWidth),
+    height: clamp(viewport.height, BROWSER_VIEWPORT_LIMITS.minHeight, BROWSER_VIEWPORT_LIMITS.maxHeight)
+  };
 }
 
 /** One finished command run (the terminal's scrollback entry). */
@@ -32,7 +71,13 @@ export interface TerminalEntry {
   cwd: string;
 }
 
-const EMPTY_BROWSER: BrowserState = { url: '', history: [], index: -1 };
+const EMPTY_BROWSER: BrowserState = {
+  url: '',
+  history: [],
+  index: -1,
+  responsive: false,
+  viewport: { ...DEFAULT_BROWSER_VIEWPORT }
+};
 
 /**
  * Turn what the user typed into a URL: a bare host gets ``https://``, anything
@@ -72,7 +117,10 @@ export const useToolboxStore = defineStore('toolbox', () => {
     if (!url) return;
     const current = browserFor(key);
     const history = [...current.history.slice(0, current.index + 1), url];
-    browser.value = { ...browser.value, [key]: { url, history, index: history.length - 1 } };
+    browser.value = {
+      ...browser.value,
+      [key]: { ...current, url, history, index: history.length - 1 }
+    };
   }
 
   /**
@@ -86,7 +134,7 @@ export const useToolboxStore = defineStore('toolbox', () => {
     if (next < 0 || next >= current.history.length) return;
     browser.value = {
       ...browser.value,
-      [key]: { url: current.history[next] ?? '', history: current.history, index: next }
+      [key]: { ...current, url: current.history[next] ?? '', index: next }
     };
   }
 
@@ -132,6 +180,30 @@ export const useToolboxStore = defineStore('toolbox', () => {
   }
 
   /**
+   * Toggle free-size mode for one browser instance (the device-frame button).
+   * Entering it keeps the size that instance last used.
+   * @param key The panel's identity.
+   * @param enabled
+   */
+  function setBrowserResponsive(key: string, enabled: boolean): void {
+    const current = browserFor(key);
+    browser.value = { ...browser.value, [key]: { ...current, responsive: enabled } };
+  }
+
+  /**
+   * Set the emulated frame's size (the drag handles / keyboard), clamped.
+   * @param key The panel's identity.
+   * @param viewport Requested size in CSS px.
+   */
+  function setBrowserViewport(key: string, viewport: BrowserViewport): void {
+    const current = browserFor(key);
+    browser.value = {
+      ...browser.value,
+      [key]: { ...current, viewport: clampBrowserViewport(viewport) }
+    };
+  }
+
+  /**
    * Forget the session's scrollback (the panel's 清空 button).
    * @param key The panel's identity.
    */
@@ -146,6 +218,8 @@ export const useToolboxStore = defineStore('toolbox', () => {
     browserFor,
     navigate,
     step,
+    setBrowserResponsive,
+    setBrowserViewport,
     canGoBack,
     canGoForward,
     terminalFor,

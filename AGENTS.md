@@ -281,7 +281,12 @@ their empty payload (`toolboxTools` in `pages/home/config.ts`, wired through the
 same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
 grids and the commands in step). The browser is an address bar over an iframe with
 a per-session history (back / forward / reload; sites that refuse framing stay
-blank, which the empty state says), and the terminal is a console for commands the
+blank, which the empty state says), a **free-size mode** that renders the page in
+a resizable emulated device frame — ZCode's own geometry and bounds, eight edge /
+corner handles with pointer-capture drags divided by the fit scale, plus keyboard
+arrows — and 打开调试工具, which opens the page in a real window because an iframe
+cannot hand out devtools (ZCode's button calls Electron's `<webview>.openDevTools()`
+on its guest), and the terminal is a console for commands the
 OPERATOR types: `GET /terminal/info` names the directory (the session's project
 directory — the selected 工作目录 wins) and `POST /terminal/run` executes one line
 through `/bin/sh -c` there with a scrubbed environment, bounded by

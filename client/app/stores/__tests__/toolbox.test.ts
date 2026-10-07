@@ -8,7 +8,13 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
-import { normalizeUrl, useToolboxStore } from '../toolbox';
+import {
+  BROWSER_VIEWPORT_LIMITS,
+  DEFAULT_BROWSER_VIEWPORT,
+  clampBrowserViewport,
+  normalizeUrl,
+  useToolboxStore
+} from '../toolbox';
 
 describe('toolbox store', () => {
   beforeEach(() => {
@@ -72,6 +78,42 @@ describe('toolbox store', () => {
     expect(store.browserFor('s2').url).toBe('https://b.com');
     // An untouched session has no page (the empty state).
     expect(store.browserFor('s3').url).toBe('');
+  });
+
+  it('keeps free-size state per browser instance, clamped to the shared band', () => {
+    const store = useToolboxStore();
+
+    // Off by default, at ZCode's device default size.
+    expect(store.browserFor('s1::browser#1').responsive).toBe(false);
+    expect(store.browserFor('s1::browser#1').viewport).toEqual(DEFAULT_BROWSER_VIEWPORT);
+
+    store.setBrowserResponsive('s1::browser#1', true);
+    store.setBrowserViewport('s1::browser#1', { width: 414, height: 896 });
+    expect(store.browserFor('s1::browser#1').responsive).toBe(true);
+    expect(store.browserFor('s1::browser#1').viewport).toEqual({ width: 414, height: 896 });
+
+    // A twin keeps its own mode and size.
+    expect(store.browserFor('s1::browser#2').responsive).toBe(false);
+    expect(store.browserFor('s1::browser#2').viewport).toEqual(DEFAULT_BROWSER_VIEWPORT);
+
+    // The bounds mirror ZCode's (320-3840 × 320-2160).
+    expect(clampBrowserViewport({ width: 10, height: 10 })).toEqual({
+      width: BROWSER_VIEWPORT_LIMITS.minWidth,
+      height: BROWSER_VIEWPORT_LIMITS.minHeight
+    });
+    store.setBrowserViewport('s1::browser#1', { width: 99999, height: 99999 });
+    expect(store.browserFor('s1::browser#1').viewport).toEqual({
+      width: BROWSER_VIEWPORT_LIMITS.maxWidth,
+      height: BROWSER_VIEWPORT_LIMITS.maxHeight
+    });
+
+    // Navigation keeps the free-size fields (they ride the same state).
+    store.navigate('s1::browser#1', 'example.com');
+    expect(store.browserFor('s1::browser#1').responsive).toBe(true);
+    expect(store.browserFor('s1::browser#1').viewport).toEqual({
+      width: BROWSER_VIEWPORT_LIMITS.maxWidth,
+      height: BROWSER_VIEWPORT_LIMITS.maxHeight
+    });
   });
 
   it('accumulates the terminal log per session and clears it on request', () => {
