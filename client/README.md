@@ -142,6 +142,8 @@ client/
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
+│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload)
+│   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
@@ -176,6 +178,7 @@ client/
 │   │   ├── todo.ts             # Session plan (todo) list + dock visibility
 │   │   ├── right-sidebar.ts    # Right sidebar (collapsed / width persisted, open tab kinds)
 │   │   ├── git-diff.ts         # Commit-diff targets (one right-sidebar tab per file, MRU-capped)
+│   │   ├── toolbox.ts          # Toolbox state: the browser's URL history and the terminal's scrollback, per session
 │   │   ├── thinking.ts         # Per-session thinking toggle / level (effective next turn)
 │   │   ├── session-model.ts    # Per-session main-model override (effective next turn)
 │   │   ├── context-usage.ts    # Per-session context accounting (window / reported prompt / parts)

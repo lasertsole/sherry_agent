@@ -92,6 +92,17 @@
             <SessionPresetButton
               v-if="currentSessionId"
               :session-id="currentSessionId" />
+            <!-- Toolbox: the hammer button. Two working surfaces that are not
+                 settings — the browser and the user's own terminal — open as
+                 tabs in the session group (see toolboxTools). -->
+            <Button
+              icon="pi pi-hammer"
+              :title="t('toolbar.toolbox')"
+              :aria-label="t('toolbar.toolbox')"
+              variant="text"
+              class="@max-[300px]:hidden!"
+              data-test="toolbox-button"
+              @click="isToolboxOpen = true" />
             <!-- Settings menu entry: the three-bars button. All other functions
                  (Skills / Knowledge Graph / System Config / Extend) have been moved from the top
                  bar into the large dialog nine-grid that this button pops open. -->
@@ -114,6 +125,31 @@
           </div>
         </div>
       </div>
+
+      <!-- Toolbox: the same dialog shape as the settings menu, with the two
+           working surfaces. Two entries share the grid, so each block is wider
+           instead of a four-wide row of one. -->
+      <Dialog
+        v-model:visible="isToolboxOpen"
+        :header="t('toolbar.toolbox')"
+        :modal="true"
+        :closable="true"
+        class="w-[min(92vw,560px)]"
+        data-test="toolbox-dialog">
+        <div class="grid grid-cols-2 gap-4">
+          <button
+            v-for="tool in toolboxTools"
+            :key="tool.event"
+            type="button"
+            class="flex flex-col items-center justify-center gap-3 w-full h-32 rounded-xl border border-solid border-gray-light dark:border-gray-dark bg-gray-50 dark:bg-gray-800 hover:border-theme-main hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors cursor-pointer"
+            :title="t(tool.title ?? tool.toolName)"
+            :data-test="`toolbox-${tool.event}`"
+            @click="handleToolboxSelect(tool.event)">
+            <i :class="[tool.icon, 'text-4xl! text-theme-main']" />
+            <span class="text-base text-theme-main">{{ t(tool.toolName) }}</span>
+          </button>
+        </div>
+      </Dialog>
 
       <!-- Settings menu: shown centered in a large dialog containing the entry grid.
            Each function is a square block with a large icon on top and the function name below.
@@ -189,7 +225,7 @@ import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import { useChatBackgroundStore } from '~/stores/chat-background';
-import { headerTools } from './config';
+import { headerTools, toolboxTools } from './config';
 import { buildHomeToolbarCommands } from './dialogs';
 
 const { t } = useI18n();
@@ -352,6 +388,19 @@ const handleOperate = (type: string, event: string) => {
  * handleOperate dispatch.
  * @param event
  */
+/** Toolbox dialog visibility (transient, like the settings menu's flag). */
+const isToolboxOpen = ref(false);
+
+/**
+ * Run one toolbox entry: close the dialog and dispatch through the same toolbar
+ * registry the settings grid uses (so an entry cannot exist without a command).
+ * @param event
+ */
+const handleToolboxSelect = (event: string) => {
+  isToolboxOpen.value = false;
+  handleOperate('headerBar', event);
+};
+
 const handleMenuSelect = (event: string) => {
   isSettingsMenuOpen.value = false;
   handleOperate('headerBar', event);
@@ -390,7 +439,10 @@ onMounted(() => {
       "projectFilesHint": "Project files",
       "projectFilesHintDetail": "Tip: collapse the left sidebar to give the file tree and the chat more room.",
       "sessionList": "Sessions",
-      "settingsMenu": "Menu"
+      "settingsMenu": "Menu",
+      "toolbox": "Toolbox",
+      "browser": "Browser",
+      "terminal": "Terminal"
     }
   },
   "zh": {
@@ -402,7 +454,10 @@ onMounted(() => {
       "projectFilesHint": "项目文件",
       "projectFilesHintDetail": "提示：可折叠左侧栏，给文件树和对话区让出更多空间。",
       "sessionList": "会话列表",
-      "settingsMenu": "菜单"
+      "settingsMenu": "菜单",
+      "toolbox": "工具箱",
+      "browser": "浏览器",
+      "terminal": "终端"
     }
   },
   "ja": {
@@ -414,7 +469,10 @@ onMounted(() => {
       "projectFilesHint": "プロジェクトファイル",
       "projectFilesHintDetail": "ヒント：左サイドバーを折りたたむと、ファイルツリーとチャットに余裕ができます。",
       "sessionList": "セッション一覧",
-      "settingsMenu": "メニュー"
+      "settingsMenu": "メニュー",
+      "toolbox": "ツールボックス",
+      "browser": "ブラウザ",
+      "terminal": "ターミナル"
     }
   },
   "ko": {
@@ -426,7 +484,10 @@ onMounted(() => {
       "projectFilesHint": "프로젝트 파일",
       "projectFilesHintDetail": "팁: 왼쪽 사이드바를 접으면 파일 트리와 채팅 공간이 넓어집니다.",
       "sessionList": "세션 목록",
-      "settingsMenu": "메뉴"
+      "settingsMenu": "메뉴",
+      "toolbox": "도구 상자",
+      "browser": "브라우저",
+      "terminal": "터미널"
     }
   }
 }

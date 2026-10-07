@@ -143,6 +143,8 @@ client/
 │   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── ContextViewerPanel.vue    # 右栏的 Agent 上下文（GET /context/inspect：系统提示词 / 工具定义 / 实时消息队列，打开时自动刷新）
+│   │           ├── BrowserPanel.vue          # 工具箱浏览器：地址栏 + 内嵌页面（按会话记录历史，后退 / 前进 / 刷新）
+│   │           ├── TerminalPanel.vue         # 工具箱终端：由用户输入的命令，在会话的项目目录下执行
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
@@ -177,6 +179,7 @@ client/
 │   │   ├── todo.ts             # 会话计划（todo）列表 + 停靠可见性
 │   │   ├── right-sidebar.ts    # 右侧栏（折叠状态 / 宽度持久化、已打开的标签类型）
 │   │   ├── git-diff.ts         # 提交差异目标（每个文件一个右栏标签页，按 MRU 限量）
+│   │   ├── toolbox.ts          # 工具箱状态：浏览器地址历史与终端回滚日志（按会话保存）
 │   │   ├── thinking.ts         # 会话级思考开关 / 档位（下一轮生效）
 │   │   ├── session-model.ts    # 会话级主模型覆盖（下一轮生效）
 │   │   ├── context-usage.ts    # 会话级上下文计量（窗口 / 上报的提示词大小 / 各部分）

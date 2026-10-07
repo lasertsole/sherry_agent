@@ -13,9 +13,9 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 
 /**
  * Toolbar event vocabulary: every `headerTools` entry (the nine-grid, see
- * ./config.ts) plus the one top-bar-only button (`notification`). The unit test
- * pins this list against `headerTools` so a new tool entry without a command
- * fails there.
+ * ./config.ts), the two `toolboxTools` entries (the hammer dialog) and the one
+ * top-bar-only button (`notification`). The unit test pins this list against both
+ * grids so a new entry without a command fails there.
  */
 export const HOME_TOOLBAR_EVENTS = [
   'skills',
@@ -29,7 +29,10 @@ export const HOME_TOOLBAR_EVENTS = [
   'logs',
   'notification',
   'extend',
-  'account'
+  'account',
+  // The toolbox (./config.ts `toolboxTools`): the browser and the user terminal.
+  'browser',
+  'terminal'
 ] as const;
 
 /** One toolbar event of the home shell. */
@@ -62,7 +65,9 @@ export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<st
     logs: () => context.openRightTab('logs'),
     notification: () => context.openRightTab('notification'),
     extend: () => context.openRightTab('extend'),
-    account: () => context.openRightTab('account')
+    account: () => context.openRightTab('account'),
+    browser: () => context.openRightTab('browser'),
+    terminal: () => context.openRightTab('terminal')
   };
   return commands;
 }

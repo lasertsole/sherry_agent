@@ -71,6 +71,15 @@ describe('stores/right-sidebar', () => {
     expect(store.activeScope).toBe('session');
     expect(store.tabsInScope('session').map(tab => tab.kind)).toEqual(['fileViewer', 'sessionPreset']);
 
+    // The toolbox panels are session-scoped as well (the terminal's cwd IS the
+    // session's project directory) and dedupe by kind.
+    const browser = store.openTab('browser');
+    expect(store.tabs.find(tab => tab.id === browser)?.scope).toBe('session');
+    expect(store.openTab('browser')).toBe(browser);
+    const terminal = store.openTab('terminal');
+    expect(store.tabs.find(tab => tab.id === terminal)?.scope).toBe('session');
+    expect(store.openTab('terminal')).toBe(terminal);
+
     // The context viewer is session-scoped too, and every click (any figure in
     // any bubble) lands in ONE instance: no payload, so the kind dedupes.
     const viewer = store.openTab('contextViewer');
@@ -81,17 +90,18 @@ describe('stores/right-sidebar', () => {
     store.activateTab(preset);
     expect(store.activeScope).toBe('session');
 
-    // Closing the session tab falls back to the neighbour and ITS group: the
-    // session preset's left neighbour is the session-scoped context viewer.
+    // Closing the session tab falls back to its left neighbour — which stays in
+    // the SESSION group, whatever kind it is (the group has grown over time:
+    // file viewer, context viewer, browser, terminal).
     store.closeTab(preset);
-    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.kind).toBe('contextViewer');
+    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.scope).toBe('session');
     expect(store.activeScope).toBe('session');
 
-    // Closing the session tabs one by one walks the group before landing back
-    // on the global one.
-    store.closeTab(store.activeTabId!);
-    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.kind).toBe('fileViewer');
-    store.closeTab(store.activeTabId!);
+    // Closing the session tabs one by one walks the whole group before landing
+    // back on the global one.
+    while (store.tabs.find(tab => tab.id === store.activeTabId)?.scope === 'session') {
+      store.closeTab(store.activeTabId!);
+    }
     expect(store.activeTabId).toBe(logs);
     expect(store.activeScope).toBe('global');
   });

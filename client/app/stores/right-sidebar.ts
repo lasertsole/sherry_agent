@@ -24,7 +24,11 @@ export type RightSidebarPanelKind =
   /** One file's diff from one commit of the session project (opened from the git graph). */
   | 'gitDiff'
   /** The session's live context: system prompt, tools and message list. */
-  | 'contextViewer';
+  | 'contextViewer'
+  /** The toolbox's browser: a URL bar over an embedded page. */
+  | 'browser'
+  /** The toolbox's user terminal: commands typed by the operator. */
+  | 'terminal';
 
 /**
  * Which group a tab belongs to: the CURRENT SESSION's own views (things read from
@@ -61,7 +65,11 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   // A diff belongs to the session whose project directory it was read from.
   gitDiff: 'session',
   // The live context is read from the session's own checkpoint.
-  contextViewer: 'session'
+  contextViewer: 'session',
+  // The browser and the terminal work on the session's own project (the
+  // terminal's cwd IS that directory), so both live in its group.
+  browser: 'session',
+  terminal: 'session'
 };
 
 /**

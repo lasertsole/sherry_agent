@@ -272,6 +272,23 @@ commit/reset outside the session) reaches the AGENT as the git notice described
 under Project Directory Binding: the next turn's transcript gets one
 `git_head` card before the human message.
 
+The taskbar's **hammer button opens a two-entry toolbox** (浏览器 / 终端) as the
+same dialog shape the settings menu uses, and both entries are right-sidebar tabs
+in the SESSION group (`toolboxTools` in `pages/home/config.ts`, wired through the
+same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
+grids and the commands in step). The browser is an address bar over an iframe with
+a per-session history (back / forward / reload; sites that refuse framing stay
+blank, which the empty state says), and the terminal is a console for commands the
+OPERATOR types: `GET /terminal/info` names the directory (the session's project
+directory — the selected 工作目录 wins) and `POST /terminal/run` executes one line
+through `/bin/sh -c` there with a scrubbed environment, bounded by
+`TOOLS_TIMEOUTS["user_terminal_timeout_seconds"]` and an output cap, answering the
+exit code instead of raising. It is a one-shot console, not a PTY — an interactive
+full-screen program has nothing to attach to — and it is NOT the agent's
+`terminal` tool (that one keeps its HITL gate and sandbox wrapper; this one is the
+human's own shell, loopback-only via the gateway). Both panels keep their state in
+`stores/toolbox.ts` because the sidebar unmounts an inactive panel.
+
 Choosing a directory is one action with two runtimes: the desktop build (Tauri)
 opens the OS folder dialog (`app/utils/project-directory.ts` →
 `@tauri-apps/plugin-dialog`), the browser build opens the in-app picker

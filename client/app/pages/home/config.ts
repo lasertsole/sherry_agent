@@ -22,6 +22,28 @@ export const tools: Tool[] = [
   }
 ];
 
+/**
+ * The toolbox dialog's entries (the hammer button): the browser and the user's
+ * terminal. Deliberately NOT a part of `headerTools` — that grid is the settings
+ * menu, and these two are working surfaces.
+ */
+export const toolboxTools: Tool[] = [
+  {
+    toolName: 'toolbar.browser',
+    icon: 'pi pi-desktop',
+    title: 'toolbar.browser',
+    event: 'browser',
+    label: 'toolbar.browser'
+  },
+  {
+    toolName: 'toolbar.terminal',
+    icon: 'pi pi-server',
+    title: 'toolbar.terminal',
+    event: 'terminal',
+    label: 'toolbar.terminal'
+  }
+];
+
 export const headerTools: Tool[] = [
   // FIRST: the preset panel is where a session's identity is set up, so it
   // leads the grid (its own name is 预设角色 / Presets & Role).

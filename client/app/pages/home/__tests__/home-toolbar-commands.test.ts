@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { headerTools } from '../config';
+import { headerTools, toolboxTools } from '../config';
 import { buildHomeToolbarCommands, HOME_TOOLBAR_EVENTS } from '../dialogs';
 import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
 
@@ -8,6 +8,10 @@ import type { RightSidebarPanelKind } from '~/stores/right-sidebar';
  * settings-menu editors and the notification list (a top-bar-only button).
  */
 const TAB_EVENTS: ReadonlyArray<[string, RightSidebarPanelKind]> = [
+  // The toolbox dialog's two entries (the hammer button) open working panels
+  // rather than settings ones.
+  ['browser', 'browser'],
+  ['terminal', 'terminal'],
   ['logs', 'logs'],
   ['stats', 'stats'],
   ['knowledgeGraph', 'knowledgeGraph'],
@@ -47,7 +51,9 @@ describe('buildHomeToolbarCommands', () => {
   it('covers every nine-grid header tool plus the top-bar-only bell', () => {
     const commands = buildCommands();
 
-    for (const tool of headerTools) expect(commands).toHaveProperty(tool.event);
+    for (const tool of [...headerTools, ...toolboxTools]) {
+      expect(commands).toHaveProperty(tool.event);
+    }
     // The log viewer is a nine-grid entry like the other tools …
     expect(headerTools.map(tool => tool.event)).toContain('logs');
     // 预设角色 leads the nine-grid (its panel is where a session's identity is
