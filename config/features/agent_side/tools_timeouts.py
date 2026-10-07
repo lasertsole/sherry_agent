@@ -34,6 +34,10 @@ class ToolsTimeoutsConfig(TypedDict):
     question_option_max_length: int
     question_min_length: int
     question_custom_max_length: int
+    #: One command typed into the toolbox's user terminal panel (a console, not
+    #: the agent's tool): longer than the agent's own bound, because a human is
+    #: watching it and can wait for a build step.
+    user_terminal_timeout_seconds: int
 
 
 TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
@@ -42,6 +46,7 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "web_search_retry_backoff_max_s": 45,
     "web_search_retry_max_attempts": 3,
     "terminal_timeout_seconds": 30,
+    "user_terminal_timeout_seconds": 120,
     "python_repl_timeout_seconds": 30,
     "ptc_timeout_seconds": 120,
     "sandbox_bwrap_probe_timeout_seconds": 3,

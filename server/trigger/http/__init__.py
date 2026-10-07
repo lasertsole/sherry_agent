@@ -27,3 +27,4 @@ import server.trigger.http.session_project  # noqa: F401  (side-effect route reg
 import server.trigger.http.agent_config  # noqa: F401  (side-effect route registration)
 import server.trigger.http.project_files  # noqa: F401  (side-effect route registration)
 import server.trigger.http.git  # noqa: F401  (side-effect route registration)
+import server.trigger.http.terminal  # noqa: F401  (side-effect route registration)
