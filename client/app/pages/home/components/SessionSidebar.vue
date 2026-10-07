@@ -16,17 +16,15 @@
       <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
       <!-- Left-sidebar body switch: the session list (default) or the session's
            工作目录 — TWO collapsible sections in one SHARED header row (文件树 /
-           Git Graph sit side by side, each header toggling its panel), with the
-           open panels stacked in a vertical Splitter: drag the gutter to give
+           Git Graph sit side by side, each header toggling its panel). With both
+           open the panels stack in a vertical Splitter: drag the gutter to give
            either one more room. The LOGO above stays in every body. -->
       <div
         v-if="sidebarBody === 'files'"
         class="flex min-h-0 flex-1 flex-col">
-        <!-- With BOTH sections collapsed the headers stack vertically; as soon as
-             one is open they share the row (the collapsed one beside the open one). -->
-        <div
-          class="mb-1 flex shrink-0 gap-1"
-          :class="ui.filesSectionOpen || ui.gitSectionOpen ? 'items-center' : 'flex-col items-stretch'">
+        <!-- The two section headers always share ONE row: each toggles its panel,
+             and a collapsed one keeps its place beside the open one. -->
+        <div class="mb-1 flex shrink-0 items-center gap-1">
           <button
             v-for="section in sidebarSections"
             :key="section.id"
@@ -48,15 +46,20 @@
           </button>
         </div>
 
+        <!-- Both open: the vertical Splitter, drag its gutter to resize. The
+             Splitter is mounted ONLY while both panels exist — its panels must
+             never change under a live instance (PrimeVue keeps refs to them and
+             throws `Cannot read properties of undefined (reading 'style')` when a
+             `v-if` panel disappears), so the single-panel cases render a plain
+             container instead of a one-panel splitter. -->
         <Splitter
-          v-if="ui.filesSectionOpen || ui.gitSectionOpen"
+          v-if="ui.filesSectionOpen && ui.gitSectionOpen"
           layout="vertical"
           class="min-h-0 flex-1"
           data-test="sidebar-splitter"
           @resizeend="onSplitResize">
           <SplitterPanel
-            v-if="ui.filesSectionOpen"
-            :size="ui.gitSectionOpen ? ui.filesSplitSize : 100"
+            :size="ui.filesSplitSize"
             :min-size="15">
             <div class="flex h-full min-h-0 flex-col">
               <ProjectFileTree
@@ -65,8 +68,7 @@
             </div>
           </SplitterPanel>
           <SplitterPanel
-            v-if="ui.gitSectionOpen"
-            :size="ui.filesSectionOpen ? 100 - ui.filesSplitSize : 100"
+            :size="100 - ui.filesSplitSize"
             :min-size="15">
             <div class="flex h-full min-h-0 flex-col">
               <GitGraphPanel
@@ -75,6 +77,22 @@
             </div>
           </SplitterPanel>
         </Splitter>
+        <div
+          v-else-if="ui.filesSectionOpen"
+          class="flex min-h-0 flex-1 flex-col"
+          data-test="sidebar-files-panel">
+          <ProjectFileTree
+            class="min-h-0 flex-1"
+            :session-id="routeSessionId" />
+        </div>
+        <div
+          v-else-if="ui.gitSectionOpen"
+          class="flex min-h-0 flex-1 flex-col"
+          data-test="sidebar-git-panel">
+          <GitGraphPanel
+            class="min-h-0 flex-1"
+            :session-id="routeSessionId" />
+        </div>
       </div>
       <template v-else>
         <!-- New chat -->
@@ -297,12 +315,11 @@ const sidebarSections = computed<Array<{ id: string; icon: string; label: string
 
 /**
  * Remember the split the gutter was dragged to (PrimeVue reports the panel sizes).
+ * The Splitter only renders with BOTH sections open, so index 0 is the file tree.
  * @param event The Splitter resizeend event.
  * @param event.sizes Panel shares in per cent, in panel order.
  */
 const onSplitResize = (event: { sizes: number[] }): void => {
-  // The first panel is the file tree whenever it is open; with it collapsed the
-  // single panel owns the body and there is nothing to remember.
   if (ui.filesSectionOpen && ui.gitSectionOpen && Array.isArray(event.sizes) && event.sizes[0] !== undefined) {
     ui.setFilesSplitSize(event.sizes[0]);
   }
