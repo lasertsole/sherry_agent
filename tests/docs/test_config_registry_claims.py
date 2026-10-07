@@ -9,8 +9,9 @@ agree with *each other*, and they did, all four being equally stale.
 Checked here:
 
 1. the counts claimed in every language's README equal the live registry counts;
-2. the contract test's coverage claim (18 covered, `MODEL_PRICING` and
-   `HTTP_CLIENT` omitted) matches ``test_features_infra_side``'s CASES;
+2. the contract test's coverage claim (19 covered, `MODEL_PRICING`,
+   `HTTP_CLIENT` and `FILE_BROWSER` omitted) matches
+   ``test_features_infra_side``'s CASES;
 3. AGENTS.md's registry counts (the config table's TypedDict totals) match too.
 """
 
@@ -66,7 +67,7 @@ def test_every_language_states_the_live_registry_counts():
 
 
 def test_the_contract_coverage_claim_matches_the_test_file():
-    """The 'covers 18 …' claim must name the features the contract test omits."""
+    """The 'covers 19 …' claim must name the features the contract test omits."""
     import importlib
 
     module = importlib.import_module("tests.config.test_features_infra_side")
@@ -74,7 +75,8 @@ def test_the_contract_coverage_claim_matches_the_test_file():
     covered = {name for name, *_rest in cases} | {"GATEWAY"}
     omitted = sorted(name for name in dir(infra_side) if name.isupper() and name not in covered)
 
-    expected_covered = 19
+    # GIT_GRAPH joined the CASES with the read-only git-graph panel.
+    expected_covered = 20
     assert len(covered) == expected_covered, "contract coverage changed; update the docs claim"
     for doc in _GROUP:
         text = doc.read_text(encoding="utf-8")
