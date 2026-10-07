@@ -119,6 +119,7 @@
         "subagents": "서브에이전트",
         "interaction": "상호작용",
         "web": "웹",
+        "browser": "브라우저",
         "mcp": "MCP"
       },
       "middlewares": {

@@ -169,6 +169,16 @@ if __name__ == "__main__":
     hooks.register(hooks.AUTO_TURN_MODULE, lambda: auto_turn_service)
     hooks.register(hooks.WS_ACTIVE_TASKS, lambda: ws_messages._active_tasks)
 
+    # Agent-controllable browser (opt-in): the browser_* tools resolve the
+    # process-wide manager through this hook (agent/** cannot import server/**).
+    # Registration is unconditional — the manager itself still answers nothing
+    # while BROWSER_AGENT["enabled"] is 0 (no launch, routes 404). The exit
+    # handler signals the Chromium child by its exact PID (see the helper).
+    from server.service.browser_manager import get_browser_manager, shutdown_browser_blocking
+
+    hooks.register(hooks.BROWSER_MANAGER, get_browser_manager)
+    atexit.register(shutdown_browser_blocking)
+
     # Lane lifecycle: fail-fast config validation + drain gate, before app.start().
     from server.service.lane_lifecycle import install_lane_lifecycle
 

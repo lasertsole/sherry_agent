@@ -119,6 +119,7 @@
         "subagents": "Subagents",
         "interaction": "Interaction",
         "web": "Web",
+        "browser": "Browser",
         "mcp": "MCP"
       },
       "middlewares": {

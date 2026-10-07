@@ -84,6 +84,7 @@ from .agent_side import (
 )
 from .infra_side import (
     AUTH as AUTH,
+    BROWSER_AGENT as BROWSER_AGENT,
     BUS as BUS,
     CHANNELS as CHANNELS,
     CRASH_LOOP as CRASH_LOOP,
@@ -105,6 +106,7 @@ from .infra_side import (
     SKILL_SCANNER as SKILL_SCANNER,
     WS_STREAM as WS_STREAM,
     AuthConfig as AuthConfig,
+    BrowserAgentConfig as BrowserAgentConfig,
     BusConfig as BusConfig,
     ChannelsConfig as ChannelsConfig,
     CrashLoopConfig as CrashLoopConfig,

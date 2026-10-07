@@ -51,6 +51,14 @@ Hook contracts (registration sites must provide these signatures; the
     background agent (python REPL + read/write file). Registered by the server
     assembly; the cron script raises when the hook is missing, mirroring the
     pre-hooks ImportError that failed the job (fail-closed).
+
+``BROWSER_MANAGER`` (``"browser_manager"``)
+    ``() -> BrowserManager``: the process-wide agent-controllable browser
+    (``server.service.browser_manager``). Registered by the server assembly;
+    the ``browser_*`` tools resolve it at call time (``agent/**`` must not
+    import ``server/**``). Missing hook -> the tools answer with a clear
+    "the browser bridge is not assembled in this process" tool result
+    (fail-closed, never a crash).
 """
 
 from __future__ import annotations
@@ -60,6 +68,7 @@ from typing import Any
 
 __all__ = [
     "AUTO_TURN_MODULE",
+    "BROWSER_MANAGER",
     "BUILD_BACKGROUND_AGENT_TOOLS",
     "BUILD_REJECT_MESSAGE",
     "MAYBE_TRIGGER_AUTO_TURN",
@@ -77,6 +86,7 @@ WS_ACTIVE_TASKS = "ws_active_tasks"
 SCAN_SKILL = "scan_skill"
 BUILD_REJECT_MESSAGE = "build_reject_message"
 BUILD_BACKGROUND_AGENT_TOOLS = "build_background_agent_tools"
+BROWSER_MANAGER = "browser_manager"
 
 _registry: dict[str, Callable[..., Any]] = {}
 

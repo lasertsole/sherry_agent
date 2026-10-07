@@ -628,6 +628,15 @@ def get_session_list() -> list[dict[str, Any]]:
 
 async def clear_session(session_id: str):
     logger.debug(f"Clearing session history: session_id={session_id}")
+    # A cleared session loses its browser pages too: the page registry is keyed
+    # by session and nothing else would close them (the LRU only caps the total
+    # count). Best-effort — a dead browser must not block the clear.
+    try:
+        from .browser_manager import get_browser_manager
+
+        await get_browser_manager().close_session(session_id)
+    except Exception:  # noqa: BLE001 - cleanup must never fail the clear
+        logger.debug("Browser page cleanup skipped for {}", session_id)
     await clear_session_dao(session_id=session_id)
     logger.debug(f"Session history cleared: session_id={session_id}")
 

@@ -69,6 +69,16 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
     ),
     "interaction": ("question",),
     "web": ("web_search",),
+    "browser": (
+        "browser_navigate",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_scroll",
+        "browser_screenshot",
+        "browser_evaluate",
+    ),
 }
 
 #: Group for tools that appear at runtime (MCP servers, future builders) —
@@ -88,6 +98,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "tasks",
     "subagents",
     "web",
+    "browser",
     "mcp",
 )
 

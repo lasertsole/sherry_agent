@@ -119,6 +119,7 @@
         "subagents": "子代理",
         "interaction": "交互",
         "web": "网络",
+        "browser": "浏览器",
         "mcp": "MCP"
       },
       "middlewares": {

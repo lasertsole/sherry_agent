@@ -1,7 +1,7 @@
 # 计划：让 agent 控制内部浏览器（方案 C · 本地 Chromium + CDP 代理）
 
 - 建档日期：2026-10-07
-- 状态：**计划（未开工）**，方案已选：**C（CDP 代理）**
+- 状态：**实施中**（P0 实测 ✅ · P1 后端 ✅ · P2 主代理工具 ✅ · P3 面板 / P4 收尾 / P5 文档门禁 待做）
 - 触发问题：希望 agent 能像 ZCode 那样驱动「工具箱·浏览器」这个面板——自己开页、
   读内容、点击输入、必要时截图看一眼；同时人还能在同一个页面上操作，并且能挂开发者工具。
 - 参考实现：`/home/honor/Desktop/project/ZCode`（Electron `<webview>` + CDP；详见第 1 节）
@@ -9,6 +9,52 @@
   `client/app/pages/home/components/BrowserPanel.vue`、`client/app/stores/toolbox.ts`、
   `config/features/`、`runtime/`（hooks/lane）
 - 验收口径：见第 5 节每个阶段的「验收」；总口径是第 3 节的六条**能力不变量**。
+
+## 0.1 实施进度与实测结论（2026-10-07）
+
+**P0 实测（本机，Xvfb :99，Chrome for Testing 153）**
+
+| 结论 | 实测 |
+|---|---|
+| 有头 / 无头都能跑 | 有头 42.8 fps、无头 59.8 fps 的 screencast；首帧 ~40 ms；启动 → 端口就绪 ~540 ms |
+| **反节流旗标是必须的** | 缺 `--disable-backgrounding-occluded-windows` 等四旗标时只有 2 帧 / 8 s（`browser_cdp.CHROME_FLAGS` 已钉） |
+| **静页面不出首帧** | `Page.startScreencast` 后需一次 DOM 触碰强制合成（`BrowserManager._nudge_paint`，已内建） |
+| 一页两操作者成立 | 第二个独立 WS 客户端（面板角色）screencast 期间，浏览器级连接同页 `Runtime.evaluate` / 点击 / 输入全部可用 |
+| 多页面共一条 WS | `Target.createTarget` + `attachToTarget(flatten=True)` 两页共存，PNG 尺寸各自正确 |
+| 自由尺寸 | `Emulation.setDeviceMetricsOverride(393×852 @2)` → PNG 786×1704 精确一致 |
+| **`--no-sandbox` 自动降级** | 本机无 userns（PRoot）：标准旗标启动 FATAL "No usable sandbox!"，`launch_browser` 自动以 `--no-sandbox` 重试一次并记日志（`LaunchedBrowser.no_sandbox`） |
+| 截图给模型 | 落盘 + 路径返回；模型经既有 `image_to_text` 技能看图（`python_repl` 不能 import 技能模块，SKILL.md 明说用 terminal 跑） |
+
+**已实施**
+
+- P1 后端：`config/features/infra_side/browser_agent.py`（`BROWSER_AGENT`）、
+  `server/service/browser_cdp.py`（传输层 + 启动器）、`server/service/browser_manager.py`
+  （进程单例：页面注册 / 每会话默认页 / LRU / refs 服务端存储 / screencast 订阅 / 自由尺寸）、
+  `server/trigger/http/browser.py`（`/browser/status|page|navigate|close`，开关关闭全 404）。
+  hooks 新键 `BROWSER_MANAGER`（`server/__main__.py` 注册 + atexit 按 PID 收进程）。
+  测试：`tests/server/service/test_browser_cdp.py`、`test_browser_manager.py`、
+  `tests/server/test_browser_endpoints.py`、配置用例（`test_features_infra_side.py`）。真机
+  live 一条链全绿（navigate → snapshot(refs) → click(ref) → type(ref) → screencast 3 帧 →
+  自由尺寸 → screenshot → shutdown）。
+- P2 主代理工具：`agent/tools/browser/**`（8 个，`browser_evaluate` 跟随
+  `allow_evaluate`）、进 `_MAIN_TOOLS_BUILDERS`、目录新组 `browser`、playbook 技能
+  `skills/builtin/core/browser/SKILL.md`、四语 `config.agent.toolGroup.browser`。
+
+**两处实现偏差（有意）**
+
+1. **子代理拒用**：不新增 `MAIN_ONLY_TOOLS` 减法——仓库已有 per-tool
+   `metadata["scope"]="main_only"` 门槛（`apply_tool_policy` 无条件先剔除，`memory` /
+   taskflow / todolist 同款），浏览器工具直接打这个标记即可，零改动钉住 ZCode 边界。
+2. **超时归属**：不加 `tools_timeouts` 新键——每个操作的时限由 `BROWSER_AGENT` 的
+   `nav_timeout_s` / `op_timeout_s` 在 **CDP 传输层**强制（更贴近失败点，错误信息更准）。
+3. 技能 `scope` 用 **`main_only`**（3.4 原写 `all`）：子代理拿不到工具，索引里放 playbook
+   只会是噪声；且 `skills/loader.py` 加了"功能关则技能不进索引"的门控
+   （`_feature_off_skill_names`）。
+
+**待做**：P3 面板 CDP 模式（canvas screencast / 输入转发 / 地址栏走端点 / WS 通道）、
+P4 收尾（会话删除/空闲回收、HITL 口径）、P5 文档 + 全量门禁。开关：
+`SHERRY_BROWSER_AGENT_ENABLED=1`（+ 可选 `SHERRY_BROWSER_ALLOW_EVALUATE=1`、`SHERRY_BROWSER_HEADLESS`），
+`.env` 里加行后重启后端生效；目前不在「环境配置」面板的可编辑键表里（P5 决定是否加入）。
 
 ---
 
@@ -65,7 +111,7 @@
 | C1 | 不入库：浏览器内容不写进 MesMemory/检查点（除非 agent 主动写摘要），只经工具结果进上下文 | 抓一次满屏快照后查 `messages` 表内容长度与来源 |
 | C2 | 单进程单例：一个 workspace 一个 Chromium 进程，页面按会话分配 | `GET /browser/status` 报告 pid + 页面数；重启后无孤儿进程 |
 | C3 | loopback-only：调试端口只 bind 127.0.0.1，且 CDP 端点不出后端进程 | 端口扫描 + `/browser/status` 不回传端口 |
-| C4 | 开关默认关：未开启时相关工具不存在于工具表 | `GET /agent/catalog` 不含 `browser_*` |
+| C4 | 开关默认关：未开启时工具不存在于任何工具表（主 agent 与子代理注入都没有） | `GET /agent/catalog` 不含 `browser_*`；researcher 子代理的工具表也不含 |
 | C5 | 人在回路可接管：同一页面既能被 agent 操作也能被用户操作，互不锁死 | 自动化操作进行中仍能在面板里手点 |
 | C6 | 资源有界：截图/快照有大小与超时上限，页面数有上限 | 超限返回结构化错误而不是卡住 |
 
@@ -102,7 +148,8 @@
   `Page.getNavigationHistory` / `Page.reload`；**自由尺寸改走
   `Emulation.setDeviceMetricsOverride`**（与 ZCode 完全一致，我们现有 store 的
   `viewport/zoom` 原样复用）。
-- **工具面**（agent 侧，7 个，全部 `browser_` 前缀，与 ZCode 的 tab API 对齐）：
+- **工具面**（agent 侧，7 个，全部 `browser_` 前缀，与 ZCode 的 tab API 对齐；**主代理直持**
+  ——用户 2026-10-07 定案，见 3.4）：
 
 | 工具 | 参数 | 返回 |
 |---|---|---|
@@ -116,6 +163,107 @@
 
 - **读内容的三层**（照抄 ZCode 的取舍）：默认给模型看**文本**（ARIA 树 / 结构化 DOM），
   需要视觉时才截图；`evaluate` 是显式危险项，单独开关。
+
+### 3.1 与 MCP 的关系（讨论结论，2026-10-07）
+
+**agent 侧不用 MCP 调 CDP**，链路就是上面那张图：`agent 工具 → BrowserManager →
+CDPClient(websockets) → Chromium`。ZCode 的"入口是 MCP"要拆开看：那是 `js`
+（node_repl）这个**进程内 REPL MCP**——`agent.browsers` 是被注入 JS 沙箱的宿主对象，
+传输最终落在宿主进程的 unix-socket broker 上，**不是"浏览器 MCP 服务器"**。我们的等价物
+是**原生工具 + 进程内 BrowserManager**，三条决定性理由：
+
+1. **会话身份**：页面按会话分配（C2/C5）。原生工具从 `InjectedState("session_id")`
+   或 `run_manager.config["configurable"]["session_id"]` 拿会话；MCP 调用是纯
+   JSON-RPC，langgraph 的 state / runnable config 都不过去，会话 id 只剩"模型可见的
+   字符串参数"一条路——可幻觉，还把路由键泄进提示词。
+2. **进程拓扑**：本仓库的 MCP 服务器按现有机制是 **stdio 独立进程**
+   （`plugins/mcp_server/config.json` 的 `$sys.executable`，且 `build_main_tools()`
+   组装期就 spawn），够不着进程内单例（Chromium 子进程、screencast 订阅、会话→页面表），
+   也没法往会话 WS 推帧；为同进程两半再搭一条 HTTP MCP 是纯成本，把浏览器管理搬进
+   工具构建期又是错误的生命周期。
+3. **既有约定全套挂在原生工具上**：`GET /agent/catalog` 分组（新增 `browser` 组）、
+   `BULK_ONLY_GROUPS`、`ToolSelectionMiddleware` 的按会话裁剪 + 执行拒绝、
+   `REQUIRED_TOOLS`、`TOOLS_TIMEOUTS` 限时、预设「工具」页签、C4 的"关闭即不注册"。
+   MCP 工具只落 `mcp` 兜底组，其余要么没有要么得重写一遍。
+
+**将来 MCP 的位置（非目标，留接口）**：若要让**外部** MCP 客户端（ZCode 自己、别的
+agent）驱动这个浏览器，facade 架在 P4 的 `runtime/hooks.py` 缝上、复用同一个
+BrowserManager——"一个管理器，两个前端"。v1 不做。
+
+**同时排除的捷径**：现成的 Playwright MCP / chrome-devtools-mcp 挂进
+`plugins/mcp_server/config.json` 一行就能给 agent 一个浏览器——但那正是方案 B
+（自拉无头浏览器，面板看不到也点不到），与本计划"同一页面、两个操作者、devtools
+可用"的目标冲突，故不采用。
+
+### 3.2 交互面：工具管能力，技能管玩法（讨论结论，2026-10-07）
+
+**不用 js REPL。** ZCode 需要 `js` 是因为它的浏览器 API 只以"注入 JS 沙箱的宿主对象"
+形式存在；我们的 CDP 是服务端 Python 直接能说的 JSON-over-WS，`CDPClient` 就是那层，
+模型不必为每个动作写 JS。唯一的"写 JS"面是 `browser_evaluate`（默认关的危险项、单个
+表达式，不是通用 REPL）；通用代码逃生舱本来就有 `python_repl`。
+
+**能力 = 原生工具（第 3 节的 7 个 `browser_*`），玩法 = 内置技能（`browser-use`
+SKILL.md，无脚本）** —— 即 `todolist` / `taskflow` 已用的先例：能力在工具里，技能只教
+"何时用、什么顺序、坑在哪"。
+
+- 技能正文承载：snapshot→act→verify 循环、ref 生命周期（导航即失效）、优先文本快照
+  而非截图（token 经济）、大页面用局部快照或 evaluate、iframe 边界、错误恢复、站点配方。
+- 攻略**不塞**工具 docstring：工具描述每轮都在提示词里（进缓存），7 段长篇说明会永久占
+  上下文；SKILL.md 只在 `skill_view` 时加载。
+- **技能不承担能力**（不写 browser 脚本让 agent 经 terminal 跑）：脚本是子进程，够不着
+  BrowserManager 单例，只能走 HTTP 门 + 网关 token——等于开一条绕过
+  `ToolSelectionMiddleware` / 超时 / 证据账本 / HITL 的第二通道，C4"关闭即不存在"也随之
+  失效（脚本还躺在盘上）。
+- 技能入索引**跟随开关**（`BrowserAgentConfig.enabled=false` 时 `/agent/catalog` 与技能
+  索引里都没有它），与 C4 同一条规则；开关翻转走既有 `invalidate_session_prompt`。
+
+### 3.3 "纯技能 + 伞状脚本"为什么排除（讨论结论，2026-10-07）
+
+把能力放进技能脚本（`scripts/browser.py`，agent 用 terminal / python_repl 跑）看似省事，
+但撞三件事：
+
+1. **沙箱断网（设计性硬约束）**。`terminal` / `python_repl` 的子进程在 OS 沙箱可用时被
+   bwrap 包裹，argv 是 `--unshare-all`（**无 `--share-net`**）→ 新网络命名空间，连
+   loopback 都不可达；脚本唯一的传输（HTTP 到 127.0.0.1:8080 / 直连 CDP 端口）就此断掉。
+   `docs/sandbox/README.md` 自己也把"真实 bwrap 下 loopback 桥是否可达"标为**未验证**。
+   本机（PRoot 内核不支持 userns，bwrap 装上但 probe 失败）子进程降级无沙箱 →
+   **本地"能跑"纯属环境偶然**；正常 Linux 桌面或 `SANDBOX_POLICY=required` 的部署上直接
+   死（required 下连 `sandbox=False` 降级都被拒）。绕法（`--share-net` / unix-socket 桥）
+   都是给既有安全边界开洞或加新协议，不值。
+2. **会话身份要开新通道**。子进程 env 没有任何会话信息（`scrub_env` 只减不加），模型也
+   不知道自己的 session id；得给 terminal / python_repl 注入 `SHERRY_SESSION_ID` 之类
+   的新 plumbing。原生工具的 `InjectedState("session_id")` / `_extract_session_id` 现成。
+3. **容错降级**。严格 JSON schema → 自由文本命令 / 代码参数：参数错了从 provider 侧拒绝
+   变成脚本运行时爆炸。
+
+两个"纯技能更好"的假设也不成立：后台（cron）工具集是 `server/__main__.py` 的 hook
+lambda（当前 `[python_repl, read_file, write_file]`），工具形态给后台加能力同样只是一行；
+"一次调用跑多步循环"若真需要，也应做**进程内**的 gated 工具（`browser_evaluate` 就是这个
+位子，多步版本也留在进程内），而不是沙箱外的脚本。
+
+结论：3.2 的分工不变——**能力 = 原生工具，技能 = 无脚本 playbook**。给用户手敲的 CLI
+可以有（真实 shell 不在沙箱内），但 agent 能力不建在它上面。
+
+### 3.4 agent 面定案：主代理专用工具（对齐 ZCode，2026-10-07）
+
+**用户定案：7 个 `browser_*` 是主代理工具**（进 `_MAIN_TOOLS_BUILDERS` + 工具目录新组
+`browser`），对齐 ZCode——它的浏览器能力就在主代理手里（`js` MCP），而**子代理被 broker
+明确拒绝**。我们照抄这条边界：
+
+- 子代理一律拿不到 `browser_*`：`_build_child_agent` 对 `MAIN_ONLY_TOOLS` 集合做减法
+  （`general` 的 `tools: inherit` 也拦得住），理由与 ZCode 相同——浏览是主代理的交互面。
+- 主代理的上下文成本由既有机制承接：**C4 默认关**（`BrowserAgentConfig.enabled=false` →
+  工具不注册、目录里没有），开了以后按预设「工具」页签按会话裁剪——正好就是本轮一并
+  要更新的东西。
+- 预设联动（`builtinAgentConfig` 从 `GET /agent/catalog` 派生，不硬编码）：
+  - 纯净 = 只有 REQUIRED → 无浏览器 ✓ 自动；
+  - 编程助手 = 除 memory 外全量 → 含浏览器（默认关时目录里本就没有）✓ 自动；
+  - 情感陪伴 = 除 任务与计划/子代理 组外全量 → 含浏览器 ✓ 自动；
+  - 全量 = 无意见（全开）✓ 自动。
+  已绑定旧预设的会话工具表是 EXACT，需要在「工具」页签补勾（或在预设面板重新应用）
+  ——写进文档。
+- 技能侧：`browser` playbook 技能（无脚本，见 3.2）`scope: all`（主代理看得到、子代理也
+  无妨）；预设的技能选择沿用现有派生（编程助手只保 CODING_SKILLS → 不含；陪伴/全量含）。
 
 ---
 
@@ -152,16 +300,27 @@
   （开/关一个页面 → 返回 page id）、`POST /browser/navigate`。
 - *验收*：C2/C3/C6；`/browser/status` 如实报告，关闭后无孤儿进程。
 
-### P2 agent 工具
+### P2 agent 工具（主代理，见 3.4）
 
-- 新 `agent/tools/browser/**`：`build_browser_tools()`，注册进 `_MAIN_TOOLS_BUILDERS`；
-  工具读会话项目目录只用于「下载/上传的落盘位置」，页面本身与目录无关。
+- 新 `agent/tools/browser/**`：`build_browser_tools()`，**注册进 `_MAIN_TOOLS_BUILDERS`**；
+  `enabled=false` 时返回 `[]`（C4）。工具经 `runtime/hooks.py` 的新钩子解析
+  server 侧的 BrowserManager（`agent/**` 不得 import `server/**`）。
+- **子代理拒绝**：`_build_child_agent` 从 `filtered_tools` 里减去 `MAIN_ONLY_TOOLS`
+  （新集合，含 `browser_*`；`general` 的 `tools: inherit` 也拦得住），对齐 ZCode。
+- 新工具组 `browser` 进 `agent/tools/catalog.py` 的 `TOOL_GROUPS`/`TOOL_ORDER`
+  （普通组，按工具粒度开关；`BULK_ONLY_GROUPS` 不加）。
+- 工具读会话项目目录只用于「下载/上传的落盘位置」，页面本身与目录无关。
 - 每页一个 `page` 句柄（默认当前会话最近使用的页面），多页面时由 `page` 参数指定。
 - 工具全部经 `tools_timeouts` 的新键限时（导航 15s、快照 5s、操作 5s、截图 10s）。
 - 危险项：`browser_evaluate` 只在 `BrowserAgentConfig["allow_evaluate"]` 为真时注册
   （与 ZCode 的"逃生舱"对齐，但默认关）。
-- *验收*：C1/C4/C6；工具在 `GET /agent/catalog` 中按组显示（新组 `browser`），
-  预设角色的「工具」页签能整体开关（`BULK_ONLY_GROUPS` 新成员，与 tasks/subagents 同规则）。
+- 新内置技能 `skills/builtin/core/browser/SKILL.md`：**纯 playbook、无脚本**、
+  `scope: all`（见 3.2）——snapshot→act→verify 的顺序、ref 生命周期、文本优先于截图、
+  错误恢复；开关关闭时技能不进索引。
+- **预设联动**：`builtinAgentConfig` 的派生已自动覆盖四个内置预设（见 3.4）；补四语面板
+  文案与文档；已绑定旧预设的会话需在「工具」页签补勾（EXACT 语义）。
+- *验收*：C1/C4/C6；`GET /agent/catalog` 按组显示 `browser`（开关开通时），预设「工具」
+  页签可见/可勾；子代理（含 general）工具表无 `browser_*`；关闭开关后目录里没有。
 
 ### P3 前端 CDP 模式
 

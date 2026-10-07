@@ -30,6 +30,7 @@ import pytest
 
 from config import is_allowed_skill_path
 from skills import loader as loader_mod
+from config.features import BROWSER_AGENT
 
 REPO_ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 
@@ -342,3 +343,26 @@ class TestAllowedSkillRoots:
         assert is_allowed_skill_path(skills_dir / "SKILL.md", skills_dir) is False
         assert is_allowed_skill_path(skills_dir / "misc/x/SKILL.md", skills_dir) is False
         assert is_allowed_skill_path(tmp_path / "outside/SKILL.md", skills_dir) is False
+
+
+# ---------------------------------------------------------------------------
+# Feature-gated skills: a playbook is hidden while its tools do not exist
+# ---------------------------------------------------------------------------
+
+
+class TestFeatureGatedSkills:
+    def test_the_browser_skill_is_hidden_while_the_feature_is_off(self, skills_tree, monkeypatch):
+        _write_skill(skills_tree, "skills/builtin/core/browser", "browser")
+        monkeypatch.setitem(BROWSER_AGENT, "enabled", 0)
+
+        names = {s["name"] for s in loader_mod.scan_skills(use_cache=False)}
+
+        assert "browser" not in names
+
+    def test_the_browser_skill_appears_once_the_feature_is_on(self, skills_tree, monkeypatch):
+        _write_skill(skills_tree, "skills/builtin/core/browser", "browser")
+        monkeypatch.setitem(BROWSER_AGENT, "enabled", 1)
+
+        names = {s["name"] for s in loader_mod.scan_skills(use_cache=False)}
+
+        assert "browser" in names

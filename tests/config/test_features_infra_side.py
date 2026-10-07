@@ -11,6 +11,7 @@ import pytest
 
 from config.features import infra_side as fs
 from config.features.infra_side.auth import build_auth
+from config.features.infra_side.browser_agent import _build_browser_agent
 from config.features.infra_side.gateway import _build_gateway
 
 pytestmark = [pytest.mark.unit]
@@ -233,15 +234,22 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
         fs.GitGraphConfig,
         {"page_size": 40, "max_page_size": 200, "timeout_s": 10.0},
     ),
+    (
+        "BROWSER_AGENT",
+        fs.BROWSER_AGENT,
+        fs.BrowserAgentConfig,
+        {"max_pages": 8, "screencast_quality": 70, "screenshot_max_bytes": 12 * 1024 * 1024},
+    ),
 ]
 
 
 def test_all_features_present() -> None:
-    # 18 data-driven cases plus GATEWAY, which is env-sourced and covered by
+    # 19 data-driven cases plus GATEWAY, which is env-sourced and covered by
     # the dedicated builder tests below. Pin the count so a new feature object
     # cannot land without a case here (and without the docs claim moving).
-    # (GIT_GRAPH joined the cases with the read-only git-graph panel.)
-    assert len(CASES) + 1 == 20
+    # (GIT_GRAPH joined the cases with the read-only git-graph panel;
+    # BROWSER_AGENT with the agent-controllable browser.)
+    assert len(CASES) + 1 == 21
 
 
 @pytest.mark.parametrize(("name", "instance", "typed_dict", "_specimen"), CASES)
@@ -300,6 +308,40 @@ class TestGatewayBuilder:
 
     def test_gateway_keys_match_annotations(self) -> None:
         assert set(fs.GATEWAY) == set(fs.GatewayConfig.__annotations__)
+
+
+class TestBrowserAgentBuilder:
+    """``BROWSER_AGENT`` is env-sourced; verify injection, defaults and the
+    DISPLAY-dependent headless default (built from the passed mapping, never
+    from an import-time snapshot)."""
+
+    def test_feature_is_off_by_default(self) -> None:
+        built = _build_browser_agent({})
+        assert built["enabled"] == 0
+        assert built["allow_evaluate"] == 0
+
+    def test_env_injection(self) -> None:
+        built = _build_browser_agent(
+            {
+                "SHERRY_BROWSER_AGENT_ENABLED": "true",
+                "SHERRY_BROWSER_ALLOW_EVALUATE": "1",
+                "SHERRY_BROWSER_EXECUTABLE": "/opt/chrome",
+            }
+        )
+        assert built["enabled"] == 1
+        assert built["allow_evaluate"] == 1
+        assert built["executable"] == "/opt/chrome"
+
+    def test_headless_default_follows_the_display(self) -> None:
+        assert _build_browser_agent({})["headless"] == 1
+        assert _build_browser_agent({"DISPLAY": ":99"})["headless"] == 0
+        assert (
+            _build_browser_agent({"DISPLAY": ":99", "SHERRY_BROWSER_HEADLESS": "1"})["headless"]
+            == 1
+        )
+
+    def test_browser_keys_match_annotations(self) -> None:
+        assert set(fs.BROWSER_AGENT) == set(fs.BrowserAgentConfig.__annotations__)
 
 
 class TestCollectionFieldTypes:

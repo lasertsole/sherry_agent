@@ -119,6 +119,7 @@
         "subagents": "サブエージェント",
         "interaction": "対話",
         "web": "ウェブ",
+        "browser": "ブラウザ",
         "mcp": "MCP"
       },
       "middlewares": {

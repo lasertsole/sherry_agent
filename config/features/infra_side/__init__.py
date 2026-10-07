@@ -91,6 +91,10 @@ from .git_graph import (
     GitGraphConfig as GitGraphConfig,
     GIT_GRAPH as GIT_GRAPH,
 )
+from .browser_agent import (
+    BrowserAgentConfig as BrowserAgentConfig,
+    BROWSER_AGENT as BROWSER_AGENT,
+)
 from .lane_system import (
     LaneSystemConfig as LaneSystemConfig,
     LANE_SYSTEM as LANE_SYSTEM,

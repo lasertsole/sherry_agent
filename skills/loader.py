@@ -116,6 +116,19 @@ def _skill_visible_to(skill: dict[str, Any], caller_scope: str) -> bool:
     return scope != "subagent_only"
 
 
+def _feature_off_skill_names() -> set[str]:
+    """Skill names hidden because their backing feature switch is off.
+
+    A playbook must not be advertised while the tools it teaches do not exist.
+    Read at scan time (the same restart semantics as the tool registration it
+    mirrors): flipping ``SHERRY_BROWSER_AGENT_ENABLED`` re-scans on the next
+    boot, exactly like ``build_browser_tools()`` does.
+    """
+    from config.features import BROWSER_AGENT
+
+    return set() if BROWSER_AGENT["enabled"] else {"browser"}
+
+
 def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     if use_cache:
         cached: list[dict[str, str]] | None = read_skills_snapshot()
@@ -165,6 +178,9 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
             }
         )
 
+    hidden = _feature_off_skill_names()
+    if hidden:
+        skills = [skill for skill in skills if skill["name"] not in hidden]
     skills.sort(key=lambda x: x["name"])
     return skills
 
