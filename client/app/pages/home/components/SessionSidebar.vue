@@ -22,7 +22,11 @@
       <div
         v-if="sidebarBody === 'files'"
         class="flex min-h-0 flex-1 flex-col">
-        <div class="mb-1 flex shrink-0 items-center gap-1">
+        <!-- With BOTH sections collapsed the headers stack vertically; as soon as
+             one is open they share the row (the collapsed one beside the open one). -->
+        <div
+          class="mb-1 flex shrink-0 gap-1"
+          :class="ui.filesSectionOpen || ui.gitSectionOpen ? 'items-center' : 'flex-col items-stretch'">
           <button
             v-for="section in sidebarSections"
             :key="section.id"

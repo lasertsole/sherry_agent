@@ -20,7 +20,9 @@ export type RightSidebarPanelKind =
   | 'account'
   | 'notification'
   /** The session's own persona preset (read-only), the only SESSION-scoped panel. */
-  | 'sessionPreset';
+  | 'sessionPreset'
+  /** One file's diff from one commit of the session project (opened from the git graph). */
+  | 'gitDiff';
 
 /**
  * Which group a tab belongs to: the CURRENT SESSION's own views (things derived
@@ -49,7 +51,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   fileViewer: 'global',
   account: 'global',
   notification: 'global',
-  sessionPreset: 'session'
+  sessionPreset: 'session',
+  // A diff belongs to the session whose project directory it was read from.
+  gitDiff: 'session'
 };
 
 /**
@@ -114,7 +118,7 @@ export interface RightSidebarTab {
    * The tab id is already the instance key, so the payload rides the tab itself
    * rather than a parallel path-by-tab map.
    */
-  payload?: { path: string };
+  payload?: { path: string; hash?: string };
 }
 
 let tabSeq = 0;
@@ -194,14 +198,19 @@ export const useRightSidebarStore = defineStore(
      * that panel, not stack a twin. Two tabs of one kind can only coexist with
      * DISTINCT payloads (two files in the viewer), which are not duplicates.
      * @param kind Panel kind to open.
-     * @param payload
+     * @param payload The panel's identity: its `path` (and, for a commit diff, the
+     *   `hash` it was opened from).
      * @param payload.path
+     * @param payload.hash
      * @returns The tab id (the existing tab's id when it was reused).
      */
-    function openTab(kind: RightSidebarPanelKind, payload?: { path: string }): string {
+    function openTab(kind: RightSidebarPanelKind, payload?: { path: string; hash?: string }): string {
       const path = payload?.path ?? null;
+      const hash = payload?.hash ?? null;
       const scope = SCOPE_BY_KIND[kind];
-      const existing = tabs.value.find(tab => tab.kind === kind && (tab.payload?.path ?? null) === path);
+      const existing = tabs.value.find(
+        tab => tab.kind === kind && (tab.payload?.path ?? null) === path && (tab.payload?.hash ?? null) === hash
+      );
       if (existing) {
         activeTabId.value = existing.id;
         activeScope.value = existing.scope;

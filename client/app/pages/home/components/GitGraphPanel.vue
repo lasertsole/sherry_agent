@@ -122,16 +122,18 @@
           <span class="shrink-0 font-mono text-[10px] text-gray-400">{{ row.commit.short }}</span>
         </div>
 
-        <!-- Expanded detail (click): the full hash, the parents and the timestamp. -->
+        <!-- Expanded detail (click a row): the commit's metadata, then the files
+             it touched — clicking a file opens its diff in a right-sidebar tab. -->
         <div
           v-if="expandedRow"
-          class="flex flex-col gap-0.5 border-y border-solid border-gray-100 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
+          class="flex flex-col gap-1 border-y border-solid border-gray-100 px-3 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
           data-test="git-detail">
+          <span class="text-xs text-theme-main">{{ expandedRow.commit.subject }}</span>
           <span
             class="break-all font-mono"
-            data-test="git-detail-hash"
-            >{{ expandedRow.commit.hash }}</span
-          >
+            data-test="git-detail-hash">
+            {{ expandedRow.commit.hash }}
+          </span>
           <span v-if="expandedRow.commit.parents.length">
             {{ t('gitGraph.parents') }}:
             <span class="font-mono">
@@ -139,6 +141,43 @@
             </span>
           </span>
           <span>{{ expandedRow.commit.author }} · {{ compactDate(expandedRow.commit.date) }}</span>
+
+          <div
+            v-if="filesState === 'loading'"
+            class="flex items-center gap-2 py-1">
+            <ProgressSpinner style="width: 1rem; height: 1rem" />
+            <span>{{ t('gitGraph.loadingFiles') }}</span>
+          </div>
+          <p
+            v-else-if="filesState === 'error'"
+            class="m-0 text-red-500 dark:text-red-400"
+            data-test="git-files-error">
+            {{ t('gitGraph.filesFailed') }}
+          </p>
+          <template v-else>
+            <div
+              v-if="commitFiles.length === 0"
+              class="text-gray-400"
+              data-test="git-files-empty">
+              {{ t('gitGraph.noFiles') }}
+            </div>
+            <button
+              v-for="file in commitFiles"
+              :key="`${file.status}:${file.path}`"
+              type="button"
+              class="flex w-full items-center gap-1.5 rounded px-1 py-0.5 text-left hover:bg-gray-100 dark:hover:bg-gray-800/70"
+              :data-test="`git-file-${file.status}-${file.path}`"
+              @click.stop="openDiff(expandedRow.commit, file)">
+              <span
+                class="w-4 shrink-0 rounded text-center font-mono text-[10px] leading-4"
+                :class="statusClass(file.status)">
+                {{ file.status }}
+              </span>
+              <span class="min-w-0 flex-1 truncate font-mono text-[11px] text-theme-main">
+                {{ file.old_path ? `${file.old_path} → ${file.path}` : file.path }}
+              </span>
+            </button>
+          </template>
         </div>
 
         <div
@@ -169,11 +208,11 @@
 <script lang="ts" setup>
 import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { GitCommitEntry, GitGraphPage, GitRefEntry } from '~/composables/bridge/git';
+import type { GitCommitEntry, GitCommitFile, GitGraphPage, GitRefEntry } from '~/composables/bridge/git';
 // Stable module specifiers so tests can vi.mock the bridge (the unimport
 // injection is compile-time and leaves bare symbols unmockable).
 /* eslint-disable @typescript-eslint/no-restricted-imports */
-import { checkoutGitRef, fetchGitGraph, resetGitBranch } from '~/composables/bridge/git';
+import { checkoutGitRef, fetchCommitFiles, fetchGitGraph, resetGitBranch } from '~/composables/bridge/git';
 /* eslint-enable @typescript-eslint/no-restricted-imports */
 import { logUtil } from '~/utils/log';
 
@@ -217,6 +256,12 @@ const EMPTY_PAGE: GitGraphPage = {
 };
 
 const page = ref<GitGraphPage>({ ...EMPTY_PAGE });
+/** hash → the commit's file list (loaded on the first expansion, then cached). */
+const filesByHash = ref<Record<string, GitCommitFile[]>>({});
+/** The expansion's file-list state: idle / loading / error (per open row). */
+const filesState = ref<'idle' | 'loading' | 'error'>('idle');
+const rightSidebar = useRightSidebarStore();
+const gitDiff = useGitDiffStore();
 const loading = ref(false);
 const expanded = ref('');
 const menuRef = ref<{ show: (event: Event) => void } | null>(null);
@@ -372,6 +417,12 @@ function graphRows(commits: GitCommitEntry[]): GraphRow[] {
 
 const rows = computed<GraphRow[]>(() => graphRows(page.value.commits));
 
+/** The files of the expanded commit ([] until the list lands). */
+const commitFiles = computed<GitCommitFile[]>(() => {
+  const hash = expanded.value;
+  return hash ? (filesByHash.value[hash] ?? []) : [];
+});
+
 /** The row whose detail block is open (undefined once a refresh drops it). */
 const expandedRow = computed<GraphRow | undefined>(() => rows.value.find(row => row.commit.hash === expanded.value));
 
@@ -412,11 +463,67 @@ const compactDate = (iso: string): string => {
 };
 
 /**
- * Toggle a row's detail block.
+ * Chip tint for a status letter (`M` / `A` / `D` / `R` …).
+ * @param status Git status letter.
+ */
+const statusClass = (status: string): string => {
+  if (status === 'A') return 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300';
+  if (status === 'D') return 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300';
+  if (status === 'R' || status === 'C') {
+    return 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300';
+  }
+  return 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400';
+};
+
+/**
+ * Toggle a row's detail block, loading the commit's file list on first open.
  * @param hash Commit hash of the clicked row.
  */
 const toggleRow = (hash: string): void => {
-  expanded.value = expanded.value === hash ? '' : hash;
+  if (expanded.value === hash) {
+    expanded.value = '';
+    filesState.value = 'idle';
+    return;
+  }
+  expanded.value = hash;
+  void loadFiles(hash);
+};
+
+/**
+ * Fetch one commit's file list (idempotent; a cached list renders at once).
+ * @param hash Commit hash.
+ */
+const loadFiles = async (hash: string): Promise<void> => {
+  if (filesByHash.value[hash]) {
+    filesState.value = 'idle';
+    return;
+  }
+  filesState.value = 'loading';
+  try {
+    const detail = await fetchCommitFiles(props.sessionId, hash);
+    filesByHash.value = { ...filesByHash.value, [hash]: detail.files };
+    filesState.value = 'idle';
+  } catch (e) {
+    logUtil.e('[GitGraphPanel] Failed to load the commit files:', e);
+    filesState.value = 'error';
+  }
+};
+
+/**
+ * Open one file's diff from a commit: the panel shows it, and the store keeps the
+ * target so the tab survives a remount (the sidebar has no KeepAlive).
+ * @param commit The commit the file belongs to.
+ * @param file The clicked file.
+ */
+const openDiff = (commit: GitCommitEntry, file: GitCommitFile): void => {
+  gitDiff.open({
+    sessionId: props.sessionId,
+    hash: commit.hash,
+    short: commit.short,
+    path: file.path,
+    subject: commit.subject
+  });
+  rightSidebar.openTab('gitDiff', { path: file.path, hash: commit.hash });
 };
 
 /**
@@ -602,6 +709,9 @@ watch(
       "gitMissing": "服务器上没有找到 git 可执行文件",
       "unavailableShort": "不可用",
       "parents": "父提交",
+      "loadingFiles": "读取文件列表…",
+      "filesFailed": "读取文件列表失败",
+      "noFiles": "该提交没有文件变更",
       "copied": "已复制{what}",
       "copyFailed": "复制失败",
       "copyHash": "复制提交哈希",
@@ -632,6 +742,9 @@ watch(
       "gitMissing": "No git executable on the server",
       "unavailableShort": "unavailable",
       "parents": "Parents",
+      "loadingFiles": "Loading the file list…",
+      "filesFailed": "Failed to load the file list",
+      "noFiles": "This commit changes no files",
       "copied": "Copied {what}",
       "copyFailed": "Copy failed",
       "copyHash": "Copy commit hash",
@@ -662,6 +775,9 @@ watch(
       "gitMissing": "サーバーに git 実行ファイルが見つかりません",
       "unavailableShort": "利用不可",
       "parents": "親コミット",
+      "loadingFiles": "ファイル一覧を読み込み中…",
+      "filesFailed": "ファイル一覧の読み込みに失敗しました",
+      "noFiles": "このコミットにファイル変更はありません",
       "copied": "{what}をコピーしました",
       "copyFailed": "コピーに失敗しました",
       "copyHash": "コミット ハッシュをコピー",
@@ -692,6 +808,9 @@ watch(
       "gitMissing": "서버에 git 실행 파일이 없습니다",
       "unavailableShort": "사용 불가",
       "parents": "부모 커밋",
+      "loadingFiles": "파일 목록 불러오는 중…",
+      "filesFailed": "파일 목록을 불러오지 못했습니다",
+      "noFiles": "이 커밋에는 파일 변경이 없습니다",
       "copied": "{what} 복사됨",
       "copyFailed": "복사 실패",
       "copyHash": "커밋 해시 복사",

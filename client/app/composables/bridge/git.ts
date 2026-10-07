@@ -136,3 +136,103 @@ export async function checkoutGitRef(sessionId: string, ref: string): Promise<Gi
   });
   return toPage(res);
 }
+
+/** One file a commit touched (the status is git's own letter). */
+export interface GitCommitFile {
+  /** `M` modified, `A` added, `D` deleted, `R` renamed, `C` copied, `T` type change. */
+  status: string;
+  path: string;
+  /** The pre-rename path (only for `R` / `C`). */
+  old_path: string;
+}
+
+/** One commit's metadata + the files it touched. */
+export interface GitCommitDetail {
+  hash: string;
+  short: string;
+  author: string;
+  date: string;
+  parents: string[];
+  subject: string;
+  files: GitCommitFile[];
+}
+
+/** One side of one aligned diff row (``null`` when the other column runs alone). */
+export interface GitDiffLine {
+  /** 1-based line number on that side. */
+  n: number;
+  text: string;
+  kind: 'same' | 'add' | 'remove';
+}
+
+/** One rendered row of the side-by-side diff. */
+export interface GitDiffRow {
+  left: GitDiffLine | null;
+  right: GitDiffLine | null;
+}
+
+/** One file's diff inside one commit, already aligned. */
+export interface GitCommitDiff {
+  hash: string;
+  path: string;
+  old_path: string;
+  status: string;
+  /** `<short-hash>:<path>` labels (empty on the side the file does not exist). */
+  old_label: string;
+  new_label: string;
+  rows: GitDiffRow[];
+  /** The row cap was hit (the tail of the diff is not shown). */
+  truncated: boolean;
+  /** One side is not text (nothing to align). */
+  binary: boolean;
+  /** `too-large` when a side exceeds the read bound. */
+  notice: string;
+}
+
+/**
+ * Read one commit's file list.
+ * @param sessionId Session whose project directory is read.
+ * @param hash Commit to inspect.
+ */
+export async function fetchCommitFiles(sessionId: string, hash: string): Promise<GitCommitDetail> {
+  const res = await fetchApiPayload<Record<string, unknown> & { success?: boolean }>({
+    url: '/git/commit',
+    opts: { session_id: sessionId, hash },
+    method: 'get'
+  });
+  return {
+    hash: String(res.hash ?? ''),
+    short: String(res.short ?? ''),
+    author: String(res.author ?? ''),
+    date: String(res.date ?? ''),
+    parents: Array.isArray(res.parents) ? (res.parents as string[]) : [],
+    subject: String(res.subject ?? ''),
+    files: Array.isArray(res.files) ? (res.files as GitCommitFile[]) : []
+  };
+}
+
+/**
+ * Read one file's aligned diff inside one commit.
+ * @param sessionId Session whose project directory is read.
+ * @param hash Commit to inspect.
+ * @param path File path inside the commit (its new path for a rename).
+ */
+export async function fetchCommitDiff(sessionId: string, hash: string, path: string): Promise<GitCommitDiff> {
+  const res = await fetchApiPayload<Record<string, unknown> & { success?: boolean }>({
+    url: '/git/commit/file',
+    opts: { session_id: sessionId, hash, path },
+    method: 'get'
+  });
+  return {
+    hash: String(res.hash ?? ''),
+    path: String(res.path ?? path),
+    old_path: String(res.old_path ?? ''),
+    status: String(res.status ?? 'M'),
+    old_label: String(res.old_label ?? ''),
+    new_label: String(res.new_label ?? ''),
+    rows: Array.isArray(res.rows) ? (res.rows as GitDiffRow[]) : [],
+    truncated: res.truncated === true,
+    binary: res.binary === true,
+    notice: String(res.notice ?? '')
+  };
+}

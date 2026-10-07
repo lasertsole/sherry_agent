@@ -168,7 +168,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   taskDetail: defineAsyncComponent(() => import('./SubagentTasksPanel.vue')),
   account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue')),
   notification: defineAsyncComponent(() => import('./NotificationPanel.vue')),
-  sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue'))
+  sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue')),
+  gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue'))
 };
 
 /**
@@ -305,6 +306,7 @@ onBeforeUnmount(() => {
       "closeTab": "关闭标签页",
       "empty": "暂无标签页，从菜单或工具栏添加",
       "sessionPreset": "预设角色",
+      "gitDiff": "提交差异",
       "scopes": {
         "session": "当前会话",
         "global": "全局"
@@ -332,6 +334,7 @@ onBeforeUnmount(() => {
       "closeTab": "Close tab",
       "empty": "No tabs yet — add one from the menu or toolbar",
       "sessionPreset": "Presets & Role",
+      "gitDiff": "Commit diff",
       "scopes": {
         "session": "This session",
         "global": "Global"
@@ -359,6 +362,7 @@ onBeforeUnmount(() => {
       "closeTab": "タブを閉じる",
       "empty": "タブがありません。メニューまたはツールバーから追加",
       "sessionPreset": "プリセットと役割",
+      "gitDiff": "コミット差分",
       "scopes": {
         "session": "現在のセッション",
         "global": "グローバル"
@@ -386,6 +390,7 @@ onBeforeUnmount(() => {
       "closeTab": "탭 닫기",
       "empty": "탭이 없습니다. 메뉴 또는 툴바에서 추가",
       "sessionPreset": "프리셋과 역할",
+      "gitDiff": "커밋 diff",
       "scopes": {
         "session": "현재 세션",
         "global": "전역"

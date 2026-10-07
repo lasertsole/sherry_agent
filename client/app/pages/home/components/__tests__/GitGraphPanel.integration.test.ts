@@ -10,8 +10,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import GitGraphPanel from '@/pages/home/components/GitGraphPanel.vue';
 
-const bridge = vi.hoisted(() => ({ fetchGitGraph: vi.fn() }));
+const bridge = vi.hoisted(() => ({ fetchGitGraph: vi.fn(), fetchCommitFiles: vi.fn() }));
 vi.mock('~/composables/bridge/git', () => bridge);
+
+const gitDiffStore = vi.hoisted(() => ({ open: vi.fn() }));
+vi.stubGlobal('useGitDiffStore', () => gitDiffStore);
+const sidebarStore = vi.hoisted(() => ({ openTab: vi.fn() }));
+vi.stubGlobal('useRightSidebarStore', () => sidebarStore);
 
 /**
  * One commit entry with the fields the panel reads.
@@ -84,6 +89,17 @@ async function mountPanel(payloads: Array<Record<string, unknown>>) {
 describe('GitGraphPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // Rows are clickable everywhere in this suite: the file list answers empty
+    // unless a test replaces it.
+    bridge.fetchCommitFiles.mockResolvedValue({
+      hash: 'aaaa1111',
+      short: 'aaaa1111',
+      author: 'Tester',
+      date: '2026-10-07T10:00:00+08:00',
+      parents: [],
+      subject: 'subject',
+      files: []
+    });
   });
 
   it('draws a linear history in one lane and shows the branch header', async () => {
@@ -206,6 +222,54 @@ describe('GitGraphPanel', () => {
     expect(classes[0]).toContain('bg-[#c1d6e5]');
     expect(classes[1]).toContain('amber');
     expect(classes[2]).toContain('text-gray-500');
+  });
+
+  it('expands a row into its file list and opens a file as a diff tab', async () => {
+    bridge.fetchCommitFiles.mockResolvedValue({
+      hash: 'aaaa1111',
+      short: 'aaaa1111',
+      author: 'Tester',
+      date: '2026-10-07T10:00:00+08:00',
+      parents: ['bbbb2222'],
+      subject: 'change things',
+      files: [
+        { status: 'M', path: 'src/app.ts', old_path: '' },
+        { status: 'A', path: 'src/new.ts', old_path: '' },
+        { status: 'D', path: 'src/gone.ts', old_path: '' }
+      ]
+    });
+    const wrapper = await mountPanel([page({ commits: [commit('aaaa1111', ['bbbb2222'])] })]);
+
+    // Nothing is fetched before the row is opened.
+    expect(bridge.fetchCommitFiles).not.toHaveBeenCalled();
+    await wrapper.get('[data-test="git-commit-aaaa1111"]').trigger('click');
+    await flushPromises();
+
+    expect(bridge.fetchCommitFiles).toHaveBeenCalledWith('sid-1', 'aaaa1111');
+    expect(wrapper.get('[data-test="git-file-M-src/app.ts"]').text()).toContain('src/app.ts');
+    expect(wrapper.get('[data-test="git-file-A-src/new.ts"]').exists()).toBe(true);
+
+    // Clicking a file opens its diff: the target reaches the diff store and the
+    // right sidebar hosts it as a tab (the sidebar has no KeepAlive).
+    await wrapper.get('[data-test="git-file-M-src/app.ts"]').trigger('click');
+    expect(gitDiffStore.open).toHaveBeenCalledWith({
+      sessionId: 'sid-1',
+      hash: 'aaaa1111',
+      short: 'aaaa1111',
+      path: 'src/app.ts',
+      subject: 'subject aaaa'
+    });
+    expect(sidebarStore.openTab).toHaveBeenCalledWith('gitDiff', {
+      path: 'src/app.ts',
+      hash: 'aaaa1111'
+    });
+
+    // Re-opening the same row re-uses the cached list (no second fetch).
+    await wrapper.get('[data-test="git-commit-aaaa1111"]').trigger('click');
+    await flushPromises();
+    await wrapper.get('[data-test="git-commit-aaaa1111"]').trigger('click');
+    await flushPromises();
+    expect(bridge.fetchCommitFiles).toHaveBeenCalledTimes(1);
   });
 
   it('reloads when the session changes', async () => {
