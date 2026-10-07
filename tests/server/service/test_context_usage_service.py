@@ -254,3 +254,139 @@ def test_http_handler_reports_a_missing_session_id(monkeypatch):
     payload = json.loads(response.description)
     assert payload["success"] is False
     assert "session_id" in payload["message"]
+
+
+# --------------------------------------------------------------------------
+# Context inspection (/context/inspect): the content behind the numbers.
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def _inspect_env(monkeypatch):
+    """Stub every external source: register prompt, tool set, checkpoint state."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    prompt = "系统提示词"
+    monkeypatch.setattr(service, "main_llm_context_window", 128_000)
+    monkeypatch.setattr(
+        service.state_register_mem,
+        "get_state",
+        lambda sid, key, default=None: prompt,
+    )
+    messages = [
+        HumanMessage(content="你好", metadata={"origin": "user"}),
+        HumanMessage(
+            content="[项目目录已切换] moved",
+            metadata={"origin": "project_dir", "internal": True},
+        ),
+        AIMessage(
+            content="",
+            tool_calls=[{"name": "read_file", "args": {"path": "a.py"}, "id": "c1"}],
+        ),
+        ToolMessage(content="file body", tool_call_id="c1"),
+    ]
+
+    async def fake_state(session_id: str):
+        return messages
+
+    monkeypatch.setattr(service, "read_state_messages", fake_state)
+    return messages
+
+
+def test_inspect_serves_prompt_tools_and_the_live_transcript(_inspect_env, monkeypatch):
+    class _Tool:
+        name = "read_file"
+        description = "Read a file"
+
+        class args_schema:  # noqa: N801 - mirrors the tool contract's attribute name
+            @staticmethod
+            def model_json_schema():
+                return {"type": "object", "properties": {"path": {"type": "string"}}}
+
+    monkeypatch.setattr("agent.tools.build_main_tools", lambda: [_Tool()])
+    monkeypatch.setattr(
+        "agent.middlewares.tool_selection.core.enabled_tool_names",
+        lambda sid: frozenset({"read_file"}),
+    )
+
+    payload = asyncio.run(service.get_context_content("s1"))
+
+    assert payload["window"] == 128_000
+    assert payload["system_prompt"] == "系统提示词"
+    assert payload["system_tokens"] > 0
+    # The tool set is the session's (selection applied) and carries its schema.
+    assert [tool["name"] for tool in payload["tools"]] == ["read_file"]
+    assert payload["tools"][0]["parameters"]["properties"]["path"]["type"] == "string"
+    assert payload["tool_tokens"] > 0
+    assert payload["tool_selection"] is True
+    # The transcript keeps roles, tool calls and the injected-carrier markers.
+    roles = [row["role"] for row in payload["messages"]]
+    assert roles == ["human", "human", "ai", "tool"]
+    assert payload["messages"][1]["origin"] == "project_dir"
+    assert payload["messages"][1]["internal"] is True
+    assert payload["messages"][2]["tool_calls"][0]["name"] == "read_file"
+    assert payload["messages"][3]["tool_call_id"] == "c1"
+    assert payload["message_tokens"] > 0
+    assert payload["truncated"] == 0
+    assert payload["state_error"] == ""
+
+
+def test_inspect_clips_a_giant_message_and_counts_it(_inspect_env, monkeypatch):
+    from langchain_core.messages import HumanMessage
+
+    async def huge_state(session_id: str):
+        return [HumanMessage(content="x" * (service._MAX_MESSAGE_CHARS + 500))]
+
+    monkeypatch.setattr(service, "read_state_messages", huge_state)
+    monkeypatch.setattr("agent.tools.build_main_tools", lambda: [])
+    monkeypatch.setattr(
+        "agent.middlewares.tool_selection.core.enabled_tool_names", lambda sid: None
+    )
+
+    payload = asyncio.run(service.get_context_content("s1"))
+
+    assert payload["truncated"] == 1
+    assert payload["messages"][0]["truncated"] is True
+    assert payload["messages"][0]["content"].endswith("…[truncated]")
+    assert len(payload["messages"][0]["content"]) < service._MAX_MESSAGE_CHARS + 40
+
+
+def test_inspect_survives_a_failed_state_read(monkeypatch):
+    async def boom(session_id: str):
+        raise RuntimeError("checkpoint down")
+
+    monkeypatch.setattr(service, "read_state_messages", boom)
+    monkeypatch.setattr(service, "main_llm_context_window", 128_000)
+    monkeypatch.setattr(service.state_register_mem, "get_state", lambda sid, key, default=None: "P")
+    monkeypatch.setattr("agent.tools.build_main_tools", lambda: [])
+    monkeypatch.setattr(
+        "agent.middlewares.tool_selection.core.enabled_tool_names", lambda sid: None
+    )
+
+    payload = asyncio.run(service.get_context_content("s1"))
+
+    assert payload["messages"] == []
+    assert "checkpoint down" in payload["state_error"]
+    assert payload["system_prompt"] == "P"
+
+
+def test_inspect_http_handler_serves_the_content(monkeypatch):
+    async def stub(sid: str) -> dict:
+        return {"window": 100, "system_prompt": "P", "tools": [], "messages": []}
+
+    monkeypatch.setattr(http, "get_context_content", stub)
+
+    response = asyncio.run(http.context_inspect_handler(_FakeRequest({"session_id": "s1"})))
+
+    assert response.status_code == 200
+    payload = json.loads(response.description)
+    assert payload["system_prompt"] == "P"
+
+
+def test_inspect_http_handler_reports_a_missing_session_id(monkeypatch):
+    monkeypatch.setattr(http, "get_context_content", service.get_context_content)
+
+    response = asyncio.run(http.context_inspect_handler(_FakeRequest({})))
+
+    assert response.status_code == 400
+    assert json.loads(response.description)["success"] is False

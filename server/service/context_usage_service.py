@@ -204,3 +204,159 @@ def get_context_usage(session_id: str) -> dict[str, int | float | None]:
         "cache_hit_ratio": _cache_hit_ratio(session_id),
         "compress_ratio": float(SUMMARIZATION["compression_trigger_ratio"]),
     }
+
+
+# --------------------------------------------------------------------------
+# Context inspection: the CONTENT behind the accounting above.
+# --------------------------------------------------------------------------
+
+#: Longest text served for one message: this is a reading surface, not a dump —
+#: a giant tool result is clipped with a flag rather than shipped whole.
+_MAX_MESSAGE_CHARS = 8000
+
+
+def _clip(text: str) -> tuple[str, bool]:
+    """Bound one message's text; ``(text, truncated)``."""
+    if len(text) <= _MAX_MESSAGE_CHARS:
+        return text, False
+    return text[:_MAX_MESSAGE_CHARS] + "\n…[truncated]", True
+
+
+def _message_text(content: Any) -> str:
+    """A message's content as one string (multimodal blocks are serialized)."""
+    if isinstance(content, str):
+        return content
+    try:
+        return json.dumps(content, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001 - a weird payload must not break the view
+        return str(content)
+
+
+def _message_payload(message: Any) -> dict[str, Any]:
+    """One transcript row for the viewer: role, text, and why it is there.
+
+    ``origin``/``internal`` ride along because injected carriers (the workspace
+    notices, task-intent directives, subagent completions) are indistinguishable
+    from user text by content alone — the viewer should say what they are.
+    """
+    text, truncated = _clip(_message_text(getattr(message, "content", "")))
+    metadata: dict[str, Any] = getattr(message, "metadata", None) or {}
+    payload: dict[str, Any] = {
+        "role": str(getattr(message, "type", "") or "unknown"),
+        "content": text,
+        "truncated": truncated,
+    }
+    origin = str(metadata.get("origin") or "").strip()
+    if origin:
+        payload["origin"] = origin
+    if metadata.get("internal") is True:
+        payload["internal"] = True
+    tool_calls = getattr(message, "tool_calls", None) or []
+    if tool_calls:
+        payload["tool_calls"] = [
+            {
+                "name": str(call.get("name", "")),
+                "args": _clip(json.dumps(call.get("args", {}), ensure_ascii=False, default=str))[0],
+            }
+            for call in tool_calls
+            if isinstance(call, dict)
+        ]
+    call_id = getattr(message, "tool_call_id", None)
+    if call_id:
+        payload["tool_call_id"] = str(call_id)
+    return payload
+
+
+async def read_state_messages(session_id: str) -> list[Any]:
+    """The session's LIVE message list from the checkpointer.
+
+    That state is exactly what the next model call receives (post-compaction,
+    with the evicted tool results already previewed), so it is the one honest
+    source for a "what is in the context right now" view.
+    """
+    from agent import core as agent_core
+    from pub.func import build_agent_config
+
+    graph = await agent_core.built_agent()
+    snapshot = await graph.aget_state(config=build_agent_config(session_id))
+    return list((snapshot.values or {}).get("messages", []))
+
+
+def _tool_definitions(session_id: str) -> tuple[list[dict[str, Any]], int, bool]:
+    """``(definitions, token estimate, selection_active)`` for this session.
+
+    The definitions are the ones the session's model can actually call: the
+    process-wide set minus the tools its 预设-工具 tab switched off (REQUIRED
+    tools are unioned back in by ``enabled_tool_names``).
+    """
+    from agent.middlewares.tool_selection.core import enabled_tool_names
+    from agent.tools import build_main_tools
+
+    enabled = enabled_tool_names(session_id)
+    items: list[dict[str, Any]] = []
+    tokens = 0
+    for tool in build_main_tools():
+        if enabled is not None and tool.name not in enabled:
+            continue
+        schema: dict[str, Any] = {
+            "name": tool.name,
+            "description": _clip(str(getattr(tool, "description", "") or ""))[0],
+        }
+        args_schema = getattr(tool, "args_schema", None)
+        if args_schema is not None and hasattr(args_schema, "model_json_schema"):
+            schema["parameters"] = args_schema.model_json_schema()
+        items.append(schema)
+        # The same JSON wire ratio the accounting uses, so the two agree.
+        tokens += estimate_json_tokens(json.dumps(schema, ensure_ascii=False))
+    items.sort(key=lambda entry: str(entry["name"]))
+    return items, tokens, enabled is not None
+
+
+async def get_context_content(session_id: str) -> dict[str, Any]:
+    """The content behind :func:`get_context_usage`: prompt, tools, transcript.
+
+    Response:
+        {
+            "window":         int,   # context window of the configured main LLM
+            "system_prompt":  str,   # the prompt the chain actually injected
+            "system_tokens":  int,
+            "tools":          [ {name, description, parameters} ],
+            "tool_tokens":    int,
+            "tool_selection": bool,  # the session narrows the tool set
+            "messages":       [ {role, content, origin?, internal?, tool_calls?} ],
+            "message_tokens": int,
+            "truncated":      int,   # rows clipped by the per-message bound
+            "state_error":    str,   # non-empty when the checkpoint read failed
+        }
+    """
+    if not session_id or not str(session_id).strip():
+        raise ValueError("session_id is required")
+    session = str(session_id)
+    prompt = _system_prompt_text(session)
+    try:
+        tools, tool_tokens, selection = _tool_definitions(session)
+    except Exception as error:  # a tool-set failure must not break the viewer
+        logger.warning("context inspect: tool definitions failed: {}", error)
+        tools, tool_tokens, selection = [], 0, False
+
+    messages: list[dict[str, Any]] = []
+    state_error = ""
+    try:
+        for message in await read_state_messages(session):
+            messages.append(_message_payload(message))
+    except Exception as error:  # noqa: BLE001 - a cold/absent checkpoint is normal
+        logger.warning("context inspect: state read failed: {}", error)
+        state_error = str(error) or error.__class__.__name__
+
+    return {
+        "window": int(main_llm_context_window or 0),
+        "system_prompt": prompt,
+        "system_tokens": estimate_text_tokens(prompt) if prompt else 0,
+        "tools": tools,
+        "tool_tokens": tool_tokens,
+        "tool_selection": selection,
+        "messages": messages,
+        "message_tokens": sum(estimate_text_tokens(row["content"]) for row in messages),
+        "truncated": sum(1 for row in messages if row["truncated"]),
+        "state_error": state_error,
+    }
