@@ -196,10 +196,14 @@ if __name__ == "__main__":
 
     # Warm the session project-directory cache: the agent-side readers are
     # mem-only, so an unprimed tier after a restart silently serves the process
-    # default (see runtime/session/project_dir.py::prime_mem_from_store).
+    # default (see runtime/session/project_dir.py::prime_mem_from_store). The
+    # git-branch notice baseline rides the same pass: a lost token would silently
+    # re-baseline and swallow a branch change the agent still needs to hear about.
+    from runtime.session.git_head import prime_git_head_from_store
     from runtime.session.project_dir import prime_mem_from_store
 
     prime_mem_from_store()
+    prime_git_head_from_store()
 
     # Pin robyn to a single worker process. `--fast` sets processes=(cpu*2)+1,
     # spawning a process pool; every in-memory registry (relation_register,

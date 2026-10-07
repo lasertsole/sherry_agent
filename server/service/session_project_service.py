@@ -171,7 +171,7 @@ async def apply_project_choice_async(session_id: str, requested: str | None) -> 
                 await asyncio.to_thread(park_project_choice, session_id, None)
                 state = await asyncio.to_thread(_state_for, session_id, None)
             # No announcement here: the agent is told at SEND time, by
-            # ProjectDirNoticeMiddleware, which compares the root against the one
+            # WorkspaceNoticeMiddleware, which compares the root against the one
             # the agent was last told about and splices ONE notice in front of
             # the next user message (any number of switches coalesce into it).
             return state

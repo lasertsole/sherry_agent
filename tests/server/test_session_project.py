@@ -525,7 +525,7 @@ async def test_a_live_switch_only_binds_and_leaves_the_notice_to_the_middleware(
 ):
     """A switch must not inject anything by itself.
 
-    The agent is told at SEND time, by ``ProjectDirNoticeMiddleware``: it
+    The agent is told at SEND time, by ``WorkspaceNoticeMiddleware``: it
     compares the live root against ``StateKey.PROJECT_DIR_ANNOUNCED`` and
     splices one notice in front of the next user message. A switch-time
     announcement here would double the notice (and fire once per switch, with

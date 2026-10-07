@@ -370,7 +370,8 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
         rows = db.execute(
             """
             SELECT session_id,
-                   MIN(CASE WHEN role = 'human' THEN content END) AS first_user_msg,
+                   MIN(CASE WHEN role = 'human' AND (origin IS NULL OR origin = 'user')
+                            THEN content END) AS first_user_msg,
                    MAX(timestamp) AS last_activity
             FROM messages
             WHERE session_id != ?

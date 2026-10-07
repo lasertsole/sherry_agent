@@ -210,7 +210,7 @@ class TestRoleAgnosticDesign:
             "LLMRetryMiddleware",
             # Required for the main agent only: a child's transcript has no
             # working-directory notice to inject and no media intake of its own.
-            "ProjectDirNoticeMiddleware",
+            "WorkspaceNoticeMiddleware",
             "MultimodalProcessor",
         }
         main_only = MAIN_REQUIRED_CLASSES - SUBAGENT_REQUIRED_CLASSES

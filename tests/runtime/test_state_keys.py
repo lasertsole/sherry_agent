@@ -32,6 +32,7 @@ EXPECTED_VALUES: dict[str, str] = {
     "PROJECT_DIR": "project_dir",
     "PROJECT_DIR_PENDING": "project_dir_pending",
     "PROJECT_DIR_ANNOUNCED": "project_dir_announced",
+    "GIT_HEAD_ANNOUNCED": "git_head_announced",
     "LLM_THINKING_ENABLED_PENDING": "llm_thinking_enabled_pending",
     "AGENT_CONFIG": "agent_config",
     "AGENT_CONFIG_PENDING": "agent_config_pending",

@@ -169,7 +169,7 @@ class AIMessageRowBuilder(MessageRowBuilder):
         )
 
         # Injected AI carriers declare their origin in ``metadata`` (the
-        # ProjectDirNoticeMiddleware notice is one): the chat renders a non-user
+        # WorkspaceNoticeMiddleware notice is one): the chat renders a non-user
         # origin as a neutral system card instead of an assistant bubble, the
         # same contract the human carriers use. A regular model answer carries no
         # origin and stays NULL (`_row_origin` returns None for it).

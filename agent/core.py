@@ -35,7 +35,7 @@ from .middlewares import (
     _MAIN_REQUIRED,
 )
 from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
-from .middlewares.project_dir_notice import ProjectDirNoticeMiddleware
+from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
 from .middlewares.tool_selection import ToolSelectionMiddleware
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
@@ -173,7 +173,7 @@ def _build_middlewares(
         # trailing-message tag), which is why it sits next to the prompt
         # injection — the prompt renders the CURRENT root, this layer explains
         # why it moved.
-        ProjectDirNoticeMiddleware(),
+        WorkspaceNoticeMiddleware(),
         # Per-session tool set (预设-工具 tab): narrows request.tools before the
         # model is bound and refuses a disabled tool at execution. Registered as
         # a real middleware (not gated) because it HAS no switch of its own — it

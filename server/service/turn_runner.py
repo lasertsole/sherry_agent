@@ -261,7 +261,7 @@ async def on_turn_finished(
         # The project directory parks/promotes exactly like the controls above:
         # same turn boundary, same HITL deferral, one extra key. The promotion
         # itself is silent — the agent hears about the new root from
-        # ProjectDirNoticeMiddleware, which compares it against the root the
+        # WorkspaceNoticeMiddleware, which compares it against the root the
         # agent was last told about at the START of the next turn.
         try:
             promoted_dir = await asyncio.to_thread(_promote_pending_project_dir, session_id)

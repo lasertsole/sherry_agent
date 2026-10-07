@@ -27,6 +27,10 @@ from __future__ import annotations
 from pathlib import Path
 
 from config.path import resolve_default_project_dir
+from pub.func.message.workspace_notice import (
+    PROJECT_DIR_NOTICE_ORIGIN,
+    workspace_notice_metadata,
+)
 from runtime.session.state_keys import StateKey
 
 __all__ = [
@@ -52,12 +56,11 @@ ProjectDirSource = str  # Literal["session", "env", "default"] — kept as str f
 _SESSION = "session"
 _DEFAULT = "default"
 
-#: ``origin`` of the injected working-directory notice. A non-``user`` origin is
-#: what the chat renders as a neutral card rather than a bubble the user wrote.
-PROJECT_DIR_NOTICE_ORIGIN = "project_dir"
-#: Metadata carried by the notice message (frozen shape: ``internal`` marks it a
-#: system directive for every consumer, as with the other injected carriers).
-PROJECT_DIR_NOTICE_METADATA = {"origin": PROJECT_DIR_NOTICE_ORIGIN, "internal": True}
+#: Metadata carried by the injected working-directory notice, whose ``origin``
+#: (``PROJECT_DIR_NOTICE_ORIGIN``, imported from the shared workspace-notice
+#: contract) is what makes the chat render a neutral system card rather than a
+#: bubble the user wrote.
+PROJECT_DIR_NOTICE_METADATA = workspace_notice_metadata(PROJECT_DIR_NOTICE_ORIGIN)
 
 
 def announced_project_dir(session_id: str | None) -> str | None:

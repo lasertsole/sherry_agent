@@ -748,6 +748,28 @@ class TestSummarizationCore:
         assert "[User]: hello" in out
         assert "[Assistant]: hi there" in out
 
+    def test_serialize_labels_a_workspace_notice_as_a_system_notice(self):
+        """The notice is a HumanMessage by role but the user never wrote it.
+
+        Labelling it ``[User]`` would feed "the branch moved" to the summarizer as
+        something the user said.
+        """
+        serialize = mget("_serialize_for_summary")
+        notice = HumanMessage(
+            content="[Git 分支/HEAD 已变化] moved to dev",
+            metadata={
+                "origin": "git_head",
+                "internal": True,
+                "provenance": "workspace_notice",
+            },
+        )
+
+        out = serialize([notice, HumanMessage(content="hello")])
+
+        assert "[System notice]: [Git 分支/HEAD 已变化] moved to dev" in out
+        assert "[User]: [Git" not in out
+        assert "[User]: hello" in out
+
     def test_serialize_includes_tool_call_name(self):
         serialize = mget("_serialize_for_summary")
         out = serialize(

@@ -29,6 +29,7 @@ from loguru import logger
 
 from config.features import SUMMARIZATION
 from pub.func.message.eviction import EVICTED_TO_KEY
+from pub.func.message.workspace_notice import is_workspace_notice
 
 from .state_aliases import _SUMMARY_LC_SOURCE
 from .summary_doc import SummaryDoc, cap_summary_doc, render_summary_markdown
@@ -208,7 +209,12 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
     lines: list[str] = []
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        if isinstance(msg, HumanMessage):
+        if is_workspace_notice(msg):
+            # A workspace notice is a HumanMessage by role but was never written
+            # by the user: labelling it ``[User]`` would put "the branch moved"
+            # into the summary as something the user said.
+            lines.append(f"[System notice]: {content[:500]}")
+        elif isinstance(msg, HumanMessage):
             text = content[:2000] if len(content) > 2000 else content
             lines.append(f"[User]: {text}")
         elif isinstance(msg, AIMessage):
@@ -310,7 +316,10 @@ def _build_static_fallback_summary(messages: list[AnyMessage]) -> str:
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
         if isinstance(msg, HumanMessage) and content.strip():
-            user_requests.append(content[:500])
+            # A workspace notice is not a request the user made — it must not
+            # become the summary's Goal (or a "user request" bullet).
+            if not is_workspace_notice(msg):
+                user_requests.append(content[:500])
         elif isinstance(msg, AIMessage):
             if content.strip():
                 lower = content.lower()

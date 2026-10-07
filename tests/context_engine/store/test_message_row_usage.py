@@ -84,7 +84,7 @@ def test_a_plain_answer_keeps_the_origin_column_null():
 
 
 def test_an_injected_ai_carrier_persists_its_metadata_origin():
-    """ProjectDirNoticeMiddleware tags its notice; the column must survive into the row."""
+    """WorkspaceNoticeMiddleware tags its notice; the column must survive into the row."""
     message = AIMessage(
         "[项目目录已切换] the working directory moved",
         metadata={"origin": "project_dir", "internal": True},

@@ -247,6 +247,30 @@ def test_resolve_turn_operator_prefers_scope_then_checks_headless(tmp_path):
         assert resolve_turn_operator(cron_state, "s1") == "alice"
 
 
+def test_a_trailing_workspace_notice_does_not_make_the_turn_headless():
+    """A notice is not a turn trigger: the human message behind it still decides.
+
+    The notice is a HumanMessage carrying ``internal``, so a naive "last human
+    message" scan would call the turn headless and auto-deny approvals that the
+    real user message further back should have prompted for.
+    """
+    notice = HumanMessage(
+        content="[项目目录已切换] moved",
+        metadata={
+            "origin": "project_dir",
+            "internal": True,
+            "provenance": "workspace_notice",
+        },
+    )
+
+    assert (
+        resolve_turn_operator({"messages": [HumanMessage(content="run it"), notice]}, "s1") == "s1"
+    )
+    # A transcript that is NOTHING but a notice keeps today's answer: it has no
+    # triggering human message at all, so the session identity is the operator.
+    assert resolve_turn_operator({"messages": [notice]}, "s1") == "s1"
+
+
 def test_store_document_shape(tmp_path):
     path = tmp_path / "approvals.json"
     store = ToolApprovalStore(path)

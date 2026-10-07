@@ -31,7 +31,7 @@ __all__ = [
 MIDDLEWARE_ORDER: tuple[str, ...] = (
     "TodoContinuationEnforcer",
     "system_prompt_injection",
-    "ProjectDirNoticeMiddleware",
+    "WorkspaceNoticeMiddleware",
     "ToolSelectionMiddleware",
     "MultimodalProcessor",
     "IterationBudget",
@@ -52,7 +52,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
 )
 
 #: Entries a session config may turn OFF (each hook early-returns when disabled).
-#: ``ProjectDirNoticeMiddleware`` and ``MultimodalProcessor`` are NOT here any
+#: ``WorkspaceNoticeMiddleware`` and ``MultimodalProcessor`` are NOT here any
 #: more: they joined ``scaffolding._MAIN_REQUIRED``, so the build refuses a chain
 #: without them and the service rejects a payload that tries to disable one.
 GATEABLE_MIDDLEWARES: frozenset[str] = frozenset(

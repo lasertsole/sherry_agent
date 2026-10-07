@@ -1610,6 +1610,29 @@ class TestSummaryMessageFiltering:
         assert pair[0].additional_kwargs.get("lc_source") == "summarization"
         assert pair[1].additional_kwargs.get("lc_source") == "summarization"
 
+    def test_the_static_fallback_ignores_a_workspace_notice(self):
+        """A notice is not a user request: it must not become the summary's Goal."""
+        fallback = mget("_build_static_fallback_summary")
+        notice = HumanMessage(
+            content="[Git 分支/HEAD 已变化] moved to dev",
+            metadata={
+                "origin": "git_head",
+                "internal": True,
+                "provenance": "workspace_notice",
+            },
+        )
+        messages = [
+            HumanMessage(content="fix the parser"),
+            AIMessage(content="working on it"),
+            notice,
+        ]
+
+        out = fallback(messages)
+
+        assert "## Latest Unresolved User Request\n- fix the parser" in out
+        assert "## Goal\n- fix the parser" in out
+        assert "Git 分支" not in out
+
 
 # ======================================================================
 # the async compression path must not block the event loop

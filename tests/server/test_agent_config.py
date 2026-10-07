@@ -245,7 +245,7 @@ def test_the_middleware_catalog_marks_the_required_set():
 
     # Promoted to the safety baseline (project-dir notice + media preprocessing):
     # locked in the UI, rejected by the service, always on in the chain.
-    for name in ("ProjectDirNoticeMiddleware", "MultimodalProcessor"):
+    for name in ("WorkspaceNoticeMiddleware", "MultimodalProcessor"):
         assert catalog[name]["required"] is True, name
         assert catalog[name]["gateable"] is False, name
 

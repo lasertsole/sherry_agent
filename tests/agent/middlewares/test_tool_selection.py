@@ -292,24 +292,24 @@ def test_a_disabled_task_intent_middleware_never_steers():
 
 
 def test_a_required_entry_cannot_be_disabled_by_a_stale_payload():
-    """ProjectDirNoticeMiddleware / MultimodalProcessor are REQUIRED now.
+    """WorkspaceNoticeMiddleware / MultimodalProcessor are REQUIRED now.
 
     The service rejects a payload naming them and the chain cannot drop them, but
     a register value written BEFORE they became required must not switch them off
     either — ``middleware_enabled`` is the single guard covering that path, and
     the directory notice keeps firing despite the stale entry.
     """
-    _set_config({"middlewares_disabled": ["ProjectDirNoticeMiddleware", "MultimodalProcessor"]})
+    _set_config({"middlewares_disabled": ["WorkspaceNoticeMiddleware", "MultimodalProcessor"]})
 
-    assert middleware_enabled(SESSION, "ProjectDirNoticeMiddleware") is True
+    assert middleware_enabled(SESSION, "WorkspaceNoticeMiddleware") is True
     assert middleware_enabled(SESSION, "MultimodalProcessor") is True
 
     state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR_ANNOUNCED, "/tmp/old-root")
     state_register_mem.set_state(SESSION, StateKey.PROJECT_DIR, "/tmp/new-root")
-    from agent.middlewares.project_dir_notice import ProjectDirNoticeMiddleware
+    from agent.middlewares.workspace_notice import WorkspaceNoticeMiddleware
 
     update = asyncio.run(
-        ProjectDirNoticeMiddleware().abefore_agent(
+        WorkspaceNoticeMiddleware().abefore_agent(
             {"session_id": SESSION, "messages": [HumanMessage("你好")]}
         )
     )

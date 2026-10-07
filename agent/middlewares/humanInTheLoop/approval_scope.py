@@ -21,6 +21,8 @@ from contextvars import ContextVar, Token
 from typing import Any
 from collections.abc import Iterator
 
+from pub.func.message.workspace_notice import is_workspace_notice
+
 # ContextVar default sentinel: distinguishes "no scope was ever set" (fall back
 # to turn/session resolution) from an explicit ``None`` scope (no operator).
 _UNSET: object = object()
@@ -66,10 +68,18 @@ def _is_headless_turn(state: dict[str, Any]) -> bool:
 
     Only the **last** human message decides: a later real user message makes
     the turn human-driven again even if an internal injection preceded it.
+
+    Workspace notices are skipped: a working-directory / git-change notice is a
+    human message by role (the injected carriers share that role) but it does not
+    TRIGGER anything — when it lands at the very end of a transcript it must not
+    turn the turn headless and auto-deny approvals that a real user message
+    (further back) would have prompted for.
     """
     messages = state.get("messages") or []
     for msg in reversed(messages):
         if getattr(msg, "type", "") != "human":
+            continue
+        if is_workspace_notice(msg):
             continue
         meta = getattr(msg, "metadata", None) or {}
         if str(meta.get("origin") or "").strip() == "cron":

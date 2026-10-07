@@ -14,6 +14,7 @@ from typing import Any
 from loguru import logger
 
 from config.features import MEMORY_FLUSH
+from pub.func.message.workspace_notice import is_workspace_notice
 
 _FLUSH_PROMPT = """\
 You are a memory extraction assistant. Below is conversation history that is \
@@ -154,7 +155,14 @@ def _msg_to_text(msg: Any) -> str:
 
 
 def _msg_type(msg: Any) -> str:
-    """Return a short role label for a message."""
+    """Return a short role label for a message.
+
+    A workspace notice is labelled ``system``: it is a HumanMessage by role but
+    the user never wrote it, and the flush prompt must not read "the branch
+    moved" as something the user said.
+    """
+    if is_workspace_notice(msg):
+        return "system"
     label = getattr(msg, "type", "")
     return str(label) if label else type(msg).__name__.lower()
 

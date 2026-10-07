@@ -97,6 +97,49 @@ class TestTurnUtils:
         single = split_into_turns([HumanMessage(content="q")])[0]
         assert split_turn(single, 100, estimator) is None
 
+    def test_a_workspace_notice_does_not_open_a_turn(self):
+        """A notice is a HumanMessage that explains the NEXT turn, not one of its own.
+
+        Counting it as a boundary would add an empty turn per injected notice and
+        shift what the turn-budget walk keeps during compression.
+        """
+        notice = HumanMessage(
+            content="[项目目录已切换] moved",
+            metadata={
+                "origin": "project_dir",
+                "internal": True,
+                "provenance": "workspace_notice",
+            },
+        )
+        h1, a1 = HumanMessage(content="q1"), AIMessage(content="r1")
+        h2, a2 = HumanMessage(content="q2"), AIMessage(content="r2")
+        turns = split_into_turns([h1, a1, notice, h2, a2])
+
+        assert [(turn.start_idx, turn.end_idx) for turn in turns] == [(0, 3), (3, 5)]
+        assert turns[1].messages == [h2, a2], "the notice belongs to the turn it precedes"
+
+    def test_a_notice_without_provenance_is_still_recognised(self):
+        """Rows written before the provenance key existed must keep being skipped."""
+        notice = HumanMessage(
+            content="[Git 分支/HEAD 已变化] moved",
+            metadata={"origin": "git_head", "internal": True},
+        )
+        h1, h2 = HumanMessage(content="q1"), HumanMessage(content="q2")
+
+        assert len(split_into_turns([h1, notice, h2])) == 2
+
+    def test_an_internal_non_notice_message_still_opens_a_turn(self):
+        """The subagent-completion carrier is a turn STARTER; only notices are not."""
+        carrier = HumanMessage(
+            content="[subagent:researcher completed]",
+            metadata={"internal": True, "provenance": "subagent_completion"},
+        )
+        h1 = HumanMessage(content="q1")
+
+        turns = split_into_turns([h1, carrier, AIMessage(content="a")])
+
+        assert len(turns) == 2, "the carrier keeps its own turn"
+
 
 # --- TestToolOutputDedup ---
 
