@@ -127,6 +127,9 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
     sidebarCollapsed: false,
     settingsMenuOpen: false,
     todoDockCollapsed: false,
+    sidebarBody: 'sessions',
+    filesSectionOpen: true,
+    gitSectionOpen: true,
     setTheme: (value: string) => {
       const colorMode = (globalThis as any).useColorMode?.();
       if (colorMode) colorMode.preference = value;
@@ -136,6 +139,15 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
     },
     toggleTodoDock: () => {
       state.todoDockCollapsed = !state.todoDockCollapsed;
+    },
+    toggleSidebarBody: () => {
+      state.sidebarBody = state.sidebarBody === 'sessions' ? 'files' : 'sessions';
+    },
+    toggleFilesSection: () => {
+      state.filesSectionOpen = !state.filesSectionOpen;
+    },
+    toggleGitSection: () => {
+      state.gitSectionOpen = !state.gitSectionOpen;
     }
   });
   return state;

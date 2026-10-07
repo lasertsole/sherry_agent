@@ -140,6 +140,7 @@ client/
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
 │   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드)
+│   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(읽기 전용, GET /git/graph, 커밋 레인을 SVG로 그림)
 │   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)

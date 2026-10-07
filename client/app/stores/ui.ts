@@ -19,6 +19,9 @@ export const useUiStore = defineStore(
     const sidebarBody = ref<'sessions' | 'files'>('sessions');
     const settingsMenuOpen = ref(false);
     const todoDockCollapsed = ref(false);
+    /** The 工作目录 body's two sections (file tree / git graph), each collapsible. */
+    const filesSectionOpen = ref(true);
+    const gitSectionOpen = ref(true);
     const setTheme = (value: string) => {
       colorMode.preference = value;
     };
@@ -31,20 +34,30 @@ export const useUiStore = defineStore(
     const toggleSidebarBody = () => {
       sidebarBody.value = sidebarBody.value === 'sessions' ? 'files' : 'sessions';
     };
+    const toggleFilesSection = () => {
+      filesSectionOpen.value = !filesSectionOpen.value;
+    };
+    const toggleGitSection = () => {
+      gitSectionOpen.value = !gitSectionOpen.value;
+    };
     return {
       sidebarCollapsed,
       settingsMenuOpen,
       todoDockCollapsed,
       sidebarBody,
+      filesSectionOpen,
+      gitSectionOpen,
       setTheme,
       toggleSidebar,
       toggleTodoDock,
-      toggleSidebarBody
+      toggleSidebarBody,
+      toggleFilesSection,
+      toggleGitSection
     };
   },
   {
     persist: {
-      pick: ['sidebarCollapsed', 'todoDockCollapsed', 'sidebarBody']
+      pick: ['sidebarCollapsed', 'todoDockCollapsed', 'sidebarBody', 'filesSectionOpen', 'gitSectionOpen']
     }
   }
 );

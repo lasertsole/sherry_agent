@@ -335,7 +335,11 @@
     "refresh": "再読み込み",
     "truncated": "{total} 件中 {shown} 件を表示",
     "empty": "空のディレクトリ",
-    "noFile": "ファイルが選択されていません"
+    "noFile": "ファイルが選択されていません",
+    "title": "ファイルツリー"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
   },
   "personaPreset": {
     "current": "現在のセッションのプリセットと役割",

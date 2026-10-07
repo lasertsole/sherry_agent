@@ -335,7 +335,11 @@
     "refresh": "새로 고침",
     "truncated": "{total}개 중 {shown}개 표시",
     "empty": "빈 디렉터리",
-    "noFile": "선택된 파일 없음"
+    "noFile": "선택된 파일 없음",
+    "title": "파일 트리"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
   },
   "personaPreset": {
     "current": "현재 세션 프리셋과 역할",

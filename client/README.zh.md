@@ -140,6 +140,7 @@ client/
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载）
+│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（只读，GET /git/graph，提交泳道用 SVG 绘制）
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）

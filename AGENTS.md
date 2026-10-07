@@ -203,7 +203,18 @@ tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
 size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
 NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
 (`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
-(`FileViewerPanel`).
+(`FileViewerPanel`). The sidebar's 工作目录 body stacks TWO collapsible sections —
+文件树 and the read-only **Git Graph** (`GET /git/graph`,
+`server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
+bounds the page size, the served text and the git timeout): one
+`git log --all --date-order` page (newest first, `limit`/`skip`, one extra commit
+to report `has_more`) plus the current branch and a capped dirty count, with
+refs parsed to `head`/`branch`/`tag`/`remote` chips. A directory that is not a
+repository (or a host without git) answers `available: false` with a reason
+instead of an error, so the panel renders its own empty state. The client lays
+the commits into lanes (`GitGraphPanel.vue`, the classic walk: a lane holds the
+hash it waits for, the first parent inherits it, an extra parent opens one) and
+draws one SVG per row.
 
 Choosing a directory is one action with two runtimes: the desktop build (Tauri)
 opens the OS folder dialog (`app/utils/project-directory.ts` →

@@ -128,4 +128,6 @@ from .infra_side import (
     validate_lane_config as validate_lane_config,
     FILE_BROWSER as FILE_BROWSER,
     FileBrowserConfig as FileBrowserConfig,
+    GIT_GRAPH as GIT_GRAPH,
+    GitGraphConfig as GitGraphConfig,
 )

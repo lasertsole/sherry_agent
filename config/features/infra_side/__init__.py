@@ -87,6 +87,10 @@ from .file_browser import (
     FileBrowserConfig as FileBrowserConfig,
     FILE_BROWSER as FILE_BROWSER,
 )
+from .git_graph import (
+    GitGraphConfig as GitGraphConfig,
+    GIT_GRAPH as GIT_GRAPH,
+)
 from .lane_system import (
     LaneSystemConfig as LaneSystemConfig,
     LANE_SYSTEM as LANE_SYSTEM,

@@ -227,6 +227,12 @@ CASES: list[tuple[str, object, object, dict[str, object]]] = [
             "lane_drain_timeout_seconds": 30.0,
         },
     ),
+    (
+        "GIT_GRAPH",
+        fs.GIT_GRAPH,
+        fs.GitGraphConfig,
+        {"page_size": 40, "max_page_size": 200, "timeout_s": 10.0},
+    ),
 ]
 
 
@@ -234,7 +240,8 @@ def test_all_features_present() -> None:
     # 18 data-driven cases plus GATEWAY, which is env-sourced and covered by
     # the dedicated builder tests below. Pin the count so a new feature object
     # cannot land without a case here (and without the docs claim moving).
-    assert len(CASES) + 1 == 19
+    # (GIT_GRAPH joined the cases with the read-only git-graph panel.)
+    assert len(CASES) + 1 == 20
 
 
 @pytest.mark.parametrize(("name", "instance", "typed_dict", "_specimen"), CASES)

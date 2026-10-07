@@ -139,6 +139,7 @@ client/
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels)
+│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (read-only, GET /git/graph, commit lanes drawn as SVG)
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)

@@ -335,7 +335,11 @@
     "refresh": "Refresh",
     "truncated": "Showing {shown} of {total} entries",
     "empty": "Empty directory",
-    "noFile": "No file selected"
+    "noFile": "No file selected",
+    "title": "Files"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
   },
   "personaPreset": {
     "current": "Session preset & role",

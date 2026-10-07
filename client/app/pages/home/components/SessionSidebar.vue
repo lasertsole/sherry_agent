@@ -14,12 +14,51 @@
     <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
       <!-- LOGO area -->
       <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
-      <!-- Left-sidebar body switch: the session list (default) or the project
-           file tree of the session in view. The LOGO above stays in both. -->
-      <ProjectFileTree
+      <!-- Left-sidebar body switch: the session list (default) or the session's
+           工作目录 — TWO collapsible sections (file tree + git graph), each with
+           its own header that toggles and its own scroller. The LOGO above stays
+           in every body. -->
+      <div
         v-if="sidebarBody === 'files'"
-        class="min-h-0 flex-1"
-        :session-id="routeSessionId" />
+        class="flex min-h-0 flex-1 flex-col gap-2">
+        <section class="flex min-h-0 flex-1 flex-col">
+          <button
+            type="button"
+            class="flex w-full shrink-0 items-center gap-1.5 rounded px-1 py-1 text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/60"
+            :aria-expanded="ui.filesSectionOpen"
+            data-test="sidebar-files-toggle"
+            @click="ui.toggleFilesSection()">
+            <i
+              class="pi pi-chevron-down text-[10px] transition-transform duration-200"
+              :class="{ '-rotate-90': !ui.filesSectionOpen }" />
+            <i class="pi pi-folder text-theme-main" />
+            <span>{{ t('projectFiles.title') }}</span>
+          </button>
+          <ProjectFileTree
+            v-if="ui.filesSectionOpen"
+            class="min-h-0 flex-1"
+            :session-id="routeSessionId" />
+        </section>
+
+        <section class="flex min-h-0 flex-1 flex-col">
+          <button
+            type="button"
+            class="flex w-full shrink-0 items-center gap-1.5 rounded px-1 py-1 text-xs text-gray-500 hover:bg-gray-50 dark:text-gray-400 dark:hover:bg-gray-800/60"
+            :aria-expanded="ui.gitSectionOpen"
+            data-test="sidebar-git-toggle"
+            @click="ui.toggleGitSection()">
+            <i
+              class="pi pi-chevron-down text-[10px] transition-transform duration-200"
+              :class="{ '-rotate-90': !ui.gitSectionOpen }" />
+            <i class="pi pi-sitemap text-theme-main" />
+            <span>{{ t('gitGraph.title') }}</span>
+          </button>
+          <GitGraphPanel
+            v-if="ui.gitSectionOpen"
+            class="min-h-0 flex-1"
+            :session-id="routeSessionId" />
+        </section>
+      </div>
       <template v-else>
         <!-- New chat -->
         <Button
@@ -178,6 +217,7 @@ export async function ensureSessionCharacter(sessionId: string) {
 // components
 import HistoryItem from './HistoryItem.vue';
 import ProjectFileTree from './ProjectFileTree.vue';
+import GitGraphPanel from './GitGraphPanel.vue';
 // function
 import { computed, onBeforeUnmount, onMounted, watch } from 'vue';
 import { useI18n } from 'vue-i18n';

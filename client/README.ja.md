@@ -140,6 +140,7 @@ client/
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
 │   │           ├── ProjectFileTree.vue        # 左サイドバーのプロジェクトファイルツリー（読み取り専用、GET /project/tree、階層ごとに遅延読み込み）
+│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（読み取り専用、GET /git/graph、コミットレーンを SVG で描画）
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
