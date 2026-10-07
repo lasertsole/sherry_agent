@@ -140,7 +140,8 @@ client/
 │   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
 │   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
 │   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드)
-│   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(읽기 전용, GET /git/graph, 커밋 레인을 SVG로 그림)
+│   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
+│   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
 │   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
@@ -174,6 +175,7 @@ client/
 │   │   ├── subagent.ts         # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
 │   │   ├── todo.ts             # 세션 계획(todo) 목록 + 독 표시 여부
 │   │   ├── right-sidebar.ts    # 오른쪽 사이드바(접힘 / 너비 영속화, 열린 탭 종류)
+│   │   ├── git-diff.ts         # 커밋 diff 대상(파일마다 오른쪽 사이드바 탭 1개, MRU 상한)
 │   │   ├── thinking.ts         # 세션별 사고 토글 / 레벨(다음 턴부터 적용)
 │   │   ├── session-model.ts    # 세션별 메인 모델 오버라이드(다음 턴부터 적용)
 │   │   ├── context-usage.ts    # 세션별 컨텍스트 계정(윈도 / 보고된 프롬프트 / 구성)

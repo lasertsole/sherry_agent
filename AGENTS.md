@@ -214,7 +214,21 @@ repository (or a host without git) answers `available: false` with a reason
 instead of an error, so the panel renders its own empty state. The client lays
 the commits into lanes (`GitGraphPanel.vue`, the classic walk: a lane holds the
 hash it waits for, the first parent inherits it, an extra parent opens one) and
-draws one SVG per row.
+draws one SVG per row with VS Code's own geometry (22px rows / 11px lanes / the
+five `scmGraph` colours; a merge is a ring node, HEAD wears an outer ring). The
+two section headers share one row and stack vertically when both are collapsed.
+The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed`/
+`hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
+with git's own stderr surfacing as a 409 — and clicking a row expands the files
+that commit touched (`GET /git/commit`: metadata plus `--name-status -M -z`,
+NUL-framed so a non-ASCII path is never quoted and the entry lookup behind the
+diff still matches). Clicking one of those files opens its diff in a right-sidebar
+tab (`GET /git/commit/file`, `GitDiffPanel.vue`, one tab per file): both sides come
+from the commit's own blobs (`<parent>:<old_path>` / `<hash>:<path>`) and are aligned
+by `difflib` opcodes, so a change reads as remove-left / add-right (red / green
+tints), an added or deleted file is a SINGLE column, a rename follows its old path,
+and a binary or oversized blob (2 MB / 4000-row caps) is flagged instead of decoded.
+A path that is not part of the commit is a 404, never an empty diff.
 
 Choosing a directory is one action with two runtimes: the desktop build (Tauri)
 opens the OS folder dialog (`app/utils/project-directory.ts` →

@@ -139,7 +139,8 @@ client/
 │   │           ├── SessionSidebar.vue         # Session list sidebar (create/rename/filter sessions)
 │   │           ├── HistoryItem.vue            # Sidebar history session item
 │   │           ├── ProjectFileTree.vue        # Left-sidebar project file tree (read-only, GET /project/tree, lazy levels)
-│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (read-only, GET /git/graph, commit lanes drawn as SVG)
+│   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the row menu resets/checks out, a row click lists the commit's files)
+│   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
@@ -173,6 +174,7 @@ client/
 │   │   ├── subagent.ts         # Background-task state (runs / tree / selection) + derived views
 │   │   ├── todo.ts             # Session plan (todo) list + dock visibility
 │   │   ├── right-sidebar.ts    # Right sidebar (collapsed / width persisted, open tab kinds)
+│   │   ├── git-diff.ts         # Commit-diff targets (one right-sidebar tab per file, MRU-capped)
 │   │   ├── thinking.ts         # Per-session thinking toggle / level (effective next turn)
 │   │   ├── session-model.ts    # Per-session main-model override (effective next turn)
 │   │   ├── context-usage.ts    # Per-session context accounting (window / reported prompt / parts)

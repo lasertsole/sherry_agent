@@ -140,7 +140,8 @@ client/
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
 │   │           ├── ProjectFileTree.vue        # 左サイドバーのプロジェクトファイルツリー（読み取り専用、GET /project/tree、階層ごとに遅延読み込み）
-│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（読み取り専用、GET /git/graph、コミットレーンを SVG で描画）
+│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。行メニューでリセット / チェックアウト、行クリックでコミットのファイル一覧を展開）
+│   │           ├── GitDiffPanel.vue          # 右サイドバーのコミット差分（左右 2 カラム、赤=削除 / 緑=追加。追加・削除されたファイルは 1 カラム）
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
@@ -174,6 +175,7 @@ client/
 │   │   ├── subagent.ts         # バックグラウンドタスク状態（実行 / ツリー / 選択）+ 派生ビュー
 │   │   ├── todo.ts             # セッション計画（todo）リスト + ドック表示可否
 │   │   ├── right-sidebar.ts    # 右サイドバー（折りたたみ / 幅を永続化、開いているタブ種別）
+│   │   ├── git-diff.ts         # コミット差分の対象（ファイルごとに右サイドバーのタブ 1 枚、MRU で上限あり）
 │   │   ├── thinking.ts         # セッション単位の思考トグル / レベル（次ターンから有効）
 │   │   ├── session-model.ts    # セッション単位のメインモデル上書き（次ターンから有効）
 │   │   ├── context-usage.ts    # セッション単位のコンテキスト計量（ウィンドウ / 報告されたプロンプト / 内訳）
