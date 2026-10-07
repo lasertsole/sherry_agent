@@ -59,18 +59,22 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 User message → Robyn WS → agent.core.built_agent() graph
   │
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
-  │    system_prompt_injection (@dynamic_prompt) → ProjectDirNotice → ToolSelection → MultimodalProcessor → IterationBudget
+  │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
-  │    (ProjectDirNotice is a before_agent node: once per turn it compares the
-  │     session's effective root with PROJECT_DIR_ANNOUNCED (the root the agent
-  │     was last told about) and, when they differ, splices ONE notice AIMessage
-  │     immediately before the turn's HumanMessage — several switches coalesce
-  │     into the final root, switching back sends none, the first turn baselines
-  │     silently; the human message keeps its LAST place for TaskIntent and
-  │     ContextEviction. It replaced the old switch-time aupdate_state
-  │     announcement, which fired per switch and as a HumanMessage)
+  │    (WorkspaceNotice is a before_agent node: once per turn it compares the
+  │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
+  │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about
+  │     — and, when either differs, splices ONE HumanMessage notice per change
+  │     immediately before the turn's HumanMessage. Several switches coalesce
+  │     into the final state, switching back sends none, the first turn baselines
+  │     both silently; the notices are HumanMessages tagged origin/internal/
+  │     provenance (the chat renders them as neutral cards, and
+  │     pub.func.message.workspace_notice.is_workspace_notice lets the human-
+  │     message scanners skip them), and the human message keeps its LAST place
+  │     for TaskIntent and ContextEviction. It replaced the old switch-time
+  │     aupdate_state announcement, which fired per switch)
   │    (MessagePersistence flushes tool results the moment they return via
   │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
   │     is also the first after_model hook — new human/ai/tool messages reach
@@ -156,18 +160,31 @@ running is PARKED (`PROJECT_DIR_PENDING`) and promoted by
 the thinking/model controls use, including the HITL deferral.
 
 The agent is told about a change **at send time**, not at switch time:
-`ProjectDirNoticeMiddleware` (`agent/middlewares/project_dir_notice/`) compares
-the effective root against `StateKey.PROJECT_DIR_ANNOUNCED` — the root the agent
-was last told about — and splices ONE notice `AIMessage` immediately before the
-turn's HumanMessage when they differ. Any number of switches between two
-messages coalesce into the single notice naming the FINAL root, a switch back to
-the announced root sends nothing, and the first turn of a session only records
-the baseline (silently). The value is mirrored durably and re-warmed by
-`prime_mem_from_store()`, so a restart cannot lose it. The notice carries
-`metadata={"origin": "project_dir", "internal": True}`: the message store keeps
-that origin on the AI row (`_row_origin` in `context_engine/store/core.py`), and
-the chat renders a non-`user` origin as a neutral system card (label 项目目录切换 /
-Working directory) instead of an assistant bubble.
+`WorkspaceNoticeMiddleware` (`agent/middlewares/workspace_notice/`) runs one
+comparison per turn over two facts — the effective root against
+`StateKey.PROJECT_DIR_ANNOUNCED`, and that root's git branch + HEAD against
+`StateKey.GIT_HEAD_ANNOUNCED` (`<branch>@<short-hash>`, one bounded
+`git rev-parse`; a non-repository root reads as "nothing to announce") — and
+splices ONE notice immediately before the turn's HumanMessage per fact that
+differs. Any number of switches between two messages coalesce into the single
+notice naming the FINAL state, a switch back to the announced state sends
+nothing, and the first turn of a session only records the baselines (silently).
+Both values are mirrored durably and re-warmed at boot
+(`prime_mem_from_store()` / `prime_git_head_from_store()`), so a restart cannot
+lose them. A directory switch re-bases the git token in the same turn and words
+its notice as "the working directory moved to X, whose repository is on Y"
+(the old token belonged to another repository). The notices are
+**HumanMessages** — the injected-carrier role — carrying
+`metadata={"origin": "project_dir"|"git_head", "internal": True,
+"provenance": "workspace_notice"}`: the message store keeps that origin on the
+row (both row builders), and the chat renders a non-`user` origin as a neutral
+system card (labels 项目目录切换 / 分支切换, folder and branch glyphs) instead of a
+user bubble. Because they are human rows, the scanners that walk human messages
+skip them through `pub.func.message.workspace_notice.is_workspace_notice`:
+`split_into_turns` (a notice is not a turn boundary), HITL's
+`_is_headless_turn` (a trailing notice does not make a turn operator-less), and
+the summarizer / memory-flush serializers (labelled `[System notice]` /
+`system`, never `[User]`).
 
 The read rule that keeps this working: **resolve the root per call, never at
 construction time.** Tool objects are process-level singletons
@@ -228,7 +245,16 @@ from the commit's own blobs (`<parent>:<old_path>` / `<hash>:<path>`) and are al
 by `difflib` opcodes, so a change reads as remove-left / add-right (red / green
 tints), an added or deleted file is a SINGLE column, a rename follows its old path,
 and a binary or oversized blob (2 MB / 4000-row caps) is flagged instead of decoded.
-A path that is not part of the commit is a 404, never an empty diff.
+A path that is not part of the commit is a 404, never an empty diff. The header's
+branch label is also the **branch switcher** (VS Code's graph has the same
+dropdown): clicking it lists the page's `branches` — local refs, most recently
+committed first, clipped by `GIT_GRAPH["max_branches"]` — with the current one
+ticked and inert; picking another checks it out (`POST /git/checkout`, no
+confirmation, matching the ref-chip menu, and git itself refuses a checkout that
+would clobber local changes). A switch made here (or in a terminal, or a
+commit/reset outside the session) reaches the AGENT as the git notice described
+under Project Directory Binding: the next turn's transcript gets one
+`git_head` card before the human message.
 
 Choosing a directory is one action with two runtimes: the desktop build (Tauri)
 opens the OS folder dialog (`app/utils/project-directory.ts` →
@@ -307,7 +333,7 @@ the model/thinking controls)::
   `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
   every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
-  `ProjectDirNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
+  `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
   build now fails without them (`scaffolding._MAIN_REQUIRED`, 14 entries) and the service
   rejects a payload naming one. Together with `system_prompt_injection`,
   `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain

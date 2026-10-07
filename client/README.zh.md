@@ -140,7 +140,7 @@ client/
 │   │           ├── SessionSidebar.vue         # 会话列表侧边栏（新建/重命名/过滤会话）
 │   │           ├── HistoryItem.vue            # 侧边栏历史会话条目
 │   │           ├── ProjectFileTree.vue        # 左侧栏的项目文件树（只读，GET /project/tree，逐层懒加载）
-│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；行右键可回退 / 切换，点击行展开该提交的文件清单）
+│   │           ├── GitGraphPanel.vue          # 左侧栏的 Git Graph（GET /git/graph，提交泳道用 SVG 绘制；标题栏分支名可切换分支，行右键可回退 / 切换，点击行展开该提交的文件清单）
 │   │           ├── GitDiffPanel.vue          # 右栏的提交差异（左右两栏，红=删除 / 绿=新增；新增或删除的文件只有一栏）
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）

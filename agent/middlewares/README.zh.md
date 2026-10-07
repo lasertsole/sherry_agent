@@ -17,7 +17,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 - [中间件链](#中间件链)
 - [中间件参考](#中间件参考)
   - [system_prompt_injection](#system_prompt_injection)
-  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
   - [ToolSelectionMiddleware](#toolselectionmiddleware)
   - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
@@ -94,7 +94,7 @@ middleware = [
     system_prompt_injection,  # @dynamic_prompt：系统提示词注入
     # 工作目录变更通知：每轮开始时若项目目录与上次告知 Agent 的根不同，
     # 就在 HumanMessage 之前插入一条 AIMessage（只发一条，写最终根）
-    ProjectDirNoticeMiddleware(),
+    WorkspaceNoticeMiddleware(),
     ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
@@ -158,7 +158,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
-- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`TodoContinuationEnforcer`、`ProjectDirNoticeMiddleware`。
+- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`TodoContinuationEnforcer`、`WorkspaceNoticeMiddleware`。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
@@ -203,23 +203,25 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 本文档的旧版本声称存在知识图谱维护（`after_turn`）和 `MemoryCache`。**当前代码中两者都不存在。** 系统提示词来自状态寄存器与 `build_system_prompt()`；中间件层没有任何知识图谱调用。
 
-### ProjectDirNoticeMiddleware
+### WorkspaceNoticeMiddleware
 
-**模块：** `agent/middlewares/project_dir_notice/core.py` · **类：** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**模块：** `agent/middlewares/workspace_notice/core.py` · **类：** `WorkspaceNoticeMiddleware(AgentMiddleware)`
 **钩子：** `before_agent` / `abefore_agent` —— `before_agent` 节点每轮只运行一次，且在任何 `before_model` 钩子之前
 
-注册在 `system_prompt_injection` 之后：提示词渲染的是**当前**工作目录，这一层负责告诉 Agent 目录变过。没有它时，切换项目目录之后到达的请求仍会按旧目录作答——对话历史里没有任何变更记录。
+注册在 `system_prompt_injection` 之后：提示词渲染的是**当前**工作目录，这一层负责告诉 Agent 目录变过——或者它所在的 git 分支/HEAD 变过。没有它时，切换项目目录之后到达的请求仍会按旧目录作答，切换分支之后到达的请求会去改一个已经不在工作区里的版本。
 
 1. 读取生效根（`runtime.session.project_dir.current_project_dir`——会话绑定，否则进程默认值），与 `StateKey.PROJECT_DIR_ANNOUNCED`（上次告知 Agent 的根）比较。
-2. 会话第一轮（无基线）：静默记录当前根——没有发生过的变更无需通知。
-3. 根相同：什么都不做。
-4. 根不同：构造**一条**通知 `AIMessage`，紧插在本轮 `HumanMessage` **之前**，然后推进基线。该更新是整表重写（`RemoveMessage(REMOVE_ALL_MESSAGES)` + 重写后的列表），因为 `messages` reducer 只会追加。解除绑定走「未绑定项目目录」文案而非普通切换文案，让 Agent 在动文件之前先问用户要在哪个项目里工作。
+2. 读取该根的 git 分支 + HEAD（`runtime.session.git_head.read_git_head`，一次有界的 `git rev-parse`，`<branch>@<short-hash>`），与 `StateKey.GIT_HEAD_ANNOUNCED` 比较。`None`（不是仓库、没有 git 可执行文件、读取失败）表示无需通知、也不推进基线。
+3. 会话第一轮（无基线）：静默记录——没有发生过的变更无需通知。
+4. 某一类不同：构造**一条**通知 `HumanMessage`，紧插在本轮 `HumanMessage` **之前**，然后推进该类基线。目录切换会在同一轮内重置 git 令牌，并把通知写成「工作目录已移到 X，其仓库位于 Y」——旧令牌来自另一个仓库。解除绑定走「未绑定项目目录」文案而非普通切换文案，让 Agent 在动文件之前先问用户要在哪个项目里工作。该更新是整表重写（`RemoveMessage(REMOVE_ALL_MESSAGES)` + 重写后的列表），因为 `messages` reducer 只会追加。
 
-合并是结构性的——只有发送时刻的比较有意义：两条消息之间切换任意多次只产生一条通知且只写最终根；切回原根不产生通知；基线仅在本轮真正开始时才推进。该值双写两个状态寄存器（`record_announced_project_dir`），并由 `prime_mem_from_store()` 在启动时回填，因此重启不会把 Agent 仍需知晓的变更静默重新基线化。
+合并是结构性的——只有发送时刻的比较有意义：两条消息之间切换任意多次、每类只产生一条通知且只写最终状态；切回原状态不产生通知；基线仅在本轮真正开始时才推进。两个值都双写两个状态寄存器（`record_announced_project_dir` / `record_announced_git_head`），并由 `prime_mem_from_store()` / `prime_git_head_from_store()` 在启动时回填，因此重启不会把 Agent 仍需知晓的变更静默重新基线化。
 
-该通知携带 `metadata={"origin": "project_dir", "internal": True}`，落库时该 origin 保留在 AI 行上，客户端因此把它渲染为中性系统卡片（标签**项目目录切换**、文件夹图标）而不是助手气泡——`client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` 现在对 AI 行与 USER 行一视同仁：非 `user` 的 origin 都按载体处理。
+通知是 `HumanMessage`（注入载体所用的角色），携带 `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}`（分支通知的 origin 是 `git_head`）。落库时该 origin 保留在人类行上，客户端因此把它渲染为中性系统卡片（标签**项目目录切换** / **Git 分支切换**、文件夹与分支图标）而不是用户气泡——`client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` 对 USER 行与 AI 行一视同仁：非 `user` 的 origin 都按载体处理（AI 行是旧形态，即通知还是 `AIMessage` 时写入的行）。
 
-`HumanMessage` 始终保持在**最后**：`TaskIntentMiddleware` 只在最后一条人类消息确实位于末尾时注入引导，`ContextEvictionMiddleware` 需要给末尾人类消息打标记。没有人类消息的历史（恢复轮 / 载体轮）改为追加通知。失败开放：任何异常只记日志，钩子返回 `None`。
+通知在角色上是人类消息、但并不是用户写的，因此所有遍历人类消息的扫描器都通过 `pub.func.message.workspace_notice.is_workspace_notice` 跳过它：`split_into_turns`（通知不算一轮边界，压缩的轮次预算不受影响）、HITL 的 `_is_headless_turn`（末尾的通知不会让一轮变成无人值守）以及摘要 / 内存快照的序列化（标为 `[System notice]` / `system`，绝不会标成 `[User]`）。
+
+真正的人类消息始终保持在**最后**：`TaskIntentMiddleware` 只在最后一条人类消息确实位于末尾时注入引导，`ContextEvictionMiddleware` 需要给末尾人类消息打标记。没有人类消息的历史（恢复轮 / 载体轮）改为追加通知。失败开放：任何异常只记日志，钩子返回 `None`。
 
 ### ToolSelectionMiddleware
 
@@ -245,7 +247,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `TaskIntentMiddleware` | 不再注入任务意图引导 |
 | `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话 |
 
-其余全部锁定（前端只读展示）：**14** 个 `_MAIN_REQUIRED` 安全项——原 12 项加上 `ProjectDirNoticeMiddleware`（提示词渲染的是当前根，没有这条通知 agent 会继续按旧目录作答）与 `MultimodalProcessor`（缺它即丢附件）——外加 `system_prompt_injection`（关掉即无系统提示词）、`ThinkingControlMiddleware`（它就是模型/思考开关）与 `ToolSelectionMiddleware`（它负责应用工具选择）。历史载荷里若点名了必需项会被忽略：`middleware_enabled()` 对必需项一律返回 `True`。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
+其余全部锁定（前端只读展示）：**14** 个 `_MAIN_REQUIRED` 安全项——原 12 项加上 `WorkspaceNoticeMiddleware`（提示词渲染的是当前根，没有这条通知 agent 会继续按旧目录作答）与 `MultimodalProcessor`（缺它即丢附件）——外加 `system_prompt_injection`（关掉即无系统提示词）、`ThinkingControlMiddleware`（它就是模型/思考开关）与 `ToolSelectionMiddleware`（它负责应用工具选择）。历史载荷里若点名了必需项会被忽略：`middleware_enabled()` 对必需项一律返回 `True`。链的成员与顺序永不变——`scaffolding` 与顺序契约测试仍然钉死——被门控的只是行为，名字以类名为键登记在 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`。
 
 ### MultimodalProcessor
 

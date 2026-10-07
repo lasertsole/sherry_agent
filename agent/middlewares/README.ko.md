@@ -17,7 +17,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 - [미들웨어 체인](#미들웨어-체인)
 - [미들웨어 레퍼런스](#미들웨어-레퍼런스)
   - [system_prompt_injection](#system_prompt_injection)
-  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
   - [ToolSelectionMiddleware](#toolselectionmiddleware)
   - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
@@ -94,7 +94,7 @@ middleware = [
     system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
     # 작업 디렉터리 변경 알림: 턴 시작 시 프로젝트 디렉터리가 마지막으로 알린
     # 루트와 다르면 HumanMessage 바로 앞에 AIMessage 하나를 삽입한다
-    ProjectDirNoticeMiddleware(),
+    WorkspaceNoticeMiddleware(),
     ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
@@ -159,7 +159,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 요약 트리거가 토큰 전용이 아니라 메시지 수(40) **또는** 토큰 수(컨텍스트 윈도우의 80%).
 - 더 타이트한 반복 예산(90 대신 60).
-- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `ProjectDirNoticeMiddleware`, `TodoContinuationEnforcer`도 없음.
+- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `WorkspaceNoticeMiddleware`, `TodoContinuationEnforcer`도 없음.
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
 - `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
@@ -204,23 +204,25 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 이 문서의 이전 버전은 지식 그래프 유지관리(`after_turn`)와 `MemoryCache`를 언급했습니다. **현재 코드에는 둘 다 존재하지 않습니다.** 시스템 프롬프트는 상태 레지스터와 `build_system_prompt()`에서 공급되며, 미들웨어 계층 어디에도 지식 그래프 호출은 없습니다.
 
-### ProjectDirNoticeMiddleware
+### WorkspaceNoticeMiddleware
 
-**모듈:** `agent/middlewares/project_dir_notice/core.py` · **클래스:** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**모듈:** `agent/middlewares/workspace_notice/core.py` · **클래스:** `WorkspaceNoticeMiddleware(AgentMiddleware)`
 **훅:** `before_agent` / `abefore_agent` — `before_agent` 노드는 턴마다 한 번, 모든 `before_model` 훅보다 먼저 실행된다
 
-`system_prompt_injection` 바로 뒤에 등록된다. 프롬프트는 **현재** 작업 디렉터리를 렌더링하고, 이 계층이 디렉터리가 이동했음을 에이전트에게 알린다. 이것이 없으면 프로젝트 디렉터리를 바꾼 뒤 도착한 요청이 옛 트리를 기준으로 처리되었다 — 대화 기록에 변경 기록이 남지 않기 때문이다.
+`system_prompt_injection` 바로 뒤에 등록된다. 프롬프트는 **현재** 작업 디렉터리를 렌더링하고, 이 계층이 디렉터리가 이동했거나 그 위에서 체크아웃된 git 브랜치/HEAD가 바뀌었음을 에이전트에게 알린다. 이것이 없으면 프로젝트 디렉터리를 바꾼 뒤 도착한 요청이 옛 트리를 기준으로 처리되고, 브랜치를 바꾼 뒤 도착한 요청은 더 이상 작업 트리에 없는 리비전의 파일을 편집하게 된다.
 
 1. 유효 루트(`runtime.session.project_dir.current_project_dir` — 세션 바인딩, 없으면 프로세스 기본값)를 읽고 `StateKey.PROJECT_DIR_ANNOUNCED`(에이전트에게 마지막으로 알린 루트)와 비교한다.
-2. 세션의 첫 턴(기준선 없음): 루트를 조용히 기록한다 — 일어나지 않은 변경에는 알림이 필요 없다.
-3. 루트가 같으면: 아무것도 하지 않는다.
-4. 루트가 다르면: 알림 `AIMessage` **하나**를 만들어 그 턴의 `HumanMessage` **바로 앞**에 삽입하고 기준선을 갱신한다. `messages` 리듀서는 추가만 하므로 갱신은 목록 전체 재작성(`RemoveMessage(REMOVE_ALL_MESSAGES)` + 재작성된 목록)이다. 바인딩 해제는 일반 전환이 아니라 "프로젝트 디렉터리 미바인딩" 문구를 사용해, 파일을 건드리기 전에 어느 프로젝트에서 작업할지 사용자에게 묻게 한다.
+2. 그 루트의 git 브랜치 + HEAD(`runtime.session.git_head.read_git_head`, 경계가 있는 `git rev-parse` 한 번, `<branch>@<short-hash>`)를 읽고 `StateKey.GIT_HEAD_ANNOUNCED`와 비교한다. `None`(저장소가 아님, git 실행 파일 없음, 읽기 실패)은 알릴 것이 없고 기준선도 진행하지 않음을 뜻한다.
+3. 세션의 첫 턴(기준선 없음): 각각을 조용히 기록한다 — 일어나지 않은 변경에는 알림이 필요 없다.
+4. 종류별로 다르면: 알림 `HumanMessage` **하나**를 만들어 그 턴의 `HumanMessage` **바로 앞**에 삽입하고 그 기준선을 갱신한다. 디렉터리 전환은 같은 턴에서 git 토큰도 재기준화하며, 알림 문구는 "작업 디렉터리가 X로 이동했고 그 저장소는 Y에 있다"가 된다 — 옛 토큰은 다른 저장소의 것이기 때문이다. 바인딩 해제는 일반 전환이 아니라 "프로젝트 디렉터리 미바인딩" 문구를 사용해, 파일을 건드리기 전에 어느 프로젝트에서 작업할지 사용자에게 묻게 한다. `messages` 리듀서는 추가만 하므로 갱신은 목록 전체 재작성(`RemoveMessage(REMOVE_ALL_MESSAGES)` + 재작성된 목록)이다.
 
-병합은 구조적으로 보장된다 — 의미 있는 것은 전송 시점의 비교뿐이다: 두 메시지 사이에 몇 번을 바꾸든 알림은 하나이고 최종 루트를 가리키며, 원래 루트로 돌아오면 알림이 없고, 기준선은 턴이 실제로 시작될 때만 전진한다. 값은 두 상태 레지스터에 모두 기록되고(`record_announced_project_dir`) `prime_mem_from_store()`가 시작 시 다시 워밍하므로, 재시작으로 인해 에이전트가 알아야 할 변경이 조용히 재기준화되지 않는다.
+병합은 구조적으로 보장된다 — 의미 있는 것은 전송 시점의 비교뿐이다: 두 메시지 사이에 몇 번을 바꾸든 종류별로 알림은 하나이고 최종 상태를 가리키며, 원래 상태로 돌아오면 알림이 없고, 기준선은 턴이 실제로 시작될 때만 전진한다. 두 값 모두 두 상태 레지스터에 기록되고(`record_announced_project_dir` / `record_announced_git_head`) `prime_mem_from_store()` / `prime_git_head_from_store()`가 시작 시 다시 워밍하므로, 재시작으로 인해 에이전트가 알아야 할 변경이 조용히 재기준화되지 않는다.
 
-알림은 `metadata={"origin": "project_dir", "internal": True}`를 가지며, 영속화 계층이 그 origin을 AI 행에 유지하므로 채팅은 어시스턴트 말풍선이 아니라 중립 시스템 카드(라벨 **작업 디렉터리**, 폴더 글리프)로 렌더링합니다 — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask`는 USER 행과 마찬가지로 AI 행의 비 `user` origin도 캐리어로 취급합니다.
+알림은 주입 캐리어의 역할인 `HumanMessage`이며 `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}`를 가진다(브랜치 알림의 origin은 `git_head`). 영속화 계층이 그 origin을 인간 행에 유지하므로 채팅은 사용자 말풍선이 아니라 중립 시스템 카드(라벨 **작업 디렉터리** / **Git 브랜치**, 폴더·브랜치 글리프)로 렌더링한다 — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask`는 비 `user` origin을 USER 행과 AI 행(알림이 아직 `AIMessage`였던 시절의 옛 형태) 모두 캐리어로 취급한다.
 
-`HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
+알림은 역할상 인간 메시지지만 사용자가 쓴 것이 아니므로, 인간 메시지를 순회하는 모든 스캐너가 `pub.func.message.workspace_notice.is_workspace_notice`로 이를 건너뛴다: `split_into_turns`(알림은 턴 경계가 아니므로 압축의 턴 예산에 영향이 없다), HITL의 `_is_headless_turn`(끝의 알림이 턴을 무인으로 만들면 안 된다), 그리고 요약 / 메모리 플러시 직렬화기(`[System notice]` / `system`으로 표시하고 `[User]`로는 절대 표시하지 않는다).
+
+실제 `HumanMessage`는 **마지막** 위치를 유지한다: `TaskIntentMiddleware`는 마지막 인간 메시지가 끝에 있을 때만 유도를 주입하고, `ContextEvictionMiddleware`는 끝의 인간 메시지에 태그를 붙인다. 인간 메시지가 없는 기록(재개 턴 / 캐리어 턴)은 알림을 덧붙인다. 실패 개방: 예외는 로그만 남기고 훅은 `None`을 반환한다.
 
 ### ToolSelectionMiddleware
 
@@ -246,7 +248,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `TaskIntentMiddleware` | 작업 의도 유도 메시지를 주입하지 않음 |
 | `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음 |
 
-나머지는 모두 잠금(UI는 읽기 전용 표시): **14개** `_MAIN_REQUIRED` 안전 항목 — 기존 12개에 `ProjectDirNoticeMiddleware`(프롬프트가 현재 루트를 렌더링하므로 알림이 없으면 옛 트리 기준으로 계속 답한다)와 `MultimodalProcessor`(없으면 첨부가 사라진다) 추가 — 에 더해 `system_prompt_injection`(없으면 지시 없는 턴), `ThinkingControlMiddleware`(그 자체가 모델/사고 제어), `ToolSelectionMiddleware`(도구 선택을 적용하는 쪽). 필수 항목을 지정한 오래된 페이로드는 무시됩니다(`middleware_enabled()`는 필수 항목에 항상 `True`). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
+나머지는 모두 잠금(UI는 읽기 전용 표시): **14개** `_MAIN_REQUIRED` 안전 항목 — 기존 12개에 `WorkspaceNoticeMiddleware`(프롬프트가 현재 루트를 렌더링하므로 알림이 없으면 옛 트리 기준으로 계속 답한다)와 `MultimodalProcessor`(없으면 첨부가 사라진다) 추가 — 에 더해 `system_prompt_injection`(없으면 지시 없는 턴), `ThinkingControlMiddleware`(그 자체가 모델/사고 제어), `ToolSelectionMiddleware`(도구 선택을 적용하는 쪽). 필수 항목을 지정한 오래된 페이로드는 무시됩니다(`middleware_enabled()`는 필수 항목에 항상 `True`). 체인의 구성과 순서는 절대 바뀌지 않고(`scaffolding`과 순서 계약 테스트가 계속 고정), 게이트되는 것은 동작뿐입니다. 이름은 `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`에 클래스 이름으로 등록됩니다.
 
 ### MultimodalProcessor
 

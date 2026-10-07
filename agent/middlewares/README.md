@@ -17,7 +17,7 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
 - [Middleware Chain](#middleware-chain)
 - [Middleware Reference](#middleware-reference)
   - [system_prompt_injection](#system_prompt_injection)
-  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
   - [ToolSelectionMiddleware](#toolselectionmiddleware)
   - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
@@ -95,7 +95,7 @@ middleware = [
     # working-directory change notice: at each turn start, splice an AIMessage
     # in front of the human message when the project directory moved since the
     # agent was last told (one notice, naming the final root)
-    ProjectDirNoticeMiddleware(),
+    WorkspaceNoticeMiddleware(),
     ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
@@ -160,7 +160,7 @@ Differences vs the main agent:
 
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
-- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `TodoContinuationEnforcer`, no `ProjectDirNoticeMiddleware`.
+- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `TodoContinuationEnforcer`, no `WorkspaceNoticeMiddleware`.
 - No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
 - No `ContextEvictionMiddleware`: child transcripts keep their full tool results (no eviction files, no read_file slice) and oversized human messages are never tagged/truncated.
 - `OutputRepetitionGuard` runs as a real middleware here.
@@ -205,23 +205,25 @@ Second in the list, right after `TodoContinuationEnforcer` (which implements no 
 
 > The previous version of this document claimed knowledge-graph maintenance (`after_turn`) and a `MemoryCache`. **Neither exists in the current code.** System prompts come from the state registers and `build_system_prompt()`; there is no knowledge-graph call anywhere in the middleware layer.
 
-### ProjectDirNoticeMiddleware
+### WorkspaceNoticeMiddleware
 
-**Module:** `agent/middlewares/project_dir_notice/core.py` · **Class:** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**Module:** `agent/middlewares/workspace_notice/core.py` · **Class:** `WorkspaceNoticeMiddleware(AgentMiddleware)`
 **Hooks:** `before_agent` / `abefore_agent` — a `before_agent` node runs once per turn, BEFORE any `before_model` hook
 
-Registered right after `system_prompt_injection`: the prompt renders the CURRENT working directory, and this layer tells the agent that it moved. Without it, a request arriving after a project-directory switch was answered against the old tree — the transcript carried no record of the change.
+Registered right after `system_prompt_injection`: the prompt renders the CURRENT working directory, and this layer tells the agent when it — or the git branch/HEAD it sits on — moved. Without it, a request arriving after a project-directory switch was answered against the old tree, and a request arriving after a branch switch edited files from a revision that is no longer checked out.
 
 1. Read the effective root (`runtime.session.project_dir.current_project_dir` — the session binding, else the process default) and compare it with `StateKey.PROJECT_DIR_ANNOUNCED`, the root the agent was last told about.
-2. First turn of a session (no baseline): record the root silently — a change that never happened needs no notice.
-3. Same root: nothing to do.
-4. Different root: build ONE notice `AIMessage` and splice it immediately BEFORE the turn's `HumanMessage`, then advance the baseline. The update is a whole-list rewrite (`RemoveMessage(REMOVE_ALL_MESSAGES)` + the rewritten list), because the `messages` reducer only appends. Unbinding gets the "no project directory bound" wording instead of a plain switch, so the agent asks which project to work in before touching files.
+2. Read that root's git branch + HEAD (`runtime.session.git_head.read_git_head`, one bounded `git rev-parse`, `<branch>@<short-hash>`) and compare it with `StateKey.GIT_HEAD_ANNOUNCED`. `None` (not a repository, no git binary, a failed read) means nothing to announce and no baseline to advance.
+3. First turn of a session (no baseline): record each silently — a change that never happened needs no notice.
+4. A kind that differs: build ONE notice `HumanMessage` and splice it immediately BEFORE the turn's `HumanMessage`, then advance that baseline. A directory switch re-bases the git token in the same turn and words its notice as "the working directory moved to X, whose repository is on Y" — the old token belonged to a different repository. Unbinding gets the "no project directory bound" wording instead of a plain switch, so the agent asks which project to work in before touching files. The update is a whole-list rewrite (`RemoveMessage(REMOVE_ALL_MESSAGES)` + the rewritten list), because the `messages` reducer only appends.
 
-Coalescing is by construction — only the comparison at send time matters: any number of switches between two messages produce a single notice naming the FINAL root, a switch that ends where it started produces none, and the baseline advances only when a turn actually starts. The value is written to both state registers (`record_announced_project_dir`) and `prime_mem_from_store()` re-warms it at startup, so a restart cannot silently re-baseline a change the agent still needs to hear about.
+Coalescing is by construction — only the comparison at send time matters: any number of switches between two messages produce a single notice per kind naming the FINAL state, a switch that ends where it started produces none, and a baseline advances only when a turn actually starts. Both values are written to both state registers (`record_announced_project_dir` / `record_announced_git_head`) and `prime_mem_from_store()` / `prime_git_head_from_store()` re-warm them at startup, so a restart cannot silently re-baseline a change the agent still needs to hear about.
 
-The notice carries `metadata={"origin": "project_dir", "internal": True}` and the persistence layer keeps that origin on the AI row, so the chat renders it as a neutral system card (label **Working directory**, folder glyph) instead of an assistant bubble — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` treats a non-`user` origin as a carrier on AI rows as well as USER rows.
+The notices are `HumanMessage`s — the injected-carrier role — carrying `metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}` (with `git_head` as the origin for the branch notice). The persistence layer keeps that origin on the human row, so the chat renders it as a neutral system card (labels **Working directory** / **Git branch**, folder and branch glyphs) instead of a user bubble — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` treats a non-`user` origin as a carrier on USER rows as well as AI rows (the legacy shape, written while the notice was an `AIMessage`).
 
-The `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notice instead. Fail-open: any error is logged and the hook returns `None`.
+Because a notice is a human message by role but was never written by the user, every scanner that walks human messages skips it through `pub.func.message.workspace_notice.is_workspace_notice`: `split_into_turns` (a notice is not a turn boundary, so compression's turn budget is unaffected), HITL's `_is_headless_turn` (a trailing notice must not make a turn operator-less) and the summarizer / memory-flush serializers (labelled `[System notice]` / `system`, never `[User]`).
+
+The real `HumanMessage` keeps its place LAST: `TaskIntentMiddleware` steers only when the last human message is final, and `ContextEvictionMiddleware` tags the trailing human message. A transcript without a human message (a resumed or carrier turn) appends the notices instead. Fail-open: any error is logged and the hook returns `None`.
 
 ### ToolSelectionMiddleware
 
@@ -247,7 +249,7 @@ Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. F
 | `TaskIntentMiddleware` | no task-intent steering message |
 | `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected |
 
-Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_REQUIRED` safety entries — the original twelve plus `ProjectDirNoticeMiddleware` (the prompt renders the current root, so without the notice the agent keeps answering from the old tree) and `MultimodalProcessor` (a turn without it loses the attachments) — plus `system_prompt_injection` (a turn without it has no instructions), `ThinkingControlMiddleware` (it IS the model/thinking control) and `ToolSelectionMiddleware` (it applies the tool selection). A stale payload naming a required entry is ignored: `middleware_enabled()` answers `True` for it. Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
+Everything else is LOCKED (the UI shows it read-only): the **fourteen** `_MAIN_REQUIRED` safety entries — the original twelve plus `WorkspaceNoticeMiddleware` (the prompt renders the current root, so without the notice the agent keeps answering from the old tree) and `MultimodalProcessor` (a turn without it loses the attachments) — plus `system_prompt_injection` (a turn without it has no instructions), `ThinkingControlMiddleware` (it IS the model/thinking control) and `ToolSelectionMiddleware` (it applies the tool selection). A stale payload naming a required entry is ignored: `middleware_enabled()` answers `True` for it. Chain membership and order never change — `scaffolding` and the order-contract test still pin them — only behaviour is gated, keyed by the class name in `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`.
 
 ### MultimodalProcessor
 

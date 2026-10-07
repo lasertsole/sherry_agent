@@ -140,7 +140,7 @@ client/
 │   │           ├── SessionSidebar.vue         # セッションリストサイドバー（作成/リネーム/フィルタ）
 │   │           ├── HistoryItem.vue            # サイドバーの履歴セッション項目
 │   │           ├── ProjectFileTree.vue        # 左サイドバーのプロジェクトファイルツリー（読み取り専用、GET /project/tree、階層ごとに遅延読み込み）
-│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。行メニューでリセット / チェックアウト、行クリックでコミットのファイル一覧を展開）
+│   │           ├── GitGraphPanel.vue          # 左サイドバーの Git Graph（GET /git/graph、コミットレーンを SVG で描画。ヘッダーのブランチ名でブランチ切替、行メニューでリセット / チェックアウト、行クリックでコミットのファイル一覧を展開）
 │   │           ├── GitDiffPanel.vue          # 右サイドバーのコミット差分（左右 2 カラム、赤=削除 / 緑=追加。追加・削除されたファイルは 1 カラム）
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）

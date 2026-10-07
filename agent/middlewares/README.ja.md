@@ -17,7 +17,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 - [ミドルウェアチェーン](#ミドルウェアチェーン)
 - [ミドルウェアリファレンス](#ミドルウェアリファレンス)
   - [system_prompt_injection](#system_prompt_injection)
-  - [ProjectDirNoticeMiddleware](#projectdirnoticemiddleware)
+  - [WorkspaceNoticeMiddleware](#workspacenoticemiddleware)
   - [ToolSelectionMiddleware](#toolselectionmiddleware)
   - [The per-session middleware switches](#the-per-session-middleware-switches)
   - [MultimodalProcessor](#multimodalprocessor)
@@ -95,7 +95,7 @@ middleware = [
     # 作業ディレクトリ変更通知: ターン開始時に、プロジェクト ディレクトリが前回
     # 伝えたルートから動いていれば HumanMessage の直前に AIMessage を挿入する
     # （通知は 1 つだけ、最終ルートを記載）
-    ProjectDirNoticeMiddleware(),
+    WorkspaceNoticeMiddleware(),
     ToolSelectionMiddleware(),
     MultimodalProcessor(),
     IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
@@ -160,7 +160,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 要約トリガーはトークンのみではなく、メッセージ数（40）**または**トークン数（コンテキストウィンドウの 80 %）。
 - より厳しい反復予算（90 ではなく 60）。
-- `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`ProjectDirNoticeMiddleware`、`TodoContinuationEnforcer` もなし。
+- `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`WorkspaceNoticeMiddleware`、`TodoContinuationEnforcer` もなし。
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
 - `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
@@ -205,23 +205,25 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 > 本ドキュメントの旧版はナレッジグラフ保守（`after_turn`）と `MemoryCache` を主張していました。**現在のコードにはどちらも存在しません。** システムプロンプトは状態レジスタと `build_system_prompt()` から供給され、ミドルウェア層のどこにもナレッジグラフ呼び出しはありません。
 
-### ProjectDirNoticeMiddleware
+### WorkspaceNoticeMiddleware
 
-**モジュール:** `agent/middlewares/project_dir_notice/core.py` · **クラス:** `ProjectDirNoticeMiddleware(AgentMiddleware)`
+**モジュール:** `agent/middlewares/workspace_notice/core.py` · **クラス:** `WorkspaceNoticeMiddleware(AgentMiddleware)`
 **フック:** `before_agent` / `abefore_agent` — `before_agent` ノードはターンごとに 1 回、すべての `before_model` フックより前に実行される
 
-`system_prompt_injection` の直後に登録される。プロンプトは**現在**の作業ディレクトリを描画し、この層が「移動した」ことをエージェントに伝える。これがないと、プロジェクト ディレクトリを切り替えた後に届いたリクエストは古いツリーに対して回答されていた — 会話履歴に変更の記録が残らないため。
+`system_prompt_injection` の直後に登録される。プロンプトは**現在**の作業ディレクトリを描画し、この層が「ディレクトリが移動した」こと、または「その上でチェックアウトされている git ブランチ/HEAD が変わった」ことをエージェントに伝える。これがないと、プロジェクト ディレクトリを切り替えた後に届いたリクエストは古いツリーに対して回答され、ブランチを切り替えた後に届いたリクエストはもう作業ツリーに無いリビジョンのファイルを編集してしまう。
 
 1. 有効ルート（`runtime.session.project_dir.current_project_dir` — セッション バインド、なければプロセス既定値）を読み、`StateKey.PROJECT_DIR_ANNOUNCED`（前回エージェントに伝えたルート）と比較する。
-2. セッションの初回ターン（ベースラインなし）: ルートを黙って記録する — 起きていない変更に通知は不要。
-3. ルートが同じ: 何もしない。
-4. ルートが違う: **1 つ**の通知 `AIMessage` を作り、そのターンの `HumanMessage` の**直前**に挿入してベースラインを進める。`messages` リデューサは追記のみなので、更新はリスト全体の書き換え（`RemoveMessage(REMOVE_ALL_MESSAGES)` + 書き換え後のリスト）になる。バインド解除は通常の切り替えではなく「プロジェクト ディレクトリ未バインド」の文言を使い、ファイルに触る前にどのプロジェクトで作業するかをユーザーに尋ねさせる。
+2. そのルートの git ブランチ + HEAD（`runtime.session.git_head.read_git_head`、境界付きの `git rev-parse` 1 回、`<branch>@<short-hash>`）を読み、`StateKey.GIT_HEAD_ANNOUNCED` と比較する。`None`（リポジトリでない、git 実行ファイルがない、読み取り失敗）は通知なし・ベースラインも進めないを意味する。
+3. セッションの初回ターン（ベースラインなし）: それぞれ黙って記録する — 起きていない変更に通知は不要。
+4. 種類ごとに違う: **1 つ**の通知 `HumanMessage` を作り、そのターンの `HumanMessage` の**直前**に挿入してそのベースラインを進める。ディレクトリ切り替えは同じターンで git トークンも再ベースライン化し、通知は「作業ディレクトリが X に移動し、そのリポジトリは Y にある」という文言になる — 古いトークンは別のリポジトリのものだから。バインド解除は通常の切り替えではなく「プロジェクト ディレクトリ未バインド」の文言を使い、ファイルに触る前にどのプロジェクトで作業するかをユーザーに尋ねさせる。`messages` リデューサは追記のみなので、更新はリスト全体の書き換え（`RemoveMessage(REMOVE_ALL_MESSAGES)` + 書き換え後のリスト）になる。
 
-合流は構造的に成立する — 意味を持つのは送信時点の比較だけ: 2 つのメッセージ間で何度切り替えても通知は 1 つだけで最終ルートを指し、元のルートに戻した場合は通知が出ず、ベースラインはターンが実際に始まったときにだけ進む。値は両方の状態レジスタに書き込まれ（`record_announced_project_dir`）、`prime_mem_from_store()` が起動時に再ウォームするため、再起動でエージェントが知るべき変更が黙って再ベースライン化されることはない。
+合流は構造的に成立する — 意味を持つのは送信時点の比較だけ: 2 つのメッセージ間で何度切り替えても種類ごとに通知は 1 つだけで最終状態を指し、元の状態に戻した場合は通知が出ず、ベースラインはターンが実際に始まったときにだけ進む。両方の値は両方の状態レジスタに書き込まれ（`record_announced_project_dir` / `record_announced_git_head`）、`prime_mem_from_store()` / `prime_git_head_from_store()` が起動時に再ウォームするため、再起動でエージェントが知るべき変更が黙って再ベースライン化されることはない。
 
-通知は `metadata={"origin": "project_dir", "internal": True}` を伴い、永続化層はその origin を AI 行に保持するため、チャットはアシスタントの吹き出しではなく中立のシステム カード（ラベル **作業ディレクトリ**、フォルダー アイコン）として描画します — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` は USER 行と同様に AI 行の非 `user` origin もキャリアとして扱います。
+通知は注入キャリアの役割である `HumanMessage` で、`metadata={"origin": "project_dir", "internal": True, "provenance": "workspace_notice"}` を伴う（ブランチ通知の origin は `git_head`）。永続化層はその origin を人間行に保持するため、チャットはユーザーの吹き出しではなく中立のシステム カード（ラベル **作業ディレクトリ** / **Git ブランチ**、フォルダーとブランチのアイコン）として描画する — `client/app/composables/use-chat-turn-groups.ts::isBackgroundTask` は非 `user` origin を USER 行でも AI 行でも（AI 行は通知がまだ `AIMessage` だった旧形態）キャリアとして扱う。
 
-`HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
+通知は役割としては人間メッセージだがユーザーが書いたものではないため、人間メッセージを走査するすべてのスキャナーは `pub.func.message.workspace_notice.is_workspace_notice` でこれを飛ばす: `split_into_turns`（通知はターン境界ではないので圧縮のターン予算に影響しない）、HITL の `_is_headless_turn`（末尾の通知でターンが無人になってはいけない）、そして要約 / メモリ フラッシュのシリアライザ（`[System notice]` / `system` とラベル付けし、`[User]` にはしない）。
+
+本来の `HumanMessage` は**最後**の位置を保つ: `TaskIntentMiddleware` は最後の人間メッセージが末尾である場合にのみ誘導を注入し、`ContextEvictionMiddleware` は末尾の人間メッセージにタグを付ける。人間メッセージのない履歴（再開ターン / キャリア ターン）では通知を追記する。フェイル オープン: 例外はログのみで、フックは `None` を返す。
 
 ### ToolSelectionMiddleware
 
@@ -247,7 +249,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `TaskIntentMiddleware` | タスク意図の誘導メッセージを注入しない |
 | `SubagentCompletionDrainMiddleware` | サブエージェントの完了結果を注入しない |
 
-それ以外はすべてロック（UI は読み取り専用で表示）: **14 個**の `_MAIN_REQUIRED` 安全項目 — 従来の 12 個に `ProjectDirNoticeMiddleware`（プロンプトは現在のルートを描画するため、通知が無いと古いツリーのまま回答し続ける）と `MultimodalProcessor`（無いと添付が失われる）を追加 — に加え、`system_prompt_injection`（無ければ指示が無いターン）、`ThinkingControlMiddleware`（それ自体がモデル/思考コントロール）、`ToolSelectionMiddleware`（ツール選択の適用側）。必須項目を名指しした古いペイロードは無視されます（`middleware_enabled()` は必須項目に常に `True` を返します）。チェーンの構成と順序は決して変わらず（`scaffolding` と順序契約テストが引き続き固定）、ゲートされるのは挙動のみ。名前は `agent/middlewares/catalog.py::MIDDLEWARE_ORDER` にクラス名で登録されています。
+それ以外はすべてロック（UI は読み取り専用で表示）: **14 個**の `_MAIN_REQUIRED` 安全項目 — 従来の 12 個に `WorkspaceNoticeMiddleware`（プロンプトは現在のルートを描画するため、通知が無いと古いツリーのまま回答し続ける）と `MultimodalProcessor`（無いと添付が失われる）を追加 — に加え、`system_prompt_injection`（無ければ指示が無いターン）、`ThinkingControlMiddleware`（それ自体がモデル/思考コントロール）、`ToolSelectionMiddleware`（ツール選択の適用側）。必須項目を名指しした古いペイロードは無視されます（`middleware_enabled()` は必須項目に常に `True` を返します）。チェーンの構成と順序は決して変わらず（`scaffolding` と順序契約テストが引き続き固定）、ゲートされるのは挙動のみ。名前は `agent/middlewares/catalog.py::MIDDLEWARE_ORDER` にクラス名で登録されています。
 
 ### MultimodalProcessor
 
