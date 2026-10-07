@@ -52,3 +52,28 @@ const loadBinding = async () => {
 
 watch(() => props.sessionId, loadBinding, { immediate: true });
 </script>
+
+<i18n lang="json">
+{
+  "en": {
+    "personaPreset": {
+      "currentWithName": "Session preset & role: {name}"
+    }
+  },
+  "zh": {
+    "personaPreset": {
+      "currentWithName": "当前会话预设角色：{name}"
+    }
+  },
+  "ja": {
+    "personaPreset": {
+      "currentWithName": "現在のセッションのプリセットと役割：{name}"
+    }
+  },
+  "ko": {
+    "personaPreset": {
+      "currentWithName": "현재 세션 프리셋과 역할: {name}"
+    }
+  }
+}
+</i18n>

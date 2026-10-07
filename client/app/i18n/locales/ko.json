@@ -1,7 +1,6 @@
 {
   "a11y": {
-    "previewImage": "이미지 미리보기",
-    "language": "언어"
+    "previewImage": "이미지 미리보기"
   },
   "common": {
     "confirmDelete": "삭제 확인",
@@ -52,14 +51,9 @@
     "newSession": "새 대화"
   },
   "sidebar": {
-    "tasksLoading": "작업을 불러오는 중...",
-    "noTasks": "백그라운드 작업이 아직 없습니다",
     "tasksAgoSeconds": "{sec}초 전",
     "statusRunning": "실행 중",
     "statusInterrupted": "중단됨",
-    "statusPending": "대기 중",
-    "statusInProgress": "전송 중",
-    "statusDelivered": "전송됨",
     "statusDone": "완료",
     "statusError": "오류",
     "statusTimeout": "시간 초과",
@@ -82,70 +76,11 @@
     "heartbeat": "하트비트",
     "cron": "크론 작업",
     "logs": "로그",
-    "notification": "알림",
     "extend": "확장",
-    "settingsMenu": "메뉴",
-    "collapseSidebar": "사이드바 접기",
-    "expandSidebar": "사이드바 펼치기",
-    "projectDirectory": {
-      "label": "프로젝트 디렉터리",
-      "unbound": "프로젝트 디렉터리 미설정",
-      "pendingHint": "다음 턴에 적용됩니다",
-      "pendingLabel": "대기 중",
-      "browse": "폴더 선택…",
-      "pickerTitle": "프로젝트 디렉터리 선택",
-      "pickerUp": "상위 폴더",
-      "pickerHome": "홈",
-      "pickerEmpty": "이 폴더에는 하위 폴더가 없습니다",
-      "pickerTruncated": "처음 {shown}개만 표시 (전체 {total}개)",
-      "pickerSelect": "이 폴더 선택",
-      "pickerCancel": "취소",
-      "pickerLoadFailed": "이 폴더를 읽을 수 없습니다"
-    },
-    "projectFiles": "프로젝트 파일",
-    "sessionList": "세션 목록",
-    "projectFilesHint": "프로젝트 파일",
-    "projectFilesHintDetail": "팁: 왼쪽 사이드바를 접으면 파일 트리와 채팅 공간이 넓어집니다.",
     "account": "계정"
   },
-  "auth": {
-    "login": {
-      "subtitle": "계속하려면 로그인하세요",
-      "username": "사용자 이름",
-      "password": "비밀번호",
-      "submit": "로그인",
-      "failed": "사용자 이름 또는 비밀번호가 올바르지 않습니다"
-    },
-    "account": {
-      "statusOn": "로그인 보호가 켜져 있습니다",
-      "statusOff": "로그인 보호가 꺼져 있습니다",
-      "scopeHint": "켜면 다른 기기에서의 접속에 로그인이 필요합니다. 이 기기는 항상 면제됩니다.",
-      "setupHint": "사용자 이름과 비밀번호를 설정하면 다른 기기에서 로그인이 필요합니다.",
-      "usernamePlaceholder": "사용자 이름",
-      "passwordPlaceholder": "비밀번호 (8자 이상)",
-      "confirmPlaceholder": "비밀번호 확인",
-      "newUsername": "새 사용자 이름 (선택)",
-      "newPassword": "새 비밀번호 (선택, 8자 이상)",
-      "currentPassword": "현재 비밀번호",
-      "changeHint": "사용자 이름/비밀번호 변경 (현재 비밀번호 필요)",
-      "disableHint": "보호를 끄려면 현재 비밀번호가 필요합니다.",
-      "enableHint": "보호를 다시 켜려면 현재 비밀번호가 필요합니다.",
-      "enable": "로그인 보호 켜기",
-      "disable": "로그인 보호 끄기",
-      "save": "저장",
-      "saved": "저장했습니다",
-      "enabled": "로그인 보호를 켰습니다",
-      "disabled": "로그인 보호를 껐습니다"
-    }
-  },
   "todolist": {
-    "progress": "{done}/{total} 완료",
-    "title": "작업 계획",
-    "flowLabel": "TaskFlow: {flow}",
-    "linkedStep": "TaskFlow {flow} · {step}",
-    "delegated": "서브에이전트에 위임됨",
-    "expand": "계획 펼치기",
-    "collapse": "계획 접기"
+    "flowLabel": "TaskFlow: {flow}"
   },
   "config": {
     "agent": {
@@ -162,19 +97,13 @@
         "followEnv": "환경 설정 따르기"
       },
       "tools": {
-        "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
         "count": "{selected}/{total} 선택",
-        "selectAll": "모두 켜기",
-        "clearAll": "모두 끄기",
-        "selectGroup": "전체",
-        "clearGroup": "지우기",
         "requiredHint": "필수 — 해제할 수 없음",
         "scope_builtin": "내장",
         "scope_mcp": "MCP",
         "mcpEmpty": "아직 MCP 도구가 없습니다(확장-MCP에서 서버 추가)"
       },
       "skills": {
-        "hint": "시스템 프롬프트의 스킬 색인에 들어갈 항목을 선택하세요(모두 선택 = 기본, 설정 저장 안 함). 해제한 항목은 스킬 색인에 나타나지 않습니다.",
         "count": "{selected}/{total} 선택",
         "scope_builtin": "내장",
         "scope_thirdparty": "서드파티",
@@ -192,12 +121,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
         "lockedTitle": "시스템 필수(잠금)",
-        "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다",
         "nudgeLabel": "nudge 사용",
-        "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
-        "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
+        "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -226,11 +152,9 @@
         }
       },
       "subagents": {
-        "hint": "기능 역할마다 사용할 모델(환경 구성 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
         "followTier": "역할 기본값 따르기",
         "tier": "역할 기본값: {tier}",
-        "tierDepth": "역할 정의 없음: 깊이 기본값",
-        "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
+        "tierDepth": "역할 정의 없음: 깊이 기본값"
       },
       "role": {
         "general": "범용",
@@ -244,26 +168,7 @@
         "middlewares": "꺼진 미들웨어: {names}",
         "middlewaresNone": "미들웨어: 모두 켜짐",
         "models": "서브에이전트 모델: {names}"
-      },
-      "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋과 역할」에서 하세요"
-    },
-    "llm": {
-      "add": "모델 추가",
-      "count": "{n} / {max}",
-      "save": "저장",
-      "apply": "적용",
-      "saved": "저장됨",
-      "applied": ".env에 적용됨",
-      "empty": "모델이 없습니다. “모델 추가”를 클릭하세요",
-      "unnamed": "이름 없는 모델",
-      "delete": "삭제",
-      "maxModels": "그룹당 최대 {max}개 모델",
-      "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
-      "deleteConfirm": "모델 “{name}”을(를) 삭제할까요?",
-      "localModel": "로컬 모델",
-      "localUnused": "로컬 모드에서 미사용",
-      "expand": "펼치기",
-      "collapse": "접기"
+      }
     },
     "save": "저장",
     "cancel": "취소",
@@ -272,9 +177,6 @@
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "env": {
-      "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
     },
     "tabs": {
       "role": "캐릭터 설정",
@@ -286,20 +188,16 @@
       "aiLine": "당신은 {name} 역할을 연기합니다.",
       "userLine": "사용자는 {name} 역할을 연기합니다.",
       "assistant": "AI 역할",
-      "aiName": "AI 이름",
-      "userRole": "사용자 역할",
-      "userName": "사용자 이름"
+      "userRole": "사용자 역할"
     },
     "persona": {
       "preset": {
-        "title": "프리셋과 역할",
         "builtinPureName": "순수",
         "builtinCompanionName": "감정 동반",
         "defaultName": "전체",
         "defaultBadge": "기본",
         "builtinCodingName": "코딩 어시스턴트",
-        "builtinBadge": "내장",
-        "emptyList": "프리셋 없음"
+        "builtinBadge": "내장"
       }
     }
   },
@@ -308,14 +206,6 @@
     "account": "계정"
   },
   "progressFloat": {
-    "expand": "계획 진행률 보기",
-    "collapse": "계획 진행률 숨기기",
-    "summary": "계획 {done}/{total}",
-    "waveSummary": "웨이브 {current}/{total}",
-    "counts": "{done}/{total}",
-    "waveLabel": "{index}번째 웨이브",
-    "current": "진행 중",
-    "cyclic": "순환 의존",
     "status": {
       "pending": "대기",
       "in_progress": "진행 중",
@@ -327,32 +217,15 @@
       "done": "완료",
       "failed": "실패",
       "skipped": "건너뜀"
-    },
-    "notStarted": "시작 전",
-    "needsClosing": "마무리 필요",
-    "empty": "진행 중인 작업이 없습니다"
+    }
   },
   "projectFiles": {
-    "refresh": "새로 고침",
-    "truncated": "{total}개 중 {shown}개 표시",
-    "empty": "빈 디렉터리",
-    "noFile": "선택된 파일 없음",
     "title": "파일 트리"
   },
   "gitGraph": {
     "title": "Git Graph"
   },
   "personaPreset": {
-    "current": "현재 세션 프리셋과 역할",
-    "unbound": "선택 안 함",
-    "contentTitle": "프리셋 내용",
-    "selectTitle": "프리셋 선택",
-    "selectHint": "새 세션을 만들려면 프리셋을 선택해야 합니다. 인격과 프롬프트는 세션 생성 시 고정되며, 이후 프리셋 변경은 기존 세션에 영향을 주지 않습니다.",
-    "create": "세션 만들기",
-    "applyFailed": "프리셋 적용에 실패했습니다. 백엔드 연결을 확인한 후 다시 시도하세요",
-    "empty": "(비어 있음)",
-    "currentWithName": "현재 세션 프리셋과 역할: {name}",
-    "unboundHint": "이 세션은 프리셋 없이 만들어졌습니다",
-    "missing": "이 프리셋은 삭제되었습니다"
+    "unbound": "선택 안 함"
   }
 }

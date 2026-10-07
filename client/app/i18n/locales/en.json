@@ -1,7 +1,6 @@
 {
   "a11y": {
-    "previewImage": "Preview image",
-    "language": "Language"
+    "previewImage": "Preview image"
   },
   "common": {
     "confirmDelete": "Confirm Delete",
@@ -52,14 +51,9 @@
     "newSession": "New Session"
   },
   "sidebar": {
-    "tasksLoading": "Loading tasks...",
-    "noTasks": "No background tasks yet",
     "tasksAgoSeconds": "{sec}s ago",
     "statusRunning": "Running",
     "statusInterrupted": "Interrupted",
-    "statusPending": "Pending",
-    "statusInProgress": "Delivering",
-    "statusDelivered": "Delivered",
     "statusDone": "Done",
     "statusError": "Error",
     "statusTimeout": "Timeout",
@@ -82,70 +76,11 @@
     "heartbeat": "Heartbeat",
     "cron": "Cron Tasks",
     "logs": "Logs",
-    "notification": "Notifications",
     "extend": "Extend",
-    "settingsMenu": "Menu",
-    "collapseSidebar": "Collapse sidebar",
-    "expandSidebar": "Expand sidebar",
-    "projectDirectory": {
-      "label": "Project directory",
-      "unbound": "No project directory bound",
-      "pendingHint": "Applies on the next turn",
-      "pendingLabel": "Pending",
-      "browse": "Choose folder…",
-      "pickerTitle": "Choose a project directory",
-      "pickerUp": "Up one level",
-      "pickerHome": "Home",
-      "pickerEmpty": "No subfolders here",
-      "pickerTruncated": "Showing the first {shown} of {total}",
-      "pickerSelect": "Use this folder",
-      "pickerCancel": "Cancel",
-      "pickerLoadFailed": "This folder could not be read"
-    },
-    "projectFiles": "Project files",
-    "sessionList": "Sessions",
-    "projectFilesHint": "Project files",
-    "projectFilesHintDetail": "Tip: collapse the left sidebar to give the file tree and the chat more room.",
     "account": "Account"
   },
-  "auth": {
-    "login": {
-      "subtitle": "Sign in to continue",
-      "username": "Username",
-      "password": "Password",
-      "submit": "Sign in",
-      "failed": "Wrong username or password"
-    },
-    "account": {
-      "statusOn": "Login protection is on",
-      "statusOff": "Login protection is off",
-      "scopeHint": "Once enabled, access from other machines needs a login; this machine never does.",
-      "setupHint": "Set a username and password to require a login from other machines.",
-      "usernamePlaceholder": "Username",
-      "passwordPlaceholder": "Password (min 8 characters)",
-      "confirmPlaceholder": "Confirm password",
-      "newUsername": "New username (optional)",
-      "newPassword": "New password (optional, min 8 characters)",
-      "currentPassword": "Current password",
-      "changeHint": "Change the username or password (current password required)",
-      "disableHint": "Turning protection off requires the current password.",
-      "enableHint": "Turning protection back on requires the current password.",
-      "enable": "Enable login protection",
-      "disable": "Disable login protection",
-      "save": "Save",
-      "saved": "Saved",
-      "enabled": "Login protection enabled",
-      "disabled": "Login protection disabled"
-    }
-  },
   "todolist": {
-    "progress": "{done}/{total} done",
-    "title": "Task Plan",
-    "flowLabel": "TaskFlow: {flow}",
-    "linkedStep": "TaskFlow {flow} · {step}",
-    "delegated": "Delegated to subagent",
-    "expand": "Expand plan",
-    "collapse": "Collapse plan"
+    "flowLabel": "TaskFlow: {flow}"
   },
   "config": {
     "agent": {
@@ -162,19 +97,13 @@
         "followEnv": "Follow the environment config"
       },
       "tools": {
-        "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
         "count": "{selected}/{total} selected",
-        "selectAll": "Enable all",
-        "clearAll": "Disable all",
-        "selectGroup": "All",
-        "clearGroup": "Clear",
         "requiredHint": "Required — cannot be disabled",
         "scope_builtin": "Built-in",
         "scope_mcp": "MCP",
         "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)"
       },
       "skills": {
-        "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index.",
         "count": "{selected}/{total} selected",
         "scope_builtin": "Built-in",
         "scope_thirdparty": "Third-party",
@@ -192,12 +121,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
         "lockedTitle": "System-required (locked)",
-        "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
         "nudgeLabel": "Enable nudge",
-        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-        "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
+        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -226,11 +152,9 @@
         }
       },
       "subagents": {
-        "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier.",
         "followTier": "Follow the role default",
         "tier": "Role default: {tier}",
-        "tierDepth": "No role definition: depth default",
-        "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
+        "tierDepth": "No role definition: depth default"
       },
       "role": {
         "general": "General",
@@ -244,26 +168,7 @@
         "middlewares": "Disabled middlewares: {names}",
         "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
-      },
-      "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
-    },
-    "llm": {
-      "add": "Add model",
-      "count": "{n} / {max}",
-      "save": "Save",
-      "apply": "Apply",
-      "saved": "Saved",
-      "applied": "Applied to .env",
-      "empty": "No models yet — click “Add model”",
-      "unnamed": "Unnamed model",
-      "delete": "Delete",
-      "maxModels": "Up to {max} models per group",
-      "requiredMissing": "Provider and model API name are required",
-      "deleteConfirm": "Delete model “{name}”?",
-      "localModel": "Local model",
-      "localUnused": "Unused in local mode",
-      "expand": "Expand",
-      "collapse": "Collapse"
+      }
     },
     "save": "Save",
     "cancel": "Cancel",
@@ -272,9 +177,6 @@
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "env": {
-      "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
     },
     "tabs": {
       "role": "Character Setup",
@@ -286,20 +188,16 @@
       "aiLine": "You will play {name}.",
       "userLine": "The user will play {name}.",
       "assistant": "AI Role",
-      "aiName": "AI Name",
-      "userRole": "User Role",
-      "userName": "User Name"
+      "userRole": "User Role"
     },
     "persona": {
       "preset": {
-        "title": "Presets & Role",
         "builtinPureName": "Pure",
         "builtinCompanionName": "Companion",
         "defaultName": "Full",
         "defaultBadge": "Default",
         "builtinCodingName": "Coding Assistant",
-        "builtinBadge": "Built-in",
-        "emptyList": "No presets yet"
+        "builtinBadge": "Built-in"
       }
     }
   },
@@ -308,14 +206,6 @@
     "account": "Account"
   },
   "progressFloat": {
-    "expand": "Show plan progress",
-    "collapse": "Hide plan progress",
-    "summary": "Plan {done}/{total}",
-    "waveSummary": "Wave {current}/{total}",
-    "counts": "{done}/{total}",
-    "waveLabel": "Wave {index}",
-    "current": "current",
-    "cyclic": "cyclic deps",
     "status": {
       "pending": "pending",
       "in_progress": "in progress",
@@ -327,32 +217,15 @@
       "done": "done",
       "failed": "failed",
       "skipped": "skipped"
-    },
-    "notStarted": "Not started",
-    "needsClosing": "Needs closing",
-    "empty": "No tasks in progress"
+    }
   },
   "projectFiles": {
-    "refresh": "Refresh",
-    "truncated": "Showing {shown} of {total} entries",
-    "empty": "Empty directory",
-    "noFile": "No file selected",
     "title": "Files"
   },
   "gitGraph": {
     "title": "Git Graph"
   },
   "personaPreset": {
-    "current": "Session preset & role",
-    "unbound": "Not chosen",
-    "contentTitle": "Preset content",
-    "selectTitle": "Choose a preset",
-    "selectHint": "Creating a session requires choosing a preset. The persona and prompt are fixed once the session starts, so later preset changes do not affect existing sessions.",
-    "create": "Create session",
-    "applyFailed": "Applying the preset failed — check the backend connection and retry",
-    "empty": "(empty)",
-    "currentWithName": "Session preset & role: {name}",
-    "unboundHint": "This session was created without a preset",
-    "missing": "This preset has been deleted"
+    "unbound": "Not chosen"
   }
 }

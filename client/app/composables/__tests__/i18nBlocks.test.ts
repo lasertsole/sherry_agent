@@ -97,4 +97,10 @@ describe('i18n static key resolution', () => {
     }
     expect(violations).toEqual([]);
   });
+  // NOT covered here, pinned by hand instead: the ROOT component is the one place
+  // a block does not work. Moving `connection.offline` / `connection.backendDown`
+  // into app.vue's own `<i18n>` block made the connection banner render the raw
+  // key live (2026-10-07) — every other component resolves its block, the root
+  // does not, and this gate cannot see the difference. Keep app.vue's messages in
+  // the central locales.
 });

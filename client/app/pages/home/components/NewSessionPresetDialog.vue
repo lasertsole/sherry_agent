@@ -146,3 +146,40 @@ const confirm = async () => {
   }
 };
 </script>
+
+<i18n lang="json">
+{
+  "en": {
+    "personaPreset": {
+      "applyFailed": "Applying the preset failed — check the backend connection and retry",
+      "create": "Create session",
+      "selectHint": "Creating a session requires choosing a preset. The persona and prompt are fixed once the session starts, so later preset changes do not affect existing sessions.",
+      "selectTitle": "Choose a preset"
+    }
+  },
+  "zh": {
+    "personaPreset": {
+      "applyFailed": "预设应用失败，请检查后端连接后重试",
+      "create": "创建会话",
+      "selectHint": "新建会话需要先选择一个预设；人格与提示词在会话创建后即固定，之后修改预设不影响已创建的会话。",
+      "selectTitle": "选择预设"
+    }
+  },
+  "ja": {
+    "personaPreset": {
+      "applyFailed": "プリセットの適用に失敗しました。バックエンド接続を確認して再試行してください",
+      "create": "セッションを作成",
+      "selectHint": "新しいセッションの作成にはプリセットの選択が必要です。人格とプロンプトはセッション作成時に固定され、後からプリセットを変更しても既存のセッションには影響しません。",
+      "selectTitle": "プリセットを選択"
+    }
+  },
+  "ko": {
+    "personaPreset": {
+      "applyFailed": "프리셋 적용에 실패했습니다. 백엔드 연결을 확인한 후 다시 시도하세요",
+      "create": "세션 만들기",
+      "selectHint": "새 세션을 만들려면 프리셋을 선택해야 합니다. 인격과 프롬프트는 세션 생성 시 고정되며, 이후 프리셋 변경은 기존 세션에 영향을 주지 않습니다.",
+      "selectTitle": "프리셋 선택"
+    }
+  }
+}
+</i18n>

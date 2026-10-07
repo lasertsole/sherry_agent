@@ -459,7 +459,19 @@ onBeforeUnmount(() => {
         "saved": "已保存",
         "applied": "已应用到 .env",
         "empty": "暂无模型，点击“添加模型”创建",
-        "unnamed": "未命名模型"
+        "unnamed": "未命名模型",
+        "collapse": "收起",
+        "count": "{n} / {max}",
+        "delete": "删除",
+        "deleteConfirm": "确定删除模型“{name}”？",
+        "expand": "展开",
+        "localModel": "本地模型",
+        "localUnused": "本地模式不使用",
+        "maxModels": "每个分组最多 {max} 个模型",
+        "requiredMissing": "提供商与模型 API 名为必填项"
+      },
+      "env": {
+        "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
       }
     }
   },
@@ -472,7 +484,19 @@ onBeforeUnmount(() => {
         "saved": "Saved",
         "applied": "Applied to .env",
         "empty": "No models yet — click “Add model”",
-        "unnamed": "Unnamed model"
+        "unnamed": "Unnamed model",
+        "collapse": "Collapse",
+        "count": "{n} / {max}",
+        "delete": "Delete",
+        "deleteConfirm": "Delete model “{name}”?",
+        "expand": "Expand",
+        "localModel": "Local model",
+        "localUnused": "Unused in local mode",
+        "maxModels": "Up to {max} models per group",
+        "requiredMissing": "Provider and model API name are required"
+      },
+      "env": {
+        "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
       }
     }
   },
@@ -485,7 +509,19 @@ onBeforeUnmount(() => {
         "saved": "保存しました",
         "applied": ".env に適用済み",
         "empty": "モデルがありません。「モデルを追加」をクリック",
-        "unnamed": "名称未設定のモデル"
+        "unnamed": "名称未設定のモデル",
+        "collapse": "折りたたむ",
+        "count": "{n} / {max}",
+        "delete": "削除",
+        "deleteConfirm": "モデル「{name}」を削除しますか？",
+        "expand": "展開",
+        "localModel": "ローカルモデル",
+        "localUnused": "ローカルでは未使用",
+        "maxModels": "1グループにつき最大 {max} モデル",
+        "requiredMissing": "プロバイダーとモデル API 名は必須です"
+      },
+      "env": {
+        "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
       }
     }
   },
@@ -498,7 +534,19 @@ onBeforeUnmount(() => {
         "saved": "저장됨",
         "applied": ".env에 적용됨",
         "empty": "모델이 없습니다. “모델 추가”를 클릭하세요",
-        "unnamed": "이름 없는 모델"
+        "unnamed": "이름 없는 모델",
+        "collapse": "접기",
+        "count": "{n} / {max}",
+        "delete": "삭제",
+        "deleteConfirm": "모델 “{name}”을(를) 삭제할까요?",
+        "expand": "펼치기",
+        "localModel": "로컬 모델",
+        "localUnused": "로컬 모드에서 미사용",
+        "maxModels": "그룹당 최대 {max}개 모델",
+        "requiredMissing": "제공자와 모델 API 이름은 필수입니다"
+      },
+      "env": {
+        "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
       }
     }
   }

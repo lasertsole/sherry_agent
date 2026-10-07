@@ -1,7 +1,6 @@
 {
   "a11y": {
-    "previewImage": "预览图片",
-    "language": "语言"
+    "previewImage": "预览图片"
   },
   "common": {
     "confirmDelete": "确认删除",
@@ -52,14 +51,9 @@
     "newSession": "新会话"
   },
   "sidebar": {
-    "tasksLoading": "正在加载任务…",
-    "noTasks": "暂无后台任务",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "运行中",
     "statusInterrupted": "已中断",
-    "statusPending": "待配送",
-    "statusInProgress": "配送中",
-    "statusDelivered": "已送达",
     "statusDone": "已完成",
     "statusError": "出错",
     "statusTimeout": "超时",
@@ -82,70 +76,11 @@
     "heartbeat": "心跳",
     "cron": "定时任务",
     "logs": "日志",
-    "notification": "通知",
     "extend": "扩展",
-    "settingsMenu": "菜单",
-    "collapseSidebar": "折叠侧边栏",
-    "expandSidebar": "展开侧边栏",
-    "projectDirectory": {
-      "label": "项目目录",
-      "unbound": "未绑定项目目录",
-      "pendingHint": "将于下一轮生效",
-      "pendingLabel": "待生效",
-      "browse": "选择文件夹…",
-      "pickerTitle": "选择项目目录",
-      "pickerUp": "上一级",
-      "pickerHome": "主目录",
-      "pickerEmpty": "此文件夹内没有子文件夹",
-      "pickerTruncated": "仅显示前 {shown} 个（共 {total} 个）",
-      "pickerSelect": "选择此文件夹",
-      "pickerCancel": "取消",
-      "pickerLoadFailed": "无法读取该文件夹"
-    },
-    "projectFiles": "项目文件",
-    "sessionList": "会话列表",
-    "projectFilesHint": "项目文件",
-    "projectFilesHintDetail": "提示：可折叠左侧栏，给文件树和对话区让出更多空间。",
     "account": "账户"
   },
-  "auth": {
-    "login": {
-      "subtitle": "请登录以继续",
-      "username": "用户名",
-      "password": "密码",
-      "submit": "登 录",
-      "failed": "用户名或密码错误"
-    },
-    "account": {
-      "statusOn": "登录保护已启用",
-      "statusOff": "登录保护未启用",
-      "scopeHint": "启用后，来自非本机的访问需要登录；本机访问始终免登录。",
-      "setupHint": "设置用户名与密码后，非本机访问将需要登录。",
-      "usernamePlaceholder": "用户名",
-      "passwordPlaceholder": "密码（至少 8 位）",
-      "confirmPlaceholder": "确认密码",
-      "newUsername": "新用户名（可选）",
-      "newPassword": "新密码（可选，至少 8 位）",
-      "currentPassword": "当前密码",
-      "changeHint": "修改用户名或密码（需输入当前密码）",
-      "disableHint": "关闭登录保护需要输入当前密码确认。",
-      "enableHint": "重新启用登录保护需要输入当前密码确认。",
-      "enable": "启用登录保护",
-      "disable": "关闭登录保护",
-      "save": "保存",
-      "saved": "已保存",
-      "enabled": "登录保护已启用",
-      "disabled": "登录保护已关闭"
-    }
-  },
   "todolist": {
-    "progress": "已完成 {done}/{total}",
-    "title": "任务计划",
-    "flowLabel": "TaskFlow: {flow}",
-    "linkedStep": "TaskFlow {flow} · {step}",
-    "delegated": "已委派给子代理",
-    "expand": "展开计划",
-    "collapse": "收起计划"
+    "flowLabel": "TaskFlow: {flow}"
   },
   "config": {
     "agent": {
@@ -162,19 +97,13 @@
         "followEnv": "跟随环境配置"
       },
       "tools": {
-        "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
         "count": "已选 {selected}/{total}",
-        "selectAll": "全部启用",
-        "clearAll": "全部禁用",
-        "selectGroup": "全选",
-        "clearGroup": "清空",
         "requiredHint": "必需，不可取消",
         "scope_builtin": "内置",
         "scope_mcp": "MCP",
         "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）"
       },
       "skills": {
-        "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。",
         "count": "已选 {selected}/{total}",
         "scope_builtin": "内置",
         "scope_thirdparty": "第三方",
@@ -192,12 +121,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
         "lockedTitle": "系统必需（锁定）",
-        "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
         "nudgeLabel": "启用 nudge",
-        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-        "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
+        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -226,11 +152,9 @@
         }
       },
       "subagents": {
-        "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
         "followTier": "跟随角色默认",
         "tier": "角色默认：{tier}",
-        "tierDepth": "无角色定义：按深度默认",
-        "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
+        "tierDepth": "无角色定义：按深度默认"
       },
       "role": {
         "general": "通用",
@@ -244,26 +168,7 @@
         "middlewares": "关闭的中间件：{names}",
         "middlewaresNone": "中间件：全部开启",
         "models": "子代理模型：{names}"
-      },
-      "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
-    },
-    "llm": {
-      "add": "添加模型",
-      "count": "{n} / {max}",
-      "save": "保存",
-      "apply": "应用",
-      "saved": "已保存",
-      "applied": "已应用到 .env",
-      "empty": "暂无模型，点击“添加模型”创建",
-      "unnamed": "未命名模型",
-      "delete": "删除",
-      "maxModels": "每个分组最多 {max} 个模型",
-      "requiredMissing": "提供商与模型 API 名为必填项",
-      "deleteConfirm": "确定删除模型“{name}”？",
-      "localModel": "本地模型",
-      "localUnused": "本地模式不使用",
-      "expand": "展开",
-      "collapse": "收起"
+      }
     },
     "save": "保存",
     "cancel": "取消",
@@ -272,9 +177,6 @@
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "env": {
-      "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
     },
     "tabs": {
       "role": "角色配置",
@@ -286,20 +188,16 @@
       "aiLine": "你将扮演{name}。",
       "userLine": "用户将扮演{name}。",
       "assistant": "AI 角色",
-      "aiName": "AI 名称",
-      "userRole": "用户角色",
-      "userName": "用户名称"
+      "userRole": "用户角色"
     },
     "persona": {
       "preset": {
-        "title": "预设角色",
         "builtinPureName": "纯净",
         "builtinCompanionName": "情感陪伴",
         "defaultName": "全量",
         "defaultBadge": "默认",
         "builtinCodingName": "编程助手",
-        "builtinBadge": "内置",
-        "emptyList": "暂无预设"
+        "builtinBadge": "内置"
       }
     }
   },
@@ -308,14 +206,6 @@
     "account": "账户"
   },
   "progressFloat": {
-    "expand": "展开计划进度",
-    "collapse": "收起计划进度",
-    "summary": "计划 {done}/{total}",
-    "waveSummary": "波次 {current}/{total}",
-    "counts": "{done}/{total}",
-    "waveLabel": "第 {index} 波",
-    "current": "当前",
-    "cyclic": "循环依赖",
     "status": {
       "pending": "待办",
       "in_progress": "进行中",
@@ -327,32 +217,15 @@
       "done": "已完成",
       "failed": "失败",
       "skipped": "已跳过"
-    },
-    "notStarted": "未开始",
-    "needsClosing": "待收口",
-    "empty": "暂无进行中的任务"
+    }
   },
   "projectFiles": {
-    "refresh": "刷新",
-    "truncated": "仅显示 {total} 项中的 {shown} 项",
-    "empty": "空目录",
-    "noFile": "未选择文件",
     "title": "文件树"
   },
   "gitGraph": {
     "title": "Git Graph"
   },
   "personaPreset": {
-    "current": "当前会话预设角色",
-    "unbound": "未选择",
-    "contentTitle": "预设内容",
-    "selectTitle": "选择预设",
-    "selectHint": "新建会话需要先选择一个预设；人格与提示词在会话创建后即固定，之后修改预设不影响已创建的会话。",
-    "create": "创建会话",
-    "applyFailed": "预设应用失败，请检查后端连接后重试",
-    "empty": "（空）",
-    "currentWithName": "当前会话预设角色：{name}",
-    "unboundHint": "此会话创建时未选择预设",
-    "missing": "该预设已被删除"
+    "unbound": "未选择"
   }
 }

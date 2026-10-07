@@ -48,3 +48,32 @@ const linkedLabel = computed(() => {
   return step ? t('todolist.linkedStep', { flow, step }) : t('todolist.flowLabel', { flow });
 });
 </script>
+
+<i18n lang="json">
+{
+  "en": {
+    "todolist": {
+      "delegated": "Delegated to subagent",
+      "linkedStep": "TaskFlow {flow} · {step}"
+    }
+  },
+  "zh": {
+    "todolist": {
+      "delegated": "已委派给子代理",
+      "linkedStep": "TaskFlow {flow} · {step}"
+    }
+  },
+  "ja": {
+    "todolist": {
+      "delegated": "サブエージェントに委任",
+      "linkedStep": "TaskFlow {flow} · {step}"
+    }
+  },
+  "ko": {
+    "todolist": {
+      "delegated": "서브에이전트에 위임됨",
+      "linkedStep": "TaskFlow {flow} · {step}"
+    }
+  }
+}
+</i18n>

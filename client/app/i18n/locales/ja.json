@@ -1,7 +1,6 @@
 {
   "a11y": {
-    "previewImage": "画像をプレビュー",
-    "language": "言語"
+    "previewImage": "画像をプレビュー"
   },
   "common": {
     "confirmDelete": "削除の確認",
@@ -52,14 +51,9 @@
     "newSession": "新しい会話"
   },
   "sidebar": {
-    "tasksLoading": "タスクを読み込み中...",
-    "noTasks": "バックグラウンドタスクはまだありません",
     "tasksAgoSeconds": "{sec} 秒前",
     "statusRunning": "実行中",
     "statusInterrupted": "中断",
-    "statusPending": "待機中",
-    "statusInProgress": "配送中",
-    "statusDelivered": "配送済み",
     "statusDone": "完了",
     "statusError": "エラー",
     "statusTimeout": "タイムアウト",
@@ -82,70 +76,11 @@
     "heartbeat": "ハートビート",
     "cron": "クーロンタスク",
     "logs": "ログ",
-    "notification": "通知",
     "extend": "拡張",
-    "settingsMenu": "メニュー",
-    "collapseSidebar": "サイドバーを折りたたむ",
-    "expandSidebar": "サイドバーを展開",
-    "projectDirectory": {
-      "label": "プロジェクトディレクトリ",
-      "unbound": "プロジェクトディレクトリ未設定",
-      "pendingHint": "次のターンで有効になります",
-      "pendingLabel": "保留中",
-      "browse": "フォルダーを選択…",
-      "pickerTitle": "プロジェクトディレクトリを選択",
-      "pickerUp": "上の階層へ",
-      "pickerHome": "ホーム",
-      "pickerEmpty": "このフォルダーにサブフォルダーはありません",
-      "pickerTruncated": "先頭 {shown} 件のみ表示（全 {total} 件）",
-      "pickerSelect": "このフォルダーを選択",
-      "pickerCancel": "キャンセル",
-      "pickerLoadFailed": "このフォルダーを読み取れませんでした"
-    },
-    "projectFiles": "プロジェクトファイル",
-    "sessionList": "セッション一覧",
-    "projectFilesHint": "プロジェクトファイル",
-    "projectFilesHintDetail": "ヒント：左サイドバーを折りたたむと、ファイルツリーとチャットに余裕ができます。",
     "account": "アカウント"
   },
-  "auth": {
-    "login": {
-      "subtitle": "続けるにはログインしてください",
-      "username": "ユーザー名",
-      "password": "パスワード",
-      "submit": "ログイン",
-      "failed": "ユーザー名またはパスワードが違います"
-    },
-    "account": {
-      "statusOn": "ログイン保護は有効です",
-      "statusOff": "ログイン保護は無効です",
-      "scopeHint": "有効にすると、他の端末からのアクセスにログインが必要になります（この端末は不要）。",
-      "setupHint": "ユーザー名とパスワードを設定すると、他の端末からのアクセスにログインが必要になります。",
-      "usernamePlaceholder": "ユーザー名",
-      "passwordPlaceholder": "パスワード（8文字以上）",
-      "confirmPlaceholder": "パスワードの確認",
-      "newUsername": "新しいユーザー名（任意）",
-      "newPassword": "新しいパスワード（任意・8文字以上）",
-      "currentPassword": "現在のパスワード",
-      "changeHint": "ユーザー名／パスワードの変更（現在のパスワードが必要）",
-      "disableHint": "保護を解除するには現在のパスワードが必要です。",
-      "enableHint": "保護を再度有効にするには現在のパスワードが必要です。",
-      "enable": "ログイン保護を有効にする",
-      "disable": "ログイン保護を解除する",
-      "save": "保存",
-      "saved": "保存しました",
-      "enabled": "ログイン保護を有効にしました",
-      "disabled": "ログイン保護を解除しました"
-    }
-  },
   "todolist": {
-    "progress": "{done}/{total} 完了",
-    "title": "タスク計画",
-    "flowLabel": "TaskFlow: {flow}",
-    "linkedStep": "TaskFlow {flow} · {step}",
-    "delegated": "サブエージェントに委任",
-    "expand": "計画を展開",
-    "collapse": "計画を折りたたむ"
+    "flowLabel": "TaskFlow: {flow}"
   },
   "config": {
     "agent": {
@@ -162,19 +97,13 @@
         "followEnv": "環境設定に従う"
       },
       "tools": {
-        "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
         "count": "{selected}/{total} 選択",
-        "selectAll": "すべて有効",
-        "clearAll": "すべて無効",
-        "selectGroup": "全選択",
-        "clearGroup": "クリア",
         "requiredHint": "必須（解除できません）",
         "scope_builtin": "内蔵",
         "scope_mcp": "MCP",
         "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）"
       },
       "skills": {
-        "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。",
         "count": "{selected}/{total} 選択",
         "scope_builtin": "内蔵",
         "scope_thirdparty": "サードパーティ",
@@ -192,12 +121,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
         "lockedTitle": "システム必須（ロック）",
-        "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
         "nudgeLabel": "nudge を有効化",
-        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
-        "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
+        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -226,11 +152,9 @@
         }
       },
       "subagents": {
-        "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
         "followTier": "ロール既定に従う",
         "tier": "ロール既定: {tier}",
-        "tierDepth": "ロール定義なし: 深度の既定",
-        "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
+        "tierDepth": "ロール定義なし: 深度の既定"
       },
       "role": {
         "general": "汎用",
@@ -244,26 +168,7 @@
         "middlewares": "無効なミドルウェア: {names}",
         "middlewaresNone": "ミドルウェア: すべて有効",
         "models": "サブエージェント モデル: {names}"
-      },
-      "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
-    },
-    "llm": {
-      "add": "モデルを追加",
-      "count": "{n} / {max}",
-      "save": "保存",
-      "apply": "適用",
-      "saved": "保存しました",
-      "applied": ".env に適用済み",
-      "empty": "モデルがありません。「モデルを追加」をクリック",
-      "unnamed": "名称未設定のモデル",
-      "delete": "削除",
-      "maxModels": "1グループにつき最大 {max} モデル",
-      "requiredMissing": "プロバイダーとモデル API 名は必須です",
-      "deleteConfirm": "モデル「{name}」を削除しますか？",
-      "localModel": "ローカルモデル",
-      "localUnused": "ローカルでは未使用",
-      "expand": "展開",
-      "collapse": "折りたたむ"
+      }
     },
     "save": "保存",
     "cancel": "キャンセル",
@@ -272,9 +177,6 @@
       "en": "English",
       "ja": "日本語",
       "ko": "한국어"
-    },
-    "env": {
-      "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
     },
     "tabs": {
       "role": "キャラクター設定",
@@ -286,20 +188,16 @@
       "aiLine": "あなたは{name}を演じます。",
       "userLine": "ユーザーは{name}を演じます。",
       "assistant": "AI ロール",
-      "aiName": "AI 名前",
-      "userRole": "ユーザーロール",
-      "userName": "ユーザー名"
+      "userRole": "ユーザーロール"
     },
     "persona": {
       "preset": {
-        "title": "プリセットと役割",
         "builtinPureName": "純粋",
         "builtinCompanionName": "寄り添い",
         "defaultName": "フル",
         "defaultBadge": "デフォルト",
         "builtinCodingName": "コーディングアシスタント",
-        "builtinBadge": "内蔵",
-        "emptyList": "プリセットなし"
+        "builtinBadge": "内蔵"
       }
     }
   },
@@ -308,14 +206,6 @@
     "account": "アカウント"
   },
   "progressFloat": {
-    "expand": "計画の進捗を表示",
-    "collapse": "計画の進捗を隠す",
-    "summary": "計画 {done}/{total}",
-    "waveSummary": "ウェーブ {current}/{total}",
-    "counts": "{done}/{total}",
-    "waveLabel": "第 {index} ウェーブ",
-    "current": "進行中",
-    "cyclic": "循環依存",
     "status": {
       "pending": "未着手",
       "in_progress": "進行中",
@@ -327,32 +217,15 @@
       "done": "完了",
       "failed": "失敗",
       "skipped": "スキップ"
-    },
-    "notStarted": "未着手",
-    "needsClosing": "クローズ待ち",
-    "empty": "実行中のタスクはありません"
+    }
   },
   "projectFiles": {
-    "refresh": "再読み込み",
-    "truncated": "{total} 件中 {shown} 件を表示",
-    "empty": "空のディレクトリ",
-    "noFile": "ファイルが選択されていません",
     "title": "ファイルツリー"
   },
   "gitGraph": {
     "title": "Git Graph"
   },
   "personaPreset": {
-    "current": "現在のセッションのプリセットと役割",
-    "unbound": "未選択",
-    "contentTitle": "プリセット内容",
-    "selectTitle": "プリセットを選択",
-    "selectHint": "新しいセッションの作成にはプリセットの選択が必要です。人格とプロンプトはセッション作成時に固定され、後からプリセットを変更しても既存のセッションには影響しません。",
-    "create": "セッションを作成",
-    "applyFailed": "プリセットの適用に失敗しました。バックエンド接続を確認して再試行してください",
-    "empty": "（空）",
-    "currentWithName": "現在のセッションのプリセットと役割：{name}",
-    "unboundHint": "このセッションはプリセット未選択で作成されました",
-    "missing": "このプリセットは削除されました"
+    "unbound": "未選択"
   }
 }

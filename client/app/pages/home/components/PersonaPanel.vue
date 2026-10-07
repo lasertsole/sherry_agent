@@ -1617,7 +1617,9 @@ const handleApply = async () => {
             "applyFailed": "应用失败，请检查后端连接",
             "presetSaveFailed": "预设保存失败",
             "applySuccess": "应用成功"
-          }
+          },
+          "emptyList": "暂无预设",
+          "title": "预设角色"
         }
       },
       "desc": {
@@ -1633,7 +1635,29 @@ const handleApply = async () => {
       "role": {
         "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
         "noFileChosen": "可选择新的头像图片",
-        "resetAvatar": "重置头像"
+        "resetAvatar": "重置头像",
+        "aiName": "AI 名称",
+        "userName": "用户名称"
+      },
+      "agent": {
+        "middlewares": {
+          "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
+          "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
+          "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
+        },
+        "skills": {
+          "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。"
+        },
+        "subagents": {
+          "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。"
+        },
+        "tools": {
+          "clearAll": "全部禁用",
+          "clearGroup": "清空",
+          "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
+          "selectAll": "全部启用",
+          "selectGroup": "全选"
+        }
       }
     }
   },
@@ -1664,7 +1688,9 @@ const handleApply = async () => {
             "applyFailed": "Apply failed, check backend connection",
             "presetSaveFailed": "Failed to save preset",
             "applySuccess": "Applied successfully"
-          }
+          },
+          "emptyList": "No presets yet",
+          "title": "Presets & Role"
         }
       },
       "desc": {
@@ -1680,7 +1706,29 @@ const handleApply = async () => {
       "role": {
         "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
         "noFileChosen": "Select an avatar image file",
-        "resetAvatar": "Reset avatar"
+        "resetAvatar": "Reset avatar",
+        "aiName": "AI Name",
+        "userName": "User Name"
+      },
+      "agent": {
+        "middlewares": {
+          "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
+          "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
+          "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
+        },
+        "skills": {
+          "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index."
+        },
+        "subagents": {
+          "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier."
+        },
+        "tools": {
+          "clearAll": "Disable all",
+          "clearGroup": "Clear",
+          "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
+          "selectAll": "Enable all",
+          "selectGroup": "All"
+        }
       }
     }
   },
@@ -1711,7 +1759,9 @@ const handleApply = async () => {
             "applyFailed": "適用に失敗しました。バックエンド接続を確認してください",
             "presetSaveFailed": "プリセットの保存に失敗しました",
             "applySuccess": "適用しました"
-          }
+          },
+          "emptyList": "プリセットなし",
+          "title": "プリセットと役割"
         }
       },
       "desc": {
@@ -1727,7 +1777,29 @@ const handleApply = async () => {
       "role": {
         "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
         "noFileChosen": "新しいアバター画像を選択できます",
-        "resetAvatar": "アバターをリセット"
+        "resetAvatar": "アバターをリセット",
+        "aiName": "AI 名前",
+        "userName": "ユーザー名"
+      },
+      "agent": {
+        "middlewares": {
+          "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
+          "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
+          "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
+        },
+        "skills": {
+          "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。"
+        },
+        "subagents": {
+          "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。"
+        },
+        "tools": {
+          "clearAll": "すべて無効",
+          "clearGroup": "クリア",
+          "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
+          "selectAll": "すべて有効",
+          "selectGroup": "全選択"
+        }
       }
     }
   },
@@ -1758,7 +1830,9 @@ const handleApply = async () => {
             "applyFailed": "적용 실패, 백엔드 연결을 확인하세요",
             "presetSaveFailed": "프리셋 저장 실패",
             "applySuccess": "적용됨"
-          }
+          },
+          "emptyList": "프리셋 없음",
+          "title": "프리셋과 역할"
         }
       },
       "desc": {
@@ -1774,7 +1848,29 @@ const handleApply = async () => {
       "role": {
         "charNote": "이름과 아바타 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다. 역할 이름은 시스템 프롬프트에도 기록됩니다.",
         "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다",
-        "resetAvatar": "아바타 초기화"
+        "resetAvatar": "아바타 초기화",
+        "aiName": "AI 이름",
+        "userName": "사용자 이름"
+      },
+      "agent": {
+        "middlewares": {
+          "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
+          "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다",
+          "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
+        },
+        "skills": {
+          "hint": "시스템 프롬프트의 스킬 색인에 들어갈 항목을 선택하세요(모두 선택 = 기본, 설정 저장 안 함). 해제한 항목은 스킬 색인에 나타나지 않습니다."
+        },
+        "subagents": {
+          "hint": "기능 역할마다 사용할 모델(환경 구성 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다."
+        },
+        "tools": {
+          "clearAll": "모두 끄기",
+          "clearGroup": "지우기",
+          "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
+          "selectAll": "모두 켜기",
+          "selectGroup": "전체"
+        }
       }
     }
   }

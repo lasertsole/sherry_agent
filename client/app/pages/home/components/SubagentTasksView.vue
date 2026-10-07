@@ -236,7 +236,9 @@ onUnmounted(() => {
       "backToSession": "返回会话",
       "backToSessionPrompt": "跳转到发起该任务的会话",
       "refreshGraph": "刷新",
-      "refreshGraphPrompt": "重新拉取并重绘运行图"
+      "refreshGraphPrompt": "重新拉取并重绘运行图",
+      "noTasks": "暂无后台任务",
+      "tasksLoading": "正在加载任务…"
     }
   },
   "en": {
@@ -244,7 +246,9 @@ onUnmounted(() => {
       "backToSession": "Back to session",
       "backToSessionPrompt": "Jump to the session that spawned this task",
       "refreshGraph": "Refresh",
-      "refreshGraphPrompt": "Refetch and redraw the run graph"
+      "refreshGraphPrompt": "Refetch and redraw the run graph",
+      "noTasks": "No background tasks yet",
+      "tasksLoading": "Loading tasks..."
     }
   },
   "ja": {
@@ -252,7 +256,9 @@ onUnmounted(() => {
       "backToSession": "セッションに戻る",
       "backToSessionPrompt": "このタスクを開始したセッションに移動",
       "refreshGraph": "再読み込み",
-      "refreshGraphPrompt": "実行グラフを再取得して再描画"
+      "refreshGraphPrompt": "実行グラフを再取得して再描画",
+      "noTasks": "バックグラウンドタスクはまだありません",
+      "tasksLoading": "タスクを読み込み中..."
     }
   },
   "ko": {
@@ -260,7 +266,9 @@ onUnmounted(() => {
       "backToSession": "세션으로 돌아가기",
       "backToSessionPrompt": "이 작업을 시작한 세션으로 이동",
       "refreshGraph": "새로고침",
-      "refreshGraphPrompt": "실행 그래프를 다시 가져와 다시 그리기"
+      "refreshGraphPrompt": "실행 그래프를 다시 가져와 다시 그리기",
+      "noTasks": "백그라운드 작업이 아직 없습니다",
+      "tasksLoading": "작업을 불러오는 중..."
     }
   }
 }

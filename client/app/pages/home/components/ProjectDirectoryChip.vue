@@ -154,3 +154,52 @@ watch(
   { immediate: true }
 );
 </script>
+
+<i18n lang="json">
+{
+  "en": {
+    "toolbar": {
+      "projectDirectory": {
+        "browse": "Choose folder…",
+        "label": "Project directory",
+        "pendingHint": "Applies on the next turn",
+        "pendingLabel": "Pending",
+        "unbound": "No project directory bound"
+      }
+    }
+  },
+  "zh": {
+    "toolbar": {
+      "projectDirectory": {
+        "browse": "选择文件夹…",
+        "label": "项目目录",
+        "pendingHint": "将于下一轮生效",
+        "pendingLabel": "待生效",
+        "unbound": "未绑定项目目录"
+      }
+    }
+  },
+  "ja": {
+    "toolbar": {
+      "projectDirectory": {
+        "browse": "フォルダーを選択…",
+        "label": "プロジェクトディレクトリ",
+        "pendingHint": "次のターンで有効になります",
+        "pendingLabel": "保留中",
+        "unbound": "プロジェクトディレクトリ未設定"
+      }
+    }
+  },
+  "ko": {
+    "toolbar": {
+      "projectDirectory": {
+        "browse": "폴더 선택…",
+        "label": "프로젝트 디렉터리",
+        "pendingHint": "다음 턴에 적용됩니다",
+        "pendingLabel": "대기 중",
+        "unbound": "프로젝트 디렉터리 미설정"
+      }
+    }
+  }
+}
+</i18n>

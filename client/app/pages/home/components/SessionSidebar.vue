@@ -786,6 +786,9 @@ watch(
       "tasksBatchDelete": "批量删除任务",
       "tasksBatchDeleteConfirm": "确定要批量删除选中的任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
       "tasksSelectAll": "全选"
+    },
+    "a11y": {
+      "language": "语言"
     }
   },
   "en": {
@@ -810,6 +813,9 @@ watch(
       "tasksBatchDelete": "Batch delete tasks",
       "tasksBatchDeleteConfirm": "Delete the selected tasks? Their root and all child tasks will be permanently cleared. This cannot be undone.",
       "tasksSelectAll": "Select All"
+    },
+    "a11y": {
+      "language": "Language"
     }
   },
   "ja": {
@@ -834,6 +840,9 @@ watch(
       "tasksBatchDelete": "タスクを一括削除",
       "tasksBatchDeleteConfirm": "選択したタスクを一括削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
       "tasksSelectAll": "すべて選択"
+    },
+    "a11y": {
+      "language": "言語"
     }
   },
   "ko": {
@@ -858,6 +867,9 @@ watch(
       "tasksBatchDelete": "작업 일괄 삭제",
       "tasksBatchDeleteConfirm": "선택한 작업을 일괄 삭제하시겠습니까? 루트 작업과 모든 하위 작업이 완전히 삭제됩니다. 이 작업은 되돌릴 수 없습니다.",
       "tasksSelectAll": "전체 선택"
+    },
+    "a11y": {
+      "language": "언어"
     }
   }
 }

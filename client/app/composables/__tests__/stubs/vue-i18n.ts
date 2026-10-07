@@ -69,9 +69,10 @@ const currentLocale = reactive({ value: 'zh' });
  *
  * The CURRENT locale's block wins (a test may switch `locale.value` to drive
  * locale-dependent rendering), falling back to `zh`.
+ * @param blocks The component's `__i18n` blocks (captured at setup — a handler
+ *   call has no current instance, so they cannot be re-read per call).
  */
-function localOverlay(): Dict {
-  const blocks = (getCurrentInstance()?.type as I18nBlockHost | undefined)?.__i18n;
+function localOverlay(blocks: unknown[] | undefined): Dict {
   const overlay: Dict = {};
   for (const entry of blocks ?? []) {
     if (!entry || typeof entry !== 'object') continue;
@@ -83,12 +84,17 @@ function localOverlay(): Dict {
 }
 
 export function useI18n() {
-  const overlay = localOverlay();
+  // The blocks are captured once (the instance is gone inside event handlers),
+  // but the LOCALE is read per call: real vue-i18n re-renders on a locale switch,
+  // and a block-resident key must follow it — resolving the overlay once at setup
+  // left every inline-block label frozen in the setup-time language.
+  const blocks = (getCurrentInstance()?.type as I18nBlockHost | undefined)?.__i18n;
   return {
     t: (key: string, params?: Record<string, unknown>) => {
       // Central keys resolve in the CURRENT locale (falling back to zh), so a
       // locale-switching test observes the same text the app would render.
       const central = CENTRAL_MESSAGES[currentLocale.value] ?? zhMessages;
+      const overlay = localOverlay(blocks);
       let text = lookupTree(overlay, key) ?? lookupTree(central, key) ?? lookupTree(zhMessages, key) ?? key;
       if (params) {
         for (const [name, value] of Object.entries(params)) {

@@ -84,3 +84,52 @@ async function submit(): Promise<void> {
   await navigateTo(redirect);
 }
 </script>
+
+<i18n lang="json">
+{
+  "en": {
+    "auth": {
+      "login": {
+        "failed": "Wrong username or password",
+        "password": "Password",
+        "submit": "Sign in",
+        "subtitle": "Sign in to continue",
+        "username": "Username"
+      }
+    }
+  },
+  "zh": {
+    "auth": {
+      "login": {
+        "failed": "用户名或密码错误",
+        "password": "密码",
+        "submit": "登 录",
+        "subtitle": "请登录以继续",
+        "username": "用户名"
+      }
+    }
+  },
+  "ja": {
+    "auth": {
+      "login": {
+        "failed": "ユーザー名またはパスワードが違います",
+        "password": "パスワード",
+        "submit": "ログイン",
+        "subtitle": "続けるにはログインしてください",
+        "username": "ユーザー名"
+      }
+    }
+  },
+  "ko": {
+    "auth": {
+      "login": {
+        "failed": "사용자 이름 또는 비밀번호가 올바르지 않습니다",
+        "password": "비밀번호",
+        "submit": "로그인",
+        "subtitle": "계속하려면 로그인하세요",
+        "username": "사용자 이름"
+      }
+    }
+  }
+}
+</i18n>
