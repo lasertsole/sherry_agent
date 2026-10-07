@@ -169,7 +169,8 @@ const PANELS: Record<RightSidebarPanelKind, Component> = {
   account: defineAsyncComponent(() => import('./AccountSettingsPanel.vue')),
   notification: defineAsyncComponent(() => import('./NotificationPanel.vue')),
   sessionPreset: defineAsyncComponent(() => import('./SessionPresetPanel.vue')),
-  gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue'))
+  gitDiff: defineAsyncComponent(() => import('./GitDiffPanel.vue')),
+  contextViewer: defineAsyncComponent(() => import('./ContextViewerPanel.vue'))
 };
 
 /**
@@ -307,6 +308,7 @@ onBeforeUnmount(() => {
       "empty": "暂无标签页，从菜单或工具栏添加",
       "sessionPreset": "预设角色",
       "gitDiff": "提交差异",
+      "contextViewer": "Agent 上下文",
       "scopes": {
         "session": "当前会话",
         "global": "全局"
@@ -335,6 +337,7 @@ onBeforeUnmount(() => {
       "empty": "No tabs yet — add one from the menu or toolbar",
       "sessionPreset": "Presets & Role",
       "gitDiff": "Commit diff",
+      "contextViewer": "Agent context",
       "scopes": {
         "session": "This session",
         "global": "Global"
@@ -363,6 +366,7 @@ onBeforeUnmount(() => {
       "empty": "タブがありません。メニューまたはツールバーから追加",
       "sessionPreset": "プリセットと役割",
       "gitDiff": "コミット差分",
+      "contextViewer": "エージェント コンテキスト",
       "scopes": {
         "session": "現在のセッション",
         "global": "グローバル"
@@ -391,6 +395,7 @@ onBeforeUnmount(() => {
       "empty": "탭이 없습니다. 메뉴 또는 툴바에서 추가",
       "sessionPreset": "프리셋과 역할",
       "gitDiff": "커밋 diff",
+      "contextViewer": "에이전트 컨텍스트",
       "scopes": {
         "session": "현재 세션",
         "global": "전역"

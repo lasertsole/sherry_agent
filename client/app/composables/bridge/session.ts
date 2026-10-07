@@ -292,6 +292,72 @@ export async function fetchContextUsage(sessionId: string): Promise<ContextUsage
   };
 }
 
+/** One tool definition the session's model can call. */
+export interface ContextToolDefinition {
+  name: string;
+  description: string;
+  /** JSON schema of the tool's arguments (absent for a schema-less tool). */
+  parameters?: Record<string, unknown>;
+}
+
+/** One transcript row as the context viewer shows it. */
+export interface ContextMessage {
+  /** ``human`` / ``ai`` / ``tool`` / ``system``. */
+  role: string;
+  content: string;
+  /** Why an injected row exists (``project_dir`` / ``git_head`` / ``task_intent``…). */
+  origin?: string;
+  /** The injected-carrier marker (see the workspace-notice contract). */
+  internal?: boolean;
+  tool_calls?: Array<{ name: string; args: string }>;
+  tool_call_id?: string;
+  /** The row was clipped to the served bound. */
+  truncated?: boolean;
+}
+
+/** The content behind the usage accounting: prompt, tools and live transcript. */
+export interface ContextInspect {
+  window: number;
+  system_prompt: string;
+  system_tokens: number;
+  tools: ContextToolDefinition[];
+  tool_tokens: number;
+  /** True when the session narrows the tool set (预设-工具 tab). */
+  tool_selection: boolean;
+  messages: ContextMessage[];
+  message_tokens: number;
+  /** Rows clipped by the per-message bound. */
+  truncated: number;
+  /** Non-empty when the checkpoint read failed (the rest still renders). */
+  state_error: string;
+}
+
+/**
+ * Read the session's live context content — the system prompt the chain
+ * injected, the tool definitions the model sees, and the message list the
+ * checkpointer holds (what the next call would receive).
+ * @param sessionId
+ */
+export async function fetchContextInspect(sessionId: string): Promise<ContextInspect> {
+  const res = await fetchApiPayload<Record<string, unknown>>({
+    url: '/context/inspect',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return {
+    window: Number(res.window ?? 0),
+    system_prompt: String(res.system_prompt ?? ''),
+    system_tokens: Number(res.system_tokens ?? 0),
+    tools: Array.isArray(res.tools) ? (res.tools as ContextToolDefinition[]) : [],
+    tool_tokens: Number(res.tool_tokens ?? 0),
+    tool_selection: res.tool_selection === true,
+    messages: Array.isArray(res.messages) ? (res.messages as ContextMessage[]) : [],
+    message_tokens: Number(res.message_tokens ?? 0),
+    truncated: Number(res.truncated ?? 0),
+    state_error: String(res.state_error ?? '')
+  };
+}
+
 export interface ThinkingState {
   mode: ThinkingMode;
   enabled: boolean | null;

@@ -535,4 +535,39 @@ describe('ChatBox streaming bubble (integration, backend mocked)', () => {
     expect(wrapper.text()).toContain('short answer');
     expect(wrapper.text()).not.toContain('仅显示末尾内容');
   });
+
+  it('opens the session context viewer when a token figure is clicked', async () => {
+    // The token phrase on the AI row is the affordance: hovering it turns the
+    // numbers blue (the class) and clicking opens the 当前会话 context tab.
+    const sidebar = { openTab: vi.fn(() => 'contextViewer-1') };
+    vi.stubGlobal('useRightSidebarStore', () => sidebar);
+    const wrapper = mount(ChatBox, {
+      props: {
+        messages: [
+          base({
+            id: 41,
+            role: CHAT_ROLE.AI,
+            content: '答复',
+            modelName: 'glm-4.6',
+            inputTokens: 13186,
+            outputTokens: 66
+          })
+        ]
+      }
+    });
+
+    const trigger = wrapper.get('[data-test="model-meta-open-context"]');
+    expect(trigger.text()).toContain('13186');
+    expect(trigger.classes().join(' ')).toContain('hover:text-[#2563EB]');
+    expect(trigger.attributes('title')).toBeTruthy();
+
+    await trigger.trigger('click');
+
+    expect(sidebar.openTab).toHaveBeenCalledWith('contextViewer');
+    // Every figure in every bubble lands in that one tab (no payload → the
+    // store's own dedupe keeps a single instance).
+    await trigger.trigger('click');
+    expect(sidebar.openTab).toHaveBeenCalledTimes(2);
+    expect(sidebar.openTab).toHaveReturnedWith('contextViewer-1');
+  });
 });

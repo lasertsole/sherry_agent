@@ -71,17 +71,26 @@ describe('stores/right-sidebar', () => {
     expect(store.activeScope).toBe('session');
     expect(store.tabsInScope('session').map(tab => tab.kind)).toEqual(['fileViewer', 'sessionPreset']);
 
+    // The context viewer is session-scoped too, and every click (any figure in
+    // any bubble) lands in ONE instance: no payload, so the kind dedupes.
+    const viewer = store.openTab('contextViewer');
+    expect(store.tabs.find(tab => tab.id === viewer)?.scope).toBe('session');
+    expect(store.openTab('contextViewer')).toBe(viewer);
+
     store.setActiveScope('global');
     store.activateTab(preset);
     expect(store.activeScope).toBe('session');
 
     // Closing the session tab falls back to the neighbour and ITS group: the
-    // session preset's left neighbour is the session-scoped file viewer.
+    // session preset's left neighbour is the session-scoped context viewer.
     store.closeTab(preset);
-    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.kind).toBe('fileViewer');
+    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.kind).toBe('contextViewer');
     expect(store.activeScope).toBe('session');
 
-    // Closing that too lands back on the global tab.
+    // Closing the session tabs one by one walks the group before landing back
+    // on the global one.
+    store.closeTab(store.activeTabId!);
+    expect(store.tabs.find(tab => tab.id === store.activeTabId)?.kind).toBe('fileViewer');
     store.closeTab(store.activeTabId!);
     expect(store.activeTabId).toBe(logs);
     expect(store.activeScope).toBe('global');

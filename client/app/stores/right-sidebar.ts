@@ -22,7 +22,9 @@ export type RightSidebarPanelKind =
   /** The session's own persona preset (read-only). */
   | 'sessionPreset'
   /** One file's diff from one commit of the session project (opened from the git graph). */
-  | 'gitDiff';
+  | 'gitDiff'
+  /** The session's live context: system prompt, tools and message list. */
+  | 'contextViewer';
 
 /**
  * Which group a tab belongs to: the CURRENT SESSION's own views (things read from
@@ -57,7 +59,9 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   notification: 'global',
   sessionPreset: 'session',
   // A diff belongs to the session whose project directory it was read from.
-  gitDiff: 'session'
+  gitDiff: 'session',
+  // The live context is read from the session's own checkpoint.
+  contextViewer: 'session'
 };
 
 /**

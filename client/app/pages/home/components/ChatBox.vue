@@ -194,7 +194,9 @@
                       input: message.inputTokens ?? 0,
                       output: message.outputTokens ?? 0
                     })
-                  " />
+                  "
+                  :title="t('chatBox.contextTip')"
+                  @open-context="openContextViewer" />
               </div>
             </div>
           </div>
@@ -286,6 +288,16 @@ const props = withDefaults(defineProps<Props>(), {
   aiName: '',
   loadingOlder: false
 });
+
+const rightSidebar = useRightSidebarStore();
+
+/**
+ * Open (or focus) the session's context viewer tab. The store dedupes by kind,
+ * so clicking any number in any bubble lands in that one tab.
+ */
+const openContextViewer = (): void => {
+  rightSidebar.openTab('contextViewer');
+};
 
 /** User display name: falls back to the i18n default when the prop is empty */
 const resolvedUserName = computed(() => props.userName || t('chatBox.defaultUserName'));
@@ -528,6 +540,7 @@ defineExpose({ scrollToMessage });
       "imageLoadFailed": "图片加载失败",
       "modelMeta": "输入 {input} · 输出 {output} tokens",
       "userInputMeta": "≈ {n} tokens",
+      "contextTip": "查看 Agent 的完整上下文（系统提示词 / 工具 / 消息）",
       "scrollBottom": "回到最底部",
       "loadingOlder": "正在加载更早的消息",
       "streamingTail": "正在流式输出，仅显示末尾内容；本轮结束后显示全文",
@@ -548,6 +561,7 @@ defineExpose({ scrollToMessage });
       "imageLoadFailed": "Image load failed",
       "modelMeta": "{input} in · {output} out tokens",
       "userInputMeta": "≈ {n} tokens",
+      "contextTip": "View the agent's full context (system prompt / tools / messages)",
       "scrollBottom": "Scroll to bottom",
       "loadingOlder": "Loading earlier messages",
       "streamingTail": "Streaming — showing the end only; the full text appears when the turn ends",
@@ -568,6 +582,7 @@ defineExpose({ scrollToMessage });
       "imageLoadFailed": "画像の読み込みに失敗しました",
       "modelMeta": "入力 {input} · 出力 {output} tokens",
       "userInputMeta": "≈ {n} トークン",
+      "contextTip": "エージェントのコンテキスト全体を表示（システム プロンプト / ツール / メッセージ）",
       "scrollBottom": "最下部へ戻る",
       "loadingOlder": "以前のメッセージを読み込み中",
       "streamingTail": "ストリーミング中 — 末尾のみ表示しています。ターン終了後に全文を表示します",
@@ -588,6 +603,7 @@ defineExpose({ scrollToMessage });
       "imageLoadFailed": "이미지 로드 실패",
       "modelMeta": "입력 {input} · 출력 {output} tokens",
       "userInputMeta": "≈ {n} 토큰",
+      "contextTip": "에이전트의 전체 컨텍스트 보기(시스템 프롬프트 / 도구 / 메시지)",
       "scrollBottom": "맨 아래로",
       "loadingOlder": "이전 메시지 불러오는 중",
       "streamingTail": "스트리밍 중 — 끝부분만 표시하며, 턴이 끝나면 전체 내용이 표시됩니다",
