@@ -25,6 +25,9 @@ class GitGraphConfig(TypedDict):
     #: File bytes read for one diff side — a bigger blob is flagged instead of
     #: being truncated into a misleading diff.
     max_diff_bytes: int
+    #: Local branches served to the panel's branch switcher (most recent commit
+    #: first); a repository with more is clipped rather than walked whole.
+    max_branches: int
 
 
 GIT_GRAPH: GitGraphConfig = {
@@ -35,4 +38,5 @@ GIT_GRAPH: GitGraphConfig = {
     "max_status_entries": 500,
     "max_diff_rows": 4000,
     "max_diff_bytes": 2 * 1024 * 1024,
+    "max_branches": 200,
 }

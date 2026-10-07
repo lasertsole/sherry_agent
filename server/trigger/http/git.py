@@ -50,6 +50,7 @@ def _page_payload(session_id: str, page) -> dict:
         "dirty_capped": page.dirty_capped,
         "commits": page.commits,
         "has_more": page.has_more,
+        "branches": page.branches,
     }
 
 

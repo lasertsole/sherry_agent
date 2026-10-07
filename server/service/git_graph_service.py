@@ -72,6 +72,8 @@ class GraphPage:
     dirty_capped: bool = False
     commits: list[dict] = field(default_factory=list)
     has_more: bool = False
+    #: Local branches, most recently committed first — the branch switcher's list.
+    branches: list[str] = field(default_factory=list)
 
 
 def _run(root: Path, args: list[str]) -> subprocess.CompletedProcess[str] | None:
@@ -171,6 +173,30 @@ def _header(root: Path) -> tuple[bool, str, str, bool, int, bool]:
     return True, "", branch, detached, dirty, capped
 
 
+def _local_branches(root: Path) -> list[str]:
+    """Local branch names, most recently committed first (the switcher's list).
+
+    ``--sort=-committerdate`` puts the branches the user is likely to want at the
+    top (the panel marks the current one), and the list is clipped so a
+    repository with thousands of branches cannot bloat the page.
+    """
+    refs = _run(
+        root,
+        [
+            "for-each-ref",
+            "--sort=-committerdate",
+            f"--count={GIT_GRAPH['max_branches']}",
+            "--format=%(refname:short)",
+            "refs/heads",
+        ],
+    )
+    if refs is None or refs.returncode != 0:
+        return []
+    return [_text(line) for line in refs.stdout.splitlines() if line.strip()][
+        : GIT_GRAPH["max_branches"]
+    ]
+
+
 def read_graph(session_id: str, limit: int | None = None, skip: int = 0) -> GraphPage:
     """One page of the session project's history (newest first).
 
@@ -218,6 +244,7 @@ def read_graph(session_id: str, limit: int | None = None, skip: int = 0) -> Grap
         dirty_capped=capped,
         commits=commits[:page_size],
         has_more=has_more,
+        branches=_local_branches(root),
     )
 
 

@@ -83,6 +83,59 @@ def test_the_graph_serves_the_repository_state_and_history(repo):
     assert page.commits[2]["subject"] == "second commit"
 
 
+def test_the_page_carries_the_local_branches_most_recent_first(repo):
+    """The switcher's list: local branches only, ordered by tip recency."""
+    import os
+
+    # A branch with a deliberately OLD tip date makes the ordering deterministic
+    # (the fixture's own commits share a timestamp second).
+    ancient_env = {
+        **os.environ,
+        "GIT_AUTHOR_DATE": "2001-01-01T00:00:00+00:00",
+        "GIT_COMMITTER_DATE": "2001-01-01T00:00:00+00:00",
+    }
+    _git(repo, "checkout", "-q", "-b", "ancient")
+    (repo / "ancient.txt").write_text("z", encoding="utf-8")
+    _git(repo, "add", ".")
+    subprocess.run(
+        ["git", "commit", "-q", "-m", "ancient"],
+        cwd=repo,
+        env=ancient_env,
+        capture_output=True,
+        check=True,
+    )
+    _git(repo, "checkout", "-q", "main")
+
+    page = service.read_graph("sess-git", limit=10)
+
+    assert set(page.branches) == {"main", "feature", "ancient"}
+    assert page.branch in page.branches, "the current branch is part of the list"
+    assert page.branches[-1] == "ancient", "the oldest tip sorts last"
+
+
+def test_the_branch_list_is_clipped_to_the_configured_cap(repo, monkeypatch):
+    for name in ("b-one", "b-two", "b-three"):
+        _git(repo, "branch", name)
+    monkeypatch.setitem(service.GIT_GRAPH, "max_branches", 2)
+
+    page = service.read_graph("sess-git", limit=10)
+
+    assert len(page.branches) == 2
+
+
+def test_a_repository_without_branches_serves_an_empty_list(tmp_path, monkeypatch):
+    """No commits yet: git has no branch to name, and the list is empty."""
+    root = tmp_path / "fresh"
+    root.mkdir()
+    _git(root, "init", "-q", "-b", "main")
+    monkeypatch.setattr(service, "current_project_dir", lambda _sid: root)
+
+    page = service.read_graph("sess-git", limit=10)
+
+    assert page.available is True
+    assert page.branches == []
+
+
 def test_paging_reports_when_more_commits_exist(repo):
     first = service.read_graph("sess-git", limit=2)
     assert [commit["subject"] for commit in first.commits] == ["merge feature", "feature work"]
