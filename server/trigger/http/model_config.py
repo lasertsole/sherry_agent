@@ -32,3 +32,29 @@ async def model_config_handler(request) -> dict:
             and aux_val >= MIN_REQUIRED_MAX_TOKEN
         ),
     }
+
+
+@app.post("/model/test")
+async def model_test_handler(request):
+    """Probe one env-config model group's endpoint with the caller's parameters.
+
+    Body: ``{"group": "MAIN_LLM", "params": {"MAIN_LLM_PROVIDER": "", ...}}`` —
+    the panel's own draft, so a profile can be verified before it is applied.
+
+    Response: ``{success: true, supported, ok, latency_ms, detail, model}``.
+    A refused probe (the provider said no, or nothing answered in time) is a
+    200 with ``ok: false`` and the reason in ``detail``: that IS the diagnosis.
+    400 only for a malformed request (missing group / params).
+    """
+    from server.service.model_test_service import test_model_group
+    from server.trigger.http.helpers import bad_request, ok, read_body
+
+    body = read_body(request) or {}
+    group = str(body.get("group") or "").strip()
+    params = body.get("params")
+    if not group:
+        return bad_request("group is required")
+    if not isinstance(params, dict):
+        return bad_request("params must be an object")
+    result = await test_model_group(group, {str(k): str(v) for k, v in params.items()})
+    return ok({**result, "group": group})
