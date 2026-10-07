@@ -233,7 +233,12 @@ the commits into lanes (`GitGraphPanel.vue`, the classic walk: a lane holds the
 hash it waits for, the first parent inherits it, an extra parent opens one) and
 draws one SVG per row with VS Code's own geometry (22px rows / 11px lanes / the
 five `scmGraph` colours; a merge is a ring node, HEAD wears an outer ring). The
-two section headers share one row and stack vertically when both are collapsed.
+two section headers always share one horizontal row (a collapsed one keeps its
+place beside the open one), and the Splitter exists ONLY while BOTH panels do:
+PrimeVue's Splitter keeps refs to its panels, so a `v-if` panel disappearing
+under a live instance logged `Splitter happened error... Cannot read properties
+of undefined (reading 'style')` when the sections were toggled quickly — the
+single-panel cases render a plain container instead.
 The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed`/
 `hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
 with git's own stderr surfacing as a 409 — and clicking a row expands the files
