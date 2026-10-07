@@ -65,16 +65,7 @@ const stubs = {
   Button: { name: 'Button', template: '<button><slot /></button>' },
   InputText: { name: 'InputText', template: '<input />' },
   Calendar: { name: 'Calendar', template: '<div />' },
-  Checkbox: { name: 'Checkbox', template: '<div />' },
-  // The language picker's contract: PrimeVue's Select emits the chosen code.
-  Select: {
-    name: 'Select',
-    props: ['modelValue', 'options'],
-    emits: ['update:modelValue'],
-    template: `<select @change="$emit('update:modelValue', 'en')">
-      <option v-for="option in options" :key="option.code" :value="option.code">{{ option.name }}</option>
-    </select>`
-  }
+  Checkbox: { name: 'Checkbox', template: '<div />' }
 };
 
 let ui: ReturnType<typeof makeUiStore>;
@@ -167,39 +158,5 @@ describe('SessionSidebar working-directory sections', () => {
       }
       expect(wrapper.find('[data-test="sidebar-splitter"]').exists()).toBe(filesOpen && gitOpen);
     }
-  });
-
-  it('hosts the theme switch and the language picker in its title row', async () => {
-    const wrapper = await mountSidebar();
-
-    const titleRow = wrapper.get('[data-test="sidebar-title-row"]');
-    const themeSwitch = titleRow.findComponent({ name: 'ModeSwitch' });
-    expect(themeSwitch.exists()).toBe(true);
-    expect(titleRow.find('[data-test="sidebar-locale"]').exists()).toBe(true);
-    // The logo keeps the row's left edge.
-    expect(titleRow.text()).toContain('🍊');
-    // The switch's wrapper must be a flex box: as a plain block the 24px switch
-    // rode the row's 28px text baseline and sat 4px above the row's centre
-    // (measured live — happy-dom has no layout to assert against).
-    const wrapperClasses = themeSwitch.element.parentElement?.className ?? '';
-    expect(wrapperClasses).toContain('flex');
-    expect(wrapperClasses).toContain('items-center');
-  });
-
-  it('picks a language from the title row and persists the choice', async () => {
-    const cookie = { value: '' };
-    vi.stubGlobal('useCookie', () => cookie);
-    const wrapper = await mountSidebar();
-    const select = wrapper.get('[data-test="sidebar-locale"]');
-
-    // Drive the picker's own contract (the real PrimeVue Select emits this).
-    await select.trigger('change');
-    await flushPromises();
-
-    // The locale switched (the stub's reactive locale) and the preference cookie
-    // was written — the pair that makes the choice survive a browser restart.
-    const { locale } = await import('vue-i18n');
-    expect(locale.value).toBe('en');
-    expect(cookie.value).toBe('en');
   });
 });

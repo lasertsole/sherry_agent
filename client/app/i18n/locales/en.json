@@ -1,6 +1,7 @@
 {
   "a11y": {
-    "previewImage": "Preview image"
+    "previewImage": "Preview image",
+    "language": "Language"
   },
   "common": {
     "confirmDelete": "Confirm Delete",

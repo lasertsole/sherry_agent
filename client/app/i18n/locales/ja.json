@@ -1,6 +1,7 @@
 {
   "a11y": {
-    "previewImage": "画像をプレビュー"
+    "previewImage": "画像をプレビュー",
+    "language": "言語"
   },
   "common": {
     "confirmDelete": "削除の確認",

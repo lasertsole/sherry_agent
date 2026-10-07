@@ -171,18 +171,25 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     expect(bellIn('toolbar-left')).toBe(false);
   });
 
-  it('keeps the theme switch and the language picker in the sidebar title row', async () => {
+  it('puts the theme switch and the language picker just left of the menu button', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    // Both controls are workspace settings: they live in the left sidebar's title
-    // row (right edge), not in the top toolbar, so the toolbar's container query
-    // no longer has to hide anything for them.
-    const titleRow = wrapper.get('[data-test="sidebar-title-row"]');
-    expect(titleRow.findComponent(ModeSwitch).exists()).toBe(true);
-    expect(titleRow.find('[data-test="sidebar-locale"]').exists()).toBe(true);
-    // The toolbar keeps no copy of either (the old narrow-column guards are gone).
-    expect(wrapper.findAll('.\\@max-\\[620px\\]\\:hidden\\!').length).toBe(0);
+    const right = wrapper.get('[data-test="toolbar-right"]');
+    expect(right.findComponent(ModeSwitch).exists()).toBe(true);
+    expect(right.find('[data-test="toolbar-locale"]').exists()).toBe(true);
+    // The sidebar keeps no copy of either.
+    expect(wrapper.get('[data-test="sidebar-title-row"]').findComponent(ModeSwitch).exists()).toBe(false);
+
+    // DOM order inside the right cluster: the picker comes BEFORE the menu button.
+    const picker = right.get('[data-test="toolbar-locale"]').element;
+    const menu = right.get('button[title="菜单"]').element;
+    expect(picker.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+
+    // The narrow-column guards are back with the controls (both drop out of the
+    // row below 620px).
+    expect(wrapper.find('.\\@max-\\[620px\\]\\:hidden').findComponent(ModeSwitch).exists()).toBe(true);
+    expect(wrapper.findAll('.\\@max-\\[620px\\]\\:hidden\\!').length).toBe(1);
   });
 
   it('keeps the log viewer out of the top bar (it is a nine-grid entry)', async () => {
