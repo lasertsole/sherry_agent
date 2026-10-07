@@ -31,7 +31,7 @@
            column's width, so the row thins out in two steps instead of being squeezed.
            Below 620px the theme switch and the language picker drop out; below 300px only
            the two sidebar collapse buttons remain — the row needs ~250px (both collapse
-           buttons plus the folder / bell / menu trio), so anything under that squeezes the
+           buttons plus the folder / menu / toggle trio), so anything under that squeezes the
            row out of the column and a button nobody can reach is worse than a hidden one.
            Container queries measure the CONTENT box, so the 300 excludes the p-3 padding.
            The `!` is load-bearing: PrimeVue's own `display` rules are UNLAYERED, and an
@@ -42,7 +42,9 @@
         class="@container flex items-center justify-between box-border border-b border-solid border-gray-light dark:border-gray-dark p-3 h-15">
         <!-- Left: collapse/expand the sidebar, then the body switch
              (sessions ↔ project files) -->
-        <div class="flex items-center gap-1">
+        <div
+          class="flex items-center gap-1"
+          data-test="toolbar-left">
           <Button
             :icon="isSidebarCollapsed ? 'pi pi-angle-double-right' : 'pi pi-angle-double-left'"
             :title="isSidebarCollapsed ? t('toolbar.expandSidebar') : t('toolbar.collapseSidebar')"
@@ -64,28 +66,32 @@
               '@max-[300px]:hidden!'
             ]"
             @click="toggleSidebarBodyWithHint" />
-          <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged count.
-               Clicking opens the notification TAB (全局); opening it clears the badge. -->
-          <div class="relative flex items-center @max-[300px]:hidden!">
-            <Button
-              icon="pi pi-bell"
-              :title="t('toolbar.notification')"
-              :aria-label="t('toolbar.notification')"
-              variant="text"
-              @click="handleOperate('headerBar', 'notification')" />
-            <span
-              v-if="notifications.unreadCount > 0"
-              class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
-              :title="t('toolbar.notification')">
-              {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
-            </span>
-          </div>
         </div>
         <!-- Right: the function button area. The theme switch and the language
              picker are NOT here any more — both moved into the left sidebar's
              title row (they are workspace settings, not per-turn controls). -->
-        <div class="flex items-center gap-3">
+        <div
+          class="flex items-center gap-3"
+          data-test="toolbar-right">
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
+            <!-- Notification entry: 🔔 bell icon + red badge with the unread/merged
+                 count. It lives on the RIGHT now — among the tools, where the rest of
+                 the shell's entries are; clicking opens the notification TAB (全局)
+                 and clears the badge. -->
+            <div class="relative flex items-center @max-[300px]:hidden!">
+              <Button
+                icon="pi pi-bell"
+                :title="t('toolbar.notification')"
+                :aria-label="t('toolbar.notification')"
+                variant="text"
+                @click="handleOperate('headerBar', 'notification')" />
+              <span
+                v-if="notifications.unreadCount > 0"
+                class="absolute -top-0.5 -right-0.5 flex min-w-[18px] h-[18px] items-center justify-center rounded-full px-1 text-[10px] leading-none font-medium text-white bg-red-500"
+                :title="t('toolbar.notification')">
+                {{ notifications.unreadCount > 99 ? '99+' : notifications.unreadCount }}
+              </span>
+            </div>
             <!-- Session preset (icon-only): opens the preset VIEW as a right-sidebar
                  tab in the 当前会话 group (no popup — the tab survives outside clicks
                  and resizes with the panel). -->

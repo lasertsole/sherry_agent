@@ -157,6 +157,20 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     expect(rightSidebarState.openTab).toHaveBeenCalledWith('notification');
   });
 
+  it('keeps the bell in the RIGHT cluster (it read as a tool, not a body switch)', async () => {
+    const wrapper = mountHome();
+    await flushPromises();
+
+    const bellIn = (test: string) =>
+      wrapper
+        .get(`[data-test="${test}"]`)
+        .findAllComponents({ name: 'Button' })
+        .some(button => button.props('icon') === 'pi pi-bell');
+
+    expect(bellIn('toolbar-right')).toBe(true);
+    expect(bellIn('toolbar-left')).toBe(false);
+  });
+
   it('keeps the theme switch and the language picker in the sidebar title row', async () => {
     const wrapper = mountHome();
     await flushPromises();
