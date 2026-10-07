@@ -12,8 +12,46 @@
     ]">
     <!-- Fixed content width: when collapsed the outer overflow-hidden clips it wholesale, inner elements are never squeezed or wrapped -->
     <div class="flex flex-col px-4 h-full w-[280px] md:w-[280px] lg:w-[360px]">
-      <!-- LOGO area -->
-      <div class="flex items-center h-15 text-xl">🍊{{ t('chatBox.defaultAiName') }}</div>
+      <!-- LOGO area: the brand, then the two app-wide switches at the row's right
+           edge — the theme toggle and the language picker moved here from the top
+           toolbar (they are workspace-level settings, not per-turn controls, and
+           the title row is the roomiest place they fit). -->
+      <div
+        class="flex items-center justify-between gap-2 h-15 text-xl"
+        data-test="sidebar-title-row">
+        <span class="truncate">🍊{{ t('chatBox.defaultAiName') }}</span>
+        <div class="flex shrink-0 items-center gap-1.5">
+          <span><ModeSwitch /></span>
+          <Select
+            :model-value="locale"
+            :options="languageOptions"
+            option-label="name"
+            option-value="code"
+            class="w-[104px]"
+            size="small"
+            :aria-label="t('a11y.language')"
+            data-test="sidebar-locale"
+            @update:model-value="onLanguageChange">
+            <template #value="slotProps">
+              <span
+                v-if="slotProps.value"
+                class="flex items-center gap-1.5">
+                <i class="pi pi-globe" />
+                <span>{{ t(`config.language.${slotProps.value}`) }}</span>
+              </span>
+              <span
+                v-else
+                class="flex items-center gap-1.5">
+                <i class="pi pi-globe" />
+                <span>{{ t('config.language.zh') }}</span>
+              </span>
+            </template>
+            <template #option="slotProps">
+              <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
+            </template>
+          </Select>
+        </div>
+      </div>
       <!-- Left-sidebar body switch: the session list (default) or the session's
            工作目录 — TWO collapsible sections in one SHARED header row (文件树 /
            Git Graph sit side by side, each header toggling its panel). With both
@@ -261,8 +299,56 @@ import type { SessionRecord } from '../type.ts';
 // auto-import (a value import of `@/composables/**` is lint-restricted).
 import { isValidSessionTitle } from '@/common/utils';
 import { useNewSessionStore } from '@/stores/new-session';
+import ModeSwitch from './ModeSwitch.vue';
 
-const { t } = useI18n();
+const { t, locale, setLocale } = useI18n();
+
+/** Language switcher options: the names come from System Config's language block. */
+const languageOptions = computed(() => [
+  { name: t('config.language.zh'), code: 'zh' },
+  { name: t('config.language.en'), code: 'en' },
+  { name: t('config.language.ja'), code: 'ja' },
+  { name: t('config.language.ko'), code: 'ko' }
+]);
+
+/**
+ * Language switch handler (moved here from the top toolbar with the picker):
+ * switches via nuxt-i18n's `setLocale`. Under the `no_prefix` strategy,
+ * `setLocale`'s internal `navigate()` returns early, **without triggering a
+ * route navigation**, so URLs of session views like `/home/:id` stay stable.
+ *
+ * `setLocale` also does two things at once:
+ * - Loads the target locale's language pack (`mergeLocaleMessage`), avoiding
+ *   rendering raw keys
+ * - Writes the preference cookie (`i18n_redirected`) for persistence, so the
+ *   chosen language survives a refresh
+ *
+ * (Compared with directly setting `locale.value = code` + manually writing the
+ * cookie, `setLocale` is the only path that guarantees the language pack gets
+ * loaded; otherwise `$t` returns raw keys on the first render/switch.)
+ * @param code
+ */
+async function onLanguageChange(code: string) {
+  await setLocale(code as 'zh' | 'en' | 'ja' | 'ko');
+  persistLocalePreference(code as 'zh' | 'en' | 'ja' | 'ko');
+}
+
+/**
+ * Persist the language preference cookie (key: `i18n_redirected`).
+ *
+ * Background: after nuxt.config.ts set `detectBrowserLanguage: false`, the module
+ * normalizes the detection config to `{}`, which makes `setCookieLocale` a no-op
+ * because `detectConfig.useCookie` is falsy — **the module never writes the cookie
+ * itself**. `setLocale` can therefore only switch immediately and cannot persist;
+ * this manual write is what makes the preference survive a browser restart, and
+ * app.vue reads the same key on first load.
+ * @param code
+ */
+function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
+  if (import.meta.server) return;
+  const pref = useCookie('i18n_redirected');
+  pref.value = code;
+}
 
 /** Mandatory new-session preset dialog (shared with `[sid].vue`'s entry points). */
 const newSession = useNewSessionStore();

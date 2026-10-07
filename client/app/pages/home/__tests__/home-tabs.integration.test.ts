@@ -157,22 +157,18 @@ describe('home/index.vue toolbar registry (integration, backend mocked)', () => 
     expect(rightSidebarState.openTab).toHaveBeenCalledWith('notification');
   });
 
-  it('drops the theme switch and the language picker when the middle column is squeezed', async () => {
+  it('keeps the theme switch and the language picker in the sidebar title row', async () => {
     const wrapper = mountHome();
     await flushPromises();
 
-    // Pure CSS: the toolbar is a size container, so the two secondary controls hide
-    // by their own width — no resize observer, and it reacts to both sidebar drags.
-    expect(wrapper.find('.\\@container').exists()).toBe(true);
-    // The theme switch is wrapped (its own root is a fragment, so it cannot inherit the
-    // class) …
-    const themeGuard = wrapper.find('.\\@max-\\[620px\\]\\:hidden');
-    expect(themeGuard.findComponent(ModeSwitch).exists()).toBe(true);
-    // … and the language picker carries the guard with the important modifier, because
-    // its own `display` comes from PrimeVue's sheet (same idiom as `text-4xl!`).
-    const pickerGuard = wrapper.findAll('.\\@max-\\[620px\\]\\:hidden\\!');
-    expect(pickerGuard.length).toBe(1);
-    expect(pickerGuard[0]!.element.tagName.toLowerCase()).toBe('select');
+    // Both controls are workspace settings: they live in the left sidebar's title
+    // row (right edge), not in the top toolbar, so the toolbar's container query
+    // no longer has to hide anything for them.
+    const titleRow = wrapper.get('[data-test="sidebar-title-row"]');
+    expect(titleRow.findComponent(ModeSwitch).exists()).toBe(true);
+    expect(titleRow.find('[data-test="sidebar-locale"]').exists()).toBe(true);
+    // The toolbar keeps no copy of either (the old narrow-column guards are gone).
+    expect(wrapper.findAll('.\\@max-\\[620px\\]\\:hidden\\!').length).toBe(0);
   });
 
   it('keeps the log viewer out of the top bar (it is a nine-grid entry)', async () => {

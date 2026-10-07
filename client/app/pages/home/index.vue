@@ -81,42 +81,11 @@
             </span>
           </div>
         </div>
-        <!-- Right: original function button area (the theme switch and the language
-             picker are the first to go when the column gets narrow) -->
+        <!-- Right: the function button area. The theme switch and the language
+             picker are NOT here any more — both moved into the left sidebar's
+             title row (they are workspace settings, not per-turn controls). -->
         <div class="flex items-center gap-3">
-          <span class="@max-[620px]:hidden"><ModeSwitch /></span>
           <div class="hidden md:flex justify-end items-center flex-1 gap-3">
-            <!-- Language switcher: moved from System Config > Language Settings to the top
-                 toolbar; reads/writes the vue-i18n locale directly.
-                 The globe icon (pi-globe) lets users of any language intuitively recognize
-                 this as the language switch control. -->
-            <Select
-              :model-value="locale"
-              :options="languageOptions"
-              option-label="name"
-              option-value="code"
-              class="@max-[620px]:hidden! w-40"
-              size="small"
-              :aria-label="t('a11y.language')"
-              @update:model-value="onLanguageChange">
-              <template #value="slotProps">
-                <span
-                  v-if="slotProps.value"
-                  class="flex items-center gap-1.5">
-                  <i class="pi pi-globe" />
-                  <span>{{ t(`config.language.${slotProps.value}`) }}</span>
-                </span>
-                <span
-                  v-else
-                  class="flex items-center gap-1.5">
-                  <i class="pi pi-globe" />
-                  <span>{{ t('config.language.zh') }}</span>
-                </span>
-              </template>
-              <template #option="slotProps">
-                <span>{{ t(`config.language.${slotProps.option.code}`) }}</span>
-              </template>
-            </Select>
             <!-- Session preset (icon-only): opens the preset VIEW as a right-sidebar
                  tab in the 当前会话 group (no popup — the tab survives outside clicks
                  and resizes with the panel). -->
@@ -215,7 +184,6 @@ import RightSidebar from './components/RightSidebar.vue';
 import NewSessionPresetDialog from './components/NewSessionPresetDialog.vue';
 import SessionPresetButton from './components/SessionPresetButton.vue';
 import { ensureSessionCharacter } from './components/SessionSidebar.vue';
-import ModeSwitch from './components/ModeSwitch.vue';
 // function
 import { computed, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
@@ -224,57 +192,12 @@ import { useChatBackgroundStore } from '~/stores/chat-background';
 import { headerTools } from './config';
 import { buildHomeToolbarCommands } from './dialogs';
 
-const { t, locale, setLocale } = useI18n();
+const { t } = useI18n();
 
 /** Global chat area background image: bound to the root container (fills the entire window, including the left session list) */
 const chatBackgroundStore = useChatBackgroundStore();
 const { backgroundOpacity, chatBackgroundStyle, chatBackgroundOverlayStyle } = storeToRefs(chatBackgroundStore);
 
-/** Language switcher options: reuses the language names from System Config (each locale maps to its own language name) */
-const languageOptions = computed(() => [
-  { name: t('config.language.zh'), code: 'zh' },
-  { name: t('config.language.en'), code: 'en' },
-  { name: t('config.language.ja'), code: 'ja' },
-  { name: t('config.language.ko'), code: 'ko' }
-]);
-
-/**
- * Language switch handler: switches via nuxt-i18n's `setLocale`. Under the `no_prefix`
- * strategy, `setLocale`'s internal `navigate()` returns early, **without triggering a route
- * navigation**, so URLs of session views like `/home/:id` stay stable.
- *
- * `setLocale` also does two things at once:
- * - Loads the target locale's language pack (`mergeLocaleMessage`), avoiding rendering raw keys
- * - Writes the preference cookie (`i18n_redirected`) for persistence, so the chosen language
- *   can be restored after a refresh
- *
- * (Compared with directly setting `locale.value = code` + manually writing the cookie,
- *  `setLocale` is the only path that guarantees the language pack gets loaded; otherwise
- *  `$t` returns raw keys on first render/switch.)
- * @param code
- */
-async function onLanguageChange(code: string) {
-  await setLocale(code as 'zh' | 'en' | 'ja' | 'ko');
-  persistLocalePreference(code as 'zh' | 'en' | 'ja' | 'ko');
-}
-
-/**
- * Persist the language preference cookie (key: i18n_redirected).
- *
- * Background: after nuxt.config.ts set `detectBrowserLanguage: false`, the module normalizes the
- * detection config to `{}`, which makes `setCookieLocale` a no-op because `detectConfig.useCookie`
- * is falsy — **the module never writes the cookie itself**.
- * As a result, `setLocale` can only switch immediately and cannot persist. To satisfy
- * "the preferred language survives browser refresh/restart", we must manually write the
- * preference cookie and have app.vue read it first on initial load (app.vue's read logic
- * cooperates using the same key).
- * @param code
- */
-function persistLocalePreference(code: 'zh' | 'en' | 'ja' | 'ko') {
-  if (import.meta.server) return;
-  const pref = useCookie('i18n_redirected');
-  pref.value = code;
-}
 /**
  * KeepAlive cache slot cap (LRU).
  *

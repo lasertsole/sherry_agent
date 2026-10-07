@@ -98,7 +98,13 @@ export function useI18n() {
       return text;
     },
     locale: currentLocale,
-    te: () => true
+    te: () => true,
+    // Mirrors nuxt-i18n's composer entry: switching loads the pack (here the
+    // reactive `currentLocale` the lookup above reads), so a suite can drive the
+    // language picker and observe the switch.
+    setLocale: async (code: string) => {
+      currentLocale.value = code;
+    }
   };
 }
 
