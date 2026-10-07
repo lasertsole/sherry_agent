@@ -109,6 +109,21 @@
             icon="pi pi-check"
             size="small"
             @click="applyProfile" />
+          <!-- Connectivity probe: same draft the 应用 button would write, but
+               it goes to /model/test and NOTHING is written. Disabled for the
+               built-in local entry (no API parameters) and for the groups whose
+               probe would need a media payload. -->
+          <Button
+            v-if="!isLocalEntrySelected"
+            :label="t('config.llm.test')"
+            icon="pi pi-bolt"
+            size="small"
+            outlined
+            :loading="testing"
+            :disabled="!canTest"
+            :title="canTest ? t('config.llm.testHint') : t('config.llm.testUnsupported')"
+            data-test="model-test"
+            @click="runTest" />
           <!-- Delete stays in the same action row; the built-in local entry and
                the empty selection have nothing to delete. -->
           <Button
@@ -129,6 +144,25 @@
             {{ flash }}
           </span>
         </div>
+
+        <!-- Probe result: the latency and the provider's own words (a refused
+             probe carries WHY), kept until the next test or a profile switch. -->
+        <p
+          v-if="testResult"
+          :class="[
+            'm-0 rounded px-2 py-1 font-mono text-[11px] break-words',
+            testResult.ok
+              ? 'bg-emerald-50 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300'
+              : 'bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300'
+          ]"
+          data-test="model-test-result">
+          {{
+            testResult.ok
+              ? t('config.llm.testOk', { ms: testResult.latency_ms })
+              : t('config.llm.testFailed', { ms: testResult.latency_ms })
+          }}
+          · {{ testResult.detail }}
+        </p>
       </div>
       <div
         v-else
@@ -144,6 +178,12 @@ import { useI18n } from 'vue-i18n';
 import LlmProfileRow from './LlmProfileRow.vue';
 import { MAX_TOKEN_GUARD_KEYS } from '@/constants/env';
 import { MAX_PROFILES_PER_GROUP } from '~/stores/llm-profiles';
+import type { ModelTestResult } from '~/composables/env';
+// Stable module specifier so tests can vi.mock the composable (the unimport
+// injection is compile-time and leaves bare symbols unmockable).
+/* eslint-disable @typescript-eslint/no-restricted-imports */
+import { testModelProfile } from '~/composables/env';
+/* eslint-enable @typescript-eslint/no-restricted-imports */
 
 const props = defineProps<{
   /** Env group this panel manages (e.g. `MAIN_LLM`, `TTI`). */
@@ -333,12 +373,64 @@ const showFlash = (text: string, isError = false) => {
   );
 };
 
-/** Create a profile seeded from the live `.env` values and select it. */
+/**
+ * Groups the backend can probe (`server/service/model_test_service.py`): the
+ * chat families, embeddings and the cloud reranker. The media groups need a real
+ * image / audio payload, so their button stays disabled with a reason.
+ */
+const TESTABLE_GROUPS = ['MAIN_LLM', 'AUXILIARY_LLM', 'REASONER_LLM', 'EMBEDDING', 'RERANKER'] as const;
+
+/** Whether the 测试 button can run for the current group / selection. */
+const canTest = computed(
+  () => !isLocalEntrySelected.value && (TESTABLE_GROUPS as readonly string[]).includes(props.group)
+);
+
+/** Last probe result (cleared when another profile is selected). */
+const testResult = ref<ModelTestResult | null>(null);
+const testing = ref(false);
+// Switching rows drops the previous probe's verdict (it belonged to that entry).
+watch(selectedId, () => {
+  testResult.value = null;
+});
+
+/**
+ * Probe the endpoint with what is on screen (nothing is written to .env).
+ * A null answer means the request itself failed (backend down) — shown as a
+ * failed probe so the button never looks inert.
+ */
+const runTest = async () => {
+  if (!canTest.value || testing.value) return;
+  if (missingRequired.value) {
+    showFlash(t('config.llm.requiredMissing'), true);
+    return;
+  }
+  testing.value = true;
+  testResult.value = null;
+  try {
+    const result = await testModelProfile(props.group, { ...draft.value });
+    testResult.value = result ?? {
+      supported: true,
+      ok: false,
+      latency_ms: 0,
+      detail: t('config.llm.testRequestFailed'),
+      model: ''
+    };
+  } finally {
+    testing.value = false;
+  }
+};
+
+/**
+ * Create an EMPTY profile and select it.
+ *
+ * Nothing is seeded from the live `.env`: a new entry is a blank form the user
+ * fills in (a prefilled copy of the applied model was easy to save by accident
+ * and hid which fields were actually new).
+ */
 const addModel = () => {
   const params: Record<string, string> = {};
-  for (const key of props.keys) params[key] = props.values[key] ?? '';
-  const label = params[nameKey.value] || t('config.llm.unnamed');
-  const id = store.add(props.group, label, params);
+  for (const key of props.keys) params[key] = '';
+  const id = store.add(props.group, t('config.llm.unnamed'), params);
   if (id === null) return; // cap reached between render and click
   selectedId.value = id;
   showFlash('');
@@ -468,7 +560,13 @@ onBeforeUnmount(() => {
         "localModel": "本地模型",
         "localUnused": "本地模式不使用",
         "maxModels": "每个分组最多 {max} 个模型",
-        "requiredMissing": "提供商与模型 API 名为必填项"
+        "requiredMissing": "提供商与模型 API 名为必填项",
+        "test": "测试连通性",
+        "testHint": "用当前填写的参数试调一次，不写入 .env",
+        "testUnsupported": "该分组需要图片 / 音频输入，暂不支持连通性测试",
+        "testOk": "连通正常（{ms} ms）",
+        "testFailed": "连通失败（{ms} ms）",
+        "testRequestFailed": "请求失败：后端未响应"
       },
       "env": {
         "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
@@ -493,7 +591,13 @@ onBeforeUnmount(() => {
         "localModel": "Local model",
         "localUnused": "Unused in local mode",
         "maxModels": "Up to {max} models per group",
-        "requiredMissing": "Provider and model API name are required"
+        "requiredMissing": "Provider and model API name are required",
+        "test": "Test connection",
+        "testHint": "Probe once with the parameters on screen — nothing is written to .env",
+        "testUnsupported": "This group needs an image / audio payload, so it cannot be probed",
+        "testOk": "Reachable ({ms} ms)",
+        "testFailed": "Unreachable ({ms} ms)",
+        "testRequestFailed": "request failed: the backend did not answer"
       },
       "env": {
         "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
@@ -518,7 +622,13 @@ onBeforeUnmount(() => {
         "localModel": "ローカルモデル",
         "localUnused": "ローカルでは未使用",
         "maxModels": "1グループにつき最大 {max} モデル",
-        "requiredMissing": "プロバイダーとモデル API 名は必須です"
+        "requiredMissing": "プロバイダーとモデル API 名は必須です",
+        "test": "接続テスト",
+        "testHint": "画面のパラメータで 1 回だけ試します（.env には書き込みません）",
+        "testUnsupported": "このグループは画像 / 音声入力が必要なため、接続テストはできません",
+        "testOk": "接続 OK（{ms} ms）",
+        "testFailed": "接続失敗（{ms} ms）",
+        "testRequestFailed": "リクエスト失敗: バックエンドが応答しません"
       },
       "env": {
         "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
@@ -543,7 +653,13 @@ onBeforeUnmount(() => {
         "localModel": "로컬 모델",
         "localUnused": "로컬 모드에서 미사용",
         "maxModels": "그룹당 최대 {max}개 모델",
-        "requiredMissing": "제공자와 모델 API 이름은 필수입니다"
+        "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
+        "test": "연결 테스트",
+        "testHint": "화면의 파라미터로 한 번 호출합니다(.env에 쓰지 않습니다)",
+        "testUnsupported": "이 그룹은 이미지 / 오디오 입력이 필요해 연결 테스트를 할 수 없습니다",
+        "testOk": "연결 정상({ms} ms)",
+        "testFailed": "연결 실패({ms} ms)",
+        "testRequestFailed": "요청 실패: 백엔드가 응답하지 않음"
       },
       "env": {
         "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."

@@ -78,3 +78,43 @@ export async function writeEnvConfig(changes: Record<string, string>): Promise<b
     return false;
   }
 }
+
+/** Result of one connectivity probe (the 环境配置 panels' 测试 button). */
+export interface ModelTestResult {
+  /** Whether this group can be probed at all (media groups cannot). */
+  supported: boolean;
+  /** Whether the configured endpoint answered. */
+  ok: boolean;
+  latency_ms: number;
+  /** A short reply preview on success, the provider's own error text on failure. */
+  detail: string;
+  /** The model name the probe used. */
+  model: string;
+}
+
+/**
+ * Probe one env group's endpoint with the caller's parameters — the panel's own
+ * draft, so a profile can be verified BEFORE it is applied (nothing is written).
+ * @param group Env group name (`MAIN_LLM`, `EMBEDDING`, …).
+ * @param params The group's parameters exactly as the panel has them.
+ * @returns The probe result, or `null` when the request itself failed.
+ */
+export async function testModelProfile(group: string, params: Record<string, string>): Promise<ModelTestResult | null> {
+  try {
+    const res = await fetchApi<ModelTestResult>({
+      url: '/model/test',
+      opts: { group, params },
+      method: 'post'
+    });
+    if (!res) return null;
+    return {
+      supported: res.supported === true,
+      ok: res.ok === true,
+      latency_ms: Number(res.latency_ms ?? 0),
+      detail: String(res.detail ?? ''),
+      model: String(res.model ?? '')
+    };
+  } catch {
+    return null;
+  }
+}

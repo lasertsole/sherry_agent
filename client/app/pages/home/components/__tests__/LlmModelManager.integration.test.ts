@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { mount, type VueWrapper } from '@vue/test-utils';
+import { mount, flushPromises, type VueWrapper } from '@vue/test-utils';
 import LlmModelManager from '@/pages/home/components/LlmModelManager.vue';
 import type { LlmProfile } from '@/stores/llm-profiles';
 import { MAX_PROFILES_PER_GROUP } from '@/stores/llm-profiles';
@@ -71,6 +71,15 @@ const stubs = {
   }
 };
 
+// The panel's probe call goes through the env composable's module (a stubGlobal
+// would not be consulted for an injected import).
+const envApi = vi.hoisted(() => ({ testModelProfile: vi.fn() }));
+vi.mock('~/composables/env', () => ({
+  testModelProfile: envApi.testModelProfile,
+  API_BASE_URL: 'http://localhost:8080',
+  WS_BASE_URL: 'ws://localhost:8080'
+}));
+
 const mountPanel = (group = 'MAIN_LLM', keys: string[] = KEYS, values: Record<string, string> = ENV_VALUES) =>
   mount(LlmModelManager, {
     props: { group, keys, values, groupTitle: group },
@@ -111,6 +120,7 @@ const countHints = (wrapper: VueWrapper) => (wrapper.text().match(/必须 >= 131
 describe('LlmModelManager.vue (integration, store stubbed)', () => {
   beforeEach(() => {
     makeStore();
+    envApi.testModelProfile.mockReset();
   });
 
   it('starts collapsed and reveals the manager on expand', async () => {
@@ -158,12 +168,72 @@ describe('LlmModelManager.vue (integration, store stubbed)', () => {
     expect(wrapper.findAll('input.inp')).toHaveLength(0);
   });
 
-  it('add seeds a profile from the live .env values and selects it', async () => {
+  it('add creates an EMPTY profile (no defaults from the live .env) and selects it', async () => {
     const wrapper = mountPanel();
     await expand(wrapper);
     await buttonFor(wrapper, '添加模型')!.trigger('click');
-    expect(storeApi.add).toHaveBeenCalledWith('MAIN_LLM', 'glm-5.3-flash', ENV_VALUES);
-    expect(wrapper.findAll('input.inp')).toHaveLength(KEYS.length);
+
+    const empty = Object.fromEntries(KEYS.map(key => [key, '']));
+    expect(storeApi.add).toHaveBeenCalledWith('MAIN_LLM', '未命名模型', empty);
+    const inputs = wrapper.findAll('input.inp');
+    expect(inputs).toHaveLength(KEYS.length);
+    // Every field renders blank: nothing is prefilled.
+    expect(inputs.every(input => (input.element as HTMLInputElement).value === '')).toBe(true);
+  });
+
+  it('probes the endpoint with the draft and shows the latency and reply', async () => {
+    makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES } }]);
+    envApi.testModelProfile.mockResolvedValueOnce({
+      supported: true,
+      ok: true,
+      latency_ms: 812,
+      detail: 'pong',
+      model: 'glm-4.6'
+    });
+    const wrapper = mountPanel();
+    await expand(wrapper);
+
+    await wrapper.get('[data-test="model-test"]').trigger('click');
+    await flushPromises();
+
+    // The DRAFT goes out (what 应用 would write) — and nothing is written.
+    expect(envApi.testModelProfile).toHaveBeenCalledWith('MAIN_LLM', ENV_VALUES);
+    const result = wrapper.get('[data-test="model-test-result"]');
+    expect(result.text()).toContain('连通正常（812 ms）');
+    expect(result.text()).toContain('pong');
+  });
+
+  it('reports a refused probe with the provider text in red', async () => {
+    makeStore([{ id: 'p1', label: 'glm-4.6', params: { ...ENV_VALUES } }]);
+    envApi.testModelProfile.mockResolvedValueOnce({
+      supported: true,
+      ok: false,
+      latency_ms: 340,
+      detail: '401 invalid api key',
+      model: 'glm-4.6'
+    });
+    const wrapper = mountPanel();
+    await expand(wrapper);
+
+    await wrapper.get('[data-test="model-test"]').trigger('click');
+    await flushPromises();
+
+    const result = wrapper.get('[data-test="model-test-result"]');
+    expect(result.text()).toContain('连通失败（340 ms）');
+    expect(result.text()).toContain('401 invalid api key');
+    expect(result.classes().join(' ')).toContain('text-red-700');
+  });
+
+  it('disables the probe for a group the backend cannot test', async () => {
+    const ITTT_KEYS = ['ITTT_MODEL_LOCAL', 'ITTT_model_PROVIDER', 'ITTT_API_NAME', 'ITTT_API_BASE', 'ITTT_API_KEY'];
+    makeStore([{ id: 't1', label: 'm', params: { ITTT_API_NAME: 'm' } }], 't1', 'ITTT');
+    const wrapper = mountPanel('ITTT', ITTT_KEYS, { ITTT_API_NAME: 'm' });
+    await expand(wrapper);
+
+    const button = wrapper.get('[data-test="model-test"]');
+    expect(button.attributes('disabled')).toBeDefined();
+    expect(button.attributes('title')).toContain('图片 / 音频');
+    expect(envApi.testModelProfile).not.toHaveBeenCalled();
   });
 
   it('marks only the applied profile with the active marker', async () => {

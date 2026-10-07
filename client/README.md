@@ -146,7 +146,7 @@ client/
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
 │   │           ├── ConfigPanel.vue            # System-config tab (.env editor, background, language, ...)
-│   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add, used by ConfigPanel)
+│   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .env)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
 │   │           ├── SessionPresetButton.vue    # Top-bar view-only entry: opens the current session's preset tab
