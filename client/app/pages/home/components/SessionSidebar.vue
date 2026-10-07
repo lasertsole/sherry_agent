@@ -21,7 +21,10 @@
         data-test="sidebar-title-row">
         <span class="truncate">🍊{{ t('chatBox.defaultAiName') }}</span>
         <div class="flex shrink-0 items-center gap-1.5">
-          <span><ModeSwitch /></span>
+          <!-- The wrapper is a flex box on purpose: ModeSwitch's root is a
+               fragment, and as a plain block its 24px switch rode the row's
+               28px text baseline — 4px above the row's centre. -->
+          <span class="flex items-center"><ModeSwitch /></span>
           <Select
             :model-value="locale"
             :options="languageOptions"

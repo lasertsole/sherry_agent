@@ -173,10 +173,17 @@ describe('SessionSidebar working-directory sections', () => {
     const wrapper = await mountSidebar();
 
     const titleRow = wrapper.get('[data-test="sidebar-title-row"]');
-    expect(titleRow.findComponent({ name: 'ModeSwitch' }).exists()).toBe(true);
+    const themeSwitch = titleRow.findComponent({ name: 'ModeSwitch' });
+    expect(themeSwitch.exists()).toBe(true);
     expect(titleRow.find('[data-test="sidebar-locale"]').exists()).toBe(true);
     // The logo keeps the row's left edge.
     expect(titleRow.text()).toContain('🍊');
+    // The switch's wrapper must be a flex box: as a plain block the 24px switch
+    // rode the row's 28px text baseline and sat 4px above the row's centre
+    // (measured live — happy-dom has no layout to assert against).
+    const wrapperClasses = themeSwitch.element.parentElement?.className ?? '';
+    expect(wrapperClasses).toContain('flex');
+    expect(wrapperClasses).toContain('items-center');
   });
 
   it('picks a language from the title row and persists the choice', async () => {
