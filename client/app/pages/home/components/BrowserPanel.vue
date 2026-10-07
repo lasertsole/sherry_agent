@@ -88,7 +88,7 @@
          BrowserViewportToolbar shows its sizing controls the same way). -->
     <div
       v-if="responsive"
-      class="flex shrink-0 flex-wrap items-center gap-2 border-b border-solid border-gray-100 px-2 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
+      class="flex shrink-0 flex-wrap items-center justify-center gap-2 border-b border-solid border-gray-100 px-2 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
       data-test="browser-size-row">
       <label class="flex items-center gap-1">
         <span>{{ t('browser.width') }}</span>
