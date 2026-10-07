@@ -107,6 +107,14 @@ vi.mock('@/pages/home/components/ExtendPanel.vue', () => ({
   __esModule: true,
   default: { name: 'ExtendPanelStub', emits: ['saved'], template: '<div data-test="extend-panel">extend</div>' }
 }));
+vi.mock('@/pages/home/components/BrowserPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'BrowserPanelStub', template: '<div data-test="browser-panel">browser</div>' }
+}));
+vi.mock('@/pages/home/components/TerminalPanel.vue', () => ({
+  __esModule: true,
+  default: { name: 'TerminalPanelStub', template: '<div data-test="terminal-panel">terminal</div>' }
+}));
 
 const stubs = {
   Button: {
