@@ -11,6 +11,7 @@ import { createPinia, setActivePinia } from 'pinia';
 import {
   BROWSER_VIEWPORT_LIMITS,
   DEFAULT_BROWSER_VIEWPORT,
+  browserZoomScale,
   clampBrowserViewport,
   normalizeUrl,
   useToolboxStore
@@ -106,6 +107,14 @@ describe('toolbox store', () => {
       width: BROWSER_VIEWPORT_LIMITS.maxWidth,
       height: BROWSER_VIEWPORT_LIMITS.maxHeight
     });
+
+    // The zoom is per instance too, and defaults to fit.
+    expect(store.browserFor('s1::browser#1').zoom).toBe('fit');
+    store.setBrowserZoom('s1::browser#1', '150');
+    expect(store.browserFor('s1::browser#1').zoom).toBe('150');
+    expect(store.browserFor('s1::browser#2').zoom).toBe('fit');
+    expect(browserZoomScale('fit')).toBeNull();
+    expect(browserZoomScale('150')).toBe(1.5);
 
     // Navigation keeps the free-size fields (they ride the same state).
     store.navigate('s1::browser#1', 'example.com');

@@ -138,6 +138,51 @@ describe('BrowserPanel', () => {
     expect(wrapper.get('[data-test="browser-frame"]').exists()).toBe(true);
   });
 
+  it('sizes the frame from the width / height inputs and the zoom picker', async () => {
+    const store = useToolboxStore();
+    store.navigate('sid-1::browser', 'example.com');
+    const wrapper = mount(BrowserPanel, { global: { stubs } });
+
+    // The row shows only in free-size mode (it is where the device is set up).
+    expect(wrapper.find('[data-test="browser-size-row"]').exists()).toBe(false);
+    await wrapper.get('[data-test="browser-free-size"]').trigger('click');
+
+    const row = wrapper.get('[data-test="browser-size-row"]');
+    expect(row.exists()).toBe(true);
+    const widthInput = wrapper.get('[data-test="browser-width-input"]');
+    const heightInput = wrapper.get('[data-test="browser-height-input"]');
+    // The inputs mirror the current frame.
+    expect((widthInput.element as HTMLInputElement).value).toBe('393');
+    expect((heightInput.element as HTMLInputElement).value).toBe('852');
+
+    // Typing is a DRAFT: the `input` events of a half-typed number must not resize
+    // the frame — only the committed `change` does (VTU's setValue would fire both).
+    (widthInput.element as HTMLInputElement).value = '414';
+    await widthInput.trigger('input');
+    expect(store.browserFor('sid-1::browser').viewport.width).toBe(393);
+    await widthInput.trigger('change');
+    expect(store.browserFor('sid-1::browser').viewport).toEqual({ width: 414, height: 852 });
+    expect(wrapper.get('[data-test="browser-free-frame"]').attributes('style')).toContain('width: 414px');
+
+    // Out-of-band values are clamped and echoed back into the input.
+    // An out-of-band value is clamped and echoed back into the box.
+    (widthInput.element as HTMLInputElement).value = '99';
+    await widthInput.trigger('input');
+    await widthInput.trigger('change');
+    expect(store.browserFor('sid-1::browser').viewport.width).toBe(320);
+    expect((widthInput.element as HTMLInputElement).value).toBe('320');
+
+    // The zoom picker sets an explicit scale (and `fit` hands it back to the panel).
+    const zoomInput = wrapper.get('[data-test="browser-zoom-input"]');
+    expect((zoomInput.element as HTMLSelectElement).value).toBe('fit');
+    await zoomInput.setValue('50');
+    await zoomInput.trigger('change');
+    expect(store.browserFor('sid-1::browser').zoom).toBe('50');
+    expect(wrapper.get('[data-test="browser-free-frame"]').attributes('style')).toContain('width: 160px');
+    // The zoom rides with the instance: a second browser stays at `fit`.
+    expect(store.browserFor('sid-1::browser#2').zoom).toBe('fit');
+  });
+
   it('opens the page in a real window for devtools (an iframe cannot host them)', async () => {
     const store = useToolboxStore();
     store.navigate('sid-1::browser', 'example.com');

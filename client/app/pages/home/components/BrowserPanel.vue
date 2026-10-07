@@ -83,6 +83,53 @@
     <!-- The page. An iframe is what a web client can offer (the desktop build's
          webview is a separate runtime); sites that refuse framing (X-Frame-Options
          / CSP frame-ancestors) stay blank, which the empty state below names. -->
+    <!-- Free-size controls: the frame's width / height and its scale, right under
+         the address row and only while free size is on (ZCode's
+         BrowserViewportToolbar shows its sizing controls the same way). -->
+    <div
+      v-if="responsive"
+      class="flex shrink-0 flex-wrap items-center gap-2 border-b border-solid border-gray-100 px-2 py-1.5 text-[11px] text-gray-500 dark:border-gray-800 dark:text-gray-400"
+      data-test="browser-size-row">
+      <label class="flex items-center gap-1">
+        <span>{{ t('browser.width') }}</span>
+        <input
+          v-model.number="draftWidth"
+          type="number"
+          :min="BROWSER_VIEWPORT_LIMITS.minWidth"
+          :max="BROWSER_VIEWPORT_LIMITS.maxWidth"
+          class="w-16 rounded border border-solid border-gray-200 bg-transparent px-1 py-0.5 font-mono text-[11px] text-theme-main outline-none dark:border-gray-700"
+          data-test="browser-width-input"
+          @change="applySize" />
+      </label>
+      <label class="flex items-center gap-1">
+        <span>{{ t('browser.height') }}</span>
+        <input
+          v-model.number="draftHeight"
+          type="number"
+          :min="BROWSER_VIEWPORT_LIMITS.minHeight"
+          :max="BROWSER_VIEWPORT_LIMITS.maxHeight"
+          class="w-16 rounded border border-solid border-gray-200 bg-transparent px-1 py-0.5 font-mono text-[11px] text-theme-main outline-none dark:border-gray-700"
+          data-test="browser-height-input"
+          @change="applySize" />
+      </label>
+      <label class="flex items-center gap-1">
+        <span>{{ t('browser.zoom') }}</span>
+        <select
+          :value="zoom"
+          class="rounded border border-solid border-gray-200 bg-transparent px-1 py-0.5 text-[11px] text-theme-main outline-none dark:border-gray-700 dark:bg-gray-900"
+          :aria-label="t('browser.zoom')"
+          data-test="browser-zoom-input"
+          @change="onZoomChange">
+          <option
+            v-for="option in BROWSER_ZOOM_OPTIONS"
+            :key="option"
+            :value="option">
+            {{ option === 'fit' ? t('browser.zoomFit', { percent: Math.round(frameScale * 100) }) : `${option}%` }}
+          </option>
+        </select>
+      </label>
+    </div>
+
     <div
       ref="canvasRef"
       class="min-h-0 flex-1 bg-white dark:bg-gray-900"
@@ -174,13 +221,16 @@ import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRoute } from 'vue-router';
 // Stores are never auto-imported (unimport only walks app/composables).
-import { useToolboxStore } from '~/stores/toolbox';
+import type { BrowserZoom } from '~/stores/toolbox';
+import { BROWSER_VIEWPORT_LIMITS, BROWSER_ZOOM_OPTIONS, browserZoomScale, useToolboxStore } from '~/stores/toolbox';
 
 const { t } = useI18n({ useScope: 'local' });
 
 const props = defineProps<{ payload?: { instance?: string } }>();
 
 const route = useRoute();
+const store = useToolboxStore();
+
 const sessionId = computed(() => (typeof route.params.sid === 'string' ? route.params.sid : ''));
 /** The instance key the toolbox gave this tab (one per click). */
 const instanceKey = computed(() => props.payload?.instance ?? 'browser');
@@ -275,12 +325,13 @@ const RESIZE_HANDLES: ReadonlyArray<{
 const canvasRef = ref<HTMLElement | null>(null);
 
 /**
- * Scale the emulated frame down to fit the panel (ZCode's `fit` zoom): 1 while
- * it fits, a smaller factor when the frame is wider / taller than the canvas.
- * Reading layout of a zero-sized container (first paint, a hidden tab) reads as
- * "fits", so the frame is never scaled into nothing.
+ * The scale the frame is drawn at: an explicit zoom percentage, or — for `fit` —
+ * down to the panel (1 while it fits). A zero-sized container (the first paint,
+ * a hidden tab) reads as "fits", so nothing is scaled into nothing.
  */
 const frameScale = computed(() => {
+  const explicit = browserZoomScale(zoom.value);
+  if (explicit !== null) return explicit;
   const canvas = canvasRef.value;
   if (!canvas || !canvas.clientWidth || !canvas.clientHeight) return 1;
   return Math.min(
@@ -300,7 +351,44 @@ const drag = ref<{
   heightDirection: -1 | 0 | 1;
 } | null>(null);
 
-/** Toggle free-size mode (entering keeps the instance's last size). */
+/** The zoom picker's value (per instance). */
+const zoom = computed(() => store.browserFor(stateKey.value).zoom);
+
+/**
+ * The width / height inputs' text. Drafts, not the source of truth: a user types
+ * intermediate values ("39" on the way to "390") that must not resize the frame,
+ * so the store only sees what a `change` (Enter / blur) confirmed.
+ */
+const draftWidth = ref(viewport.value.width);
+const draftHeight = ref(viewport.value.height);
+watch(
+  viewport,
+  next => {
+    draftWidth.value = next.width;
+    draftHeight.value = next.height;
+  },
+  { deep: true }
+);
+
+/** Commit the typed size (clamped by the store) and echo the clamped value back. */
+const applySize = (): void => {
+  store.setBrowserViewport(stateKey.value, {
+    width: Number(draftWidth.value) || viewport.value.width,
+    height: Number(draftHeight.value) || viewport.value.height
+  });
+  draftWidth.value = store.browserFor(stateKey.value).viewport.width;
+  draftHeight.value = store.browserFor(stateKey.value).viewport.height;
+};
+
+/**
+ * Apply a zoom choice from the picker.
+ * @param event The select's change.
+ */
+const onZoomChange = (event: Event): void => {
+  store.setBrowserZoom(stateKey.value, (event.target as HTMLSelectElement).value as BrowserZoom);
+};
+
+/** Toggle free-size mode (entering keeps the instance's last size / zoom). */
 const toggleResponsive = (): void => {
   store.setBrowserResponsive(stateKey.value, !responsive.value);
 };
@@ -389,7 +477,6 @@ const openExternal = (): void => {
   if (!pageUrl.value) return;
   window.open(pageUrl.value, '_blank', 'noopener,noreferrer');
 };
-const store = useToolboxStore();
 
 /** A few one-click targets for the empty state (the address bar takes any URL). */
 const QUICK_LINKS: ReadonlyArray<{ label: string; url: string }> = [
@@ -441,6 +528,10 @@ const quickLink = (url: string): void => {
       "empty": "在上方输入网址开始浏览",
       "framingHint": "有些站点禁止被内嵌（X-Frame-Options / CSP），这类页面会保持空白。",
       "freeSizeOn": "自由尺寸：在模拟设备框里预览页面",
+      "width": "宽",
+      "height": "高",
+      "zoom": "缩放",
+      "zoomFit": "适应（{percent}%）",
       "freeSizeOff": "退出自由尺寸",
       "resizeHandle": "调整浏览器尺寸",
       "devtools": "打开调试工具",
@@ -457,6 +548,10 @@ const quickLink = (url: string): void => {
       "empty": "Type an address above to start browsing",
       "framingHint": "Some sites refuse to be embedded (X-Frame-Options / CSP); those pages stay blank.",
       "freeSizeOn": "Free size: preview the page in an emulated device frame",
+      "width": "W",
+      "height": "H",
+      "zoom": "Zoom",
+      "zoomFit": "Fit ({percent}%)",
       "freeSizeOff": "Leave free size",
       "resizeHandle": "Resize the browser",
       "devtools": "Open DevTools",
@@ -473,6 +568,10 @@ const quickLink = (url: string): void => {
       "empty": "上のアドレスバーに URL を入力してください",
       "framingHint": "一部のサイトは埋め込みを拒否します（X-Frame-Options / CSP）。その場合は空白のままです。",
       "freeSizeOn": "フリーサイズ：仮想デバイス枠でページをプレビュー",
+      "width": "幅",
+      "height": "高さ",
+      "zoom": "ズーム",
+      "zoomFit": "フィット（{percent}%）",
       "freeSizeOff": "フリーサイズを終了",
       "resizeHandle": "ブラウザのサイズを変更",
       "devtools": "開発者ツールを開く",
@@ -489,6 +588,10 @@ const quickLink = (url: string): void => {
       "empty": "위 주소창에 주소를 입력하세요",
       "framingHint": "일부 사이트는 임베드를 거부합니다(X-Frame-Options / CSP). 그런 페이지는 빈 화면으로 남습니다.",
       "freeSizeOn": "자유 크기: 가상 기기 프레임에서 페이지 미리보기",
+      "width": "너비",
+      "height": "높이",
+      "zoom": "줌",
+      "zoomFit": "맞춤({percent}%)",
       "freeSizeOff": "자유 크기 종료",
       "resizeHandle": "브라우저 크기 조절",
       "devtools": "개발자 도구 열기",

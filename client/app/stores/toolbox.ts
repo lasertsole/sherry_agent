@@ -31,6 +31,8 @@ export interface BrowserState {
   responsive: boolean;
   /** That frame's size (only meaningful while `responsive`). */
   viewport: BrowserViewport;
+  /** How that frame is scaled: fit to the panel, or a fixed percentage. */
+  zoom: BrowserZoom;
 }
 
 /**
@@ -47,6 +49,23 @@ export const BROWSER_VIEWPORT_LIMITS = {
 
 /** The frame a browser instance starts free-size mode with (ZCode's default). */
 export const DEFAULT_BROWSER_VIEWPORT: BrowserViewport = { width: 393, height: 852 };
+
+/** How the emulated frame is scaled: to fit the panel, or a fixed percentage. */
+export type BrowserZoom = 'fit' | '50' | '75' | '100' | '125' | '150' | '200';
+
+/** The zoom options the size row offers (ZCode's own set, fit first). */
+export const BROWSER_ZOOM_OPTIONS: readonly BrowserZoom[] = ['fit', '50', '75', '100', '125', '150', '200'] as const;
+
+/** Fit is the default: a phone-sized frame rarely fits a sidebar unchanged. */
+export const DEFAULT_BROWSER_ZOOM: BrowserZoom = 'fit';
+
+/**
+ * The scale a zoom means: ``null`` for fit (the caller computes it).
+ * @param zoom
+ */
+export function browserZoomScale(zoom: BrowserZoom): number | null {
+  return zoom === 'fit' ? null : Number(zoom) / 100;
+}
 
 /**
  * Clamp a requested frame size into :data:`BROWSER_VIEWPORT_LIMITS`.
@@ -76,7 +95,8 @@ const EMPTY_BROWSER: BrowserState = {
   history: [],
   index: -1,
   responsive: false,
-  viewport: { ...DEFAULT_BROWSER_VIEWPORT }
+  viewport: { ...DEFAULT_BROWSER_VIEWPORT },
+  zoom: DEFAULT_BROWSER_ZOOM
 };
 
 /**
@@ -204,6 +224,16 @@ export const useToolboxStore = defineStore('toolbox', () => {
   }
 
   /**
+   * Set how the emulated frame is scaled (the size row's picker).
+   * @param key The panel's identity.
+   * @param zoom `fit` or a percentage from :data:`BROWSER_ZOOM_OPTIONS`.
+   */
+  function setBrowserZoom(key: string, zoom: BrowserZoom): void {
+    const current = browserFor(key);
+    browser.value = { ...browser.value, [key]: { ...current, zoom } };
+  }
+
+  /**
    * Forget the session's scrollback (the panel's 清空 button).
    * @param key The panel's identity.
    */
@@ -220,6 +250,7 @@ export const useToolboxStore = defineStore('toolbox', () => {
     step,
     setBrowserResponsive,
     setBrowserViewport,
+    setBrowserZoom,
     canGoBack,
     canGoForward,
     terminalFor,
