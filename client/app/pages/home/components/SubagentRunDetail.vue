@@ -308,11 +308,6 @@ function formatTime(ms: number | null | undefined): string {
       "steerSuccess": "指令已送达，子任务正在继续。",
       "steerTitle": "改道 / 恢复执行",
       "taskDesc": "任务描述"
-    },
-    "sidebar": {
-      "statusDelivered": "已送达",
-      "statusInProgress": "配送中",
-      "statusPending": "待配送"
     }
   },
   "en": {
@@ -340,11 +335,6 @@ function formatTime(ms: number | null | undefined): string {
       "steerSuccess": "Sent — the child agent is continuing.",
       "steerTitle": "Steer / Resume",
       "taskDesc": "Description"
-    },
-    "sidebar": {
-      "statusDelivered": "Delivered",
-      "statusInProgress": "Delivering",
-      "statusPending": "Pending"
     }
   },
   "ja": {
@@ -372,11 +362,6 @@ function formatTime(ms: number | null | undefined): string {
       "steerSuccess": "指示を送信しました。子エージェントが処理を続けています。",
       "steerTitle": "軌道修正 / 再開",
       "taskDesc": "説明"
-    },
-    "sidebar": {
-      "statusDelivered": "配送済み",
-      "statusInProgress": "配送中",
-      "statusPending": "待機中"
     }
   },
   "ko": {
@@ -404,11 +389,6 @@ function formatTime(ms: number | null | undefined): string {
       "steerSuccess": "지시를 전달했습니다. 하위 에이전트가 계속 진행합니다.",
       "steerTitle": "경로 변경 / 재개",
       "taskDesc": "설명"
-    },
-    "sidebar": {
-      "statusDelivered": "전송됨",
-      "statusInProgress": "전송 중",
-      "statusPending": "대기 중"
     }
   }
 }

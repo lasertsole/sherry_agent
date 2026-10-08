@@ -99,28 +99,3 @@ watch(
   () => store.clear()
 );
 </script>
-
-<i18n lang="json">
-{
-  "en": {
-    "projectFiles": {
-      "noFile": "No file selected"
-    }
-  },
-  "zh": {
-    "projectFiles": {
-      "noFile": "未选择文件"
-    }
-  },
-  "ja": {
-    "projectFiles": {
-      "noFile": "ファイルが選択されていません"
-    }
-  },
-  "ko": {
-    "projectFiles": {
-      "noFile": "선택된 파일 없음"
-    }
-  }
-}
-</i18n>

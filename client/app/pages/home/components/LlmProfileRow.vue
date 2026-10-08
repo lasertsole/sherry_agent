@@ -35,36 +35,3 @@ defineProps<{
 const emit = defineEmits<{ (e: 'select'): void }>();
 const { t } = useI18n();
 </script>
-
-<i18n lang="json">
-{
-  "en": {
-    "config": {
-      "llm": {
-        "applied": "Applied to .env"
-      }
-    }
-  },
-  "zh": {
-    "config": {
-      "llm": {
-        "applied": "已应用到 .env"
-      }
-    }
-  },
-  "ja": {
-    "config": {
-      "llm": {
-        "applied": ".env に適用済み"
-      }
-    }
-  },
-  "ko": {
-    "config": {
-      "llm": {
-        "applied": ".env에 적용됨"
-      }
-    }
-  }
-}
-</i18n>

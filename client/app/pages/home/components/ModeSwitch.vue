@@ -40,28 +40,3 @@ const handleSwitch = (value: string | boolean) => {
   uiStore.setTheme(mode);
 };
 </script>
-
-<i18n lang="json">
-{
-  "zh": {
-    "a11y": {
-      "toggleTheme": "切换主题"
-    }
-  },
-  "en": {
-    "a11y": {
-      "toggleTheme": "Toggle theme"
-    }
-  },
-  "ja": {
-    "a11y": {
-      "toggleTheme": "テーマを切り替え"
-    }
-  },
-  "ko": {
-    "a11y": {
-      "toggleTheme": "테마 전환"
-    }
-  }
-}
-</i18n>

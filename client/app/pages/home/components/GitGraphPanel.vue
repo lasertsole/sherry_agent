@@ -834,6 +834,7 @@ watch(
 {
   "zh": {
     "gitGraph": {
+      "title": "Git Graph",
       "refresh": "刷新",
       "dirty": "未提交 {count}",
       "scrollForMore": "向下滚动加载更多",
@@ -869,6 +870,7 @@ watch(
   },
   "en": {
     "gitGraph": {
+      "title": "Git Graph",
       "refresh": "Refresh",
       "dirty": "{count} uncommitted",
       "scrollForMore": "Scroll for more",
@@ -904,6 +906,7 @@ watch(
   },
   "ja": {
     "gitGraph": {
+      "title": "Git Graph",
       "refresh": "更新",
       "dirty": "未コミット {count}",
       "scrollForMore": "下にスクロールで追加読み込み",
@@ -939,6 +942,7 @@ watch(
   },
   "ko": {
     "gitGraph": {
+      "title": "Git Graph",
       "refresh": "새로고침",
       "dirty": "미커밋 {count}",
       "scrollForMore": "아래로 스크롤하면 더 불러옵니다",

@@ -185,43 +185,6 @@ const toggleMenu = (event: Event) => {
 };
 </script>
 
-<i18n lang="json">
-{
-  "zh": {
-    "sessionModelPicker": {
-      "label": "主模型",
-      "a11y": "切换当前会话的主模型",
-      "followEnv": "跟随环境配置",
-      "followEnvWith": "跟随环境配置（{model}）"
-    }
-  },
-  "en": {
-    "sessionModelPicker": {
-      "label": "Main model",
-      "a11y": "Switch this session's main model",
-      "followEnv": "Follow env config",
-      "followEnvWith": "Follow env config ({model})"
-    }
-  },
-  "ja": {
-    "sessionModelPicker": {
-      "label": "メインモデル",
-      "a11y": "このセッションのメインモデルを切り替え",
-      "followEnv": "環境設定に従う",
-      "followEnvWith": "環境設定に従う（{model}）"
-    }
-  },
-  "ko": {
-    "sessionModelPicker": {
-      "label": "메인 모델",
-      "a11y": "이 세션의 메인 모델 전환",
-      "followEnv": "환경 설정 따르기",
-      "followEnvWith": "환경 설정 따르기 ({model})"
-    }
-  }
-}
-</i18n>
-
 <style scoped>
 /* Compact trigger: the model name is the widest text in the toolbar row. */
 .model-trigger :deep(.p-button-label) {

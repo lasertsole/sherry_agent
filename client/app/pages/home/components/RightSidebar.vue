@@ -307,6 +307,8 @@ onBeforeUnmount(() => {
 {
   "zh": {
     "rightSidebar": {
+      "fileViewer": "项目文件",
+      "account": "账户",
       "logs": "日志查看",
       "skills": "技能",
       "systemConfig": "系统配置",
@@ -338,6 +340,8 @@ onBeforeUnmount(() => {
   },
   "en": {
     "rightSidebar": {
+      "fileViewer": "Project files",
+      "account": "Account",
       "logs": "Logs",
       "skills": "Skills",
       "systemConfig": "System Config",
@@ -369,6 +373,8 @@ onBeforeUnmount(() => {
   },
   "ja": {
     "rightSidebar": {
+      "fileViewer": "プロジェクトファイル",
+      "account": "アカウント",
       "logs": "ログ表示",
       "skills": "スキル",
       "systemConfig": "システム設定",
@@ -400,6 +406,8 @@ onBeforeUnmount(() => {
   },
   "ko": {
     "rightSidebar": {
+      "fileViewer": "프로젝트 파일",
+      "account": "계정",
       "logs": "로그 보기",
       "skills": "스킬",
       "systemConfig": "시스템 설정",

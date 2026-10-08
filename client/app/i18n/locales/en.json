@@ -1,7 +1,10 @@
 {
   "a11y": {
     "previewImage": "Preview image",
-    "language": "Language"
+    "language": "Language",
+    "skipToMain": "Skip to main content",
+    "deleteSession": "Delete session",
+    "toggleTheme": "Toggle theme"
   },
   "common": {
     "confirmDelete": "Confirm Delete",
@@ -14,13 +17,47 @@
     "maxAudios": "You can upload at most {count} audio files",
     "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
     "maxVideos": "You can upload at most {count} video files",
-    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit",
+    "placeholder": "Type a message...",
+    "queueHint": "Keep typing to queue your message",
+    "send": "Send",
+    "stop": "Stop",
+    "queued": "Queued · position {position} of {queueSize}",
+    "queuedPosition": "#{position}/{queueSize}",
+    "sendNow": "Now",
+    "editQueued": "Edit queued message",
+    "cancelQueued": "Cancel queued message",
+    "waitingApproval": "Waiting for approval..."
   },
   "sessionModelPicker": {
-    "pending": "Applies next turn"
+    "pending": "Applies next turn",
+    "label": "Main model",
+    "a11y": "Switch this session's main model",
+    "followEnv": "Follow env config",
+    "followEnvWith": "Follow env config ({model})"
   },
   "chatBox": {
-    "defaultAiName": "Sherry"
+    "defaultAiName": "Sherry",
+    "copy": "Copy",
+    "copied": "Copied",
+    "defaultUserName": "Me",
+    "imageLoadFailed": "Image load failed",
+    "modelMeta": "{input} in · {output} out tokens",
+    "userInputMeta": "≈ {n} tokens",
+    "contextTip": "View the agent's full context (system prompt / tools / messages)",
+    "scrollBottom": "Scroll to bottom",
+    "loadingOlder": "Loading earlier messages",
+    "streamingTail": "Streaming — showing the end only; the full text appears when the turn ends",
+    "expandFull": "Show all {chars} characters",
+    "collapseFull": "Collapse",
+    "thinking": "Thinking",
+    "toolArgs": "Arguments",
+    "toolNoOutput": "No output",
+    "toolResult": "Result",
+    "toolRunning": "Running…",
+    "removeImage": "Remove image",
+    "removeAudio": "Remove audio",
+    "removeVideo": "Remove video"
   },
   "chat": {
     "backgroundMessage": "Background task",
@@ -45,11 +82,26 @@
   "connection": {
     "offline": "Network offline",
     "backendDown": "Backend service unreachable",
-    "backOnline": "Connection restored"
+    "backOnline": "Connection restored",
+    "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})"
   },
   "history": {
     "noSessions": "No conversations",
-    "newSession": "New Session"
+    "newSession": "New Session",
+    "createdAt": "Created: {time}",
+    "dateFormat": "MM/DD/YYYY HH:mm",
+    "deleteConfirm": "Are you sure you want to delete this conversation? This action cannot be undone.",
+    "editTitle": "Rename session",
+    "titleInvalid": "Title must be at most 30 characters and contain only letters, numbers, spaces, and . _ -",
+    "titlePlaceholder": "Enter new title",
+    "batchDelete": "Delete Conversations",
+    "batchDeleteConfirm": "Are you sure you want to delete the selected conversations? This action cannot be undone.",
+    "clearFilter": "Clear filters",
+    "dateRange": "Filter by date range",
+    "filterToggle": "Filter",
+    "noSearchResults": "No matching sessions",
+    "searchPlaceholder": "Search sessions by title…",
+    "selectAll": "Select All"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec}s ago",
@@ -61,7 +113,26 @@
     "statusKilled": "Killed",
     "statusUnknown": "Unknown",
     "roleRoot": "Root",
-    "roleChild": "Task"
+    "roleChild": "Task",
+    "callingSession": "Calling Session",
+    "endTime": "End Time",
+    "startTime": "Start Time",
+    "tabSessions": "Chats",
+    "tabTasks": "Background Tasks",
+    "taskDelete": "Delete task",
+    "taskDeleteConfirm": "Delete this task? Its root and all child tasks will be permanently cleared. This cannot be undone.",
+    "tasksBatchDelete": "Batch delete tasks",
+    "tasksBatchDeleteConfirm": "Delete the selected tasks? Their root and all child tasks will be permanently cleared. This cannot be undone.",
+    "tasksSelectAll": "Select All",
+    "statusDelivered": "Delivered",
+    "statusInProgress": "Delivering",
+    "statusPending": "Pending",
+    "backToSession": "Back to session",
+    "backToSessionPrompt": "Jump to the session that spawned this task",
+    "refreshGraph": "Refresh",
+    "refreshGraphPrompt": "Refetch and redraw the run graph",
+    "noTasks": "No background tasks yet",
+    "tasksLoading": "Loading tasks..."
   },
   "toolbar": {
     "newChat": "New Chat",
@@ -78,10 +149,42 @@
     "cron": "Cron Tasks",
     "logs": "Logs",
     "extend": "Extend",
-    "account": "Account"
+    "account": "Account",
+    "projectDirectory": {
+      "browse": "Choose folder…",
+      "label": "Project directory",
+      "pendingHint": "Applies on the next turn",
+      "pendingLabel": "Pending",
+      "unbound": "No project directory bound",
+      "pickerCancel": "Cancel",
+      "pickerEmpty": "No subfolders here",
+      "pickerHome": "Home",
+      "pickerLoadFailed": "This folder could not be read",
+      "pickerSelect": "Use this folder",
+      "pickerTitle": "Choose a project directory",
+      "pickerTruncated": "Showing the first {shown} of {total}",
+      "pickerUp": "Up one level"
+    },
+    "collapseSidebar": "Collapse sidebar",
+    "expandSidebar": "Expand sidebar",
+    "notification": "Notifications",
+    "projectFiles": "Project files",
+    "projectFilesHint": "Project files",
+    "projectFilesHintDetail": "Tip: collapse the left sidebar to give the file tree and the chat more room.",
+    "sessionList": "Sessions",
+    "settingsMenu": "Menu",
+    "toolbox": "Toolbox",
+    "browser": "Browser",
+    "terminal": "Terminal"
   },
   "todolist": {
-    "flowLabel": "TaskFlow: {flow}"
+    "flowLabel": "TaskFlow: {flow}",
+    "collapse": "Collapse plan",
+    "expand": "Expand plan",
+    "progress": "{done}/{total} done",
+    "title": "Task Plan",
+    "delegated": "Delegated to subagent",
+    "linkedStep": "TaskFlow {flow} · {step}"
   },
   "config": {
     "agent": {
@@ -102,13 +205,19 @@
         "requiredHint": "Required — cannot be disabled",
         "scope_builtin": "Built-in",
         "scope_mcp": "MCP",
-        "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)"
+        "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)",
+        "clearAll": "Disable all",
+        "clearGroup": "Clear",
+        "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
+        "selectAll": "Enable all",
+        "selectGroup": "All"
       },
       "skills": {
         "count": "{selected}/{total} selected",
         "scope_builtin": "Built-in",
         "scope_thirdparty": "Third-party",
-        "empty": "No skills yet"
+        "empty": "No skills yet",
+        "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index."
       },
       "toolGroup": {
         "files": "Files",
@@ -125,7 +234,10 @@
       "middlewares": {
         "lockedTitle": "System-required (locked)",
         "nudgeLabel": "Enable nudge",
-        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)"
+        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
+        "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
+        "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
+        "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -156,7 +268,9 @@
       "subagents": {
         "followTier": "Follow the role default",
         "tier": "Role default: {tier}",
-        "tierDepth": "No role definition: depth default"
+        "tierDepth": "No role definition: depth default",
+        "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier.",
+        "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
       },
       "role": {
         "general": "General",
@@ -170,7 +284,8 @@
         "middlewares": "Disabled middlewares: {names}",
         "middlewaresNone": "Middlewares: all on",
         "models": "Subagent models: {names}"
-      }
+      },
+      "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
     },
     "save": "Save",
     "cancel": "Cancel",
@@ -184,13 +299,22 @@
       "role": "Character Setup",
       "agents": "Operating Instructions",
       "soul": "Soul",
-      "user": "User Profile"
+      "user": "User Profile",
+      "env": "Environment",
+      "sherry": "App Config",
+      "memoryAgent": "Memory · Agent",
+      "memoryUser": "Memory · User"
     },
     "role": {
       "aiLine": "You will play {name}.",
       "userLine": "The user will play {name}.",
       "assistant": "AI Role",
-      "userRole": "User Role"
+      "userRole": "User Role",
+      "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
+      "noFileChosen": "Select an avatar image file",
+      "resetAvatar": "Reset avatar",
+      "aiName": "AI Name",
+      "userName": "User Name"
     },
     "persona": {
       "preset": {
@@ -199,13 +323,189 @@
         "defaultName": "Full",
         "defaultBadge": "Default",
         "builtinCodingName": "Coding Assistant",
-        "builtinBadge": "Built-in"
-      }
-    }
+        "builtinBadge": "Built-in",
+        "savePreset": "Save Preset",
+        "apply": "Apply",
+        "editingBadge": "Editing",
+        "nameDialog": {
+          "title": "Save as Preset",
+          "placeholder": "Enter preset name",
+          "confirm": "Save"
+        },
+        "nameError": {
+          "duplicate": "Name already exists",
+          "required": "Name is required"
+        },
+        "confirmDelete": {
+          "title": "Delete Preset",
+          "message": "Delete preset \"{name}\"? This cannot be undone"
+        },
+        "toast": {
+          "presetSaved": "Preset saved",
+          "presetDeleted": "Preset deleted",
+          "applyFailed": "Apply failed, check backend connection",
+          "presetSaveFailed": "Failed to save preset",
+          "applySuccess": "Applied successfully"
+        },
+        "emptyList": "No presets yet",
+        "title": "Presets & Role"
+      },
+      "restoreDefault": "Restore Default"
+    },
+    "crop": {
+      "confirm": "Confirm",
+      "preview": "Crop Preview",
+      "rotate": "Rotate",
+      "zoomIn": "Zoom In",
+      "zoomOut": "Zoom Out",
+      "title": "Crop Avatar"
+    },
+    "background": {
+      "title": "Background Image",
+      "upload": "Upload Background",
+      "clear": "Clear Background",
+      "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
+      "opacity": "Overlay Strength",
+      "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
+      "cropTitle": "Crop Background",
+      "current": "Background image set",
+      "noFileChosen": "Select an image file"
+    },
+    "env": {
+      "loadError": "Failed to load environment config. Please check the backend service.",
+      "saveFailed": "Failed to save environment config.",
+      "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
+      "noEnvFile": "No .env file found.",
+      "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
+      "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+    },
+    "sherry": {
+      "loadError": "Failed to load app config. Please check the backend service.",
+      "saveFailed": "Failed to save app config.",
+      "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
+      "noConfigFile": "No sherry.jsonc file found."
+    },
+    "cron": {
+      "addJob": "New task",
+      "empty": "No cron tasks yet. Click \"New task\" to add one.",
+      "run": "Run",
+      "edit": "Edit",
+      "delete": "Delete",
+      "addTitle": "New Cron Task",
+      "editTitle": "Edit Cron Task",
+      "name": "Task name",
+      "namePlaceholder": "e.g. Daily good-morning greeting",
+      "scheduleType": "Schedule type",
+      "typeAt": "Specific time",
+      "typeEvery": "Repeat every",
+      "typeCron": "Cron expression",
+      "atTime": "Execution time",
+      "everyInterval": "Interval",
+      "intervalValue": "Value",
+      "intervalTooSmall": "Interval must be at least 1 second",
+      "cronExpr": "Cron expression",
+      "message": "Task message",
+      "messagePlaceholder": "Enter the task content to execute",
+      "skills": "Skills (optional)",
+      "skillsEmpty": "No skills installed",
+      "skillsHint": "Selected skills are loaded before the prompt runs — the cron sets when, the skill sets how",
+      "deliver": "Push to channel",
+      "channel": "Channel",
+      "channelPlaceholder": "e.g. default",
+      "to": "Recipient / group",
+      "toPlaceholder": "Optional",
+      "deleteAfterRun": "Delete after run",
+      "nextRun": "Next run",
+      "lastStatus": "Last status",
+      "descAt": "Run at {time}",
+      "descAtEmpty": "No time set",
+      "everySeconds": "Every {n} seconds",
+      "everyMinutes": "Every {n} minutes",
+      "everyHours": "Every {n} hours",
+      "everyDays": "Every {n} days"
+    },
+    "heartbeat": {
+      "addTask": "Add task",
+      "globalSwitch": "Global heartbeat",
+      "globalSwitchHint": "On: checks the tasks every {minutes} minutes",
+      "globalSwitchOff": "Off: the periodic heartbeat does not fire (and stays off after a restart)",
+      "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
+      "activeEmpty": "No active tasks. Add new tasks below.",
+      "completedEmpty": "No completed tasks yet.",
+      "deleteTask": "Delete task",
+      "complete": "Complete",
+      "reactivate": "Reactivate"
+    },
+    "llm": {
+      "add": "Add model",
+      "save": "Save",
+      "apply": "Apply",
+      "saved": "Saved",
+      "applied": "Applied to .env",
+      "empty": "No models yet — click “Add model”",
+      "unnamed": "Unnamed model",
+      "collapse": "Collapse",
+      "count": "{n} / {max}",
+      "delete": "Delete",
+      "deleteConfirm": "Delete model “{name}”?",
+      "expand": "Expand",
+      "localModel": "Local model",
+      "localUnused": "Unused in local mode",
+      "maxModels": "Up to {max} models per group",
+      "requiredMissing": "Provider and model API name are required",
+      "test": "Test connection",
+      "testHint": "Probe once with the parameters on screen — nothing is written to .env",
+      "testUnsupported": "This group needs an image / audio payload, so it cannot be probed",
+      "testOk": "Reachable ({ms} ms)",
+      "testFailed": "Unreachable ({ms} ms)",
+      "testRequestFailed": "request failed: the backend did not answer"
+    },
+    "memory": {
+      "addEntry": "Add entry",
+      "deleteEntry": "Delete entry",
+      "empty": "No entries yet. Add one below.",
+      "effectiveHint": "Note: Changes only take effect after compression or restart."
+    },
+    "desc": {
+      "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
+      "memoryUser": "User long-term memory info (workspace/memory/USER.md)",
+      "role": "Who the AI and the user each play (names and avatars)",
+      "agents": "The agent's operating instructions and safety boundaries",
+      "soul": "Agent personality, tone, character",
+      "user": "User info and preferences"
+    },
+    "uploadAvatar": "Upload Avatar"
   },
   "rightSidebar": {
     "fileViewer": "Project files",
-    "account": "Account"
+    "account": "Account",
+    "logs": "Logs",
+    "skills": "Skills",
+    "systemConfig": "System Config",
+    "persona": "Presets & Role",
+    "notification": "Notifications",
+    "maximize": "Expand to the full viewport",
+    "restore": "Restore the panel width",
+    "memory": "Memory",
+    "heartbeat": "Heartbeat",
+    "cron": "Scheduled Tasks",
+    "extend": "Extend",
+    "taskDetail": "Task details",
+    "knowledgeGraph": "Knowledge Graph",
+    "resize": "Drag to resize",
+    "stats": "Statistics",
+    "closeTab": "Close tab",
+    "empty": "No tabs yet — add one from the menu or toolbar",
+    "sessionPreset": "Presets & Role",
+    "gitDiff": "Commit diff",
+    "contextViewer": "Agent context",
+    "browser": "Browser",
+    "terminal": "Terminal",
+    "scopes": {
+      "session": "This session",
+      "global": "Global"
+    },
+    "scopeEmpty": "No tabs in this group"
   },
   "progressFloat": {
     "status": {
@@ -219,15 +519,71 @@
       "done": "done",
       "failed": "failed",
       "skipped": "skipped"
-    }
+    },
+    "collapse": "Hide plan progress",
+    "counts": "{done}/{total}",
+    "current": "current",
+    "cyclic": "cyclic deps",
+    "empty": "No tasks in progress",
+    "expand": "Show plan progress",
+    "needsClosing": "Needs closing",
+    "notStarted": "Not started",
+    "summary": "Plan {done}/{total}",
+    "waveLabel": "Wave {index}",
+    "waveSummary": "Wave {current}/{total}"
   },
   "projectFiles": {
-    "title": "Files"
+    "title": "Files",
+    "noFile": "No file selected",
+    "empty": "Empty directory",
+    "refresh": "Refresh",
+    "truncated": "Showing {shown} of {total} entries"
   },
   "gitGraph": {
-    "title": "Git Graph"
+    "title": "Git Graph",
+    "refresh": "Refresh",
+    "dirty": "{count} uncommitted",
+    "scrollForMore": "Scroll for more",
+    "loadRetry": "Loading failed — click to retry",
+    "empty": "No commits yet",
+    "noCommits": "no commits",
+    "notARepository": "The working directory is not a Git repository",
+    "gitMissing": "No git executable on the server",
+    "unavailableShort": "unavailable",
+    "parents": "Parents",
+    "loadingFiles": "Loading the file list…",
+    "filesFailed": "Failed to load the file list",
+    "noFiles": "This commit changes no files",
+    "copied": "Copied {what}",
+    "copyFailed": "Copy failed",
+    "copyHash": "Copy commit hash",
+    "copySubject": "Copy commit message",
+    "copyRef": "Copy ref name",
+    "switchBranch": "Switch branch",
+    "checkoutBranch": "Check out this branch",
+    "checkoutFailed": "Checkout failed",
+    "menuResetSoft": "Reset here — soft (keep changes)",
+    "menuResetHard": "Reset here — hard (discard changes)",
+    "resetAction": "Reset ({mode})",
+    "modeSoft": "soft",
+    "modeHard": "hard",
+    "resetFailed": "Reset failed",
+    "confirmSoftTitle": "Soft-reset the branch",
+    "confirmSoftMessage": "Move {branch} to {hash}? The committed changes return to the index and the working tree keeps its files.",
+    "confirmHardTitle": "Hard-reset the branch (dangerous)",
+    "confirmHardMessage": "Move {branch} to {hash}? {count} uncommitted change(s) will be discarded and cannot be recovered."
   },
   "personaPreset": {
-    "unbound": "Not chosen"
+    "unbound": "Not chosen",
+    "applyFailed": "Applying the preset failed — check the backend connection and retry",
+    "create": "Create session",
+    "selectHint": "Creating a session requires choosing a preset. The persona and prompt are fixed once the session starts, so later preset changes do not affect existing sessions.",
+    "selectTitle": "Choose a preset",
+    "currentWithName": "Session preset & role: {name}",
+    "contentTitle": "Preset content",
+    "current": "Session preset & role",
+    "empty": "(empty)",
+    "missing": "This preset has been deleted",
+    "unboundHint": "This session was created without a preset"
   }
 }

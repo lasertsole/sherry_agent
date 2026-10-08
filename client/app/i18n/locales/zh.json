@@ -1,7 +1,10 @@
 {
   "a11y": {
     "previewImage": "预览图片",
-    "language": "语言"
+    "language": "语言",
+    "skipToMain": "跳到主内容",
+    "deleteSession": "删除会话",
+    "toggleTheme": "切换主题"
   },
   "common": {
     "confirmDelete": "确认删除",
@@ -14,13 +17,47 @@
     "maxAudios": "最多只能上传 {count} 段音频",
     "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
     "maxVideos": "最多只能上传 {count} 段视频",
-    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段",
+    "placeholder": "请输入内容...",
+    "queueHint": "继续输入消息以排队",
+    "send": "发送",
+    "stop": "停止",
+    "queued": "已排队 · 第 {position} 位（共 {queueSize} 个）",
+    "queuedPosition": "#{position}/{queueSize}",
+    "sendNow": "立刻",
+    "editQueued": "编辑排队消息",
+    "cancelQueued": "取消排队消息",
+    "waitingApproval": "等待审批..."
   },
   "sessionModelPicker": {
-    "pending": "下一轮生效"
+    "pending": "下一轮生效",
+    "label": "主模型",
+    "a11y": "切换当前会话的主模型",
+    "followEnv": "跟随环境配置",
+    "followEnvWith": "跟随环境配置（{model}）"
   },
   "chatBox": {
-    "defaultAiName": "雪莉"
+    "defaultAiName": "雪莉",
+    "copy": "复制",
+    "copied": "已复制",
+    "defaultUserName": "我",
+    "imageLoadFailed": "图片加载失败",
+    "modelMeta": "输入 {input} · 输出 {output} tokens",
+    "userInputMeta": "≈ {n} tokens",
+    "contextTip": "查看 Agent 的完整上下文（系统提示词 / 工具 / 消息）",
+    "scrollBottom": "回到最底部",
+    "loadingOlder": "正在加载更早的消息",
+    "streamingTail": "正在流式输出，仅显示末尾内容；本轮结束后显示全文",
+    "expandFull": "展开全文（{chars} 字）",
+    "collapseFull": "收起全文",
+    "thinking": "思考过程",
+    "toolArgs": "调用参数",
+    "toolNoOutput": "无输出",
+    "toolResult": "执行结果",
+    "toolRunning": "执行中…",
+    "removeImage": "移除图片",
+    "removeAudio": "移除音频",
+    "removeVideo": "移除视频"
   },
   "chat": {
     "backgroundMessage": "后台任务",
@@ -45,11 +82,26 @@
   "connection": {
     "offline": "网络已断开",
     "backendDown": "后端服务未连接",
-    "backOnline": "网络已恢复"
+    "backOnline": "网络已恢复",
+    "reconnecting": "连接中断，正在重连…（第 {attempt}/{max} 次）"
   },
   "history": {
     "noSessions": "暂无会话记录",
-    "newSession": "新会话"
+    "newSession": "新会话",
+    "createdAt": "创建时间：{time}",
+    "dateFormat": "YYYY-MM-DD HH:mm",
+    "deleteConfirm": "确定要删除该会话吗？此操作不可恢复。",
+    "editTitle": "重命名会话",
+    "titleInvalid": "标题限 30 字以内，且只能包含中英文、数字、空格和 . _ -",
+    "titlePlaceholder": "输入新标题",
+    "batchDelete": "批量删除对话",
+    "batchDeleteConfirm": "确定要批量删除选中的对话吗？此操作不可恢复。",
+    "clearFilter": "清除筛选",
+    "dateRange": "按日期范围筛选",
+    "filterToggle": "筛选",
+    "noSearchResults": "没有匹配的会话",
+    "searchPlaceholder": "搜索会话标题…",
+    "selectAll": "全选"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec} 秒前",
@@ -61,7 +113,26 @@
     "statusKilled": "已终止",
     "statusUnknown": "未知",
     "roleRoot": "主任务",
-    "roleChild": "子任务"
+    "roleChild": "子任务",
+    "callingSession": "调用会话",
+    "endTime": "结束时间",
+    "startTime": "开始时间",
+    "tabSessions": "会话",
+    "tabTasks": "后台任务",
+    "taskDelete": "删除任务",
+    "taskDeleteConfirm": "确定要删除该任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
+    "tasksBatchDelete": "批量删除任务",
+    "tasksBatchDeleteConfirm": "确定要批量删除选中的任务吗？该任务及其所有子任务将被彻底清空，此操作不可恢复。",
+    "tasksSelectAll": "全选",
+    "statusDelivered": "已送达",
+    "statusInProgress": "配送中",
+    "statusPending": "待配送",
+    "backToSession": "返回会话",
+    "backToSessionPrompt": "跳转到发起该任务的会话",
+    "refreshGraph": "刷新",
+    "refreshGraphPrompt": "重新拉取并重绘运行图",
+    "noTasks": "暂无后台任务",
+    "tasksLoading": "正在加载任务…"
   },
   "toolbar": {
     "newChat": "新建对话",
@@ -78,10 +149,42 @@
     "cron": "定时任务",
     "logs": "日志",
     "extend": "扩展",
-    "account": "账户"
+    "account": "账户",
+    "projectDirectory": {
+      "browse": "选择文件夹…",
+      "label": "项目目录",
+      "pendingHint": "将于下一轮生效",
+      "pendingLabel": "待生效",
+      "unbound": "未绑定项目目录",
+      "pickerCancel": "取消",
+      "pickerEmpty": "此文件夹内没有子文件夹",
+      "pickerHome": "主目录",
+      "pickerLoadFailed": "无法读取该文件夹",
+      "pickerSelect": "选择此文件夹",
+      "pickerTitle": "选择项目目录",
+      "pickerTruncated": "仅显示前 {shown} 个（共 {total} 个）",
+      "pickerUp": "上一级"
+    },
+    "collapseSidebar": "折叠侧边栏",
+    "expandSidebar": "展开侧边栏",
+    "notification": "通知",
+    "projectFiles": "项目文件",
+    "projectFilesHint": "项目文件",
+    "projectFilesHintDetail": "提示：可折叠左侧栏，给文件树和对话区让出更多空间。",
+    "sessionList": "会话列表",
+    "settingsMenu": "菜单",
+    "toolbox": "工具箱",
+    "browser": "浏览器",
+    "terminal": "终端"
   },
   "todolist": {
-    "flowLabel": "TaskFlow: {flow}"
+    "flowLabel": "TaskFlow: {flow}",
+    "collapse": "收起计划",
+    "expand": "展开计划",
+    "progress": "已完成 {done}/{total}",
+    "title": "任务计划",
+    "delegated": "已委派给子代理",
+    "linkedStep": "TaskFlow {flow} · {step}"
   },
   "config": {
     "agent": {
@@ -102,13 +205,19 @@
         "requiredHint": "必需，不可取消",
         "scope_builtin": "内置",
         "scope_mcp": "MCP",
-        "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）"
+        "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）",
+        "clearAll": "全部禁用",
+        "clearGroup": "清空",
+        "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
+        "selectAll": "全部启用",
+        "selectGroup": "全选"
       },
       "skills": {
         "count": "已选 {selected}/{total}",
         "scope_builtin": "内置",
         "scope_thirdparty": "第三方",
-        "empty": "暂无技能"
+        "empty": "暂无技能",
+        "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。"
       },
       "toolGroup": {
         "files": "文件读写",
@@ -125,7 +234,10 @@
       "middlewares": {
         "lockedTitle": "系统必需（锁定）",
         "nudgeLabel": "启用 nudge",
-        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）"
+        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
+        "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
+        "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
+        "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -156,7 +268,9 @@
       "subagents": {
         "followTier": "跟随角色默认",
         "tier": "角色默认：{tier}",
-        "tierDepth": "无角色定义：按深度默认"
+        "tierDepth": "无角色定义：按深度默认",
+        "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
+        "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
       },
       "role": {
         "general": "通用",
@@ -170,7 +284,8 @@
         "middlewares": "关闭的中间件：{names}",
         "middlewaresNone": "中间件：全部开启",
         "models": "子代理模型：{names}"
-      }
+      },
+      "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
     },
     "save": "保存",
     "cancel": "取消",
@@ -184,13 +299,22 @@
       "role": "角色配置",
       "agents": "运行守则",
       "soul": "人格灵魂",
-      "user": "用户信息"
+      "user": "用户信息",
+      "env": "环境配置",
+      "sherry": "应用配置",
+      "memoryAgent": "记忆·Agent",
+      "memoryUser": "记忆·用户"
     },
     "role": {
       "aiLine": "你将扮演{name}。",
       "userLine": "用户将扮演{name}。",
       "assistant": "AI 角色",
-      "userRole": "用户角色"
+      "userRole": "用户角色",
+      "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
+      "noFileChosen": "可选择新的头像图片",
+      "resetAvatar": "重置头像",
+      "aiName": "AI 名称",
+      "userName": "用户名称"
     },
     "persona": {
       "preset": {
@@ -199,13 +323,189 @@
         "defaultName": "全量",
         "defaultBadge": "默认",
         "builtinCodingName": "编程助手",
-        "builtinBadge": "内置"
-      }
-    }
+        "builtinBadge": "内置",
+        "savePreset": "保存预设",
+        "apply": "应用",
+        "editingBadge": "编辑中",
+        "nameDialog": {
+          "title": "保存为预设",
+          "placeholder": "输入预设名称",
+          "confirm": "保存"
+        },
+        "nameError": {
+          "duplicate": "名称已存在",
+          "required": "名称不能为空"
+        },
+        "confirmDelete": {
+          "title": "删除预设",
+          "message": "确定删除预设「{name}」吗？此操作不可恢复"
+        },
+        "toast": {
+          "presetSaved": "预设已保存",
+          "presetDeleted": "预设已删除",
+          "applyFailed": "应用失败，请检查后端连接",
+          "presetSaveFailed": "预设保存失败",
+          "applySuccess": "应用成功"
+        },
+        "emptyList": "暂无预设",
+        "title": "预设角色"
+      },
+      "restoreDefault": "恢复默认"
+    },
+    "crop": {
+      "confirm": "确定",
+      "preview": "裁剪预览",
+      "rotate": "旋转",
+      "zoomIn": "放大",
+      "zoomOut": "缩小",
+      "title": "裁剪头像"
+    },
+    "background": {
+      "title": "背景图片",
+      "upload": "上传背景",
+      "clear": "清除背景",
+      "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
+      "opacity": "遮罩强度",
+      "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
+      "cropTitle": "裁剪背景",
+      "current": "已设置背景图",
+      "noFileChosen": "可选择新图片文件"
+    },
+    "env": {
+      "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
+      "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
+      "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
+      "noEnvFile": "未找到 .env 文件。",
+      "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
+      "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+    },
+    "sherry": {
+      "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
+      "saveFailed": "应用配置保存失败，请检查值是否合法。",
+      "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
+      "noConfigFile": "未找到 sherry.jsonc 文件。"
+    },
+    "cron": {
+      "addJob": "新建任务",
+      "empty": "暂无定时任务。点击「新建任务」添加。",
+      "run": "运行",
+      "edit": "编辑",
+      "delete": "删除",
+      "addTitle": "新建定时任务",
+      "editTitle": "编辑定时任务",
+      "name": "任务名称",
+      "namePlaceholder": "例如：每日早安问候",
+      "scheduleType": "调度方式",
+      "typeAt": "指定时刻",
+      "typeEvery": "每隔多久",
+      "typeCron": "Cron 表达式",
+      "atTime": "执行时刻",
+      "everyInterval": "执行间隔",
+      "intervalValue": "数值",
+      "intervalTooSmall": "间隔最小为 1 秒",
+      "cronExpr": "Cron 表达式",
+      "message": "任务消息",
+      "messagePlaceholder": "请输入要执行的任务内容",
+      "skills": "绑定技能（可选）",
+      "skillsEmpty": "暂无可用技能",
+      "skillsHint": "选中的技能会在执行前预加载 — 定时任务决定何时执行，技能决定如何执行",
+      "deliver": "推送到渠道",
+      "channel": "渠道名称",
+      "channelPlaceholder": "例如：default",
+      "to": "接收人/群",
+      "toPlaceholder": "可选",
+      "deleteAfterRun": "运行后自动删除",
+      "nextRun": "下次运行",
+      "lastStatus": "上次状态",
+      "descAt": "在 {time} 执行",
+      "descAtEmpty": "未设定时刻",
+      "everySeconds": "每 {n} 秒",
+      "everyMinutes": "每 {n} 分钟",
+      "everyHours": "每 {n} 小时",
+      "everyDays": "每 {n} 天"
+    },
+    "heartbeat": {
+      "addTask": "添加任务",
+      "globalSwitch": "全局心跳",
+      "globalSwitchHint": "开启中：每 {minutes} 分钟检查一次任务",
+      "globalSwitchOff": "已关闭：定时心跳不会触发（重启后仍然关闭）",
+      "effectiveHint": "此文件每30分钟被检查一次。请在下方添加希望 Agent 定期处理的任务。若仅剩标题/注释（没有任务），则将跳过心跳。",
+      "activeEmpty": "暂无活动任务。请在下方添加新任务。",
+      "completedEmpty": "暂无已完成任务。",
+      "deleteTask": "删除任务",
+      "complete": "完成任务",
+      "reactivate": "重新激活"
+    },
+    "llm": {
+      "add": "添加模型",
+      "save": "保存",
+      "apply": "应用",
+      "saved": "已保存",
+      "applied": "已应用到 .env",
+      "empty": "暂无模型，点击“添加模型”创建",
+      "unnamed": "未命名模型",
+      "collapse": "收起",
+      "count": "{n} / {max}",
+      "delete": "删除",
+      "deleteConfirm": "确定删除模型“{name}”？",
+      "expand": "展开",
+      "localModel": "本地模型",
+      "localUnused": "本地模式不使用",
+      "maxModels": "每个分组最多 {max} 个模型",
+      "requiredMissing": "提供商与模型 API 名为必填项",
+      "test": "测试连通性",
+      "testHint": "用当前填写的参数试调一次，不写入 .env",
+      "testUnsupported": "该分组需要图片 / 音频输入，暂不支持连通性测试",
+      "testOk": "连通正常（{ms} ms）",
+      "testFailed": "连通失败（{ms} ms）",
+      "testRequestFailed": "请求失败：后端未响应"
+    },
+    "memory": {
+      "addEntry": "添加条目",
+      "deleteEntry": "删除条目",
+      "empty": "暂无条目，请在下方添加。",
+      "effectiveHint": "提示：修改后仅在系统压缩或重启时生效。"
+    },
+    "desc": {
+      "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
+      "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）",
+      "role": "AI 与用户各自的扮演角色（名字与头像）",
+      "agents": "Agent 的运行守则与安全边界",
+      "soul": "Agent人格、语气、性格",
+      "user": "用户信息和偏好"
+    },
+    "uploadAvatar": "上传头像"
   },
   "rightSidebar": {
     "fileViewer": "项目文件",
-    "account": "账户"
+    "account": "账户",
+    "logs": "日志查看",
+    "skills": "技能",
+    "systemConfig": "系统配置",
+    "persona": "预设角色",
+    "notification": "通知",
+    "maximize": "放大到整个视口",
+    "restore": "还原面板宽度",
+    "memory": "记忆",
+    "heartbeat": "心跳",
+    "cron": "定时任务",
+    "extend": "扩展",
+    "taskDetail": "任务详情",
+    "knowledgeGraph": "知识图谱",
+    "resize": "拖动调整宽度",
+    "stats": "统计",
+    "closeTab": "关闭标签页",
+    "empty": "暂无标签页，从菜单或工具栏添加",
+    "sessionPreset": "预设角色",
+    "gitDiff": "提交差异",
+    "contextViewer": "Agent 上下文",
+    "browser": "浏览器",
+    "terminal": "终端",
+    "scopes": {
+      "session": "当前会话",
+      "global": "全局"
+    },
+    "scopeEmpty": "该分组暂无标签页"
   },
   "progressFloat": {
     "status": {
@@ -219,15 +519,71 @@
       "done": "已完成",
       "failed": "失败",
       "skipped": "已跳过"
-    }
+    },
+    "collapse": "收起计划进度",
+    "counts": "{done}/{total}",
+    "current": "当前",
+    "cyclic": "循环依赖",
+    "empty": "暂无进行中的任务",
+    "expand": "展开计划进度",
+    "needsClosing": "待收口",
+    "notStarted": "未开始",
+    "summary": "计划 {done}/{total}",
+    "waveLabel": "第 {index} 波",
+    "waveSummary": "波次 {current}/{total}"
   },
   "projectFiles": {
-    "title": "文件树"
+    "title": "文件树",
+    "noFile": "未选择文件",
+    "empty": "空目录",
+    "refresh": "刷新",
+    "truncated": "仅显示 {total} 项中的 {shown} 项"
   },
   "gitGraph": {
-    "title": "Git Graph"
+    "title": "Git Graph",
+    "refresh": "刷新",
+    "dirty": "未提交 {count}",
+    "scrollForMore": "向下滚动加载更多",
+    "loadRetry": "加载失败，点击重试",
+    "empty": "暂无提交",
+    "noCommits": "无提交",
+    "notARepository": "当前工作目录不是 Git 仓库",
+    "gitMissing": "服务器上没有找到 git 可执行文件",
+    "unavailableShort": "不可用",
+    "parents": "父提交",
+    "loadingFiles": "读取文件列表…",
+    "filesFailed": "读取文件列表失败",
+    "noFiles": "该提交没有文件变更",
+    "copied": "已复制{what}",
+    "copyFailed": "复制失败",
+    "copyHash": "复制提交哈希",
+    "copySubject": "复制提交信息",
+    "copyRef": "复制引用名",
+    "switchBranch": "切换分支",
+    "checkoutBranch": "切换到此分支",
+    "checkoutFailed": "切换分支失败",
+    "menuResetSoft": "软回退到此提交（保留改动）",
+    "menuResetHard": "硬回退到此提交（丢弃改动）",
+    "resetAction": "{mode}回退",
+    "modeSoft": "软",
+    "modeHard": "硬",
+    "resetFailed": "回退失败",
+    "confirmSoftTitle": "软回退分支",
+    "confirmSoftMessage": "把 {branch} 移动到 {hash}？已提交的更改会回到暂存区，工作区内容保留。",
+    "confirmHardTitle": "硬回退分支（危险）",
+    "confirmHardMessage": "把 {branch} 移动到 {hash}？当前 {count} 项未提交改动会被丢弃，无法恢复。"
   },
   "personaPreset": {
-    "unbound": "未选择"
+    "unbound": "未选择",
+    "applyFailed": "预设应用失败，请检查后端连接后重试",
+    "create": "创建会话",
+    "selectHint": "新建会话需要先选择一个预设；人格与提示词在会话创建后即固定，之后修改预设不影响已创建的会话。",
+    "selectTitle": "选择预设",
+    "currentWithName": "当前会话预设角色：{name}",
+    "contentTitle": "预设内容",
+    "current": "当前会话预设角色",
+    "empty": "（空）",
+    "missing": "该预设已被删除",
+    "unboundHint": "此会话创建时未选择预设"
   }
 }

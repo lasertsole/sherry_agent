@@ -1,7 +1,10 @@
 {
   "a11y": {
     "previewImage": "画像をプレビュー",
-    "language": "言語"
+    "language": "言語",
+    "skipToMain": "メインコンテンツへスキップ",
+    "deleteSession": "セッションを削除",
+    "toggleTheme": "テーマを切り替え"
   },
   "common": {
     "confirmDelete": "削除の確認",
@@ -14,13 +17,47 @@
     "maxAudios": "最大 {count} 個の音声をアップロードできます",
     "maxAudiosExceed": "最大 {count} 個の音声をアップロードできます。{extra} 個超過しています",
     "maxVideos": "最大 {count} 個の動画をアップロードできます",
-    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています"
+    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています",
+    "placeholder": "メッセージを入力してください...",
+    "queueHint": "続けて入力するとメッセージがキューに追加されます",
+    "send": "送信",
+    "stop": "停止",
+    "queued": "順番待ち · {queueSize} 件中 {position} 番目",
+    "queuedPosition": "#{position}/{queueSize}",
+    "sendNow": "今すぐ",
+    "editQueued": "待機中のメッセージを編集",
+    "cancelQueued": "待機中のメッセージを取り消す",
+    "waitingApproval": "承認待ち..."
   },
   "sessionModelPicker": {
-    "pending": "次のターンで反映"
+    "pending": "次のターンで反映",
+    "label": "メインモデル",
+    "a11y": "このセッションのメインモデルを切り替え",
+    "followEnv": "環境設定に従う",
+    "followEnvWith": "環境設定に従う（{model}）"
   },
   "chatBox": {
-    "defaultAiName": "シェリー"
+    "defaultAiName": "シェリー",
+    "copy": "コピー",
+    "copied": "コピーしました",
+    "defaultUserName": "わたし",
+    "imageLoadFailed": "画像の読み込みに失敗しました",
+    "modelMeta": "入力 {input} · 出力 {output} tokens",
+    "userInputMeta": "≈ {n} トークン",
+    "contextTip": "エージェントのコンテキスト全体を表示（システム プロンプト / ツール / メッセージ）",
+    "scrollBottom": "最下部へ戻る",
+    "loadingOlder": "以前のメッセージを読み込み中",
+    "streamingTail": "ストリーミング中 — 末尾のみ表示しています。ターン終了後に全文を表示します",
+    "expandFull": "全文を表示（{chars} 文字）",
+    "collapseFull": "折りたたむ",
+    "thinking": "思考",
+    "toolArgs": "引数",
+    "toolNoOutput": "出力なし",
+    "toolResult": "実行結果",
+    "toolRunning": "実行中…",
+    "removeImage": "画像を削除",
+    "removeAudio": "音声を削除",
+    "removeVideo": "動画を削除"
   },
   "chat": {
     "backgroundMessage": "バックグラウンドタスク",
@@ -45,11 +82,26 @@
   "connection": {
     "offline": "ネットワークが切断されました",
     "backendDown": "バックエンドサービスに接続できません",
-    "backOnline": "接続が復帰しました"
+    "backOnline": "接続が復帰しました",
+    "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）"
   },
   "history": {
     "noSessions": "会話履歴がありません",
-    "newSession": "新しい会話"
+    "newSession": "新しい会話",
+    "createdAt": "作成日時：{time}",
+    "dateFormat": "YYYY/MM/DD HH:mm",
+    "deleteConfirm": "この会話を削除してもよろしいですか？この操作は元に戻せません。",
+    "editTitle": "セッション名を変更",
+    "titleInvalid": "タイトルは30文字以内で、英字・数字・空白および . _ - のみ使用できます",
+    "titlePlaceholder": "新しいタイトルを入力",
+    "batchDelete": "会話を一括削除",
+    "batchDeleteConfirm": "選択した会話を一括削除してもよろしいですか？この操作は元に戻せません。",
+    "clearFilter": "フィルターをクリア",
+    "dateRange": "日付範囲で絞り込み",
+    "filterToggle": "絞り込み",
+    "noSearchResults": "一致するセッションがありません",
+    "searchPlaceholder": "セッションタイトルを検索…",
+    "selectAll": "すべて選択"
   },
   "sidebar": {
     "tasksAgoSeconds": "{sec} 秒前",
@@ -61,7 +113,26 @@
     "statusKilled": "終了",
     "statusUnknown": "不明",
     "roleRoot": "ルート",
-    "roleChild": "タスク"
+    "roleChild": "タスク",
+    "callingSession": "呼び出し中セッション",
+    "endTime": "終了時刻",
+    "startTime": "開始時刻",
+    "tabSessions": "会話",
+    "tabTasks": "バックグラウンドタスク",
+    "taskDelete": "タスクを削除",
+    "taskDeleteConfirm": "このタスクを削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
+    "tasksBatchDelete": "タスクを一括削除",
+    "tasksBatchDeleteConfirm": "選択したタスクを一括削除しますか？ルートタスクとすべての子タスクが完全に削除されます。この操作は元に戻せません。",
+    "tasksSelectAll": "すべて選択",
+    "statusDelivered": "配送済み",
+    "statusInProgress": "配送中",
+    "statusPending": "待機中",
+    "backToSession": "セッションに戻る",
+    "backToSessionPrompt": "このタスクを開始したセッションに移動",
+    "refreshGraph": "再読み込み",
+    "refreshGraphPrompt": "実行グラフを再取得して再描画",
+    "noTasks": "バックグラウンドタスクはまだありません",
+    "tasksLoading": "タスクを読み込み中..."
   },
   "toolbar": {
     "newChat": "新しい会話",
@@ -78,10 +149,42 @@
     "cron": "クーロンタスク",
     "logs": "ログ",
     "extend": "拡張",
-    "account": "アカウント"
+    "account": "アカウント",
+    "projectDirectory": {
+      "browse": "フォルダーを選択…",
+      "label": "プロジェクトディレクトリ",
+      "pendingHint": "次のターンで有効になります",
+      "pendingLabel": "保留中",
+      "unbound": "プロジェクトディレクトリ未設定",
+      "pickerCancel": "キャンセル",
+      "pickerEmpty": "このフォルダーにサブフォルダーはありません",
+      "pickerHome": "ホーム",
+      "pickerLoadFailed": "このフォルダーを読み取れませんでした",
+      "pickerSelect": "このフォルダーを選択",
+      "pickerTitle": "プロジェクトディレクトリを選択",
+      "pickerTruncated": "先頭 {shown} 件のみ表示（全 {total} 件）",
+      "pickerUp": "上の階層へ"
+    },
+    "collapseSidebar": "サイドバーを折りたたむ",
+    "expandSidebar": "サイドバーを展開",
+    "notification": "通知",
+    "projectFiles": "プロジェクトファイル",
+    "projectFilesHint": "プロジェクトファイル",
+    "projectFilesHintDetail": "ヒント：左サイドバーを折りたたむと、ファイルツリーとチャットに余裕ができます。",
+    "sessionList": "セッション一覧",
+    "settingsMenu": "メニュー",
+    "toolbox": "ツールボックス",
+    "browser": "ブラウザ",
+    "terminal": "ターミナル"
   },
   "todolist": {
-    "flowLabel": "TaskFlow: {flow}"
+    "flowLabel": "TaskFlow: {flow}",
+    "collapse": "計画を折りたたむ",
+    "expand": "計画を展開",
+    "progress": "{done}/{total} 完了",
+    "title": "タスク計画",
+    "delegated": "サブエージェントに委任",
+    "linkedStep": "TaskFlow {flow} · {step}"
   },
   "config": {
     "agent": {
@@ -102,13 +205,19 @@
         "requiredHint": "必須（解除できません）",
         "scope_builtin": "内蔵",
         "scope_mcp": "MCP",
-        "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）"
+        "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）",
+        "clearAll": "すべて無効",
+        "clearGroup": "クリア",
+        "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
+        "selectAll": "すべて有効",
+        "selectGroup": "全選択"
       },
       "skills": {
         "count": "{selected}/{total} 選択",
         "scope_builtin": "内蔵",
         "scope_thirdparty": "サードパーティ",
-        "empty": "スキルはまだありません"
+        "empty": "スキルはまだありません",
+        "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。"
       },
       "toolGroup": {
         "files": "ファイル",
@@ -125,7 +234,10 @@
       "middlewares": {
         "lockedTitle": "システム必須（ロック）",
         "nudgeLabel": "nudge を有効化",
-        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）"
+        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
+        "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
+        "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
+        "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
       },
       "middleware": {
         "TodoContinuationEnforcer": {
@@ -156,7 +268,9 @@
       "subagents": {
         "followTier": "ロール既定に従う",
         "tier": "ロール既定: {tier}",
-        "tierDepth": "ロール定義なし: 深度の既定"
+        "tierDepth": "ロール定義なし: 深度の既定",
+        "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
+        "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
       },
       "role": {
         "general": "汎用",
@@ -170,7 +284,8 @@
         "middlewares": "無効なミドルウェア: {names}",
         "middlewaresNone": "ミドルウェア: すべて有効",
         "models": "サブエージェント モデル: {names}"
-      }
+      },
+      "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
     },
     "save": "保存",
     "cancel": "キャンセル",
@@ -184,13 +299,22 @@
       "role": "キャラクター設定",
       "agents": "操作指示",
       "soul": "人格・魂",
-      "user": "ユーザー情報"
+      "user": "ユーザー情報",
+      "env": "環境設定",
+      "sherry": "アプリ設定",
+      "memoryAgent": "記憶・Agent",
+      "memoryUser": "記憶・ユーザー"
     },
     "role": {
       "aiLine": "あなたは{name}を演じます。",
       "userLine": "ユーザーは{name}を演じます。",
       "assistant": "AI ロール",
-      "userRole": "ユーザーロール"
+      "userRole": "ユーザーロール",
+      "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
+      "noFileChosen": "新しいアバター画像を選択できます",
+      "resetAvatar": "アバターをリセット",
+      "aiName": "AI 名前",
+      "userName": "ユーザー名"
     },
     "persona": {
       "preset": {
@@ -199,13 +323,189 @@
         "defaultName": "フル",
         "defaultBadge": "デフォルト",
         "builtinCodingName": "コーディングアシスタント",
-        "builtinBadge": "内蔵"
-      }
-    }
+        "builtinBadge": "内蔵",
+        "savePreset": "プリセット保存",
+        "apply": "適用",
+        "editingBadge": "編集中",
+        "nameDialog": {
+          "title": "プリセットとして保存",
+          "placeholder": "プリセット名を入力",
+          "confirm": "保存"
+        },
+        "nameError": {
+          "duplicate": "名前は既に存在します",
+          "required": "名前は必須です"
+        },
+        "confirmDelete": {
+          "title": "プリセットを削除",
+          "message": "プリセット「{name}」を削除しますか？元に戻せません"
+        },
+        "toast": {
+          "presetSaved": "プリセットを保存しました",
+          "presetDeleted": "プリセットを削除しました",
+          "applyFailed": "適用に失敗しました。バックエンド接続を確認してください",
+          "presetSaveFailed": "プリセットの保存に失敗しました",
+          "applySuccess": "適用しました"
+        },
+        "emptyList": "プリセットなし",
+        "title": "プリセットと役割"
+      },
+      "restoreDefault": "デフォルトに戻す"
+    },
+    "crop": {
+      "confirm": "確定",
+      "preview": "トリミングプレビュー",
+      "rotate": "回転",
+      "zoomIn": "拡大",
+      "zoomOut": "縮小",
+      "title": "アバターをトリミング"
+    },
+    "background": {
+      "title": "背景画像",
+      "upload": "背景をアップロード",
+      "clear": "背景をクリア",
+      "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
+      "opacity": "オーバーレイの強さ",
+      "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
+      "cropTitle": "背景をトリミング",
+      "current": "背景画像が設定されています",
+      "noFileChosen": "画像ファイルを選択"
+    },
+    "env": {
+      "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+      "saveFailed": "環境設定の保存に失敗しました。",
+      "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
+      "noEnvFile": ".env ファイルが見つかりません。",
+      "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
+      "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+    },
+    "sherry": {
+      "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+      "saveFailed": "アプリ設定の保存に失敗しました。",
+      "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
+      "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+    },
+    "cron": {
+      "addJob": "新規タスク",
+      "empty": "クーロンタスクはまだありません。「新規タスク」をクリックして追加してください。",
+      "run": "実行",
+      "edit": "編集",
+      "delete": "削除",
+      "addTitle": "新しいクーロンタスク",
+      "editTitle": "クーロンタスクを編集",
+      "name": "タスク名",
+      "namePlaceholder": "例：毎朝の挨拶",
+      "scheduleType": "スケジュール方式",
+      "typeAt": "指定時刻",
+      "typeEvery": "間隔で繰り返し",
+      "typeCron": "Cron 式",
+      "atTime": "実行時刻",
+      "everyInterval": "実行間隔",
+      "intervalValue": "値",
+      "intervalTooSmall": "間隔は1秒以上にしてください",
+      "cronExpr": "Cron 式",
+      "message": "タスク内容",
+      "messagePlaceholder": "実行するタスクの内容を入力",
+      "skills": "スキル（任意）",
+      "skillsEmpty": "利用可能なスキルがありません",
+      "skillsHint": "選択したスキルは実行前にロードされます — クーロンが実行タイミングを、スキルが実行方法を決定します",
+      "deliver": "チャネルへ配信",
+      "channel": "チャネル名",
+      "channelPlaceholder": "例：default",
+      "to": "受信者 / グループ",
+      "toPlaceholder": "任意",
+      "deleteAfterRun": "実行後に自動削除",
+      "nextRun": "次回実行",
+      "lastStatus": "前回の状態",
+      "descAt": "{time} に実行",
+      "descAtEmpty": "時刻が未設定",
+      "everySeconds": "{n} 秒ごと",
+      "everyMinutes": "{n} 分ごと",
+      "everyHours": "{n} 時間ごと",
+      "everyDays": "{n} 日ごと"
+    },
+    "heartbeat": {
+      "addTask": "タスクを追加",
+      "globalSwitch": "グローバル ハートビート",
+      "globalSwitchHint": "{minutes} 分ごとにタスクを確認します",
+      "globalSwitchOff": "オフ：定期ハートビートは実行されません（再起動後もオフのまま）",
+      "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
+      "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
+      "completedEmpty": "完了済みのタスクはまだありません。",
+      "deleteTask": "タスクを削除",
+      "complete": "完了にする",
+      "reactivate": "再アクティブ化"
+    },
+    "llm": {
+      "add": "モデルを追加",
+      "save": "保存",
+      "apply": "適用",
+      "saved": "保存しました",
+      "applied": ".env に適用済み",
+      "empty": "モデルがありません。「モデルを追加」をクリック",
+      "unnamed": "名称未設定のモデル",
+      "collapse": "折りたたむ",
+      "count": "{n} / {max}",
+      "delete": "削除",
+      "deleteConfirm": "モデル「{name}」を削除しますか？",
+      "expand": "展開",
+      "localModel": "ローカルモデル",
+      "localUnused": "ローカルでは未使用",
+      "maxModels": "1グループにつき最大 {max} モデル",
+      "requiredMissing": "プロバイダーとモデル API 名は必須です",
+      "test": "接続テスト",
+      "testHint": "画面のパラメータで 1 回だけ試します（.env には書き込みません）",
+      "testUnsupported": "このグループは画像 / 音声入力が必要なため、接続テストはできません",
+      "testOk": "接続 OK（{ms} ms）",
+      "testFailed": "接続失敗（{ms} ms）",
+      "testRequestFailed": "リクエスト失敗: バックエンドが応答しません"
+    },
+    "memory": {
+      "addEntry": "項目を追加",
+      "deleteEntry": "項目を削除",
+      "empty": "項目はまだありません。下から追加してください。",
+      "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
+    },
+    "desc": {
+      "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
+      "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）",
+      "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
+      "agents": "Agent の操作指示と安全境界",
+      "soul": "Agent 人格、トーン、性格",
+      "user": "ユーザー情報と好み"
+    },
+    "uploadAvatar": "アバターをアップロード"
   },
   "rightSidebar": {
     "fileViewer": "プロジェクトファイル",
-    "account": "アカウント"
+    "account": "アカウント",
+    "logs": "ログ表示",
+    "skills": "スキル",
+    "systemConfig": "システム設定",
+    "persona": "プリセットと役割",
+    "notification": "通知",
+    "maximize": "ビューポート全体に拡大",
+    "restore": "パネル幅に戻す",
+    "memory": "メモリ",
+    "heartbeat": "ハートビート",
+    "cron": "定期タスク",
+    "extend": "拡張",
+    "taskDetail": "タスク詳細",
+    "knowledgeGraph": "ナレッジグラフ",
+    "resize": "ドラッグで幅を変更",
+    "stats": "統計",
+    "closeTab": "タブを閉じる",
+    "empty": "タブがありません。メニューまたはツールバーから追加",
+    "sessionPreset": "プリセットと役割",
+    "gitDiff": "コミット差分",
+    "contextViewer": "エージェント コンテキスト",
+    "browser": "ブラウザ",
+    "terminal": "ターミナル",
+    "scopes": {
+      "session": "現在のセッション",
+      "global": "グローバル"
+    },
+    "scopeEmpty": "このグループにタブはありません"
   },
   "progressFloat": {
     "status": {
@@ -219,15 +519,71 @@
       "done": "完了",
       "failed": "失敗",
       "skipped": "スキップ"
-    }
+    },
+    "collapse": "計画の進捗を隠す",
+    "counts": "{done}/{total}",
+    "current": "進行中",
+    "cyclic": "循環依存",
+    "empty": "実行中のタスクはありません",
+    "expand": "計画の進捗を表示",
+    "needsClosing": "クローズ待ち",
+    "notStarted": "未着手",
+    "summary": "計画 {done}/{total}",
+    "waveLabel": "第 {index} ウェーブ",
+    "waveSummary": "ウェーブ {current}/{total}"
   },
   "projectFiles": {
-    "title": "ファイルツリー"
+    "title": "ファイルツリー",
+    "noFile": "ファイルが選択されていません",
+    "empty": "空のディレクトリ",
+    "refresh": "再読み込み",
+    "truncated": "{total} 件中 {shown} 件を表示"
   },
   "gitGraph": {
-    "title": "Git Graph"
+    "title": "Git Graph",
+    "refresh": "更新",
+    "dirty": "未コミット {count}",
+    "scrollForMore": "下にスクロールで追加読み込み",
+    "loadRetry": "読み込みに失敗 — クリックで再試行",
+    "empty": "コミットがまだありません",
+    "noCommits": "コミットなし",
+    "notARepository": "作業ディレクトリは Git リポジトリではありません",
+    "gitMissing": "サーバーに git 実行ファイルが見つかりません",
+    "unavailableShort": "利用不可",
+    "parents": "親コミット",
+    "loadingFiles": "ファイル一覧を読み込み中…",
+    "filesFailed": "ファイル一覧の読み込みに失敗しました",
+    "noFiles": "このコミットにファイル変更はありません",
+    "copied": "{what}をコピーしました",
+    "copyFailed": "コピーに失敗しました",
+    "copyHash": "コミット ハッシュをコピー",
+    "copySubject": "コミット メッセージをコピー",
+    "copyRef": "参照名をコピー",
+    "switchBranch": "ブランチを切り替え",
+    "checkoutBranch": "このブランチに切り替え",
+    "checkoutFailed": "ブランチの切り替えに失敗しました",
+    "menuResetSoft": "ここへソフト リセット（変更を保持）",
+    "menuResetHard": "ここへハード リセット（変更を破棄）",
+    "resetAction": "{mode} リセット",
+    "modeSoft": "ソフト",
+    "modeHard": "ハード",
+    "resetFailed": "リセットに失敗しました",
+    "confirmSoftTitle": "ブランチをソフト リセット",
+    "confirmSoftMessage": "{branch} を {hash} に移動しますか？コミット済みの変更はステージに戻り、作業ツリーは保持されます。",
+    "confirmHardTitle": "ブランチをハード リセット（危険）",
+    "confirmHardMessage": "{branch} を {hash} に移動しますか？未コミットの {count} 件の変更は破棄され、復元できません。"
   },
   "personaPreset": {
-    "unbound": "未選択"
+    "unbound": "未選択",
+    "applyFailed": "プリセットの適用に失敗しました。バックエンド接続を確認して再試行してください",
+    "create": "セッションを作成",
+    "selectHint": "新しいセッションの作成にはプリセットの選択が必要です。人格とプロンプトはセッション作成時に固定され、後からプリセットを変更しても既存のセッションには影響しません。",
+    "selectTitle": "プリセットを選択",
+    "currentWithName": "現在のセッションのプリセットと役割：{name}",
+    "contentTitle": "プリセット内容",
+    "current": "現在のセッションのプリセットと役割",
+    "empty": "（空）",
+    "missing": "このプリセットは削除されました",
+    "unboundHint": "このセッションはプリセット未選択で作成されました"
   }
 }

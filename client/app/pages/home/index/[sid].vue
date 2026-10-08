@@ -957,22 +957,6 @@ onUnmounted(() => {
 <i18n lang="json">
 {
   "zh": {
-    "chatInput": {
-      "queued": "已排队 · 第 {position} 位（共 {queueSize} 个）",
-      "queuedPosition": "#{position}/{queueSize}",
-      "sendNow": "立刻",
-      "editQueued": "编辑排队消息",
-      "cancelQueued": "取消排队消息",
-      "waitingApproval": "等待审批..."
-    },
-    "chatBox": {
-      "removeImage": "移除图片",
-      "removeAudio": "移除音频",
-      "removeVideo": "移除视频"
-    },
-    "connection": {
-      "reconnecting": "连接中断，正在重连…（第 {attempt}/{max} 次）"
-    },
     "hitl": {
       "approve": "批准",
       "approveDir": "批准整个目录",
@@ -987,22 +971,6 @@ onUnmounted(() => {
     }
   },
   "en": {
-    "chatInput": {
-      "queued": "Queued · position {position} of {queueSize}",
-      "queuedPosition": "#{position}/{queueSize}",
-      "sendNow": "Now",
-      "editQueued": "Edit queued message",
-      "cancelQueued": "Cancel queued message",
-      "waitingApproval": "Waiting for approval..."
-    },
-    "chatBox": {
-      "removeImage": "Remove image",
-      "removeAudio": "Remove audio",
-      "removeVideo": "Remove video"
-    },
-    "connection": {
-      "reconnecting": "Connection lost, reconnecting… (attempt {attempt}/{max})"
-    },
     "hitl": {
       "approve": "Approve",
       "approveDir": "Approve Entire Directory",
@@ -1017,22 +985,6 @@ onUnmounted(() => {
     }
   },
   "ja": {
-    "chatInput": {
-      "queued": "順番待ち · {queueSize} 件中 {position} 番目",
-      "queuedPosition": "#{position}/{queueSize}",
-      "sendNow": "今すぐ",
-      "editQueued": "待機中のメッセージを編集",
-      "cancelQueued": "待機中のメッセージを取り消す",
-      "waitingApproval": "承認待ち..."
-    },
-    "chatBox": {
-      "removeImage": "画像を削除",
-      "removeAudio": "音声を削除",
-      "removeVideo": "動画を削除"
-    },
-    "connection": {
-      "reconnecting": "接続が切断されました。再接続中…（{attempt}/{max} 回目）"
-    },
     "hitl": {
       "approve": "承認",
       "approveDir": "ディレクトリ全体を承認",
@@ -1047,22 +999,6 @@ onUnmounted(() => {
     }
   },
   "ko": {
-    "chatInput": {
-      "queued": "대기 중 · {queueSize}개 중 {position}번째",
-      "queuedPosition": "#{position}/{queueSize}",
-      "sendNow": "즉시",
-      "editQueued": "대기 중인 메시지 편집",
-      "cancelQueued": "대기 중인 메시지 취소",
-      "waitingApproval": "승인 대기 중..."
-    },
-    "chatBox": {
-      "removeImage": "이미지 제거",
-      "removeAudio": "오디오 제거",
-      "removeVideo": "비디오 제거"
-    },
-    "connection": {
-      "reconnecting": "연결 끊김, 재연결 중… ({attempt}/{max}번째 시도)"
-    },
     "hitl": {
       "approve": "승인",
       "approveDir": "디렉터리 전체 승인",

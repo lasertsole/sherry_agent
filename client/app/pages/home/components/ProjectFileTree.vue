@@ -171,36 +171,3 @@ watch(error, value => {
   if (value) logUtil.w('[ProjectFileTree] load failed:', value);
 });
 </script>
-
-<i18n lang="json">
-{
-  "en": {
-    "projectFiles": {
-      "empty": "Empty directory",
-      "refresh": "Refresh",
-      "truncated": "Showing {shown} of {total} entries"
-    }
-  },
-  "zh": {
-    "projectFiles": {
-      "empty": "空目录",
-      "refresh": "刷新",
-      "truncated": "仅显示 {total} 项中的 {shown} 项"
-    }
-  },
-  "ja": {
-    "projectFiles": {
-      "empty": "空のディレクトリ",
-      "refresh": "再読み込み",
-      "truncated": "{total} 件中 {shown} 件を表示"
-    }
-  },
-  "ko": {
-    "projectFiles": {
-      "empty": "빈 디렉터리",
-      "refresh": "새로 고침",
-      "truncated": "{total}개 중 {shown}개 표시"
-    }
-  }
-}
-</i18n>
