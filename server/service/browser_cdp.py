@@ -283,6 +283,11 @@ async def launch_browser(
     """
     Path(user_data_dir).mkdir(parents=True, exist_ok=True)
     port_file = Path(user_data_dir) / "DevToolsActivePort"
+    # A healthy start publishes the port in well under a second, so the
+    # sandbox-less probe does NOT deserve the full timeout: without this, a host
+    # whose Chrome cannot sandbox (no userns) pays the whole launch budget on the
+    # doomed first attempt — measured: 20 s before the browser was usable.
+    # The retry below still gets the full timeout.
     for attempt_flags in ((), ("--no-sandbox",)):
         port_file.unlink(missing_ok=True)
         argv = [
@@ -300,8 +305,9 @@ async def launch_browser(
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        attempt_timeout = min(timeout_s, 6.0) if not attempt_flags else timeout_s
         try:
-            port, ws_url = await _wait_for_debug_port(user_data_dir, timeout_s)
+            port, ws_url = await _wait_for_debug_port(user_data_dir, attempt_timeout)
         except TimeoutError:
             _kill_quietly(process)
             if attempt_flags:

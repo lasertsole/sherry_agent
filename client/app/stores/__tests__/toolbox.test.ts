@@ -162,4 +162,37 @@ describe('toolbox store', () => {
     expect(store.terminalFor('s1')).toEqual([]);
     expect(store.terminalFor('s2')).toHaveLength(1);
   });
+
+  it('carries the CDP channel state per panel instance', () => {
+    const store = useToolboxStore();
+
+    expect(store.browserFor('s1::browser').cdp).toBe(false);
+    store.setBrowserCdp('s1::browser', true);
+    store.setBrowserConnected('s1::browser', true);
+    store.setBrowserFrame('s1::browser', { data: 'AAA', width: 393, height: 852 });
+    store.setBrowserNav('s1::browser', {
+      url: 'https://a.test',
+      canBack: true,
+      canForward: false
+    });
+
+    const state = store.browserFor('s1::browser');
+    expect(state.cdp).toBe(true);
+    expect(state.connected).toBe(true);
+    expect(state.frame).toEqual({ data: 'AAA', width: 393, height: 852 });
+    expect(state.url).toBe('https://a.test');
+    expect(state.serverCanBack).toBe(true);
+    expect(state.serverCanForward).toBe(false);
+    // Another instance is untouched (per `sessionId::instance`).
+    expect(store.browserFor('s1::browser-2').frame).toBeNull();
+
+    // An empty URL never blanks the panel (the server may answer before it knows).
+    store.setBrowserNav('s1::browser', { url: '', canBack: false, canForward: false });
+    expect(store.browserFor('s1::browser').url).toBe('https://a.test');
+
+    store.setBrowserDevtools('s1::browser', true);
+    expect(store.browserFor('s1::browser').devtools).toBe(true);
+    store.setBrowserFrame('s1::browser', null);
+    expect(store.browserFor('s1::browser').frame).toBeNull();
+  });
 });

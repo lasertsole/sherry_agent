@@ -12,8 +12,57 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
 import { createPinia, setActivePinia } from 'pinia';
 
-const bridge = vi.hoisted(() => ({ fetchTerminalInfo: vi.fn(), runTerminalCommand: vi.fn() }));
+const bridge = vi.hoisted(() => ({
+  fetchTerminalInfo: vi.fn(),
+  runTerminalCommand: vi.fn(),
+  // The panel asks this on mount; a default install answers {"enabled": false}
+  // and the panel keeps its iframe mode (the CDP suite flips it per test).
+  fetchBrowserStatus: vi.fn(async () => ({ enabled: false, running: false, pages: 0 }))
+}));
 vi.mock('~/composables/bridge/toolbox', () => bridge);
+
+/**
+ * The CDP channel is replaced by a recorder: the panel's contract is "connect
+ * once, forward frames/shape commands", and the socket itself has its own suite.
+ */
+const channels = vi.hoisted(() => {
+  interface Sent {
+    [key: string]: unknown;
+  }
+
+  class FakeChannel {
+    static instances: FakeChannel[] = [];
+
+    handlers: Record<string, (...args: never[]) => void>;
+
+    sent: Sent[] = [];
+
+    disposed = false;
+
+    connected = false;
+
+    constructor(_sessionId: string, handlers: Record<string, (...args: never[]) => void>) {
+      this.handlers = handlers;
+      FakeChannel.instances.push(this);
+    }
+
+    connect() {
+      this.connected = true;
+    }
+
+    dispose() {
+      this.disposed = true;
+      this.connected = false;
+    }
+
+    send(payload: Sent) {
+      this.sent.push(payload);
+      return true;
+    }
+  }
+  return { FakeChannel };
+});
+vi.mock('~/composables/browser-channel', () => ({ BrowserChannel: channels.FakeChannel }));
 vi.mock('vue-router', () => ({ useRoute: () => ({ params: { sid: 'sid-1' } }) }));
 
 import BrowserPanel from '@/pages/home/components/BrowserPanel.vue';
@@ -341,5 +390,143 @@ describe('TerminalPanel', () => {
     await flushPromises();
 
     expect(bridge.runTerminalCommand).not.toHaveBeenCalled();
+  });
+});
+
+describe('BrowserPanel — CDP mode', () => {
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    channels.FakeChannel.instances = [];
+    bridge.fetchBrowserStatus.mockResolvedValue({ enabled: true, running: true, pages: 1 });
+  });
+
+  /** Mount the panel in CDP mode with its channel ready. */
+  async function mountCdp() {
+    const wrapper = mount(BrowserPanel, { global: { stubs } });
+    await flushPromises();
+    const channel = channels.FakeChannel.instances[0]!;
+    return { wrapper, channel };
+  }
+
+  it('switches to the frame stream and renders the picture', async () => {
+    const { wrapper, channel } = await mountCdp();
+
+    expect(channel.connected).toBe(true);
+    channel.handlers.onReady!({
+      enabled: true,
+      running: true,
+      page: 'p1',
+      url: 'https://x.test',
+      title: 'X',
+      can_back: true,
+      can_forward: false,
+      kind: 'page'
+    } as never);
+    channel.handlers.onFrame!({ data: 'AAA', width: 393, height: 852 } as never);
+    await flushPromises();
+
+    const frame = wrapper.get('[data-test="browser-frame"]');
+    expect(frame.element.tagName).toBe('IMG');
+    expect(frame.attributes('src')).toBe('data:image/jpeg;base64,AAA');
+    // The address bar mirrors the server's page, and back follows its history.
+    expect(wrapper.get('[data-test="browser-address"]').element.value).toBe('https://x.test');
+    expect(wrapper.get('[data-test="browser-back"]').attributes('disabled')).toBeUndefined();
+    expect(wrapper.get('[data-test="browser-forward"]').attributes('disabled')).toBeDefined();
+    wrapper.unmount();
+    expect(channel.disposed).toBe(true);
+  });
+
+  it('sends navigation and pointer events over the channel', async () => {
+    const { wrapper, channel } = await mountCdp();
+
+    await wrapper.get('[data-test="browser-address"]').setValue('example.com');
+    await wrapper.get('[data-test="browser-go"]').trigger('click');
+    expect(channel.sent).toContainEqual({ event: 'nav', url: 'https://example.com' });
+
+    channel.handlers.onFrame!({ data: 'AAA', width: 393, height: 852 } as never);
+    await flushPromises();
+    await wrapper.get('[data-test="browser-frame"]').trigger('pointerdown', {
+      clientX: 10,
+      clientY: 20,
+      button: 0,
+      buttons: 1,
+      pointerType: 'mouse'
+    });
+    const click = channel.sent.find(item => item.event === 'input');
+    expect(click).toMatchObject({ kind: 'mouse' });
+    expect((click as { payload: Record<string, unknown> }).payload).toMatchObject({
+      type: 'mousePressed',
+      x: 10,
+      y: 20,
+      clickCount: 1
+    });
+    wrapper.unmount();
+  });
+
+  it('opens the inspector target and toggles back', async () => {
+    const { wrapper, channel } = await mountCdp();
+    channel.handlers.onPage!({
+      page: 'p1',
+      url: 'https://x.test',
+      title: 'X',
+      can_back: false,
+      can_forward: false,
+      kind: 'page'
+    } as never);
+    channel.handlers.onFrame!({ data: 'AAA', width: 393, height: 852 } as never);
+    await flushPromises();
+
+    await wrapper.get('[data-test="browser-devtools"]').trigger('click');
+    expect(channel.sent).toContainEqual({ event: 'devtools', on: true });
+
+    // The server confirms with a devtools page frame; the button flips back.
+    channel.handlers.onPage!({
+      page: 'p9',
+      url: 'devtools://devtools/bundled/inspector.html',
+      title: 'DevTools',
+      can_back: false,
+      can_forward: false,
+      kind: 'devtools'
+    } as never);
+    await flushPromises();
+    // The suite runs under the zh locale (the inline i18n block's first entry).
+    expect(wrapper.get('[data-test="browser-devtools"]').attributes('title')).toBe('返回页面');
+
+    await wrapper.get('[data-test="browser-devtools"]').trigger('click');
+    expect(channel.sent).toContainEqual({ event: 'devtools', on: false });
+    wrapper.unmount();
+  });
+
+  it('shows the reconnecting hint and refuses commands while offline', async () => {
+    const { wrapper, channel } = await mountCdp();
+    channel.handlers.onFrame!({ data: 'AAA', width: 393, height: 852 } as never);
+    await flushPromises();
+    expect(wrapper.find('[data-test="browser-status"]').exists()).toBe(false);
+
+    channel.handlers.onOpen!();
+    await flushPromises();
+    expect(wrapper.find('[data-test="browser-status"]').exists()).toBe(false);
+
+    channel.handlers.onClose!();
+    await flushPromises();
+    // zh locale: the hint is the inline block's reconnecting string.
+    expect(wrapper.get('[data-test="browser-status"]').text()).toContain('正在重连');
+
+    channel.handlers.onError!('unknown ref' as never);
+    await flushPromises();
+    expect(wrapper.get('[data-test="browser-status"]').text()).toContain('unknown ref');
+    wrapper.unmount();
+  });
+
+  it('keeps the iframe panel when the feature is off', async () => {
+    bridge.fetchBrowserStatus.mockResolvedValue({ enabled: false, running: false, pages: 0 });
+    const wrapper = mount(BrowserPanel, { global: { stubs } });
+    await flushPromises();
+
+    expect(channels.FakeChannel.instances).toHaveLength(0);
+    await wrapper.get('[data-test="browser-address"]').setValue('example.com');
+    await wrapper.get('[data-test="browser-go"]').trigger('click');
+    expect(wrapper.get('[data-test="browser-frame"]').element.tagName).toBe('IFRAME');
+    wrapper.unmount();
   });
 });

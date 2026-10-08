@@ -82,8 +82,17 @@ class BrowserPage:
     created_at: float = 0.0
     last_used: float = 0.0
     framers: list[Callable[[BrowserPage, dict[str, Any]], None]] = field(default_factory=list)
+    #: Listeners for this page's raw CDP events (method + params), e.g. the
+    #: panel following a user-initiated navigation with Page.frameNavigated.
+    event_sinks: list[Callable[[BrowserPage, str, dict[str, Any]], None]] = field(
+        default_factory=list
+    )
     alive: bool = True
     screencasting: bool = False
+    #: "page" for an ordinary tab, "devtools" for a devtools frontend target.
+    kind: str = "page"
+    #: For kind="devtools": the target id this frontend inspects.
+    devtools_for: str = ""
 
     def info(self) -> dict[str, Any]:
         """The JSON-safe shape routes and tools report for this page."""
@@ -92,6 +101,7 @@ class BrowserPage:
             "url": self.url,
             "title": self.title,
             "session_id": self.session_id,
+            "kind": self.kind,
         }
 
 
@@ -185,6 +195,22 @@ _KEY_TABLE: dict[str, tuple[str, int]] = {
     "Space": ("Space", 32),
 }
 
+#: Payload keys each raw input kind may carry (anything else is dropped).
+_INPUT_KEYS: dict[str, tuple[str, ...]] = {
+    "mouse": ("type", "x", "y", "button", "clickCount", "modifiers", "buttons", "pointerType"),
+    "wheel": ("x", "y", "deltaX", "deltaY", "modifiers"),
+    "key": (
+        "type",
+        "key",
+        "code",
+        "text",
+        "windowsVirtualKeyCode",
+        "nativeVirtualKeyCode",
+        "modifiers",
+        "autoRepeat",
+    ),
+}
+
 #: Longest JSON-serialized evaluate result served back (C6).
 _EVALUATE_MAX_CHARS = 8000
 
@@ -212,6 +238,8 @@ class BrowserManager:
         self._transport_factory = transport_factory
         self._transport: BrowserTransport | None = None
         self._pid: int | None = None
+        #: Debug port, used ONLY to build devtools frontend URLs in-process (C3).
+        self._port: int | None = None
         self._start_lock = asyncio.Lock()
         self._pages: dict[str, BrowserPage] = {}
         self._counter = 0
@@ -259,12 +287,14 @@ class BrowserManager:
             transport.add_listener(self._on_event)
             self._transport = transport
             self._pid = launched.pid
+            self._port = launched.port
 
     async def shutdown(self) -> None:
         """Close every page, the browser and the transport (idempotent)."""
         transport = self._transport
         self._transport = None
         self._pid = None
+        self._port = None
         self._pages.clear()
         if transport is None:
             return
@@ -285,6 +315,11 @@ class BrowserManager:
     def page_for(self, session_id: str, page_id: str | None = None) -> BrowserPage:
         """Resolve a session's page: the named one, else its most recent.
 
+        The DEFAULT resolution prefers ordinary pages: a devtools frontend is an
+        auxiliary target (kind="devtools") and must never become the implicit
+        subject of a navigate / snapshot / click. It is only reached by naming
+        it or when nothing else exists.
+
         :raises KeyError: the session has no page (and none was named).
         """
         if page_id:
@@ -297,7 +332,8 @@ class BrowserManager:
             raise KeyError(
                 f"session {session_id!r} has no browser page — call browser_navigate first"
             )
-        return max(candidates, key=lambda page: page.last_used)
+        ordinary = [page for page in candidates if page.kind == "page"]
+        return max(ordinary or candidates, key=lambda page: page.last_used)
 
     async def open_page(self, session_id: str, url: str = "about:blank") -> BrowserPage:
         """Create a page for a session (evicting the global LRU when full)."""
@@ -396,6 +432,11 @@ class BrowserManager:
                     logger.opt(exception=True).warning("screencast subscriber failed")
         elif method in ("Inspector.detached", "Target.detachedFromTarget"):
             page.alive = False
+        for sink in list(page.event_sinks):
+            try:
+                sink(page, method, message.get("params") or {})
+            except Exception:  # noqa: BLE001 - a bad subscriber must not kill the feed
+                logger.opt(exception=True).warning("page event subscriber failed")
 
     def subscribe_frames(
         self, page: BrowserPage, framer: Callable[[BrowserPage, dict[str, Any]], None]
@@ -410,6 +451,20 @@ class BrowserManager:
         """Drop a screencast-frame subscriber (no-op when absent)."""
         if framer in page.framers:
             page.framers.remove(framer)
+
+    def subscribe_events(
+        self, page: BrowserPage, sink: Callable[[BrowserPage, str, dict[str, Any]], None]
+    ) -> None:
+        """Register a raw-page-event listener (``method`` + ``params``)."""
+        if sink not in page.event_sinks:
+            page.event_sinks.append(sink)
+
+    def unsubscribe_events(
+        self, page: BrowserPage, sink: Callable[[BrowserPage, str, dict[str, Any]], None]
+    ) -> None:
+        """Drop a raw-page-event listener (no-op when absent)."""
+        if sink in page.event_sinks:
+            page.event_sinks.remove(sink)
 
     async def start_screencast(self, session_id: str, page_id: str | None = None) -> dict[str, Any]:
         """Start JPEG frame streaming to subscribers (the panel's picture).
@@ -769,6 +824,197 @@ class BrowserManager:
             "result": text[:_EVALUATE_MAX_CHARS],
             "truncated": len(text) > _EVALUATE_MAX_CHARS,
         }
+
+    async def reload(self, session_id: str, page_id: str | None = None) -> dict[str, Any]:
+        """Reload a page and wait for the new load (the panel's 刷新)."""
+        page = self.page_for(session_id, page_id)
+        async with page.nav_lock:
+            await self._require_transport().call(
+                "Page.reload", session=page.cdp_session, timeout=float(self.config["op_timeout_s"])
+            )
+            page.refs.clear()
+            finished = await self._wait_ready(page, float(self.config["nav_timeout_s"]))
+        location = await self._page_location(page)
+        page.url = location.get("url") or page.url
+        page.title = location.get("title") or ""
+        page.last_used = time.monotonic()
+        return {**page.info(), "loaded": finished}
+
+    async def page_history(self, session_id: str, page_id: str | None = None) -> dict[str, Any]:
+        """The page's own back/forward state (drives the panel's nav buttons)."""
+        page = self.page_for(session_id, page_id)
+        try:
+            history = await self._require_transport().call(
+                "Page.getNavigationHistory",
+                session=page.cdp_session,
+                timeout=float(self.config["op_timeout_s"]),
+            )
+        except CdpError:
+            return {**page.info(), "can_back": False, "can_forward": False}
+        entries = history.get("entries") or []
+        index = int(history.get("currentIndex") or 0)
+        return {
+            **page.info(),
+            "can_back": index > 0,
+            "can_forward": index < len(entries) - 1,
+        }
+
+    async def history_step(
+        self, session_id: str, step: int, page_id: str | None = None
+    ) -> dict[str, Any]:
+        """Walk the page's own navigation history by ``step`` entries (+1 / -1)."""
+        page = self.page_for(session_id, page_id)
+        transport = self._require_transport()
+        timeout = float(self.config["op_timeout_s"])
+        history = await transport.call(
+            "Page.getNavigationHistory", session=page.cdp_session, timeout=timeout
+        )
+        entries = history.get("entries") or []
+        current = int(history.get("currentIndex") or 0)
+        target_index = current + int(step)
+        if not 0 <= target_index < len(entries):
+            return {
+                **page.info(),
+                "moved": False,
+                "can_back": current > 0,
+                "can_forward": current < len(entries) - 1,
+            }
+        async with page.nav_lock:
+            await transport.call(
+                "Page.navigateToHistoryEntry",
+                session=page.cdp_session,
+                entryId=entries[target_index]["id"],
+                timeout=timeout,
+            )
+            page.refs.clear()
+            finished = await self._wait_ready(page, float(self.config["nav_timeout_s"]))
+        location = await self._page_location(page)
+        page.url = location.get("url") or page.url
+        page.title = location.get("title") or ""
+        page.last_used = time.monotonic()
+        return {
+            **page.info(),
+            "moved": True,
+            "loaded": finished,
+            "can_back": target_index > 0,
+            "can_forward": target_index < len(entries) - 1,
+        }
+
+    async def open_devtools(self, session_id: str, page_id: str | None = None) -> dict[str, Any]:
+        """Open (or reuse) a devtools frontend target for the session's page.
+
+        The frontend is an ordinary target pointed at the page's CDP endpoint;
+        the debug port never leaves this process (C3) — the frontend's own URL is
+        reported without it, and only its screencast ever reaches a client.
+        Chrome 153 accepts this form and ``Target.openDevTools`` alike; the
+        target form is used because the panel can then show AND drive it like
+        any other page.
+        """
+        page = self.page_for(session_id, page_id)
+        if page.kind != "page":
+            raise ValueError("devtools can only be opened for an ordinary page")
+        existing = next(
+            (
+                candidate
+                for candidate in self._pages.values()
+                if candidate.session_id == session_id
+                and candidate.kind == "devtools"
+                and candidate.devtools_for == page.target_id
+            ),
+            None,
+        )
+        if existing is not None:
+            existing.last_used = time.monotonic()
+            return existing.info()
+        await self.ensure_started()
+        if self._port is None:
+            raise CdpError("the browser has no debug port (not launched?)")
+        transport = self._require_transport()
+        timeout = float(self.config["op_timeout_s"])
+        frontend = (
+            "devtools://devtools/bundled/inspector.html?ws=127.0.0.1:"
+            f"{self._port}/devtools/page/{page.target_id}"
+        )
+        created = await transport.call("Target.createTarget", url=frontend, timeout=timeout)
+        attached = await transport.call(
+            "Target.attachToTarget", targetId=created["targetId"], flatten=True, timeout=timeout
+        )
+        self._counter += 1
+        devtools_page = BrowserPage(
+            page_id=f"p{self._counter}",
+            target_id=created["targetId"],
+            cdp_session=attached["sessionId"],
+            session_id=session_id,
+            url="devtools://devtools/bundled/inspector.html",
+            title="DevTools",
+            kind="devtools",
+            devtools_for=page.target_id,
+            created_at=time.monotonic(),
+            last_used=time.monotonic(),
+        )
+        await transport.call("Page.enable", session=devtools_page.cdp_session)
+        self._pages[devtools_page.page_id] = devtools_page
+        return devtools_page.info()
+
+    async def send_input(
+        self,
+        session_id: str,
+        kind: str,
+        payload: dict[str, Any],
+        page_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Forward one raw input event from the panel to the page.
+
+        The panel computes coordinates in the page's own CSS pixels (it divides
+        by its render scale), so no mapping happens here; every numeric field is
+        coerced and every unknown field is dropped.
+        """
+        page = self.page_for(session_id, page_id)
+        transport = self._require_transport()
+        timeout = float(self.config["op_timeout_s"])
+        if kind == "text":
+            text = str(payload.get("text") or "")
+            if text:
+                await transport.call(
+                    "Input.insertText", session=page.cdp_session, text=text, timeout=timeout
+                )
+        elif kind in _INPUT_KEYS:
+            params: dict[str, Any] = {}
+            for key in _INPUT_KEYS[kind]:
+                if key in payload:
+                    params[key] = payload[key]
+            if kind == "wheel":
+                # CDP insists on BOTH deltas for a wheel event; a client that only
+                # scrolls vertically would otherwise be refused outright.
+                params["type"] = "mouseWheel"
+                params.setdefault("deltaX", 0)
+                params.setdefault("deltaY", 0)
+            if not params.get("type"):
+                raise ValueError(f"input kind {kind!r} needs a 'type'")
+            for field in ("x", "y", "deltaX", "deltaY"):
+                if field in params:
+                    params[field] = float(params[field])
+            for field in (
+                "clickCount",
+                "modifiers",
+                "buttons",
+                "windowsVirtualKeyCode",
+                "nativeVirtualKeyCode",
+            ):
+                if field in params:
+                    params[field] = int(params[field])
+            await transport.call(
+                "Input.dispatchMouseEvent"
+                if kind in ("mouse", "wheel")
+                else "Input.dispatchKeyEvent",
+                session=page.cdp_session,
+                timeout=timeout,
+                **params,
+            )
+        else:
+            raise ValueError(f"unknown input kind {kind!r}")
+        page.last_used = time.monotonic()
+        return {"page": page.page_id, "kind": kind}
 
     # ------------------------------------------------------------------ helpers
 

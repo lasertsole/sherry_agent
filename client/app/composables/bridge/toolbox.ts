@@ -62,3 +62,33 @@ export async function runTerminalCommand(sessionId: string, command: string): Pr
     duration_ms: Number(res.duration_ms ?? 0)
   };
 }
+
+/** The agent browser feature's live state (see `server/trigger/http/browser.py`). */
+export interface BrowserStatus {
+  /** The feature switch — false on a default install (the panel falls back to its iframe). */
+  enabled: boolean;
+  /** Whether a Chromium is up right now (the first navigate launches it lazily). */
+  running: boolean;
+  /** The live page count across sessions. */
+  pages: number;
+}
+
+/**
+ * Read the browser feature's state.
+ *
+ * The route is a 404 while the feature is off; the caller treats that (and any
+ * transport failure) as "CDP unavailable" and keeps the iframe fallback, which
+ * is exactly what `enabled: false` means here too.
+ */
+export async function fetchBrowserStatus(): Promise<BrowserStatus> {
+  try {
+    const res = await fetchApiPayload<Record<string, unknown>>({ url: '/browser/status', method: 'get' });
+    return {
+      enabled: Boolean(res.enabled),
+      running: Boolean(res.running),
+      pages: Number(res.pages ?? 0)
+    };
+  } catch {
+    return { enabled: false, running: false, pages: 0 };
+  }
+}

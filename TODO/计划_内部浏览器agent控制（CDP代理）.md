@@ -1,7 +1,7 @@
 # 计划：让 agent 控制内部浏览器（方案 C · 本地 Chromium + CDP 代理）
 
 - 建档日期：2026-10-07
-- 状态：**实施中**（P0 实测 ✅ · P1 后端 ✅ · P2 主代理工具 ✅ · P3 面板 / P4 收尾 / P5 文档门禁 待做）
+- 状态：**实施中**（P0 实测 ✅ · P1 后端 ✅ · P2 主代理工具 ✅ · **P3 面板 CDP 模式 ✅** · P4 收尾 / P5 文档门禁 待做）
 - 触发问题：希望 agent 能像 ZCode 那样驱动「工具箱·浏览器」这个面板——自己开页、
   读内容、点击输入、必要时截图看一眼；同时人还能在同一个页面上操作，并且能挂开发者工具。
 - 参考实现：`/home/honor/Desktop/project/ZCode`（Electron `<webview>` + CDP；详见第 1 节）
@@ -51,8 +51,38 @@
    只会是噪声；且 `skills/loader.py` 加了"功能关则技能不进索引"的门控
    （`_feature_off_skill_names`）。
 
-**待做**：P3 面板 CDP 模式（canvas screencast / 输入转发 / 地址栏走端点 / WS 通道）、
-P4 收尾（会话删除/空闲回收、HITL 口径）、P5 文档 + 全量门禁。开关：
+**P3 已实施（2026-10-08）**
+
+- 后端：`BrowserManager` 新增 `reload` / `page_history` / `history_step` / `open_devtools` /
+  `send_input`（裸鼠标/滚轮/按键/文本，字段白名单 + 数值强制 + 缺失 delta 补 0）；
+  `page_for` 的默认解析**优先普通页**（devtools 前端永远不会成为隐式的操作对象）；
+  页面事件扇出（`subscribe_events`）供面板跟随用户点击。
+- 通道：`server/trigger/ws/browser_ws.py`（`/browser/ws?session_id=…`，两层握手门 + 票证）。
+  协议：出 `ready`/`frame`（**可丢帧，最新者胜**）/`page`/`error`/`pong`；入
+  `nav`/`reload`/`back`/`forward`/`history`/`viewport`/`input`/`watch`/`devtools`/`ping`。
+  无人观看时自动 `stopScreencast`。
+- 前端：`composables/browser-channel.ts`（复用 `WsConnection` 的固定延迟重连）、
+  `bridge/toolbox.ts` 的 `fetchBrowserStatus`、store 每个实例的 `cdp/connected/frame/
+  serverCanBack/serverCanForward/devtools`、面板的 CDP 模式（帧显示、指针/滚轮/键盘转发、
+  自由尺寸 → `Emulation.setDeviceMetricsOverride`、重连提示条、devtools 按钮切换）。
+  **`/browser/status` 为 enabled:false（默认安装）时面板完全是原来的 iframe 形态**。
+- **真机实测抓出并修掉的四处**（脚本：真实 Manager + 真实 Chromium 驱动
+  `BrowserWSSession`）：
+  1. **用户在页面里点链接时地址栏不更新** → 补 `Page.frameNavigated` 事件扇出
+     （合并 120ms，子框架忽略）；
+  2. 失败导航会把地址栏写成 `chrome-error://chromewebdata/` → 该 URL 不再覆盖地址栏
+     （画面仍显示 Chrome 的错误页，与真浏览器行为一致）；
+  3. `mouseWheel` 缺少任一 delta 会被 CDP **直接拒绝** → 管理器补默认 0（面板两端都发，
+     但裸输入通道必须容错）；
+  4. 冷启动要等满 20s 的"无沙箱探测"超时 → 首试只给 6s（健康启动 <1s 出端口），失败即刻
+     带 `--no-sandbox` 重试（本机冷启动 22s → 7s）。
+  实测链路：nav → 首帧 16.7KB/1192×627 → 点击后地址栏跟随到
+  `http://127.0.0.1:8080/browsed-by-panel` → 滚轮出帧 → devtools 以 p2 打开且帧流可用 →
+  切回 p1 → 零 error 帧、干净关闭。
+- 测试：后端 +16（WS 会话 16 个用例、manager 新动词 7 个）、前端 +28（通道 4 / store 1 /
+  面板 CDP 5 等），客户端四件套（typecheck / 755→760 unit / 322 integration / dpdm）全绿。
+
+**待做**：P4 收尾（空闲回收、HITL 口径）、P5 文档 + 全量门禁。开关：
 `SHERRY_BROWSER_AGENT_ENABLED=1`（+ 可选 `SHERRY_BROWSER_ALLOW_EVALUATE=1`、`SHERRY_BROWSER_HEADLESS`），
 `.env` 里加行后重启后端生效；目前不在「环境配置」面板的可编辑键表里（P5 决定是否加入）。
 
@@ -262,8 +292,41 @@ lambda（当前 `[python_repl, read_file, write_file]`），工具形态给后�
   - 全量 = 无意见（全开）✓ 自动。
   已绑定旧预设的会话工具表是 EXACT，需要在「工具」页签补勾（或在预设面板重新应用）
   ——写进文档。
-- 技能侧：`browser` playbook 技能（无脚本，见 3.2）`scope: all`（主代理看得到、子代理也
-  无妨）；预设的技能选择沿用现有派生（编程助手只保 CODING_SKILLS → 不含；陪伴/全量含）。
+- 技能侧：`browser` playbook 技能（无脚本，见 3.2）`scope: main_only`（子代理拿不到工具，
+  索引里放 playbook 只会是噪声）；预设的技能选择沿用现有派生（编程助手只保 CODING_SKILLS
+  → 不含；陪伴/全量含）。
+
+### 3.5 再议归属：浏览器能力放"子代理专用"？（讨论结论，2026-10-08）
+
+现状（功能开启、evaluate 开启）主代理为浏览器付：8 个工具 **1,765 tok** + 技能索引行
+**62 tok** ≈ **1.8k**，占主工具预算（17,191 / 45 个）的 10.6%；技能正文 802 tok 按需加载。
+为了省这 1.8k 翻转成子代理专用 **不值得**：
+
+- 收益侧：主代理省 ~1.8k（≈ 128K 窗口的 1.4%）＋页面文本不进主 transcript（每次快照
+  ~1.5–2k tok、10 步浏览 ~15–20k 进主会话——但这条有更便宜的替代：结果侧驱逐/裁剪本就
+  在做，快照自身也已截断到 4k 字符文本 + 200 元素）。
+- 代价侧（动的都是这套功能的卖点）：① **面板归属**——页面按会话分配、面板也按会话取页，
+  子代理专用会让主会话的面板看不到任何页面（要新写"本会话或其子会话最近页"的路由）；
+  ② 每次浏览 = spawn + announce 两跳，"顺手看一眼"退化，中途纠偏要走 `sessions_send`；
+  ③ 动作发生在 detached 子会话里，聊天主流的工具卡不可见；④ ZCode 对齐被反转（它是主代理
+  持浏览器、broker 拒子代理）。另有第二条 plumbing：`close_session` 目前只挂在**会话删除**
+  上（`server/service/messages.py`），子代理专用需补"子会话结束 → 释放其页"，否则挂在
+  死子会话上的页面只能靠 `max_pages` 的 LRU 兜底。
+- 已核实的两条（供加法路线参考）：子图 invoke 的输入自带 `session_id`
+  （`spawn/core.py:779`），`InjectedState` 在子代理里可用 → **加法授权没有身份障碍**，只剩
+  "把 `scope=main_only` 门槛放成按角色显式授权"这一处；另一种加法是把 browser builders
+  加进后台工具的 lambda（`server/__main__.py`，一行）。
+- 若"浏览器调试"指的是**网页调试**（console / network / 异常排查）而非交互式浏览：那是另一
+  批**读取型**工具（`Runtime.consoleAPICalled` / `Runtime.exceptionThrown` / `Log.entryAdded`
+  / `Network.*` / `Debugger.*`），今天尚未实现；这批工具"读一堆、报摘要"的形状本身最适合
+  委派，届时按 **subagent-only** 设计（甚至新角色"调试员"）是顺的——但那是新能力，不是翻转
+  现有 8 个操作型工具的归属。
+- 真正值当的两条路（**都不翻转**）：**结果侧治理**（若主 transcript 被页面文本撑大）与
+  **加法授权**（要做无人值守/长时浏览时，让 researcher 也拿浏览器工具——需把
+  `scope=main_only` 门槛放成"按角色显式授权"，或把 browser builders 加进后台工具
+  的 lambda 一行；主代理保持直连，面板与直控不受影响）。
+- 结论：**维持 3.4 的主代理专用**；有实测证据表明主上下文被浏览器结果撑大时，先做结果侧
+  治理，再考虑加法授权。
 
 ---
 
@@ -322,7 +385,7 @@ lambda（当前 `[python_repl, read_file, write_file]`），工具形态给后�
 - *验收*：C1/C4/C6；`GET /agent/catalog` 按组显示 `browser`（开关开通时），预设「工具」
   页签可见/可勾；子代理（含 general）工具表无 `browser_*`；关闭开关后目录里没有。
 
-### P3 前端 CDP 模式
+### P3 前端 CDP 模式（已实施，见 0.1）
 
 - `BrowserPanel.vue`：新增 `mode: 'cdp' | 'iframe'`（服务未启用 → 自动落回 iframe）。
   - `canvas` 显示 screencast 帧（`<img>` + base64 也行，二选一，看 P0-2 的帧率）；

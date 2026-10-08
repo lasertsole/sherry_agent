@@ -74,6 +74,13 @@ class _FakeBrowser:
                 "Target.closeTarget": self._close_target,
                 "Page.enable": lambda s, p: {},
                 "Page.navigate": lambda s, p: {},
+                "Page.reload": lambda s, p: {},
+                "Page.getNavigationHistory": lambda s, p: {
+                    "entries": [{"id": 1}, {"id": 2}, {"id": 3}],
+                    "currentIndex": 2,
+                },
+                "Page.navigateToHistoryEntry": lambda s, p: {},
+                "Page.stopScreencast": lambda s, p: {},
                 "Runtime.evaluate": self._evaluate,
                 "Input.dispatchMouseEvent": lambda s, p: {},
                 "Input.dispatchKeyEvent": lambda s, p: {},
@@ -614,3 +621,150 @@ def test_a_detached_page_is_marked_dead(rig):
     page = _run(scenario())
 
     assert page.alive is False
+
+
+def test_reload_waits_and_reports_the_location(rig):
+    manager, transport, _browser, _l = rig
+
+    async def scenario():
+        page = await manager.open_page("s1", "https://fake.test/one")
+        page.refs = {"e1": "//a[1]"}
+        outcome = await manager.reload("s1")
+        return page, outcome
+
+    page, outcome = _run(scenario())
+
+    assert page.refs == {}
+    assert outcome["loaded"] is True
+    assert outcome["url"] == "https://fake.test/page"
+    assert any(call["method"] == "Page.reload" for call in transport.calls)
+
+
+def test_history_step_walks_the_pages_own_history(rig):
+    manager, transport, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        moved = await manager.history_step("s1", -1)
+        return moved
+
+    moved = _run(scenario())
+
+    assert moved["moved"] is True
+    assert moved["can_back"] is True  # 2 -> 1
+    assert moved["can_forward"] is True
+    entries = [c for c in transport.calls if c["method"] == "Page.navigateToHistoryEntry"]
+    assert entries and entries[0]["params"]["entryId"] == 2
+
+
+def test_history_step_out_of_range_does_not_move(rig):
+    manager, transport, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        return await manager.history_step("s1", 1)  # already at the newest entry
+
+    outcome = _run(scenario())
+
+    assert outcome["moved"] is False
+    assert not any(c["method"] == "Page.navigateToHistoryEntry" for c in transport.calls)
+
+
+def test_page_history_reports_forward_only(rig):
+    manager, _t, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        return await manager.page_history("s1")
+
+    history = _run(scenario())
+
+    assert history["can_back"] is True  # currentIndex 2 of 3
+    assert history["can_forward"] is False
+
+
+def test_open_devtools_creates_a_target_without_leaking_the_port(rig):
+    manager, transport, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        first = await manager.open_devtools("s1")
+        again = await manager.open_devtools("s1")  # reused, not re-created
+        return first, again
+
+    first, again = _run(scenario())
+
+    assert first["kind"] == "devtools"
+    assert again["page"] == first["page"]
+    # The URL the CLIENT sees carries no port (C3)…
+    assert "127.0.0.1" not in first["url"] and "9" not in first["url"].split("//")[1][:4]
+    # …while the target really was pointed at the page's CDP endpoint.
+    created = [c for c in transport.calls if c["method"] == "Target.createTarget"]
+    assert any(
+        "devtools://devtools/bundled/inspector.html?ws=127.0.0.1:9/devtools/page/"
+        in str(c["params"].get("url", ""))
+        for c in created
+    )
+
+
+def test_open_devtools_refuses_a_devtools_page(rig):
+    manager, _t, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        await manager.open_devtools("s1")
+        with pytest.raises(ValueError, match="ordinary page"):
+            await manager.open_devtools("s1", page_id="p2")
+
+    _run(scenario())
+
+
+def test_send_input_drops_unknown_fields_and_coerces_numbers(rig):
+    manager, transport, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        return await manager.send_input(
+            "s1",
+            "mouse",
+            {
+                "type": "mousePressed",
+                "x": "12.5",
+                "y": 20,
+                "button": "left",
+                "clickCount": "1",
+                "bogus": "ignored",
+            },
+        )
+
+    outcome = _run(scenario())
+
+    assert outcome["kind"] == "mouse"
+    dispatch = [c for c in transport.calls if c["method"] == "Input.dispatchMouseEvent"]
+    assert dispatch and dispatch[0]["params"]["x"] == 12.5
+    assert dispatch[0]["params"]["clickCount"] == 1
+    assert "bogus" not in dispatch[0]["params"]
+
+
+def test_send_input_wheel_forces_the_wheel_type_and_text_inserts(rig):
+    manager, transport, _browser, _l = rig
+
+    async def scenario():
+        await manager.open_page("s1", "about:blank")
+        await manager.send_input("s1", "wheel", {"x": 5, "y": 6, "deltaY": 120})
+        await manager.send_input("s1", "text", {"text": "hello"})
+        with pytest.raises(ValueError, match="unknown input kind"):
+            await manager.send_input("s1", "gesture", {})
+        with pytest.raises(ValueError, match="needs a 'type'"):
+            await manager.send_input("s1", "key", {"key": "a"})
+
+    _run(scenario())
+
+    wheel = [c for c in transport.calls if c["method"] == "Input.dispatchMouseEvent"]
+    assert wheel and wheel[0]["params"]["type"] == "mouseWheel"
+    # CDP refuses a wheel event missing either delta: the missing one defaults to 0.
+    assert wheel[0]["params"]["deltaX"] == 0 and wheel[0]["params"]["deltaY"] == 120
+    assert any(
+        c["method"] == "Input.insertText" and c["params"]["text"] == "hello"
+        for c in transport.calls
+    )

@@ -33,6 +33,17 @@ export interface BrowserState {
   viewport: BrowserViewport;
   /** How that frame is scaled: fit to the panel, or a fixed percentage. */
   zoom: BrowserZoom;
+  /** True once the CDP channel answered `enabled: true` (the panel's mode switch). */
+  cdp: boolean;
+  /** True while the channel's socket is OPEN (a dropped backend shows a hint). */
+  connected: boolean;
+  /** The newest screencast frame (base64 JPEG), or null before the first one. */
+  frame: { data: string; width: number | null; height: number | null } | null;
+  /** The watched page's own back/forward state (CDP mode: the server's answer). */
+  serverCanBack: boolean;
+  serverCanForward: boolean;
+  /** True while the panel is watching the devtools frontend instead of the page. */
+  devtools: boolean;
 }
 
 /**
@@ -96,7 +107,13 @@ const EMPTY_BROWSER: BrowserState = {
   index: -1,
   responsive: false,
   viewport: { ...DEFAULT_BROWSER_VIEWPORT },
-  zoom: DEFAULT_BROWSER_ZOOM
+  zoom: DEFAULT_BROWSER_ZOOM,
+  cdp: false,
+  connected: false,
+  frame: null,
+  serverCanBack: false,
+  serverCanForward: false,
+  devtools: false
 };
 
 /**
@@ -234,6 +251,70 @@ export const useToolboxStore = defineStore('toolbox', () => {
   }
 
   /**
+   * Switch one panel to CDP mode (the `/browser/status` answer).
+   * @param key The panel's identity.
+   * @param enabled True when the backend feature is on.
+   */
+  function setBrowserCdp(key: string, enabled: boolean): void {
+    const current = browserFor(key);
+    browser.value = { ...browser.value, [key]: { ...current, cdp: enabled } };
+  }
+
+  /**
+   * Record the channel's socket state (drives the reconnecting hint).
+   * @param key The panel's identity.
+   * @param connected
+   */
+  function setBrowserConnected(key: string, connected: boolean): void {
+    const current = browserFor(key);
+    browser.value = { ...browser.value, [key]: { ...current, connected } };
+  }
+
+  /**
+   * Keep the newest screencast frame (older ones are dropped by design).
+   * @param key The panel's identity.
+   * @param frame The frame, or null to clear the picture.
+   */
+  function setBrowserFrame(
+    key: string,
+    frame: { data: string; width: number | null; height: number | null } | null
+  ): void {
+    const current = browserFor(key);
+    browser.value = { ...browser.value, [key]: { ...current, frame } };
+  }
+
+  /**
+   * Apply a `page` frame from the server: the watched URL and history state.
+   * @param key The panel's identity.
+   * @param nav The page's url / title and can_back / can_forward.
+   * @param nav.url
+   * @param nav.canBack
+   * @param nav.canForward
+   */
+  function setBrowserNav(key: string, nav: { url: string; canBack: boolean; canForward: boolean }): void {
+    const current = browserFor(key);
+    browser.value = {
+      ...browser.value,
+      [key]: {
+        ...current,
+        url: nav.url || current.url,
+        serverCanBack: nav.canBack,
+        serverCanForward: nav.canForward
+      }
+    };
+  }
+
+  /**
+   * Remember whether the panel watches the devtools frontend or the page.
+   * @param key The panel's identity.
+   * @param enabled
+   */
+  function setBrowserDevtools(key: string, enabled: boolean): void {
+    const current = browserFor(key);
+    browser.value = { ...browser.value, [key]: { ...current, devtools: enabled } };
+  }
+
+  /**
    * Forget the session's scrollback (the panel's 清空 button).
    * @param key The panel's identity.
    */
@@ -251,6 +332,11 @@ export const useToolboxStore = defineStore('toolbox', () => {
     setBrowserResponsive,
     setBrowserViewport,
     setBrowserZoom,
+    setBrowserCdp,
+    setBrowserConnected,
+    setBrowserFrame,
+    setBrowserNav,
+    setBrowserDevtools,
     canGoBack,
     canGoForward,
     terminalFor,
