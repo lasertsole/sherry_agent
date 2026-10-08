@@ -177,15 +177,6 @@
     "browser": "브라우저",
     "terminal": "터미널"
   },
-  "todolist": {
-    "flowLabel": "TaskFlow: {flow}",
-    "collapse": "계획 접기",
-    "expand": "계획 펼치기",
-    "progress": "{done}/{total} 완료",
-    "title": "작업 계획",
-    "delegated": "서브에이전트에 위임됨",
-    "linkedStep": "TaskFlow {flow} · {step}"
-  },
   "config": {
     "agent": {
       "tabs": {

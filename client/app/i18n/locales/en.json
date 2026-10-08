@@ -177,15 +177,6 @@
     "browser": "Browser",
     "terminal": "Terminal"
   },
-  "todolist": {
-    "flowLabel": "TaskFlow: {flow}",
-    "collapse": "Collapse plan",
-    "expand": "Expand plan",
-    "progress": "{done}/{total} done",
-    "title": "Task Plan",
-    "delegated": "Delegated to subagent",
-    "linkedStep": "TaskFlow {flow} · {step}"
-  },
   "config": {
     "agent": {
       "tabs": {

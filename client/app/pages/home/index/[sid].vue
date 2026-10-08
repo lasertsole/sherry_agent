@@ -93,7 +93,6 @@
             </div>
           </div>
         </template>
-        <TodoDock />
         <!-- Chat input box area (position:relative parent, used as the anchor for other floating elements) -->
         <div class="relative">
           <!-- WS stream reconnect banner: shown while sendChatMessageWs is in exponential-backoff reconnection (browser mode);
@@ -375,7 +374,6 @@ useErrorCaptured();
 
 // components
 import ChatBox from '../components/ChatBox.vue';
-import TodoDock from '@/components/chat/TodoDock.vue';
 import { ChatInputBox } from '#components';
 // function
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';

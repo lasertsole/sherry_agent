@@ -12,16 +12,12 @@ import ModeSwitch from '@/pages/home/components/ModeSwitch.vue';
 const uiState = reactive({
   sidebarCollapsed: ref(false),
   settingsMenuOpen: ref(false),
-  todoDockCollapsed: ref(false),
   setTheme: (value: string) => {
     const colorMode = (globalThis as { useColorMode?: () => { preference: string } }).useColorMode?.();
     if (colorMode) colorMode.preference = value;
   },
   toggleSidebar: () => {
     uiState.sidebarCollapsed = !uiState.sidebarCollapsed;
-  },
-  toggleTodoDock: () => {
-    uiState.todoDockCollapsed = !uiState.todoDockCollapsed;
   }
 });
 vi.stubGlobal('useUiStore', () => uiState);

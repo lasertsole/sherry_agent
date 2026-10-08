@@ -138,9 +138,6 @@ for (const [name, impl] of Object.entries(vueAutoImports)) {
     toggleSidebar: () => {
       state.sidebarCollapsed = !state.sidebarCollapsed;
     },
-    toggleTodoDock: () => {
-      state.todoDockCollapsed = !state.todoDockCollapsed;
-    },
     toggleSidebarBody: () => {
       state.sidebarBody = state.sidebarBody === 'sessions' ? 'files' : 'sessions';
     },

@@ -121,7 +121,7 @@ Before (message arrives)    During                     After
 ## 架构总览
 
 ```
-Layer 9  │ UI 组件层         │ TodoDock.vue + TodoItem.vue (PrimeVue)，按 TaskFlow flow 分组
+Layer 9  │ UI 组件层         │ ProgressFloat.vue (PrimeVue)，按 TaskFlow flow 分组
 Layer 8  │ 前端状态层         │ useTodoList.ts (模块级单例) + 按 flow 分组
 Layer 7  │ 实时通信层         │ WS: todo_updated 推送 + todo_refresh 重连重发
 Layer 6  │ 压缩保护层 ★      │ build_system_prompt 注入当前 todos + boulder 状态
@@ -408,10 +408,9 @@ interface Todo {
 
 WS 事件：`todo_updated`（变更推送）+ `todo_refresh`（重连重发）。
 
-### UI 组件
+### UI 组件（ProgressFloat.vue）
 
-- **TodoDock.vue**：按 `flow_id` 分组显示；进度计数；可折叠。
-- **TodoItem.vue**：Checkbox (PrimeVue)、category 徽章、委派图标、in_progress 脉冲点。
+- **ProgressFloat.vue**：对话里的计划悬浮框——按 `flow_id` 分组的待办 + TaskFlow 波次视图，默认收成一个小胶囊。界面里没有第二处计划展示（输入框上方那块 dock 已按设计移除）。
 
 ### WS 消息格式
 

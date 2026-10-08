@@ -15,8 +15,8 @@ import { sessionIdFromPathname } from '~/utils/session-route';
  *   by emitting a `ws:send` frame with `event: "todo_refresh"`; the
  *   `server/trigger/core.py` handler answers with a fresh `todo_updated`.
  *
- * The store is a singleton by construction: every consumer (the `TodoDock`
- * component, the session page) shares one reactive source of truth, and the
+ * The store is a singleton by construction: every consumer (the plan float,
+ * the session page) shares one reactive source of truth, and the
  * mitt listeners are registered exactly once per store instance (`subscribed`
  * guard) — call `subscribe()` (usually through `init()`) before relying on
  * pushed frames.
@@ -171,9 +171,6 @@ export const useTodoStore = defineStore('todo', () => {
     return todos.value.every(isTerminal) ? 'close' : 'open';
   });
 
-  /** Whether the dock should be rendered (only while work remains). */
-  const dockVisible = computed(() => todoState.value === 'open');
-
   /** Number of terminal todos. */
   const doneCount = computed(() => todos.value.filter(isTerminal).length);
 
@@ -213,7 +210,6 @@ export const useTodoStore = defineStore('todo', () => {
     subscribed,
     // Derived
     todoState,
-    dockVisible,
     doneCount,
     groups,
     // Behavior

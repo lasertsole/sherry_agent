@@ -119,7 +119,7 @@ Before (message arrives)    During                     After
 ## アーキテクチャ概要
 
 ```
-Layer 9  │ UI コンポーネント  │ TodoDock.vue + TodoItem.vue (PrimeVue)、TaskFlow flow ごとにグループ化
+Layer 9  │ UI コンポーネント  │ ProgressFloat.vue (PrimeVue)、TaskFlow flow ごとにグループ化
 Layer 8  │ フロントエンド状態  │ useTodoList.ts（モジュールレベルシングルトン）+ flow ごとにグループ化
 Layer 7  │ リアルタイム通信    │ WS: todo_updated プッシュ + todo_refresh 再接続時再送
 Layer 6  │ 圧縮保護 ★        │ build_system_prompt が現在の todos + boulder 状態を注入
@@ -406,10 +406,9 @@ interface Todo {
 
 WS イベント：`todo_updated`（変更時プッシュ）+ `todo_refresh`（再接続時再送）。
 
-### UI コンポーネント
+### UI コンポーネント（ProgressFloat.vue）
 
-- **TodoDock.vue**：`flow_id` ごとにグループ化して表示、進捗カウント、折りたたみ可能。
-- **TodoItem.vue**：Checkbox (PrimeVue)、category バッジ、委譲アイコン、in_progress パルスドット。
+- **ProgressFloat.vue**：チャット内の計画フロート——`flow_id` ごとにグループ化した TODO と TaskFlow のウェーブ表示、既定ではピルに折りたたみ。UI に他の計画表示はない（入力欄上部の dock は設計どおり削除）。
 
 ### WS メッセージ形式
 

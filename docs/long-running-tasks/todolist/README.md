@@ -129,7 +129,7 @@ One-liner: model won't plan → E7 injects guidance; model stops lazily → E3 p
 ## Architecture Overview
 
 ```
-Layer 9  │ UI Component      │ TodoDock.vue + TodoItem.vue (PrimeVue), grouped by TaskFlow flow
+Layer 9  │ UI Component      │ ProgressFloat.vue (PrimeVue), grouped by TaskFlow flow
 Layer 8  │ Frontend State    │ useTodoList.ts (module singleton) + grouped by flow
 Layer 7  │ Realtime Comm     │ WS: todo_updated push + todo_refresh reconnect
 Layer 6  │ Compression Guard │ build_system_prompt injects current todos + boulder state
@@ -421,10 +421,11 @@ interface Todo {
 
 WS events: `todo_updated` (push on change) + `todo_refresh` (re-send on reconnect).
 
-### UI Components (TodoDock.vue + TodoItem.vue)
+### UI Component (ProgressFloat.vue)
 
-- **TodoDock.vue**: Groups todos by `flow_id`; shows progress count; collapsible.
-- **TodoItem.vue**: Checkbox (PrimeVue), category badge, delegation icon, in-progress pulse dot.
+- **ProgressFloat.vue**: the chat's plan float — todos grouped by `flow_id` plus the
+  TaskFlow wave view, collapsed to a pill by default. There is no other plan surface
+  in the UI (the old input-box dock was removed on purpose).
 
 ### WS Message Format
 

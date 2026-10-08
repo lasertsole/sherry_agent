@@ -177,15 +177,6 @@
     "browser": "ブラウザ",
     "terminal": "ターミナル"
   },
-  "todolist": {
-    "flowLabel": "TaskFlow: {flow}",
-    "collapse": "計画を折りたたむ",
-    "expand": "計画を展開",
-    "progress": "{done}/{total} 完了",
-    "title": "タスク計画",
-    "delegated": "サブエージェントに委任",
-    "linkedStep": "TaskFlow {flow} · {step}"
-  },
   "config": {
     "agent": {
       "tabs": {

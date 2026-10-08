@@ -119,7 +119,7 @@ Before (message arrives)    During                     After
 ## 아키텍처 개요
 
 ```
-Layer 9  │ UI 컴포넌트     │ TodoDock.vue + TodoItem.vue (PrimeVue), TaskFlow flow별 그룹화
+Layer 9  │ UI 컴포넌트     │ ProgressFloat.vue (PrimeVue), TaskFlow flow별 그룹화
 Layer 8  │ 프론트엔드 상태  │ useTodoList.ts (모듈 레벨 싱글톤) + flow별 그룹화
 Layer 7  │ 실시간 통신      │ WS: todo_updated 푸시 + todo_refresh 재연결 시 재전송
 Layer 6  │ 압축 보호 ★     │ build_system_prompt가 현재 todos + boulder 상태 주입
@@ -406,10 +406,9 @@ interface Todo {
 
 WS 이벤트: `todo_updated` (변경 시 푸시) + `todo_refresh` (재연결 시 재전송).
 
-### UI 컴포넌트
+### UI 컴포넌트 (ProgressFloat.vue)
 
-- **TodoDock.vue**: `flow_id`별 그룹화 표시, 진행 카운트, 접기 가능.
-- **TodoItem.vue**: Checkbox (PrimeVue), category 배지, 위임 아이콘, in_progress 펄스 닷.
+- **ProgressFloat.vue**: 채팅의 계획 플로트 — `flow_id`별로 그룹화한 TODO와 TaskFlow 웨이브 뷰, 기본값은 알약 형태로 접힘. UI에 다른 계획 표시는 없다(입력창 위 dock은 설계에 따라 제거됨).
 
 ### WS 메시지 형식
 

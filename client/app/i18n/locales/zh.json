@@ -177,15 +177,6 @@
     "browser": "浏览器",
     "terminal": "终端"
   },
-  "todolist": {
-    "flowLabel": "TaskFlow: {flow}",
-    "collapse": "收起计划",
-    "expand": "展开计划",
-    "progress": "已完成 {done}/{total}",
-    "title": "任务计划",
-    "delegated": "已委派给子代理",
-    "linkedStep": "TaskFlow {flow} · {step}"
-  },
   "config": {
     "agent": {
       "tabs": {

@@ -49,7 +49,6 @@ describe('stores/todo', () => {
     expect(store.currentSid).toBe('');
     expect(store.subscribed).toBe(true);
     expect(store.todoState).toBe('hide');
-    expect(store.dockVisible).toBe(false);
   });
 
   it('registers the WS listeners exactly once (singleton guard)', () => {
@@ -105,17 +104,14 @@ describe('stores/todo', () => {
     expect(store.groups.map(g => g.flowId)).toEqual(['flow-1']);
   });
 
-  it('derives todoState hide -> close -> open and dockVisible accordingly', () => {
+  it('derives todoState hide -> close -> open', () => {
     expect(store.todoState).toBe('hide');
-    expect(store.dockVisible).toBe(false);
 
     pushFrame([makeTodo('a', { status: 'completed' }), makeTodo('b', { status: 'cancelled' })]);
     expect(store.todoState).toBe('close');
-    expect(store.dockVisible).toBe(false);
 
     pushFrame([makeTodo('a', { status: 'completed' }), makeTodo('b', { status: 'in_progress' })]);
     expect(store.todoState).toBe('open');
-    expect(store.dockVisible).toBe(true);
   });
 
   it('counts completed and cancelled todos as done', () => {
