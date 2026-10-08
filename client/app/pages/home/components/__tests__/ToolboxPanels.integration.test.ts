@@ -529,4 +529,36 @@ describe('BrowserPanel — CDP mode', () => {
     expect(wrapper.get('[data-test="browser-frame"]').element.tagName).toBe('IFRAME');
     wrapper.unmount();
   });
+
+  it('maps pointer coordinates through the emulated viewport, not the frame pixels', async () => {
+    const { wrapper, channel } = await mountCdp();
+    // Free size emulates a device server-side; Chrome then reports its own frame
+    // pixel size (measured 393x852 -> 554x1200). Coordinates must stay in the
+    // emulated CSS space or every click lands off-target.
+    const store = useToolboxStore();
+    // The free-size branch renders once the page has a URL (the server's page frame).
+    channel.handlers.onPage!({
+      page: 'p1',
+      url: 'https://example.com/',
+      title: 'Example',
+      can_back: false,
+      can_forward: false,
+      kind: 'page'
+    } as never);
+    store.setBrowserResponsive('sid-1::browser', true);
+    store.setBrowserViewport('sid-1::browser', { width: 393, height: 852 });
+    channel.handlers.onFrame!({ data: 'AAA', width: 554, height: 1200 } as never);
+    await flushPromises();
+
+    const rendered = wrapper.get('[data-test="browser-frame"]');
+    // The free-size picture must be focusable: without a tabindex the click
+    // cannot move focus onto it and every forwarded key goes astray.
+    expect(rendered.attributes('tabindex')).toBe('0');
+    // happy-dom reports a zero-size rect, so the render scale is 1: screen x
+    // becomes the page's CSS x directly.
+    await rendered.trigger('pointerdown', { clientX: 120, clientY: 240, button: 0, buttons: 1, pointerType: 'mouse' });
+    const click = channel.sent.filter(item => item.event === 'input').pop() as { payload: Record<string, unknown> };
+    expect(click.payload).toMatchObject({ type: 'mousePressed', x: 120, y: 240 });
+    wrapper.unmount();
+  });
 });

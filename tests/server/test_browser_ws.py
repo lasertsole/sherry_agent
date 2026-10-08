@@ -22,6 +22,27 @@ from server.trigger.ws.browser_ws import BrowserWSSession
 pytestmark = [pytest.mark.unit]
 
 
+#: Sentinel: a caller that omits Robyn's required default raises.
+_MISSING = object()
+
+
+class _StrictQueryParams:
+    """Robyn's QueryParams contract: ``get`` requires the default argument.
+
+    The plain-dict double the handler tests used accepted the one-arg form and
+    hid a live TypeError ("QueryParams.get() missing 1 required positional
+    argument: 'default'") — the same trap ``helpers.query_int`` exists for.
+    """
+
+    def __init__(self, values: dict) -> None:
+        self._values = values
+
+    def get(self, key: str, default: object = _MISSING):  # noqa: ANN001 - Robyn's signature
+        if default is _MISSING:
+            raise TypeError("QueryParams.get() missing 1 required positional argument: 'default'")
+        return self._values.get(key, default)
+
+
 class _FakeWS:
     """A websocket double: ``sent`` collects parsed frames; ``queue`` feeds input."""
 
@@ -357,7 +378,7 @@ def test_the_ready_frame_carries_the_feature_switch(monkeypatch):
 def test_the_handler_refuses_a_socket_without_a_session(monkeypatch):
     async def scenario():
         ws = _FakeWS()
-        ws.query_params = {}
+        ws.query_params = _StrictQueryParams({})
         monkeypatch.setattr(ws_module.auth, "check_ws", lambda token: None)
 
         async def allow(_query):
@@ -374,7 +395,7 @@ def test_the_handler_refuses_a_socket_without_a_session(monkeypatch):
 def test_the_handler_refuses_a_bad_token(monkeypatch):
     async def scenario():
         ws = _FakeWS()
-        ws.query_params = {"session_id": "s1"}
+        ws.query_params = _StrictQueryParams({"session_id": "s1"})
         monkeypatch.setattr(ws_module.auth, "check_ws", lambda token: "missing or invalid token")
         await ws_module.browser_ws_handler(ws)
         return ws
@@ -386,7 +407,7 @@ def test_the_handler_refuses_a_bad_token(monkeypatch):
 def test_the_handler_tells_a_disabled_client_so(monkeypatch):
     async def scenario():
         ws = _FakeWS()
-        ws.query_params = {"session_id": "s1"}
+        ws.query_params = _StrictQueryParams({"session_id": "s1"})
         monkeypatch.setitem(BROWSER_AGENT, "enabled", 0)
         monkeypatch.setattr(ws_module.auth, "check_ws", lambda token: None)
 
@@ -405,7 +426,7 @@ def test_the_handler_tells_a_disabled_client_so(monkeypatch):
 def test_the_handler_runs_a_full_session(monkeypatch):
     async def scenario():
         ws = _FakeWS()
-        ws.query_params = {"session_id": "s1"}
+        ws.query_params = _StrictQueryParams({"session_id": "s1"})
         monkeypatch.setitem(BROWSER_AGENT, "enabled", 1)
         monkeypatch.setattr(ws_module.auth, "check_ws", lambda token: None)
 
@@ -493,3 +514,28 @@ def test_watch_switches_the_event_sink_too(enabled):
     # stale navigation can never move the address bar.
     assert calls == [("subscribe_events", "p9")]
     assert manager.pages["p1"].event_sinks == []
+
+
+def test_a_failed_command_keeps_the_channel_alive(enabled):
+    """A launch timeout (OSError) must answer an error frame, not drop the socket."""
+
+    async def scenario():
+        ws = _FakeWS()
+        manager = _FakeManager([_page()])
+        session = BrowserWSSession(ws, manager, "s1")
+        session.page = manager.page_for("s1")
+
+        async def boom(*args, **kwargs):
+            raise TimeoutError("the browser did not publish a debug port within 6.0s")
+
+        manager.navigate = boom  # type: ignore[method-assign]
+        await session.handle({"event": "nav", "url": "https://x.test"})
+        # The socket is still usable afterwards.
+        await session.handle({"event": "ping"})
+        return ws
+
+    ws = asyncio.run(scenario())
+
+    errors = [frame["message"] for frame in ws.sent if frame["event"] == "error"]
+    assert any("debug port" in message for message in errors)
+    assert ws.sent[-1] == {"event": "pong"}

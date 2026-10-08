@@ -238,6 +238,11 @@ class BrowserWSSession:
         except RuntimeError as error:
             # Also covers the server's CdpError (a RuntimeError subclass).
             await self.send({"event": "error", "message": f"browser error: {error}"})
+        except Exception as error:  # noqa: BLE001 - one bad command must never kill the channel
+            # A launch timeout is a TimeoutError (an OSError) and a dead browser
+            # can surface practically anything: the panel gets a message and keeps
+            # its socket, instead of silently reconnecting forever.
+            await self.send({"event": "error", "message": f"browser command failed: {error}"})
 
     # ------------------------------------------------------------------ lifecycle
 
@@ -301,7 +306,9 @@ async def browser_ws_handler(websocket: WebSocketAdapter):
         logger.warning("Browser WS connection rejected: {}", user_refusal)
         await websocket.close()
         return
-    session_id = str(query.get("session_id") or "").strip()
+    # Robyn's QueryParams.get() REQUIRES the default argument (a plain dict
+    # would accept the one-arg form; the real object raises TypeError).
+    session_id = str(query.get("session_id", "") or "").strip()
     if not session_id:
         logger.warning("Browser WS connection rejected: missing session_id")
         await websocket.close()

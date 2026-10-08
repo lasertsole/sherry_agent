@@ -173,11 +173,14 @@
               class="h-full w-full border-0 outline-none"
               alt=""
               draggable="false"
+              tabindex="0"
               data-test="browser-frame"
               @pointerdown="onPointer($event, 'down')"
               @pointerup="onPointer($event, 'up')"
               @pointermove="onPointer($event, 'move')"
-              @wheel.prevent="onWheel" />
+              @wheel.prevent="onWheel"
+              @keydown="onKeyDown"
+              @keyup="onKeyUp" />
             <div
               v-else-if="cdp"
               class="flex h-full w-full items-center justify-center text-xs text-gray-400 dark:text-gray-500">
@@ -326,8 +329,18 @@ const connected = computed(() => store.browserFor(stateKey.value).connected);
 const frame = computed(() => store.browserFor(stateKey.value).frame);
 const frameSrc = computed(() => (frame.value ? `data:image/jpeg;base64,${frame.value.data}` : ''));
 const devtoolsOn = computed(() => store.browserFor(stateKey.value).devtools);
-/** The frame's own pixel size (the coordinate space input events live in). */
-const frameWidth = computed(() => frame.value?.width ?? viewport.value.width);
+/**
+ * The CSS-pixel width input events are expressed in.
+ *
+ * Free size emulates a device server-side, so the page's CSS pixels are the
+ * STORE's viewport — a screencast frame can come back at a different pixel size
+ * (Chrome's mobile emulation reports its own scale, measured 393x852 -> 554x1200),
+ * and mapping with that size lands clicks off-target. Without the override the
+ * frame's own size is the only truth.
+ */
+const inputWidth = computed(() =>
+  responsive.value ? viewport.value.width : (frame.value?.width ?? viewport.value.width)
+);
 /** The channel instance for this panel (not reactive: it owns a socket). */
 let channel: BrowserChannel | null = null;
 const lastError = ref('');
@@ -418,7 +431,7 @@ function modifierBits(event: { altKey: boolean; ctrlKey: boolean; metaKey: boole
  */
 function pageCoords(event: PointerEvent | WheelEvent, target: HTMLElement): { x: number; y: number } {
   const rect = target.getBoundingClientRect();
-  const scale = rect.width > 0 ? rect.width / frameWidth.value : 1;
+  const scale = rect.width > 0 ? rect.width / inputWidth.value : 1;
   return { x: (event.clientX - rect.left) / scale, y: (event.clientY - rect.top) / scale };
 }
 
