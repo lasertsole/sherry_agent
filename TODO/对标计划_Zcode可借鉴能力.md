@@ -17,7 +17,7 @@
 
 > **重要声明（已修正）**:
 > 1. **Zcode 源码是可读的完整 TypeScript monorepo，非闭源打包**。本文所有 Zcode 结论均带源码路径或落盘路径，不再有「无法核验」的降级表述。首轮「闭源不可测」的说法已作废。
-> 2. **本文不记录 Zcode 的安全缺陷**（Bash 无沙箱、插件 hook 无信任门、workflow `vm` 非安全边界、遥测等）——那是反向议题，需另文。但**部分缺陷会否决本文的照搬建议**（如 WebFetch 的 SSRF、workflow 脚本化），相关条目已就地标注，附数据来源表里也标了「否决照抄项」的源码位置。
+> 2. **本文不记录 Zcode 的安全缺陷**（Bash 无沙箱、插件 hook 无信任门、遥测等）——那是反向议题，需另文。但**部分缺陷会否决本文的照搬建议**（如 WebFetch 的 SSRF），相关条目已就地标注，附数据来源表里也标了「否决照抄项」的源码位置。
 > 3. **源码版本与发布版可能不一致**：源码树 `apps/zcode-cli` 版本为 0.16.9，发布版为 v3.14.4。唯一强交叉验证项是压缩阈值（966,000 与 `autoCompactThreshold` 精确吻合）。
 
 ---
@@ -35,13 +35,11 @@
 | 用户可配生命周期 hook | ✅ 7 事件 [源码确认] | ❌ [实测] | **Zcode** |
 | 结构化上下文注入目录 | ✅ 27 个 `system-reminder` 源 [源码确认] | ❌（各中间件各自拼字符串）[实测] | **Zcode** |
 | Prompt 缓存分段 | ✅ `stable` / `dynamic` + `cacheHint` [源码确认] | ❌（全动态注入）[实测] | **Zcode** |
-| 文件状态回滚 | ✅ 509 条 workspace checkpoint [落盘实测] | ❌ [实测] | **Zcode** |
-| 对话 rewind / 分支 | ✅ append-only + `branchGeneration` [源码确认] | ❌ [实测] | **Zcode** |
 | turn 内联输入（`guide`） | ✅ 3 种投递语义 [源码确认] | ❌（2 种）[实测] | **Zcode** |
 | per-agent 用量记账 | ✅ 3 张表，`model_usage` 5,880 行 [落盘实测] | ❌（进程内计数器不落库）[实测] | **Zcode** |
 | 流恢复锚点 | ✅ 7 个流恢复事件 [源码确认] | ❌ [实测] | **Zcode** |
 | Edit 模糊匹配 | ✅ 8 级级联 [源码确认] | ❌ [实测] | **Zcode** |
-| Write 原子性 | ✅ temp+fsync+rename+`O_NOFOLLOW` [源码确认] | ⚠️ 未验证原子性 [实测] | **Zcode** |
+| Write 原子性 | ✅ temp+fsync+rename+`O_NOFOLLOW` [源码确认] | ✅ temp+fsync+rename+`O_NOFOLLOW` + 跨进程 flock [实测] | **Sherry**（多了跨进程锁） |
 | workflow 编排表达力 | 两代、9 工具、TS 脚本 [源码确认] | 14 工具、声明式 DAG [实测] | Zcode 更表达力 |
 | workflow 失败级联 / 节点上限 | ❌ 无上限 [源码确认] | ✅ `failed` 依赖者保持 `blocked` [实测] | **Sherry** |
 | 代码智能 | ❌ 无内建索引 [源码确认] | AST + LSP + 语义 16 工具 [实测] | **Sherry** |
@@ -116,46 +114,6 @@
 
 ---
 
-### 1.4 ⭐ 文件级检查点 + 对话 rewind（append-only 分支）
-
-这是 Zcode 相对 Sherry **差距最大**的一项，Sherry 完全没有对应物。
-
-**Zcode 做法**：
-
-*文件检查点* [落盘实测]：`session_entry` 表 509 条 `runtime/workspace_checkpoint` 记录，payload 结构：
-```
-checkpointId / messageId / targetMessageId / toolMessageId
-scope ("workspace") / snapshotRef / diffRef / fileCount
-```
-`snapshotRef` / `diffRef` 是 `zcode-artifact://<sessionId>/tool-result-<uuid>` URI，指向 artifact 目录里的文件快照与 jsdiff 结构化 diff（`contracts/src/rewind/index.ts:100`，每文件带 `beforeContent` / `afterContent` / `structuredPatch`，3 context 行，5s timeout）。
-
-*对话 rewind* [源码确认]：`rewindConversationToMessage`（`core/src/runtime/methods/rewind-message.ts:404`）
-- 写 `setRevert`：`keptMessageIDs` / `branchCutAfterMessageID` / **`branchGeneration`**
-- `branchGeneration` 递增作为 **fencing token**（防止旧分支的迟到写入污染新分支）
-- 取消被移除 turn 名下的后台任务
-- **旧分支仍留在库里**，通过 `selectActiveConversationBranch`（`contracts/src/rewind/index.ts:176`）从活动分支隐藏——即 append-only，不删消息
-
-*fork 路径* [源码确认]：`core/src/runtime/methods/session-fork.ts` 有 6 条（含 `createSelectionSideConversation` 选区旁聊、`forkStableConversationAtMessage` 原子 `commitForkBundle`），fork 携带完整 message/part 转写本 + id 重映射 + goal state 快照 + verifier ledger。
-
-*维度解耦* [源码确认]：scope 可选 `conversation` / `workspace` / `both`；strategy 有 `active_chain` / `file_only` / `fork_required` / `unavailable`；target status 含 `covered_by_compact`——目标若在压缩边界之前，workspace rewind 仅在有 checkpoint 时可用，否则明确返回 `unavailable`（**不假装能回滚**）。
-
-**Sherry 现状** [实测]：
-- 无文件状态快照，`patch_file` / `write_file` 不可回滚
-- `TOOL_RESULT_EVICTION.eviction_subdir = 'evicted'` 只落盘**工具结果**，不是文件状态
-- `workspace/` 在 `.gitignore` 中是锚定的（`/workspace/`），**无 git 兜底**
-- checkpointer（`agent/checkpointer/thread_safe_checkpointer.py`）保存的是 **LangGraph 图状态**，不是文件快照，也不是对话分支树
-
-**改造建议**（按依赖顺序）：
-1. **先做文件快照**：`patch_file` / `write_file` 写入前把旧内容快照到 artifact 目录（复用 `agent/tools/pub_base/` 的路径工具 + `evicted/` 的落盘模式），并在 session 状态里记 `messageId → checkpointId` 映射
-2. **再做 `file_checkpoint_revert` 工具**，与 4.2 的 stale 检测配套（revert 也必须走 stale 检查，不能把别人的改动覆盖掉）
-3. **最后做对话 rewind**：这一步可以**独立于** 1 和 2 上线（纯 append-only + `branchGeneration`），且与 Sherry 已有的 `context_engine/events/` append-only 事件日志哲学一致，可复用同一套思路
-
-**收益**：agent 改坏文件后用户能一键撤销——这是目前用户投诉风险最高、而 Sherry 零防护的场景。
-
-**风险**：磁盘占用。Zcode 的 `cli/artifacts/` 单会话已达数百文件 / 十余 MB。Sherry 可参照 `TODOLIST_INFRA.ttl_registry_max_entries` 做保留策略（`history_deleted_at` 式软删 + TTL 清理）。
-
----
-
 ### 1.5 流恢复锚点（stream recovery anchor）
 
 **Zcode 做法** [源码确认]：7 个流恢复事件构成一套完整协议：
@@ -190,15 +148,6 @@ stream_recovery_anchor_created → stream_recovery_started → anchor_selected
 2. **压缩失败熔断阈值对齐**——Zcode 连续 3 次失败即停止重试；Sherry 有 `max_recovery_attempts = 2` + `ineffective_threshold = 2`，机制已存在，阈值可对齐。
 
 **不要照搬**：`keptMessageCount = 1`。Sherry 的分层保留应保留并强化。
-
----
-
-### 1.7 Todo 跨会话持久化（无差距，仅记录结论）
-
-**Zcode** [落盘实测]：`TodoRead` / `TodoWrite` 工具 + `todo` 表，本机 30 条（22 completed / 2 in_progress / 6 pending），主键 `(session_id, position)`。
-**Sherry** [实测]：`todowrite` / `todoread` + `TODOLIST_INFRA` SQLite，有 `stagnation_max_stagnation = 3` 停滞熔断 + `stagnation_max_cooldown_s = 60` 冷却。
-
-**结论**：**Sherry 更强**（多了停滞熔断与冷却）。不需要改造，记录以免重复讨论。
 
 ---
 
@@ -324,29 +273,13 @@ SessionStart | UserPromptSubmit | PreToolUse | PermissionRequest
 
 ---
 
-### 2.5 运行时 workflow 脚本编排
-
-**Zcode 做法** [源码确认]：**两代系统并存**，不要混淆：
-
-| | Legacy "script workflow" | New "dynamic workflow" |
-| --- | --- | --- |
-| 工具 | `Workflow` / `/expert` | `CreateWorkflow`、`AmendWorkflow`、`SaveWorkflow`、`EvalWorkflowSnippet`、`ListWorkflowRuns`、`GetWorkflowRun`、`ResumeWorkflowRun`、`ResolveWorkflowQuestion`、`ListSavedWorkflows`（**9 个**） |
-| 数据表 | `workflow_run`、`workflow_activity`、`workflow_event`、`workflow_definition` | `dwf_run`、`dwf_actor`、`dwf_node`、`dwf_event` |
-| 隔离 | Node 子进程 + `new AsyncFunction` + 全局覆写 | Node 子进程 + **`vm.createContext` realm** |
-
-`EvalWorkflowSnippet` 属新一代。官方 SKILL.md 明说 legacy `Workflow` 与 `/expert` 是「另一个更旧的、恰好同名的特性」。
-执行管线：作者写 TS → 类型检查（对内嵌 `.d.ts` facade 查 `import`/`process`/`fetch`/`require`/`Date.now`/`Math.random`，编译失败）→ lowering（剥离类型 + 注入 site id，`planner.ask<Plan>(t)` → `__host.ask("ask#3", planner, t)`）→ 落盘 `.zcode/workflow-runs/<runId>.mjs` → 子进程执行（`--max-old-space-size=256`，NDJSON over stdio）。
-宿主 API：`agent().ask<T>()`、`files.*`（只读）、`git.*`（固定 allowlist argv）、`world.run`（cmd 必须是编译期字符串字面量并进「已批准命令集」，**fail-closed**）、`report`、`artifact.*`。
+### 2.5 taskflow step 挂载 skill（可插拔行为）
 
 **Sherry 现状** [实测]：taskflow 的 step 由 `taskflow_create` 声明式定义（`response_schema` / `judge_criteria` / `depends_on`），**编排逻辑是固定的 Python 代码**，不能运行时生成新逻辑。`skills/builtin/` 已有成熟 skill 体系可挂载。
 
 **差距**：声明式 DAG 适合已知流程，遇到未预见的长任务形态就僵了。
 
-**改造建议：分两步，不要一步到位**
-1. **先做「step 类型扩展」**：允许 taskflow step 引用一个 skill，把「固定编排」变成「编排 + 可插拔行为」。**这一步能吃到 80% 的表达力收益，且零沙箱风险。**
-2. **再考虑脚本化**：Zcode 的 `vm` 隔离**不是安全边界**（Node 官方明说 `vm` 非安全沙箱；其 sandbox 对象暴露了外部 realm 函数 `__send`，经典 `constructor("return process")()` 逃逸理论可达——`[行为推断]`，**未执行验证**）。若 Sherry 要做，必须换真隔离方案（子进程 + seccomp/landlock 或容器），不能照抄。
-
-**强烈建议先做第 1 步**。第 2 步的安全边界设计与 Sherry 现有姿态（`PathGuard` 硬拒 `~/.ssh`、OS 原生沙箱、审批门）直接冲突，需要独立立项。
+**改造建议**：允许 taskflow step 引用一个 skill，把「固定编排」变成「编排 + 可插拔行为」。**零沙箱风险，能吃到 80% 的表达力收益。**
 
 ---
 
@@ -439,41 +372,6 @@ readOnly 或 sideEffectScope == "none"  → 允许
 
 ---
 
-### 4.2 ⭐ Edit/Write：读-before-edit + stale 三要素 + 原子写
-
-**Zcode 做法** [源码确认]：
-
-*stale 检测三要素*（`core/src/tool/handlers/edit.ts:444-468`, `core/src/tool/handlers/write.ts:306-332`）：
-1. `mtime` 推进（**整数毫秒**比较，抑制误报）
-2. `size` 变化
-3. `revisionId` 不同 —— 形如 `mtime:<ms>:size:<bytes>`（`fs/index.ts:775-777`）
-
-*假阳性豁免*（`core/src/tool/handlers/edit.ts:434`, `core/src/tool/handlers/write.ts:295`）：若上次是**全量读**且存储内容与当前内容相等，则**即使 mtime 推进也不算 stale**——容忍 linter/formatter 触碰文件但不改字节。
-
-*原子性*（`fs/index.ts:700-755`）：`O_EXCL|O_NOFOLLOW` 写临时文件 → `fsync` → `rename` 覆盖；失败清理临时文件并降级为 `O_NOFOLLOW` 截断写。**保留原文件 mode**（exec 位不丢）。**拒绝穿符号链接**（`SymlinkWriteRefusedError`）。
-
-*错误分类*：`write_file_not_read`（未先读）/ `write_file_stale`（读后已改）/ `write_file_partial_view`（基于 token 截断的部分视图不可用于 Edit/Write）。Edit 另有 `MAX_EDIT_FILE_SIZE_BYTES = 1GB` 拒绝、`.ipynb` 引导改用 NotebookEdit。
-
-*无 dry-run*：`EditInput` schema 只有 4 个字段，diff 是**事后**算的（`createStructuredPatch`，3 context，5s timeout）返回给 UI/权限展示。
-
-**Sherry 现状** [实测]：
-- 无 stale 检测（`patch_file` 读后被外部改过仍会写入 → 静默覆盖用户改动）
-- 原子性未验证
-- 符号链接语义未验证（`PathGuard` 管路径限制，但 symlink 穿透未确认）
-- **`read_file` 的部分视图**（truncated）与 patch 之间**无关联保护**——模型可能基于截断视图 patch 出错误内容
-
-**改造建议**：
-1. **stale 三要素 + 内容豁免**（最高优先）：在 `patch_file` / `write_file` 记录读时的 `revision`（`mtime_ms:size`），写入前比对；内容相等则豁免。这一条**直接消除「静默覆盖用户改动」这个真实数据丢失场景**
-2. **原子写 + 保留 mode + 拒绝 symlink**：改 `write_file` 的落盘实现
-3. **部分视图保护**：把 `read_file` 的 `truncated` / `hint` 标记透传给 `patch_file`，基于部分视图的 patch 显式拒绝（照抄 `write_file_partial_view`）
-4. diff 展示：照抄 `createStructuredPatch` 思路，在 patch 成功时返回结构化 diff 供前端展示
-
-**收益**：数据安全性。三条都是纯实现改动，`patch_file` / `write_file` 两个文件。
-
-**风险**：低-中。stale 检测会让「读之后文件被 formatter 改了」的场景从成功变失败——必须实现内容豁免，否则会引入大量假阳性。
-
----
-
 ### 4.3 ⭐ Read：token 感知的二分截断 + 未变更重读 stub
 
 **Zcode 做法** [源码确认] `contracts/src/tools/read.ts:15-17`：
@@ -511,18 +409,6 @@ readOnly 或 sideEffectScope == "none"  → 允许
 **改造建议**：优先级低于本文多数条目（上下文侧已受保护），但方向明确：输出超过内联预算时改为把子进程 stdout 直接写进 artifact 文件，只回传路径 + 预览。
 
 **风险**：中——改动落在工具执行路径上，且要同时覆盖同步/异步与沙箱（`bwrap`）两条路径。
-
----
-
-### 4.5 bfs / ugrep 注入 bash prelude
-
-**Zcode 做法** [源码确认] `adapters/src/exec/embedded-search-prelude.ts`：向 Bash prelude 注入 shell 函数——`find()` → **bfs**（`-S dfs -regextype findutils-default`）、`grep()` → **ugrep**（`-G --ignore-files --hidden -I --exclude-dir=...`；语义不同的 flag（`-z`/`-Z`/`--null` 等）自动 bypass 回系统 grep）、`rg()` fallback 仅当 PATH 无 `rg`。二进制解析顺序 `ZCODE_{BFS,RG,UGREP}_BINARY` env → `<runtime root>/tools/` → Electron resources → dev bundle → PATH，缺失时优雅降级。
-
-**Sherry 现状** [实测]：`search_files` 用 Python `re`（`bounded_walk` + `ScanState`），无外部搜索二进制；`terminal` 走系统 shell，无 prelude 注入。
-
-**判断**：**收益有限，不建议优先做**。Sherry 已有 AST + LSP + 语义索引三层检索（Zcode 完全没有），主检索路径不走 grep。bfs/ugrep 注入只对「agent 在 Bash 里手写 `find`/`grep`」的场景有边际收益。
-
-**风险**：注入 prelude 会改变 `terminal` 工具的 shell 行为（用户可能依赖 GNU grep 语义），且 ugrep 的 flag 不兼容需要 bypass 逻辑——复杂度不低。**排在最后。**
 
 ---
 
@@ -597,13 +483,6 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 **结论**：**Sherry 服务端能力更强**（降级背压 + 禁用阈值 + skill 绑定），Zcode 是工具侧暴露。
 **可借鉴的只有一点**：把 cron 的触发暴露为 agent 工具（Zcode 侧是 agent 主动管理 cron），让模型能「检查自己的定时任务状态」。`OffPeak` 的低谷期概念 Sherry 暂无对应，可作为低优先候选。
 
-### 6.3 会话上下文回读
-
-**Zcode** [落盘实测]：`ReadSessionContext` 独立工具（34 工具列表内）。
-**Sherry** [实测]：`message_search` 工具 + `message_search_checkpoint_fallback_enabled = True`（检查点回退）+ `message_search_max_session_chars = 100,000`。
-
-**结论**：**Sherry 更完整**。不需要改造。
-
 ### 6.4 大窗口利用（1M 上下文）
 
 **Zcode** [落盘实测]：实际使用 1M 窗口，压缩触发点 966K，配 `modelIoFullRetentionEnabled` 控制模型 I/O 留存。
@@ -620,7 +499,6 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | --- | --- |
 | 桌面端专属能力 | `closeToTrayOnWindows`、`keepAwakeWhileRunning`、`desktopChromiumHardwareAccelerationEnabled`、`embeddedBrowserViewportPreference`（393×852 移动视口）、`proactiveSuggestionsEnabled`、`nativeSearchEnhancementsEnabled`、Bots（IM 接入）——Sherry 的定位是自托管服务端，桌面端是客户端而非 agent 能力 |
 | CUA 电脑操作 | `computerUseComposerEntryHidden` 对应的能力会引入新的安全边界，与现有 `PathGuard` 姿态冲突，需独立评估 |
-| workflow `vm` 沙箱 | Node 官方明说 `vm` 非安全沙箱；Zcode 自身暴露了外部 realm 函数。**这是 containment，不是加固的安全边界**。若要脚本化必须换真隔离方案（见 2.5 第 2 步） |
 | 插件 hook 无条件执行 | `canRunPluginHooks` 无条件 `return true`，第三方插件以用户权限执行任意进程。**Sherry 已有 SkillSpector，hook 必须复用同一信任模型**（见 2.1） |
 | `keptMessageCount = 1` 的激进压缩 | 2027 条消息压成 1 条。Sherry 的分层保留更成熟，应保留并强化（见 1.6） |
 
@@ -632,18 +510,15 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 
 | 优先级 | 条目 | 收益 | 成本 | 依赖 / 前置 |
 | --- | --- | --- | --- | --- |
-| **P0** | 4.2 stale 三要素 + 原子写 | **高**（消除静默覆盖用户改动） | 低（2 个文件） | 无 |
 | **P0** | 4.1 Edit 8 级匹配级联 | **高**（降低 patch 失败循环） | 低（纯函数，可单测） | 无 |
 | **P0** | 6.4 大窗口利用 | 高 | **零代码**（换模型） | 实测 1M 下压缩行为 |
 | **P0** | 1.3 Session token 预算封顶 | 高 | 低（加状态键 + 检查点） | 无 |
 | **P0** | 5.1 per-agent 用量记账 | 高 | 低（1 表 + 1 写入点） | 与 2.3 一起做收益最大 |
 | **P1** | 4.4 核查 terminal 大输出 | **未知，可能高** | **先核查** | 依赖 4.4 核查结论 |
 | **P1** | 2.2 system-reminder 目录化 | 中-高 | 低（只加目录与包装层） | 2.3 可并行 |
-| **P1** | 1.4①③ journal 短路 + 血缘 | 高 | 中（migration + 幂等性验证） | **必须先验证 step 重入幂等** |
 | **P1** | 2.3 Prompt cache 分段 | 中-高 | 中（跨层 seam 改动） | 需更新 `tests/workspace/` |
 | **P1** | 4.3 Read token 感知二分 | 中 | 低-中 | 无 |
-| **P1** | 2.5① step 挂载 skill | 高 | 中（复用现有 skill 体系） | 无 |
-| **P2** | 1.4 文件快照 + revert 工具 | 中-高 | 中（磁盘占用策略） | 依赖 4.2 stale 检测 |
+| **P1** | 2.5 step 挂载 skill | 高 | 中（复用现有 skill 体系） | 无 |
 | **P2** | 3.1 `guide` 输入语义 | 中 | 中（队列 + 注入点） | 依赖 2.2 目录化 |
 | **P2** | 3.2 工具并行安全标注 | 中 | 低（纯声明式） | 无 |
 | **P2** | 2.4 计划模式 | 中 | 低（复用 HITL 骨架） | 与 1.5 协调 |
@@ -653,16 +528,14 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | **P3** | 1.2 taskflow 并行执行 | 中 | 高（judge/evidence 并发安全） | 依赖 1.1 |
 | **P3** | 1.6 microcompact 独立通道 | 低 | 低 | 无 |
 | **P3** | 6.2 OffPeak 低谷期 | 低 | 低 | 无 |
-| **P3** | 4.5 bfs/ugrep prelude | 低 | 中（shell 语义变更） | 排在最后 |
 | **P3** | 2.1 Hooks（分三步） | 高 | **高（安全设计）** | 2.1① 只读型可先上 |
-| ❌ | 桌面端 / CUA / workflow 脚本化 | — | 很高 | 见第七节 |
+| ❌ | 桌面端 / CUA | — | 很高 | 见第七节 |
 
 **建议起手顺序**：
-1. **第一批（零风险、可并行）**：4.1 + 4.2 + 1.3 + 3.2 —— 全部是单文件实现改动，不碰架构，可在一个批次内验证
+1. **第一批（零风险、可并行）**：4.1 + 1.3 + 3.2 —— 全部是单文件实现改动，不碰架构，可在一个批次内验证
 2. **先核查再决策**：4.4（terminal 大输出）—— 这是本文唯一结论未知的项，核查成本极低但潜在收益可能超过上面所有条目
 3. **第二批（需设计）**：5.1 + 2.3 一起做（用量记账与缓存分段是同一个闭环，分开做都看不到收益）；2.2 目录化作为 3.1 的前置
-4. **第三批（需原型验证）**：1.4①③ —— 价值最高但依赖「step 重入幂等性」这个**未经证实的假设**，必须先做原型
-5. **独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里
+4. **独立立项**：2.1 Hooks 与 6.1 WebFetch 都涉及新的安全设计，不应混在常规迭代里
 
 ---
 
@@ -672,9 +545,7 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 
 | 能力 | Zcode | Sherry 结论 |
 | --- | --- | --- |
-| Todo 持久化 | `todo` 表 30 条 [落盘实测] | **Sherry 更强**（停滞熔断 + 冷却） |
 | Cron 服务端 | 6 个工具侧 | **Sherry 更强**（降级背压 + 禁用阈值 + skill 绑定计划） |
-| 会话上下文回读 | `ReadSessionContext` | **Sherry 更完整**（checkpoint fallback + 100K 字符上限） |
 | 压缩有效性检测 | 连续 3 次失败熔断 | **Sherry 已有**（`max_recovery_attempts=2` + `ineffective_threshold=2`） |
 | 并发显式管理 | 批内 10 | **Sherry 更明确**（四类 lane + 启动校验 + 排队不拒绝 + `/lane-status`） |
 | delegation 深度限制 | ❌ 无 | **Sherry 独有**（默认 2 / 硬上限 2） |
@@ -703,13 +574,12 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
    ```
 2. **源码版本与发布版可能不一致**：源码树 `apps/zcode-cli` 版本 **0.16.9**，发布版 **v3.14.4**。源码可读且行号精确，但**不能保证与发布构建逐行一致**。唯一强交叉验证项：压缩阈值 966,000 与落盘 `autoCompactThreshold` 精确吻合（1,000,000 − 21,000 − 13,000）。
 3. **`session_target` 表本机 0 行** [落盘实测]：1.3 的 token 预算能力只有 schema 证据，**行为完全未验证**（预算耗尽是否真转 `budget_limited`、是否真暂停）。
-4. **workflow / bot / off-peak 8 张表本机 0 行** [落盘实测]：第 1.1、2.5 节的 workflow 结论基于源码逻辑推断，**实际运行行为未验证**。
+4. **workflow / bot / off-peak 8 张表本机 0 行** [落盘实测]：第 1.1 节的 journal 短路结论基于源码逻辑推断，**实际运行行为未验证**。
 5. **`guide` 模式本机从未使用** [落盘实测]：`session_input` 214 行只用 `startNow`（107）与 `queue`（92 + 15 cancelled），`guide` 代码存在但真实行为未验证。3.1 的设计判断基于源码。
-6. **`vm` 逃逸未验证** [行为推断]：`__send.constructor("return process")()` 是理论推断，**未执行**。不应作为已确认漏洞，仅作为「vm 非安全边界」的风险提示。
-7. **落盘计数是快照且库为活库**：`~/.zcode/cli/db/db.sqlite` 仍在写入，本文所有行数（509 checkpoint / 5,880 model_usage / 30 todo）为 2026-09-30 快照值，会随使用增长。**趋势可信，绝对值会变。**
-8. **Sherry 侧唯一未验证项已核查**：`terminal.py` 的大输出处理（4.4）——工具侧无上限、上下文侧由 20k 字符驱逐兜底，结论已就地改写。
-9. **本文未评估 Zcode 的遥测/隐私行为**：`config.isTelemetryEnabled` 等设置项存在，但该 checkout 中遥测实现不完整，未做结论。
-10. **本文未记录 Zcode 的安全缺陷**（反向议题）。部分缺陷已就地标注为「不可照抄」（附数据来源表里标了源码位置），但完整安全评估需另文。
+6. **落盘计数是快照且库为活库**：`~/.zcode/cli/db/db.sqlite` 仍在写入，本文 `model_usage` 5,880 行为 2026-09-30 快照值，会随使用增长。**趋势可信，绝对值会变。**
+7. **Sherry 侧唯一未验证项已核查**：`terminal.py` 的大输出处理（4.4）——工具侧无上限、上下文侧由 20k 字符驱逐兜底，结论已就地改写。
+8. **本文未评估 Zcode 的遥测/隐私行为**：`config.isTelemetryEnabled` 等设置项存在，但该 checkout 中遥测实现不完整，未做结论。
+9. **本文未记录 Zcode 的安全缺陷**（反向议题）。部分缺陷已就地标注为「不可照抄」（附数据来源表里标了源码位置），但完整安全评估需另文。
 
 ---
 
@@ -730,14 +600,10 @@ Sherry 已有可复用的基础：`MODEL_PRICING` 配置、`MAX_TOKENS_BOOST`、
 | `.../contracts/src/events/session.events.ts:83-176,696-711` | ~90 事件、14 流式 kind、7 流恢复事件 | 源码确认 |
 | `.../core/src/runtime/command-queue.ts` + `helpers/steering.ts:11` | 6 mode、3 priority、200KB 上限、5 拒绝原因 | 源码确认 |
 | `.../core/src/runtime/methods/turn-guide-drain.ts` | `guide` 注入与降级 | 源码确认 |
-| `.../core/src/runtime/methods/rewind-message.ts:404` + `contracts/src/rewind/index.ts:100,176` | append-only 分支、`branchGeneration`、scope/strategy | 源码确认 |
-| `.../core/src/runtime/methods/session-fork.ts` | 6 条 fork 路径 | 源码确认 |
 | `.../core/src/tool/edit-matchers.ts:30-397` | 8 级匹配、Levenshtein ≥0.8、歧义处理 | 源码确认 |
-| `.../core/src/tool/handlers/{edit,write}.ts` | read-before-edit、stale 三要素、原子写 | 源码确认 |
 | `.../adapters/src/fs/index.ts:452-647,700-777` | WASM ripgrep、原子写、revision | 源码确认 |
 | `.../contracts/src/tools/read.ts:15-17` + `read-text.ts:161-236` | token 二分截断、85% 上限、未变更 stub | 源码确认 |
 | `.../core/src/tool/scheduler.ts:48,85,187,233` | 并发 10、并行判定、只读工具集 | 源码确认 |
-| `.../dynamic-workflow/src/engine/types.ts` + `.../dynamic-workflow-runtime/src/child-source.ts:260-314` | workflow 状态机、vm realm、确定性禁令 | 源码确认 |
 | `.../adapters/src/storage/session-store/{migrations.ts,repositories/dwf-journal-codecs.ts}` | journal 短路、状态映射、无预算列 | 源码确认 |
 | `~/.zcode/cli/db/db.sqlite` | 全部表 DDL、行数、聚合统计 | 落盘实测 |
 | `~/.zcode/cli/rollout/model-io-*.jsonl` | 34 工具列表、prompt 分段实测、压缩事件 | 落盘实测 |
