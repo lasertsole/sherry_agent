@@ -61,6 +61,16 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **Overflow (provider error)** | T4/T5 forced recovery | one call per compact step | clip → compact + budget truncate, retried up to 3 times |
 | **Media offload (compression)** | `offload_inline_media` | none | inline media in the summarized prefix → on-disk copy + `[evicted to: …]` pointer; preserved tail untouched |
 
+**Browser pages follow the same rule.** The agent-controllable browser
+(`config/features/infra_side/browser_agent.py`) contributes exactly ONE thing to
+this pipeline: the text (and screenshot path) a `browser_*` tool returns. The
+page itself — its DOM, its pixels, its screencast frames — never enters the
+message store: frames go to the panel over `/browser/ws`, snapshots are bounded
+by the manager (element / text caps) before they become tool results, and a
+screenshot is a file path the model opens through the `image_to_text` chain.
+Nothing a page displays can steer the agent except through a tool result the
+model itself asked for.
+
 ## 🗂️ Information Sources
 
 Everything that reaches graph state or MesMemory enters from one of the sources below. The `origin` column is being upgraded into a full-coverage source marker: `NULL` is a legacy user row written before tagging (the read side treats it as `user`), and a message carrying `internal=True` is **not a user request** — the summary's Unresolved list accepts only user-sent messages (positive identification). Non-message sources (eviction files, plan knowledge) are listed too: they never become a `messages` row but are still injectable context. Rows marked `planned` / `reserved` are not implemented yet.

@@ -484,6 +484,52 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
   client has one shape to render (`client/app/stores/taskflow.ts`,
   `pages/home/components/ProgressFloat.vue`).
 
+## Agent-Controllable Browser (`config/features/infra_side/browser_agent.py`)
+
+Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
+「环境配置」 panel grows a `SHERRY_BROWSER` group for its switches once the keys
+exist in `.env`). With the feature off no `browser_*` tool is registered, every
+`/browser/*` route answers 404 and no Chromium is ever spawned.
+
+**Server side** — `server/service/browser_cdp.py` is a thin CDP transport (one
+WebSocket, JSON-RPC ids, flat sessions, *droppable* screencast events) plus the
+launcher: it probes `--no-sandbox` last (the first attempt is capped at 6 s so a
+host without user namespaces pays seconds, not the whole launch budget) and
+honours `SHERRY_BROWSER_HEADLESS` (default: headed when a DISPLAY exists). The
+process singleton `browser_manager.py` keeps pages per session, stores snapshot
+refs SERVER-side (cleared on navigation), bounds every verb (timeouts, element /
+text / screenshot caps), evicts the LRU past `max_pages`, reclaims pages unused
+for `idle_timeout_s` unless a panel is watching them, and reaps its Chromium on
+exit (`shutdown_browser_blocking` signals the exact PID). The debug port never
+leaves the process: `status()` reports the page count, never the port, and the
+devtools frontend is built in-process.
+
+**Routes** — `GET /browser/status`, `POST /browser/page|navigate|close` (the
+panel's HTTP face) and the live channel `/browser/ws` (gateway token + login
+ticket): screencast frames out, `nav`/`reload`/`back`/`forward`/`viewport`/
+`input`/`watch`/`devtools` in. A user-initiated navigation reaches the address
+bar through `Page.frameNavigated` (a `chrome-error://` page keeps the URL the
+user asked for); the screencast stops when nobody watches a page.
+
+**Agent side** — the eight `browser_*` tools (navigate / snapshot / click /
+type / press / scroll / screenshot / evaluate) live in the `browser` catalogue
+group, are MAIN-AGENT-ONLY (`metadata["scope"] = "main_only"` — the subagent
+tool policy drops them unconditionally), and are taught by the `browser`
+playbook skill (`skills/builtin/core/browser/SKILL.md`, scriptless, hidden from
+the index while the feature is off). `browser_screenshot` writes a PNG and
+returns its path (the model views it through the `image_to_text` chain);
+`browser_evaluate` registers only with `SHERRY_BROWSER_ALLOW_EVALUATE=1`.
+
+**Panel** — `BrowserPanel.vue` picks CDP mode from `/browser/status` and falls
+back to its iframe mode otherwise (`composables/browser-channel.ts` owns the
+socket). Free size drives REAL device emulation
+(`Emulation.setDeviceMetricsOverride`) and pointer coordinates map through the
+emulated viewport, never through the screencast frame's pixel size (Chrome's
+mobile emulation reports its own scale, measured 393x852 -> 554x1200); 打开调试
+工具 opens the inspector as a page the panel watches. There is NO approval gate
+on browser actions — the panel IS the human's window on the same page (ZCode
+parity); the external-path HITL gate still covers `terminal`/skills.
+
 ## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
 
 The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to

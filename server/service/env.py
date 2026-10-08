@@ -23,6 +23,10 @@ OTHER_GROUP = "other"
 # is gitignored, unlike the tracked sherry.jsonc.
 SPLIT_OUT_KEYS = SERVER_HTTP["env_split_out_keys"]
 
+# Model groups (provider/model/api_key profiles) vs plain key/value groups; the
+# panel renders the former with its profile manager and the latter as a card.
+MODEL_GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_model_group_prefixes"]
+
 # MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
 
@@ -106,6 +110,7 @@ def read_env_file() -> dict:
         ordered_groups.append(
             {
                 "name": name,
+                "kind": ("model" if name + "_" in MODEL_GROUP_PREFIXES else "plain"),
                 "entries": [
                     {"key": e.key, "value": e.value, "value_edited": False} for e in groups[name]
                 ],

@@ -21,6 +21,7 @@ class ServerHttpConfig(TypedDict):
     skills_skip_suffixes: frozenset[str]
     subagent_public_fields: tuple[str, ...]
     env_group_prefixes: tuple[str, ...]
+    env_model_group_prefixes: tuple[str, ...]
     env_split_out_keys: frozenset[str]
     memory_system_file_names: list[str]
     memory_max_content_length: int
@@ -96,6 +97,21 @@ SERVER_HTTP: ServerHttpConfig = {
     # the chat model first, then the auxiliary model it delegates simple work to,
     # then the reasoner.
     "env_group_prefixes": (
+        "SHERRY_BROWSER_",
+        "MAIN_LLM_",
+        "AUXILIARY_LLM_",
+        "REASONER_LLM_",
+        "ITTT_",
+        "VTTT_",
+        "TTI_",
+        "RERANKER_",
+        "EMBEDDING_",
+        "STT_",
+    ),
+    #: Groups rendered with the model-profile manager (provider / model /
+    #: api_key / profile rows). Everything else in ``env_group_prefixes`` is a
+    #: plain key/value card (the browser feature's switches, for one).
+    "env_model_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
         "REASONER_LLM_",

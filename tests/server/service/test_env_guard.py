@@ -58,3 +58,37 @@ def test_non_token_key_is_not_guarded(env_file: Path) -> None:
     env_service.write_env_file({"MAIN_LLM_NAME": "other-model"})
 
     assert "MAIN_LLM_NAME = other-model" in env_file.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# Group kinds: the panel renders model groups with their profile manager and
+# everything else as a plain key/value card.
+# ---------------------------------------------------------------------------
+
+_KIND_ENV_BODY = (
+    "MAIN_LLM_NAME = deepseek-flash\n"
+    "SHERRY_BROWSER_AGENT_ENABLED = 1\n"
+    "SHERRY_BROWSER_HEADLESS = 1\n"
+    "SOME_STRAY_KEY = x\n"
+)
+
+
+def test_groups_carry_their_kind_and_the_browser_switches_are_plain(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / ".env"
+    path.write_text(_KIND_ENV_BODY, encoding="utf-8")
+    monkeypatch.setattr(env_service, "ENV_PATH", path)
+
+    groups = {group["name"]: group for group in env_service.read_env_file()["groups"]}
+
+    # The browser feature owns a dedicated PLAIN group (not the catch-all).
+    assert groups["SHERRY_BROWSER"]["kind"] == "plain"
+    assert [entry["key"] for entry in groups["SHERRY_BROWSER"]["entries"]] == [
+        "SHERRY_BROWSER_AGENT_ENABLED",
+        "SHERRY_BROWSER_HEADLESS",
+    ]
+    # A model group keeps its profile manager; the catch-all stays plain.
+    assert groups["MAIN_LLM"]["kind"] == "model"
+    assert groups["other"]["kind"] == "plain"
+    assert [entry["key"] for entry in groups["other"]["entries"]] == ["SOME_STRAY_KEY"]

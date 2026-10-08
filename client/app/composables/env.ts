@@ -24,6 +24,8 @@ export interface EnvEntry {
 export interface EnvGroup {
   name: string;
   entries: EnvEntry[];
+  /** How the panel renders it: model groups carry the profile manager. */
+  kind?: 'model' | 'plain';
 }
 
 /** Raw structure returned by the backend `/env` endpoint (a list of groups) */

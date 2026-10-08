@@ -1,7 +1,7 @@
 # 计划：让 agent 控制内部浏览器（方案 C · 本地 Chromium + CDP 代理）
 
 - 建档日期：2026-10-07
-- 状态：**实施中**（P0 实测 ✅ · P1 后端 ✅ · P2 主代理工具 ✅ · **P3 面板 CDP 模式 ✅** · P4 收尾 / P5 文档门禁 待做）
+- 状态：**已实施完毕**（P0–P5 全部 ✅；唯一未做的可选项在 0.2）
 - 触发问题：希望 agent 能像 ZCode 那样驱动「工具箱·浏览器」这个面板——自己开页、
   读内容、点击输入、必要时截图看一眼；同时人还能在同一个页面上操作，并且能挂开发者工具。
 - 参考实现：`/home/honor/Desktop/project/ZCode`（Electron `<webview>` + CDP；详见第 1 节）
@@ -82,7 +82,26 @@
 - 测试：后端 +16（WS 会话 16 个用例、manager 新动词 7 个）、前端 +28（通道 4 / store 1 /
   面板 CDP 5 等），客户端四件套（typecheck / 755→760 unit / 322 integration / dpdm）全绿。
 
-**待做**：P4 收尾（空闲回收、HITL 口径）、P5 文档 + 全量门禁。开关：
+**P4 / P5 已实施（2026-10-09）**
+
+- **空闲回收**：`BrowserManager._idle_sweep_loop` 每 `idle_sweep_interval_s`（默认 60s）扫一次，
+  关闭超过 `idle_timeout_s`（默认 30 分钟）未被使用的页面——**但绝不回收有面板订阅者
+  （framers）的页面**（有人在看不算"没人用"）；`idle_timeout_s=0` 关闭该功能；sweep 任务随
+  `shutdown()` 一起收。
+- **HITL 口径（定案）**：浏览器动作**不设审批门**——面板就是"人在同一页面上"的窗口，每个动作
+  实时可见（ZCode 同款）。`browser_evaluate` 由 `SHERRY_BROWSER_ALLOW_EVALUATE` 单独把关
+  （默认关）；实践中触发审批的是 `terminal`/技能那条外部路径，与本功能无关。
+- **开关入面板**：「环境配置」新增 `SHERRY_BROWSER` 组（`SERVER_HTTP["env_group_prefixes"]`
+  += 该前缀）；`GET /env` 给每组标了 `kind`（`model`/`plain`），面板按 kind 渲染——模型组用
+  档案管理器，其余是纯键值卡片，所以浏览器开关是一张干净的卡片而不是"假模型组"。
+- **本机默认改无头**：`.env` 加了 `SHERRY_BROWSER_HEADLESS=1`。有 DISPLAY 就有头是本功能的
+  默认策略（真桌面用户可接管窗口），但本机的 :99 是 Xvfb（`-fbdir`），有头只会凭空多出
+  Chrome 窗口——面板/调试器/截图全部走 CDP，无头没有任何损失。
+- **文档**：AGENTS.md 新增「Agent-Controllable Browser」一节（服务/路由/工具/面板/边界）；
+  四语 client README 的 `BrowserPanel.vue` 条目补上 CDP 模式；本节记录 HITL 与开关口径。
+
+**唯一未做的可选项**：`browser_evaluate` 的「多步脚本」形态（把 evaluate 从单表达式扩成
+一段脚本，仍留在进程内、仍由开关把守）——需要时再评估。开关：
 `SHERRY_BROWSER_AGENT_ENABLED=1`（+ 可选 `SHERRY_BROWSER_ALLOW_EVALUATE=1`、`SHERRY_BROWSER_HEADLESS`），
 `.env` 里加行后重启后端生效；目前不在「环境配置」面板的可编辑键表里（P5 决定是否加入）。
 
@@ -402,7 +421,7 @@ lambda（当前 `[python_repl, read_file, write_file]`），工具形态给后�
   `nav` / `event`），与现有 `push_channel` 同层但独立，避免污染会话消息流。
 - *验收*：C5；人在面板里点击与 agent 操作互不冲突；断线重连后画面恢复。
 
-### P4 与现有架构的接线
+### P4 与现有架构的接线（已实施，见 0.1/0.2）
 
 - `runtime/hooks.py`：新增 `set_browser_manager()` / `get_browser_page(session_id)`，
   agent 侧不 import `server/**`（import-linter 契约不变）。
@@ -413,7 +432,7 @@ lambda（当前 `[python_repl, read_file, write_file]`），工具形态给后�
   自己在网页上点"，ZCode 也不设门。建议：读操作免审批；`browser_evaluate` 默认关；
   其余动作记 `evidence ledger` 一行，便于事后追溯。
 
-### P5 测试与文档
+### P5 测试与文档（已实施，见 0.1/0.2）
 
 - 单测：CDP 客户端（假 WS 服务器回放 `Target.getTargets` 等）、`PageSession` 生命周期、
   快照序列化（上限与截断）、工具参数校验。

@@ -1,5 +1,7 @@
 <template>
-  <div class="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800">
+  <div
+    class="flex flex-col gap-3 rounded-lg border border-gray-100 p-3 dark:border-gray-800"
+    :data-test="`model-profile-${group}`">
     <!-- Group header doubles as the collapse toggle; panels start collapsed
          so a long model list does not push the other groups off screen. -->
     <button

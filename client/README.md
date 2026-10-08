@@ -142,7 +142,7 @@ client/
 │   │           ├── GitGraphPanel.vue          # Left-sidebar git graph (GET /git/graph, commit lanes drawn as SVG; the header branch label switches branches, the row menu resets/checks out, a row click lists the commit's files)
 │   │           ├── GitDiffPanel.vue          # Right-sidebar commit diff (two columns, red = removed / green = added; an added or deleted file is one column)
 │   │           ├── ContextViewerPanel.vue    # Right-sidebar agent context (GET /context/inspect: system prompt / tool definitions / live message list, refreshed while open)
-│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools)
+│   │           ├── BrowserPanel.vue          # Toolbox browser: an address bar over an embedded page (per-session history, back/forward/reload; free size renders a resizable device frame — ZCode's bounds — and 打开调试工具 opens the page in a real window, since an iframe cannot host devtools). With the agent browser feature on it switches to CDP mode: the backend hosts a headless Chromium, the panel draws its screencast frames and forwards pointer/keyboard/wheel events (address bar and nav buttons ride /browser/ws; 打开调试工具 opens the real inspector as a page the panel can watch)
 │   │           ├── TerminalPanel.vue         # Toolbox terminal: commands the OPERATOR types, run in the session's project directory
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)

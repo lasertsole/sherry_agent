@@ -768,3 +768,56 @@ def test_send_input_wheel_forces_the_wheel_type_and_text_inserts(rig):
         c["method"] == "Input.insertText" and c["params"]["text"] == "hello"
         for c in transport.calls
     )
+
+
+# --------------------------------------------------------------- idle reclaim
+
+
+def test_sweep_closes_only_the_idle_unwatched_pages(rig):
+    manager, _t, browser, _l = rig
+    manager.config["idle_timeout_s"] = 60.0
+
+    async def scenario():
+        old = await manager.open_page("s1", "about:blank")
+        watched = await manager.open_page("s2", "about:blank")
+        fresh = await manager.open_page("s3", "about:blank")
+        # A watcher (the panel) keeps a page alive no matter how old it is.
+        manager.subscribe_frames(watched, lambda page, params: None)
+        now = __import__("time").monotonic()
+        old.last_used = now - 3600
+        watched.last_used = now - 3600
+        return await manager.sweep_idle_pages(), old, watched, fresh
+
+    closed, old, watched, fresh = _run(scenario())
+
+    assert closed == [old.page_id]
+    with pytest.raises(KeyError):
+        manager.page_for("s1")
+    assert manager.page_for("s2", watched.page_id).page_id == watched.page_id
+    assert manager.page_for("s3", fresh.page_id).page_id == fresh.page_id
+
+
+def test_sweep_is_disabled_by_a_zero_timeout(rig):
+    manager, _t, _b, _l = rig
+    manager.config["idle_timeout_s"] = 0.0
+
+    async def scenario():
+        page = await manager.open_page("s1", "about:blank")
+        page.last_used = 0.0
+        return await manager.sweep_idle_pages(), page
+
+    closed, page = _run(scenario())
+
+    assert closed == []
+    assert manager.page_for("s1").page_id == page.page_id
+
+
+def test_shutdown_stops_the_sweeper(rig):
+    manager, _t, _b, _l = rig
+
+    async def scenario():
+        await manager.ensure_started()
+        await manager.shutdown()
+        return manager._sweeper
+
+    assert _run(scenario()) is None

@@ -115,9 +115,10 @@
                 v-for="group in envGroups"
                 :key="group.name">
                 <!-- Model groups: profile manager (list + parameters + save/apply);
-                       the catch-all "other" group (non-model keys) stays a plain key/value card. -->
+                       everything else (the catch-all "other", the browser feature's
+                       switches) stays a plain key/value card. -->
                 <LlmModelManager
-                  v-if="group.name !== 'other'"
+                  v-if="group.kind !== 'plain' && group.name !== 'other'"
                   :group="group.name"
                   :keys="group.entries.map(e => e.key)"
                   :values="groupValues[group.name] ?? {}"
@@ -125,7 +126,8 @@
                   @apply="payload => applyModelProfile(group.name, payload)" />
                 <div
                   v-else
-                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+                  :data-test="`env-group-${group.name}`">
                   <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
                     {{ group.name }}
                   </p>

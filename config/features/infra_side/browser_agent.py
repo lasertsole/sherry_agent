@@ -45,6 +45,10 @@ class BrowserAgentConfig(TypedDict):
     user_data_dir: str
     #: Ceiling on live pages; the least-recently-used page beyond it is closed.
     max_pages: int
+    #: Seconds a page may sit unused before the sweep closes it (0 = never).
+    idle_timeout_s: float
+    #: Seconds between idle sweeps.
+    idle_sweep_interval_s: float
     #: Seconds allowed for the browser to publish its debug port.
     launch_timeout_s: float
     #: Seconds a navigation may take before it is reported as unfinished.
@@ -90,6 +94,8 @@ def _build_browser_agent(env: Mapping[str, str] | None = None) -> BrowserAgentCo
         ),
         "user_data_dir": str(SRC_DIR / "data" / "browser-profile"),
         "max_pages": 8,
+        "idle_timeout_s": 1800.0,
+        "idle_sweep_interval_s": 60.0,
         "launch_timeout_s": 20.0,
         "nav_timeout_s": 15.0,
         "op_timeout_s": 8.0,

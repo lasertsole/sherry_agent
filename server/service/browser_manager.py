@@ -23,6 +23,7 @@ Design points that the plan's invariants pin:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import base64
 import json
 import os
@@ -243,6 +244,7 @@ class BrowserManager:
         self._start_lock = asyncio.Lock()
         self._pages: dict[str, BrowserPage] = {}
         self._counter = 0
+        self._sweeper: asyncio.Task | None = None
 
     # ---------------------------------------------------------------- lifecycle
 
@@ -287,10 +289,17 @@ class BrowserManager:
             transport.add_listener(self._on_event)
             self._transport = transport
             self._pid = launched.pid
+            if self._sweeper is None or self._sweeper.done():
+                self._sweeper = asyncio.create_task(self._idle_sweep_loop())
             self._port = launched.port
 
     async def shutdown(self) -> None:
         """Close every page, the browser and the transport (idempotent)."""
+        if self._sweeper is not None:
+            self._sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._sweeper
+            self._sweeper = None
         transport = self._transport
         self._transport = None
         self._pid = None
@@ -303,6 +312,41 @@ class BrowserManager:
         except Exception:  # noqa: BLE001 - a dead browser is already the goal
             logger.debug("Browser.close failed during shutdown (already gone?)")
         await transport.close()
+
+    async def _idle_sweep_loop(self) -> None:
+        """Close pages nobody used (or watched) for ``idle_timeout_s``.
+
+        A watched page is never swept: someone has the panel open on it, and
+        reading is not "using" it in the ``last_used`` sense.
+        """
+        while True:
+            await asyncio.sleep(max(5.0, float(self.config["idle_sweep_interval_s"])))
+            try:
+                await self.sweep_idle_pages()
+            except Exception:  # noqa: BLE001 - a failed sweep must not kill the loop
+                logger.opt(exception=True).warning("browser idle sweep failed")
+
+    async def sweep_idle_pages(self) -> list[str]:
+        """Close the idle, unwatched pages; returns the ids that were closed."""
+        timeout = float(self.config["idle_timeout_s"])
+        if timeout <= 0:
+            return []
+        now = time.monotonic()
+        stale = [
+            page
+            for page in list(self._pages.values())
+            if not page.framers and now - page.last_used > timeout
+        ]
+        closed: list[str] = []
+        for page in stale:
+            try:
+                await self.close_page(page.session_id, page.page_id)
+                closed.append(page.page_id)
+            except KeyError:
+                continue
+        if closed:
+            logger.info("Browser idle sweep closed {}", closed)
+        return closed
 
     # -------------------------------------------------------------------- pages
 
