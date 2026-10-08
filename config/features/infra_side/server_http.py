@@ -97,7 +97,6 @@ SERVER_HTTP: ServerHttpConfig = {
     # the chat model first, then the auxiliary model it delegates simple work to,
     # then the reasoner.
     "env_group_prefixes": (
-        "SHERRY_BROWSER_",
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
         "REASONER_LLM_",
@@ -107,6 +106,8 @@ SERVER_HTTP: ServerHttpConfig = {
         "RERANKER_",
         "EMBEDDING_",
         "STT_",
+        # Feature switches render last, just before the catch-all "other".
+        "SHERRY_BROWSER_",
     ),
     #: Groups rendered with the model-profile manager (provider / model /
     #: api_key / profile rows). Everything else in ``env_group_prefixes`` is a
