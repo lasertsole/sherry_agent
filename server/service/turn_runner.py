@@ -51,6 +51,7 @@ from server.service.input_queue_service import (
 )
 from server.service.session_settings_service import promote_pending_settings
 from server.service.stream_driver import StreamDriver
+from server.service.stream_diag import public_error_text
 from server.utils.ws_helpers import send_ws_json
 from pub.types.message import MultiModalMessage
 
@@ -404,7 +405,7 @@ async def _execute_single(session_id: str, row: Any) -> None:
             f"TurnRunner: executor '{route}' failed for session {session_id} (row {row.id}): {e}"
         )
         await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
-        await _send_turn_error(session_id, route, str(e))
+        await _send_turn_error(session_id, route, public_error_text(e))
         return
     await queue.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
 

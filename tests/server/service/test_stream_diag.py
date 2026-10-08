@@ -7,6 +7,7 @@ import pytest
 from server.service.stream_diag import (
     STREAM_DIAG_HEADERS,
     flatten_exception_chain,
+    public_error_text,
     reraise_with_diag,
     stream_diag_capture_response,
     stream_diag_init,
@@ -125,3 +126,35 @@ class TestReraiseWithDiag:
         with pytest.raises(_MultiArgError) as info:
             reraise_with_diag(original, "summary")
         assert info.value is original
+
+
+class TestPublicErrorText:
+    """The chat's failure bubble must not carry the triage summary.
+
+    ``reraise_with_diag`` appends ``" | diag: chunks=… http_status=…"`` so the
+    log explains a failure; the client-facing text stops at that marker (a live
+    bubble showed the raw counters).
+    """
+
+    def test_the_diag_summary_is_stripped(self):
+        error = RuntimeError("Stream stalled mid tool-call (todowrite) | diag: chunks=580 bytes=35")
+
+        assert public_error_text(error) == "Stream stalled mid tool-call (todowrite)"
+
+    def test_a_plain_message_passes_through(self):
+        assert public_error_text(RuntimeError("model rejected the request")) == (
+            "model rejected the request"
+        )
+
+    def test_a_rendered_string_is_supported(self):
+        assert public_error_text("boom | diag: http_status=429") == "boom"
+
+    def test_the_original_marker_stays_a_single_source(self):
+        """reraise_with_diag and public_error_text share the marker."""
+        from server.service.stream_diag import DIAG_MARKER
+
+        error = RuntimeError("x")
+        with pytest.raises(RuntimeError) as caught:
+            reraise_with_diag(error, "chunks=1")
+        assert DIAG_MARKER in str(caught.value)
+        assert public_error_text(caught.value) == "x"

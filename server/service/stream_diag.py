@@ -85,14 +85,33 @@ def stream_diag_summary(diag: dict[str, Any], error: BaseException | None = None
     return " ".join(parts)
 
 
+#: Separates the user-facing message from the triage summary in an exception.
+DIAG_MARKER = " | diag: "
+
+
 def reraise_with_diag(exc: Exception, summary: str) -> None:
     """Re-raise ``exc`` with ``summary`` appended; keeps the original type.
 
-    Exceptions whose constructor rejects a single string argument are
-    re-raised untouched so the diagnostic never masks the real error.
+    The summary is for LOGS and triage: ``public_error_text`` strips it back off
+    before anything reaches a user (the chat's failure bubble showed the raw
+    ``chunks=… http_status=…`` line). Exceptions whose constructor rejects a
+    single string argument are re-raised untouched so the diagnostic never masks
+    the real error.
     """
     try:
-        augmented = type(exc)(f"{exc} | diag: {summary}")
+        augmented = type(exc)(f"{exc}{DIAG_MARKER}{summary}")
     except TypeError:
         raise exc from None
     raise augmented from exc
+
+
+def public_error_text(error: BaseException | str) -> str:
+    """The client-facing part of an error message — the diag stays in the logs.
+
+    :param error: The exception (or an already-rendered message).
+    :returns: The message up to :data:`DIAG_MARKER`, or the whole text when no
+        summary was appended.
+    """
+    text = str(error)
+    head, marker, _tail = text.partition(DIAG_MARKER)
+    return head if marker else text

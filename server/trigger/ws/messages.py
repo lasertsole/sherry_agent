@@ -11,6 +11,7 @@ from server.service import get_pending_interrupt, resume_agent
 from server.service import input_queue_service as iqs
 from server.service import turn_runner
 from server.service.stream_driver import StreamDriver
+from server.service.stream_diag import public_error_text
 from server.service.stream_dispatch import _clear_pending_args
 from server.utils.ws_helpers import send_ws_json
 from server.trigger import auth
@@ -377,7 +378,11 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                 # (chunk/done/error). Best-effort: _send_ws swallows send failures.
                 await _send_ws(
                     websocket,
-                    {"event": "error", "session_id": session_id, "content": str(e)},
+                    {
+                        "event": "error",
+                        "session_id": session_id,
+                        "content": public_error_text(e),
+                    },
                 )
     except (WebSocketDisconnect, ConnectionResetError) as e:
         logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
