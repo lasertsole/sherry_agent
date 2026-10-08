@@ -61,6 +61,14 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **溢出（提供商错误）** | T4/T5 强制恢复 | 每个 compact 步骤一次调用 | 先裁剪 → 再压缩 + 预算截断，最多重试 3 次 |
 | **媒体卸载（压缩）** | `offload_inline_media` | 无 | 被摘要前缀中的内联媒体 → 落盘副本 + `[evicted to: …]` 指针；保留窗口不动 |
 
+
+**浏览器页面遵循同一条规则。** agent 可控浏览器
+（`config/features/infra_side/browser_agent.py`）向本管线贡献的东西只有一件：`browser_*`
+工具返回的文本（以及截图路径）。页面本身——它的 DOM、像素、screencast 帧——从不进入消息
+存储：帧走 `/browser/ws` 直接给面板，快照在成为工具结果之前就被管理器按上限截断（元素 /
+文本），截图只是一个文件路径，由模型通过 `image_to_text` 链去看。页面显示的任何内容都只能
+经由"模型自己要求的工具结果"影响 agent。
+
 ## 🗂️ 信息来源
 
 进入图 state 或 MesMemory 的一切信息都来自下列来源之一。`origin` 列正在升级为全量来源标记：`NULL` 是标记之前写入的存量用户消息（读侧视同 `user`），携带 `internal=True` 的消息**不是用户请求** —— 摘要的 Unresolved 清单只收用户亲发消息（正向识别）。非消息来源（驱逐文件、计划知识）也一并列出：它们永远不会成为 `messages` 行，但同样是可注入的上下文。标注 `planned` / `reserved` 的行尚未实现。

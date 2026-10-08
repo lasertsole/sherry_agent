@@ -61,6 +61,15 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **오버플로(프로바이더 오류)** | T4/T5 강제 복구 | compact 단계마다 1회 | 클립 → 압축 + 예산 트렁케이션, 최대 3회 재시도 |
 | **미디어 오프로드(압축)** | `offload_inline_media` | 없음 | 요약될 프리픽스의 인라인 미디어 → 디스크 사본 + `[evicted to: …]` 포인터; 보존 윈도우 불변 |
 
+
+**브라우저 페이지도 같은 규칙을 따릅니다.** 에이전트 제어 브라우저
+(`config/features/infra_side/browser_agent.py`)가 이 파이프라인에 기여하는 것은 단 하나,
+`browser_*` 도구가 돌려주는 텍스트(그리고 스크린샷 경로)뿐입니다. 페이지 자체——DOM, 픽셀,
+screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 프레임은 `/browser/ws`로 패널에
+직행하고, 스냅샷은 도구 결과가 되기 전에 관리자가 상한(요소 / 텍스트)으로 잘라내며,
+스크린샷은 파일 경로일 뿐이고 모델은 `image_to_text` 체인으로 봅니다. 페이지가 표시하는
+무엇이든 에이전트에 영향을 줄 수 있는 경로는 모델이 스스로 요청한 도구 결과뿐입니다.
+
 ## 🗂️ 정보 출처
 
 그래프 state나 MesMemory에 도달하는 모든 정보는 아래 출처 중 하나로 들어온다. `origin` 열은 전량 출처 마커로 승격 중이다: `NULL`은 태깅 이전에 기록된 기존 사용자 메시지(읽기 측에서 `user`로 취급), `internal=True`를 가진 메시지는 **사용자 요청이 아니다** —— 요약의 Unresolved 목록은 사용자가 직접 보낸 메시지만 받는다(긍정 식별 / positive identification). 비메시지 출처(축출 파일, 계획 지식)도 함께 기재한다: `messages` 행이 되지는 않지만 주입 가능한 컨텍스트다. `planned` / `reserved`로 표시된 행은 아직 구현되지 않았다.
