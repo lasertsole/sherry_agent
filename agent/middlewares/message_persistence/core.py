@@ -41,6 +41,7 @@ from typing import Any, override
 
 from langchain.agents.middleware import AgentMiddleware, AgentState
 from langchain_core.messages import BaseMessage, ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.runtime import Runtime
 from langgraph.types import Command
@@ -246,6 +247,51 @@ class MessagePersistenceMiddleware(AgentMiddleware):
         await self._persist_async(session_id, state.get("messages") or [], "model boundary")
 
     @override
+    @staticmethod
+    def _tool_error_message(request: ToolCallRequest, error: Exception) -> ToolMessage:
+        """Turn a raising tool into a readable error result.
+
+        langgraph's default tool-error handler only converts its OWN
+        ``ToolInvocationError``; anything a tool raises itself is re-raised and
+        aborts the whole run (measured live: an empty ``todowrite`` payload killed
+        two consecutive turns). One boundary here gives the model the message it
+        needs to correct the call — the turn keeps going.
+        """
+        call = request.tool_call or {}
+        name = str(call.get("name") or getattr(request.tool, "name", "tool"))
+        return ToolMessage(
+            content=f"Error: {error}",
+            name=name,
+            tool_call_id=str(call.get("id") or ""),
+            status="error",
+        )
+
+    def _call_sync(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
+    ) -> ToolMessage | Command[Any]:
+        try:
+            return handler(request)
+        except GraphInterrupt:
+            raise
+        except Exception as error:  # noqa: BLE001 - see _tool_error_message
+            logger.warning("Tool {} raised: {}", (request.tool_call or {}).get("name"), error)
+            return self._tool_error_message(request, error)
+
+    async def _call_async(
+        self,
+        request: ToolCallRequest,
+        handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
+    ) -> ToolMessage | Command[Any]:
+        try:
+            return await handler(request)
+        except GraphInterrupt:
+            raise
+        except Exception as error:  # noqa: BLE001 - see _tool_error_message
+            logger.warning("Tool {} raised: {}", (request.tool_call or {}).get("name"), error)
+            return self._tool_error_message(request, error)
+
     def wrap_tool_call(
         self,
         request: ToolCallRequest,
@@ -253,7 +299,7 @@ class MessagePersistenceMiddleware(AgentMiddleware):
     ) -> ToolMessage | Command[Any]:
         """Run the tool, flush its ToolMessages, return the response untouched."""
         started = time.monotonic()
-        response = handler(request)
+        response = self._call_sync(request, handler)
         _stamp_tool_duration(response, started)
         session_id = self._resolve_session_id(request.state)
         if session_id is not None:
@@ -268,7 +314,7 @@ class MessagePersistenceMiddleware(AgentMiddleware):
     ) -> ToolMessage | Command[Any]:
         """Async twin of :meth:`wrap_tool_call`."""
         started = time.monotonic()
-        response = await handler(request)
+        response = await self._call_async(request, handler)
         _stamp_tool_duration(response, started)
         session_id = self._resolve_session_id(request.state)
         if session_id is not None:

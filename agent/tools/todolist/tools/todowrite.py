@@ -57,6 +57,22 @@ async def todowrite(
     taskflow_run_task(flow_id, task, depends_on=[...]); the blocked/ready/
     dispatched/done status and unlock-on-resume are owned by TaskFlow.
     """
+    # A model that drafts an empty item must get a TEXT refusal it can fix, not
+    # an exception: anything a tool raises aborts the whole run in this graph
+    # (measured live — two consecutive turns died on an empty todowrite).
+    items = list(todos or [])
+    problems = [
+        f"item #{index} needs a non-empty 'content' string"
+        for index, item in enumerate(items)
+        if not isinstance(item, dict) or not str(item.get("content") or "").strip()
+    ]
+    if problems:
+        return (
+            "todowrite refused: "
+            + "; ".join(problems)
+            + ". Pass the COMPLETE list again, every item as "
+            '{"content": "...", "status": "pending|in_progress|completed|cancelled", ...}.'
+        )
     result = await service.TodoService.update_todos(session_id, todos, plan_ref=plan_ref)
     output = json.dumps(result, ensure_ascii=False, indent=2)
     if session_id not in _reminded_sessions:

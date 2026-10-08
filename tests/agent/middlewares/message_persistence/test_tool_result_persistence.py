@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+from langgraph.errors import GraphInterrupt
 from langgraph.prebuilt.tool_node import ToolCallRequest
 from langgraph.types import Command
 
@@ -444,3 +445,69 @@ class TestNoDuplicatesAcrossRestarts:
         assert _watermark_count(sid) == 12
         for index in range(3):
             assert _tool_row_count(sid, f"c{index}") == 1
+
+
+class TestToolErrorBoundary:
+    """A tool that raises becomes a readable error result, never a dead turn.
+
+    langgraph's default handler converts only its own ``ToolInvocationError``;
+    anything a tool raises itself is re-raised and aborts the run (measured
+    live: an empty ``todowrite`` payload killed two consecutive turns). The
+    persistence wrapper — the layer every tool call already passes through —
+    now catches that class of failure and hands the model the message.
+    """
+
+    def _raising_sync(self):
+        def handler(_request: ToolCallRequest) -> Any:
+            raise ValueError("todo content must be a non-empty string")
+
+        return handler
+
+    def _raising_async(self):
+        async def handler(_request: ToolCallRequest) -> Any:
+            raise ValueError("todo content must be a non-empty string")
+
+        return handler
+
+    def test_a_raising_tool_returns_an_error_message_sync(self, isolated_db, sid):
+        middleware = MessagePersistenceMiddleware()
+        response = middleware.wrap_tool_call(_tool_request(sid), self._raising_sync())
+
+        assert isinstance(response, ToolMessage)
+        assert response.status == "error"
+        assert "todo content must be a non-empty string" in str(response.content)
+        assert response.tool_call_id == "c1"
+        assert response.name == "terminal"
+        # The boundary persists what the model will see.
+        assert _tool_row_count(sid, "c1") == 1
+
+    @pytest.mark.asyncio
+    async def test_a_raising_tool_returns_an_error_message_async(self, isolated_db, sid):
+        middleware = MessagePersistenceMiddleware()
+        response = await middleware.awrap_tool_call(_tool_request(sid), self._raising_async())
+
+        assert isinstance(response, ToolMessage)
+        assert response.status == "error"
+        assert "must be a non-empty string" in str(response.content)
+        assert _tool_row_count(sid, "c1") == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sync", [True, False], ids=["sync", "async"])
+    async def test_a_graph_interrupt_is_never_swallowed(self, isolated_db, sid, sync):
+        """HITL approvals suspend through GraphInterrupt — the boundary must re-raise."""
+        middleware = MessagePersistenceMiddleware()
+
+        if sync:
+
+            def handler(_request: ToolCallRequest) -> Any:
+                raise GraphInterrupt()
+
+            with pytest.raises(GraphInterrupt):
+                middleware.wrap_tool_call(_tool_request(sid), handler)
+        else:
+
+            async def handler(_request: ToolCallRequest) -> Any:
+                raise GraphInterrupt()
+
+            with pytest.raises(GraphInterrupt):
+                await middleware.awrap_tool_call(_tool_request(sid), handler)
