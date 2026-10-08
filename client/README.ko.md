@@ -1,0 +1,478 @@
+# client
+
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
+
+## 개요
+
+`client`는 EMA AI Agent의 프런트엔드입니다. [server/](../server/)의 Python 백엔드(Robyn, 기본 `http://127.0.0.1:8080`)와 통신하는 **스트리밍 SPA 채팅 클라이언트**입니다.
+
+**Tauri 2 + Nuxt 4(Vue 3 + TypeScript)**로 구축되었습니다:
+
+- **스트리밍 채팅** — 에이전트 응답이 WebSocket(`/sessions/agent/ws`)을 통해 타입이 지정된 청크(`text` / `reasoning` / `tool_start` / `tool_end` / `tool_result`)로 스트리밍되며, HITL(human-in-the-loop) 승인 카드를 지원합니다
+- **오프라인 우선 히스토리** — Dexie.js(IndexedDB)가 대화 히스토리, 서브에이전트 실행 기록, 캐릭터 프로필, 채팅 배경 이미지를 캐시합니다. 히스토리 요청은 캐시 우선이며 누락된 턴만 가져옵니다
+- **풍부한 도구 UI** — 스킬 매니저, cron 작업, 하트비트 편집기, 채널 설정, 로그 뷰어(서버 + 클라이언트 로그), 통계 차트, 서브에이전트 플로우 그래프, 지식 그래프 뷰어
+- **다크/라이트 모드 + i18n** — `@nuxtjs/color-mode` 테마와 4개 로케일(`zh` / `en` / `ja` / `ko`)
+- **듀얼 모드 브리지** — `bridge.ts`가 Tauri 데스크톱과 일반 브라우저를 자동 감지하여 적절한 전송 방식을 선택합니다
+
+> **개발 상태**: 활발히 개발 중입니다. 브라우저 코드 경로(Python 백엔드로의 직접 HTTP/WS)는 완전히 구현되어 있습니다. `src-tauri/`의 Rust 측은 현재 플레이스홀더 모듈만 포함합니다([아키텍처](#아키텍처) 참조).
+
+---
+
+## 아키텍처
+
+### 하이브리드 아키텍처
+
+```text
++--------------------------------------------------------------+
+|                프런트엔드(Nuxt 4 SPA, app/)                   |
+|  Vue 3 컴포넌트 + composables + Pinia + mitt 이벤트 버스       |
++---------------------------+----------------------------------+
+                            |  bridge.ts(런타임 자동 감지)
+              +-------------+--------------+
+              |                            |
+   [브라우저 모드]                [Tauri 모드]
+   ofetch HTTP REST +            invoke() IPC 커맨드
+   네이티브 WebSocket             + Tauri Events(agent:stream:*)
+              |                            |
+              |                 src-tauri/(Rust 셸, 현재는
+              |                 플레이스홀더 모듈만 존재)
+              |                            |
+              +-------------+--------------+
+                            |
+              HTTP / WS  http://localhost:8080
+              (VITE_API_BACK_URL, 개발 프록시 없음)
+                            |
++---------------------------v----------------------------------+
+|              Python 백엔드(server/, Robyn)                    |
+|  REST 엔드포인트 + WebSocket 엔드포인트                        |
+|  Agent Core (LangGraph) | Memory | Skills | Cron | Channels  |
++--------------------------------------------------------------+
+```
+
+### 데이터 흐름
+
+```text
+사용자 상호작용(Vue 컴포넌트)
+    -> bridge.ts(Tauri / 브라우저 모드 자동 감지)
+        |
+        |--> [브라우저 모드] fetchApi() REST + WebSocket /sessions/agent/ws
+        |        (Base64 미디어는 먼저 POST /images|/audio|/video/upload로 업로드)
+        |
+        |--> [Tauri 모드] invoke() -> Rust IPC 커맨드 -> Tauri Events
+        |
+    -> 반응형 상태(composables + Pinia + mitt 이벤트 버스)
+    -> 반응형 UI 업데이트
+```
+
+**Tauri 모드 참고 사항**: `bridge.ts`에는 Tauri IPC 코드 경로(`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`)가 `app/types/backend/*`(ts-rs 생성)와 대응되어 그대로 남아 있습니다. 그러나 `src-tauri/src/`는 현재 **빈 플레이스홀더 모듈만** 포함하며(`config/`, `core/`, `database/`, `prompts/`, `rag/`, `runtime/`, `sessions/`, `skills/`, `tools/`, `types/` — 각각 빈 `mod.rs`), Rust 엔트리 포인트와 IPC 커맨드 구현은 현재 코드 트리에 존재하지 않습니다. 또한 일부 흐름(하트비트, cron, 스킬, 채널, curator, 로그, `/env`, 서브에이전트 스티어)은 Rust를 완전히 우회하며 두 모드 모두에서 항상 `fetchApi`를 거칩니다.
+
+---
+
+## 디렉터리 구조
+
+```text
+client/
+├── .env.example                   # 환경변수 템플릿(VITE_APP_NAME, VITE_API_BACK_URL)
+├── eslint.config.mjs              # ESLint flat 설정
+├── nuxt.config.ts                 # Nuxt 4 설정(SPA, Tailwind v4, i18n, PrimeVue, Pinia, color-mode)
+├── package.json                   # 의존성 매니페스트(스크립트: dev/build/generate/preview/typecheck/test/...)
+├── playwright.config.ts           # Playwright repro 설정(./repros, Desktop Edge, localhost:3000)
+├── pnpm-lock.yaml                 # pnpm 락파일
+├── pnpm-workspace.yaml            # pnpm 워크스페이스 설정(allowBuilds)
+├── prettier.config.mjs            # Prettier 설정
+├── tsconfig.json                  # TypeScript 설정
+├── vitest.config.ts               # Vitest 단위 테스트 설정(composables, happy-dom, v8 커버리지)
+├── vitest.integration.config.ts   # Vitest 통합 테스트 설정(실제 .vue SFC, 목 백엔드)
+├── app/                           # Nuxt 4 SPA 소스
+│   ├── app.vue                    # 루트 컴포넌트 — 레이아웃, Toast 레이어, 연결 배너, 로케일 복원
+│   ├── common.scss                # 300줄 이상의 전역 SCSS 믹스인 라이브러리(레이아웃, 형태, 스크롤바, ...)
+│   ├── assets/css/
+│   │   ├── main.css               # Tailwind v4 엔트리(@import 'tailwindcss') + @theme 토큰 + 리셋
+│   │   └── main.scss              # 전역 SCSS 엔트리(nuxt.config css에서 로드)
+│   ├── common/utils.ts            # 공유 유틸리티(dayjs 설정, formatCompactTimeString, ...)
+│   ├── components/
+│   │   ├── chat/inputBox.vue      # 채팅 입력 박스 컴포넌트(i18n 지원)
+│   │   └── ImagePreviewOverlay.vue# 전체 화면 이미지 미리보기 오버레이(body로 Teleport)
+│   ├── composables/               # Vue 3 컴포저블 로직(단위 테스트는 __tests__/ 아래)
+│   │   ├── bridge.ts              # 통합 Tauri/Browser 브리지 — 채팅 스트리밍, 세션, 시스템 프롬프트,
+│   │   │                          #   메모리, 하트비트, cron, 스킬, 채널, curator, 로그, env
+│   │   ├── requestApi.ts          # fetchApi HTTP 래퍼(ofetch, baseURL은 VITE_API_BACK_URL)
+│   │   ├── ws.ts                  # WebSocket 싱글턴: /sessions/ws + /subagents/ws(5초 자동 재연결)
+│   │   ├── db.ts                  # Dexie(IndexedDB) 캐시: 메시지, 캐릭터 프로필, 배경, 실행 기록
+│   │   ├── messages.ts            # 히스토리 API(캐시 우선 /get_history_by_turn_page) + 스트림 중단 이벤트
+│   │   ├── toast.ts               # 전역 Toast 레이어(PrimeVue Toast 등록)
+│   │   ├── clientLog.ts           # 클라이언트 console.* 캡처를 Dexie에 영속화(all/log/error)
+│   │   ├── env.ts                 # 백엔드 .env 읽기/쓰기(GET/PUT /env)
+│   │   ├── workspace.ts           # 시스템 프롬프트 핸들러(/system_prompt GET/POST/PATCH)
+│   │   ├── defaultCharacter.ts    # 내장 기본 캐릭터(이름 + /avatar/*.jpg 및 default.svg 자리 표시자)
+│   │   ├── sessionFilter.ts       # 클라이언트 측 세션 목록 필터(키워드 + 날짜 범위)
+│   │   ├── useImagePreview.ts     # 이미지 미리보기 오버레이 상태
+│   │   ├── useSubagentTasks.ts    # 백그라운드 작업 파사드(Pinia 스토어 + fetch/WS/Dexie 동기화)
+│   │   ├── utils.ts               # max/min + 날짜/시간 유틸리티
+│   │   ├── mitt.ts                # mitt 이벤트 버스 인스턴스
+│   │   ├── ws-ticket.ts           # WebSocket 일회용 티켓 미리 받기(지연 import로 소켓 계층에서 인증 브리지를 분리)
+│   │   ├── use-auth-refresh.ts    # 세션 선제 갱신(HttpOnly 액세스 쿠키를 만료 전에 교체)
+│   │   └── system.ts              # (빈 플레이스홀더)
+│   ├── declare/declarations.d.ts  # 타입 선언
+│   ├── i18n/locales/              # en.json / ja.json / ko.json / zh.json
+│   ├── layouts/default.vue        # 기본 레이아웃 — 풀뷰 래퍼
+│   ├── pages/
+│   │   ├── index.vue              # ChatInputBox 렌더링(루트 / 는 routeRules에 의해 /home으로 301 리다이렉트)
+│   │   ├── login/index.vue        # 로그인 페이지(사용자 이름 + 비밀번호, 게이트가 요구할 때만 표시)
+│   │   └── home/
+│   │       ├── index.vue          # 메인 채팅 셸 — SessionSidebar + 툴바 + 중첩 NuxtPage
+│   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
+│   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
+│   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
+│   │       └── components/        # 43 개의 페이지 컴포넌트:
+│   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
+│   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
+│   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
+│   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
+│   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
+│   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(환경 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
+│   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
+│   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 방패 트리거(변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
+│   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
+│   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령(팝오버 행은 페이지에 이동을 맡긴다: 실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
+│   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
+│   │           ├── ProjectDirectoryPicker.vue # 브라우저 빌드용 내장 폴더 선택기(GET /system/dirs, 데스크톱 빌드는 OS 대화상자)
+│   │           ├── SessionSidebar.vue         # 세션 목록 사이드바(생성/이름 변경/필터)
+│   │           ├── HistoryItem.vue            # 사이드바 히스토리 세션 항목
+│   │           ├── ProjectFileTree.vue        # 왼쪽 사이드바의 프로젝트 파일 트리(읽기 전용, GET /project/tree, 레벨 단위 지연 로드)
+│   │           ├── GitGraphPanel.vue          # 왼쪽 사이드바 Git Graph(GET /git/graph, 커밋 레인을 SVG로 그림; 헤더의 브랜치 이름으로 브랜치 전환, 행 메뉴에서 되돌리기 / 체크아웃, 행 클릭 시 커밋 파일 목록 펼침)
+│   │           ├── GitDiffPanel.vue          # 오른쪽 사이드바 커밋 diff(좌우 2열, 빨강=삭제 / 초록=추가, 추가·삭제된 파일은 1열)
+│   │           ├── ContextViewerPanel.vue    # 오른쪽 사이드바 에이전트 컨텍스트(GET /context/inspect: 시스템 프롬프트 / 도구 정의 / 실시간 메시지 목록, 열려 있는 동안 자동 갱신)
+│   │           ├── BrowserPanel.vue          # 도구 상자 브라우저: 주소창 + 임베드 페이지(세션별 기록, 뒤로 / 앞으로 / 새로 고침; 자유 크기는 크기 조절 가능한 가상 기기 프레임을 렌더링하며 경계는 ZCode와 동일, 개발자 도구는 새 창에서 엽니다 — iframe은 개발자 도구를 내장할 수 없습니다)
+│   │           ├── TerminalPanel.vue         # 도구 상자 터미널: 사용자가 입력한 명령을 세션 프로젝트 디렉터리에서 실행
+│   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
+│   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
+│   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
+│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(.env 편집, 배경, 언어 등)
+│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .env에 쓰지 않음)
+│   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
+│   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
+│   │           ├── SessionPresetButton.vue    # 상단 바 보기 전용 진입점: 현재 세션의 프리셋 탭 열기
+│   │           ├── SessionPresetPanel.vue     # 「현재 세션」탭: 세션 자체의 프리셋(읽기 전용, 에이전트 모델 탭이 첫 번째)
+│   │           ├── NewSessionPresetDialog.vue # 「새 대화」마다 필수인 프리셋 선택 대화상자(적용 후 세션 생성)
+│   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
+│   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
+│   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
+│   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
+│   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
+│   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
+│   │           ├── AccountSettingsPanel.vue   # 계정 탭: 로그인 보호 설정 / 변경 / 해제(현재 비밀번호 필요)
+│   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
+│   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file, 텍스트 + 이미지 미리보기)
+│   │           ├── LogsPanel.vue              # 로그 보기 탭(서버 로그 + 클라이언트 로그, 실시간 스트림)
+│   │           ├── StatsPanel.vue             # 통계 탭(@antv/g2, GChart.vue 경유)
+│   │           ├── KnowledgeGraphPanel.vue    # 지식 그래프 탭(@antv/g6, 문서 업로드)
+│   │           ├── GChart.vue                 # @antv/g2 차트 래퍼
+│   │           ├── SubagentTasksView.vue      # 백그라운드 작업 뷰(플로우 그래프 + 선택한 run 상세), 작업 상세 탭이 호스트
+│   │           ├── SubagentTasksPanel.vue     # 오른쪽 사이드바 탭: 패널 내 SubagentTasksView(세션으로 돌아가기 없음)
+│   │           ├── SubagentRunDetail.vue      # 단일 서브에이전트 실행 상세
+│   │           ├── SubagentFlowGraph.vue      # 서브에이전트 실행 트리 그래프(@antv/g6)
+│   │           └── AvatarCropDialog.vue       # 아바타 업로드 + 크롭(cropperjs)
+│   ├── stores/                    # Pinia 스토어
+│   │   ├── ui.ts               # UI 상태(sidebarCollapsed / todoDockCollapsed를 localStorage에 영속화)
+│   │   ├── subagent.ts         # 백그라운드 작업 상태(실행 / 트리 / 선택) + 파생 뷰
+│   │   ├── todo.ts             # 세션 계획(todo) 목록 + 독 표시 여부
+│   │   ├── right-sidebar.ts    # 오른쪽 사이드바(접힘 / 너비 영속화, 열린 탭 종류)
+│   │   ├── git-diff.ts         # 커밋 diff 대상(파일마다 오른쪽 사이드바 탭 1개, MRU 상한)
+│   │   ├── toolbox.ts          # 도구 상자 상태: 브라우저 주소 기록과 터미널 로그(세션별 보관)
+│   │   ├── thinking.ts         # 세션별 사고 토글 / 레벨(다음 턴부터 적용)
+│   │   ├── session-model.ts    # 세션별 메인 모델 오버라이드(다음 턴부터 적용)
+│   │   ├── context-usage.ts    # 세션별 컨텍스트 계정(윈도 / 보고된 프롬프트 / 구성)
+│   │   ├── running-commands.ts # 세션에서 실행 중인 백그라운드 명령(실행 중 도구 행이며 세션이 생성 중일 때만)
+│   │   ├── access-mode.ts      # 세션별 접근 모드(변경 전 확인 / 자동 편집 / 전체 접근, 백엔드와 동기화)
+│   │   ├── llm-profiles.ts     # 환경 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
+│   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast
+│   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도)
+│   │   ├── project-directory.ts # 세션별 프로젝트 디렉터리(바인딩 / 보류된 선택 / 적용 루트)
+│   │   ├── file-viewer.ts      # 파일 뷰어 탭(연 경로 + 내용 캐시)
+│   │   ├── new-session.ts      # 새 세션 프리셋 선택 대화상자 상태(모든 「새 대화」 진입점)
+│   │   ├── notification.ts     # 알림 목록 + 미읽음 배지(탭을 닫아도 계속 집계)
+│   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 에이전트 모델 / 스킬)을 세션별로 보관; 필수 도구와 필수 스킬은 잠겨 해제 불가, 작업과 계획 / 서브에이전트 두 그룹은 일괄 선택만
+│   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
+│   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
+│   ├── plugins/                   # Nuxt 플러그인
+│   │   ├── auth-guard.ts          # 전역 로그인 가드(내비게이션마다 /auth/status로 판정)
+│   │   ├── client-log.ts          # 브라우저 console.* 캡처를 클라이언트 로그로 저장
+│   │   ├── directives.ts          # v-debounce / v-safe-html 디렉티브 등록
+│   │   └── error-handler.ts       # 전역 에러 핸들러 설치(첫 라우트 마운트 전)
+│   └── types/
+│       ├── message.ts             # BaseMessage / AiMessage / MultiModalMessage, ...
+│       ├── response.d.ts          # API 응답 타입 정의
+│       └── backend/               # ts-rs 생성 백엔드 타입(ChatRequest, HealthStatus, ...)
+├── docs/                          # VitePress 문서 사이트(guide/commands/events/types/zh)
+├── public/                        # 정적 에셋(favicon.svg, robots.txt, avatar/)
+├── repros/                        # Playwright repro 테스트(playwright.config.ts로 실행)
+├── src-tauri/                     # Tauri 2 네이티브 셸
+│   ├── capabilities/default.json  # 권한(core:default, shell:*, notification,
+│   │                              #   global-shortcut:default, window-state:default)
+│   ├── icons/                     # 앱 아이콘
+│   ├── resources/                 # 번들 리소스 플레이스홀더(skills/, templates/)
+│   ├── src/                       # 빈 플레이스홀더 모듈만 존재: config/ core/ database/
+│   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
+│   ├── tests/                     # Rust 테스트 플레이스홀더(빈 mod.rs + .gitkeep 디렉터리)
+│   ├── benches/                   # 벤치마크 플레이스홀더
+│   ├── .env.example               # 백엔드 모델 설정 템플릿(MAIN_LLM_*, TAVILY_API_KEY, ...)
+│   ├── Cargo.toml                 # Rust 매니페스트(tauri 2, reqwest, ts-rs, tracing, 플러그인, ...)
+│   ├── Cargo.lock                 # Rust 락파일
+│   ├── build.rs                   # Tauri 빌드 스크립트
+│   └── tauri.conf.json            # Tauri 2 설정(beforeDev: pnpm dev, beforeBuild: pnpm build)
+└── tests/integration/             # Vitest 통합 테스트(실제 SFC, 목 백엔드)
+```
+
+## 기술 스택
+
+| 계층                      | 기술                                                                                                  | 목적                                                                     |
+| ------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| **크로스 플랫폼 셸**      | [Tauri 2](https://v2.tauri.app/)(`2.0.0-rc.17`, `@tauri-apps/api` ^2.11.1, `@tauri-apps/cli` 2.11.4)  | 네이티브 데스크톱 패키징 + 설정/케이퍼빌리티/아이콘                      |
+| **프런트엔드 프레임워크** | [Nuxt 4](https://nuxt.com/) ^4.5.2 + [Vue 3](https://vuejs.org/) ^3.5.41                              | SPA 모드(`ssr: false`), Composition API + `<script setup lang="ts">`     |
+| **UI 컴포넌트**           | [PrimeVue](https://primevue.org/) ^4.5.0 + PrimeIcons ^8.0.0(`@primevue/nuxt-module`)                 | Dialog, Button, Select, ToggleSwitch, Toast 등                           |
+| **상태 관리**             | [Pinia](https://pinia.vuejs.org/) ^4.0.3(`@pinia/nuxt`) + `pinia-plugin-persistedstate`(localStorage) | 전역 상태(UI, 백그라운드 작업, 계획, 연결성, 채팅 배경)                  |
+| **스타일링**              | [Tailwind CSS](https://tailwindcss.com/) v4(`@tailwindcss/vite` 경유) + SCSS(`sass`)                  | 유틸리티 퍼스트 CSS + `@theme` 토큰 + SCSS 믹스인 라이브러리             |
+| **컬러 모드**             | [@nuxtjs/color-mode](https://color-mode.nuxtjs.org/)                                                  | 다크/라이트 테마 전환(`.dark` 클래스)                                    |
+| **국제화**                | [@nuxtjs/i18n](https://i18n.nuxtjs.org/) 10.6.0                                                       | zh / en / ja / ko, `no_prefix` 전략                                      |
+| **Markdown 렌더링**       | [markdown-it](https://github.com/markdown-it/markdown-it) ^15                                         | 채팅 메시지 markdown → HTML(ChatBox.vue)                                 |
+| **XSS 방어**              | [DOMPurify](https://github.com/cure53/DOMPurify) ^3.4                                                 | 렌더링된 HTML 새니타이즈                                                 |
+| **날짜 포맷**             | [dayjs](https://day.js.org/)                                                                          | 컴팩트 타임스탬프(`YYYYMMDDHHmmss`) 파싱/포맷                            |
+| **오프라인 저장소**       | [Dexie.js](https://dexie.org/) ^4.4.4                                                                 | IndexedDB 래퍼: 메시지, 캐릭터, 배경, 서브에이전트 실행, 클라이언트 로그 |
+| **이벤트 버스**           | [mitt](https://github.com/developit/mitt) ^3                                                          | 경량 컴포넌트 간 통신                                                    |
+| **차트 / 그래프**         | [@antv/g2](https://g2.antv.antgroup.com/) ^5, [@antv/g6](https://g6.antv.antgroup.com/) ^5            | 통계 차트, 서브에이전트 플로우 그래프, 지식 그래프                       |
+| **이미지 크롭**           | [cropperjs](https://github.com/fengyuanchen/cropperjs) ^1.6                                           | 아바타 업로드 및 크롭                                                    |
+| **유틸리티**              | [lodash-es](https://lodash.com/) ^4.18                                                                | 범용 유틸리티 함수                                                       |
+| **단위 / 통합 테스트**    | [Vitest](https://vitest.dev/) ^4 + happy-dom + @vue/test-utils + @vitest/coverage-v8                  | 컴포저블 단위 테스트 + SFC 통합 테스트                                   |
+| **E2E repro**             | [@playwright/test](https://playwright.dev/) ^1.62                                                     | 개발 서버 대상 repro 테스트(Desktop Edge)                                |
+| **Lint / 포맷**           | ESLint ^10(flat config) + Prettier                                                                    | 코드 품질                                                                |
+| **타입 체크**             | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                             | `pnpm typecheck`                                                         |
+| **백엔드 언어**           | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94)                                            | Tauri 셸(src-tauri/, 현재는 플레이스홀더 모듈)                           |
+
+### 주요 설정
+
+- **Nuxt**(`nuxt.config.ts`): `ssr: false`(순수 SPA); `devtools` 비활성화; Vite에 `clearScreen: false`, `envPrefix: ['VITE_', 'TAURI_']`, `server.strictPort: true`(Tauri는 고정 포트 필요); CSS 엔트리 `~/assets/css/main.css` + `~/assets/css/main.scss`; 라우트 규칙 `/` → `/home`으로 301 리다이렉트; `src-tauri/`는 스캔 제외
+- **Tauri**(`tauri.conf.json`): 제품명 "EMA AI Agent", 버전 0.1.0, 식별자 `com.ema-ai.agent`, `beforeDevCommand: pnpm dev`, `beforeBuildCommand: pnpm build`, 개발 URL `http://localhost:3000`, frontendDist `../dist`, CSP `null`, 메인 윈도우 800×600 리사이즈 가능
+- **Tailwind**(v4): `@tailwindcss/vite`로 로드; 엔트리 `app/assets/css/main.css`가 `tailwindcss`와 PrimeIcons 임포트; `@custom-variant dark`는 `.dark` 클래스로 트리거; 커스텀 `@theme` 토큰(브레이크포인트 480/768/976/1440, 색상 `gray-dark`/`gray-light`/`theme-main`, 세리프 폰트 Merriweather, z-index 1–3)
+- **i18n**: 전략 `no_prefix`, `defaultLocale: 'en'`, 로케일 `zh`/`en`/`ja`/`ko`, `detectBrowserLanguage: false`; `app.vue`가 마운트 시 로케일 복원(설정 쿠키 `i18n_redirected` → 브라우저 언어 → 폴백 `en`)
+- **PrimeVue**: Aura 프리셋에서 파생된 커스텀 `NoirPreset`(slate 프라이머리 팔레트); 다크 모드는 `.dark` 셀렉터
+- **Pinia 영속화**: `pinia-plugin-persistedstate`를 전역으로 `storage: 'localStorage'`로 설정
+
+---
+
+## 프런트엔드 아키텍처
+
+### 컴포넌트 계층
+
+```text
+app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
+  └─ NuxtLayout(layouts/default.vue)
+       └─ NuxtPage
+            ├─ /            → /home으로 301 리다이렉트(routeRules)
+            └─ /home(home/index.vue: SessionSidebar + 툴바)
+                 └─ NuxtPage(page-key = route.params.sid, KeepAlive)
+                      └─ /home/{sid}       (index/[sid].vue — 채팅 + HITL 카드)
+```
+
+### 통신 브리지(bridge.ts)
+
+`bridge.ts`는 Tauri 데스크톱과 브라우저 두 모드 모두에서 작동하는 통합 API를 제공합니다. 모든 백엔드 접근은 이것(또는 `requestApi.ts`의 `fetchApi`)을 통해 이루어집니다:
+
+| API                                                                                                | 설명                                                                                           |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `streamChatMessage(request, onChunk, onHitl?, onDone?)`                                            | 스트리밍 에이전트 채팅; `{ controller, promise }` 반환(Tauri Events 또는 `/sessions/agent/ws`) |
+| `sendChatMessage(request, onChunk)`                                                                | `streamChatMessage`의 편의 래퍼                                                                |
+| `stopChatMessage(sessionId)`                                                                       | 진행 중인 생성 중지(`agent_stop` IPC 또는 WS `stop` 프레임)                                    |
+| `resumeHitl(sessionId, decision, ...)`                                                             | 새 WebSocket으로 일시 중지된 HITL 에이전트 재개                                                |
+| `clearSession(sessionId)`                                                                          | 세션 상태 클리어(`session_clear` IPC 또는 `DELETE /sessions`)                                  |
+| `getHistory(sessionId, lastTurnCount)`                                                             | 히스토리 조회(`session_history` IPC 또는 `GET /n_turns_history_messages`)                      |
+| `fetchSubagentRuns` / `fetchSubagentRunSubtree` / `deleteSubagentRunSubtree` / `steerSubagentRun`  | 백그라운드 서브에이전트 작업 관리                                                              |
+| `readSystemPrompt` / `writeSystemPrompt` / `updateSystemPrompt` / `readSystemPromptTemplate`       | 시스템 프롬프트 파일 CRUD                                                                      |
+| `readMemory` / `writeMemory`                                                                       | 장기 메모리 파일(`workspace/memory/*`)                                                         |
+| `readHeartbeat` / `writeHeartbeat`                                                                 | `workspace/HEARTBEAT.md`(항상 직접 HTTP)                                                       |
+| `listCronJobs` / `addCronJob` / `updateCronJob` / `runCronJob` / `enableCronJob` / `deleteCronJob` | cron 작업 관리                                                                                 |
+| `listSkills` / `readSkill` / `uploadSkill` / `setSkillActive` / `deleteSkill` / `pinSkill`         | 스킬 관리                                                                                      |
+| `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 채널 설정                                                                                      |
+| `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 자동 스킬 curator 제어                                                                         |
+| `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 백엔드 로그 읽기 + 실시간 `/logs/ws` 스트림                                                    |
+| `readEnvConfig` / `writeEnvConfig`(`env.ts`)                                                       | 백엔드 `.env` 읽기/업데이트(`GET/PUT /env`)                                                    |
+| `checkHealth()`                                                                                    | 백엔드 도달 가능성(`system_health` IPC 또는 `GET /system_prompt`)                              |
+
+브라우저 모드 채팅 스트리밍 세부 사항:
+
+- `ws(s)://{VITE_API_BACK_URL}/sessions/agent/ws`에 연결하여 `{ session_id, msg_id, origin: "user", multi_modal_message }` 전송 (`origin`은 실제 사용자 입력임을 표시하며, 백엔드가 검증하고 권위 있는 출처를 각인합니다)
+- Base64 미디어는 먼저 `POST /images/upload`, `/audio/upload`, `/video/upload`로 업로드되고 URL로 참조됨
+- 서버 프레임: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; 청크는 `type`(`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`)과 도구 메타데이터를 포함
+- 스트림 중단 시 지수 백오프로 재연결(1s/2s/4s, `WS_RECONNECT_MAX_ATTEMPTS`로 최대 3회); 스트림 중 손실은 `StreamInterruptedError`를 발생시키고 mitt를 통해 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` 이벤트를 발행
+- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송
+
+### WebSocket 싱글턴(ws.ts)
+
+서로 독립적인 2개의 모듈 수준 싱글턴 연결(둘 다 5초 후 자동 재연결):
+
+| 연결              | 엔드포인트                        | mitt로 발행되는 이벤트                                                                                                                          |
+| ----------------- | --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| 세션 푸시         | `/sessions/ws?session_id=default` | `ws:connected`, `ws:notification`, `ws:message`, `ws:disconnected`                                                                              |
+| 서브에이전트 푸시 | `/subagents/ws`                   | `ws:subagents:connected`, `ws:subagents:ready`, `ws:subagent_spawned`, `ws:subagent_ended`, `ws:subagents:message`, `ws:subagents:disconnected` |
+
+둘 다 `VITE_API_BACK_URL`에서 베이스 URL을 해석합니다(`http://` → `ws://`, `https://` → `wss://`).
+
+### 클라이언트가 사용하는 백엔드 엔드포인트
+
+REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
+
+| 엔드포인트                                                                                       | 메서드                   | 용도                                       |
+| ------------------------------------------------------------------------------------------------ | ------------------------ | ------------------------------------------ |
+| `/sessions`                                                                                      | DELETE                   | 세션 클리어                                |
+| `/n_turns_history_messages`                                                                      | GET                      | 최근 N턴 히스토리                          |
+| `/get_history_by_turn_page`                                                                      | GET                      | 페이지네이션된 히스토리(Dexie로 캐시 우선) |
+| `/sessions/agent/ws`                                                                             | WS                       | 채팅 스트리밍, 중지, HITL 재개             |
+| `/sessions/ws`                                                                                   | WS                       | 서버 푸시 알림                             |
+| `/subagents/ws`                                                                                  | WS                       | 서브에이전트 생성/종료 푸시                |
+| `/subagents/runs`                                                                                | GET / DELETE             | 서브에이전트 실행 기록(목록/서브트리/삭제) |
+| `/subagents/steer`                                                                               | POST                     | 서브에이전트 실행 스티어/재개              |
+| `/system_prompt`                                                                                 | GET / POST / PATCH / PUT | 시스템 프롬프트 읽기/쓰기/업데이트         |
+| `/system_prompt/template`                                                                        | GET                      | 페르소나 템플릿 파일                       |
+| `/memory`                                                                                        | GET / PUT                | 장기 메모리 파일                           |
+| `/heartbeat`                                                                                     | GET / PUT                | HEARTBEAT.md                               |
+| `/cron`, `/cron/trigger`, `/cron/enable`                                                         | GET/POST/PUT/DELETE      | cron 작업 CRUD + 트리거                    |
+| `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST                 | 스킬 관리                                  |
+| `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | curator 리뷰 및 설정                       |
+| `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | 채널 토글 및 설정                          |
+| `/env`                                                                                           | GET / PUT                | 백엔드 `.env` 읽기/업데이트                |
+| `/model-config`                                                                                  | GET                      | 모델 설정 및 유효성                        |
+| `/logs/files`, `/logs`                                                                           | GET                      | 로그 파일 목록 및 꼬리 읽기                |
+| `/logs/ws`                                                                                       | WS                       | 실시간 로그 스트림                         |
+| `/images/upload`, `/audio/upload`, `/video/upload`                                               | POST                     | Base64 미디어 업로드 → URL                 |
+| `/media`                                                                                         | GET                      | 저장된 미디어 파일 렌더링                  |
+
+---
+
+## 핵심 모듈 세부 사항
+
+### SCSS 믹스인 라이브러리(`common.scss`)
+
+300줄 이상의 SCSS 믹스인 라이브러리로, 레이아웃·형태·스크롤바·텍스트 오버플로우 유틸리티(`fullViewWindow`, `flexCenter`, `scrollBar`, `wordEllipsis` 등)를 제공하며 페이지, 컴포넌트, 레이아웃 전반에서 사용됩니다.
+
+### 오프라인 캐시(db.ts, Dexie/IndexedDB)
+
+- `CachedMessage` — 백엔드 메시지 테이블 행을 미러링(turn_num, images/audios/videos, tool 필드, 토큰 수); 히스토리 요청은 캐시 우선이며 캐시된 최대 턴보다 새로운 턴만 가져옴
+- `CachedCharacter` — 세션별 아바타/이름 스냅샷(base64 data URL 또는 `public/avatar/`의 `/avatar/*.jpg`)
+- `/subagents/ws` 푸시와 REST 조회에서 캐시된 서브에이전트 실행 기록
+- 채팅 배경 이미지 설정(전역 Pinia 스토어 `stores/chat-background.ts`)
+- `clientLog.ts`가 캡처한 브라우저 `console.*` 출력을 `all` / `log` / `error` 버킷 구조로 영속화
+
+### 도구 호출 소요 시간(`ChatToolCard.vue`)
+
+모든 도구 카드는 그 호출이 얼마나 걸렸는지 백엔드와 같은 기준으로 보여 줍니다:
+
+- 실행 중에는 1초 간격 타이머가 올라갑니다(`formatElapsed`, 툴바의 "실행 중 명령" 항목과 같은 관례);
+- 완료되면 측정값으로 고정됩니다(`formatToolDuration`: `<1s → 850ms`, `<10s → 1.2s`, 그 이상은 정수 초);
+- 알 수 없으면 비워 둡니다——이 기능 이전의 카드나 사람이 거부한 호출에는 가짜 `0ms` 대신 **아무것도 표시하지 않습니다**.
+
+숫자는 항상 일치하는 두 경로에서 옵니다: 라이브 `tool_result` 프레임이 `duration_ms`를 싣고, 기록 행이 `messages.tool_duration_ms`를 싣습니다(미들웨어의 권위 있는 측정이며, 프레임은 각인이 있으면 그것을 우선합니다). 승인 대기와 큐 대기는 구조상 창 밖입니다.
+
+### 상태와 이벤트
+
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`)
+- **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
+- **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
+
+### 타입 생성(app/types/backend/)
+
+[ts-rs](https://github.com/Aleph-Alpha/ts-rs)로 Rust 백엔드 구조체에서 생성된 TypeScript 인터페이스(`ChatRequest`, `HistoryMessage`, `HealthStatus`, `AgentStreamChunk`, `PromptFileResponse` 등). 파일에 "Do not edit manually" 헤더가 있습니다.
+
+### 테스트
+
+- **단위 테스트**(`pnpm test`): `app/**/*.{test,spec}.ts` — `app/composables/__tests__/` 아래 20개 이상의 컴포저블 테스트 스위트(happy-dom, `vue-i18n` 스텁)
+- **통합 테스트**(`pnpm test:integration`): `tests/integration/` — 실제 `.vue` SFC 마운트(ChatBox, HistoryItem, 홈 페이지, ModeSwitch, inputBox, 이미지 렌더링), 백엔드는 목
+- **Repro**(`repros/`): `localhost:3000`의 Nuxt 개발 서버 대상 Playwright 스펙(MS Edge 채널 설치됨)
+
+---
+
+## 개발 가이드
+
+### 전제 조건
+
+- [Node.js](https://nodejs.org/)(LTS)
+- [pnpm](https://pnpm.io/) — 프로젝트는 `pnpm-lock.yaml` / `pnpm-workspace.yaml`를 사용합니다. 락파일을 정본으로 유지하려면 pnpm을 사용하세요
+- [Rust](https://www.rust-lang.org/) 툴체인(MSRV 1.94) — `src-tauri/` 빌드에만 필요
+- 프로젝트 루트의 Python 백엔드([루트 README](../README.md) 참조)
+
+### 자주 사용하는 명령
+
+```bash
+# 의존성 설치(패키지 매니저는 pnpm. postinstall에서 `nuxt prepare` 실행)
+pnpm install
+
+# 개발 서버(브라우저 모드, Nuxt 개발 서버 http://localhost:3000)
+pnpm dev
+
+# 프로덕션 빌드(SPA 출력은 dist/ — tauri.conf.json의 frontendDist)
+pnpm build
+
+# 정적 생성 / 프리뷰
+pnpm generate
+pnpm preview
+
+# 타입 체크(vue-tsc --noEmit)
+pnpm typecheck
+
+# 단위 테스트(Vitest, happy-dom)
+pnpm test
+pnpm test:watch
+
+# 통합 테스트(실제 SFC, 목 백엔드)
+pnpm test:integration
+pnpm test:integration:watch
+
+# Tauri 데스크톱 개발 모드(beforeDevCommand로 먼저 `pnpm dev` 실행)
+pnpm tauri dev
+
+# Tauri 데스크톱 빌드(beforeBuildCommand로 먼저 `pnpm build` 실행)
+pnpm tauri build
+```
+
+`pnpm tauri dev` / `pnpm tauri build`는 `@tauri-apps/cli` 개발 의존성의 Tauri CLI를 호출합니다.
+
+### 환경 변수
+
+```bash
+# client/.env.example
+VITE_APP_NAME="sherry"                     # 앱 표시 이름(document <title>)
+VITE_API_BACK_URL="http://localhost:8080"  # Python 백엔드 베이스 URL(REST + WS)
+```
+
+모든 백엔드 호출은 `VITE_API_BACK_URL`을 해석하며 하드코딩된 폴백 `http://localhost:8080`을 가집니다. 개발 서버 프록시가 없습니다 — 프런트엔드는 백엔드에 직접 접근하므로 백엔드가 크로스 오리진 요청을 허용해야 합니다(백엔드는 `Access-Control-Allow-Origin: *`를 반환).
+
+`src-tauri/.env.example`에는 별도로 **백엔드** 모델 설정 템플릿(`MAIN_LLM_*`, `REASONER_*`, `SIMPLE_MAIN_LLM_*`, `ITTT_*`, `TTI_*`, `RERANKER_*`, `EMBEDDING_*`, `TAVILY_API_KEY`, `LANGSMITH_*`)이 있습니다.
+
+### Python 백엔드 시작
+
+프로젝트 루트에서(전체 설정은 루트 README 참조):
+
+```bash
+uv run python -m server
+```
+
+백엔드는 기본적으로 `http://127.0.0.1:8080`에서 수신 대기합니다(클라이언트 측은 `VITE_API_BACK_URL`로 변경 가능).
+
+### 새 페이지 / 컴포넌트 추가
+
+1. `app/pages/` 아래에 `.vue` 파일 생성 — Nuxt 4가 라우트를 자동 등록(`home/` 아래의 중첩 페이지는 `home/index.vue`의 내부 `<NuxtPage>`로 렌더링)
+2. `app/components/` 또는 `app/pages/home/components/` 아래에 컴포넌트 생성
+3. `app/composables/` 아래에 컴포저블 로직 추가(단위 테스트는 `app/composables/__tests__/`에)
+4. `app/assets/css/main.css`의 `@theme` 블록에 커스텀 토큰 추가
+5. 4개 로케일 파일 모두에 i18n 키 추가: `app/i18n/locales/{en,ja,ko,zh}.json`
+
+### 새 백엔드 호출 추가
+
+1. `app/composables/bridge.ts`에 엔드포인트 호출 추가(순수 REST라면 `requestApi.ts`) — Tauri IPC 경로, `fetchApi`, 둘 다 중 무엇을 사용할지 결정
+2. 백엔드가 새 페이로드 형태를 보내는 경우 `app/types/backend/` 또는 `app/types/message.ts`의 해당 타입 확장
+3. `app/composables/__tests__/`에 단위 테스트 추가
+
+---
+
+## 라이선스
+
+MIT — EMA AI Agent 본 프로젝트와 동일(`src-tauri/Cargo.toml`의 `license` 필드 참조).

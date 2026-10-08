@@ -1,0 +1,168 @@
+"""VTTT_model — auto-selects between remote API and local GGUF (multimodal).
+
+If ``VTTT_MODEL_LOCAL=true`` is set in ``.env``, uses the local GGUF model
+(``Qwen3.5-9B-Q4_K_M.gguf`` + ``mmproj-Qwen3.5-9B-BF16.gguf`` for multimodal vision support).
+
+Otherwise uses the remote API via ``init_chat_model()`` (legacy behaviour).
+
+Usage:
+    from models import VTTT_model
+    from langchain_core.messages import HumanMessage
+
+    # Text-only
+    result = VTTT_model.invoke("Describe the video")
+
+    # Multimodal (video_url → extracted frames as image_url)
+    result = VTTT_model.invoke([HumanMessage(content=[
+        {"type": "text", "text": "What's in this video?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,..."}},
+    ])])
+
+Note:
+    Local GGUF mode uses Qwen's VL chat handler for multimodal vision.
+    Video understanding is achieved by sending extracted frames as images.
+    The remote API path supports native ``video_url`` content blocks.
+"""
+
+import os
+from pathlib import Path
+
+from config import ENV_PATH
+from config.features import LLM_CLIENT_DEFAULTS
+from typing import Any
+from dotenv import load_dotenv
+from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
+from models.env_builder import ModelEnvBuilder
+from models.utils import LazyInstance
+from langchain_core.runnables import ConfigurableField
+
+# ---------------------------------------------------------------------------
+# 1.  Locate model weight directory & read env
+# ---------------------------------------------------------------------------
+
+# .env is loaded from project root via config.path (ENV_PATH)
+load_dotenv(ENV_PATH, override=True)
+
+# VTTT_model weight directory (side-by-side with this file)
+_MODEL_WEIGHT_DIR = Path(__file__).parent.resolve() / "model_weight"
+
+# ---------------------------------------------------------------------------
+# 2.  Decide remote vs. local
+# ---------------------------------------------------------------------------
+
+_is_local = os.getenv("VTTT_MODEL_LOCAL", "").strip().lower() == "true"
+
+if not _is_local:
+    # ======================== Remote (API) branch ========================
+    from langchain.chat_models import init_chat_model
+
+    _model_config: dict[str, Any] = ModelEnvBuilder(
+        {
+            "model_provider": "VTTT_MODEL_PROVIDER",
+            "model": "VTTT_API_NAME",
+            "api_key": "VTTT_API_KEY",
+            "base_url": "VTTT_API_BASE",
+        }
+    ).build(
+        {
+            "temperature": LLM_CLIENT_DEFAULTS["vttt_remote_temperature"],
+            "max_retries": LLM_CLIENT_DEFAULTS["vttt_remote_max_retries"],
+            # Explicit bounded window for each remote request (seconds).
+            "timeout": LLM_CLIENT_DEFAULTS["vttt_remote_timeout"],
+        }
+    )
+
+    def build_vttt_model() -> Any:
+        """Build a fresh remote VTTT client."""
+        return init_chat_model(**_model_config).configurable_fields(
+            temperature=ConfigurableField(id="temperature"),
+        )
+
+else:
+    # ======================== Local (GGUF) branch ========================
+
+    _GGUF_FILENAME = "Qwen3.5-9B-Q4_K_M.gguf"
+    _MMPROJ_FILENAME = "mmproj-Qwen3.5-9B-BF16.gguf"
+    _HF_REPO_ID = "lmstudio-community/Qwen3.5-9B-GGUF"
+
+    _gguf_path = _MODEL_WEIGHT_DIR / _GGUF_FILENAME
+    _mmproj_path = _MODEL_WEIGHT_DIR / _MMPROJ_FILENAME
+
+    # Fallback: check auxiliary_llm's model_weight directory (may already exist)
+    _aux_model_weight = (
+        Path(__file__).parent.parent.resolve() / "LLMs" / "auxiliary_llm" / "model_weight"
+    )
+    _fallback_gguf_path = _aux_model_weight / _GGUF_FILENAME
+
+    # ------------------------------------------------------------------
+    # 2a.  Helper: resolve model file path (download from HF if missing)
+    # ------------------------------------------------------------------
+
+    def _resolve_model_path() -> str:
+        """Local GGUF path: local hit -> auxiliary fallback copy -> HF download."""
+        from models.utils import resolve_gguf_path
+
+        return resolve_gguf_path(
+            _gguf_path,
+            _HF_REPO_ID,
+            _GGUF_FILENAME,
+            _MODEL_WEIGHT_DIR,
+            fallback_path=_fallback_gguf_path,
+        )
+
+    # ------------------------------------------------------------------
+    # 2b.  Helper: resolve mmproj path (download if missing)
+    # ------------------------------------------------------------------
+
+    def _resolve_mmproj_path() -> str:
+        """Local mmproj path, downloading from HF if needed."""
+        from models.utils import resolve_gguf_path
+
+        return resolve_gguf_path(_mmproj_path, _HF_REPO_ID, _MMPROJ_FILENAME, _MODEL_WEIGHT_DIR)
+
+    # ------------------------------------------------------------------
+    # 2c.  LocalLlamaChatModel — LangChain wrapper around llama_cpp.Llama
+    #      with Qwen25VLChatHandler for multimodal vision support
+    # ------------------------------------------------------------------
+
+    class LocalLlamaChatModel(LocalMultimodalLlamaChatBase):
+        """VTTT variant: delegates conversion/resolution to this module's
+        closures; lifecycle/fields live on the multimodal base."""
+
+        n_ctx: int = 8192
+
+        def _resolve_model_path(self) -> str:
+            return _resolve_model_path()
+
+        def _resolve_mmproj_path(self) -> str:
+            return _resolve_mmproj_path()
+
+        def _convert_content_block(self, block: dict[str, Any]) -> dict[str, Any]:
+            if block.get("type") == "video_url":
+                # Local GGUF doesn't support video_url natively; convert to a
+                # text placeholder (the caller should extract frames instead).
+                return {
+                    "type": "text",
+                    "text": "[video content — use extracted frames as image_url instead]",
+                }
+            return super()._convert_content_block(block)
+
+        @property
+        def _llm_type(self) -> str:
+            return "local-llama-cpp-multimodal"
+
+    # ------------------------------------------------------------------
+    # 2e.  Instantiate the singleton
+    # ------------------------------------------------------------------
+
+    def build_vttt_model() -> Any:
+        """Build a fresh local VTTT model (weight resolution happens here)."""
+        return LocalLlamaChatModel().configurable_fields(
+            temperature=ConfigurableField(id="temperature"),
+        )
+
+
+# Singleton instance behind the ``from models import VTTT_model`` API. The proxy
+# defers weight resolution / client construction to the first use, so importing
+# this module never touches the filesystem or HuggingFace.
+VTTT_model: LazyInstance[Any] = LazyInstance(build_vttt_model)

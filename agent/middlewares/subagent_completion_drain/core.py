@@ -1,0 +1,176 @@
+"""— before_model middleware: drain subagent-completion steering injections.
+
+The announce pipeline queues busy-session completion messages
+into the per-session ``SteeringQueue`` (memory + SQLite). This middleware is the
+parent-turn ingestion point: at ``before_model`` it rehydrates + drains the
+session's queue and returns ``{"messages": [carrier, ...]}`` so the
+``add_messages`` reducer injects the rebuilt ``HumanMessage`` carriers right
+before the next model call (same graph, same checkpoint persistence).
+
+Design guarantees:
+
+- blank/missing ``session_id`` → no-op (never break the turn);
+- empty queue → no-op;
+- ``drain`` marks SQLite rows CONSUMED → re-injection impossible;
+- checkpoint persistence makes HITL-resume replays safe (queued items are
+  drained exactly once, before the resumed turn's model call);
+- every failure is swallowed (log + return None) — the drain must never
+  break the parent turn.
+
+Memory backflow: a non-empty drain also reconciles the shared
+``MEMORY.md``/``USER.md`` files with the process-wide ``MemoryStore`` (reload
+from disk, then persist) so anything a child session wrote is visible to the
+parent turn. Like the drain itself, the reconcile is fail-open.
+
+The sync ``before_model`` is best-effort: production turns are async-only
+(``astream``/``ainvoke``). Inside a running event loop it is a debug-logged
+no-op; otherwise it runs the async impl via ``asyncio.run``.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain_core.messages import HumanMessage
+from loguru import logger
+
+__all__ = ["SubagentCompletionDrainMiddleware"]
+
+# Always-on programmatic gate: appended to the drained batch when the session has
+# no passing verification evidence, so the parent must verify before completing.
+_VERIFICATION_GATE_MESSAGE = (
+    "[GATE] Completion blocked: verification evidence missing or failing. "
+    "Run verification commands (test/lint/build) before completing."
+)
+
+# Injector provenance, persisted as the human row's ``origin``: the chat renders
+# a non-user origin as a neutral system card instead of a bubble the user "wrote"
+# (see context_engine/store/core.py for the origin contract).
+_GATE_ORIGIN = "quality_gate"
+_GATE_METADATA = {"origin": _GATE_ORIGIN, "internal": True}
+
+
+def _completion_gate_violated(session_key: str) -> bool:
+    """True when the session lacks passing verification evidence.
+
+    Fail-open: an unavailable collector or any lookup error is treated as
+    "not violated" so the drain never becomes a hard block.
+    """
+    try:
+        from agent.tools.taskflow.evidence_collector import collect_evidence_summary
+
+        evidence = collect_evidence_summary(session_key=session_key)
+    except Exception:  # noqa: BLE001 - optional probe; never block the turn
+        logger.exception("completion drain: evidence lookup failed; skipping gate")
+        return False
+    if not evidence:
+        return True
+    return "FAIL" in evidence
+
+
+def _is_internal_completion(msg: Any) -> bool:
+    """True when ``msg`` carries the frozen task-4 completion metadata contract.
+
+    Contract (completion_message.py): messages carry
+    ``metadata = {"internal": True, "provenance": "subagent_completion",
+    "run_id": ..., "status": ...}`` on ``BaseMessage.metadata`` (NOT
+    additional_kwargs). Only ``internal`` + ``provenance`` are load-bearing
+    here: rehydrated carriers cannot restore ``status`` (``PendingInjection`` API gap).
+    """
+    meta = getattr(msg, "metadata", None) or {}
+    return bool(meta.get("internal")) and meta.get("provenance") == "subagent_completion"
+
+
+def _backflow_shared_memory() -> None:
+    """Reconcile the shared memory files around a subagent completion.
+
+    Parent and children share one process-wide ``MemoryStore`` and the same
+    ``memory/`` directory, so a child's writes are already file-visible. What can
+    drift is the parent's in-memory view (live entries + frozen snapshot) when a
+    writer outside this process updated ``MEMORY.md``/``USER.md``. Reloading
+    first is load-bearing: persisting a stale in-memory list would clobber a
+    concurrent writer, so this reconciles load → persist per target.
+
+    Never raises: a completion carrier must still reach the parent turn even
+    when memory I/O fails.
+    """
+    try:
+        from agent.tools.memory import memory_store
+
+        memory_store.load_from_disk()
+        for target in ("memory", "user"):
+            memory_store.save_to_disk(target)
+        logger.debug(
+            "completion drain: memory backflow reconciled (memory={} entries, user={} entries)",
+            len(memory_store.memory_entries),
+            len(memory_store.user_entries),
+        )
+    except Exception:
+        logger.exception("completion drain: memory backflow failed; continuing")
+
+
+class SubagentCompletionDrainMiddleware(AgentMiddleware):
+    """Inject queued subagent-completion steering messages before a model call.
+
+    Registered in ``agent/core.py`` immediately AFTER ``ToolCallNormalize`` so
+    the injected messages bypass the sanitize rewrite on the injection turn.
+    The programmatic verification gate is unconditional.
+    """
+
+    async def abefore_model(self, state, runtime=None):
+        """Drain the session queue; return ``{"messages": [...]}`` or ``None``.
+
+        ``item.message`` is the rebuilt task-4 carrier ``HumanMessage`` carrying
+        proper completion metadata — injected directly, never reconstructed.
+        """
+        from agent.middlewares.agent_switch import middleware_enabled
+
+        if not middleware_enabled(str((state or {}).get("session_id") or ""), type(self).__name__):
+            return None  # 会话配置（预设-中间件）关闭该中间件时，本钩子整体 no-op。
+        try:
+            # Lazy: agent.tools.subagent imports agent.middlewares at import time,
+            # so a top-level import here would close the middlewares/tools cycle.
+            from agent.tools.subagent.announce.steering_queue import drain, rehydrate
+
+            key = ""
+            if isinstance(state, dict):
+                key = state.get("session_id") or ""
+            if not str(key).strip():
+                logger.debug("completion drain: no session_id in state; skipping")
+                return None
+            await rehydrate(key)
+            items = await drain(key)
+            if not items:
+                return None
+            _backflow_shared_memory()
+            logger.info(
+                "completion drain: injecting {} subagent completion message(s) into session {}",
+                len(items),
+                key,
+            )
+            # Completion carriers are DoneClaims, not verified results: when the
+            # session has no passing verification evidence, append the gate.
+            messages = [item.message for item in items]
+            if _completion_gate_violated(str(key)):
+                messages.append(
+                    HumanMessage(content=_VERIFICATION_GATE_MESSAGE, metadata=dict(_GATE_METADATA))
+                )
+            return {"messages": messages}
+        except Exception:
+            logger.exception("completion drain failed; continuing turn without injection")
+            return None
+
+    def before_model(self, state, runtime=None):
+        """Sync best-effort path (production main agent streams async-only)."""
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            try:
+                return asyncio.run(self.abefore_model(state, runtime))
+            except Exception:
+                logger.exception("completion drain (sync) failed; continuing without injection")
+                return None
+        logger.debug("completion drain: running loop detected; async-only path skips")
+        return None

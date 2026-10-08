@@ -1,0 +1,69 @@
+// 应用级运行配置（从 .env 环境配置拆分而来），JSON5 格式：支持注释与尾逗号。
+// 修改后重启后端生效（可通过前端「系统配置 → 应用配置」编辑）。
+{
+  // Stored setting only — no tool-execution path consumes it. Real per-tool timeouts come from
+  // the TOOLS_TIMEOUTS registry (WEB_SEARCH_TIMEOUT=15 / TERMINAL_TIMEOUT=30 /
+  // PYTHON_REPL_TIMEOUT=30): config/features/agent_side/tools_timeouts.py
+  // 仅存储设置——当前没有任何工具执行路径消费它；真正的分工具超时来自 TOOLS_TIMEOUTS 注册表
+  // （WEB_SEARCH_TIMEOUT=15 / TERMINAL_TIMEOUT=30 / PYTHON_REPL_TIMEOUT=30）：
+  // config/features/agent_side/tools_timeouts.py
+  "TOOL_CALL_TIMEOUT_MINUTES": 5,
+
+  // Log level for console output and info log files: TRACE / DEBUG / INFO / SUCCESS / WARNING / ERROR / CRITICAL
+  // 控制台与 info 日志文件的日志级别
+  "LOG_LEVEL": "INFO",
+
+  // Process-level default project directory — where the agent works when a
+  // session has no explicit binding. Empty = the repository root (the historical
+  // behaviour). SHERRY_PROJECT_DIR overrides this key for a single launch.
+  // 进程级默认项目目录——会话未显式绑定时 Agent 的工作目录。留空 = 仓库根目录（与历史行为一致）。
+  // 环境变量 SHERRY_PROJECT_DIR 可对单次启动覆盖此键。
+  "project_dir": "",
+
+  // subagent
+  "SUBAGENT_TODO_DONE_FUNC": "archive",
+
+  // Default workspace template language (lazy-copied persona files from workspace/template/{lang}/): en / zh / ja / ko
+  // 人设模板语言（首次使用时从 workspace/template/{lang}/ 懒拷贝）
+  "WORKSPACE_TEMPLATE_LANG": "en",
+
+  // Global heartbeat scheduler switch (the 心跳 panel toggle writes this value and applies it live).
+  // Off by default: the periodic heartbeat is opt-in. false = it never fires; delivery to channels
+  // is separately gated per channel.
+  // 全局心跳调度开关（「心跳」面板里的开关会写这里并立即生效）：默认关闭，需要定时心跳请到面板打开。
+  // false 表示定时心跳不再触发；通道投递另有每个通道的 heartbeat 开关控制。
+  "heartbeat": {
+    "enabled": false
+  },
+
+  // LangSmith tracing
+  "LANGSMITH": {
+    "TRACING_V2": false,
+    "API_KEY": "",
+    "PROJECT": "EMA_AI_agent"
+  },
+
+  // Curator — background skill maintenance orchestrator for agent-created skills.
+  "curator": {
+    // Whether Curator is enabled / 是否启用 Curator
+    "enabled": true,
+
+    // Minimum interval between curator runs (hours); 7 days / 两次 Curator 运行的最小间隔（小时）；7 天
+    "interval_hours": 168,
+
+    // Agent must be idle for at least N hours before curator triggers / 触发前 Agent 至少空闲的小时数
+    "min_idle_hours": 2,
+
+    // Days of inactivity before a skill is marked stale / 技能被标记为过期（stale）前的闲置天数
+    "stale_after_days": 30,
+
+    // Days of inactivity before a skill is archived / 技能被归档前的闲置天数
+    "archive_after_days": 90,
+
+    // Whether to enable LLM consolidation pass (merge narrow skills into umbrellas) / 是否启用 LLM 合并（将窄技能合并为 umbrella 技能）
+    "consolidate": true,
+
+    // Whether to clean up usage records for built-in skills / 是否清理内置技能的使用记录
+    "prune_builtins": true
+  }
+}

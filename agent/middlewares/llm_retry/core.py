@@ -1,0 +1,614 @@
+"""LLMRetryMiddleware — generic error retry loop around each model call.
+
+Relationship to the existing pipeline:
+- Wraps the Summarization middleware's T4/T5 overflow-recovery loop from the
+  outside; Summarization keeps owning payload_too_large / context_overflow
+  (``should_compress`` errors re-raise immediately into it).
+- Handles the remaining classes: timeout, rate_limit, overloaded,
+  server_error, invalid_response, unknown (bounded backoff retries) and
+  delegates deterministic failures (auth_permanent, billing, ssl, model
+  not found, policy blocks) to the fallback chain when one is configured.
+- A silent mid-stream network cut (the stream layer's
+  ``llm_partial_stream_stub`` flag) converts into a classified retry
+  on the next call: the cut response is regenerated with a fresh attempt —
+  never boosted with larger max_tokens.
+- content_policy_blocked never retries: the stream layer flags it via the
+  ``llm_content_filter_blocked`` state key and this middleware consumes it
+  after each handler call, switching to a fallback model or raising
+  :class:`ContentFilterError`.
+- The stale-streak circuit breaker counts timeout-classified failures across
+  turns (session-scoped ``llm_stale_streak``) and aborts the turn once the
+  provider looks persistently unresponsive.
+
+The async ``awrap_model_call`` is the production path (the main agent runs
+via astream/ainvoke); the sync twin exists for parity with the other
+middlewares. When no fallback chain is configured (the default) the
+middleware is a plain bounded retry loop.
+"""
+
+# allow: SIZE_OK — the bulk is the sync/async retry-loop pair that the
+# AgentMiddleware contract requires as two near-identical state machines
+# (the established pattern: see MaxTokensBoostMiddleware). The stream-flag
+# seams belong beside the loops that consume them; extracting
+# them would scatter one cohesive unit across modules.
+
+import asyncio
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from typing import Any
+
+from langchain.agents.middleware import AgentMiddleware
+from langchain.agents.middleware.types import ModelRequest
+from langchain_core.messages import AIMessage
+from loguru import logger
+
+from config.features import LLM_RETRY, MEDIA_PIPELINE
+from agent.middlewares.llm_capability_cache import set_capability
+from agent.middlewares.media_pipeline.degradation import detect_media_blindness
+from agent.middlewares.media_pipeline.media_handlers import MEDIA_TYPE_BY_ITEM, MediaType
+from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
+from pub.func.retry_utils import jittered_backoff
+from pub.types.llm import FallbackCandidate
+from runtime import StateKey, state_register_mem
+
+_STALE_STREAK_KEY = StateKey.LLM_STALE_STREAK
+_FALLBACK_INDEX_KEY = StateKey.LLM_FALLBACK_INDEX
+_CONTENT_FILTER_KEY = StateKey.LLM_CONTENT_FILTER_BLOCKED
+# Mid-stream safety-cut flag set by the stream layer (same contract as
+# ``_CONTENT_FILTER_KEY``, which covers the explicit finish_reason path).
+_FILTER_TERMINATED_KEY = StateKey.LLM_CONTENT_FILTER_TERMINATED
+# Partial-stream stub flag set by the stream layer — the PREVIOUS response was
+# cut mid-output by a network failure; the next model call must be retried (a
+# fresh attempt), never boosted with larger max_tokens.
+_PARTIAL_STUB_KEY = StateKey.LLM_PARTIAL_STREAM_STUB
+_PARTIAL_CAUSE_KEY = StateKey.LLM_PARTIAL_STREAM_CAUSE
+_STREAM_FLAG = StateKey.IS_STREAM_TURN
+_STALE_GIVEUP_MESSAGE = "Provider unresponsive — aborting to avoid indefinite stall."
+_CONTENT_FILTER_MESSAGE = "Model declined to respond (safety refusal)."
+
+
+class ContentFilterError(Exception):
+    """The model (or the stream layer) flagged the response as safety-filtered."""
+
+
+@dataclass
+class LLMRetryConfig:
+    max_retries: int = LLM_RETRY["max_retries"]
+    base_delay: float = LLM_RETRY["base_delay"]
+    max_delay: float = LLM_RETRY["max_delay"]
+    jitter: float = LLM_RETRY["jitter"]
+    stale_giveup_threshold: int = LLM_RETRY["stale_giveup_threshold"]
+
+
+# ``FallbackCandidate`` lives in ``pub/types/llm.py`` (shared with models) and is
+# re-exported here (and by ``agent.middlewares``) for backwards compatibility.
+__all__ = ["ContentFilterError", "FallbackCandidate", "LLMRetryConfig", "LLMRetryMiddleware"]
+
+
+class LLMRetryMiddleware(AgentMiddleware):
+    """Bounded retry / fallback loop composed around every model call."""
+
+    def __init__(
+        self,
+        config: LLMRetryConfig | None = None,
+        fallback_chain: list[FallbackCandidate] | None = None,
+    ):
+        self.config = config or LLMRetryConfig()
+        self.fallback_chain = fallback_chain or []
+
+    # ---- hooks ----------------------------------------------------------
+
+    def wrap_model_call(self, request: ModelRequest, handler: Callable) -> Any:
+        session_id = self._get_session_id(request)
+        if session_id is None:
+            return handler(request)
+        request = self._apply_sticky_fallback(request, session_id)
+        retry_count = 0
+        while True:
+            self._raise_if_provider_stale(session_id)
+            try:
+                result = handler(request)
+            except Exception as exc:
+                classified = classify_api_error(exc)
+                if classified.should_compress:
+                    raise  # Summarization's T4/T5 recovery loop owns overflow errors
+                if classified.reason == FailoverReason.multimodal_not_supported:
+                    rebound = self._try_multimodal_fallback(request, session_id)
+                    if rebound is None:
+                        raise
+                    request = rebound
+                    retry_count = 0
+                    continue
+                rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
+                if rebound is not None:
+                    request = rebound
+                    retry_count = 0
+                    continue
+                if not classified.retryable:
+                    rebound = None
+                    if classified.should_fallback:
+                        rebound = self._try_fallback(request, session_id)
+                    if rebound is not None:
+                        request = rebound
+                        retry_count = 0
+                        continue
+                    raise
+                retry_count += 1
+                if retry_count > self.config.max_retries:
+                    raise
+                if classified.reason == FailoverReason.timeout:
+                    self._bump_stale_streak(session_id)
+                delay = self._backoff(retry_count)
+                logger.warning(
+                    "LLM call failed (attempt {}/{}, reason={}): retrying in {:.2f}s — {}",
+                    retry_count,
+                    self.config.max_retries,
+                    classified.reason.value,
+                    delay,
+                    exc,
+                )
+                time.sleep(delay)
+                continue
+            self._reset_stale_streak(session_id)
+            rebound = self._handle_content_filter_flag(request, session_id)
+            if rebound is not None:
+                request = rebound
+                retry_count = 0
+                continue
+            self._evaluate_silent_degradation(request, session_id, result)
+            stub_reason = self._consume_partial_stream_stub(session_id)
+            if stub_reason is None:
+                return result
+            retry_count += 1
+            if retry_count > self.config.max_retries:
+                logger.warning(
+                    "Partial-stream stub retry budget exhausted; keeping the current result"
+                )
+                return result
+            return self._recall_after_stub_sync(
+                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            )
+
+    async def awrap_model_call(
+        self, request: ModelRequest, handler: Callable[[ModelRequest], Awaitable[Any]]
+    ) -> Any:
+        session_id = self._get_session_id(request)
+        if session_id is None:
+            return await handler(request)
+        request = self._apply_sticky_fallback(request, session_id)
+        retry_count = 0
+        while True:
+            self._raise_if_provider_stale(session_id)
+            try:
+                result = await handler(request)
+            except Exception as exc:
+                classified = classify_api_error(exc)
+                if classified.should_compress:
+                    raise  # Summarization's T4/T5 recovery loop owns overflow errors
+                if classified.reason == FailoverReason.multimodal_not_supported:
+                    rebound = self._try_multimodal_fallback(request, session_id)
+                    if rebound is None:
+                        raise
+                    request = rebound
+                    retry_count = 0
+                    continue
+                rebound = self._handle_content_filter_flag(request, session_id, cause=exc)
+                if rebound is not None:
+                    request = rebound
+                    retry_count = 0
+                    continue
+                if not classified.retryable:
+                    rebound = None
+                    if classified.should_fallback:
+                        rebound = self._try_fallback(request, session_id)
+                    if rebound is not None:
+                        request = rebound
+                        retry_count = 0
+                        continue
+                    raise
+                retry_count += 1
+                if retry_count > self.config.max_retries:
+                    raise
+                if classified.reason == FailoverReason.timeout:
+                    self._bump_stale_streak(session_id)
+                delay = self._backoff(retry_count)
+                logger.warning(
+                    "LLM call failed (attempt {}/{}, reason={}): retrying in {:.2f}s — {}",
+                    retry_count,
+                    self.config.max_retries,
+                    classified.reason.value,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                continue
+            self._reset_stale_streak(session_id)
+            rebound = self._handle_content_filter_flag(request, session_id)
+            if rebound is not None:
+                request = rebound
+                retry_count = 0
+                continue
+            self._evaluate_silent_degradation(request, session_id, result)
+            stub_reason = self._consume_partial_stream_stub(session_id)
+            if stub_reason is None:
+                return result
+            retry_count += 1
+            if retry_count > self.config.max_retries:
+                logger.warning(
+                    "Partial-stream stub retry budget exhausted; keeping the current result"
+                )
+                return result
+            return await self._recall_after_stub_async(
+                request, handler, session_id, stub_reason, self._backoff(retry_count)
+            )
+
+    # ---- session-scoped state -------------------------------------------
+
+    def _get_session_id(self, request: ModelRequest) -> str | None:
+        state = getattr(request, "state", None) or {}
+        session_id = state.get("session_id") if hasattr(state, "get") else None
+        return session_id or None
+
+    def _raise_if_provider_stale(self, session_id: str) -> None:
+        streak = state_register_mem.get_state(session_id, _STALE_STREAK_KEY, 0) or 0
+        if streak >= self.config.stale_giveup_threshold:
+            logger.error(
+                "Stale-streak circuit breaker tripped (streak={}): {}",
+                streak,
+                _STALE_GIVEUP_MESSAGE,
+            )
+            raise RuntimeError(_STALE_GIVEUP_MESSAGE)
+
+    def _bump_stale_streak(self, session_id: str) -> None:
+        streak = state_register_mem.get_state(session_id, _STALE_STREAK_KEY, 0) or 0
+        state_register_mem.set_state(session_id, _STALE_STREAK_KEY, streak + 1)
+
+    def _reset_stale_streak(self, session_id: str) -> None:
+        state_register_mem.set_state(session_id, _STALE_STREAK_KEY, 0)
+
+    def _backoff(self, retry_count: int) -> float:
+        return jittered_backoff(
+            retry_count,
+            base_delay=self.config.base_delay,
+            max_delay=self.config.max_delay,
+            jitter=self.config.jitter,
+        )
+
+    # ---- content-filter flag (set by the stream layer) -------------------
+
+    def _handle_content_filter_flag(
+        self, request: ModelRequest, session_id: str, cause: BaseException | None = None
+    ) -> ModelRequest | None:
+        """Consume the cross-layer content-filter flags after a handler call.
+
+        Two stream-layer producers share this seam: the explicit
+        ``finish_reason == "content_filter"`` branch
+        (``llm_content_filter_blocked``) and the mid-stream safety cut
+        (``llm_content_filter_terminated``).
+
+        Returns the request rebound to the fallback model when a candidate is
+        available, or None when the flags are absent / no candidate remains
+        (raising :class:`ContentFilterError` when a flag WAS set). This is
+        also the interception seam for stream-layer response markers.
+        """
+        flagged = any(
+            state_register_mem.get_state(session_id, key, False)
+            for key in (_CONTENT_FILTER_KEY, _FILTER_TERMINATED_KEY)
+        )
+        if not flagged:
+            return None
+        state_register_mem.set_state(session_id, _CONTENT_FILTER_KEY, False)
+        state_register_mem.set_state(session_id, _FILTER_TERMINATED_KEY, False)
+        rebound = self._try_fallback(request, session_id)
+        if rebound is not None:
+            logger.warning(
+                "Content filter flagged the model response — switching to fallback model"
+            )
+            return rebound
+        raise ContentFilterError(_CONTENT_FILTER_MESSAGE) from cause
+
+    # ---- partial-stream stub (set by the stream layer) -------------------
+
+    def _consume_partial_stream_stub(self, session_id: str) -> FailoverReason | None:
+        """Convert the stream layer's partial-stub flag into a classified failure.
+
+        The flag marks the PREVIOUS response as cut mid-output; the result
+        just produced is discarded and the handler is re-called with a fresh
+        attempt. Returns the classified reason of what killed the stream
+        (preserved by StreamTurn, defaulting to timeout for silent cuts), or
+        None when the flag is absent.
+        """
+        if not state_register_mem.get_state(session_id, _PARTIAL_STUB_KEY, False):
+            return None
+        state_register_mem.set_state(session_id, _PARTIAL_STUB_KEY, False)
+        cause_val = state_register_mem.get_state(session_id, _PARTIAL_CAUSE_KEY, "")
+        state_register_mem.set_state(session_id, _PARTIAL_CAUSE_KEY, "")
+        try:
+            return FailoverReason(cause_val)
+        except ValueError:
+            return FailoverReason.timeout
+
+    def _strip_callbacks(self, request: ModelRequest) -> Any:
+        config = getattr(request, "config", None)
+        if isinstance(config, dict):
+            return config.pop("callbacks", None)
+        return None
+
+    def _restore_callbacks(self, request: ModelRequest, original: Any) -> None:
+        config = getattr(request, "config", None)
+        if isinstance(config, dict):
+            config["callbacks"] = original
+
+    def _recall_after_stub_sync(
+        self,
+        request: ModelRequest,
+        handler: Callable,
+        session_id: str,
+        stub_reason: FailoverReason,
+        delay: float,
+    ) -> Any:
+        """Re-call the handler once for a stub flag with callbacks stripped
+        on stream turns.
+
+        The cut response's tokens already streamed to the client; without
+        the strip the retry would append a second copy. Mirrors
+        MaxTokensBoost's callback-stripping contract (strip → call → restore
+        in finally).
+        """
+        self._prepare_stub_retry(session_id, stub_reason)
+        logger.warning(
+            "Previous stream was cut mid-output (reason={}): retrying in {:.2f}s",
+            stub_reason.value,
+            delay,
+        )
+        time.sleep(delay)
+        strip = bool(state_register_mem.get_state(session_id, _STREAM_FLAG, ""))
+        saved = self._strip_callbacks(request) if strip else None
+        try:
+            return handler(request)
+        finally:
+            if strip:
+                self._restore_callbacks(request, saved)
+
+    async def _recall_after_stub_async(
+        self,
+        request: ModelRequest,
+        handler: Callable[[ModelRequest], Awaitable[Any]],
+        session_id: str,
+        stub_reason: FailoverReason,
+        delay: float,
+    ) -> Any:
+        self._prepare_stub_retry(session_id, stub_reason)
+        logger.warning(
+            "Previous stream was cut mid-output (reason={}): retrying in {:.2f}s",
+            stub_reason.value,
+            delay,
+        )
+        await asyncio.sleep(delay)
+        strip = bool(state_register_mem.get_state(session_id, _STREAM_FLAG, ""))
+        saved = self._strip_callbacks(request) if strip else None
+        try:
+            return await handler(request)
+        finally:
+            if strip:
+                self._restore_callbacks(request, saved)
+
+    def _prepare_stub_retry(self, session_id: str, stub_reason: FailoverReason) -> None:
+        if stub_reason == FailoverReason.timeout:
+            self._bump_stale_streak(session_id)
+
+    # ---- native multimodal → skill fallback ------------------------------
+
+    def _try_multimodal_fallback(
+        self, request: ModelRequest, session_id: str
+    ) -> ModelRequest | None:
+        """Fall back from native multimodal to the skill-based path.
+
+        Only triggers while the session is in an auto-mode native attempt
+        (``_multimodal_trying_native``): the model just rejected the media
+        blocks, so record the rejection in the process-wide capability cache
+        for every media family present in the request and rewrite the request's
+        messages onto the skill path. Returns None when no fallback applies —
+        the caller then re-raises the original error.
+        """
+        from agent.middlewares.media_pipeline.core import (
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            MULTIMODAL_TRYING_NATIVE_KEY,
+            apply_skill_fallback,
+        )
+
+        if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
+            logger.debug("Multimodal error outside an auto-mode native attempt — no fallback")
+            return None
+        state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False)
+
+        messages = getattr(request, "messages", None) or []
+        media_types = _detect_media_types_in_messages(messages)
+        if not media_types:
+            return None
+
+        model_key = state_register_mem.get_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, "")
+        if model_key:
+            provider, _, model = model_key.partition("/")
+            for media in media_types:
+                set_capability(provider, model, media, "unsupported")
+            logger.warning(
+                "Native multimodal rejected by {}/{} (media: {}) — falling back to the skill path",
+                provider,
+                model,
+                ", ".join(sorted(media_types)),
+            )
+
+        new_messages = apply_skill_fallback(list(messages), session_id)
+        try:
+            return request.override(messages=new_messages)
+        except Exception as exc:
+            logger.error("Failed to override messages for multimodal fallback: {}", exc)
+            return None
+
+    def _refresh_native_model_key(self, session_id: str, candidate: FallbackCandidate) -> None:
+        """Point the per-turn native-attempt key at the model now serving the call.
+
+        ``MultimodalProcessor`` records the env main model in
+        ``_multimodal_native_model`` when the native attempt starts. Once the
+        request is re-bound to a fallback candidate, a media rejection belongs
+        to that candidate — not to the env main model — so the key is rewritten
+        to ``{candidate.provider}/{candidate.model_name}`` before the call.
+
+        Guarded by ``_multimodal_trying_native``: outside an in-flight native
+        attempt there is no key to attribute a rejection to, so no state is
+        written.
+        """
+        from agent.middlewares.media_pipeline.core import (
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            MULTIMODAL_TRYING_NATIVE_KEY,
+        )
+
+        if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
+            return
+        state_register_mem.set_state(
+            session_id,
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            f"{candidate.provider}/{candidate.model_name}",
+        )
+
+    def _evaluate_silent_degradation(
+        self, request: ModelRequest, session_id: str, result: Any
+    ) -> None:
+        """Cache a native attempt the model silently ignored.
+
+        Runs on the success path of a call that started as an auto-mode native
+        attempt. The model did not error, so the only evidence is its own text:
+        when it self-reports media blindness, every media family present in the
+        request is cached ``unsupported`` against the model that actually served
+        the call. The per-turn native flag is cleared either way — the attempt
+        is over, so a stale flag must never authorize a fallback for a later
+        call in the same turn. Precision-first: a false positive would silently
+        degrade a capable model (see ``detect_media_blindness``).
+        """
+        from agent.middlewares.media_pipeline.core import (
+            MULTIMODAL_NATIVE_MODEL_KEY,
+            MULTIMODAL_TRYING_NATIVE_KEY,
+        )
+
+        if not state_register_mem.get_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False):
+            return
+        state_register_mem.set_state(session_id, MULTIMODAL_TRYING_NATIVE_KEY, False)
+        if not MEDIA_PIPELINE.get("main_llm_silent_degradation_detection", True):
+            return
+        if not detect_media_blindness(_extract_ai_text(result)):
+            return
+
+        media_types = _detect_media_types_in_messages(getattr(request, "messages", None) or [])
+        model_key = state_register_mem.get_state(session_id, MULTIMODAL_NATIVE_MODEL_KEY, "")
+        if not media_types or not model_key:
+            return
+        provider, _, model = model_key.partition("/")
+        for media in media_types:
+            set_capability(provider, model, media, "unsupported")
+        logger.warning(
+            "Native model {}/{} ignored the media (self-reported blindness; media: {}) "
+            "— caching them as unsupported",
+            provider,
+            model,
+            ", ".join(sorted(media_types)),
+        )
+
+    # ---- fallback chain ---------------------------------------------------
+
+    def _apply_sticky_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest:
+        """Begin attempts on the already-activated fallback candidate, if any."""
+        if not self.fallback_chain:
+            return request
+        idx = state_register_mem.get_state(session_id, _FALLBACK_INDEX_KEY, 0) or 0
+        if not 0 < idx <= len(self.fallback_chain):
+            return request
+        candidate = self.fallback_chain[idx - 1]
+        rebound = self._rebind_model(request, candidate)
+        if rebound is None:
+            return request
+        self._refresh_native_model_key(session_id, candidate)
+        return rebound
+
+    def _try_fallback(self, request: ModelRequest, session_id: str) -> ModelRequest | None:
+        """Activate the next fallback candidate; None when the chain is exhausted."""
+        if not self.fallback_chain:
+            return None
+        idx = state_register_mem.get_state(session_id, _FALLBACK_INDEX_KEY, 0) or 0
+        if idx >= len(self.fallback_chain):
+            return None
+        candidate = self.fallback_chain[idx]
+        state_register_mem.set_state(session_id, _FALLBACK_INDEX_KEY, idx + 1)
+        rebound = self._rebind_model(request, candidate)
+        if rebound is None:
+            return None
+        self._refresh_native_model_key(session_id, candidate)
+        logger.warning(
+            "Switching to fallback model {}/{} (candidate {} of {})",
+            candidate.provider,
+            candidate.model_name,
+            idx + 1,
+            len(self.fallback_chain),
+        )
+        return rebound
+
+    def _rebind_model(
+        self, request: ModelRequest, candidate: FallbackCandidate
+    ) -> ModelRequest | None:
+        try:
+            return request.override(model=candidate.model)
+        except Exception as exc:
+            logger.error(
+                "Failed to rebind request to fallback model {}/{}: {}",
+                candidate.provider,
+                candidate.model_name,
+                exc,
+            )
+            return None
+
+
+def _detect_media_types_in_messages(messages: list[Any]) -> set[MediaType]:
+    """Collect the media families of every multimodal content item in `messages`."""
+    found: set[MediaType] = set()
+    for mes in messages:
+        content = getattr(mes, "content", None)
+        if not isinstance(content, list):
+            continue
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            media = MEDIA_TYPE_BY_ITEM.get(item.get("type", ""))
+            if media is not None:
+                found.add(media)
+    return found
+
+
+def _extract_ai_text(result: Any) -> str:
+    """Best-effort text of the AIMessage carried by a handler result.
+
+    The handler may return a bare ``AIMessage`` or a ``ModelRequest``-shaped
+    response object carrying ``.messages``; non-text content blocks are ignored.
+    """
+    message: AIMessage | None = None
+    if isinstance(result, AIMessage):
+        message = result
+    else:
+        messages = getattr(result, "messages", None)
+        if messages:
+            for candidate in reversed(messages):
+                if isinstance(candidate, AIMessage):
+                    message = candidate
+                    break
+    if message is None:
+        return ""
+    content = getattr(message, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            item.get("text", "")
+            for item in content
+            if isinstance(item, dict) and item.get("type") == "text"
+        )
+    return ""

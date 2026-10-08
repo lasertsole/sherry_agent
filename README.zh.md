@@ -1,0 +1,492 @@
+# 🍊 EMA AI Agent - 橘雪莉
+
+![Python](https://img.shields.io/badge/Python-3.13-blue)
+![LangChain](https://img.shields.io/badge/LangChain-1.3+-green)
+![License](https://img.shields.io/badge/License-MIT-orange)
+
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
+
+> **一个基于 LangChain/LangGraph 与多模态技术的深度角色扮演 AI Agent。**
+
+## ✨ 简介
+
+EMA AI Agent 是一个高度拟人化、具备长期记忆与复杂推理能力的 AI Agent 系统。它不仅仅是一个聊天机器人，更是一个拥有独立 **Persona（人格）**、动态 **技能系统**，并可通过定时任务与后台子代理主动行动的虚拟伙伴。
+
+Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外表永远开朗活泼，内心却冷静缜密。整个系统旨在支持沉浸式、可持久化的角色扮演，让记忆跨会话不断积累。
+
+---
+
+## 🚀 核心特性
+
+### 1. 🧠 分层记忆系统（Context Engine）
+- **短期会话记忆**（[MesMemory](context_engine/README.md)）：对话历史持久化到 SQLite（WAL 模式），并自动建立 FTS5 索引——包含面向中文全文检索的 trigram 分词表；落库分为两个时机（`MessagePersistenceMiddleware`）：工具结果一返回即落库，其余新产生的 human/ai/tool 消息在每个模型调用边界增量落库——靠 `persisted_message_ids` 水位写一次——原始存储不依赖压缩是否发生
+- **历史检索**：支持最近 N 轮、分页历史、指定轮次范围查询，并格式化为提示词上下文
+- **会话检查点**：线程安全的异步 SQLite checkpointer（`langgraph-checkpoint-sqlite`）跨重启持久化 Agent 状态，过期检查点自动清理
+- **对话摘要**：Summarization 中间件在对话中途用 auxiliary LLM 压缩过长历史
+- **上下文治理**：超大工具结果与人类消息被驱逐出提示词并保留可恢复的磁盘副本，`read_file` 结果被切片，任何压缩之前先运行不调 LLM 的尾部裁剪，链式摘要被挡在对话载荷之外
+- **私有知识图谱 RAG**：`multimodal_rag` 技能将文档/文件夹索引为实体关系图（内置 vendored LightRAG + RAG-Anything，基于 `snkv` 向量存储），并通过多跳图检索回答问题
+- **经验抽取（Experience Extraction）**：四条生命周期路径将对话历史沉淀为可复用经验：压缩时的 memory review（每次压缩）、压缩时 todo 全部完成触发的 plan 抽取、压缩前的 memory flush，以及压缩后的 todo fork。它们分别写入 MEMORY.md / USER.md、plan 知识库（`agent/tools/todolist/knowledge/`）、`skills/auto/` 与 `todos.db`
+- ▶️ _详见 [Context Engine README](context_engine/README.md) 了解架构、数据模型与 API_
+- ▶️ _详见 [Experience README](docs/experience/README.zh.md) 了解四条抽取路径与技能策展_
+
+### 2. 🛠️ 动态技能系统
+- **SKILL.md 标准**：技能是带 YAML frontmatter 的 Markdown 文件（`name`、`description`、可选 `scope: all | main_only | subagent_only`）——loader 会自动发现 `skills/` 下的所有 `SKILL.md`
+- **内置技能**（[skills/builtin/](skills/builtin/)）：`cron`、`heartbeat`、`clawhub`（GitHub 技能安装器）、`skill_creator`（自动生成新技能）、`image_to_text`、`speech_to_text`、`video_text_to_text`、`text_to_image`、`multimodal_rag`、`taskflow`、`todolist`、`ulw-execute`、`code_wiki`、`llm_wiki`
+- **技能管理工具**：Agent 可在运行时列出、查看、管理技能；第三方上传的技能（`skills/plugins/`）默认停用，需显式启用
+- **SkillSpector 安全扫描**（[server/service/skill_scanner.py](server/service/skill_scanner.py)）：第三方技能在启用前由 NVIDIA SkillSpector 扫描（静态 YARA/规则分析 + 可选的 LLM 语义分析，使用 auxiliary LLM）；被标记的技能将被禁止安装
+- **技能 Curator**：context engine 的 curator 线程维护 `skills/auto/` 下的自动学习技能 —— 详见 [Experience README](docs/experience/README.zh.md)
+- **工具超时**：真实的分工具限制来自 `TOOLS_TIMEOUTS` 注册表（`WEB_SEARCH_TIMEOUT=15`、`TERMINAL_TIMEOUT=30`、`PYTHON_REPL_TIMEOUT=30`）；`TOOL_CALL_TIMEOUT_MINUTES` 只是存储设置，**没有任何执行路径消费它**
+- ▶️ _详见 [Middlewares README](agent/middlewares/README.md) 了解中间件流水线（护栏、迭代预算、HITL、规范化、摘要、多模态处理）_
+
+### 3. 🤖 多层级子代理系统
+- **7 个运行时工具**：`sessions_spawn`、`sessions_yield`、`sessions_send`、`sessions_kill`、`sessions_steer`、`agents_list`、`subagents_list`
+- **层级角色**：深度受限的嵌套（默认最大 2 层，硬上限 2），MAIN → ORCHESTRATOR → LEAF 角色与最小权限工具作用域
+- **独立上下文**：每个子代理都在全新、独立的上下文中运行 —— 永不继承父级对话记录；支持文件附件
+- **可靠投递**：结果通过 EventBus announce 流水线回传，具备幂等校验与指数退避重试
+- **持久化注册表**：运行记录持久化到 SQLite；sweeper 负责恢复孤儿任务，followup 检查器在配置了运行超时时强制超时（默认不配置）
+- **Swarm 模式**：批量子任务执行，FIFO 调度与并发数控制
+- **验证式完成**：每次 spawn 都会在子 Agent 轮次之间运行辅助 LLM 完成判别器；`continue` 判定会把判别器的后续提示作为下一轮注入，轮次上限由配置的 `COMPLETION_JUDGE["goal_max_turns"]` 预算限定（默认 5）
+- **功能角色（可选）**：`sessions_spawn(functional_role=...)` 可让 worker 专业化（general / researcher / executor / reviewer / librarian）；该角色决定 LLM 层级、工具 allow-list 与子代理系统提示词段落
+- **隔离工作树（可选）**：`sessions_spawn(isolation=True)` 让子代理拥有项目专属的 git worktree（`agent/tools/subagent/isolation/`），基于**脏**基线切出（`git stash create`，因此未提交的改动对子代理可见），并在 announce 时于每根目录锁下合并回去 —— 详见 [File Safety README](docs/file-safety/README.md)
+- ▶️ _详见 [Subagent System README](agent/tools/subagent/README.md) 了解完整架构_
+
+### 4. 🌐 多渠道接入
+- **Robyn 后端**（[server/](server/)）：异步 HTTP API + WebSocket（`/sessions/ws`），监听 `127.0.0.1:8080`，并通过 `/static`、`/images`、`/audio`、`/video` 提供上传媒体文件
+- **桌面客户端**（[client/](client/)）：Tauri 2 + Nuxt 4（Vue 3 + TypeScript）SPA，支持系统托盘、全局快捷键、离线历史缓存（Dexie/IndexedDB）、明暗主题与国际化
+- **QQ 机器人**：通过插件系统接入 QQ 频道适配器（[plugins/channels/qq/](plugins/channels/qq/)）
+- **消息总线**（[bus/core.py](bus/core.py)）：内部异步队列解耦渠道与 Agent 核心
+
+### 5. 👁️ 多模态交互
+- **图像理解（ITTT）**：Image-to-Text 视觉模型，识别与分析用户上传的图片
+- **视频理解（VTTT）**：Video-Text-to-Text 模型，分析视频内容
+- **语音识别（STT）**：基于 FunASR 的本地语音转文字
+- **文生图（TTI）**：通过 `text_to_image` 技能根据文字描述生成图片
+- **文档解析**：基于 MinerU 的多模态文档摄取，服务于知识图谱 RAG 流水线
+
+### 6. ⏰ 定时与主动行为
+- **Cron 服务**（[skills/builtin/core/cron/](skills/builtin/core/cron/scripts/README.md)）：支持一次性（`at`）、间隔（`every`）与 cron 表达式（`cron`，基于 croniter + 时区）三类定时任务，持久化到 JSON 任务文件，带运行历史与渠道投递
+- **Heartbeat 服务**（[skills/builtin/core/heartbeat/](skills/builtin/core/heartbeat/README.md)）：周期性唤醒（默认 30 分钟），检查 `HEARTBEAT.md` 中的待办任务，由 LLM 决定 skip/run，结果经过通知门控过滤
+
+### 7. ⚙️ 运行时、并发与会话控制
+- **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录
+- **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框
+- **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
+- **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
+- **TaskFlow 进度波次** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py))：一个流程的步骤被按最长路径 DAG 层级分组，用于浮动进度面板（仅用于展示——调度器仍按各自的 `depends_on` 逐个解锁步骤；未知依赖被忽略，环则落入一个标记为 `cyclic` 的末尾波次）。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
+- **工具耗时**：每次工具调用仅在工具返回时被计时一次（使用 `time.monotonic()`，下限钳制为 0），由消息持久化包装器完成，写入 `ToolMessage.additional_kwargs["tool_duration_ms"]` 并持久化到 `messages.tool_duration_ms`；实时卡片在运行中显示计时器，结束后显示实测值。按设计，审批等待和排队时间不计入该窗口
+- **会话级模型与思考**：`PUT /sessions/thinking` 与 `PUT /sessions/model` 为单个会话覆盖思考开关和主模型（启用登录时，客户端会预取一次性使用的 `GET /auth/ws-ticket`），思考控制中间件据此将请求模型替换为 `build_main_llm(thinking=...)` 变体——会话没有显式选择时回退到环境变量默认值
+
+---
+
+## 🏗️ 技术栈
+
+基于 **Python 3.13**（依赖管理使用 [uv](https://docs.astral.sh/uv/)），核心技术如下：
+
+| 模块 | 技术 |
+| :----- | :--------- |
+| **Agent 框架** | LangChain 1.3+（`create_agent` + 中间件）、LangGraph 编译图 |
+| **检查点** | langgraph-checkpoint-sqlite（线程安全异步 SQLite saver） |
+| **Web 服务器** | Robyn（HTTP + WebSocket + 静态托管） |
+| **数据库** | SQLite（aiosqlite，FTS5 全文检索，WAL 模式） |
+| **图谱 RAG** | 内置 vendored LightRAG + RAG-Anything（multimodal_rag 技能）、`snkv[vector]` 存储 |
+| **本地推理** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT 模型）、FunASR（STT） |
+| **文档解析** | mineru-vl-utils |
+| **联网搜索** | langchain-tavily（Tavily API） |
+| **代码搜索** | ripgrep，随依赖一并安装（`ripgrep-bin`）；纯 Python 扫描始终作为兜底 |
+| **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-community + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
+| **结构化输出** | instructor、json_repair |
+| **评估（Evaluation）** | RAGAS（图谱 RAG 质量指标）+ 自建沙箱化评估框架（`evals/`） |
+| **MCP** | langchain-mcp-adapters（在 `plugins/mcp_server/` 中配置服务器） |
+| **任务调度** | croniter、asyncio |
+| **异步消息** | asyncio 队列（MessageBus、EventBus） |
+| **媒体处理** | OpenCV（headless）、Pillow、websockets / websocket-client |
+| **桌面客户端** | Tauri 2 + Nuxt 4（Vue 3、TypeScript、pnpm） |
+| **日志** | loguru（可选 LangSmith 追踪） |
+
+---
+
+## 📂 项目结构
+
+```text
+EMA_AI_agent/
+├── agent/                  # Agent 核心逻辑
+│   ├── core.py             # 主 Agent 循环（LangChain create_agent → LangGraph 图）
+│   ├── security/           # Redaction, PII, threat patterns, untrusted-output wrapping
+│   ├── wrapper/            # 图级包装器（重复防护、上下文上限）
+│   ├── checkpointer/       # 线程安全异步 SQLite checkpointer
+│   ├── middlewares/        # 中间件流水线（摘要、护栏、HITL 等）
+│   ├── prompt_data_provider.py # Runtime PromptDataProvider implementation (owner side)
+│   ├── skill_write_provider.py  # Runtime SkillWriteProvider implementation (owner side)
+│   └── tools/              # Agent 可用工具
+│       ├── taskflow/       # Task orchestration engine (DAG, budget, deadline, step judge)
+│       ├── subagent/       # 多层级子代理系统（spawn/registry/swarm 等）
+│       │   └── isolation/  # Opt-in git-worktree isolation backend for a spawned child
+│       ├── todolist/       # 会话级 todo 规划层
+│       │   └── knowledge/  # Plan 知识库 + `knowledge` 工具
+│       ├── file_tools/     # 文件 I/O 工具（读、写、补丁、搜索）
+│       ├── skill_tools/    # 技能管理工具（列表、查看、管理）
+│       ├── code_intel/     # Code retrieval (ripgrep, tree-sitter, ast-grep, LSP, semantic)
+│       ├── ptc/            # Programmatic tool calling (`execute_code` child-process bridge)
+│       ├── pub_base/       # 共享工具基础组件（BaseSQLiteRepository、路径工具）
+│       ├── mcp_plugin.py   # MCP 工具集成
+│       ├── web_search.py   # 联网搜索工具（Tavily）
+│       ├── python_repl.py  # Python 代码执行
+│       ├── terminal.py     # 终端命令执行
+│       ├── memory.py       # 记忆查看工具
+│       ├── question.py     # HITL 多选提问工具
+│       └── message_search.py # 会话 FTS5 搜索工具
+│
+├── bus/                    # 消息总线（异步队列）
+│   └── core.py             # MessageBus —— 入站/出站队列
+│
+├── channels/               # 渠道接口定义
+│   ├── base.py             # 渠道抽象基类
+│   ├── deps.py             # Dependency-injection seams for channel wiring
+│   ├── manager.py          # 渠道生命周期管理器
+│   └── registry.py         # 渠道注册
+│
+├── client/                 # 桌面客户端（Tauri 2 + Nuxt 4，pnpm）
+│   ├── app/                # Nuxt 4 SPA 源码（Vue 3）
+│   ├── src-tauri/          # Tauri 2 原生壳（Rust）
+│   └── README.md           # 客户端文档
+│
+├── config/                 # 集中配置（paths、feature TypedDicts、schema、settings）
+│   ├── __init__.py         # API 主机/端口（127.0.0.1:8080）
+│   ├── path.py             # 文件路径配置
+│   ├── schema.py           # 配置模型
+│   ├── sherry_settings.py  # sherry.jsonc 加载器
+│   └── features/           # 逐对象的 feature TypedDict 与默认实例
+│
+├── context_engine/         # 记忆引擎（MesMemory）
+│   ├── core.py             # 历史检索与 FTS5 搜索 API
+│   ├── store/              # 会话消息存储（SQLite + FTS5，WAL）
+│   ├── events/             # 追加式事件日志 + projector
+│   ├── embeddings/         # 向量语义搜索（indexer / search）
+│   └── curator/            # 自动技能维护
+│
+├── docs/                   # 子系统设计文档（各语言 README）
+│   ├── experience/         # 经验抽取路径 + 技能策展
+│   ├── session_memory/     # 会话记忆能力
+│   ├── summarization/      # 压缩触发条件与冷却
+│   ├── loop-prevention/    # 防失控循环防护
+│   ├── sandbox/            # 评估沙箱与工具隔离
+│   ├── token-guard/        # 128K 上下文窗口下限
+│   ├── context-governance/ # 持久化、驱逐、尾部裁剪与摘要过滤
+│   ├── long-running-tasks/ # TaskFlow 编排
+│   ├── subagent/           # Subagent design invariants & completion gates
+│   ├── code-intel/         # Code retrieval layers
+│   ├── ptc/                # Programmatic tool calling
+│   ├── file-safety/        # Atomic writes, CAS, locks, worktree isolation
+│   ├── threat-model/       # Trust boundaries & prompt-injection scanner
+│   └── auth/               # 可选登录保护（账户与会话）
+│
+├── evals/                  # 评估框架（dispatcher + 5 个套件）
+│   ├── evals.py            # 套件运行器：uv run python evals/evals.py [suite]
+│   ├── sandbox.py          # 运行期间重定向仓库写入的沙箱
+│   ├── graph_rag/          # 图谱 RAG 管线的 RAGAS 指标
+│   ├── subagent/           # 子代理派生管线基准
+│   ├── long_running_task/  # TaskFlow DAG 评估
+│   ├── session_memory/     # 会话内存栈检查
+│   ├── nudge_extraction/   # AI 评判的 plan 抽取
+│   └── results/            # 每次运行的报告（已 gitignore）
+│
+├── logs/                   # 日志系统
+│   ├── logger.py           # 日志配置（loguru）
+│   ├── curator/            # Curator run logs
+│   └── output/             # 日志输出目录
+│
+├── models/                 # 模型封装与权重
+│   ├── LLMs/               # LLM 配置（main_llm.py、reasoner_llm.py、auxiliary_llm/、reasoning_* 各提供商适配）
+│   ├── ITTT_model/         # 图生文模型（云端 API 或本地 GGUF）
+│   ├── VTTT_model/         # 视频理解模型（云端 API 或本地 GGUF）
+│   ├── STT_model/          # 语音识别模型（FunASR）
+│   ├── embed_model/        # 向量嵌入模型（本地 bge-m3 GGUF 或云端 API）
+│   ├── reranker_model/     # 重排序模型（本地 GGUF 或云端 API）
+│   ├── extract_model/      # 实体抽取模型（第三方权重）
+│   └── providers/          # LLM 提供商规范与注册表
+│       └── registry.py    # 20+ 提供商的 ProviderSpec
+│
+├── plugins/                # 插件系统
+│   ├── channels/           # 渠道插件（QQ 机器人适配器）
+│   └── mcp_server/         # MCP 服务器配置
+│
+├── pub/                    # 共享工具与数据模型
+│   ├── func/               # 通用工具函数
+│   │   ├── format/         # 文本格式化工具
+│   │   ├── media/          # 媒体处理工具
+│   │   ├── message/        # 消息处理工具
+│   │   └── validator/      # 输入校验工具
+│   └── types/              # 共享数据模型
+│       ├── message.py      # MultiModalMessage、Chat 等
+│       ├── bus.py          # 消息总线数据模型
+│       └── client.py       # 客户端数据模型
+│
+├── runtime/                # Runtime state, lanes & cross-boundary seams
+│   ├── hooks.py            # Process-level callback registry (server-owned hooks resolved by agent/skills)
+│   ├── data_provider.py    # Prompt/skill-write provider registries (agent-owned, read by workspace/context_engine)
+│   ├── lane/               # Process-level concurrency lanes (MAIN / SUBAGENT / NUDGE / NESTED)
+│   ├── session/            # 会话级寄存器
+│   │   ├── core.py         # 单例 SessionRegister 基类 + 按会话清理
+│   │   ├── relation_register.py # 会话/socket 关系注册表
+│   │   ├── state_register.py   # 状态注册表
+│   │   ├── state_keys.py       # 类型化 StateKey 注册表 + TypedState 门面
+│   │   ├── project_dir.py  # Per-session project-directory binding resolution
+│   │   ├── count_call_register.py # 用量/统计计数器
+│   │   ├── timer_call_register.py # 定时器注册表
+│   │   └── _callback_executor.py # 异步回调执行器
+│   └── process/            # 进程级服务
+│       ├── crash_loop_breaker.py # 启动崩溃循环检测
+│       └── periodic_backoff.py   # 周期退避状态
+│
+├── server/                 # Robyn 后端服务
+│   ├── __main__.py         # 服务入口（python -m server）
+│   ├── DAO/                # 数据访问对象
+│   ├── queue/              # Persisted user-input queue store
+│   ├── utils/              # Shared backend helpers (JWT, password hashing, atomic I/O, WS)
+│   ├── service/            # 业务逻辑服务（含 skill_scanner.py）
+│   └── trigger/            # 路由与处理器注册
+│       ├── http/           # HTTP 端点触发器
+│       ├── ws/             # WebSocket 触发器
+│       ├── channels/       # 渠道入站触发器
+│       └── subagent/       # 子代理结果触发器
+│
+├── skills/                 # 技能库（SKILL.md 定义文件）
+│   ├── loader.py           # 技能自动发现与注册
+│   ├── skills_snapshot.py  # 构建技能提示词快照
+│   ├── auto/               # 自动学习技能（curator 维护）
+│   ├── plugins/            # 第三方上传技能（默认停用）
+│   └── builtin/            # 内置技能
+│       ├── core/           # cron、heartbeat、clawhub、skill_creator、image_to_text、
+│       │                   # speech_to_text、video_text_to_text、multimodal_rag、
+│       │                   # taskflow, todolist, ulw-execute
+│       ├── text_to_image/  # 文生图技能
+│       ├── code_wiki/      # 代码库 wiki 生成技能
+│       └── llm_wiki/       # Markdown 知识库技能
+│
+├── src/                    # 运行时数据目录
+│   ├── checkpoints/        # 会话检查点
+│   ├── data/               # 数据存储
+│   ├── store/              # 数据存储
+│   ├── rag/                # RAG 索引输出
+│   └── images/ audio/ video/ # 上传媒体文件（静态托管）
+│
+├── temp/                   # 临时文件
+│
+├── tests/                  # 测试套件（pytest）
+│
+├── workspace/              # 角色档案与行为定义
+│   ├── SOUL.md             # 性格反差、语言风格
+│   ├── IDENTITY.md         # Core identity card
+│   ├── AGENTS.md           # 工具使用优先级、安全边界
+│   ├── USER.md             # 用户偏好与已知信息
+│   ├── ROLE.md             # 角色声明：AI 扮演谁、用户扮演谁
+│   ├── HEARTBEAT.md        # Heartbeat 服务的待办任务
+│   ├── prompt_builder.py   # 档案到系统提示词的构建器
+│   ├── file_sync.py        # 工作区模板懒同步（按语言）
+│   ├── template/           # 人设模板（en / zh / ja / ko）
+│   ├── sessions/           # Per-session runtime workspace data
+│   └── memory/             # 长期记忆存储
+│
+├── .env.example            # 环境变量模板
+├── pyproject.toml          # Python 依赖（uv 管理）
+├── uv.lock                 # uv 锁文件
+├── start.sh                # 后端启动脚本
+└── cron_jobs.json          # Cron 任务计划数据
+```
+
+---
+
+## 📚 子模块文档
+
+各主要子系统均有详细 README：
+
+| 子模块 | 说明 | 文档 |
+|-----------|-------------|---------------|
+| **Context Engine** | 短期会话消息记忆（MesMemory） | [EN](context_engine/README.md) · [ZH](context_engine/README.zh.md) · [JA](context_engine/README.ja.md) · [KO](context_engine/README.ko.md) |
+| **经验体系** | 将对话历史沉淀为可复用经验的四条抽取路径，以及维护 `skills/auto/` 的后台 Curator | [EN](docs/experience/README.md) · [ZH](docs/experience/README.zh.md) · [JA](docs/experience/README.ja.md) · [KO](docs/experience/README.ko.md) |
+| **会话内存** | SESSION 计划能力：memory flush、压缩冷却、compaction lock、事件日志、语义搜索 | [EN](docs/session_memory/README.md) · [ZH](docs/session_memory/README.zh.md) · [JA](docs/session_memory/README.ja.md) · [KO](docs/session_memory/README.ko.md) |
+| **子代理系统** | 多层级子代理派生、并行执行与结果投递 | [EN](agent/tools/subagent/README.md) · [ZH](agent/tools/subagent/README.zh.md) · [JA](agent/tools/subagent/README.ja.md) · [KO](agent/tools/subagent/README.ko.md) |
+| **子代理设计** | 设计不变量：两轴角色模型、spawn 权限守卫与四层完成门禁 | [EN](docs/subagent/README.md) · [ZH](docs/subagent/README.zh.md) · [JA](docs/subagent/README.ja.md) · [KO](docs/subagent/README.ko.md) |
+| **Code Intel** | 代码检索：所有代理可用的 ripgrep 关键词搜索，加上四层按角色开放的检索——tree-sitter 符号索引、ast-grep 结构化搜索、LSP 精确检索与语义搜索 | [EN](docs/code-intel/README.md) · [ZH](docs/code-intel/README.zh.md) · [JA](docs/code-intel/README.ja.md) · [KO](docs/code-intel/README.ko.md) |
+| **程序化工具调用** | 仅 EXECUTOR 可用的 `execute_code`：一段 Python 脚本在独立子进程执行，经 loopback TCP RPC 桥调用真实工具，配合受限 builtins 与逐脚本预算 | [EN](docs/ptc/README.md) · [ZH](docs/ptc/README.zh.md) · [JA](docs/ptc/README.ja.md) · [KO](docs/ptc/README.ko.md) |
+| **中间件** | Agent 生命周期中间件流水线 | [EN](agent/middlewares/README.md) · [ZH](agent/middlewares/README.zh.md) · [JA](agent/middlewares/README.ja.md) · [KO](agent/middlewares/README.ko.md) |
+| **渠道** | 渠道接口与适配器系统 | [EN](channels/README.md) · [ZH](channels/README.zh.md) · [JA](channels/README.ja.md) · [KO](channels/README.ko.md) |
+| **桌面客户端** | Tauri 2 + Nuxt 4 桌面/移动 SPA 客户端 | [EN](client/README.md) · [ZH](client/README.zh.md) · [JA](client/README.ja.md) · [KO](client/README.ko.md) |
+| **Cron 服务** | 定时/周期性 Agent 任务执行 | [EN](skills/builtin/core/cron/scripts/README.md) · [ZH](skills/builtin/core/cron/scripts/README.zh.md) · [JA](skills/builtin/core/cron/scripts/README.ja.md) · [KO](skills/builtin/core/cron/scripts/README.ko.md) |
+| **Heartbeat 服务** | 周期性唤醒任务检查 | [EN](skills/builtin/core/heartbeat/README.md) · [ZH](skills/builtin/core/heartbeat/README.zh.md) · [JA](skills/builtin/core/heartbeat/README.ja.md) · [KO](skills/builtin/core/heartbeat/README.ko.md) |
+| **摘要压缩** | 上下文压缩中间件：五个触发点、四路溢出路由器与防抖动保护 | [EN](docs/summarization/README.md) · [ZH](docs/summarization/README.zh.md) · [JA](docs/summarization/README.ja.md) · [KO](docs/summarization/README.ko.md) |
+| **防循环** | 失控循环守卫、指数退避断路器与进程崩溃门控 | [EN](docs/loop-prevention/README.md) · [ZH](docs/loop-prevention/README.zh.md) · [JA](docs/loop-prevention/README.ja.md) · [KO](docs/loop-prevention/README.ko.md) |
+| **沙箱** | 终端与 Python REPL 隔离：环境变量清洗、OS 原生隔离与审批闸门 | [EN](docs/sandbox/README.md) · [ZH](docs/sandbox/README.zh.md) · [JA](docs/sandbox/README.ja.md) · [KO](docs/sandbox/README.ko.md) |
+| **威胁模型** | 信任边界、数据分类、逐条威胁的防护现状，以及 prompt 注入扫描器 | [EN](docs/threat-model/README.md) · [ZH](docs/threat-model/README.zh.md) · [JA](docs/threat-model/README.ja.md) · [KO](docs/threat-model/README.ko.md) |
+| **用户登录** | 可选账户保护：loopback 客户端免登录，远程访问由 scrypt 口令与 HttpOnly JWT 会话 Cookie 把关 | [EN](docs/auth/README.md) · [ZH](docs/auth/README.zh.md) · [JA](docs/auth/README.ja.md) · [KO](docs/auth/README.ko.md) |
+| **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
+| **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
+| **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
+| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证，以及隔离子代理工作区 | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+
+## ⚡ 快速开始
+
+### 1. 前置条件
+- **Python 3.13+**
+- **[uv](https://docs.astral.sh/uv/)** —— 依赖管理器。`.venv` 由 uv 自动创建和管理，无需手动创建虚拟环境。
+
+```bash
+git clone <your-repo-url>
+cd EMA_AI_agent
+uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
+```
+
+### 2. 配置环境变量
+复制 `.env` 模板，至少填写主聊天模型与 Tavily Key：
+
+```bash
+cp .env.example .env
+```
+
+| 变量 | 必填 | 说明 |
+| :------- | :------- | :---------- |
+| `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 主聊天模型（需支持 JSON 输出与工具调用）；`MAIN_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 通用推理开关，按提供商映射（DeepSeek / OpenAI / GLM / Anthropic） |
+| `TAVILY_API_KEY` | 使用联网搜索时必填 | 启用联网搜索工具 |
+| `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
+| `REASONER_LLM_*` | — | 思维链推理模型 |
+| `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
+| `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |
+| `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 安全扫描开关（默认开启） |
+| `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 仅存储设置（默认 5）——没有任何工具执行路径消费它；日志级别（INFO） |
+| `WORKSPACE_TEMPLATE_LANG` | — | 人设模板语言：`en` / `zh` / `ja` / `ko`（首次使用时懒拷贝） |
+| `"LANGSMITH"`（sherry.jsonc） | — | 可选的 LangSmith 追踪 |
+
+### 3. 模型说明（HuggingFace 自动下载）
+配置为**本地 GGUF** 模式的模型会在首次使用时自动从 Hugging Face 下载到 `models/<model>/model_weight/`，无需手动下载：
+
+- **嵌入模型**：`EMBEDDING_MODEL_LOCAL=true`（默认）使用本地 `bge-m3` Q8_0 GGUF，首次运行时自动下载。
+- **重排序模型**：`.env` 模板默认使用**云端 API**（`RERANKER_MODEL_LOCAL=false`，OpenAI 兼容的 `bge-reranker-v2-m3`）。设为 `true` 可切换为本地 GGUF 重排序模型（约 636 MB，自动下载）。
+- **ITTT / VTTT / Auxiliary LLM**：模板默认云端 API；设 `*_MODEL_LOCAL=true` 切换为本地 GGUF 模型（同样自动下载）。
+
+> 首次下载需要访问 huggingface.co（中国大陆用户可能需要代理或镜像）。下载中断后下次启动会继续；删除 `models/<model>/model_weight/` 可强制重新下载。
+
+### 4. 启动后端
+`start.sh` 会激活 uv 管理的 `.venv` 并启动 Robyn 后端（不启动 Ollama 或任何前端）：
+
+```bash
+chmod +x start.sh
+./start.sh          # 执行 .venv 内解释器：python -m server --fast --disable-openapi
+```
+
+手动启动（等效）：
+
+```bash
+uv run python -m server
+```
+
+后端监听 **http://127.0.0.1:8080**，WebSocket 端点为 `/sessions/ws`。
+
+### 5. （可选）桌面客户端
+Tauri 2 + Nuxt 4 客户端位于 [client/](client/)，需要 Node.js 20+、pnpm 与 Rust（CI 固定 Node 22）：
+
+```bash
+cd client
+pnpm install
+pnpm dev          # 浏览器模式，开发服务器 http://localhost:3000
+pnpm tauri dev    # 原生桌面模式
+```
+
+客户端默认连接 `http://127.0.0.1:8080` 的 Python 后端（可通过 `client/.env` 中的 `VITE_API_BACK_URL` 配置）。详见[客户端 README](client/README.md)。
+
+---
+
+## 🧪 测试
+
+测试位于 `tests/` 下，**镜像源码树**（`tests/agent/...`、`tests/server/...`、`tests/context_engine/...`），通过 uv 用 **pytest** 运行（单个测试文件或小范围选择用 `uv run pytest`）。每个测试文件都带一个模块级 `pytestmark`（`unit` / `integration` / `module` / `system` / `regression`），决定它属于哪个 runner 分组。
+
+### 推荐：进程隔离 runner
+
+完整套件（以及 CI）请使用拆分 runner：它以**三个顺序执行的 pytest 进程**（从不并行）按 MARKER（而非目录）选择测试，汇总退出码，并打印每组摘要与最终裁决（仅当所有组通过时退出码为 0）：
+
+```bash
+uv run python tests/run_tests_split.py                  # 密闭套件（默认，排除 llm_e2e）
+uv run python tests/run_tests_split.py --with-llm-e2e   # 仅真实 LLM e2e 测试（独立 job 模式）
+uv run python tests/run_tests_split.py -- -k spawn -q   # `--` 之后的参数转发给 pytest
+```
+
+| 组 | Marker | 内容 |
+| :---- | :----- | :------- |
+| **A** | `unit` | 纯逻辑、完全 mock 的测试 |
+| **B** | `integration or module or system` | 密闭的集成 / 模块 / 系统测试 |
+| **C** | `regression` | 跨模块回归测试 |
+
+**为什么必须分进程？** `tests/agent/tools/subagent/conftest.py` 会在 conftest *导入* 时把 stub 可调用对象装进进程级全局 `sys.modules`。在单进程完整套件运行中，pytest 会在收集阶段（任何测试执行之前）导入所有 conftest 与测试模块，于是这些 stub 在整个进程内一直有效并跨套件泄漏：惰性（调用时）导入会解析到 stub，而更早绑定真实对象的模块仍保留旧绑定。结果就是远离 subagent 测试的套件出现令人困惑、依赖顺序的失败（例如技能作用域断言看到 stub 固定技能列表、`TypeError` 回溯指向 conftest lambda）。分进程运行让这种跨套件污染在结构上不可能发生。（stub 自 `c730a46` 起已可安全还原；runner 是纵深防御的运维层。）
+
+**Windows 说明：** 子 pytest 进程的环境会被注入 `PYTHONIOENCODING=utf-8`，runner 以 `errors="replace"` 捕获其输出，因此 GBK 控制台代码页既不会破坏输出也不会让运行崩溃。
+
+### 真实 LLM e2e 测试（`llm_e2e` marker）
+
+五个文件中的八个测试会调用**真实 LLM API**：其中七个位于 `tests/agent/tools/subagent/`（`test_real_e2e.py`、`test_spawn_direct_e2e.py`、`test_code_intel_researcher_e2e.py`、`test_ptc_executor_e2e.py`），外加 `tests/skills/builtin/core/multimodal_rag/test_rag_e2e.py` 中的 multimodal-RAG 流水线测试。它们：
+
+- **默认被取消选择**（`-m "not llm_e2e"`，同时写在 `pyproject.toml` addopts 与 runner 中），
+- 受 `@pytest.mark.timeout` 预算约束（pytest-timeout）：简单测试 300 秒，并发测试 600 秒，
+- 需显式运行，且放在**独立 job**：`uv run python tests/run_tests_split.py --with-llm-e2e`（选择 `-m llm_e2e`）或 `uv run pytest -m llm_e2e`。
+
+**预期耗时**（单独运行、真实后端）：简单任务约 30–60 秒；复杂最坏情况约 10 分钟；并发任务约 2–9 分钟。超过这些预算说明是真正卡住，而非正常慢，单测超时会将其限制住（简单 300 秒 / 并发 600 秒）。
+
+**CI：** `.github/workflows/ci.yml` 会在每次向 `main` 或 `dev` 推送/提 PR 时运行 `uv run python tests/run_tests_split.py`，以**三个顺序执行的 pytest 进程**（从不并行）跑完整套件：A = `unit`，B = `integration` + `module` + `system`，C = `regression`。`--with-llm-e2e` 仍作为单独的、更慢的 job（它消耗 API token；绝不要与其他套件并行运行）。
+
+> **注意：** `tests/full/` 是标准分组之外的辅助/实验目录。其中所有驱动真实 LLM 的文件都带有 `llm_e2e` 标记，因此默认 addopts 会取消选择它们，split runner 也从不收集（它还会 `--ignore` `tests/full/`）。手动运行：`uv run --no-sync pytest -m llm_e2e tests/full/<file>`。hermetic 测试不应放在这里 —— real-graph HITL 测试现已移至 `tests/agent/middlewares/humanInTheLoop/test_hitl_real_graph.py`，随标准分组运行。
+
+### Evals
+
+`evals/` 是与 pytest 并列的自建、沙箱化评估框架。可运行全部已注册套件，或按名称运行单个：
+
+```bash
+uv run python evals/evals.py                # 全部已注册套件
+uv run python evals/evals.py graph_rag      # 按名称运行单个套件
+```
+
+| 套件 | 评估内容 |
+| :---- | :---------------- |
+| `graph_rag` | multimodal_rag 管线，用 RAGAS 评分（faithfulness、answer relevancy、context recall、context precision） |
+| `subagent` | 真实 `spawn_subagent_direct` 管线在一组确定性任务上的表现（任务成功率 + 延迟） |
+| `long_running_task` | TaskFlow 编排环在有依赖的 DAG 上的表现（步骤成功率、流程完成度、墙钟时间） |
+| `session_memory` | 会话内存栈的 6 项检查：冷却、compaction lock、检查点恢复、幂等重放、上下文资格、语义搜索排序 |
+| `nudge_extraction` | plan 抽取过程，由 auxiliary LLM 评判技能是否 grounded、可复用、非泛化 |
+
+每个套件都在 `evals/sandbox.py` 内运行（仓库写入被重定向到临时沙箱），并把报告写到 `evals/results/<suite>/<run_id>/`。该目录已 **gitignore**，每次运行的报告永不提交。
+
+---
+
+## 📝 角色档案示例
+
+Agent 的行为由 `workspace/` 下的文件驱动：
+
+- **SOUL.md**：定义性格反差、语言风格与行为逻辑。
+- **AGENTS.md**：定义工具使用优先级、安全边界与伦理准则。
+- **USER.md**：存储用户相关的交互偏好与已知信息。
+- **ROLE.md**：声明 AI 扮演谁、用户扮演谁（“用户将扮演…”句式）；由「预设角色」面板按当前界面语言生成，并随预设一同保存。
+- **HEARTBEAT.md**：列出 Heartbeat 定时服务的待办任务。
+- **prompt_builder.py**：将档案文件构建为系统提示词。
+- **file_sync.py**：按需从 `workspace/template/<lang>/`（由 `WORKSPACE_TEMPLATE_LANG` 选择）懒拷贝缺失的人设文件，且绝不覆盖用户修改。
+
+---
+
+## 🤝 参与贡献
+
+欢迎提交 Issue 与 Pull Request！添加新技能的方法：
+
+1. 在 `skills/` 下创建一个文件夹（第三方技能放在 `skills/plugins/`）。
+2. 编写带 YAML frontmatter（`name`、`description`、可选 `scope`）的 `SKILL.md`，描述技能的用法与步骤。
+3. 重启 Agent —— loader 会自动发现所有 `SKILL.md` 并暴露给模型。（也可以让运行中的 Agent 使用内置 `skill_creator` 技能自动生成。）
+
+`skills/plugins/` 下的第三方技能会经过 SkillSpector 扫描，并保持停用直到被显式启用。
+
+---
+
+联系方式：QQ 3132225629
+
+## 📄 许可证
+
+本项目基于 MIT 许可证开源。
+
+---
+
+> **💡 提示**：本项目的灵感来自对先进 AI Agent 与深度角色扮演的探索。

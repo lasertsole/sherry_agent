@@ -1,0 +1,159 @@
+import type { SubagentRun } from '~/composables/bridge';
+
+/**
+ * Whether the run is still running (RUNNING / INTERRUPTED count as not yet finished)
+ * @param run
+ */
+export function isRunning(run: SubagentRun): boolean {
+  const status = statusOf(run?.execution?.status);
+  return status === 'RUNNING' || status === 'INTERRUPTED';
+}
+
+/** Execution statuses that mean "the run still owns a slot" (running, parked after
+ *  an interrupt, or queued behind the sub-agent lane). */
+const ACTIVE_EXECUTION_STATUSES = new Set(['RUNNING', 'INTERRUPTED', 'PENDING']);
+
+/** Outcome statuses the registry writes once a run has finished. */
+const FINISHED_OUTCOME_STATUSES = new Set(['OK', 'ERROR', 'TIMEOUT', 'KILLED', 'UNKNOWN']);
+
+/**
+ * Upper-cased view of a wire status.
+ *
+ * The run record carries the same vocabulary in either case depending on the
+ * transport: the HTTP/WS payloads serialize the backend enums' VALUES
+ * (``running`` / ``terminal`` / ``ok``), while the native IPC payload
+ * upper-cases them. Comparing on one case keeps both working; the
+ * presentation tables (``subagent-status.ts``) are upper-case.
+ * @param status
+ */
+const statusOf = (status: unknown): string => String(status ?? '').toUpperCase();
+
+/**
+ * Whether a run is still active work: running, interrupted (recoverable) or
+ * queued. Used by the toolbar's terminal entry and its panel.
+ *
+ * A finished run must never keep sitting in the "running" list, so the status
+ * alone is not trusted: an end timestamp, an end reason or a terminal outcome
+ * all mean the run is done, whatever the status field still says (a run whose
+ * ``subagent_ended`` frame was missed during a reload keeps a stale ``running``
+ * status until the next fetch).
+ * @param run
+ */
+export function isActiveRun(run: SubagentRun): boolean {
+  const execution = run?.execution;
+  if (!ACTIVE_EXECUTION_STATUSES.has(statusOf(execution?.status))) return false;
+  if (execution?.ended_at != null) return false;
+  if (run?.ended_reason) return false;
+  if (FINISHED_OUTCOME_STATUSES.has(statusOf(execution?.outcome?.status))) return false;
+  return true;
+}
+
+/**
+ * Collect the given root run and all its descendant run_ids (parent-child: parent's child_session_key === child's requester_session_key).
+ * @param rootId
+ * @param pool
+ */
+export function collectSubtreeRunIds(rootId: string, pool: SubagentRun[]): string[] {
+  const root = pool.find(r => r.run_id === rootId);
+  if (!root) return [rootId];
+  const out: string[] = [root.run_id];
+  const byRequester = new Map<string, SubagentRun[]>();
+  for (const run of pool) {
+    const key = run.requester_session_key;
+    if (!key) continue;
+    const list = byRequester.get(key);
+    if (list) list.push(run);
+    else byRequester.set(key, [run]);
+  }
+  const queue: string[] = [];
+  if (root.child_session_key) queue.push(root.child_session_key);
+  while (queue.length > 0) {
+    const key = queue.shift();
+    if (!key) continue;
+    const children = byRequester.get(key);
+    if (!children) continue;
+    for (const child of children) {
+      out.push(child.run_id);
+      if (child.child_session_key) queue.push(child.child_session_key);
+    }
+  }
+  return out;
+}
+
+/**
+ * Display list for the right-side task view: when a background task box is clicked, show
+ * **all first-level root tasks** under the "calling session" that box belongs to (the
+ * requester_session_key of its topmost depth-1 ancestor task), each expanded with its full
+ * descendant subtree. When nothing is focused, falls back to showing all first-level tasks.
+ *
+ * Parent-child linkage (SubagentRun has no parent_run_id): if a parent run's
+ * child_session_key = K, then every run with requester_session_key === K is a direct
+ * subtask of it. From this:
+ * - Upward: if run.requester_session_key === some parent run's child_session_key, that run
+ *   is its ancestor;
+ * - Downward: starting from the root, collect descendants level by level along the
+ *   child_session_key → requester_session_key chain.
+ * @param rootId Focused run_id (undefined = no focus).
+ * @param pool The full run list across all sessions.
+ */
+export function computeFocusedSubtreeRuns(rootId: string | undefined, pool: SubagentRun[]): SubagentRun[] {
+  if (!rootId) return pool.filter(run => run?.depth === 1);
+
+  // Pre-build a "direct subtasks" index by requester_session_key for bidirectional (upward/downward) lookup
+  const byRequester = new Map<string, SubagentRun[]>();
+  for (const run of pool) {
+    const key = run.requester_session_key;
+    if (!key) continue;
+    const list = byRequester.get(key);
+    if (list) list.push(run);
+    else byRequester.set(key, [run]);
+  }
+  // Index by child_session_key → the "parent run spawned from it", for tracing ancestors upward
+  const parentByChildSession = new Map<string, SubagentRun>();
+  for (const run of pool) {
+    if (run.child_session_key) parentByChildSession.set(run.child_session_key, run);
+  }
+
+  // Starting from the focused run, trace upward to the topmost depth-1 ancestor root task
+  const focused = pool.find(r => r.run_id === rootId);
+  if (!focused) return [];
+  let top: SubagentRun = focused;
+  let guard = 0;
+  while (top.depth !== 1 && guard++ < 100) {
+    const parent: SubagentRun | undefined = top.requester_session_key
+      ? parentByChildSession.get(top.requester_session_key)
+      : undefined;
+    if (!parent) break;
+    top = parent;
+  }
+
+  // Collect all depth-1 root tasks under that calling session
+  const callingSid = top.requester_session_key ?? top.child_session_key;
+  const roots = pool.filter(r => r.depth === 1 && r.requester_session_key === callingSid);
+  if (roots.length === 0) return [];
+
+  // For each root task collect its entire subtree (root + descendants), aggregated in BFS order with roots first and descendants after
+  const seen = new Set<string>();
+  const result: SubagentRun[] = [];
+  const appendTree = (root: SubagentRun): void => {
+    if (seen.has(root.run_id)) return;
+    seen.add(root.run_id);
+    result.push(root);
+    const queue: string[] = [];
+    if (root.child_session_key) queue.push(root.child_session_key);
+    while (queue.length > 0) {
+      const key = queue.shift();
+      if (!key) continue;
+      const children = byRequester.get(key);
+      if (!children) continue;
+      for (const child of children) {
+        if (seen.has(child.run_id)) continue;
+        seen.add(child.run_id);
+        result.push(child);
+        if (child.child_session_key) queue.push(child.child_session_key);
+      }
+    }
+  };
+  for (const r of roots) appendTree(r);
+  return result;
+}

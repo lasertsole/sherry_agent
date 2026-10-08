@@ -1,0 +1,165 @@
+import pytest
+from agent.tools.subagent.registry.memory import set_run, clear
+from agent.tools.subagent.registry.queries import (
+    list_runs_for_requester,
+    list_descendant_runs,
+    count_active_runs_for_session,
+    get_run_by_child_session_key,
+)
+from agent.tools.subagent.types.registry import SubagentRunRecord
+
+
+pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture(autouse=True)
+def _clean():
+    clear()
+    yield
+    clear()
+
+
+def _make_run(run_id, requester, child_key=None, task="test", task_name=None):
+    child_key = child_key or f"agent:main:subagent:{run_id}"
+    r = SubagentRunRecord(
+        run_id=run_id,
+        child_session_key=child_key,
+        requester_session_key=requester,
+        task=task,
+        task_name=task_name,
+    )
+    set_run(r)
+    return r
+
+
+class TestQueries:
+    def test_list_runs_for_requester(self):
+        _make_run("r1", "parent1")
+        _make_run("r2", "parent1")
+        _make_run("r3", "parent2")
+        result = list_runs_for_requester("parent1")
+        assert len(result) == 2
+
+    def test_list_runs_for_requester_empty(self):
+        assert list_runs_for_requester("nonexistent") == []
+
+    def test_list_descendant_runs(self):
+        _make_run("r1", "root", child_key="child1")
+        _make_run("r2", "child1", child_key="child2")
+        _make_run("r3", "child2", child_key="child3")
+        result = list_descendant_runs("root")
+        assert len(result) == 3
+
+    def test_list_descendant_no_infinite_loop(self):
+        _make_run("r1", "A", child_key="B")
+        _make_run("r2", "B", child_key="A")
+        result = list_descendant_runs("A")
+        assert len(result) >= 1
+
+    def test_count_active_runs(self):
+        _make_run("r1", "parent1")
+        _make_run("r2", "parent1")
+        count = count_active_runs_for_session("parent1")
+        assert count == 2
+
+    def test_get_run_by_child_session_key(self):
+        _make_run("r1", "p1", child_key="agent:main:subagent:xyz")
+        found = get_run_by_child_session_key("agent:main:subagent:xyz")
+        assert found is not None
+        assert found.run_id == "r1"
+
+    def test_get_run_by_child_session_key_missing(self):
+        assert get_run_by_child_session_key("nonexistent") is None
+
+
+def test_list_descendant_runs_scans_the_registry_once(monkeypatch):
+    """The BFS builds the requester index from ONE registry pass.
+
+    The previous implementation re-scanned every run record once per expanded
+    node (O(N*D)); with three levels the old code called ``memory.values()``
+    four times (root pop + three child pops), the index-based walk once.
+    """
+    _make_run("r1", "root", child_key="child1")
+    _make_run("r2", "child1", child_key="child2")
+    _make_run("r3", "child2", child_key="child3")
+
+    from agent.tools.subagent.registry import memory as memory_module
+
+    calls = {"n": 0}
+    real_values = memory_module.values
+
+    def counting_values():
+        calls["n"] += 1
+        return real_values()
+
+    monkeypatch.setattr(memory_module, "values", counting_values)
+
+    result = list_descendant_runs("root")
+
+    assert len(result) == 3
+    assert calls["n"] == 1
+
+
+def test_count_all_active_runs_global():
+    from agent.tools.subagent.registry import (  # package-root import also proves re-export
+        register_run,
+        count_all_active_runs,
+        count_all_active_runs_readonly,
+        clear as clear_registry,
+    )
+    from agent.tools.subagent.types.registry import ExecutionStatus
+
+    clear_registry()
+    try:
+        register_run(
+            child_session_key="agent:main:subagent:g1",
+            requester_session_key="agent:main:session:s1",
+            task="t1",
+            depth=1,
+        )
+        r2 = register_run(
+            child_session_key="agent:main:subagent:g2",
+            requester_session_key="agent:main:session:s2",
+            task="t2",
+            depth=1,
+        )
+        r2.execution.status = ExecutionStatus.INTERRUPTED
+        assert count_all_active_runs() == 1
+        assert count_all_active_runs_readonly() == 1
+    finally:
+        clear_registry()
+
+
+def test_pending_counts_as_active():
+    """PENDING runs hold a spawn slot: all three counters must include them."""
+    from agent.tools.subagent.registry import (
+        register_run,
+        count_active_runs_for_session,
+        count_active_descendant_runs,
+        count_all_active_runs,
+        clear as clear_registry,
+    )
+    from agent.tools.subagent.types.registry import ExecutionStatus
+
+    clear_registry()
+    try:
+        root = register_run(
+            child_session_key="agent:main:subagent:p_root",
+            requester_session_key="agent:main:session:root",
+            task="root task",
+            depth=1,
+        )
+        child = register_run(
+            child_session_key="agent:main:subagent:p_child",
+            requester_session_key=root.child_session_key,
+            task="child task",
+            depth=2,
+        )
+        assert root.execution.status == ExecutionStatus.PENDING
+        assert child.execution.status == ExecutionStatus.PENDING
+
+        assert count_active_runs_for_session("agent:main:session:root") == 1
+        assert count_active_descendant_runs("agent:main:session:root") == 2
+        assert count_all_active_runs() == 2
+    finally:
+        clear_registry()

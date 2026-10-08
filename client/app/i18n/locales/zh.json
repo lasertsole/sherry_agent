@@ -1,0 +1,233 @@
+{
+  "a11y": {
+    "previewImage": "预览图片",
+    "language": "语言"
+  },
+  "common": {
+    "confirmDelete": "确认删除",
+    "delete": "删除",
+    "cancel": "取消"
+  },
+  "chatInput": {
+    "maxImages": "最多只能上传 {count} 张图片",
+    "maxImagesExceed": "最多只能上传 {count} 张图片，已超出 {extra} 张",
+    "maxAudios": "最多只能上传 {count} 段音频",
+    "maxAudiosExceed": "最多只能上传 {count} 段音频，已超出 {extra} 段",
+    "maxVideos": "最多只能上传 {count} 段视频",
+    "maxVideosExceed": "最多只能上传 {count} 段视频，已超出 {extra} 段"
+  },
+  "sessionModelPicker": {
+    "pending": "下一轮生效"
+  },
+  "chatBox": {
+    "defaultAiName": "雪莉"
+  },
+  "chat": {
+    "backgroundMessage": "后台任务",
+    "originTaskIntent": "任务意图",
+    "originQualityGate": "质量门控",
+    "originTodoNudge": "待办提醒",
+    "originProjectDir": "项目目录切换",
+    "originGitHead": "Git 分支切换",
+    "originSystem": "系统消息",
+    "tokenGuard": {
+      "title": "模型配置不达标",
+      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 环境配置中修正。"
+    }
+  },
+  "errors": {
+    "requestFailed": "请求失败",
+    "pageError": "页面错误",
+    "replyFailed": "（回复失败：{reason}）",
+    "sendFailed": "（发送失败：{reason}）",
+    "streamInterrupted": "连接中断，回复可能已在后台完成，稍后自动同步"
+  },
+  "connection": {
+    "offline": "网络已断开",
+    "backendDown": "后端服务未连接",
+    "backOnline": "网络已恢复"
+  },
+  "history": {
+    "noSessions": "暂无会话记录",
+    "newSession": "新会话"
+  },
+  "sidebar": {
+    "tasksAgoSeconds": "{sec} 秒前",
+    "statusRunning": "运行中",
+    "statusInterrupted": "已中断",
+    "statusDone": "已完成",
+    "statusError": "出错",
+    "statusTimeout": "超时",
+    "statusKilled": "已终止",
+    "statusUnknown": "未知",
+    "roleRoot": "主任务",
+    "roleChild": "子任务"
+  },
+  "toolbar": {
+    "newChat": "新建对话",
+    "image": "图片",
+    "audio": "音频",
+    "video": "视频",
+    "skills": "技能",
+    "knowledgeGraph": "知识图谱",
+    "stats": "统计",
+    "systemConfig": "系统配置",
+    "persona": "预设角色",
+    "memory": "记忆",
+    "heartbeat": "心跳",
+    "cron": "定时任务",
+    "logs": "日志",
+    "extend": "扩展",
+    "account": "账户"
+  },
+  "todolist": {
+    "flowLabel": "TaskFlow: {flow}"
+  },
+  "config": {
+    "agent": {
+      "tabs": {
+        "tools": "工具",
+        "middlewares": "中间件",
+        "subagents": "代理模型",
+        "skills": "技能"
+      },
+      "models": {
+        "scope_main": "主代理",
+        "scope_subagent": "子代理",
+        "mainHint": "主代理（main agent）使用的模型；默认跟随环境配置。",
+        "followEnv": "跟随环境配置"
+      },
+      "tools": {
+        "count": "已选 {selected}/{total}",
+        "requiredHint": "必需，不可取消",
+        "scope_builtin": "内置",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）"
+      },
+      "skills": {
+        "count": "已选 {selected}/{total}",
+        "scope_builtin": "内置",
+        "scope_thirdparty": "第三方",
+        "empty": "暂无技能"
+      },
+      "toolGroup": {
+        "files": "文件读写",
+        "terminal": "终端与代码",
+        "tasks": "任务与计划",
+        "memory": "记忆与检索",
+        "skills": "技能",
+        "subagents": "子代理",
+        "interaction": "交互",
+        "web": "网络",
+        "browser": "浏览器",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "lockedTitle": "系统必需（锁定）",
+        "nudgeLabel": "启用 nudge",
+        "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "计划续跑",
+          "desc": "计划（待办/任务流）未完成时自动继续下一轮"
+        },
+        "TaskIntentMiddleware": {
+          "name": "任务意图引导",
+          "desc": "识别工作型请求并注入编排提示"
+        },
+        "WorkspaceNoticeMiddleware": {
+          "name": "工作区变更通知",
+          "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
+        },
+        "MultimodalProcessor": {
+          "name": "多模态预处理",
+          "desc": "上传的图片/音频/视频入库与降级处理"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "子代理完成注入",
+          "desc": "子代理完成后把结果注入主会话"
+        },
+        "Summarization": {
+          "name": "摘要压缩",
+          "desc": "上下文压缩、溢出处理与压缩后的 nudge"
+        }
+      },
+      "subagents": {
+        "followTier": "跟随角色默认",
+        "tier": "角色默认：{tier}",
+        "tierDepth": "无角色定义：按深度默认"
+      },
+      "role": {
+        "general": "通用",
+        "researcher": "研究员",
+        "executor": "执行者",
+        "reviewer": "审查者",
+        "librarian": "图书管理员"
+      },
+      "viewer": {
+        "tools": "工具 {selected}/{total}",
+        "middlewares": "关闭的中间件：{names}",
+        "middlewaresNone": "中间件：全部开启",
+        "models": "子代理模型：{names}"
+      }
+    },
+    "save": "保存",
+    "cancel": "取消",
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "tabs": {
+      "role": "角色配置",
+      "agents": "运行守则",
+      "soul": "人格灵魂",
+      "user": "用户信息"
+    },
+    "role": {
+      "aiLine": "你将扮演{name}。",
+      "userLine": "用户将扮演{name}。",
+      "assistant": "AI 角色",
+      "userRole": "用户角色"
+    },
+    "persona": {
+      "preset": {
+        "builtinPureName": "纯净",
+        "builtinCompanionName": "情感陪伴",
+        "defaultName": "全量",
+        "defaultBadge": "默认",
+        "builtinCodingName": "编程助手",
+        "builtinBadge": "内置"
+      }
+    }
+  },
+  "rightSidebar": {
+    "fileViewer": "项目文件",
+    "account": "账户"
+  },
+  "progressFloat": {
+    "status": {
+      "pending": "待办",
+      "in_progress": "进行中",
+      "completed": "已完成",
+      "cancelled": "已取消",
+      "ready": "可开始",
+      "blocked": "未解锁",
+      "dispatched": "已派发",
+      "done": "已完成",
+      "failed": "失败",
+      "skipped": "已跳过"
+    }
+  },
+  "projectFiles": {
+    "title": "文件树"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
+  },
+  "personaPreset": {
+    "unbound": "未选择"
+  }
+}

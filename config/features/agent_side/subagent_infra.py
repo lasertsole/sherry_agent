@@ -1,0 +1,53 @@
+"""Scattered subagent infrastructure tunables (outside SubagentConfig)."""
+
+from typing import TypedDict
+
+
+class SubagentInfraConfig(TypedDict):
+    """Scattered subagent infrastructure tunables (outside SubagentConfig)."""
+
+    registry_max_retained_runs: int
+    registry_store_busy_timeout_ms: int
+    registry_init_wait_timeout_s: float
+    pending_injections_busy_timeout_ms: int
+    sessions_yield_default_timeout_seconds: float
+    sessions_send_timeout_seconds: float
+    delivery_mirror_max: int
+    delivery_transient_retry_delays_ms: list[int]
+    delivery_compaction_retry_delays_ms: list[int]
+    orphan_wedged_age_seconds: int
+    orphan_max_recovery_attempts: int
+    orphan_max_terminal_finalize_attempts: int
+    helpers_frozen_result_cap_bytes: int
+    helpers_announce_retry_base_ms: int
+    helpers_announce_retry_cap_ms: int
+    capture_max_wait_ms: int
+    capture_retry_interval_ms: int
+    steer_abort_settle_timeout: float
+    followup_interval_multiplier: int
+
+
+SUBAGENT_INFRA: SubagentInfraConfig = {
+    # In-memory run records: the sweeper persists terminal runs to SQLite, so
+    # the dict only has to hold the working set; readers that miss fall back to
+    # disk. Keeps a long-lived process bounded (the dev DB holds ~7.8k runs).
+    "registry_max_retained_runs": 2000,
+    "registry_store_busy_timeout_ms": 5000,
+    "registry_init_wait_timeout_s": 10.0,
+    "pending_injections_busy_timeout_ms": 5000,
+    "sessions_yield_default_timeout_seconds": 300.0,
+    "sessions_send_timeout_seconds": 30.0,
+    "delivery_mirror_max": 5000,
+    "delivery_transient_retry_delays_ms": [5000, 10000, 20000],
+    "delivery_compaction_retry_delays_ms": [1000, 2000, 4000, 8000],
+    "orphan_wedged_age_seconds": 86400,
+    "orphan_max_recovery_attempts": 3,
+    "orphan_max_terminal_finalize_attempts": 3,
+    "helpers_frozen_result_cap_bytes": 24000,
+    "helpers_announce_retry_base_ms": 1000,
+    "helpers_announce_retry_cap_ms": 8000,
+    "capture_max_wait_ms": 5000,
+    "capture_retry_interval_ms": 500,
+    "steer_abort_settle_timeout": 5.0,
+    "followup_interval_multiplier": 2,
+}

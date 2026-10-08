@@ -1,0 +1,606 @@
+# AGENTS.md — sherry_agent
+
+AI coding assistant guide for the EMA AI Agent (Sherry) project. Read this before exploring the codebase.
+
+## Project
+
+**EMA AI Agent** — a role-playing AI agent with long-term memory, multi-level subagents, and a task orchestration engine. Python 3.13 (uv) · LangChain/LangGraph 1.3 · Robyn backend · Nuxt 4 + Tauri 2 frontend · SQLite (WAL) storage.
+
+## Quick Commands
+
+```bash
+uv run python -m server                              # start backend (127.0.0.1:8080)
+uv run pytest tests/agent/middlewares -q -k "not llm_e2e"  # run middleware tests
+uv run --no-sync python tests/run_tests_split.py     # CI test gate (3-process; group C also runs the perf guards)
+uv run --no-sync pytest tests/perf -q -s             # hot-path perf guards: prints each measured growth ratio
+uv run --no-sync pytest tests/ -m "not llm_e2e" --cov=agent --cov=server --cov=context_engine \
+  --cov=pub --cov=runtime --cov=workspace --cov-report=term-missing   # coverage report (single process; use run_tests_split.py -- --cov-append for the gate grouping)
+uv run --no-sync python scripts/check_docs_parity.py # four-language README parity gate
+uv run --no-sync python scripts/check_doc_links.py   # Markdown dead-link + anchor gate
+uv run --no-sync lint-imports                        # import-linter contract check
+uv run --with ruff ruff check . && uv run --with ruff ruff format --check .  # lint + format
+uv run --no-sync basedpyright agent/                 # type check
+cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # frontend tests
+./scripts/verify_feature.sh                         # one-shot feature verification (client typecheck/unit/integration/dpdm + repo pytest gate + docs gates; --quick for client-only)
+```
+
+## Directory Structure
+
+| Directory | Purpose | Key entry point |
+|---|---|---|
+| `agent/` | Agent core: middleware chain, tools, subagent system, checkpointer | `agent/core.py::built_agent()` |
+| `agent/middlewares/` | Middleware pipeline (summarization, guardrails, HITL, intent, continuation, memory_flush, message_persistence) | `agent/middlewares/__init__.py` |
+| `agent/tools/` | LLM-callable tools (taskflow, todolist, memory, subagent, file, search, ...) | `agent/tools/__init__.py::build_main_tools()` |
+| `agent/tools/taskflow/` | Task orchestration engine (DAG, budget, deadline, progress, board, step judge, expectation→actual closure, evidence collector) | `agent/tools/taskflow/config.py` |
+| `agent/tools/todolist/` | Session-scoped todo planning layer + append-only evidence ledger/recorder | `agent/tools/todolist/service.py` |
+| `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles) | `agent/tools/subagent/spawn/core.py` |
+| `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
+| `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
+| `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
+| `config/features/` | Per-object feature config (59 TypedDicts) | `config/features/__init__.py` |
+| `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
+| `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
+| `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
+| `pub/` | Shared utilities (message pipeline, retry, validators) | `pub/func/message/` |
+| `models/` | LLM/model wrappers (main, reasoner, auxiliary, vision, embed, reranker) | `models/LLMs/main_llm.py` |
+| `runtime/` | Runtime state registers (`session/`; canonical keys in `state_keys.py`) + process-level services (`process/`, `lane/`) + dependency-inversion seams (`hooks.py`, `data_provider.py`) | `runtime/session/state_register.py` |
+| `runtime/hooks.py` | Process-level callback registry — `agent`/`skills` resolve server-owned callables (auto-turn trigger, WS task table, skill scan) without importing `server` | `runtime/hooks.py` |
+| `runtime/data_provider.py` | Prompt/skill-write provider registries (`PromptDataProvider`/`SkillWriteProvider`) — `workspace`/`context_engine` obtain agent-owned data without importing `agent` | `runtime/data_provider.py` |
+| `runtime/lane/` | Process-level concurrency lanes (`Lane`/`LaneManager`/`lane_slot`/`LaneType`) | `runtime/lane/core.py` |
+| `tests/` | Mirror-structured pytest suite (markers: unit/integration/module/system/regression/perf) | `tests/run_tests_split.py` |
+| `skills/` | SKILL.md skill system (builtin/auto/plugins) | `skills/loader.py::scan_skills()` |
+| `docs/` | VitePress documentation site | `docs/long-running-tasks/README.md` |
+| `docs/context-governance/` | Context governance docs (persistence, eviction, slices, overflow clip, summary filtering) | `docs/context-governance/README.md` |
+| `scripts/` | Dev tooling (git hooks, maintenance scripts) | `scripts/hooks/` |
+
+## Architecture
+
+```
+User message → Robyn WS → agent.core.built_agent() graph
+  │
+  ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
+  │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
+  │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
+  │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
+  │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
+  │    (WorkspaceNotice is a before_agent node: once per turn it compares the
+  │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
+  │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about
+  │     — and, when either differs, splices ONE HumanMessage notice per change
+  │     immediately before the turn's HumanMessage. Several switches coalesce
+  │     into the final state, switching back sends none, the first turn baselines
+  │     both silently; the notices are HumanMessages tagged origin/internal/
+  │     provenance (the chat renders them as neutral cards, and
+  │     pub.func.message.workspace_notice.is_workspace_notice lets the human-
+  │     message scanners skip them), and the human message keeps its LAST place
+  │     for TaskIntent and ContextEviction. It replaced the old switch-time
+  │     aupdate_state announcement, which fired per switch)
+  │    (MessagePersistence flushes tool results the moment they return via
+  │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
+  │     is also the first after_model hook — new human/ai/tool messages reach
+  │     MesMemory before HITL rewrites denials or interrupts. HITL denials are the
+  │     exception: its short-circuit bypasses the wrap layer and lands next boundary.
+  │     ContextEviction wraps outside MessagePersistence: the raw result is
+  │     persisted first, then replaced by an evicted-head/tail preview before it
+  │     reaches state; read_file results are sliced, never offloaded. Its
+  │     before_model tags an oversized trailing HumanMessage (full text stays in
+  │     state/MesMemory) and wrap_model_call truncates only the model view)
+  │    ThinkingControl: per-session thinking toggle (client switch →
+  │     PUT /sessions/thinking → state register); swaps request.model for the
+  │     thinking on/off variant built by build_main_llm(thinking=...) when the
+  │     session carries an explicit LLM_THINKING_ENABLED flag, else env default
+  │
+  ├─ tools: build_main_tools() → taskflow(14) + todolist(2) + memory + subagent(7)
+  │         + file_tools + web_search + terminal + python_repl + question + ...
+  │
+  ├─ graph wrappers: apply_graph_wrappers(inner)
+  │    → ContextLimitGuard(RepetitionGuard(graph))
+  │
+  ├─ lanes: runtime/lane/lane_slot() gates every dispatch point —
+  │    MAIN(turn) / SUBAGENT(child) / NUDGE(memory) / NESTED(sessions.send)
+  │
+  └─ subagents: spawn_subagent_direct() → accepted as PENDING when the
+       SUBAGENT lane is full → RUNNING inside the lane slot (`started_at`
+       stamped there) → detached child agents → announce pipeline → drain
+
+  completion gates (all always-on, all fail-open):
+    · Tier 1 schema gate — a step's response_schema is validated on
+      taskflow_resume (json parse + validate_structured_output); a miss is a
+      retry signal ("schema_error") that never spends a judge call, and an
+      unretried miss marks the step failed
+    · StepJudge — step_judge.py, on taskflow_resume for criteria-bearing steps
+      (judge_criteria or validation_criteria; pass / retry within
+      STEP_JUDGE["max_retries"] / block); a Tier 1 pass never skips it, and a
+      caller-declared step_outcome outranks both
+    · CompletionJudge goal loop — every spawn, bounded by
+      COMPLETION_JUDGE["goal_max_turns"]; continue injects a follow-up turn
+    · Evidence ledger — always-on terminal/python_repl auto-record + file-edit
+      stale events; read side derives staleness (evidence_collector.py)
+    · taskflow_finish gates A–D — DAG completeness, no unresolved steps
+      (blocked/failed/skipped/cancelled are reported by id with their reason),
+      no FAIL/[stale] evidence, SisyphusVerifier (only with todo + plan_path)
+    · SubagentCompletionDrainMiddleware — unconditional programmatic gate on
+      drained completion carriers when the session lacks passing evidence
+```
+
+## Queued User Input (`server/service/input_queue_service.py`)
+
+A message sent while the session is busy is persisted as a `QUEUED` row in
+`user_input_queue` (SQLite, `server/queue/user_input_queue.py`; cap =
+`INPUT_QUEUE["max_active_per_session"]`, dedup by `client_msg_id`) and answered
+by the `queued` WS frame with its FIFO position. The composer says so: while a
+turn runs, `inputBox.vue`'s placeholder switches from 请输入内容 to
+`chatInput.queueHint` (继续输入消息以排队 — four languages in the component's
+inline block), and that hint is skipped when the box is disabled (a HITL prompt
+takes the input slot; the disabled text wins). The turn runner drains those
+rows **one per turn** (`server/service/turn_runner.py::_drain_loop` claims a
+single row via `claim_next` and `_execute_single` drives it), so N queued
+messages produce N turns and N replies — one answer per user bubble — never one
+merged answer. `on_turn_finished` kicks the drain; a HITL-pending session drains
+nothing until the resume completion.
+
+Each queued row is manageable from the client (`cancel_queued` / `edit_queued` /
+`send_now` frames → `queued_cancelled` / `queued_updated` / `send_now_ack`
+`{event, session_id, msg_id, ok}` acks): cancel voids a `QUEUED` row (a
+`CLAIMED` one is already inside a turn and is refused), edit rewrites only a
+`QUEUED` payload, and `send_now` re-stamps `created_at` below the session
+minimum **before** cancelling the running turn — the cancel-triggered drain then
+claims the prioritised row first (`claim_next`'s `ORDER BY created_at` stays the
+single ordering rule; there is no priority column).
+
+## Project Directory Binding (`runtime/session/project_dir.py`)
+
+Every session has a **project directory**: the root its tools resolve relative
+paths against. Precedence is session binding → `SHERRY_PROJECT_DIR` →
+`sherry.jsonc`'s `project_dir` key → `ROOT_DIR`, so with nothing configured the
+behaviour is byte-for-byte the old behavior. `PUT /sessions/project` binds (or
+clears, with `null`) the session's own value; a choice made while a turn is
+running is PARKED (`PROJECT_DIR_PENDING`) and promoted by
+`turn_runner.on_turn_finished` at the turn boundary — the same park/promote pair
+the thinking/model controls use, including the HITL deferral.
+
+The agent is told about a change **at send time**, not at switch time:
+`WorkspaceNoticeMiddleware` (`agent/middlewares/workspace_notice/`) runs one
+comparison per turn over two facts — the effective root against
+`StateKey.PROJECT_DIR_ANNOUNCED`, and that root's git branch + HEAD against
+`StateKey.GIT_HEAD_ANNOUNCED` (`<branch>@<short-hash>`, one bounded
+`git rev-parse`; a non-repository root reads as "nothing to announce") — and
+splices ONE notice immediately before the turn's HumanMessage per fact that
+differs. Any number of switches between two messages coalesce into the single
+notice naming the FINAL state, a switch back to the announced state sends
+nothing, and the first turn of a session only records the baselines (silently).
+Both values are mirrored durably and re-warmed at boot
+(`prime_mem_from_store()` / `prime_git_head_from_store()`), so a restart cannot
+lose them. A directory switch re-bases the git token in the same turn and words
+its notice as "the working directory moved to X, whose repository is on Y"
+(the old token belonged to another repository). The notices are
+**HumanMessages** — the injected-carrier role — carrying
+`metadata={"origin": "project_dir"|"git_head", "internal": True,
+"provenance": "workspace_notice"}`: the message store keeps that origin on the
+row (both row builders), and the chat renders a non-`user` origin as a neutral
+system card (labels 项目目录切换 / 分支切换, folder and branch glyphs) instead of a
+user bubble. Because they are human rows, the scanners that walk human messages
+skip them through `pub.func.message.workspace_notice.is_workspace_notice`:
+`split_into_turns` (a notice is not a turn boundary), HITL's
+`_is_headless_turn` (a trailing notice does not make a turn operator-less), and
+the summarizer / memory-flush serializers (labelled `[System notice]` /
+`system`, never `[User]`).
+
+The read rule that keeps this working: **resolve the root per call, never at
+construction time.** Tool objects are process-level singletons
+(`agent/core.py`), so a captured root would freeze every session onto the first
+caller's directory; and a session can switch at a turn boundary, so even a
+per-turn cache would go stale after a HITL resume. The single accessor is
+`agent.tools.pub_base.session_workspace_root(session_id)` feeding
+`resolve_workspace_path(path, root)`; `PathGuard`, the four file tools,
+`terminal`, `python_repl`, `ptc` and the code-intel runners all read it (the
+guard also moves its boundary, keeping its policy: in-root passes, only the
+hard-deny floor rejects outside it).
+
+Derivation: a subagent inherits the parent's binding at spawn
+(`resolve_spawned_workspace_inheritance`) and the value is persisted as the
+CHILD session's own binding, so a child is frozen to the root it started with
+and does not follow a later parent switch. `sessions_spawn(cwd=...)` overrides
+it. The prompt gains a `## Current Working Directory` block naming the effective
+root, and marks an unbound session with 未绑定项目目录 instead of quietly
+pointing the model at the sherry checkout.
+
+The external-path HITL gate agrees with that root: `resolve_external_path`'s
+first check is "inside `ROOT_DIR` **or inside the session's project directory**"
+(state lookup only on the non-repo branch, so the repo fast path stays
+state-free). Selecting a project directory therefore exempts it and every child
+path from "external file" approvals — including when a caller arrives with the
+process default as its root (cold mem tier right after a restart) — and the
+approval prompt names the session's root, not the checkout.
+
+File browsing (`GET /project/tree`, `GET /project/file`,
+`server/service/project_files_service.py`) is read-only and hard-refused to the
+session's root: `resolve_within(base, path)` runs the same gate order as the
+tools, reads go through `_open_no_follow` (TOCTOU), and `FILE_BROWSER` bounds
+size (413), non-UTF-8 (415), depth and entries per level. It deliberately does
+NOT use the agent's `resolve_external_path` HITL flow. The client shows the chip
+(`ProjectDirectoryChip`), the lazy tree (`ProjectFileTree`) and the viewer tab
+(`FileViewerPanel`, a SESSION-scoped tab: a file of the session's directory belongs
+to that session, so it opens under 当前会话 like the commit diff). The sidebar's 工作目录 body stacks TWO collapsible sections —
+文件树 and the read-only **Git Graph** (`GET /git/graph`,
+`server/service/git_graph_service.py`; `config/features/infra_side/git_graph.py`
+bounds the page size, the served text and the git timeout): one
+`git log --all --date-order` page (newest first, `limit`/`skip`, one extra commit
+to report `has_more`; the panel appends the next page when the list is scrolled
+near its end — there is no load-more button, and a page that fails offers a retry
+in the same row) plus the current branch and a capped dirty count, with
+refs parsed to `head`/`branch`/`tag`/`remote` chips. A directory that is not a
+repository (or a host without git) answers `available: false` with a reason
+instead of an error, so the panel renders its own empty state. The client lays
+the commits into lanes (`GitGraphPanel.vue`, the classic walk: a lane holds the
+hash it waits for, the first parent inherits it, an extra parent opens one) and
+draws one SVG per row with VS Code's own geometry (22px rows / 11px lanes / the
+five `scmGraph` colours; a merge is a ring node, HEAD wears an outer ring). The
+two section headers always share one horizontal row (a collapsed one keeps its
+place beside the open one), and the Splitter exists ONLY while BOTH panels do:
+PrimeVue's Splitter keeps refs to its panels, so a `v-if` panel disappearing
+under a live instance logged `Splitter happened error... Cannot read properties
+of undefined (reading 'style')` when the sections were toggled quickly — the
+single-panel cases render a plain container instead.
+The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed`/
+`hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
+with git's own stderr surfacing as a 409 — and clicking a row opens a DRAWER of
+the files that commit touched directly under that row (an accordion, never a block
+parked at the end of the list — a click elsewhere in that drawer replays the row's
+own contextmenu, so the SAME action menu opens anchored at the row's right edge; `GET /git/commit`: metadata plus `--name-status -M -z`,
+NUL-framed so a non-ASCII path is never quoted and the entry lookup behind the
+diff still matches). Clicking one of those files opens its diff in a right-sidebar
+tab (`GET /git/commit/file`, `GitDiffPanel.vue`, one tab per file): both sides come
+from the commit's own blobs (`<parent>:<old_path>` / `<hash>:<path>`) and are aligned
+by `difflib` opcodes, so a change reads as remove-left / add-right (red / green
+tints), an added or deleted file is a SINGLE column, a rename follows its old path,
+and a binary or oversized blob (2 MB / 4000-row caps) is flagged instead of decoded.
+A path that is not part of the commit is a 404, never an empty diff. On the
+client side every git call THROWS on failure (`bridge/git.ts`): the two write
+actions go through the raw transport so a refusal reaches the toast with git's
+own reason (a checkout blocked by a dirty tree names the files), and a failed
+read rejects rather than resolving the shared client's null payload — a null
+assigned to the panel's page threw on every later render, which left the panel
+visibly dead (no row expansion, no branch switch) until a reload. The header's
+branch label is also the **branch switcher** (VS Code's graph has the same
+dropdown): clicking it lists the page's `branches` — local refs, most recently
+committed first, clipped by `GIT_GRAPH["max_branches"]` — with the current one
+ticked and inert; picking another checks it out (`POST /git/checkout`, no
+confirmation, matching the ref-chip menu, and git itself refuses a checkout that
+would clobber local changes). A switch made here (or in a terminal, or a
+commit/reset outside the session) reaches the AGENT as the git notice described
+under Project Directory Binding: the next turn's transcript gets one
+`git_head` card before the human message.
+
+The taskbar's **hammer button opens a two-entry toolbox** (浏览器 / 终端) as the
+same dialog shape the settings menu uses, and both entries open a right-sidebar tab
+in the SESSION group PER CLICK (a fresh `instance` key in the tab payload — the
+strip numbers the twins 浏览器 1 / 浏览器 2, and each panel keeps its own history /
+scrollback under `<sessionId>::<instance>`); the settings entries keep deduping on
+their empty payload (`toolboxTools` in `pages/home/config.ts`, wired through the
+same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
+grids and the commands in step). The browser is an address bar over an iframe with
+a per-session history (back / forward / reload; sites that refuse framing stay
+blank, which the empty state says), a **free-size mode** that renders the page in
+a resizable emulated device frame — ZCode's own geometry and bounds, eight edge /
+corner handles with pointer-capture drags divided by the fit scale, plus keyboard
+arrows — and 打开调试工具, which opens the page in a real window because an iframe
+cannot hand out devtools (ZCode's button calls Electron's `<webview>.openDevTools()`
+on its guest), and the terminal is a console for commands the
+OPERATOR types: `GET /terminal/info` names the directory (the session's project
+directory — the selected 工作目录 wins) and `POST /terminal/run` executes one line
+through `/bin/sh -c` there with a scrubbed environment, bounded by
+`TOOLS_TIMEOUTS["user_terminal_timeout_seconds"]` and an output cap, answering the
+exit code instead of raising. It is a one-shot console, not a PTY — an interactive
+full-screen program has nothing to attach to — and it is NOT the agent's
+`terminal` tool (that one keeps its HITL gate and sandbox wrapper; this one is the
+human's own shell, loopback-only via the gateway). Both panels keep their state in
+`stores/toolbox.ts` because the sidebar unmounts an inactive panel.
+
+Choosing a directory is one action with two runtimes: the desktop build (Tauri)
+opens the OS folder dialog (`app/utils/project-directory.ts` →
+`@tauri-apps/plugin-dialog`), the browser build opens the in-app picker
+(`ProjectDirectoryPicker.vue`) — a browser cannot hand out an absolute path, so
+there is no typing channel. That picker is the one deliberate exception to the
+in-root rule (`GET /system/dirs`, `server/service/system_folders_service.py`):
+it lists the direct **subdirectories** of one absolute path (names only, no
+files, no contents; `FILE_BROWSER` caps the level) and sits behind the same
+gateway auth/CORS/CSRF middleware as every other route. The toolbar's files
+button (`pages/home/index.vue`) exists only while a session is open AND its
+project directory is bound — the tree it opens is scoped to both, so an unbound
+session shows no control at all (nothing to press, no empty picker) — and the
+persisted sidebar body falls back to the session list whenever the button goes
+away (last session closed, binding cleared).
+
+## Per-Session Agent Config (`server/service/agent_config_service.py`)
+
+The 预设角色 panel (the 菜单 entry renamed from 预设; it leads the nine-grid, and the right
+sidebar's tab label — global and 当前会话 alike — carries the same name) covers one JSON payload
+per session in its last four tabs (工具 / 中间件 / 代理模型 / 技能), stored under
+`StateKey.AGENT_CONFIG` (parked twin `AGENT_CONFIG_PENDING`, promoted at the turn boundary like
+the model/thinking controls)::
+
+    {"tools": [...]|null, "middlewares_disabled": [...],
+     "subagent_models": {"<role>": {profile}|null}, "skills": [...]|null,
+     "middleware_options": {"Summarization": {"nudge": bool}}}
+
+- `GET /agent/catalog` is the client's only source of tool / middleware / role / skill names
+  (`agent/tools/catalog.py::TOOL_GROUPS`, `agent/middlewares/catalog.py::MIDDLEWARE_ORDER`
+  + `scaffolding.MAIN_REQUIRED_NAMES`, `roles/loader.py`, `skills/loader.py::skills_catalog`);
+  the skill list carries the ACTIVE skills visible to main plus the 内置 / 第三方 split (`builtin:
+  false` = under `skills/plugins/`); each tool entry also carries the
+  tool's own first description line (bounded) — the 工具 tabs show it as a hover tooltip, so
+  it always matches the code (runtime notes like web_search's missing key included). `GET|PUT /sessions/agent_config`
+  reads/writes the payload; the service rejects an unknown tool / skill / role, and any
+  system-required middleware name, with a 400 that names it.
+- **Tools** are applied per call by `ToolSelectionMiddleware`
+  (`agent/middlewares/tool_selection/`): `request.override(tools=<enabled subset>)` narrows
+  what the model sees, and `wrap_tool_call` refuses a disabled tool at EXECUTION (a stale
+  checkpoint or a hallucinated name would otherwise still run — the ToolNode holds the full
+  list). Unset config = every tool. `agent/tools/catalog.py` carries the three rules the
+  payload obeys: `TOOL_ORDER` (group render order — 技能 / 终端与代码 / 文件读写 / 交互 first,
+  memory fifth, then the task and delegation surfaces), `REQUIRED_TOOLS` (the file tools, code
+  execution, the three skill tools, `question` and `message_search` — the 工具 tab shows those
+  rows as locked chips with NO checkbox, the service 400s on a payload that omits one, and
+  `enabled_tool_names()` unions
+  them back in so an older register value cannot strip them either), and `BULK_ONLY_GROUPS`
+  (`tasks` and `subagents` move as a whole in the UI — select-all / clear-all only, never a
+  per-tool switch).
+- **Skills** (`AGENT_CONFIG["skills"]`): the names whose `<available_skills>` index entries enter
+  the system prompt — `null`/absent = every skill (today's behaviour), an explicit list is EXACT
+  (an empty list means only the required chain). `skills/loader.py::REQUIRED_SKILLS` is the
+  multimedia chain (`image_to_text` / `speech_to_text` / `video_text_to_text` / `text_to_image`):
+  the catalogue marks it `required`, serves it FIRST (the 技能 tab renders those rows as locked
+  chips with no checkbox), the service 400s on a payload that drops one, and
+  `build_system_prompt` unions them back for a stale register value. `workspace/prompt_builder.build_system_prompt` reads the
+  session's selection through `runtime/session/agent_config_view.py::session_skill_names` and
+  passes `exact=` to `skills.loader.get_skills_text`; an explicit argument still outranks it.
+  Because the index lives INSIDE the cached system prompt (`system_prompt_injection`'s three-tier
+  cache), `agent_config_service.invalidate_session_prompt` clears that cache whenever a payload
+  lands — at the live write and at the turn-boundary promotion for a parked one
+  (`session_settings_service.promote_pending_settings_sync`) — and it deletes only
+  `StateKey.SYSTEM_PROMPT`, never the frozen persona snapshot.
+- **Middleware options** (`AGENT_CONFIG["middleware_options"]`): a REQUIRED entry cannot be
+  switched off, so its tuning rides here — today exactly one pair, `Summarization.nudge` (the
+  中间件 tab renders it as its own section with a switch). The service rejects an unknown section /
+  option / non-boolean value and refuses `nudge: true` beside a payload whose tool list omits
+  `memory` (the nudge writes memory THROUGH that tool). At runtime
+  `agent.middlewares.agent_switch.middleware_option(session_id, "Summarization", "nudge")` gates
+  `schedule_compression_nudges`; the panel's switch is DISABLED while the draft has memory off —
+  a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
+  nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
+  情感陪伴 pin `nudge: false`.
+- **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
+  `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
+  `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
+  every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
+  `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain
+  build now fails without them (`scaffolding._MAIN_REQUIRED`, 14 entries) and the service
+  rejects a payload naming one. Together with `system_prompt_injection`,
+  `ThinkingControlMiddleware` and `ToolSelectionMiddleware` they are LOCKED in the UI — chain
+  membership and order never change.
+- **Subagent models**: `subagent_models[role]` is a profile descriptor (the same shape as the
+  session main-model override); at spawn `resolve_role_model_profile` reads it for the
+  requester session and the child LLM is built with `build_main_llm_for_profile` (provider /
+  key / base_url can change), with the role's `model_tier` as the fallback. `steer` re-reads the
+  same profile so a steered run keeps its model.
+- **代理模型** is the 子代理模型 tab renamed, split into 主代理 (the main agent's model — a profile
+  picker whose "follow the environment config" entry maps to `null`) and 子代理 (the per-role
+  pickers). It is a PRESET-level field (`PersonaPreset.main_model`, applied through
+  `PUT /sessions/model` so the session-model control stays the single owner of that key) rather
+  than part of the agent payload. The 当前会话预设 viewer puts 代理模型 FIRST (the session's own
+  model pair is what it is opened for), and BOTH of its sub-tabs write through the
+  session-model store — 主代理 is literally the same control as the toolbar's model switch
+  (one store, one endpoint, so the two can never disagree; the toolbar shows the parked
+  change with its 下一轮生效 badge) and 子代理 keeps the role pickers.
+- Presets carry the block (`PersonaPreset.agent`, no Dexie version bump); 保存预设 stores it,
+  应用 writes it to the open session (the new-session dialog writes it for the session it just
+  created), and the read-only 当前会话预设 tab summarises it (skills read-only there, the
+  subagent-model picker editable).
+- **The agent-config tabs split into sub-tabs** where the catalogue has two natures: 工具 =
+  内置 / MCP (`group === 'mcp'`), 技能 = 内置 / 第三方 (`builtin` flag), 代理模型 = 主代理 /
+  子代理. The pills are a VIEW filter — the preset's draft stays whole, and the count (已选 n/m) spans the whole catalogue.
+- **Four built-in presets**, in display order — the whole spectrum
+  (`client/app/composables/persona-catalog.ts::BUILTIN_PRESETS`): 纯净 (nobody named, every
+  persona file empty, only the catalogue's REQUIRED tools and skills, every optional middleware
+  off), 编程助手 (the operating-rules template, empty soul / user profile, no roles, every tool
+  EXCEPT the memory store, the required skills plus `CODING_SKILLS` — code-wiki / taskflow /
+  ulw-execute / todolist — and every optional middleware on), 情感陪伴 (the full role-play
+  persona with the 任务与计划 / 子代理 tool groups off, every optional middleware off, the
+  mirror-image skill set — the required chain plus every skill 编程助手 does NOT pick — and the
+  task-orchestration sections stripped out of 运行守则 — `stripTaskSections`, a per-language
+  heading/label filter pinned by a test that reads the four shipped templates) and 全量 (the
+  DEFAULT — the same full persona with everything on and every skill in the index).
+  Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
+  (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed
+  throws instead of silently applying every tool. The `sherry` id names 全量 (the label
+  changed; sessions already bound to it keep the stored name), and its shipped character is
+  still 橘雪莉.
+
+## User Login (`server/service/auth_service.py`)
+
+Opt-in login protection in front of the API, shipped OFF: a default install has
+no account and `auth_settings.enabled = 0`, so nothing changes until someone
+configures it.
+
+**Two independent auth layers.** `gateway_auth_middleware` (Origin allowlist +
+per-boot token) is unchanged and still the outermost gate;
+`server/trigger/auth_user.py::user_auth_middleware` is the login gate and runs
+last, so an unlisted Origin or a hostile page is refused before a session is
+even looked at. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
+handler) reflects the caller's Origin for allowlisted origins — credentialed
+cross-origin fetches are refused by the browser when the response says `*`.
+
+**Who must log in.** Loopback clients never do (`request.ip_addr`, the socket
+address, not a header) unless `SHERRY_AUTH_REQUIRE_NON_LOOPBACK=0`; enforcement
+requires BOTH the runtime switch in SQLite AND an existing account, so an enabled
+switch can never lock a deployment out of itself. `/auth/status` reports the same
+rule the middleware applies.
+
+**Session.** scrypt-hashed password (`server/utils/password.py`, stdlib only,
+parameters carried in the stored string), HS256 JWT (`server/utils/jwt_utils.py`,
+`algorithms` pinned, `typ` claim separating access/refresh) in two HttpOnly
+cookies: `sherry_session` (Path=/, 12h) and `sherry_refresh` (Path=/auth/refresh,
+7d). The client never sees a token string; `/auth/login` and `/auth/refresh`
+answer `{expires_in, user}` and the browser keeps the cookies. Refresh ROTATES
+(the presented `jti` is blacklisted — a replay gets 401); logout blacklists both
+`jti`s; `auth_service.start_blacklist_cleanup()` prunes expired entries.
+
+**WebSockets** carry no peer address in Robyn, so their gate is a ticket:
+`GET /auth/ws-ticket` makes the loopback decision over HTTP and the handshake
+spends the single-use ticket (`?ticket=`). The client prefetches one per connect
+(`client/app/composables/ws-ticket.ts`, a lazy import so the socket layer does
+not pull the whole auth bridge into every page).
+
+**Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_users`
+(unique username, scrypt hash), `auth_settings` (single row = the runtime
+switch; `SHERRY_AUTH_ENABLED` only *seeds* a fresh row) and
+`auth_jwt_blacklist` (`expires_at` in JWT seconds). Server tests isolate it with
+the autouse `isolated_auth_store` fixture — no test may touch the real file.
+
+**Client**: `pages/login.vue`, `middleware/auth.global.ts` (per-navigation
+`/auth/status` decision), `stores/auth.ts`, `pages/home/components/AccountSettingsPanel.vue`
+(menu → 账户, a right-sidebar tab), `composables/bridge/auth.ts` (raw transport:
+codes in, no generic toasts) and the transport's own 401 → refresh-once → replay
+(`requestApi.refreshSessionOnce`, single-flight).
+
+## TaskFlow Progress (`agent/tools/taskflow/waves.py`)
+
+Two reporting views, both pushed (never polled) to the chat's floating progress
+panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
+
+* **Todos** — the existing `todo_updated` push from
+  `agent/tools/todolist/service.py::_push_todo_update`.
+* **Waves** — `waves.py` groups a flow's steps into longest-path DAG levels
+  (reporting only: the scheduler still unlocks each step on its own
+  `depends_on`; an unknown dep id is ignored and a cycle lands in a trailing wave
+  flagged `cyclic` instead of looping). Every flow mutation calls
+  `progress_push.push_taskflow_progress(session_id)` — wired into the shared
+  `update_flow_with_conflict_retry` plus create / update_steps / finish / fail /
+  cancel / set_waiting — which sends `{"event":"taskflow_updated", …}` to the
+  session's websocket, best-effort and never raising (a dead socket must not break
+  a tool). A reconnecting client asks for a snapshot with `taskflow_refresh`
+  (handled in `server/trigger/core.py`) and gets the identical payload, so the
+  client has one shape to render (`client/app/stores/taskflow.ts`,
+  `pages/home/components/ProgressFloat.vue`).
+
+## Cron Jobs & Skill Binding (`skills/builtin/core/cron/`)
+
+The cron engine is a builtin skill (`scripts/base.py::CronService`, jobs persisted to
+`cron_jobs.json`), with the agent-facing facade in `scripts/core.py`, REST wrappers in
+`server/trigger/http/cron.py`, and the panel in `client/…/CronPanel.vue`. A job can bind an
+ordered list of skill names (`payload.skills`): on every run `_assemble_skill_prompt()` loads
+each SKILL.md through `_skill_view(name, caller_scope="background")` and prepends it (wrapped
+in an `[IMPORTANT: …]` header) ahead of the job message, counts the use (`bump_use`), and scans
+the assembled prompt for injection patterns (warning only). The cron agent keeps its minimal
+background tool set — skills arrive by pre-load, not by a `skill_view` tool.
+
+Reference maintenance lives in `scripts/skill_refs.py` and keeps bindings honest when skills
+move: `rewrite_skill_refs()` follows consolidation into an umbrella or drops pruned names (called
+by the curator right after archiving and by `skill_manage(action="delete")`), and
+`referenced_skill_names()` makes the curator's 90-day transition refuse to archive a skill that
+some job still loads. Documented in the four-language `scripts/README*.md`.
+
+## Concurrency Lanes (`runtime/lane/`)
+
+Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, gate concurrent work instead of rejecting it: over-limit work waits FIFO.
+
+| Lane | Constrains | Default | Config key |
+|---|---|---|---|
+| `MAIN` | main-agent turn (`_run_executor`) | `min(16, max(8, CPU))`, clamped up to `SUBAGENT + NUDGE` (12) → 12–16 | `LANE_SYSTEM["main_max_concurrent"]` |
+| `SUBAGENT` | child-agent executions (spawn + steer) | 8 | `LANE_SYSTEM["subagent_max_concurrent"]` |
+| `NUDGE` | nudge/persistence calls (`summarization/nudges.py`, 3 sites) | 4 | `LANE_SYSTEM["nudge_max_concurrent"]` |
+| `NESTED` | `sessions_send` reply turns (serial) | 1 | `LANE_SYSTEM["nested_max_concurrent"]` |
+
+- Config: `config/features/infra_side/lane_system.py`; `validate_lane_config()` runs at server startup and enforces `main >= subagent + nudge` (all limits ≥ 1); `install_lane_lifecycle()` in `server/service/lane_lifecycle.py` validates, prewarms the manager, registers `set_drain_check(is_gateway_draining)`, and installs a bounded exit drain (`atexit`, `drain_all(timeout=0)` — never blocks exit).
+- Queueing: a spawn that passes per-parent admission but exceeds the SUBAGENT lane is registered `PENDING` (no `forbidden`); `PENDING → RUNNING` happens inside the lane slot and only then is `started_at` stamped (queue wait is not run time). `PENDING` counts as active in registry queries and is killable; restore finalizes restart-leftover PENDING runs the same way at startup (silently — no announce), and orphan recovery covers same-lifetime lost tasks with `ended_reason="pending_orphaned"`.
+- Drain mode: `set_drain_check(fn)` makes `Lane.acquire()` refuse (without consuming a permit) while the subagent gateway reports draining.
+- Observability: `GET /lane-status` → `{main|subagent|nudge|nested: {name, max_concurrent, active, queued}}`.
+- Hot updates (`LaneManager.set_concurrency`) only affect new acquires; in-flight slots keep their permits.
+
+## Key Configuration
+
+| File | Contents |
+|---|---|
+| `config/features/agent_side/` | 35 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/infra_side/` | 24 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
+| `config/features/__init__.py` | Aggregator — all 59 TypedDicts + instances re-exported |
+| `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
+| `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
+| `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
+
+## Code Graph
+
+CodeGraph MCP (`@colbymchenry/codegraph`, wired in `opencode.json`) indexes the repo into `.codegraph/codegraph.db` (gitignored) — a 20-language AST knowledge graph (Python/TS/Rust full; `.vue` gets no AST). One MCP tool, `codegraph_explore`, returns verbatim source + call paths (dynamic dispatch included) + blast radius. Auto-syncs on file events (2s debounce). CLI: `codegraph query|explore|callers|impact|status`. Rebuild index after big restructures: `codegraph init`. It is a snapshot — verify against source when editing.
+
+## Import Rules
+
+- `server/**` layering: trigger → service → queue|DAO → utils (enforced by import-linter)
+- Cross-package bans (enforced by `uv run --no-sync lint-imports`, `[tool.importlinter]` in `pyproject.toml`; grimp counts function-level imports, so a lazy import does NOT satisfy them):
+  - `agent/**` MUST NOT import `server/**`
+  - `config/**` MUST NOT import `models/**`
+  - `context_engine/**` MUST NOT import `agent/**`
+  - `workspace/**` MUST NOT import `agent/**` or `context_engine/**`
+  - `skills/**` MUST NOT import `server/**`
+  - `skills/builtin/**` user scripts may still import `models`/`bus`/`channels`/`workspace`/`runtime` (one-way, by design) — this ban covers `server/**` only; whether to tighten those directions is evaluated separately and is not currently enforced
+- Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary.
+- `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
+- `config/**` is importable from ALL layers (no restriction)
+- `config/num.py` is DELETED — all constants live in `config/features/agent_side/summarization.py` (SUMMARIZATION TypedDict) and other per-object modules
+
+## Test Structure
+
+```
+tests/
+├── agent/
+│   ├── middlewares/          # one test file per middleware (summarization, task_intent, ...)
+│   ├── tools/
+│   │   ├── taskflow/         # test_dag_e2e.py, test_token_budget.py, test_deadline.py, ...
+│   │   ├── todolist/         # test_todolist_e2e.py, test_store_sqlite.py, ...
+│   │   └── subagent/         # test_spawn_direct_e2e.py, test_queue_e2e.py, ...
+│   └── core/                 # test_built_agent_wrappers.py
+├── workspace/                # test_prompt_builder.py, test_prompt_builder_todos.py, ...
+├── config/                   # test_features_agent_side.py, test_features_infra_side.py, ...
+├── server/                   # mirror of server/ source
+├── context_engine/           # mirror of context_engine/ source
+└── run_tests_split.py        # CI gate: 3-process runner (A=unit, B=integration, C=regression)
+```
+
+Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (deselected by default).
+
+`tests/full/` is excluded from the split runner (`--ignore`) and every live-LLM file there is tagged `llm_e2e`, so a bare `pytest` run never collects them. Run one explicitly with `uv run --no-sync pytest -m llm_e2e tests/full/<file>` — addopts default to `not llm_e2e`, so the explicit `-m` is required. Because process startup/teardown dominates the wall clock, run `tests/full/` **one file per process under an external watchdog** (e.g. `timeout 1500 uv run --no-sync pytest -m llm_e2e tests/full/<file>`); measured: 47 cases ≈ 10.8 min of net test time but ≈ 73.7 min wall clock when batched. Hermetic tests belong in the standard tree, not `tests/full/`.
+
+**IMPORTANT**: `tests/agent/tools/subagent/conftest.py` installs sys.modules stubs at collection time. When running multiple test dirs in one process, use the stub-tolerant loading pattern from `tests/agent/tools/taskflow/conftest.py`. The split runner (`tests/run_tests_split.py`) avoids this by running groups in separate processes.
+
+## Conventions
+
+- **Python 3.13** (StrEnum, PEP 695 type aliases, typing.override)
+- **Config**: one TypedDict + one instance per feature in `config/features/<side>/<name>.py`, re-exported via `__init__.py` — NEVER use bare dict literals for feature config
+- **Middleware hooks**: `abefore_model(self, state, runtime=None)`, `aafter_agent(self, state, runtime=None)` — LangChain 1.3.9 signatures; after_agent runs in REVERSE list order
+- **Tool registration**: `@tool("name")` + `build_*_tools()` factory + `_MAIN_TOOLS_BUILDERS` list in `agent/tools/__init__.py`
+- **Test fixtures**: `isolated_db` (tmp SQLite), `build_main_tools_real` (stub-tolerant), `scan_skills_real`
+- **Docs parity** (`scripts/check_docs_parity.py`): gates every four-language README group on structure plus semantic metrics — link-target sets with per-target language variants (a translation that links a foreign README the EN reference does not link fails, while the language switcher and own-language links pass), per-section body-length ratio plus a non-empty check for even the smallest EN sections, a language-independent heading-marker sequence (inline code spans + link targets, order-canonicalized) that fails a heading reordered under an unchanged level sequence, and a per-section invariant-token multiset (code spans + file paths + ENV names + numbers, matched by substring so dropped backticks are not drift) that fails a long but stale translation which lost ≥2 code-span/path tokens or all of them. Section pairing matches headings by marker fingerprint first, then occurrence index (the index-fallback count and the marker-less-reorder residual limitation are printed in the summary). The ratio band is a calibration snapshot: `--calibrate` prints the per-language distribution and its margin, and `tests/scripts/test_check_docs_parity.py` pins the smallest legitimate ratio at ≥1.15× the band so a denser legitimate section turns the test red before the band silently narrows — re-run `--calibrate` and update the constants' comment before changing any band. Exempting a group via `ALLOWLIST` is a last resort: the reason must contain an explicit "Fixing the document(s) is wrong because …" clause followed by a substantive rationale, be ≥40 chars, and may not open with placeholder text; stale entries fail the gate, and tests pin the mapping empty so every addition requires an explicit test edit
+- **Commits**: angular conventional (commitlint enforced), pathspec-only (`git commit -- <files>`)
+- **File naming**: snake_case enforced by pre-commit hook
+- **Line length**: 100 chars (ruff)
+
+## Known Pitfalls
+
+- `workspace/` in `.gitignore` is anchored (`/workspace/`) — live persona files are NOT tracked
+- `tests/agent/tools/subagent/conftest.py` pollutes `sys.modules` globally — use stub-tolerant imports in cross-suite tests
+- `agent/core.py::init()` imports `skills` lazily and calls `build_skills_snapshot()` at assembly time (server boot); a process that never calls `init()` still gets a live disk scan from `scan_skills(use_cache=True)`
+- `Summarization` has both sync (`_apply_compression`) and async (`_aapply_compression`) paths — changes must cover both
+- `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
+- after_agent hooks run in REVERSE list order — first registered = last executed
+- `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
+- file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`) — and `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, and a directory/symlink target skips the gate (its write fails with its own error). `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight. An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge; the docs page is `docs/file-safety/README.md`. Conversation rewind was tried and REMOVED on purpose: hiding history to "undo" a turn was the wrong trade, so a revert never touches the conversation — it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn
+- tool duration is measured ONCE, at tool-return time, by `message_persistence`'s `wrap_tool_call`/`awrap_tool_call`
+  (`time.monotonic()` difference, rounded, clamped at 0 — never a wall-clock subtraction: an NTP step back would make it
+  negative, which is the defect ZCode ships unguarded), stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]`
+  and persisted to `messages.tool_duration_ms` (old DBs heal by ADD COLUMN; old rows read NULL). The stream's
+  `tool_result.duration_ms` is the same measurement for the live card (`stream_dispatch`'s `_tool_started_at`, per
+  session + tool id, consumed once). Approval waits and queue time are OUTSIDE the window by construction — the clock
+  starts when the tool actually executes. The client shows a live ticker while running and the measured value when
+  settled (`formatToolDuration`: <1s → `850ms`, <10s → `1.2s`, else whole seconds), and nothing when unknown.
+- `.gitignore` line `*.db` ignores all SQLite files — DB files are never committed
+- pre-push hook runs basedpyright on the entire diff — must be 0 errors before push

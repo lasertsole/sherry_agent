@@ -1,0 +1,233 @@
+{
+  "a11y": {
+    "previewImage": "Preview image",
+    "language": "Language"
+  },
+  "common": {
+    "confirmDelete": "Confirm Delete",
+    "delete": "Delete",
+    "cancel": "Cancel"
+  },
+  "chatInput": {
+    "maxImages": "You can upload at most {count} images",
+    "maxImagesExceed": "You can upload at most {count} images, {extra} over the limit",
+    "maxAudios": "You can upload at most {count} audio files",
+    "maxAudiosExceed": "You can upload at most {count} audio files, {extra} over the limit",
+    "maxVideos": "You can upload at most {count} video files",
+    "maxVideosExceed": "You can upload at most {count} video files, {extra} over the limit"
+  },
+  "sessionModelPicker": {
+    "pending": "Applies next turn"
+  },
+  "chatBox": {
+    "defaultAiName": "Sherry"
+  },
+  "chat": {
+    "backgroundMessage": "Background task",
+    "originTaskIntent": "Task intent",
+    "originQualityGate": "Quality gate",
+    "originTodoNudge": "Todo nudge",
+    "originProjectDir": "Working directory",
+    "originGitHead": "Git branch switch",
+    "originSystem": "System message",
+    "tokenGuard": {
+      "title": "Model Config Below Minimum",
+      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Environment."
+    }
+  },
+  "errors": {
+    "requestFailed": "Request failed",
+    "pageError": "Page error",
+    "replyFailed": "(Reply failed: {reason})",
+    "sendFailed": "(Send failed: {reason})",
+    "streamInterrupted": "Connection interrupted. The reply may have completed in the background — it will sync automatically shortly."
+  },
+  "connection": {
+    "offline": "Network offline",
+    "backendDown": "Backend service unreachable",
+    "backOnline": "Connection restored"
+  },
+  "history": {
+    "noSessions": "No conversations",
+    "newSession": "New Session"
+  },
+  "sidebar": {
+    "tasksAgoSeconds": "{sec}s ago",
+    "statusRunning": "Running",
+    "statusInterrupted": "Interrupted",
+    "statusDone": "Done",
+    "statusError": "Error",
+    "statusTimeout": "Timeout",
+    "statusKilled": "Killed",
+    "statusUnknown": "Unknown",
+    "roleRoot": "Root",
+    "roleChild": "Task"
+  },
+  "toolbar": {
+    "newChat": "New Chat",
+    "image": "Image",
+    "audio": "Audio",
+    "video": "Video",
+    "skills": "Skills",
+    "knowledgeGraph": "Knowledge Graph",
+    "stats": "Statistics",
+    "systemConfig": "System Config",
+    "persona": "Presets & Role",
+    "memory": "Memory",
+    "heartbeat": "Heartbeat",
+    "cron": "Cron Tasks",
+    "logs": "Logs",
+    "extend": "Extend",
+    "account": "Account"
+  },
+  "todolist": {
+    "flowLabel": "TaskFlow: {flow}"
+  },
+  "config": {
+    "agent": {
+      "tabs": {
+        "tools": "Tools",
+        "middlewares": "Middlewares",
+        "subagents": "Agent models",
+        "skills": "Skills"
+      },
+      "models": {
+        "scope_main": "Main agent",
+        "scope_subagent": "Subagent",
+        "mainHint": "The model the main agent runs on; follows the environment config by default.",
+        "followEnv": "Follow the environment config"
+      },
+      "tools": {
+        "count": "{selected}/{total} selected",
+        "requiredHint": "Required — cannot be disabled",
+        "scope_builtin": "Built-in",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)"
+      },
+      "skills": {
+        "count": "{selected}/{total} selected",
+        "scope_builtin": "Built-in",
+        "scope_thirdparty": "Third-party",
+        "empty": "No skills yet"
+      },
+      "toolGroup": {
+        "files": "Files",
+        "terminal": "Terminal & code",
+        "tasks": "Tasks & planning",
+        "memory": "Memory & search",
+        "skills": "Skills",
+        "subagents": "Subagents",
+        "interaction": "Interaction",
+        "web": "Web",
+        "browser": "Browser",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "lockedTitle": "System-required (locked)",
+        "nudgeLabel": "Enable nudge",
+        "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "Plan continuation",
+          "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
+        },
+        "TaskIntentMiddleware": {
+          "name": "Task-intent steering",
+          "desc": "Detects work requests and injects the orchestration prompt"
+        },
+        "WorkspaceNoticeMiddleware": {
+          "name": "Workspace-change notice",
+          "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
+        },
+        "MultimodalProcessor": {
+          "name": "Multimodal preprocessing",
+          "desc": "Persists and prepares uploaded images / audio / video"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "Completion injection",
+          "desc": "Injects a finished subagent's result into the main session"
+        },
+        "Summarization": {
+          "name": "Summarization",
+          "desc": "Context compression, overflow handling and the post-compression nudges"
+        }
+      },
+      "subagents": {
+        "followTier": "Follow the role default",
+        "tier": "Role default: {tier}",
+        "tierDepth": "No role definition: depth default"
+      },
+      "role": {
+        "general": "General",
+        "researcher": "Researcher",
+        "executor": "Executor",
+        "reviewer": "Reviewer",
+        "librarian": "Librarian"
+      },
+      "viewer": {
+        "tools": "Tools {selected}/{total}",
+        "middlewares": "Disabled middlewares: {names}",
+        "middlewaresNone": "Middlewares: all on",
+        "models": "Subagent models: {names}"
+      }
+    },
+    "save": "Save",
+    "cancel": "Cancel",
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "tabs": {
+      "role": "Character Setup",
+      "agents": "Operating Instructions",
+      "soul": "Soul",
+      "user": "User Profile"
+    },
+    "role": {
+      "aiLine": "You will play {name}.",
+      "userLine": "The user will play {name}.",
+      "assistant": "AI Role",
+      "userRole": "User Role"
+    },
+    "persona": {
+      "preset": {
+        "builtinPureName": "Pure",
+        "builtinCompanionName": "Companion",
+        "defaultName": "Full",
+        "defaultBadge": "Default",
+        "builtinCodingName": "Coding Assistant",
+        "builtinBadge": "Built-in"
+      }
+    }
+  },
+  "rightSidebar": {
+    "fileViewer": "Project files",
+    "account": "Account"
+  },
+  "progressFloat": {
+    "status": {
+      "pending": "pending",
+      "in_progress": "in progress",
+      "completed": "completed",
+      "cancelled": "cancelled",
+      "ready": "ready",
+      "blocked": "blocked",
+      "dispatched": "dispatched",
+      "done": "done",
+      "failed": "failed",
+      "skipped": "skipped"
+    }
+  },
+  "projectFiles": {
+    "title": "Files"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
+  },
+  "personaPreset": {
+    "unbound": "Not chosen"
+  }
+}

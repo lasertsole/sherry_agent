@@ -1,0 +1,18 @@
+# Explicit, per-hit exemptions for scripts/checks/check_vendored_security.py.
+#
+# A hit is exempted only when all three key fields below match exactly - there
+# are no globs and no path prefixes:
+#
+#   <rule_id>	<path-relative-to-repo-root>	<fingerprint>	<reason>
+#
+# The fingerprint is printed next to every un-baselined hit and hashes the
+# matched snippet, so secrets are never written to this file. Add a row ONLY
+# after manually reviewing the hit, with a concrete reason. Stale rows
+# (matching no hit) are reported on every run and should be deleted.
+#
+# Keep this list empty unless a real false positive is reviewed: the vendored
+# trees scan clean as of audit item #58.
+#
+# Reviewed exception (2026-09-14): "{bcrypt}" is a hash FORMAT marker that
+# passwords.py concatenates/strips around bcrypt.checkpw - not a credential.
+hardcoded-secret-assignment	skills/builtin/core/multimodal_rag/scripts/graph_rag/vendored_lightrag/tools/passwords.py	a3c9fc498741146a	bcrypt hash format-prefix marker, not a credential

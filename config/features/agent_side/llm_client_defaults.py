@@ -1,0 +1,68 @@
+"""LLM client construction defaults across main/aux/reasoner/local models."""
+
+from typing import TypedDict
+
+
+class LlmClientDefaultsConfig(TypedDict):
+    """LLM client construction defaults across main/aux/reasoner/local models."""
+
+    main_max_retries: int
+    main_timeout: int
+    main_stream_chunk_timeout: int
+    fallback_max_retries: int
+    fallback_timeout: int
+    aux_max_retries: int
+    aux_timeout: int
+    aux_remote_max_tokens: int
+    reasoner_max_retries: int
+    reasoner_timeout: int
+    reasoner_max_tokens_cap: int
+    local_n_ctx: int
+    local_temperature: float
+    local_max_tokens: int
+    local_n_gpu_layers: int
+    ittt_remote_temperature: float
+    ittt_remote_max_retries: int
+    ittt_remote_timeout: int
+    vttt_remote_temperature: float
+    vttt_remote_max_retries: int
+    vttt_remote_timeout: int
+
+
+LLM_CLIENT_DEFAULTS: LlmClientDefaultsConfig = {
+    "main_max_retries": 2,
+    "main_timeout": 120,
+    "main_stream_chunk_timeout": 60,
+    "fallback_max_retries": 2,
+    "fallback_timeout": 120,
+    "aux_max_retries": 2,
+    # Per-request timeout for the auxiliary remote client (seconds) — aligned
+    # with ``main_timeout``. Without it the OpenAI SDK default (600 s) applies
+    # to every attempt (max_retries + 1), so one stalled aux call can silently
+    # hang for ~30 min.
+    "aux_timeout": 120,
+    "aux_remote_max_tokens": 121072,
+    "reasoner_max_retries": 2,
+    # Per-request timeout for the reasoner remote client (seconds) — aligned
+    # with ``main_timeout``/``aux_timeout``. Without it the OpenAI SDK default
+    # (600 s) applies to every attempt (max_retries + 1), so one stalled
+    # reasoner call can silently hang for ~30 min.
+    "reasoner_timeout": 120,
+    "reasoner_max_tokens_cap": 65536,
+    "local_n_ctx": 4096,
+    "local_temperature": 0.0,
+    "local_max_tokens": 4096,
+    "local_n_gpu_layers": -1,
+    "ittt_remote_temperature": 0.8,
+    "ittt_remote_max_retries": 2,
+    # Per-request timeout for the ITTT remote client (seconds) — aligned with
+    # ``main_timeout``. Without it the OpenAI SDK default (600 s) applies to
+    # every attempt (max_retries + 1).
+    "ittt_remote_timeout": 120,
+    "vttt_remote_temperature": 0.8,
+    "vttt_remote_max_retries": 2,
+    # Per-request timeout for the VTTT remote client (seconds) — aligned with
+    # ``main_timeout``. Without it the OpenAI SDK default (600 s) applies to
+    # every attempt (max_retries + 1).
+    "vttt_remote_timeout": 120,
+}

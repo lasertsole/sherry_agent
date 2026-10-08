@@ -1,0 +1,524 @@
+from __future__ import annotations
+
+import os
+from typing import Any
+from collections.abc import Callable
+
+from loguru import logger
+from runtime.session.state_keys import TypedState, hitl_tool_approved_key
+
+from .types import (
+    ApprovalDecision,
+    ApprovalMode,
+    ApprovalResult,
+    HITLConfig,
+    SmartApprovalResult,
+    SESSION_YOLO_KEY,
+    SESSION_CONFIRM_ALL_KEY,
+    HITL_PERMANENT_KEY,
+    HITL_SESSION_APPROVED_KEY,
+    BLOCKED_MESSAGE,
+)
+from .approval_scope import current_operator
+from .approval_store import ApprovalVerdict, ToolApprovalStore
+from .detection import detect_hardline_command, detect_dangerous_command
+
+# Use shared args_hash from middlewares.base
+from agent.middlewares.base import args_hash
+
+
+def is_yolo_mode(config: HITLConfig, session_id: str | None = None) -> bool:
+    """Check whether YOLO (bypass-all) mode is active.
+
+    Activated by any of:
+    - ``config.yolo_mode == True``
+    - ``config.mode == ApprovalMode.OFF``
+    - Environment variable ``SHERRY_YOLO_MODE`` set to ``1`` / ``true`` / ``yes``
+    - Session-scoped flag ``hitl:session_yolo`` in ``state_register_mem``
+      (set when the user answers an approval interrupt with the ``"yolo"``
+      decision; checked only when *session_id* is provided)
+
+    Public API (sandbox-hardening): the sandbox-bypass approval wiring
+    in :mod:`.core` reuses this exact YOLO predicate, so the approval pipeline
+    and the sandbox-bypass gate share one source of truth.
+    """
+    if config.yolo_mode:
+        return True
+    if config.mode == ApprovalMode.OFF:
+        return True
+    if session_id and _get_state(session_id, SESSION_YOLO_KEY, False):
+        return True
+    return os.environ.get("SHERRY_YOLO_MODE", "").strip() in ("1", "true", "yes")
+
+
+def set_session_yolo(session_id: str) -> None:
+    """Activate session-scoped YOLO for *session_id* (bypass subsequent approval gates).
+
+    The strict flag is dropped in the same write: the two are the opposite ends of
+    one setting, and a session that answered a card with "always allow" must not
+    keep asking afterwards.
+    """
+    _set_state(session_id, SESSION_YOLO_KEY, True)
+    _set_state(session_id, SESSION_CONFIRM_ALL_KEY, False)
+
+
+def clear_session_yolo(session_id: str) -> None:
+    """Drop the session-scoped YOLO flag (back to the normal approval gates).
+
+    The counterpart of :func:`set_session_yolo`, used by the toolbar's access-mode
+    control: switching back to the default mode must survive the session's own
+    earlier "always allow" answer.
+    """
+    _set_state(session_id, SESSION_YOLO_KEY, False)
+
+
+def set_session_confirm_all(session_id: str) -> None:
+    """Activate session-scoped STRICT approval: every command and every file
+    change asks, no matter how ordinary.
+
+    YOLO is dropped in the same write (see :func:`set_session_yolo`).
+    """
+    _set_state(session_id, SESSION_CONFIRM_ALL_KEY, True)
+    _set_state(session_id, SESSION_YOLO_KEY, False)
+
+
+def clear_session_confirm_all(session_id: str) -> None:
+    """Drop the strict flag (back to the normal approval gates)."""
+    _set_state(session_id, SESSION_CONFIRM_ALL_KEY, False)
+
+
+def is_confirm_all_mode(config: HITLConfig, session_id: str | None = None) -> bool:
+    """Check whether the session runs in strict ("confirm before changes") mode.
+
+    YOLO wins when both somehow read as set: a bypass-all session is never asked,
+    so the strict gate must not fire behind it.
+    """
+    if not session_id:
+        return False
+    if not _get_state(session_id, SESSION_CONFIRM_ALL_KEY, False):
+        return False
+    return not is_yolo_mode(config, session_id)
+
+
+def _is_yolo_active(config: HITLConfig, session_id: str | None = None) -> bool:
+    """Backward-compatible alias for :func:`is_yolo_mode` (verbatim logic)."""
+    return is_yolo_mode(config, session_id)
+
+
+def _check_deny_rules(command: str, deny_rules: list[str]) -> str | None:
+    """Return the first deny-rule glob that matches *command*, or ``None``."""
+    import fnmatch
+
+    for rule in deny_rules:
+        if fnmatch.fnmatch(command, rule):
+            return rule
+    return None
+
+
+def _extract_pattern(command: str) -> str:
+    """Extract a glob-style pattern from a command string for allowlist storage.
+
+    E.g. ``"git push --force origin main"`` → ``"git push*"``.
+    """
+    parts = command.strip().split()
+    if len(parts) >= 2:
+        return f"{parts[0]} {parts[1]}*"
+    return f"{parts[0]}*" if parts else command
+
+
+# Use shared args_hash from middlewares.base
+_args_hash = args_hash
+
+
+def _get_state(session_id: str, key: str, default: Any = None) -> Any:
+    """Read a typed HITL key from the in-memory state register."""
+    return TypedState.get(session_id, key, default)
+
+
+def _set_state(session_id: str, key: str, value: Any) -> bool:
+    """Write a typed HITL key to the in-memory state register."""
+    return TypedState.set(session_id, key, value)
+
+
+class ApprovalPipeline:
+    """6-layer command approval pipeline with allowlist management.
+
+    Layers (in order):
+    1. Hardline blocklist — unconditional deny
+    2. User-configured deny rules (glob patterns)
+    3. YOLO mode bypass — skip all checks
+    4. Confirm-all (strict) mode — every command asks, allowlists included
+    5. Permanent allowlist — cross-session approved patterns
+    6. Session allowlist — per-session approved patterns
+    7. Dangerous pattern detection — escalate dangerous commands to human approval
+
+    The pipeline is called from :class:`~agent.middlewares.humanInTheLoop.core.HumanInTheLoop`
+    middleware. After a human decision, :meth:`_apply_decision` persists the choice
+    back to the allowlists.
+    """
+
+    def __init__(
+        self,
+        config: HITLConfig,
+        fire_hooks: Callable[[str, ApprovalResult], None],
+        store: ToolApprovalStore | None = None,
+    ):
+        """Initialize the pipeline.
+
+        Args:
+            config: HITL configuration dataclass.
+            fire_hooks: Callback invoked after every approval decision (for event tracking).
+            store: Persistent approval store; defaults to a new
+                :class:`ToolApprovalStore` at the configured Sherry path.
+        """
+        self.config = config
+        self._fire_hooks = fire_hooks
+        self.store = store or ToolApprovalStore()
+
+    def _store_operator(self, operator: str | None, session_id: str) -> str:
+        if operator and operator.strip():
+            return operator.strip()
+        scoped = current_operator()
+        if isinstance(scoped, str) and scoped.strip():
+            return scoped.strip()
+        return session_id.strip() or "default"
+
+    def check_command(self, command: str, session_id: str) -> ApprovalResult:
+        """Run the full approval pipeline on a command string.
+
+        Args:
+            command: The raw shell command to evaluate.
+            session_id: Active session ID for state lookups.
+
+        Returns:
+            :class:`ApprovalResult` — ``approved=True`` if the command passes all layers,
+            ``approved=False`` (with ``decision=DENY``) if blocked by the hardline
+            blocklist / a deny rule, or ``approved=False`` (with ``decision=None``) if
+            escalated for human approval (a dangerous pattern, or any command at all
+            while the session runs in confirm-all mode).
+        """
+        # Layer 1: Hardline blocklist
+        hardline = detect_hardline_command(command)
+        if hardline:
+            result = ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=f"Hardline blocklist: {hardline}. {BLOCKED_MESSAGE}",
+                pattern_key=hardline,
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        # Layer 2: User deny rules
+        deny_match = _check_deny_rules(command, self.config.deny_rules)
+        if deny_match:
+            result = ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=f"User deny rule: {deny_match}. {BLOCKED_MESSAGE}",
+                pattern_key=f"deny:{deny_match}",
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        # Layer 3: YOLO bypass
+        if _is_yolo_active(self.config, session_id):
+            result = ApprovalResult(
+                approved=True, decision=ApprovalDecision.ONCE, reason="YOLO mode active"
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        # Layer 4: Confirm-all (strict) mode
+        if is_confirm_all_mode(self.config, session_id):
+            dangerous = detect_dangerous_command(command)
+            tags = ", ".join(tag for _, tag in dangerous) or "no dangerous pattern"
+            result = ApprovalResult(
+                approved=False,
+                decision=None,
+                reason=f"Confirm-all mode: every command needs approval ({tags}).",
+                pattern_key=dangerous[0][1] if dangerous else "confirm_all",
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        # Layer 5: Permanent allowlist
+        permanent: list[str] = _get_state(session_id, HITL_PERMANENT_KEY, [])
+        import fnmatch
+
+        for pattern_str in permanent:
+            if fnmatch.fnmatch(command, pattern_str):
+                result = ApprovalResult(
+                    approved=True,
+                    decision=ApprovalDecision.ALWAYS,
+                    reason="Permanent allowlist match",
+                )
+                self._fire_hooks(session_id, result)
+                return result
+
+        # Layer 6: Session allowlist
+        session_list: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
+        for pattern_str in session_list:
+            if fnmatch.fnmatch(command, pattern_str):
+                result = ApprovalResult(
+                    approved=True,
+                    decision=ApprovalDecision.SESSION,
+                    reason="Session allowlist match",
+                )
+                self._fire_hooks(session_id, result)
+                return result
+
+        # Layer 7: Dangerous pattern detection
+        dangerous = detect_dangerous_command(command)
+        if not dangerous:
+            result = ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.ONCE,
+                reason="No dangerous patterns detected",
+            )
+            self._fire_hooks(session_id, result)
+            return result
+
+        return ApprovalResult(
+            approved=False,
+            decision=None,
+            reason=f"Dangerous pattern(s): {', '.join(tag for _, tag in dangerous)}. Requires human approval.",
+            pattern_key=dangerous[0][1],
+        )
+
+    def check_command_with_approval(
+        self,
+        command: str,
+        session_id: str,
+        prompt_fn: Callable[[str], ApprovalDecision] | None = None,
+    ) -> ApprovalResult:
+        """Run the pipeline and, if escalated, call *prompt_fn* for human decision.
+
+        Args:
+            command: Shell command to evaluate.
+            session_id: Active session ID.
+            prompt_fn: Callback that takes a command string and returns an
+                :class:`ApprovalDecision`. If ``None``, defaults to deny.
+
+        Returns:
+            :class:`ApprovalResult` — final decision after human input if applicable.
+        """
+        auto_result = self.check_command(command, session_id)
+        if auto_result.approved or auto_result.decision == ApprovalDecision.DENY:
+            return auto_result
+        if prompt_fn is None:
+            return ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason="Human approval required but no prompt function. Defaulting to deny.",
+            )
+        decision = prompt_fn(command)
+        return self._apply_decision(auto_result.pattern_key, decision, session_id, command)
+
+    def _apply_decision(
+        self, pattern_key: str, decision: ApprovalDecision, session_id: str, command: str
+    ) -> ApprovalResult:
+        """Persist a human decision and return the corresponding result.
+
+        - ``DENY`` → returns blocked result
+        - ``ALWAYS`` → adds to permanent allowlist
+        - ``SESSION`` → adds to session allowlist
+        - ``ONCE`` → approves for this invocation only
+
+        Every decision fires the hooks callback.
+        """
+        if decision == ApprovalDecision.DENY:
+            result = ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=f"User denied. {BLOCKED_MESSAGE}",
+                pattern_key=pattern_key,
+            )
+        elif decision == ApprovalDecision.ALWAYS:
+            self._add_to_permanent(session_id, command)
+            result = ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.ALWAYS,
+                reason="User approved permanently",
+                pattern_key=pattern_key,
+            )
+        elif decision == ApprovalDecision.SESSION:
+            self._add_to_session(session_id, command)
+            result = ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.SESSION,
+                reason="User approved for this session",
+                pattern_key=pattern_key,
+            )
+        else:
+            result = ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.ONCE,
+                reason="User approved once",
+                pattern_key=pattern_key,
+            )
+        self._fire_hooks(session_id, result)
+        return result
+
+    def _add_to_permanent(self, session_id: str, command: str):
+        """Add a command pattern to the permanent (cross-session) allowlist."""
+        current: list[str] = _get_state(session_id, HITL_PERMANENT_KEY, [])
+        pattern = _extract_pattern(command)
+        if pattern not in current:
+            current.append(pattern)
+            _set_state(session_id, HITL_PERMANENT_KEY, current)
+
+    def _add_to_session(self, session_id: str, command: str):
+        """Add a command pattern to the session (in-memory) allowlist."""
+        current: list[str] = _get_state(session_id, HITL_SESSION_APPROVED_KEY, [])
+        pattern = _extract_pattern(command)
+        if pattern not in current:
+            current.append(pattern)
+            _set_state(session_id, HITL_SESSION_APPROVED_KEY, current)
+
+    # ── Layer 6: Smart approval ─────────────────────────────────────────
+
+    def smart_approve(self, command: str) -> SmartApprovalResult:
+        """Use an LLM to auto-assess whether a command is safe.
+
+        Requires ``config.smart_approval_llm`` to be set. The LLM is asked to
+        classify the command as ``safe`` / ``suspicious`` / ``dangerous``.
+
+        Returns:
+            :class:`SmartApprovalResult` — ``APPROVE``, ``DENY``, or ``ESCALATE``
+            if the LLM is unavailable or uncertain.
+        """
+        llm = self.config.smart_approval_llm
+        if llm is None:
+            return SmartApprovalResult.ESCALATE
+        try:
+            response = llm.invoke(
+                f"Assess the risk of this shell command on a scale of "
+                f"safe/suspicious/dangerous. Reply with ONLY one word.\n\n"
+                f"Command: {command}"
+            )
+            text = str(response).strip().lower()
+            if "safe" in text:
+                return SmartApprovalResult.APPROVE
+            if "dangerous" in text:
+                return SmartApprovalResult.DENY
+            return SmartApprovalResult.ESCALATE
+        except Exception:
+            logger.exception("Smart approval LLM call failed, escalating")
+            return SmartApprovalResult.ESCALATE
+
+    # ── Layer 10: Plugin tool approval ───────────────────────────────────
+
+    def request_tool_approval(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        operator: str | None = None,
+    ) -> ApprovalResult:
+        """Check whether a plugin tool invocation has been pre-approved.
+
+        Previously session-approved tool calls (by args hash, in-memory or in
+        the persistent :class:`ToolApprovalStore`) are auto-approved. All other
+        tool calls are approved by default (allow-through) so the agent's tools
+        can execute without a human gate. Tools are blocked only when explicitly
+        denied for the session (a False args-hash record).
+        """
+        key = hitl_tool_approved_key(tool_name)
+        approved_args: dict[str, bool] = _get_state(session_id, key, {})
+        args_hash = _args_hash(tool_args)
+        if args_hash in approved_args:
+            if approved_args[args_hash]:
+                return ApprovalResult(
+                    approved=True,
+                    decision=ApprovalDecision.SESSION,
+                    reason="Previously session-approved",
+                )
+            return ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=f"Tool '{tool_name}' is denied for this session.",
+            )
+        evaluation = self.store.evaluate(
+            tool_name,
+            tool_args,
+            session_id,
+            operator=self._store_operator(operator, session_id),
+        )
+        if evaluation.verdict == ApprovalVerdict.ALLOW:
+            return ApprovalResult(
+                approved=True,
+                decision=ApprovalDecision.SESSION,
+                reason=evaluation.reason or "Previously approved (persisted)",
+            )
+        if evaluation.verdict == ApprovalVerdict.DENY:
+            return ApprovalResult(
+                approved=False,
+                decision=ApprovalDecision.DENY,
+                reason=evaluation.reason or f"Tool '{tool_name}' is denied for this session.",
+            )
+        # No explicit decision recorded → allow the tool through by default.
+        return ApprovalResult(
+            approved=True, decision=ApprovalDecision.ONCE, reason="Tool allowed by default"
+        )
+
+    def approve_tool_for_session(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        operator: str | None = None,
+    ):
+        """Approve a tool + args combination for the session (memory + persistent)."""
+        self._set_tool_decision(
+            tool_name,
+            tool_args,
+            session_id,
+            allow=True,
+            operator=operator,
+            reason="User approved for this session",
+        )
+
+    def deny_tool_for_session(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        operator: str | None = None,
+        reason: str = "",
+    ):
+        """Deny a tool + args combination for the session (memory + persistent)."""
+        self._set_tool_decision(
+            tool_name,
+            tool_args,
+            session_id,
+            allow=False,
+            operator=operator,
+            reason=reason or "User denied for this session",
+        )
+
+    def _set_tool_decision(
+        self,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        session_id: str,
+        *,
+        allow: bool,
+        operator: str | None,
+        reason: str,
+    ) -> None:
+        key = hitl_tool_approved_key(tool_name)
+        approved_args: dict[str, bool] = _get_state(session_id, key, {})
+        approved_args[_args_hash(tool_args)] = allow
+        _set_state(session_id, key, approved_args)
+        self.store.record(
+            tool_name,
+            tool_args,
+            session_id,
+            allow=allow,
+            reason=reason,
+            operator=self._store_operator(operator, session_id),
+        )

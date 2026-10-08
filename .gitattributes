@@ -1,0 +1,4 @@
+# Shell scripts must use LF endings: CRLF breaks bash (Git Bash / WSL), and a
+# Windows checkout with core.autocrlf=true would otherwise rewrite them to
+# CRLF. eol=lf forces LF in both the repository and every working tree.
+*.sh text eol=lf

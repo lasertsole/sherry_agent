@@ -1,0 +1,233 @@
+{
+  "a11y": {
+    "previewImage": "이미지 미리보기",
+    "language": "언어"
+  },
+  "common": {
+    "confirmDelete": "삭제 확인",
+    "delete": "삭제",
+    "cancel": "취소"
+  },
+  "chatInput": {
+    "maxImages": "최대 {count}개의 이미지를 업로드할 수 있습니다",
+    "maxImagesExceed": "최대 {count}개의 이미지를 업로드할 수 있습니다. {extra}개를 초과했습니다",
+    "maxAudios": "최대 {count}개의 음성을 업로드할 수 있습니다",
+    "maxAudiosExceed": "최대 {count}개의 음성을 업로드할 수 있습니다. {extra}개를 초과했습니다",
+    "maxVideos": "최대 {count}개의 비디오를 업로드할 수 있습니다",
+    "maxVideosExceed": "최대 {count}개의 비디오를 업로드할 수 있습니다. {extra}개를 초과했습니다"
+  },
+  "sessionModelPicker": {
+    "pending": "다음 턴에 적용"
+  },
+  "chatBox": {
+    "defaultAiName": "셰리"
+  },
+  "chat": {
+    "backgroundMessage": "백그라운드 작업",
+    "originTaskIntent": "작업 의도",
+    "originQualityGate": "품질 게이트",
+    "originTodoNudge": "할 일 알림",
+    "originProjectDir": "작업 디렉터리",
+    "originGitHead": "Git 브랜치 전환",
+    "originSystem": "시스템 메시지",
+    "tokenGuard": {
+      "title": "모델 설정이 최소값 미만",
+      "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 환경 설정에서 수정하세요."
+    }
+  },
+  "errors": {
+    "requestFailed": "요청 실패",
+    "pageError": "페이지 오류",
+    "replyFailed": "（회신 실패：{reason}）",
+    "sendFailed": "（전송 실패：{reason}）",
+    "streamInterrupted": "연결이 끊겼습니다. 답장은 백그라운드에서 완료되었을 수 있으며 곧 자동 동기화됩니다."
+  },
+  "connection": {
+    "offline": "네트워크 연결 끊김",
+    "backendDown": "백엔드 서비스에 연결할 수 없음",
+    "backOnline": "네트워크 연결 복원됨"
+  },
+  "history": {
+    "noSessions": "대화 기록이 없습니다",
+    "newSession": "새 대화"
+  },
+  "sidebar": {
+    "tasksAgoSeconds": "{sec}초 전",
+    "statusRunning": "실행 중",
+    "statusInterrupted": "중단됨",
+    "statusDone": "완료",
+    "statusError": "오류",
+    "statusTimeout": "시간 초과",
+    "statusKilled": "종료됨",
+    "statusUnknown": "알 수 없음",
+    "roleRoot": "루트",
+    "roleChild": "작업"
+  },
+  "toolbar": {
+    "newChat": "새 대화",
+    "image": "이미지",
+    "audio": "오디오",
+    "video": "비디오",
+    "skills": "스킬",
+    "knowledgeGraph": "지식 그래프",
+    "stats": "통계",
+    "systemConfig": "시스템 설정",
+    "persona": "프리셋과 역할",
+    "memory": "메모리",
+    "heartbeat": "하트비트",
+    "cron": "크론 작업",
+    "logs": "로그",
+    "extend": "확장",
+    "account": "계정"
+  },
+  "todolist": {
+    "flowLabel": "TaskFlow: {flow}"
+  },
+  "config": {
+    "agent": {
+      "tabs": {
+        "tools": "도구",
+        "middlewares": "미들웨어",
+        "subagents": "에이전트 모델",
+        "skills": "스킬"
+      },
+      "models": {
+        "scope_main": "메인 에이전트",
+        "scope_subagent": "서브에이전트",
+        "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 환경 설정을 따릅니다.",
+        "followEnv": "환경 설정 따르기"
+      },
+      "tools": {
+        "count": "{selected}/{total} 선택",
+        "requiredHint": "필수 — 해제할 수 없음",
+        "scope_builtin": "내장",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "아직 MCP 도구가 없습니다(확장-MCP에서 서버 추가)"
+      },
+      "skills": {
+        "count": "{selected}/{total} 선택",
+        "scope_builtin": "내장",
+        "scope_thirdparty": "서드파티",
+        "empty": "아직 스킬이 없습니다"
+      },
+      "toolGroup": {
+        "files": "파일",
+        "terminal": "터미널과 코드",
+        "tasks": "작업과 계획",
+        "memory": "기억과 검색",
+        "skills": "스킬",
+        "subagents": "서브에이전트",
+        "interaction": "상호작용",
+        "web": "웹",
+        "browser": "브라우저",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "lockedTitle": "시스템 필수(잠금)",
+        "nudgeLabel": "nudge 사용",
+        "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "계획 이어가기",
+          "desc": "계획(todo / 플로우)이 끝나지 않은 동안 턴을 이어갑니다"
+        },
+        "TaskIntentMiddleware": {
+          "name": "작업 의도 유도",
+          "desc": "작업 요청을 감지해 오케스트레이션 프롬프트를 주입합니다"
+        },
+        "WorkspaceNoticeMiddleware": {
+          "name": "워크스페이스 변경 알림",
+          "desc": "작업 디렉터리나 git 브랜치/HEAD가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
+        },
+        "MultimodalProcessor": {
+          "name": "멀티모달 전처리",
+          "desc": "업로드된 이미지 / 오디오 / 비디오를 저장하고 전처리합니다"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "완료 결과 주입",
+          "desc": "서브에이전트 완료 결과를 메인 세션에 주입합니다"
+        },
+        "Summarization": {
+          "name": "요약 압축",
+          "desc": "컨텍스트 압축, 오버플로 처리, 압축 후 nudge"
+        }
+      },
+      "subagents": {
+        "followTier": "역할 기본값 따르기",
+        "tier": "역할 기본값: {tier}",
+        "tierDepth": "역할 정의 없음: 깊이 기본값"
+      },
+      "role": {
+        "general": "범용",
+        "researcher": "리서처",
+        "executor": "실행자",
+        "reviewer": "리뷰어",
+        "librarian": "사서"
+      },
+      "viewer": {
+        "tools": "도구 {selected}/{total}",
+        "middlewares": "꺼진 미들웨어: {names}",
+        "middlewaresNone": "미들웨어: 모두 켜짐",
+        "models": "서브에이전트 모델: {names}"
+      }
+    },
+    "save": "저장",
+    "cancel": "취소",
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "tabs": {
+      "role": "캐릭터 설정",
+      "agents": "운영 지침",
+      "soul": "인격·영혼",
+      "user": "사용자 정보"
+    },
+    "role": {
+      "aiLine": "당신은 {name} 역할을 연기합니다.",
+      "userLine": "사용자는 {name} 역할을 연기합니다.",
+      "assistant": "AI 역할",
+      "userRole": "사용자 역할"
+    },
+    "persona": {
+      "preset": {
+        "builtinPureName": "순수",
+        "builtinCompanionName": "감정 동반",
+        "defaultName": "전체",
+        "defaultBadge": "기본",
+        "builtinCodingName": "코딩 어시스턴트",
+        "builtinBadge": "내장"
+      }
+    }
+  },
+  "rightSidebar": {
+    "fileViewer": "프로젝트 파일",
+    "account": "계정"
+  },
+  "progressFloat": {
+    "status": {
+      "pending": "대기",
+      "in_progress": "진행 중",
+      "completed": "완료",
+      "cancelled": "취소",
+      "ready": "시작 가능",
+      "blocked": "미해제",
+      "dispatched": "파견됨",
+      "done": "완료",
+      "failed": "실패",
+      "skipped": "건너뜀"
+    }
+  },
+  "projectFiles": {
+    "title": "파일 트리"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
+  },
+  "personaPreset": {
+    "unbound": "선택 안 함"
+  }
+}

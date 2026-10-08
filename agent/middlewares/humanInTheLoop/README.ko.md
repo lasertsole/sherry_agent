@@ -1,0 +1,296 @@
+# HITL(Human-In-The-Loop) 미들웨어
+
+[**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
+
+hermes-agent 파이프라인을 위한 종합적인 인간-참여(human-in-the-loop) 미들웨어입니다. 명령 실행(하드라인/위험), 파일 쓰기, MCP 도구 호출, 파괴적 슬래시 명령, 피어 페어링에 대한 계층형 승인 게이트를 제공하며, 모두 단일 미들웨어 훅을 통해 관리됩니다.
+
+---
+
+## 목차
+
+- [아키텍처 개요](#아키텍처-개요)
+- [레이어 레퍼런스](#레이어-레퍼런스)
+  - [1. 하드라인 및 위험 감지](#1-하드라인-및-위험-감지)
+  - [2. 쓰기 승인 게이트](#2-쓰기-승인-게이트)
+  - [3. 인터럽트 매니저](#3-인터럽트-매니저)
+  - [4. MCP 유발 동의](#4-mcp-유발-동의)
+  - [5. 칸반 트리아지](#5-칸반-트리아지)
+  - [6. 스마트 승인](#6-스마트-승인)
+  - [7. 페어링 저장소](#7-페어링-저장소)
+  - [8. 슬래시 확인](#8-슬래시-확인)
+- [미들웨어 훅](#미들웨어-훅)
+- [설정](#설정)
+- [승인 훅 시스템](#승인-훅-시스템)
+- [도구 승인 영속성](#도구-승인-영속성)
+- [파일 구조](#파일-구조)
+
+---
+
+## 아키텍처 개요
+
+HITL 미들웨어는 `HumanInTheLoop` 미들웨어 클래스에 의해 조율되는 7개의 독립적인 하위 게이트로 구성됩니다:
+
+```
+HumanInTheLoop
+├── ApprovalPipeline      (approval.py — 계층형 명령 승인)
+│   ├── detect_hardline_command()
+│   ├── detect_dangerous_command()
+│   └── smart_approve()
+├── WriteApprovalGate     (gates.py — 파일/메모리 쓰기 게이팅)
+├── InterruptManager      (gates.py — 세션별 인터럽트 플래그)
+├── MCPElicitationConsent (gates.py — MCP 서버 동의)
+├── KanbanTriage          (gates.py — 작업 실패 트리아지)
+├── PairingStore          (gates.py — 플랫폼 사용자 승인)
+└── SlashConfirm          (gates.py — 파괴적 슬래시 확인)
+```
+
+각 게이트는 독립적으로 인스턴스화하고 테스트할 수 있습니다. `HumanInTheLoop` 미들웨어가 이를 연결하고 표준 `AgentMiddleware` 수명주기 훅(`after_model`, `wrap_tool_call`, `awrap_tool_call`, `abefore_agent`)을 통해 노출합니다.
+
+---
+
+## 레이어 레퍼런스
+
+### 1. 하드라인 및 위험 감지
+
+**파일:** `detection.py`
+
+부작용 없이 명령을 분류하는 두 개의 정적 패턴 매칭기:
+
+| 함수 | 용도 |
+|---|---|
+| `detect_hardline_command(cmd)` | `HARDLINE_PATTERNS`에 대해 검사 — 항상 검토해야 하는 명령(`rm -rf`, `format`, `dd` 등) |
+| `detect_dangerous_command(cmd)` | `DANGEROUS_PATTERNS`에 대해 검사 — 파괴 가능성이 높은 명령(`DROP TABLE`, `shutdown`, `rm`, 강제 푸시) |
+
+둘 다 첫 번째 일치하는 패턴(문자열) 또는 `None`을 반환합니다.
+
+### 2. 쓰기 승인 게이트
+
+**파일:** `gates.py` — 클래스 `WriteApprovalGate`
+
+파일 또는 메모리 대상에 대한 보류 중인 쓰기 작업을 관리합니다. 각 쓰기는 고유 ID로 추적되며 승인/거부를 위해 저장됩니다:
+
+| 메서드 | 설명 |
+|---|---|
+| `request_write(target, content, session_id)` | 승인을 위해 쓰기를 제출합니다. 추적된 `write_id`가 포함된 `ApprovalResult`를 반환합니다. |
+| `approve_write(session_id, write_id)` | 보류 중인 쓰기를 승인합니다. |
+| `reject_write(session_id, write_id)` | 보류 중인 쓰기를 거부합니다. |
+| `get_pending_writes(session_id, target)` | 보류 중인 쓰기를 나열하며, 대상 유형별로 필터링할 수 있습니다. |
+
+### 3. 인터럽트 매니저
+
+**파일:** `gates.py` — 클래스 `InterruptManager`
+
+실행 중에 도구 실행을 게이팅하는 세션별 부울 플래그:
+
+| 메서드 | 설명 |
+|---|---|
+| `set_interrupt(session_id, active=True)` | 인터럽트 플래그를 설정하거나 해제합니다. |
+| `is_interrupted(session_id)` | 세션이 인터럽트되었는지 확인합니다. |
+| `clear_interrupt(session_id)` | 인터럽트 플래그를 해제합니다(편의 별칭). |
+
+인터럽트가 설정되면 `wrap_tool_call` / `awrap_tool_call` 훅이 상태 `"error"`인 `ToolMessage`를 반환하고 실행을 차단합니다.
+
+### 4. MCP 유발 동의
+
+**파일:** `gates.py` — 클래스 `MCPElicitationConsent`
+
+부작용을 유발할 수 있는 MCP(Model Context Protocol) 서버의 경우:
+
+| 메서드 | 설명 |
+|---|---|
+| `request_consent(server_name, session_id)` | MCP 서버 상호작용에 대한 명시적 동의를 요청하는 인터럽트를 사용자에게 표시합니다. |
+
+### 5. 칸반 트리아지
+
+**파일:** `gates.py` — 클래스 `KanbanTriage`
+
+칸반 스타일 트리아지 에스컬레이션을 위한 작업 실패를 추적합니다:
+
+| 메서드 | 설명 |
+|---|---|
+| `report_task_failure(task_id, session_id)` | 작업 실패를 등록합니다. `TriageStatus`(실패 횟수가 설정된 `kanban_recurrence_limit`에 도달하면 `TRIAGE`, 그렇지 않으면 `BLOCKED`)를 반환합니다. 예외는 발생하지 않습니다. |
+| `resolve_triage(task_id, session_id)` | 트리아지된 작업을 해결됨으로 표시합니다. |
+
+### 6. 스마트 승인
+
+**파일:** `approval.py` — 클래스 `ApprovalPipeline`
+
+여러 레이어를 가진 구성 가능한 승인 파이프라인:
+
+| 레벨 | 메커니즘 |
+|---|---|
+| **레이어 1 — 하드라인 감지** | 항상 차단되는 명령(`rm -rf`, `format` 등) |
+| **레이어 2 — 위험 감지** | 플래그가 지정된 명령(`DROP TABLE`, `shutdown` 등) |
+| **레이어 3 — 터미널 모드** | 터미널 명령의 승인 정책에 위임 |
+| **레이어 4 — 도구 승인** | 플러그인 에스컬레이션 도구 승인(`request_tool_approval`) |
+| **레이어 5 — 세션 캐시** | 반복 프롬프트를 피하기 위해 세션별로 승인된 도구 캐시 |
+| **레이어 6 — 스마트 승인** | `smart_approve()` — 명령 내용과 컨텍스트를 기반으로 하는 휴리스틱 자동 승인/자동 거부 |
+| **레이어 7 — 인간 인터럽트** | 사용자 결정을 위한 `interrupt()` 폴백 |
+
+파이프라인은 외부 호출자를 위해 직접 노출됩니다:
+
+| 메서드 | 설명 |
+|---|---|
+| `check_command(command, session_id)` | 하드라인 + 위험 감지를 실행합니다. `ApprovalResult`를 반환합니다. |
+| `check_command_with_approval(command, session_id, prompt_fn)` | 스마트 승인 + 인간 인터럽트를 포함한 전체 파이프라인. |
+| `smart_approve(command)` | 휴리스틱 전용 승인(감지 또는 인터럽트 없음). |
+| `request_tool_approval(name, args, session_id)` | 플러그인 에스컬레이션 도구 승인 확인. |
+| `approve_tool_for_session(name, args, session_id)` | 세션의 나머지 동안 승인된 도구를 캐시합니다. |
+
+### 7. 페어링 저장소
+
+**파일:** `gates.py` — 클래스 `PairingStore`
+
+플랫폼 수준 사용자 허용 목록:
+
+| 메서드 | 설명 |
+|---|---|
+| `is_user_allowed(platform, user_id)` | 사용자가 특정 플랫폼에서 승인되었는지 확인합니다. |
+| `approve_user(platform, user_id)` | 사용자를 허용 목록에 추가합니다. |
+| `revoke_user(platform, user_id)` | 사용자를 허용 목록에서 제거합니다. |
+
+### 8. 슬래시 확인
+
+**파일:** `gates.py` — 클래스 `SlashConfirm`
+
+파괴적 슬래시 명령의 확인 게이트(예: `/reset`, `/kill`):
+
+| 메서드 | 설명 |
+|---|---|
+| `confirm_destructive(action, session_id)` | 파괴적 작업을 확인하도록 요청하는 인터럽트를 표시합니다. `ApprovalResult`를 반환합니다. |
+
+---
+
+## 미들웨어 훅
+
+`HumanInTheLoop` 클래스는 네 개의 훅을 통해 에이전트 수명주기에 통합됩니다:
+
+| 훅 | 용도 |
+|---|---|
+| `after_model` / `aafter_model` | LLM 출력을 가로챕니다. 각 도구 호출에 대해: 명령 승인, 쓰기 게이트 검사, `interrupt_on` 설정 검사, 플러그인 에스컬레이션 승인을 실행합니다. 차단되었을 때 도구 호출을 인공 `ToolMessage` 결과로 대체합니다. |
+| `wrap_tool_call` | 도구를 실행하기 전에 인터럽트 플래그를 확인합니다. 세션이 인터럽트되면 오류 `ToolMessage`를 반환합니다. |
+| `awrap_tool_call` | `wrap_tool_call`의 비동기 변형. |
+| `abefore_agent` / `before_agent` | 턴별 상태를 재설정합니다(`turn_interrupted` 플래그 해제). |
+
+### 인터럽트 흐름
+
+```
+LLM 출력 → after_model
+  ├── 하드라인/위험 검사 (레이어 1-2)
+  ├── 쓰기 승인 게이트 (메모리 쓰기만)
+  ├── interrupt_on 설정 검사
+  ├── 플러그인 도구 승인 (레이어 4)
+  └── 수정된 tool_calls + 인공 ToolMessages
+
+각 도구 호출 → wrap/awrap_tool_call
+  └── 인터럽트 플래그 확인 → 차단 또는 통과
+```
+
+### 외부 경로 인터럽트(`external_file_access`)
+
+모든 인터럽트가 이 미들웨어에서 오는 것은 아닙니다. 파일 도구(`read_file`, `write_file`, `patch_file`, `search_files` 등)가 `agent/tools/pub_base/path_utils.py::resolve_external_path()`로 경로를 해석할 때, `ROOT_DIR` 밖에 있으면서 YOLO 거부 목록(보안 바닥)에 걸리지 않은 경로만이 **여섯 번째** 게이트에 도달합니다: `interrupted_tools`에 **의존하지 않고** 도구 계층이 직접 일으키는 `interrupt()`이며, 자체 결정 세트를 가집니다:
+
+- `approve` — 이 파일만 허용(세션 범위, 서브에이전트에 상속);
+- `approve_dir` — 파일이 속한 디렉터리 전체 허용(세션 범위 접두사 일치, 서브에이전트에도 상속);
+- `yolo` — 모든 외부 경로를 영구 허용(전역 YOLO 플래그 기록);
+- `reject` — 접근 거부.
+
+▶️ 자세히: [docs/sandbox/isolation/README.ko.md](../../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
+
+---
+
+## 설정
+
+모든 설정은 `HITLConfig` 데이터클래스(`types.py`에 정의됨)를 통해 전달됩니다:
+
+| 필드 | 유형 | 기본값 | 설명 |
+|---|---|---|---|
+| `mode` | `ApprovalMode` | `SMART` | `SMART`, `MANUAL` 또는 `OFF` |
+| `interrupted_tools` | `dict[str, bool \| dict]` | `{}` | `interrupt_on` 설정에 의해 게이팅되는 도구 이름. 각 항목은 부울(기본 허용 결정 `["approve", "edit", "reject"]`) 또는 `allowed_decisions`와 선택적 `description` 콜러블이 있는 dict일 수 있습니다. |
+| `interrupt_on` | deprecated | — | `interrupted_tools`로 대체됨. |
+| `write_approval_memory` | `bool` | `False` | `WriteApprovalGate`를 통해 메모리 쓰기를 게이팅합니다. |
+| `description_prefix` | `str` | `"Action requires human approval"` | 사람이 읽을 수 있는 작업 설명의 접두사. |
+| `kanban_recurrence_limit` | `int` | `3` | `TriageStatus.TRIAGE`로 승격되기 전까지의 실패 횟수. |
+
+### 예시
+
+```python
+from agent.middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig, ApprovalMode
+
+middleware = HumanInTheLoop(
+    HITLConfig(
+        mode=ApprovalMode.SMART,
+        interrupted_tools={
+            "terminal": {"allowed_decisions": ["approve", "reject"]},
+            "memory": True,
+        },
+        write_approval_memory=True,
+        kanban_recurrence_limit=3,
+    )
+)
+```
+
+---
+
+## 세션 접근 모드
+
+세션 단위로 무인 실행을 어디까지 허용할지 정하는 세 위치입니다. 채팅 툴바의 접근 모드
+컨트롤(`GET/PUT /sessions/access_mode`)이 소유하며, 메모리 세션 상태 레지스터
+(`runtime/session/state_keys.py`)에 저장되므로 전환은 다음 도구 호출부터 적용됩니다.
+
+| 모드 | 플래그 | 동작 |
+|---|---|---|
+| `confirm_all` | `hitl:session_confirm_all` | 엄격: 모든 터미널 명령과 모든 파일 변경(`write_file` / `patch_file`)이 확인을 요구합니다. 평범한 명령도 확인하고, 스마트 승인은 건너뛰며, 기억된 최초 확인은 무시되어 같은 도구라도 매번 다시 묻습니다. 하드라인 차단 목록과 사용자 deny 규칙은 그대로 차단합니다. |
+| `auto_edit` | — | 기본: 위험하거나 불확실한 호출만 확인을 요구합니다. 변경 도구의 최초 사용은 세션당 한 번만 확인합니다. |
+| `full_access` | `hitl:session_yolo` | 전체 우회(YOLO): 이 세션에서는 승인 카드를 띄우지 않습니다. 하드라인 차단 목록, deny 규칙, 외부 경로 거부 목록은 계속 적용됩니다. |
+
+엄격 플래그와 우회 플래그는 상호 배타적입니다 — `set_session_yolo()`와
+`set_session_confirm_all()`은 서로를 지우고, `auto_edit`는 둘 다 지웁니다.
+승인 카드에서 `yolo`를 고르면 컨트롤이 읽는 플래그가 설정되므로, 그 세션은 이후
+`full_access`로 보고되고(그리고 거기서부터 다시 전환되고) 합니다.
+
+## 승인 훅 시스템
+
+모든 승인 결정 후에 실행되는 외부 콜백을 등록합니다:
+
+```python
+def log_approval(session_id: str, result: ApprovalResult):
+    print(f"[{session_id}] {result.decision}: {result.reason}")
+
+
+middleware.register_approval_hook(log_approval)
+```
+
+훅은 세션 ID와 전체 `ApprovalResult`를 받습니다. 모든 훅은 try/except로 감싸져 있어 실패하는 훅이 승인 흐름을 차단하지 않습니다.
+
+---
+
+## 도구 승인 영속성
+
+도구 호출 승인 결정은 JSON 파일에 영속화되어 프로세스 재시작 후에도 유지됩니다——인메모리 레지스터의 결정은 재시작 시 사라집니다. 저장소는 오퍼레이터 단위로 분리되며 낙관적 바이트 리비전 CAS로 갱신됩니다.
+
+- **저장소와 위치** — `ToolApprovalStore`(`approval_store.py`)가 `SRC_DIR/data/approvals.json`을 관리합니다(Sherry 소유 런타임 데이터로, boulder 포인터·증거 원장과 같은 디렉터리 트리이며 `SHERRY_APPROVAL_STORE_PATH`로 재정의 가능). 파일이 없으면 "기록된 결정 없음"을 의미하고, 손상된 JSON은 빈 상태로 읽혀 다음 성공적인 쓰기에서 교체됩니다. 쓰기는 원자적(임시 파일 + `os.replace`)이며 파일은 `0600`으로 생성됩니다. 저장되는 것은 도구 이름, 인자 해시, 판정(`allow`/`deny`), 사유, 타임스탬프뿐——원시 도구 인자나 시크릿은 저장하지 않습니다.
+- **바이트 리비전 CAS** — 읽을 때마다 원시 바이트의 sha256 리비전을 캡처하고, 디스크의 리비전이 일치할 때만 쓰기가 반영됩니다. 경합에서 진 작성자는 다시 읽어 제한된 횟수(`max_cas_retries`, 기본 3)만큼 재시도하고, 그래도 실패하면 실패를 보고합니다. 프로세스 내 변경은 경로 단위로 직렬화되고, 프로세스 간 작성자는 CAS로 수렴합니다.
+- **오퍼레이터 범위** — 결정은 `(오퍼레이터, 세션, 도구, 인자 해시)`를 키로 합니다. `operator_scope()` / `set_operator()`가 `ContextVar`로 현재 오퍼레이터를 설정하며, 인증된 전송 신원이 없을 때 세션 신원이 오퍼레이터 범위의 등가물입니다. 오퍼레이터 A의 승인은 B에게 보이지 않습니다.
+- **오퍼레이터 없음 → 자동 거부** — 범위에 오퍼레이터가 없거나(또는 헤드리스 시스템 주입 턴: 마지막 human 메시지의 `metadata.internal` / `metadata.origin == "cron"`) `ToolApprovalStore.evaluate()`가 명시적 자동 거부를 반환하면, 원래 `interrupt()`했을 게이트(설정된 `interrupted_tools`, 위험한 터미널 명령, 샌드박스 우회)는 응답할 수 없는 사람을 위해 그래프를 멈추는 대신 오류 `ToolMessage`를 반환합니다.
+- **HITL 통합** — `ApprovalPipeline.request_tool_approval` / `approve_tool_for_session` / `deny_tool_for_session`이 저장소를 읽고 씁니다(기존 인메모리 `hitl:tool_approved:*` 캐시도 계속 참조·갱신되므로 기존 세션은 그대로 동작합니다). 설정된 `interrupted_tools` 호출의 승인·거부는 결정으로 기록되어 재시작 후에도 같은 세션의 같은 호출에 재승인이 필요 없습니다. `edit`과 `yolo` 결정은 각각 일회성 / 세션 플래그 범위로 남습니다.
+
+---
+
+## 파일 구조
+
+```
+agent/middlewares/humanInTheLoop/
+├── __init__.py        # 공개 내보내기
+├── types.py           # 열거형, 데이터클래스, 설정, 스텁
+├── approval_scope.py  # 오퍼레이터 ContextVar + 헤드리스 턴 판정
+├── approval_store.py  # 영속 승인 저장소 (JSON + 바이트 리비전 CAS)
+├── detection.py       # 하드라인 + 위험 패턴 감지
+├── approval.py        # 계층형 승인 파이프라인
+├── gates.py           # 하위 게이트 (쓰기, 인터럽트, MCP, 칸반, 페어링, 슬래시)
+├── core.py            # HumanInTheLoop 미들웨어 클래스
+├── README.md          # 이 파일 (영어)
+├── README.zh.md       # 중국어 버전
+├── README.ko.md       # 한국어 버전
+└── README.ja.md       # 일본어 버전
+```

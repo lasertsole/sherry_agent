@@ -1,0 +1,233 @@
+{
+  "a11y": {
+    "previewImage": "画像をプレビュー",
+    "language": "言語"
+  },
+  "common": {
+    "confirmDelete": "削除の確認",
+    "delete": "削除",
+    "cancel": "キャンセル"
+  },
+  "chatInput": {
+    "maxImages": "最大 {count} 枚の画像をアップロードできます",
+    "maxImagesExceed": "最大 {count} 枚の画像をアップロードできます。{extra} 枚超過しています",
+    "maxAudios": "最大 {count} 個の音声をアップロードできます",
+    "maxAudiosExceed": "最大 {count} 個の音声をアップロードできます。{extra} 個超過しています",
+    "maxVideos": "最大 {count} 個の動画をアップロードできます",
+    "maxVideosExceed": "最大 {count} 個の動画をアップロードできます。{extra} 個超過しています"
+  },
+  "sessionModelPicker": {
+    "pending": "次のターンで反映"
+  },
+  "chatBox": {
+    "defaultAiName": "シェリー"
+  },
+  "chat": {
+    "backgroundMessage": "バックグラウンドタスク",
+    "originTaskIntent": "タスク意図",
+    "originQualityGate": "品質ゲート",
+    "originTodoNudge": "TODO リマインダー",
+    "originProjectDir": "作業ディレクトリ",
+    "originGitHead": "Git ブランチ切替",
+    "originSystem": "システム メッセージ",
+    "tokenGuard": {
+      "title": "モデル設定が最小値未満",
+      "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 128K (131072) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → 環境設定で修正してください。"
+    }
+  },
+  "errors": {
+    "requestFailed": "リクエストに失敗しました",
+    "pageError": "ページエラー",
+    "replyFailed": "（返信に失敗：{reason}）",
+    "sendFailed": "（送信に失敗：{reason}）",
+    "streamInterrupted": "接続が中断されました。返信はバックグラウンドで完了している可能性があります。まもなく自動同期されます。"
+  },
+  "connection": {
+    "offline": "ネットワークが切断されました",
+    "backendDown": "バックエンドサービスに接続できません",
+    "backOnline": "接続が復帰しました"
+  },
+  "history": {
+    "noSessions": "会話履歴がありません",
+    "newSession": "新しい会話"
+  },
+  "sidebar": {
+    "tasksAgoSeconds": "{sec} 秒前",
+    "statusRunning": "実行中",
+    "statusInterrupted": "中断",
+    "statusDone": "完了",
+    "statusError": "エラー",
+    "statusTimeout": "タイムアウト",
+    "statusKilled": "終了",
+    "statusUnknown": "不明",
+    "roleRoot": "ルート",
+    "roleChild": "タスク"
+  },
+  "toolbar": {
+    "newChat": "新しい会話",
+    "image": "画像",
+    "audio": "音声",
+    "video": "動画",
+    "skills": "スキル",
+    "knowledgeGraph": "ナレッジグラフ",
+    "stats": "統計",
+    "systemConfig": "システム設定",
+    "persona": "プリセットと役割",
+    "memory": "記憶",
+    "heartbeat": "ハートビート",
+    "cron": "クーロンタスク",
+    "logs": "ログ",
+    "extend": "拡張",
+    "account": "アカウント"
+  },
+  "todolist": {
+    "flowLabel": "TaskFlow: {flow}"
+  },
+  "config": {
+    "agent": {
+      "tabs": {
+        "tools": "ツール",
+        "middlewares": "ミドルウェア",
+        "subagents": "エージェントモデル",
+        "skills": "スキル"
+      },
+      "models": {
+        "scope_main": "メインエージェント",
+        "scope_subagent": "サブエージェント",
+        "mainHint": "メインエージェントが使うモデル。既定では環境設定に従います。",
+        "followEnv": "環境設定に従う"
+      },
+      "tools": {
+        "count": "{selected}/{total} 選択",
+        "requiredHint": "必須（解除できません）",
+        "scope_builtin": "内蔵",
+        "scope_mcp": "MCP",
+        "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）"
+      },
+      "skills": {
+        "count": "{selected}/{total} 選択",
+        "scope_builtin": "内蔵",
+        "scope_thirdparty": "サードパーティ",
+        "empty": "スキルはまだありません"
+      },
+      "toolGroup": {
+        "files": "ファイル",
+        "terminal": "ターミナルとコード",
+        "tasks": "タスクと計画",
+        "memory": "記憶と検索",
+        "skills": "スキル",
+        "subagents": "サブエージェント",
+        "interaction": "対話",
+        "web": "ウェブ",
+        "browser": "ブラウザ",
+        "mcp": "MCP"
+      },
+      "middlewares": {
+        "lockedTitle": "システム必須（ロック）",
+        "nudgeLabel": "nudge を有効化",
+        "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）"
+      },
+      "middleware": {
+        "TodoContinuationEnforcer": {
+          "name": "計画の継続",
+          "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
+        },
+        "TaskIntentMiddleware": {
+          "name": "タスク意図の誘導",
+          "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
+        },
+        "WorkspaceNoticeMiddleware": {
+          "name": "ワークスペース変更通知",
+          "desc": "作業ディレクトリまたは git ブランチ/HEAD が変わったときユーザー メッセージの前に通知を挿入します"
+        },
+        "MultimodalProcessor": {
+          "name": "マルチモーダル前処理",
+          "desc": "アップロードされた画像 / 音声 / 動画を保存・前処理します"
+        },
+        "SubagentCompletionDrainMiddleware": {
+          "name": "完了結果の注入",
+          "desc": "サブエージェントの完了結果をメイン セッションに注入します"
+        },
+        "Summarization": {
+          "name": "要約圧縮",
+          "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
+        }
+      },
+      "subagents": {
+        "followTier": "ロール既定に従う",
+        "tier": "ロール既定: {tier}",
+        "tierDepth": "ロール定義なし: 深度の既定"
+      },
+      "role": {
+        "general": "汎用",
+        "researcher": "リサーチャー",
+        "executor": "実行者",
+        "reviewer": "レビュアー",
+        "librarian": "ライブラリアン"
+      },
+      "viewer": {
+        "tools": "ツール {selected}/{total}",
+        "middlewares": "無効なミドルウェア: {names}",
+        "middlewaresNone": "ミドルウェア: すべて有効",
+        "models": "サブエージェント モデル: {names}"
+      }
+    },
+    "save": "保存",
+    "cancel": "キャンセル",
+    "language": {
+      "zh": "简体中文",
+      "en": "English",
+      "ja": "日本語",
+      "ko": "한국어"
+    },
+    "tabs": {
+      "role": "キャラクター設定",
+      "agents": "操作指示",
+      "soul": "人格・魂",
+      "user": "ユーザー情報"
+    },
+    "role": {
+      "aiLine": "あなたは{name}を演じます。",
+      "userLine": "ユーザーは{name}を演じます。",
+      "assistant": "AI ロール",
+      "userRole": "ユーザーロール"
+    },
+    "persona": {
+      "preset": {
+        "builtinPureName": "純粋",
+        "builtinCompanionName": "寄り添い",
+        "defaultName": "フル",
+        "defaultBadge": "デフォルト",
+        "builtinCodingName": "コーディングアシスタント",
+        "builtinBadge": "内蔵"
+      }
+    }
+  },
+  "rightSidebar": {
+    "fileViewer": "プロジェクトファイル",
+    "account": "アカウント"
+  },
+  "progressFloat": {
+    "status": {
+      "pending": "未着手",
+      "in_progress": "進行中",
+      "completed": "完了",
+      "cancelled": "中止",
+      "ready": "実行可能",
+      "blocked": "未解放",
+      "dispatched": "派遣済み",
+      "done": "完了",
+      "failed": "失敗",
+      "skipped": "スキップ"
+    }
+  },
+  "projectFiles": {
+    "title": "ファイルツリー"
+  },
+  "gitGraph": {
+    "title": "Git Graph"
+  },
+  "personaPreset": {
+    "unbound": "未選択"
+  }
+}

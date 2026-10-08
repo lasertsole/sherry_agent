@@ -1,0 +1,270 @@
+"""Per-session project directory: the working root every tool resolves against.
+
+The value lives in the session state register (``StateKey.PROJECT_DIR``), written
+by ``PUT /sessions/project`` and read on the hot path by the tools, the path
+guard and the prompt builder. Because those readers live in different packages —
+``agent/**``, ``workspace/**`` and ``server/**`` — this module is the shared leaf:
+it may only depend on ``config`` and ``runtime`` (import-linter keeps
+``workspace/**`` away from ``agent/**``, so the reader cannot live in the tool
+layer).
+
+Two read depths, deliberately split:
+
+- :func:`read_project_dir` is mem-only and safe to call synchronously inside a
+  tool call (the register's mem tier is the agent-side fast path).
+- :func:`read_project_dir_durable` falls back to the SQLite mirror and
+  rehydrates mem. The SQLite read is blocking, so async callers (the HTTP layer)
+  must wrap it in ``asyncio.to_thread`` — the same contract as
+  ``session_settings_service._read_value``.
+
+The process default (:func:`config.path.resolve_default_project_dir`) is only
+consulted when the session has no binding; a bound value is always the session's
+own, so two sessions can never see each other's directory.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from config.path import resolve_default_project_dir
+from pub.func.message.workspace_notice import (
+    PROJECT_DIR_NOTICE_ORIGIN,
+    workspace_notice_metadata,
+)
+from runtime.session.state_keys import StateKey
+
+__all__ = [
+    "ProjectDirSource",
+    "PROJECT_DIR_NOTICE_METADATA",
+    "PROJECT_DIR_NOTICE_ORIGIN",
+    "announced_project_dir",
+    "current_project_dir",
+    "project_dir_notice_text",
+    "project_dir_source",
+    "read_project_dir",
+    "record_announced_project_dir",
+    "prime_mem_from_store",
+    "read_project_dir_durable",
+    "write_project_dir",
+    "write_pending_project_dir",
+]
+
+#: Where the effective directory came from: an explicit session binding, the
+#: process default (env / sherry.jsonc), or the repository root (nothing set).
+ProjectDirSource = str  # Literal["session", "env", "default"] — kept as str for callers
+
+_SESSION = "session"
+_DEFAULT = "default"
+
+#: Metadata carried by the injected working-directory notice, whose ``origin``
+#: (``PROJECT_DIR_NOTICE_ORIGIN``, imported from the shared workspace-notice
+#: contract) is what makes the chat render a neutral system card rather than a
+#: bubble the user wrote.
+PROJECT_DIR_NOTICE_METADATA = workspace_notice_metadata(PROJECT_DIR_NOTICE_ORIGIN)
+
+
+def announced_project_dir(session_id: str | None) -> str | None:
+    """The root the agent was last TOLD about (mem tier); ``None`` = never told.
+
+    Mem-only like :func:`read_project_dir` — this runs at the start of a turn.
+    The durable mirror is warmed at startup by :func:`prime_mem_from_store`, so
+    the value survives a restart without a per-turn SQLite read.
+    """
+    if not session_id:
+        return None
+    from runtime.session.state_register import state_register_mem
+
+    raw = state_register_mem.get_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, None)
+    return raw if isinstance(raw, str) and raw.strip() else None
+
+
+def record_announced_project_dir(session_id: str, directory: str | Path) -> None:
+    """Remember the root the agent has been told about (mem + durable mirror).
+
+    Writes both tiers: the mem value serves the next turn's comparison, the
+    mirror lets :func:`prime_mem_from_store` restore it after a restart (a lost
+    baseline would make the next message silently re-baseline and skip a notice
+    the agent still needs).
+    """
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    value = str(directory)
+    state_register_mem.set_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, value)
+    state_register_db.set_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, value)
+
+
+def project_dir_notice_text(previous: str, directory: str, *, bound: bool) -> str:
+    """The body of a working-directory change notice.
+
+    ``bound`` distinguishes a switch to another project from an UNBINDING (the
+    session falls back to the process default, which the agent must not treat as
+    a project it may write into).
+    """
+    if not bound:
+        return (
+            f"[项目目录已解除绑定 / no project directory bound] The session no longer has a "
+            f"bound project directory, so it resolves against the process default `{directory}` "
+            f"(previously `{previous}`). Ask the user which project to work in before creating "
+            "or changing files."
+        )
+    return (
+        f"[项目目录已切换 / working directory changed] The working directory moved from `{previous}` "
+        f"to `{directory}`. Relative paths in file tools, terminal commands and path checks now "
+        "resolve against it, and paths outside it are rejected."
+    )
+
+
+def read_project_dir(session_id: str | None) -> Path | None:
+    """The session's bound project directory (mem tier only); ``None`` when unset.
+
+    Mem-only on purpose: this runs inside tool calls on the event loop, and the
+    durable tier is a blocking SQLite read. The HTTP layer rehydrates mem via
+    :func:`read_project_dir_durable` before the agent runs.
+    """
+    if not session_id:
+        return None
+    from runtime.session.state_register import state_register_mem
+
+    raw = state_register_mem.get_state(session_id, StateKey.PROJECT_DIR, None)
+    return _as_dir(raw)
+
+
+def read_project_dir_durable(session_id: str | None) -> Path | None:
+    """Like :func:`read_project_dir`, but falls back to the SQLite mirror.
+
+    A hit in the mirror rehydrates the mem tier so the agent-side readers see
+    the persisted value without another database hit. Blocking — async callers
+    must run it in a worker thread.
+    """
+    bound = read_project_dir(session_id)
+    if bound is not None or not session_id:
+        return bound
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    raw = state_register_db.get_state(session_id, StateKey.PROJECT_DIR, None)
+    directory = _as_dir(raw)
+    if directory is not None:
+        state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(directory))
+    return directory
+
+
+def current_project_dir(session_id: str | None) -> Path:
+    """The directory the session's tools must resolve against — never ``None``.
+
+    A session binding wins; otherwise the process default from
+    :func:`config.path.resolve_default_project_dir` (env → sherry.jsonc →
+    repository root). Use :func:`project_dir_source` when the caller must know
+    whether that default was an explicit choice or a fallback.
+    """
+    return read_project_dir(session_id) or resolve_default_project_dir()
+
+
+def project_dir_source(session_id: str | None) -> ProjectDirSource:
+    """``"session"`` when the session is bound, else ``"env"`` or ``"default"``.
+
+    ``"env"`` means the process default came from ``SHERRY_PROJECT_DIR`` or the
+    ``sherry.jsonc`` ``project_dir`` key; ``"default"`` means nothing was
+    configured and the repository root is in effect. Callers use this to render
+    "unbound" states and to leave a trace when a session silently runs against
+    the repository.
+    """
+    if read_project_dir(session_id) is not None:
+        return _SESSION
+    default = resolve_default_project_dir()
+    from config import ROOT_DIR
+
+    return _DEFAULT if default == ROOT_DIR else "env"
+
+
+def write_project_dir(session_id: str, directory: Path | str, *, pending: bool = False) -> None:
+    """Persist the session's project directory (mem + durable mirror).
+
+    ``pending=True`` writes the parked twin instead (the in-flight turn keeps
+    the old root; the turn boundary promotes it) — see
+    ``server.service.session_project_service``.
+    """
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    key = StateKey.PROJECT_DIR_PENDING if pending else StateKey.PROJECT_DIR
+    value = str(directory)
+    state_register_mem.set_state(session_id, key, value)
+    state_register_db.set_state(session_id, key, value)
+
+
+def write_pending_project_dir(session_id: str, directory: Path | str | None) -> None:
+    """Write (or clear, with ``None``) the parked directory choice."""
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    if directory is None:
+        state_register_mem.delete_state(session_id, StateKey.PROJECT_DIR_PENDING)
+        state_register_db.delete_state(session_id, StateKey.PROJECT_DIR_PENDING)
+        return
+    value = str(directory)
+    state_register_mem.set_state(session_id, StateKey.PROJECT_DIR_PENDING, value)
+    state_register_db.set_state(session_id, StateKey.PROJECT_DIR_PENDING, value)
+
+
+def prime_mem_from_store() -> int:
+    """Warm the mem tier with every persisted project-dir binding.
+
+    The agent-side readers are mem-only (they run inside tool calls on the event
+    loop), so after a process restart an unprimed mem tier makes
+    :func:`read_project_dir` miss and :func:`current_project_dir` silently fall
+    back to the process default — the live smoke caught exactly that: the file
+    browser served the sherry checkout while ``GET /sessions/project`` still
+    reported the session's real binding (it reads the durable tier directly).
+
+    The notice baseline (``PROJECT_DIR_ANNOUNCED``) is warmed in the same pass:
+    a lost baseline would make the next message silently re-baseline, and the
+    agent would never hear about a directory change that predates the restart.
+
+    Called once at server startup. Returns the number of bindings warmed;
+    failures are swallowed — a broken mirror must not stop the boot.
+    """
+    from runtime import state_register_db
+    from runtime.session.state_register import state_register_mem
+
+    warmed = 0
+    try:
+        for session_id in state_register_db.get_all_session_ids():
+            if state_register_mem.get_state(session_id, StateKey.PROJECT_DIR, None) is None:
+                directory = _as_dir(
+                    state_register_db.get_state(session_id, StateKey.PROJECT_DIR, None)
+                )
+                if directory is not None:
+                    state_register_mem.set_state(session_id, StateKey.PROJECT_DIR, str(directory))
+                    warmed += 1
+            if (
+                state_register_mem.get_state(session_id, StateKey.PROJECT_DIR_ANNOUNCED, None)
+                is None
+            ):
+                announced = state_register_db.get_state(
+                    session_id, StateKey.PROJECT_DIR_ANNOUNCED, None
+                )
+                if isinstance(announced, str) and announced.strip():
+                    state_register_mem.set_state(
+                        session_id, StateKey.PROJECT_DIR_ANNOUNCED, announced
+                    )
+    except Exception as exc:  # noqa: BLE001 - boot must not depend on the mirror
+        from loguru import logger
+
+        logger.warning("project_dir: failed to prime the mem tier from the store: {}", exc)
+        return warmed
+    if warmed:
+        from loguru import logger
+
+        logger.info("project_dir: primed {} session binding(s) from the durable store", warmed)
+    return warmed
+
+
+def _as_dir(raw: object) -> Path | None:
+    """Coerce a stored value to a Path; anything non-string/blank -> ``None``."""
+    if isinstance(raw, Path):
+        return raw
+    if isinstance(raw, str) and raw.strip():
+        return Path(raw.strip())
+    return None

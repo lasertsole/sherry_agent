@@ -1,0 +1,246 @@
+/**
+ * Chat protocol types and constants shared across the bridge chat modules.
+ *
+ * @module bridge/chatTypes
+ */
+
+/**
+ * Chat request body — used by sendChatMessage / handleSend.
+ * Fields mirror the backend `type/message.py` MultiModalMessage.
+ */
+export interface ChatRequest {
+  /** Session ID (when omitted the backend treats it as the "default" session) */
+  session_id?: string;
+  /**
+   * Client-generated id for this send (frozen protocol `msg_id`, REQUIRED on the wire).
+   * The server echoes it back on `queued`, and includes it in `turn_started` / `done` /
+   * `error` / `stopped` `message_ids`, which is how replies are routed back to the
+   * originating send on the shared per-session socket.
+   */
+  msg_id?: string;
+  /**
+   * Message source marker sent on the wire. The client always sends `"user"`;
+   * the backend validates it and stamps the authoritative origin from the
+   * transport entry, so no other value can be self-declared.
+   */
+  origin?: string;
+  /** Text content */
+  text: string;
+  /** Image base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to image_path_list) */
+  image_base64_list?: string[];
+  /** Image URL list (browser mode; HTTP URLs returned after uploading via /images/upload) */
+  image_path_list?: string[];
+  /** Audio base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to audio_path_list) */
+  audio_bytes_list?: string[];
+  /** Audio URL list (browser mode; HTTP URLs returned after uploading via /audio/upload) */
+  audio_path_list?: string[];
+  /** Video base64 list (Tauri mode; in browser mode these are uploaded automatically and converted to video_path_list) */
+  video_bytes_list?: string[];
+  /** Video URL list (browser mode; HTTP URLs returned after uploading via /video/upload) */
+  video_path_list?: string[];
+}
+
+/**
+ * Streaming event frames returned by the backend `/sessions/agent/ws` in browser mode.
+ * Corresponds to `{"event": ..., "session_id": ..., "content": ...}` in `server/trigger/ws/messages.py`.
+ */
+export type AgentWsEventType =
+  | 'turn_started'
+  | 'chunk'
+  | 'done'
+  | 'error'
+  | 'stopped'
+  | 'hitl_request'
+  | 'queued'
+  | 'todo_updated'
+  | 'taskflow_updated';
+
+/** Chunk type — distinguishes conversational text from tool-call markers. */
+export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';
+
+/** HITL interrupt payload sent by the server when the agent pauses for human approval. */
+export interface HitlInterruptData {
+  tool_name: string;
+  tool_args: Record<string, unknown>;
+  description: string;
+  allowed_decisions: string[];
+}
+
+/** HITL decision sent by the client to resume the agent. */
+export interface HitlResponse {
+  decision: 'approve' | 'approve_dir' | 'reject' | 'edit' | 'yolo';
+  message?: string;
+  edited_args?: Record<string, unknown>;
+}
+
+/**
+ * Runtime guard for the `hitl_request` payload: the server sends the interrupt
+ * object under `content`, so a non-object (or an array) cannot be dispatched to
+ * the HITL card.
+ * @param value Candidate frame body.
+ */
+export function isHitlInterruptData(value: unknown): value is HitlInterruptData {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+export interface AgentWsEvent {
+  event: AgentWsEventType;
+  session_id?: string | null;
+  /**
+   * Frame body: text for `chunk` / `error` frames, the interrupt object for
+   * `hitl_request` frames (server/service/stream_driver.py sends the payload
+   * under `content`).
+   */
+  content?: string | HitlInterruptData;
+  /** Turn id (carried only on `turn_started`; identifies the generation turn). */
+  turn_id?: string;
+  /**
+   * Client `msg_id`s belonging to this generation turn (carried on `turn_started`,
+   * `done`, `error` and `stopped`). Used to resolve/reject the originating sends.
+   */
+  message_ids?: string[];
+  /**
+   * Client `msg_id` the queue-management ack is about (carried on
+   * `queued_cancelled` / `queued_updated` / `send_now_ack`).
+   */
+  msg_id?: string;
+  /**
+   * Whether the backend applied a queue-management frame; `false` means the row
+   * was no longer QUEUED. Only present on those ack frames.
+   */
+  ok?: boolean;
+  /** Chunk type (only present on "chunk" events). Defaults to "text" for backwards compat. */
+  type?: AgentChunkType;
+  /** Tool-call metadata (only present on "tool_result" chunks). */
+  tool_id?: string;
+  tool_name?: string;
+  args?: Record<string, unknown>;
+  error?: boolean;
+  /**
+   * Tool execution duration in ms (only present on "tool_result" chunks; null
+   * when the start was never seen). Measured monotonically on the backend.
+   */
+  duration_ms?: number | null;
+  /** Model name (carried only on done frames; from the backend model_name) */
+  model_name?: string;
+  /** Input token count (carried only on done frames; from the backend input_tokens) */
+  input_tokens?: number;
+  /** Output token count (carried only on done frames; from the backend output_tokens) */
+  output_tokens?: number;
+  /** 1-based position of this message in the session's input queue (carried only on queued frames). */
+  position?: number;
+  /** Current queue depth, this message included (carried only on queued frames). */
+  queue_size?: number;
+  /** Server-assigned id of the enqueued message (carried only on queued frames). */
+  message_id?: string;
+}
+
+/**
+ * Error used to reject when the stream is interrupted by the network
+ * (WebSocket reconnect retries exhausted).
+ * `midStream` being true means the disconnect happened **after the first chunk
+ * of this round had already been produced** — any content is already on screen
+ * and must never be re-sent (see the handleSend Case B comment); the UI can
+ * only mark the round as failed and trigger a history reconciliation fallback.
+ */
+export class StreamInterruptedError extends Error {
+  constructor(
+    message: string,
+    /** true = at least one chunk was received before the disconnect (this round's content is already on screen); false = pure connection failure before the first chunk */
+    readonly midStream: boolean
+  ) {
+    super(message);
+    this.name = 'StreamInterruptedError';
+  }
+}
+
+/**
+ * Maximum number of reconnect attempts for a browser-mode WebSocket stream loss.
+ * After each failure it retries with exponential backoff (1000 * 2^(attempt-1) ms);
+ * once this cap is exceeded, {@link StreamInterruptedError} is thrown.
+ * The backend cancels the session's active task on every new connection and only
+ * persists the round when the agent graph completes, so reconnecting and
+ * re-sending "before the first chunk" is safe
+ * (see `server/trigger/ws/messages.py:171-183`).
+ */
+export const WS_RECONNECT_MAX_ATTEMPTS = 3;
+
+/**
+ * Fixed liveness-reconnect delay used by the persistent per-session agent socket
+ * once the exponential reconnect budget is exhausted (or when there is no
+ * in-flight send to recover). Mirrors the 5s auto-reconnect of the `ws.ts`
+ * singletons.
+ */
+export const WS_FALLBACK_RECONNECT_MS = 5000;
+
+/**
+ * Exponential backoff: wait time in milliseconds before the `attempt`-th (1-based) reconnect.
+ * @param attempt
+ * @example wsReconnectDelayMs(1) === 1000; wsReconnectDelayMs(2) === 2000; wsReconnectDelayMs(3) === 4000
+ */
+export function wsReconnectDelayMs(attempt: number): number {
+  return 1000 * 2 ** (attempt - 1);
+}
+
+/** mitt event name — WebSocket stream connection loss (stream drop). Payload is the session ID of the interrupted stream. */
+export const WS_CONN_LOSS_EVENT = 'ws:conn-loss';
+
+/**
+ * Typed chunk callback: receives the text fragment, its semantic type, the
+ * session id the chunk belongs to, and optional tool-call metadata (present
+ * only on `tool_result` chunks). The session id lets the caller route chunks
+ * to the correct per-session ChatPage when multiple sessions stream concurrently.
+ */
+export type OnChunkCallback = (
+  content: string,
+  type: AgentChunkType,
+  sessionId: string,
+  meta?: {
+    tool_id?: string;
+    tool_name?: string;
+    args?: Record<string, unknown>;
+    error?: boolean;
+    /** Tool execution duration in ms (present on `tool_result` frames). */
+    duration_ms?: number | null;
+  }
+) => void;
+
+/** HITL interrupt callback: invoked when the agent pauses for human approval. */
+export type OnHitlCallback = (data: HitlInterruptData) => void;
+
+/**
+ * Queued-notification payload: the backend accepted the message but the session
+ * is busy, so the message was enqueued and will stream once earlier turns finish
+ * (contract: `{"event":"queued","session_id":"...","position":N,"queue_size":M,"message_id":"..."}`).
+ */
+export interface QueuedInfo {
+  /** Session the queued message belongs to (lets KeepAlive-cached pages filter against their frozen sid). */
+  sessionId: string;
+  /** 1-based position of this message in the session's input queue. */
+  position: number;
+  /** Current queue depth, this message included. */
+  queueSize: number;
+  /** Server-assigned id of the enqueued message (optional passthrough). */
+  messageId?: string;
+}
+
+/** Queued callback: invoked when the backend reports a `queued` frame instead of streaming immediately. */
+export type OnQueuedCallback = (info: QueuedInfo) => void;
+
+/** Stream-end callback: carries optional model metadata (model_name/input_tokens/output_tokens, from the done frame). */
+export type OnDoneCallback = (meta?: { modelName?: string; inputTokens?: number; outputTokens?: number }) => void;
+
+/**
+ * A handle that can be used to stop an ongoing generation request.
+ *
+ * `abort()` instructs the backend to halt the stream for the session and
+ * tears down the underlying WebSocket. `closed` becomes `true` once torn down.
+ */
+export interface StreamController {
+  /** Whether the connection has been closed/stopped/errored. */
+  readonly closed: boolean;
+  /** Stop the generation and close the connection. */
+  abort(): void;
+  /** Send a HITL decision (approve/reject/edit) to resume a pending agent. */
+  sendHitlResponse?(response: HitlResponse): void;
+}

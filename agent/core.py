@@ -1,0 +1,331 @@
+import os
+from typing import Any
+
+from langchain_core.tools import BaseTool
+from langchain.agents import create_agent
+from langchain.agents.middleware import AgentState
+from langgraph.graph.state import CompiledStateGraph
+from models import build_main_llm, build_auxiliary_llm
+from agent.checkpointer import build_async_sqlite_checkpointer
+from models.LLMs.main_llm import build_fallback_chain
+from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
+from config.features import (
+    ITERATION_BUDGET,
+    LLM_CLIENT_DEFAULTS,
+    SUMMARIZATION,
+    assert_max_token_valid,
+)
+from agent.tools import memory_store, build_main_tools
+from .checkpointer.thread_safe_checkpointer import ThreadSafeAsyncSqliteSaver
+from .middlewares import (
+    Summarization,
+    ToolCallNormalize,
+    PathGuard,
+    MultimodalProcessor,
+    system_prompt_injection,
+    ToolGuardrails,
+    ContextEvictionMiddleware,
+    IterationBudget,
+    HeartbeatStaleness,
+    OutputRepetitionGuard,
+    MaxTokensBoostMiddleware,
+    MessagePersistenceMiddleware,
+    LLMRetryMiddleware,
+    validate_required_middleware,
+    _MAIN_REQUIRED,
+)
+from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
+from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
+from .middlewares.tool_selection import ToolSelectionMiddleware
+from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
+from .middlewares.task_intent import TaskIntentMiddleware
+from .middlewares.thinking_control import ThinkingControlMiddleware
+from .middlewares.todo_continuation import TodoContinuationEnforcer
+from agent.wrapper.registry import apply_graph_wrappers
+from agent.prompt_data_provider import register_prompt_data_provider
+from agent.skill_write_provider import register_skill_write_provider
+from .wrapper.context_limit import ContextLimitGuardWrapper
+
+COMPRESSION_TRIGGER_RATIO = SUMMARIZATION["compression_trigger_ratio"]
+
+# ── Extended state schema ────────────────────────────────────────────────
+# Carries ``session_id`` through the graph so that middlewares reading
+# ``request.state["session_id"]`` is used by middlewares that need it
+
+
+class StateSchema(AgentState):
+    """Agent state that preserves an ``session_id``."""
+
+    session_id: str
+
+
+# ── Initialization (explicit, idempotent) ────────────────────────────────
+# These three steps used to run at module import time, which made any bare
+# ``import agent.core`` (tests, tooling, type checkers) trigger disk I/O and
+# tool construction unexpectedly and slowly. They now
+# live in ``init``, called once by the service entry point
+# (``server/__main__.py``) — importing this module is side-effect-free.
+
+_tools: list[BaseTool] = []
+_initialized: bool = False
+
+
+def init() -> None:
+    """One-time agent initialization; called by the service entry point.
+
+    - Rebuilds the skill snapshot at server start to keep the skills prompt
+      stable throughout this server run, ensuring reliable model prefix
+      caching.
+    - Loads memory markdown files from disk; they stay unchanged until
+      compression is triggered during this server run.
+    - Builds the main tool list.
+    - Registers the prompt data provider so workspace/context_engine can read
+      prompt data without importing the agent package.
+    - Registers the skill write provider so the curator can create/write
+      skills without importing the agent package.
+
+    Idempotent: subsequent calls are no-ops.
+    """
+    global _tools, _initialized
+    if _initialized:
+        return
+
+    from skills import build_skills_snapshot
+
+    build_skills_snapshot()
+    memory_store.load_from_disk()
+    _tools = build_main_tools()
+    register_prompt_data_provider()
+    register_skill_write_provider()
+    _initialized = True
+
+
+def get_agent_tools() -> list[BaseTool]:
+    return _tools
+
+
+# Cache of compiled agents, keyed by the asyncio event loop that they were
+# built on. Each entry holds a fresh main_llm whose internal openai.AsyncOpenAI
+# -> httpx.AsyncClient transport pool is bound to that specific loop.
+#
+# Why loop-keyed: the previous module-level `_agent: CompiledStateGraph | None`
+# singleton embedded ONE loop-bound httpx transport pool and reused it across WS
+# turns (and across the subagent daemon thread). Connections in that stale pool
+# silently died mid-request on the WS server, surfacing as
+# openai.APITimeoutError("Request timed out") at ~17s even though the SDK's
+# default 600s deadline had not elapsed (the request is killed by the dead
+# pooled connection, not a normal timeout). Verified by a standalone stream with
+# the exact same payload (12KB system prompt + full tools schema) that COMPLETED
+# IN 8.0s on a fresh in-loop client, while the cached-pool WS path failed.
+#
+# Keying by loop gives identical behaviour to calling build_main_llm fresh for
+# the current loop (the codebase-wide convention), but still reuses the compiled
+# graph for subsequent requests on the same loop to avoid rebuilding it.
+_agent: CompiledStateGraph | None = None
+_agent_loop = None
+
+
+def _assert_max_token() -> None:
+    """MAX_TOKEN guard, runtime second line of defense.
+
+    Even if the server booted with a valid .env, a mid-run edit that drops
+    either value below 128K still refuses to build the graph. TokenGuardError
+    propagates to the caller (server/service/messages.py surfaces it as a WS
+    error chunk).
+    """
+    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
+    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
+    _main_val = int(_main_raw) if _main_raw else None
+    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
+    assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+
+
+def _build_middlewares(
+    *,
+    fallback_chain: Any,
+    auxiliary_llm: Any,
+    main_llm_context_window: int,
+    compression_trigger_ratio: float,
+    temperature: float | None = None,
+) -> list[Any]:
+    """Assemble the middleware pipeline.
+
+    ORDER IS A CONTRACT: LangChain executes ``after_model`` nodes in reverse
+    registration order and ``wrap_model_call`` layers outermost-first, so the
+    positions below are load-bearing. Pinned by
+    ``tests/agent/core/test_middleware_order.py``.
+    """
+    drain_middleware = SubagentCompletionDrainMiddleware()
+    return [
+        # Todo-continuation: registered FIRST so its after_agent hook runs LAST —
+        # after_agent hooks execute in REVERSE list order, so the first
+        # registered middleware sits closest to END (README "Hook
+        # Ordering Semantics"). It must observe the truly finished turn.
+        TodoContinuationEnforcer(),
+        # @dynamic_prompt middleware INSTANCE (not a constructor):
+        # the outermost wrap_model_call layer in this list.
+        system_prompt_injection,
+        # Working-directory change notice: a before_agent node, so it runs once
+        # per turn and BEFORE every before_model hook. The notice is spliced in
+        # FRONT of the turn's human message (the one other middlewares rely on
+        # staying last: TaskIntent's steering check, ContextEviction's
+        # trailing-message tag), which is why it sits next to the prompt
+        # injection — the prompt renders the CURRENT root, this layer explains
+        # why it moved.
+        WorkspaceNoticeMiddleware(),
+        # Per-session tool set (预设-工具 tab): narrows request.tools before the
+        # model is bound and refuses a disabled tool at execution. Registered as
+        # a real middleware (not gated) because it HAS no switch of its own — it
+        # is what applies the switch, and an unset config is a no-op.
+        ToolSelectionMiddleware(),
+        MultimodalProcessor(),
+        IterationBudget(ITERATION_BUDGET["main_agent_max_iterations"]),
+        ToolGuardrails(),
+        # Registered directly after ToolGuardrails, i.e. OUTER relative
+        # to PathGuard / HITL / MessagePersistenceMiddleware in the wrap
+        # chain (first registered = outermost). MessagePersistence
+        # stays innermost and persists the RAW tool result the moment
+        # the handler returns; this layer then swaps in the preview on
+        # the way out, so graph state only ever holds the preview while
+        # MesMemory keeps the full text, read_file results are
+        # sliced instead of offloaded, and its before_model hook
+        # tags an oversized trailing HumanMessage after
+        # MultimodalProcessor's before_agent ran (before_agent chain
+        # precedes the model loop), and wrap_model_call truncates only
+        # the model view — state keeps the full human text.
+        ContextEvictionMiddleware(),
+        ToolCallNormalize(),
+        PathGuard(),
+        drain_middleware,
+        TaskIntentMiddleware(),
+        OutputRepetitionGuard(),
+        MaxTokensBoostMiddleware(),
+        # Per-session thinking toggle: swaps the per-call model for the
+        # thinking on/off variant when the client flag is set (inner relative
+        # to MaxTokensBoost — the boost retries must re-apply on top of the
+        # swapped model, and this layer only ever changes request.model).
+        ThinkingControlMiddleware(temperature=temperature),
+        HeartbeatStaleness(),
+        HumanInTheLoop(HITLConfig()),
+        # Registered directly after HITL so its after_model node runs
+        # FIRST — langchain 1.3.9 chains after_model nodes in reverse
+        # registration order (factory.py: model -> after_model[-1] ->
+        # ... -> after_model[0]). The AI message is therefore persisted
+        # before HITL strips denied tool calls or raises a
+        # GraphInterrupt, and no other hook can skip the flush.
+        MessagePersistenceMiddleware(),
+        # Between HITL and Summarization: INNER relative to
+        # MaxTokensBoost (it only sees genuine truncations) and OUTER
+        # relative to Summarization (the retry loop wraps the
+        # T4/T5 overflow recovery from outside).
+        LLMRetryMiddleware(fallback_chain=fallback_chain),
+        Summarization(
+            need_update_system_prompt=True,
+            model=auxiliary_llm,
+            main_llm_context_window=main_llm_context_window,
+            trigger=[("tokens", int(main_llm_context_window * compression_trigger_ratio))],
+        ),
+    ]
+
+
+async def _build_graph(
+    *,
+    temperature: float,
+    main_llm_context_window: int,
+    compression_trigger_ratio: float,
+) -> CompiledStateGraph:
+    """Compile the agent graph and apply the wrapper chain."""
+    checkpointer: ThreadSafeAsyncSqliteSaver = await build_async_sqlite_checkpointer()
+
+    # create table before using
+    await checkpointer.setup()
+
+    # Delete all checkpoints but keeps the latest checkpoint
+    await checkpointer.aclean_old_checkpoints()
+
+    main_llm = build_main_llm()
+    auxiliary_llm = build_auxiliary_llm()
+    fallback_chain = build_fallback_chain()
+
+    # Assemble the pipeline, then fail fast BEFORE the expensive create_agent()
+    # build if a safety-critical middleware has been silently removed.
+    agent_middleware = _build_middlewares(
+        fallback_chain=fallback_chain,
+        auxiliary_llm=auxiliary_llm,
+        main_llm_context_window=main_llm_context_window,
+        compression_trigger_ratio=compression_trigger_ratio,
+        temperature=temperature,
+    )
+    validate_required_middleware(agent_middleware, chain="main", entries=_MAIN_REQUIRED)
+
+    # Build the agent
+    compiled = create_agent(
+        model=main_llm.bind(temperature=temperature),
+        state_schema=StateSchema,
+        checkpointer=checkpointer,
+        tools=get_agent_tools(),
+        middleware=agent_middleware,
+    )
+    # Wrap with the pluggable graph-wrapper chain (agent/wrapper/registry.py).
+    # Defaults, innermost first:
+    #
+    # 1. RepetitionGuardWrapper: stream-level repetition
+    # detection (in addition to the OutputRepetitionGuard middleware
+    # registered above; it owns the stream seam end to end, and the
+    # middleware exposes no separate stream helper).
+    # phantom_stream_guard=True: the middleware-equipped graph ALWAYS
+    # emits before_agent "updates" before any model text on fresh
+    # dict-input runs — pre-update model text is physically impossible
+    # stream output and historically triggered a false repetition cut
+    # that suppressed the real reply.
+    #
+    # 2. ContextLimitGuardWrapper: context-window guard OUTSIDE the
+    # repetition wrapper — the guard sees chunks before repetition
+    # filtering, capturing real usage_metadata at model-call boundaries
+    # and enforcing the mid-stream output budget.
+    return apply_graph_wrappers(compiled)
+
+
+async def built_agent(
+    temperature: float = 0.8,
+    force_rebuild: bool = False,
+) -> ContextLimitGuardWrapper:
+    """Return the compiled, wrapped agent bound to the current event loop.
+
+    Thin orchestrator over the builder steps: token gate → per-loop cache
+    check → ``_build_graph``.
+    """
+    global _agent, _agent_loop
+    import asyncio
+
+    _assert_max_token()
+
+    current_loop = asyncio.get_running_loop()
+
+    # Rebuild whenever the loop changes, on first call, or when explicitly
+    # requested (force_rebuild). Each rebuild constructs a fresh main_llm ->
+    # httpx client bound to the CURRENT loop.
+    #
+    # Why force_rebuild: the WS server needs a FRESH transport pool every turn.
+    # Over many turns on a single event loop the long-lived pooled TCP connection
+    # goes stale — DeepSeek's edge reaps an idle keep-alive connection (~15-17s)
+    # and the next streaming POST on it dies mid-request, surfacing as
+    # ``openai.APITimeoutError("Request timed out")`` far under the SDK deadline.
+    # Provably: the exact same payload (12KB system prompt + full tools schema)
+    # streams in 8.0s on a fresh in-loop client, while a cached-pool WS call dies
+    # at ~16.78s. Closing the pool (AsyncOpenAI.close) does NOT help — it
+    # permanently destroys the client ("Cannot send a request, as the client has
+    # been closed"), so rebuilding the graph (hence a fresh client) per turn is
+    # the only clean way to reproduce the fresh-client condition. The SQLite
+    # checkpointer persists session state independently of the graph object, so a
+    # rebuild is safe and cheap relative to the 15-20s LLM call.
+    if _agent is None or _agent_loop is not current_loop or force_rebuild:
+        _agent = await _build_graph(
+            temperature=temperature,
+            main_llm_context_window=main_llm_max_tokens,
+            compression_trigger_ratio=COMPRESSION_TRIGGER_RATIO,
+        )
+        _agent_loop = current_loop
+
+    return _agent

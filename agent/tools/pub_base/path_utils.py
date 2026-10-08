@@ -1,0 +1,545 @@
+"""Shared path resolution utilities for file tools."""
+
+import errno
+import os
+from pathlib import Path
+
+from config import ROOT_DIR
+from config.path import resolve_default_project_dir
+from runtime.session.project_dir import current_project_dir
+from runtime.session.state_keys import StateKey
+
+
+class PathOutOfBoundsError(ValueError):
+    """Raised when a resolved path escapes ROOT_DIR.
+
+    File tools must NOT be able to read/write outside the project root;
+    otherwise an LLM-triggered model can exfiltrate secrets (e.g. .env),
+    overwrite arbitrary files, or read system paths. Absolute paths that
+    resolve outside ROOT_DIR are rejected rather than silently allowed.
+    """
+
+
+# ── Path safety gates ───────────────────────────────────────────────
+
+_WIN32_ERROR_CANT_RESOLVE_FILENAME = 1921
+
+
+def _reject_traversal_input(file_path: str) -> None:
+    """Gate 1: string-level rejection of traversal, before any filesystem I/O.
+
+    Rejects ``~``-prefixed input and any ``..`` path *component*. Component
+    matching (``Path(...).parts``) is deliberate: a substring test would
+    false-positive on legitimate names such as ``foo..bar`` or ``配置..md``.
+    The reference applies its ``~`` test to a slash-prefixed virtual path, so
+    that branch is dead code there; here it runs on the raw input instead.
+    """
+    if file_path.startswith("~") or any(part == ".." for part in Path(file_path).parts):
+        raise PathOutOfBoundsError(f"Path traversal not allowed: {file_path}")
+
+
+def _is_eloop_oserror(exc: BaseException | None) -> bool:
+    """Return True when exc is an OS-level symlink-loop (ELOOP) error."""
+    return isinstance(exc, OSError) and (
+        exc.errno == errno.ELOOP
+        or getattr(exc, "winerror", None) == _WIN32_ERROR_CANT_RESOLVE_FILENAME
+    )
+
+
+def _is_symlink_loop_error(exc: Exception) -> bool:
+    """Return True when exc (or a chained cause/context) signals a symlink loop."""
+    if _is_eloop_oserror(exc):
+        return True
+    return isinstance(exc, RuntimeError) and any(
+        _is_eloop_oserror(chained) for chained in (exc.__cause__, exc.__context__)
+    )
+
+
+def _raise_if_symlink_loop(path: Path) -> None:
+    """Gate 3: raise ELOOP when ``path`` is itself a looping symlink.
+
+    ``Path.resolve()`` stops silently at a symlink loop and hands back the
+    looping link, which would later fail in confusing ways. ``stat()`` maps
+    that condition to ``OSError(ELOOP)``, turning it into an explicit error.
+    """
+    if not path.is_symlink():
+        return
+    try:
+        path.stat()
+    except OSError as exc:
+        if _is_eloop_oserror(exc):
+            raise
+
+
+def _open_no_follow(path: Path, flags: int, mode: int = 0o644) -> int:
+    """``os.open`` with ``O_NOFOLLOW``; Windows fallback: an ``is_symlink`` check.
+
+    Closes the TOCTOU window between resolution and I/O: the final path
+    component is refused when it is a symlink, so a link swapped in after
+    validation cannot redirect the read/write outside ROOT_DIR. Raises
+    ``OSError(ELOOP)`` — the same errno Linux/macOS produce natively.
+    """
+    if not hasattr(os, "O_NOFOLLOW"):
+        if path.is_symlink():
+            raise OSError(errno.ELOOP, "Symbolic link not allowed")
+    return os.open(path, flags | getattr(os, "O_NOFOLLOW", 0), mode)
+
+
+def resolve_workspace_path(file_path: str, workspace_root: Path | None = None) -> Path:
+    """Resolve file_path against an explicit workspace root; reject escapes.
+
+    The root-parameterised form of :func:`resolve_project_path`: the same three
+    gates (traversal rejection → ``resolve()`` → containment → symlink-loop
+    detection), with the boundary supplied by the caller — a session's bound
+    project directory — instead of the process-wide constant.
+
+    ``workspace_root=None`` means "the process default"
+    (:func:`config.path.resolve_default_project_dir`: ``SHERRY_PROJECT_DIR`` →
+    the ``sherry.jsonc`` ``project_dir`` key → ``ROOT_DIR``), so a process with
+    nothing configured keeps the historical ``ROOT_DIR`` boundary exactly.
+
+    Relative paths are joined onto the root; absolute paths resolving outside
+    it raise :class:`PathOutOfBoundsError`. For paths that legitimately need to
+    reach outside, use :func:`resolve_external_path` (HITL-gated) instead.
+    """
+    # Gate 1 first: traversal input must be rejected without touching the
+    # filesystem (resolving the root would be an FS access).
+    _reject_traversal_input(file_path)
+    root = (
+        workspace_root if workspace_root is not None else resolve_default_project_dir()
+    ).resolve()
+    p = Path(os.path.expanduser(file_path))
+    if not p.is_absolute():
+        p = root / p
+    resolved = p.resolve()
+    if resolved != root and not resolved.is_relative_to(root):
+        raise PathOutOfBoundsError(
+            f"Path resolves outside project root and is not allowed: {resolved} (root={root})"
+        )
+    _raise_if_symlink_loop(resolved)
+    return resolved
+
+
+def session_workspace_root(session_id: str | None) -> Path | None:
+    """The session's bound project directory, or ``None`` (= process default).
+
+    The single accessor every session-aware tool uses to feed
+    :func:`resolve_workspace_path`. Read per call from the register's mem tier
+    (cheap, no I/O) — never cached, because the tool objects are process-level
+    singletons and a session can switch directories at a turn boundary.
+    """
+    if not session_id:
+        return None
+    from runtime.session.project_dir import read_project_dir
+
+    return read_project_dir(session_id)
+
+
+def resolve_project_path(file_path: str) -> Path:
+    """Resolve file_path against the project root; reject paths escaping it.
+
+    Thin wrapper over :func:`resolve_workspace_path` pinned to the module's
+    ``ROOT_DIR`` (import-time resolved, monkeypatchable in tests), kept as the
+    historical name so existing call sites are untouched. Session-aware callers
+    pass their bound project directory to :func:`resolve_workspace_path`
+    directly instead.
+    """
+    return resolve_workspace_path(file_path, ROOT_DIR)
+
+
+def resolve_within(base: Path, file_path: str) -> Path:
+    """Resolve ``file_path`` inside ``base``; reject anything escaping it.
+
+    The file-browser gate: the SAME four steps
+    :func:`resolve_workspace_path` runs, but with a mandatory explicit base and
+    no session/default fallback, so a caller can never accidentally inherit a
+    broader root. ``base`` is resolved first; the traversal rejection happens
+    before any filesystem access.
+
+    Raises :class:`PathOutOfBoundsError` for traversal, escapes and symlink
+    loops. Callers that answer a client MUST NOT echo the exception text
+    unchanged — it names both the resolved path and the root; use
+    :func:`safe_error_detail` or a fixed message.
+    """
+    _reject_traversal_input(file_path)
+    root = base.resolve()
+    p = Path(os.path.expanduser(file_path))
+    if not p.is_absolute():
+        p = root / p
+    resolved = p.resolve()
+    if resolved != root and not resolved.is_relative_to(root):
+        raise PathOutOfBoundsError(
+            f"Path resolves outside project root and is not allowed: {resolved} (root={root})"
+        )
+    _raise_if_symlink_loop(resolved)
+    return resolved
+
+
+def resolve_path(file_path: str) -> Path:
+    """Deprecated alias for resolve_project_path."""
+    import warnings
+
+    warnings.warn(
+        "resolve_path is deprecated; use resolve_project_path",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return resolve_project_path(file_path)
+
+
+# ── Model-visible path rendering ────────────────────────────────────
+
+
+def to_virtual_path(real_path: Path, root: Path | None = None) -> str:
+    """Convert a real filesystem path to a virtual path anchored at *root*.
+
+    /home/user/project/src/main.py -> /src/main.py
+
+    ``root=None`` means the module's ``ROOT_DIR`` (the historical anchor).
+    Session-aware callers pass the session's project directory so a bound
+    session's files keep rendering as ``/src/main.py`` instead of degrading to
+    bare filenames. Raises ValueError if the path is outside the anchor.
+    """
+    anchor = (root if root is not None else ROOT_DIR).resolve()
+    return "/" + real_path.resolve().relative_to(anchor).as_posix()
+
+
+def display_path(real_path: Path, root: Path | None = None) -> str:
+    """Safely render a path for model-visible output.
+
+    Returns a virtual path in normal cases. If the path cannot be converted
+    (outside the anchor, unresolvable symlink), falls back to just the filename
+    so no real root ever leaks.
+    """
+    try:
+        return to_virtual_path(real_path, root)
+    except (ValueError, OSError, RuntimeError):
+        return real_path.name or "/"
+
+
+def safe_error_detail(exc: Exception) -> str:
+    """Extract an agent-safe error detail string.
+
+    ``OSError.__str__`` embeds the real file path, so those surface only
+    ``strerror`` ('Permission denied', path-free); ``UnicodeDecodeError``
+    exposes ``.reason`` ('invalid start byte'). Every other exception's
+    message is deliberately DROPPED — generic exception text can still embed
+    the real root path (for example an error raised mid-``Path.rglob``), and
+    this module is always "virtual mode": ROOT_DIR must never leak into
+    agent-visible output. Only the exception type name survives.
+
+    Mirrors deepagents ``_safe_detail`` under ``virtual_mode=True``
+    (`backends/filesystem.py:1201-1214`), which likewise never falls back to
+    ``str(exc)``.
+    """
+    if isinstance(exc, OSError):
+        detail = exc.strerror
+    else:
+        detail = getattr(exc, "reason", None)
+    return f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__
+
+
+# ── State keys ──────────────────────────────────────────────────────
+
+_GLOBAL_SESSION = "__global__"
+_YOLO_KEY = StateKey.EXTERNAL_PATH_YOLO
+_ALLOWLIST_KEY = StateKey.EXTERNAL_PATH_ALLOWLIST
+
+
+def _extract_session_id(run_manager) -> str:
+    """Extract session_id from CallbackManagerForToolRun config.
+
+    Returns empty string when unavailable — callers must treat empty
+    as fail-closed (no HITL approval possible).
+    """
+    config = getattr(run_manager, "config", None) or {}
+    configurable = config.get("configurable", {})
+    return configurable.get("session_id", "")
+
+
+def _is_yolo() -> bool:
+    """Check persistent YOLO flag from state_register_db."""
+    from runtime import state_register_db
+
+    return bool(state_register_db.get_state(_GLOBAL_SESSION, _YOLO_KEY, False))
+
+
+def _get_yolo_deny_paths() -> list[str]:
+    """Return the YOLO deny list: config defaults + user entries from sherry.jsonc.
+
+    Defaults come first, user additions follow; duplicates are dropped so the
+    order stays stable and the first occurrence wins.
+    """
+    from config.features import HITL_DEFAULTS
+    from config.sherry_settings import load_sherry_list_setting
+
+    merged: list[str] = []
+    for pattern in (
+        *HITL_DEFAULTS.get("yolo_deny_paths", []),
+        *load_sherry_list_setting("yolo_deny_paths"),
+    ):
+        if isinstance(pattern, str) and pattern.strip() and pattern not in merged:
+            merged.append(pattern)
+    return merged
+
+
+def _is_yolo_denied(resolved: Path) -> bool:
+    """Check whether resolved is on the YOLO deny list.
+
+    Always enforced — even when YOLO is active, the allowlist matches, or a
+    subagent inherits its parent's authorization. ``~`` is expanded at check
+    time; a pattern with a trailing separator matches that directory and every
+    descendant, a pattern without one is an exact match.
+    """
+    resolved_str = str(resolved)
+    for pattern in _get_yolo_deny_paths():
+        if not isinstance(pattern, str) or not pattern.strip():
+            continue
+        raw = os.path.expanduser(pattern.strip())
+        is_dir = raw.endswith(("/", "\\"))
+        try:
+            expanded = Path(raw).resolve()
+            if is_dir:
+                if resolved.is_relative_to(expanded):
+                    return True
+            elif resolved_str == str(expanded):
+                return True
+        except (TypeError, ValueError):
+            continue
+    return False
+
+
+def _check_allowlist(resolved: Path, session_id: str) -> bool:
+    """Check if resolved path is in the session-level allowlist.
+
+    Checks session_id (self), requester_session_key (parent), and global.
+    A directory entry (trailing separator) matches the directory and every
+    path beneath it; any other entry is an exact path match.
+    """
+    from runtime import state_register_mem
+
+    resolved_str = str(resolved)
+    for sid in _candidate_session_ids(session_id):
+        entries = state_register_mem.get_state(sid, _ALLOWLIST_KEY, [])
+        if not entries:
+            continue
+        for entry in entries:
+            if resolved_str == entry:
+                return True
+            if isinstance(entry, str) and entry.endswith(("/", "\\")):
+                try:
+                    if resolved.is_relative_to(Path(entry)):
+                        return True
+                except (TypeError, ValueError):
+                    continue
+    return False
+
+
+def _candidate_session_ids(session_id: str) -> list[str]:
+    """Return [session_id, requester_session_key, _GLOBAL_SESSION].
+
+    The requester_session_key is looked up from state_register_mem under
+    the child's own session_id. Subagents inherit the parent's allowlist.
+    """
+    from runtime import state_register_mem
+
+    ids = [session_id, _GLOBAL_SESSION]
+    requester = state_register_mem.get_state(session_id, StateKey.REQUESTER_SESSION_KEY, "")
+    if requester and requester not in ids:
+        ids.insert(1, requester)
+    return ids
+
+
+def _add_to_allowlist(resolved: Path, session_id: str, *, mode: str = "file") -> None:
+    """Add a resolved path to the session allowlist.
+
+    ``mode="file"`` stores the exact path; ``mode="dir"`` stores a normalized
+    directory entry (trailing separator) matching the directory and every
+    descendant. Re-adding an existing entry is a no-op.
+    """
+    from runtime import state_register_mem
+
+    entries = state_register_mem.get_state(session_id, _ALLOWLIST_KEY, [])
+    path_str = str(resolved).rstrip("/\\") + "/" if mode == "dir" else str(resolved)
+    if path_str not in entries:
+        entries.append(path_str)
+        state_register_mem.set_state(session_id, _ALLOWLIST_KEY, entries)
+
+
+def _is_subagent(session_id: str) -> bool:
+    """Check if the current session is a subagent by looking up caller_scope."""
+    from runtime import state_register_mem
+
+    if not session_id:
+        return False
+    scope = state_register_mem.get_state(session_id, StateKey.CALLER_SCOPE, "main")
+    return scope == "subagent"
+
+
+def _is_materialized_link_path(path: Path, project_root: Path) -> bool:
+    """True when *path* sits under the project root through a materialized link.
+
+    The check is textual (normalized, symlinks NOT followed): the path must be
+    below the session's project root, and its first components must match an
+    entry the isolated run's manifest materialized. A link the run did not
+    record — or a path that merely resolves outside the root — is external.
+    """
+    try:
+        rel = Path(os.path.normpath(path.absolute())).relative_to(project_root)
+    except ValueError:
+        return False
+    if not rel.parts:
+        return False
+
+    # Lazy import: the isolation package is a sibling of this one, and only an
+    # isolated run ever reaches this branch.
+    from agent.tools.subagent.isolation import materialized_paths
+
+    for entry in materialized_paths(project_root):
+        try:
+            if Path(os.path.normpath(path.absolute())).is_relative_to(project_root / entry):
+                return True
+        except (OSError, ValueError):
+            continue
+    return False
+
+
+def resolve_external_path(
+    file_path: str,
+    *,
+    session_id: str,
+    action_desc: str = "",
+) -> Path:
+    """Resolve a path that may be outside ROOT_DIR, gated by HITL approval.
+
+    Checks (in order):
+    1. Inside ROOT_DIR **or inside the session's own project directory** →
+       return directly (safe path: the operator pointed the agent at that
+       directory, so neither it nor anything beneath it is "external")
+    2. YOLO deny list → deny (security floor: checked before YOLO and allowlist)
+    3. YOLO flag (state_register_db) → return
+    4. Session allowlist (exact or directory-prefix match) → return
+    5. Subagent without prior auth → deny (cannot self-approve)
+    6. Main agent → HITL interrupt (approve / approve_dir / yolo / reject)
+
+    Args:
+        file_path: The path to resolve (relative, absolute, or ~).
+        session_id: Current session ID (main or child).
+        action_desc: Optional description for the approval prompt.
+
+    Raises:
+        PathOutOfBoundsError: If denied by the deny list, by user, or for a
+            subagent without prior authorization.
+    """
+    p = Path(os.path.expanduser(file_path))
+    if not p.is_absolute():
+        p = ROOT_DIR / p
+    resolved = p.resolve()
+
+    # 1a. Inside the repository — safe path, and no state lookup (fast path).
+    if resolved == ROOT_DIR or resolved.is_relative_to(ROOT_DIR):
+        return resolved
+
+    # 1b. Inside the session's OWN project directory — the operator pointed the
+    #     agent at that directory, so neither it nor anything beneath it is an
+    #     "external file". Checked here as well as in the tools' first
+    #     resolution (``resolve_workspace_path``) because a caller can arrive
+    #     with the process default as its root (cold mem tier, e.g. right after
+    #     a restart); the selected directory must never prompt whichever route a
+    #     tool takes to ask.
+    project_root = current_project_dir(session_id).resolve()
+    if resolved == project_root or resolved.is_relative_to(project_root):
+        return resolved
+
+    # 1c. Inside the session's project dir but reached THROUGH a materialized
+    #     isolation link: a worktree cannot carry ignored paths, so the run's
+    #     manifest records the ones its tree links to (``src/``, the session
+    #     workspace, …). Following such a link stays inside the isolation, so it
+    #     is not an "external file" read; only a RECORDED materialization
+    #     qualifies, so an arbitrary symlink out of the tree still prompts.
+    if _is_materialized_link_path(p, project_root):
+        return resolved
+
+    # 2. YOLO deny list — always enforced, even when YOLO/allowlist would allow
+    if _is_yolo_denied(resolved):
+        raise PathOutOfBoundsError(
+            f"Path is in the YOLO deny list and cannot be accessed: {resolved}"
+        )
+
+    # 3. YOLO — persistent global allow-all
+    if _is_yolo():
+        return resolved
+
+    # 4. Session allowlist — exact or directory-prefix match, inherited by subagents
+    if _check_allowlist(resolved, session_id):
+        return resolved
+
+    # 5. Subagent without prior authorization — cannot self-approve
+    if _is_subagent(session_id):
+        raise PathOutOfBoundsError(
+            f"External path not authorized for subagent: {resolved}. "
+            f"Approve this path from the main session first."
+        )
+
+    # 6. Main session — trigger HITL interrupt
+    from langchain.agents.middleware.human_in_the_loop import (
+        ActionRequest,
+        HITLRequest,
+        ReviewConfig,
+    )
+    from langgraph.types import interrupt
+
+    action_request = ActionRequest(
+        name="external_file_access",
+        args={"path": str(resolved)},
+        description=(
+            f"External file access approval\n"
+            f"  Path: {resolved}\n"
+            f"  Project root: {project_root}\n"
+            f"  Intent: {action_desc or 'unspecified'}\n\n"
+            f"Options:\n"
+            f"  approve      — allow this file only (session-scoped, inherited by subagents)\n"
+            f"  approve_dir  — allow entire directory {resolved.parent}/ (session-scoped, "
+            f"inherited by subagents)\n"
+            f"  yolo         — permanently allow all external paths (no more prompts)\n"
+            f"  reject       — deny"
+        ),
+    )
+    review_config = ReviewConfig(
+        action_name="external_file_access",
+        allowed_decisions=["approve", "approve_dir", "yolo", "reject"],
+    )
+
+    hitl_response = interrupt(
+        HITLRequest(
+            action_requests=[action_request],
+            review_configs=[review_config],
+        )
+    )
+
+    decisions = hitl_response.get("decisions", [])
+    if not decisions:
+        raise PathOutOfBoundsError(f"External access denied (no decision): {resolved}")
+
+    decision_type = decisions[0].get("type", "")
+
+    if decision_type == "approve":
+        # Session-scoped: add exact path to allowlist
+        _add_to_allowlist(resolved, session_id, mode="file")
+        return resolved
+
+    if decision_type == "approve_dir":
+        # Session-scoped: add the parent directory (prefix match covers children)
+        _add_to_allowlist(resolved.parent, session_id, mode="dir")
+        return resolved
+
+    if decision_type == "yolo":
+        # Persistent global allow-all
+        from runtime import state_register_db
+
+        state_register_db.set_state(_GLOBAL_SESSION, _YOLO_KEY, True)
+        return resolved
+
+    # Reject
+    msg = decisions[0].get("message", "Rejected by user")
+    raise PathOutOfBoundsError(f"External file access denied: {resolved} ({msg})")

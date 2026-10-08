@@ -1,0 +1,816 @@
+<template>
+  <!-- Right-sidebar tab body: mounted and unmounted with its tab, which drives
+       loadContent / onHide; the sidebar owns the tab label and its close button. -->
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+    <div
+      v-if="loading"
+      class="flex items-center justify-center py-8">
+      <ProgressSpinner style="width: 2rem; height: 2rem" />
+    </div>
+    <template v-else>
+      <TabView
+        v-model:activeIndex="activeTab"
+        class="flex-1 min-h-0">
+        <TabPanel
+          value="background"
+          :header="t('config.background.title')">
+          <div class="flex flex-col gap-5">
+            <!-- Background image: shown in both light/dark themes; the slider below controls the themed overlay (light=white / dark=black) -->
+            <div class="flex items-center justify-between gap-3">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.background.bothThemes') }}
+              </p>
+              <Button
+                v-if="backgroundUrl"
+                :label="t('config.background.clear')"
+                icon="pi pi-times"
+                severity="secondary"
+                size="small"
+                @click="backgroundUrl = ''" />
+            </div>
+
+            <!-- Background preview: displayed at the window's aspect ratio; scrolls inside the container when the browser window is too short; a themed overlay is stacked on top to preview the slider effect in real time -->
+            <div
+              v-if="backgroundUrl"
+              class="relative w-full rounded-lg border border-solid border-gray-300 dark:border-gray-700 overflow-y-auto"
+              :style="{ aspectRatio: String(backgroundAspect), maxHeight: '60vh' }">
+              <img
+                :src="backgroundUrl"
+                alt="chat background"
+                class="w-full h-full object-cover" />
+              <div
+                class="absolute inset-0 pointer-events-none"
+                :style="backgroundPreviewOverlayStyle" />
+            </div>
+            <div
+              v-else
+              class="w-full rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-gray-400"
+              :style="{ aspectRatio: String(backgroundAspect) }">
+              <i class="pi pi-image mr-2" />
+              <span class="text-sm">{{ t('config.background.title') }}</span>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <FileUpload
+                mode="basic"
+                :choose-label="t('config.background.upload')"
+                accept="image/*"
+                customUpload
+                :auto="false"
+                @select="onBackgroundSelect">
+                <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                       replaced with localized text: file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to choose an image -->
+                <template #filelabel="{ files }">
+                  <span class="text-xs text-gray-400">
+                    {{ fileLabelText(Array.isArray(files) ? files : []) }}
+                  </span>
+                </template>
+              </FileUpload>
+            </div>
+
+            <!-- Overlay opacity: light theme=white overlay / dark theme=black overlay; the further left, the clearer the photo; the further right, the more it fades until fully covered by pure white/black -->
+            <div
+              v-if="backgroundUrl"
+              class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-[#111827] dark:text-[#E5E7EB]">
+                {{ t('config.background.opacity') }}
+                <span class="ml-1 text-xs text-gray-400">({{ backgroundOpacityValue }})</span>
+              </label>
+              <Slider
+                v-model="backgroundOpacityValue"
+                :min="0"
+                :max="100"
+                :step="5"
+                class="w-full" />
+              <p class="m-0 text-xs text-gray-400">
+                {{ t('config.background.opacityHint') }}
+              </p>
+            </div>
+          </div>
+        </TabPanel>
+
+        <!-- Env config tab: reads/edits the project root .env, grouped by prefix; only existing keys can be modified.
+               Loading is driven by the setup-scoped watch below (@show runs in an event context where
+               getCurrentInstance() is null, so Nuxt useFetch never actually sends the request) -->
+        <TabPanel
+          value="env"
+          :header="t('config.tabs.env')">
+          <div class="flex flex-col gap-4">
+            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('config.env.restartHint') }}
+            </p>
+
+            <div
+              v-if="envLoadError"
+              class="flex">
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
+            </div>
+
+            <template v-else-if="envGroups.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
+            </template>
+
+            <template v-else>
+              <template
+                v-for="group in envGroups"
+                :key="group.name">
+                <!-- Model groups: profile manager (list + parameters + save/apply);
+                       the catch-all "other" group (non-model keys) stays a plain key/value card. -->
+                <LlmModelManager
+                  v-if="group.name !== 'other'"
+                  :group="group.name"
+                  :keys="group.entries.map(e => e.key)"
+                  :values="groupValues[group.name] ?? {}"
+                  :group-title="group.name"
+                  @apply="payload => applyModelProfile(group.name, payload)" />
+                <div
+                  v-else
+                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3">
+                  <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    {{ group.name }}
+                  </p>
+                  <div
+                    v-for="entry in group.entries"
+                    :key="entry.key"
+                    class="flex flex-col gap-1">
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                    <InputText
+                      v-model="entry.value"
+                      :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                      class="w-full font-mono text-xs"
+                      autocomplete="off"
+                      spellcheck="false" />
+                  </div>
+                  <!-- Non-model keys save on their own (the model groups carry
+                         their own 保存/应用 inside the panel). -->
+                  <div class="mt-1 flex justify-start">
+                    <Button
+                      :label="t('config.save')"
+                      icon="pi pi-save"
+                      size="small"
+                      :loading="saving"
+                      :disabled="!envHasChanges"
+                      @click="handleSave" />
+                  </div>
+                </div>
+              </template>
+            </template>
+          </div>
+        </TabPanel>
+
+        <!-- Sherry config tab: reads/edits the project root sherry.jsonc (app-level settings
+               split out of .env). Same lazy-load + snapshot/diff save flow as the env tab. -->
+        <TabPanel
+          value="sherry"
+          :header="t('config.tabs.sherry')">
+          <div class="flex flex-col gap-4">
+            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('config.sherry.restartHint') }}
+            </p>
+
+            <div
+              v-if="sherryLoadError"
+              class="flex">
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
+            </div>
+
+            <template v-else-if="sherryEntries.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
+            </template>
+
+            <template v-else>
+              <div
+                v-for="entry in sherryEntries"
+                :key="entry.key"
+                class="flex flex-col gap-1">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                <InputText
+                  v-model="entry.value"
+                  :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
+                  class="w-full font-mono text-xs"
+                  autocomplete="off"
+                  spellcheck="false" />
+              </div>
+            </template>
+          </div>
+        </TabPanel>
+      </TabView>
+    </template>
+
+    <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
+         scrolls), and only the background / sherry tabs use it — every env item
+         saves or applies on its own inside its own group card.
+         (角色配置 moved to the 预设 panel together with the persona presets.) -->
+    <div
+      v-if="activeTab !== 1"
+      class="shrink-0 flex gap-2 justify-end">
+      <Button
+        :label="t('config.cancel')"
+        icon="pi pi-times"
+        severity="secondary"
+        @click="onHide" />
+      <Button
+        :label="t('config.save')"
+        icon="pi pi-check"
+        :loading="saving"
+        :disabled="!canSave"
+        @click="saveDialogSettings" />
+    </div>
+
+    <AvatarCropDialog
+      v-model="cropVisible"
+      :src="cropSource"
+      :aspect-ratio="cropAspectRatio"
+      :output-width="cropOutput.width"
+      :output-height="cropOutput.height"
+      :header="cropVisible ? cropTitle : ''"
+      @cropped="onCropConfirmed" />
+  </div>
+</template>
+
+<script lang="ts" setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
+import AvatarCropDialog from './AvatarCropDialog.vue';
+import type { EnvGroup } from '@/composables/env';
+import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
+import LlmModelManager from './LlmModelManager.vue';
+import type { SherryEntry } from '@/composables/sherryConfig';
+import { useChatBackgroundStore } from '~/stores/chat-background';
+import { logUtil } from '~/utils/log';
+
+/** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
+const chatBackgroundStore = useChatBackgroundStore();
+const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
+const setBackground = chatBackgroundStore.setBackground;
+
+const { t } = useI18n({ useScope: 'local' });
+
+const emits = defineEmits<{ saved: [] }>();
+
+const activeTab = ref(0);
+const loading = ref(false);
+const saving = ref(false);
+
+// ── Env config state (.env) ──────────────────────────────────
+// Snapshot taken once on load; edits directly modify entry.value inside envGroups, and on save the changes are diffed against the snapshot and written back to the backend.
+const envGroups = ref<EnvGroup[]>([]);
+const originalEnvValues = ref<Record<string, string>>({});
+const envLoadError = ref('');
+
+/** Whether the env config has already been loaded (avoids duplicate GETs) */
+const envLoaded = ref(false);
+
+/** Computes whether the env config has changes (used for canSave and save decisions) */
+const envHasChanges = computed(() =>
+  envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
+);
+
+// ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
+const llmProfiles = useLlmProfilesStore();
+
+/** Live .env values per group (seed + active-inference input for the panels). */
+const groupValues = computed<Record<string, Record<string, string>>>(() => {
+  const all: Record<string, Record<string, string>> = {};
+  for (const group of envGroups.value) {
+    const values: Record<string, string> = {};
+    for (const entry of group.entries) values[entry.key] = entry.value;
+    all[group.name] = values;
+  }
+  return all;
+});
+
+/**
+ * Apply a model profile: write its MAIN_LLM_* parameters into .env through the
+ * existing write path, then sync the tab's draft/snapshot so the env diff stays
+ * clean. The green dot follows only a SUCCESSFUL write.
+ * @param groupName
+ * @param payload
+ * @param payload.id
+ * @param payload.params
+ */
+const applyModelProfile = async (groupName: string, payload: { id: string; params: Record<string, string> }) => {
+  const ok = await writeEnvConfig(payload.params);
+  if (!ok) {
+    envLoadError.value = t('config.env.saveFailed');
+    return;
+  }
+  envLoadError.value = '';
+  const group = envGroups.value.find(g => g.name === groupName);
+  for (const entry of group?.entries ?? []) {
+    if (entry.key in payload.params) entry.value = payload.params[entry.key]!;
+  }
+  for (const [key, value] of Object.entries(payload.params)) {
+    originalEnvValues.value[key] = value;
+  }
+  llmProfiles.setActive(groupName, payload.id);
+};
+
+/** Lazily loads the .env config when the env tab is opened (backend GET /env) */
+const loadEnvConfig = async () => {
+  if (envLoaded.value) return;
+  envLoaded.value = true;
+  envLoadError.value = '';
+  try {
+    const payload = await readEnvConfig();
+    envGroups.value = payload.groups || [];
+    const snap: Record<string, string> = {};
+    for (const g of envGroups.value) {
+      for (const e of g.entries) snap[e.key] = e.value;
+    }
+    originalEnvValues.value = snap;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to load env config:', e);
+    envLoadError.value = t('config.env.loadError');
+    envLoaded.value = false;
+  }
+};
+
+/** Writes env changes back to the backend (.env PUT); returns true on success */
+const persistEnvChanges = async (): Promise<boolean> => {
+  const changes: Record<string, string> = {};
+  for (const g of envGroups.value) {
+    for (const e of g.entries) {
+      if (e.value !== originalEnvValues.value[e.key]) changes[e.key] = e.value;
+    }
+  }
+  if (Object.keys(changes).length === 0) return true;
+
+  // MAX_TOKEN guard: pre-validate before the PUT so a sub-128K value is rejected
+  // in the dialog (the backend write_env_file enforces the same floor).
+  for (const [key, value] of Object.entries(changes)) {
+    if ((MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key)) {
+      const num = parseInt(value, 10);
+      if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
+        envLoadError.value = t('config.env.maxTokenError', { key });
+        return false;
+      }
+    }
+  }
+
+  const ok = await writeEnvConfig(changes);
+  if (ok) {
+    // Sync the snapshot to serve as the baseline for the next diff
+    for (const g of envGroups.value) {
+      for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
+    }
+  }
+  return ok;
+};
+
+/** Resets the env tab every time the dialog hides (cancel or save): reloads on next open */
+const resetEnvState = () => {
+  envGroups.value = [];
+  originalEnvValues.value = {};
+  envLoadError.value = '';
+  envLoaded.value = false;
+};
+
+// ── Sherry config state (sherry.jsonc) ───────────────────────
+// Mirrors the env tab: snapshot taken once on load; edits directly modify
+// entry.value inside sherryEntries; on save the changes are diffed against
+// the snapshot and PUT to /sherry-config (backend coerces types).
+const sherryEntries = ref<SherryEntry[]>([]);
+const originalSherryValues = ref<Record<string, string>>({});
+const sherryLoadError = ref('');
+const sherryLoaded = ref(false);
+
+const sherryHasChanges = computed(() =>
+  sherryEntries.value.some(entry => entry.value !== originalSherryValues.value[entry.key])
+);
+
+/** Lazily loads the sherry.jsonc config when the sherry tab is opened (backend GET /sherry-config) */
+const loadSherryConfig = async () => {
+  if (sherryLoaded.value) return;
+  sherryLoaded.value = true;
+  sherryLoadError.value = '';
+  try {
+    const payload = await readSherryConfig();
+    sherryEntries.value = payload.entries || [];
+    const snap: Record<string, string> = {};
+    for (const e of sherryEntries.value) snap[e.key] = e.value;
+    originalSherryValues.value = snap;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to load sherry config:', e);
+    sherryLoadError.value = t('config.sherry.loadError');
+    sherryLoaded.value = false;
+  }
+};
+
+/** Writes sherry changes back to the backend (sherry.jsonc PUT); returns true on success */
+const persistSherryChanges = async (): Promise<boolean> => {
+  const changes: Record<string, string> = {};
+  for (const e of sherryEntries.value) {
+    if (e.value !== originalSherryValues.value[e.key]) changes[e.key] = e.value;
+  }
+  if (Object.keys(changes).length === 0) return true;
+  const ok = await writeSherryConfig(changes);
+  if (ok) {
+    // Sync the snapshot to serve as the baseline for the next diff
+    for (const e of sherryEntries.value) originalSherryValues.value[e.key] = e.value;
+  }
+  return ok;
+};
+
+/** Resets the sherry tab every time the dialog hides (cancel or save): reloads on next open */
+const resetSherryState = () => {
+  sherryEntries.value = [];
+  originalSherryValues.value = {};
+  sherryLoadError.value = '';
+  sherryLoaded.value = false;
+};
+
+// ── Env config load trigger (setup scope) ──────────────
+// Previously loadEnvConfig was called from the PrimeVue TabPanel @show event: event callbacks run in a
+// non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
+// in pure SPA mode and data stayed undefined forever → the || { groups: [] } fallback kicked in and rendered
+// the misleading "No .env file found" message.
+// Instead, the env tab (activeTab===1) is watched in setup scope; the callback runs
+// in a setup context where getCurrentInstance() stays alive → useFetch actually issues GET /env and loads the real .env groups.
+watch(
+  activeTab,
+  tab => {
+    if (tab === 1) void loadEnvConfig();
+    if (tab === 2) void loadSherryConfig();
+  },
+  // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
+  { flush: 'post' }
+);
+
+/**
+ * Reads an uploaded image file as a base64 data URL
+ * @param file
+ */
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+/**
+ * Footer save availability. The footer is hidden on the env tab (every item
+ * there saves/applies on its own), so only the background / sherry tabs reach this.
+ */
+const canSave = computed(() => {
+  if (loading.value || saving.value) return false;
+  // Sherry config: saveable only when there are changes.
+  if (activeTab.value === 2) return sherryHasChanges.value;
+  // Background: nothing extra to validate.
+  return true;
+});
+
+// ── Image crop handling (background only; the role avatars moved to the 预设 panel) ──
+// After an image is selected, the crop dialog opens; the background is cropped and
+// output at the **actual aspect ratio of the current chat window/screen** so it fits
+// any ratio (16:9, 16:10, 3:2, 21:9…); since rendering uses `background-size: cover`,
+// edges get cut off under cover unless the crop ratio == the window ratio.
+// The ratio/size are **snapshotted** once at the moment the dialog opens (avoids the crop box jumping while the window is being dragged).
+const cropVisible = ref(false);
+const cropSource = ref('');
+
+/** Crop box aspect ratio and output size (snapshotted when the crop box opens) */
+const cropAspectRatio = ref(1);
+const cropOutput = ref({ width: 512, height: 512 });
+
+/**
+ * Background crop size: generated from the current window's physical pixels (aspect ratio == chat window aspect ratio).
+ * Based on the window's real physical resolution (logical width/height × devicePixelRatio) so any screen gets a sharp full fill.
+ */
+const getBackgroundCrop = () => {
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  const innerW = (typeof window !== 'undefined' && window.innerWidth) || 1920;
+  const innerH = (typeof window !== 'undefined' && window.innerHeight) || 1080;
+  const w = Math.max(512, Math.round(innerW * dpr));
+  const h = Math.max(288, Math.round(innerH * dpr));
+  return { width: w, height: h };
+};
+/** Crop dialog title */
+const cropTitle = computed(() => t('config.background.cropTitle'));
+
+const openCrop = async (file: File) => {
+  try {
+    // Snapshot the crop ratio/output size when the dialog opens: background adapts to the current window ratio
+    const { width, height } = getBackgroundCrop();
+    cropAspectRatio.value = width / height;
+    cropOutput.value = { width, height };
+    cropSource.value = await readFileAsDataUrl(file);
+    cropVisible.value = true;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Image read failed:', e);
+  }
+};
+
+const onCropConfirmed = (dataUrl: string) => {
+  backgroundUrl.value = dataUrl;
+  cropVisible.value = false;
+};
+
+// ── Background settings state ────────────────────────────────
+// The chat-area background image is saved locally on the frontend only: written to the single global row in Dexie (GLOBAL_SESSION_KEY),
+// for the main chat page to read and render under light/dark themes (photo + themed overlay).
+const backgroundUrl = ref('');
+const originalBackgroundUrl = ref('');
+/** Overlay opacity (0-100 integer, light=white / dark=black). Local edit state: snapshotted from the singleton when the dialog opens, written back on save */
+const backgroundOpacityValue = ref(0);
+
+const colorMode = useColorMode();
+
+/**
+ * Preview overlay style: identical to the real chat-area overlay — light=white / dark=black, with opacity tracking the slider in real time,
+ * letting users see the true effect of "dragging the slider fades the photo to white/black" right on the preview image.
+ */
+const backgroundPreviewOverlayStyle = computed(() => {
+  const overlayColor = colorMode.value === 'light' ? '#ffffff' : '#000000';
+  return {
+    backgroundColor: overlayColor,
+    opacity: (backgroundOpacityValue.value || 0) / 100
+  };
+});
+
+/** Reactive window size (window is not reactive, so a ref + resize listener drives the placeholder box's aspect ratio to follow window changes) */
+const windowSize = ref(getWindowSize());
+function getWindowSize() {
+  if (typeof window === 'undefined') return { width: 1920, height: 1080 };
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+function onWindowResize() {
+  windowSize.value = getWindowSize();
+}
+onMounted(() => window.addEventListener('resize', onWindowResize));
+onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize));
+
+/** Empty-state background placeholder box aspect ratio == current window aspect ratio (matches the crop preview for an intuitive look at the chat background ratio) */
+const backgroundAspect = computed(() => {
+  const innerW = windowSize.value.width;
+  const innerH = windowSize.value.height;
+  return Number((innerW / innerH).toFixed(4));
+});
+
+/**
+ * Opens the crop dialog after a background image is selected; only the cropped result becomes the background
+ * @param event
+ * @param event.files
+ */
+const onBackgroundSelect = (event: { files: File[] }) => {
+  const file = event.files?.[0];
+  if (!file) return;
+  void openCrop(file);
+};
+
+/**
+ * Localized label for the background FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
+ * file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to upload a new background.
+ * @param files
+ */
+const fileLabelText = (files: File[]): string => {
+  if (files.length > 0) return files[0]?.name ?? '';
+  if (backgroundUrl.value) return t('config.background.current');
+  return t('config.background.noFileChosen');
+};
+
+const loadContent = async () => {
+  loading.value = true;
+  try {
+    // Read the global background config from local Dexie (falls back to empty string + opacity 0 when unset)
+    const bgConfig = (await readBackgroundConfig()) ?? { backgroundUrl: '', backgroundOpacity: 0 };
+    backgroundUrl.value = bgConfig.backgroundUrl;
+    originalBackgroundUrl.value = bgConfig.backgroundUrl;
+    backgroundOpacityValue.value = bgConfig.backgroundOpacity;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to load content:', e);
+  } finally {
+    loading.value = false;
+  }
+};
+
+/**
+ * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
+ * The model groups carry their own 保存/应用 inside the panel, so the env tab
+ * needs no footer button at all.
+ */
+const handleSave = async () => {
+  if (loading.value || saving.value) return;
+  saving.value = true;
+  try {
+    if (!envHasChanges.value) return;
+    const ok = await persistEnvChanges();
+    if (!ok) {
+      // persistEnvChanges may already have set a specific validation error
+      // (MAX_TOKEN guard); only fall back to the generic save-failed message.
+      if (!envLoadError.value) envLoadError.value = t('config.env.saveFailed');
+      return;
+    }
+    invalidateModelConfigCache();
+    emits('saved');
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to save env config:', e);
+  } finally {
+    saving.value = false;
+  }
+};
+
+const saveDialogSettings = async () => {
+  if (loading.value || saving.value) return;
+  saving.value = true;
+  try {
+    // Background image: only when changed, write to the local Dexie global row
+    // (an empty string clears the background). setBackground updates the shared
+    // singleton reactively, so the change takes effect without a refresh.
+    const bgUrlChanged = backgroundUrl.value !== originalBackgroundUrl.value;
+    const bgOpacityChanged = backgroundOpacityValue.value !== backgroundOpacity.value;
+    if (bgUrlChanged || bgOpacityChanged) {
+      await setBackground(backgroundUrl.value, backgroundOpacityValue.value);
+      originalBackgroundUrl.value = backgroundUrl.value;
+    }
+
+    // Sherry config: same contract as the env tab — abort on save failure
+    // without closing the dialog.
+    if (activeTab.value === 2 && sherryHasChanges.value) {
+      const ok = await persistSherryChanges();
+      if (!ok) {
+        sherryLoadError.value = t('config.sherry.saveFailed');
+        return;
+      }
+    }
+
+    emits('saved');
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to save settings:', e);
+  } finally {
+    saving.value = false;
+  }
+};
+
+const onHide = () => {
+  activeTab.value = 0;
+  backgroundOpacityValue.value = backgroundOpacity.value;
+  // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open
+  resetEnvState();
+  resetSherryState();
+};
+
+// The tab's lifetime drives the load and the reset (the dialog's @show/@hide).
+onMounted(loadContent);
+onBeforeUnmount(onHide);
+</script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "background": {
+        "title": "背景图片",
+        "upload": "上传背景",
+        "clear": "清除背景",
+        "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
+        "opacity": "遮罩强度",
+        "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
+        "cropTitle": "裁剪背景",
+        "current": "已设置背景图",
+        "noFileChosen": "可选择新图片文件"
+      },
+      "env": {
+        "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
+        "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
+        "noEnvFile": "未找到 .env 文件。",
+        "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。"
+      },
+      "sherry": {
+        "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "应用配置保存失败，请检查值是否合法。",
+        "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
+        "noConfigFile": "未找到 sherry.jsonc 文件。"
+      },
+      "tabs": {
+        "env": "环境配置",
+        "sherry": "应用配置"
+      }
+    }
+  },
+  "en": {
+    "config": {
+      "background": {
+        "title": "Background Image",
+        "upload": "Upload Background",
+        "clear": "Clear Background",
+        "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
+        "opacity": "Overlay Strength",
+        "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
+        "cropTitle": "Crop Background",
+        "current": "Background image set",
+        "noFileChosen": "Select an image file"
+      },
+      "env": {
+        "loadError": "Failed to load environment config. Please check the backend service.",
+        "saveFailed": "Failed to save environment config.",
+        "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
+        "noEnvFile": "No .env file found.",
+        "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save."
+      },
+      "sherry": {
+        "loadError": "Failed to load app config. Please check the backend service.",
+        "saveFailed": "Failed to save app config.",
+        "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
+        "noConfigFile": "No sherry.jsonc file found."
+      },
+      "tabs": {
+        "env": "Environment",
+        "sherry": "App Config"
+      }
+    }
+  },
+  "ja": {
+    "config": {
+      "background": {
+        "title": "背景画像",
+        "upload": "背景をアップロード",
+        "clear": "背景をクリア",
+        "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
+        "opacity": "オーバーレイの強さ",
+        "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
+        "cropTitle": "背景をトリミング",
+        "current": "背景画像が設定されています",
+        "noFileChosen": "画像ファイルを選択"
+      },
+      "env": {
+        "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "環境設定の保存に失敗しました。",
+        "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
+        "noEnvFile": ".env ファイルが見つかりません。",
+        "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。"
+      },
+      "sherry": {
+        "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "アプリ設定の保存に失敗しました。",
+        "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
+        "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+      },
+      "tabs": {
+        "env": "環境設定",
+        "sherry": "アプリ設定"
+      }
+    }
+  },
+  "ko": {
+    "config": {
+      "background": {
+        "title": "배경 이미지",
+        "upload": "배경 업로드",
+        "clear": "배경 지우기",
+        "bothThemes": "배경 이미지는 라이트/다크 테마 모두에서 표시됩니다. 아래 슬라이더로 오버레이 강도를 조정하세요.",
+        "opacity": "오버레이 강도",
+        "opacityHint": "라이트 테마는 흰색, 다크 테마는 검은색 오버레이를 덮습니다. 오른쪽으로 갈수록 사진이 순백/순흑으로 바래다 완전히 가려집니다.",
+        "cropTitle": "배경 자르기",
+        "current": "배경 이미지가 설정됨",
+        "noFileChosen": "이미지 파일을 선택하세요"
+      },
+      "env": {
+        "loadError": "환경 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "환경 설정을 저장하지 못했습니다.",
+        "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
+        "noEnvFile": ".env 파일을 찾을 수 없습니다.",
+        "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다."
+      },
+      "sherry": {
+        "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "앱 설정을 저장하지 못했습니다.",
+        "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
+        "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
+      },
+      "tabs": {
+        "env": "환경 설정",
+        "sherry": "앱 설정"
+      }
+    }
+  }
+}
+</i18n>
+
+<style scoped>
+/* The tab strip keeps its height and the tab body scrolls inside it, so the
+   save / cancel row below stays pinned at the bottom-right of the panel instead
+   of scrolling away with a long form. */
+:deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* This PrimeVue version renders the strip as .p-tabview-tablist-container
+   (there is no .p-tabview-nav): keep it at its own height so the panels area
+   below is the only thing that scrolls. */
+:deep(.p-tabview-tablist-container) {
+  flex-shrink: 0;
+}
+
+:deep(.p-tabview-panels) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+</style>

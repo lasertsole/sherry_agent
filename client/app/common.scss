@@ -1,0 +1,304 @@
+@use 'sass:math';
+
+/* Minimum width */
+@mixin minWidth($minWidth) {
+  min-width: $minWidth;
+  box-sizing: border-box;
+  display: inline-block;
+}
+
+/* Maximum width */
+@mixin maxWidth($maxWidth) {
+  max-width: $maxWidth;
+  box-sizing: border-box;
+  display: inline-block;
+}
+
+/* Bounded width (min + max) */
+@mixin limitWidth($minWidth, $maxWidth) {
+  width: $maxWidth;
+  @include minWidth($minWidth);
+  @include maxWidth($maxWidth);
+}
+
+/* Minimum height */
+@mixin minHeight($minHeight) {
+  box-sizing: border-box;
+  height: $minHeight;
+  min-height: $minHeight;
+  display: inline-block;
+}
+
+/* Maximum height */
+@mixin maxHeight($maxHeight) {
+  box-sizing: border-box;
+  height: $maxHeight;
+  max-height: $maxHeight;
+  display: inline-block;
+}
+
+/* Bounded height (min + max) */
+@mixin limitHeight($minHeight, $maxHeight) {
+  height: $maxHeight;
+  @include minHeight($minHeight);
+  @include maxHeight($maxHeight);
+}
+
+/* Fixed width */
+@mixin fixedWidth($size) {
+  @include limitWidth($size, $size);
+}
+
+/* Fixed height */
+@mixin fixedHeight($size) {
+  @include limitHeight($size, $size);
+}
+
+/* Minimum width of the parent container */
+@mixin minWidthInParent {
+  @include minWidth(100%);
+}
+
+/* Maximum width of the parent container */
+@mixin maxWidthInParent {
+  @include maxWidth(100%);
+}
+
+/* Minimum height of the parent container */
+@mixin minHeightInParent {
+  @include minHeight(100%);
+}
+
+/* Maximum height of the parent container */
+@mixin maxHeightInParent {
+  @include maxHeight(100%);
+}
+
+/* Fixed width filling the parent container */
+@mixin fullWidth {
+  @include fixedWidth(100%);
+}
+
+/* Fixed height filling the parent container */
+@mixin fullHeight {
+  @include fixedHeight(100%);
+}
+
+/* Fixed height */
+@mixin fixedWidthFullHeight($size) {
+  @include fixedWidth($size);
+  @include fixedHeight(100%);
+}
+
+/* Fixed height */
+@mixin fullWidthFixedHeight($size) {
+  @include fixedWidth(100%);
+  @include fixedHeight($size);
+}
+
+/* Minimum rectangle */
+@mixin minRetangle($widthSize, $heightSize) {
+  @include minWidth($widthSize);
+  @include minHeight($heightSize);
+}
+
+/* Maximum rectangle */
+@mixin maxRetangle($widthSize, $heightSize) {
+  @include maxWidth($widthSize);
+  @include maxHeight($heightSize);
+}
+
+/* Fixed rectangle */
+@mixin fixedRetangle($widthSize, $heightSize) {
+  @include fixedWidth($widthSize);
+  @include fixedHeight($heightSize);
+}
+
+/* Full-width rectangle */
+@mixin fullWidthRetangle($heightSize) {
+  @include fullWidth;
+  @include fixedHeight($heightSize);
+}
+
+/* Full-height rectangle */
+@mixin fullHeightRetangle($widthSize) {
+  @include fixedWidth($widthSize);
+  @include fullHeight;
+}
+
+/* Minimum square */
+@mixin minSquare($size) {
+  @include minRetangle($size, $size);
+}
+
+/* Maximum square */
+@mixin maxSquare($size) {
+  @include maxRetangle($size, $size);
+}
+
+/* Fixed square */
+@mixin fixedSquare($size) {
+  @include fixedRetangle($size, $size);
+}
+
+/* Fixed rounded rectangle */
+@mixin fixedRoundedRectangle($widthSize, $heightSize, $borderRadiusSize) {
+  border-radius: $borderRadiusSize;
+  @include fixedRetangle($widthSize, $heightSize);
+}
+
+/* Minimum rounded square */
+@mixin minRoundedSquare($widthSize, $heightSize, $borderRadiusSize) {
+  border-radius: $borderRadiusSize;
+  @include minRetangle($widthSize, $heightSize);
+}
+
+/* Maximum rounded square */
+@mixin maxRoundedSquare($widthSize, $heightSize, $borderRadiusSize) {
+  border-radius: $borderRadiusSize;
+  @include maxRetangle($widthSize, $heightSize);
+}
+
+/* Fixed rounded square */
+@mixin fixedRoundedSquare($size, $borderRadiusSize) {
+  border-radius: $borderRadiusSize;
+  @include fixedSquare($size);
+}
+
+/* Minimum capsule */
+@mixin minCapsule($widthSize, $heightSize) {
+  border-radius: math.div($heightSize, 2);
+  @include minRetangle($widthSize, $heightSize);
+}
+
+/* Maximum capsule */
+@mixin maxCapsule($widthSize, $heightSize) {
+  border-radius: math.div($heightSize, 2);
+  @include maxRetangle($widthSize, $heightSize);
+}
+
+/* Fixed capsule */
+@mixin fixedCapsule($widthSize, $heightSize) {
+  border-radius: math.div($heightSize, 2);
+  @include fixedRetangle($widthSize, $heightSize);
+}
+
+/* Minimum circle */
+@mixin minCircle($size) {
+  @include minRoundedSquare($size, $size);
+}
+
+/* Maximum circle */
+@mixin maxCircle($size) {
+  @include maxRoundedSquare($size, $size);
+}
+
+/* Fixed circle */
+@mixin fixedCircle($size) {
+  @include fixedRoundedRectangle($size, $size, 50%);
+  overflow: hidden;
+}
+
+/* Minimum fill of the parent container */
+@mixin minInParent {
+  @include minSquare(100%);
+}
+
+/* Maximum fill of the parent container */
+@mixin maxInParent {
+  @include maxSquare(100%);
+}
+
+/* Fixed fill of the parent container */
+@mixin fullInParent {
+  @include fixedSquare(100%);
+}
+
+/* Minimum fill of the viewport */
+@mixin minViewWindow {
+  @include minWidthInParent;
+}
+
+/* Maximum fill of the viewport */
+@mixin maxViewWindow {
+  @include maxWidthInParent;
+}
+
+/* Fixed fill of the viewport */
+@mixin fullViewWindow {
+  width: 100vw;
+  height: 100vh;
+}
+
+/* Minimum circle filling the parent container */
+@mixin minInParentCircle {
+  @include minCircle(100%);
+}
+
+/* Maximum circle filling the parent container */
+@mixin maxInParentCircle {
+  @include maxCircle(100%);
+}
+
+/* Fixed circle filling the parent container */
+@mixin fullInParentCircle {
+  @include fixedCircle(100%);
+}
+
+/* Background image placement conditions */
+@mixin backgroundImgCondition() {
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 100%;
+}
+
+/* Image filling the parent container */
+@mixin imgFullInParent($imgSrc) {
+  background-image: url(#{$imgSrc});
+  @include fullInParent;
+  @include backgroundImgCondition;
+}
+
+/* Image filling this container */
+@mixin fullImg($imgSrc) {
+  background-image: url(#{$imgSrc});
+  @include backgroundImgCondition;
+}
+
+/* Flex layout centering */
+@mixin flexCenter {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+
+@mixin scrollBar($thumbSize) {
+  /* Scrollbar as a whole */
+  overflow: auto;
+  &::-webkit-scrollbar {
+    width: $thumbSize; /* Scrollbar width */
+    height: $thumbSize; /* Horizontal scrollbar height */
+  }
+
+  /* Scrollbar thumb */
+  &::-webkit-scrollbar-thumb {
+    background-color: darkgrey; /* Thumb color */
+    border-radius: $thumbSize; /* Thumb corner radius */
+  }
+
+  /* Scrollbar track */
+  &::-webkit-scrollbar-track {
+    background-color: lightgrey; /* Track color */
+    border-radius: $thumbSize; /* Track corner radius */
+  }
+}
+
+@mixin wordEllipsis {
+  word-wrap: break-word;
+  word-break: break-all;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1; // Limit the number of displayed lines
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
