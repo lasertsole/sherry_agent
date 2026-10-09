@@ -69,18 +69,20 @@ def test_the_policy_covers_the_tools_that_actually_ship():
 def test_the_browser_tool_family_is_fenced():
     """Every ``browser_*`` verb returns page-authored text — all of it is fenced.
 
-    The names are read off the module's own declarations (the tools only
+    The names are read off the package's own declarations (the tools only
     register when the feature is enabled, so building them here would prove
-    nothing on a default install).
+    nothing on a default install), one module per verb.
     """
     import pathlib
     import re
 
-    source = pathlib.Path("agent/tools/browser/__init__.py").read_text(encoding="utf-8")
-    names = sorted(set(re.findall(r'name: str = "(browser_[a-z_]+)"', source)))
+    package = pathlib.Path("agent/tools/browser")
+    names: set[str] = set()
+    for module in sorted(package.rglob("*.py")):
+        names.update(re.findall(r'name: str = "(browser_[a-z_]+)"', module.read_text("utf-8")))
 
     assert names, "the browser tool family stopped declaring its names"
-    for name in names:
+    for name in sorted(names):
         assert is_untrusted_tool(name) is True, name
 
 
