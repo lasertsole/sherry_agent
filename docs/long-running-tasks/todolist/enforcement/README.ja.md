@@ -72,9 +72,14 @@ turn ends (no tool_call, agent loop exits)
       → is_in_cooldown? → skip
       → build continuation prompt (full todo status + flow/step)
       → maybe_trigger_auto_turn(session_key, prompt)
-          → detect_state() → idle? → fire-and-forget
-          → _watch_user_takeover() 0.5s poll
-      → user sends message → detect_state() busy → cancel → reset()
+          → detect_state()
+              → idle? → fire-and-forget
+              → busy(ws_task/answering)? → the ENDING TURN's own stream is still
+                draining (this hook runs inside it): wait up to
+                TODOLIST_INFRA["continuation_self_idle_wait_s"] (30 s) for it to
+                finish, then fire
+              → busy(hitl_pending/auto_turn_inflight)? → refused, dropped
+      → user message inside that wait → still busy at the cap → drop → reset()
 ```
 
 **ファイル**：`stagnation_tracker.py`（~90 行）+ `todo_continuation/core.py`（~110 行）+ `agent/core.py`（~2 行登録）。

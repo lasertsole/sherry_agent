@@ -7,7 +7,14 @@ lifecycle.  The turn itself consumes `server.service.messages.async_generate`
 (an async generator) chunk-by-chunk and mirrors the WS frame contract of
 `_run_stream`.  Under the new queueing semantics user input arriving during
 an auto turn is queued (/9): the auto turn is never cancelled by user
-presence and runs to completion — there is no user-takeover branch.
+presence and runs to completion.
+
+One busy case is NOT a refusal: an after_agent hook (the plan-continuation
+enforcer) calls this while the turn's own stream is still draining, so
+``ws_task``/``answering`` are live. The runner waits (bounded by
+``TODOLIST_INFRA["continuation_self_idle_wait_s"]``) for the end that is
+already under way; a session still busy at the cap is a real user takeover and
+the injection is dropped — the next turn end decides again.
 
 Hard rules honored here: no import of the WS trigger module (it hangs
 standalone), no writes to `_active_tasks` / `answering` / `_pending_args` (all
@@ -29,9 +36,12 @@ from server.service.stream_driver import StreamDriver
 from agent.tools.subagent.announce.steering_queue import enqueue_steering
 from agent.tools.subagent.registry.session_keys import normalize_session_key
 from agent.tools.subagent.registry.session_state import (
+    REASON_ANSWERING,
     REASON_AUTO_TURN_INFLIGHT,
+    REASON_WS_TASK,
     detect_state,
 )
+from config.features import TODOLIST_INFRA
 from runtime.session.relation_register import relation_register
 from server.service import get_pending_interrupt
 from server.service.messages import async_generate
@@ -76,24 +86,58 @@ async def _send_ws(websocket: Any, payload: dict[str, Any]) -> None:
 
 
 async def maybe_trigger_auto_turn(session_key: str, injection: HumanMessage) -> AutoTurnResult:
-    """Snapshot idleness and spawn the fire-and-forget auto turn (zero awaits here)."""
+    """Snapshot idleness and spawn the fire-and-forget auto turn (zero awaits here).
+
+    A session that is busy ONLY because the turn it just finished is still
+    draining its stream (``ws_task`` / ``answering``) is not a refusal: the
+    caller *is* that turn's graph hook, so the runner waits (bounded) for the
+    end that is already under way before it fires. Every other busy reason —
+    a HITL wait, another auto turn — is a real refusal, returned unchanged.
+    """
     bare = normalize_session_key(session_key)
     if not bare:
         # Not our problem ( addresses real sessions): zero side effects.
         return AutoTurnResult(AutoTurnOutcome.BUSY, bare, "unknown_session")
     st = detect_state(bare)
-    if st.busy:
+    if st.busy and st.reason not in _SELF_BUSY_REASONS:
         return AutoTurnResult(AutoTurnOutcome.BUSY, bare, st.reason)
     with _INFLIGHT_LOCK:
         existing = _INFLIGHT.get(bare)
         if existing is not None and not existing.done():
             return AutoTurnResult(AutoTurnOutcome.ALREADY_PENDING, bare, None)
-        task = asyncio.create_task(_run_auto_turn(bare, injection))
+        task = asyncio.create_task(_run_auto_turn(bare, injection, wait_for_idle=st.busy))
         _INFLIGHT[bare] = task
     return AutoTurnResult(AutoTurnOutcome.TRIGGERED, bare, None)
 
 
-async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
+#: Busy reasons that mean "the ending turn is still unwinding", not "somebody
+#: else owns the session": the client's stream task is still live (and
+#: ``answering`` still set) at the moment an after_agent hook runs.
+_SELF_BUSY_REASONS = (REASON_WS_TASK, REASON_ANSWERING)
+
+
+async def _wait_for_self_idle(bare: str) -> bool:
+    """Wait (bounded) for the ending turn to release its own busy signals.
+
+    :returns: True when the session reads idle (or only our own in-flight
+        auto turn), False when it stayed busy past the cap — a real user turn
+        took over, so the directive is dropped and the next turn end decides.
+    """
+    deadline = asyncio.get_running_loop().time() + TODOLIST_INFRA["continuation_self_idle_wait_s"]
+    while True:
+        st = detect_state(bare)
+        # REASON_AUTO_TURN_INFLIGHT is our own registration (the runner task is
+        # in _INFLIGHT before its body starts) — not somebody else's turn.
+        if not st.busy or st.reason == REASON_AUTO_TURN_INFLIGHT:
+            return True
+        if asyncio.get_running_loop().time() >= deadline:
+            return False
+        await asyncio.sleep(TODOLIST_INFRA["continuation_self_idle_poll_s"])
+
+
+async def _run_auto_turn(
+    bare: str, injection: HumanMessage, *, wait_for_idle: bool = False
+) -> None:
     """Fire-and-forget runner: drive the turn to completion, abandon safely."""
     abandoned = False
 
@@ -113,6 +157,16 @@ async def _run_auto_turn(bare: str, injection: HumanMessage) -> None:
     consumer: asyncio.Task[None] | None = None
     try:
         await asyncio.sleep(0)  # one yield: an already-received user frame can register first
+        if wait_for_idle and not await _wait_for_self_idle(bare):
+            # The session never went idle inside the cap: a real user turn took
+            # over (or the stream is wedged). Drop it rather than inject into
+            # somebody's turn — the next turn end decides again.
+            logger.info(
+                "auto_turn: session {} stayed busy past the self-idle cap; "
+                "dropping the deferred injection",
+                bare,
+            )
+            return
         st = detect_state(bare)
         # WHY exclude auto_turn_inflight: at gate time _INFLIGHT[bare] IS this
         # runner itself — maybe_trigger_auto_turn registered the task BEFORE the

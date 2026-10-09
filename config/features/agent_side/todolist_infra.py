@@ -13,6 +13,13 @@ class TodoListInfraConfig(TypedDict):
     stagnation_max_cooldown_s: float
     stagnation_failure_reset_window_s: int
     stagnation_max_recovery_attempts: int
+    #: How long a DEFERRED continuation waits for the ending turn to release its
+    #: own busy signals (the enforcer's after_agent hook runs while the client's
+    #: stream task is still live, so an immediate trigger would see "busy" and
+    #: drop the directive). Reaching the cap means a real user turn took over.
+    continuation_self_idle_wait_s: float
+    #: Poll interval of that wait.
+    continuation_self_idle_poll_s: float
 
 
 TODOLIST_INFRA: TodoListInfraConfig = {
@@ -23,4 +30,6 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     "stagnation_max_cooldown_s": 60.0,
     "stagnation_failure_reset_window_s": 300,
     "stagnation_max_recovery_attempts": 2,
+    "continuation_self_idle_wait_s": 30.0,
+    "continuation_self_idle_poll_s": 0.5,
 }

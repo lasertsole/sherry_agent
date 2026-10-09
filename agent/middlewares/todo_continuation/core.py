@@ -12,6 +12,13 @@ next idle turn — the middleware itself never mutates state. When no trigger
 is registered (evals, unit tests, any process that never assembled a server)
 the injection is a no-op and the session stays retryable.
 
+Timing note: this hook runs INSIDE the turn whose end it observes, so the
+session still reads busy (`ws_task`/`answering`) at that instant. The server's
+auto-turn trigger therefore DEFERS past those two self-busy signals (bounded by
+``TODOLIST_INFRA["continuation_self_idle_wait_s"]``) instead of refusing — a
+session still busy at the cap is a real user turn and the directive is dropped,
+with the next turn end deciding again.
+
 Tailored from omo ``todo-continuation-enforcer``:
 
 - idle detection → ``auto_turn`` + ``detect_state`` (already present);

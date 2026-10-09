@@ -167,18 +167,88 @@ async def test_double_trigger_idempotent(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_busy_not_triggered(monkeypatch):
+    """A session somebody else owns refuses the trigger outright.
+
+    ``ws_task``/``answering`` are NOT in this set any more: they are the
+    ending turn's own drain (the caller is that turn's graph hook), so they
+    defer instead — pinned by the two tests below.
+    """
     at = _mod()
     calls, started, finished = [], asyncio.Event(), asyncio.Event()
     monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
     spy = _make_spy()
     monkeypatch.setattr(at, "enqueue_steering", spy)
-    for reason in ("ws_task", "answering"):
+    for reason in ("hitl_pending", "auto_turn_inflight"):
         _fake_detect(monkeypatch, at, {"busy": True, "reason": reason})
         result = await at.maybe_trigger_auto_turn("sess-1", _injection())
         assert result.outcome == at.AutoTurnOutcome.BUSY
         assert result.reason == reason
     assert not at._INFLIGHT
     assert not calls and not spy.calls
+
+
+@pytest.mark.asyncio
+async def test_self_busy_defers_until_the_turn_finishes(monkeypatch):
+    """ws_task/answering defer, then fire once the ending turn released them.
+
+    This is the plan-continuation path: the enforcer's after_agent hook runs
+    while the client's stream task is still live, so an immediate trigger used
+    to see "busy" and silently drop the directive (the gate "did not work").
+    """
+    at = _mod()
+    calls, started, finished = [], asyncio.Event(), asyncio.Event()
+    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
+    monkeypatch.setattr(at, "get_websocket_by_session_id", lambda sid: None)
+    monkeypatch.setattr(at, "get_pending_interrupt", _no_interrupt)
+    monkeypatch.setitem(at.TODOLIST_INFRA, "continuation_self_idle_poll_s", 0.01)
+
+    state = {"busy": True, "reason": "ws_task"}
+    _fake_detect(monkeypatch, at, state)
+
+    result = await at.maybe_trigger_auto_turn("sess-defer", _injection("run-d1"))
+    assert result.outcome == at.AutoTurnOutcome.TRIGGERED
+    # Hold the task handle: the runner pops itself from _INFLIGHT when it ends.
+    task = at._INFLIGHT["sess-defer"]
+
+    # The stream is still draining: no model call yet.
+    await asyncio.sleep(0.05)
+    assert calls == []
+
+    # The turn ends → the deferred runner fires the real turn. Wait generously:
+    # a loaded batch can take seconds to schedule the runner.
+    state.update(busy=False, reason="idle")
+    for _ in range(1000):
+        if started.is_set():
+            break
+        await asyncio.sleep(0.01)
+    assert started.is_set(), "the deferred runner never fired after the turn ended"
+    await asyncio.wait_for(task, timeout=20)
+    assert calls and calls[0][0] == "sess-defer"
+    assert finished.is_set()
+
+
+@pytest.mark.asyncio
+async def test_self_busy_that_never_clears_is_dropped(monkeypatch):
+    """A user turn taking over inside the cap cancels the continuation."""
+    at = _mod()
+    calls, started, finished = [], asyncio.Event(), asyncio.Event()
+    monkeypatch.setattr(at, "async_generate", _fake_generate(calls, started, None, finished))
+    spy = _make_spy()
+    monkeypatch.setattr(at, "enqueue_steering", spy)
+    _fake_detect(monkeypatch, at, {"busy": True, "reason": "ws_task"})
+
+    # Shrink the cap and the poll so the drop happens fast.
+    monkeypatch.setitem(at.TODOLIST_INFRA, "continuation_self_idle_wait_s", 0.05)
+    monkeypatch.setitem(at.TODOLIST_INFRA, "continuation_self_idle_poll_s", 0.01)
+
+    result = await at.maybe_trigger_auto_turn("sess-takeover", _injection("run-t1"))
+    assert result.outcome == at.AutoTurnOutcome.TRIGGERED
+    task = at._INFLIGHT["sess-takeover"]  # the runner pops itself when it ends
+    await asyncio.wait_for(task, timeout=20)
+
+    assert calls == []  # never injected into somebody else's turn
+    assert not spy.calls  # and nothing silently persisted
+    assert at._INFLIGHT.get("sess-takeover") is None
 
 
 @pytest.mark.asyncio
