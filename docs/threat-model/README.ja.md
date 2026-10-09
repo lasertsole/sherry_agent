@@ -16,6 +16,7 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 | 8 | サンドボックスの子プロセス → ホストプロセス | 子プロセス起動 | `scrub_env`、`bwrap`/`seatbelt` による隔離 |
 | 9 | メモリ / スキルファイル → システムプロンプト | プロンプト組み立て | インストール時のスキルスキャンゲート；**書き込み時の注入ブロックは未実装** |
 | 10 | TaskFlow step の結果 → 下流 step | DAG の辺 | 期待→実績の閉ループ：schema ゲート、step judge、証跡台帳 |
+| 11 | リモートページ → エージェント | ブラウザツール | 明示的に有効化するまでオフ（`SHERRY_BROWSER_AGENT_ENABLED`、起動時に読み込み）。各ツールの出力は**信頼できない出力のフェンス**を通り、デバッグポートはバックエンドプロセスから出ません |
 
 ## データ分類
 
@@ -57,7 +58,7 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 
 | 性質 | 実装 |
 |---|---|
-| 対象 | `web_search`、`tavily_search`（API キーを設定すると同じツールが Tavily 自身の名前で出荷される）、`message_search`、および `mcp_` ツール |
+| 対象 | `web_search`、`tavily_search`（API キーを設定すると同じツールが Tavily 自身の名前で出荷される）、`message_search`、`mcp_` ツール、およびすべての `browser_` ツール（ページ自身が書いたテキスト——とくに `browser_snapshot`） |
 | 区切り文字の偽装 | ペイロード内の閉じタグは包む前に `</untrusted-tool-result>` へ書き換えられ、ブロックを早期に閉じられません |
 | 順序 | 先に evict、その後に包むため、フェンスはモデルが実際に読むプレビューを囲みます |
 | 原文 | フェンスされるのはモデルの見る姿だけ；内側の永続化が保持するメッセージは決して書き換えられません |
@@ -72,7 +73,7 @@ Sherry が何を防御し、信頼境界がどこにあり、そして同じく�
 | 面 | 適用するもの | スイッチ |
 |---|---|---|
 | すべてのログレコード（コンソール + 3 つのローテーションファイル） | `agent/security/redact_formatter.py`（`logs/logger.py` が導入する loguru patcher） | 常時有効——ログファイルはセッションより長生きし、読む人はその秘密を見ていない |
-| 漏洩しやすいツール出力（`terminal`、`python_repl`、信頼できないツール群、`mcp_*`） | フェンスと同じミドルウェア | `config/features/agent_side/redaction.py` の `REDACTION["tool_output_enabled"]` |
+| 漏洩しやすいツール出力（`terminal`、`python_repl`、信頼できないツール群、`mcp_*`、`browser_*`） | フェンスと同じミドルウェア | `config/features/agent_side/redaction.py` の `REDACTION["tool_output_enabled"]` |
 | ファイルツール（`read_file`、`patch_file`、`write_file`） | — | 意図的にマスクしません：エージェントは自分の設定を編集し、マスクすると「読んで書き戻す」が損失的になるため |
 
 対象：ベンダー鍵プレフィックス（`sk-`、`ghp_`、`AKIA`、`xox*`、`AIza`、`hf_` など）、各種設定形式の鍵名代入（`.env`、INI、YAML、TOML、JSON——`"CURATOR_API_KEY"` のような接頭辞付きキーや空白を含む引用値も）、`Authorization` / `X-API-Key` ヘッダ、JWT、PEM 秘密鍵ブロック、URL 資格情報とクエリパラメータ。

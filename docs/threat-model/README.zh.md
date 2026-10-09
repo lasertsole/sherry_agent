@@ -16,6 +16,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 8 | 沙箱子进程 → 宿主进程 | 子进程派生 | `scrub_env`、`bwrap`/`seatbelt` 隔离 |
 | 9 | 记忆 / 技能文件 → 系统提示词 | 提示词组装 | 安装时的技能扫描门禁；**写入时注入拦截待实现** |
 | 10 | TaskFlow step 结果 → 下游 step | DAG 边 | 期望→实际闭环：schema 门、step judge、证据台账 |
+| 11 | 远程页面 → Agent | 浏览器工具 | 显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED`，重启时读取）；每个工具的输出都经过**不可信输出围栏**，调试端口从不离开后端进程 |
 
 ## 数据分类
 
@@ -57,7 +58,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 | 性质 | 做法 |
 |---|---|
-| 适用范围 | `web_search`、`tavily_search`（配好 API key 后同一个工具以 Tavily 自己的名字出厂）、`message_search`，以及任何 `mcp_` 工具 |
+| 适用范围 | `web_search`、`tavily_search`（配好 API key 后同一个工具以 Tavily 自己的名字出厂）、`message_search`、任何 `mcp_` 工具，以及每个 `browser_` 工具（页面自产的文本——`browser_snapshot` 最典型） |
 | 分隔符防伪 | 载荷里的闭合标签在包装前被改写成 `</untrusted-tool-result>`，无法提前结束该块 |
 | 顺序 | 先 evict 再包装，因此围栏包住的正是模型实际看到的那份预览 |
 | 原文 | 只有模型视图被围栏；内层持久化持有的消息对象从不被修改 |
@@ -72,7 +73,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 | 面 | 由谁施加 | 开关 |
 |---|---|---|
 | 每一条日志记录（控制台 + 三个轮转文件） | `agent/security/redact_formatter.py`（由 `logs/logger.py` 装载的 loguru patcher） | 始终开启——日志文件比会话活得久，读它的人从没见过那个密钥 |
-| 天生易泄漏的工具输出（`terminal`、`python_repl`、不可信工具集、`mcp_*`） | 与围栏同一个中间件 | `config/features/agent_side/redaction.py` 里的 `REDACTION["tool_output_enabled"]` |
+| 天生易泄漏的工具输出（`terminal`、`python_repl`、不可信工具集、`mcp_*`、`browser_*`） | 与围栏同一个中间件 | `config/features/agent_side/redaction.py` 里的 `REDACTION["tool_output_enabled"]` |
 | 文件工具（`read_file`、`patch_file`、`write_file`） | — | 刻意不脱敏：agent 要编辑自己的配置，掩码会让"读回再写回"变成有损操作 |
 
 覆盖家族：vendor 密钥前缀（`sk-`、`ghp_`、`AKIA`、`xox*`、`AIza`、`hf_` 等）、各种配置形状里的密钥名赋值（`.env`、INI、YAML、TOML、JSON——含 `"CURATOR_API_KEY"` 这类带前缀键与引号内含空格的值）、`Authorization` / `X-API-Key` 头、JWT、PEM 私钥块、URL 凭证与查询参数。

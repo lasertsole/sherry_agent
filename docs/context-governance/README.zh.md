@@ -67,7 +67,8 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 工具返回的文本（以及截图路径）。页面本身——它的 DOM、像素、screencast 帧——从不进入消息
 存储：帧走 `/browser/ws` 直接给面板，快照在成为工具结果之前就被管理器按上限截断（元素 /
 文本），截图只是一个文件路径，由模型通过 `image_to_text` 链去看。页面显示的任何内容都只能
-经由"模型自己要求的工具结果"影响 agent。
+经由"模型自己要求的工具结果"影响 agent——而这些结果和其他远程内容一样，会经过不可信输出
+围栏与密钥脱敏（见威胁模型）。
 
 ## 🗂️ 信息来源
 

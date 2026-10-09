@@ -51,10 +51,13 @@ __all__ = [
 #: web results in exactly the deployments that can actually fetch the web.
 UNTRUSTED_TOOL_NAMES: frozenset[str] = frozenset({"web_search", "tavily_search", "message_search"})
 
-#: Prefix rule for tools this process does not own: MCP servers are separate
-#: attack surfaces by construction. No MCP tool ships with the repository today —
-#: the rule exists so a server added later is covered without a code change here.
-UNTRUSTED_TOOL_PREFIXES: tuple[str, ...] = ("mcp_",)
+#: Prefix rule for tool families that are attacker-facing by construction. ``mcp_``
+#: covers servers this process does not own (no MCP tool ships with the repository
+#: today — the rule exists so a server added later is covered without a code change
+#: here). ``browser_`` covers the agent-controllable browser: every verb returns
+#: text the visited page authored (``browser_snapshot`` most of all), which is the
+#: same channel ``web_search`` fetches through.
+UNTRUSTED_TOOL_PREFIXES: tuple[str, ...] = ("mcp_", "browser_")
 
 #: The delimiter tag. Underscores keep it a valid XML-ish tag while leaving room
 #: for the hyphenated neutralized form.

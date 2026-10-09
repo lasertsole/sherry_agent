@@ -69,7 +69,8 @@ message store: frames go to the panel over `/browser/ws`, snapshots are bounded
 by the manager (element / text caps) before they become tool results, and a
 screenshot is a file path the model opens through the `image_to_text` chain.
 Nothing a page displays can steer the agent except through a tool result the
-model itself asked for.
+model itself asked for — and those results pass the untrusted-output fence and
+secret redaction like any other remote content (see the threat model).
 
 ## 🗂️ Information Sources
 

@@ -16,6 +16,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 8 | 샌드박스 자식 프로세스 → 호스트 프로세스 | 자식 프로세스 생성 | `scrub_env`, `bwrap`/`seatbelt` 격리 |
 | 9 | 메모리 / 스킬 파일 → 시스템 프롬프트 | 프롬프트 조립 | 설치 시 스킬 스캔 게이트; **쓰기 시 주입 차단은 미구현** |
 | 10 | TaskFlow step 결과 → 하위 step | DAG 간선 | 기대→실제 폐루프: schema 게이트, step judge, 증거 원장 |
+| 11 | 원격 페이지 → 에이전트 | 브라우저 도구 | 명시적으로 켜기 전에는 꺼져 있음(`SHERRY_BROWSER_AGENT_ENABLED`, 부팅 시 읽음). 모든 도구의 출력은 **신뢰 불가 출력 펜스**를 거치고, 디버그 포트는 백엔드 프로세스를 벗어나지 않습니다 |
 
 ## 데이터 분류
 
@@ -58,7 +59,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 | 성질 | 구현 |
 |---|---|
-| 범위 | `web_search`, `tavily_search`(API 키를 설정하면 같은 도구가 Tavily 자체 이름으로 출하됨), `message_search`, 그리고 모든 `mcp_` 도구 |
+| 범위 | `web_search`, `tavily_search`(API 키를 설정하면 같은 도구가 Tavily 자체 이름으로 출하됨), `message_search`, 모든 `mcp_` 도구, 그리고 모든 `browser_` 도구(페이지가 쓴 텍스트——특히 `browser_snapshot`) |
 | 구분자 위조 | 페이로드 안의 닫는 태그는 감싸기 전에 `</untrusted-tool-result>` 로 바뀌어 블록을 일찍 닫을 수 없습니다 |
 | 순서 | 먼저 evict 후 감싸므로 펜스는 모델이 실제로 읽는 미리보기를 감쌉니다 |
 | 원문 | 펜스되는 것은 모델이 보는 모습뿐이며, 내부 영속화가 가진 메시지는 결코 변형되지 않습니다 |
@@ -74,7 +75,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 | 면 | 적용 주체 | 스위치 |
 |---|---|---|
 | 모든 로그 레코드(콘솔 + 세 개의 로테이션 파일) | `agent/security/redact_formatter.py`(`logs/logger.py` 가 설치하는 loguru patcher) | 항상 켜짐——로그 파일은 세션보다 오래 살고, 읽는 사람은 그 비밀을 본 적이 없습니다 |
-| 유출되기 쉬운 도구 출력(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`) | 펜스와 같은 미들웨어 | `config/features/agent_side/redaction.py` 의 `REDACTION["tool_output_enabled"]` |
+| 유출되기 쉬운 도구 출력(`terminal`, `python_repl`, 신뢰 불가 도구군, `mcp_*`, `browser_*`) | 펜스와 같은 미들웨어 | `config/features/agent_side/redaction.py` 의 `REDACTION["tool_output_enabled"]` |
 | 파일 도구(`read_file`, `patch_file`, `write_file`) | — | 의도적으로 마스킹하지 않습니다: 에이전트가 자기 설정을 편집하는데, 마스킹하면 "읽고 되쓰기"가 손실이 됩니다 |
 
 대상: 벤더 키 접두(`sk-`, `ghp_`, `AKIA`, `xox*`, `AIza`, `hf_` 등), 여러 설정 형식의 비밀 이름 대입(`.env`, INI, YAML, TOML, JSON——`"CURATOR_API_KEY"` 같은 접두 키와 공백 포함 인용 값 포함), `Authorization` / `X-API-Key` 헤더, JWT, PEM 개인키 블록, URL 자격 증명과 쿼리 파라미터.

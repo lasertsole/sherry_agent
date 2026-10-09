@@ -87,6 +87,12 @@ def test_the_documented_fence_matches_the_wrapper():
     assert {"web_search", "tavily_search", "message_search"} <= UNTRUSTED_TOOL_NAMES
     for name in sorted(UNTRUSTED_TOOL_NAMES):
         assert f"`{name}`" in doc, f"the fence section stopped naming {name}"
+    # The browser family is prefix-fenced because every verb returns page-authored
+    # text; the document names the prefix, and the fence must actually cover it.
+    from agent.security.untrusted_wrapper import is_untrusted_tool
+
+    assert is_untrusted_tool("browser_snapshot") is True
+    assert "`browser_`" in doc, "the fence section stopped naming the browser prefix"
 
 
 def test_the_security_policy_and_operations_sections_are_present():

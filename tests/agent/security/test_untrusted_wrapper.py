@@ -32,7 +32,10 @@ _OPEN = f"<{WRAPPER_TAG}"
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("name", ["web_search", "message_search", "mcp_filesystem_read"])
+@pytest.mark.parametrize(
+    "name",
+    ["web_search", "message_search", "mcp_filesystem_read", "browser_snapshot", "browser_evaluate"],
+)
 def test_attacker_facing_tools_are_untrusted(name):
     assert is_untrusted_tool(name) is True
 
@@ -61,6 +64,24 @@ def test_the_policy_covers_the_tools_that_actually_ship():
     # The keyed web-search branch ships under TavilySearch's own name, so the
     # policy must carry it even though this environment uses the fallback.
     assert "tavily_search" in UNTRUSTED_TOOL_NAMES
+
+
+def test_the_browser_tool_family_is_fenced():
+    """Every ``browser_*`` verb returns page-authored text — all of it is fenced.
+
+    The names are read off the module's own declarations (the tools only
+    register when the feature is enabled, so building them here would prove
+    nothing on a default install).
+    """
+    import pathlib
+    import re
+
+    source = pathlib.Path("agent/tools/browser/__init__.py").read_text(encoding="utf-8")
+    names = sorted(set(re.findall(r'name: str = "(browser_[a-z_]+)"', source)))
+
+    assert names, "the browser tool family stopped declaring its names"
+    for name in names:
+        assert is_untrusted_tool(name) is True, name
 
 
 # ---------------------------------------------------------------------------
