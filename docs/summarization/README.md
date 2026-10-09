@@ -153,7 +153,7 @@ All thresholds live in `config/features/agent_side/summarization.py` (SUMMARIZAT
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | Persistent watermark store: idempotent marking, session scoping, cleanup on session deletion, empty-input no-ops |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | Marker semantics: the summary pair survives later compaction; FACT C fixture (window 26 000 → usable 10 000, truncate line 7 000) |
 
-The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **7141 passed / 12 skipped / 0 failed** (GROUP A 5741P/0S + GROUP B 1312P/12S + GROUP C 88P).
+The full process-isolated suite (`uv run python tests/run_tests_split.py`) passes with **7155 passed / 12 skipped / 0 failed** (GROUP A 5755P/0S + GROUP B 1312P/12S + GROUP C 88P).
 
 ## ⚠️ Honesty & Limitations
 

@@ -305,6 +305,7 @@ Browser-mode chat streaming details:
 - Server frames: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; chunks carry a `type` (`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`) and tool metadata
 - Interrupted streams reconnect with exponential backoff (1s/2s/4s, max 3 attempts via `WS_RECONNECT_MAX_ATTEMPTS`); a mid-stream loss raises `StreamInterruptedError` and emits `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` via mitt
 - HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`)
+- A turn this page never sent (the plan-continuation auto-turn, a subagent-completion injection, a cron run) arrives with **no `turn_started`** — the auto-turn passes no turn identity — so its chunks cannot be streamed into a local row; the `done` handler refetches the newest turn page, which renders the finished answer without a reload
 
 ### WebSocket Singletons (ws.ts)
 

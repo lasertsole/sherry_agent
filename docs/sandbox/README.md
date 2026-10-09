@@ -28,7 +28,7 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 | **Filesystem reads** | Child reads `~/.ssh`, `.env`, credential stores | L2 read-shield (sensitive-path masking, Linux / macOS) + sensitive-file regex (terminal) |
 | **File-tool path arguments** | A tool call asks `read_file` for a traversal or hard-denied path | §5 external-path gate + §6 structural gates + §7 `PathGuard` (external paths still go through HITL) |
 | **Process / session scope** | Child shares namespaces and survives the parent | L2 `--unshare-all`, `--die-with-parent` |
-| **Deliberate bypass** | Model asks for `sandbox=False` | Human approval gate (HITL) |
+| **Deliberate bypass** | Model asks for `sandbox=False` | Human approval gate (HITL) — skipped by a session in `full_access` |
 | **Programmatic tool calls (PTC)** | A generated `execute_code` child script calls real tools and could reach the filesystem directly | L1 env scrub + L2 OS sandbox wrap (same backend as `terminal` / `python_repl`) + restricted builtins + import allowlist |
 
 Two layers plus one gate — plus a separate path-defense stack for the file tools:

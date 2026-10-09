@@ -58,7 +58,7 @@ Two static pattern-matchers that classify commands without side effects:
 
 | Function | Purpose |
 |---|---|
-| `detect_hardline_command(cmd)` | Checks against `HARDLINE_PATTERNS` — commands that must always be reviewed (`rm -rf`, `format`, `dd`, etc.) |
+| `detect_hardline_command(cmd)` | Checks against `HARDLINE_PATTERNS` — commands **denied outright** (no card, no approval, no bypass in any access mode): `rm -rf` on an absolute path or with `--no-preserve-root`, `mkfs`, `dd if=… of=/dev/…`, `shutdown` / `reboot`, fork bombs, `chmod -R 777 /`, `> /dev/sdX`, `sysctl -w`, `iptables -F` |
 | `detect_dangerous_command(cmd)` | Checks against `DANGEROUS_PATTERNS` — commands with high destructive potential (`DROP TABLE`, `shutdown`, `rm`, force pushes) |
 
 Both return the first matching pattern (string) or `None`.
@@ -195,6 +195,10 @@ Not every interrupt comes from this middleware. When a file tool (`read_file`, `
 - `yolo` — permanently allow all external paths (sets the global YOLO flag);
 - `reject` — deny the access.
 
+The access-mode switch does NOT lift this gate: only `yolo` on this card (a
+persistent global flag, `external_path_yolo`) or an allowlist entry does. A
+session in `full_access` still gets this card for an outside-root path.
+
 ▶️ Full details: [docs/sandbox/isolation/README.md](../../../docs/sandbox/isolation/README.md#5-external-file-path-gate-file-tools).
 
 ---
@@ -244,6 +248,15 @@ switch applies from the next tool call on.
 | `confirm_all` | `hitl:session_confirm_all` | Strict: every terminal command and every file change (`write_file` / `patch_file`) asks. Ordinary commands ask too, smart approval is skipped, and the remembered first-call confirmation is ignored so the same tool asks again on every call. The hardline blocklist and the user deny rules still block outright. |
 | `auto_edit` | — | Default: only dangerous or uncertain calls ask. A file change never asks — an edit is licensed by the read-before-write license, the external-path card and `PathGuard`, not by a prompt; `first_call_confirmation_enabled` can restore an ask-once reminder on top. |
 | `full_access` | `hitl:session_yolo` | Bypass-all (YOLO): no approval card for this session. The hardline blocklist, the deny rules and the external-path deny list still apply. |
+
+What `auto_edit` and `full_access` actually differ on (verified against the
+pipeline):
+
+* a **dangerous** command (`detect_dangerous_command`, e.g. a relative `rm -rf dir`) — a card in `auto_edit`, unattended in `full_access`;
+* `sandbox=False` (the deliberate sandbox bypass) — a card in `auto_edit` for `terminal` and `python_repl` alike, skipped in `full_access`;
+* a clawhub remote-npm command — always carded in `auto_edit`, skipped in `full_access`;
+* a file edit — identical: neither asks;
+* the external-path gate, the hardline blocklist and the user deny rules — identical in both: the hardline list is never lifted, and the external-path gate answers to its own persistent flag (`external_path_yolo`), never to the access mode.
 
 The strict and bypass flags are mutually exclusive — `set_session_yolo()` and
 `set_session_confirm_all()` clear each other, and `auto_edit` clears both.

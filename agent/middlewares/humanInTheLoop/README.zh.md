@@ -58,7 +58,7 @@ HumanInTheLoop
 
 | 函数 | 用途 |
 |---|---|
-| `detect_hardline_command(cmd)` | 对照 `HARDLINE_PATTERNS` 检查——必须始终审核的命令（`rm -rf`、`format`、`dd` 等） |
+| `detect_hardline_command(cmd)` | 对照 `HARDLINE_PATTERNS` 检查——**直接拒绝**的命令（不弹卡、不能批准、任何访问模式都绕不过）：`rm -rf` 作用于绝对路径或带 `--no-preserve-root`、`mkfs`、`dd if=… of=/dev/…`、`shutdown` / `reboot`、fork 炸弹、`chmod -R 777 /`、`> /dev/sdX`、`sysctl -w`、`iptables -F` |
 | `detect_dangerous_command(cmd)` | 对照 `DANGEROUS_PATTERNS` 检查——具有高破坏潜力的命令（`DROP TABLE`、`shutdown`、`rm`、强制推送等） |
 
 两者都返回第一个匹配的模式（字符串）或 `None`。
@@ -195,6 +195,8 @@ LLM 输出 → after_model
 - `yolo` —— 永久允许所有外部路径（写入全局 YOLO 标志）；
 - `reject` —— 拒绝本次访问。
 
+访问模式开关**不能**解除这道闸门：只有在这张卡上选 `yolo`（持久全局标记 `external_path_yolo`）或把目录加入允许列表才行。处于 `full_access` 的会话访问根目录之外的路径时，仍然会看到这张卡。
+
 ▶️ 详见：[docs/sandbox/isolation/README.zh.md](../../../docs/sandbox/isolation/README.zh.md#5-外部文件路径门禁文件工具)。
 
 ---
@@ -243,6 +245,14 @@ middleware = HumanInTheLoop(
 | `confirm_all` | `hitl:session_confirm_all` | 严格：每条终端命令、每次文件改动（`write_file` / `patch_file`）都要确认。普通命令也问，智能审批被跳过，且本会话已记住的首次确认被忽略——同一个工具每次调用都会再问。硬拉黑名单与用户 deny 规则仍然直接拦截。 |
 | `auto_edit` | — | 默认：只有危险或不确定的调用才弹卡。文件改动**从不**询问——编辑由读前写许可证、外部路径卡与 `PathGuard` 约束，而不是靠一次弹卡；`first_call_confirmation_enabled` 可以另行恢复「首次问一次」的提醒。 |
 | `full_access` | `hitl:session_yolo` | 全量旁路（YOLO）：该会话不再弹审批卡。硬拉黑名单、deny 规则与外部路径拒绝清单依然生效。 |
+
+`auto_edit` 与 `full_access` 真正的区别（已对照实现逐条验证）：
+
+* **危险命令**（命中 `detect_dangerous_command`，例如相对路径的 `rm -rf dir`）——`auto_edit` 弹卡，`full_access` 直接执行；
+* `sandbox=False`（有意绕过沙箱）——`auto_edit` 下 `terminal` 与 `python_repl` 都弹卡，`full_access` 跳过；
+* clawhub 远程 npm 命令——`auto_edit` 必弹卡，`full_access` 跳过；
+* 文件编辑——完全相同：两者都不问；
+* 外部路径闸门、硬黑名单与用户 deny 规则——两者相同：硬黑名单永不放行，外部路径闸门只认它自己的持久标记（`external_path_yolo`），与访问模式无关。
 
 严格标志与旁路标志互斥——`set_session_yolo()` 与 `set_session_confirm_all()`
 互相清除，`auto_edit` 两个都清。审批卡上点 `yolo` 设置的正是控件读取的那个标志，

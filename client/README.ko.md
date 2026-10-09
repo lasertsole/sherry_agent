@@ -305,6 +305,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 - 서버 프레임: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; 청크는 `type`(`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`)과 도구 메타데이터를 포함
 - 스트림 중단 시 지수 백오프로 재연결(1s/2s/4s, `WS_RECONNECT_MAX_ATTEMPTS`로 최대 3회); 스트림 중 손실은 `StreamInterruptedError`를 발생시키고 mitt를 통해 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` 이벤트를 발행
 - HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송
+- 이 페이지가 보낸 적 없는 턴(계획 연속 auto-turn, 서브에이전트 완료 주입, cron 실행)에는 **`turn_started`가 오지 않습니다**——auto-turn은 턴 식별자를 전달하지 않습니다——그래서 청크를 로컬 행으로 스트리밍할 수 없습니다. `done` 핸들러가 최신 턴 페이지를 다시 가져와 새로고침 없이 최종 답변을 표시합니다
 
 ### WebSocket 싱글턴(ws.ts)
 

@@ -58,7 +58,7 @@ HumanInTheLoop
 
 | 関数 | 目的 |
 |---|---|
-| `detect_hardline_command(cmd)` | `HARDLINE_PATTERNS` に対してチェック — 常にレビューが必要なコマンド(`rm -rf`、`format`、`dd` など) |
+| `detect_hardline_command(cmd)` | `HARDLINE_PATTERNS` に対してチェック — **即座に拒否**されるコマンド（カードなし・承認不可・どのアクセスモードでも回避不可）: 絶対パスや `--no-preserve-root` 付きの `rm -rf`、`mkfs`、`dd if=… of=/dev/…`、`shutdown` / `reboot`、フォーク爆弾、`chmod -R 777 /`、`> /dev/sdX`、`sysctl -w`、`iptables -F` |
 | `detect_dangerous_command(cmd)` | `DANGEROUS_PATTERNS` に対してチェック — 破壊可能性の高いコマンド(`DROP TABLE`、`shutdown`、`rm`、強制プッシュ) |
 
 どちらも最初に一致したパターン(文字列)または `None` を返します。
@@ -195,6 +195,8 @@ LLM 出力 → after_model
 - `yolo` — すべての外部パスを恒久的に許可(グローバル YOLO フラグを書き込む);
 - `reject` — アクセスを拒否。
 
+アクセスモードの切り替えではこのゲートは解除されません: このカードで `yolo` を選ぶ（永続グローバルフラグ `external_path_yolo`）か、許可リストに追加した場合だけです。`full_access` のセッションでも、ルート外のパスではこのカードが出ます。
+
 ▶️ 詳細: [docs/sandbox/isolation/README.ja.md](../../../docs/sandbox/isolation/README.ja.md#5-外部ファイルパスゲートファイルツール)。
 
 ---
@@ -244,6 +246,14 @@ middleware = HumanInTheLoop(
 | `confirm_all` | `hitl:session_confirm_all` | 厳格: すべての端末コマンドとすべてのファイル変更（`write_file` / `patch_file`）が確認を求めます。通常のコマンドも確認し、スマート承認はスキップされ、記憶された初回確認は無視されるため同じツールでも毎回確認します。ハードライン ブロックリストとユーザーの deny ルールは引き続き遮断します。 |
 | `auto_edit` | — | 既定: 危険または不確実な呼び出しだけが確認を求めます。ファイル変更は**決して**確認しません——編集は読み取り先行ライセンス・外部パスカード・`PathGuard` が担保し、プロンプトには依存しません。`first_call_confirmation_enabled` で「初回のみ確認」のリマインダーを任意で戻せます。 |
 | `full_access` | `hitl:session_yolo` | 全バイパス（YOLO）: このセッションでは承認カードを出しません。ハードライン ブロックリスト、deny ルール、外部パスの拒否リストは引き続き適用されます。 |
+
+`auto_edit` と `full_access` が実際に異なる点（実装に対して検証済み）:
+
+* **危険な**コマンド（`detect_dangerous_command` に一致、例: 相対パスの `rm -rf dir`）—— `auto_edit` ではカード、`full_access` では無人実行;
+* `sandbox=False`（意図的なサンドボックス・バイパス）—— `auto_edit` では `terminal` と `python_repl` のどちらもカード、`full_access` ではスキップ;
+* clawhub のリモート npm コマンド —— `auto_edit` では常にカード、`full_access` ではスキップ;
+* ファイル編集 —— 両者で同一: どちらも確認しません;
+* 外部パスゲート・ハードライン・ユーザーの deny ルール —— 両者で同一: ハードラインは決して解除されず、外部パスゲートは自身の永続フラグ（`external_path_yolo`）にのみ従い、アクセスモードには従いません。
 
 厳格フラグとバイパス フラグは排他です——`set_session_yolo()` と
 `set_session_confirm_all()` は互いを消去し、`auto_edit` は両方を消去します。

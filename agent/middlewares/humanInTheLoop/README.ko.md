@@ -58,7 +58,7 @@ HumanInTheLoop
 
 | 함수 | 용도 |
 |---|---|
-| `detect_hardline_command(cmd)` | `HARDLINE_PATTERNS`에 대해 검사 — 항상 검토해야 하는 명령(`rm -rf`, `format`, `dd` 등) |
+| `detect_hardline_command(cmd)` | `HARDLINE_PATTERNS`에 대해 검사 — **즉시 거부**되는 명령(카드 없음, 승인 불가, 어떤 접근 모드에서도 우회 불가): 절대 경로 또는 `--no-preserve-root`가 붙은 `rm -rf`, `mkfs`, `dd if=… of=/dev/…`, `shutdown` / `reboot`, 포크 폭탄, `chmod -R 777 /`, `> /dev/sdX`, `sysctl -w`, `iptables -F` |
 | `detect_dangerous_command(cmd)` | `DANGEROUS_PATTERNS`에 대해 검사 — 파괴 가능성이 높은 명령(`DROP TABLE`, `shutdown`, `rm`, 강제 푸시) |
 
 둘 다 첫 번째 일치하는 패턴(문자열) 또는 `None`을 반환합니다.
@@ -195,6 +195,8 @@ LLM 출력 → after_model
 - `yolo` — 모든 외부 경로를 영구 허용(전역 YOLO 플래그 기록);
 - `reject` — 접근 거부.
 
+접근 모드 전환으로는 이 게이트가 풀리지 않습니다: 이 카드에서 `yolo`를 고르거나(영속 전역 플래그 `external_path_yolo`) 허용 목록에 추가했을 때만 풀립니다. `full_access` 세션도 루트 밖 경로에서는 이 카드를 봅니다.
+
 ▶️ 자세히: [docs/sandbox/isolation/README.ko.md](../../../docs/sandbox/isolation/README.ko.md#5-외부-파일-경로-게이트파일-도구)。
 
 ---
@@ -243,6 +245,14 @@ middleware = HumanInTheLoop(
 | `confirm_all` | `hitl:session_confirm_all` | 엄격: 모든 터미널 명령과 모든 파일 변경(`write_file` / `patch_file`)이 확인을 요구합니다. 평범한 명령도 확인하고, 스마트 승인은 건너뛰며, 기억된 최초 확인은 무시되어 같은 도구라도 매번 다시 묻습니다. 하드라인 차단 목록과 사용자 deny 규칙은 그대로 차단합니다. |
 | `auto_edit` | — | 기본: 위험하거나 불확실한 호출만 확인을 요구합니다. 파일 변경은 **결코** 확인을 요구하지 않습니다——편집은 읽기 우선 라이선스·외부 경로 카드·`PathGuard`가 보증하며 프롬프트에 의존하지 않습니다. `first_call_confirmation_enabled`로 '최초 1회 확인' 알림을 선택적으로 되살릴 수 있습니다. |
 | `full_access` | `hitl:session_yolo` | 전체 우회(YOLO): 이 세션에서는 승인 카드를 띄우지 않습니다. 하드라인 차단 목록, deny 규칙, 외부 경로 거부 목록은 계속 적용됩니다. |
+
+`auto_edit`와 `full_access`가 실제로 다른 지점(구현 대조 검증):
+
+* **위험한** 명령(`detect_dangerous_command` 일치, 예: 상대 경로 `rm -rf dir`) —— `auto_edit`는 카드, `full_access`는 무인 실행;
+* `sandbox=False`(의도적 샌드박스 우회) —— `auto_edit`에서는 `terminal`과 `python_repl` 모두 카드, `full_access`에서는 건너뜀;
+* clawhub 원격 npm 명령 —— `auto_edit`는 항상 카드, `full_access`는 건너뜀;
+* 파일 편집 —— 동일: 둘 다 묻지 않음;
+* 외부 경로 게이트·하드라인·사용자 deny 규칙 —— 동일: 하드라인은 결코 해제되지 않고, 외부 경로 게이트는 자체 영속 플래그(`external_path_yolo`)에만 따르며 접근 모드와 무관합니다.
 
 엄격 플래그와 우회 플래그는 상호 배타적입니다 — `set_session_yolo()`와
 `set_session_confirm_all()`은 서로를 지우고, `auto_edit`는 둘 다 지웁니다.

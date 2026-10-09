@@ -153,7 +153,7 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 永続ウォーターマークストア: 冪等なマーキング、セッション分離、セッション削除時のクリーンアップ、空入力の no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | マーカー意味論: 要約ペアは後続の圧縮でも生存; FACT C フィクスチャ（ウィンドウ 26 000 → usable 10 000、切り詰め線 7 000） |
 
-プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **7141 passed / 12 skipped / 0 failed** で合格（GROUP A 5741P/0S + GROUP B 1312P/12S + GROUP C 88P）。
+プロセス分離フルスイート（`uv run python tests/run_tests_split.py`）は **7155 passed / 12 skipped / 0 failed** で合格（GROUP A 5755P/0S + GROUP B 1312P/12S + GROUP C 88P）。
 
 ## ⚠️ 正直な限界
 

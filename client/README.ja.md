@@ -305,6 +305,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 - サーバーフレーム：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；チャンクは `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）とツールメタデータを保持
 - ストリーム切断時は指数バックオフで再接続（1s/2s/4s、`WS_RECONNECT_MAX_ATTEMPTS` により最大 3 回）；ストリーム中の損失は `StreamInterruptedError` を投げ、mitt 経由で `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` を発行
 - HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）として送信
+- このページが送信していないターン（計画継続の auto-turn、サブエージェント完了の注入、cron 実行）には **`turn_started` が来ません**——auto-turn はターン識別を渡しません——そのためチャンクをローカル行へ流せません。`done` ハンドラーが最新ターンページを再取得し、リロードなしで最終回答を表示します
 
 ### WebSocket シングルトン（ws.ts）
 
