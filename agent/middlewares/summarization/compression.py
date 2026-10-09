@@ -14,6 +14,7 @@ semantics.
 
 import asyncio
 import re
+from pathlib import Path
 from typing import Any, cast
 
 from langchain.agents.middleware import ModelRequest
@@ -62,6 +63,57 @@ MIN_ARGS_CHARS_TO_TRUNCATE = SUMMARIZATION["min_args_chars_to_truncate"]
 MAX_TOOL_ARGS_CHARS = SUMMARIZATION["max_tool_args_chars"]
 PROTECTED_TOOLS = SUMMARIZATION["protected_tools"]
 LATEST_USER_REQUEST_MAX_CHARS = SUMMARIZATION["latest_user_request_max_chars"]
+
+
+def _invalidate_compressed_read_licenses(
+    messages_to_summarize: list[AnyMessage],
+    preserved: list[AnyMessage],
+    session_id: str,
+) -> None:
+    """Drop read licenses whose ``read_file`` result is being compressed away.
+
+    ``write_file`` may only overwrite a file this session has read (the
+    read-before-write license in ``read_state``). Summarization discards the
+    ``read_file`` ToolMessage — the file content leaves the context window —
+    while the license (a historical fact) would survive, letting the model
+    blind-overwrite from a summary that mentions a path and nothing else.
+
+    A license is dropped only when the file's read is in ``messages_to_summarize``
+    and NOT in ``preserved``: licenses are keyed by the LATEST read, so a later
+    read in the preserved tail still matches what the model can see.
+
+    Fail-open by construction: a miss is the old behaviour (license survives),
+    never a broken compression.
+    """
+    try:
+        from agent.tools.pub_base import forget_license
+        from agent.tools.pub_base.path_utils import resolve_workspace_path
+        from runtime.session.project_dir import current_project_dir
+
+        # Same resolution read_file itself used, so the keys match.
+        root = current_project_dir(session_id)
+
+        def _read_paths(messages: list[AnyMessage]) -> set[Path]:
+            paths: set[Path] = set()
+            for message in messages:
+                for tool_call in getattr(message, "tool_calls", None) or []:
+                    if tool_call.get("name") != "read_file":
+                        continue
+                    file_path = (tool_call.get("args") or {}).get("file_path")
+                    if not isinstance(file_path, str) or not file_path:
+                        continue
+                    try:
+                        paths.add(resolve_workspace_path(file_path, root))
+                    except Exception:
+                        continue  # unreadable arg / out-of-bounds path: skip
+            return paths
+
+        summarized = _read_paths(messages_to_summarize)
+        still_visible = _read_paths(preserved)
+        for path in summarized - still_visible:
+            forget_license(session_id, path)
+    except Exception:  # noqa: S110 — fail-open on purpose: never break compression
+        pass
 
 
 class CompressionMixin:
@@ -130,6 +182,7 @@ class CompressionMixin:
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+                _invalidate_compressed_read_licenses(messages_to_summarize, preserved, session_id)
                 messages_to_summarize = offload_inline_media(messages_to_summarize, session_id)
 
                 self._fire_compression_nudges(session_id, original_messages, messages_to_summarize)
@@ -220,6 +273,7 @@ class CompressionMixin:
             if cutoff > 0:
                 messages_to_summarize = current_messages[:cutoff]
                 preserved = current_messages[cutoff:]
+                _invalidate_compressed_read_licenses(messages_to_summarize, preserved, session_id)
                 messages_to_summarize = await asyncio.to_thread(
                     offload_inline_media, messages_to_summarize, session_id
                 )

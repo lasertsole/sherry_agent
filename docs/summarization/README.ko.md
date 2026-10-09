@@ -139,6 +139,7 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 미들웨어 통합: T1/T2 LLM 없는 클립, 불충분 클립 퇴화, 킬 스위치, T4/T5 클립 후 재시도와 클립→압축 퇴화, 동기/비동기 패리티, 새니타이저 불변 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12개 클래스: T2 소프트 오버플로, T2 쿨다운, T2 음성/무작동, 동기/비동기 패리티, T1 사전 점검, 라우트 결정, T3 트리거/3형태/음성 이중, T4/T5 복구, 전체 안티-스래싱 매트릭스, 전체 분기 패리티, 체이닝 요약 필터링 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 압축 시점 인라인 미디어 오프로드: 쓰기 + 포인터, 내용 해시 중복 제거, 디코드/쓰기 실패 플레이스홀더, 보존 윈도우 미디어 불변, 동기/비동기 패리티, `evicted_refs` 수집 |
+| `tests/agent/middlewares/test_license_invalidation.py` | 11 | 읽기 라이선스 무효화: 요약에 버려진 `read_file`은 라이선스를 잃고(이후 `write_file` 거부), 보존 꼬리의 읽기는 유지, 최신 읽기 규칙, 부분 중첩, `patch_file` / append 무영향, 재읽기로 재발급, 동기/비동기 패리티, fail-open |
 | `tests/pub/func/test_estimate_tokens_media.py` | 22 | 블록 단위 멀티모달 추정: 유형별 고정 비용, 5 MB base64 회귀, 미디어를 숨긴 미지 블록, `str` / `None` / 빈 리스트 / 순수 텍스트 경계 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 체이닝 요약 필터링: 이전 쌍을 직렬화된 대화에서 제거, 일반/빈/다중 쌍 입력, 마커 없는 레거시 human 보존, async `_acreate_summary` 미러 |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 구조화 요약: schema 강제 변환, 렌더링 왕복 + 바이트 안정 + 섹션 순서, 코드층 cap + 주석, latest request 그대로, json_mode/json_repair/free-form 3티어, prior-doc JSON 체이닝, 레거시 MD 전환, 퇴출 포인터 수집·승계 |

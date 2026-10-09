@@ -37,6 +37,7 @@ from pathlib import Path
 __all__ = [
     "FileLicense",
     "forget_all",
+    "forget_license",
     "forget_session",
     "licensed",
     "note_edit",
@@ -121,6 +122,20 @@ def forget_session(session_id: str) -> None:
     with _LOCK:
         for key in [k for k in _LICENSES if k[0] == session_id]:
             del _LICENSES[key]
+
+
+def forget_license(session_id: str, path: Path) -> None:
+    """Drop ONE file's license for a session (the file left the context window).
+
+    Called when the ``read_file`` result that granted the license is compressed
+    away by the summarization middleware: the model no longer holds the file
+    content, so an overwrite off a stale memory would be a silent data loss.
+    The next ``write_file`` then answers ``UnreadFileError`` and a re-read
+    re-establishes the license.
+    """
+    key = _key(session_id, path)
+    with _LOCK:
+        _LICENSES.pop(key, None)
 
 
 def forget_all() -> None:

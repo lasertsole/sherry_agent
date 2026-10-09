@@ -28,7 +28,15 @@ from .atomic_write import (
     read_bytes_no_follow,
     revision_id,
 )
-from .read_state import FileLicense, licensed, note_edit, note_overwrite, note_read
+from .read_state import (
+    FileLicense,
+    forget_license,
+    forget_session,
+    licensed,
+    note_edit,
+    note_overwrite,
+    note_read,
+)
 from .path_lock import active_path_locks, path_lock
 from .file_lock import (
     FileBusyError,
@@ -79,6 +87,8 @@ __all__ = [
     "read_bytes_no_follow",
     "revision_id",
     "FileLicense",
+    "forget_license",
+    "forget_session",
     "licensed",
     "note_edit",
     "note_overwrite",

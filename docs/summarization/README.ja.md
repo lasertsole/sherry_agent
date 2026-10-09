@@ -139,6 +139,7 @@ content が**リスト**の場合はブロック単位で数え、リスト全�
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 ミドルウェア統合: T1/T2 の LLM なしクリップ、不十分クリップの劣化、キルスイッチ、T4/T5 のクリップ→再試行とクリップ→圧縮劣化、同期/非同期パリティ、サニタイザ不変 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 クラス: T2 ソフトオーバーフロー、T2 クールダウン、T2 負/無操作、同期/非同期パリティ、T1 事前点検、ルート判定、T3 トリガー/3 形態/負の二重実行、T4/T5 リカバリ、全アンチスラッシングマトリクス、全分岐パリティ、チェイニング要約フィルタリング |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 圧縮時のインライン・メディア・オフロード: 書き込み + ポインタ、内容ハッシュ重複排除、デコード/書き込み失敗のプレースホルダ、保持ウィンドウのメディア不変、同期/非同期パリティ、`evicted_refs` 収集 |
+| `tests/agent/middlewares/test_license_invalidation.py` | 11 | 読み取りライセンスの無効化: 要約に捨てられた `read_file` はライセンスを失い（後の `write_file` は拒否）、保持側の末尾の読み取りは保ち、最新読み取り規則、部分的な重なり、`patch_file` / append は無影響、再読で再発行、同期/非同期パリティ、fail-open |
 | `tests/pub/func/test_estimate_tokens_media.py` | 22 | ブロック単位のマルチモーダル推定: 固定型コスト、5 MB base64 回帰、メディアを隠す未知ブロック、`str` / `None` / 空リスト / 純テキスト境界 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | チェイニング要約フィルタリング: 旧ペアを直列化会話から除去、通常/空/複数ペア入力、未マークの旧セッション human を保持、async `_acreate_summary` ミラー |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 構造化要約: schema 強制変換、レンダリング往復 + バイト安定 + セクション順、コード層 cap + 注記、latest request 逐字、json_mode/json_repair/free-form の 3 ティア、prior-doc JSON チェイニング、旧 MD 遷移、退避ポインタの収集と継承 |

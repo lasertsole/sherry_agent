@@ -139,6 +139,7 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 | `tests/agent/middlewares/test_summarization_overflow_clip.py` | 9 | P1-2 中间件集成：T1/T2 不调 LLM 裁剪、裁剪不足降级、总开关、T4/T5 先裁后重试与裁→压缩降级、同步/异步奇偶、sanitizer 不移位 |
 | `tests/agent/middlewares/test_compression_comprehensive.py` | 52 | 12 个类：T2 软溢出、T2 冷却期、T2 负面/无操作、同步/异步奇偶、T1 预检、路由决策、T3 触发/三形态/负面双跑、T4/T5 恢复、完整防抖矩阵、全分支奇偶、链式摘要过滤 |
 | `tests/agent/middlewares/test_compression_media_offload.py` | 12 | 压缩期内联媒体卸载：写盘 + 指针、内容 hash 去重、解码/写盘失败占位、保留窗口媒体不动、同步/异步两路径、`evicted_refs` 收集 |
+| `tests/agent/middlewares/test_license_invalidation.py` | 11 | 读许可证失效：被摘要丢掉的 `read_file` 失去许可证（之后的 `write_file` 被拒）、保留尾部的读取保住许可证、最近一次读取规则、部分重叠、`patch_file` / append 不受影响、重读重新发证、同步/异步两路径、fail-open |
 | `tests/pub/func/test_estimate_tokens_media.py` | 22 | 逐块多模态估算：固定分型成本、5 MB base64 回归、未知块藏媒体、`str` / `None` / 空列表 / 纯文本边界 |
 | `tests/agent/middlewares/test_summary_message_filtering.py` | 6 | 链式摘要过滤：旧消息对从序列化对话中移除、普通/空/多对输入、无标记的旧会话 human 保留、async `_acreate_summary` 镜像 |
 | `tests/agent/middlewares/test_summary_doc.py` + `test_summary_doc_middleware.py` | 41 | 结构化摘要：schema 兼容/强制转换、渲染往返 + 字节稳定 + 节顺序、代码层 cap + 注记、latest request 逐字、json_mode/json_repair/free-form 三档、prior-doc JSON 链式、旧 MD 过渡、驱逐指针收集与延续 |
