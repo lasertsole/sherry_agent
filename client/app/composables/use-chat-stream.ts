@@ -397,7 +397,15 @@ export function useChatStream(deps: ChatStreamDeps) {
       // was cut at its output cap and the composer stayed "busy".
       if (isSending.value) {
         settleStuckTurn('done frame without a tracked turn');
+        return;
       }
+      // A SERVER-initiated turn just finished: the plan-continuation auto-turn,
+      // a subagent-completion injection, a cron run. This page never sent it, so
+      // it has no streaming turn to settle and no `turn_started` frame to adopt
+      // (the auto-turn passes no turn identity) — but the answer IS persisted,
+      // and without this refetch the continuation stayed invisible until a
+      // manual reload. Reloading the newest turn page is the repair.
+      void loadSessionHistory(mySid);
       return;
     }
     // The graph stopped streaming, so every tool card still spinning never got

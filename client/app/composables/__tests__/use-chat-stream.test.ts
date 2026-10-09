@@ -430,6 +430,24 @@ describe('useChatStream busy-state recovery', () => {
     expect(state.markRunningToolsFailed).toHaveBeenCalled();
   });
 
+  it('reloads the history for a done frame of a turn this page never sent', async () => {
+    // A SERVER-initiated turn (the plan-continuation auto-turn, a subagent
+    // completion, a cron run) has no local send entry and gets no
+    // `turn_started` (the auto-turn passes no turn identity), so its chunks
+    // cannot be streamed. The finished answer IS persisted — without this
+    // refetch the continuation stayed invisible until a manual reload.
+    const harness = makeHarness();
+    harness.isSending.value = false;
+    harness.streamingTurn.value = null;
+
+    harness.stream.handleSocketDone({ modelName: 'stub' });
+
+    expect(harness.isSending.value).toBe(false);
+    expect(state.markRunningToolsFailed).not.toHaveBeenCalled();
+    await Promise.resolve(); // flush the fire-and-forget refetch
+    expect(harness.deps.loadSessionHistory).toHaveBeenCalledWith('s1');
+  });
+
   it('watchdog settles the turn once the server reports it is no longer active', async () => {
     vi.useFakeTimers();
     const harness = makeHarness();
