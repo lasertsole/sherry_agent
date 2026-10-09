@@ -228,6 +228,32 @@ describe('ProgressFloat', () => {
     expect(panel.get('[data-test="progress-float-header"]').text()).toContain('2/4');
   });
 
+  it('gives a COMPLETED checklist row the same green tick as a done step', async () => {
+    // The two halves speak different vocabularies (todos: completed; steps:
+    // done). Mapping only one of them silently degraded every finished
+    // checklist row to a grey circle — "已完成的，前面没有绿色的打勾".
+    const wrapper = await mountFloat();
+    handlers().todo!({
+      event: 'todo_updated',
+      session_id: 'sid-1',
+      content: {
+        todos: [
+          { content: '已完成的清单项', status: 'completed', priority: 'high' },
+          { content: '进行中的清单项', status: 'in_progress', priority: 'high' }
+        ]
+      }
+    });
+    await flushPromises();
+
+    await wrapper.get('[data-test="progress-float-trigger"]').trigger('click');
+    await flushPromises();
+
+    const rows = wrapper.get('[data-test="progress-float-todos"]').findAll('[data-test="progress-todo"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0].find('i.pi').classes()).toEqual(expect.arrayContaining(['pi-check-circle', 'text-emerald-500']));
+    expect(rows[1].find('i.pi').classes()).toContain('pi-spinner');
+  });
+
   it('says "not started" while every step is merely ready', async () => {
     // A board nobody has begun must not read as "wave 1/1": that number belongs
     // to work in flight, and the user read it as exactly that.

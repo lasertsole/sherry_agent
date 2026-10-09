@@ -252,12 +252,17 @@ function isTerminal(status: string): boolean {
 
 /**
  * Status → glyph + tone (the same vocabulary the todo dock uses).
+ *
+ * BOTH vocabularies the box renders must map here: flow steps say ``done``,
+ * checklist rows say ``completed`` — a missing case silently degrades that
+ * whole surface to the grey circle (and hides the green tick).
  * @param status
  * @returns The `pi` icon classes for the status.
  */
 function todoIcon(status: string): string {
   switch (status) {
     case 'done':
+    case 'completed':
       return 'pi-check-circle text-emerald-500';
     case 'in_progress':
     case 'dispatched':
