@@ -95,6 +95,7 @@ def _report_block(report: MergeReport) -> str:
         "### Isolated workspace merged",
         f"- {report.summary()} → {report.parent_root}",
     ]
+    lines.extend(_interface_lines(report))
     if report.skipped:
         lines.append(f"- Skipped (never merged through): {len(report.skipped)} path(s)")
     if report.conflicts:
@@ -106,3 +107,59 @@ def _report_block(report: MergeReport) -> str:
         if len(report.conflicts) > 20:
             lines.append(f"  - … and {len(report.conflicts) - 20} more")
     return "\n".join(lines)
+
+
+#: Rendering caps for the interface section: the parent agent needs the shape of
+#: the change, not an exhaustive listing of a regenerated file.
+_INTERFACE_MAX_FILES = 10
+_INTERFACE_MAX_PER_KIND = 20
+
+
+def _symbol_label(kind: str, parent: str | None) -> str:
+    """``function`` / ``class`` / ``method of `Api``` — how a line ends."""
+    if parent and kind == "method":
+        return f"method of `{parent}`"
+    if parent:
+        return f"{kind} of `{parent}`"
+    return kind
+
+
+def _interface_lines(report: MergeReport) -> list[str]:
+    """The ``Interface changes`` section, or ``[]`` when nothing changed."""
+    deltas = report.interface_changes
+    if not deltas:
+        return []
+
+    lines = [
+        "- **Interface changes** (renamed/added/removed symbols — another subagent may "
+        "still call an OLD name):"
+    ]
+    for delta in deltas[:_INTERFACE_MAX_FILES]:
+        if delta.error:
+            lines.append(f"  - `{delta.relpath}` ({delta.language}): not compared — {delta.error}")
+            continue
+        lines.append(f"  - `{delta.relpath}` ({delta.language}):")
+        for rename in delta.renamed[:_INTERFACE_MAX_PER_KIND]:
+            lines.append(
+                f"    - renamed: `{rename.old_name}` → `{rename.new_name}` "
+                f"({_symbol_label(rename.kind, rename.parent)})"
+            )
+        lines.extend(_overflow_line(len(delta.renamed)))
+        for removed in delta.removed[:_INTERFACE_MAX_PER_KIND]:
+            lines.append(
+                f"    - removed: `{removed.name}` ({_symbol_label(removed.kind, removed.parent)})"
+            )
+        lines.extend(_overflow_line(len(delta.removed)))
+        for added in delta.added[:_INTERFACE_MAX_PER_KIND]:
+            lines.append(f"    - added: `{added.name}` ({_symbol_label(added.kind, added.parent)})")
+        lines.extend(_overflow_line(len(delta.added)))
+    if len(deltas) > _INTERFACE_MAX_FILES:
+        lines.append(f"  - … and {len(deltas) - _INTERFACE_MAX_FILES} more file(s)")
+    return lines
+
+
+def _overflow_line(count: int) -> list[str]:
+    """``… and N more`` for one capping bucket, or nothing when it fits."""
+    if count <= _INTERFACE_MAX_PER_KIND:
+        return []
+    return [f"    - … and {count - _INTERFACE_MAX_PER_KIND} more"]

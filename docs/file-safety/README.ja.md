@@ -4,7 +4,7 @@
 
 > 同時に書き込む者——メイン Agent、最大 8 体のサブ Agent、そして同じプロジェクト上で動く 2 つ目の Sherry プロセス——が互いの編集を静かに破壊するのをどう止めるか：アトミック書き込み、二層 CAS、プロセス内のパス単位ロック、プロセス間 `flock`、`write_file` の読み取り先行ライセンス、そしてロックの下でマージされる任意参加の隔離ワークスペース。
 
-情報源：`agent/tools/pub_base/atomic_write.py`、`agent/tools/pub_base/path_lock.py`、`agent/tools/pub_base/file_lock.py`、`agent/tools/pub_base/read_state.py`、`agent/tools/file_tools/write_file.py`、`agent/tools/file_tools/read_file.py`、`agent/tools/file_tools/patch_file.py`、`agent/tools/subagent/isolation/`、`agent/tools/subagent/announce/workspace_merge.py`。本書のすべての定数はそのコードに対して確認済み。
+情報源：`agent/tools/pub_base/atomic_write.py`、`agent/tools/pub_base/path_lock.py`、`agent/tools/pub_base/file_lock.py`、`agent/tools/pub_base/read_state.py`、`agent/tools/file_tools/write_file.py`、`agent/tools/file_tools/read_file.py`、`agent/tools/file_tools/patch_file.py`、`agent/tools/subagent/isolation/`、`agent/tools/subagent/announce/workspace_merge.py`、`agent/tools/code_intel/symbol_diff.py`。本書のすべての定数はそのコードに対して確認済み。
 
 ## 目次
 
@@ -80,6 +80,8 @@
 
 レジストリには上限があり（4096 件、LRU）、**永続化されません**：再起動でライセンスは忘れられ、既存ファイルへの次の上書きは「まず読む」を返します——代償は再読 1 回で、失う編集は決してありません。追い出しは保護を落とすだけで、与えはしません。
 
+**圧縮もライセンスを終わらせます。** 要約ミドルウェアが `read_file` の結果を捨てるとき——内容がパスだけを挙げる要約に置き換わります——その読み取りが与えたライセンスも同時に破棄され、以降の `write_file` は古い記憶からの盲目的な上書きではなく「まず読む」と答えます。失うのは**最新の**読み取りが捨てられたファイルだけです：保持側の末尾にあるより新しい読み取りはライセンスを保ちます。このスキャンは fail-open で、パス引数を解決できない場合や、読み取り後にセッションがプロジェクトディレクトリを切り替えた場合は従来の挙動（ライセンスが残る）へ劣化します。
+
 ## 🌱 隔離サブエージェントワークスペース（git worktree）
 
 `sessions_spawn(isolation=True)` は子にプロジェクトの **git worktree** を与えます（実装は `agent/tools/subagent/isolation/`、ワークスペースは `src/data/isolated/` 配下、子の cwd は `<workspace>/tree`、ブランチは `sherry/<run8>`）。子はそこで端から端まで働き——自らのツール、`terminal`、テスト——実行が終端に達したとき、完了メッセージの配達の前に announce フローがツリーをマージします（静かな子の仕事も同様にマージされます）。
@@ -99,9 +101,10 @@
 
 - ワークスペースのマニフェスト（`snapshot.json`）は作成時点の通常ファイルごとの revision を記録し（メンバーはツリーから、revision は親から、mtime を揃えて未変更ファイルが変更と読まれないように）、ベースライン revision とブランチも記録します；
 - 子が変更したファイルは、親がまだスナップショット revision を保つ間だけ適用されます——そうでなければ**衝突**で、親のファイルは手つかずのままです；
-- 新規ファイルは空きにのみ作成されます；削除は親が依然一致することを要します；シンボリックリンクは決して貫通マージされません（スキップして報告）。
+- 新規ファイルは空きにのみ作成されます；削除は親が依然一致することを要します；シンボリックリンクは決して貫通マージされません（スキップして報告）；
+- マージされる各コードファイル（Python / TS / TSX / JS / JSX / Rust / Go）は書き込みの前に**シンボル単位**で比較されます——改名（同じ kind、同じ所属クラス、名前距離 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`）、削除、追加は完了返信の **Interface changes** 節に載ります。別のサブエージェントのファイルがまだ**古い名前**を呼んでいる可能性があるためです。この比較は fail-open で（巨大なファイルや解析不能なファイルはその節に注記されるだけで、決して致命的にはなりません）、上限もあります（10 ファイル、種類ごとに 20 件）。
 
-きれいなマージは worktree を登録解除し、そのブランチを削除してワークスペースを消します。衝突のあるマージは `<workspace>/tree` を検査用に残し、マニフェストを消費します——同じツリーが二度マージされることは決してありません。親が読む完了返信には報告が添えられ（`applied`、`created`、`deleted`、そしてパスごとの全衝突）、マージされたパスは親の証跡台帳で古いものとして印されます。
+きれいなマージは worktree を登録解除し、そのブランチを削除してワークスペースを消します。衝突のあるマージは `<workspace>/tree` を検査用に残し、マニフェストを消費します——同じツリーが二度マージされることは決してありません。親が読む完了返信には報告が添えられ（`applied`、`created`、`deleted`、インターフェース変更、そしてパスごとの全衝突）、マージされたパスは親の証跡台帳で古いものとして印されます。
 
 ## ⚖️ 代替案と実測
 
@@ -140,7 +143,7 @@
 
 ## 🧪 テスト
 
-`tests/agent/tools/file_tools/` が書き込み経路を固定します：`test_atomic_write.py`（原子性、シンボリックリンク拒否、二層 CAS、残留掃除）、`test_file_write_concurrency.py`（並行パッチ、破れ読みの不在）、`test_file_lock_cross_process.py`（実プロセス 2 つ、`kill -9` での解放）、`test_read_before_write.py`（ライセンスのマトリクス）。`tests/agent/tools/subagent/test_workspace_isolation.py` はダーティなベースライン、auto-init の拒否リスト、物化（リンク・コピー・未追跡ファイル）、外部パス免除、マージ CAS、衝突、シンボリックリンクのスキップ、親ルート単位の直列化を固定します。
+`tests/agent/tools/file_tools/` が書き込み経路を固定します：`test_atomic_write.py`（原子性、シンボリックリンク拒否、二層 CAS、残留掃除）、`test_file_write_concurrency.py`（並行パッチ、破れ読みの不在）、`test_file_lock_cross_process.py`（実プロセス 2 つ、`kill -9` での解放）、`test_read_before_write.py`（ライセンスのマトリクス）、`tests/agent/middlewares/test_license_invalidation.py`（圧縮が捨てた読み取りのライセンスを破棄すること）。`tests/agent/tools/subagent/test_workspace_isolation.py` はダーティなベースライン、auto-init の拒否リスト、物化（リンク・コピー・未追跡ファイル）、外部パス免除、マージ CAS、衝突、シンボリックリンクのスキップ、インターフェース変更の報告、親ルート単位の直列化を固定します；`tests/agent/tools/code_intel/test_symbol_diff.py` はシンボル比較器（改名の対応付け、グループ規則、作成/削除、エラー経路）を固定します。
 
 ## 🗺️ ファイルマップ
 
@@ -155,3 +158,4 @@
 | `agent/tools/subagent/isolation/tree.py` | ワークスペースの worktree、マニフェスト、破棄 |
 | `agent/tools/subagent/isolation/merge.py` | ロック付き・CAS 検証済みのマージバック |
 | `agent/tools/subagent/announce/workspace_merge.py` | マージフック + 完了返信内の報告 |
+| `agent/tools/code_intel/symbol_diff.py` | あるファイルの 2 リビジョン間のシンボル単位の差分 |

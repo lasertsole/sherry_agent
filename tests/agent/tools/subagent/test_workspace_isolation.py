@@ -405,3 +405,139 @@ def test_discarding_a_workspace_unregisters_the_worktree_and_branch(project):
     assert not ws.meta_dir.exists()
     assert _git(project, "worktree", "list").stdout.count("\n") == 1  # only the main tree
     assert branch not in _git(project, "branch", "--list").stdout
+
+
+# ---------------------------------------------------------------------------
+# Interface changes in the merge report
+#
+# The per-file CAS is revision-aware and semantically blind: a rename merges
+# cleanly while another child's file may still call the OLD name. The merge
+# therefore snapshots the symbol surface of every merged code file, and the
+# completion report tells the parent what moved.
+# ---------------------------------------------------------------------------
+
+
+def _write_python(path, source: str) -> None:
+    path.write_text(source, encoding="utf-8")
+
+
+def test_merge_report_includes_renamed_function(project):
+    _write_python(project / "utils.py", "def get_user():\n    return 1\n")
+    ws = create_isolated_workspace(project, "agent:main:subagent:iface-rename")
+
+    _write_python(ws.tree / "utils.py", "def get_users():\n    return 1\n")
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    assert report.applied == ["utils.py"]
+    deltas = {delta.relpath: delta for delta in report.interface_changes}
+    assert list(deltas) == ["utils.py"]
+    delta = deltas["utils.py"]
+    assert delta.language == "python"
+    assert [(r.old_name, r.new_name, r.kind, r.parent) for r in delta.renamed] == [
+        ("get_user", "get_users", "function", None)
+    ]
+    # The parent's tree holds the child's revision.
+    assert (project / "utils.py").read_text(encoding="utf-8").startswith("def get_users")
+
+
+def test_merge_report_includes_added_and_removed(project):
+    _write_python(
+        project / "helpers.py",
+        'def keep():\n    return 1\n\n\ndef old_helper():\n    return "old"\n',
+    )
+    ws = create_isolated_workspace(project, "agent:main:subagent:iface-add-remove")
+
+    _write_python(
+        ws.tree / "helpers.py",
+        'def keep():\n    return 1\n\n\ndef brand_new_function():\n    return "new"\n',
+    )
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    delta = report.interface_changes[0]
+    assert [r.name for r in delta.removed] == ["old_helper"]
+    assert [a.name for a in delta.added] == ["brand_new_function"]
+    assert delta.renamed == []
+
+
+def test_report_block_renders_interface_changes(project):
+    _write_python(
+        project / "utils.py",
+        'def get_user():\n    return 1\n\n\ndef old_helper():\n    return "old"\n',
+    )
+    ws = create_isolated_workspace(project, "agent:main:subagent:iface-report")
+
+    _write_python(
+        ws.tree / "utils.py",
+        'def get_users():\n    return 1\n\n\ndef brand_new_function():\n    return "new"\n',
+    )
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    from agent.tools.subagent.announce.workspace_merge import _report_block
+
+    block = _report_block(report)
+
+    assert "### Isolated workspace merged" in block
+    assert "**Interface changes**" in block
+    assert "- `utils.py` (python):" in block
+    assert "renamed: `get_user` → `get_users` (function)" in block
+    assert "removed: `old_helper` (function)" in block
+    assert "added: `brand_new_function` (function)" in block
+    # A report without interface changes must not grow an empty section.
+    report.interface_changes.clear()
+    assert "Interface changes" not in _report_block(report)
+
+
+def test_report_block_caps_the_interface_listing(project):
+    """A regenerated file must not turn the completion reply into a dump."""
+    _write_python(
+        project / "many.py", "".join(f"def fn_{i}():\n    return {i}\n\n\n" for i in range(25))
+    )
+    ws = create_isolated_workspace(project, "agent:main:subagent:iface-cap")
+
+    _write_python(
+        ws.tree / "many.py",
+        "".join(f"def fn_{i}x():\n    return {i}\n\n\n" for i in range(25)),
+    )
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    from agent.tools.subagent.announce.workspace_merge import _report_block
+
+    block = _report_block(report)
+
+    assert len(report.interface_changes[0].renamed) == 25
+    assert block.count("renamed: ") == 20
+    assert "… and 5 more" in block
+
+
+def test_unsupported_language_skipped(project):
+    _seed(project)
+    ws = create_isolated_workspace(project, "agent:main:subagent:iface-txt")
+
+    (ws.tree / "a.txt").write_text("def renamed_but_not_indexed():\n", encoding="utf-8")
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    assert report.applied == ["a.txt"]
+    assert report.interface_changes == []
+
+
+def test_syntax_error_does_not_break_merge(project):
+    _write_python(project / "broken.py", "def fine():\n    return 1\n")
+    ws = create_isolated_workspace(project, "agent:main:subagent:iface-syntax")
+
+    _write_python(ws.tree / "broken.py", "def broken(:\n    return\n")
+    report = merge_isolated_workspace(ws.meta_dir)
+
+    # The merge applied the child's revision; only the note carries the error.
+    assert report.applied == ["broken.py"]
+    assert (project / "broken.py").read_text(encoding="utf-8").startswith("def broken(:")
+    assert len(report.interface_changes) == 1
+    delta = report.interface_changes[0]
+    assert delta.error
+    assert delta.has_changes is False
+    assert "not compared" in _render_block(report)
+
+
+def _render_block(report) -> str:
+    from agent.tools.subagent.announce.workspace_merge import _report_block
+
+    return _report_block(report)

@@ -18,6 +18,7 @@ import os
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -38,6 +39,9 @@ from .tree import (
     scan_manifest,
 )
 
+if TYPE_CHECKING:
+    from agent.tools.code_intel.symbol_diff import InterfaceDelta
+
 __all__ = ["MergeReport", "merge_isolated_workspace"]
 
 #: How long a merge waits for the parent root's merge lock before giving up.
@@ -54,6 +58,9 @@ class MergeReport:
     deleted: list[str] = field(default_factory=list)
     conflicts: list[tuple[str, str]] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)
+    #: Symbol-level changes per merged file (renamed / added / removed
+    #: functions, methods, classes) — see ``agent/tools/code_intel/symbol_diff.py``.
+    interface_changes: list[InterfaceDelta] = field(default_factory=list)
 
     @property
     def is_clean(self) -> bool:
@@ -97,6 +104,57 @@ def _apply_bytes(source: Path, target: Path, expected_revision: str | None) -> N
     atomic_write_bytes_no_follow(target, data, expected_revision=expected_revision)
     with contextlib.suppress(OSError):
         os.chmod(target, stat.S_IMODE(source.stat().st_mode))
+
+
+def _record_interface_change(
+    relpath: str,
+    source: Path,
+    target: Path,
+    report: MergeReport,
+    *,
+    mode: str,
+) -> None:
+    """Snapshot the file's symbol-level delta BEFORE it is written or removed.
+
+    Both revisions must still be on disk (the child's copy at *source*, the
+    parent's at *target*); after ``_apply_bytes`` / ``os.unlink`` the old
+    content is gone. A delta is recorded so the parent agent can check whether
+    another subagent still calls a name this change removed or renamed.
+
+    Fail-open in every direction: a switched-off feature, an unsupported
+    language, an oversized or unparseable file, any unexpected error — the
+    merge proceeds, only the note is missing.
+
+    :param mode: ``"created"``, ``"modified"`` or ``"deleted"`` — which side
+        still has content to read.
+    """
+    try:
+        from config.features import SUBAGENT_ISOLATION
+
+        if not SUBAGENT_ISOLATION["interface_diff_enabled"]:
+            return
+        from agent.tools.code_intel.symbol_diff import (
+            diff_file_interface,
+            language_for_extension,
+        )
+
+        language = language_for_extension(Path(relpath).suffix)
+        if language is None:
+            return
+        old_bytes = target.read_bytes() if mode in ("modified", "deleted") else None
+        new_bytes = source.read_bytes() if mode in ("modified", "created") else None
+        delta = diff_file_interface(
+            old_bytes,
+            new_bytes,
+            language,
+            relpath,
+            rename_threshold=SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"],
+            max_file_bytes=SUBAGENT_ISOLATION["interface_diff_max_file_bytes"],
+        )
+        if delta is not None and (delta.has_changes or delta.error):
+            report.interface_changes.append(delta)
+    except Exception:  # noqa: S110 — fail-open on purpose: never break a merge
+        pass
 
 
 def merge_isolated_workspace(
@@ -180,6 +238,7 @@ def _merge_one(
         if snapshot_rev is None:
             return
         if _parent_state(target) == snapshot_rev:
+            _record_interface_change(relpath, source, target, report, mode="deleted")
             with contextlib.suppress(FileNotFoundError):
                 os.unlink(target)
             report.deleted.append(relpath)
@@ -200,11 +259,13 @@ def _merge_one(
             report.conflicts.append((relpath, "created in isolation, already exists in the parent"))
             return
         target.parent.mkdir(parents=True, exist_ok=True)
+        _record_interface_change(relpath, source, target, report, mode="created")
         _apply_bytes(source, target, "absent")
         report.created.append(relpath)
         return
 
     # Modified in the copy: the parent must still be the snapshot it started from.
+    _record_interface_change(relpath, source, target, report, mode="modified")
     _apply_bytes(source, target, snapshot_rev)
     report.applied.append(relpath)
 

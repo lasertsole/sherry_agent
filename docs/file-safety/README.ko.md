@@ -4,7 +4,7 @@
 
 > 동시에 쓰는 자들——메인 Agent, 최대 8개의 서브 Agent, 그리고 같은 프로젝트 위의 두 번째 Sherry 프로세스——이 서로의 편집을 조용히 파괴하지 못하게 막는 방법: 원자적 쓰기, 이중 CAS, 프로세스 내 경로별 잠금, 프로세스 간 `flock`, `write_file`의 읽기 우선 라이선스, 그리고 잠금 아래 병합되는 선택적 격리 워크스페이스.
 
-출처: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/path_lock.py`, `agent/tools/pub_base/file_lock.py`, `agent/tools/pub_base/read_state.py`, `agent/tools/file_tools/write_file.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/file_tools/patch_file.py`, `agent/tools/subagent/isolation/`, `agent/tools/subagent/announce/workspace_merge.py`. 이 문서의 모든 상수는 그 코드와 대조해 확인했습니다.
+출처: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/path_lock.py`, `agent/tools/pub_base/file_lock.py`, `agent/tools/pub_base/read_state.py`, `agent/tools/file_tools/write_file.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/file_tools/patch_file.py`, `agent/tools/subagent/isolation/`, `agent/tools/subagent/announce/workspace_merge.py`, `agent/tools/code_intel/symbol_diff.py`. 이 문서의 모든 상수는 그 코드와 대조해 확인했습니다.
 
 ## 목차
 
@@ -80,6 +80,8 @@
 
 레지스트리에는 상한이 있고(4096개, LRU) **영속화되지 않습니다**: 재시작하면 라이선스는 잊히고, 기존 파일에 대한 다음 덮어쓰기는 "먼저 읽으세요"를 돌려줍니다——대가는 다시 읽기 한 번이고, 잃는 편집은 결코 없습니다. 축출은 보호를 떨어뜨릴 뿐, 부여하지 않습니다.
 
+**압축도 라이선스를 끝냅니다.** 요약 미들웨어가 `read_file` 결과를 버릴 때——내용이 경로만 언급하는 요약으로 바뀝니다——그 읽기가 부여한 라이선스도 함께 삭제되어, 이후 `write_file`은 낡은 기억으로 덮어쓰는 대신 "먼저 읽으세요"라고 답합니다. 잃는 것은 **최신** 읽기가 버려진 파일뿐입니다: 보존 꼬리에 있는 더 새로운 읽기는 라이선스를 유지합니다. 이 스캔은 fail-open이라 경로 인자를 해석할 수 없거나, 읽기 후 세션이 프로젝트 디렉터리를 바꾼 경우에는 예전 동작(라이선스 잔존)으로 퇴화합니다.
+
 ## 🌱 격리 서브에이전트 워크스페이스 (git worktree)
 
 `sessions_spawn(isolation=True)`는 자식에게 프로젝트의 **git worktree**를 줍니다(구현은 `agent/tools/subagent/isolation/`, 워크스페이스는 `src/data/isolated/` 아래, 자식의 cwd는 `<workspace>/tree`, 브랜치는 `sherry/<run8>`). 자식은 그곳에서 처음부터 끝까지 일하고——자기 도구, `terminal`, 테스트——실행이 종단에 이르면 완료 메시지 전달 전에 announce 흐름이 트리를 병합합니다(조용한 자식의 작업도 마찬가지로 병합됩니다).
@@ -99,9 +101,10 @@
 
 - 워크스페이스 매니페스트(`snapshot.json`)는 생성 시점의 일반 파일별 revision을 기록하고(구성은 트리에서, revision은 부모에서, mtime을 정렬해 건드리지 않은 파일이 변경으로 읽히지 않게 합니다) 베이스라인 revision과 브랜치도 기록합니다;
 - 자식이 바꾼 파일은 부모가 아직 스냅샷 revision을 지니는 동안에만 적용됩니다——그렇지 않으면 **충돌**이고, 부모의 파일은 손대지 않은 채 남습니다;
-- 새 파일은 빈 자리에만 만들어집니다; 삭제는 부모가 여전히 일치할 것을 요구합니다; 심볼릭 링크는 결코 관통 병합되지 않습니다(건너뛰고 보고합니다).
+- 새 파일은 빈 자리에만 만들어집니다; 삭제는 부모가 여전히 일치할 것을 요구합니다; 심볼릭 링크는 결코 관통 병합되지 않습니다(건너뛰고 보고합니다);
+- 병합되는 모든 코드 파일(Python / TS / TSX / JS / JSX / Rust / Go)은 쓰기 전에 **심볼 단위**로 비교됩니다——이름 변경(같은 kind, 같은 소속 클래스, 이름 거리 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`), 삭제, 추가가 완료 회신의 **Interface changes** 절에 실립니다. 다른 서브에이전트의 파일이 아직 **옛 이름**을 호출하고 있을 수 있기 때문입니다. 이 비교는 fail-open이며(거대하거나 해석할 수 없는 파일은 그 절에 기록될 뿐, 결코 치명적이지 않습니다), 상한도 있습니다(파일 10개, 종류별 20건).
 
-깨끗한 병합은 worktree를 등록 해제하고 그 브랜치를 지우고 워크스페이스를 제거합니다. 충돌이 있는 병합은 `<workspace>/tree`를 검사용으로 남기고 매니페스트를 소비합니다——같은 트리가 두 번 병합될 수 없도록. 부모가 읽는 완료 회신에는 보고가 실립니다(`applied`, `created`, `deleted`, 그리고 경로별 모든 충돌), 병합된 경로는 부모의 증거 원장에서 오래된 것으로 표시됩니다.
+깨끗한 병합은 worktree를 등록 해제하고 그 브랜치를 지우고 워크스페이스를 제거합니다. 충돌이 있는 병합은 `<workspace>/tree`를 검사용으로 남기고 매니페스트를 소비합니다——같은 트리가 두 번 병합될 수 없도록. 부모가 읽는 완료 회신에는 보고가 실립니다(`applied`, `created`, `deleted`, 인터페이스 변경, 그리고 경로별 모든 충돌), 병합된 경로는 부모의 증거 원장에서 오래된 것으로 표시됩니다.
 
 ## ⚖️ 대안과 실측
 
@@ -139,7 +142,7 @@
 
 ## 🧪 테스트
 
-`tests/agent/tools/file_tools/`가 쓰기 경로를 고정합니다: `test_atomic_write.py`(원자성, 심볼릭 링크 거부, 두 CAS 계층, 잔여 청소), `test_file_write_concurrency.py`(병렬 패치, 찢어진 읽기 부재), `test_file_lock_cross_process.py`(실제 프로세스 둘, `kill -9` 해제), `test_read_before_write.py`(라이선스 매트릭스). `tests/agent/tools/subagent/test_workspace_isolation.py`는 더러운 베이스라인, auto-init 거부 목록, 물질화(링크·복사·미추적 파일), 외부 경로 면제, 병합 CAS, 충돌, 심볼릭 링크 건너뛰기, 부모 루트 단위 직렬화를 고정합니다.
+`tests/agent/tools/file_tools/`가 쓰기 경로를 고정합니다: `test_atomic_write.py`(원자성, 심볼릭 링크 거부, 두 CAS 계층, 잔여 청소), `test_file_write_concurrency.py`(병렬 패치, 찢어진 읽기 부재), `test_file_lock_cross_process.py`(실제 프로세스 둘, `kill -9` 해제), `test_read_before_write.py`(라이선스 매트릭스), `tests/agent/middlewares/test_license_invalidation.py`(압축이 버린 읽기의 라이선스를 삭제함). `tests/agent/tools/subagent/test_workspace_isolation.py`는 더러운 베이스라인, auto-init 거부 목록, 물질화(링크·복사·미추적 파일), 외부 경로 면제, 병합 CAS, 충돌, 심볼릭 링크 건너뛰기, 인터페이스 변경 보고, 부모 루트 단위 직렬화를 고정합니다; `tests/agent/tools/code_intel/test_symbol_diff.py`는 심볼 비교기(이름 변경 짝짓기, 그룹 규칙, 생성/삭제, 오류 경로)를 고정합니다.
 
 ## 🗺️ 파일 지도
 
@@ -154,3 +157,4 @@
 | `agent/tools/subagent/isolation/tree.py` | 워크스페이스 worktree, 매니페스트, 폐기 |
 | `agent/tools/subagent/isolation/merge.py` | 잠금·CAS 검증 병합 |
 | `agent/tools/subagent/announce/workspace_merge.py` | 병합 훅 + 완료 회신 속 보고 |
+| `agent/tools/code_intel/symbol_diff.py` | 한 파일의 두 리비전 사이 심볼 단위 비교 |

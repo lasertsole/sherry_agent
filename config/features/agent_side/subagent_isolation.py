@@ -40,6 +40,14 @@ class SubagentIsolationConfig(TypedDict):
     include_file_name: str
     #: How long a `git` subprocess may take before the isolation is refused.
     git_timeout_s: float
+    #: Report renamed/added/removed symbols in the merge announcement (the
+    #: parent's other subagents may still call the old names).
+    interface_diff_enabled: bool
+    #: Per-file size cap of the interface diff; a larger revision is skipped
+    #: with a recorded note instead of being read twice into memory.
+    interface_diff_max_file_bytes: int
+    #: Name-edit distance at which a removed+added pair reads as a rename.
+    interface_diff_rename_levenshtein: int
 
 
 SUBAGENT_ISOLATION: SubagentIsolationConfig = {
@@ -87,4 +95,7 @@ SUBAGENT_ISOLATION: SubagentIsolationConfig = {
     "branch_prefix": "sherry/",
     "include_file_name": ".worktreeinclude",
     "git_timeout_s": 120.0,
+    "interface_diff_enabled": True,
+    "interface_diff_max_file_bytes": 1_000_000,
+    "interface_diff_rename_levenshtein": 2,
 }

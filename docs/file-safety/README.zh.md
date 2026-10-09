@@ -4,7 +4,7 @@
 
 > 并发写者——主 Agent、最多 8 个子 Agent、以及同一项目上的第二个 Sherry 进程——如何被阻止静默摧毁彼此的编辑：原子写、两层 CAS、进程内按路径锁、跨进程 `flock`、`write_file` 的先读后写许可证，以及可选的隔离工作区（其改动在锁下合并回主树）。
 
-事实来源：`agent/tools/pub_base/atomic_write.py`、`agent/tools/pub_base/path_lock.py`、`agent/tools/pub_base/file_lock.py`、`agent/tools/pub_base/read_state.py`、`agent/tools/file_tools/write_file.py`、`agent/tools/file_tools/read_file.py`、`agent/tools/file_tools/patch_file.py`、`agent/tools/subagent/isolation/`、`agent/tools/subagent/announce/workspace_merge.py`。本文档中的每一个常量都已对照该代码核对。
+事实来源：`agent/tools/pub_base/atomic_write.py`、`agent/tools/pub_base/path_lock.py`、`agent/tools/pub_base/file_lock.py`、`agent/tools/pub_base/read_state.py`、`agent/tools/file_tools/write_file.py`、`agent/tools/file_tools/read_file.py`、`agent/tools/file_tools/patch_file.py`、`agent/tools/subagent/isolation/`、`agent/tools/subagent/announce/workspace_merge.py`、`agent/tools/code_intel/symbol_diff.py`。本文档中的每一个常量都已对照该代码核对。
 
 ## 目录
 
@@ -80,6 +80,8 @@
 
 注册表有上限（4096 条，LRU），且**不持久化**：重启即遗忘所有许可证，下一次覆盖已存在文件会得到"先读"——代价是一次重读，绝不是丢失编辑。淘汰只会丢掉保护，绝不会发放保护。
 
+**压缩也会终止许可证。** 摘要中间件丢弃一条 `read_file` 结果时——内容被替换成一个只提到路径、别的什么都没有的摘要——该次读取授予的许可证也一并清除，之后的 `write_file` 会答"先读"，而不是基于过期记忆盲目覆写。只有**最近一次**读取被丢弃的文件才会失去许可证：保留尾部里更新的那次读取会保住它。这次扫描是 fail-open 的——路径参数不可解析，或读取之后会话切换了项目目录，都会退化为旧行为（许可证残留）。
+
 ## 🌱 隔离子代理工作区（git worktree）
 
 `sessions_spawn(isolation=True)` 让子代理获得项目的 **git worktree**（实现见 `agent/tools/subagent/isolation/`，工作区位于 `src/data/isolated/`，子代理的 cwd 是 `<workspace>/tree`，分支为 `sherry/<run8>`）。子代理在那里端到端工作——它的工具、它的 `terminal`、它的测试——运行进入终态时由 announce 流程把树合并回去，发生在交付完成消息之前（静默的子代理同样合并）。
@@ -99,9 +101,10 @@
 
 - 工作区清单（`snapshot.json`）记录创建时每个普通文件的 revision（成员取自检出树、revision 取自父树，并把 mtime 对齐，使未被触碰的文件不会被读成已改），外加基线 revision 与分支；
 - 子代理改过的文件，只有在父树仍持有快照 revision 时才应用——否则记为**冲突**，父树文件保持原样；
-- 新文件只创建到空位上；删除要求父树仍然匹配；符号链接绝不穿透合并（跳过并报告）。
+- 新文件只创建到空位上；删除要求父树仍然匹配；符号链接绝不穿透合并（跳过并报告）；
+- 每个被合并的代码文件（Python / TS / TSX / JS / JSX / Rust / Go）在写入前会做一次**符号级**比较——改名（同 kind、同所在类、名字距离 ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`）、删除与新增都会以一节 **接口变更** 出现在完成回复里，因为别的子代理的文件可能还在调用**旧名字**。这次比较是 fail-open 的（超大或无法解析的文件在那一节里注明，绝不致命），并且有上限（10 个文件、每种至多 20 条）。
 
-干净合并会注销 worktree、删除其分支并移除工作区；有冲突则保留 `<workspace>/tree` 供检查，并消费掉清单，使同一棵树永远不可能被合并两次。父代理读到的完成回复中附带报告（`applied`、`created`、`deleted`，以及按路径列出的一一冲突），被合并的路径同时会在父会话的证据账本里标记为陈旧。
+干净合并会注销 worktree、删除其分支并移除工作区；有冲突则保留 `<workspace>/tree` 供检查，并消费掉清单，使同一棵树永远不可能被合并两次。父代理读到的完成回复中附带报告（`applied`、`created`、`deleted`、接口变更，以及按路径列出的一一冲突），被合并的路径同时会在父会话的证据账本里标记为陈旧。
 
 ## ⚖️ 备选方案与实测
 
@@ -136,7 +139,7 @@
 
 ## 🧪 测试
 
-`tests/agent/tools/file_tools/` 钉住写路径：`test_atomic_write.py`（原子性、软链拒绝、两层 CAS、残留清扫）、`test_file_write_concurrency.py`（并发补丁、无撕裂读）、`test_file_lock_cross_process.py`（两个真实进程、`kill -9` 释放）、`test_read_before_write.py`（许可证矩阵）。`tests/agent/tools/subagent/test_workspace_isolation.py` 钉住脏基线、auto-init 的拒入清单、物化（软链、复制、未跟踪文件）、外部路径豁免、合并 CAS、冲突、软链跳过与按父根串行化。
+`tests/agent/tools/file_tools/` 钉住写路径：`test_atomic_write.py`（原子性、软链拒绝、两层 CAS、残留清扫）、`test_file_write_concurrency.py`（并发补丁、无撕裂读）、`test_file_lock_cross_process.py`（两个真实进程、`kill -9` 释放）、`test_read_before_write.py`（许可证矩阵）、`tests/agent/middlewares/test_license_invalidation.py`（压缩会清掉它丢弃的那些读取的许可证）。`tests/agent/tools/subagent/test_workspace_isolation.py` 钉住脏基线、auto-init 的拒入清单、物化（软链、复制、未跟踪文件）、外部路径豁免、合并 CAS、冲突、软链跳过、接口变更报告与按父根串行化；`tests/agent/tools/code_intel/test_symbol_diff.py` 钉住符号比较器（改名配对、分组规则、创建/删除、错误路径）。
 
 ## 🗺️ 文件地图
 
@@ -151,3 +154,4 @@
 | `agent/tools/subagent/isolation/tree.py` | 工作区 worktree、清单、销毁 |
 | `agent/tools/subagent/isolation/merge.py` | 加锁、CAS 校验的合并回主树 |
 | `agent/tools/subagent/announce/workspace_merge.py` | 合并钩子 + 完成回复中的报告 |
+| `agent/tools/code_intel/symbol_diff.py` | 同一文件两个版本之间的符号级比较 |

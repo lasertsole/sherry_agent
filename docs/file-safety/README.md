@@ -4,7 +4,7 @@
 
 > How concurrent writers — the main agent, up to 8 subagents, and a second Sherry process on the same project — are stopped from silently destroying each other's edits: an atomic write, a two-layer CAS, an in-process per-path lock, a cross-process `flock`, a read-before-write license for `write_file`, and opt-in isolated workspaces whose changes merge back under a lock.
 
-Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/path_lock.py`, `agent/tools/pub_base/file_lock.py`, `agent/tools/pub_base/read_state.py`, `agent/tools/file_tools/write_file.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/file_tools/patch_file.py`, `agent/tools/subagent/isolation/`, `agent/tools/subagent/announce/workspace_merge.py`. Every constant in this document was verified against that code.
+Source of truth: `agent/tools/pub_base/atomic_write.py`, `agent/tools/pub_base/path_lock.py`, `agent/tools/pub_base/file_lock.py`, `agent/tools/pub_base/read_state.py`, `agent/tools/file_tools/write_file.py`, `agent/tools/file_tools/read_file.py`, `agent/tools/file_tools/patch_file.py`, `agent/tools/subagent/isolation/`, `agent/tools/subagent/announce/workspace_merge.py`, `agent/tools/code_intel/symbol_diff.py`. Every constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -80,6 +80,8 @@ A session's own `append` or `patch_file` ADVANCES a license it already holds and
 
 The registry is capped (4096 entries, LRU) and is **not persisted**: a restart forgets the licenses, and the next overwrite of an existing file answers "read it first" — one extra read, never a lost edit. Eviction drops protection, never grants it.
 
+**Compression ends a license too.** When the summarization middleware discards a `read_file` result — the content is replaced by a summary that names a path and nothing else — the license that read granted is dropped as well, so a later `write_file` answers "read it first" instead of blind-overwriting from a stale memory. Only files whose LATEST read was discarded lose it: a later read in the preserved tail keeps its license. The scan is fail-open — an unreadable path argument, or a project directory switched since the read, degrades to the old behaviour (the license survives).
+
 ## 🌱 Isolated subagent workspaces (git worktrees)
 
 `sessions_spawn(isolation=True)` gives a child its own **git worktree** of the project (`agent/tools/subagent/isolation/`, workspace under `src/data/isolated/`, the child's cwd is `<workspace>/tree`, its branch `sherry/<run8>`). The child works end to end there — its tools, its `terminal`, its tests — and the announce flow merges the tree back when the run turns terminal, before the completion message is delivered (a silent child's work merges too).
@@ -99,9 +101,10 @@ The merge is the same rule as everywhere else, applied in the other direction, u
 
 - the workspace manifest (`snapshot.json`) records every regular file's revision at creation (membership from the tree, revisions from the parent, mtimes aligned so an untouched file never reads as changed) plus the baseline revision and branch;
 - a file the child changed is applied only while the parent still holds the snapshot revision — otherwise it is a CONFLICT, and the parent's file is left untouched;
-- a new file is created into empty space only; a deletion requires the parent to still match; symlinks are never merged through (they are skipped and reported).
+- a new file is created into empty space only; a deletion requires the parent to still match; symlinks are never merged through (they are skipped and reported);
+- every merged code file (Python / TS / TSX / JS / JSX / Rust / Go) is diffed at the **symbol level** before it is written — renames (same kind, same enclosing class, name distance ≤ `SUBAGENT_ISOLATION["interface_diff_rename_levenshtein"]`), removals and additions land in the completion reply as an **Interface changes** section, because another subagent's file may still call the OLD name. The diff is fail-open (an oversized or unparseable file is noted in the section, never fatal) and capped (10 files, 20 entries per kind).
 
-A clean merge unregisters the worktree, deletes its branch and removes the workspace; a conflicting one keeps `<workspace>/tree` for inspection and consumes the manifest, so nothing can ever merge the same tree twice. The completion reply the parent reads carries the report (`applied`, `created`, `deleted`, and every conflict by path), and the merged paths are marked stale in the parent's evidence ledger.
+A clean merge unregisters the worktree, deletes its branch and removes the workspace; a conflicting one keeps `<workspace>/tree` for inspection and consumes the manifest, so nothing can ever merge the same tree twice. The completion reply the parent reads carries the report (`applied`, `created`, `deleted`, the interface changes, and every conflict by path), and the merged paths are marked stale in the parent's evidence ledger.
 
 ## ⚖️ Alternatives, measured
 
@@ -144,7 +147,7 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 
 ## 🧪 Testing
 
-`tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the dirty baseline, the auto-init deny list, the materialization (links, copies, untracked files), the external-path exemption, the merge CAS, conflicts, symlink skipping and the per-root serialization.
+`tests/agent/tools/file_tools/` pins the write path: `test_atomic_write.py` (atomicity, symlink refusal, both CAS layers, the sweep), `test_file_write_concurrency.py` (parallel patches, torn-read freedom), `test_file_lock_cross_process.py` (two real processes, `kill -9` release), `test_read_before_write.py` (the license matrix), `tests/agent/middlewares/test_license_invalidation.py` (compression drops the license of the reads it discards). `tests/agent/tools/subagent/test_workspace_isolation.py` pins the dirty baseline, the auto-init deny list, the materialization (links, copies, untracked files), the external-path exemption, the merge CAS, conflicts, symlink skipping, the interface-change report and the per-root serialization; `tests/agent/tools/code_intel/test_symbol_diff.py` pins the symbol comparator (rename pairing, the group rule, creation/deletion, the error paths).
 
 ## 🗺️ File Map
 
@@ -159,3 +162,4 @@ now decides, from the BOM first and a NUL / UTF-8-decode check second:
 | `agent/tools/subagent/isolation/tree.py` | Workspace worktree, manifest, discard |
 | `agent/tools/subagent/isolation/merge.py` | The locked, CAS-checked merge-back |
 | `agent/tools/subagent/announce/workspace_merge.py` | Merge hook + report in the completion reply |
+| `agent/tools/code_intel/symbol_diff.py` | Symbol-level diff of one file between two revisions |
