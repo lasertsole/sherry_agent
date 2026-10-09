@@ -222,7 +222,10 @@ class HITLConfig:
         smart_approval_llm: Optional LLM instance for smart command assessment.
         interrupted_tools: Mapping of tool_name → config for interrupt-on-use.
         description_prefix: Prefix for auto-generated interrupt descriptions.
-        first_call_confirmation_enabled: Gate the first use of a listed tool.
+        first_call_confirmation_enabled: Optional ask-once reminder for the
+            listed tools under auto_edit (off by default: auto_edit never asks
+            for a file change). The confirm_all access mode asks on every
+            change regardless of this flag.
         first_call_confirmation_tools: Tool names covered by that gate.
     """
 

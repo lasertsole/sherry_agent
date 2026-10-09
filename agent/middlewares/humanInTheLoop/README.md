@@ -242,7 +242,7 @@ switch applies from the next tool call on.
 | Mode | Flag | Behaviour |
 |---|---|---|
 | `confirm_all` | `hitl:session_confirm_all` | Strict: every terminal command and every file change (`write_file` / `patch_file`) asks. Ordinary commands ask too, smart approval is skipped, and the remembered first-call confirmation is ignored so the same tool asks again on every call. The hardline blocklist and the user deny rules still block outright. |
-| `auto_edit` | — | Default: only dangerous or uncertain calls ask; the first use of a mutation tool asks once per session. |
+| `auto_edit` | — | Default: only dangerous or uncertain calls ask. A file change never asks — an edit is licensed by the read-before-write license, the external-path card and `PathGuard`, not by a prompt; `first_call_confirmation_enabled` can restore an ask-once reminder on top. |
 | `full_access` | `hitl:session_yolo` | Bypass-all (YOLO): no approval card for this session. The hardline blocklist, the deny rules and the external-path deny list still apply. |
 
 The strict and bypass flags are mutually exclusive — `set_session_yolo()` and

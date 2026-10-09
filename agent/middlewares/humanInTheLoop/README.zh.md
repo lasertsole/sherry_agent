@@ -241,7 +241,7 @@ middleware = HumanInTheLoop(
 | 模式 | 标志 | 行为 |
 |---|---|---|
 | `confirm_all` | `hitl:session_confirm_all` | 严格：每条终端命令、每次文件改动（`write_file` / `patch_file`）都要确认。普通命令也问，智能审批被跳过，且本会话已记住的首次确认被忽略——同一个工具每次调用都会再问。硬拉黑名单与用户 deny 规则仍然直接拦截。 |
-| `auto_edit` | — | 默认：只有危险或不确定的调用才弹卡；改动类工具的首次使用每个会话问一次。 |
+| `auto_edit` | — | 默认：只有危险或不确定的调用才弹卡。文件改动**从不**询问——编辑由读前写许可证、外部路径卡与 `PathGuard` 约束，而不是靠一次弹卡；`first_call_confirmation_enabled` 可以另行恢复「首次问一次」的提醒。 |
 | `full_access` | `hitl:session_yolo` | 全量旁路（YOLO）：该会话不再弹审批卡。硬拉黑名单、deny 规则与外部路径拒绝清单依然生效。 |
 
 严格标志与旁路标志互斥——`set_session_yolo()` 与 `set_session_confirm_all()`

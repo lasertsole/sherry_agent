@@ -290,10 +290,19 @@ class MemoryWriteApprovalHandler(ToolApprovalHandler):
 
 
 class FirstCallConfirmationHandler(ToolApprovalHandler):
-    """High-risk tools: confirm the FIRST use per session, then pass through.
+    """File-change gate for the two access modes that concern it.
 
-    Covers the side-effecting tools no other handler intercepts (file
-    mutations — see ``first_call_confirmation_tools``); ``terminal`` /
+    * ``confirm_all`` ("变更前确认") — EVERY change asks, ignoring any
+      remembered confirmation and the ask-once flag below.
+    * ``auto_edit`` ("自动编辑", the default) — the agent edits, and NOTHING
+      here asks. That is the mode's meaning (the user's call): a file edit is
+      licensed by the read-before-write license, the external-path card and
+      `PathGuard`, not by a per-session prompt.
+      ``first_call_confirmation_enabled`` restores an optional ask-once
+      reminder (first use of a listed tool per session, then free).
+
+    Covers the mutation surfaces no other handler intercepts (``write_file`` /
+    ``patch_file`` — see ``first_call_confirmation_tools``); ``terminal`` /
     ``python_repl`` keep their own command and sandbox-bypass gates, and
     memory/skill writes keep the write gate.
 
@@ -303,20 +312,17 @@ class FirstCallConfirmationHandler(ToolApprovalHandler):
       heartbeat, subagent completion carrier) is left to its existing policy,
       because there is nobody to answer the prompt;
     * YOLO mode bypasses the gate like every other approval;
-    * the decision is remembered per session (``HITL_CONFIRMED_TOOLS``), so a
-      long session asks once per tool, not once per call — the gate closes the
-      "agent silently starts mutating files" gap without becoming a per-call
-      tax. A rejection is NOT remembered: the next call asks again.
-    * confirm-all mode ignores that memory: every change asks. Nothing is
-      remembered in that mode either, so leaving it restores the ask-once
+    * with the ask-once reminder ON, the decision is remembered per session
+      (``HITL_CONFIRMED_TOOLS``) — one prompt per tool, not per call; a
+      rejection is NOT remembered (the next call asks again);
+    * confirm-all mode ignores that memory: every change asks, and nothing is
+      remembered in that mode either, so leaving it restores the normal
       behaviour for whatever comes next.
     """
 
     def matches(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:
         mw = ctx.mw
         tool_name: str = tool_call.get("name", "")
-        if not mw.config.first_call_confirmation_enabled:
-            return False
         if tool_name not in mw.config.first_call_confirmation_tools:
             return False
         if is_yolo_mode(mw.config, ctx.session_id):
@@ -325,6 +331,8 @@ class FirstCallConfirmationHandler(ToolApprovalHandler):
             return False
         if is_confirm_all_mode(mw.config, ctx.session_id):
             return True
+        if not mw.config.first_call_confirmation_enabled:
+            return False  # auto_edit: a file change never asks
         return tool_name not in _confirmed_tools(mw, ctx.session_id)
 
     def handle(self, tool_call: ToolCall, ctx: ApprovalContext) -> bool:

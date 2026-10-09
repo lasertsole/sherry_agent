@@ -41,6 +41,7 @@ from agent.middlewares.humanInTheLoop.approval import (
     set_session_yolo,
 )
 from agent.middlewares.humanInTheLoop.types import (
+    HITL_CONFIRMED_TOOLS_KEY,
     HITL_SESSION_APPROVED_KEY,
     SESSION_CONFIRM_ALL_KEY,
     SESSION_YOLO_KEY,
@@ -208,23 +209,31 @@ def _pending_tasks(graph, config: RunnableConfig):
 
 
 def test_strict_mode_asks_on_every_file_change():
-    """The remembered first-call confirmation is ignored while the mode is on."""
+    """The mode asks on EVERY change and ignores remembered confirmations.
+
+    The session is pre-seeded as one that already confirmed ``write_file`` (the
+    ask-once reminder is opt-in and OFF by default, so a real first prompt
+    cannot be relied on to produce that memory — seeding it states the
+    condition directly).
+    """
+    state_register_mem.set_state(_SESSION, HITL_CONFIRMED_TOOLS_KEY, ["write_file"])
+    set_session_confirm_all(_SESSION)
+
     call = {"id": "c1", "name": "write_file", "args": {"path": "a.txt"}, "type": "tool_call"}
     graph = _build_graph([call])
     config: RunnableConfig = {"configurable": {"thread_id": "t-strict-1"}}
 
-    # First call: approve it (which would normally satisfy the gate for the session).
-    _invoke(graph, "t-strict-1")
-    assert len(_pending_tasks(graph, config)) == 1
-    _resume = graph.invoke(
-        Command(resume={"decisions": [{"type": "approve"}]}),
-        config,
-    )
-    assert any(_SENTINEL in m.content for m in _resume["messages"] if isinstance(m, ToolMessage))
+    out, _ = _invoke(graph, "t-strict-1")
 
-    set_session_confirm_all(_SESSION)
+    tasks = _pending_tasks(graph, config)
+    assert len(tasks) == 1, f"expected a fresh prompt, got {len(tasks)}"
+    description = tasks[0].interrupts[0].value["action_requests"][0]["description"]
+    assert "Confirm-all mode" in description
+    assert not [m for m in out["messages"] if isinstance(m, ToolMessage)], "nothing ran yet"
 
-    # Same session, same tool, second call: it must ask again.
+    # Approving in strict mode does not remember the tool: the next call still
+    # asks (the memory is only meaningful outside the mode).
+    graph.invoke(Command(resume={"decisions": [{"type": "approve"}]}), config)
     graph2 = _build_graph(
         [
             {
@@ -235,29 +244,8 @@ def test_strict_mode_asks_on_every_file_change():
             }
         ]
     )
-    out, config2 = _invoke(graph2, "t-strict-2")
-
-    tasks = _pending_tasks(graph2, config2)
-    assert len(tasks) == 1, f"expected a fresh prompt, got {len(tasks)}"
-    description = tasks[0].interrupts[0].value["action_requests"][0]["description"]
-    assert "Confirm-all mode" in description
-    assert not [m for m in out["messages"] if isinstance(m, ToolMessage)], "nothing ran yet"
-
-    # Approving in strict mode does not remember the tool either: the next call
-    # still asks (the memory is only meaningful outside the mode).
-    graph2.invoke(Command(resume={"decisions": [{"type": "approve"}]}), config2)
-    graph3 = _build_graph(
-        [
-            {
-                "id": "c3",
-                "name": "write_file",
-                "args": {"path": "c.txt"},
-                "type": "tool_call",
-            }
-        ]
-    )
-    _invoke(graph3, "t-strict-3")
-    assert len(_pending_tasks(graph3, {"configurable": {"thread_id": "t-strict-3"}})) == 1
+    _invoke(graph2, "t-strict-2")
+    assert len(_pending_tasks(graph2, {"configurable": {"thread_id": "t-strict-2"}})) == 1
 
 
 def test_yolo_bypasses_the_strict_gate():

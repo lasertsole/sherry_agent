@@ -185,6 +185,9 @@ SPOT_DEFAULTS = [
     (HITL_DEFAULTS, "default_timeout", 60),
     (HITL_DEFAULTS, "default_clarify_timeout", 3600),
     (HITL_DEFAULTS, "default_description_prefix", "Action requires human approval"),
+    # auto_edit never asks for a file change; the ask-once reminder is opt-in
+    # (the confirm_all mode gates every change regardless of this flag).
+    (HITL_DEFAULTS, "first_call_confirmation_enabled", False),
     (NUDGE, "plan_extraction_enabled", True),
     (MEMORY_TOOL, "memory_char_limit", 2_200),
     (MEMORY_TOOL, "user_char_limit", 1_375),
