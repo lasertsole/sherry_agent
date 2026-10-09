@@ -67,7 +67,9 @@ this pipeline: the text (and screenshot path) a `browser_*` tool returns. The
 page itself — its DOM, its pixels, its screencast frames — never enters the
 message store: frames go to the panel over `/browser/ws`, snapshots are bounded
 by the manager (element / text caps) before they become tool results, and a
-screenshot is a file path the model opens through the `image_to_text` chain.
+screenshot travels to a vision-capable model as the image itself (the
+`image_to_text` skill is the fallback for a model without native vision, and the
+per-turn history strip keeps an old screenshot out of later contexts).
 Nothing a page displays can steer the agent except through a tool result the
 model itself asked for — and those results pass the untrusted-output fence and
 secret redaction like any other remote content (see the threat model).

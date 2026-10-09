@@ -61,22 +61,33 @@ def attach_media_hints(text_dict: dict[str, Any], paths: MediaPaths) -> None:
 
 
 def apply_skill_fallback(messages: list[BaseMessage], session_id: str) -> list[BaseMessage]:
-    """Strip the media blocks from the last HumanMessage and attach skill hints.
+    """Strip the media blocks from the request and attach skill hints.
 
     Called by LLMRetryMiddleware when a model call fails with
-    ``multimodal_not_supported`` during an auto-mode native attempt. Returns a
-    new messages list with the modified last message, leaving the input
-    untouched; the message's ``additional_kwargs`` (media persistence) are
+    ``multimodal_not_supported`` during an auto-mode native attempt. The last
+    HumanMessage is rewritten onto the skill path; TOOL-produced media (a
+    natively attached screenshot) is stripped from wherever it sits — the retry
+    would otherwise bounce on the same block, and the capability cache only
+    learns after this call returns. Returns a new list, leaving the input
+    untouched; the messages' ``additional_kwargs`` (media persistence) are
     carried over.
     """
     if not messages:
         return messages
-    last_mes = messages[-1]
+
+    # Tool media first: it may sit in ANY position, including the last one.
+    from .tool_media import effective_model_key, scrub_tool_media
+
+    model_key = effective_model_key(session_id)
+    provider, _, model = model_key.partition("/")
+    rewritten, tool_changed = scrub_tool_media(messages, provider, model, model_key, force=True)
+
+    last_mes = rewritten[-1]
     if not isinstance(last_mes, HumanMessage):
-        return messages
+        return rewritten if tool_changed else messages
     content = getattr(last_mes, "content", None)
     if not isinstance(content, list):
-        return messages
+        return rewritten if tool_changed else messages
 
     text_dict: dict[str, Any] | None = None
     for item in content:
@@ -90,7 +101,7 @@ def apply_skill_fallback(messages: list[BaseMessage], session_id: str) -> list[B
 
     new_last = HumanMessage(content=[text_dict])
     new_last.additional_kwargs = dict(getattr(last_mes, "additional_kwargs", {}) or {})
-    return [*messages[:-1], new_last]
+    return [*rewritten[:-1], new_last]
 
 
 def _rebuild_paths(mes: BaseMessage, content: list[Any], session_id: str) -> MediaPaths:

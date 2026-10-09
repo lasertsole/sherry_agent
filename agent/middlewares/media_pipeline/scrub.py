@@ -29,9 +29,10 @@ def scrub_messages(
 ) -> tuple[list[BaseMessage], bool]:
     """Return ``(messages, changed)`` with unsupported media blocks replaced.
 
-    Only ``HumanMessage`` multimodal content lists are inspected; every other
-    message is carried over by reference. ``changed`` is False when no block
-    needed replacement, letting the caller skip the request rebuild.
+    Human messages carry uploads; tool messages carry images a tool produced
+    (``browser_screenshot``). Both are scrubbed by family; every other message
+    is carried over by reference. ``changed`` is False when no block needed
+    replacement, letting the caller skip the request rebuild.
     """
     scrubbed: list[BaseMessage] = []
     changed = False
@@ -49,7 +50,12 @@ def scrub_messages(
             continue
         changed = True
         scrubbed.append(message.model_copy(update={"content": new_content}))
-    return scrubbed, changed
+
+    # Tool-produced media rides the same capability contract.
+    from .tool_media import scrub_tool_media
+
+    scrubbed, tool_changed = scrub_tool_media(scrubbed, provider, model, model_key)
+    return scrubbed, changed or tool_changed
 
 
 def _scrub_content(

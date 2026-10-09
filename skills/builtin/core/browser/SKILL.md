@@ -31,9 +31,11 @@ The tool family: `browser_navigate` · `browser_snapshot` · `browser_click` ·
 - **Text beats screenshots.** The snapshot's text is the readable page content
   and its element list gives you the handles; screenshots cost far more tokens
   and are for layout/visual questions only ("does it overlap", "what does the
-  icon look like"). When you do need to look at one:
-  `browser_screenshot()` returns a PNG path — view it with the `image_to_text`
-  skill (run its script via the `terminal` tool).
+  icon look like"). When you do need to look at one, `browser_screenshot()`
+  returns the image ITSELF when the serving model reads images natively — look
+  at it directly, never route that through a skill; when the result is the
+  saved PNG path instead (a model without native vision), view it with the
+  `image_to_text` skill (run its script via the `terminal` tool).
 - **Scroll, don't demand.** Long pages are truncated in the snapshot; scroll
   (`browser_scroll(delta_y=600)`) and snapshot again rather than retrying with
   a huge `max_elements`.

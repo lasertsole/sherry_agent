@@ -22,6 +22,12 @@ class MediaPipelineConfig(TypedDict):
     # and never reaches the model; the model gets a text notice instead.
     # 20 MiB matches DeepAgents' CLI hard limit for inbound media.
     max_media_bytes: int
+    # Ceiling for attaching a TOOL-produced image (browser_screenshot) to its
+    # result as a native block. The block is a data URL that rides the turn's
+    # message row, so the cap sits far below the upload ceiling: over it the
+    # tool keeps its text + path answer and the model uses the image_to_text
+    # skill instead.
+    tool_media_attach_max_bytes: int
 
 
 MEDIA_PIPELINE: MediaPipelineConfig = {
@@ -29,4 +35,5 @@ MEDIA_PIPELINE: MediaPipelineConfig = {
     "main_llm_native_multimodal": "auto",
     "main_llm_silent_degradation_detection": True,
     "max_media_bytes": 20 * 1024 * 1024,
+    "tool_media_attach_max_bytes": 2 * 1024 * 1024,
 }

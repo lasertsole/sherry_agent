@@ -16,7 +16,7 @@ from langchain.agents.middleware.types import (
     ModelResponse,
     ResponseT,
 )
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMessage
 
 from ..llm_capability_cache import get_capability, get_model_key
 from .fallback import apply_skill_fallback as apply_skill_fallback
@@ -194,9 +194,14 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         """Strip image_url blocks from history messages. The cheap pre-check
         avoids extracting/assigning on messages with nothing to strip, and the
         assignment only happens when the stripped text is non-empty (same
-        semantics as before, minus the needless rewrite)."""
+        semantics as before, minus the needless rewrite).
+
+        TOOL results are covered too: a natively attached screenshot
+        (``browser_screenshot``) must not ride every later turn's context — the
+        tool's own text keeps the saved path, which is the skill path's input.
+        """
         for mes in state_mes_list[:-1]:
-            if not isinstance(mes, HumanMessage):
+            if not isinstance(mes, (HumanMessage, ToolMessage)):
                 continue
             mes_content = getattr(mes, "content", None)
             if not isinstance(mes_content, list):

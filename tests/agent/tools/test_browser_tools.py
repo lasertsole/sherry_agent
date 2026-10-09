@@ -36,6 +36,11 @@ _ALL_NAMES = {
 class _FakeManager:
     """The manager surface the tools use, returning canned outcomes."""
 
+    def __init__(self) -> None:
+        #: Where the fake capture claims to have written the PNG (a test that
+        #: wants the native image block points this at a file that exists).
+        self.screenshot_path = "/tmp/shot.png"
+
     async def navigate(self, session_id, url, page=None):
         return {"page": "p1", "url": url, "title": "T", "session_id": session_id, "loaded": True}
 
@@ -76,7 +81,7 @@ class _FakeManager:
     async def screenshot(self, session_id, *, full_page=False, page_id=None):
         return {
             "page": "p1",
-            "path": "/tmp/shot.png",
+            "path": self.screenshot_path,
             "bytes": 10,
             "width": 4,
             "height": 3,
@@ -196,9 +201,27 @@ def test_click_and_type_and_press_and_scroll_report_their_effect(enabled, bridge
     assert "scrolled [0, 600" in scrolled
 
 
-def test_screenshot_names_the_path_and_the_reading_route(enabled, bridge):
+def test_screenshot_attaches_the_image_for_a_vision_model(enabled, bridge, tmp_path):
+    """The model that can SEE should not be sent to the image_to_text skill."""
+    shot = tmp_path / "shot.png"
+    shot.write_bytes(b"\x89PNG\r\n\x1a\n" + b"body")
+    bridge.screenshot_path = str(shot)
+
     result = asyncio.run(_tool("browser_screenshot").ainvoke({}))
-    assert "/tmp/shot.png" in result and "4×3" in result and "image_to_text" in result
+
+    assert isinstance(result, list), result
+    assert f"screenshot saved: {shot}" in result[0]["text"]
+    block = result[1]
+    assert block["type"] == "image_url"
+    assert block["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_screenshot_falls_back_to_the_path_when_the_image_is_unusable(enabled, bridge):
+    """No readable file (the canned path does not exist) → the text answer."""
+    result = asyncio.run(_tool("browser_screenshot").ainvoke({}))
+
+    assert isinstance(result, str)
+    assert "/tmp/shot.png" in result and "4×3" in result
 
 
 def test_evaluate_is_added_only_with_the_opt_in(enabled, bridge):

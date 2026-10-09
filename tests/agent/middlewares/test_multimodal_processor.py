@@ -512,3 +512,146 @@ class TestApplySkillFallback:
         messages = [HumanMessage(content="纯文本")]
 
         assert mm_fallback.apply_skill_fallback(messages, "fb-str") is messages
+
+
+# ---------------------------------------------------------------------------
+# Functional — tool-produced media (browser_screenshot) rides the same contract
+# ---------------------------------------------------------------------------
+
+
+def _shot_file(tmp_path, name: str = "shot.png"):
+    from agent.middlewares.media_pipeline.tool_media import native_image_content
+
+    path = tmp_path / name
+    path.write_bytes(b"\x89PNG\r\n\x1a\n" + b"payload")
+    return path, native_image_content
+
+
+class TestToolProducedMedia:
+    def test_auto_unprobed_attaches_the_block(self, tmp_path):
+        path, native_image_content = _shot_file(tmp_path)
+
+        content = native_image_content("tool-session", "screenshot saved: x", path)
+
+        assert isinstance(content, list)
+        assert content[0]["text"] == "screenshot saved: x"
+        assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+    def test_cached_unsupported_keeps_the_text_only(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("MAIN_LLM_PROVIDER", "test-provider")
+        monkeypatch.setenv("MAIN_LLM_NAME", "test-model")
+        cache.set_capability("test-provider", "test-model", "vision", "unsupported")
+        path, native_image_content = _shot_file(tmp_path)
+
+        assert native_image_content("tool-session", "text", path) == "text"
+
+    def test_session_model_override_decides(self, tmp_path, monkeypatch):
+        """The session's own model (PUT /sessions/model) is the one that matters."""
+        from runtime.session.state_keys import StateKey
+
+        monkeypatch.setenv("MAIN_LLM_PROVIDER", "env-provider")
+        monkeypatch.setenv("MAIN_LLM_NAME", "env-model")
+        cache.set_capability("pick", "blind-model", "vision", "unsupported")
+        state_register_mem.set_state(
+            "override-session",
+            StateKey.LLM_MAIN_MODEL,
+            {"provider": "pick", "model": "blind-model"},
+        )
+        path, native_image_content = _shot_file(tmp_path)
+
+        assert native_image_content("override-session", "text", path) == "text"
+
+    def test_false_policy_never_attaches(self, tmp_path, monkeypatch):
+        path, native_image_content = _shot_file(tmp_path)
+        monkeypatch.setitem(MEDIA_PIPELINE, "main_llm_native_multimodal", "false")
+
+        assert native_image_content("tool-session", "text", path) == "text"
+
+    def test_missing_file_keeps_the_text_only(self, tmp_path):
+        from agent.middlewares.media_pipeline.tool_media import native_image_content
+
+        assert native_image_content("s", "text", tmp_path / "nope.png") == "text"
+
+    def test_oversize_payload_keeps_the_text_only(self, tmp_path, monkeypatch):
+        path, native_image_content = _shot_file(tmp_path)
+        monkeypatch.setitem(MEDIA_PIPELINE, "tool_media_attach_max_bytes", 4)
+
+        assert native_image_content("s", "text", path) == "text"
+
+    def test_scrub_replaces_the_block_for_an_unsupported_model(self, tmp_path):
+        from langchain_core.messages import ToolMessage
+
+        from agent.middlewares.media_pipeline.tool_media import scrub_tool_media
+
+        cache.set_capability("test-provider", "test-model", "vision", "unsupported")
+        message = ToolMessage(
+            content=[
+                {"type": "text", "text": "screenshot saved: /tmp/shot.png"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
+            ],
+            tool_call_id="c1",
+        )
+
+        out, changed = scrub_tool_media(
+            [message], "test-provider", "test-model", "test-provider/test-model"
+        )
+
+        assert changed is True
+        # The tool's own text stays; the image slot becomes the skill pointer.
+        assert [item["type"] for item in out[0].content] == ["text", "text"]
+        assert "image_to_text" in out[0].content[1]["text"]
+        assert message.content[1]["type"] == "image_url"  # input untouched
+
+    def test_scrub_leaves_a_supported_model_alone(self):
+        from langchain_core.messages import ToolMessage
+
+        from agent.middlewares.media_pipeline.tool_media import scrub_tool_media
+
+        cache.set_capability("test-provider", "test-model", "vision", "supported")
+        message = ToolMessage(
+            content=[
+                {"type": "text", "text": "s"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
+            ],
+            tool_call_id="c1",
+        )
+
+        out, changed = scrub_tool_media(
+            [message], "test-provider", "test-model", "test-provider/test-model"
+        )
+
+        assert changed is False and out[0] is message
+
+    def test_skill_fallback_force_strips_tool_media(self):
+        """A rejected first native attempt must not bounce on the same block."""
+        from langchain_core.messages import ToolMessage
+
+        message = ToolMessage(
+            content=[
+                {"type": "text", "text": "screenshot saved: /tmp/shot.png"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
+            ],
+            tool_call_id="c1",
+        )
+        human = HumanMessage(content=[{"type": "text", "text": "看图"}])
+
+        out = mm_fallback.apply_skill_fallback([human, message], "fb-tool")
+
+        assert [item["type"] for item in out[1].content] == ["text", "text"]
+        assert "image_to_text" in out[1].content[1]["text"]
+
+    def test_history_strip_also_clears_tool_images(self, processor):
+        from langchain_core.messages import ToolMessage
+
+        old_tool = ToolMessage(
+            content=[
+                {"type": "text", "text": "screenshot saved: /tmp/old.png"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,AA"}},
+            ],
+            tool_call_id="c1",
+        )
+        tail = AIMessage(content="done")
+
+        processor._strip_history_images([old_tool, tail])
+
+        assert old_tool.content == "screenshot saved: /tmp/old.png"

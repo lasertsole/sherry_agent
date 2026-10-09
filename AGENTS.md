@@ -62,7 +62,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
-  │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows)
+  │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
   │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about
@@ -517,8 +517,14 @@ group, are MAIN-AGENT-ONLY (`metadata["scope"] = "main_only"` — the subagent
 tool policy drops them unconditionally), and are taught by the `browser`
 playbook skill (`skills/builtin/core/browser/SKILL.md`, scriptless, hidden from
 the index while the feature is off). `browser_screenshot` writes a PNG and
-returns its path (the model views it through the `image_to_text` chain);
-`browser_evaluate` registers only with `SHERRY_BROWSER_ALLOW_EVALUATE=1`.
+returns **the image itself** when the serving model reads images natively
+(`media_pipeline/tool_media.py::native_image_content` — the `image_to_text`
+skill is the fallback for a model without vision, never the route a
+vision-capable one takes; the per-request capability scrub and the retry
+fallback strip the block again for a model that turns out blind, and the
+per-turn history strip removes it from later turns so a screenshot does not
+ride every context); `browser_evaluate` registers only with
+`SHERRY_BROWSER_ALLOW_EVALUATE=1`.
 
 **Panel** — `BrowserPanel.vue` picks CDP mode from `/browser/status` and falls
 back to its iframe mode otherwise (`composables/browser-channel.ts` owns the
