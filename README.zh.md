@@ -70,6 +70,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 ### 7. ⚙️ 运行时、并发与会话控制
 - **项目目录绑定** ([runtime/session/project_dir.py](runtime/session/project_dir.py))：每个会话都有一个项目目录，其工具以此解析相对路径——会话绑定 → `SHERRY_PROJECT_DIR` → `sherry.jsonc` 中的 `project_dir` → `ROOT_DIR`。`PUT /sessions/project` 用于绑定或清除（`null`），回合进行中的选择会被暂存并在回合边界提升。根目录**按调用解析**、从不缓存，因此进程级工具单例不会把会话冻结在第一个调用者的目录上；子智能体在创建时继承父级绑定，并固定为其启动时的根目录。提示词会新增一个 `## Current Working Directory` 段落，指明生效根目录
 - **只读文件浏览**：`GET /project/tree` 与 `GET /project/file` 提供惰性目录树和查看器，硬性拒绝会话根目录之外的路径（它们有意绕过智能体的外部文件审批流程），并由 `FILE_BROWSER` 限制读取大小、编码、深度和每层条目数。应用内目录选择器（`GET /system/dirs`，一个有意例外，仅列出某个绝对路径的**直接子目录**）为浏览器版本提供支持，桌面版本则打开系统文件夹对话框
+- **智能体可控浏览器（CDP）** ([config/features/infra_side/browser_agent.py](config/features/infra_side/browser_agent.py))：需显式开启、默认关闭（`SHERRY_BROWSER_AGENT_ENABLED=1` 加一次重启）——关闭时不注册任何 `browser_*` 工具、每个 `/browser/*` 路由都答 404，也不会派生任何 Chromium。开启后，主智能体通过 8 个仅主代理可用的工具（navigate / snapshot / click / type / press / scroll / screenshot / evaluate，最后一个还需 `SHERRY_BROWSER_ALLOW_EVALUATE=1`）驱动真实的 loopback Chromium；工具箱的浏览器面板作为第二个 CDP 客户端观看同一页面（`/browser/ws` 截图流 + 输入）；调试端口从不离开后端进程
 - **并发通道** ([runtime/lane/core.py](runtime/lane/core.py))：四条进程级通道，每条都是一个带 active/queued 计数器的 `asyncio.Semaphore`，超出上限的工作按 FIFO 排队而非被拒绝——`MAIN`（主智能体回合，按 CPU 缩放 12–16）、`SUBAGENT`（创建与引导，8）、`NUDGE`（nudge/持久化调用，4）、`NESTED`（`sessions_send` 回复回合，串行，1）。启动校验强制 `main >= subagent + nudge`；`GET /lane-status` 报告每条通道的 `{name, max_concurrent, active, queued}`
 - **排队用户输入**：回合运行期间发送的消息会被持久化为 `QUEUED` 行（按 `client_msg_id` 去重，上限为 `INPUT_QUEUE["max_active_per_session"]`），并回复其 FIFO 位置。回合执行器**每回合只取出一行**，因此 N 条排队消息产生 N 个回合和 N 条回复——绝不合并为一个回答——且处于 HITL 待处理状态的会话在恢复完成前不取出任何内容。客户端可对排队行执行 `cancel_queued`、`edit_queued` 或 `send_now`
 - **TaskFlow 进度波次** ([agent/tools/taskflow/waves.py](agent/tools/taskflow/waves.py))：一个流程的步骤被按最长路径 DAG 层级分组，用于浮动进度面板（仅用于展示——调度器仍按各自的 `depends_on` 逐个解锁步骤；未知依赖被忽略，环则落入一个标记为 `cyclic` 的末尾波次）。每次流程变更都会尽力推送 `taskflow_updated` 帧，重连的客户端可用 `taskflow_refresh` 重新请求完全相同的载荷
@@ -322,7 +323,7 @@ EMA_AI_agent/
 | **长时任务** | TaskFlow DAG 引擎、步骤判别器、token 预算、截止时间、验证式完成门与跨轮次记忆连续性 | [EN](docs/long-running-tasks/README.md) · [ZH](docs/long-running-tasks/README.zh.md) · [JA](docs/long-running-tasks/README.ja.md) · [KO](docs/long-running-tasks/README.ko.md) |
 | **Token Guard** | 两个 LLM 的 128K 上下文窗口硬下限（启动、构建、派生、写盘四道闸门） | [EN](docs/token-guard/README.md) · [ZH](docs/token-guard/README.zh.md) · [JA](docs/token-guard/README.ja.md) · [KO](docs/token-guard/README.ko.md) |
 | **Context Governance** | 逐边界持久化、工具结果与人类消息驱逐、`read_file` 切片、溢出尾部裁剪、摘要过滤 | [EN](docs/context-governance/README.md) · [ZH](docs/context-governance/README.zh.md) · [JA](docs/context-governance/README.ja.md) · [KO](docs/context-governance/README.ko.md) |
-| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证，以及隔离子代理工作区 | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
+| **File Safety** | 原子写、两层 CAS、按路径与跨进程锁、`write_file` 的先读后写许可证（压缩一旦丢弃发证的那次读取，许可证也随即失效），以及隔离子代理工作区（合并会报告接口级变更） | [EN](docs/file-safety/README.md) · [ZH](docs/file-safety/README.zh.md) · [JA](docs/file-safety/README.ja.md) · [KO](docs/file-safety/README.ko.md) |
 
 ## ⚡ 快速开始
 

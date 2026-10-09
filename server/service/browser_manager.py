@@ -6,14 +6,14 @@ keeps the pages in a registry keyed by ``page_id``. A page belongs to a SHERRY
 session; the newest page of a session is its default handle, so the agent's
 tools can omit the ``page`` argument.
 
-Design points that the plan's invariants pin:
+Design points:
 
-* C2 — one Chromium per process; ``status()`` reports the page count, never the
+* one Chromium per process; ``status()`` reports the page count, never the
   debug port.
-* C5 — the panel is a SECOND independent CDP client; nothing here locks reads,
+* the panel is a SECOND independent CDP client; nothing here locks reads,
   only navigation (a per-page ``asyncio.Lock``), so a person can keep using the
   page while the agent works.
-* C6 — every operation is bounded (timeouts, element/text caps, screenshot size
+* every operation is bounded (timeouts, element/text caps, screenshot size
   cap) and reports ``truncated`` instead of hanging.
 * Refs — a snapshot assigns ``eN`` handles and stores ``ref -> xpath`` on the
   SERVER (cleared on navigation). ``browser_click(ref=...)`` resolves through
@@ -212,7 +212,7 @@ _INPUT_KEYS: dict[str, tuple[str, ...]] = {
     ),
 }
 
-#: Longest JSON-serialized evaluate result served back (C6).
+#: Longest JSON-serialized evaluate result served back (BROWSER_AGENT cap).
 _EVALUATE_MAX_CHARS = 8000
 
 
@@ -239,7 +239,7 @@ class BrowserManager:
         self._transport_factory = transport_factory
         self._transport: BrowserTransport | None = None
         self._pid: int | None = None
-        #: Debug port, used ONLY to build devtools frontend URLs in-process (C3).
+        #: Debug port, kept in-process: only devtools frontend URLs are built from it.
         self._port: int | None = None
         self._start_lock = asyncio.Lock()
         self._pages: dict[str, BrowserPage] = {}
@@ -259,7 +259,7 @@ class BrowserManager:
         return self._transport is not None and self._transport.connected
 
     def status(self) -> dict[str, Any]:
-        """The panel's / the tools' view: never the debug port (C3)."""
+        """The panel's / the tools' view: never the debug port."""
         return {
             "enabled": self.enabled,
             "running": self.running,
@@ -812,7 +812,7 @@ class BrowserManager:
         """Capture a PNG to the scratch dir; return its path, size and dimensions.
 
         The file (not the bytes) is the answer: the agent views it through the
-        existing image path, and C1 keeps page pixels out of the message store.
+        existing image path, so page pixels never enter the message store.
         """
         page = self.page_for(session_id, page_id)
         transport = self._require_transport()
@@ -948,7 +948,7 @@ class BrowserManager:
         """Open (or reuse) a devtools frontend target for the session's page.
 
         The frontend is an ordinary target pointed at the page's CDP endpoint;
-        the debug port never leaves this process (C3) — the frontend's own URL is
+        the debug port never leaves this process — the frontend's own URL is
         reported without it, and only its screencast ever reaches a client.
         Chrome 153 accepts this form and ``Target.openDevTools`` alike; the
         target form is used because the panel can then show AND drive it like

@@ -14,14 +14,14 @@ Two deliberate properties:
   subagents outright).
 * **Off by default.** ``build_browser_tools()`` returns ``[]`` while
   ``BROWSER_AGENT["enabled"]`` is 0: nothing reaches the tool catalogue, the
-  prompt, or ``GET /agent/catalog`` (plan invariant C4). ``browser_evaluate``
+  prompt, or ``GET /agent/catalog``. ``browser_evaluate``
   additionally requires ``allow_evaluate``.
 
-Reading strategy (mirrors the plan's three layers): ``browser_snapshot`` gives
-TEXT — the page's readable text plus numbered interactive elements whose refs
-``browser_click`` / ``browser_type`` resolve — and ``browser_screenshot`` is
-for the visual case only (the PNG lands in the scratch dir; the ``image_to_text``
-skill is how the model actually looks at it).
+Reading strategy: ``browser_snapshot`` gives TEXT — the page's readable text
+plus numbered interactive elements whose refs ``browser_click`` /
+``browser_type`` resolve — and ``browser_screenshot`` is for the visual case
+only (the PNG lands in the scratch dir; the ``image_to_text`` skill is how the
+model actually looks at it).
 """
 
 from __future__ import annotations
@@ -419,7 +419,7 @@ class BrowserEvaluateTool(_BrowserTool):
 
 
 def build_browser_tools() -> list[BaseTool]:
-    """The browser tool set — empty while the feature is switched off (C4).
+    """The browser tool set — empty while the feature is switched off.
 
     ``browser_evaluate`` joins only when ``allow_evaluate`` is set (the
     escape hatch is opt-in, like ZCode's).

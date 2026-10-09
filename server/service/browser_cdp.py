@@ -279,7 +279,7 @@ async def launch_browser(
        pattern the tool sandbox backends use. The trade is logged.
 
     The debug port binds loopback only (``--remote-debugging-port=0`` on the
-    default address) and is never reported outside this process (C3).
+    default address) and is never reported outside this process.
     """
     Path(user_data_dir).mkdir(parents=True, exist_ok=True)
     port_file = Path(user_data_dir) / "DevToolsActivePort"

@@ -5,7 +5,7 @@ Endpoints:
         -> {"success": true, "enabled": bool, "running": bool, "pid": int|null,
             "pages": int, "sessions": int}
 
-        Never the debug port: the CDP endpoint stays inside the backend (C3).
+        Never the debug port: the CDP endpoint stays inside the backend.
 
     POST /browser/page   {"session_id": "...", "url": "https://…"}
         -> {"success": true, page, url, title, session_id}
@@ -18,7 +18,7 @@ Endpoints:
     POST /browser/close  {"session_id": "...", "page": "p1"?}
         -> {"success": true, page, closed: true}
 
-With the feature off every route answers 404 (C4), and no Chromium is ever
+With the feature off every route answers 404, and no Chromium is ever
 spawned.
 """
 

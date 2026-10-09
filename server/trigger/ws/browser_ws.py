@@ -3,7 +3,7 @@
 One WebSocket per panel instance (``/browser/ws?session_id=…``), behind the
 same two handshake gates as every other socket (gateway token + the login
 ticket). The panel never talks to the CDP port — it watches JPEG frames and
-sends intent; the manager performs every CDP call in-process (C3).
+sends intent; the manager performs every CDP call in-process.
 
 Wire frames (JSON):
 
@@ -315,7 +315,7 @@ async def browser_ws_handler(websocket: WebSocketAdapter):
         return
     if not BROWSER_AGENT["enabled"]:
         # The feature ships off: the panel falls back to its iframe mode and must
-        # be able to learn that over the socket (C4 leaves no browser routes live).
+        # be able to learn that over the socket (the routes are 404 while off).
         with contextlib.suppress(Exception):
             await websocket.send_text(
                 json.dumps({"event": "ready", "enabled": False, "running": False, "page": None})

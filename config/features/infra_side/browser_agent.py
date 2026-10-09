@@ -3,7 +3,7 @@
 The feature is OPT-IN and off by default: with ``enabled`` false no ``browser_*``
 tool is registered and the ``/browser/*`` routes answer 404, so a default
 install carries neither the schemas nor the routes (and no Chromium process is
-ever spawned — plan invariant C4).
+ever spawned).
 
 ``headless`` follows the environment unless pinned: a host with a DISPLAY gets a
 headed window (a person on that desktop can take the page over directly), a
@@ -13,7 +13,7 @@ passes: headed ≈ 43 fps, headless ≈ 60 fps, first frame in ~40 ms.
 
 The debug port is deliberately absent from every answer (``status()`` reports the
 page count, never the port): the CDP endpoint stays inside the backend process
-(C3).
+and is never reported to a client.
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from config.path import SRC_DIR
 
 
 class BrowserAgentConfig(TypedDict):
-    """Bounds and switches for the agent's browser (plan invariants C2–C4, C6)."""
+    """Bounds and switches for the agent's browser."""
 
     #: 1 = the feature exists (tools registered, routes live). Default 0 (off).
     enabled: int
