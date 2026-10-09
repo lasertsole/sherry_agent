@@ -153,7 +153,7 @@ content 为**列表**时逐块计数，绝不再 JSON 序列化整份列表：�
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 持久水位存储：幂等标记、会话隔离、会话删除时清理、空输入无操作 |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 标记语义：摘要消息对在后续压缩中存活；FACT C 固定装置（窗口 26 000 → usable 10 000，截断线 7 000） |
 
-全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**4268 passed / 12 skipped / 0 failed**（GROUP A 3282P/1S + GROUP B 913P/11S + GROUP C 73P）。
+全量进程隔离套件（`uv run python tests/run_tests_split.py`）通过：**7141 passed / 12 skipped / 0 failed**（GROUP A 5741P/0S + GROUP B 1312P/12S + GROUP C 88P）。
 
 ## ⚠️ 诚实与局限
 

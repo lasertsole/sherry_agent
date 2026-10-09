@@ -153,7 +153,7 @@ content가 **리스트**이면 블록 단위로 세고, 리스트 전체를 JSON
 | `tests/context_engine/store/test_persisted_message_ids.py` | 3 | 영속 워터마크 저장소: 멱등 마킹, 세션 격리, 세션 삭제 시 정리, 빈 입력 no-op |
 | `tests/context_engine/store/test_interrupt_marker_approach.py` | 11 | 마커 의미론: 요약 쌍은 이후 압축에서도 생존; FACT C 픽스처 (윈도우 26 000 → usable 10 000, 트렁케이트 라인 7 000) |
 
-전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **4268 passed / 12 skipped / 0 failed** (GROUP A 3282P/1S + GROUP B 913P/11S + GROUP C 73P).
+전체 프로세스 격리 스위트(`uv run python tests/run_tests_split.py`) 통과: **7141 passed / 12 skipped / 0 failed** (GROUP A 5741P/0S + GROUP B 1312P/12S + GROUP C 88P).
 
 ## ⚠️ 정직함과 한계
 
