@@ -28,6 +28,7 @@ import json
 from functools import lru_cache
 from typing import Any
 
+from pub.func.message.text_limits import MAX_INLINE_TEXT_CHARS
 from config.features import SUMMARIZATION
 from context_engine import get_db, get_history_by_turn_page
 from models.LLMs.main_llm import max_tokens as main_llm_context_window
@@ -212,7 +213,7 @@ def get_context_usage(session_id: str) -> dict[str, int | float | None]:
 
 #: Longest text served for one message: this is a reading surface, not a dump —
 #: a giant tool result is clipped with a flag rather than shipped whole.
-_MAX_MESSAGE_CHARS = 8000
+_MAX_MESSAGE_CHARS = MAX_INLINE_TEXT_CHARS
 
 
 def _clip(text: str) -> tuple[str, bool]:

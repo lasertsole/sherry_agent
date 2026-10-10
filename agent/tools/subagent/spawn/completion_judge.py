@@ -28,6 +28,8 @@ from loguru import logger
 
 from models import build_auxiliary_llm
 
+from pub.func.message.text_limits import MAX_INLINE_TEXT_CHARS
+
 
 class CompletionVerdict(StrEnum):
     """Judge verdict for a subagent run."""
@@ -71,7 +73,7 @@ Reply ONLY with a single JSON object on one line:
 _VERDICT_PATTERN = re.compile(r'"(?:verdict)"\s*:\s*"(done|continue)"', re.IGNORECASE)
 
 # Truncate the child's answer so a pathologically long one cannot blow the judge's context window.
-_MAX_RESPONSE_CHARS = 8000
+_MAX_RESPONSE_CHARS = MAX_INLINE_TEXT_CHARS
 
 
 def _build_completion_prompt(

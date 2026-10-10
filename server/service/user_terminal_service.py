@@ -25,6 +25,7 @@ import time
 
 from loguru import logger
 
+from pub.func.message.text_limits import MAX_INLINE_TEXT_CHARS
 from config.features import TOOLS_TIMEOUTS
 from runtime.session.project_dir import current_project_dir
 
@@ -34,7 +35,7 @@ __all__ = ["read_terminal_info", "run_user_command"]
 #: `yes`-style command must not ship megabytes to the browser).
 _MAX_OUTPUT_CHARS = 200_000
 #: Longest command accepted (a paste-bomb guard, not a shell limit).
-_MAX_COMMAND_CHARS = 8000
+_MAX_COMMAND_CHARS = MAX_INLINE_TEXT_CHARS
 
 _TIMEOUT_S = float(TOOLS_TIMEOUTS["user_terminal_timeout_seconds"])
 

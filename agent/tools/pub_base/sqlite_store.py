@@ -115,6 +115,15 @@ class BaseSQLiteRepository(ABC):
                     mode,
                 )
 
+    def _on_owner_loop_died(self) -> None:
+        """Hook: replace any OTHER loop-bound primitive a subclass owns.
+
+        Called by :meth:`ensure_db` after it re-owns an init whose previous
+        owner loop died (the base's own ``_init_lock`` is replaced before this
+        runs). The default is a no-op; a store with extra asyncio primitives
+        (e.g. a writer lock) overrides it.
+        """
+
     # -- one-time schema init (async) --------------------------------------
 
     async def _init_db(self) -> None:
@@ -151,6 +160,20 @@ class BaseSQLiteRepository(ABC):
         if ns["_initialized"]:
             return
         loop = asyncio.get_running_loop()
+        if (
+            ns["_init_loop"] is not None
+            and ns["_init_loop"] is not loop
+            and ns["_init_loop"].is_closed()
+        ):
+            # The owning loop died before its one-time init finished (event-loop
+            # teardown can cancel a first-use init mid-statement). It can never
+            # complete now: re-own the init on THIS loop instead of pointlessly
+            # polling the full ``_INIT_WAIT_TIMEOUT_S``. asyncio primitives are
+            # loop-bound once used, so the locks minted on the dead loop are
+            # replaced along with it.
+            ns["_init_loop"] = None
+            ns["_init_lock"] = asyncio.Lock()
+            self._on_owner_loop_died()
         if ns["_init_loop"] is None:
             ns["_init_loop"] = loop
         if ns["_init_loop"] is loop:

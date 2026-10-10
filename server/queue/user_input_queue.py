@@ -74,16 +74,18 @@ NULL``, ``created_at REAL NOT NULL`` (epoch seconds, FIFO sort key),
 """
 
 import asyncio
+import threading
 import time
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import aiosqlite
 from config.features import INPUT_QUEUE
+from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
 from loguru import logger
 from pydantic import BaseModel
 
@@ -222,34 +224,6 @@ VALUES (?, ?, ?, ?, ?, ?, 'QUEUED', ?, ?, ?);
 """
 
 
-async def _switch_to_wal_if_needed(db: aiosqlite.Connection) -> None:
-    """Switch the database to WAL mode, unless it is already WAL.
-
-    The journal-mode switch does NOT reliably honor busy_timeout: with an
-    active writer it can raise OperationalError("database is locked") immediately.
-    Once the file is WAL (the steady state after the first init) the pragma is
-    skipped entirely. If a concurrent initializer is mid-switch, re-check and
-    tolerate the outcome -- init must never fail over the journal mode.
-    """
-    async with db.execute("PRAGMA journal_mode") as cursor:
-        row = await cursor.fetchone()
-    mode = str(row[0]) if row and row[0] else ""
-    if mode.lower() == "wal":
-        return
-    try:
-        await db.execute("PRAGMA journal_mode=WAL")
-    except aiosqlite.OperationalError:
-        # Another connection may hold the exclusive lock for its own switch.
-        async with db.execute("PRAGMA journal_mode") as cursor:
-            row = await cursor.fetchone()
-        mode = str(row[0]) if row and row[0] else ""
-        if mode.lower() != "wal":
-            logger.warning(
-                "user_input_queue db stays in {!r} journal mode (WAL switch contended); proceeding without WAL",
-                mode,
-            )
-
-
 class QueueFullError(Exception):
     """A session's user-input queue is at capacity (MAX_ACTIVE_PER_SESSION)."""
 
@@ -369,76 +343,43 @@ class ConnectionManager:
                 yield db
 
 
-class SchemaManager:
-    """One-time schema setup (WAL + table + indexes), lock- and loop-aware.
+class SchemaManager(BaseSQLiteRepository):
+    """One-time schema setup (WAL + table + indexes) for the input queue.
 
-    Schema init runs at most once per store instance, on first use, serialized
-    by an asyncio lock on the instance's owning loop. If the owning loop died
-    before finishing (event-loop teardown can cancel a first-use init
-    mid-statement), the next caller re-owns the init: asyncio primitives are
-    loop-bound once used, so the locks minted on the dead loop are replaced
-    along with it (the connection manager's write lock included).
+    The connection lifecycle, the loop-ownership dance and the dead-owner
+    re-own come from ``BaseSQLiteRepository`` (this class used to copy them);
+    the init state lives in a PER-INSTANCE namespace because a caller may point
+    the queue at its own ``db_path``. What stays queue-specific is the extra
+    loop-bound primitive: the connection manager's writer lock is reminted when
+    the owner loop died.
     """
 
     def __init__(self, db_path: Path, conn: ConnectionManager) -> None:
         self._db_path = Path(db_path)
         self._conn = conn
-        self._init_lock = asyncio.Lock()
-        self._init_loop: asyncio.AbstractEventLoop | None = None
-        self._initialized: bool = False
+        self._ns: dict[str, Any] = {
+            "_DB_DIR": self._db_path.parent,
+            "_DB_PATH": self._db_path,
+            "_BUSY_TIMEOUT_MS": _BUSY_TIMEOUT_MS,
+            "_BUSY_TIMEOUT_S": _BUSY_TIMEOUT_MS / 1000,
+            "_INIT_WAIT_TIMEOUT_S": _INIT_WAIT_TIMEOUT_S,
+            "_initialized": False,
+            "_init_loop": None,
+            "_init_lock": asyncio.Lock(),
+            "_sync_tables_ready": False,
+            "_sync_init_lock": threading.Lock(),
+        }
+        super().__init__(self._ns)
 
-    def remint_locks(self) -> None:
-        """Replace the init lock (the owning event loop died and was re-owned)."""
-        self._init_lock = asyncio.Lock()
+    def _table_ddls(self) -> tuple[str, ...]:
+        return (_CREATE_TABLE_SQL,)
 
-    async def init_db(self) -> None:
-        """One-time schema setup; safe to run concurrently (busy_timeout + IF NOT EXISTS)."""
-        self._db_path.parent.mkdir(parents=True, exist_ok=True)
-        async with self._conn.connect() as db:
-            await _switch_to_wal_if_needed(db)
-            await db.execute(_CREATE_TABLE_SQL)
-            for index_sql in _CREATE_INDEX_SQLS:
-                await db.execute(index_sql)
-            await db.commit()
+    def _index_ddls(self) -> tuple[str, ...]:
+        return tuple(_CREATE_INDEX_SQLS)
 
-    async def ensure_db(self) -> None:
-        """Ensure the database directory and the user_input_queue table exist (once per instance)."""
-        if self._initialized:
-            return
-        loop = asyncio.get_running_loop()
-        if (
-            self._init_loop is not None
-            and self._init_loop is not loop
-            and self._init_loop.is_closed()
-        ):
-            # The owning loop died before its one-time init finished (loop
-            # teardown can cancel a first-use init mid-statement). It can
-            # never complete now: re-own the init on THIS loop instead of
-            # pointlessly polling the full _INIT_WAIT_TIMEOUT_S for it.
-            # asyncio primitives are loop-bound once used, so the locks
-            # minted on the dead loop are replaced along with it.
-            self._init_loop = None
-            self.remint_locks()
-            self._conn.remint_write_lock()
-        if self._init_loop is None:
-            self._init_loop = loop
-        if self._init_loop is loop:
-            async with self._init_lock:
-                if self._initialized:
-                    return
-                await self.init_db()
-                self._initialized = True
-            return
-        # Non-owning loop (a store instance driven from more than one event
-        # loop, e.g. test harnesses mixing threads and asyncio). asyncio
-        # primitives are single-loop by design -- wait for the owning loop to
-        # finish its one-time init instead of touching the lock.
-        deadline = time.monotonic() + _INIT_WAIT_TIMEOUT_S
-        while not self._initialized and time.monotonic() < deadline:
-            await asyncio.sleep(0.01)
-        if not self._initialized:
-            await self.init_db()
-            self._initialized = True
+    def _on_owner_loop_died(self) -> None:
+        # The writer lock was minted on the dead loop too (see ConnectionManager).
+        self._conn.remint_write_lock()
 
 
 class QueueRepository:
@@ -624,11 +565,11 @@ class UserInputQueue:
 
     @property
     def _initialized(self) -> bool:
-        return self._schema._initialized
+        return bool(self._schema._ns["_initialized"])
 
     @property
     def _init_loop(self) -> asyncio.AbstractEventLoop | None:
-        return self._schema._init_loop
+        return self._schema._ns["_init_loop"]
 
     async def _ensure_db(self) -> None:
         await self._schema.ensure_db()

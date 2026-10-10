@@ -38,6 +38,7 @@ from collections.abc import Callable
 
 from loguru import logger
 
+from pub.func.message.text_limits import MAX_INLINE_TEXT_CHARS
 from config.features import BROWSER_AGENT, BrowserAgentConfig
 from config.path import TEMP_DIR
 from server.service.browser_cdp import (
@@ -214,7 +215,7 @@ _INPUT_KEYS: dict[str, tuple[str, ...]] = {
 }
 
 #: Longest JSON-serialized evaluate result served back (BROWSER_AGENT cap).
-_EVALUATE_MAX_CHARS = 8000
+_EVALUATE_MAX_CHARS = MAX_INLINE_TEXT_CHARS
 
 
 def _png_size(png: bytes) -> tuple[int, int] | None:
