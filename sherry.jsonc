@@ -20,8 +20,6 @@
   // 环境变量 SHERRY_PROJECT_DIR 可对单次启动覆盖此键。
   "project_dir": "",
 
-  // subagent
-  "SUBAGENT_TODO_DONE_FUNC": "archive",
 
   // Default workspace template language (lazy-copied persona files from workspace/template/{lang}/): en / zh / ja / ko
   // 人设模板语言（首次使用时从 workspace/template/{lang}/ 懒拷贝）

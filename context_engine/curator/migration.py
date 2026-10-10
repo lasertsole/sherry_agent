@@ -121,13 +121,38 @@ def _archive_consolidated_sources(consolidations: list) -> None:
             logger.warning("Curator failed to archive '{}' into umbrella '{}': {}", name, into, msg)
 
 
+def _is_builtin_skill(name: str) -> bool:
+    """True when *name* is a first-party skill shipped under ``skills/builtin``.
+
+    Used only by the ``curator.prune_builtins`` switch: the curator may prune an
+    auto/plugin skill freely, but archiving a builtin is a product decision.
+    """
+    try:
+        from config.path import SKILLS_DIR
+
+        return (SKILLS_DIR / "builtin" / name).is_dir()
+    except Exception:
+        return False
+
+
 def _archive_pruned_skills(prunings: list, consolidations: list) -> None:
+    prune_builtins = True
+    try:
+        from config.sherry_settings import get_sherry_setting
+
+        prune_builtins = bool(get_sherry_setting("curator.prune_builtins"))
+    except Exception:
+        logger.debug("curator.prune_builtins unreadable; defaulting to True", exc_info=True)
+
     for entry in prunings:
         name = entry.get("name", "").strip()
         if not name:
             continue
         in_consolidation = any(e.get("from", "").strip() == name for e in consolidations)
         if in_consolidation:
+            continue
+        if not prune_builtins and _is_builtin_skill(name):
+            logger.info("Curator keeps builtin skill {!r} (curator.prune_builtins=false)", name)
             continue
         ok, msg = archive_skill(name)
         if ok:
