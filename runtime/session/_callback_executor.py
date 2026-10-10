@@ -94,6 +94,10 @@ class CallbackExecutor:
                 await coro
             except asyncio.CancelledError:
                 logger.warning("Task '{}' cancelled (timeout after {}s)", name, timeout)
+            except Exception:
+                # Without this the exception only surfaced as asyncio's
+                # "Task exception was never retrieved" warning.
+                logger.exception("Background task {!r} failed", name)
             finally:
                 done.set()
 

@@ -15,7 +15,12 @@ current_dir = Path(__file__).parent.resolve()
 load_dotenv(ENV_PATH, override=True)
 max_tokens = os.getenv("REASONER_LLM_MAX_TOKEN")
 if max_tokens:
-    max_tokens = min(int(max_tokens), LLM_CLIENT_DEFAULTS["reasoner_max_tokens_cap"])
+    try:
+        max_tokens = min(int(max_tokens), LLM_CLIENT_DEFAULTS["reasoner_max_tokens_cap"])
+    except ValueError as exc:
+        raise ValueError(
+            f"REASONER_LLM_MAX_TOKEN must be an integer number of tokens, got {max_tokens!r}"
+        ) from exc
 
 model_config: dict[str, Any] = ModelEnvBuilder(
     {

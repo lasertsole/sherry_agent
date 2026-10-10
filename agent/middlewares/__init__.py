@@ -1,5 +1,5 @@
-from .media_pipeline.mixins import BeforeAgentHooksMixin as BeforeAgentHooksMixin
-from .media_pipeline.mixins import AfterAgentHooksMixin as AfterAgentHooksMixin
+from .base import BeforeAgentHooksMixin as BeforeAgentHooksMixin
+from .base import AfterAgentHooksMixin as AfterAgentHooksMixin
 from .base import require_session_id as require_session_id
 from .base import args_hash as args_hash
 

@@ -11,10 +11,9 @@ re-dispatched instead of marked done - the failure result is still recorded.
 
 import json
 import time
-from typing import Annotated, Any
+from typing import Any
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from config.features import STEP_JUDGE
 from agent.tools.subagent.swarm.collector import validate_structured_output
@@ -33,6 +32,7 @@ from ._retry import (
     wait_before_retry,
     with_judge_feedback,
 )
+from agent.tools.pub_base import SessionId
 from ._shared import (
     build_task_with_bindings,
     build_task_with_dep_results,
@@ -46,7 +46,6 @@ from ._shared import (
     update_flow_with_conflict_retry,
 )
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 _STATUS_ORDER = tuple(status.value for status in StepStatus)
 

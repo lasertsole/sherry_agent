@@ -21,13 +21,10 @@ Design notes
   programmatic/bind-time use.
 """
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from langchain_core.tools import BaseTool, tool
-from langgraph.prebuilt.tool_node import InjectedState
-
-
-SessionId = Annotated[str, InjectedState("session_id")]
+from agent.tools.pub_base import SessionId
 
 
 def _session_key(session_id: str) -> str:

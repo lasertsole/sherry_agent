@@ -148,6 +148,17 @@ def _setup_subagent_alias():
         if mod_name not in sys.modules:
             sys.modules[mod_name] = _make_stub(mod_name)
 
+    # ``agent.core``'s graph-lease API: the real module is stubbed here, but
+    # the server's turn lifecycle (``server/service/messages.py``) calls
+    # ``hold_agent``/``release_agent`` around every turn. Bind faithful no-op
+    # stand-ins so a stubbed-process turn behaves exactly as before the lease
+    # existed (the lease semantics are pinned in
+    # ``tests/agent/core/test_agent_graph_lease.py``).
+    core_stub = sys.modules["agent.core"]
+    if not hasattr(core_stub, "hold_agent"):
+        core_stub.hold_agent = lambda graph: None
+        core_stub.release_agent = lambda graph: None
+
     # Light packages are NOT stubbed and load for real on demand: `config`
     # (path/num constants; chains need ENV_PATH, SRC_DIR, AUTO_SKILLS_DIR,
     # PLUGINS_PATH, ROOT_DIR, TEMP_DIR), `pub.types` (bus dataclasses /

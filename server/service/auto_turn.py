@@ -265,6 +265,11 @@ class _AutoTurnStreamDriver(StreamDriver):
     def log_error(self, exc: Exception, elapsed: float) -> None:
         logger.error("auto_turn: turn failed for {}: {}", self.session_id, exc)
 
+    def public_error(self, exc: Exception) -> str:
+        from server.service.stream_diag import public_error_text
+
+        return public_error_text(exc)
+
     async def on_finish(self) -> None:
         # the auto-turn owns no queue row (claim_row_id=None) — the
         # TurnRunner defers while a foreign CLAIMED row exists, so this only

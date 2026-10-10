@@ -4,6 +4,7 @@ import sys
 
 import nest_asyncio
 from logs import init_logger
+from loguru import logger
 from dotenv import load_dotenv
 from config import STATIC_DIR, SRC_DIR
 from config import API_HOST, API_PORT, ENV_PATH
@@ -32,10 +33,11 @@ if bool(get_sherry_setting("LANGSMITH.TRACING_V2")) and str(
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
     os.environ["LANGSMITH_API_KEY"] = str(get_sherry_setting("LANGSMITH.API_KEY"))
     os.environ["LANGSMITH_PROJECT"] = str(get_sherry_setting("LANGSMITH.PROJECT"))
-    print("🔍 LangSmith tracing enabled -> project:", os.environ["LANGSMITH_PROJECT"])
+    logger.info("LangSmith tracing enabled -> project: {}", os.environ["LANGSMITH_PROJECT"])
 else:
-    print(
-        "ℹ️  LangSmith not configured (set LANGSMITH.TRACING_V2=true and LANGSMITH.API_KEY in sherry.jsonc to enable)"
+    logger.debug(
+        "LangSmith not configured (set LANGSMITH.TRACING_V2=true and LANGSMITH.API_KEY "
+        "in sherry.jsonc to enable)"
     )
 
 

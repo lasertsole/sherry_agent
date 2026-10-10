@@ -1,17 +1,14 @@
 """taskflow_create: create a durable task flow (openclaw createManaged)."""
 
 import time
-from typing import Annotated
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowExistsError
 from ._shared import default_state, requester_session_key
-
-SessionId = Annotated[str, InjectedState("session_id")]
+from agent.tools.pub_base import SessionId
 
 
 @tool("taskflow_create")

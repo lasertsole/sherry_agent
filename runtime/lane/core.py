@@ -18,6 +18,7 @@ optional drain-mode gate is injected through ``set_drain_check()``.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
@@ -67,6 +68,8 @@ class Lane:
         self._max = max_concurrent
         self._active = 0
         self._queued = 0
+        #: A limit update that waits for an empty queue (see set_max).
+        self._rebind_pending = False
         self._sem: asyncio.Semaphore | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -109,6 +112,9 @@ class Lane:
         check = _drain_check
         if check is not None and check():
             raise RuntimeError(f"Lane {self.name} acquire refused: gateway is draining")
+        # A limit update deferred by an occupied queue lands here, before this
+        # caller parks on the semaphore.
+        self._apply_pending_rebind()
         sem = self._ensure_sem()
         self._queued += 1
         wait_start = time.monotonic()
@@ -137,18 +143,41 @@ class Lane:
         self._active -= 1
         if self._sem is not None:
             self._sem.release()
+        self._apply_pending_rebind()
 
     def set_max(self, max_concurrent: int) -> None:
         """Hot-update the limit; in-flight slots are unaffected.
 
         Existing slots keep their permit and the fresh semaphore is seeded
         with the remaining capacity, so only new acquires see the new limit.
+
+        The swap is DEFERRED while tasks are parked on the current semaphore:
+        those waiters hold a reference to the old object, so replacing it would
+        leave them waiting on a semaphore nobody releases — ``_queued`` would
+        never drain. The pending rebind is applied by the next acquire/release
+        that sees an empty queue.
         """
         if max_concurrent < 1:
             raise ValueError(f"Lane {self.name!r} max_concurrent must be >= 1")
         self._max = max_concurrent
-        if self._sem is not None and self._loop is not None:
-            self._rebind(self._loop)
+        if self._sem is None or self._loop is None:
+            return
+        if self._queued > 0:
+            self._rebind_pending = True
+            logger.debug(
+                "Lane {}: limit update deferred ({} waiter(s) parked on the current semaphore)",
+                self.name,
+                self._queued,
+            )
+            return
+        self._rebind(self._loop)
+
+    def _apply_pending_rebind(self) -> None:
+        """Swap in a deferred limit once nothing is parked on the old semaphore."""
+        if not self._rebind_pending or self._queued > 0 or self._loop is None:
+            return
+        self._rebind_pending = False
+        self._rebind(self._loop)
 
     async def drain(self, timeout: float = 30.0) -> bool:
         """Wait for all active slots to release. Returns True if drained in time."""
@@ -224,13 +253,21 @@ class LaneManager:
 
 
 _manager: LaneManager | None = None
+#: Guards the first construction (see get_lane_manager).
+_MANAGER_LOCK = threading.Lock()
 
 
 def get_lane_manager() -> LaneManager:
-    """Return the process-level lane manager, creating it on first use."""
+    """Return the process-level lane manager, creating it on first use.
+
+    Double-checked under a module lock: two threads racing the first call must
+    get the SAME manager (one shared set of lanes), not one each.
+    """
     global _manager
     if _manager is None:
-        _manager = LaneManager()
+        with _MANAGER_LOCK:
+            if _manager is None:
+                _manager = LaneManager()
     return _manager
 
 

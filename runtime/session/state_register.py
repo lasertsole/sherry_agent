@@ -346,7 +346,11 @@ class ContextEpoch:
 
         baseline = json.dumps(system_context, ensure_ascii=False)
         now = datetime.now().strftime("%Y%m%d%H%M%S")
-        with sqlite3.connect(self._db.db_path) as conn:
+        # The register's shared connection + lock (a private sqlite3.connect()
+        # here churned WAL handles and skipped the write serialization every
+        # other operation has).
+        with self._db._conn_lock:
+            conn = self._db._init_db()
             conn.execute(
                 "INSERT INTO context_epoch (session_id, baseline, snapshot, baseline_seq, "
                 "created_at, updated_at) VALUES (?, ?, ?, 0, ?, ?) "
@@ -402,7 +406,8 @@ class ContextEpoch:
 
         ctx_json = json.dumps(new_context, ensure_ascii=False)
         now = datetime.now().strftime("%Y%m%d%H%M%S")
-        with sqlite3.connect(self._db.db_path) as conn:
+        with self._db._conn_lock:
+            conn = self._db._init_db()
             conn.execute(
                 "UPDATE context_epoch SET baseline = ?, snapshot = ?, baseline_seq = ?, "
                 "updated_at = ? WHERE session_id = ?",
@@ -416,7 +421,8 @@ class ContextEpoch:
 
         snapshot_json = json.dumps(new_snapshot, ensure_ascii=False)
         now = datetime.now().strftime("%Y%m%d%H%M%S")
-        with sqlite3.connect(self._db.db_path) as conn:
+        with self._db._conn_lock:
+            conn = self._db._init_db()
             conn.execute(
                 "UPDATE context_epoch SET snapshot = ?, updated_at = ? WHERE session_id = ?",
                 (snapshot_json, now, session_id),

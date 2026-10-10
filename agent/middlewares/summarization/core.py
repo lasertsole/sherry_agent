@@ -280,12 +280,17 @@ class Summarization(
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _get_session_or_raise(state: AgentState) -> str:
-        session_id: str = state.get("session_id", "")
+    def _session_or_none(state: AgentState) -> str | None:
+        """The session id, or ``None`` when the turn carries none (fail-open).
+
+        Every sibling middleware passes such a turn through instead of raising
+        (context_eviction returns None, message_persistence catches, the drain
+        returns None) — a missing session id must not fail the model call.
+        """
+        session_id = str(state.get("session_id") or "")
         if session_id.strip() == "":
-            err_text = "Not pass session_id"
-            logger.error(err_text)
-            raise RuntimeError(err_text)
+            logger.error("Compaction skipped: turn carries no session_id")
+            return None
         return session_id
 
     # ------------------------------------------------------------------
@@ -420,7 +425,9 @@ class Summarization(
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         logger.debug("Compaction wrap_model_call hook fired")
-        session_id = self._get_session_or_raise(request.state)
+        session_id = self._session_or_none(request.state)
+        if session_id is None:
+            return handler(request)
         messages: list[AnyMessage] = request.state.get("messages", [])
         self._check_last_turn_ratio(messages, session_id)
 
@@ -502,7 +509,9 @@ class Summarization(
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
         logger.debug("Compaction awrap_model_call hook fired")
-        session_id = self._get_session_or_raise(request.state)
+        session_id = self._session_or_none(request.state)
+        if session_id is None:
+            return await handler(request)
         messages: list[AnyMessage] = request.state.get("messages", [])
         self._check_last_turn_ratio(messages, session_id)
 

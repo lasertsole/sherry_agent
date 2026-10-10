@@ -1,6 +1,18 @@
-"""Shared tool helper utilities."""
+"""Shared tool helper utilities (error shape + the session-id argument).
+
+The session id every session-aware tool takes from graph state is declared ONCE
+here: 25 tool modules used to repeat the identical
+``SessionId = Annotated[str, InjectedState("session_id")]`` line, so a change to
+the injection contract had 25 places to find.
+"""
 
 import json
+from typing import Annotated
+
+from langgraph.prebuilt.tool_node import InjectedState
+
+#: The injected session id argument every session-aware tool declares.
+SessionId = Annotated[str, InjectedState("session_id")]
 
 
 def tool_error(message, **extra) -> str:
@@ -17,4 +29,4 @@ def tool_error(message, **extra) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-__all__ = ["tool_error"]
+__all__ = ["SessionId", "tool_error"]

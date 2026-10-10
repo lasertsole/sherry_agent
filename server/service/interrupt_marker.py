@@ -121,7 +121,18 @@ async def _write_interrupted_marker_inner(
         # cast the returned wrapper/graph to the state-ops contract.
         from agent import core as agent_core
 
-        graph = cast("CompiledStateGraph[Any, Any, Any, Any]", await agent_core.built_agent())
+        leased = cast("CompiledStateGraph[Any, Any, Any, Any]", await agent_core.built_agent())
+        # Lease it for this reconciliation: a concurrent rebuild replaces the
+        # cached graph and closes the replaced one, which would pull the
+        # checkpointer out from under this write.
+        agent_core.hold_agent(leased)
+        try:
+            await _write_interrupted_marker_inner(
+                session_id, config, partial_text, reason, leased, queue
+            )
+        finally:
+            agent_core.release_agent(leased)
+        return
     if queue is None:
         from server.service.input_queue_service import get_default_queue
 

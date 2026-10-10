@@ -39,7 +39,6 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # this key so an operator can repoint a single launch (see
     # config/path.py::resolve_default_project_dir).
     "project_dir": "",
-    "SUBAGENT_TODO_DONE_FUNC": "archive",
     "WORKSPACE_TEMPLATE_LANG": "en",
     # Global heartbeat scheduler switch (the 心跳 panel's toggle). Off by
     # default: the periodic heartbeat is opt-in, and the boot path reads this

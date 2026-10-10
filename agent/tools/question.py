@@ -23,13 +23,10 @@ from langchain.agents.middleware.human_in_the_loop import (
     ReviewConfig,
 )
 from langchain_core.tools import BaseTool
-from langgraph.prebuilt.tool_node import InjectedState
 from langgraph.types import interrupt
 from pydantic import BaseModel, Field
-from typing import Annotated, Any, override
-
-
-SessionId = Annotated[str, InjectedState("session_id")]
+from typing import Any, override
+from agent.tools.pub_base import SessionId
 
 
 class QuestionOption(BaseModel):

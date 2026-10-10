@@ -26,7 +26,13 @@ api_name = os.getenv("MAIN_LLM_NAME")
 model_provider = os.getenv("MAIN_LLM_PROVIDER")
 max_tokens = os.getenv("MAIN_LLM_MAX_TOKEN")
 if max_tokens:
-    max_tokens = int(max_tokens)
+    try:
+        max_tokens = int(max_tokens)
+    except ValueError as exc:
+        # A typo ("128K") must name the variable instead of dying inside int().
+        raise ValueError(
+            f"MAIN_LLM_MAX_TOKEN must be an integer number of tokens, got {max_tokens!r}"
+        ) from exc
 
 # Reasoning/thinking mode is OFF by default (matching the non-reasoning
 # behaviour users expect from the main LLM). Set MAIN_LLM_ENABLE_THINKING=true

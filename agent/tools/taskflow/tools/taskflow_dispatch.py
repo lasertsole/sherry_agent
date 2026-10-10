@@ -11,15 +11,14 @@ touched by this tool - per-step child keys are authoritative.
 """
 
 import time
-from typing import Annotated
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus
 from ..registry import store_sqlite
 from . import _dispatch
 from ._retry import is_redispatch, normalize_policy, step_retry_count, with_judge_feedback
+from agent.tools.pub_base import SessionId
 from ._shared import (
     build_task_with_bindings,
     apply_dispatched_steps,
@@ -32,8 +31,6 @@ from ._shared import (
     terminal_error,
     update_flow_with_conflict_retry,
 )
-
-SessionId = Annotated[str, InjectedState("session_id")]
 
 
 @tool("taskflow_dispatch")

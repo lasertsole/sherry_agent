@@ -7,14 +7,12 @@ re-read the exact persisted state before marking something complete.
 """
 
 import json
-from typing import Annotated
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from .. import service
+from agent.tools.pub_base import SessionId
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 _NO_TODOS = "No todos found."
 

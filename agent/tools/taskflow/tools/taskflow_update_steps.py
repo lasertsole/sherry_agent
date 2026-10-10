@@ -26,15 +26,15 @@ fail fast, and a mismatch returns the latest revision for re-read + retry.
 """
 
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Any
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
+from agent.tools.pub_base import SessionId
 from ._shared import (
     conflict_error,
     is_terminal,
@@ -44,7 +44,6 @@ from ._shared import (
     validate_steps_list,
 )
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 # The only statuses a caller may assign to a step in the structural plane.
 _STRUCTURAL_STATUSES = frozenset({StepStatus.READY.value, StepStatus.BLOCKED.value})

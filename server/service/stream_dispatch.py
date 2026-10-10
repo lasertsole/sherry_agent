@@ -40,6 +40,7 @@ from langchain_core.messages import BaseMessage, ToolCall, ToolCallChunk, ToolMe
 from agent.security.think_scrub import StreamingReasoningScrubber
 from loguru import logger
 from runtime import state_register_mem
+from runtime.session.state_keys import StateKey
 from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
@@ -318,7 +319,7 @@ class StreamTurn:
         additive ``duration_ms`` — is testable without driving a whole stream.
         """
         tool_id = tm.tool_call_id
-        name = state_register_mem.get_state(self.session_id, "current_tool_name", "")
+        name = state_register_mem.get_state(self.session_id, StateKey.CURRENT_TOOL_NAME, "")
         args = _pop_pending_args(self.session_id, tool_id)
         self._partial_tool_calls.pop(tool_id, None)
         return [
@@ -355,7 +356,7 @@ class StreamTurn:
         if self.meta_finish_reason == "content_filter":
             # Safety-filtered responses must not enter the continuation loop;
             # flag the middleware layer so it can fall back or terminate.
-            state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+            state_register_mem.set_state(self.session_id, StateKey.LLM_CONTENT_FILTER_BLOCKED, True)
         return False, False
 
     def _detect_mid_stream_content_filter(self) -> bool:
@@ -370,7 +371,7 @@ class StreamTurn:
         if not any(kw in lowered for kw in _CONTENT_FILTER_KEYWORDS):
             return False
         self.meta_finish_reason = "content_filter"
-        state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+        state_register_mem.set_state(self.session_id, StateKey.LLM_CONTENT_FILTER_BLOCKED, True)
         state_register_mem.set_state(self.session_id, _FILTER_TERMINATED_KEY, True)
         return True
 
@@ -421,11 +422,11 @@ class StreamTurn:
 
     async def _cleanup(self, kind: Literal["stream", "invoke"] | None, source: Any) -> None:
         # Reset tool tracking state
-        state_register_mem.set_state(self.session_id, "current_tool_name", "")
-        state_register_mem.set_state(self.session_id, "current_tool_id", "")
-        state_register_mem.set_state(self.session_id, "answering", False)
+        state_register_mem.set_state(self.session_id, StateKey.CURRENT_TOOL_NAME, "")
+        state_register_mem.set_state(self.session_id, StateKey.CURRENT_TOOL_ID, "")
+        state_register_mem.set_state(self.session_id, StateKey.ANSWERING, False)
         # Flag consumed by MaxTokensBoostMiddleware during model calls
-        state_register_mem.delete_state(self.session_id, "is_stream_turn")
+        state_register_mem.delete_state(self.session_id, StateKey.IS_STREAM_TURN)
         _clear_pending_args(self.session_id)
 
     # ---- template -------------------------------------------------------
@@ -436,7 +437,7 @@ class StreamTurn:
         await self._prepare()
 
         # Control answering
-        state_register_mem.set_state(self.session_id, "answering", True)
+        state_register_mem.set_state(self.session_id, StateKey.ANSWERING, True)
 
         kind: Literal["stream", "invoke"] | None = None
         source: Any = None
@@ -455,7 +456,9 @@ class StreamTurn:
                 kind, source = await self._create_source()
                 # MaxTokensBoostMiddleware reads this flag to decide
                 # whether a re-call must strip streaming callbacks.
-                state_register_mem.set_state(self.session_id, "is_stream_turn", kind == "stream")
+                state_register_mem.set_state(
+                    self.session_id, StateKey.IS_STREAM_TURN, kind == "stream"
+                )
 
                 if kind == "invoke":
                     result: dict[str, Any] = await source
@@ -463,7 +466,10 @@ class StreamTurn:
                         yield frame
                 else:
                     async for chunk in source:
-                        if state_register_mem.get_state(self.session_id, "answering") is False:
+                        if (
+                            state_register_mem.get_state(self.session_id, StateKey.ANSWERING)
+                            is False
+                        ):
                             raise asyncio.CancelledError
 
                         mode: str = chunk[0]
@@ -479,7 +485,7 @@ class StreamTurn:
                                     for frame in self._tool_result_frames(tm):
                                         yield frame
                                     state_register_mem.set_state(
-                                        self.session_id, "current_tool_id", ""
+                                        self.session_id, StateKey.CURRENT_TOOL_ID, ""
                                     )
                             continue
                         if mode != "messages":
@@ -545,7 +551,7 @@ class StreamTurn:
                             if (
                                 len(tool_calls) > 0
                                 or state_register_mem.get_state(
-                                    self.session_id, "current_tool_id", ""
+                                    self.session_id, StateKey.CURRENT_TOOL_ID, ""
                                 ).strip()
                             ):
                                 repeat_flag: bool = True  # Prevent duplicate tool call output
@@ -573,7 +579,7 @@ class StreamTurn:
                                         ):
                                             state_register_mem.set_state(
                                                 self.session_id,
-                                                "current_tool_name",
+                                                StateKey.CURRENT_TOOL_NAME,
                                                 tool_call["name"],
                                             )
 
@@ -587,7 +593,7 @@ class StreamTurn:
                                             )
                                         ):
                                             state_register_mem.set_state(
-                                                self.session_id, "current_tool_id", tool_id
+                                                self.session_id, StateKey.CURRENT_TOOL_ID, tool_id
                                             )
                                             repeat_flag = False
 
@@ -614,7 +620,7 @@ class StreamTurn:
                                 eff_tool_id: str | None = (
                                     tool_id
                                     or state_register_mem.get_state(
-                                        self.session_id, "current_tool_id", ""
+                                        self.session_id, StateKey.CURRENT_TOOL_ID, ""
                                     ).strip()
                                     or None
                                 )
@@ -634,7 +640,7 @@ class StreamTurn:
 
                                 if not repeat_flag:
                                     tool_name = state_register_mem.get_state(
-                                        self.session_id, "current_tool_name", ""
+                                        self.session_id, StateKey.CURRENT_TOOL_NAME, ""
                                     )
                                     self._note_tool_start(tool_name)
                                     _note_tool_started(self.session_id, eff_tool_id)
@@ -745,7 +751,9 @@ class StreamTurn:
                 # The provider killed the stream on a safety filter —
                 # either the explicit finish_reason carried in the metadata
                 # or the keyword heuristic above. Flag for fallback.
-                state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+                state_register_mem.set_state(
+                    self.session_id, StateKey.LLM_CONTENT_FILTER_BLOCKED, True
+                )
                 state_register_mem.set_state(self.session_id, _FILTER_TERMINATED_KEY, True)
             else:
                 # The stream died mid-output — preserve the classified

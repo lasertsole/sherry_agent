@@ -23,6 +23,7 @@ Design points:
 from __future__ import annotations
 
 import asyncio
+import threading
 import contextlib
 import base64
 import json
@@ -1113,13 +1114,21 @@ class BrowserManager:
 # ------------------------------------------------------------------ singleton
 
 _manager: BrowserManager | None = None
+#: Guards the first construction (see get_browser_manager).
+_MANAGER_LOCK = threading.Lock()
 
 
 def get_browser_manager() -> BrowserManager:
-    """The process-wide manager (created on first use; lazy launch on first op)."""
+    """The process-wide manager (created on first use; lazy launch on first op).
+
+    Double-checked under a module lock: two threads racing the first call must
+    share one manager — one Chromium, one page registry.
+    """
     global _manager
     if _manager is None:
-        _manager = BrowserManager()
+        with _MANAGER_LOCK:
+            if _manager is None:
+                _manager = BrowserManager()
     return _manager
 
 

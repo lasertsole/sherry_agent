@@ -298,11 +298,15 @@ def build_thinking_off_kwargs(provider: str | None, model_name: str | None) -> d
 def build_thinking_floor_kwargs(provider: str | None, model_name: str | None) -> dict[str, Any]:
     """Return kwargs for the MINIMUM thinking level of always-think models.
 
-    Some gateways (e.g. ``glm-5`` series, verified live 2026-09: glm-5.3-flash
-    rejects ``disabled`` with error code 1210 "该模型始终思考，不支持关闭思考")
-    cannot turn thinking off at all and only accept a level (low / high / max).
-    For those the forced-off toggle maps to the lowest level — the closest
-    possible approximation. Providers with a real off switch get ``{}``.
+    Some gateways cannot turn thinking off at all (verified live 2026-09:
+    ``glm-5.3-flash`` rejects ``disabled`` with error code 1210 "该模型始终思考，
+    不支持关闭思考") and only accept a level (low / high / max). For those the
+    forced-off toggle maps to the lowest level — the closest possible
+    approximation. The caller decides when that applies: ``thinking_control_mode``
+    raises the floor only for the always-think models (``_ALWAYS_THINK_PREFIXES``),
+    so this function pins the level for any model in the reasoning families below
+    and returns ``{}`` for everything else — a provider with a real off switch is
+    never asked for a floor by the production paths.
     """
     if not provider or not model_name:
         return {}
@@ -310,6 +314,10 @@ def build_thinking_floor_kwargs(provider: str | None, model_name: str | None) ->
     if "/" in name:
         name = name.rsplit("/", 1)[-1]
     if name.startswith(_ZHIPU_REASONING_PREFIXES):
+        # The Zhipu reasoning families that accept the ``thinking`` payload.
+        # WHETHER a floor is needed is the caller's decision (``thinking_floor``
+        # comes from ``thinking_control_mode``, which raises it only for the
+        # always-think models), so this function does not second-guess it.
         return {"extra_body": {"thinking": {"type": "low"}}}
     return {}
 

@@ -19,18 +19,19 @@ import fnmatch
 import json
 import re
 from pathlib import Path
-from typing import Annotated, override
+from typing import override
 
 from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
 from langchain_core.tools import BaseTool
-from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
 from agent.tools.file_tools.search_scan import ScanState, SearchQuery, bounded_walk
 from agent.tools.pub_base.rg_backend import pattern_needs_python, rg_search, rg_search_files
 from agent.tools.pub_base.rg_resolver import resolve_rg
+from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
+    tool_error,
     PathOutOfBoundsError,
     _extract_session_id,
     display_path,
@@ -38,8 +39,6 @@ from agent.tools.pub_base import (
     resolve_external_path,
     resolve_workspace_path,
 )
-
-SessionId = Annotated[str, InjectedState("session_id")]
 
 
 # ── Content search (grep-like) ───────────────────────────────────────────
@@ -224,12 +223,10 @@ class SearchFilesTool(BaseTool):
                     path, session_id=session_id, action_desc="search directory"
                 )
             except PathOutOfBoundsError as e:
-                return json.dumps({"error": str(e)}, ensure_ascii=False)
+                return tool_error(str(e))
 
         if not resolved.exists():
-            return json.dumps(
-                {"error": f"Path not found: {display_path(resolved, root)}"}, ensure_ascii=False
-            )
+            return tool_error(f"Path not found: {display_path(resolved, root)}")
         if not resolved.is_dir():
             return json.dumps(
                 {"error": f"Path is not a directory: {display_path(resolved, root)}"},

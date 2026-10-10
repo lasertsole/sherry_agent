@@ -33,7 +33,7 @@ from config.features.agent_side import (
 from config.path import CODE_INTEL_DIR
 
 from .query import CalleeInfo, CallerInfo, CodeQuery, ExploreResult, ImpactResult
-from .semantic import SemanticCodeSearchTool, SemanticSearch
+from .semantic import SemanticSearch, build_semantic_search_tool
 
 _ROOT_ENV_KEY = "SHERRY_CODE_INTEL_ROOT"
 _DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
@@ -303,7 +303,7 @@ def build_code_intel_tools(
             embed_model=embed_model,
             reranker=reranker,
         )
-        tools.append(SemanticCodeSearchTool(semantic, resolved_root, session_id))
+        tools.append(build_semantic_search_tool(semantic, resolved_root, session_id))
     except Exception as exc:  # noqa: BLE001 - semantic layer is additive, never fatal
         logger.warning("code_intel: semantic search unavailable: {}", exc)
     return tools

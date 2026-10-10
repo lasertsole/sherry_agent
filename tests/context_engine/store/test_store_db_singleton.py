@@ -30,10 +30,16 @@ pytestmark = [pytest.mark.module, pytest.mark.timeout(60)]
 
 
 @pytest.fixture
-def fresh_singleton():
-    """Reset the module singleton state around a test, restoring afterwards."""
+def fresh_singleton(tmp_path, monkeypatch):
+    """Reset the module singleton state around a test, restoring afterwards.
+
+    ``_db_path`` is repointed at a tmp file FIRST: without it, a test that
+    forces a fresh ``get_db()`` runs the schema self-heal + migration against
+    the REAL ``src/store/mes_memory/mes_memory.db``.
+    """
     saved_db = db_mod._db
     saved_lock = getattr(db_mod, "_db_lock", None)
+    monkeypatch.setattr(db_mod, "_db_path", tmp_path / "mes_memory.db")
     db_mod._db = None
     try:
         yield db_mod

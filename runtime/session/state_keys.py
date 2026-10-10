@@ -127,6 +127,12 @@ class StateKey(StrEnum):
     EXTERNAL_PATH_ALLOWLIST = "external_path_allowlist"
 
     ANSWERING = "answering"
+    #: Tool currently streaming inside a turn (stream_dispatch writes it per
+    #: tool_start/tool_end so the content filter and the cancellation path can
+    #: name what is running).
+    CURRENT_TOOL_NAME = "current_tool_name"
+    #: Id of that tool's call (pair of CURRENT_TOOL_NAME).
+    CURRENT_TOOL_ID = "current_tool_id"
     REQUESTER_SESSION_KEY = "requester_session_key"
     CALLER_SCOPE = "caller_scope"
 

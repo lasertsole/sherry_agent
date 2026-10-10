@@ -11,16 +11,16 @@ without touching the spawn pipeline.
 """
 
 import time
-from typing import Annotated, Any
+from typing import Any
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from . import _dispatch
 from ._retry import validate_policy
+from agent.tools.pub_base import SessionId
 from ._shared import (
     build_task_with_bindings,
     build_task_with_dep_results,
@@ -34,8 +34,6 @@ from ._shared import (
     terminal_error,
     update_flow_with_conflict_retry,
 )
-
-SessionId = Annotated[str, InjectedState("session_id")]
 
 
 @tool("taskflow_run_task")

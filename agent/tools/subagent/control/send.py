@@ -70,11 +70,11 @@ async def send_subagent_message(
 async def _capture_baseline_reply(child_session_key: str) -> str | None:
     """Snapshot the current last AI message so we can detect when a new reply arrives."""
     try:
-        from agent import built_agent
+        from agent.core import agent_lease
         from pub.func import build_agent_config
 
-        agent = await built_agent()
-        state = await agent.aget_state(config=build_agent_config(child_session_key))
+        async with agent_lease() as agent:
+            state = await agent.aget_state(config=build_agent_config(child_session_key))
         messages = state.values.get("messages", [])
 
         for msg in reversed(messages):

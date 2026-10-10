@@ -27,7 +27,6 @@ from typing import Any
 from collections.abc import Callable
 
 from loguru import logger
-from robyn import WebSocketDisconnect
 
 from server.trigger import auth
 from server.trigger import auth_user
@@ -71,7 +70,14 @@ class WSPushChannel:
                 frame = queue.popleft()
                 try:
                     await websocket.send_text(frame)
-                except Exception:
+                except Exception as e:
+                    # The socket is gone: the serve() loop's finally unregisters
+                    # it. Logged so a silently dead push channel is visible.
+                    logger.debug(
+                        "push sender stopped: websocket_id={} error={}",
+                        getattr(websocket, "id", "?"),
+                        e,
+                    )
                     return
 
     async def serve(
@@ -125,7 +131,7 @@ class WSPushChannel:
                     await websocket.receive_text()
                 except Exception:
                     break
-        except (WebSocketDisconnect, ConnectionResetError, Exception) as e:
+        except Exception as e:
             logger.warning(f"{client_label} client {websocket.id} disconnected: {e}")
         finally:
             # Await the cancelled task so its frame is finished before the

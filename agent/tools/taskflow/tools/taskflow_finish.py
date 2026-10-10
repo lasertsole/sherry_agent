@@ -13,15 +13,13 @@ Every gate is fail-open: an unavailable evidence collector or verifier never
 blocks a finish, and a skipped Gate D is silent.
 """
 
-from typing import Annotated
-
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
+from agent.tools.pub_base import SessionId
 from ._shared import (
     conflict_error,
     is_terminal,
@@ -30,7 +28,6 @@ from ._shared import (
     terminal_error,
 )
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 # Gate A passes a step in exactly these states; anything else is still pending.
 _FINISHABLE_STATUSES = (StepStatus.DONE.value, StepStatus.BLOCKED.value)

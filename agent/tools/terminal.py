@@ -37,7 +37,7 @@ import locale
 import asyncio
 import re
 import subprocess
-from typing import Annotated, Any, ClassVar
+from typing import Any, ClassVar
 from loguru import logger
 from pydantic import BaseModel, Field
 from typing import override
@@ -48,8 +48,7 @@ from langchain_community.tools.shell.tool import ShellInput
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_core.tools import ToolException
 
-from agent.tools.pub_base import _extract_session_id
-from langgraph.prebuilt.tool_node import InjectedState
+from agent.tools.pub_base import SessionId, _extract_session_id
 
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import areap_process, reap_process
@@ -63,7 +62,6 @@ from agent.tools.todolist.evidence_recorder import record_verification_evidence
 #: tools use). The runnable-config lookup in ``_extract_session_id`` is empty in
 #: production, so a tool that relied on it alone resolved against the process
 #: root instead of the session's project directory (found by the live smoke).
-SessionId = Annotated[str, InjectedState("session_id")]
 
 # Bound to the feature registry (single source of truth); name preserved.
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
@@ -306,6 +304,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                 "The command was forcibly terminated. Please try a simpler command."
             )
         except Exception as e:
+            logger.debug("terminal command failed: {!r}", argv[:1], exc_info=True)
             return f"Error: {e}"
 
     def _run_with_encoding(

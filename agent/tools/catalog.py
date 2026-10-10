@@ -26,6 +26,11 @@ from typing import Any
 __all__ = [
     "BULK_ONLY_GROUPS",
     "REQUIRED_TOOLS",
+    # The catalogue lists the MAIN agent's tools. The subagent-only families
+    # (code_intel explore/semantic, ast_grep, lsp, ptc) are deliberately absent:
+    # they are registered per child at spawn (``build_code_intel_tools`` and friends
+    # are called from the spawn path), so they never appear in the main tool face
+    # nor in ``GET /agent/catalog``. A new subagent tool joins them there, not here.
     "TOOL_GROUPS",
     "TOOL_ORDER",
     "tool_catalog",

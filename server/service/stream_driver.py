@@ -85,6 +85,15 @@ class StreamDriver:
     async def send_frame(self, payload: dict[str, Any]) -> None:
         raise NotImplementedError
 
+    def public_error(self, exc: Exception) -> str:
+        """Client-facing text for a failed turn (site hook).
+
+        The default is the exception's own text; the WS and auto-turn sites
+        override it with ``stream_diag.public_error_text`` so an internal detail
+        never reaches the client — this module stays free of server imports.
+        """
+        return str(exc)
+
     async def check_interrupt(self) -> dict[str, Any] | None:
         raise NotImplementedError
 
@@ -173,7 +182,9 @@ class StreamDriver:
                 {
                     "event": "error",
                     "session_id": self.session_id,
-                    "content": str(e),
+                    # The full text (with any internal paths/identifiers) stays
+                    # in the server log; the client gets the public summary.
+                    "content": self.public_error(e),
                     "message_ids": self._message_ids(),
                 }
             )

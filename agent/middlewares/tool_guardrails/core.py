@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import threading
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -73,6 +74,10 @@ class _TurnGuardrailState:
 
 
 _GUARDRAIL_STATE_KEY = StateKey.TOOL_GUARDRAIL_STATE
+
+#: Per-session mutation locks for the guardrail state (see _state_lock).
+_STATE_LOCKS: dict[str, threading.Lock] = {}
+_STATE_LOCKS_GUARD = threading.Lock()
 _MAX_RECORDS = 200
 
 _ACTION_RANK = {
@@ -110,6 +115,23 @@ class ToolGuardrails(AgentMiddleware):
 
     def _get_state(self, session_id: str) -> _TurnGuardrailState:
         return state_register_mem.get_state(session_id, _GUARDRAIL_STATE_KEY, _TurnGuardrailState())
+
+    @staticmethod
+    def _state_lock(session_id: str) -> threading.Lock:
+        """The per-session lock serializing read-modify-write of the state.
+
+        ToolNode executes a step's parallel tool calls concurrently, and
+        ``_get_state`` hands back the SAME object: two calls appending to
+        ``records`` / incrementing counters without this lock can drop or
+        double-count an entry, which then trips a wrong BLOCK/HALT. The guarded
+        section is pure Python (no awaits inside).
+        """
+        with _STATE_LOCKS_GUARD:
+            lock = _STATE_LOCKS.get(session_id)
+            if lock is None:
+                lock = threading.Lock()
+                _STATE_LOCKS[session_id] = lock
+            return lock
 
     def _save_state(self, session_id: str, state: _TurnGuardrailState) -> None:
         state_register_mem.set_state(session_id, _GUARDRAIL_STATE_KEY, state)
@@ -347,6 +369,17 @@ class ToolGuardrails(AgentMiddleware):
         result: ToolMessage,
     ) -> ToolMessage:
         session_id = self._get_session_id(request.state)
+        # The whole read-modify-write runs under the session's lock (parallel
+        # tool calls share one state object — see _state_lock).
+        with self._state_lock(session_id):
+            return self._wrap_tool_call_locked(request, result, session_id)
+
+    def _wrap_tool_call_locked(
+        self,
+        request: ToolCallRequest,
+        result: ToolMessage,
+        session_id: str,
+    ) -> ToolMessage:
         gs = self._get_state(session_id)
         tool_name: str = request.tool_call.get("name", "unknown")
         tool_args: dict[str, Any] = request.tool_call.get("args", {})

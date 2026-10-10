@@ -239,6 +239,12 @@ def _resolve_hook(name: str) -> Callable[..., Any] | None:
 class TodoContinuationEnforcer(AgentMiddleware):
     """Turn-end enforcer: inject a continuation prompt when todos remain.
 
+    Async-only BY DESIGN: this hook fires from ``aafter_agent`` alone. The
+    production graph is driven through ``ainvoke``/``astream`` (the whole
+    middleware chain is async), so a sync twin would only be dead code — a
+    process that somehow ran the sync path would skip the gate entirely, which
+    is why there is no ``after_agent`` here to half-work.
+
     Registered in ``agent/core.py`` FIRST in the middleware list, so it runs
     LAST at turn end (after_agent hooks execute in reverse list order).
     """

@@ -1,15 +1,11 @@
 """taskflow_budget: set and query the token/cost budget for a task flow."""
 
-from typing import Annotated
-
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ._shared import conflict_error, is_terminal, not_found_error, terminal_error
-
-SessionId = Annotated[str, InjectedState("session_id")]
+from agent.tools.pub_base import SessionId
 
 
 @tool("taskflow_budget")

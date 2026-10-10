@@ -1,10 +1,14 @@
+import asyncio
+import contextlib
 import os
+import threading
 from typing import Any
 
 from langchain_core.tools import BaseTool
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentState
 from langgraph.graph.state import CompiledStateGraph
+from loguru import logger
 from models import build_main_llm, build_auxiliary_llm
 from agent.checkpointer import build_async_sqlite_checkpointer
 from models.LLMs.main_llm import build_fallback_chain
@@ -104,25 +108,122 @@ def get_agent_tools() -> list[BaseTool]:
     return _tools
 
 
-# Cache of compiled agents, keyed by the asyncio event loop that they were
-# built on. Each entry holds a fresh main_llm whose internal openai.AsyncOpenAI
-# -> httpx.AsyncClient transport pool is bound to that specific loop.
+# Cache of the compiled agent for the CURRENT event loop: ONE slot plus the loop
+# it was built on. A request on the same loop reuses it; a request on another
+# loop — or ``force_rebuild=True`` — replaces it. (The earlier design kept a
+# per-loop dict; a single slot is what actually ships, because a rebuild is
+# required whenever the loop differs and the extra entries would only pin more
+# loop-bound clients alive.)
 #
-# Why loop-keyed: the previous module-level `_agent: CompiledStateGraph | None`
-# singleton embedded ONE loop-bound httpx transport pool and reused it across WS
-# turns (and across the subagent daemon thread). Connections in that stale pool
-# silently died mid-request on the WS server, surfacing as
-# openai.APITimeoutError("Request timed out") at ~17s even though the SDK's
-# default 600s deadline had not elapsed (the request is killed by the dead
-# pooled connection, not a normal timeout). Verified by a standalone stream with
-# the exact same payload (12KB system prompt + full tools schema) that COMPLETED
-# IN 8.0s on a fresh in-loop client, while the cached-pool WS path failed.
+# Why the loop matters: the graph embeds a main_llm whose openai.AsyncOpenAI ->
+# httpx.AsyncClient transport pool is bound to the loop it was built on. Reusing
+# a foreign loop's pool dies mid-request as
+# ``openai.APITimeoutError("Request timed out")`` at ~17s, far under the SDK's
+# 600s deadline — the request is killed by the dead pooled connection. Verified
+# with a standalone stream (same 12KB prompt + full tools schema) completing in
+# 8.0s on a fresh in-loop client while the cached-pool path failed at ~16.78s.
 #
-# Keying by loop gives identical behaviour to calling build_main_llm fresh for
-# the current loop (the codebase-wide convention), but still reuses the compiled
-# graph for subsequent requests on the same loop to avoid rebuilding it.
+# Lifecycle: every rebuild opens a NEW checkpointer (own aiosqlite connection +
+# non-daemon worker thread + file handle), so a replaced graph must be closed or
+# every turn leaks one connection. Callers register a live use with
+# ``hold_agent`` / ``release_agent``; a replaced graph is closed as soon as its
+# last holder drops it, and a graph that is still the cache stays open.
+class _LoopSafeLock(asyncio.Lock):
+    """``asyncio.Lock`` that binds to whichever loop acquires it.
+
+    The build lock is module-level and ``built_agent`` is called from the server
+    loop, the subagent daemon thread and in-process callers; a plain
+    ``asyncio.Lock`` created at import time would refuse the second loop
+    ("is bound to a different event loop"). Same override as the checkpointer's.
+    """
+
+    def _get_loop(self) -> asyncio.AbstractEventLoop:
+        return asyncio.get_running_loop()
+
+
 _agent: CompiledStateGraph | None = None
 _agent_loop = None
+_agent_lock = _LoopSafeLock()
+_agent_holders: dict[int, int] = {}  # id(graph) -> live holders
+_agent_holders_lock = threading.Lock()
+_release_tasks: set[asyncio.Task[None]] = set()
+
+
+def hold_agent(graph: Any) -> None:
+    """Register a live use of *graph* (pair every call with ``release_agent``)."""
+    if graph is None:
+        return
+    with _agent_holders_lock:
+        _agent_holders[id(graph)] = _agent_holders.get(id(graph), 0) + 1
+
+
+def release_agent(graph: Any) -> None:
+    """Drop one live use; an orphaned, unheld graph is closed here.
+
+    The graph still sitting in the cache slot is kept: it is not orphaned, the
+    next same-loop caller reuses it.
+    """
+    if graph is None:
+        return
+    with _agent_holders_lock:
+        key = id(graph)
+        remaining = _agent_holders.get(key, 0) - 1
+        if remaining > 0:
+            _agent_holders[key] = remaining
+            return
+        _agent_holders.pop(key, None)
+    if graph is _agent:
+        return
+    close_agent_graph(graph)
+
+
+def close_agent_graph(graph: Any) -> None:
+    """Close a graph's owned resources (its checkpointer connection), async-safe.
+
+    Fail-open and never blocking: without a running loop there is nothing to
+    schedule on (process teardown closes the fds anyway), and a checkpointer
+    without ``aclose`` is left alone.
+    """
+    checkpointer = getattr(graph, "checkpointer", None)
+    aclose = getattr(checkpointer, "aclose", None)
+    if not callable(aclose):
+        return
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_aclose_checkpointer_quietly(checkpointer, aclose))
+    _release_tasks.add(task)
+    task.add_done_callback(_release_tasks.discard)
+
+
+async def _aclose_checkpointer_quietly(checkpointer: Any, aclose: Any) -> None:
+    try:
+        await aclose()
+    except Exception:
+        logger.exception("failed to close a replaced agent graph's checkpointer")
+
+
+@contextlib.asynccontextmanager
+async def agent_lease(*, force_rebuild: bool = False):
+    """A HELD graph for one bounded operation (``hold_agent``/``release_agent``).
+
+    Every caller that uses a graph beyond the immediate call must lease it: a
+    concurrent rebuild replaces the cached graph, and an unheld replaced graph is
+    closed at once — which would pull the checkpointer out from under a live
+    read.
+    """
+    graph = await built_agent(force_rebuild=force_rebuild)
+    hold_agent(graph)
+    try:
+        yield graph
+    finally:
+        release_agent(graph)
+
+
+def _agent_holder_count(graph: Any) -> int:
+    with _agent_holders_lock:
+        return _agent_holders.get(id(graph), 0)
 
 
 def _assert_max_token() -> None:
@@ -297,7 +398,6 @@ async def built_agent(
     check → ``_build_graph``.
     """
     global _agent, _agent_loop
-    import asyncio
 
     _assert_max_token()
 
@@ -320,12 +420,23 @@ async def built_agent(
     # the only clean way to reproduce the fresh-client condition. The SQLite
     # checkpointer persists session state independently of the graph object, so a
     # rebuild is safe and cheap relative to the 15-20s LLM call.
-    if _agent is None or _agent_loop is not current_loop or force_rebuild:
+    # The lock covers the check-and-build so two concurrent callers cannot both
+    # build (and orphan one graph each); it is loop-safe because callers may sit
+    # on different loops.
+    async with _agent_lock:
+        if _agent is not None and _agent_loop is current_loop and not force_rebuild:
+            return _agent
+        previous = _agent
         _agent = await _build_graph(
             temperature=temperature,
             main_llm_context_window=main_llm_max_tokens,
             compression_trigger_ratio=COMPRESSION_TRIGGER_RATIO,
         )
         _agent_loop = current_loop
+
+    # A replaced graph is closed as soon as nobody is using it: `release_agent`
+    # of its last holder does the closing when this call leaves it held.
+    if previous is not None and _agent_holder_count(previous) == 0:
+        close_agent_graph(previous)
 
     return _agent

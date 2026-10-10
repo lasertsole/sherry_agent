@@ -10,11 +10,12 @@ which is what refuses the overwrite.
 
 import json
 import os
-from typing import Annotated, override
+from typing import override
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
-from langgraph.prebuilt.tool_node import InjectedState
+from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
+    tool_error,
     PathOutOfBoundsError,
     _extract_session_id,
     _open_no_follow,
@@ -29,8 +30,6 @@ from agent.tools.pub_base import (
 )
 from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
-
-SessionId = Annotated[str, InjectedState("session_id")]
 
 
 class ReadFileInput(BaseModel):
@@ -95,7 +94,7 @@ class ReadFileTool(BaseTool):
                     file_path, session_id=session_id, action_desc="read file"
                 )
             except PathOutOfBoundsError as e:
-                return json.dumps({"error": str(e)}, ensure_ascii=False)
+                return tool_error(str(e))
 
         if not resolved.exists():
             return json.dumps(
@@ -126,9 +125,7 @@ class ReadFileTool(BaseTool):
                 if fd >= 0:
                     os.close(fd)
         except Exception as e:
-            return json.dumps(
-                {"error": f"Failed to read file: {safe_error_detail(e)}"}, ensure_ascii=False
-            )
+            return tool_error(f"Failed to read file: {safe_error_detail(e)}")
 
         encoding = sniff_text_encoding(data)
         if encoding is None:

@@ -21,14 +21,15 @@ agents patched one file and both reported success.
 import hashlib
 import json
 import difflib
-from typing import Annotated, override
+from typing import override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
 from langchain_core.tools import BaseTool
-from langgraph.prebuilt.tool_node import InjectedState
+from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
+    tool_error,
     FileBusyError,
     PathOutOfBoundsError,
     StaleWriteError,
@@ -50,7 +51,6 @@ from agent.tools.pub_base import (
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 # ── Diff helper ──────────────────────────────────────────────────────────
 
@@ -152,17 +152,12 @@ class PatchFileTool(BaseTool):
                     file_path, session_id=session_id, action_desc="patch file"
                 )
             except PathOutOfBoundsError as e:
-                return json.dumps({"error": str(e)}, ensure_ascii=False)
+                return tool_error(str(e))
 
         if not resolved.exists():
-            return json.dumps(
-                {"error": f"File not found: {display_path(resolved, root)}"}, ensure_ascii=False
-            )
+            return tool_error(f"File not found: {display_path(resolved, root)}")
         if resolved.is_dir():
-            return json.dumps(
-                {"error": f"Path is a directory: {display_path(resolved, root)}"},
-                ensure_ascii=False,
-            )
+            return tool_error(f"Path is a directory: {display_path(resolved, root)}")
 
         try:
             # One writer per path at a time (in-process and cross-process), so the
@@ -260,13 +255,9 @@ class PatchFileTool(BaseTool):
                 ensure_ascii=False,
             )
         except UnicodeDecodeError as e:
-            return json.dumps(
-                {"error": f"Failed to read file: {safe_error_detail(e)}"}, ensure_ascii=False
-            )
+            return tool_error(f"Failed to read file: {safe_error_detail(e)}")
         except OSError as e:
-            return json.dumps(
-                {"error": f"Failed to write file: {safe_error_detail(e)}"}, ensure_ascii=False
-            )
+            return tool_error(f"Failed to write file: {safe_error_detail(e)}")
 
         mark_evidence_stale(file_path, session_id)
         diff = _unified_diff(content, new_content, display_path(resolved, root))

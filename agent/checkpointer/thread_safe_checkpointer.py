@@ -28,6 +28,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 import aiosqlite
+import contextlib
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.base import (
     ChannelVersions,
@@ -160,14 +161,19 @@ class ThreadSafeAsyncSqliteSaver(AsyncSqliteSaver):
     ) -> Iterator[CheckpointTuple]:
         self._raise_if_has_running_loop("list")
         loop = asyncio.new_event_loop()
+        aiter_ = self.alist(config, filter=filter, before=before, limit=limit)
         try:
-            aiter_ = self.alist(config, filter=filter, before=before, limit=limit)
             while True:
                 try:
                     yield loop.run_until_complete(anext(aiter_))  # type: ignore[arg-type]
                 except StopAsyncIteration:
                     break
         finally:
+            # Close the generator BEFORE the loop: its `finally` blocks are
+            # coroutines that need a loop to run (an abandoned generator would
+            # otherwise be finalized against a closed loop).
+            with contextlib.suppress(Exception):
+                loop.run_until_complete(aiter_.aclose())
             loop.close()
 
     def put(

@@ -15,10 +15,9 @@ and tests can substitute the liveness source without touching the real registry.
 import asyncio
 import time
 from collections.abc import Callable
-from typing import Annotated, Any
+from typing import Any
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from config.features import TASKFLOW_INFRA
 from ..config import StepStatus
@@ -31,8 +30,8 @@ from ._retry import (
     wait_before_retry,
 )
 from ._shared import not_found_error, step_status
+from agent.tools.pub_base import SessionId
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 # Never busy-spin: the caller's interval is clamped up to this floor.
 _MIN_POLL_INTERVAL_SECONDS = TASKFLOW_INFRA["wait_all_min_poll_interval_seconds"]

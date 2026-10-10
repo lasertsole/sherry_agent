@@ -15,7 +15,6 @@ SAMPLE = """// app settings
 
   "project_dir": "",
 
-  "SUBAGENT_TODO_DONE_FUNC": "archive",
   "WORKSPACE_TEMPLATE_LANG": "en",
   "heartbeat": {
     "enabled": true

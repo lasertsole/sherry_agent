@@ -6,16 +6,13 @@ instructs the caller to retry with the revision reported here.
 
 import json
 import time
-from typing import Annotated
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from config.features import TASKFLOW_INFRA
 from ..registry import store_sqlite
 from ._shared import is_terminal, not_found_error, step_status, steps_summary
-
-SessionId = Annotated[str, InjectedState("session_id")]
+from agent.tools.pub_base import SessionId
 
 
 @tool("taskflow_summary")

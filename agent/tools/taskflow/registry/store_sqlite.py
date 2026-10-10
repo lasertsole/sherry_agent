@@ -304,7 +304,8 @@ async def create_flow(
     except aiosqlite.IntegrityError as e:
         raise FlowExistsError(flow_id) from e
     flow = await get_flow(flow_id, session_id)
-    assert flow is not None  # we just inserted it
+    if flow is None:  # unreachable: the row was inserted in this transaction
+        raise FlowNotFoundError(flow_id)
     return flow
 
 
@@ -407,7 +408,8 @@ async def update_flow(
         await db.commit()
 
     flow = await get_flow(flow_id, session_id)
-    assert flow is not None  # the UPDATE just matched this row
+    if flow is None:  # unreachable: the UPDATE matched this row
+        raise FlowNotFoundError(flow_id)
     return flow
 
 

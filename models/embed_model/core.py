@@ -1,4 +1,4 @@
-import sys
+from typing import Never
 import math
 from pathlib import Path
 from loguru import logger
@@ -11,9 +11,16 @@ _MODEL_DIR = Path(__file__).resolve().parent
 _WEIGHT_DIR = _MODEL_DIR / "model_weight"
 
 
-def _abort(msg: str) -> None:
+def _abort(msg: str) -> Never:
+    """Fail the embed-model setup with a clear message.
+
+    Raises instead of calling ``sys.exit``: this is a library module, and a
+    configuration typo must not kill the whole server process from inside it —
+    the caller (``build_embed_model`` / the first embed call) decides, and the
+    message still names the missing variable.
+    """
     logger.error(f"[EmbedModel ERROR] {msg}")
-    sys.exit(1)
+    raise RuntimeError(f"[EmbedModel] {msg}")
 
 
 def _detect_backend() -> tuple[str, bool, dict | None]:

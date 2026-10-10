@@ -269,6 +269,7 @@ def _has_active_boulder(session_id: str | None = None) -> bool:
         plan_content = plan_file.read_text(encoding="utf-8")
         return "- [ ]" in plan_content or "- [x]" in plan_content
     except Exception:
+        logger.debug("plan-file check failed for plan_ref={!r}", plan_ref, exc_info=True)
         return False
 
 

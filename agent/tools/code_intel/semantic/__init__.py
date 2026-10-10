@@ -15,6 +15,7 @@ from .search import (
     SemanticSearch,
     SemanticSearchInput,
     SemanticSearchResult,
+    build_semantic_search_tool,
 )
 
 __all__ = [
@@ -28,4 +29,5 @@ __all__ = [
     "SemanticSearchResult",
     "SymbolRecord",
     "build_chunk",
+    "build_semantic_search_tool",
 ]

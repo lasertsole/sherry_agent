@@ -225,11 +225,11 @@ async def _build_resume_message(run: SubagentRunRecord) -> str | None:
 async def _read_chat_history(child_session_key: str) -> dict | None:
     """Extract the last human and AI messages from a session's chat history."""
     try:
-        from agent import built_agent
+        from agent.core import agent_lease
         from pub.func import build_agent_config
 
-        agent = await built_agent()
-        state = await agent.aget_state(config=build_agent_config(child_session_key))
+        async with agent_lease() as agent:
+            state = await agent.aget_state(config=build_agent_config(child_session_key))
         messages = state.values.get("messages", [])
 
         if not messages:

@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from typing import override
 from langchain_core.tools import BaseTool
 from pathlib import PurePosixPath, PureWindowsPath
+from agent.tools.pub_base import tool_error
 from agent.tools.pub_base import (
     sort_skills,
     parse_frontmatter,
@@ -436,7 +437,7 @@ def _skill_view(name: str, file_path: str | None = None, caller_scope: str = "ma
         return json.dumps(result, ensure_ascii=False)
 
     except Exception as e:
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        return tool_error(str(e), success=False)
 
 
 class SkillViewSchema(BaseModel):

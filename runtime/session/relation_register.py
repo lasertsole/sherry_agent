@@ -171,8 +171,13 @@ class RelationManager(SessionRegister):
     def clear_session(self, session_id: str):
         try:
             with self._rm_lock:
+                # The websocket-id index is keyed by the SOCKET id: resolve it
+                # from the session first, then drop that entry. Passing the
+                # session id here popped nothing (dead lookup).
+                websocket_id = self.session_id_to_websocket_id.get(session_id)
                 self.unregister_websocket_by_session_id(session_id)
-                self.unregister_websocket_by_websocket_id(session_id)
+                if websocket_id:
+                    self.unregister_websocket_by_websocket_id(websocket_id)
         except Exception:
             logger.exception(f"clear_session failed: session_id={session_id}")
 

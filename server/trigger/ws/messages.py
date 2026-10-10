@@ -17,6 +17,7 @@ from server.utils.ws_helpers import send_ws_json
 from server.trigger import auth
 from server.trigger.auth_user import ws_user_check
 from pub.types.message import MultiModalMessage
+from runtime.session.state_keys import StateKey
 from robyn import WebSocketDisconnect, WebSocketAdapter
 
 # Tracks the running stream task per session. A generation/HITL-resume request
@@ -145,7 +146,7 @@ async def _cancel_session(session_id: str) -> None:
                 f"Agent WS stop: cancelled task raised: session_id={session_id}, error={e}"
             )
     else:
-        state_register_mem.set_state(session_id, "answering", False)
+        state_register_mem.set_state(session_id, StateKey.ANSWERING, False)
         logger.info(f"Agent WS stop requested (no active task): session_id={session_id}")
 
 

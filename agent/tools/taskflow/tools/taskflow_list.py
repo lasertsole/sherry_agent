@@ -7,15 +7,13 @@ channel/chat is never visible here. Read-only.
 """
 
 import time
-from typing import Annotated
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ._shared import steps_summary
+from agent.tools.pub_base import SessionId
 
-SessionId = Annotated[str, InjectedState("session_id")]
 _DESCRIPTION_WIDTH = 40
 _CREATOR_WIDTH = 16
 _TS_FORMAT = "%Y-%m-%d %H:%M:%S"

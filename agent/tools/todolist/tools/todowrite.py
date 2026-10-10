@@ -12,14 +12,12 @@ replace wholesale for isolation.
 """
 
 import json
-from typing import Annotated
 
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from .. import service
+from agent.tools.pub_base import SessionId
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 _FANOUT_REMINDER = """
 

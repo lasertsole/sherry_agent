@@ -468,7 +468,8 @@ class QueueRepository:
             (session_id,),
         ) as cursor:
             count_row = await cursor.fetchone()
-            assert count_row is not None, "COUNT(*) always returns a row"
+            if count_row is None:  # COUNT(*) always returns a row
+                return 0
             (count,) = count_row
         return int(count)
 
@@ -510,7 +511,8 @@ class QueueRepository:
     async def fetch_by_id(db: aiosqlite.Connection, row_id: str) -> UserInputQueueRow:
         async with db.execute("SELECT * FROM user_input_queue WHERE id = ?", (row_id,)) as cursor:
             inserted = await cursor.fetchone()
-        assert inserted is not None, "inserted row vanished inside its own transaction"
+        if inserted is None:  # the row vanished inside its own transaction
+            raise LookupError(f"row {row_id} vanished inside its own transaction")
         return _row_from_db(inserted)
 
     @staticmethod
@@ -529,7 +531,8 @@ class QueueRepository:
             (row.session_id, row.created_at, row.created_at, row.id),
         ) as cursor:
             position_row = await cursor.fetchone()
-            assert position_row is not None, "COUNT(*) always returns a row"
+            if position_row is None:  # COUNT(*) always returns a row
+                return 0
             (position,) = position_row
         return int(position)
 

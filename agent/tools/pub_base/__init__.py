@@ -45,6 +45,7 @@ from .file_lock import (
     flock_path,
     lock_path_for,
 )
+from .tool_utils import SessionId, tool_error
 from .text_matcher import fuzzy_find_and_replace, format_no_match_hint
 from .skill_usage import bump_patch, forget, mark_agent_created
 from .skill_provenance import is_background_review
@@ -100,6 +101,8 @@ __all__ = [
     "file_write_lock",
     "flock_path",
     "lock_path_for",
+    "SessionId",
+    "tool_error",
     "fuzzy_find_and_replace",
     "format_no_match_hint",
     "bump_patch",

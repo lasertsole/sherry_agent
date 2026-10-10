@@ -222,7 +222,7 @@ async def _send_turn_error(session_id: str, route: str, content: str) -> None:
     try:
         await router.send_error(session_id, content)
     except Exception as e:  # pragma: no cover - defensive
-        logger.warning(f"TurnRunner: outbound router '{route}' failed: {e}")
+        logger.error(f"TurnRunner: outbound router '{route}' failed: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,9 @@ async def on_turn_finished(
             try:
                 await queue.mark_terminal(row_id, UserInputQueueStatus.DELIVERED)
             except Exception as e:
-                logger.warning(f"TurnRunner: failed to mark row {row_id} DELIVERED: {e}")
+                logger.error(
+                    f"TurnRunner: failed to mark row {row_id} DELIVERED: {e}", exc_info=True
+                )
     else:
         try:
             rows = await _iqs().get_default_queue().list_active(session_id)
@@ -389,25 +391,47 @@ async def _execute_single(session_id: str, row: Any) -> None:
             claim_row_id=row.id,
         )
     ]
+    status = UserInputQueueStatus.DELIVERED
+    error_text: str | None = None
+
     executor = get_registry().resolve(route)
     if executor is None:
         logger.warning(
             f"TurnRunner: no executor registered for route '{route}'; marking row {row.id} FAILED"
         )
-        await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
-        await _send_turn_error(session_id, route, f"No executor registered for route '{route}'")
-        return
+        status = UserInputQueueStatus.FAILED
+        error_text = f"No executor registered for route '{route}'"
+    else:
+        try:
+            await _invoke_executor_batch(executor, session_id, batch, reply_target)
+        except Exception as e:
+            logger.warning(
+                f"TurnRunner: executor '{route}' failed for session {session_id} (row {row.id}): {e}"
+            )
+            status = UserInputQueueStatus.FAILED
+            error_text = public_error_text(e)
 
+    # The row MUST leave CLAIMED: a claim that is never finalized blocks the
+    # dedup key and every later drain deferral for this session until the 24 h
+    # recovery sweep. So a failing terminal write falls back to VOIDED (which
+    # frees the key) and a failing VOID is logged — never re-raised into the
+    # drain loop, whose retry would just claim the NEXT row and leave this one.
     try:
-        await _invoke_executor_batch(executor, session_id, batch, reply_target)
-    except Exception as e:
-        logger.warning(
-            f"TurnRunner: executor '{route}' failed for session {session_id} (row {row.id}): {e}"
+        await queue.mark_terminal(row.id, status)
+    except Exception as mark_error:
+        logger.exception(
+            f"TurnRunner: marking row {row.id} {status} failed for session {session_id}: "
+            f"{mark_error}"
         )
-        await queue.mark_terminal(row.id, UserInputQueueStatus.FAILED)
-        await _send_turn_error(session_id, route, public_error_text(e))
-        return
-    await queue.mark_terminal(row.id, UserInputQueueStatus.DELIVERED)
+        try:
+            await queue.mark_terminal(row.id, UserInputQueueStatus.VOIDED)
+        except Exception as void_error:
+            logger.error(
+                f"TurnRunner: row {row.id} stays CLAIMED (void fallback failed): {void_error}"
+            )
+
+    if error_text is not None:
+        await _send_turn_error(session_id, route, error_text)
 
 
 # ---------------------------------------------------------------------------
@@ -602,3 +626,8 @@ class _WsTurnStreamDriver(StreamDriver):
 
     def log_error(self, exc: Exception, elapsed: float) -> None:
         logger.warning(f"TurnRunner: generation failed: session_id={self.session_id}, error={exc}")
+
+    def public_error(self, exc: Exception) -> str:
+        from server.service.stream_diag import public_error_text
+
+        return public_error_text(exc)

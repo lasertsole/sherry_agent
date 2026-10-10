@@ -148,7 +148,7 @@ class TestToctouRace:
 
         out = build_write_file_tool()._core("victim.txt", "pwned", session_id=SESSION)
 
-        assert out.startswith("Error:")
+        assert "error" in json.loads(out), out
         assert secret.read_text(encoding="utf-8") == "top-secret"
 
 
@@ -187,10 +187,11 @@ class TestRegularFilesUnaffected:
         assert "successfully" in out
         assert target.read_text(encoding="utf-8") == "line1\nline2\n"
 
-    def test_write_failure_returns_error_string(self, virtual_root):
+    def test_write_failure_returns_the_shared_error_json(self, virtual_root):
         target = virtual_root / "locked"
         target.mkdir()
 
         out = build_write_file_tool()._core("locked", "data", session_id=SESSION)
 
-        assert out.startswith("Error:")
+        payload = json.loads(out)
+        assert "error" in payload, out

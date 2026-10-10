@@ -700,7 +700,9 @@ class OverflowMixin:
         while True:
             try:
                 return handler(request)
-            except BaseException as exc:
+            except Exception as exc:  # noqa: BLE001 - classify, then re-raise
+                # NOT BaseException: CancelledError must propagate untouched
+                # (classifying it would swallow a cancellation).
                 error_class = classify_provider_error(exc)
                 if error_class is None:
                     raise
@@ -740,7 +742,9 @@ class OverflowMixin:
         while True:
             try:
                 return await handler(request)
-            except BaseException as exc:
+            except Exception as exc:  # noqa: BLE001 - classify, then re-raise
+                # NOT BaseException: CancelledError must propagate untouched
+                # (classifying it would swallow a cancellation).
                 error_class = classify_provider_error(exc)
                 if error_class is None:
                     raise

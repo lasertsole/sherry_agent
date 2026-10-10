@@ -280,8 +280,13 @@ class ImageUrlHandler(MediaItemHandler):
             return
 
         if url.startswith("data:image/"):
-            # Already has a prefix, use as-is
-            base64_data: str = url.split(",")[1]
+            # Already has a prefix; a TRUNCATED data URL (no comma) has no
+            # payload — treat it as a decode failure instead of raising
+            # IndexError through the media pipeline.
+            _, _, base64_data = url.partition(",")
+            if not base64_data:
+                logger.error("Malformed data: image URL (no payload after the comma)")
+                return
         else:
             # No prefix, add one
             base64_data: str = url

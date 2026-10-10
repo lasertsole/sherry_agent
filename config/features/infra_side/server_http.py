@@ -127,7 +127,6 @@ SERVER_HTTP: ServerHttpConfig = {
         {
             "TOOL_CALL_TIMEOUT_MINUTES",
             "LOG_LEVEL",
-            "SUBAGENT_TODO_DONE_FUNC",
             "WORKSPACE_TEMPLATE_LANG",
             "LANGSMITH_TRACING_V2",
             "LANGSMITH_API_KEY",

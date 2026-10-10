@@ -22,7 +22,7 @@ import json
 import os
 import stat
 from pathlib import Path
-from typing import Annotated, Literal, override
+from typing import override
 
 from pydantic import BaseModel
 
@@ -30,9 +30,10 @@ from langchain_core.callbacks import CallbackManagerForToolRun
 from runtime.session.project_dir import current_project_dir
 from langchain_community.tools.file_management import WriteFileTool
 from langchain_community.tools.file_management.write import WriteFileInput
-from langgraph.prebuilt.tool_node import InjectedState
 
+from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
+    tool_error,
     FileBusyError,
     FileLicense,
     PathOutOfBoundsError,
@@ -55,8 +56,6 @@ from agent.tools.pub_base import (
     sniff_text_encoding,
 )
 from agent.tools.todolist.evidence_recorder import mark_evidence_stale
-
-SessionId = Annotated[str, InjectedState("session_id")]
 
 
 class FormattedWriteFileInput(WriteFileInput):
@@ -123,7 +122,7 @@ def _append_bytes_no_follow(resolved: Path, data: bytes) -> None:
             os.close(fd)
 
 
-def _existing_text_encoding(resolved: Path) -> str | None | Literal["absent"]:
+def _existing_text_encoding(resolved: Path) -> str | None:
     """Encoding of the existing target: a codec, ``None`` for binary, ``"absent"``.
 
     ``None`` (binary or not UTF-8/UTF-16) is the caller's refusal signal: the
@@ -140,6 +139,9 @@ def _existing_text_encoding(resolved: Path) -> str | None | Literal["absent"]:
 class FormattedWriteFileTool(WriteFileTool):
     """WriteFileTool that auto-formats .py files with autopep8."""
 
+    #: Declared on the class like every other tool (the factory used to assign
+    #: it, so constructing the class directly produced a nameless tool).
+    name: str = "write_file"
     args_schema: type[BaseModel] = FormattedWriteFileInput
     description: str = (
         "Write file to disk. Creating a file needs nothing else; overwriting a file "
@@ -167,7 +169,7 @@ class FormattedWriteFileTool(WriteFileTool):
                     file_path, session_id=session_id, action_desc="write file"
                 )
             except PathOutOfBoundsError as e:
-                return json.dumps({"error": str(e)}, ensure_ascii=False)
+                return tool_error(str(e))
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -280,7 +282,11 @@ class FormattedWriteFileTool(WriteFileTool):
                 ensure_ascii=False,
             )
         except Exception as e:
-            return "Error: " + safe_error_detail(e)
+            # Same JSON shape as every other branch, and the evidence is
+            # invalidated here too: the file may have been touched before the
+            # failure.
+            mark_evidence_stale(file_path, session_id)
+            return tool_error(safe_error_detail(e), path=display_path(resolved, root))
 
         mark_evidence_stale(file_path, session_id)
         return f"File written successfully to {display_path(resolved, root)}."
@@ -315,6 +321,5 @@ def build_write_file_tool() -> WriteFileTool:
         root_dir="/"  # containment is enforced by resolve_project_path / resolve_external_path
     )
     tool.handle_tool_error = True
-    tool.name = "write_file"
     tool.metadata = {"idempotent": False}
     return tool

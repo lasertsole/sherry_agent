@@ -7,11 +7,19 @@ from config.features import TOOLS_TIMEOUTS
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
-load_dotenv(ENV_PATH, override=True)
 
-# Secret-class value: TAVILY_API_KEY deliberately stays in the gitignored .env
-# (NOT in the tracked sherry.jsonc).
-tavily_api_key = os.getenv("TAVILY_API_KEY")
+def _tavily_api_key() -> str | None:
+    """Read the Tavily key at BUILD time, never at import time.
+
+    (``agent/core.py`` moved its own dotenv work into the assembly step for the
+    same reason: importing a tool module must not mutate the process env, and a
+    key edited while the process runs should be picked up on the next build.)
+    """
+    load_dotenv(ENV_PATH, override=True)
+    # Secret-class value: TAVILY_API_KEY deliberately stays in the gitignored
+    # .env (NOT in the tracked sherry.jsonc).
+    return os.getenv("TAVILY_API_KEY")
+
 
 # Bound to the feature registry (single source of truth); names preserved.
 WEB_SEARCH_TIMEOUT = TOOLS_TIMEOUTS["web_search_timeout_seconds"]
@@ -35,47 +43,60 @@ def build_web_search_tool():
 
     from langchain_core.tools import tool
 
-    if tavily_api_key:
+    if _tavily_api_key():
         from langchain_tavily import TavilySearch
 
-        base = TavilySearch(tavily_api_key=tavily_api_key, max_results=5)
+        class RetryingTavilySearch(TavilySearch):
+            """TavilySearch with a bounded retry + timeout on ``_arun``.
 
-        original_arun = base._arun
+            A SUBCLASS, not a monkeypatched private method: patching
+            ``base._arun`` silently dropped the wrapper (and the metadata below)
+            the day the library renamed or stopped dispatching through that name.
+            Overriding it here fails loudly instead — the override is checked by
+            the type system.
+            """
 
-        async def _arun_with_retry(*args, **kwargs):
-            last_error = None
-            for attempt in range(RETRY_MAX_ATTEMPTS):
-                try:
-                    return await asyncio.wait_for(
-                        original_arun(*args, **kwargs),
-                        timeout=WEB_SEARCH_TIMEOUT,
-                    )
-                except TimeoutError:
-                    last_error = f"timed out after {WEB_SEARCH_TIMEOUT}s"
-                    logger.warning(
-                        "web_search attempt {}/{} {}", attempt + 1, RETRY_MAX_ATTEMPTS, last_error
-                    )
-                except Exception as e:
-                    last_error = str(e)
-                    logger.warning(
-                        "web_search attempt {}/{} failed: {}",
-                        attempt + 1,
-                        RETRY_MAX_ATTEMPTS,
-                        last_error,
-                    )
+            async def _arun(self, *args, **kwargs):
+                last_error = None
+                for attempt in range(RETRY_MAX_ATTEMPTS):
+                    try:
+                        return await asyncio.wait_for(
+                            super()._arun(*args, **kwargs),
+                            timeout=WEB_SEARCH_TIMEOUT,
+                        )
+                    except TimeoutError:
+                        last_error = f"timed out after {WEB_SEARCH_TIMEOUT}s"
+                        logger.warning(
+                            "web_search attempt {}/{} {}",
+                            attempt + 1,
+                            RETRY_MAX_ATTEMPTS,
+                            last_error,
+                        )
+                    except Exception as e:
+                        last_error = str(e)
+                        logger.warning(
+                            "web_search attempt {}/{} failed: {}",
+                            attempt + 1,
+                            RETRY_MAX_ATTEMPTS,
+                            last_error,
+                        )
 
-                if attempt < RETRY_MAX_ATTEMPTS - 1:
-                    delay = _backoff_delay(attempt)
-                    logger.debug("web_search retry in {:.1f}s", delay)
-                    await asyncio.sleep(delay)
+                    if attempt < RETRY_MAX_ATTEMPTS - 1:
+                        delay = _backoff_delay(attempt)
+                        logger.debug("web_search retry in {:.1f}s", delay)
+                        await asyncio.sleep(delay)
 
-            return (
-                f"Web search failed after {RETRY_MAX_ATTEMPTS} attempts. "
-                f"Last error: {last_error}. "
-                "Please try a more specific query or answer without web search."
-            )
+                return (
+                    f"Web search failed after {RETRY_MAX_ATTEMPTS} attempts. "
+                    f"Last error: {last_error}. "
+                    "Please try a more specific query or answer without web search."
+                )
 
-        base._arun = _arun_with_retry
+        base = RetryingTavilySearch(tavily_api_key=_tavily_api_key(), max_results=5)
+        # The keyed branch used to return BEFORE the metadata assignment below,
+        # so the shipped Tavily tool carried neither flag.
+        base.handle_tool_error = True
+        base.metadata = {"idempotent": False}
         return base
     else:
 

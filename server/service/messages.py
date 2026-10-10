@@ -3,12 +3,14 @@ import base64
 from config.features import WS_STREAM
 from loguru import logger
 from agent import built_agent
+from agent import core as agent_core
 from langgraph.types import Command
 from typing import Any, Literal
 from collections.abc import AsyncGenerator, Sequence
 from runtime import state_register_mem
 from context_engine import get_session_ids
 from pub.types.message import MultiModalMessage
+from runtime.session.state_keys import StateKey
 from pub.func import build_agent_config, is_url
 from ..DAO import clear_session as clear_session_dao
 from context_engine.curator import reset_idle_for_seconds
@@ -190,6 +192,9 @@ class _GenerateTurn(StreamTurn):
         # reset curator reset_idle_for_seconds
         reset_idle_for_seconds()
         self._agent = await built_agent(force_rebuild=True)
+        # Lease the graph for the whole turn: a concurrent rebuild must not close
+        # the checkpointer connection this turn is writing checkpoints through.
+        agent_core.hold_agent(self._agent)
 
     def _log_started(self) -> None:
         total_len = sum(len(m.text) if m.text else 0 for m in self.messages)
@@ -291,7 +296,7 @@ class _GenerateTurn(StreamTurn):
         if self.meta_finish_reason == "content_filter":
             # Flag the middleware layer so the next model call can fall back
             # or terminate instead of re-prompting a filtered response.
-            state_register_mem.set_state(self.session_id, "llm_content_filter_blocked", True)
+            state_register_mem.set_state(self.session_id, StateKey.LLM_CONTENT_FILTER_BLOCKED, True)
             return False, False
         if self.meta_finish_reason not in ("length", "max_tokens"):
             return False, False
@@ -356,6 +361,11 @@ class _GenerateTurn(StreamTurn):
                 await source.aclose()
             except Exception:  # noqa: S110
                 pass  # GeneratorExit is expected and harmless
+        if self._agent is not None:
+            # The turn is over: a graph a rebuild already replaced is closed here
+            # (its checkpointer connection + worker thread + fd), the cached one
+            # stays open for the next turn.
+            agent_core.release_agent(self._agent)
         self._agent = None
         # There is no pool to "release" here: the stale keep-alive connection
         # (which dies mid-request as openai.APITimeoutError) is handled by
@@ -390,6 +400,7 @@ class _ResumeTurn(StreamTurn):
 
     async def _prepare(self) -> None:
         self._agent = await built_agent(force_rebuild=True)
+        agent_core.hold_agent(self._agent)  # released in _cleanup
         self._config = build_agent_config(self.session_id)
 
         # Inject session_id into the resume value. On a normal turn it arrives via the
@@ -444,7 +455,7 @@ class _ResumeTurn(StreamTurn):
                 "content": _normalize_text(msg_chunk.content),
                 "tool_id": msg_chunk.tool_call_id,
                 "tool_name": getattr(msg_chunk, "name", "")
-                or state_register_mem.get_state(self.session_id, "current_tool_name", ""),
+                or state_register_mem.get_state(self.session_id, StateKey.CURRENT_TOOL_NAME, ""),
                 # _pending_args was cleared by the generate turn's finally
                 # block before the resume started; sending {} would wipe the
                 # args already shown on the client card, so emit null instead
@@ -592,7 +603,11 @@ async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
                 }
         return None
     except Exception as e:
-        logger.debug(f"get_pending_interrupt failed for session_id={session_id}: {e}")
+        # A real failure here hides the approval dialog for a turn that is
+        # actually parked: log it loud enough to be found from the log alone.
+        logger.warning(
+            f"get_pending_interrupt failed for session_id={session_id}: {e}", exc_info=True
+        )
         return None
 
 

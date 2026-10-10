@@ -309,6 +309,19 @@ class SemanticCodeSearchTool(BaseTool):
         return await asyncio.to_thread(lambda: self._run(query, top_k))
 
 
+def build_semantic_search_tool(
+    semantic: SemanticSearch,
+    root: Path,
+    session_id: str,
+) -> SemanticCodeSearchTool:
+    """Factory for :class:`SemanticCodeSearchTool` (every tool family has one).
+
+    Kept beside the class so the construction arguments live with the tool; the
+    code-intel assembler calls this instead of instantiating inline.
+    """
+    return SemanticCodeSearchTool(semantic, root, session_id)
+
+
 def _payload(result: SemanticSearchResult) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "query": result.query,

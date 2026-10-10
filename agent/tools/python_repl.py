@@ -22,7 +22,7 @@ Sandbox-hardening additions (see docs/sandbox/README.md):
 
 from __future__ import annotations
 
-from typing import Annotated, Any, ClassVar
+from typing import Any, ClassVar
 
 import sys
 import json
@@ -34,8 +34,7 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 
 from config.path import ROOT_DIR
 from config.features import TOOLS_TIMEOUTS
-from agent.tools.pub_base import _extract_session_id
-from langgraph.prebuilt.tool_node import InjectedState
+from agent.tools.pub_base import SessionId, _extract_session_id
 
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
@@ -45,7 +44,6 @@ from agent.tools.todolist.evidence_recorder import record_verification_evidence
 
 #: Injected calling session (see terminal.SessionId for why the runnable-config
 #: fallback is never enough in production).
-SessionId = Annotated[str, InjectedState("session_id")]
 
 # Bound to the feature registry (single source of truth); name preserved.
 PYTHON_REPL_TIMEOUT = TOOLS_TIMEOUTS["python_repl_timeout_seconds"]
@@ -198,7 +196,12 @@ def _run_with_timeout(
 
 
 class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
+    name: str = "python_repl"
     """PythonREPLTool with a timeout on each execution.
+
+    The tool name is declared HERE, like every other tool in the codebase
+    (a factory-side ``tool.name = ...`` silently lost the name if a caller
+    ever constructed the class directly).
 
     Uses subprocess to run code in an isolated Python process and kills it
     on timeout — clean, no leakage, works on Windows.
@@ -248,7 +251,6 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
 
 def build_python_repl_tool() -> TimedPythonREPLTool:
     tool = TimedPythonREPLTool()
-    tool.name = "python_repl"
     tool.handle_tool_error = True
     tool.metadata = {"idempotent": False}
     return tool

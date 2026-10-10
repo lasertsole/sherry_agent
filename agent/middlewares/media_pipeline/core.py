@@ -21,7 +21,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 from ..llm_capability_cache import get_capability, get_model_key
 from .fallback import apply_skill_fallback as apply_skill_fallback
 from .fallback import attach_media_hints
-from .mixins import BeforeAgentHooksMixin, AfterAgentHooksMixin
+from ..base import AfterAgentHooksMixin, BeforeAgentHooksMixin
 from .media_handlers import MediaPaths, MediaType, _MEDIA_HANDLERS
 from .scrub import scrub_messages
 from pub.func.validator import is_safe_session_id

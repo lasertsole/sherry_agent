@@ -252,10 +252,17 @@ async def ws_handler(websocket: WebSocketAdapter):
                 await websocket.send_text(json.dumps(res))
                 logger.debug(f"WebSocket response sent: session_id={session_id}, event={event}")
 
+            except (WebSocketDisconnect, ConnectionResetError):
+                # The client is gone: re-raise so the outer handler ends the
+                # loop. Swallowing it would re-enter receive_text() on a dead
+                # socket and spin at 100% CPU (sibling handler: ws/messages.py).
+                raise
             except Exception as e:
                 logger.warning(f"Error in ws_handler: {e}, websocket_id={websocket.id}")
-    except (WebSocketDisconnect, ConnectionResetError, Exception) as e:
+    except (WebSocketDisconnect, ConnectionResetError) as e:
         logger.warning(f"Client {websocket.id} disconnected: {e}")
+    except Exception as e:
+        logger.exception(f"ws_handler failed: {e}, websocket_id={websocket.id}")
 
 
 @getattr(ws_handler, "on_connect")

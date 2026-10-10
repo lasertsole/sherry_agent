@@ -89,8 +89,12 @@ def resolve_workspace_template_lang(lang: str | None = None) -> str:
         template subdirectory (geometry guaranteed by the default fallback).
     """
     requested = (lang or DEFAULT_WORKSPACE_TEMPLATE_LANG).strip().lower()
-    candidates = [requested] if requested != DEFAULT_WORKSPACE_TEMPLATE_LANG else [requested]
-    candidates.append(DEFAULT_WORKSPACE_TEMPLATE_LANG)
+    # Requested first, then the default — deduplicated (the old ternary had both
+    # branches identical, so a requested value equal to the default was tried
+    # twice).
+    candidates = [requested]
+    if requested != DEFAULT_WORKSPACE_TEMPLATE_LANG:
+        candidates.append(DEFAULT_WORKSPACE_TEMPLATE_LANG)
     for code in candidates:
         if code in WORKSPACE_TEMPLATE_LANGS and (WORKSPACE_TEMPLATE_DIR / code).is_dir():
             return code

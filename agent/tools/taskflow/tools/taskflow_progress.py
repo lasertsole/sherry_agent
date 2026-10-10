@@ -6,15 +6,12 @@ next actionable steps, and estimated remaining time based on completed step
 durations.
 """
 
-from typing import Annotated
-
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..registry import store_sqlite
 from ._shared import not_found_error, step_status, steps_summary
+from agent.tools.pub_base import SessionId
 
-SessionId = Annotated[str, InjectedState("session_id")]
 
 #: Statuses that are not work to start but a decision for the caller.
 DECISION_STATUSES = ("failed", "blocked", "skipped", "cancelled")

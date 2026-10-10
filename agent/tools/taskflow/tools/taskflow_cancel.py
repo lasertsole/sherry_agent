@@ -1,17 +1,13 @@
 """taskflow_cancel: cancel the flow (openclaw requestCancel / cancel)."""
 
-from typing import Annotated
-
 from langchain_core.tools import tool
-from langgraph.prebuilt.tool_node import InjectedState
 
 from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
 from ._shared import conflict_error, is_terminal, not_found_error, step_status, terminal_error
-
-SessionId = Annotated[str, InjectedState("session_id")]
+from agent.tools.pub_base import SessionId
 
 
 @tool("taskflow_cancel")

@@ -288,8 +288,8 @@ async def read_state_messages(session_id: str) -> list[Any]:
     from agent import core as agent_core
     from pub.func import build_agent_config
 
-    graph = await agent_core.built_agent()
-    snapshot = await graph.aget_state(config=build_agent_config(session_id))
+    async with agent_core.agent_lease() as graph:
+        snapshot = await graph.aget_state(config=build_agent_config(session_id))
     return list((snapshot.values or {}).get("messages", []))
 
 

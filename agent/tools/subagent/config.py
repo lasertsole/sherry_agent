@@ -1,5 +1,6 @@
 """Subagent global configuration (singleton); defaults can be overridden via set_config()."""
 
+import threading
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal
 
@@ -57,13 +58,21 @@ class SubagentConfig(BaseModel):
 
 
 _instance: SubagentConfig | None = None
+#: Guards the first construction (see get_config).
+_INSTANCE_LOCK = threading.Lock()
 
 
 def get_config() -> SubagentConfig:
-    """Return the global SubagentConfig singleton, creating it on first access."""
+    """Return the global SubagentConfig singleton, creating it on first access.
+
+    Double-checked under a module lock (two threads racing the first access must
+    share one config, not one each).
+    """
     global _instance
     if _instance is None:
-        _instance = SubagentConfig()
+        with _INSTANCE_LOCK:
+            if _instance is None:
+                _instance = SubagentConfig()
     return _instance
 
 

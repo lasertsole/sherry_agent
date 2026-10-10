@@ -342,6 +342,11 @@ class HumanInTheLoop(AgentMiddleware):
             # approval dialog can fire. Do NOT swallow it.
             raise
         except Exception:
+            logger.exception(
+                "sandbox-bypass interrupt failed for tool {!r} (session {!r})",
+                tool_name,
+                session_id,
+            )
             return False, ToolMessage(
                 content=f"Approval interrupt failed. {BLOCKED_MESSAGE}",
                 name=tool_name,

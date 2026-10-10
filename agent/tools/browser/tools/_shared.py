@@ -13,17 +13,20 @@ Error-text contract: a tool NEVER raises a business error to the LLM — the
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import Any
 
 from langchain_core.tools import BaseTool
-from langgraph.prebuilt.tool_node import InjectedState
+
+from agent.tools.pub_base import SessionId
+
+__all__ = ["SessionId"]
+
 
 #: The session id every browser tool takes from graph state.
-SessionId = Annotated[str, InjectedState("session_id")]
 
 #: The subagent tool policy drops these unconditionally (see the family
 #: docstring: ZCode parity, the browser stays the main agent's hand).
-MAIN_ONLY = {"scope": "main_only"}
+MAIN_ONLY = {"scope": "main_only", "idempotent": False}
 
 
 def resolve_manager() -> Any:

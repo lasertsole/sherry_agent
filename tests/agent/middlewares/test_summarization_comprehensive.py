@@ -501,25 +501,19 @@ class TestSummarizationCore:
         assert mw._slice_last_turn([]) == []
 
     # ------------------------------------------------------------------
-    # _get_session_or_raise (§9.7 L935): behavior lock — old raises
-    # RuntimeError("Not pass session_id") identically.
+    # _session_or_none: fail-open like every sibling middleware — a turn with
+    # no session id must NOT fail the model call (it used to raise
+    # RuntimeError("Not pass session_id")).
     # ------------------------------------------------------------------
 
     def test_get_session_valid_state(self):
-        assert (
-            summarization_module.Summarization._get_session_or_raise({"session_id": "t8-x"})
-            == "t8-x"
-        )
+        assert summarization_module.Summarization._session_or_none({"session_id": "t8-x"}) == "t8-x"
 
-    def test_get_session_missing_raises(self):
-        with pytest.raises(RuntimeError):
-            summarization_module.Summarization._get_session_or_raise({})
+    def test_get_session_missing_returns_none(self):
+        assert summarization_module.Summarization._session_or_none({}) is None
 
-    def test_get_session_none_raises(self):
-        # None value → falsy-session guard path (RuntimeError per §9.7;
-        # legacy shape raises AttributeError — both count as Red/lock).
-        with pytest.raises((RuntimeError, AttributeError)):
-            summarization_module.Summarization._get_session_or_raise({"session_id": None})
+    def test_get_session_none_returns_none(self):
+        assert summarization_module.Summarization._session_or_none({"session_id": None}) is None
 
     # ------------------------------------------------------------------
     # _determine_cutoff (§9.7 L1167): budget-based tail selection.
@@ -1683,15 +1677,15 @@ class TestSummarizationAsync:
         # Pairing intact, no compression pair injected (truncate route only).
         assert captured[0][2].tool_call_id == "t8-wt-1"
 
-    def test_wrap_model_call_missing_session_id_raises(self):
+    def test_wrap_model_call_missing_session_id_passes_through(self):
+        """No session id → the middleware is a pass-through, not a failure."""
         mw = make_middleware(main_llm_context_window=40000)
         req = ModelRequest(
             model=StubModel(),
             messages=[HumanMessage(content="hi")],
             state={"messages": [HumanMessage(content="hi")]},
         )
-        with pytest.raises(RuntimeError):
-            mw.wrap_model_call(req, lambda r: "never")
+        assert mw.wrap_model_call(req, lambda r: "never") == "never"
 
     def test_wrap_model_call_records_count_on_compact(self, sid):
         mw = make_middleware(main_llm_context_window=2000, trigger=[("tokens", 500)])
@@ -1780,15 +1774,18 @@ class TestSummarizationAsync:
         assert len(out) < 76000
         assert captured[0][2].tool_call_id == "t8-wa-1"
 
-    def test_awrap_model_call_missing_session_id_raises(self):
+    def test_awrap_model_call_missing_session_id_passes_through(self):
         mw = make_middleware(main_llm_context_window=40000)
         req = ModelRequest(
             model=StubModel(),
             messages=[HumanMessage(content="hi")],
             state={"messages": [HumanMessage(content="hi")]},
         )
-        with pytest.raises(RuntimeError):
-            asyncio.run(mw.awrap_model_call(req, lambda r: "never"))
+
+        async def _handler(_request):
+            return "never"
+
+        assert asyncio.run(mw.awrap_model_call(req, _handler)) == "never"
 
     def test_awrap_model_call_llm_path_async_stub(self, sid):
         stub = StubModel(text="Async wrap LLM deterministic long summary body here.")

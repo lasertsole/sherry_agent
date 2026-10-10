@@ -47,8 +47,12 @@ async def clear_session(session_id: str) -> None:
         from context_engine.session_continuity import auto_save_on_session_end
 
         await auto_save_on_session_end(session_id)
-    except Exception:  # noqa: S110 - non-critical: must not block session cleanup
-        pass
+    except Exception:  # non-critical: must not block session cleanup
+        logger.debug(
+            "session continuity save failed on session end (continuing): session_id={}",
+            session_id,
+            exc_info=True,
+        )
 
     # (1) Context engine mes_memory store — messages for this session. The bulk
     # DELETE is blocking SQLite, so it runs on a worker thread (audit-hygiene:

@@ -515,11 +515,11 @@ def _search_latest_checkpoint_messages(
         return []
 
     async def _load_checkpoint_state() -> Any:
-        from agent import built_agent
+        from agent.core import agent_lease
         from pub.func import build_agent_config
 
-        agent = await built_agent()
-        return await agent.aget_state(config=build_agent_config(session_id))
+        async with agent_lease() as agent:
+            return await agent.aget_state(config=build_agent_config(session_id))
 
     state = run_async(_load_checkpoint_state())
     values = getattr(state, "values", None) or {}
