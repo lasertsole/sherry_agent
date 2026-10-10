@@ -59,6 +59,14 @@ Hook contracts (registration sites must provide these signatures; the
     import ``server/**``). Missing hook -> the tools answer with a clear
     "the browser bridge is not assembled in this process" tool result
     (fail-closed, never a crash).
+
+``RECORD_TRAJECTORY_EVENT`` (``"record_trajectory_event"``)
+    ``(session_id: str, kind: str, payload: dict) -> None``: append one
+    discrete event to the per-turn trajectory ledger
+    (``server.service.trajectory_store``). Registered by the server assembly;
+    agent-side producers (Summarization's compaction, the subagent lifecycle)
+    call it instead of importing the server module. Missing hook -> the event
+    is dropped (no ledger in this process, e.g. a bare unit test).
 """
 
 from __future__ import annotations
@@ -72,6 +80,7 @@ __all__ = [
     "BUILD_BACKGROUND_AGENT_TOOLS",
     "BUILD_REJECT_MESSAGE",
     "MAYBE_TRIGGER_AUTO_TURN",
+    "RECORD_TRAJECTORY_EVENT",
     "SCAN_SKILL",
     "WS_ACTIVE_TASKS",
     "clear",
@@ -80,6 +89,7 @@ __all__ = [
     "unregister",
 ]
 
+RECORD_TRAJECTORY_EVENT = "record_trajectory_event"
 MAYBE_TRIGGER_AUTO_TURN = "maybe_trigger_auto_turn"
 AUTO_TURN_MODULE = "auto_turn_module"
 WS_ACTIVE_TASKS = "ws_active_tasks"

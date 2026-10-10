@@ -57,6 +57,8 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "taskflow_update_steps",
         "taskflow_wait_all",
         "taskflow_list",
+        "taskflow_replan",
+        "taskflow_plan",
         "todowrite",
         "todoread",
         "knowledge",

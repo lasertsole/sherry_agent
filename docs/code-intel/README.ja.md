@@ -178,7 +178,7 @@ LSP 層は `agent/tools/code_intel/lsp/` にあります：`protocol.py`（URI�
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled、`SHERRY_RG_PATH`、runtime ディレクトリ、5 s のバージョンプローブ、5 s / 5 s の回収猶予。スキャン予算とマッチ上限は `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` と `librarian` |
 
-索引データベースのパスは既定で `CODE_INTEL_DIR / "index.db"`、`config/path.py` の `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"` です。`SHERRY_CODE_INTEL_ROOT` と `SHERRY_CODE_INTEL_DB` は呼び出し時にルートとデータベースパスを上書きできます。
+インデックスのデータベースは**セッションのプロジェクトディレクトリ**に従います：spawn 時は `<project_root>/.codeintel/index.db` に索引します（`agent/tools/code_intel/roots.py::index_db_for_root`）。プロジェクトを交互に使っても共有インデックスを再構築しません（保存されるパスはプロジェクト相対で、ルートをまたぐと衝突します）。プロジェクトルートが無い呼び出しは共有の `CODE_INTEL_DIR / "index.db"`（`config/path.py` の `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`）にフォールバックし、`code_intel_index_db_path` で明示的に固定でき、`SHERRY_CODE_INTEL_DB` が呼び出し時にパスを上書きします（`SHERRY_CODE_INTEL_ROOT` はルートを上書き）。
 
 ## 🖥️ 環境能力マトリクス
 

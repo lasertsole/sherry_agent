@@ -27,10 +27,10 @@ class ToolCallNormalize(AgentMiddleware):
 
     @override
     def before_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        logger.debug("{} before_model hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("before_model hook fired")
         return self._before_model_impl(state)
 
     @override
     async def abefore_model(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        logger.debug("{} abefore_model hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("abefore_model hook fired")
         return self._before_model_impl(state)

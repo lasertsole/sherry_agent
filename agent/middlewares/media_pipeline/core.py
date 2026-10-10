@@ -278,13 +278,13 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
     # ------------------------------------------------------------------
     @override
     def before_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        logger.debug("{} before_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("before_agent hook fired")
         self._before_agent_impl(state)
         return None
 
     @override
     async def abefore_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("abefore_agent hook fired")
         # The impl downloads media (urlopen), decodes images and writes files;
         # run it off the loop so one large upload cannot stall every other
         # session's stream.
@@ -300,7 +300,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_model_call hook fired")
         return handler(self._scrub_request(request))
 
     @override
@@ -309,7 +309,7 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_model_call hook fired")
         return await handler(self._scrub_request(request))
 
     # ------------------------------------------------------------------
@@ -317,13 +317,13 @@ class MultimodalProcessor(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMidd
     # ------------------------------------------------------------------
     @override
     def after_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        logger.debug("{} after_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("after_agent hook fired")
         self._after_agent_impl(state)
         return None
 
     @override
     async def aafter_agent(self, state: AgentState, runtime: Runtime) -> dict[str, Any] | None:
-        logger.debug("{} aafter_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("aafter_agent hook fired")
         # Cache cleanup walks the media directories (iterdir/unlink); keep that
         # filesystem work off the event loop like the before hook.
         await asyncio.to_thread(self._after_agent_impl, state)

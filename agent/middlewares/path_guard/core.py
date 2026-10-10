@@ -81,6 +81,7 @@ def _external_target(value: str, root: Path | None = None) -> Path | None:
             target = (root if root is not None else ROOT_DIR) / target
         return target.resolve()
     except (OSError, RuntimeError):
+        logger.debug("PathGuard: path resolution fell back", exc_info=True)
         return None
 
 
@@ -112,6 +113,7 @@ def _screen_path_arg(value: str, root: Path | None = None) -> str | None:
         if target is not None and _is_hard_denied(target):
             return "path is on the hard deny list (credentials / system files)"
     except (OSError, RuntimeError):
+        logger.debug("PathGuard: path resolution fell back", exc_info=True)
         return None
     return None
 
@@ -182,7 +184,7 @@ class PathGuard(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
-        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_tool_call hook fired")
         rejection = self._find_rejection(request)
         if rejection is not None:
             return self._blocked_message(request, rejection)
@@ -194,7 +196,7 @@ class PathGuard(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
-        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
         rejection = self._find_rejection(request)
         if rejection is not None:
             return self._blocked_message(request, rejection)

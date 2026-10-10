@@ -32,6 +32,7 @@ both arrays are empty.
 
 from __future__ import annotations
 
+from pub.func.message.token_truncation import truncate_by_tokens
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from config.features import SUMMARIZATION
@@ -165,18 +166,60 @@ def cap_items(items: list[str], max_items: int) -> tuple[list[str], int]:
     return list(items[-max_items:]), len(items) - max_items
 
 
+#: Per-item token budgets, by list field. Items are one-liners, so a runaway
+#: entry (a pasted error log, a whole config value) would otherwise consume the
+#: summary's entire budget and push the rest out. ``evicted_refs`` is exempt on
+#: purpose: a truncated file path cannot be used to read the payload back.
+_ITEM_TOKEN_BUDGETS: dict[str, int] = {
+    "completed": SUMMARIZATION["summary_item_tokens"],
+    "key_decisions": SUMMARIZATION["summary_item_tokens"],
+    "critical_context": SUMMARIZATION["summary_item_tokens"],
+    "constraints": SUMMARIZATION["summary_item_tokens_short"],
+    "in_progress": SUMMARIZATION["summary_item_tokens_short"],
+    "blocked": SUMMARIZATION["summary_item_tokens_short"],
+    "next_steps": SUMMARIZATION["summary_item_tokens_short"],
+    "active_plan_notes": SUMMARIZATION["summary_item_tokens_short"],
+}
+
+
+#: Marker ``truncate_by_tokens`` leaves behind; an item already carrying one is
+#: left alone so a second pass cannot eat into the text the first pass kept.
+_OMISSION_MARKER = "...[truncated "
+
+
+def cap_item_lengths(items: list[str], max_tokens: int) -> list[str]:
+    """Clip every item to a token budget (idempotent; CJK-aware)."""
+    return [
+        item if _OMISSION_MARKER in item else truncate_by_tokens(item, max_tokens) for item in items
+    ]
+
+
 def cap_summary_doc(doc: SummaryDoc) -> SummaryDoc:
     """Apply every code-layer cap; idempotent.
 
-    The capped document is what gets stored on the chain
+    Two caps per list field: an ITEM-COUNT cap (the tail survives) and a
+    PER-ITEM token budget, so one runaway entry cannot evict the rest of the
+    section. The capped document is what gets stored on the chain
     (``additional_kwargs["summary_doc"]``), so the carried payload cannot
     grow without bound.
     """
     updates: dict[str, list[str]] = {}
     for field_name, max_items in _FIELD_CAPS.items():
-        kept, omitted = cap_items(getattr(doc, field_name), max_items)
-        if omitted:
-            updates[field_name] = kept
+        items = list(getattr(doc, field_name))
+        originally = list(items)
+        items, omitted = cap_items(items, max_items)
+        budget = _ITEM_TOKEN_BUDGETS.get(field_name)
+        if budget is not None:
+            items = cap_item_lengths(items, budget)
+        if omitted or items != originally:
+            updates[field_name] = items
+    for field_name, budget in _ITEM_TOKEN_BUDGETS.items():
+        if field_name in _FIELD_CAPS:
+            continue  # already handled above
+        items = list(getattr(doc, field_name))
+        clipped = cap_item_lengths(items, budget)
+        if clipped != items:
+            updates[field_name] = clipped
     if not updates:
         return doc
     return doc.model_copy(update=updates)

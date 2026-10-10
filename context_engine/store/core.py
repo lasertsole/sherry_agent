@@ -881,7 +881,7 @@ def get_max_message_id(session_id: str) -> int:
 
 
 def message_exists(session_id: str, message_id: int) -> bool:
-    """Whether *message_id* is a message of this session (the rewind guard)."""
+    """Whether *message_id* belongs to this session (a write-scope guard)."""
     row = (
         _shared_db()
         .execute(

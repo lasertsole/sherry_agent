@@ -361,6 +361,18 @@ def _schedule_sweeper(event_loop) -> concurrent.futures.Future[None] | None:
     """
     from agent.tools.subagent.registry import start_sweeper
 
+    # Session folders no store references (a crash between the row purge and the
+    # folder removal) are reclaimed at the same boot moment, from the server
+    # side: the sweep lives in server/service, and agent/** may not import it.
+    try:
+        from server.service.session_dir_sweep import sweep_orphaned_session_dirs
+
+        orphans = sweep_orphaned_session_dirs()
+        if orphans:
+            logger.info("Boot: cleaned {} orphaned session dir(s)", orphans)
+    except Exception:
+        logger.debug("boot session-dir sweep skipped", exc_info=True)
+
     sweeper_coro = start_sweeper()
     try:
         future = asyncio.run_coroutine_threadsafe(sweeper_coro, event_loop)

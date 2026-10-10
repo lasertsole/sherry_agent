@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import time
 from typing import Any
 
 from loguru import logger
@@ -40,6 +41,24 @@ def require_session_id(state: dict[str, Any], error_message: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def run_hook(middleware_name: str, hook: str, impl: Any, state: Any) -> None:
+    """Run one middleware hook body bracketed by an enter/exit log pair.
+
+    The pair carries the hook's wall-clock cost, so a turn's log trace shows the
+    middleware chain in order; ``middleware``/``hook`` ride as structured fields
+    and ``session_id``/``turn_id`` come from the caller's
+    ``logger.contextualize`` scope. A throwing impl still logs its exit (the
+    exception itself is the middleware's own to report).
+    """
+    log = logger.bind(middleware=middleware_name, hook=hook)
+    started = time.monotonic()
+    log.debug("enter")
+    try:
+        impl(state)
+    finally:
+        log.debug("exit in {:.1f}ms", (time.monotonic() - started) * 1000.0)
+
+
 class BeforeAgentHooksMixin:
     """Mixin providing sync/async before_agent hooks that delegate to
     ``_before_agent_impl``.
@@ -50,13 +69,11 @@ class BeforeAgentHooksMixin:
     """
 
     def before_agent(self, state: Any, runtime: Any = None) -> None:
-        logger.debug("{} before_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
+        run_hook(type(self).__name__, "before_agent", self._before_agent_impl, state)
         return None
 
     async def abefore_agent(self, state: Any, runtime: Any = None) -> None:
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
-        self._before_agent_impl(state)
+        run_hook(type(self).__name__, "abefore_agent", self._before_agent_impl, state)
         return None
 
 
@@ -70,13 +87,11 @@ class AfterAgentHooksMixin:
     """
 
     def after_agent(self, state: Any, runtime: Any = None) -> None:
-        logger.debug("{} after_agent hook fired", type(self).__name__)
-        self._after_agent_impl(state)
+        run_hook(type(self).__name__, "after_agent", self._after_agent_impl, state)
         return None
 
     async def aafter_agent(self, state: Any, runtime: Any = None) -> None:
-        logger.debug("{} aafter_agent hook fired", type(self).__name__)
-        self._after_agent_impl(state)
+        run_hook(type(self).__name__, "aafter_agent", self._after_agent_impl, state)
         return None
 
 

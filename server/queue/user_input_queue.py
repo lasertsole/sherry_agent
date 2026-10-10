@@ -3,7 +3,7 @@
 The crash-safe store behind "busy-time input queueing": while a session's turn
 is running, newly submitted user input is persisted here and drained AFTER the
 current turn finishes instead of cancelling it. This module is a PURE store --
-no delivery decisions, no drain loops, no WS/channel frame sending (Tasks 5/7
+no delivery decisions, no drain loops, no WS/channel frame sending (the
 own those), no priorities, no retries, no dead-letter handling.
 
 The ``user_input_queue`` table lives in the SAME SQLite database file as
@@ -20,7 +20,7 @@ single ``BEGIN IMMEDIATE`` transaction so the check-then-write sequences
 concurrency: 100 coroutines claiming the same session each get a DISTINCT row
 (or None), never the same row twice.
 
-Public API (consumed by Tasks 5/7/9/10 -- signatures are a contract):
+Public API (the signatures below are a contract):
 
 - ``QueueFullError(Exception)`` -- raised by ``enqueue`` when a session already
   holds ``MAX_ACTIVE_PER_SESSION`` (20) active (QUEUED+CLAIMED) rows.

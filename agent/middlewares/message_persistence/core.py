@@ -156,6 +156,16 @@ def _stamp_tool_duration(response: Any, started: float) -> None:
                 kwargs["tool_duration_ms"] = elapsed
         except Exception as exc:  # noqa: BLE001 — timing must never fail a tool
             logger.debug("tool duration stamp skipped: {}", exc)
+    # The one log line that makes every tool call observable: the family-level
+    # loggers are sparse by design, and turn_id/session_id arrive from the
+    # turn's contextualize scope, so this needs no per-tool logging.
+    for message in _iter_tool_messages(response):
+        logger.info(
+            "tool executed: name={} duration_ms={} status={}",
+            getattr(message, "name", "") or "unknown",
+            elapsed,
+            "error" if getattr(message, "status", None) == "error" else "ok",
+        )
 
 
 class MessagePersistenceMiddleware(AgentMiddleware):

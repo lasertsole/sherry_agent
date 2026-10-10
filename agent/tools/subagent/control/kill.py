@@ -60,8 +60,8 @@ async def kill_subagent_run(
     save_kill_reconciliation(run_id)
     # cancel_task is keyed by run_id (task_refs.register_task) and is the whole
     # cancellation story: the child's background task is registered under its
-    # run, never under its session key, so the session-keyed queue clear that
-    # used to sit here could not match anything and cancelled nothing.
+    # run, never under its session key — a session-keyed clear would match
+    # nothing and cancel nothing.
     cancel_task(run_id)
 
     from ..registry.lifecycle import complete_subagent_run

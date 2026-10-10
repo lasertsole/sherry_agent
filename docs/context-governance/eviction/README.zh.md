@@ -64,7 +64,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 `read_file` 的结果**不**卸载 —— 文件本来就在磁盘上，再写一份纯属重复。`slice_read_file_result`（`pub/func/message/eviction.py`）则把内容替换为**前 `_READ_FILE_SLICE_CHARS`（4 000）个字符**加一条恢复提示（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）。不写驱逐文件，且该辅助函数幂等：已切片的（含提示的）结果原样返回。
 
-这是两级压缩中的**执行期**一半。**压缩期**一半位于 `pub/func/message/target_truncation.py::_truncate_read_file_content`：压缩裁切上下文时，它按 `tool_call_id` 把每条 `ToolMessage` 解析回其 `read_file` 调用，保留 `max_tool_output_chars`（2 000）的 head 30% + tail 30%，中间替换为携带**解析器推导的 1-based 续读偏移**的恢复提示（`Use offset=<N> to continue reading…`；载荷无法解析时退化为"从头重读"）。
+这是两级压缩中的**执行期**一半。**压缩期**一半位于 `pub/func/message/target_truncation.py::_truncate_read_file_content`：压缩裁切上下文时，它按 `tool_call_id` 把每条 `ToolMessage` 解析回其 `read_file` 调用，保留 `max_tool_output_tokens`（500，≈2 000 个 ASCII 字符，CJK 感知等价）的 head 30% + tail 30%，中间替换为携带**解析器推导的 1-based 续读偏移**的恢复提示（`Use offset=<N> to continue reading…`；载荷无法解析时退化为"从头重读"）。
 
 两级在构造上互补：压缩期后续裁切一条已被执行期切片的载荷时，截断的 JSON 不再可解析，压缩提示因此确定性地回退为重启形式 —— 永远不发出错误偏移，执行期切片辅助函数也绝不二次切片自己的输出。
 

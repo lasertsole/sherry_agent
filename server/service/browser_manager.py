@@ -361,6 +361,7 @@ class _BrowserPagePoolMixin(_BrowserManagerBase):
             try:
                 await transport.call("Target.closeTarget", targetId=target_id, timeout=3.0)
             except CdpError:
+                logger.debug("browser: page close failed (best-effort)", exc_info=True)
                 pass
         return {"page": page.page_id, "closed": True}
 
@@ -380,6 +381,7 @@ class _BrowserPagePoolMixin(_BrowserManagerBase):
                 try:
                     await transport.call("Target.closeTarget", targetId=page.target_id, timeout=3.0)
                 except CdpError:
+                    logger.debug("browser: session page close failed (best-effort)", exc_info=True)
                     pass
         return {"session_id": session_id, "closed": len(pages)}
 
@@ -395,6 +397,7 @@ class _BrowserPagePoolMixin(_BrowserManagerBase):
                         "Target.closeTarget", targetId=stalest.target_id, timeout=3.0
                     )
                 except CdpError:
+                    logger.debug("browser: LRU evict failed (best-effort)", exc_info=True)
                     pass
 
 
@@ -493,6 +496,7 @@ class _BrowserScreencastMixin(_BrowserManagerBase):
                     "Page.stopScreencast", session=page.cdp_session, timeout=3.0
                 )
             except CdpError:
+                logger.debug("browser: screencast stop failed (best-effort)", exc_info=True)
                 pass
         page.screencasting = False
         return {**page.info(), "screencasting": False}
@@ -850,6 +854,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
                 timeout=float(self.config["op_timeout_s"]),
             )
         except CdpError:
+            logger.debug("browser: page history failed (best-effort)", exc_info=True)
             return {**page.info(), "can_back": False, "can_forward": False}
         entries = history.get("entries") or []
         index = int(history.get("currentIndex") or 0)
@@ -1051,6 +1056,7 @@ class _BrowserInteractionMixin(_BrowserManagerBase):
             try:
                 state = await self._eval_raw(page, "document.readyState", timeout=2.0)
             except CdpError:
+                logger.debug("browser: wait-ready eval failed (best-effort)", exc_info=True)
                 state = None
             if state == "complete":
                 return True
@@ -1108,6 +1114,7 @@ class BrowserManager(_BrowserInteractionMixin, _BrowserScreencastMixin, _Browser
         async with self._start_lock:
             if self.running:
                 return
+            started = time.monotonic()
             executable = resolve_executable(
                 self.config["executable"], self.config["executable_candidates"]
             )
@@ -1125,6 +1132,13 @@ class BrowserManager(_BrowserInteractionMixin, _BrowserScreencastMixin, _Browser
             if self._sweeper is None or self._sweeper.done():
                 self._sweeper = asyncio.create_task(self._idle_sweep_loop())
             self._port = launched.port
+            logger.info(
+                "browser launched: pid={} executable={} headless={} in {:.0f}ms",
+                launched.pid,
+                executable,
+                bool(self.config["headless"]),
+                (time.monotonic() - started) * 1000.0,
+            )
 
     async def shutdown(self) -> None:
         """Close every page, the browser and the transport (idempotent)."""
@@ -1134,12 +1148,14 @@ class BrowserManager(_BrowserInteractionMixin, _BrowserScreencastMixin, _Browser
                 await self._sweeper
             self._sweeper = None
         transport = self._transport
+        pid = self._pid
         self._transport = None
         self._pid = None
         self._port = None
         self._pages.clear()
         if transport is None:
             return
+        logger.info("browser shutdown: closing pid={}", pid)
         try:
             await transport.call("Browser.close", timeout=3.0)
         except Exception:  # noqa: BLE001 - a dead browser is already the goal

@@ -508,7 +508,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **パス安全性とライフサイクル。** `session_id` は単一の安全なパスセグメントとして検証されます（`config/path.py::is_safe_session_segment`）。空 / `.` / `..` / 区切り文字を含む id はディスクに触れずスキップされます。`clear_session()` は `SESSIONS_DIR/<session_id>/` フォルダー全体を rmtree するため、退避ファイルはセッションと共に削除されます。退避済みメッセージが再度退避されることはありません（冪等マーカー検査）。
 
-**圧縮時の read_file スライスとの相補性**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：このミドルウェアはツール実行時を、圧縮経路はコンテキスト逼迫時を担当します（head 30 % + tail 30 %、`max_tool_output_chars = 2 000`、パーサー由来の 1-based 継続 offset 付き）。スライス済みペイロードを圧縮が再度クリップしても、切り詰められた JSON はパースできないため、決定論的に「先頭から読み直し」通知へフォールバックします。実行時スライス自体も冪等です。2 つの通知は衝突せず、同一メッセージの段階的縮小です。
+**圧縮時の read_file スライスとの相補性**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：このミドルウェアはツール実行時を、圧縮経路はコンテキスト逼迫時を担当します（head 30 % + tail 30 %、`max_tool_output_tokens = 500`（≈2 000 ASCII 文字）、パーサー由来の 1-based 継続 offset 付き）。スライス済みペイロードを圧縮が再度クリップしても、切り詰められた JSON はパースできないため、決定論的に「先頭から読み直し」通知へフォールバックします。実行時スライス自体も冪等です。2 つの通知は衝突せず、同一メッセージの段階的縮小です。
 
 #### 人間メッセージの退避（P1-9）
 

@@ -327,6 +327,12 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
     except Exception as e:
         logger.debug("fire_delivery_target_hook error: {}", e)
 
+    # The flow's own record moves first: a TaskFlow-dispatched child resumes its
+    # flow (which auto-dispatches the next wave) BEFORE the human-facing
+    # announcement goes out, so the answer the AI reads already reflects the
+    # advanced flow instead of asking it to resume.
+    await _try_auto_resume_taskflow(run)
+
     result = await run_announce_dispatch(run, _deliver_with_retry)
 
     if result.success:
@@ -355,6 +361,50 @@ async def deliver_subagent_announcement(run: SubagentRunRecord) -> AnnounceDeliv
             result.suspended = True
 
     return result
+
+
+async def _try_auto_resume_taskflow(run: SubagentRunRecord) -> bool:
+    """Inject this child's result into its TaskFlow, if a flow dispatched it.
+
+    The loop-closure half of the announce pipeline: without it the AI has to
+    read the delivered result and call ``taskflow_resume`` itself before the
+    next wave moves — two extra AI turns per step. ``taskflow_resume``'s own
+    ``auto_dispatch`` then starts the wave it unlocked, so a flow advances with
+    the AI supervising the exceptions (judge BLOCK / failures / finish) rather
+    than driving every step.
+
+    Fail-open in both directions: no flow owns this child, or the resume raised
+    -> ``False`` and the caller keeps the historical behaviour (the result is
+    delivered to the session, the AI resumes manually).
+    """
+    try:
+        from agent.tools.taskflow.registry import store_sqlite as taskflow_store
+
+        flow = await taskflow_store.get_flow_for_child_session(run.child_session_key)
+        if flow is None:
+            return False
+        flow_id = str(flow.get("flow_id") or "")
+        if not flow_id:
+            return False
+        from agent.tools.taskflow.tools.taskflow_resume import taskflow_resume
+
+        result_text = (run.completion.result_text or "").strip()
+        answer = await taskflow_resume.coroutine(  # type: ignore[attr-defined]
+            flow_id=flow_id,
+            child_session_key=run.child_session_key,
+            result=result_text,
+            session_id=run.child_session_key,
+        )
+        logger.info(
+            "TaskFlow auto-resume for run {}: flow={} -> {}",
+            run.run_id,
+            flow_id,
+            answer.splitlines()[0] if answer else "",
+        )
+        return True
+    except Exception:
+        logger.debug("TaskFlow auto-resume skipped for run {}", run.run_id, exc_info=True)
+        return False
 
 
 async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliveryResult:

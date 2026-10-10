@@ -37,8 +37,10 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
 | `agent/state_port.py` | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API) | `agent/state_port.py` |
+| `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
+| `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (59 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (62 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -232,17 +234,10 @@ near its end — there is no load-more button, and a page that fails offers a re
 in the same row) plus the current branch and a capped dirty count, with
 refs parsed to `head`/`branch`/`tag`/`remote` chips. A directory that is not a
 repository (or a host without git) answers `available: false` with a reason
-instead of an error, so the panel renders its own empty state. The client lays
-the commits into lanes (`GitGraphPanel.vue`, the classic walk: a lane holds the
-hash it waits for, the first parent inherits it, an extra parent opens one) and
-draws one SVG per row with VS Code's own geometry (22px rows / 11px lanes / the
-five `scmGraph` colours; a merge is a ring node, HEAD wears an outer ring). The
-two section headers always share one horizontal row (a collapsed one keeps its
-place beside the open one), and the Splitter exists ONLY while BOTH panels do:
-PrimeVue's Splitter keeps refs to its panels, so a `v-if` panel disappearing
-under a live instance logged `Splitter happened error... Cannot read properties
-of undefined (reading 'style')` when the sections were toggled quickly — the
-single-panel cases render a plain container instead.
+instead of an error, so the panel renders its own empty state. `GitGraphPanel.vue`
+lays the commits into lanes and draws one SVG per row (merges and HEAD get their
+own node shapes), and it is the client's only consumer of that route. The two
+sidebar section headers (文件树 / Git Graph) share one row.
 The row's context menu offers 回退/切换 — `POST /git/reset` (`soft`/`mixed`/
 `hard` only) and `POST /git/checkout`, both behind the client's confirm dialog,
 with git's own stderr surfacing as a 409 — and clicking a row opens a DRAWER of
@@ -282,12 +277,10 @@ their empty payload (`toolboxTools` in `pages/home/config.ts`, wired through the
 same `HOME_TOOLBAR_EVENTS` registry as the settings grid — a pinned test keeps the
 grids and the commands in step). The browser is an address bar over an iframe with
 a per-session history (back / forward / reload; sites that refuse framing stay
-blank, which the empty state says), a **free-size mode** that renders the page in
-a resizable emulated device frame — ZCode's own geometry and bounds, eight edge /
-corner handles with pointer-capture drags divided by the fit scale, plus keyboard
-arrows — and 打开调试工具, which opens the page in a real window because an iframe
-cannot hand out devtools (ZCode's button calls Electron's `<webview>.openDevTools()`
-on its guest), and the terminal is a console for commands the
+blank, which the empty state says), a **free-size mode** that emulates a mobile
+device viewport (resizable frame with edge/corner handles), and 打开调试工具,
+which opens the page in a real window because an iframe cannot hand out devtools;
+the terminal is a console for commands the
 OPERATOR types: `GET /terminal/info` names the directory (the session's project
 directory — the selected 工作目录 wins) and `POST /terminal/run` executes one line
 through `/bin/sh -c` there with a scrubbed environment, bounded by
@@ -485,6 +478,32 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
   client has one shape to render (`client/app/stores/taskflow.ts`,
   `pages/home/components/ProgressFloat.vue`).
 
+## Log Tracing & the Trajectory Ledger (`server/service/trajectory_store.py`)
+
+A turn is one greppable unit. `turn_runner.WsTurnExecutor._drive` opens
+`turn_scope(turn_id, session_id)` around the whole turn — a
+`logger.contextualize` scope (every log line in the turn carries both ids,
+including the middleware chain, tool calls, LLM retries and compaction) AND a
+contextvar the frame projector reads. The WS resume path opens the same scope
+with its own fresh turn id, and `_execute_subagent` rebinds the CHILD's identity
+(child session key + its own turn id) so a subagent's lines never carry the
+parent's. `logs/logger.py` adds a JSONL twin of the full log
+(`logs/output/json/json_*.log`, `serialize=True`) so
+`jq 'select(.record.extra.turn_id == "…")'` pulls one turn out.
+
+`trajectory_events` (SQLite, `SESSIONS_DIR/trajectory.db`) is the structured
+per-turn timeline for the UI: `ServerStreamTurn._project` hooks the stream's
+frame yield sites and upserts `tool_start`/`tool_end` into ONE row per tool call
+(deterministic `event_id`, `json_patch` merge: args from the start, result +
+duration + error from the end), the turn scope records `turn_start`, the stream's
+completion records `turn_end` (total ms + TTFB), and agent-side producers
+(Summarization's compaction) reach the ledger through
+`runtime.hooks.RECORD_TRAJECTORY_EVENT` (registered at server assembly) —
+`agent/**` never imports the server module. `GET /sessions/:session_id/trajectory`
+(`server/trigger/http/trajectory.py`) reads a turn back (`turn_id`, `limit` ≤ 500,
+`offset`); writes are per-session pruned to `TRAJECTORY["max_turns_per_session"]`.
+Everything in the ledger is fail-open: a metrics write never breaks a turn.
+
 ## Agent-Controllable Browser (`config/features/infra_side/browser_agent.py`)
 
 Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
@@ -575,9 +594,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 35 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
-| `config/features/infra_side/` | 24 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 59 TypedDicts + instances re-exported |
+| `config/features/agent_side/` | 36 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/infra_side/` | 26 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
+| `config/features/__init__.py` | Aggregator — all 62 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
@@ -599,7 +618,7 @@ CodeGraph MCP (`@colbymchenry/codegraph`, wired in `opencode.json`) indexes the 
 - Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary. The transcript port is the third seam, in the agent's own direction: `agent/state_port.py` (`read_messages` / `read_interrupt` / `heal_interrupted_turn`) is the ONLY place the LangGraph checkpoint shape is read or rewritten — `server/` drives turns through it and never touches `snapshot.values["messages"]` or `aupdate_state` itself (a turn's INPUT messages and the auxiliary heartbeat agent stay the server's own business).
 - `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `config/**` is importable from ALL layers (no restriction)
-- `config/num.py` is DELETED — all constants live in `config/features/agent_side/summarization.py` (SUMMARIZATION TypedDict) and other per-object modules
+- every numeric constant lives in a `config/features/**` per-object module (e.g. `SUMMARIZATION` in `config/features/agent_side/summarization.py`), never in a shared `num.py`
 
 ## Test Structure
 
@@ -646,7 +665,25 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - `taskflow_resume` and `taskflow_run_task` both dispatch via `_dispatch.dispatch_child` — the seam is monkeypatchable
 - after_agent hooks run in REVERSE list order — first registered = last executed
 - `asyncio.Semaphore` is event-loop-bound, so lanes must be acquired on the main loop — a cross-loop `acquire()` logs a warning and rebinds a fresh semaphore with outstanding slots deducted (never double-issues permits)
-- file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`) — and `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`). `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error). `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight. An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); the docs page is `docs/file-safety/README.md`. Conversation rewind was tried and REMOVED on purpose: hiding history to "undo" a turn was the wrong trade, so a revert never touches the conversation — it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn
+- file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`).
+- `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
+- `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
+- An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); the docs page is `docs/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
+- a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
+- the TaskFlow loop closes itself: a child spawned by a flow resumes it
+  automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
+  finds the owning flow by scanning active flows' steps for the child key), and
+  `taskflow_resume` then dispatches the wave it unlocked
+  (`auto_dispatch=True` default; `auto_dispatch=False` keeps the "unlock only"
+  shape). The AI still supervises the exceptions — judge BLOCK, failures,
+  planning and the final finish — instead of driving every step. `taskflow_replan`
+  regenerates a flow's REMAINING steps from the goal, the done results and the
+  failure reason (transitively invalidated steps go back to `blocked`; bounded by
+  `REPLAN_MAX` replans per flow), `taskflow_plan` decomposes a goal into a
+  dependency-ordered flow without dispatching anything, and `taskflow_finish`
+  gained **Gate E** (`_goal_gate`): with a flow description present, an auxiliary
+  model judges whether the collected results actually satisfy the goal (fail-open;
+  a rejection names `taskflow_replan`).
 - tool duration is measured ONCE, at tool-return time, by `message_persistence`'s `wrap_tool_call`/`awrap_tool_call`
   (`time.monotonic()` difference, rounded, clamped at 0 — never a wall-clock subtraction: an NTP step back would make it
   negative, which is the defect ZCode ships unguarded), stamped into `ToolMessage.additional_kwargs["tool_duration_ms"]`
@@ -655,5 +692,15 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   session + tool id, consumed once). Approval waits and queue time are OUTSIDE the window by construction — the clock
   starts when the tool actually executes. The client shows a live ticker while running and the measured value when
   settled (`formatToolDuration`: <1s → `850ms`, <10s → `1.2s`, else whole seconds), and nothing when unknown.
+- two boot sweeps reconcile crash leftovers, both conservative and both run from
+  the server assembly (`server/trigger/channels/core.py::_schedule_sweeper`, next
+  to the sweeper start): `agent/tools/subagent/isolation/sweep.py` removes
+  isolated workspaces no REGISTRY run owns (orphaned / expired-conflict past
+  `SUBAGENT_ISOLATION["stale_workspace_ttl_days"]` / corrupted) plus a
+  `git worktree prune` on their parents, and
+  `server/service/session_dir_sweep.py` removes `SESSIONS_DIR/<id>/` folders NO
+  store references (messages / todos / taskflows / checkpoints all probed,
+  fail-open per store; symlinks and folders younger than
+  `SESSION_DIRS["min_dir_age_seconds"]` are skipped)
 - `.gitignore` line `*.db` ignores all SQLite files — DB files are never committed
 - pre-push hook runs basedpyright on the entire diff — must be 0 errors before push

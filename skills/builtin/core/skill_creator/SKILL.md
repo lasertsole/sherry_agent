@@ -300,12 +300,11 @@ When editing the (newly-generated or existing) skill, remember that the skill is
 
 #### Learn Proven Design Patterns
 
-Consult these helpful guides based on your skill's needs:
-
-- **Multi-step processes**: See references/workflows.md for sequential workflows and conditional logic
-- **Specific output formats or quality standards**: See references/output-patterns.md for template and example patterns
-
-These files contain established best practices for effective skill design.
+Design the skill's own shape from the section above: a multi-step process
+belongs in a numbered procedure with its decision points written out, and a
+fixed output format belongs in a template the skill writes to `references/`.
+Whatever the shape, keep SKILL.md itself short — the detail goes into the
+`references/` files you create alongside it.
 
 #### Start with Reusable Skill Contents
 

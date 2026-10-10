@@ -507,7 +507,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **경로 안전성과 수명주기.** `session_id`는 단일 안전 경로 세그먼트로 검증됩니다(`config/path.py::is_safe_session_segment`). 빈 값 / `.` / `..` / 구분자를 포함한 id는 디스크를 건드리지 않고 건너뜁니다. `clear_session()`은 `SESSIONS_DIR/<session_id>/` 폴더 전체를 rmtree하므로 퇴거 파일은 세션과 함께 삭제됩니다. 이미 퇴거된 메시지는 다시 퇴거되지 않습니다(멱등 마커 검사).
 
-**압축 시점 read_file 슬라이스와의 상보성**(`pub/func/message/target_truncation.py::_truncate_read_file_content`): 이 미들웨어는 도구 실행 시점을, 압축 경로는 컨텍스트 압박 시점을 담당합니다(head 30 % + tail 30 %, `max_tool_output_chars = 2 000`, 파서가 계산한 1-based 연속 offset 포함). 슬라이스된 페이로드를 압축이 다시 클립해도 잘린 JSON은 파싱할 수 없으므로 결정론적으로 "처음부터 다시 읽기" 안내로 폴백합니다. 실행 시점 슬라이스 자체도 멱등입니다. 두 안내는 충돌하지 않으며, 같은 메시지의 단계적 축소입니다.
+**압축 시점 read_file 슬라이스와의 상보성**(`pub/func/message/target_truncation.py::_truncate_read_file_content`): 이 미들웨어는 도구 실행 시점을, 압축 경로는 컨텍스트 압박 시점을 담당합니다(head 30 % + tail 30 %, `max_tool_output_tokens = 500`(≈2 000 ASCII 문자), 파서가 계산한 1-based 연속 offset 포함). 슬라이스된 페이로드를 압축이 다시 클립해도 잘린 JSON은 파싱할 수 없으므로 결정론적으로 "처음부터 다시 읽기" 안내로 폴백합니다. 실행 시점 슬라이스 자체도 멱등입니다. 두 안내는 충돌하지 않으며, 같은 메시지의 단계적 축소입니다.
 
 #### 인간 메시지 퇴거(P1-9)
 

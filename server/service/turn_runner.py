@@ -52,6 +52,7 @@ from server.service.input_queue_service import (
 from server.service.session_settings_service import promote_pending_settings
 from server.service.stream_driver import StreamDriver
 from server.service.stream_diag import public_error_text
+from server.service.trajectory_store import turn_start_event, turn_scope
 from server.utils.ws_helpers import send_ws_json
 from pub.types.message import MultiModalMessage
 
@@ -345,6 +346,12 @@ async def _drain_loop(session_id: str) -> None:
                 row = await queue.claim_next(session_id)
                 if row is None:
                     break
+                logger.info(
+                    "TurnRunner: claimed queued row {} for session {} (route={})",
+                    row.id,
+                    session_id,
+                    _row_route(row),
+                )
                 await _execute_single(session_id, row)
             except Exception as e:
                 logger.warning(
@@ -418,6 +425,7 @@ async def _execute_single(session_id: str, row: Any) -> None:
     # drain loop, whose retry would just claim the NEXT row and leave this one.
     try:
         await queue.mark_terminal(row.id, status)
+        logger.info("TurnRunner: row {} finalized as {} (route={})", row.id, status, route)
     except Exception as mark_error:
         logger.exception(
             f"TurnRunner: marking row {row.id} {status} failed for session {session_id}: "
@@ -594,9 +602,25 @@ class WsTurnExecutor(BatchTurnExecutor):
         messages = [MultiModalMessage(text=item.message) for item in batch]
         sources = {item.source for item in batch}
         origin = origin_for_source("cron" if "cron" in sources else "user")
-        await _WsTurnStreamDriver(session_id, websocket, turn_info).drive(
-            async_generate_multi(session_id, messages, origin=origin)
-        )
+        # One scope for the whole turn: every log line the turn produces —
+        # middleware chain, tool calls, LLM retries, compaction, errors — carries
+        # turn_id/session_id, so `grep turn_id=<id>` reconstructs the turn; the
+        # same scope tells the trajectory ledger which turn it is recording.
+        # The child task below is created INSIDE the scope and inherits both.
+        with turn_scope(turn_info.get("turn_id", ""), session_id):
+            turn_start_event(
+                session_id,
+                source="queue",
+                message_ids=[str(mid) for mid in turn_info.get("message_ids") or []],
+            )
+            logger.info(
+                "TurnRunner: turn execution started (route={}, rows={})",
+                self.__class__.__name__,
+                len(batch),
+            )
+            await _WsTurnStreamDriver(session_id, websocket, turn_info).drive(
+                async_generate_multi(session_id, messages, origin=origin)
+            )
 
 
 class _WsTurnStreamDriver(StreamDriver):

@@ -139,7 +139,7 @@ The interaction map:
 | `overflow_clip_enabled` | `True` | P1-2 tail-clip master switch |
 | `overflow_clip_max_remove` | `10` | Max trailing messages stubbed by one clip |
 | `overflow_clip_min_keep` | `5` | Transcript floor: at/below this length, never clip |
-| `max_tool_output_chars` | `2_000` | Compression-time clip budget for a tool result |
+| `max_tool_output_tokens` | `500` | Compression-time clip budget for a tool result (tokens; ~2 000 ASCII chars) |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | Head/tail keep ratios for compression-time clips |
 
 `TOKEN_ESTIMATION` (`config/features/agent_side/token_estimation.py`), multimodal token classing:

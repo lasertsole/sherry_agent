@@ -83,9 +83,10 @@ from .summary_generation import (
     _serialize_for_summary as _serialize_for_summary,
 )
 from .thrash import ThrashMixin
+from agent.trajectory_events import record_trajectory_event
 
-# Constants used by the retained hooks / cooldown mirror. Kept bound here
-# (not imported from a mixin) because they were module-level before the split.
+# Constants used by the hooks and the cooldown mirror, bound at module level
+# so the mixins and the tests read one source.
 COMPACTION_COOLDOWN_ROUNDS = SUMMARIZATION["compaction_cooldown_rounds"]
 MAX_COMPRESS_ATTEMPTS_PER_TURN = SUMMARIZATION["max_compress_attempts_per_turn"]
 
@@ -228,9 +229,10 @@ def _schedule_compression_nudges(session_id: str, messages: Sequence[Any]) -> No
         logger.exception("compression nudge scheduling failed (fail-open)")
 
 
-# Message persistence no longer runs here: every model boundary flushes new
-# messages to MesMemory via ``MessagePersistenceMiddleware`` (registered in
-# ``agent/core.py``), so the compression path only compacts and schedules the
+# Message persistence is not this middleware's job: every model boundary
+# flushes new messages to MesMemory via ``MessagePersistenceMiddleware``
+# (registered in ``agent/core.py``), so the compression path only compacts and
+# schedules the
 # compression-time nudges below.
 
 
@@ -406,13 +408,13 @@ class Summarization(
         return None
 
     def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        logger.debug("Compaction before_agent hook fired")
+        logger.bind(middleware=type(self).__name__).debug("before_agent hook fired")
         return self._before_agent_impl(state)
 
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        logger.debug("Compaction abefore_agent hook fired")
+        logger.bind(middleware=type(self).__name__).debug("abefore_agent hook fired")
         return await self._abefore_agent_impl(state)
 
     # ------------------------------------------------------------------
@@ -518,7 +520,7 @@ class Summarization(
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("Compaction wrap_model_call hook fired")
+        logger.bind(middleware=type(self).__name__).debug("wrap_model_call hook fired")
         session_id = self._session_or_none(request.state)
         if session_id is None:
             return handler(request)
@@ -542,7 +544,24 @@ class Summarization(
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
         t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+        messages_before = len(request.state.get("messages", []) or [])
         request = self._before_call_dispatch(request, session_id)
+        t2_attempts_after = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+        if t2_attempts_after > t2_attempts_before:
+            # NOTE: no "trigger=" token here — the sync/async parity harness
+            # parses captured lines on that token to compare compression facts.
+            messages_after = len(request.state.get("messages", []) or [])
+            logger.info(
+                "Summarization: compacted (path=T2, messages {} -> {}, session={})",
+                messages_before,
+                messages_after,
+                session_id,
+            )
+            record_trajectory_event(
+                session_id,
+                "compact",
+                {"messages_before": messages_before, "messages_after": messages_after},
+            )
 
         response = self._execute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)
@@ -562,7 +581,7 @@ class Summarization(
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("Compaction awrap_model_call hook fired")
+        logger.bind(middleware=type(self).__name__).debug("awrap_model_call hook fired")
         session_id = self._session_or_none(request.state)
         if session_id is None:
             return await handler(request)

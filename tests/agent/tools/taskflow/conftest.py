@@ -28,6 +28,20 @@ import pytest
 
 _ROOT = next(p for p in Path(__file__).resolve().parents if (p / "pyproject.toml").exists())
 
+
+def _capture_real_dispatch_child() -> None:
+    """Stash the module's pristine ``dispatch_child`` for the opt-out fixture."""
+    import importlib
+
+    try:
+        module = importlib.import_module("agent.tools.taskflow.tools._dispatch")
+    except Exception:  # pragma: no cover - import环境 problem: the opt-out fixture报错即可
+        return
+    module.__dict__.setdefault("__real_dispatch_child__", module.dispatch_child)
+
+
+_capture_real_dispatch_child()
+
 _skills_loader_cache: Any = None
 _agent_tools_cache: Any = None
 
@@ -128,6 +142,54 @@ def isolated_db(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     monkeypatch.setattr(store_sqlite, "_init_lock", asyncio.Lock())
     monkeypatch.setattr(store_sqlite, "_sync_tables_ready", False)
     return db_path
+
+
+@pytest.fixture(autouse=True)
+def _isolated_child_dispatch(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    """Never spawn a real child from a resume's auto-dispatch.
+
+    ``taskflow_resume`` dispatches the wave it just unlocked (auto_dispatch),
+    which in a unit test would reach ``spawn_subagent_direct`` and leave a real
+    registry row + background task behind. The seam is
+    ``_dispatch.dispatch_child``; this fixture records the calls and hands back
+    a synthetic child key, so tests observe the DECISION hermetically. A test
+    that must exercise the real spawn chain opts out with ``real_child_dispatch``.
+    """
+    from agent.tools.taskflow.tools import _dispatch
+
+    spawned: list[dict[str, Any]] = []
+
+    async def _fake_dispatch_child(
+        task,
+        requester_session_key,
+        label=None,
+        functional_role=None,
+        output_schema=None,
+        step_model=None,
+        step_timeout_seconds=None,
+    ) -> str:
+        spawned.append({"task": task, "requester": requester_session_key, "label": label})
+        return f"agent:auto:subagent:{len(spawned)}"
+
+    monkeypatch.setattr(_dispatch, "dispatch_child", _fake_dispatch_child)
+    return spawned
+
+
+@pytest.fixture()
+def real_child_dispatch(monkeypatch: pytest.MonkeyPatch):
+    """Opt out of ``_isolated_child_dispatch`` for spawn-chain smoke tests.
+
+    Re-installs the module's own ``dispatch_child`` (captured before the autouse
+    fixture replaced it) so the real ``spawn_subagent_direct`` chain runs — the
+    smoke tests stub the lane and the child-agent build themselves.
+    """
+    from agent.tools.taskflow.tools import _dispatch
+
+    real = _dispatch.__dict__.get("__real_dispatch_child__")
+    if real is None:
+        raise RuntimeError("the real dispatch_child was not captured")
+    monkeypatch.setattr(_dispatch, "dispatch_child", real)
+    return real
 
 
 @pytest.fixture()

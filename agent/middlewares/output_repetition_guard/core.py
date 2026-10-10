@@ -449,7 +449,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
         :func:`_wrap_model_call_post`.  Returns the hijack ``AIMessage`` when a
         repetition escalation fires, otherwise the original result unchanged.
         """
-        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_model_call hook fired")
         result = handler(request)
         replacement = self._wrap_model_call_post(request, result)
         if replacement is not None:
@@ -467,7 +467,7 @@ class OutputRepetitionGuard(BeforeAgentHooksMixin, AgentMiddleware):
         Same behaviour as :func:`wrap_model_call` but awaits the async
         ``handler`` first.
         """
-        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_model_call hook fired")
         result = await handler(request)
         replacement = self._wrap_model_call_post(request, result)
         if replacement is not None:

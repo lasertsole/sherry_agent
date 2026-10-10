@@ -1,4 +1,4 @@
-"""Human-In-The-Loop middleware for the hermes-agent.
+"""Human-In-The-Loop middleware for the Sherry agent.
 
 Exports all public components — types, detectors, approval pipeline,
 gates, and the main :class:`humanInTheLoop` middleware class.

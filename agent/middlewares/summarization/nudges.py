@@ -357,9 +357,8 @@ _COMPRESSION_TODO_TASKS: set[asyncio.Task[None]] = set()
 # ---------------------------------------------------------------------------
 # Compression-time nudge scheduling (memory review + plan extraction)
 #
-# Both triggers originally ran on every turn from the middleware's
-# after-agent hook (removed with the @dynamic_prompt migration). They are now
-# unified with the compression pipeline: the Summarization middleware calls
+# Both triggers are driven by the compression pipeline: the Summarization
+# middleware calls
 # ``schedule_compression_nudges`` on every compression that actually discards
 # messages. The memory review is dispatched on **every** compression (a
 # compaction discards content, so the review must never be skipped), and plan
@@ -517,7 +516,7 @@ class _NudgeLimitTool(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
         tool_name: str = request.tool_call.get("name", "unknown")
 
         if not self._is_allowed(request.tool):
@@ -677,9 +676,9 @@ def _build_plan_context(session_id: str) -> dict[str, Any]:
 
 
 async def _nudge_memory(session_id: str, system_prompt: str, messages: list[BaseMessage]) -> None:
-    # NUDGE lane is event-loop-bound: acquire only on the main loop. The sync
-    # after_agent path no longer dispatches nudges (that per-turn hook was
-    # removed), so no run_async() worker loop ever touches this semaphore.
+    # NUDGE lane is event-loop-bound: acquire only on the main loop. Nudges
+    # are dispatched exclusively from the async compression path, so no
+    # run_async() worker loop ever touches this semaphore.
     state_register_mem.set_state(session_id, _NUDGE_MEMORY_LOCK_KEY, True)
     try:
         async with lane_slot(LaneType.NUDGE):

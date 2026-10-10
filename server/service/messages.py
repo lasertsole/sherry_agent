@@ -198,7 +198,7 @@ class _GenerateTurn(StreamTurn):
 
     def _log_started(self) -> None:
         total_len = sum(len(m.text) if m.text else 0 for m in self.messages)
-        logger.debug(
+        logger.info(
             f"Agent execution started: session_id={self.session_id}, is_stream={self.is_stream}, "
             f"message_count={len(self.messages)}, input_text_length={total_len}"
         )

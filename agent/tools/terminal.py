@@ -70,9 +70,8 @@ from agent.tools.todolist.evidence_recorder import record_verification_evidence
 # Bound to the feature registry (single source of truth); name preserved.
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
 
-# Historical refusal message format (terminal.py snapshot); now RAISED
-# as a ToolException instead of returned, so handle_tool_error=True routes it
-# through the error ToolMessage channel.
+# Raised as a ToolException instead of returned, so handle_tool_error=True
+# routes it through the error ToolMessage channel.
 _BLOCKED_MESSAGE = "Blocked: unsafe command."
 
 # Sensitive-file access refusal: the model must go through read_file /
@@ -156,8 +155,8 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         # root_dir defaults to None so the ClassVar schema descriptor can
         # synthesize a throwaway instance for class-level schema access.
         # Stored via direct field assignment: super.__init__ is ShellTool's
-        # synthesized pydantic __init__, which has no root_dir parameter
-        # (pre-Task-6 code passed it as an extra kwarg that pydantic dropped).
+        # synthesized pydantic __init__, which has no root_dir parameter — passing
+        # one as an extra kwarg would be dropped silently.
         super().__init__()
         self.root_dir = root_dir
         # Detect system encoding (Windows typically uses GBK/codepage 936)
@@ -442,6 +441,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                 cmd_str, "Terminal command was cancelled.", run_manager
             )
         except Exception as e:
+            logger.debug("terminal: command dispatch failed", exc_info=True)
             return self._record_verification(cmd_str, f"Error: {e}", run_manager)
 
 

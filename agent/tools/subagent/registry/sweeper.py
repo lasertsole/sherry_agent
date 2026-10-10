@@ -119,6 +119,15 @@ async def _do_sweep() -> None:
 
     await run_with_work_admission(_persist_async(), label="sweeper-persist")
 
+    # Isolated workspaces are not registry rows: a crash between their creation
+    # and the run's registration leaves a directory + worktree + branch that no
+    # other scanner can see. Same cycle, its own scan.
+    from ..isolation.sweep import sweep_stale_isolated_workspaces
+
+    stale_workspaces = sweep_stale_isolated_workspaces()
+    if stale_workspaces > 0:
+        logger.info("Sweeper cleaned {} stale isolated workspace(s)", stale_workspaces)
+
 
 async def _expire_overdue_taskflows() -> int:
     """Mark non-terminal TaskFlows whose deadline has passed as failed."""
@@ -300,10 +309,25 @@ async def _finalize_killed_unterminated() -> int:
 
 
 async def start_sweeper() -> None:
-    """Start the sweeper background task if not already running."""
+    """Start the sweeper background task if not already running.
+
+    The first registry cycle waits one interval; the stale-workspace scan is
+    cheap and boot is exactly when a crash's leftovers are still around, so it
+    runs immediately here (best-effort, in a worker thread: the scan does disk
+    and git I/O and must not block startup).
+    """
     global _sweeper_task
     if _sweeper_task is not None and not _sweeper_task.done():
         return
+
+    try:
+        from ..isolation.sweep import sweep_stale_isolated_workspaces
+
+        cleaned = await asyncio.to_thread(sweep_stale_isolated_workspaces)
+        if cleaned:
+            logger.info("Boot: cleaned {} stale isolated workspace(s)", cleaned)
+    except Exception:
+        logger.debug("boot stale-workspace sweep skipped", exc_info=True)
 
     _sweeper_task = asyncio.create_task(_sweep_loop())
 

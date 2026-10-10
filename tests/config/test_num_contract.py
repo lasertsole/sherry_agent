@@ -21,10 +21,12 @@ PRUNE_PROTECT_TOKENS = SUMMARIZATION["prune_protect_tokens"]
 PRUNE_MIN_REDUCTION_TOKENS = SUMMARIZATION["prune_min_reduction_tokens"]
 TARGET_TRUNCATE_RATIO = SUMMARIZATION["target_truncate_ratio"]
 MIN_OUTPUT_CHARS_TO_TRUNCATE = SUMMARIZATION["min_output_chars_to_truncate"]
-MAX_TOOL_OUTPUT_CHARS = SUMMARIZATION["max_tool_output_chars"]
-AGGRESSIVE_TRUNCATE_CHARS = SUMMARIZATION["aggressive_truncate_chars"]
+MAX_TOOL_OUTPUT_TOKENS = SUMMARIZATION["max_tool_output_tokens"]
+AGGRESSIVE_TRUNCATE_TOKENS = SUMMARIZATION["aggressive_truncate_tokens"]
 SUMMARY_TRIM_TOKENS = SUMMARIZATION["summary_trim_tokens"]
-SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
+SUMMARY_TOTAL_MAX_TOKENS = SUMMARIZATION["summary_total_max_tokens"]
+SUMMARY_ITEM_TOKENS = SUMMARIZATION["summary_item_tokens"]
+SUMMARY_ITEM_TOKENS_SHORT = SUMMARIZATION["summary_item_tokens_short"]
 CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
 CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
 DEGRADATION_NO_TEXT_THRESHOLD = SUMMARIZATION["degradation_no_text_threshold"]
@@ -59,10 +61,12 @@ CONTRACT_NAMES = [
     "PRUNE_MIN_REDUCTION_TOKENS",
     "TARGET_TRUNCATE_RATIO",
     "MIN_OUTPUT_CHARS_TO_TRUNCATE",
-    "MAX_TOOL_OUTPUT_CHARS",
-    "AGGRESSIVE_TRUNCATE_CHARS",
+    "MAX_TOOL_OUTPUT_TOKENS",
+    "AGGRESSIVE_TRUNCATE_TOKENS",
     "SUMMARY_TRIM_TOKENS",
-    "SUMMARY_TOTAL_MAX_CHARS",
+    "SUMMARY_TOTAL_MAX_TOKENS",
+    "SUMMARY_ITEM_TOKENS",
+    "SUMMARY_ITEM_TOKENS_SHORT",
     "CONTENT_HEAD_RATIO",
     "CONTENT_TAIL_RATIO",
     "DEGRADATION_NO_TEXT_THRESHOLD",
@@ -135,13 +139,18 @@ class TestMultiStrategyPipeline:
         assert MIN_OUTPUT_CHARS_TO_TRUNCATE == 500
         assert isinstance(MIN_OUTPUT_CHARS_TO_TRUNCATE, int)
 
-    def test_max_tool_output_chars(self):
-        assert MAX_TOOL_OUTPUT_CHARS == 2_000
-        assert isinstance(MAX_TOOL_OUTPUT_CHARS, int)
+    def test_max_tool_output_tokens(self):
+        # 500 tokens ≈ the old 2 000-character cap for English (4 chars/token).
+        assert MAX_TOOL_OUTPUT_TOKENS == 500
+        assert isinstance(MAX_TOOL_OUTPUT_TOKENS, int)
 
-    def test_aggressive_truncate_chars(self):
-        assert AGGRESSIVE_TRUNCATE_CHARS == 1_000
-        assert isinstance(AGGRESSIVE_TRUNCATE_CHARS, int)
+    def test_aggressive_truncate_tokens(self):
+        assert AGGRESSIVE_TRUNCATE_TOKENS == 250
+        assert isinstance(AGGRESSIVE_TRUNCATE_TOKENS, int)
+
+    def test_summary_item_token_budgets(self):
+        assert SUMMARY_ITEM_TOKENS == 100
+        assert SUMMARY_ITEM_TOKENS_SHORT == 50
 
 
 class TestLLMSummaryImprovement:
@@ -150,8 +159,9 @@ class TestLLMSummaryImprovement:
         assert isinstance(SUMMARY_TRIM_TOKENS, int)
 
     def test_summary_total_max_chars(self):
-        assert SUMMARY_TOTAL_MAX_CHARS == 16_000
-        assert isinstance(SUMMARY_TOTAL_MAX_CHARS, int)
+        # 4 000 tokens ≈ the old 16 000-character cap for English.
+        assert SUMMARY_TOTAL_MAX_TOKENS == 4_000
+        assert isinstance(SUMMARY_TOTAL_MAX_TOKENS, int)
 
     def test_content_head_ratio(self):
         assert CONTENT_HEAD_RATIO == 0.3
@@ -277,7 +287,7 @@ class TestContract:
         assert missing == [], f"missing contract constants: {missing}"
 
     def test_contract_name_count(self):
-        assert len(CONTRACT_NAMES) == 36
+        assert len(CONTRACT_NAMES) == 38
 
 
 class TestPreservedConstants:

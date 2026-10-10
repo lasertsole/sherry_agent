@@ -228,7 +228,7 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         request: ModelRequest,
         handler: Callable[[ModelRequest], ModelResponse],
     ) -> ModelResponse | AIMessage | ExtendedModelResponse:
-        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_model_call hook fired")
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
             return terminal
@@ -240,7 +240,7 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         request: ModelRequest,
         handler: Callable[[ModelRequest], Awaitable[ModelResponse]],
     ) -> ModelResponse | AIMessage | ExtendedModelResponse:
-        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_model_call hook fired")
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
             return terminal
@@ -295,7 +295,7 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
-        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_tool_call hook fired")
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal
@@ -309,7 +309,7 @@ class HeartbeatStaleness(BeforeAgentHooksMixin, AfterAgentHooksMixin, AgentMiddl
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
-        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal

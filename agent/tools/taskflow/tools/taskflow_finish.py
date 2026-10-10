@@ -14,11 +14,13 @@ blocks a finish, and a skipped Gate D is silent.
 """
 
 from langchain_core.tools import tool
+from loguru import logger
 
 from ..config import StepStatus, TaskFlowStatus
 from ..registry import store_sqlite
 from ..progress_push import push_taskflow_progress
 from ..registry.store_sqlite import FlowConflictError, FlowNotFoundError
+from config.features import GOAL_GATE
 from agent.tools.pub_base import SessionId
 from ._shared import (
     conflict_error,
@@ -31,6 +33,82 @@ from ._shared import (
 
 # Gate A passes a step in exactly these states; anything else is still pending.
 _FINISHABLE_STATUSES = (StepStatus.DONE.value, StepStatus.BLOCKED.value)
+
+
+async def _goal_gate(flow: dict) -> str | None:
+    """Gate E: does the flow's result set actually satisfy the original goal?
+
+    Gates A-D prove the DAG is finished and the evidence is clean; none of them
+    reads the RESULTS against the goal the user stated. This gate asks an
+    auxiliary model that one question, so a flow whose steps all "passed" their
+    own criteria cannot close while the goal is unmet. Opt-in by construction:
+    it runs only when the flow carries a ``description`` (the goal), and it is
+    fail-open — a judge error passes, because a broken judge must never pin a
+    flow open.
+
+    Returns ``None`` to pass, else the rejection text (which names
+    ``taskflow_replan`` so the model knows the next move).
+    """
+    if not GOAL_GATE["enabled"]:
+        return None
+    state = dict(flow.get("state") or {})
+    goal = str(state.get("description") or flow.get("description") or "").strip()
+    if not goal:
+        return None  # no stated goal -> nothing to check (behaviour unchanged)
+
+    results = [
+        record
+        for record in (state.get("results") or [])
+        if isinstance(record, dict) and str(record.get("result") or "").strip()
+    ]
+    if not results:
+        return None  # nothing to judge (a flow with results is the interesting case)
+
+    joined = "\n---\n".join(
+        f"[{record.get('step_id') or record.get('child_session_key') or 'step'}] "
+        f"{str(record.get('result'))[: int(GOAL_GATE['max_result_chars'])]}"
+        for record in results
+    )
+    prompt = (
+        f"Goal:\n{goal}\n\nStep results:\n{joined}\n\n"
+        "Does the collected work satisfy the goal? Answer with exactly one line: "
+        "'GOAL_MET: <one-line reason>' or 'GOAL_NOT_MET: <what is missing>'."
+    )
+    try:
+        # Imported at call time (like the other auxiliary-model call sites): the
+        # constructor seam stays patchable and no model client is built at import.
+        from models import build_auxiliary_llm
+
+        llm = build_auxiliary_llm(temperature=0)
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": _GOAL_GATE_SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ]
+        )
+        raw = str(response.content if hasattr(response, "content") else response).strip()
+    except Exception as exc:  # noqa: BLE001 - fail-open boundary of this gate
+        logger.warning("TaskFlow goal gate skipped (judge error, failing open): {}", exc)
+        return None
+
+    upper = raw.upper()
+    if "GOAL_NOT_MET" in upper:
+        reason = raw.split(":", 1)[1].strip() if ":" in raw else raw
+        logger.info("TaskFlow goal gate rejected the finish: {}", reason[:200])
+        return (
+            f"Error: Cannot finish: the goal is not met ({reason}). "
+            "Re-plan the remaining work with taskflow_replan, or finish the missing "
+            "steps and try again."
+        )
+    return None
+
+
+_GOAL_GATE_SYSTEM_PROMPT = (
+    "You verify whether a set of completed step results satisfies the stated goal. "
+    "Be strict about missing deliverables, but do not invent requirements that were "
+    "never asked for. Answer with exactly one line: 'GOAL_MET: <reason>' or "
+    "'GOAL_NOT_MET: <what is missing>'."
+)
 
 
 async def _evidence_gate(flow_id: str) -> str | None:
@@ -166,6 +244,13 @@ async def taskflow_finish(
     verifier_error = await _verifier_gate(session_id, todo, plan_path, checkbox_label)
     if verifier_error is not None:
         return verifier_error
+
+    # Gate E — the goal judge (opt-in: a flow with a description). Gates A-D
+    # prove the machinery finished; this is the only gate that reads the
+    # results against what the user actually asked for.
+    goal_error = await _goal_gate(flow)
+    if goal_error is not None:
+        return goal_error
 
     if summary:
         state["summary"] = summary

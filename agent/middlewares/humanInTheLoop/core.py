@@ -175,6 +175,11 @@ class HumanInTheLoop(AgentMiddleware):
             review_configs=[RC(action_name="clarify", allowed_decisions=["approve", "reject"])],
         )
         try:
+            logger.info(
+                "HITL: clarify requested for session {} (choices={})",
+                session_id,
+                len(choices) if choices else 0,
+            )
             response = interrupt(hitl_request)
             decisions = response.get("decisions", [])
             decision_type = decisions[0]["type"] if decisions else ""
@@ -182,6 +187,7 @@ class HumanInTheLoop(AgentMiddleware):
                 set_session_yolo(session_id)
             if decision_type in ("approve", "yolo"):
                 return decisions[0].get("message", "Approved")
+            logger.info("HITL: clarify rejected for session {}", session_id)
             return None
         except Exception:
             logger.exception("Clarify interrupt failed")
@@ -376,6 +382,16 @@ class HumanInTheLoop(AgentMiddleware):
             for tool_call in last_ai_msg.tool_calls:
                 self._approval_registry.dispatch(tool_call, ctx)
 
+        approved = len(outcome.revised_tool_calls)
+        denied = len(outcome.artificial_tool_messages)
+        if denied or approved != len(last_ai_msg.tool_calls):
+            logger.info(
+                "HITL: reviewed {} tool call(s) for session {}: {} approved, {} blocked",
+                len(last_ai_msg.tool_calls),
+                ctx.session_id,
+                approved,
+                denied,
+            )
         last_ai_msg.tool_calls = outcome.revised_tool_calls
         return (
             {"messages": [last_ai_msg, *outcome.artificial_tool_messages]}
@@ -397,6 +413,7 @@ class HumanInTheLoop(AgentMiddleware):
         if self.interrupt_mgr.is_interrupted(session_id):
             tool_name = request.tool_call.get("name", "unknown")
             self.interrupt_mgr.clear_interrupt(session_id)
+            logger.info("HITL: tool '{}' interrupted for session {}", tool_name, session_id)
             return ToolMessage(
                 content=f"Tool execution interrupted by user. {BLOCKED_MESSAGE}",
                 name=tool_name,
@@ -415,6 +432,7 @@ class HumanInTheLoop(AgentMiddleware):
         if self.interrupt_mgr.is_interrupted(session_id):
             tool_name = request.tool_call.get("name", "unknown")
             self.interrupt_mgr.clear_interrupt(session_id)
+            logger.info("HITL: tool '{}' interrupted for session {}", tool_name, session_id)
             return ToolMessage(
                 content=f"Tool execution interrupted by user. {BLOCKED_MESSAGE}",
                 name=tool_name,

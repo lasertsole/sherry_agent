@@ -19,7 +19,18 @@ class SummarizationConfig(TypedDict):
     prune_min_reduction_tokens: int
     target_truncate_ratio: float
     min_output_chars_to_truncate: int
-    max_tool_output_chars: int
+    #: Token budgets (CJK-aware) for the truncation points. The legacy character
+    #: caps were these × ``TOKEN_ESTIMATION["chars_per_token"]`` (4 for English),
+    #: so an English session truncates at the same characters as before while a
+    #: CJK one pays the same TOKENS, not double.
+    max_tool_output_tokens: int
+    summary_total_max_tokens: int
+    aggressive_truncate_tokens: int
+    #: Per-item token budgets for the SummaryDoc list fields (a single item may
+    #: otherwise eat the whole summary's budget). ``evicted_refs`` is exempt:
+    #: a truncated path is useless.
+    summary_item_tokens: int
+    summary_item_tokens_short: int
     min_args_chars_to_truncate: int
     max_tool_args_chars: int
     aggressive_truncate_chars: int
@@ -73,7 +84,11 @@ SUMMARIZATION: SummarizationConfig = {
     "prune_min_reduction_tokens": 5_000,
     "target_truncate_ratio": 0.5,
     "min_output_chars_to_truncate": 500,
-    "max_tool_output_chars": 2_000,
+    "max_tool_output_tokens": 500,
+    "summary_total_max_tokens": 4_000,
+    "aggressive_truncate_tokens": 250,
+    "summary_item_tokens": 100,
+    "summary_item_tokens_short": 50,
     "min_args_chars_to_truncate": 500,
     "max_tool_args_chars": 2_000,
     "aggressive_truncate_chars": 1_000,

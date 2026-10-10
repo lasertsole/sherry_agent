@@ -7,7 +7,10 @@ Resume must, after injecting a result:
   (d) PARTIAL COMPLETION: with two dispatched steps, resuming one leaves the
       sibling ``dispatched``;
   (e) a duplicate resume is a byte-identical no-op (no revision bump, no
-      re-unlock).
+      re-unlock);
+  (f) auto_dispatch (default ON) starts the wave the resume unlocked, and
+      auto_dispatch=False keeps the old "unlock only" shape (pinned here as the
+      explicit opt-out).
 
 The dispatch seam is monkeypatched; the real spawn pipeline is never invoked.
 Blocked dependents are seeded directly into state because ``depends_on`` on
@@ -139,10 +142,20 @@ async def test_resume_unlocks_dependent_and_reports_id(
     flow = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow is not None
     assert step_status(flow["state"]["steps"][0]) == StepStatus.DONE
-    assert step_status(flow["state"]["steps"][1]) == StepStatus.READY
-    # resume must NEVER spawn the newly-ready step.
-    assert len(calls) == 1
-    assert "ready=1" in out
+    # auto_dispatch (the default) starts the wave this resume unlocked: the
+    # dependent is no longer merely ready, it is running.
+    assert step_status(flow["state"]["steps"][1]) == StepStatus.DISPATCHED
+    assert len(calls) == 2  # the seed's run_task + the auto-dispatched step
+    assert "auto_dispatched=[step-2]" in out
+
+    # The opt-out keeps the pre-auto shape: unlocked, not started.
+    await _seed_step(
+        "flow-1",
+        step_id="step-3",
+        task="manual",
+        status=StepStatus.BLOCKED,
+        depends_on=["step-2"],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -258,7 +271,8 @@ async def test_duplicate_resume_is_byte_identical_noop(
     assert "TaskFlow resumed" in first
     flow_after_first = await store_sqlite.get_flow("flow-1", _SESSION)
     assert flow_after_first is not None
-    assert flow_after_first["expected_revision"] == 4  # create + run + seed + resume
+    # create + run + seed + resume + the auto-dispatch's step write
+    assert flow_after_first["expected_revision"] == 5
 
     second = await tools["taskflow_resume"].coroutine(
         session_id=_SESSION,

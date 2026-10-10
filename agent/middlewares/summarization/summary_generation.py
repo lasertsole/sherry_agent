@@ -27,6 +27,10 @@ from langchain_core.messages import (
 )
 from loguru import logger
 
+from pub.func.estimate_tokens import estimate_text_tokens
+
+from pub.func.message.token_truncation import truncate_by_tokens
+
 from config.features import SUMMARIZATION
 from pub.func.message.eviction import EVICTED_TO_KEY
 from pub.func.message.workspace_notice import is_workspace_notice
@@ -38,7 +42,7 @@ COMPLETED_MAX_ITEMS = SUMMARIZATION["completed_max_items"]
 KEY_DECISIONS_MAX_ITEMS = SUMMARIZATION["key_decisions_max_items"]
 CRITICAL_CONTEXT_MAX_ITEMS = SUMMARIZATION["critical_context_max_items"]
 FILE_OPS_LIST_MAX_CHARS = SUMMARIZATION["file_ops_list_max_chars"]
-SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
+SUMMARY_TOTAL_MAX_TOKENS = SUMMARIZATION["summary_total_max_tokens"]
 CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
 CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
 
@@ -837,11 +841,14 @@ class SummaryGenerationMixin:
         else:
             markdown = summary
 
-        if len(markdown) > SUMMARY_TOTAL_MAX_CHARS:
-            head = markdown[: int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_HEAD_RATIO)]
-            tail = markdown[-int(SUMMARY_TOTAL_MAX_CHARS * CONTENT_TAIL_RATIO) :]
-            omitted = len(markdown) - len(head) - len(tail)
-            markdown = f"{head}...[summary truncated, omitted {omitted} chars]...{tail}"
+        if estimate_text_tokens(markdown) > SUMMARY_TOTAL_MAX_TOKENS:
+            markdown = truncate_by_tokens(
+                markdown,
+                SUMMARY_TOTAL_MAX_TOKENS,
+                head_ratio=CONTENT_HEAD_RATIO,
+                tail_ratio=CONTENT_TAIL_RATIO,
+                omission_template="...[summary truncated, omitted {omitted} chars]...",
+            )
 
         full_content = (
             f"{_SUMMARY_PREFIX}\n\n"

@@ -135,7 +135,7 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | `overflow_clip_enabled` | `True` | P1-2 尾部裁剪总开关 |
 | `overflow_clip_max_remove` | `10` | 一次裁剪最多 stub 的尾部消息数 |
 | `overflow_clip_min_keep` | `5` | 转录下限：长度不超过它时绝不裁剪 |
-| `max_tool_output_chars` | `2_000` | 工具结果的压缩期裁切预算 |
+| `max_tool_output_tokens` | `500` | 工具结果的压缩期裁切预算（token；≈2 000 个 ASCII 字符） |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | 压缩期裁切的 head/tail 保留比例 |
 
 `TOKEN_ESTIMATION`（`config/features/agent_side/token_estimation.py`），多模态 token 分型：

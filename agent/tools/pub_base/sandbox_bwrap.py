@@ -27,7 +27,7 @@ from pathlib import Path
 from config.path import ROOT_DIR, TEMP_DIR
 from config.features import TOOLS_TIMEOUTS
 
-try:  # Prefer the output; fall back to the local ABC shape when hasn't landed (see notepad problems.md)
+try:  # Prefer the shared contract; fall back to a local ABC shape if it is unavailable
     from agent.tools.pub_base.sandbox import SandboxBackend
 except ImportError:  # pragma: no cover
     from abc import ABC, abstractmethod

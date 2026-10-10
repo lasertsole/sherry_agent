@@ -44,6 +44,7 @@ from runtime.session.state_keys import StateKey
 from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from pub.func.message.llm_error_classifier import FailoverReason, classify_api_error
 from .stream_diag import reraise_with_diag, stream_diag_init, stream_diag_summary
+from .trajectory_store import current_turn_id, project_frame, turn_end_event
 
 
 # Stash of pending tool args, keyed by [bare session id][tool_call_id] (the
@@ -288,6 +289,10 @@ class StreamTurn:
         # Per-turn stream diagnostics (chunk/byte counters + first-chunk timing)
         # consumed by the failure path in run().
         self._diag: dict[str, Any] = stream_diag_init()
+        # Trajectory ledger: the event sequence number the projector stamps on
+        # every event derived from an emitted frame (the turn identity comes
+        # from the scope opened by the turn driver).
+        self._trajectory_seq: int = 0
 
     # ---- hooks ----------------------------------------------------------
 
@@ -322,6 +327,12 @@ class StreamTurn:
         name = state_register_mem.get_state(self.session_id, StateKey.CURRENT_TOOL_NAME, "")
         args = _pop_pending_args(self.session_id, tool_id)
         self._partial_tool_calls.pop(tool_id, None)
+        logger.info(
+            "stream: tool result name={} tool_id={} status={}",
+            name or "unknown",
+            tool_id,
+            "error" if getattr(tm, "status", None) == "error" else "ok",
+        )
         return [
             {
                 "type": "tool_result",
@@ -373,6 +384,10 @@ class StreamTurn:
         self.meta_finish_reason = "content_filter"
         state_register_mem.set_state(self.session_id, StateKey.LLM_CONTENT_FILTER_BLOCKED, True)
         state_register_mem.set_state(self.session_id, _FILTER_TERMINATED_KEY, True)
+        logger.warning(
+            "stream: mid-stream content filter detected (keyword heuristic), session={}",
+            self.session_id,
+        )
         return True
 
     def _mark_partial_stream_stub(self, cause_reason: str) -> None:
@@ -389,6 +404,11 @@ class StreamTurn:
             return
         state_register_mem.set_state(self.session_id, _STUB_FLAG_KEY, True)
         state_register_mem.set_state(self.session_id, _STUB_CAUSE_KEY, cause_reason)
+        logger.warning(
+            "stream: partial output flagged as stub (cause={}, session={})",
+            cause_reason,
+            self.session_id,
+        )
 
     def _build_dropped_tool_warning(self) -> str | None:
         """Name the tool calls the stream dropped mid-flight.
@@ -430,6 +450,19 @@ class StreamTurn:
         _clear_pending_args(self.session_id)
 
     # ---- template -------------------------------------------------------
+
+    def _project(self, frame: dict[str, Any]) -> None:
+        """Project one emitted frame onto the trajectory ledger (fail-open).
+
+        One call at the yield sites: every frame the turn emits passes through
+        them, so the events the ledger cares about are recorded without a second
+        instrumentation pass over the stream machinery.
+        """
+        turn_id = current_turn_id.get()
+        if not turn_id:
+            return
+        self._trajectory_seq += 1
+        project_frame(frame, self.session_id, turn_id, self._trajectory_seq)
 
     async def run(self) -> AsyncGenerator[dict[str, Any]]:
         start_time = time.time()
@@ -477,6 +510,15 @@ class StreamTurn:
                 yield frame
 
             elapsed = time.time() - start_time
+            first_chunk_at = self._diag.get("first_chunk_at")
+            ttfb_ms = round((first_chunk_at - start_time) * 1000) if first_chunk_at else None
+            logger.info(
+                "stream: turn completed in {:.0f}ms (ttfb={}, chunks={})",
+                elapsed * 1000.0,
+                f"{ttfb_ms}ms" if ttfb_ms is not None else "n/a",
+                self._diag.get("chunks", 0),
+            )
+            turn_end_event(self.session_id, total_ms=elapsed * 1000.0, ttfb_ms=ttfb_ms)
             self._log_completed(elapsed)
         except asyncio.CancelledError:
             elapsed = time.time() - start_time
@@ -529,10 +571,12 @@ class StreamTurn:
             data: Any = chunk[1]
             if mode == "updates":
                 for frame in self._updates_frames(data):
+                    self._project(frame)
                     yield frame
             elif mode == "messages":
                 # For "messages" mode, data is (message_chunk, metadata_dict).
                 for frame in self._messages_frames(data[0], data[1]):
+                    self._project(frame)
                     yield frame
 
         # Stream ended: check for a provider mid-stream safety cut
@@ -748,6 +792,9 @@ class StreamTurn:
             )
             self._note_tool_start(tool_name)
             _note_tool_started(self.session_id, eff_tool_id)
+            logger.info(
+                "stream: tool start name={} tool_id={}", tool_name or "unknown", eff_tool_id
+            )
             frames.append(
                 {
                     "type": "tool_start",

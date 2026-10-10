@@ -114,8 +114,8 @@ _SUBAGENT_REQUIRED: tuple[RequiredMiddlewareEntry, ...] = (
 )
 
 
-# Derived sets for fast membership testing (mirrors deepagents'
-# ``graph.py:258-268``). ``*_CLASSES`` is the set of required class objects;
+# Derived sets for fast membership testing. ``*_CLASSES`` is the set of
+# required class objects;
 # ``*_NAMES`` is the union of every accepted name (class name + aliases).
 MAIN_REQUIRED_CLASSES: frozenset[type] = frozenset(e.cls for e in _MAIN_REQUIRED)
 MAIN_REQUIRED_NAMES: frozenset[str] = frozenset(

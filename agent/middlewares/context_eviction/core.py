@@ -280,6 +280,11 @@ class ContextEvictionMiddleware(AgentMiddleware):
             return None
         if tagged is None:
             return None
+        logger.debug(
+            "ContextEviction: tagged trailing human message for view truncation ({} chars) session={}",
+            len(str(last.content)),
+            session_id,
+        )
         return {"messages": [tagged]}
 
     @override
@@ -325,12 +330,26 @@ class ContextEvictionMiddleware(AgentMiddleware):
     def _maybe_evict(self, result: ToolMessage, session_id: str) -> ToolMessage:
         """Return the replacement message, or *result* when eviction is skipped."""
         try:
-            if (getattr(result, "name", "") or "") == _READ_FILE_TOOL:
+            name = getattr(result, "name", "") or "unknown"
+            if name == _READ_FILE_TOOL:
                 sliced = slice_read_file_result(result)
+                logger.debug(
+                    "ContextEviction: sliced read_file result ({} -> {} chars) session={}",
+                    len(str(result.content)),
+                    len(str(sliced.content)),
+                    session_id,
+                )
                 return self._cover_with_watermark(session_id, result, sliced)
             evicted = evict_tool_result(result, session_id)
             if evicted is None:
                 return result
+            logger.debug(
+                "ContextEviction: evicted tool result name={} ({} -> {} chars) session={}",
+                name,
+                len(str(result.content)),
+                len(str(evicted.content)),
+                session_id,
+            )
             return self._cover_with_watermark(session_id, result, evicted)
         except Exception:
             logger.exception("tool result eviction failed (fail-open)")

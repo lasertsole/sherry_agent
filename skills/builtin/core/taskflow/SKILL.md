@@ -135,6 +135,21 @@ getTaskSummary).
   (truncated to 16 characters), last activity time (the flow's newest timestamp,
   or `-` when none). Ordered by expected_revision descending (most recent
   activity first).
+- `taskflow_replan(flow_id, reason, blocked_step_id, keep_done)`: re-plan the
+  flow's REMAINING steps after a failure. `done` and in-flight `dispatched`
+  steps are kept; an auxiliary model regenerates the rest from the goal, the
+  done results and the failure reason; the replacement goes through the same
+  DAG safety rules and optimistic lock. Steps downstream of a step whose task
+  changed are blocked again (transitive invalidation) so they cannot run on
+  stale inputs. Bounded: after 3 replans the call is refused — use
+  `taskflow_fail` instead. Use it after a judge BLOCK or an irrecoverable step
+  failure.
+- `taskflow_plan(goal, flow_id, context, max_steps)`: decompose a goal into a
+  dependency-ordered flow. Creates the flow and registers every step BLOCKED
+  (READY when it has no dependencies) — nothing is dispatched, so review the
+  printed plan and start it with `taskflow_dispatch` (or `taskflow_run_task`),
+  or fix it first with `taskflow_update_steps`. Each planned step may carry
+  `judge_criteria` and `response_schema` gates like any other step.
 
 ## Optimistic locking and conflict retry
 

@@ -2,51 +2,46 @@
 
 Answers a single question: is the session currently processing a turn? Four
 independent signals, all keyed by the BARE session id, checked in the fixed
-precedence order (frozen by tests/agent/tools/subagent/registry/test_detect_state_extension.py):
+precedence order (frozen by
+tests/agent/tools/subagent/registry/test_detect_state_extension.py):
 
     ws_task > answering > hitl_pending > auto_turn_inflight > idle
 
 
-1. Live WS stream task — ``server/trigger/ws/messages.py:19``
-   ``_active_tasks: dict[str, asyncio.Task]``. The ``/sessions/agent/ws``
-   handler (:139) registers the background stream task under the
-   client-supplied bare ``session_id`` for both turn paths (generate :228,
-   HITL resume :181). Unregistration: the ``_run_stream`` ``finally`` pops the
-   entry when the running task itself finishes (:114-118) and the socket
-   disconnect reaper pops already-finished tasks (:242-246). "Live" means the
-   key is present AND ``task.done()`` is False — the same shape
-   ``_cancel_session`` (:121-136) treats as cancellable. A stale done entry
-   falls through to the answering signal instead of reporting a false busy.
+1. Live WS stream task — the transport module's ``_active_tasks`` table
+   (``dict[str, asyncio.Task]``, reached through ``runtime.hooks``). The
+   ``/sessions/agent/ws`` handler registers the background stream task under
+   the client-supplied bare ``session_id`` for both turn paths (generate and
+   HITL resume); ``_run_stream``'s ``finally`` pops the entry when the running
+   task itself finishes, and the socket-disconnect reaper drops already-finished
+   tasks. "Live" means the key is present AND ``task.done()`` is False — the
+   same shape the WS module's own cancellation helper treats as cancellable. A
+   stale done entry falls through to the answering signal instead of reporting
+   a false busy.
 
-2. Answering flag — ``server/service/messages.py:241``
-   ``state_register_mem.set_state(session_id, "answering", True)`` (bare id)
-   covers both turn paths (generate and ``resume_agent`` :621); it is reset to
-   False in the stream ``finally`` (:516/:802) and on WS stop (:135). Truthy
-   = answering, matching the in-stream abort check
-   ``get_state(...) is False`` (:258/:634).
+2. Answering flag — ``state_register_mem.set_state(session_id, "answering",
+   True)`` (bare id), set at the start of a generation or resume turn and
+   cleared by that turn's own cleanup (and on a WS stop). Truthy = answering,
+   matching the in-stream abort check ``get_state(...) is False``.
 
-3. HITL-wait flag (plan) — per-session registry OWNED by this module,
-   mutated only via ``set_hitl_pending(session_id, value)`` ( wires the
-   set/clear calls in the WS layer: set when the ``hitl_request`` frame is
-   sent at ``server/trigger/ws/messages.py:67-74``, cleared when the resume
-   turn starts at :181). Needed because during a HITL wait neither signal
-   above is live — the WS task was popped (:114-118) and ``answering`` was
-   cleared in the stream ``finally`` (:548) while the graph is still
-   suspended awaiting ``hitl_response`` — so the session would misreport as
-   idle.
+3. HITL-wait flag (plan) — per-session registry OWNED by this module, mutated
+   only via ``set_hitl_pending(session_id, value)``; the WS layer sets it when
+   it sends the ``hitl_request`` frame and clears it when the resume turn
+   starts. Needed because during a HITL wait neither signal above is live — the
+   WS task was popped and ``answering`` was cleared by the cancelled turn's
+   cleanup while the graph is still suspended awaiting ``hitl_response`` — so
+   the session would misreport as idle.
 
-4. Auto-turn in-flight — membership of ``server/service/auto_turn.py:51``
-   ``_INFLIGHT: dict[str, asyncio.Task]`` (bare id -> auto-turn runner task).
-   "Live" means present AND ``task.done()`` is False (same shape as the
-   ws_task signal). Narrows the TOCTOU window (plan): the answering
-   flag is only set at ``messages.py:273`` AFTER the heavy
-   ``built_agent(force_rebuild=True)`` rebuild (:220), while ``_INFLIGHT``
-   is registered at auto-turn dispatch time.
+4. Auto-turn in-flight — membership of ``auto_turn``'s ``_INFLIGHT`` table
+   (bare id -> auto-turn runner task, reached through ``runtime.hooks``).
+   "Live" means present AND ``task.done()`` is False (same shape as the ws_task
+   signal). It narrows the TOCTOU window: the answering flag is only set AFTER
+   the heavy ``built_agent(force_rebuild=True)`` rebuild inside the turn, while
+   ``_INFLIGHT`` is registered at auto-turn dispatch time.
 
 Session keys arrive from the announce side as ``agent:main:session:{id}``
 while the structures above use bare ids, so every lookup goes through
-``agent.tools.subagent.registry.session_keys.normalize_session_key`` (
-frozen contract) first.
+``agent.tools.subagent.registry.session_keys.normalize_session_key`` first.
 
 Guarantees:
     - READ-ONLY for signals 1/2/4: neither the WS task table, the state
@@ -57,11 +52,8 @@ Guarantees:
       sources (cheap dict/state lookups);
     - no heavy imports at module load: the WS task table and the auto-turn
       module are reached through ``runtime.hooks`` getters (resolved at call
-      time; the server boots register them), and
-      ``runtime.session.state_register`` is imported lazily inside the
-      accessor — so this module stays importable in isolated contexts. When a
-      hook is unregistered (no server assembled: evals, unit tests) the
-      affected signal reports not-live instead of raising.
+      time; the server boot registers them), and a process that never assembled
+      a server reports those signals as not-live.
 """
 
 from __future__ import annotations

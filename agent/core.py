@@ -64,11 +64,10 @@ class StateSchema(AgentState):
 
 
 # ── Initialization (explicit, idempotent) ────────────────────────────────
-# These three steps used to run at module import time, which made any bare
-# ``import agent.core`` (tests, tooling, type checkers) trigger disk I/O and
-# tool construction unexpectedly and slowly. They now
-# live in ``init``, called once by the service entry point
-# (``server/__main__.py``) — importing this module is side-effect-free.
+# These three steps live in ``init``, called once by the service entry point
+# (``server/__main__.py``): importing this module stays side-effect-free, so a
+# bare ``import agent.core`` (tests, tooling, type checkers) triggers no disk
+# I/O and no tool construction.
 
 _tools: list[BaseTool] = []
 _initialized: bool = False
@@ -102,6 +101,10 @@ def init() -> None:
     register_prompt_data_provider()
     register_skill_write_provider()
     _initialized = True
+    logger.info(
+        "agent init: skills snapshot built, {} main tool(s) registered, providers wired",
+        len(_tools),
+    )
 
 
 def get_agent_tools() -> list[BaseTool]:
@@ -359,6 +362,10 @@ async def _build_graph(
         temperature=temperature,
     )
     validate_required_middleware(agent_middleware, chain="main", entries=_MAIN_REQUIRED)
+    logger.debug(
+        "_build_graph: {} middleware validated (chain=main), building the agent",
+        len(agent_middleware),
+    )
 
     # Build the agent
     compiled = create_agent(
@@ -407,25 +414,27 @@ async def built_agent(
     # requested (force_rebuild). Each rebuild constructs a fresh main_llm ->
     # httpx client bound to the CURRENT loop.
     #
-    # Why force_rebuild: the WS server needs a FRESH transport pool every turn.
-    # Over many turns on a single event loop the long-lived pooled TCP connection
-    # goes stale — DeepSeek's edge reaps an idle keep-alive connection (~15-17s)
-    # and the next streaming POST on it dies mid-request, surfacing as
-    # ``openai.APITimeoutError("Request timed out")`` far under the SDK deadline.
-    # Provably: the exact same payload (12KB system prompt + full tools schema)
-    # streams in 8.0s on a fresh in-loop client, while a cached-pool WS call dies
-    # at ~16.78s. Closing the pool (AsyncOpenAI.close) does NOT help — it
-    # permanently destroys the client ("Cannot send a request, as the client has
-    # been closed"), so rebuilding the graph (hence a fresh client) per turn is
-    # the only clean way to reproduce the fresh-client condition. The SQLite
-    # checkpointer persists session state independently of the graph object, so a
-    # rebuild is safe and cheap relative to the 15-20s LLM call.
+    # Why force_rebuild: the WS server asks for a fresh transport pool every
+    # turn — the same stale pooled connection as above, reached one turn later
+    # rather than on a foreign loop. No other state lives in the graph object
+    # (the checkpointer persists sessions independently), so a rebuild is safe
+    # and cheap next to the LLM call it precedes.
     # The lock covers the check-and-build so two concurrent callers cannot both
     # build (and orphan one graph each); it is loop-safe because callers may sit
     # on different loops.
     async with _agent_lock:
         if _agent is not None and _agent_loop is current_loop and not force_rebuild:
             return _agent
+        reason = (
+            "first-call"
+            if _agent is None
+            else ("loop-change" if _agent_loop is not current_loop else "force_rebuild")
+        )
+        logger.info(
+            "built_agent: rebuilding graph (reason={}, loop={:#x})",
+            reason,
+            id(current_loop),
+        )
         previous = _agent
         _agent = await _build_graph(
             temperature=temperature,
@@ -433,6 +442,7 @@ async def built_agent(
             compression_trigger_ratio=COMPRESSION_TRIGGER_RATIO,
         )
         _agent_loop = current_loop
+        logger.debug("built_agent: graph rebuilt and cached")
 
     # A replaced graph is closed as soon as nobody is using it: `release_agent`
     # of its last holder does the closing when this call leaves it held.

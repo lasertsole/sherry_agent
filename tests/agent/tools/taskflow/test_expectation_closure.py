@@ -327,6 +327,7 @@ async def test_plain_step_behaves_as_before(isolated_db):
         flow_id="flow-plain",
         child_session_key="child-1",
         result="plain result",
+        auto_dispatch=False,  # this case pins the resume record, not the wave start
     )
 
     assert "Error" not in out, out

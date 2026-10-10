@@ -11,6 +11,8 @@ which is what refuses the overwrite.
 import json
 import os
 from pathlib import Path
+
+from loguru import logger
 from typing import override
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
@@ -99,6 +101,7 @@ class ReadFileTool(BaseTool):
                 if fd >= 0:
                     os.close(fd)
         except Exception as e:
+            logger.debug("read_file: read failed", exc_info=True)
             return None, None, tool_error(f"Failed to read file: {safe_error_detail(e)}")
         return data, read_stat, None
 

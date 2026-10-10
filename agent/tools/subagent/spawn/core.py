@@ -494,6 +494,13 @@ async def spawn_subagent_direct(
     config = get_config()
     child_depth, refusal = _validate_spawn_request(task, agent_id, requester_session_key, config)
     if refusal is not None:
+        logger.warning(
+            "spawn refused: reason={} agent={} depth={} requester={}",
+            refusal.error,
+            agent_id,
+            child_depth,
+            requester_session_key,
+        )
         return refusal
 
     normalized_task_name = normalize_subagent_task_name(task_name)
@@ -502,6 +509,12 @@ async def spawn_subagent_direct(
     isolation_cfg = resolve_runtime_isolation(requester_session_key, agent_id=agent_id, cwd=cwd)
     iso_ok, iso_reason = validate_runtime_isolation(isolation_cfg)
     if not iso_ok:
+        logger.warning(
+            "spawn refused: runtime isolation ({}) agent={} requester={}",
+            iso_reason,
+            agent_id,
+            requester_session_key,
+        )
         return SpawnResult(status="forbidden", error=iso_reason)
 
     # Inherit the parent's workspace when the caller does not specify one
@@ -514,6 +527,12 @@ async def spawn_subagent_direct(
     if cwd:
         cwd_ok, cwd_reason = validate_cwd_restriction(cwd, isolation_cfg.allowed_cwd_prefixes)
         if not cwd_ok:
+            logger.warning(
+                "spawn refused: cwd restriction ({}) agent={} cwd={}",
+                cwd_reason,
+                agent_id,
+                cwd,
+            )
             return SpawnResult(status="forbidden", error=cwd_reason)
 
     # --- Phase 4: Ownership & capability resolution ---
@@ -737,16 +756,20 @@ async def _execute_subagent_with_lane(
     from runtime.lane import LaneType, lane_slot
 
     try:
+        logger.debug("subagent run {} waiting for a SUBAGENT lane slot", run.run_id)
         async with lane_slot(LaneType.SUBAGENT):
             current = get_run(run.run_id)
             if current is None or current.execution.status == ExecutionStatus.TERMINAL:
+                logger.info("subagent run {} killed while waiting for a lane slot", run.run_id)
                 return  # killed while waiting for a lane slot
 
             if current.execution.status == ExecutionStatus.PENDING:
                 promoted = mark_run_running(run.run_id)
                 if promoted is None:
+                    logger.warning("subagent run {} vanished before PENDING -> RUNNING", run.run_id)
                     return  # race: run disappeared between lookup and transition
                 current = promoted
+                logger.info("subagent run {} PENDING -> RUNNING inside its lane slot", run.run_id)
 
             await _execute_subagent(
                 run=current,
@@ -959,6 +982,47 @@ async def _finalize_child_run(
 
 
 async def _execute_subagent(
+    run: SubagentRunRecord,
+    system_prompt: str,
+    user_message: str,
+    tools: list | None,
+    timeout_seconds: float,
+    model_override: str | None = None,
+    model_tier: str | None = None,
+    model_profile: dict[str, str] | None = None,
+    extra_tools: list[str] | None = None,
+    output_schema: dict | None = None,
+    *,
+    goal_max_turns: int = 5,
+) -> None:
+    """Run a sub-agent under its OWN log scope (see :func:`_execute_subagent_scoped`).
+
+    The child runs in an asyncio task that inherits whatever ``contextualize``
+    scope the parent turn opened, so this wrapper rebinds the child's identity:
+    its log lines carry the child session key and a fresh turn id, never the
+    parent's, and one subagent run is greppable on its own key.
+    """
+    with logger.contextualize(
+        session_id=run.child_session_key,
+        turn_id=uuid.uuid4().hex,
+        agent="subagent",
+    ):
+        await _execute_subagent_scoped(
+            run,
+            system_prompt=system_prompt,
+            user_message=user_message,
+            tools=tools,
+            timeout_seconds=timeout_seconds,
+            model_override=model_override,
+            model_tier=model_tier,
+            model_profile=model_profile,
+            extra_tools=extra_tools,
+            output_schema=output_schema,
+            goal_max_turns=goal_max_turns,
+        )
+
+
+async def _execute_subagent_scoped(
     run: SubagentRunRecord,
     system_prompt: str,
     user_message: str,

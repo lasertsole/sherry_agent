@@ -35,12 +35,14 @@ def _resolve_level() -> str:
 
 def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
     """Initialize the global logging configuration."""
-    # Create per-type log sub-directories: info/, error/, and all/ (everything)
+    # Create per-type log sub-directories: info/, error/, all/ (everything) and
+    # json/ (machine-readable JSONL)
     log_dir = Path(log_dir)
     info_dir = log_dir / "info"
     error_dir = log_dir / "error"
     all_dir = log_dir / "all"
-    for d in (log_dir, info_dir, error_dir, all_dir):
+    json_dir = log_dir / "json"
+    for d in (log_dir, info_dir, error_dir, all_dir, json_dir):
         if not os.path.exists(d):
             os.makedirs(d)
 
@@ -90,6 +92,24 @@ def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
         compression="zip",
         encoding="utf-8",
         enqueue=True,
+    )
+
+    # 4b. Machine-readable JSONL twin of the full log: one JSON object per line
+    #     with ``text`` (the message) and ``record.extra`` (the fields a
+    #     ``logger.bind``/``logger.contextualize`` scope attached — turn_id,
+    #     session_id, middleware, hook, …). The text sinks above stay the
+    #     human-readable channel; this one exists so a whole turn can be pulled
+    #     out with a single ``jq 'select(.record.extra.turn_id == "…")'``.
+    #     The redaction patcher runs before every sink, this one included.
+    logger.add(
+        os.path.join(json_dir, f"json_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
+        level="TRACE",
+        rotation="100 MB",
+        retention="30 days",
+        compression="zip",
+        encoding="utf-8",
+        enqueue=True,
+        serialize=True,
     )
 
     # 5. Exception/error log (captures ERROR and CRITICAL only, with the failing

@@ -46,6 +46,9 @@ class SubagentIsolationConfig(TypedDict):
     #: Per-file size cap of the interface diff; a larger revision is skipped
     #: with a recorded note instead of being read twice into memory.
     interface_diff_max_file_bytes: int
+    #: Days a CONFLICT-kept workspace is retained before the sweeper removes it
+    #: (the tree stays for inspection; nothing else would ever clean it).
+    stale_workspace_ttl_days: int
     #: Name-edit distance at which a removed+added pair reads as a rename.
     interface_diff_rename_levenshtein: int
 
@@ -98,4 +101,6 @@ SUBAGENT_ISOLATION: SubagentIsolationConfig = {
     "interface_diff_enabled": True,
     "interface_diff_max_file_bytes": 1_000_000,
     "interface_diff_rename_levenshtein": 2,
+    #: Conflict-kept workspaces expire after this many days (sweeper).
+    "stale_workspace_ttl_days": 7,
 }

@@ -58,7 +58,7 @@ PRUNE_PROTECT_TOKENS = SUMMARIZATION["prune_protect_tokens"]
 PRUNE_MIN_REDUCTION_TOKENS = SUMMARIZATION["prune_min_reduction_tokens"]
 TARGET_TRUNCATE_RATIO = SUMMARIZATION["target_truncate_ratio"]
 MIN_OUTPUT_CHARS_TO_TRUNCATE = SUMMARIZATION["min_output_chars_to_truncate"]
-MAX_TOOL_OUTPUT_CHARS = SUMMARIZATION["max_tool_output_chars"]
+MAX_TOOL_OUTPUT_TOKENS = SUMMARIZATION["max_tool_output_tokens"]
 MIN_ARGS_CHARS_TO_TRUNCATE = SUMMARIZATION["min_args_chars_to_truncate"]
 MAX_TOOL_ARGS_CHARS = SUMMARIZATION["max_tool_args_chars"]
 PROTECTED_TOOLS = SUMMARIZATION["protected_tools"]
@@ -403,7 +403,7 @@ class CompressionMixin:
             current,
             target_reduction_tokens=target,
             min_output_chars=MIN_OUTPUT_CHARS_TO_TRUNCATE,
-            max_output_chars=MAX_TOOL_OUTPUT_CHARS,
+            max_output_tokens=MAX_TOOL_OUTPUT_TOKENS,
             protected_tools=set(PROTECTED_TOOLS),
         )
         total_reduced += reduced

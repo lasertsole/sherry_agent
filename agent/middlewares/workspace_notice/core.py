@@ -184,10 +184,10 @@ class WorkspaceNoticeMiddleware(AgentMiddleware):
 
     @override
     def before_agent(self, state: AgentState, runtime: Any = None) -> dict[str, Any] | None:
-        logger.debug("{} before_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("before_agent hook fired")
         return self._notice_update(state)
 
     @override
     async def abefore_agent(self, state: AgentState, runtime: Any = None) -> dict[str, Any] | None:
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("abefore_agent hook fired")
         return self._notice_update(state)

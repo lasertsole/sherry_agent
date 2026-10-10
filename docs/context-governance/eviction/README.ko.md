@@ -64,7 +64,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 `read_file` 결과는 **축출되지 않는다** — 파일이 이미 디스크에 있으니 두 번째 사본을 쓰는 것은 순수한 중복이다. 대신 `slice_read_file_result`(`pub/func/message/eviction.py`)가 내용을 **앞 `_READ_FILE_SLICE_CHARS`(4 000)자**와 복구 안내(`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`)로 대체한다. 축출 파일은 쓰지 않으며, 헬퍼는 멱등하다: 이미 슬라이스된(안내가 있는) 결과는 그대로 반환된다.
 
-이것은 2단계 축소의 **실행 시점** 절반이다. **압축 시점** 절반은 `pub/func/message/target_truncation.py::_truncate_read_file_content`에 있다: 압축이 컨텍스트를 자를 때 각 `ToolMessage`를 `tool_call_id`로 `read_file` 호출에 되돌려 매핑하고, `max_tool_output_chars`(2 000)의 head 30% + tail 30%를 남기며, 중간을 **파서가 도출한 1-based 연속 오프셋**을 담은 복구 안내로 바꾼다(`Use offset=<N> to continue reading…`; 페이로드가 파싱되지 않으면 "처음부터 다시 읽기"로 폴백).
+이것은 2단계 축소의 **실행 시점** 절반이다. **압축 시점** 절반은 `pub/func/message/target_truncation.py::_truncate_read_file_content`에 있다: 압축이 컨텍스트를 자를 때 각 `ToolMessage`를 `tool_call_id`로 `read_file` 호출에 되돌려 매핑하고, `max_tool_output_tokens`(500, ≈2 000 ASCII 문자, CJK 인식 등가)의 head 30% + tail 30%를 남기며, 중간을 **파서가 도출한 1-based 연속 오프셋**을 담은 복구 안내로 바꾼다(`Use offset=<N> to continue reading…`; 페이로드가 파싱되지 않으면 "처음부터 다시 읽기"로 폴백).
 
 두 단계는 구조적으로 상호 보완적이다: 압축 시점이 실행 시점에 슬라이스된 페이로드를 나중에 자르면 잘린 JSON이 더 이상 파싱되지 않으므로 압축 안내는 결정론적으로 재시작 형식으로 폴백한다 — 잘못된 오프셋이 방출되는 일은 결코 없고, 실행 시점 슬라이스 헬퍼가 자기 출력을 다시 슬라이스하는 일도 없다.
 

@@ -13,7 +13,7 @@ Both leave a tool call hanging past its deadline, which is the one thing a
 timeout must never do. The escalation is therefore bounded at every step:
 ``terminate`` → wait ``grace`` → ``kill`` → wait ``kill_grace`` → **abandon the
 handle** with a warning. Ported from DeepAgents' ``_reap_ripgrep`` (see
-``libs/deepagents/deepagents/backends/filesystem.py``), whose comment on the
+a sibling agent framework's filesystem backend), whose comment on the
 uninterruptible case is the reason the second wait is bounded too.
 """
 

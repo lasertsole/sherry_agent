@@ -14,6 +14,7 @@ import time
 from typing import Any
 
 from langchain_core.tools import tool
+from loguru import logger
 
 from config.features import STEP_JUDGE
 from agent.tools.subagent.swarm.collector import validate_structured_output
@@ -39,6 +40,7 @@ from ._shared import (
     conflict_error,
     is_terminal,
     not_found_error,
+    requester_session_key,
     result_hash,
     steps_summary,
     terminal_error,
@@ -60,6 +62,7 @@ async def taskflow_resume(
     validation_criteria: str | None = None,
     structured_result: dict | None = None,
     step_outcome: str | None = None,
+    auto_dispatch: bool = True,
     session_id: SessionId = "",
 ) -> str:
     """Inject a completed child session result into the flow state (idempotent).
@@ -393,8 +396,23 @@ async def taskflow_resume(
         except FlowNotFoundError:
             return not_found_error(flow_id)
 
+    # Auto-dispatch the wave this resume just unlocked: without it every step
+    # completion costs the AI two extra turns (resume + dispatch), which is the
+    # whole point of closing the loop. Fail-open: a step that cannot spawn stays
+    # ready and is named in the answer for a manual retry.
+    dispatched_now: list[str] = []
+    dispatch_failures: list[str] = []
+    if auto_dispatch and newly_ready and not is_terminal(updated["status"]):
+        dispatched_now, dispatch_failures = await _auto_dispatch_ready(
+            flow_id, newly_ready, session_id
+        )
+        updated = await store_sqlite.get_flow(flow_id, session_id) or updated
+        counts = steps_summary(list((updated["state"] or {}).get("steps") or []))
+
     counts_text = ",".join(f"{status}={counts[status]}" for status in _STATUS_ORDER)
     unlocked_text = ",".join(newly_ready)
+    dispatched_text = ",".join(dispatched_now)
+    failure_text = "; ".join(dispatch_failures)
     return (
         f"TaskFlow resumed: flow_id={flow_id}, revision={updated['expected_revision']}, "
         f"results={len(results)}, status={updated['status']}, step_id={step_id}, "
@@ -404,7 +422,83 @@ async def taskflow_resume(
         f"{judge_text}"
         f"{outcome_text}"
         f"{_schema_text(schema_validated, schema_error)}"
+        f"\n  auto_dispatched=[{dispatched_text}]"
+        + (f"\n  auto_dispatch_failed={failure_text}" if failure_text else "")
     )
+
+
+async def _auto_dispatch_ready(
+    flow_id: str, newly_ready: list[str], session_id: str
+) -> tuple[list[str], list[str]]:
+    """Dispatch the steps a resume just unlocked; returns ``(dispatched, failures)``.
+
+    The loop is what makes a flow advance without an AI turn per step: a resume
+    that unlocked the next wave starts it here instead of parking until the
+    model reads the result and calls ``taskflow_dispatch`` itself. Each step is
+    dispatched exactly like the dispatch tool does it (task bindings + judge
+    feedback), and every failure is reported, never raised — a step that could
+    not spawn is left ``ready`` for the caller to retry, and the resume's own
+    answer names it.
+    """
+    from . import _dispatch
+
+    dispatched: list[str] = []
+    failures: list[str] = []
+    flow = await store_sqlite.get_flow(flow_id, session_id)
+    if flow is None:
+        return dispatched, [f"{sid}: flow vanished" for sid in newly_ready]
+    state = dict(flow["state"])
+    steps = list(state.get("steps") or [])
+    results = list(state.get("results") or [])
+    by_id = {step.get("step_id"): step for step in steps}
+    requester_key = requester_session_key(session_id)
+
+    for sid in newly_ready:
+        step = by_id.get(sid)
+        if step is None:
+            failures.append(f"{sid}: unknown step")
+            continue
+        feedback = str(step.get("judge_feedback") or "").strip()
+        task_text = with_judge_feedback(
+            build_task_with_bindings(
+                build_task_with_dep_results(step, steps, results), step, steps, results
+            ),
+            feedback,
+        )
+        try:
+            child_key = await _dispatch.dispatch_child(
+                task=task_text,
+                requester_session_key=requester_key,
+                label=None,
+            )
+        except Exception as exc:  # the flow advances without this step; report it
+            logger.warning(
+                "taskflow auto-dispatch failed for step {} of flow {}: {}", sid, flow_id, exc
+            )
+            failures.append(f"{sid}: {type(exc).__name__}: {exc}")
+            continue
+        if feedback:
+            step.pop("judge_feedback", None)
+        step["status"] = str(StepStatus.DISPATCHED)
+        step["child_session_key"] = child_key
+        step["dispatched_at"] = time.time()
+        dispatched.append(sid)
+
+    if dispatched:
+        try:
+            latest = await store_sqlite.get_flow(flow_id, session_id)
+            if latest is not None:
+                await store_sqlite.update_flow(
+                    flow_id,
+                    latest["expected_revision"],
+                    session_id=session_id,
+                    state={**dict(latest["state"]), "steps": steps},
+                )
+        except Exception:
+            # The children ARE running; the dispatch record failed. A later
+            # resume / dispatch pass reconciles the bookkeeping.
+            logger.exception("taskflow auto-dispatch state write failed for flow {}", flow_id)
+    return dispatched, failures
 
 
 def _schema_text(schema_validated: bool | None, schema_error: str | None) -> str:

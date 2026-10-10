@@ -153,7 +153,14 @@ def _connect_with_retry() -> sqlite3.Connection:
                 except sqlite3.Error:  # noqa: S110
                     pass
             if attempt == _CONNECT_ATTEMPTS:
+                logger.error("mes_memory: still locked after {} attempts", attempt)
                 raise
+            logger.warning(
+                "mes_memory locked, retry {}/{} in {:.1f}s",
+                attempt,
+                _CONNECT_ATTEMPTS,
+                _RETRY_DELAY_S * attempt,
+            )
             time.sleep(_RETRY_DELAY_S * attempt)
     raise sqlite3.OperationalError("database is locked")
 

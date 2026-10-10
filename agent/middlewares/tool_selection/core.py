@@ -96,6 +96,18 @@ class ToolSelectionMiddleware(AgentMiddleware):
         ]
         if len(kept) == len(tools):
             return request
+        dropped = [
+            (getattr(tool, "name", None) or (tool.get("name") if isinstance(tool, dict) else None))
+            for tool in tools
+            if tool not in kept
+        ]
+        logger.debug(
+            "ToolSelection: narrowed the tool face {} -> {} for session {} (disabled: {})",
+            len(tools),
+            len(kept),
+            _session_id_of(getattr(request, "state", None)),
+            ", ".join(str(name) for name in dropped[:10]) or "-",
+        )
         return request.override(tools=kept)
 
     def _apply(self, request: Any) -> Any:

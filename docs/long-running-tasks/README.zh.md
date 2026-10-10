@@ -54,13 +54,13 @@
 
 | 部分 | 内容 |
 | :--- | :--- |
-| `config/features/agent_side/` | **35** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow） |
-| `config/features/infra_side/` | **24** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、模型定价） |
+| `config/features/agent_side/` | **36** 个 Agent 侧配置模块（中间件、工具、LLM 客户端、记忆、TaskFlow） |
+| `config/features/infra_side/` | **26** 个基础设施侧配置模块（服务端、登录、队列、技能、上下文引擎、运行时、模型定价） |
 | `config/features/_env.py` | 唯一的共享环境辅助函数 |
 
 每个模块定义一个 `class XxxConfig(TypedDict)` 以及一个模块级常量 `XXX: XxxConfig = {…}`。感知环境的模块定义一个构建函数 `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig`，它读取 `env or os.environ`，并在导入时物化常量。环境辅助函数是 `_env_int(name, default, env)`（`config/features/_env.py:9`），它接受 `1/true/yes/on` 与 `0/false/no/off/""`，并且从不抛异常。
 
-该注册表当前包含 **59 个 feature 对象**——Agent 侧 35 + 基础设施侧 24——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
+该注册表当前包含 **62 个 feature 对象**——Agent 侧 36 + 基础设施侧 26——通过各包的 `__init__.py` 重新导出，并由 `config/features/__init__.py` 汇总，因此消费方可以从单一位置导入其中一半或整个注册表。消费方代码直接导入常量并索引它（例如 `ITERATION_BUDGET["default_max_iterations"]`）；不存在 `get_feature`/`load_feature` 访问器。`config/__init__.py:38-39` 从 `GATEWAY` 派生出 `API_HOST`/`API_PORT`。
 
 与本文档最相关的常量：
 
@@ -154,13 +154,15 @@
 | `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | 已派发步骤，或带待满足依赖的 `blocked` |
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | 已派发的 step id + 版本 |
 | `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | 每个步骤的落定报告（完整或部分；对策略步骤自动重试） |
-| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | 恢复后的状态、解锁的步骤、步骤状态计数、标准回显、判别器判定、重试说明 |
+| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | 恢复后的状态、解锁的步骤、步骤状态计数、标准回显、判别器判定、重试说明 |
 | `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting 状态 + 版本 |
 | `taskflow_summary` | `(flow_id, session_id)` | 完整 flow 状态，含等待/截止状态 |
 | `taskflow_progress` | `(flow_id, session_id)` | 完成度 %、分解、后续步骤、预计剩余 |
 | `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | 预算报告，或设置确认 |
 | `taskflow_list` | `(status_filter="active", session_id)` | 本会话面板（`active` / `all` / 状态名） |
 | `taskflow_finish` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | 终态 `done`（四道门、失败开放） |
+| `taskflow_replan` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | 用目标 + 已完成结果 + 失败原因重新生成**未完成**步骤（已完成/在跑的保留，被改步骤的下游重新 blocked，每流程 ≤ 3 次） |
+| `taskflow_plan` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | 把一个目标分解成依赖有序的新流程，只注册不派发 |
 | `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `failed` |
 | `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | 终态 `cancelled` |
 
@@ -251,7 +253,7 @@ uv run pytest tests/pub/func/message/test_tool_output_prune.py -q
 - **压缩前落盘处于潜伏状态。** `Summarization` 的生产实例（主 Agent 与子 Agent）未传入 `memory_store` / `llm_factory`，因此在某个调用点接线之前落盘不会运行；代码已实现并有测试，但目前不生效。
 - **连续性依赖渠道。** `build_continuity_prompt` 同时需要 channel id 与 chat id，因此没有渠道绑定的会话拿不到连续性区块。存储是磁盘上按 key 划分的 JSON，而不是数据库。
 - **三处重复的活动 flow 扫描。** `prompt_builder._build_taskflow_block`、`summarization._get_taskflow_context_sync` 与 `session_continuity._get_active_taskflow_ids_sync` 各自独立实现了同一查询；必须保持同步。
-- **注册表规模是 59。** 配置注册表包含 59 个 feature 对象（Agent 侧 35 + 基础设施侧 24）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`。
+- **注册表规模是 62。** 配置注册表包含 62 个 feature 对象（Agent 侧 36 + 基础设施侧 26）；基础设施侧契约测试覆盖其中 21 个（GATEWAY 加 20 个数据驱动用例），遗漏了 `MODEL_PRICING`、`HTTP_CLIENT` 与 `FILE_BROWSER`、`TRAJECTORY` 和 `SESSION_DIRS`。
 - **包导出缺口。** `agent/tools/taskflow/__init__.py` 只重新导出十一个名字；`taskflow_dispatch` 与 `taskflow_wait_all` 可通过 `build_taskflow_tools()` 获取，但被包 `__all__` 遗漏。
 - **TaskFlow 区块仅限 LLM 提示词。** LLM 失败时使用的确定性回退摘要不包含 `## Current TaskFlow State`。
 - **Token 记账由调用方提供。** 只有当 `taskflow_resume` 收到 `token_usage` 字典时才计算成本；未提供时注入的步骤贡献零 token 与零成本。

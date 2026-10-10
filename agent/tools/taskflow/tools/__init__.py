@@ -1,4 +1,4 @@
-"""TaskFlow tool family: 14 tools mirroring the openclaw managedFlows API surface.
+"""TaskFlow tool family: 16 tools mirroring the openclaw managedFlows API surface.
 
 Mapping: taskflow_create=createManaged, taskflow_run_task=runTask,
 taskflow_set_waiting=setWaiting, taskflow_resume=resume,
@@ -8,7 +8,9 @@ report, taskflow_dispatch=batch dispatch of ready steps,
 taskflow_update_steps=full replacement of the steps list (todowrite-like),
 taskflow_wait_all=flow-scoped wait for dispatched steps,
 taskflow_budget=token/cost budget query and set,
-taskflow_list=cross-session board of every flow.
+taskflow_list=cross-session board of every flow,
+taskflow_replan=regenerate the remaining steps of a failed flow,
+taskflow_plan=decompose a goal into a dependency-ordered flow.
 """
 
 from langchain_core.tools import BaseTool
@@ -20,7 +22,9 @@ from .taskflow_dispatch import taskflow_dispatch
 from .taskflow_fail import taskflow_fail
 from .taskflow_finish import taskflow_finish
 from .taskflow_list import taskflow_list
+from .taskflow_plan import taskflow_plan
 from .taskflow_progress import taskflow_progress
+from .taskflow_replan import taskflow_replan
 from .taskflow_resume import taskflow_resume
 from .taskflow_run_task import taskflow_run_task
 from .taskflow_set_waiting import taskflow_set_waiting
@@ -43,6 +47,8 @@ _TASKFLOW_TOOLS: list[BaseTool] = [
     taskflow_update_steps,
     taskflow_wait_all,
     taskflow_list,
+    taskflow_replan,
+    taskflow_plan,
 ]
 
 # Pure reporting tools: the guardrails may hash their results to detect a
@@ -56,7 +62,7 @@ _READ_ONLY_TASKFLOW: set[str] = {
 
 
 def build_taskflow_tools() -> list[BaseTool]:
-    """Build and return the 14 taskflow tools.
+    """Build and return the 16 taskflow tools.
 
     Meant to be registered in ``_MAIN_TOOLS_BUILDERS``. Business errors are
     returned as readable strings (handle_tool_error=True as backstop), and

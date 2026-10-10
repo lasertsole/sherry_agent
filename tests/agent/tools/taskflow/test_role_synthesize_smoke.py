@@ -211,7 +211,9 @@ def test_role_driven_spawn_chain_smoke(_captured_lane, _wiring, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_synthesize_reaches_real_spawn_smoke(isolated_db, _captured_lane):
+async def test_synthesize_reaches_real_spawn_smoke(
+    isolated_db, _captured_lane, real_child_dispatch
+):
     # Given a done dependency with a recorded result
     await _seed_done_dependency("flow-smoke")
 
@@ -240,7 +242,7 @@ async def test_synthesize_reaches_real_spawn_smoke(isolated_db, _captured_lane):
 
 @pytest.mark.asyncio
 async def test_synthesize_task_with_role_through_dispatch_smoke(
-    isolated_db, _captured_lane, monkeypatch
+    isolated_db, _captured_lane, real_child_dispatch, monkeypatch
 ):
     # Given a dependency result aggregated into a dispatch task (synthesize) and a
     # LEAF depth cap (role whitelist)

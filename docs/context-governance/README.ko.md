@@ -136,7 +136,7 @@ screencast 프레임——는 메시지 저장소에 들어가지 않습니다: 
 | `overflow_clip_enabled` | `True` | P1-2 테일 클립 마스터 스위치 |
 | `overflow_clip_max_remove` | `10` | 한 번의 클립이 스텁화하는 꼬리 메시지 상한 |
 | `overflow_clip_min_keep` | `5` | 트랜스크립트 하한: 이 길이 이하면 결코 클립하지 않음 |
-| `max_tool_output_chars` | `2_000` | 도구 결과의 압축 시점 클립 예산 |
+| `max_tool_output_tokens` | `500` | 도구 결과의 압축 시점 클립 예산(토큰; ≈2 000 ASCII 문자) |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | 압축 시점 클립의 head/tail 유지 비율 |
 
 `TOKEN_ESTIMATION`(`config/features/agent_side/token_estimation.py`), 멀티모달 토큰 분류:

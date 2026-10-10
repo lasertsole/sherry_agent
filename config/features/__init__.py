@@ -13,6 +13,8 @@ place. Imports use the explicit ``X as X`` form so re-exports stay lint-clean.
 """
 
 from .agent_side import (
+    GOAL_GATE as GOAL_GATE,
+    GoalGateConfig as GoalGateConfig,
     TOKEN_ESTIMATION as TOKEN_ESTIMATION,
     TOOL_GUARDRAILS as TOOL_GUARDRAILS,
     MEDIA_PIPELINE as MEDIA_PIPELINE,
@@ -104,6 +106,8 @@ from .infra_side import (
     SERVER_HTTP as SERVER_HTTP,
     SKILLS_TOOLING as SKILLS_TOOLING,
     SKILL_SCANNER as SKILL_SCANNER,
+    SESSION_DIRS as SESSION_DIRS,
+    TRAJECTORY as TRAJECTORY,
     WS_STREAM as WS_STREAM,
     AuthConfig as AuthConfig,
     BrowserAgentConfig as BrowserAgentConfig,
@@ -126,6 +130,8 @@ from .infra_side import (
     ServerHttpConfig as ServerHttpConfig,
     SkillScannerConfig as SkillScannerConfig,
     SkillsToolingConfig as SkillsToolingConfig,
+    SessionDirsConfig as SessionDirsConfig,
+    TrajectoryConfig as TrajectoryConfig,
     WsStreamConfig as WsStreamConfig,
     validate_lane_config as validate_lane_config,
     FILE_BROWSER as FILE_BROWSER,

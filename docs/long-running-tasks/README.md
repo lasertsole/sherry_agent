@@ -54,13 +54,13 @@ All tunables live under `config/features/`, which is a **per-object `TypedDict` 
 
 | Part | Contents |
 | :--- | :--- |
-| `config/features/agent_side/` | **35** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow) |
-| `config/features/infra_side/` | **24** infra-side config modules (server, login, queues, skills, context engine, runtime, model pricing) |
+| `config/features/agent_side/` | **36** agent-side config modules (middlewares, tools, LLM client, memory, TaskFlow) |
+| `config/features/infra_side/` | **26** infra-side config modules (server, login, queues, skills, context engine, runtime, model pricing) |
 | `config/features/_env.py` | The single shared env helper |
 
 Each module defines `class XxxConfig(TypedDict)` plus a module-level constant `XXX: XxxConfig = {…}`. Env-aware modules define a builder `def _build_xxx(env: Mapping[str, str] | None = None) -> XxxConfig` that reads `env or os.environ` and materialises the constant at import time. The env helper is `_env_int(name, default, env)` (`config/features/_env.py:9`), which accepts `1/true/yes/on` and `0/false/no/off/""` and never raises.
 
-The registry currently holds **59 feature objects** — 35 agent-side + 24 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
+The registry currently holds **62 feature objects** — 36 agent-side + 26 infra-side — re-exported through each package `__init__.py` and aggregated by `config/features/__init__.py`, so a consumer imports either one half or the whole registry from a single place. Consuming code imports the constant and indexes it directly (for example `ITERATION_BUDGET["default_max_iterations"]`); there is no `get_feature`/`load_feature` accessor. `config/__init__.py:38-39` derives `API_HOST`/`API_PORT` from `GATEWAY`.
 
 The constants most relevant to this document:
 
@@ -154,13 +154,15 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `taskflow_run_task` | `(flow_id, task, label=None, expected_revision=None, depends_on=None, validation_criteria=None, retry_policy=None, session_id)` | dispatched step, or `blocked` with pending deps |
 | `taskflow_dispatch` | `(flow_id, step_ids, expected_revision=None, session_id)` | dispatched step ids + revision |
 | `taskflow_wait_all` | `(flow_id, timeout_seconds=300.0, poll_interval_seconds=0.5, session_id)` | per-step settled report (complete or partial; auto-retries policy steps) |
-| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, session_id)` | resumed status, unlocked steps, step-status counts, criteria echo, judge verdict, retry note |
+| `taskflow_resume` | `(flow_id, child_session_key="", result="", expected_revision=None, token_usage=None, validation_criteria=None, auto_dispatch=True, session_id)` | resumed status, unlocked steps (**auto-dispatched by default**), step-status counts, criteria echo, judge verdict, retry note |
 | `taskflow_set_waiting` | `(flow_id, wait_reason="", expected_revision=None, session_id)` | waiting status + revision |
 | `taskflow_summary` | `(flow_id, session_id)` | full flow state incl. wait/deadline status |
 | `taskflow_progress` | `(flow_id, session_id)` | completion %, breakdown, next steps, est. remaining |
 | `taskflow_budget` | `(flow_id, action="query", token_budget=None, expected_revision=None, session_id)` | budget report, or set confirmation |
 | `taskflow_list` | `(status_filter="active", session_id)` | this session's board (`active` / `all` / status name) |
-| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | terminal `done` (four-gate check, fail-open) |
+| `taskflow_finish` | `(flow_id, summary="", expected_revision=None, todo=None, plan_path=None, checkbox_label=None, session_id)` | terminal `done` (five-gate check incl. the goal judge, fail-open) |
+| `taskflow_replan` | `(flow_id, reason="", blocked_step_id=None, keep_done=True, session_id)` | remaining steps regenerated from the goal + done results + failure reason (done/in-flight kept, downstream of a changed step re-blocked, ≤ 3 replans) |
+| `taskflow_plan` | `(goal, flow_id="", context=None, max_steps=8, session_id)` | a new flow decomposed into dependency-ordered steps, registered but NOT dispatched |
 | `taskflow_fail` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `failed` |
 | `taskflow_cancel` | `(flow_id, reason="", expected_revision=None, session_id)` | terminal `cancelled` |
 
@@ -259,7 +261,7 @@ For the full process-isolated suite use `uv run python tests/run_tests_split.py`
 - **The pre-compression memory flush is latent.** Production instantiations of `Summarization` (main agent and subagent) do not pass `memory_store` / `llm_factory`, so the flush does not run until a call site wires them; the code is implemented and tested but currently inert.
 - **Continuity is channel-bound.** `build_continuity_prompt` requires both a channel id and a chat id, so sessions without a channel binding receive no continuity block. Storage is per-key JSON on disk, not a database.
 - **Three duplicate active-flow scans.** `prompt_builder._build_taskflow_block`, `summarization._get_taskflow_context_sync`, and `session_continuity._get_active_taskflow_ids_sync` implement the same query independently; they must be kept in sync.
-- **Registry size is 59.** The config registry holds 59 feature objects (35 agent-side + 24 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT` and `FILE_BROWSER`.
+- **Registry size is 62.** The config registry holds 62 feature objects (36 agent-side + 26 infra-side); the infra-side contract test covers 21 of them (GATEWAY plus 20 data-driven cases) and omits `MODEL_PRICING`, `HTTP_CLIENT`, `FILE_BROWSER`, `TRAJECTORY` and `SESSION_DIRS`.
 - **Package re-export gap.** `agent/tools/taskflow/__init__.py` re-exports only eleven names; `taskflow_dispatch` and `taskflow_wait_all` are reachable through `build_taskflow_tools()` but omitted from the package `__all__`.
 - **The TaskFlow block is LLM-prompt only.** The deterministic fallback summary used on LLM failure does not include `## Current TaskFlow State`.
 - **Token accounting is caller-supplied.** Cost is computed only when `taskflow_resume` receives a `token_usage` dict; steps whose results are injected without it contribute zero tokens and zero cost.

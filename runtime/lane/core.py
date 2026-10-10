@@ -134,6 +134,13 @@ class Lane:
                 self._queued,
             )
         self._active += 1
+        logger.debug(
+            "Lane {} acquired (active={}, queued={}, waited={:.0f}ms)",
+            self.name,
+            self._active,
+            self._queued,
+            waited_ms,
+        )
 
     def release(self) -> None:
         """Return one slot to the lane. Never underflows."""
@@ -159,7 +166,17 @@ class Lane:
         """
         if max_concurrent < 1:
             raise ValueError(f"Lane {self.name!r} max_concurrent must be >= 1")
+        previous = getattr(self, "_max", None)
         self._max = max_concurrent
+        if previous is not None and previous != max_concurrent:
+            logger.info(
+                "Lane {}: max_concurrency {} -> {} (active={}, queued={})",
+                self.name,
+                previous,
+                max_concurrent,
+                self._active,
+                self._queued,
+            )
         if self._sem is None or self._loop is None:
             return
         if self._queued > 0:

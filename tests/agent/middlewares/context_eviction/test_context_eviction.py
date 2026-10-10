@@ -383,7 +383,7 @@ class TestReadFileSlice:
             [ai, sliced],
             target_reduction_tokens=10**6,
             min_output_chars=500,
-            max_output_chars=2_000,
+            max_output_tokens=500,
         )
 
         clipped = result[1].content

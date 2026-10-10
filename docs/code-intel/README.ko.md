@@ -178,7 +178,7 @@ LSP 계층은 `agent/tools/code_intel/lsp/`에 있습니다: `protocol.py`(URI, 
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime 디렉터리, 5초 버전 프로브, 5초 / 5초 회수 유예. 스캔 예산과 매치 상한은 `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher`와 `librarian` |
 
-인덱스 데이터베이스 경로는 기본 `CODE_INTEL_DIR / "index.db"`이며, `config/path.py`의 `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`입니다. `SHERRY_CODE_INTEL_ROOT`와 `SHERRY_CODE_INTEL_DB`가 호출 시 루트와 데이터베이스 경로를 덮어쓸 수 있습니다.
+인덱스 데이터베이스는 **세션의 프로젝트 디렉터리**를 따릅니다: spawn 시 `<project_root>/.codeintel/index.db`에 인덱싱하므로(`agent/tools/code_intel/roots.py::index_db_for_root`), 프로젝트를 번갈아 써도 하나의 공유 인덱스를 다시 만들지 않습니다(저장되는 경로는 프로젝트 상대 경로라 루트를 넘나들면 충돌합니다). 프로젝트 루트가 없는 호출은 공유 `CODE_INTEL_DIR / "index.db"`(`config/path.py`의 `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"`)로 폴백하고, `code_intel_index_db_path`가 명시적으로 고정하며, `SHERRY_CODE_INTEL_DB`가 호출 시 경로를 덮어씁니다(`SHERRY_CODE_INTEL_ROOT`는 루트를 덮어씀).
 
 ## 🖥️ 환경 능력 매트릭스
 

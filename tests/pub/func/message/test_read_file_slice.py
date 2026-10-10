@@ -29,7 +29,11 @@ from pub.func.message.target_truncation import (
 
 pytestmark = [pytest.mark.unit]
 
-MAX_CHARS = 2000
+# The clip is token-budgeted now; 500 tokens spans ~2000 characters of ASCII,
+# which is what the character assertions below (and the ratio-derived head/tail
+# spans) still describe.
+MAX_TOKENS = 500
+MAX_CHARS = MAX_TOKENS * 4
 HEAD_CHARS = int(MAX_CHARS * CONTENT_HEAD_RATIO)
 TAIL_CHARS = int(MAX_CHARS * CONTENT_TAIL_RATIO)
 READ_LIMIT = TOOLS_TIMEOUTS["file_tools_read_default_limit"]
@@ -66,7 +70,7 @@ def _clip(messages: list[BaseMessage], **overrides) -> tuple[list[BaseMessage], 
     kwargs = {
         "target_reduction_tokens": HUGE_TARGET,
         "min_output_chars": 500,
-        "max_output_chars": MAX_CHARS,
+        "max_output_tokens": MAX_CHARS // 4,
     }
     kwargs.update(overrides)
     return target_truncate_tool_outputs(messages, **kwargs)
@@ -172,7 +176,9 @@ class TestGenericPathRegressionLock:
 
 class TestUnchangedPaths:
     def test_read_file_within_budget_is_untouched(self):
-        content = _read_file_json(1, 12)  # >= min_output_chars, <= max_output_chars
+        content = _read_file_json(
+            1, 12
+        )  # >= min_output_chars, <= the token budget's character span
         assert 500 <= len(content) <= MAX_CHARS
         result, reduced = _clip(_messages("read_file", "r1", {"file_path": "a.md"}, content))
         assert result[1].content == content

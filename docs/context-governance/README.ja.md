@@ -136,7 +136,7 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | `overflow_clip_enabled` | `True` | P1-2 テールクリップのマスタースイッチ |
 | `overflow_clip_max_remove` | `10` | 一回のクリップでスタブ化する末尾メッセージの上限 |
 | `overflow_clip_min_keep` | `5` | トランスクリプト下限：これ以下なら決してクリップしない |
-| `max_tool_output_chars` | `2_000` | ツール結果の圧縮時クリップ予算 |
+| `max_tool_output_tokens` | `500` | ツール結果の圧縮時クリップ予算（トークン；≈2 000 ASCII 文字） |
 | `content_head_ratio` / `content_tail_ratio` | `0.3` / `0.3` | 圧縮時クリップの head/tail 保持比率 |
 
 `TOKEN_ESTIMATION`（`config/features/agent_side/token_estimation.py`）、マルチモーダル・トークン分類：

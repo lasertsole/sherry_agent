@@ -1,12 +1,12 @@
 """Sandbox abstraction layer: policy parsing, backend contract, platform dispatch.
 
 This module is the single sandbox entry point consumed by the terminal and
-python_repl tools (Tasks 6/7). It defines:
+python_repl tools. It defines:
 
 - ``SandboxPolicy``: the three-state ``SANDBOX_POLICY`` configuration enum.
 - ``parse_policy`` / ``read_policy``: strict env parsing (no silent fallback).
 - ``SandboxBackend``: the ABC that the platform backends (bwrap on Linux,
-  seatbelt on macOS, implemented in Tasks 3/4) must satisfy.
+  seatbelt on macOS) must satisfy.
 - ``get_backend``: platform dispatch + probe + degrade semantics.
 
 Backends are imported *lazily* inside ``get_backend`` so this module works even
@@ -20,14 +20,14 @@ This is the authoritative behavior table, tested cell-by-cell in
 ========== ============================== ==============================
 policy     sandbox=True                   sandbox=False
 ========== ============================== ==============================
-required   sandboxed via backend;         DENIED outright (tool layer,
-           RuntimeError if the backend    Tasks 6/7 -- no approval path)
+required   sandboxed via backend;         DENIED outright (no approval
+           RuntimeError if the backend    path exists for it)
            is unavailable on this system
-auto       sandboxed via backend; if      HITL approval required
-           unavailable: degrade to        (, humanInTheLoop)
-           unsandboxed + one loguru
+auto       sandboxed via backend; if      HITL approval required (the
+           unavailable: degrade to        card is raised by the
+           unsandboxed + one loguru       humanInTheLoop middleware)
            warning (warning emitted by
-           the tool layer, Tasks 6/7)
+           the tool layer)
 off        NEVER sandboxed, NEVER         NEVER sandboxed, NEVER
            approved                       approved
 ========== ============================== ==============================
@@ -37,7 +37,7 @@ Notes:
   ``RuntimeError("Required sandbox unavailable on {system}")`` from
   ``get_backend`` -- the tool layer surfaces it as a tool error.
 - The ``auto`` degrade warning (one loguru line) belongs to the tool layer
-  (Tasks 6/7), which knows whether the current call actually wanted sandboxing;
+  (the sandboxed execution tools), which know whether the call wanted sandboxing;
   ``get_backend`` itself stays silent to avoid double warnings.
 - Env parsing is strict: unknown ``SANDBOX_POLICY`` values raise ``ValueError``
   listing the legal values (silent fallback to the default is explicitly NOT
@@ -137,7 +137,7 @@ def read_policy() -> SandboxPolicy:
 
 
 class SandboxBackend(ABC):
-    """Contract for OS-native sandbox backends (bwrap / seatbelt, Tasks 3/4)."""
+    """Contract for OS-native sandbox backends (bwrap on Linux, seatbelt on macOS)."""
 
     @abstractmethod
     def probe(self) -> bool:

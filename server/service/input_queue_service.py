@@ -37,7 +37,7 @@ Crash recovery: the CLAIMED row is the audit/recovery fact. If the process
 dies between step 5 and 6 the row survives in SQLite and ``recover()``
 (24h expiry) eventually voids it; wires startup reconciliation.
 
-Public surface consumed by Tasks 7/9/10 (names are a contract):
+Public surface consumed by the WS layer and the turn runner (names are a contract):
 ``submit_user_input`` / ``SubmitResult`` / ``SubmitStatus`` / ``TurnExecutor``
 / ``TurnExecutorRegistry`` / ``OutboundRouter`` / ``get_default_registry`` /
 ``get_default_queue``.
@@ -195,7 +195,7 @@ class BatchTurnExecutor:
 class OutboundRouter(Protocol):
     """Delivers one outbound frame to a session's client.
 
-    Contract seam for Tasks 7/9: the WS layer and channel adapters register
+    Contract seam: the WS layer and channel adapters register
     routers that forward ``queued`` / ``started`` / ``queue_full`` style
     notification frames. ``submit_user_input`` itself sends no frames --
     frame formats and error-frame conventions stay with the callers.
@@ -285,7 +285,7 @@ def get_default_queue() -> UserInputQueue:
 
 
 def get_default_registry() -> TurnExecutorRegistry:
-    """The process-wide executor registry (Tasks 7/9 register real ones)."""
+    """The process-wide executor registry (the WS layer registers a real one)."""
     return _default_registry
 
 

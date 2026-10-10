@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 from pathlib import Path
 from typing import Any
 
@@ -32,7 +31,7 @@ from config.features.agent_side import (
 )
 from config.path import CODE_INTEL_DIR
 
-from .roots import resolve_root, root_for_call
+from .roots import index_db_for_root, resolve_root, root_for_call
 
 from .query import CalleeInfo, CallerInfo, CodeQuery, ExploreResult, ImpactResult
 from .semantic import SemanticSearch, build_semantic_search_tool
@@ -41,11 +40,10 @@ _DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
 _SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
 
 
-def _resolve_db_path(config: CodeIntelConfig) -> str:
-    override = os.environ.get(_DB_ENV_KEY, "").strip()
-    if override:
-        return str(Path(override).expanduser())
-    return config["code_intel_index_db_path"] or str(CODE_INTEL_DIR / "index.db")
+def _resolve_db_path(config: CodeIntelConfig, session_id: str, explicit_root: Path | None) -> str:
+    """The index DB for this spawn, resolved against the session's own root."""
+    root = root_for_call(explicit_root, session_id, resolve_root())
+    return index_db_for_root(root, config["code_intel_index_db_path"], CODE_INTEL_DIR)
 
 
 class ExploreInput(BaseModel):
@@ -282,14 +280,16 @@ def build_code_intel_tools(
     the existing ``models`` wrappers on first use.
     """
     cfg = config or CODE_INTEL
-    resolved_db = db_path or _resolve_db_path(cfg)
+    explicit_root = Path(root).resolve() if root is not None else None
+    # The index DB follows the SESSION's project root: one index per project, so
+    # switching projects does not rebuild a shared one (see roots.py).
+    resolved_db = db_path or _resolve_db_path(cfg, session_id, explicit_root)
     try:
         engine = CodeQuery(resolved_db, cfg)
     except Exception as exc:  # noqa: BLE001 - missing tooling must not break a spawn
         logger.warning("code_intel: tools unavailable: {}", exc)
         return []
     resolved_root = resolve_root()
-    explicit_root = Path(root).resolve() if root is not None else None
     tools: list[BaseTool] = [
         ExploreTool(engine, cfg, resolved_root, session_id, explicit_root),
         CallersTool(engine, cfg, resolved_root, session_id, explicit_root),

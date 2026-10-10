@@ -1,7 +1,7 @@
 """Targeted tool-output truncation (head+tail keep with a recoverable marker).
 
 Slicing an oversized ``ToolMessage`` keeps ``CONTENT_HEAD_RATIO`` of
-``max_output_chars`` at the head and ``CONTENT_TAIL_RATIO`` at the tail, and
+``max_output_tokens`` (CJK-aware) at the head and ``CONTENT_TAIL_RATIO`` at the tail, and
 collapses the middle. ``read_file`` results are special-cased: the full file
 is still on disk at the same path, so the middle is replaced with a recovery
 notice carrying the original ``file_path`` and a 1-based continuation offset
@@ -13,11 +13,12 @@ import re
 
 from config.features import SUMMARIZATION, TOOLS_TIMEOUTS
 from langchain_core.messages import BaseMessage, ToolMessage, AIMessage, ToolCall
+from pub.func.message.token_truncation import truncate_by_tokens
 from pub.func.estimate_tokens import estimate_text_tokens
 
 CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
 CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
-MAX_TOOL_OUTPUT_CHARS = SUMMARIZATION["max_tool_output_chars"]
+MAX_TOOL_OUTPUT_TOKENS = SUMMARIZATION["max_tool_output_tokens"]
 MIN_OUTPUT_CHARS_TO_TRUNCATE = SUMMARIZATION["min_output_chars_to_truncate"]
 
 _READ_FILE_CONTINUE_LIMIT = TOOLS_TIMEOUTS["file_tools_read_default_limit"]
@@ -42,16 +43,18 @@ _JSON_TWO_CHAR_ESCAPES = frozenset('"\\\n\r\t\b\f')
 
 def _truncate_content(
     content: str,
-    max_chars: int,
+    max_tokens: int,
     head_ratio: float = CONTENT_HEAD_RATIO,
     tail_ratio: float = CONTENT_TAIL_RATIO,
 ) -> str:
-    if len(content) <= max_chars:
-        return content
-    head = content[: int(max_chars * head_ratio)]
-    tail = content[-int(max_chars * tail_ratio) :]
-    omitted = len(content) - len(head) - len(tail)
-    return f"{head}{_OMISSION_TEMPLATE.format(omitted=omitted)}{tail}"
+    """Head+tail clip to a token budget (CJK-aware; see token_truncation)."""
+    return truncate_by_tokens(
+        content,
+        max_tokens,
+        head_ratio=head_ratio,
+        tail_ratio=tail_ratio,
+        omission_template=_OMISSION_TEMPLATE,
+    )
 
 
 def _find_tool_call(messages: list[BaseMessage], target_idx: int, tc_id: str) -> ToolCall | None:
@@ -121,11 +124,20 @@ def _read_file_next_offset(content: str, head_chars: int) -> int | None:
     return int(first.group(1)) + line_breaks
 
 
-def _truncate_read_file_content(content: str, max_chars: int, file_path: str) -> str:
-    """Head+tail clip a read_file result, middle replaced by a recovery notice."""
-    head = content[: int(max_chars * CONTENT_HEAD_RATIO)]
-    tail = content[-int(max_chars * CONTENT_TAIL_RATIO) :]
-    omitted = len(content) - len(head) - len(tail)
+def _truncate_read_file_content(content: str, max_tokens: int, file_path: str) -> str:
+    """Head+tail clip a read_file result, middle replaced by a recovery notice.
+
+    The head keeps the JSON envelope a continuation offset can be parsed from,
+    so the split is token-budgeted on the same currency as every other clip.
+    """
+    from pub.func.message.token_truncation import _chars_for_tokens
+
+    head_chars = _chars_for_tokens(content, max_tokens * CONTENT_HEAD_RATIO)
+    tail_chars = _chars_for_tokens(content, max_tokens * CONTENT_TAIL_RATIO, from_end=True)
+    tail_chars = min(tail_chars, max(0, len(content) - head_chars))
+    head = content[:head_chars]
+    tail = content[len(content) - tail_chars :] if tail_chars else ""
+    omitted = len(content) - head_chars - tail_chars
     next_offset = _read_file_next_offset(content, len(head))
     if next_offset is None:
         notice = _READ_FILE_RESTART_NOTICE.format(
@@ -145,7 +157,7 @@ def target_truncate_tool_outputs(
     messages: list[BaseMessage],
     target_reduction_tokens: int,
     min_output_chars: int = MIN_OUTPUT_CHARS_TO_TRUNCATE,
-    max_output_chars: int = MAX_TOOL_OUTPUT_CHARS,
+    max_output_tokens: int = MAX_TOOL_OUTPUT_TOKENS,
     protected_tools: set[str] | None = None,
     estimator=None,
 ) -> tuple[list[BaseMessage], int]:
@@ -177,10 +189,10 @@ def target_truncate_tool_outputs(
         if total_reduced >= target_reduction_tokens:
             break
         file_path = _read_file_arg(tool_call)
-        if file_path is not None and len(content) > max_output_chars:
-            truncated = _truncate_read_file_content(content, max_output_chars, file_path)
+        if file_path is not None and len(content) > max_output_tokens * 4:
+            truncated = _truncate_read_file_content(content, max_output_tokens, file_path)
         else:
-            truncated = _truncate_content(content, max_output_chars)
+            truncated = _truncate_content(content, max_output_tokens)
         reduced_tokens = estimate_text_tokens(content) - estimate_text_tokens(truncated)
         total_reduced += max(reduced_tokens, 0)
         result[idx] = result[idx].model_copy(update={"content": truncated})

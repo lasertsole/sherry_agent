@@ -19,6 +19,14 @@ from .http_client import (
     HttpClientConfig as HttpClientConfig,
     HTTP_CLIENT as HTTP_CLIENT,
 )
+from .session_dirs import (
+    SessionDirsConfig as SessionDirsConfig,
+    SESSION_DIRS as SESSION_DIRS,
+)
+from .trajectory import (
+    TrajectoryConfig as TrajectoryConfig,
+    TRAJECTORY as TRAJECTORY,
+)
 from .http_upload import (
     HttpUploadConfig as HttpUploadConfig,
     HTTP_UPLOAD as HTTP_UPLOAD,

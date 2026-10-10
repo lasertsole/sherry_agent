@@ -351,7 +351,7 @@ class ToolGuardrails(AgentMiddleware):
 
     @override
     def before_agent(self, state: AgentState, runtime: Runtime[ContextT]) -> dict[str, Any] | None:
-        logger.debug("{} before_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("before_agent hook fired")
         self._before_agent_impl(state)
         return None
 
@@ -359,7 +359,7 @@ class ToolGuardrails(AgentMiddleware):
     async def abefore_agent(
         self, state: AgentState, runtime: Runtime[ContextT]
     ) -> dict[str, Any] | None:
-        logger.debug("{} abefore_agent hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("abefore_agent hook fired")
         self._before_agent_impl(state)
         return None
 
@@ -474,7 +474,7 @@ class ToolGuardrails(AgentMiddleware):
             )
 
         if action == GuardrailAction.WARN:
-            logger.error("ToolGuardrails WARN: session={} tool={}", session_id, tool_name)
+            logger.warning("ToolGuardrails WARN: session={} tool={}", session_id, tool_name)
             if gs.last_pathology is not None:
                 kind, count, limit = gs.last_pathology
                 pathology = "ping-pong loop" if kind == "ping_pong" else "argument churn"
@@ -560,7 +560,7 @@ class ToolGuardrails(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage],
     ) -> ToolMessage:
-        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_tool_call hook fired")
         blocked = self._wrap_tool_call_precheck(request)
         if blocked is not None:
             return blocked
@@ -573,7 +573,7 @@ class ToolGuardrails(AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage]],
     ) -> ToolMessage:
-        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
         blocked = self._wrap_tool_call_precheck(request)
         if blocked is not None:
             return blocked

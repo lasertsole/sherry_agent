@@ -184,6 +184,7 @@ def _run_with_timeout(
 
     try:
         result = json.loads(stdout)
+        logger.debug("python_repl: result JSON decode failed", exc_info=True)
     except json.JSONDecodeError:
         return f"Error: failed to parse output\n{stdout[:500]}"
 

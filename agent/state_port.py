@@ -189,10 +189,9 @@ async def _heal_with_graph(
     # as_node="model" is REQUIRED on create_agent graphs: LangGraph cannot
     # infer the attribution node on a bare graph's state-only checkpoint
     # (next-node inference is ambiguous -> InvalidUpdateError "Ambiguous
-    # update, specify as_node"); explicit attribution to the model node
-    # (langchain create_agent registers it as "model",
-    # agents/factory.py:1476) is deterministic regardless of where the
-    # cancel landed.
+    # update, specify as_node"); explicit attribution to the model node is
+    # deterministic regardless of where the cancel landed — langchain's
+    # create_agent registers that node under the name "model".
     await graph.aupdate_state(config, {"messages": [*placeholders, marker]}, as_node="model")
     logger.info(
         "interrupt_marker: marker {!r} written to checkpointer "

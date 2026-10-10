@@ -235,15 +235,19 @@ def test_dag_e2e_parallel_flow_across_restart(isolated_db: Path, monkeypatch: py
             "step-3": "dispatched",
         }
 
-        # When A's result is injected
+        # When A's result is injected with auto-dispatch opted out
         out = await tools["taskflow_resume"].coroutine(
-            session_id=_SESSION, flow_id=FLOW, child_session_key=CHILD_A, result="data collected"
+            session_id=_SESSION,
+            flow_id=FLOW,
+            child_session_key=CHILD_A,
+            result="data collected",
+            auto_dispatch=False,
         )
         # Then step-1 is done, step-2 is reported ready, and B was NOT spawned
         assert "TaskFlow resumed" in out, out
         assert "step_id=step-1" in out, out
         assert "unlocked=[step-2]" in out, out
-        assert len(dispatched) == 2, "resume must not auto-spawn the unlocked step"
+        assert len(dispatched) == 2, "auto_dispatch=False must not spawn the unlocked step"
 
         flow = await store_sqlite.get_flow(FLOW, _SESSION)
         assert flow is not None
@@ -455,12 +459,14 @@ def test_dag_e2e_progress_report_tracks_unlock(isolated_db: Path, monkeypatch: p
         )
         assert "blocked" in out, out
 
-        # When step-1's result is injected and step-2 unlocks
+        # When step-1's result is injected and step-2 unlocks (auto-dispatch
+        # opted out: this scenario renders the progress of an UNSTARTED wave)
         out = await tools["taskflow_resume"].coroutine(
             session_id=_SESSION,
             flow_id=FLOW_PROGRESS,
             child_session_key=CHILD_A,
             result="data collected",
+            auto_dispatch=False,
         )
         assert "unlocked=[step-2]" in out, out
 

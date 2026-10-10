@@ -196,7 +196,7 @@ The main agent is outside this table entirely: the builders are never added to `
 | `RIPGREP` | `config/features/agent_side/ripgrep.py` | enabled, `SHERRY_RG_PATH`, runtime dir, 5 s version-probe timeout, 5 s / 5 s reap graces; the scan budget and match cap live in `TOOLS_TIMEOUTS` |
 | `CODE_INTEL_ROLES` | `agent/tools/subagent/types/functional_role.py` | `researcher` and `librarian` |
 
-The index database path defaults to `CODE_INTEL_DIR / "index.db"` with `CODE_INTEL_DIR = ROOT_DIR / ".codeintel"` in `config/path.py`, and both `SHERRY_CODE_INTEL_ROOT` and `SHERRY_CODE_INTEL_DB` can override the root and the database path at call time.
+The index database follows the SESSION's project directory: a spawn indexes into `<project_root>/.codeintel/index.db` (`agent/tools/code_intel/roots.py::index_db_for_root`), so alternating between projects no longer rebuilds one shared index (the stored paths are project-relative and collide across roots). The shared `CODE_INTEL_DIR / "index.db"` (`CODE_INTEL_DIR = ROOT_DIR / ".codeintel"` in `config/path.py`) stays the fallback for a call with no project root, `code_intel_index_db_path` pins one explicitly, and `SHERRY_CODE_INTEL_DB` overrides the path at call time (as does `SHERRY_CODE_INTEL_ROOT` for the root).
 
 ## 🖥️ Environment Capability Matrix
 

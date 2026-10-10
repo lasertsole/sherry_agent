@@ -64,7 +64,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 `read_file` の結果は**退避されない** —— ファイルはすでにディスク上にあり、二つ目のコピーを書くのは純粋な重複である。代わりに `slice_read_file_result`（`pub/func/message/eviction.py`）が内容を**先頭 `_READ_FILE_SLICE_CHARS`（4 000）文字**と回復通知（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）に置き換える。退避ファイルは書かれず、ヘルパーは冪等である：すでにスライス済み（通知あり）の結果はそのまま返る。
 
-これは二段階縮小の**実行時**側である。**圧縮時**側は `pub/func/message/target_truncation.py::_truncate_read_file_content` にある：圧縮がコンテキストを切る際、各 `ToolMessage` を `tool_call_id` で `read_file` 呼び出しに解決し、`max_tool_output_chars`（2 000）の head 30% + tail 30% を残し、中間を**パーサ由来の 1-based 継続オフセット**を運ぶ回復通知に置き換える（`Use offset=<N> to continue reading…`；ペイロードが解析できないときは「先頭から読み直し」にフォールバック）。
+これは二段階縮小の**実行時**側である。**圧縮時**側は `pub/func/message/target_truncation.py::_truncate_read_file_content` にある：圧縮がコンテキストを切る際、各 `ToolMessage` を `tool_call_id` で `read_file` 呼び出しに解決し、`max_tool_output_tokens`（500、≈2 000 ASCII 文字、CJK 対応の等価値）の head 30% + tail 30% を残し、中間を**パーサ由来の 1-based 継続オフセット**を運ぶ回復通知に置き換える（`Use offset=<N> to continue reading…`；ペイロードが解析できないときは「先頭から読み直し」にフォールバック）。
 
 二段階は構造的に補完し合う：圧縮時が実行時スライス済みペイロードを後から切ると、切り詰められた JSON はもはや解析できず、圧縮通知は決定論的に再開形式へフォールバックする —— 誤ったオフセットが emit されることは決してなく、実行時スライスヘルパーが自らの出力を二度スライスすることもない。
 

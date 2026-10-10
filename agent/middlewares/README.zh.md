@@ -506,7 +506,7 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 **路径安全与生命周期。** `session_id` 需通过单段安全校验（`config/path.py::is_safe_session_segment`）；空 / `.` / `..` / 含分隔符的 id 直接跳过且不落盘。`clear_session()` 会对整个 `SESSIONS_DIR/<session_id>/` 目录 rmtree，驱逐文件随会话一并删除。已驱逐的消息不会二次驱逐（幂等标记检查）。
 
-**与压缩期 read_file 切片的互补关系**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：本中间件覆盖工具执行时，压缩路径覆盖上下文压力时（head 30 % + tail 30 %，`max_tool_output_chars = 2 000`，并给出解析得出的 1-based 续读 offset）。压缩再次切分已切片载荷时无法解析被截断的 JSON，会确定性地回退到"从头重读"提示；执行期切片本身也是幂等的。两条提示不会冲突，是同一消息的分阶段缩减。
+**与压缩期 read_file 切片的互补关系**（`pub/func/message/target_truncation.py::_truncate_read_file_content`）：本中间件覆盖工具执行时，压缩路径覆盖上下文压力时（head 30 % + tail 30 %，`max_tool_output_tokens = 500`（≈2 000 个 ASCII 字符），并给出解析得出的 1-based 续读 offset）。压缩再次切分已切片载荷时无法解析被截断的 JSON，会确定性地回退到"从头重读"提示；执行期切片本身也是幂等的。两条提示不会冲突，是同一消息的分阶段缩减。
 
 #### 人类消息驱逐（P1-9）
 

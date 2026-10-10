@@ -343,7 +343,7 @@ class TestTargetTruncation:
             messages,
             target_reduction_tokens=huge_target,
             min_output_chars=500,
-            max_output_chars=2000,
+            max_output_tokens=500,
         )
         # Both candidates truncated: head 600 + tail 600 + omission marker.
         assert result[1].content.startswith("a" * 600)
@@ -362,7 +362,7 @@ class TestTargetTruncation:
             messages,
             target_reduction_tokens=100_000,
             min_output_chars=500,
-            max_output_chars=2000,
+            max_output_tokens=500,
         )
         truncated = result[1].content
         assert truncated.startswith("x" * 600)
@@ -384,7 +384,7 @@ class TestTargetTruncation:
             messages,
             target_reduction_tokens=100_000,
             min_output_chars=500,
-            max_output_chars=2000,
+            max_output_tokens=500,
             protected_tools={"memory"},
         )
         assert tokens_reduced == 0

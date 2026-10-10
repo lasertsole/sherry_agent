@@ -126,7 +126,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], ModelResponse[ResponseT]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("{} wrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_model_call hook fired")
         session_id = self._get_session_id(request.state)
         logger.debug("[IB_TRACE] wrap_model_call enter session_id={}", session_id)
         terminal = self._wrap_model_call_impl(request)
@@ -146,7 +146,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         request: ModelRequest[ContextT],
         handler: Callable[[ModelRequest[ContextT]], Awaitable[ModelResponse[ResponseT]]],
     ) -> ModelResponse[ResponseT] | AIMessage | ExtendedModelResponse[ResponseT]:
-        logger.debug("{} awrap_model_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_model_call hook fired")
         terminal = self._wrap_model_call_impl(request)
         if terminal is not None:
             return terminal
@@ -185,7 +185,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], ToolMessage | Command[Any]],
     ) -> ToolMessage | Command[Any]:
-        logger.debug("{} wrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("wrap_tool_call hook fired")
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal
@@ -197,7 +197,7 @@ class IterationBudget(BeforeAgentHooksMixin, AgentMiddleware):
         request: ToolCallRequest,
         handler: Callable[[ToolCallRequest], Awaitable[ToolMessage | Command[Any]]],
     ) -> ToolMessage | Command[Any]:
-        logger.debug("{} awrap_tool_call hook fired", type(self).__name__)
+        logger.bind(middleware=type(self).__name__).debug("awrap_tool_call hook fired")
         terminal = self._wrap_tool_call_impl(request)
         if terminal is not None:
             return terminal

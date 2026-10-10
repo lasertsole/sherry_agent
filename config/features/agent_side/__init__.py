@@ -55,6 +55,10 @@ from .subagent_infra import (
     SubagentInfraConfig as SubagentInfraConfig,
     SUBAGENT_INFRA as SUBAGENT_INFRA,
 )
+from .goal_gate import (
+    GoalGateConfig as GoalGateConfig,
+    GOAL_GATE as GOAL_GATE,
+)
 from .taskflow_infra import (
     TaskFlowInfraConfig as TaskFlowInfraConfig,
     TASKFLOW_INFRA as TASKFLOW_INFRA,

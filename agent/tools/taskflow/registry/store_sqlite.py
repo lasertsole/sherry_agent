@@ -429,6 +429,37 @@ async def get_overdue_flows(now_ts: float) -> list[dict]:
     return [_row_to_flow(row) for row in rows]
 
 
+async def get_flow_for_child_session(child_session_key: str) -> dict | None:
+    """The non-terminal flow whose steps include this child session, if any.
+
+    A flow dispatches one child per step, so the owning flow is found by
+    scanning active flows' step records for the child key — this is what lets
+    the announce pipeline resume the right flow when a dispatched child
+    completes (a child has no direct flow pointer of its own).
+    """
+    key = (child_session_key or "").strip()
+    if not key:
+        return None
+    await ensure_db()
+    terminal = tuple(sorted(TERMINAL_STATUSES))
+    placeholders = ", ".join("?" for _ in terminal)
+    async with _connect() as db:
+        async with db.execute(
+            _SELECT_COLUMNS_SQL + f" WHERE status NOT IN ({placeholders})",
+            terminal,
+        ) as cursor:
+            rows = await cursor.fetchall()
+    for row in rows:
+        flow = _row_to_flow(row)
+        steps = list((flow.get("state") or {}).get("steps") or [])
+        if any(
+            isinstance(step, dict) and str(step.get("child_session_key") or "") == key
+            for step in steps
+        ):
+            return flow
+    return None
+
+
 async def get_waiting_flows() -> list[dict]:
     """Return all flows in WAITING status."""
     await ensure_db()

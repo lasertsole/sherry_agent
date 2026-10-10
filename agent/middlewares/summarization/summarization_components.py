@@ -21,15 +21,16 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, ToolMe
 
 from config.features import SUMMARIZATION
 from runtime import StateKey, state_register_mem
+from pub.func.message.token_truncation import truncate_by_tokens
 
-AGGRESSIVE_TRUNCATE_CHARS = SUMMARIZATION["aggressive_truncate_chars"]
+AGGRESSIVE_TRUNCATE_TOKENS = SUMMARIZATION["aggressive_truncate_tokens"]
 CONTENT_HEAD_RATIO = SUMMARIZATION["content_head_ratio"]
 CONTENT_TAIL_RATIO = SUMMARIZATION["content_tail_ratio"]
 INEFFECTIVE_THRESHOLD = SUMMARIZATION["ineffective_threshold"]
 MAX_TOTAL_COMPRESSION_ATTEMPTS = SUMMARIZATION["max_total_compression_attempts"]
 MIN_EFFECTIVENESS_PCT = SUMMARIZATION["min_effectiveness_pct"]
 PROTECTED_TOOLS = SUMMARIZATION["protected_tools"]
-SUMMARY_TOTAL_MAX_CHARS = SUMMARIZATION["summary_total_max_chars"]
+SUMMARY_TOTAL_MAX_TOKENS = SUMMARIZATION["summary_total_max_tokens"]
 
 # Anti-flutter / anti-thrash state keys (re-exported by the middleware module,
 # whose tests read them via getattr on the module).
@@ -116,13 +117,15 @@ class MessageTruncator:
     tool-output truncation and the aggressive last-resort pass."""
 
     @staticmethod
-    def truncate_content(content: str, max_chars: int) -> str:
-        if len(content) <= max_chars:
-            return content
-        head = content[: int(max_chars * CONTENT_HEAD_RATIO)]
-        tail = content[-int(max_chars * CONTENT_TAIL_RATIO) :]
-        omitted = len(content) - len(head) - len(tail)
-        return f"{head}...[omitted {omitted} chars]...{tail}"
+    def truncate_content(content: str, max_tokens: int) -> str:
+        """Clip a summary body to a token budget (CJK-aware; see token_truncation)."""
+        return truncate_by_tokens(
+            content,
+            max_tokens,
+            head_ratio=CONTENT_HEAD_RATIO,
+            tail_ratio=CONTENT_TAIL_RATIO,
+            omission_template="...[omitted {omitted} chars]...",
+        )
 
     @staticmethod
     def truncate_summary_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
@@ -130,8 +133,8 @@ class MessageTruncator:
         for m in messages:
             if getattr(m, "additional_kwargs", {}).get("lc_source") == _SUMMARY_LC_SOURCE:
                 content = getattr(m, "content", "")
-                if isinstance(content, str) and len(content) > SUMMARY_TOTAL_MAX_CHARS:
-                    truncated = MessageTruncator.truncate_content(content, SUMMARY_TOTAL_MAX_CHARS)
+                if isinstance(content, str) and len(content) > SUMMARY_TOTAL_MAX_TOKENS * 4:
+                    truncated = MessageTruncator.truncate_content(content, SUMMARY_TOTAL_MAX_TOKENS)
                     m = m.model_copy(update={"content": truncated})
             result.append(m)
         return result
@@ -176,10 +179,15 @@ class MessageTruncator:
         for msg in messages:
             if isinstance(msg, ToolMessage):
                 content = str(getattr(msg, "content", ""))
-                if len(content) > AGGRESSIVE_TRUNCATE_CHARS:
-                    truncated = content[:AGGRESSIVE_TRUNCATE_CHARS] + (
-                        f"...[aggressively truncated, {len(content) - AGGRESSIVE_TRUNCATE_CHARS} chars omitted]"
+                if len(content) > AGGRESSIVE_TRUNCATE_TOKENS * 4:
+                    clipped = truncate_by_tokens(
+                        content,
+                        AGGRESSIVE_TRUNCATE_TOKENS,
+                        head_ratio=1.0,
+                        tail_ratio=0.0,
+                        omission_template="...[aggressively truncated, {omitted} chars omitted]",
                     )
+                    truncated = clipped
                     msg = msg.model_copy(update={"content": truncated})
             elif isinstance(msg, AIMessage) and getattr(msg, "tool_calls", None):
                 new_tcs = []
@@ -193,11 +201,17 @@ class MessageTruncator:
                         args_str = json.dumps(args, ensure_ascii=False)
                     except (TypeError, ValueError):
                         args_str = str(args)
-                    if len(args_str) > AGGRESSIVE_TRUNCATE_CHARS:
-                        truncated = args_str[:AGGRESSIVE_TRUNCATE_CHARS] + (
-                            f"...[args aggressively truncated, "
-                            f"{len(args_str) - AGGRESSIVE_TRUNCATE_CHARS} chars omitted]"
+                    if len(args_str) > AGGRESSIVE_TRUNCATE_TOKENS * 4:
+                        clipped = truncate_by_tokens(
+                            args_str,
+                            AGGRESSIVE_TRUNCATE_TOKENS,
+                            head_ratio=1.0,
+                            tail_ratio=0.0,
+                            omission_template=(
+                                "...[args aggressively truncated, {omitted} chars omitted]"
+                            ),
                         )
+                        truncated = clipped
                         new_tcs.append({**tc, "args": {"_truncated_args": truncated}})
                     else:
                         new_tcs.append(tc)

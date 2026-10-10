@@ -414,7 +414,7 @@ class OverflowMixin:
         """Single reusable 4-route executor.
 
         T1 (before_agent) and T2 (wrap/awrap_model_call) both call this —
-        Tasks 6/7 (T3 post-response check, provider-error retry) must reuse
+        The T3 post-response check and the provider-error retry path must reuse
         it instead of copying a second dispatch.
 
         P1-2: every non-``fits`` route first attempts the no-LLM tail clip.
@@ -533,7 +533,7 @@ class OverflowMixin:
             return response
         except Exception as exc:
             # T3 must never break the response path: original response wins.
-            logger.exception(
+            logger.opt(exception=True).warning(
                 "Context compression: T3 check failed (response preserved): {}",
                 exc,
             )
@@ -556,7 +556,7 @@ class OverflowMixin:
             self._log_post_response(reported, route, est, usable, pressure, request)
             return response
         except Exception as exc:
-            logger.exception(
+            logger.opt(exception=True).warning(
                 "Context compression: T3 check failed (response preserved): {}",
                 exc,
             )

@@ -1,4 +1,5 @@
 import json
+import uuid
 import asyncio
 from typing import Any
 from collections.abc import AsyncGenerator
@@ -13,6 +14,7 @@ from server.service import turn_runner
 from server.service.stream_driver import StreamDriver
 from server.service.stream_diag import public_error_text
 from server.service.stream_dispatch import _clear_pending_args
+from server.service.trajectory_store import turn_scope
 from server.utils.ws_helpers import send_ws_json
 from server.trigger import auth
 from server.trigger.auth_user import ws_user_check
@@ -58,6 +60,7 @@ async def _run_stream(
     source: AsyncGenerator[dict[str, str]],
     stream_kind: str,
     claim_row_id: str | None = None,
+    turn_id: str = "",
 ) -> None:
     """Drive a stream generator to completion, forwarding chunks to ``websocket``.
 
@@ -72,7 +75,10 @@ async def _run_stream(
     The loop itself is the shared :class:`StreamDriver` template;
     ``_AgentWsStreamDriver`` carries this site's knobs.
     """
-    await _AgentWsStreamDriver(session_id, websocket, claim_row_id, stream_kind).drive(source)
+    # Resume turns never pass through the queue executor, so this is their one
+    # contextualize scope (a fresh turn_id: a resume is its own turn).
+    with turn_scope(turn_id or uuid.uuid4().hex, session_id):
+        await _AgentWsStreamDriver(session_id, websocket, claim_row_id, stream_kind).drive(source)
 
 
 class _AgentWsStreamDriver(StreamDriver):
@@ -183,12 +189,14 @@ async def _handle_hitl_response(
     # the HITL wait is over — clear the pending flag as
     # the resume turn starts.
     set_hitl_pending(session_id, False)
+    resume_turn_id = uuid.uuid4().hex
     task = asyncio.ensure_future(
         _run_stream(
             websocket,
             session_id,
             resume_agent(session_id, decision, hitl_message, edited_args),
             "resume",
+            turn_id=resume_turn_id,
         )
     )
     _active_tasks[session_id] = task
@@ -447,7 +455,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     },
                 )
     except (WebSocketDisconnect, ConnectionResetError) as e:
-        logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
+        logger.info(f"Agent WS client {websocket.id} disconnected: {e}")
     except Exception as e:
         logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
 
