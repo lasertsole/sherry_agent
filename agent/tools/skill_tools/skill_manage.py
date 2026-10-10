@@ -399,7 +399,7 @@ def _atomic_write_text(file_path: Path, content: str, encoding: str = "utf-8") -
         try:
             os.unlink(temp_path)
         except OSError:
-            logger.error(
+            logger.exception(
                 "Failed to remove temporary file %s during atomic write", temp_path, exc_info=True
             )
         raise

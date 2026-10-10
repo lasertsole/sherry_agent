@@ -204,7 +204,7 @@ uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
 
 ## 🧹 クリアの意味論と限界
 
-- **`clear_session` はすべてを一度に消す。** `server/DAO/messages.py::clear_session` はセッションの MesMemory 行（`persisted_message_ids` ウォーターマークごと削除）、checkpointer 履歴、そして `SESSIONS_DIR/<session_id>/` フォルダ全体を削除する —— したがって **`evicted/` ファイルと `plans/` はセッションとともに削除される**（`config/path.py::session_plans_dir` が同じ丸ごと削除の契約を記している）。インメモリレジスタは最後にクリアされる。
+- **`clear_session` はすべてを一度に消す。** `server/service/session_cleanup_service.py::purge_session` はセッションの MesMemory 行（`persisted_message_ids` ウォーターマークごと削除）、checkpointer 履歴、そして `SESSIONS_DIR/<session_id>/` フォルダ全体を削除する —— したがって **`evicted/` ファイルと `plans/` はセッションとともに削除される**（`config/path.py::session_plans_dir` が同じ丸ごと削除の契約を記している）。インメモリレジスタは最後にクリアされる。
 - **退避はモデルビューの縮小であり、削除では決してない。** 本ページが縮めるすべてのペイロードは、MesMemory にアーカイブされるか、グラフ state に全文があるか（人間メッセージ）、ディスクの `evicted/` 下にある —— そしてすべてのプレビューがポインタを運ぶ。
 - **`evicted/` ディレクトリはセッション所有だがガベージコレクションされない。** ファイルは `clear_session` まで生きる；メッセージ単位の TTL はない。巨大なツール結果の多い長寿セッションは `workspace/sessions/<session_id>/evicted/` にディスク使用を蓄積し得る。
 - **一行の巨大行は決して退避されない。** head と tail の両方がペイロード全体を含む場合、プレビューは原文より小さくなれず、メッセージはそのまま残る（ツール経路・人間経路とも）。

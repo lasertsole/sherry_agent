@@ -16,13 +16,27 @@ from __future__ import annotations
 from typing import Any
 
 from langchain_core.tools import BaseTool
+from pydantic import BaseModel, Field
 
 from agent.tools.pub_base import SessionId
 
-__all__ = ["SessionId"]
+__all__ = ["BrowserPageInput", "SessionId"]
 
 
-#: The session id every browser tool takes from graph state.
+class BrowserPageInput(BaseModel):
+    """The two target fields every browser verb shares.
+
+    ``page`` selects which of the session's pages the verb acts on (omitted =
+    the session's current page); ``session_id`` arrives through ``InjectedState``
+    and is never LLM-facing. The per-verb schemas subclass this instead of
+    re-declaring the pair eight times.
+    """
+
+    page: str | None = Field(
+        default=None, description="Page id from an earlier call; omit for the session's page."
+    )
+    session_id: SessionId = ""
+
 
 #: The subagent tool policy drops these unconditionally (see the family
 #: docstring: ZCode parity, the browser stays the main agent's hand).

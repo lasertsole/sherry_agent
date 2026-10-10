@@ -4,16 +4,14 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
 
 
-class ScrollInput(BaseModel):
+class ScrollInput(BrowserPageInput):
     """Arguments of ``browser_scroll``."""
 
     delta_y: float = Field(default=0, description="Vertical wheel delta (positive scrolls down).")
     delta_x: float = Field(default=0, description="Horizontal wheel delta.")
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
-    session_id: SessionId = ""
 
 
 class BrowserScrollTool(BrowserTool):

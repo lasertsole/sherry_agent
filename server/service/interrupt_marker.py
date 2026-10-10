@@ -6,12 +6,15 @@ provider-invalid shape (e.g. an ``AIMessage(tool_calls)`` whose results never
 arrived) and the client/UI loses the "the answer was cut off" fact. This module
 reconciles the graph state and persists the interruption:
 
-1. **Checkpointer reconciliation** — one ``graph.aupdate_state`` commit that
-   (a) heals the TRAILING incomplete model super-step and (b) appends the
-   interrupt marker ``AIMessage``. The marker carries a DETERMINISTIC message
-   id (``interrupted-{thread_id}-{turn_seq}``), so the ``add_messages``
+1. **Checkpointer reconciliation** — ``agent.state_port.heal_interrupted_turn``
+   runs the ONE ``graph.aupdate_state`` commit that (a) heals the TRAILING
+   incomplete model super-step and (b) appends the interrupt marker
+   ``AIMessage``. The marker carries a DETERMINISTIC message id
+   (``interrupted-{thread_id}-{turn_seq}``), so the ``add_messages``
    reducer upserts it — a retried write is an idempotent rewrite, never a
-   duplicate (FACT A + FACT D).
+   duplicate (FACT A + FACT D). The checkpoint shape is the agent framework's
+   business, so this module only decides WHAT to persist and then persists the
+   MesMemory row + voids the queue row.
 
 2. **MesMemory dual-write** — one ``role=ai`` row prefixed
    ``[interrupted:{reason}] `` through the EXISTING store writer
@@ -39,11 +42,13 @@ the inline comment at the heal decision).
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
+from langchain_core.messages import AIMessage
 from langchain_core.runnables import RunnableConfig
 from loguru import logger
+
+from agent.state_port import heal_interrupted_turn
 
 if TYPE_CHECKING:  # pragma: no cover - typing only, keeps the import light
     from langgraph.graph.state import CompiledStateGraph
@@ -113,129 +118,18 @@ async def _write_interrupted_marker_inner(
     queue: UserInputQueue | None,
 ) -> None:
     """Actual reconciliation work (see ``write_interrupted_marker``)."""
-    # Lazy imports keep this module cheap to import (it sits on the hot
-    # cancellation path) and avoid hard dependency edges in tests.
-    if graph is None:
-        # agent/__init__ exposes built_agent through module __getattr__ (lazy),
-        # which static analysis cannot type — import the real submodule and
-        # cast the returned wrapper/graph to the state-ops contract.
-        from agent import core as agent_core
-
-        leased = cast("CompiledStateGraph[Any, Any, Any, Any]", await agent_core.built_agent())
-        # Lease it for this reconciliation: a concurrent rebuild replaces the
-        # cached graph and closes the replaced one, which would pull the
-        # checkpointer out from under this write.
-        agent_core.hold_agent(leased)
-        try:
-            await _write_interrupted_marker_inner(
-                session_id, config, partial_text, reason, leased, queue
-            )
-        finally:
-            agent_core.release_agent(leased)
-        return
+    # Lazy import keeps this module cheap to import (it sits on the hot
+    # cancellation path).
     if queue is None:
         from server.service.input_queue_service import get_default_queue
 
         queue = get_default_queue()
 
-    snapshot = await graph.aget_state(config=config)
-    messages: list[BaseMessage] = list((snapshot.values or {}).get("messages", []))
-
-    thread_id = (config.get("configurable") or {}).get("thread_id", session_id)
-    # turn_seq = number of HumanMessages in the CURRENT state: stable across
-    # marker-write retries (no new human turn can land in between — the turn
-    # being interrupted is not finished), deterministic per thread.
-    turn_seq = sum(1 for m in messages if m.type == "human")
-    marker_id = f"interrupted-{thread_id}-{turn_seq}"
-
-    already_written = any(getattr(m, "id", None) == marker_id for m in messages)
-    if already_written:
-        # Idempotent rewrite: the deterministic id is already in state — skip
-        # the checkpointer write AND the MesMemory insert (MesMemory is
-        # append-only with no id dedupe; FACT D), but ALWAYS run the
-        # CLAIMED cleanup below.
-        logger.info(
-            "interrupt_marker: marker {!r} already in state; skipping "
-            "checkpointer + MesMemory writes (idempotent rewrite)",
-            marker_id,
-        )
-    else:
-        marker = AIMessage(
-            content=f"[interrupted] {partial_text}".strip(),
-            id=marker_id,
-            metadata={"interrupted": True, "reason": reason},
-        )
-        placeholders = _heal_trailing_tool_calls(messages, marker_id)
-        # ONE aupdate_state commit: [placeholders..., marker] — the marker is
-        # appended after a provider-valid element (FACT A).
-        # as_node="model" is REQUIRED on create_agent graphs: LangGraph cannot
-        # infer the attribution node on a bare graph's state-only checkpoint
-        # (next-node inference is ambiguous -> InvalidUpdateError "Ambiguous
-        # update, specify as_node"); explicit attribution to the model node
-        # (langchain create_agent registers it as "model",
-        # agents/factory.py:1476) is deterministic regardless of where the
-        # cancel landed.
-        await graph.aupdate_state(config, {"messages": [*placeholders, marker]}, as_node="model")
-        logger.info(
-            "interrupt_marker: marker {!r} written to checkpointer "
-            "(reason={!r}, partial_len={}, healed_calls={})",
-            marker_id,
-            reason,
-            len(partial_text),
-            len(placeholders),
-        )
-        await _persist_to_mesmemory(session_id, reason, partial_text, marker_id)
+    write = await heal_interrupted_turn(session_id, config, partial_text, reason, graph)
+    if write.wrote_checkpointer:
+        await _persist_to_mesmemory(session_id, reason, partial_text, write.marker_id)
 
     await _void_claimed_rows(queue, session_id)
-
-
-def _heal_trailing_tool_calls(messages: list[BaseMessage], marker_id: str) -> list[ToolMessage]:
-    """Synthesize error ToolMessages for the TRAILING incomplete super-step.
-
-    Decision (spike verdict): heal at WRITE time, in the SAME
-    ``aupdate_state`` commit as the marker. FACT B1 shows relying
-    on input-time ``ToolCallNormalize`` healing is NOT safe —
-    its span scan silently DROPS the next HumanMessage when the dangling span
-    reaches end-of-transcript (pre-existing behaviour, out of scope) — and FACT B3
-    shows the marker only rescues that case by accident of its message type.
-    Only the TRAILING incomplete super-step is healed; earlier dangling spans
-    stay untouched for provider validity (appending a ToolMessage at the end
-    can only answer the last AIMessage's calls anyway).
-    """
-    from pub.func.transcript_repair import make_missing_tool_result
-
-    last_ai_idx = None
-    for i in range(len(messages) - 1, -1, -1):
-        if isinstance(messages[i], AIMessage):
-            last_ai_idx = i
-            break
-    if last_ai_idx is None:
-        return []
-
-    trailing_ai = messages[last_ai_idx]
-    tool_calls = getattr(trailing_ai, "tool_calls", None) or []
-    # id -> tool name, for error placeholder labeling.
-    call_names: dict[str, str | None] = {
-        tc["id"]: tc.get("name") for tc in tool_calls if isinstance(tc, dict) and tc.get("id")
-    }
-    if not call_names:
-        return []
-
-    answered: set[str] = set()
-    for m in messages[last_ai_idx + 1 :]:
-        if isinstance(m, ToolMessage) and getattr(m, "tool_call_id", None) in call_names:
-            answered.add(m.tool_call_id)
-
-    placeholders: list[ToolMessage] = []
-    for call_id in call_names:
-        if call_id in answered:
-            continue
-        placeholder = make_missing_tool_result(call_id, call_names[call_id])
-        # Deterministic placeholder id: the id-keyed reducer upserts it, so a
-        # retried reconciliation never duplicates the heal (mirrors FACT D).
-        placeholder.id = f"{marker_id}-heal-{call_id}"
-        placeholders.append(placeholder)
-    return placeholders
 
 
 async def _persist_to_mesmemory(

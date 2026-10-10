@@ -1429,15 +1429,22 @@ def _parity_state_snapshot(sid):
 
 
 def _trigger_facts(lines):
-    """Comparable trigger-log facts per 'trigger=' line: the sorted
+    """Comparable trigger-log facts per 'trigger=' record: the sorted
     key=value tokens, immune to logger formatting and session-id
-    differences between the two twins."""
+    differences between the two twins.
+
+    A record logged through ``logger.exception`` carries its traceback in the
+    same captured entry, and the two twins' stacks differ by construction
+    (``await`` frames) — so only the trigger line's OWN first line is read.
+    Traceback text is never a fact about compression behaviour.
+    """
     facts = []
     for line in lines:
         if "trigger=" not in line:
             continue
+        head = line.splitlines()[0]
         facts.append(
-            tuple(sorted(p for p in line.split() if "=" in p and not p.startswith("session=")))
+            tuple(sorted(p for p in head.split() if "=" in p and not p.startswith("session=")))
         )
     return facts
 

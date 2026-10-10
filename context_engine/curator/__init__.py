@@ -146,7 +146,7 @@ def _curator_loop():
             _idle_for_seconds += _curator_check_interval
             maybe_run_curator(idle_for_seconds=_idle_for_seconds)
         except Exception as e:
-            logger.error("Curator cycle failed: {}", e)
+            logger.exception("Curator cycle failed: {}", e)
         loop.run_until_complete(_a.sleep(_curator_check_interval))
 
 

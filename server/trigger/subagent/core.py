@@ -22,7 +22,7 @@ async def _init_registry_once() -> None:
         await init_registry()
         logger.info("Subagent registry initialized via server startup hook")
     except Exception as e:  # pragma: no cover - startup robustness
-        logger.error("Failed to initialize subagent registry at startup: {}", e)
+        logger.exception("Failed to initialize subagent registry at startup: {}", e)
 
 
 def start() -> None:

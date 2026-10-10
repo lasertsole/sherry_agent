@@ -52,7 +52,7 @@ async def _push_cron_notification(job: CronJob) -> None:
         res: dict[str, Any] = {"event": "notification", "content": content}
         await websocket.send_text(json.dumps(res))
     except Exception as e:
-        logger.error("Cron: failed to push notification: %s", e)
+        logger.exception("Cron: failed to push notification: %s", e)
 
 
 def _now_ms() -> int:
@@ -227,7 +227,7 @@ def _validate_schedule_for_add(schedule: CronSchedule) -> None:
             ZoneInfo(schedule.tz)
         except Exception:
             err_text = f"unknown timezone '{schedule.tz}'"
-            logger.error(err_text)
+            logger.exception(err_text)
             raise ValueError(err_text) from None
 
 
@@ -465,7 +465,7 @@ class CronService:
         except Exception as e:
             job.state.last_status = "error"
             job.state.last_error = str(e)
-            logger.error("Cron: job %s failed: %s", job.name, e)
+            logger.exception("Cron: job %s failed: %s", job.name, e)
 
         # Notify the bell: a cron job just completed (ok or error).
         await _push_cron_notification(job)
@@ -701,7 +701,7 @@ class CronService:
                 )
             )
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Cron: failed to publish auto-disable notification for job {}: {}", job.id, e
             )
 

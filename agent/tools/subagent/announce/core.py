@@ -148,7 +148,7 @@ async def run_subagent_announce_flow(run: SubagentRunRecord) -> None:
         else:
             logger.error("Announce failed for run {}: {}", run.run_id, result.error)
     except Exception as e:
-        logger.error("Announce flow exception for run {}: {}", run.run_id, e)
+        logger.exception("Announce flow exception for run {}: {}", run.run_id, e)
 
     await emit_ended_hook_once(run)
 

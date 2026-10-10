@@ -252,7 +252,7 @@ for r in results:
 | `agent/middlewares/message_persistence/` (`MessagePersistenceMiddleware`) | `add_messages`, `add_messages_sync`, `filter_persisted_message_ids`, `mark_message_ids_persisted`, `is_message_persisted` | 각 모델 경계가 새 human/ai 메시지를 MesMemory로 증분 플러시하고(human은 턴의 첫 경계, AI는 생성 직후), 도구 결과는 도구 반환 시 플러시합니다; 영속 워터마크 `persisted_message_ids`가 상태 누적과 프로세스 재시작을 넘어 write-once를 유지합니다. 압축 경로는 이제 아무것도 영속화하지 않습니다 — `compaction_persistence.py`는 삭제되었습니다. `system_prompt_injection`(`@dynamic_prompt` 미들웨어)는 시스템 프롬프트 주입(`wrap_model_call`/`awrap_model_call`)만 담당하고, 메모리 리뷰 / 플랜 추출 nudge는 여전히 `summarization/nudges.py`가 압축 시점에 스케줄합니다. 자세한 내용은 `agent/middlewares/README.md` 참조. |
 | `agent/tools/message_search.py` → `message_search` 도구 | `get_db`, `search_messages`, `get_turns_by_turn_num_scope` | 세션 간 회상 도구: FTS5 검색(limit 50) → 일치 항목별 턴 범위 조회 → LLM 세션 요약. query가 없으면 최근 세션 메타데이터를 대신 반환 |
 | `server/service/messages.py` | `get_session_ids`, `get_history_by_turn_page`, 그리고 (`context_engine.curator`의) `reset_idle_for_seconds` | 클라이언트용 세션 목록(최상위 세션 + 파생 제목), 페이지네이션 히스토리, 사용자 턴마다 curator 유휴 타이머 리셋 |
-| `server/DAO/messages.py` | `delete_messages_by_session` | "세션 비우기" 작업 |
+| `server/service/session_cleanup_service.py` | `delete_messages_by_session` | "세션 비우기" 작업 |
 | `server/trigger/http/stats.py` | `get_db` (`context_engine.store.db`에서) | messages 테이블 기반 사용 통계 |
 | `server/__main__.py` | `context_engine.curator.init()` | curator 백그라운드 데몬 스레드를 명시적으로 시작 (패키지 임포트에는 부수 효과 없음) |
 

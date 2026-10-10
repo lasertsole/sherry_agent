@@ -111,9 +111,9 @@ class TestToctouRace:
         secret = virtual_root.parent / "toctou-secret.txt"
         secret.write_text("top-secret", encoding="utf-8")
 
-        import agent.tools.file_tools.read_file as read_file_module
+        import agent.tools.pub_base.path_utils as path_utils
 
-        real_resolve = read_file_module.resolve_workspace_path
+        real_resolve = path_utils.resolve_workspace_path
 
         def racing_resolve(file_path, root):
             resolved = real_resolve(file_path, root)
@@ -121,7 +121,9 @@ class TestToctouRace:
             _link(victim, secret)
             return resolved
 
-        monkeypatch.setattr(read_file_module, "resolve_workspace_path", racing_resolve)
+        # The shared resolver the file tools call resolves the name in its own
+        # module namespace, so the racing seam lives there.
+        monkeypatch.setattr(path_utils, "resolve_workspace_path", racing_resolve)
 
         result = json.loads(build_read_file_tool()._core("victim.txt", session_id=SESSION))
 
@@ -134,9 +136,9 @@ class TestToctouRace:
         secret = virtual_root.parent / "toctou-secret.txt"
         secret.write_text("top-secret", encoding="utf-8")
 
-        import agent.tools.file_tools.write_file as write_file_module
+        import agent.tools.pub_base.path_utils as path_utils
 
-        real_resolve = write_file_module.resolve_workspace_path
+        real_resolve = path_utils.resolve_workspace_path
 
         def racing_resolve(file_path, root):
             resolved = real_resolve(file_path, root)
@@ -144,7 +146,7 @@ class TestToctouRace:
             _link(victim, secret)
             return resolved
 
-        monkeypatch.setattr(write_file_module, "resolve_workspace_path", racing_resolve)
+        monkeypatch.setattr(path_utils, "resolve_workspace_path", racing_resolve)
 
         out = build_write_file_tool()._core("victim.txt", "pwned", session_id=SESSION)
 

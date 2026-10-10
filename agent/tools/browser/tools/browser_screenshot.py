@@ -13,15 +13,13 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
 
 
-class ScreenshotInput(BaseModel):
+class ScreenshotInput(BrowserPageInput):
     """Arguments of ``browser_screenshot``."""
 
     full_page: bool = Field(default=False, description="Capture beyond the viewport (whole page).")
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
-    session_id: SessionId = ""
 
 
 class BrowserScreenshotTool(BrowserTool):

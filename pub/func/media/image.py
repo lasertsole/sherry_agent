@@ -67,7 +67,7 @@ def validate_and_fix_base64(base64_string: str) -> str | None:
             return base64_data
 
     except Exception as e:
-        logger.error(f"base64 validation failed: {e}")
+        logger.exception(f"base64 validation failed: {e}")
         return None
 
 
@@ -133,7 +133,7 @@ def compress_image_if_needed(
         return compressed_data
 
     except Exception as e:
-        logger.error(f"Image compression failed: {e}")
+        logger.exception(f"Image compression failed: {e}")
         import traceback
 
         logger.debug(traceback.format_exc())
@@ -193,7 +193,7 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> by
             return image_data
 
         except requests.exceptions.HTTPError as e:
-            logger.error(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e}")
+            logger.exception(f"HTTP error (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 wait_time = 2**attempt  # Exponential backoff
                 logger.debug(f"Waiting {wait_time}s before retry...")
@@ -201,7 +201,7 @@ def download_with_retry(url: str, timeout: int = 10, max_retries: int = 3) -> by
             else:
                 return None
         except Exception as e:
-            logger.error(f"Download failed (attempt {attempt + 1}/{max_retries}): {e}")
+            logger.exception(f"Download failed (attempt {attempt + 1}/{max_retries}): {e}")
             if attempt < max_retries - 1:
                 time.sleep(2**attempt)
             else:
@@ -256,7 +256,7 @@ def clean_and_validate_base64(base64_string: str) -> str | None:
                 logger.error("base64 decoded content is empty")
                 return None
         except Exception as decode_err:
-            logger.error(f"base64 decode failed: {decode_err}")
+            logger.exception(f"base64 decode failed: {decode_err}")
             return None
 
         # Reassemble
@@ -271,7 +271,7 @@ def clean_and_validate_base64(base64_string: str) -> str | None:
         return result
 
     except Exception as e:
-        logger.error(f"base64 cleanup/validation failed: {e}")
+        logger.exception(f"base64 cleanup/validation failed: {e}")
         import traceback
 
         logger.debug(traceback.format_exc())
@@ -346,7 +346,7 @@ def download_and_convert_to_base64(
         return validated_uri
 
     except Exception as e:
-        logger.error(f"Download or conversion failed: {e}")
+        logger.exception(f"Download or conversion failed: {e}")
         import traceback
 
         logger.debug(traceback.format_exc())
@@ -437,7 +437,7 @@ def check_if_image_and_convert_to_base64(
             return False, content_type, detected_format, None
 
     except Exception as e:
-        logger.error(f"Check failed: {e}")
+        logger.exception(f"Check failed: {e}")
         import traceback
 
         logger.debug(traceback.format_exc())

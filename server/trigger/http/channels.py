@@ -31,7 +31,7 @@ def _save_channel_config(config_path: Path, data: dict) -> bool:
         atomic_write_text(config_path, json.dumps(data, ensure_ascii=False, indent=2), fsync=True)
         return True
     except Exception as e:
-        logger.error(f"Failed to save channel config: {e}")
+        logger.exception(f"Failed to save channel config: {e}")
         return False
 
 

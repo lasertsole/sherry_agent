@@ -6,17 +6,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, page_line, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, page_line, resolve_manager
 
 
-class SnapshotInput(BaseModel):
+class SnapshotInput(BrowserPageInput):
     """Arguments of ``browser_snapshot``."""
 
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
     max_elements: int | None = Field(
         default=None, ge=1, le=1000, description="Cap on interactive elements (default 200)."
     )
-    session_id: SessionId = ""
 
 
 def _format_snapshot(outcome: dict[str, Any]) -> str:

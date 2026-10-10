@@ -409,46 +409,14 @@ class RepetitionGuardWrapper:
     # ------------------------------------------------------------------
     @staticmethod
     def _extract_session_id(input_: Any, config: Any) -> str:
-        """Extract ``session_id`` from the input dict, ``Command.resume``,
-        or ``config['configurable']``.
+        """Session id from the input dict, ``Command.resume`` or the config.
 
-        Raises ``RuntimeError`` if it cannot be found.
+        Thin façade over the shared resolver (``tool_utils.extract_session_id``)
+        with the wrapper's stricter contract: missing -> ``RuntimeError``.
         """
-        # 1. Plain dict input (normal astream / ainvoke path)
-        if isinstance(input_, dict):
-            sid = input_.get("session_id", "")
-            if sid.strip():
-                return sid
+        from agent.tools.pub_base.tool_utils import extract_session_id
 
-        # 2. Command(resume=...) — HITL resume path
-        try:
-            from langgraph.types import Command
-
-            if isinstance(input_, Command):
-                resume = getattr(input_, "resume", None)
-                if isinstance(resume, dict):
-                    sid = resume.get("session_id", "")
-                    if sid.strip():
-                        return sid
-        except Exception as e:
-            logger.debug("[RepetitionGuardWrapper] Command.resume session_id probe failed: {}", e)
-
-        # 3. config configurable fallback
-        try:
-            cfg = config or {}
-            if isinstance(cfg, dict):
-                conf = cfg.get("configurable", {})
-                if isinstance(conf, dict):
-                    sid = conf.get("session_id", "")
-                    if sid.strip():
-                        return sid
-        except Exception as e:
-            logger.debug("[RepetitionGuardWrapper] config session_id probe failed: {}", e)
-
-        raise RuntimeError(
-            "RepetitionGuardWrapper: session_id is required but not found "
-            "in input, Command.resume, or config.configurable"
-        )
+        return extract_session_id(input_, config, require=True)
 
     # ------------------------------------------------------------------
     # Stream-mode detection

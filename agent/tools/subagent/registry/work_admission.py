@@ -37,7 +37,7 @@ async def _run_and_cleanup(coro, label: str) -> None:
     try:
         await coro
     except Exception as e:
-        logger.error("Root work '{}' failed: {}", label, e)
+        logger.exception("Root work '{}' failed: {}", label, e)
 
 
 async def _schedule_drain_retry(coro, label: str, delay: float = 5.0) -> None:

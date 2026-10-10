@@ -371,6 +371,6 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 **서브에이전트 경계.** 세 패밀리 모두 빌더(`build_taskflow_tools`, `build_todolist_tools`, `build_knowledge_tools`)가 `metadata["scope"] = "main_only"`를 부여합니다. `apply_tool_policy`(`agent/tools/subagent/spawn/inherited_tool_policy.py`)는 `main_only` 도구를 **가장 먼저 무조건** 제거합니다 — allow/deny 목록보다 앞서며 ORCHESTRATOR 해제로도 덮어쓸 수 없습니다 — 따라서 스폰된 자식 에이전트는 `taskflow_*`, `todowrite`/`todoread`, `knowledge` 도구를 절대 받지 않습니다. 같은 태그 패턴은 이미 `memory`, `skill_manage`, `sessions_kill`, `sessions_steer`를 포괄했습니다. 실제 도구 세트 단언은 `tests/agent/tools/taskflow/test_taskflow_tools.py`, `_build_child_agent` 경계는 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py`가 고정합니다.
 
-**세션 간 거부.** `taskflow_create`에서 다른 세션이 사용 중인 `flow_id`와 충돌하면 존재만 알리고 리비전은 누출하지 않습니다; 다른 세션의 flow에 대한 변경은 알 수 없는 id와 같은 "not found" 텍스트를 반환합니다. 읽기/목록/업데이트/퍼지 경로는 `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py`, `tests/server/DAO/test_clear_session.py`가 포괄합니다.
+**세션 간 거부.** `taskflow_create`에서 다른 세션이 사용 중인 `flow_id`와 충돌하면 존재만 알리고 리비전은 누출하지 않습니다; 다른 세션의 flow에 대한 변경은 알 수 없는 id와 같은 "not found" 텍스트를 반환합니다. 읽기/목록/업데이트/퍼지 경로는 `tests/agent/tools/taskflow/test_store_sqlite.py`, `test_taskflow_tools.py`, `test_dag_e2e.py`, `tests/server/service/test_session_cleanup_service.py`가 포괄합니다.
 
 

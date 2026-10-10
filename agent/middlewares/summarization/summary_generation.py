@@ -750,7 +750,7 @@ class SummaryGenerationMixin:
                     doc, messages_to_summarize, previous_doc, session_id=session_id
                 )
             except Exception as e:
-                logger.error("json_repair summary failed ({}) - using the free-form path", e)
+                logger.exception("json_repair summary failed ({}) - using the free-form path", e)
 
         prompt = self._build_summary_prompt(serialized, previous_summary, session_id=session_id)
         try:
@@ -761,7 +761,7 @@ class SummaryGenerationMixin:
                 return _build_static_fallback_summary(filtered)
             return summary
         except Exception as e:
-            logger.error("LLM summary failed: {}, using fallback", e)
+            logger.exception("LLM summary failed: {}, using fallback", e)
             return _build_static_fallback_summary(filtered)
 
     async def _acreate_summary(
@@ -813,7 +813,7 @@ class SummaryGenerationMixin:
                     session_id=session_id,
                 )
             except Exception as e:
-                logger.error("json_repair summary failed ({}) - using the free-form path", e)
+                logger.exception("json_repair summary failed ({}) - using the free-form path", e)
 
         prompt = await asyncio.to_thread(
             self._build_summary_prompt, serialized, previous_summary, session_id=session_id
@@ -826,7 +826,7 @@ class SummaryGenerationMixin:
                 return _build_static_fallback_summary(filtered)
             return summary
         except Exception as e:
-            logger.error("LLM summary failed: {}, using fallback", e)
+            logger.exception("LLM summary failed: {}, using fallback", e)
             return _build_static_fallback_summary(filtered)
 
     def _build_new_messages(self, summary: SummaryDoc | str) -> list[BaseMessage]:

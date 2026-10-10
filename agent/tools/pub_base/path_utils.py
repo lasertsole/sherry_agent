@@ -1,8 +1,14 @@
 """Shared path resolution utilities for file tools."""
 
+from __future__ import annotations
+
 import errno
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from langchain.agents.middleware.human_in_the_loop import HITLRequest
 
 from config import ROOT_DIR
 from config.path import resolve_default_project_dir
@@ -247,14 +253,14 @@ _ALLOWLIST_KEY = StateKey.EXTERNAL_PATH_ALLOWLIST
 
 
 def _extract_session_id(run_manager) -> str:
-    """Extract session_id from CallbackManagerForToolRun config.
+    """Session id from a tool's run manager (empty when unavailable).
 
-    Returns empty string when unavailable — callers must treat empty
-    as fail-closed (no HITL approval possible).
+    Thin façade over the shared resolver (``tool_utils.extract_session_id``):
+    callers must treat empty as fail-closed (no HITL approval possible).
     """
-    config = getattr(run_manager, "config", None) or {}
-    configurable = config.get("configurable", {})
-    return configurable.get("session_id", "")
+    from .tool_utils import extract_session_id
+
+    return extract_session_id(run_manager)
 
 
 def _is_yolo() -> bool:
@@ -404,6 +410,138 @@ def _is_materialized_link_path(path: Path, project_root: Path) -> bool:
     return False
 
 
+def resolve_tool_path(
+    file_path: str, session_id: str, action_desc: str
+) -> tuple[Path, Path | None, str | None]:
+    """Resolve a tool's file argument: ``(root, resolved, error_json)``.
+
+    The in-root gate runs first (PathGuard has already run — this is the second
+    line of defense); a path that escapes it may still be approved through the
+    external-path HITL flow, and a refusal comes back as the error JSON callers
+    return verbatim. ``action_desc`` words the approval prompt ("read file",
+    "write file", …).
+    """
+    from agent.tools.pub_base.tool_utils import tool_error
+
+    root = current_project_dir(session_id)
+    try:
+        return root, resolve_workspace_path(file_path, root), None
+    except PathOutOfBoundsError:
+        try:
+            resolved = resolve_external_path(
+                file_path, session_id=session_id, action_desc=action_desc
+            )
+        except PathOutOfBoundsError as e:
+            return root, None, tool_error(str(e))
+    return root, resolved, None
+
+
+def _absolute_candidate(file_path: str) -> Path:
+    """The raw path as an absolute Path (``~`` expanded, relative → ROOT_DIR)."""
+    p = Path(os.path.expanduser(file_path))
+    if not p.is_absolute():
+        p = ROOT_DIR / p
+    return p
+
+
+def _inside_session_root(resolved: Path, project_root: Path, candidate: Path) -> bool:
+    """True when the path is not external by the session-scoped routes.
+
+    1b. inside the session's OWN project directory — the operator pointed the
+        agent at that directory, so neither it nor anything beneath it is an
+        "external file". Checked here as well as in the tools' first resolution
+        (``resolve_workspace_path``) because a caller can arrive with the
+        process default as its root (cold mem tier, e.g. right after a restart);
+        the selected directory must never prompt whichever route a tool takes;
+    1c. inside the project dir but reached THROUGH a materialized isolation
+        link: a worktree cannot carry ignored paths, so the run's manifest
+        records the ones its tree links to (``src/``, the session workspace, …).
+        Following such a link stays inside the isolation, so it is not an
+        "external file" read; only a RECORDED materialization qualifies, so an
+        arbitrary symlink out of the tree still prompts.
+
+    The repository fast path (1a) is checked by the caller BEFORE this runs: it
+    needs no state lookup, and an internal path must never consult the register.
+    """
+    if resolved == project_root or resolved.is_relative_to(project_root):
+        return True
+    return _is_materialized_link_path(candidate, project_root)
+
+
+def _external_access_prompt(resolved: Path, project_root: Path, action_desc: str) -> HITLRequest:
+    """The approval card for one external path (options + review config)."""
+    from langchain.agents.middleware.human_in_the_loop import (
+        ActionRequest,
+        HITLRequest,
+        ReviewConfig,
+    )
+
+    action_request = ActionRequest(
+        name="external_file_access",
+        args={"path": str(resolved)},
+        description=(
+            f"External file access approval\n"
+            f"  Path: {resolved}\n"
+            f"  Project root: {project_root}\n"
+            f"  Intent: {action_desc or 'unspecified'}\n\n"
+            f"Options:\n"
+            f"  approve      — allow this file only (session-scoped, inherited by subagents)\n"
+            f"  approve_dir  — allow entire directory {resolved.parent}/ (session-scoped, "
+            f"inherited by subagents)\n"
+            f"  yolo         — permanently allow all external paths (no more prompts)\n"
+            f"  reject       — deny"
+        ),
+    )
+    review_config = ReviewConfig(
+        action_name="external_file_access",
+        allowed_decisions=["approve", "approve_dir", "yolo", "reject"],
+    )
+    return HITLRequest(
+        action_requests=[action_request],
+        review_configs=[review_config],
+    )
+
+
+def _apply_external_decision(resolved: Path, session_id: str, decision: dict[str, Any]) -> Path:
+    """Turn one approval decision into the resolved path (reject raises)."""
+    decision_type = decision.get("type", "")
+
+    if decision_type == "approve":
+        # Session-scoped: add exact path to allowlist
+        _add_to_allowlist(resolved, session_id, mode="file")
+        return resolved
+
+    if decision_type == "approve_dir":
+        # Session-scoped: add the parent directory (prefix match covers children)
+        _add_to_allowlist(resolved.parent, session_id, mode="dir")
+        return resolved
+
+    if decision_type == "yolo":
+        # Persistent global allow-all
+        from runtime import state_register_db
+
+        state_register_db.set_state(_GLOBAL_SESSION, _YOLO_KEY, True)
+        return resolved
+
+    # Reject
+    msg = decision.get("message", "Rejected by user")
+    raise PathOutOfBoundsError(f"External file access denied: {resolved} ({msg})")
+
+
+def _external_access_hitl(
+    resolved: Path, project_root: Path, session_id: str, action_desc: str
+) -> Path:
+    """Ask the operator about one external path and apply the decision."""
+    from langgraph.types import interrupt
+
+    hitl_response = interrupt(_external_access_prompt(resolved, project_root, action_desc))
+
+    decisions = hitl_response.get("decisions", [])
+    if not decisions:
+        raise PathOutOfBoundsError(f"External access denied (no decision): {resolved}")
+    return _apply_external_decision(resolved, session_id, decisions[0])
+
+
 def resolve_external_path(
     file_path: str,
     *,
@@ -431,33 +569,17 @@ def resolve_external_path(
         PathOutOfBoundsError: If denied by the deny list, by user, or for a
             subagent without prior authorization.
     """
-    p = Path(os.path.expanduser(file_path))
-    if not p.is_absolute():
-        p = ROOT_DIR / p
-    resolved = p.resolve()
+    candidate = _absolute_candidate(file_path)
+    resolved = candidate.resolve()
 
     # 1a. Inside the repository — safe path, and no state lookup (fast path).
     if resolved == ROOT_DIR or resolved.is_relative_to(ROOT_DIR):
         return resolved
 
-    # 1b. Inside the session's OWN project directory — the operator pointed the
-    #     agent at that directory, so neither it nor anything beneath it is an
-    #     "external file". Checked here as well as in the tools' first
-    #     resolution (``resolve_workspace_path``) because a caller can arrive
-    #     with the process default as its root (cold mem tier, e.g. right after
-    #     a restart); the selected directory must never prompt whichever route a
-    #     tool takes to ask.
+    # 1b/1c. Inside the session's project directory (directly or through a
+    # recorded materialized link) — the operator pointed the agent there.
     project_root = current_project_dir(session_id).resolve()
-    if resolved == project_root or resolved.is_relative_to(project_root):
-        return resolved
-
-    # 1c. Inside the session's project dir but reached THROUGH a materialized
-    #     isolation link: a worktree cannot carry ignored paths, so the run's
-    #     manifest records the ones its tree links to (``src/``, the session
-    #     workspace, …). Following such a link stays inside the isolation, so it
-    #     is not an "external file" read; only a RECORDED materialization
-    #     qualifies, so an arbitrary symlink out of the tree still prompts.
-    if _is_materialized_link_path(p, project_root):
+    if _inside_session_root(resolved, project_root, candidate):
         return resolved
 
     # 2. YOLO deny list — always enforced, even when YOLO/allowlist would allow
@@ -482,64 +604,4 @@ def resolve_external_path(
         )
 
     # 6. Main session — trigger HITL interrupt
-    from langchain.agents.middleware.human_in_the_loop import (
-        ActionRequest,
-        HITLRequest,
-        ReviewConfig,
-    )
-    from langgraph.types import interrupt
-
-    action_request = ActionRequest(
-        name="external_file_access",
-        args={"path": str(resolved)},
-        description=(
-            f"External file access approval\n"
-            f"  Path: {resolved}\n"
-            f"  Project root: {project_root}\n"
-            f"  Intent: {action_desc or 'unspecified'}\n\n"
-            f"Options:\n"
-            f"  approve      — allow this file only (session-scoped, inherited by subagents)\n"
-            f"  approve_dir  — allow entire directory {resolved.parent}/ (session-scoped, "
-            f"inherited by subagents)\n"
-            f"  yolo         — permanently allow all external paths (no more prompts)\n"
-            f"  reject       — deny"
-        ),
-    )
-    review_config = ReviewConfig(
-        action_name="external_file_access",
-        allowed_decisions=["approve", "approve_dir", "yolo", "reject"],
-    )
-
-    hitl_response = interrupt(
-        HITLRequest(
-            action_requests=[action_request],
-            review_configs=[review_config],
-        )
-    )
-
-    decisions = hitl_response.get("decisions", [])
-    if not decisions:
-        raise PathOutOfBoundsError(f"External access denied (no decision): {resolved}")
-
-    decision_type = decisions[0].get("type", "")
-
-    if decision_type == "approve":
-        # Session-scoped: add exact path to allowlist
-        _add_to_allowlist(resolved, session_id, mode="file")
-        return resolved
-
-    if decision_type == "approve_dir":
-        # Session-scoped: add the parent directory (prefix match covers children)
-        _add_to_allowlist(resolved.parent, session_id, mode="dir")
-        return resolved
-
-    if decision_type == "yolo":
-        # Persistent global allow-all
-        from runtime import state_register_db
-
-        state_register_db.set_state(_GLOBAL_SESSION, _YOLO_KEY, True)
-        return resolved
-
-    # Reject
-    msg = decisions[0].get("message", "Rejected by user")
-    raise PathOutOfBoundsError(f"External file access denied: {resolved} ({msg})")
+    return _external_access_hitl(resolved, project_root, session_id, action_desc)

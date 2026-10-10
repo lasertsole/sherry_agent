@@ -166,7 +166,7 @@ async def activate_swarm_run(
     try:
         await _on_swarm_run_started(updated)
     except Exception as e:
-        logger.error("onStartFailure for swarm run {}: {}", run_id, e)
+        logger.exception("onStartFailure for swarm run {}: {}", run_id, e)
         failed = updated.model_copy(
             update={
                 "swarm_run_state": SwarmRunState.FAILED.value,

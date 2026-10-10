@@ -718,19 +718,21 @@ def test_interrupted_tools_false_skipped(unit_test_config):
 
 @pytest.mark.asyncio
 async def test_get_pending_interrupt_returns_none_when_no_agent(unit_test_config, monkeypatch):
-    """Getting no built agent → no pending interrupt."""
+    """No reachable agent → no pending interrupt (the port answers None)."""
     from server.service import messages as _messages
+    import agent.state_port as state_port
 
-    async def _fake_built_agent():
+    async def _no_agent(session_id: str, graph=None):
         return None
 
-    monkeypatch.setattr(_messages, "built_agent", _fake_built_agent)
+    monkeypatch.setattr(state_port, "read_interrupt", _no_agent)
     assert await _messages.get_pending_interrupt("sess-no-pending") is None
 
 
 @pytest.mark.asyncio
 async def test_get_pending_interrupt_returns_none_when_no_task_state(unit_test_config, monkeypatch):
     """A built agent with no interrupt tasks → no pending interrupt."""
+    import agent.state_port as state_port
     from server.service import messages as _messages
 
     class _FakeTask:
@@ -743,10 +745,13 @@ async def test_get_pending_interrupt_returns_none_when_no_task_state(unit_test_c
         async def aget_state(self, config=None):
             return _FakeState()
 
-    async def _fake_built_agent():
-        return _FakeAgent()
+    # The scan lives in the port; the state double goes in there.
+    original = state_port.read_interrupt
 
-    monkeypatch.setattr(_messages, "built_agent", _fake_built_agent)
+    async def _scan(session_id: str, graph=None):
+        return await original(session_id, graph=_FakeAgent())
+
+    monkeypatch.setattr(state_port, "read_interrupt", _scan)
     assert await _messages.get_pending_interrupt("sess-no-pending") is None
 
 
@@ -778,10 +783,16 @@ async def test_get_pending_interrupt_reads_executed_action(unit_test_config, mon
         async def aget_state(self, config=None):
             return _FakeState()
 
-    async def _fake_built_agent():
-        return _FakeAgent()
+    # The scan itself lives in the agent-side port now; the service delegates to
+    # it, so the state double is injected there (same assertions either way).
+    import agent.state_port as state_port
 
-    monkeypatch.setattr(_messages, "built_agent", _fake_built_agent)
+    original = state_port.read_interrupt
+
+    async def _read(session_id: str, graph=None):
+        return await original(session_id, graph=_FakeAgent())
+
+    monkeypatch.setattr(state_port, "read_interrupt", _read)
     got = await _messages.get_pending_interrupt("sess-contract-1")
     assert got == {
         "tool_name": "clone",

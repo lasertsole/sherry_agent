@@ -4,17 +4,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, page_line, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, page_line, resolve_manager
 
 
-class NavigateInput(BaseModel):
+class NavigateInput(BrowserPageInput):
     """Arguments of ``browser_navigate``."""
 
     url: str = Field(description="Absolute URL to open (https://… or http://…).")
-    page: str | None = Field(
-        default=None, description="Page id from an earlier call; omit for the session's page."
-    )
-    session_id: SessionId = ""
 
 
 class BrowserNavigateTool(BrowserTool):

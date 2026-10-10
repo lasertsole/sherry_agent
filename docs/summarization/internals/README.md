@@ -51,7 +51,7 @@ Message persistence runs outside the compression path: human/AI messages are flu
 
 **Compression-time nudges** (`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): the memory review (`_nudge_memory`) is dispatched on every compression; plan extraction evaluates `_detect_todo_all_complete` at the same point. Both dispatch fire-and-forget under the NUDGE lane, so they can never block the model call. While a nudge lock is held the compression skips dispatch entirely (nothing is queued). The single-fire `nudge_plan_extraction_fired` flag allows one extraction per completion cycle, so a session that never compresses never fires plan extraction.
 
-**Cutoff selection** (`_determine_cutoff`, compression.py:277): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, compression.py:70); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (compression.py:311) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry core.py:421 / core.py:503), the cutoff never crosses the last `HumanMessage`.
+**Cutoff selection** (`_determine_cutoff`, compression.py:277): split the history into turns, walk **from the newest backwards** accumulating against the preserve budget `clamp(window × 0.25, 2 000, 15 000)` (`_calculate_preserve_budget`, compression.py:70); a turn that does not fully fit is split mid-turn. `_adjust_for_orphan_pairs` (compression.py:311) then walks the cutoff backwards until no `ToolMessage` is separated from its `AIMessage` tool-call. Unless the last-turn ratio gate fires (last user turn ≥ `LAST_TURN_RATIO_THRESHOLD (0.5)` of tokens — `_check_last_turn_ratio`, called at wrap entry inside `_plan_model_call`), the cutoff never crosses the last `HumanMessage`.
 
 Every failure mode is fail-open: if `_apply_compression` raises, the exception is logged and the original request proceeds unchanged — a broken compaction never breaks the turn.
 
@@ -164,16 +164,16 @@ State lives in session-scoped `state_register_mem` under **thirteen** `summariza
 | Effectiveness | (`_record_compression`, thrash.py:117) | message count reduced **or** token reduction ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | Successful non-LLM strategies (`dedup`/`prune`/`truncate`/`fallback`/`aggressive`) clear `skip_llm` again |
 | Degradation recovery budget | `summarization_recovery_attempts` | `MAX_RECOVERY_ATTEMPTS = 2` | Caps forced recoveries from the degradation monitor |
 
-**Degradation monitor** (`_monitor_degradation`, thrash.py:131): only consulted when a compaction actually happened this call (`_compaction_just_happened` flag). If the model's reply has no text, a counter increments; at `DEGRADATION_NO_TEXT_THRESHOLD (3)` consecutive empty replies — and while `summarization_recovery_attempts < 2` — it sets `force_recovery`, clears the ineffective streak and the session compression count. Any non-empty reply resets the counter. This catches the pathological "compact → model confused → empty output → compact again" loop. Note the interplay: the forced flag is read at wrap entry (core.py:426) **before** `_should_skip_compression`, and the skip gate consumes it by resetting the counters and proceeding (thrash.py:110–115) — recovery compression runs exactly once.
+**Degradation monitor** (`_monitor_degradation`, thrash.py:131): only consulted when a compaction actually happened this call (`_compaction_just_happened` flag). If the model's reply has no text, a counter increments; at `DEGRADATION_NO_TEXT_THRESHOLD (3)` consecutive empty replies — and while `summarization_recovery_attempts < 2` — it sets `force_recovery`, clears the ineffective streak and the session compression count. Any non-empty reply resets the counter. This catches the pathological "compact → model confused → empty output → compact again" loop. Note the interplay: the forced flag is read at wrap entry (`core.py::_plan_model_call`) **before** `_should_skip_compression`, and the skip gate consumes it by resetting the counters and proceeding (thrash.py:110–115) — recovery compression runs exactly once.
 
 ## 🔄 System Prompt Refresh
 
-Main agent only (`need_update_system_prompt=True`): after a compression the middleware rebuilds the system prompt and writes it to the `system_prompt` state key, so the next model call sees persona files / long-term memory as they are now. Two delivery paths: `request.override(system_message=SystemMessage(...))` directly after compaction, and — when a T1 compact already happened but the anti-thrash gate blocks a second one — the rebuilt prompt is still delivered in the gate path (core.py:441–459), because chains without the `@dynamic_prompt` system-prompt middleware (subagent / nudge pipelines) rely on this middleware delivering it. On the gate path the rebuild is injected **only when the request's current system message differs**: if the content already matches, no `override` and no new `SystemMessage` are created (the prompt is not re-injected).
+Main agent only (`need_update_system_prompt=True`): after a compression the middleware rebuilds the system prompt and writes it to the `system_prompt` state key, so the next model call sees persona files / long-term memory as they are now. Two delivery paths: `request.override(system_message=SystemMessage(...))` directly after compaction, and — when a T1 compact already happened but the anti-thrash gate blocks a second one — the rebuilt prompt is still delivered in the gate path (`core.py::_refresh_system_prompt_if_needed`), because chains without the `@dynamic_prompt` system-prompt middleware (subagent / nudge pipelines) rely on this middleware delivering it. On the gate path the rebuild is injected **only when the request's current system message differs**: if the content already matches, no `override` and no new `SystemMessage` are created (the prompt is not re-injected).
 
 ## 📌 Registration Sites
 
 ```python
-# agent/core.py:204 — main agent (Summarization is the LAST middleware:
+# agent/core.py:324 — main agent (Summarization is the LAST middleware:
 # innermost wrap layer, closest to the LLM)
 Summarization(
     need_update_system_prompt=True,
@@ -182,7 +182,7 @@ Summarization(
     trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
 )
 
-# agent/tools/subagent/spawn/core.py:909 — worker agent (first middleware)
+# agent/tools/subagent/spawn/core.py:1106 — worker agent (first middleware)
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

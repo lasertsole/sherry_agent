@@ -21,19 +21,18 @@ agents patched one file and both reported success.
 import hashlib
 import json
 import difflib
+from pathlib import Path
 from typing import override
 from difflib import SequenceMatcher
 from pydantic import BaseModel, Field
 from langchain_core.callbacks import CallbackManagerForToolRun
-from runtime.session.project_dir import current_project_dir
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
     tool_error,
     FileBusyError,
-    PathOutOfBoundsError,
     StaleWriteError,
-    _extract_session_id,
+    resolve_tool_session_id,
     atomic_write_bytes_no_follow,
     decode_text,
     display_path,
@@ -44,12 +43,11 @@ from agent.tools.pub_base import (
     note_edit,
     read_bytes_no_follow,
     sniff_text_encoding,
-    resolve_external_path,
-    resolve_workspace_path,
+    resolve_tool_path,
     revision_id,
     safe_error_detail,
 )
-from agent.tools.todolist.evidence_recorder import mark_evidence_stale
+from agent.tools.todolist.evidence_recorder import invalidates_evidence
 
 
 # ── Diff helper ──────────────────────────────────────────────────────────
@@ -134,6 +132,7 @@ class PatchFileTool(BaseTool):
 
     # ── shared core ────────────────────────────────────────────────────────
 
+    @invalidates_evidence()
     def _core(
         self,
         file_path: str,
@@ -142,17 +141,9 @@ class PatchFileTool(BaseTool):
         replace_all: bool = False,
         session_id: str = "",
     ) -> str:
-        # redundant: path_guard middleware handles this — kept as the second line of defense
-        try:
-            root = current_project_dir(session_id)
-            resolved = resolve_workspace_path(file_path, root)
-        except PathOutOfBoundsError:
-            try:
-                resolved = resolve_external_path(
-                    file_path, session_id=session_id, action_desc="patch file"
-                )
-            except PathOutOfBoundsError as e:
-                return tool_error(str(e))
+        root, resolved, error = resolve_tool_path(file_path, session_id, "patch file")
+        if error is not None or resolved is None or root is None:
+            return error or tool_error("Could not resolve the path")
 
         if not resolved.exists():
             return tool_error(f"File not found: {display_path(resolved, root)}")
@@ -164,78 +155,9 @@ class PatchFileTool(BaseTool):
             # read → replace → write cycle below cannot interleave with another
             # agent's patch of the same file.
             with file_write_lock(resolved):
-                read_raw, read_stat = read_bytes_no_follow(resolved)
-                if (read_encoding := sniff_text_encoding(read_raw)) is None:
-                    # Binary or a codec we do not edit: patching would rewrite
-                    # the bytes it cannot represent. Refuse, keep the file.
-                    return json.dumps(
-                        {
-                            "error": (
-                                "File is binary or not UTF-8/UTF-16 text; "
-                                "patch_file edits text only."
-                            ),
-                            "path": display_path(resolved, root),
-                            "hint": "Use terminal (cp / python) for resource files.",
-                        },
-                        ensure_ascii=False,
-                    )
-                content = decode_text(read_raw, read_encoding)
-
-                new_content, match_count, strategy, error = fuzzy_find_and_replace(
-                    content,
-                    old_string,
-                    new_string,
-                    replace_all,
+                outcome = self._apply_patch(
+                    resolved, root, old_string, new_string, replace_all, session_id
                 )
-
-                if error or match_count == 0:
-                    hint = ""
-                    if error and error.startswith("Could not find"):
-                        closest = _find_closest_lines(old_string, content)
-                        if closest:
-                            hint = f"\n\nDid you mean one of these sections?\n{closest}"
-                    return json.dumps(
-                        {
-                            "error": (error or "No match found") + hint,
-                            "path": display_path(resolved, root),
-                            "strategy": strategy,
-                        },
-                        ensure_ascii=False,
-                    )
-
-                # Layer 1 of the CAS: the file must still be the one we read.
-                # mtime+size first (cheap); a content hash exempts the case where
-                # they moved but the bytes are identical (touch / formatter no-op).
-                check_raw, check_stat = read_bytes_no_follow(resolved)
-                if (check_stat.st_mtime_ns, check_stat.st_size) != (
-                    read_stat.st_mtime_ns,
-                    read_stat.st_size,
-                ) and hashlib.sha256(check_raw).digest() != hashlib.sha256(read_raw).digest():
-                    return json.dumps(
-                        {
-                            "error": (
-                                "File changed on disk since it was read "
-                                "(another writer touched it)."
-                            ),
-                            "path": display_path(resolved, root),
-                            "hint": "Re-read the file and re-apply the patch.",
-                        },
-                        ensure_ascii=False,
-                    )
-
-                written = encode_text(new_content, read_encoding)
-                # Layer 2: the atomic write re-asserts the revision right before
-                # the replace, closing the window between the check above and it.
-                atomic_write_bytes_no_follow(
-                    resolved,
-                    written,
-                    expected_revision=revision_id(check_stat),
-                )
-                # A session that already knew the file advances with its own
-                # delta (see pub_base/read_state.py): the patch does not invent a
-                # license for a session that never read the file, but one that is
-                # held stays valid instead of going stale over this edit.
-                note_edit(session_id, resolved, file_revision(resolved))
         except StaleWriteError:
             return json.dumps(
                 {
@@ -259,7 +181,9 @@ class PatchFileTool(BaseTool):
         except OSError as e:
             return tool_error(f"Failed to write file: {safe_error_detail(e)}")
 
-        mark_evidence_stale(file_path, session_id)
+        if isinstance(outcome, str):
+            return outcome
+        content, new_content, strategy, match_count = outcome
         diff = _unified_diff(content, new_content, display_path(resolved, root))
 
         return json.dumps(
@@ -273,6 +197,92 @@ class PatchFileTool(BaseTool):
             ensure_ascii=False,
         )
 
+    def _apply_patch(
+        self,
+        resolved: Path,
+        root: Path,
+        old_string: str,
+        new_string: str,
+        replace_all: bool,
+        session_id: str,
+    ) -> str | tuple[str, str, str, int]:
+        """Replace the text under the path lock.
+
+        Returns the error JSON when the patch cannot be applied, else
+        ``(content, new_content, strategy, match_count)`` for the caller's diff.
+        """
+        read_raw, read_stat = read_bytes_no_follow(resolved)
+        if (read_encoding := sniff_text_encoding(read_raw)) is None:
+            # Binary or a codec we do not edit: patching would rewrite
+            # the bytes it cannot represent. Refuse, keep the file.
+            return json.dumps(
+                {
+                    "error": (
+                        "File is binary or not UTF-8/UTF-16 text; patch_file edits text only."
+                    ),
+                    "path": display_path(resolved, root),
+                    "hint": "Use terminal (cp / python) for resource files.",
+                },
+                ensure_ascii=False,
+            )
+        content = decode_text(read_raw, read_encoding)
+
+        new_content, match_count, strategy, error = fuzzy_find_and_replace(
+            content,
+            old_string,
+            new_string,
+            replace_all,
+        )
+
+        if error or match_count == 0:
+            hint = ""
+            if error and error.startswith("Could not find"):
+                closest = _find_closest_lines(old_string, content)
+                if closest:
+                    hint = f"\n\nDid you mean one of these sections?\n{closest}"
+            return json.dumps(
+                {
+                    "error": (error or "No match found") + hint,
+                    "path": display_path(resolved, root),
+                    "strategy": strategy,
+                },
+                ensure_ascii=False,
+            )
+
+        # Layer 1 of the CAS: the file must still be the one we read.
+        # mtime+size first (cheap); a content hash exempts the case where
+        # they moved but the bytes are identical (touch / formatter no-op).
+        check_raw, check_stat = read_bytes_no_follow(resolved)
+        if (check_stat.st_mtime_ns, check_stat.st_size) != (
+            read_stat.st_mtime_ns,
+            read_stat.st_size,
+        ) and hashlib.sha256(check_raw).digest() != hashlib.sha256(read_raw).digest():
+            return json.dumps(
+                {
+                    "error": (
+                        "File changed on disk since it was read (another writer touched it)."
+                    ),
+                    "path": display_path(resolved, root),
+                    "hint": "Re-read the file and re-apply the patch.",
+                },
+                ensure_ascii=False,
+            )
+
+        written = encode_text(new_content, read_encoding)
+        # Layer 2: the atomic write re-asserts the revision right before
+        # the replace, closing the window between the check above and it.
+        atomic_write_bytes_no_follow(
+            resolved,
+            written,
+            expected_revision=revision_id(check_stat),
+        )
+        # A session that already knew the file advances with its own
+        # delta (see pub_base/read_state.py): the patch does not invent a
+        # license for a session that never read the file, but one that is
+        # held stays valid instead of going stale over this edit.
+        note_edit(session_id, resolved, file_revision(resolved))
+        return content, new_content, strategy, match_count
+
     @override
     def _run(
         self,
@@ -283,7 +293,7 @@ class PatchFileTool(BaseTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(file_path, old_string, new_string, replace_all, session_id)
 
     @override
@@ -298,7 +308,7 @@ class PatchFileTool(BaseTool):
     ) -> str:
         import asyncio
 
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return await asyncio.to_thread(
             self._core, file_path, old_string, new_string, replace_all, session_id
         )

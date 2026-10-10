@@ -90,7 +90,7 @@ def _new_sid(tag: str) -> str:
 async def _purge_session(session_id: str) -> None:
     """Delete every trace of a session this module created.
 
-    Mirrors ``server/DAO/messages.py::clear_session`` minus the session-end
+    Mirrors ``server/service/session_cleanup_service.py::purge_session`` minus the session-end
     continuity save (a test session has nothing worth carrying forward).
     """
     with contextlib.suppress(Exception):

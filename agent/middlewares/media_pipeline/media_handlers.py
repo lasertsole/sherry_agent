@@ -192,7 +192,7 @@ def _download_url_to_temp(
         )
         return media_path.as_posix()
     except Exception as e:
-        logger.error(f"Media download failed for {url}: {e}")
+        logger.exception(f"Media download failed for {url}: {e}")
         return None
 
 
@@ -294,7 +294,7 @@ class ImageUrlHandler(MediaItemHandler):
         try:
             image_bytes = base64.b64decode(base64_data)
         except Exception as e:
-            logger.error(f"Base64 decode failed: {e}")
+            logger.exception(f"Base64 decode failed: {e}")
             return
 
         if _exceeds_media_limit(image_bytes, paths, "image"):
@@ -303,7 +303,7 @@ class ImageUrlHandler(MediaItemHandler):
         try:
             image = Image.open(io.BytesIO(image_bytes))
         except Exception as e:
-            logger.error(f"Image decode failed: {e}")
+            logger.exception(f"Image decode failed: {e}")
             return
 
         temp_dir = src_dir / session_id / "mutil_temp"

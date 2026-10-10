@@ -9,6 +9,7 @@ ledger write must never break the tool that produced the result.
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 
 from loguru import logger
 
@@ -72,3 +73,65 @@ def mark_evidence_stale(file_path: str, session_id: str) -> None:
         EvidenceLedger.for_session(session_id).mark_stale_for_path(file_path)
     except Exception as exc:
         logger.warning("evidence stale mark failed: {}", exc)
+
+
+def mark_evidence_stale_for_paths(paths: Iterable[str], session_id: str) -> None:
+    """Batch form of :func:`mark_evidence_stale` (fail-open, one row per path)."""
+    for path in paths:
+        mark_evidence_stale(str(path), session_id)
+
+
+def invalidates_evidence(
+    path_arg: str = "file_path",
+    session_arg: str = "session_id",
+):
+    """Decorate a file-write handler so its path's evidence goes stale.
+
+    The write paths used to place the ``mark_evidence_stale`` call by hand —
+    and write_file placed it twice (success and failure) while its exception
+    branch was easy to miss on a new write path. Wrapping the handler instead
+    fires on EVERY outcome the handler can have: a returned error string, a
+    raised exception, or a completed write. Fail-open: the mark itself never
+    raises, and an unresolvable argument (a direct caller that passes the path
+    positionally and the session by keyword) only skips the mark.
+    """
+    import functools
+    import inspect
+
+    def decorate(fn):
+        signature = inspect.signature(fn)
+
+        def _resolve(args, kwargs) -> tuple[str, str]:
+            try:
+                bound = signature.bind_partial(*args, **kwargs)
+            except TypeError:
+                return "", ""
+            return str(bound.arguments.get(path_arg) or ""), str(
+                bound.arguments.get(session_arg) or ""
+            )
+
+        if inspect.iscoroutinefunction(fn):
+
+            @functools.wraps(fn)
+            async def async_wrapper(*args, **kwargs):
+                try:
+                    return await fn(*args, **kwargs)
+                finally:
+                    path, session_id = _resolve(args, kwargs)
+                    if path:
+                        mark_evidence_stale(path, session_id)
+
+            return async_wrapper
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                path, session_id = _resolve(args, kwargs)
+                if path:
+                    mark_evidence_stale(path, session_id)
+
+        return wrapper
+
+    return decorate

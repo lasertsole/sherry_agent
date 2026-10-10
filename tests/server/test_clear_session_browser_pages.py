@@ -32,11 +32,13 @@ class _RecordingManager:
 def _wire(monkeypatch, manager) -> list[str]:
     cleared: list[str] = []
 
-    async def fake_dao(session_id: str) -> None:
+    async def fake_purge(session_id: str) -> None:
         cleared.append(session_id)
 
     monkeypatch.setattr(bm, "get_browser_manager", lambda: manager)
-    monkeypatch.setattr(service, "clear_session_dao", fake_dao)
+    # The purge itself lives in the service layer's session_cleanup_service; the
+    # facade's own job is only "release the pages, then purge".
+    monkeypatch.setattr(service, "purge_session", fake_purge)
     return cleared
 
 

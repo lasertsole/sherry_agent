@@ -100,7 +100,7 @@ def _spawn_daemon() -> None:
         _PID_PATH.write_text(str(proc.pid), encoding="utf-8")
         logger.info(f"STT daemon spawning (pid={proc.pid}).")
     except Exception as e:  # noqa: BLE001
-        logger.error(f"STT daemon spawn failed: {e}")
+        logger.exception(f"STT daemon spawn failed: {e}")
 
 
 @validate_call
@@ -156,5 +156,5 @@ def stt(audio_path: str) -> str:
         return suc_mes
     except Exception as e:  # noqa: BLE001
         err_mes: str = f"[Error] Call failed: {e}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         return err_mes

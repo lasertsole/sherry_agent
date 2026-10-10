@@ -51,7 +51,7 @@ TTL 注册表本体（`record_first_seen` / `select_expired` / `truncate_expired
 
 **压缩时 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）：记忆回顾（`_nudge_memory`）每次压缩都派发；计划提取在同一时点评估 `_detect_todo_all_complete`。两者都以 fire-and-forget 方式在 NUDGE 车道上派发，绝不可能阻塞模型调用。nudge 锁被持有时压缩完全跳过派发（不排队）。单发 `nudge_plan_extraction_fired` 标记保证每个完成周期只提取一次 —— 因此从不压缩的会话永远不会触发计划提取。
 
-**切点选择**（`_determine_cutoff`，compression.py:277）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，compression.py:70）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（compression.py:311）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口 core.py:421 / core.py:503 调用），切点绝不越过最后一条 `HumanMessage`。
+**切点选择**（`_determine_cutoff`，compression.py:277）：把历史切成回合，**从最新往回**累加、对照保留预算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`，compression.py:70）；放不下的整回合可以从中劈开。`_adjust_for_orphan_pairs`（compression.py:311）再把切点往回走，直到没有 `ToolMessage` 与它的 `AIMessage` 工具调用分离。除非最后一回合比例闸门触发（最后一条用户消息 ≥ token 总量的 `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`，在 wrap 入口的 `_plan_model_call` 中调用），切点绝不越过最后一条 `HumanMessage`。
 
 所有失败模式都是 fail-open：`_apply_compression` 抛异常只会记日志，原始请求原样继续 —— 坏掉的压缩从不弄坏回合。
 
@@ -164,16 +164,16 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 | 有效性判定 | （`_record_compression`，thrash.py:117 | 消息数下降**或** token 缩减 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 成功的非 LLM 策略（`dedup`/`prune`/`truncate`/`fallback`/`aggressive`）会再次清掉 `skip_llm` |
 | 退化恢复预算 | `summarization_recovery_attempts` | `MAX_RECOVERY_ATTEMPTS = 2` | 限制退化监视器发起的强制恢复次数 |
 
-**退化监视器**（`_monitor_degradation`，thrash.py:131）：只在本次调用真的发生过压缩时才被咨询（`_compaction_just_happened` 标志）。模型回复没有文本时计数器递增；连续 `DEGRADATION_NO_TEXT_THRESHOLD (3)` 次空回复 —— 且 `summarization_recovery_attempts < 2` —— 时置 `force_recovery`、清零无效连击与会话压缩计数。任何非空回复都会清零计数器。它捕捉的是"压缩 → 模型懵了 → 空输出 → 再压缩"的病态循环。注意二者的配合：force 标志在 wrap 入口（core.py:426）被读取，**先于** `_should_skip_compression`，而跳过闸门会消费它（重置各计数器并继续，thrash.py:110–115）—— 恢复压缩恰好跑一次。
+**退化监视器**（`_monitor_degradation`，thrash.py:131）：只在本次调用真的发生过压缩时才被咨询（`_compaction_just_happened` 标志）。模型回复没有文本时计数器递增；连续 `DEGRADATION_NO_TEXT_THRESHOLD (3)` 次空回复 —— 且 `summarization_recovery_attempts < 2` —— 时置 `force_recovery`、清零无效连击与会话压缩计数。任何非空回复都会清零计数器。它捕捉的是"压缩 → 模型懵了 → 空输出 → 再压缩"的病态循环。注意二者的配合：force 标志在 wrap 入口（`core.py::_plan_model_call`）被读取，**先于** `_should_skip_compression`，而跳过闸门会消费它（重置各计数器并继续，thrash.py:110–115）—— 恢复压缩恰好跑一次。
 
 ## 🔄 系统提示词刷新
 
-仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（core.py:441–459），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / nudge 管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
+仅主 agent（`need_update_system_prompt=True`）：压缩后中间件重建系统提示词并写入 `system_prompt` 状态键，让下一次模型调用看到的是当前的人设文件 / 长期记忆。两条送达路径：压缩后直接 `request.override(system_message=SystemMessage(...))`；以及当 T1 已发生过 compact、而防抖闸门又拦下了第二次压缩时，重建的提示词仍会在闸门路径中送达（`core.py::_refresh_system_prompt_if_needed`），因为不带 `@dynamic_prompt` 系统提示词中间件的链路（子 Agent / nudge 管线）依赖本中间件送达它。闸门路径仅在请求当前 system message **内容不同**时才注入：内容相同则不 override、不新建 `SystemMessage`（不会重复注入）。
 
 ## 📌 注册点
 
 ```python
-# agent/core.py:204 — 主 agent（Summarization 是最后一个中间件：
+# agent/core.py:324 — 主 agent（Summarization 是最后一个中间件：
 # 最内层 wrap，离 LLM 最近）
 Summarization(
     need_update_system_prompt=True,
@@ -182,7 +182,7 @@ Summarization(
     trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
 )
 
-# agent/tools/subagent/spawn/core.py:909 — worker agent（第一个中间件）
+# agent/tools/subagent/spawn/core.py:1106 — worker agent（第一个中间件）
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

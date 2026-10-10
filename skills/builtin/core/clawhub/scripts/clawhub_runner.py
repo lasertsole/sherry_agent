@@ -80,7 +80,7 @@ def _write_state(state: dict[str, dict[str, bool]]) -> None:
         try:
             os.unlink(temp_path)
         except OSError:
-            logger.error("Failed to remove temp state file %s", temp_path, exc_info=True)
+            logger.exception("Failed to remove temp state file %s", temp_path, exc_info=True)
         raise
 
 
@@ -122,7 +122,7 @@ def _rollback_skill(skill_root: Path, name: str, reason: str) -> bool:
     try:
         _remove_tree(skill_root)
     except Exception as exc:  # noqa: BLE001 - removal must not crash the command
-        logger.error(f"Failed to roll back skill '{name}' ({reason}): {exc}")
+        logger.exception(f"Failed to roll back skill '{name}' ({reason}): {exc}")
         return False
     # Drop the state entry so the skill cannot be toggled active later.
     state = _read_state()
@@ -131,7 +131,7 @@ def _rollback_skill(skill_root: Path, name: str, reason: str) -> bool:
         try:
             _write_state(state)
         except Exception as exc:  # noqa: BLE001
-            logger.error(f"Failed to prune state for rolled-back skill '{name}': {exc}")
+            logger.exception(f"Failed to prune state for rolled-back skill '{name}': {exc}")
     logger.info(f"Rolled back skill '{name}' downloaded via clawhub ({reason}).")
     return True
 
@@ -232,7 +232,9 @@ def _scan_plugin_skills() -> dict[str, Any]:
             try:
                 _write_state(current)
             except Exception as exc:  # noqa: BLE001
-                logger.error(f"Failed to prune orphaned state entries after clawhub scan: {exc}")
+                logger.exception(
+                    f"Failed to prune orphaned state entries after clawhub scan: {exc}"
+                )
 
     return summary
 

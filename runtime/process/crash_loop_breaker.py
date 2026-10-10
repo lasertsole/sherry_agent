@@ -91,7 +91,7 @@ def _try_write_state(state: dict[str, Any]) -> None:
     try:
         _write_state(state)
     except OSError as e:
-        logger.error("CrashLoopBreaker: failed to write state file {}: {}", STATE_PATH, e)
+        logger.exception("CrashLoopBreaker: failed to write state file {}: {}", STATE_PATH, e)
 
 
 def record_boot(clean: bool, reason: str = "") -> bool:
@@ -140,7 +140,7 @@ def clear() -> None:
     try:
         STATE_PATH.unlink(missing_ok=True)
     except OSError as e:
-        logger.error("CrashLoopBreaker: failed to clear state file {}: {}", STATE_PATH, e)
+        logger.exception("CrashLoopBreaker: failed to clear state file {}: {}", STATE_PATH, e)
 
 
 def mark_clean_exit() -> None:

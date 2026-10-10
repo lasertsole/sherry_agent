@@ -137,7 +137,7 @@ async def _consume_loop() -> None:
             logger.info("EventBusBridge consume loop cancelled")
             break
         except Exception as e:
-            logger.error("EventBusBridge consume loop error: {}", e)
+            logger.exception("EventBusBridge consume loop error: {}", e)
             await asyncio.sleep(1.0)
 
 

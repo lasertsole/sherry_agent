@@ -12,12 +12,12 @@ from context_engine import get_session_ids
 from pub.types.message import MultiModalMessage
 from runtime.session.state_keys import StateKey
 from pub.func import build_agent_config, is_url
-from ..DAO import clear_session as clear_session_dao
 from context_engine.curator import reset_idle_for_seconds
 from agent.middlewares.heartbeat_staleness.core import HeartbeatTimeoutError
 from context_engine import get_history_by_turn_page as _get_history_by_turn_page
 from langchain_core.messages import HumanMessage, BaseMessage, ToolMessage
 
+from .session_cleanup_service import purge_session
 from .stream_dispatch import (
     StreamTurn,
     _consume_tool_duration,
@@ -570,38 +570,9 @@ async def get_pending_interrupt(session_id: str) -> dict[str, Any] | None:
         }
     """
     try:
-        agent = await built_agent()
-        if agent is None:
-            return None
-        config = build_agent_config(session_id)
-        state = await agent.aget_state(config=config)
+        from agent.state_port import read_interrupt
 
-        # Scan EVERY task of the superstep: a graph that resumed several
-        # parallel branches carries one task each, and stopping at the first
-        # task silently dropped the approval of a later one (the frontend then
-        # showed no dialog at all). The first interrupt with a payload wins.
-        for task in getattr(state, "tasks", []):
-            if not (hasattr(task, "interrupts") and task.interrupts):
-                continue
-            for intr in task.interrupts:
-                value = getattr(intr, "value", None)
-                if value is None:
-                    continue
-                action_requests = (
-                    value.get("action_requests", []) if isinstance(value, dict) else []
-                )
-                review_configs = value.get("review_configs", []) if isinstance(value, dict) else []
-                if not action_requests:
-                    continue
-                ar = action_requests[0]
-                rc = review_configs[0] if review_configs else {}
-                return {
-                    "tool_name": ar.get("name", "unknown"),
-                    "tool_args": ar.get("args", {}),
-                    "description": ar.get("description", ""),
-                    "allowed_decisions": rc.get("allowed_decisions", ["approve", "reject"]),
-                }
-        return None
+        return await read_interrupt(session_id)
     except Exception as e:
         # A real failure here hides the approval dialog for a turn that is
         # actually parked: log it loud enough to be found from the log alone.
@@ -652,7 +623,7 @@ async def clear_session(session_id: str):
         await get_browser_manager().close_session(session_id)
     except Exception:  # noqa: BLE001 - cleanup must never fail the clear
         logger.debug("Browser page cleanup skipped for {}", session_id)
-    await clear_session_dao(session_id=session_id)
+    await purge_session(session_id=session_id)
     logger.debug(f"Session history cleared: session_id={session_id}")
 
 

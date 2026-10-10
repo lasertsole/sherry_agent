@@ -27,7 +27,6 @@ from typing import override
 from pydantic import BaseModel
 
 from langchain_core.callbacks import CallbackManagerForToolRun
-from runtime.session.project_dir import current_project_dir
 from langchain_community.tools.file_management import WriteFileTool
 from langchain_community.tools.file_management.write import WriteFileInput
 
@@ -36,9 +35,8 @@ from agent.tools.pub_base import (
     tool_error,
     FileBusyError,
     FileLicense,
-    PathOutOfBoundsError,
     StaleWriteError,
-    _extract_session_id,
+    resolve_tool_session_id,
     _open_no_follow,
     atomic_write_bytes_no_follow,
     decode_text,
@@ -50,12 +48,11 @@ from agent.tools.pub_base import (
     note_edit,
     note_overwrite,
     read_bytes_no_follow,
-    resolve_external_path,
-    resolve_workspace_path,
+    resolve_tool_path,
     safe_error_detail,
     sniff_text_encoding,
 )
-from agent.tools.todolist.evidence_recorder import mark_evidence_stale
+from agent.tools.todolist.evidence_recorder import invalidates_evidence
 
 
 class FormattedWriteFileInput(WriteFileInput):
@@ -152,6 +149,7 @@ class FormattedWriteFileTool(WriteFileTool):
 
     # ── shared core ────────────────────────────────────────────────────────
 
+    @invalidates_evidence()
     def _core(
         self,
         file_path: str,
@@ -159,110 +157,16 @@ class FormattedWriteFileTool(WriteFileTool):
         append: bool = False,
         session_id: str = "",
     ) -> str:
-        # redundant: path_guard middleware handles this — kept as the second line of defense
-        try:
-            root = current_project_dir(session_id)
-            resolved = resolve_workspace_path(file_path, root)
-        except PathOutOfBoundsError:
-            try:
-                resolved = resolve_external_path(
-                    file_path, session_id=session_id, action_desc="write file"
-                )
-            except PathOutOfBoundsError as e:
-                return tool_error(str(e))
+        root, resolved, error = resolve_tool_path(file_path, session_id, "write file")
+        if error is not None or resolved is None or root is None:
+            return error or tool_error("Could not resolve the path")
 
         try:
             resolved.parent.mkdir(parents=True, exist_ok=True)
-            is_py = resolved.suffix == ".py"
             # One writer per path at a time: in-process (other agents) and
             # cross-process (a second Sherry process on the same project root).
             with file_write_lock(resolved):
-                existing_encoding = _existing_text_encoding(resolved)
-                if existing_encoding is None:
-                    # A resource file (image, archive, UTF-16/legacy text): the
-                    # text tools refuse rather than replace it with mojibake.
-                    return json.dumps(
-                        {
-                            "error": (
-                                "Target is a binary or non-UTF-8 file "
-                                "(only UTF-8 and BOM-marked UTF-16 text is edited)."
-                            ),
-                            "path": display_path(resolved, root),
-                            "hint": (
-                                "Use terminal (e.g. cp / python) for resource files; "
-                                "write_file edits text only."
-                            ),
-                        },
-                        ensure_ascii=False,
-                    )
-                if append and existing_encoding not in ("utf-8", "utf-8-sig"):
-                    # Appending into UTF-16 would either write UTF-8 bytes into a
-                    # UTF-16 file or plant a second BOM mid-file. A whole-file
-                    # read + write is the safe path, and the license allows it.
-                    return json.dumps(
-                        {
-                            "error": (
-                                "Cannot append to a non-UTF-8 text file "
-                                f"(detected {existing_encoding}); append is UTF-8 only."
-                            ),
-                            "path": display_path(resolved, root),
-                            "hint": "Read the file and write the whole content instead of appending.",
-                        },
-                        ensure_ascii=False,
-                    )
-                if is_py and append:
-                    # Append then format the WHOLE file: one atomic write of the
-                    # reformatted result instead of the old append+rewrite pair.
-                    existing = ""
-                    with contextlib.suppress(FileNotFoundError):
-                        existing = decode_text(read_bytes_no_follow(resolved)[0], existing_encoding)
-                    written = encode_text(_format_py_code(existing + text), existing_encoding)
-                    atomic_write_bytes_no_follow(resolved, written)
-                    note_edit(session_id, resolved, file_revision(resolved))
-                elif append:
-                    # Plain append keeps O_APPEND semantics (crash-tolerant by
-                    # construction); the lock still serializes its writers. The
-                    # bytes are UTF-8 — a BOM (utf-8-sig) belongs to the file's
-                    # first bytes only and is never re-emitted here.
-                    _append_bytes_no_follow(resolved, text.encode("utf-8"))
-                    note_edit(session_id, resolved, file_revision(resolved))
-                else:
-                    try:
-                        license = _overwrite_precondition(session_id, resolved)
-                    except UnreadFileError:
-                        return json.dumps(
-                            {
-                                "error": (
-                                    "File exists but has not been read in this session; "
-                                    "refusing to overwrite content the agent has not seen."
-                                ),
-                                "path": display_path(resolved, root),
-                                "hint": (
-                                    "Read it with read_file first, then write — or use "
-                                    "patch_file for a targeted change."
-                                ),
-                            },
-                            ensure_ascii=False,
-                        )
-                    assert license is not None  # the gate above answered otherwise
-                    payload = _format_py_code(text) if is_py else text
-                    written = encode_text(payload, license.encoding)
-                    # ``absent`` is a real precondition: a file another writer
-                    # creates in the window is refused, not clobbered.
-                    atomic_write_bytes_no_follow(
-                        resolved,
-                        written,
-                        expected_revision=license.revision,
-                    )
-                    # This session authored the whole file: it knows the revision
-                    # it produced, so the next overwrite is licensed against it
-                    # — and in the codec it was written in.
-                    note_overwrite(
-                        session_id,
-                        resolved,
-                        file_revision(resolved),
-                        encoding=license.encoding,
-                    )
+                error = self._write_locked(resolved, root, text, append, session_id)
         except StaleWriteError:
             return json.dumps(
                 {
@@ -282,14 +186,117 @@ class FormattedWriteFileTool(WriteFileTool):
                 ensure_ascii=False,
             )
         except Exception as e:
-            # Same JSON shape as every other branch, and the evidence is
-            # invalidated here too: the file may have been touched before the
-            # failure.
-            mark_evidence_stale(file_path, session_id)
+            # Same JSON shape as every other branch.
             return tool_error(safe_error_detail(e), path=display_path(resolved, root))
 
-        mark_evidence_stale(file_path, session_id)
+        if error is not None:
+            return error
         return f"File written successfully to {display_path(resolved, root)}."
+
+    def _write_locked(
+        self,
+        resolved: Path,
+        root: Path,
+        text: str,
+        append: bool,
+        session_id: str,
+    ) -> str | None:
+        """Apply the write under the path lock; None on success, else error JSON.
+
+        Three modes: append to Python (whole-file format + one atomic write),
+        plain append (O_APPEND semantics, crash-tolerant by construction), and
+        overwrite (read-before-write license + revision CAS).
+        """
+        is_py = resolved.suffix == ".py"
+        existing_encoding = _existing_text_encoding(resolved)
+        if existing_encoding is None:
+            # A resource file (image, archive, UTF-16/legacy text): the
+            # text tools refuse rather than replace it with mojibake.
+            return json.dumps(
+                {
+                    "error": (
+                        "Target is a binary or non-UTF-8 file "
+                        "(only UTF-8 and BOM-marked UTF-16 text is edited)."
+                    ),
+                    "path": display_path(resolved, root),
+                    "hint": (
+                        "Use terminal (e.g. cp / python) for resource files; "
+                        "write_file edits text only."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        if append and existing_encoding not in ("utf-8", "utf-8-sig"):
+            # Appending into UTF-16 would either write UTF-8 bytes into a
+            # UTF-16 file or plant a second BOM mid-file. A whole-file
+            # read + write is the safe path, and the license allows it.
+            return json.dumps(
+                {
+                    "error": (
+                        "Cannot append to a non-UTF-8 text file "
+                        f"(detected {existing_encoding}); append is UTF-8 only."
+                    ),
+                    "path": display_path(resolved, root),
+                    "hint": "Read the file and write the whole content instead of appending.",
+                },
+                ensure_ascii=False,
+            )
+        if is_py and append:
+            # Append then format the WHOLE file: one atomic write of the
+            # reformatted result instead of the old append+rewrite pair.
+            existing = ""
+            with contextlib.suppress(FileNotFoundError):
+                existing = decode_text(read_bytes_no_follow(resolved)[0], existing_encoding)
+            written = encode_text(_format_py_code(existing + text), existing_encoding)
+            atomic_write_bytes_no_follow(resolved, written)
+            note_edit(session_id, resolved, file_revision(resolved))
+            return None
+        if append:
+            # Plain append keeps O_APPEND semantics (crash-tolerant by
+            # construction); the lock still serializes its writers. The
+            # bytes are UTF-8 — a BOM (utf-8-sig) belongs to the file's
+            # first bytes only and is never re-emitted here.
+            _append_bytes_no_follow(resolved, text.encode("utf-8"))
+            note_edit(session_id, resolved, file_revision(resolved))
+            return None
+
+        try:
+            license = _overwrite_precondition(session_id, resolved)
+        except UnreadFileError:
+            return json.dumps(
+                {
+                    "error": (
+                        "File exists but has not been read in this session; "
+                        "refusing to overwrite content the agent has not seen."
+                    ),
+                    "path": display_path(resolved, root),
+                    "hint": (
+                        "Read it with read_file first, then write — or use "
+                        "patch_file for a targeted change."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+        assert license is not None  # the gate above answered otherwise
+        payload = _format_py_code(text) if is_py else text
+        written = encode_text(payload, license.encoding)
+        # ``absent`` is a real precondition: a file another writer
+        # creates in the window is refused, not clobbered.
+        atomic_write_bytes_no_follow(
+            resolved,
+            written,
+            expected_revision=license.revision,
+        )
+        # This session authored the whole file: it knows the revision
+        # it produced, so the next overwrite is licensed against it
+        # — and in the codec it was written in.
+        note_overwrite(
+            session_id,
+            resolved,
+            file_revision(resolved),
+            encoding=license.encoding,
+        )
+        return None
 
     @override
     def _run(
@@ -300,7 +307,7 @@ class FormattedWriteFileTool(WriteFileTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(file_path, text, append, session_id)
 
     @override
@@ -312,7 +319,7 @@ class FormattedWriteFileTool(WriteFileTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return await asyncio.to_thread(self._core, file_path, text, append, session_id)
 
 

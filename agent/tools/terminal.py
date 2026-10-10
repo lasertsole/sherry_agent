@@ -48,7 +48,11 @@ from langchain_community.tools.shell.tool import ShellInput
 from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackManagerForToolRun
 from langchain_core.tools import ToolException
 
-from agent.tools.pub_base import SessionId, _extract_session_id
+from agent.tools.pub_base import (
+    SessionId,
+    _extract_session_id,
+    resolve_tool_session_id,
+)
 
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import areap_process, reap_process
@@ -342,7 +346,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
-        cwd = self._resolve_cwd(session_id or _extract_session_id(run_manager))
+        cwd = self._resolve_cwd(resolve_tool_session_id(session_id, run_manager))
 
         env = scrub_env()
         if sandbox:
@@ -383,7 +387,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
-        cwd = self._resolve_cwd(session_id or _extract_session_id(run_manager))
+        cwd = self._resolve_cwd(resolve_tool_session_id(session_id, run_manager))
 
         env = scrub_env()
         argv: list[str] | None = None

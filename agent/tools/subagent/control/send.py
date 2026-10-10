@@ -58,7 +58,7 @@ async def send_subagent_message(
         await bus.publish_internal(msg)
         logger.info("Sent message to subagent run {}: {} chars", run_id, len(message))
     except Exception as e:
-        logger.error("Failed to send message to subagent run {}: {}", run_id, e)
+        logger.exception("Failed to send message to subagent run {}: {}", run_id, e)
         return None
 
     if not wait_for_reply:

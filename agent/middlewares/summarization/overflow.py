@@ -336,7 +336,7 @@ class OverflowMixin:
         try:
             request = self._apply_compression(request, session_id)
         except Exception as e:
-            logger.error("Compression failed: {}", e)
+            logger.exception("Compression failed: {}", e)
             return request
         return self._finish_compact(request, route, session_id, trigger, old_tokens, usable)
 
@@ -354,7 +354,7 @@ class OverflowMixin:
         try:
             request = await self._aapply_compression(request, session_id)
         except Exception as e:
-            logger.error("Compression failed: {}", e)
+            logger.exception("Compression failed: {}", e)
             return request
         return self._finish_compact(request, route, session_id, trigger, old_tokens, usable)
 
@@ -533,7 +533,7 @@ class OverflowMixin:
             return response
         except Exception as exc:
             # T3 must never break the response path: original response wins.
-            logger.error(
+            logger.exception(
                 "Context compression: T3 check failed (response preserved): {}",
                 exc,
             )
@@ -556,7 +556,7 @@ class OverflowMixin:
             self._log_post_response(reported, route, est, usable, pressure, request)
             return response
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Context compression: T3 check failed (response preserved): {}",
                 exc,
             )
@@ -713,7 +713,7 @@ class OverflowMixin:
                     raise
                 retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
                 if retries >= MAX_OVERFLOW_RETRIES:
-                    logger.error(
+                    logger.exception(
                         "Context compression: trigger={} retries exhausted "
                         "({}, error_class={}) - propagating original error",
                         trigger,
@@ -724,7 +724,7 @@ class OverflowMixin:
                 try:
                     request = self._forced_recovery_request(request, session_id, error_class)
                 except Exception as compression_exc:
-                    logger.error(
+                    logger.exception(
                         "Context compression: trigger={} forced compression "
                         "failed ({}) - propagating original error",
                         trigger,
@@ -754,7 +754,7 @@ class OverflowMixin:
                     raise
                 retries = state_register_mem.get_state(session_id, retry_key, 0) or 0
                 if retries >= MAX_OVERFLOW_RETRIES:
-                    logger.error(
+                    logger.exception(
                         "Context compression: trigger={} retries exhausted "
                         "({}, error_class={}) - propagating original error",
                         trigger,
@@ -765,7 +765,7 @@ class OverflowMixin:
                 try:
                     request = await self._aforced_recovery_request(request, session_id, error_class)
                 except Exception as compression_exc:
-                    logger.error(
+                    logger.exception(
                         "Context compression: trigger={} forced compression "
                         "failed ({}) - propagating original error",
                         trigger,

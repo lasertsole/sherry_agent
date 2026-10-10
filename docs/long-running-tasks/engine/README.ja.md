@@ -371,6 +371,6 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 **サブエージェント境界。** 3 ファミリはいずれもビルダー（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）が `metadata["scope"] = "main_only"` を付与します。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）は `main_only` ツールを**最初に無条件で**落とします——allow/deny リストより先で、ORCHESTRATOR の解除でも上書きできません——したがって spawn された子エージェントが `taskflow_*`、`todowrite`/`todoread`、`knowledge` を受け取ることは決してありません。同じタグパターンは既に `memory`、`skill_manage`、`sessions_kill`、`sessions_steer` を覆っています。実ツールセットの表明は `tests/agent/tools/taskflow/test_taskflow_tools.py`、`_build_child_agent` 境界は `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` が固定します。
 
-**セッション間拒否。** `taskflow_create` で他セッションが使用中の `flow_id` に衝突した場合、存在だけを報告しリビジョンは漏らしません；他セッションの flow への変更は未知 id と同じ "not found" テキストを返します。読み取り/一覧/更新/パージ経路は `tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py`、`tests/server/DAO/test_clear_session.py` がカバーします。
+**セッション間拒否。** `taskflow_create` で他セッションが使用中の `flow_id` に衝突した場合、存在だけを報告しリビジョンは漏らしません；他セッションの flow への変更は未知 id と同じ "not found" テキストを返します。読み取り/一覧/更新/パージ経路は `tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py`、`tests/server/service/test_session_cleanup_service.py` がカバーします。
 
 

@@ -152,7 +152,7 @@ async def _run_auto_turn(
         try:
             _item = await enqueue_steering(bare, injection)
         except Exception as exc:  # noqa: BLE001 - abandon must never crash the runner
-            logger.error("auto_turn: abandon enqueue failed for {}: {}", bare, exc)
+            logger.exception("auto_turn: abandon enqueue failed for {}: {}", bare, exc)
 
     consumer: asyncio.Task[None] | None = None
     try:

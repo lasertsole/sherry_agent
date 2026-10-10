@@ -1,3 +1,13 @@
+"""Session purge orchestration — every store a cleared session touches.
+
+Lives in the service layer, not in ``server/DAO``: the purge spans the context
+engine, the checkpointer, the planning stores, the plan-knowledge directories
+and the runtime state registers, so a DAO (whose contract is pure data access
+to its own store) was the wrong owner.
+"""
+
+from __future__ import annotations
+
 import asyncio
 import shutil
 from pathlib import Path
@@ -14,7 +24,7 @@ def _session_folder(session_id: str) -> str:
     return (Path(SESSIONS_DIR) / session_id).as_posix()
 
 
-async def clear_session(session_id: str) -> None:
+async def purge_session(session_id: str) -> None:
     """Purge every trace of a session across all stores.
 
     Deletes, in order:

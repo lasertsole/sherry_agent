@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
 
 
-class TypeInput(BaseModel):
+class TypeInput(BrowserPageInput):
     """Arguments of ``browser_type``."""
 
     text: str = Field(
@@ -18,8 +18,6 @@ class TypeInput(BaseModel):
         description="Input ref from a snapshot; omit to type into whatever is focused.",
     )
     submit: bool = Field(default=False, description="Press Enter after typing.")
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
-    session_id: SessionId = ""
 
 
 class BrowserTypeTool(BrowserTool):

@@ -416,6 +416,100 @@ class Summarization(
         return await self._abefore_agent_impl(state)
 
     # ------------------------------------------------------------------
+    # The wrap_model_call decision (shared by the sync and async twins)
+    # ------------------------------------------------------------------
+
+    #: Answer with a plain handler call: the session asked to skip compression,
+    #: or a forced recovery owns this call.
+    _CALL_SKIP = "skip"
+    #: The anti-thrash gate suppressed the PROACTIVE trigger (cooldown still
+    #: running, or the per-turn attempt cap is reached).
+    _CALL_GATED = "gated"
+    #: T2 may act: evaluate the overflow route / the legacy trigger clause.
+    _CALL_DISPATCH = "dispatch"
+
+    def _plan_model_call(self, request: ModelRequest[ContextT], session_id: str) -> str:
+        """Decide what this model call does, and tick the T2 bookkeeping.
+
+        The ONE place the decision lives: the sync and async hooks used to
+        carry two ~90-line copies of it, which drifted whenever a rule moved.
+        Returns one of :data:`_CALL_SKIP` / :data:`_CALL_GATED` /
+        :data:`_CALL_DISPATCH`; request rewrites stay in the caller.
+        """
+        self._check_last_turn_ratio(request.state.get("messages", []), session_id)
+
+        # T2 anti-thrash bookkeeping (EVERY call): tick the cooldown down
+        # before anything else. The force flag is read BEFORE the skip check
+        # because _should_skip_compression consumes it.
+        forced = state_register_mem.get_state(session_id, _FORCE_RECOVERY_KEY, False)
+        cooldown_active = self._tick_cooldown(session_id)
+
+        if self._should_skip_compression(session_id):
+            self._compress_last_turn = False
+            self._compaction_just_happened = False
+            return self._CALL_SKIP
+
+        attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
+        if not forced and (cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN):
+            # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
+            # the PROACTIVE trigger only (forced recovery is exempt above).
+            self._compress_last_turn = False
+            return self._CALL_GATED
+        return self._CALL_DISPATCH
+
+    def _refresh_system_prompt_if_needed(
+        self, request: ModelRequest[ContextT], session_id: str
+    ) -> ModelRequest[ContextT]:
+        """Deliver the T1-rebuilt system prompt on the gated path.
+
+        T1 compacted earlier this turn: a second compression is exactly the
+        thrash the cooldown prevents, but the rebuilt system prompt must still
+        reach the model (chains without the @dynamic_prompt middleware rely on
+        this one delivering it), and the response still needs degradation
+        monitoring — the flag is left for _monitor_degradation to consume.
+        Identical content is left untouched (no override, no new SystemMessage).
+        """
+        if not self._compaction_just_happened or not self._need_update_system_prompt:
+            return request
+        rebuilt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, "")
+        if not rebuilt:
+            return request
+        existing = request.system_message
+        if isinstance(existing, SystemMessage) and existing.content == rebuilt:
+            return request
+        return request.override(system_message=SystemMessage(content=rebuilt))
+
+    def _before_call_dispatch(
+        self, request: ModelRequest[ContextT], session_id: str
+    ) -> ModelRequest[ContextT]:
+        """T2's dispatch: the 4-route overflow decision, else the trigger clause."""
+        messages: list[AnyMessage] = request.state.get("messages", [])
+        route = self._decide_overflow_route(messages, session_id)
+        if route is not None and route != ROUTE_FITS:
+            return self._dispatch_overflow_route(request, route, session_id, trigger="T2")
+        if self._check_trigger(messages):
+            # legacy trigger-clause fallback (e.g. ("messages", N) triggers).
+            # P1-2: the tail clip must NOT bypass an explicit trigger-clause
+            # compaction — that is a length/token mandate, not pressure
+            # recovery — so this path goes straight to the compact executor.
+            return self._execute_compact(request, ROUTE_COMPACT_ONLY, session_id, trigger="T2")
+        return request
+
+    async def _abefore_call_dispatch(
+        self, request: ModelRequest[ContextT], session_id: str
+    ) -> ModelRequest[ContextT]:
+        """Async twin of :meth:`_before_call_dispatch`."""
+        messages: list[AnyMessage] = request.state.get("messages", [])
+        route = self._decide_overflow_route(messages, session_id)
+        if route is not None and route != ROUTE_FITS:
+            return await self._adispatch_overflow_route(request, route, session_id, trigger="T2")
+        if self._check_trigger(messages):
+            return await self._aexecute_compact(
+                request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
+            )
+        return request
+
+    # ------------------------------------------------------------------
     # wrap_model_call (sync)
     # ------------------------------------------------------------------
 
@@ -428,46 +522,15 @@ class Summarization(
         session_id = self._session_or_none(request.state)
         if session_id is None:
             return handler(request)
-        messages: list[AnyMessage] = request.state.get("messages", [])
-        self._check_last_turn_ratio(messages, session_id)
 
-        # T2 anti-thrash bookkeeping (EVERY call): tick the cooldown down
-        # before anything else. The force flag is read BEFORE the skip check
-        # because _should_skip_compression consumes it.
-        forced = state_register_mem.get_state(session_id, _FORCE_RECOVERY_KEY, False)
-        cooldown_active = self._tick_cooldown(session_id)
-
-        if self._should_skip_compression(session_id):
-            self._compress_last_turn = False
-            self._compaction_just_happened = False
+        plan = self._plan_model_call(request, session_id)
+        if plan == self._CALL_SKIP:
             response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             return response
 
-        attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-        if not forced and (cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN):
-            # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
-            # the PROACTIVE trigger only (forced recovery is exempt above).
-            self._compress_last_turn = False
-            if self._compaction_just_happened:
-                # T1 compacted earlier this turn: a second compression is
-                # exactly the thrash the cooldown prevents, but the rebuilt
-                # system prompt must still reach the model (chains without the
-                # @dynamic_prompt middleware rely on this one delivering it),
-                # and the response still needs degradation monitoring — the
-                # flag is left for _monitor_degradation to consume. Identical
-                # content is left untouched (no override, no new SystemMessage).
-                if self._need_update_system_prompt:
-                    rebuilt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, "")
-                    if rebuilt:
-                        existing = request.system_message
-                        content_matches = (
-                            isinstance(existing, SystemMessage) and existing.content == rebuilt
-                        )
-                        if not content_matches:
-                            request = request.override(
-                                system_message=SystemMessage(content=rebuilt)
-                            )
+        if plan == self._CALL_GATED:
+            request = self._refresh_system_prompt_if_needed(request, session_id)
             response = self._execute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check. Gate path: T2 did NOT
@@ -479,16 +542,7 @@ class Summarization(
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
         t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-        # 4-route decision (upgraded _preemptive_check) → single dispatch
-        route = self._decide_overflow_route(messages, session_id)
-        if route is not None and route != ROUTE_FITS:
-            request = self._dispatch_overflow_route(request, route, session_id, trigger="T2")
-        elif self._check_trigger(request.state.get("messages", [])):
-            # legacy trigger-clause fallback (e.g. ("messages", N) triggers).
-            # P1-2: the tail clip must NOT bypass an explicit trigger-clause
-            # compaction — that is a length/token mandate, not pressure
-            # recovery — so this path goes straight to the compact executor.
-            request = self._execute_compact(request, ROUTE_COMPACT_ONLY, session_id, trigger="T2")
+        request = self._before_call_dispatch(request, session_id)
 
         response = self._execute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)
@@ -512,46 +566,15 @@ class Summarization(
         session_id = self._session_or_none(request.state)
         if session_id is None:
             return await handler(request)
-        messages: list[AnyMessage] = request.state.get("messages", [])
-        self._check_last_turn_ratio(messages, session_id)
 
-        # T2 anti-thrash bookkeeping (EVERY call): tick the cooldown down
-        # before anything else. The force flag is read BEFORE the skip check
-        # because _should_skip_compression consumes it.
-        forced = state_register_mem.get_state(session_id, _FORCE_RECOVERY_KEY, False)
-        cooldown_active = self._tick_cooldown(session_id)
-
-        if self._should_skip_compression(session_id):
-            self._compress_last_turn = False
-            self._compaction_just_happened = False
+        plan = self._plan_model_call(request, session_id)
+        if plan == self._CALL_SKIP:
             response = await self._aexecute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             return response
 
-        attempts = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-        if not forced and (cooldown_active or attempts >= MAX_COMPRESS_ATTEMPTS_PER_TURN):
-            # T2 anti-thrash gate: cooldown / per-turn attempt cap suppress
-            # the PROACTIVE trigger only (forced recovery is exempt above).
-            self._compress_last_turn = False
-            if self._compaction_just_happened:
-                # T1 compacted earlier this turn: a second compression is
-                # exactly the thrash the cooldown prevents, but the rebuilt
-                # system prompt must still reach the model (chains without the
-                # @dynamic_prompt middleware rely on this one delivering it),
-                # and the response still needs degradation monitoring — the
-                # flag is left for _monitor_degradation to consume. Identical
-                # content is left untouched (no override, no new SystemMessage).
-                if self._need_update_system_prompt:
-                    rebuilt = state_register_mem.get_state(session_id, StateKey.SYSTEM_PROMPT, "")
-                    if rebuilt:
-                        existing = request.system_message
-                        content_matches = (
-                            isinstance(existing, SystemMessage) and existing.content == rebuilt
-                        )
-                        if not content_matches:
-                            request = request.override(
-                                system_message=SystemMessage(content=rebuilt)
-                            )
+        if plan == self._CALL_GATED:
+            request = self._refresh_system_prompt_if_needed(request, session_id)
             response = await self._aexecute_with_recovery(request, handler, session_id)
             self._monitor_degradation(response, session_id)
             # T3 post-response re-check; see the sync twin.
@@ -561,18 +584,7 @@ class Summarization(
         # T2 dispatch; only actual compact executions increment the key, so a
         # bump means T2 compressed in THIS wrap call.
         t2_attempts_before = state_register_mem.get_state(session_id, _TURN_ATTEMPTS_KEY, 0)
-        # 4-route decision (upgraded _preemptive_check) → single dispatch
-        route = self._decide_overflow_route(messages, session_id)
-        if route is not None and route != ROUTE_FITS:
-            request = await self._adispatch_overflow_route(request, route, session_id, trigger="T2")
-        elif self._check_trigger(request.state.get("messages", [])):
-            # legacy trigger-clause fallback (e.g. ("messages", N) triggers).
-            # P1-2: the tail clip must NOT bypass an explicit trigger-clause
-            # compaction — that is a length/token mandate, not pressure
-            # recovery — so this path goes straight to the compact executor.
-            request = await self._aexecute_compact(
-                request, ROUTE_COMPACT_ONLY, session_id, trigger="T2"
-            )
+        request = await self._abefore_call_dispatch(request, session_id)
 
         response = await self._aexecute_with_recovery(request, handler, session_id)
         self._monitor_degradation(response, session_id)

@@ -53,7 +53,7 @@ async def main() -> None:
             )
             logger.info(f"OK: {p.name}")
         except Exception as e:
-            logger.error(f"FAIL {p.name}: {type(e).__name__}: {e}")
+            logger.exception(f"FAIL {p.name}: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

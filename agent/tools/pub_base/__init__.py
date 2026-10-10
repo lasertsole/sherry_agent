@@ -9,6 +9,7 @@ from .path_utils import (
     display_path,
     safe_error_detail,
     _extract_session_id,
+    resolve_tool_path,
     _open_no_follow,
     PathOutOfBoundsError,
 )
@@ -45,7 +46,7 @@ from .file_lock import (
     flock_path,
     lock_path_for,
 )
-from .tool_utils import SessionId, tool_error
+from .tool_utils import SessionId, resolve_tool_session_id, tool_error
 from .text_matcher import fuzzy_find_and_replace, format_no_match_hint
 from .skill_usage import bump_patch, forget, mark_agent_created
 from .skill_provenance import is_background_review
@@ -73,6 +74,8 @@ __all__ = [
     "display_path",
     "safe_error_detail",
     "_extract_session_id",
+    "resolve_tool_path",
+    "resolve_tool_session_id",
     "_open_no_follow",
     "PathOutOfBoundsError",
     "SKIP_DIR_NAMES",
@@ -102,6 +105,7 @@ __all__ = [
     "flock_path",
     "lock_path_for",
     "SessionId",
+    "resolve_tool_session_id",
     "tool_error",
     "fuzzy_find_and_replace",
     "format_no_match_hint",

@@ -415,7 +415,7 @@ def _recent_sessions(db: sqlite3.Connection, session_id: str, limit: int) -> str
             ensure_ascii=False,
         )
     except Exception as e:
-        logger.error("Recent sessions query failed: %s", e, exc_info=True)
+        logger.exception("Recent sessions query failed: %s", e, exc_info=True)
         return _tool_error(f"Recent sessions query failed: {str(e)}", success=False)
 
 
@@ -674,7 +674,7 @@ def session_search(
         )
 
     except Exception as e:
-        logger.error("Session search failed: %s", e, exc_info=True)
+        logger.exception("Session search failed: %s", e, exc_info=True)
         return _tool_error(f"Search failed: {str(e)}", success=False)
 
 

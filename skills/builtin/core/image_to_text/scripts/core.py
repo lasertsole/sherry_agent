@@ -61,7 +61,7 @@ def itt(
             path = tmp_path
         except Exception as e:
             err_mes: str = f"[Error] Image download failed: {repr(e)}"
-            logger.error(err_mes)
+            logger.exception(err_mes)
             return err_mes
     else:
         path = Path(image_path)
@@ -72,7 +72,7 @@ def itt(
                 return info_mes
         except Exception as e:
             err_mes: str = f"[error] Invalid file path: {image_path}, {repr(e)}"
-            logger.error(err_mes)
+            logger.exception(err_mes)
             return err_mes
 
     # ----- Phase 2: Verify image integrity -----
@@ -81,7 +81,7 @@ def itt(
             img.verify()
     except Exception as e:
         err_mes: str = f"[error] Not a valid image file: {image_path}, {repr(e)}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
         return err_mes
@@ -95,7 +95,7 @@ def itt(
             encoded_string = base64.b64encode(image_file.read()).decode("utf-8")
     except Exception as e:
         err_mes = f"[Error] Image conversion failed: {repr(e)}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         if is_url(image_path):
             tmp_path.unlink(missing_ok=True)
         return err_mes
@@ -115,7 +115,7 @@ def itt(
         return suc_mess
     except Exception as e:
         err_mes: str = f"[Error] Vision model call failed: {e}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         return err_mes
     finally:
         # Clean up temp file if it was downloaded from a URL

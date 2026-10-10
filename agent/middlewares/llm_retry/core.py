@@ -444,7 +444,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         try:
             return request.override(messages=new_messages)
         except Exception as exc:
-            logger.error("Failed to override messages for multimodal fallback: {}", exc)
+            logger.exception("Failed to override messages for multimodal fallback: {}", exc)
             return None
 
     def _refresh_native_model_key(self, session_id: str, candidate: FallbackCandidate) -> None:
@@ -559,7 +559,7 @@ class LLMRetryMiddleware(AgentMiddleware):
         try:
             return request.override(model=candidate.model)
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Failed to rebind request to fallback model {}/{}: {}",
                 candidate.provider,
                 candidate.model_name,

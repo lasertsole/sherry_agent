@@ -4,18 +4,16 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
 
 
-class PressInput(BaseModel):
+class PressInput(BrowserPageInput):
     """Arguments of ``browser_press``."""
 
     keys: str = Field(
         description="One named key: Enter / Tab / Escape / Backspace / Delete / "
         "ArrowUp / ArrowDown / ArrowLeft / ArrowRight / PageUp / PageDown / Home / End / Space."
     )
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
-    session_id: SessionId = ""
 
 
 class BrowserPressTool(BrowserTool):

@@ -196,6 +196,240 @@ class SpawnResult:
         }
 
 
+def _validate_spawn_request(
+    task: str, agent_id: str, requester_session_key: str, config: Any
+) -> tuple[int, SpawnResult | None]:
+    """Phases 1–2: input validation and the depth/concurrency admission gate.
+
+    Returns ``(child_depth, refusal)``: a non-None refusal is what the caller
+    hands back. Global concurrency is NOT rejected here — the SUBAGENT lane
+    queues over-limit runs (PENDING) instead of refusing them.
+    """
+    if not task or not task.strip():
+        return 0, SpawnResult(status="error", error="Task description is required")
+
+    # Reject agent_id values that could enable path traversal or command injection
+    if not _VALID_AGENT_ID.match(agent_id):
+        return 0, SpawnResult(
+            status="forbidden", error=f"Invalid agent_id: '{agent_id}' (only [a-zA-Z0-9_-] allowed)"
+        )
+
+    # When the platform requires explicit agent identification, reject the default "main"
+    if config.require_agent_id and agent_id == "main":
+        return 0, SpawnResult(
+            status="forbidden", error="agent_id is required (cannot use default 'main')"
+        )
+
+    allowed, reason = validate_target_policy(agent_id, "main")
+    if not allowed:
+        return 0, SpawnResult(status="forbidden", error=reason)
+
+    parent_depth = get_subagent_depth(requester_session_key)
+    child_depth = parent_depth + 1
+
+    allowed, reason = validate_spawn_depth(parent_depth)
+    if not allowed:
+        return child_depth, SpawnResult(status="forbidden", error=reason)
+
+    active_count = count_active_runs_readonly(requester_session_key)
+    allowed, reason = validate_concurrent_children(active_count)
+    if not allowed:
+        return child_depth, SpawnResult(status="forbidden", error=reason)
+    return child_depth, None
+
+
+def _resolve_child_tool_policy(
+    role_def: RoleDefinition | None,
+    role: SubagentSessionRole,
+    extra_tools: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Phases 8–8.6: the child's ``(allow, deny)`` tool policy.
+
+    A functional role with an explicit tool list is a WHITELIST (deny cleared);
+    the depth role still controls spawn/yield, per-spawn ``extra_tools`` join
+    the whitelist, and the final allow-list is intersected with
+    ``can_spawn_children(role)`` so a LEAF can never be granted recursion.
+    """
+    tool_allow: list[str] = []
+    tool_deny = list(DEFAULT_SUBAGENT_BLOCKED_TOOLS)
+
+    # Functional role drives tool policy: an explicit tool list becomes a
+    # whitelist (deny cleared, since the whitelist already restricts).
+    if role_def is not None and role_def.tools is not None:
+        tool_allow = list(role_def.tools)
+        tool_deny = []
+
+    # Depth role still controls spawn/yield.
+    if role == SubagentSessionRole.ORCHESTRATOR:
+        if tool_allow:
+            # Whitelist mode: deny is already empty, so grant spawn/yield by
+            # adding them to the allow-list instead of removing from deny.
+            for t in _SPAWN_YIELD_TOOLS:
+                if t not in tool_allow:
+                    tool_allow.append(t)
+        else:
+            # Inherit mode: unblock spawn/yield by removing them from the deny list.
+            tool_deny = [t for t in tool_deny if t not in _SPAWN_YIELD_TOOLS]
+
+    # Per-task tool attachment (deepagents TaskTools pattern): extra_tools are
+    # attached on top of whatever the role already allows. In whitelist mode
+    # they join the allow-list; in inherit mode the base tool set already
+    # contains them and only the deny-list applies.
+    extra_tool_names: list[str] = list(dict.fromkeys(extra_tools or []))
+    for name in extra_tool_names:
+        if tool_allow and name not in tool_allow:
+            tool_allow.append(name)
+
+    if not can_spawn_children(role):
+        tool_allow = [t for t in tool_allow if t not in _SPAWN_YIELD_TOOLS]
+    return tool_allow, tool_deny
+
+
+async def _materialize_child_attachments(
+    attachments: list[dict] | None,
+    cwd: str | None,
+    config: Any,
+) -> tuple[str | None, str | None, str, SpawnResult | None]:
+    """Phase 7: materialize attachments into the child workspace.
+
+    Returns ``(attachments_dir, attachments_root_dir, prompt_suffix, refusal)``.
+    """
+    if not attachments or not config.attachments_enabled:
+        return None, None, "", None
+    workspace = Path(cwd) if cwd else None
+    mat_result = await materialize_subagent_attachments(
+        attachments,
+        child_workspace=workspace,
+        max_files=config.attachments_max_files,
+        max_file_bytes=config.attachments_max_file_bytes,
+        max_total_bytes=config.attachments_max_total_bytes,
+    )
+    if mat_result.status == "error":
+        return None, None, "", SpawnResult(status="error", error=mat_result.error)
+    if mat_result.status == "ok" and mat_result.abs_dir:
+        return mat_result.abs_dir, mat_result.root_dir, mat_result.system_prompt_suffix, None
+    return None, None, "", None
+
+
+def _assemble_child_prompts(
+    run: SubagentRunRecord,
+    *,
+    task: str,
+    role: SubagentSessionRole,
+    functional_role: FunctionalRole,
+    role_def: RoleDefinition | None,
+    child_depth: int,
+    max_depth: int,
+    child_session_key: str,
+    controller_session_key: str,
+    requester_display_key: str,
+    attachment_prompt_suffix: str,
+    isolated: bool,
+    output_schema: dict | None,
+) -> tuple[str, str]:
+    """Phase 10: the child's system prompt and initial user message."""
+    system_prompt = build_subagent_system_prompt(
+        role=role,
+        task=task,
+        functional_role=functional_role,
+        role_description=role_def.description if role_def else "",
+        role_prompt_body=role_def.prompt_body if role_def else "",
+        requester_label=requester_display_key,
+        depth=child_depth,
+        max_depth=max_depth,
+        child_session_key=child_session_key,
+        requester_session_key=controller_session_key,
+        can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
+    )
+
+    # Append attachment-aware and schema-constraint suffixes to the system prompt
+    if attachment_prompt_suffix:
+        system_prompt = f"{system_prompt}\n{attachment_prompt_suffix}"
+
+    if isolated:
+        system_prompt = f"{system_prompt}\n{_ISOLATION_PROMPT_NOTE}"
+
+    if output_schema:
+        schema_prompt = build_structured_output_prompt(output_schema)
+        if schema_prompt:
+            system_prompt = f"{system_prompt}\n{schema_prompt}"
+
+    user_message = build_subagent_initial_user_message(
+        task,
+        depth=child_depth,
+        max_depth=max_depth,
+    )
+    return system_prompt, user_message
+
+
+async def _reserve_swarm_group(
+    run: SubagentRunRecord,
+    swarm_group_id: str | None,
+    *,
+    task: str,
+    requester_session_key: str,
+    normalized_task_name: str | None,
+    launch_fingerprint: str | None,
+) -> SubagentRunRecord:
+    """Phase 9: reserve this run inside its swarm group (if any)."""
+    if not swarm_group_id:
+        return run
+    from ..swarm.collector import configure_swarm_group, get_group_config
+
+    group_cfg = get_group_config(swarm_group_id)
+    if group_cfg is None:
+        # First run in this group — create the group config on the fly
+        from ..types.swarm import SwarmGroupConfig
+
+        configure_swarm_group(SwarmGroupConfig(group_id=swarm_group_id))
+
+    swarm_run = await reserve_swarm_run(
+        swarm_group_id,
+        task,
+        requester_session_key,
+        task_name=normalized_task_name,
+        launch_fingerprint=launch_fingerprint,
+    )
+    if swarm_run is None:
+        return run
+    from ..registry.memory import get as get_run, update as update_run
+
+    update_run(run.run_id, swarm_group_id=swarm_group_id, swarm_run_state=swarm_run.swarm_run_state)
+    return get_run(run.run_id) or run  # refresh after in-place update
+
+
+def _create_isolated_child_workspace(
+    isolation: bool, cwd: str | None, child_session_key: str
+) -> tuple[str | None, Any, SpawnResult | None]:
+    """Phase 4.1: give the child a private COPY of the project directory.
+
+    Returns ``(cwd, isolated_workspace, refusal)``; everything downstream
+    (attachments, the child's binding, its tools) sees the copy and nothing
+    needs to know isolation happened.
+    """
+    if not isolation:
+        return cwd, None, None
+    if not cwd:
+        return (
+            cwd,
+            None,
+            SpawnResult(
+                status="forbidden",
+                error=(
+                    "isolation requires a project directory to copy: the caller has "
+                    "neither a bound project directory nor an explicit cwd"
+                ),
+            ),
+        )
+    from ..isolation import create_isolated_workspace
+
+    try:
+        isolated_workspace = create_isolated_workspace(Path(cwd), child_session_key)
+    except OSError as exc:
+        return cwd, None, SpawnResult(status="error", error=f"isolated workspace failed: {exc}")
+    return str(isolated_workspace.tree), isolated_workspace, None
+
+
 async def spawn_subagent_direct(
     task: str,
     requester_session_key: str,
@@ -220,9 +454,9 @@ async def spawn_subagent_direct(
 ) -> SpawnResult:
     """Validate, register, and launch a sub-agent as a background task.
 
-    Runs through the full spawn pipeline: input validation → depth/concurrency
-    checks → ownership resolution → tool policy → registry registration →
-    async execution. Returns immediately with an accepted/forbidden/error result.
+    The phases live in the ``_…`` helpers above; this function is the
+    orchestration they compose. Returns immediately with an
+    accepted/forbidden/error result.
 
     Args:
         task: Natural-language task description for the sub-agent.
@@ -256,45 +490,13 @@ async def spawn_subagent_direct(
         A :class:`SpawnResult` with ``status="accepted"`` on success, or
         ``status="forbidden"`` / ``status="error"`` on failure.
     """
-    # --- Phase 1: Input validation ---
-    if not task or not task.strip():
-        return SpawnResult(status="error", error="Task description is required")
-
+    # --- Phases 1–2: input validation and the admission gate ---
     config = get_config()
-
-    # Reject agent_id values that could enable path traversal or command injection
-    if not _VALID_AGENT_ID.match(agent_id):
-        return SpawnResult(
-            status="forbidden", error=f"Invalid agent_id: '{agent_id}' (only [a-zA-Z0-9_-] allowed)"
-        )
-
-    # When the platform requires explicit agent identification, reject the default "main"
-    if config.require_agent_id and agent_id == "main":
-        return SpawnResult(
-            status="forbidden", error="agent_id is required (cannot use default 'main')"
-        )
+    child_depth, refusal = _validate_spawn_request(task, agent_id, requester_session_key, config)
+    if refusal is not None:
+        return refusal
 
     normalized_task_name = normalize_subagent_task_name(task_name)
-
-    # --- Phase 2: Policy & depth/concurrency gate ---
-    allowed, reason = validate_target_policy(agent_id, "main")
-    if not allowed:
-        return SpawnResult(status="forbidden", error=reason)
-
-    parent_depth = get_subagent_depth(requester_session_key)
-    child_depth = parent_depth + 1
-
-    allowed, reason = validate_spawn_depth(parent_depth)
-    if not allowed:
-        return SpawnResult(status="forbidden", error=reason)
-
-    active_count = count_active_runs_readonly(requester_session_key)
-    allowed, reason = validate_concurrent_children(active_count)
-    if not allowed:
-        return SpawnResult(status="forbidden", error=reason)
-
-    # Global concurrency is no longer rejected here: the SUBAGENT lane queues
-    # over-limit runs (PENDING) instead of refusing them.
 
     # --- Phase 3: Runtime isolation & cwd ---
     isolation_cfg = resolve_runtime_isolation(requester_session_key, agent_id=agent_id, cwd=cwd)
@@ -325,27 +527,11 @@ async def spawn_subagent_direct(
     role, _ = resolve_subagent_capabilities(child_depth)
 
     # --- Phase 4.1: Workspace isolation (opt-in) ---
-    # The child gets a private copy of the project directory and works there;
-    # the announce flow merges it back under a lock when the run completes.
-    # Everything downstream (attachments, the child's binding, its tools) sees
-    # the copy and nothing needs to know isolation happened.
-    isolated_workspace = None
-    if isolation:
-        if not cwd:
-            return SpawnResult(
-                status="forbidden",
-                error=(
-                    "isolation requires a project directory to copy: the caller has "
-                    "neither a bound project directory nor an explicit cwd"
-                ),
-            )
-        from ..isolation import create_isolated_workspace
-
-        try:
-            isolated_workspace = create_isolated_workspace(Path(cwd), child_session_key)
-        except OSError as exc:
-            return SpawnResult(status="error", error=f"isolated workspace failed: {exc}")
-        cwd = str(isolated_workspace.tree)
+    cwd, isolated_workspace, refusal = _create_isolated_child_workspace(
+        isolation, cwd, child_session_key
+    )
+    if refusal is not None:
+        return refusal
 
     # --- Phase 4.5: Functional role resolution ---
     # GENERAL is the identity role: it loads no definition, so a spawn without a
@@ -377,70 +563,25 @@ async def spawn_subagent_direct(
     child_scopes = resolve_least_privilege_scopes(agent_id, role)
 
     # --- Phase 7: Attachment materialization ---
-    attachments_dir = None
-    attachments_root_dir = None
-    attachment_prompt_suffix = ""
-    if attachments and config.attachments_enabled:
-        workspace = Path(cwd) if cwd else None
-        mat_result = await materialize_subagent_attachments(
-            attachments,
-            child_workspace=workspace,
-            max_files=config.attachments_max_files,
-            max_file_bytes=config.attachments_max_file_bytes,
-            max_total_bytes=config.attachments_max_total_bytes,
-        )
-        if mat_result.status == "error":
-            await _rollback_spawn(child_session_key, None, attachments_dir, attachments_root_dir)
-            if isolated_workspace is not None:
-                # A failed spawn must not leave its copy behind: nothing will
-                # ever merge it (no run record), so it is discarded here.
-                from ..isolation import discard_isolated_workspace
+    (
+        attachments_dir,
+        attachments_root_dir,
+        attachment_prompt_suffix,
+        refusal,
+    ) = await _materialize_child_attachments(attachments, cwd, config)
+    if refusal is not None:
+        await _rollback_spawn(child_session_key, None, attachments_dir, attachments_root_dir)
+        if isolated_workspace is not None:
+            # A failed spawn must not leave its copy behind: nothing will
+            # ever merge it (no run record), so it is discarded here.
+            from ..isolation import discard_isolated_workspace
 
-                discard_isolated_workspace(isolated_workspace.meta_dir)
-            return SpawnResult(status="error", error=mat_result.error)
-        if mat_result.status == "ok" and mat_result.abs_dir:
-            attachments_dir = mat_result.abs_dir
-            attachments_root_dir = mat_result.root_dir
-            attachment_prompt_suffix = mat_result.system_prompt_suffix
+            discard_isolated_workspace(isolated_workspace.meta_dir)
+        return refusal
 
-    # --- Phase 8: Tool policy & registry registration ---
-    tool_allow: list[str] = []
-    tool_deny = list(DEFAULT_SUBAGENT_BLOCKED_TOOLS)
-
-    # Functional role drives tool policy: an explicit tool list becomes a
-    # whitelist (deny cleared, since the whitelist already restricts).
-    if role_def is not None and role_def.tools is not None:
-        tool_allow = list(role_def.tools)
-        tool_deny = []
-
-    # Depth role still controls spawn/yield.
-    if role == SubagentSessionRole.ORCHESTRATOR:
-        if tool_allow:
-            # Whitelist mode: deny is already empty, so grant spawn/yield by
-            # adding them to the allow-list instead of removing from deny.
-            for t in _SPAWN_YIELD_TOOLS:
-                if t not in tool_allow:
-                    tool_allow.append(t)
-        else:
-            # Inherit mode: unblock spawn/yield by removing them from the deny list.
-            tool_deny = [t for t in tool_deny if t not in _SPAWN_YIELD_TOOLS]
-
-    # --- Phase 8.5: Per-task tool attachment (deepagents TaskTools pattern) ---
-    # extra_tools are attached on top of whatever the role already allows. In
-    # whitelist mode they join the allow-list; in inherit mode the base tool set
-    # already contains them and only the deny-list applies.
+    # --- Phases 8–8.6: tool policy, then registry registration ---
+    tool_allow, tool_deny = _resolve_child_tool_policy(role_def, role, extra_tools)
     extra_tool_names: list[str] = list(dict.fromkeys(extra_tools or []))
-    for name in extra_tool_names:
-        if tool_allow and name not in tool_allow:
-            tool_allow.append(name)
-
-    # --- Phase 8.6: Spawn/yield privilege intersection ---
-    # Intersect the FINAL allow-list (role whitelist + extra_tools) with
-    # can_spawn_children(role): only MAIN and ORCHESTRATOR may hold
-    # sessions_spawn / sessions_yield. In inherit mode the allow-list is empty
-    # and the deny-list already blocks them, so this is a no-op there.
-    if not can_spawn_children(role):
-        tool_allow = [t for t in tool_allow if t not in _SPAWN_YIELD_TOOLS]
 
     run = register_run(
         child_session_key=child_session_key,
@@ -473,30 +614,14 @@ async def spawn_subagent_direct(
     get_terminal_gen_tracker().register_expected(run.run_id, run.generation)
 
     # --- Phase 9: Swarm group reservation (optional) ---
-    if swarm_group_id:
-        from ..swarm.collector import configure_swarm_group, get_group_config
-
-        group_cfg = get_group_config(swarm_group_id)
-        if group_cfg is None:
-            # First run in this group — create the group config on the fly
-            from ..types.swarm import SwarmGroupConfig
-
-            configure_swarm_group(SwarmGroupConfig(group_id=swarm_group_id))
-
-        swarm_run = await reserve_swarm_run(
-            swarm_group_id,
-            task,
-            requester_session_key,
-            task_name=normalized_task_name,
-            launch_fingerprint=launch_fingerprint,
-        )
-        if swarm_run is not None:
-            from ..registry.memory import get as get_run, update as update_run
-
-            update_run(
-                run.run_id, swarm_group_id=swarm_group_id, swarm_run_state=swarm_run.swarm_run_state
-            )
-            run = get_run(run.run_id) or run  # refresh local reference after in-place update
+    run = await _reserve_swarm_group(
+        run,
+        swarm_group_id,
+        task=task,
+        requester_session_key=requester_session_key,
+        normalized_task_name=normalized_task_name,
+        launch_fingerprint=launch_fingerprint,
+    )
 
     if child_origin.channel or child_origin.account_id:
         from ..registry.memory import update as update_run
@@ -514,36 +639,20 @@ async def spawn_subagent_direct(
         ownership.completion_requester_display_key,
     )
 
-    system_prompt = build_subagent_system_prompt(
-        role=role,
+    system_prompt, user_message = _assemble_child_prompts(
+        run,
         task=task,
+        role=role,
         functional_role=functional_role,
-        role_description=role_def.description if role_def else "",
-        role_prompt_body=role_def.prompt_body if role_def else "",
-        requester_label=ownership.completion_requester_display_key,
-        depth=child_depth,
+        role_def=role_def,
+        child_depth=child_depth,
         max_depth=config.max_spawn_depth,
         child_session_key=child_session_key,
-        requester_session_key=ownership.controller_session_key,
-        can_spawn=role == SubagentSessionRole.ORCHESTRATOR,
-    )
-
-    # Append attachment-aware and schema-constraint suffixes to the system prompt
-    if attachment_prompt_suffix:
-        system_prompt = f"{system_prompt}\n{attachment_prompt_suffix}"
-
-    if isolated_workspace is not None:
-        system_prompt = f"{system_prompt}\n{_ISOLATION_PROMPT_NOTE}"
-
-    if output_schema:
-        schema_prompt = build_structured_output_prompt(output_schema)
-        if schema_prompt:
-            system_prompt = f"{system_prompt}\n{schema_prompt}"
-
-    user_message = build_subagent_initial_user_message(
-        task,
-        depth=child_depth,
-        max_depth=config.max_spawn_depth,
+        controller_session_key=ownership.controller_session_key,
+        requester_display_key=ownership.completion_requester_display_key,
+        attachment_prompt_suffix=attachment_prompt_suffix,
+        isolated=isolated_workspace is not None,
+        output_schema=output_schema,
     )
     timeout_seconds = resolve_run_timeout_seconds(run_timeout_seconds)
 
@@ -660,6 +769,195 @@ async def _execute_subagent_with_lane(
         remove_task(run.run_id)
 
 
+def _effective_child_deny(run: SubagentRunRecord) -> list[str]:
+    """The child's deny-list: inherited policy + every tool whose scope is absent."""
+    effective_deny = list(run.inherited_tool_deny)
+    if run.scopes:
+        scope_tool_map = {
+            "subagent:spawn": "sessions_spawn",
+            "subagent:kill": "sessions_kill",
+            "subagent:yield": "sessions_yield",
+            "subagent:send": "sessions_send",
+        }
+        for scope, tool_name in scope_tool_map.items():
+            # If the scope is missing from the run's scopes, deny the corresponding tool
+            if scope not in run.scopes and tool_name not in effective_deny:
+                effective_deny.append(tool_name)
+    return effective_deny
+
+
+def _bind_child_run_context(run: SubagentRunRecord) -> dict:
+    """Build the child's LangGraph config and bind its session-level context.
+
+    Sets the thinking tag, pins the child's project directory (the register is
+    the only channel its tools can read — LangGraph's ``config`` is not
+    reachable from a tool body), and stamps the keys the external-path gate
+    reads: allowlist inheritance from the parent session plus the subagent
+    identification that keeps a child fail-closed without main approval.
+    """
+    from pub.func import build_agent_config
+
+    agent_config = build_agent_config(session_id=run.child_session_key)
+    if run.thinking:
+        agent_config["tags"] = agent_config.get("tags", [])
+        # LangGraph inspects tags for the "thinking:<level>" pattern
+        agent_config["tags"].append(f"thinking:{run.thinking}")
+    if run.spawned_cwd:
+        # The child's tools resolve against this root. It is persisted as the
+        # CHILD session's own project-dir binding (resolved at spawn time,
+        # inside the lane slot) because that register is the only channel the
+        # tools can read — LangGraph's ``config`` is not reachable from a
+        # tool body (no ToolRuntime). Freezing it here is what makes a child
+        # independent: a later switch in the parent session does not follow.
+        from runtime.session import project_dir as project_dir_mod
+
+        project_dir_mod.write_project_dir(run.child_session_key, run.spawned_cwd)
+
+    # Security: the child's file tools resolve external-path authorization
+    # against these keys — allowlist inheritance (parent session) and
+    # subagent identification (fail-closed without main-session approval).
+    from runtime import StateKey, state_register_mem
+
+    state_register_mem.set_state(
+        run.child_session_key,
+        StateKey.REQUESTER_SESSION_KEY,
+        normalize_session_key(run.spawned_by),
+    )
+    state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
+    return agent_config
+
+
+async def _run_goal_loop(
+    run: SubagentRunRecord,
+    user_message: str,
+    result_text: str | None,
+    invoke: Any,
+    goal_max_turns: int,
+) -> tuple[str | None, RunOutcome | None]:
+    """Review each turn with the completion judge until DONE or budget spent.
+
+    CONTINUE injects the judge's continuation prompt as the next human turn.
+    Fail-open (judge errors => DONE) so it cannot trap the subagent. Returns the
+    latest result text and an outcome only when the budget ran out.
+    """
+    from agent.tools.taskflow.evidence_collector import collect_evidence_summary
+
+    from .completion_judge import CompletionVerdict, judge_completion
+
+    turns_used = 1
+    while True:
+        judge_result = await judge_completion(
+            task_text=user_message,
+            last_response=result_text or "",
+            evidence_summary=collect_evidence_summary(session_key=run.child_session_key),
+        )
+        if judge_result.verdict == CompletionVerdict.DONE:
+            return result_text, None
+        if turns_used >= goal_max_turns:
+            return result_text, RunOutcome(
+                status=RunOutcomeStatus.OK,
+                error="goal_loop_budget_exhausted",
+            )
+        if not judge_result.continuation_prompt.strip():
+            return result_text, None
+        from langchain_core.messages import HumanMessage
+
+        agent_result = await invoke([HumanMessage(content=judge_result.continuation_prompt)])
+        result_text = _extract_result_text(agent_result)
+        turns_used += 1
+
+
+async def _release_child_resources(run: SubagentRunRecord, child_agent: Any) -> None:
+    """Close the child's checkpointer and drop its per-session state.
+
+    Always runs, even on cancellation: every spawn opens an aiosqlite
+    checkpointer and writes repetition-guard keys under the child's session
+    bucket, and nothing else would release them.
+    """
+    child_checkpointer = getattr(child_agent, "checkpointer", None)
+    if child_checkpointer is not None:
+        try:
+            await child_checkpointer.aclose()
+        except Exception:
+            logger.exception("Failed to close child checkpointer for {}", run.run_id)
+
+    # Release this child's per-session OutputRepetitionGuard state. The guard
+    # writes its top-level keys (output_repetition_history, ..._halted, etc.)
+    # into ``state_register_mem`` under the child's unique session key. If we
+    # left them behind they would accumulate in memory each time a subagent
+    # is spawned and destroyed. ``clear_session`` is deliberately NOT used
+    # here: it would wipe the entire session bucket and clobber the other
+    # middlewares' top-level state (heartbeat_killed, summarization, tool
+    # guardrails, iteration budget, ...). We delete exactly the 6 keys this
+    # middleware owns, scoped to the child's own bucket via ``delete_state``.
+    try:
+        from agent.middlewares.output_repetition_guard.repetition_state import (
+            SESSION_STATE_KEYS,
+        )
+        from runtime import state_register_mem
+
+        for _key in SESSION_STATE_KEYS:
+            state_register_mem.delete_state(run.child_session_key, _key)
+    except Exception:
+        logger.exception(
+            "Failed to release OutputRepetitionGuard state for session {}",
+            run.child_session_key,
+        )
+
+    from ..registry import remove_task
+
+    remove_task(run.run_id)
+
+    try:
+        await fire_progress_hook(run, "execution completed")
+    except Exception as e:
+        logger.debug("fire_progress_hook error for run {}: {}", run.run_id, e)
+
+
+async def _finalize_child_run(
+    run: SubagentRunRecord, outcome: RunOutcome, result_text: str | None
+) -> None:
+    """Grace period (failures only), then complete the run and fire the hooks."""
+    if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
+        from ..config import get_config
+
+        grace = get_config().lifecycle_grace_period_seconds
+        if grace > 0:
+            # Give in-flight completion messages a chance to arrive before finalizing
+            logger.info(
+                "Lifecycle grace: waiting {:.1f}s before finalizing run {} ({})",
+                grace,
+                run.run_id,
+                outcome.status.value,
+            )
+            await asyncio.sleep(grace)
+            from ..registry import get_run as _get_run
+
+            latest = _get_run(run.run_id)
+            if latest and latest.execution.status == ExecutionStatus.TERMINAL:
+                # Run was already completed (e.g. by a yield/settle callback) during grace period
+                logger.info(
+                    "Lifecycle grace: run {} completed during grace period, skipping finalize",
+                    run.run_id,
+                )
+                try:
+                    await fire_ended_hook(run)
+                except Exception as e:
+                    logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
+                return
+
+    from ..registry.lifecycle import complete_subagent_run
+
+    await complete_subagent_run(
+        run.run_id, outcome, result_text, expected_generation=run.generation
+    )
+
+    try:
+        await fire_ended_hook(run)
+    except Exception as e:
+        logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
+
+
 async def _execute_subagent(
     run: SubagentRunRecord,
     system_prompt: str,
@@ -700,20 +998,7 @@ async def _execute_subagent(
     """
     from langchain_core.messages import HumanMessage
 
-    # Compute effective deny-list: start with inherited policy, then add tools
-    # whose corresponding scope is absent from the run's granted scopes.
-    effective_deny = list(run.inherited_tool_deny)
-    if run.scopes:
-        scope_tool_map = {
-            "subagent:spawn": "sessions_spawn",
-            "subagent:kill": "sessions_kill",
-            "subagent:yield": "sessions_yield",
-            "subagent:send": "sessions_send",
-        }
-        for scope, tool_name in scope_tool_map.items():
-            # If the scope is missing from the run's scopes, deny the corresponding tool
-            if scope not in run.scopes and tool_name not in effective_deny:
-                effective_deny.append(tool_name)
+    effective_deny = _effective_child_deny(run)
 
     # Optimistic default — overridden by the appropriate exception handler below
     result_text: str | None = None
@@ -740,36 +1025,7 @@ async def _execute_subagent(
 
         messages = [HumanMessage(content=user_message)]
 
-        # Build the LangGraph config dict (session, thinking tag, cwd)
-        from pub.func import build_agent_config
-
-        agent_config = build_agent_config(session_id=run.child_session_key)
-        if run.thinking:
-            agent_config["tags"] = agent_config.get("tags", [])
-            # LangGraph inspects tags for the "thinking:<level>" pattern
-            agent_config["tags"].append(f"thinking:{run.thinking}")
-        if run.spawned_cwd:
-            # The child's tools resolve against this root. It is persisted as the
-            # CHILD session's own project-dir binding (resolved at spawn time,
-            # inside the lane slot) because that register is the only channel the
-            # tools can read — LangGraph's ``config`` is not reachable from a
-            # tool body (no ToolRuntime). Freezing it here is what makes a child
-            # independent: a later switch in the parent session does not follow.
-            from runtime.session import project_dir as project_dir_mod
-
-            project_dir_mod.write_project_dir(run.child_session_key, run.spawned_cwd)
-
-        # Security: the child's file tools resolve external-path authorization
-        # against these keys — allowlist inheritance (parent session) and
-        # subagent identification (fail-closed without main-session approval).
-        from runtime import StateKey, state_register_mem
-
-        state_register_mem.set_state(
-            run.child_session_key,
-            StateKey.REQUESTER_SESSION_KEY,
-            normalize_session_key(run.spawned_by),
-        )
-        state_register_mem.set_state(run.child_session_key, StateKey.CALLER_SCOPE, "subagent")
+        agent_config = _bind_child_run_context(run)
 
         # Invoke the child agent under a wall-clock timeout (0 disables the timeout).
         # ``_invoke`` is reused by goal-loop continuation turns: the same config
@@ -797,32 +1053,11 @@ async def _execute_subagent(
         # continuation prompt as the next human turn until DONE or the budget is
         # spent. Fail-open (judge errors => DONE) so it cannot trap the subagent.
         if goal_max_turns > 1:
-            from agent.tools.taskflow.evidence_collector import collect_evidence_summary
-
-            from .completion_judge import CompletionVerdict, judge_completion
-
-            turns_used = 1
-            while True:
-                judge_result = await judge_completion(
-                    task_text=user_message,
-                    last_response=result_text or "",
-                    evidence_summary=collect_evidence_summary(session_key=run.child_session_key),
-                )
-                if judge_result.verdict == CompletionVerdict.DONE:
-                    break
-                if turns_used >= goal_max_turns:
-                    outcome = RunOutcome(
-                        status=RunOutcomeStatus.OK,
-                        error="goal_loop_budget_exhausted",
-                    )
-                    break
-                if not judge_result.continuation_prompt.strip():
-                    break
-                agent_result = await _invoke(
-                    [HumanMessage(content=judge_result.continuation_prompt)]
-                )
-                result_text = _extract_result_text(agent_result)
-                turns_used += 1
+            result_text, budget_outcome = await _run_goal_loop(
+                run, user_message, result_text, _invoke, goal_max_turns
+            )
+            if budget_outcome is not None:
+                outcome = budget_outcome
 
         # Validate structured output against the provided JSON Schema (swarm mode)
         if output_schema and result_text:
@@ -846,87 +1081,8 @@ async def _execute_subagent(
 
     # --- Lifecycle cleanup (always runs, even on cancellation) ---
     finally:
-        # Close the child's aiosqlite checkpointer: every spawn opened one and
-        # nothing released it, so a busy swarm leaked connections until GC. The
-        # compiled graph carries the reference, so the builder's signature (a
-        # documented monkeypatch seam) stays unchanged.
-        child_checkpointer = getattr(child_agent, "checkpointer", None)
-        if child_checkpointer is not None:
-            try:
-                await child_checkpointer.aclose()
-            except Exception:
-                logger.exception("Failed to close child checkpointer for {}", run.run_id)
-
-        # Release this child's per-session OutputRepetitionGuard state. The guard
-        # writes its top-level keys (output_repetition_history, ..._halted, etc.)
-        # into ``state_register_mem`` under the child's unique session key. If we
-        # left them behind they would accumulate in memory each time a subagent
-        # is spawned and destroyed. ``clear_session`` is deliberately NOT used
-        # here: it would wipe the entire session bucket and clobber the other
-        # middlewares' top-level state (heartbeat_killed, summarization, tool
-        # guardrails, iteration budget, ...). We delete exactly the 6 keys this
-        # middleware owns, scoped to the child's own bucket via ``delete_state``.
-        try:
-            from agent.middlewares.output_repetition_guard.repetition_state import (
-                SESSION_STATE_KEYS,
-            )
-            from runtime import state_register_mem
-
-            for _key in SESSION_STATE_KEYS:
-                state_register_mem.delete_state(run.child_session_key, _key)
-        except Exception:
-            logger.exception(
-                "Failed to release OutputRepetitionGuard state for session {}",
-                run.child_session_key,
-            )
-
-        from ..registry import remove_task
-
-        remove_task(run.run_id)
-
-        try:
-            await fire_progress_hook(run, "execution completed")
-        except Exception as e:
-            logger.debug("fire_progress_hook error for run {}: {}", run.run_id, e)
-
-        if outcome.status in (RunOutcomeStatus.ERROR, RunOutcomeStatus.TIMEOUT):
-            from ..config import get_config
-
-            grace = get_config().lifecycle_grace_period_seconds
-            if grace > 0:
-                # Give in-flight completion messages a chance to arrive before finalizing
-                logger.info(
-                    "Lifecycle grace: waiting {:.1f}s before finalizing run {} ({})",
-                    grace,
-                    run.run_id,
-                    outcome.status.value,
-                )
-                await asyncio.sleep(grace)
-                from ..registry import get_run as _get_run
-
-                latest = _get_run(run.run_id)
-                if latest and latest.execution.status == ExecutionStatus.TERMINAL:
-                    # Run was already completed (e.g. by a yield/settle callback) during grace period
-                    logger.info(
-                        "Lifecycle grace: run {} completed during grace period, skipping finalize",
-                        run.run_id,
-                    )
-                    try:
-                        await fire_ended_hook(run)
-                    except Exception as e:
-                        logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
-                    return
-
-        from ..registry.lifecycle import complete_subagent_run
-
-        await complete_subagent_run(
-            run.run_id, outcome, result_text, expected_generation=run.generation
-        )
-
-        try:
-            await fire_ended_hook(run)
-        except Exception as e:
-            logger.debug("fire_ended_hook error for run {}: {}", run.run_id, e)
+        await _release_child_resources(run, child_agent)
+        await _finalize_child_run(run, outcome, result_text)
 
 
 def _build_child_middlewares(
@@ -983,6 +1139,152 @@ def _build_child_middlewares(
         ToolCallNormalize(),
         HeartbeatStaleness(),
     ]
+
+
+def _assert_child_token_floor() -> None:
+    """Subagent spawn bypasses ``built_agent()``, so validate the 128K floor here.
+
+    Child LLM construction would otherwise inherit the floor implicitly — this
+    is the same guard the main agent applies.
+    """
+    from config.features import LLM_CLIENT_DEFAULTS, assert_max_token_valid
+
+    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
+    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
+    _main_val = int(_main_raw) if _main_raw else None
+    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
+    assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
+    assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
+
+
+def _assemble_child_tools(
+    tools: list | None,
+    tool_allow: list[str] | None,
+    tool_deny: list[str] | None,
+    extra_tools: list[str] | None,
+    functional_role: FunctionalRole,
+    session_id: str,
+) -> list:
+    """The child's tool face: role policy, then the role-gated families.
+
+    Code intelligence (researcher + librarian) and PTC (executor) are injected
+    here and never added to ``_MAIN_TOOLS_BUILDERS``, so the main agent and
+    every other functional role cannot see them; ast-grep is available to every
+    functional role but also stays out of the main agent's face.
+    """
+    from agent.tools import build_main_tools
+
+    base_tools = tools if tools is not None else build_main_tools()
+
+    # Per-task extra tools attach on top of the role policy: they join the
+    # allow-list only when a whitelist is active (in inherit mode they are
+    # already part of the candidate set and only the deny-list applies). The
+    # main_only metadata gate and deny-list still apply to them.
+    effective_allow = list(tool_allow or [])
+    if extra_tools and effective_allow:
+        for name in extra_tools:
+            if name not in effective_allow:
+                effective_allow.append(name)
+
+    filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
+
+    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher + librarian):
+    # they are injected here, after the role policy, and never added to
+    # _MAIN_TOOLS_BUILDERS, so the main agent and every other functional role
+    # cannot see them.
+    final_tools = list(filtered_tools)
+    if functional_role in CODE_INTEL_ROLES:
+        from agent.tools.code_intel import build_code_intel_tools
+        from agent.tools.code_intel.lsp import build_lsp_tools
+
+        final_tools = [
+            *final_tools,
+            *build_code_intel_tools(session_id=session_id),
+            *build_lsp_tools(session_id=session_id),
+        ]
+
+    # ast-grep structural search/rewrite is a core component available to EVERY
+    # functional role (not RESEARCHER-only), mirroring oh-my-openagent's globally
+    # registered ast-grep MCP server. It is never added to _MAIN_TOOLS_BUILDERS,
+    # so the main agent cannot see it; the builder is fail-open (a missing
+    # binary degrades to an actionable install-hint tool result, never a crash).
+    from agent.tools.code_intel.ast_grep import build_ast_grep_tools
+
+    final_tools = [*final_tools, *build_ast_grep_tools(session_id=session_id)]
+
+    # Programmatic Tool Calling is EXECUTOR-only (PTC_ROLES) — the same single
+    # named source that spawn/system_prompt.py reads. Injected after the role
+    # policy and never added to _MAIN_TOOLS_BUILDERS, so the main agent and
+    # every other functional role cannot see it. The tool's own whitelist is
+    # intersected with filtered_tools, so it can call only real executor tools
+    # and can never recurse into execute_code.
+    if functional_role in PTC_ROLES:
+        from agent.tools.ptc import build_ptc_tool
+
+        final_tools = [
+            *final_tools,
+            build_ptc_tool(available_tools=filtered_tools, session_id=session_id),
+        ]
+    return final_tools
+
+
+def _select_child_llm(
+    model_profile: dict[str, str] | None,
+    model_override: str | None,
+    functional_role: FunctionalRole,
+    model_tier: str | None,
+    role: SubagentSessionRole,
+):
+    """Pick the child's LLM, in precedence order.
+
+    *model_profile* (the requester session's per-role model, 预设-子代理模型) wins:
+    it is a full profile descriptor, so the child can run on another provider /
+    key entirely. A build failure logs and falls through to the next step. Then
+    *model_override* (resolved by name), then the functional role's *model_tier*,
+    and finally the depth role: ORCHESTRATOR gets the main LLM, LEAF the
+    auxiliary one.
+    """
+    from models import build_auxiliary_llm, build_main_llm
+
+    if model_profile and model_profile.get("model"):
+        try:
+            from models import build_main_llm_for_profile
+
+            child_llm = build_main_llm_for_profile(
+                provider=model_profile.get("provider"),
+                model=model_profile["model"],
+                api_key=model_profile.get("api_key"),
+                base_url=model_profile.get("base_url"),
+            )
+            logger.info(
+                "Subagent role model: functional_role={} model={} provider={}",
+                functional_role,
+                model_profile["model"],
+                model_profile.get("provider"),
+            )
+            return child_llm
+        except Exception as exc:  # noqa: BLE001 - a bad profile must not kill the spawn
+            logger.warning(
+                "Subagent role model profile failed ({}); falling back to the role tier", exc
+            )
+
+    if model_override:
+        try:
+            from models import build_llm_by_name
+
+            return build_llm_by_name(model_override)
+        except (ImportError, AttributeError):
+            pass
+
+    # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
+    # the pre-migration depth-based behavior untouched.
+    if functional_role != FunctionalRole.GENERAL and model_tier == "main":
+        return build_main_llm()
+    if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
+        return build_auxiliary_llm()
+    if role == SubagentSessionRole.ORCHESTRATOR:
+        return build_main_llm()
+    return build_auxiliary_llm()
 
 
 async def _build_child_agent(
@@ -1042,120 +1344,15 @@ async def _build_child_agent(
     """
     from agent.core import StateSchema
     from langchain.agents import create_agent
-    from models import build_main_llm, build_auxiliary_llm
     from models.LLMs.main_llm import max_tokens as main_llm_max_tokens
-    from config.features import (
-        LLM_CLIENT_DEFAULTS,
-        assert_max_token_valid,
-    )
     from agent.checkpointer import build_async_sqlite_checkpointer
     from agent.middlewares import _SUBAGENT_REQUIRED, validate_required_middleware
-    from agent.tools import build_main_tools
 
-    # Subagent spawn bypasses built_agent(), so child LLM construction validates
-    # the same 128K MAX_TOKEN floor here instead of inheriting it implicitly.
-    _main_raw = os.getenv("MAIN_LLM_MAX_TOKEN", "").strip()
-    _aux_raw = os.getenv("AUXILIARY_LLM_MAX_TOKEN", "").strip()
-    _main_val = int(_main_raw) if _main_raw else None
-    _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
-    assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
-    assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
-
-    base_tools = tools if tools is not None else build_main_tools()
-
-    # Per-task extra tools attach on top of the role policy: they join the
-    # allow-list only when a whitelist is active (in inherit mode they are
-    # already part of the candidate set and only the deny-list applies). The
-    # main_only metadata gate and deny-list still apply to them.
-    effective_allow = list(tool_allow or [])
-    if extra_tools and effective_allow:
-        for name in extra_tools:
-            if name not in effective_allow:
-                effective_allow.append(name)
-
-    filtered_tools = apply_tool_policy(base_tools, effective_allow, tool_deny)
-
-    # Code intelligence tools are CODE_INTEL_ROLES-only (researcher + librarian):
-    # they are injected here, after the role policy, and never added to
-    # _MAIN_TOOLS_BUILDERS, so the main agent and every other functional role
-    # cannot see them.
-    final_tools = list(filtered_tools)
-    if functional_role in CODE_INTEL_ROLES:
-        from agent.tools.code_intel import build_code_intel_tools
-        from agent.tools.code_intel.lsp import build_lsp_tools
-
-        final_tools = [
-            *final_tools,
-            *build_code_intel_tools(session_id=session_id),
-            *build_lsp_tools(session_id=session_id),
-        ]
-
-    # ast-grep structural search/rewrite is a core component available to EVERY
-    # functional role (not RESEARCHER-only), mirroring oh-my-openagent's globally
-    # registered ast-grep MCP server. It is never added to _MAIN_TOOLS_BUILDERS,
-    # so the main agent cannot see it; the builder is fail-open (a missing
-    # binary degrades to an actionable install-hint tool result, never a crash).
-    from agent.tools.code_intel.ast_grep import build_ast_grep_tools
-
-    final_tools = [*final_tools, *build_ast_grep_tools(session_id=session_id)]
-
-    # Programmatic Tool Calling is EXECUTOR-only (PTC_ROLES) — the same single
-    # named source that spawn/system_prompt.py reads. Injected after the role
-    # policy and never added to _MAIN_TOOLS_BUILDERS, so the main agent and
-    # every other functional role cannot see it. The tool's own whitelist is
-    # intersected with filtered_tools, so it can call only real executor tools
-    # and can never recurse into execute_code.
-    if functional_role in PTC_ROLES:
-        from agent.tools.ptc import build_ptc_tool
-
-        final_tools = [
-            *final_tools,
-            build_ptc_tool(available_tools=filtered_tools, session_id=session_id),
-        ]
-
-    def _select_child_llm():
-        # Functional-role tier wins over the depth role; GENERAL (no tier) keeps
-        # the pre-migration depth-based behavior untouched.
-        if functional_role != FunctionalRole.GENERAL and model_tier == "main":
-            return build_main_llm()
-        if functional_role != FunctionalRole.GENERAL and model_tier == "auxiliary":
-            return build_auxiliary_llm()
-        if role == SubagentSessionRole.ORCHESTRATOR:
-            return build_main_llm()
-        return build_auxiliary_llm()
-
-    child_llm = None
-    if model_profile and model_profile.get("model"):
-        try:
-            from models import build_main_llm_for_profile
-
-            child_llm = build_main_llm_for_profile(
-                provider=model_profile.get("provider"),
-                model=model_profile["model"],
-                api_key=model_profile.get("api_key"),
-                base_url=model_profile.get("base_url"),
-            )
-            logger.info(
-                "Subagent role model: functional_role={} model={} provider={}",
-                functional_role,
-                model_profile["model"],
-                model_profile.get("provider"),
-            )
-        except Exception as exc:  # noqa: BLE001 - a bad profile must not kill the spawn
-            logger.warning(
-                "Subagent role model profile failed ({}); falling back to the role tier", exc
-            )
-            child_llm = None
-    if child_llm is None:
-        if model_override:
-            try:
-                from models import build_llm_by_name
-
-                child_llm = build_llm_by_name(model_override)
-            except (ImportError, AttributeError):
-                child_llm = _select_child_llm()
-        else:
-            child_llm = _select_child_llm()
+    _assert_child_token_floor()
+    final_tools = _assemble_child_tools(
+        tools, tool_allow, tool_deny, extra_tools, functional_role, session_id
+    )
+    child_llm = _select_child_llm(model_profile, model_override, functional_role, model_tier, role)
 
     child_checkpointer = await build_async_sqlite_checkpointer()
     await child_checkpointer.setup()

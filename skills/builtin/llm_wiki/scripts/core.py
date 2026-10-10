@@ -108,7 +108,7 @@ def init_wiki() -> dict:
         logger.debug(f"Wiki initialized at: {wiki_root}")
 
     except Exception as e:
-        logger.error(f"Wiki initialization failed: {e}")
+        logger.exception(f"Wiki initialization failed: {e}")
         result["errors"].append(str(e))
 
     return result

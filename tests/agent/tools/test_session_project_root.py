@@ -212,18 +212,18 @@ def test_python_repl_resolves_the_session_root(two_roots: tuple[Path, Path]):
         def _extract(self) -> str:
             return self._sid
 
-    # The helper reads the session id through _extract_session_id(run_manager);
+    # The helper reads the session id through resolve_tool_session_id(run_manager);
     # stub that seam instead of fabricating a whole callback manager.
     import agent.tools.python_repl as mod
 
-    original = mod._extract_session_id
-    mod._extract_session_id = lambda _rm: SESSION_A
+    original = mod.resolve_tool_session_id
+    mod.resolve_tool_session_id = lambda _sid, _rm: SESSION_A
     try:
         assert python_repl._resolve_session_cwd(_RunManager(SESSION_A)) == str(a)
-        mod._extract_session_id = lambda _rm: ""
+        mod.resolve_tool_session_id = lambda _sid, _rm: ""
         assert python_repl._resolve_session_cwd(_RunManager("")) is None
     finally:
-        mod._extract_session_id = original
+        mod.resolve_tool_session_id = original
 
 
 def test_ptc_resolves_the_session_root(two_roots: tuple[Path, Path]):
@@ -330,7 +330,7 @@ def test_path_utils_rendering_anchors_at_the_session_root(two_roots: tuple[Path,
 def test_terminal_takes_the_session_from_the_injected_state(two_roots):
     """The runnable-config lookup is empty in production (smoke finding).
 
-    `_extract_session_id(run_manager)` reads `config["configurable"]["session_id"]`,
+    `resolve_tool_session_id(run_manager)` reads `config["configurable"]["session_id"]`,
     which nothing writes at runtime — so a terminal call that relied on it alone
     ran in the repository root instead of the session's project directory. The
     schema carries `session_id` as `InjectedState`, and the resolved cwd must
@@ -363,6 +363,8 @@ def test_python_repl_prefers_the_injected_session(two_roots, monkeypatch):
     a, _b = two_roots
     _bind(SESSION_A, a)
 
-    monkeypatch.setattr(python_repl, "_extract_session_id", lambda _rm: "")
+    # Simulate the runtime truth: the runnable-config lookup is empty, so the
+    # resolver passes the injected value straight through.
+    monkeypatch.setattr(python_repl, "resolve_tool_session_id", lambda sid, _rm: sid)
     assert python_repl._resolve_session_cwd(None, SESSION_A) == str(a)
     assert python_repl._resolve_session_cwd(None, "") is None

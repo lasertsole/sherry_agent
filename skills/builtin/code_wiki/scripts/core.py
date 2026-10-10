@@ -83,7 +83,7 @@ def init_repo_wiki(repo_name: str) -> dict:
         logger.debug(f"code_wiki initialized for '{repo_name}' at: {repo_dir}")
 
     except Exception as e:
-        logger.error(f"code_wiki init failed for '{repo_name}': {e}")
+        logger.exception(f"code_wiki init failed for '{repo_name}': {e}")
         result["errors"].append(str(e))
 
     return result

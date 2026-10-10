@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
 
 
-class ClickInput(BaseModel):
+class ClickInput(BrowserPageInput):
     """Arguments of ``browser_click``."""
 
     ref: str | None = Field(default=None, description='Element ref from a snapshot (e.g. "e5").')
@@ -19,8 +19,6 @@ class ClickInput(BaseModel):
     )
     button: str = Field(default="left", description="Mouse button: left / middle / right.")
     double: bool = Field(default=False, description="Double click.")
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
-    session_id: SessionId = ""
 
 
 class BrowserClickTool(BrowserTool):

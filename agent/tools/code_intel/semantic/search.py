@@ -33,6 +33,7 @@ from config.features.agent_side import (
     CodeIntelSemanticConfig,
 )
 
+from ..roots import root_for_call
 from .indexer import SemanticIndexer, _unpack
 
 _LOAD_SQL = """
@@ -287,6 +288,7 @@ class SemanticCodeSearchTool(BaseTool):
 
     _engine: SemanticSearch = PrivateAttr()
     _root: Path = PrivateAttr()
+    _explicit_root: Path | None = PrivateAttr(default=None)
     _session_id: str = PrivateAttr(default="")
 
     def __init__(
@@ -294,15 +296,21 @@ class SemanticCodeSearchTool(BaseTool):
         engine: SemanticSearch,
         root: Path,
         session_id: str = "",
+        explicit_root: Path | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._engine = engine
         self._root = root
+        self._explicit_root = explicit_root
         self._session_id = session_id
 
+    def _session_root(self) -> Path:
+        """The project directory this call queries (per call, never cached)."""
+        return root_for_call(self._explicit_root, self._session_id, self._root)
+
     def _run(self, query: str, top_k: int | None = None) -> str:
-        result = self._engine.search(query, self._root, top_k=top_k)
+        result = self._engine.search(query, self._session_root(), top_k=top_k)
         return json.dumps(_payload(result), ensure_ascii=False)
 
     async def _arun(self, query: str, top_k: int | None = None) -> str:
@@ -313,13 +321,15 @@ def build_semantic_search_tool(
     semantic: SemanticSearch,
     root: Path,
     session_id: str,
+    *,
+    explicit_root: Path | None = None,
 ) -> SemanticCodeSearchTool:
     """Factory for :class:`SemanticCodeSearchTool` (every tool family has one).
 
     Kept beside the class so the construction arguments live with the tool; the
     code-intel assembler calls this instead of instantiating inline.
     """
-    return SemanticCodeSearchTool(semantic, root, session_id)
+    return SemanticCodeSearchTool(semantic, root, session_id, explicit_root)
 
 
 def _payload(result: SemanticSearchResult) -> dict[str, Any]:

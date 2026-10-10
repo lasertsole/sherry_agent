@@ -33,7 +33,7 @@ from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
     tool_error,
     PathOutOfBoundsError,
-    _extract_session_id,
+    resolve_tool_session_id,
     display_path,
     is_text_file,
     resolve_external_path,
@@ -276,7 +276,7 @@ class SearchFilesTool(BaseTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(pattern, target, path, file_glob, limit, offset, context, session_id)
 
     @override
@@ -292,7 +292,7 @@ class SearchFilesTool(BaseTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         # The scan (walk or child process) is blocking work; run it in a worker
         # thread so a search cannot stall the event loop for its whole budget.
         return await asyncio.to_thread(

@@ -32,20 +32,13 @@ from config.features.agent_side import (
 )
 from config.path import CODE_INTEL_DIR
 
+from .roots import resolve_root, root_for_call
+
 from .query import CalleeInfo, CallerInfo, CodeQuery, ExploreResult, ImpactResult
 from .semantic import SemanticSearch, build_semantic_search_tool
 
-_ROOT_ENV_KEY = "SHERRY_CODE_INTEL_ROOT"
 _DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
 _SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
-
-
-def _resolve_root() -> Path:
-    """Resolve the index root: explicit env override, else the process cwd."""
-    override = os.environ.get(_ROOT_ENV_KEY, "").strip()
-    if override:
-        return Path(override).expanduser().resolve()
-    return Path.cwd().resolve()
 
 
 def _resolve_db_path(config: CodeIntelConfig) -> str:
@@ -87,6 +80,7 @@ class _CodeIntelTool(BaseTool):
     _engine: CodeQuery = PrivateAttr()
     _config: CodeIntelConfig = PrivateAttr()
     _root: Path = PrivateAttr()
+    _explicit_root: Path | None = PrivateAttr(default=None)
     _session_id: str = PrivateAttr(default="")
 
     def __init__(
@@ -95,13 +89,19 @@ class _CodeIntelTool(BaseTool):
         config: CodeIntelConfig,
         root: Path,
         session_id: str = "",
+        explicit_root: Path | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(**kwargs)
         self._engine = engine
         self._config = config
         self._root = root
+        self._explicit_root = explicit_root
         self._session_id = session_id
+
+    def _session_root(self) -> Path:
+        """The project directory this call runs against (see :func:`_root_for_call`)."""
+        return root_for_call(self._explicit_root, self._session_id, self._root)
 
     def _run(self, **kwargs: Any) -> str:  # pragma: no cover - overridden
         raise NotImplementedError
@@ -129,7 +129,7 @@ class ExploreTool(_CodeIntelTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, query: str) -> str:
-        result = self._engine.explore(query, self._root)
+        result = self._engine.explore(query, self._session_root())
         return self._json(_explore_payload(result))
 
 
@@ -146,7 +146,7 @@ class CallersTool(_CodeIntelTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, symbol: str) -> str:
-        rows = self._engine.callers(symbol, self._root)
+        rows = self._engine.callers(symbol, self._session_root())
         return self._json(_callers_payload(symbol, rows))
 
 
@@ -163,7 +163,7 @@ class CalleesTool(_CodeIntelTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, symbol: str) -> str:
-        rows = self._engine.callees(symbol, self._root)
+        rows = self._engine.callees(symbol, self._session_root())
         return self._json(_callees_payload(symbol, rows))
 
 
@@ -180,7 +180,7 @@ class ImpactTool(_CodeIntelTool):
     metadata: dict[str, Any] = _SCOPE_METADATA
 
     def _run(self, symbol: str) -> str:
-        result = self._engine.impact(symbol, self._root)
+        result = self._engine.impact(symbol, self._session_root())
         return self._json(_impact_payload(result))
 
 
@@ -288,12 +288,13 @@ def build_code_intel_tools(
     except Exception as exc:  # noqa: BLE001 - missing tooling must not break a spawn
         logger.warning("code_intel: tools unavailable: {}", exc)
         return []
-    resolved_root = Path(root).resolve() if root is not None else _resolve_root()
+    resolved_root = resolve_root()
+    explicit_root = Path(root).resolve() if root is not None else None
     tools: list[BaseTool] = [
-        ExploreTool(engine, cfg, resolved_root, session_id),
-        CallersTool(engine, cfg, resolved_root, session_id),
-        CalleesTool(engine, cfg, resolved_root, session_id),
-        ImpactTool(engine, cfg, resolved_root, session_id),
+        ExploreTool(engine, cfg, resolved_root, session_id, explicit_root),
+        CallersTool(engine, cfg, resolved_root, session_id, explicit_root),
+        CalleesTool(engine, cfg, resolved_root, session_id, explicit_root),
+        ImpactTool(engine, cfg, resolved_root, session_id, explicit_root),
     ]
     try:
         semantic = SemanticSearch(
@@ -303,7 +304,11 @@ def build_code_intel_tools(
             embed_model=embed_model,
             reranker=reranker,
         )
-        tools.append(build_semantic_search_tool(semantic, resolved_root, session_id))
+        tools.append(
+            build_semantic_search_tool(
+                semantic, resolved_root, session_id, explicit_root=explicit_root
+            )
+        )
     except Exception as exc:  # noqa: BLE001 - semantic layer is additive, never fatal
         logger.warning("code_intel: semantic search unavailable: {}", exc)
     return tools

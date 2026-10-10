@@ -48,7 +48,7 @@ async def persist_runs_to_disk() -> None:
     try:
         await store_sqlite.save_runs_to_sqlite(runs)
     except Exception as e:
-        logger.error("Failed to persist subagent runs to SQLite: {}", e)
+        logger.exception("Failed to persist subagent runs to SQLite: {}", e)
 
 
 async def restore_runs_from_disk() -> None:
@@ -76,7 +76,7 @@ async def restore_runs_from_disk() -> None:
                 restored_pending,
             )
     except Exception as e:
-        logger.error("Failed to restore subagent runs from SQLite: {}", e)
+        logger.exception("Failed to restore subagent runs from SQLite: {}", e)
 
 
 async def init_registry() -> None:
@@ -109,4 +109,4 @@ async def periodic_persist(interval_seconds: int = 30) -> None:
         try:
             await persist_runs_to_disk()
         except Exception as e:
-            logger.error("Periodic persist failed: {}", e)
+            logger.exception("Periodic persist failed: {}", e)

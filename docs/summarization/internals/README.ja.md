@@ -51,7 +51,7 @@ TTL レジストリ本体（`record_first_seen` / `select_expired` / `truncate_e
 
 **圧縮時 nudge**（`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`）: メモリレビュー（`_nudge_memory`）は圧縮のたびにディスパッチされます; プラン抽出は同じ時点で `_detect_todo_all_complete` を評価します。どちらも NUDGE レーン上で fire-and-forget でディスパッチされ、モデル呼び出しをブロックしません。nudge ロックが保持されている間、圧縮はディスパッチを完全にスキップします（キューイングなし）。単発の `nudge_plan_extraction_fired` フラグは完了サイクルごとに 1 回の抽出を保証します —— そのため、一度も圧縮しないセッションはプラン抽出を発火しません。
 
-**カットポイント選択**（`_determine_cutoff`、compression.py:277）: 履歴をターンに分割し、**最新から逆方向**に歩きながら保持予算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`、compression.py:70）に照らして累積します; 丸ごと入らないターンはターン途中で割られることがあります。`_adjust_for_orphan_pairs`（compression.py:311）がカットポイントを逆に歩き、`ToolMessage` が `AIMessage` のツール呼び出しから分離する状態がなくなるまで調整します。最終ターン比率ゲートが発火しない限り（最後のユーザーターン ≥ 全トークンの `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`、wrap 入口 core.py:421 / core.py:503 で呼び出し）、カットポイントが最後の `HumanMessage` を超えることはありません。
+**カットポイント選択**（`_determine_cutoff`、compression.py:277）: 履歴をターンに分割し、**最新から逆方向**に歩きながら保持予算 `clamp(window × 0.25, 2 000, 15 000)`（`_calculate_preserve_budget`、compression.py:70）に照らして累積します; 丸ごと入らないターンはターン途中で割られることがあります。`_adjust_for_orphan_pairs`（compression.py:311）がカットポイントを逆に歩き、`ToolMessage` が `AIMessage` のツール呼び出しから分離する状態がなくなるまで調整します。最終ターン比率ゲートが発火しない限り（最後のユーザーターン ≥ 全トークンの `LAST_TURN_RATIO_THRESHOLD (0.5)` —— `_check_last_turn_ratio`、wrap 入口の `_plan_model_call` で呼び出し）、カットポイントが最後の `HumanMessage` を超えることはありません。
 
 すべての失敗モードは fail-open です: `_apply_compression` が例外を投げてもログに記録されるだけで、元のリクエストがそのまま進行します —— 壊れた圧縮がターンを壊すことはありません。
 
@@ -164,16 +164,16 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 | 有効性判定 | （`_record_compression`、thrash.py:117） | メッセージ数減少**または**トークン削減 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 成功した非 LLM 戦略（`dedup`/`prune`/`truncate`/`fallback`/`aggressive`）が `skip_llm` を再び解除 |
 | 劣化リカバリ予算 | `summarization_recovery_attempts` | `MAX_RECOVERY_ATTEMPTS = 2` | 劣化モニタが発動する強制リカバリの上限 |
 
-**劣化モニタ**（`_monitor_degradation`、thrash.py:131）: この呼び出しで実際に圧縮が起きたときのみ参照されます（`_compaction_just_happened` フラグ）。モデルの応答にテキストがなければカウンタが増え、`DEGRADATION_NO_TEXT_THRESHOLD (3)` 回連続の空応答 —— かつ `summarization_recovery_attempts < 2` の間 —— で `force_recovery` を設定し、無効連続記録とセッション圧縮カウントをクリアします。空でない応答はすべてカウンタをリセットします。これは「圧縮 → モデルが混乱 → 空の出力 → 再圧縮」の病的ループを捉えます。相互作用に注意: force フラグは wrap 入口（core.py:426）で `_should_skip_compression` **より先に**読まれ、スキップゲートはカウンタをリセットして進むことでそのフラグを消費します（thrash.py:110–115）—— リカバリ圧縮は正確に一度だけ実行されます。
+**劣化モニタ**（`_monitor_degradation`、thrash.py:131）: この呼び出しで実際に圧縮が起きたときのみ参照されます（`_compaction_just_happened` フラグ）。モデルの応答にテキストがなければカウンタが増え、`DEGRADATION_NO_TEXT_THRESHOLD (3)` 回連続の空応答 —— かつ `summarization_recovery_attempts < 2` の間 —— で `force_recovery` を設定し、無効連続記録とセッション圧縮カウントをクリアします。空でない応答はすべてカウンタをリセットします。これは「圧縮 → モデルが混乱 → 空の出力 → 再圧縮」の病的ループを捉えます。相互作用に注意: force フラグは wrap 入口（`core.py::_plan_model_call`）で `_should_skip_compression` **より先に**読まれ、スキップゲートはカウンタをリセットして進むことでそのフラグを消費します（thrash.py:110–115）—— リカバリ圧縮は正確に一度だけ実行されます。
 
 ## 🔄 システムプロンプト更新
 
-メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（core.py:441–459）。`@dynamic_prompt` システムプロンプトミドルウェアを持たないチェーン（サブエージェント / nudge パイプライン）はこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
+メインエージェントのみ（`need_update_system_prompt=True`）: 圧縮後、ミドルウェアはシステムプロンプトを再構築して `system_prompt` 状態キーに書き込み、次のモデル呼び出しがペルソナファイル / 長期記憶を現時点のまま見るようにします。2 つの配送経路: 圧縮直後の `request.override(system_message=SystemMessage(...))`、および —— T1 の compact が既に起きたがアンチスラッシングゲートが 2 回目を封鎖したとき —— 再構築されたプロンプトはゲート経路でも配送されます（`core.py::_refresh_system_prompt_if_needed`）。`@dynamic_prompt` システムプロンプトミドルウェアを持たないチェーン（サブエージェント / nudge パイプライン）はこのミドルウェアの配送に依存するためです。ゲート経路は、リクエストの現在の system message と**内容が異なる場合にのみ**注入します: 内容が一致していれば override も新しい `SystemMessage` も作らず（再注入しません）。
 
 ## 📌 登録箇所
 
 ```python
-# agent/core.py:204 — メインエージェント（Summarization は最後のミドルウェア:
+# agent/core.py:324 — メインエージェント（Summarization は最後のミドルウェア:
 # 最も内側の wrap レイヤ、LLM に最も近い）
 Summarization(
     need_update_system_prompt=True,
@@ -182,7 +182,7 @@ Summarization(
     trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
 )
 
-# agent/tools/subagent/spawn/core.py:909 — ワーカーエージェント（最初のミドルウェア）
+# agent/tools/subagent/spawn/core.py:1106 — ワーカーエージェント（最初のミドルウェア）
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

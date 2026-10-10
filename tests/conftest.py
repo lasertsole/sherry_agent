@@ -86,6 +86,36 @@ def _isolated_skill_scan_cache(tmp_path):
         yield
 
 
+#: Every aiosqlite Connection object this session's recorder saw, in creation
+#: order — the session-end sweep re-closes them because aiosqlite starts its
+#: worker THREAD only on first await: a connection created in one test and first
+#: awaited in a later one is closed (as a no-op) by the wrong test's teardown and
+#: would otherwise outlive the session as a live non-daemon thread.
+_RECORDED_AIOSQLITE: list[object] = []
+
+
+def _close_recorded_aiosqlite_connections() -> None:
+    """Close every recorded connection (idempotent — close() re-closes safely).
+
+    ``close()`` early-returns when the connection never finished connecting, so
+    a worker whose awaiting task was cancelled keeps its thread parked forever.
+    ``stop()`` is the thread-stopping half of that pair and is what actually
+    releases such a worker (it enqueues the sentinel the loop exits on).
+    """
+    while _RECORDED_AIOSQLITE:
+        conn = _RECORDED_AIOSQLITE.pop()
+        try:
+            asyncio.run(conn.close())
+        except Exception:  # noqa: BLE001 - the sweep must never mask results
+            logger.debug("aiosqlite session sweep close skipped", exc_info=True)
+        thread = getattr(conn, "_thread", None)
+        if thread is not None and thread.is_alive():
+            try:
+                conn.stop()
+            except Exception:  # noqa: BLE001 - same contract as above
+                logger.debug("aiosqlite session sweep stop skipped", exc_info=True)
+
+
 @pytest.fixture(autouse=True)
 def _close_aiosqlite_connections_at_teardown(monkeypatch):
     """Close every aiosqlite connection opened during a test, at teardown.
@@ -117,6 +147,7 @@ def _close_aiosqlite_connections_at_teardown(monkeypatch):
         # the connection (and its worker thread) materializes on first await.
         conn = real_connect(*args, **kwargs)
         opened.append(conn)
+        _RECORDED_AIOSQLITE.append(conn)
         return conn
 
     monkeypatch.setattr(aiosqlite, "connect", _recording_connect)
@@ -168,6 +199,7 @@ def pytest_sessionfinish(session, exitstatus) -> None:
     process hard-exits after a short grace so a test leak can never become a
     hung job.
     """
+    _close_recorded_aiosqlite_connections()
     executor_workers = _executor_worker_threads()
     survivors = [
         thread

@@ -34,7 +34,11 @@ from langchain_core.callbacks import CallbackManagerForToolRun, AsyncCallbackMan
 
 from config.path import ROOT_DIR
 from config.features import TOOLS_TIMEOUTS
-from agent.tools.pub_base import SessionId, _extract_session_id
+from agent.tools.pub_base import (
+    SessionId,
+    _extract_session_id,
+    resolve_tool_session_id,
+)
 
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
@@ -107,7 +111,7 @@ def _resolve_session_cwd(run_manager: Any, session_id: str = "") -> str | None:
 
     # The injected state is the production channel; the runnable-config lookup
     # below it stays as a fallback for direct/test callers (it is empty at runtime).
-    bound = session_workspace_root(session_id or _extract_session_id(run_manager))
+    bound = session_workspace_root(resolve_tool_session_id(session_id, run_manager))
     return str(bound) if bound is not None else None
 
 

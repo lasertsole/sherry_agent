@@ -222,7 +222,7 @@ async def _send_turn_error(session_id: str, route: str, content: str) -> None:
     try:
         await router.send_error(session_id, content)
     except Exception as e:  # pragma: no cover - defensive
-        logger.error(f"TurnRunner: outbound router '{route}' failed: {e}", exc_info=True)
+        logger.exception(f"TurnRunner: outbound router '{route}' failed: {e}", exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -287,7 +287,7 @@ async def on_turn_finished(
             try:
                 await queue.mark_terminal(row_id, UserInputQueueStatus.DELIVERED)
             except Exception as e:
-                logger.error(
+                logger.exception(
                     f"TurnRunner: failed to mark row {row_id} DELIVERED: {e}", exc_info=True
                 )
     else:
@@ -426,7 +426,7 @@ async def _execute_single(session_id: str, row: Any) -> None:
         try:
             await queue.mark_terminal(row.id, UserInputQueueStatus.VOIDED)
         except Exception as void_error:
-            logger.error(
+            logger.exception(
                 f"TurnRunner: row {row.id} stays CLAIMED (void fallback failed): {void_error}"
             )
 

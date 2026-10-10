@@ -226,94 +226,38 @@ def _png_size(png: bytes) -> tuple[int, int] | None:
     return width, height
 
 
-class BrowserManager:
-    """The process-wide browser: lazy launch, per-session pages, bounded verbs."""
+class _BrowserManagerBase:
+    """Shared state and cross-mixin hooks — declarations only.
 
-    def __init__(
-        self,
-        config: BrowserAgentConfig | None = None,
-        *,
-        launcher: Callable[..., Any] = launch_browser,
-        transport_factory: Callable[..., BrowserTransport] = CdpConnection,
-    ) -> None:
-        self.config = config if config is not None else BROWSER_AGENT
-        self._launcher = launcher
-        self._transport_factory = transport_factory
-        self._transport: BrowserTransport | None = None
-        self._pid: int | None = None
-        #: Debug port, kept in-process: only devtools frontend URLs are built from it.
-        self._port: int | None = None
-        self._start_lock = asyncio.Lock()
-        self._pages: dict[str, BrowserPage] = {}
-        self._counter = 0
-        self._sweeper: asyncio.Task | None = None
+    The responsibilities are split across the mixins below, but they all operate
+    on ONE manager's live CDP state. This class declares the attributes and the
+    methods each mixin reaches for on the others, so the mixins type-check
+    without a back-reference; every declaration is overridden by its real
+    implementation (the concrete mixins precede this class in the MRO).
+    """
 
-    # ---------------------------------------------------------------- lifecycle
+    # Set by ``BrowserManager.__init__``.
+    config: BrowserAgentConfig
+    _transport: BrowserTransport | None
+    _port: int | None
+    _pages: dict[str, BrowserPage]
 
-    @property
-    def enabled(self) -> bool:
-        """True when the feature is switched on (tools/routes exist)."""
-        return bool(self.config["enabled"])
+    # Implemented by the lifecycle class / the pool and screencast mixins.
+    async def ensure_started(self) -> None: ...
+    def page_for(self, session_id: str, page_id: str | None = None) -> BrowserPage: ...
+    async def open_page(self, session_id: str, url: str = "about:blank") -> BrowserPage: ...
+    def _require_transport(self) -> BrowserTransport: ...
+    async def _nudge_paint(self, page: BrowserPage) -> None: ...
+    async def _eval_raw(self, page: BrowserPage, expression: str, *, timeout: float) -> Any: ...
 
-    @property
-    def running(self) -> bool:
-        """True while a transport is connected to a live browser."""
-        return self._transport is not None and self._transport.connected
 
-    def status(self) -> dict[str, Any]:
-        """The panel's / the tools' view: never the debug port."""
-        return {
-            "enabled": self.enabled,
-            "running": self.running,
-            "pid": self._pid,
-            "pages": len(self._pages),
-            "sessions": len({page.session_id for page in self._pages.values()}),
-        }
+class _BrowserPagePoolMixin(_BrowserManagerBase):
+    """The page pool: per-session pages, LRU cap, idle sweep.
 
-    async def ensure_started(self) -> None:
-        """Launch Chromium and connect on first use (idempotent, serialized)."""
-        if self.running:
-            return
-        async with self._start_lock:
-            if self.running:
-                return
-            executable = resolve_executable(
-                self.config["executable"], self.config["executable_candidates"]
-            )
-            launched = await self._launcher(
-                executable=executable,
-                headless=bool(self.config["headless"]),
-                user_data_dir=self.config["user_data_dir"],
-                timeout_s=float(self.config["launch_timeout_s"]),
-            )
-            transport = self._transport_factory(launched.ws_url)
-            await transport.start(timeout=float(self.config["launch_timeout_s"]))
-            transport.add_listener(self._on_event)
-            self._transport = transport
-            self._pid = launched.pid
-            if self._sweeper is None or self._sweeper.done():
-                self._sweeper = asyncio.create_task(self._idle_sweep_loop())
-            self._port = launched.port
-
-    async def shutdown(self) -> None:
-        """Close every page, the browser and the transport (idempotent)."""
-        if self._sweeper is not None:
-            self._sweeper.cancel()
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                await self._sweeper
-            self._sweeper = None
-        transport = self._transport
-        self._transport = None
-        self._pid = None
-        self._port = None
-        self._pages.clear()
-        if transport is None:
-            return
-        try:
-            await transport.call("Browser.close", timeout=3.0)
-        except Exception:  # noqa: BLE001 - a dead browser is already the goal
-            logger.debug("Browser.close failed during shutdown (already gone?)")
-        await transport.close()
+    A mixin (not a collaborator object) so every method keeps operating on the
+    manager's own transport/pages/config — the split is about responsibility,
+    not about inventing a second source of truth for live CDP state.
+    """
 
     async def _idle_sweep_loop(self) -> None:
         """Close pages nobody used (or watched) for ``idle_timeout_s``.
@@ -349,8 +293,6 @@ class BrowserManager:
         if closed:
             logger.info("Browser idle sweep closed {}", closed)
         return closed
-
-    # -------------------------------------------------------------------- pages
 
     def list_pages(self, session_id: str) -> list[dict[str, Any]]:
         """Every live page of one session, newest activity first."""
@@ -455,7 +397,13 @@ class BrowserManager:
                 except CdpError:
                     pass
 
-    # ------------------------------------------------------------------- events
+
+class _BrowserScreencastMixin(_BrowserManagerBase):
+    """Frame/event fan-out: transport listeners, panel subscriptions, screencast.
+
+    Owns what the panel SEES — the droppable frame channel, the ref-updated
+    events, and the paint nudge that gets the first frame out.
+    """
 
     def _on_event(self, message: dict[str, Any]) -> None:
         """Route one transport event to its page (screencast frames fan out)."""
@@ -560,6 +508,14 @@ class BrowserManager:
         except (CdpError, ValueError, TypeError):
             pass
 
+
+class _BrowserInteractionMixin(_BrowserManagerBase):
+    """Bounded verbs: navigation, page interaction, DOM/eval helpers.
+
+    Each verb resolves its page through the pool mixin and bounds its own CDP
+    call; the exceptions they raise are the routes' contract.
+    """
+
     async def set_viewport(
         self,
         session_id: str,
@@ -583,8 +539,6 @@ class BrowserManager:
         )
         await self._nudge_paint(page)
         return {**page.info(), "viewport": [int(width), int(height)]}
-
-    # --------------------------------------------------------------------- verbs
 
     async def navigate(
         self, session_id: str, url: str, page_id: str | None = None
@@ -1062,8 +1016,6 @@ class BrowserManager:
         page.last_used = time.monotonic()
         return {"page": page.page_id, "kind": kind}
 
-    # ------------------------------------------------------------------ helpers
-
     async def _eval_raw(self, page: BrowserPage, expression: str, *, timeout: float) -> Any:
         """Evaluate one expression and return its JSON value."""
         result = await self._require_transport().call(
@@ -1105,6 +1057,94 @@ class BrowserManager:
             if time.monotonic() >= deadline:
                 return False
             await asyncio.sleep(0.1)
+
+
+class BrowserManager(_BrowserInteractionMixin, _BrowserScreencastMixin, _BrowserPagePoolMixin):
+    """The process-wide browser: lazy launch, per-session pages, bounded verbs."""
+
+    def __init__(
+        self,
+        config: BrowserAgentConfig | None = None,
+        *,
+        launcher: Callable[..., Any] = launch_browser,
+        transport_factory: Callable[..., BrowserTransport] = CdpConnection,
+    ) -> None:
+        self.config = config if config is not None else BROWSER_AGENT
+        self._launcher = launcher
+        self._transport_factory = transport_factory
+        self._transport: BrowserTransport | None = None
+        self._pid: int | None = None
+        #: Debug port, kept in-process: only devtools frontend URLs are built from it.
+        self._port: int | None = None
+        self._start_lock = asyncio.Lock()
+        self._pages: dict[str, BrowserPage] = {}
+        self._counter = 0
+        self._sweeper: asyncio.Task | None = None
+
+    @property
+    def enabled(self) -> bool:
+        """True when the feature is switched on (tools/routes exist)."""
+        return bool(self.config["enabled"])
+
+    @property
+    def running(self) -> bool:
+        """True while a transport is connected to a live browser."""
+        return self._transport is not None and self._transport.connected
+
+    def status(self) -> dict[str, Any]:
+        """The panel's / the tools' view: never the debug port."""
+        return {
+            "enabled": self.enabled,
+            "running": self.running,
+            "pid": self._pid,
+            "pages": len(self._pages),
+            "sessions": len({page.session_id for page in self._pages.values()}),
+        }
+
+    async def ensure_started(self) -> None:
+        """Launch Chromium and connect on first use (idempotent, serialized)."""
+        if self.running:
+            return
+        async with self._start_lock:
+            if self.running:
+                return
+            executable = resolve_executable(
+                self.config["executable"], self.config["executable_candidates"]
+            )
+            launched = await self._launcher(
+                executable=executable,
+                headless=bool(self.config["headless"]),
+                user_data_dir=self.config["user_data_dir"],
+                timeout_s=float(self.config["launch_timeout_s"]),
+            )
+            transport = self._transport_factory(launched.ws_url)
+            await transport.start(timeout=float(self.config["launch_timeout_s"]))
+            transport.add_listener(self._on_event)
+            self._transport = transport
+            self._pid = launched.pid
+            if self._sweeper is None or self._sweeper.done():
+                self._sweeper = asyncio.create_task(self._idle_sweep_loop())
+            self._port = launched.port
+
+    async def shutdown(self) -> None:
+        """Close every page, the browser and the transport (idempotent)."""
+        if self._sweeper is not None:
+            self._sweeper.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._sweeper
+            self._sweeper = None
+        transport = self._transport
+        self._transport = None
+        self._pid = None
+        self._port = None
+        self._pages.clear()
+        if transport is None:
+            return
+        try:
+            await transport.call("Browser.close", timeout=3.0)
+        except Exception:  # noqa: BLE001 - a dead browser is already the goal
+            logger.debug("Browser.close failed during shutdown (already gone?)")
+        await transport.close()
 
     def _require_transport(self) -> BrowserTransport:
         if self._transport is None or not self._transport.connected:

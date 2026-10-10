@@ -2,8 +2,9 @@
 
 Nothing here asserts source text: every case fails against the code as it was.
 
-1. ``get_pending_interrupt`` stops at the FIRST task of the superstep — a graph
-   that resumed several parallel branches carries one task each, so an approval
+1. ``agent.state_port.read_interrupt`` (the operation ``get_pending_interrupt``
+   delegates to) stops at the FIRST task of the superstep — a graph that
+   resumed several parallel branches carries one task each, so an approval
    sitting on a later task produced no dialog at all.
 2. ``process_heartbeat_task`` calls ``agent.invoke`` inside a coroutine, running
    the whole heartbeat turn in the event-loop thread and stalling every other
@@ -24,7 +25,6 @@ from langchain_core.messages import AIMessage
 
 from agent.tools.message_search import _run_semantic_search
 from server.service import heartbeat as heartbeat_service
-from server.service import messages as messages_service
 
 pytestmark = [pytest.mark.unit]
 
@@ -61,19 +61,17 @@ def _approval(tool_name: str) -> dict:
     }
 
 
-def _patch_state(monkeypatch: pytest.MonkeyPatch, tasks: list[_Task]) -> None:
-    async def _built_agent() -> _Agent:
-        return _Agent(tasks)
+def _pending(tasks: list[_Task]):
+    """Read the pending interrupt through the port, with the graph injected."""
+    from agent.state_port import read_interrupt
 
-    monkeypatch.setattr(messages_service, "built_agent", _built_agent)
+    return read_interrupt("s1", graph=_Agent(tasks))
 
 
 @pytest.mark.asyncio
-async def test_interrupt_on_a_later_task_is_found(monkeypatch):
+async def test_interrupt_on_a_later_task_is_found():
     # Task 1 is a branch that never interrupted; the approval lives on task 2.
-    _patch_state(monkeypatch, [_Task(), _Task(_Interrupt(_approval("write_file")))])
-
-    pending = await messages_service.get_pending_interrupt("s1")
+    pending = await _pending([_Task(), _Task(_Interrupt(_approval("write_file")))])
 
     assert pending is not None, "the approval on the second task was dropped"
     assert pending["tool_name"] == "write_file"
@@ -81,36 +79,28 @@ async def test_interrupt_on_a_later_task_is_found(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_interrupt_scan_skips_empty_payloads_before_finding_one(monkeypatch):
-    _patch_state(
-        monkeypatch,
+async def test_interrupt_scan_skips_empty_payloads_before_finding_one():
+    pending = await _pending(
         [
             _Task(_Interrupt(None)),  # a bare resume marker
             _Task(_Interrupt({"action_requests": []})),  # nothing to approve
             _Task(_Interrupt(_approval("terminal"))),
-        ],
+        ]
     )
-
-    pending = await messages_service.get_pending_interrupt("s1")
 
     assert pending is not None and pending["tool_name"] == "terminal", pending
 
 
 @pytest.mark.asyncio
-async def test_no_interrupt_anywhere_is_still_none(monkeypatch):
-    _patch_state(monkeypatch, [_Task(), _Task(_Interrupt({"action_requests": []}))])
-
-    assert await messages_service.get_pending_interrupt("s1") is None
+async def test_no_interrupt_anywhere_is_still_none():
+    assert await _pending([_Task(), _Task(_Interrupt({"action_requests": []}))]) is None
 
 
 @pytest.mark.asyncio
-async def test_the_first_approval_wins_when_several_are_pending(monkeypatch):
-    _patch_state(
-        monkeypatch,
-        [_Task(_Interrupt(_approval("first"))), _Task(_Interrupt(_approval("second")))],
+async def test_the_first_approval_wins_when_several_are_pending():
+    pending = await _pending(
+        [_Task(_Interrupt(_approval("first"))), _Task(_Interrupt(_approval("second")))]
     )
-
-    pending = await messages_service.get_pending_interrupt("s1")
 
     assert pending is not None and pending["tool_name"] == "first", pending
 

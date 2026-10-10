@@ -1,6 +1,7 @@
 """Clear-session tests for the planning stores.
 
-``server.DAO.messages.clear_session`` purges "every trace of a session": the
+``server.service.session_cleanup_service.purge_session`` purges "every trace of a
+session": the
 message store, the checkpointer, the session folder, the session's todo /
 task-flow rows (since session isolation) and the session's private
 plan-knowledge directories (since plan identity). Other sessions' rows and
@@ -31,7 +32,7 @@ def _isolate_dao(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     async def _noop(session_id: str) -> None:
         return None
 
-    from server.DAO import messages as dao
+    from server.service import session_cleanup_service as dao
 
     monkeypatch.setattr("context_engine.session_continuity.auto_save_on_session_end", _noop)
     monkeypatch.setattr("context_engine.delete_messages_by_session", lambda session_id: 0)
@@ -46,7 +47,7 @@ async def test_clear_session_purges_only_that_sessions_planning_rows(
 ):
     from agent.tools.taskflow.registry import store_sqlite as flow_store
     from agent.tools.todolist.registry import store_sqlite as todo_store
-    from server.DAO import messages as dao
+    from server.service import session_cleanup_service as dao
 
     _isolate_store(monkeypatch, todo_store, "todos.db", tmp_path)
     _isolate_store(monkeypatch, flow_store, "taskflow_registry.db", tmp_path)
@@ -58,7 +59,7 @@ async def test_clear_session_purges_only_that_sessions_planning_rows(
     await flow_store.create_flow("flow-1", state, session_id="sess-1")
     await flow_store.create_flow("flow-2", state, session_id="sess-2")
 
-    await dao.clear_session("sess-1")
+    await dao.purge_session("sess-1")
 
     assert await todo_store.get_todos("sess-1") == []
     assert [todo["content"] for todo in await todo_store.get_todos("sess-2")] == ["b"]
@@ -73,7 +74,7 @@ async def test_clear_session_purges_session_private_plan_knowledge(
     from agent.tools.todolist.knowledge import knowledge_store as store_mod
     from agent.tools.todolist.knowledge import ownership as knowledge_ownership
     from agent.tools.todolist.knowledge.identity import resolve_plan_identity
-    from server.DAO import messages as dao
+    from server.service import session_cleanup_service as dao
 
     _isolate_dao(monkeypatch, tmp_path)
 
@@ -105,7 +106,7 @@ async def test_clear_session_purges_session_private_plan_knowledge(
     await store_mod.KnowledgeStore.write(identity_1, layer="plan", data={"method": "one"})
     await store_mod.KnowledgeStore.write(identity_2, layer="plan", data={"method": "two"})
 
-    await dao.clear_session("sess-1")
+    await dao.purge_session("sess-1")
 
     assert (knowledge_root / identity_1.key).exists() is False
     assert (knowledge_root / identity_2.key / "plan-summary.json").is_file()
@@ -119,7 +120,7 @@ async def test_clear_session_rejects_unsafe_session_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, evil_sid: str
 ):
     """A traversal session_id must never reach ``shutil.rmtree``."""
-    from server.DAO import messages as dao
+    from server.service import session_cleanup_service as dao
 
     _isolate_dao(monkeypatch, tmp_path)
 
@@ -128,7 +129,7 @@ async def test_clear_session_rejects_unsafe_session_id(
     victim.mkdir()
 
     with pytest.raises(ValueError, match="invalid session_id"):
-        await dao.clear_session(evil_sid)
+        await dao.purge_session(evil_sid)
 
     assert victim.is_dir()
     assert list((tmp_path / "sessions").glob("*")) == []
@@ -139,7 +140,7 @@ async def test_clear_session_offloads_the_store_delete(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """The bulk message-store DELETE is blocking SQLite: it must run off-loop."""
-    from server.DAO import messages as dao
+    from server.service import session_cleanup_service as dao
 
     _isolate_dao(monkeypatch, tmp_path)
 
@@ -156,6 +157,6 @@ async def test_clear_session_offloads_the_store_delete(
 
     monkeypatch.setattr("context_engine.delete_messages_by_session", probe)
 
-    await dao.clear_session("sess-1")
+    await dao.purge_session("sess-1")
 
     assert observed == {"off_loop": True, "session_id": "sess-1"}

@@ -204,7 +204,7 @@ uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
 
 ## 🧹 정리 의미론과 한계
 
-- **`clear_session`은 한 번에 전부 지운다.** `server/DAO/messages.py::clear_session`은 세션의 MesMemory 행(`persisted_message_ids` 워터마크까지 함께 삭제), checkpointer 이력, 그리고 `SESSIONS_DIR/<session_id>/` 폴더 전체를 삭제한다 — 따라서 **`evicted/` 파일과 `plans/`가 세션과 함께 삭제된다**(`config/path.py::session_plans_dir`가 같은 전면 삭제 계약을 기록한다). 인메모리 레지스터는 마지막에 정리된다.
+- **`clear_session`은 한 번에 전부 지운다.** `server/service/session_cleanup_service.py::purge_session`은 세션의 MesMemory 행(`persisted_message_ids` 워터마크까지 함께 삭제), checkpointer 이력, 그리고 `SESSIONS_DIR/<session_id>/` 폴더 전체를 삭제한다 — 따라서 **`evicted/` 파일과 `plans/`가 세션과 함께 삭제된다**(`config/path.py::session_plans_dir`가 같은 전면 삭제 계약을 기록한다). 인메모리 레지스터는 마지막에 정리된다.
 - **축출은 모델 뷰 축소이며 결코 삭제가 아니다.** 이 페이지가 줄이는 모든 페이로드는 MesMemory에 아카이브되거나, 그래프 state에 전문이 있거나(인간 메시지), 디스크 `evicted/` 아래에 있다 — 그리고 모든 프리뷰가 포인터를 운반한다.
 - **`evicted/` 디렉터리는 세션 소유지만 가비지 컬렉션이 없다.** 파일은 `clear_session`까지 살아남는다; 메시지별 TTL은 없다. 거대한 도구 결과가 많은 장수 세션은 `workspace/sessions/<session_id>/evicted/`에 디스크 사용량을 쌓을 수 있다.
 - **한 줄짜리 거대 행은 결코 축출되지 않는다.** head와 tail이 모두 전체 페이로드를 담게 되면 프리뷰가 원문보다 작아질 수 없어 메시지는 그대로 남는다(도구 경로와 인간 경로 모두).

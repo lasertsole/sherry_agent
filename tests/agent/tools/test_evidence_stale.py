@@ -2,14 +2,33 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from agent.tools.todolist.evidence_ledger import EvidenceLedger
 
 import agent.tools.file_tools.patch_file as patch_file
 import agent.tools.file_tools.write_file as write_file
+import agent.tools.pub_base.path_utils as path_utils
 
 pytestmark = [pytest.mark.unit]
+
+
+@pytest.fixture(autouse=True)
+def _pin_resolver(monkeypatch, tmp_path):
+    """The three file tools resolve through the shared ``resolve_tool_path``.
+
+    Patch the in-root resolution in ITS module so the tool goes straight to the
+    target file without a session/project binding.
+    """
+    target_holder: dict[str, Path] = {}
+
+    def _resolve(file_path, root):
+        return target_holder["target"]
+
+    monkeypatch.setattr(path_utils, "resolve_workspace_path", _resolve)
+    yield target_holder
 
 
 @pytest.fixture
@@ -19,9 +38,9 @@ def ledger_path(tmp_path, monkeypatch):
     return path
 
 
-def test_write_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
+def test_write_file_appends_stale_event(ledger_path, tmp_path, _pin_resolver):
     target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_workspace_path", lambda _path, _root: target)
+    _pin_resolver["target"] = target
     EvidenceLedger.for_session("s1").append(kind="test", command="pytest foo.py")
     tool = write_file.build_write_file_tool()
 
@@ -34,9 +53,9 @@ def test_write_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
     assert stale["session_id"] == "s1"
 
 
-def test_write_file_stale_event_derives_prior_evidence(ledger_path, tmp_path, monkeypatch):
+def test_write_file_stale_event_derives_prior_evidence(ledger_path, tmp_path, _pin_resolver):
     target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_workspace_path", lambda _path, _root: target)
+    _pin_resolver["target"] = target
     EvidenceLedger.for_session("s1").append(kind="test", command="pytest foo.py")
     tool = write_file.build_write_file_tool()
 
@@ -48,10 +67,10 @@ def test_write_file_stale_event_derives_prior_evidence(ledger_path, tmp_path, mo
     assert stale["file_path"] in evidence["command"]
 
 
-def test_patch_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
+def test_patch_file_appends_stale_event(ledger_path, tmp_path, _pin_resolver):
     target = tmp_path / "bar.py"
     target.write_text("value = 1\n", encoding="utf-8")
-    monkeypatch.setattr(patch_file, "resolve_workspace_path", lambda _path, _root: target)
+    _pin_resolver["target"] = target
     EvidenceLedger.for_session("s1").append(kind="test", command="pytest bar.py")
     tool = patch_file.build_patch_file_tool()
 
@@ -64,9 +83,9 @@ def test_patch_file_appends_stale_event(ledger_path, tmp_path, monkeypatch):
     assert stale["session_id"] == "s1"
 
 
-def test_write_file_survives_ledger_failure(ledger_path, tmp_path, monkeypatch):
+def test_write_file_survives_ledger_failure(ledger_path, tmp_path, _pin_resolver, monkeypatch):
     target = tmp_path / "foo.py"
-    monkeypatch.setattr(write_file, "resolve_workspace_path", lambda _path, _root: target)
+    _pin_resolver["target"] = target
     tool = write_file.build_write_file_tool()
 
     def _boom(_entry):

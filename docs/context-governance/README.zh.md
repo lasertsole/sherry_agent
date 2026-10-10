@@ -203,7 +203,7 @@ uv run --no-sync pytest tests/full/test_context_governance_e2e.py -v
 
 ## 🧹 清除语义与局限
 
-- **`clear_session` 一次清除全部。** `server/DAO/messages.py::clear_session` 删除该会话的 MesMemory 行（连同 `persisted_message_ids` 水位一起删除）、checkpointer 历史，以及整个 `SESSIONS_DIR/<session_id>/` 文件夹 —— 因此 **`evicted/` 文件与 `plans/` 随会话一并删除**（`config/path.py::session_plans_dir` 记录了同样的整目录契约）。内存寄存器最后清理。
+- **`clear_session` 一次清除全部。** `server/service/session_cleanup_service.py::purge_session` 删除该会话的 MesMemory 行（连同 `persisted_message_ids` 水位一起删除）、checkpointer 历史，以及整个 `SESSIONS_DIR/<session_id>/` 文件夹 —— 因此 **`evicted/` 文件与 `plans/` 随会话一并删除**（`config/path.py::session_plans_dir` 记录了同样的整目录契约）。内存寄存器最后清理。
 - **驱逐只是模型视图压缩，绝不是删除。** 本页压缩的每份载荷要么归档在 MesMemory、要么全文留在图 state（人类消息）、要么在磁盘 `evicted/` 下 —— 且每份预览都带指针。
 - **`evicted/` 目录归会话所有，但没有垃圾回收。** 文件活到 `clear_session` 为止；没有逐消息 TTL。长会话 + 大量巨型工具结果会在 `workspace/sessions/<session_id>/evicted/` 下持续累积磁盘占用。
 - **单行巨行永不驱逐。** 当 head 与 tail 都会包含整份载荷时，预览不可能比原文更小，消息原样保留（工具路径与人类路径都是如此）。

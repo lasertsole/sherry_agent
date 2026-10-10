@@ -58,5 +58,5 @@ sha256: {sha256_hash}
         logger.debug(f"Source saved: {file_path}")
         return {"file_path": str(file_path), "sha256": sha256_hash, "success": True}
     except Exception as e:
-        logger.error(f"Failed to save source: {e}")
+        logger.exception(f"Failed to save source: {e}")
         return {"file_path": str(file_path), "error": str(e), "success": False}

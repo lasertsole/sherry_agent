@@ -93,13 +93,13 @@ def provision_sg_binary() -> str | None:
     try:
         destination.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        logger.error("Cannot create ast-grep runtime dir {}: {}", destination.parent, exc)
+        logger.exception("Cannot create ast-grep runtime dir {}: {}", destination.parent, exc)
         return None
 
     try:
         archive = _download(asset["url"], AST_GREP["ast_grep_provision_timeout_s"])
     except Exception as exc:  # noqa: BLE001 - any download failure must degrade, not crash
-        logger.error(
+        logger.exception(
             "Failed to download ast-grep {}: {}",
             AST_GREP["ast_grep_pinned_version"],
             exc,
@@ -119,13 +119,13 @@ def provision_sg_binary() -> str | None:
     try:
         binary_bytes = _extract_binary(archive, sys.platform)
     except (FileNotFoundError, zipfile.BadZipFile, OSError) as exc:
-        logger.error("Failed to extract ast-grep binary: {}", exc)
+        logger.exception("Failed to extract ast-grep binary: {}", exc)
         return None
 
     try:
         _write_atomic(destination, binary_bytes)
     except OSError as exc:
-        logger.error("Failed to write ast-grep binary to {}: {}", destination, exc)
+        logger.exception("Failed to write ast-grep binary to {}: {}", destination, exc)
         return None
 
     logger.info(

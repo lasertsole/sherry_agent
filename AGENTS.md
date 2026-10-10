@@ -36,6 +36,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/tools/subagent/` | Multi-level subagent system (spawn/registry/announce/sweeper, completion judge, functional roles) | `agent/tools/subagent/spawn/core.py` |
 | `agent/tools/pub_base/` | Shared tool infrastructure (`BaseSQLiteRepository` for the three SQLite stores, path utils, skill usage) | `agent/tools/pub_base/sqlite_store.py` |
 | `agent/wrapper/` | Graph-level wrappers (repetition guard, context limit) + pluggable registry | `agent/wrapper/registry.py` |
+| `agent/state_port.py` | The transcript port: read the live message list / pending HITL interrupt, heal an interrupted turn (server calls this, never the checkpoint API) | `agent/state_port.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
 | `config/features/` | Per-object feature config (59 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
@@ -595,7 +596,7 @@ CodeGraph MCP (`@colbymchenry/codegraph`, wired in `opencode.json`) indexes the 
   - `workspace/**` MUST NOT import `agent/**` or `context_engine/**`
   - `skills/**` MUST NOT import `server/**`
   - `skills/builtin/**` user scripts may still import `models`/`bus`/`channels`/`workspace`/`runtime` (one-way, by design) — this ban covers `server/**` only; whether to tighten those directions is evaluated separately and is not currently enforced
-- Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary.
+- Cross-boundary seams: `runtime/hooks.py` (callback registry) and `runtime/data_provider.py` (`PromptDataProvider`/`SkillWriteProvider`) are leaf modules importable from both sides — owners register at assembly time (server boot / `agent.core.init()`), consumers resolve at call time. Never reintroduce a direct import to cross a forbidden boundary. The transcript port is the third seam, in the agent's own direction: `agent/state_port.py` (`read_messages` / `read_interrupt` / `heal_interrupted_turn`) is the ONLY place the LangGraph checkpoint shape is read or rewritten — `server/` drives turns through it and never touches `snapshot.values["messages"]` or `aupdate_state` itself (a turn's INPUT messages and the auxiliary heartbeat agent stay the server's own business).
 - `config/features/**` MUST NOT import from `agent/`, `server/`, or `models/` — config is dependency-free
 - `config/**` is importable from ALL layers (no restriction)
 - `config/num.py` is DELETED — all constants live in `config/features/agent_side/summarization.py` (SUMMARIZATION TypedDict) and other per-object modules

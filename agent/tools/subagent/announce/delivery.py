@@ -244,7 +244,7 @@ async def _route_completion_injection(run: SubagentRunRecord) -> None:
     try:
         await _enqueue_steering(bare, injection)  # persist so the next turn consumes it
     except Exception as exc:  # noqa: BLE001 - log-only by contract
-        logger.error("Third-path fallback enqueue failed for run {}: {}", run.run_id, exc)
+        logger.exception("Third-path fallback enqueue failed for run {}: {}", run.run_id, exc)
 
 
 async def route_subagent_failure_notification(run: SubagentRunRecord) -> None:
@@ -383,7 +383,7 @@ async def _deliver_with_retry(run: SubagentRunRecord, **kwargs) -> AnnounceDeliv
             )
 
             if error_class == "permanent":
-                logger.error(
+                logger.exception(
                     "Permanent delivery error for run {}, aborting: {}", run.run_id, error_str
                 )
                 return AnnounceDeliveryResult(success=False, error=f"permanent: {error_str}")

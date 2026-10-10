@@ -252,7 +252,7 @@ async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
         try:
             await run_subagent_announce_flow(run)
         except Exception as e:
-            logger.error("Announce flow failed for run {}: {}", run.run_id, e)
+            logger.exception("Announce flow failed for run {}: {}", run.run_id, e)
     elif _should_notify_failure(run):
         # Additive failure trigger: runs that skip the announce gate
         # entirely (completion not required) would otherwise end silently;
@@ -262,7 +262,7 @@ async def _start_announce_cleanup_flow(run: SubagentRunRecord) -> None:
         try:
             await route_subagent_failure_notification(run)
         except Exception as e:
-            logger.error("Failure notification failed for run {}: {}", run.run_id, e)
+            logger.exception("Failure notification failed for run {}: {}", run.run_id, e)
 
     settle_batch = get_settle_wake_batch()
     settle_batch.register_run_for_settle(run.run_id, run.requester_session_key)
@@ -481,7 +481,7 @@ async def finalize_suspended_deliveries() -> int:
                 await run_subagent_announce_flow(updated)
                 count += 1
             except Exception as e:
-                logger.error("Retry delivery failed for run {}: {}", run.run_id, e)
+                logger.exception("Retry delivery failed for run {}: {}", run.run_id, e)
 
     return count
 
@@ -504,7 +504,7 @@ async def finalize_failed_deliveries() -> int:
                 await run_subagent_announce_flow(updated)
                 count += 1
             except Exception as e:
-                logger.error("Retry failed delivery for run {}: {}", run.run_id, e)
+                logger.exception("Retry failed delivery for run {}: {}", run.run_id, e)
 
     return count
 

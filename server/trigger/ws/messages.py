@@ -150,8 +150,244 @@ async def _cancel_session(session_id: str) -> None:
         logger.info(f"Agent WS stop requested (no active task): session_id={session_id}")
 
 
+# ---------------------------------------------------------------------------
+# Frame handlers — one per ``type`` we accept, keyed by _FRAME_HANDLERS below.
+# A frame WITHOUT a known type is a generation request (the historical default).
+# ---------------------------------------------------------------------------
+
+
+async def _handle_stop(websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]) -> None:
+    """``stop``: cancel the running turn and ack on this (possibly separate) socket."""
+    await _cancel_session(session_id)
+    await _send_ws(
+        websocket,
+        {
+            "event": "stopped",
+            "session_id": session_id,
+            "content": "",
+            "message_ids": [],
+        },
+    )
+
+
+async def _handle_hitl_response(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``hitl_response``: cancel any in-flight generation, then resume the graph."""
+    decision: str = obj.get("decision", "reject")
+    hitl_message: str = obj.get("message", "")
+    edited_args: dict[str, Any] | None = obj.get("edited_args")
+    logger.info(f"Agent WS HITL resume: session_id={session_id}, decision={decision}")
+    # Cancel any in-flight generation before resuming.
+    await _cancel_session(session_id)
+    # the HITL wait is over — clear the pending flag as
+    # the resume turn starts.
+    set_hitl_pending(session_id, False)
+    task = asyncio.ensure_future(
+        _run_stream(
+            websocket,
+            session_id,
+            resume_agent(session_id, decision, hitl_message, edited_args),
+            "resume",
+        )
+    )
+    _active_tasks[session_id] = task
+
+
+async def _handle_cancel_queued(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``cancel_queued``: void a QUEUED row (a CLAIMED one is refused)."""
+    msg_id = str(obj.get("msg_id", ""))
+    ok = await iqs.cancel_queued_message(session_id, msg_id)
+    await _send_ws(
+        websocket,
+        {
+            "event": "queued_cancelled",
+            "session_id": session_id,
+            "msg_id": msg_id,
+            "ok": ok,
+        },
+    )
+
+
+async def _handle_edit_queued(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``edit_queued``: rewrite a QUEUED row's payload."""
+    msg_id = str(obj.get("msg_id", ""))
+    new_text = str(obj.get("message", ""))
+    ok = await iqs.update_queued_message(session_id, msg_id, new_text)
+    await _send_ws(
+        websocket,
+        {
+            "event": "queued_updated",
+            "session_id": session_id,
+            "msg_id": msg_id,
+            "ok": ok,
+        },
+    )
+
+
+async def _handle_send_now(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """``send_now``: re-stamp the row below the session minimum, then cancel."""
+    msg_id = str(obj.get("msg_id", ""))
+    # Order matters: prioritize BEFORE cancelling. `_cancel_session`
+    # awaits the task's cancellation and its finally drains the
+    # queue, so a late prioritize would let the drain claim
+    # whatever was first.
+    ok = await iqs.prioritize_queued_message(session_id, msg_id)
+    if ok:
+        await _cancel_session(session_id)
+    await _send_ws(
+        websocket,
+        {
+            "event": "send_now_ack",
+            "session_id": session_id,
+            "msg_id": msg_id,
+            "ok": ok,
+        },
+    )
+
+
+async def _handle_generation(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """A user turn: register the reply socket, then queue-then-drain.
+
+    The ``WsTurnExecutor`` resolves the reply socket through
+    ``relation_register``, so THIS connection must be registered under the
+    session — otherwise every streamed chunk/done frame is silently dropped
+    (``_send_ws(None)`` is a no-op). Only generation frames register: stop/hitl
+    arrive on separate sockets that never read stream frames.
+    """
+    multi_modal_message_data: dict[str, Any] | None = obj.get("multi_modal_message", None)
+    if not multi_modal_message_data:
+        await _send_ws(
+            websocket,
+            {
+                "event": "error",
+                "session_id": session_id,
+                "content": "Missing multi_modal_message",
+            },
+        )
+        return
+
+    multi_modal_message = MultiModalMessage(**multi_modal_message_data)
+    relation_register.register_websocket(session_id, websocket)
+
+    text_preview = multi_modal_message.text[:50] if multi_modal_message.text else ""
+    image_count = (
+        len(multi_modal_message.image_base64_list) if multi_modal_message.image_base64_list else 0
+    )
+    image_path_count = (
+        len(multi_modal_message.image_path_list) if multi_modal_message.image_path_list else 0
+    )
+    logger.info(
+        f"Agent WS request started: session_id={session_id}, "
+        f"text_preview='{text_preview}', image_count={image_count}, image_path_count={image_path_count}"
+    )
+
+    # queue-then-drain. A busy session never gets its turn
+    # cancelled — the message is queued and executed FIFO when the
+    # current turn finishes (on_turn_finished → TurnRunner drain).
+    # The client may declare origin="user"; anything else is
+    # rejected (a client can never self-declare an internal
+    # origin) and the entry stamps the authoritative source.
+    client_origin = obj.get("origin")
+    if client_origin is not None and client_origin != "user":
+        logger.warning(
+            f"Agent WS ignoring unsupported origin={client_origin!r}: session_id={session_id}"
+        )
+    submit_result = await iqs.submit_user_input(
+        session_id,
+        multi_modal_message.text,
+        "user",
+        client_msg_id=obj.get("msg_id"),
+    )
+    if submit_result.status is iqs.SubmitStatus.QUEUE_FULL:
+        await _send_ws(
+            websocket,
+            {
+                "event": "error",
+                "session_id": session_id,
+                "content": "Input queue full; please try again later",
+            },
+        )
+        return
+    if submit_result.status is iqs.SubmitStatus.DEDUPED:
+        # Duplicate msg_id: silently ignored.
+        return
+    if submit_result.status is iqs.SubmitStatus.QUEUED:
+        queue_size = await iqs.get_default_queue().count_active(session_id)
+        await _send_ws(
+            websocket,
+            {
+                "event": "queued",
+                "session_id": session_id,
+                "position": submit_result.position,
+                "queue_size": queue_size,
+                "message_id": obj.get("msg_id"),
+            },
+        )
+        return
+    # STARTED: submit inserted the CLAIMED placeholder row and
+    # dispatched the registered WsTurnExecutor — that dispatched
+    # executor IS this turn's execution; no inline turn here.
+
+
+#: ``type`` → handler. A generation frame carries no type (the default).
+_FRAME_HANDLERS: dict[str, Any] = {
+    "stop": _handle_stop,
+    "hitl_response": _handle_hitl_response,
+    "cancel_queued": _handle_cancel_queued,
+    "edit_queued": _handle_edit_queued,
+    "send_now": _handle_send_now,
+}
+
+
+async def _dispatch_frame(
+    websocket: WebSocketAdapter, session_id: str, obj: dict[str, Any]
+) -> None:
+    """Route one received frame: a known ``type``, else a generation request."""
+    frame_type = obj.get("type")
+    handler = _FRAME_HANDLERS.get(frame_type) if isinstance(frame_type, str) else None
+    if handler is None:
+        await _handle_generation(websocket, session_id, obj)
+        return
+    await handler(websocket, session_id, obj)
+
+
+def _release_socket(websocket: WebSocketAdapter) -> None:
+    """Drop this socket's bindings and cancel its turn when it was the last one.
+
+    The unregister is last-writer-wins safe: a newer socket's binding survives
+    this exit. A still-running turn is cancelled only when this socket was the
+    session's last binding — a newer socket re-binding the same session keeps
+    its turn alive.
+    """
+    disconnected_session_id = relation_register.get_session_id_by_websocket(websocket)
+    relation_register.unregister_websocket_by_websocket(websocket)
+
+    if (
+        disconnected_session_id is not None
+        and relation_register.get_websocket_id_by_session_id(disconnected_session_id) is None
+    ):
+        task = _active_tasks.pop(disconnected_session_id, None)
+        if task is not None and not task.done():
+            task.cancel()
+        _clear_pending_args(disconnected_session_id)
+
+    for sid, task in list(_active_tasks.items()):
+        if task.done():
+            _active_tasks.pop(sid, None)
+
+
 @app.websocket("/sessions/agent/ws")
 async def agent_ws_handler(websocket: WebSocketAdapter):
+    """Receive loop: authenticate, route each frame, frame errors for the client."""
     logger.info(f"Agent WebSocket handler started: websocket_id={websocket.id}")
     # This socket drives generation, approves HITL tool calls and cancels runs,
     # so the handshake must carry the gateway token (see server/trigger/auth.py).
@@ -168,6 +404,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
         logger.warning(f"Agent WS connection rejected: {user_refusal}")
         await websocket.close()
         return
+
     # Bound before the loop so the receive-loop catch-all can always reference
     # it when composing an error frame (never unbound there).
     session_id: str | None = None
@@ -185,183 +422,7 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
                     )
                     continue
 
-                if obj.get("type") == "stop":
-                    await _cancel_session(session_id)
-                    # ack on the (possibly separate) stop connection
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "stopped",
-                            "session_id": session_id,
-                            "content": "",
-                            "message_ids": [],
-                        },
-                    )
-                    continue
-
-                if obj.get("type") == "hitl_response":
-                    decision: str = obj.get("decision", "reject")
-                    hitl_message: str = obj.get("message", "")
-                    edited_args: dict[str, Any] | None = obj.get("edited_args")
-                    logger.info(
-                        f"Agent WS HITL resume: session_id={session_id}, decision={decision}"
-                    )
-                    # Cancel any in-flight generation before resuming.
-                    await _cancel_session(session_id)
-                    # the HITL wait is over — clear the pending flag as
-                    # the resume turn starts.
-                    set_hitl_pending(session_id, False)
-                    task = asyncio.ensure_future(
-                        _run_stream(
-                            websocket,
-                            session_id,
-                            resume_agent(session_id, decision, hitl_message, edited_args),
-                            "resume",
-                        )
-                    )
-                    _active_tasks[session_id] = task
-                    continue
-
-                # ── Queue management frames (toolbar's queued-message list) ──
-                # Each frame answers with its own ack: the client updates
-                # optimistically and uses the ack to correct itself.
-                if obj.get("type") == "cancel_queued":
-                    msg_id = str(obj.get("msg_id", ""))
-                    ok = await iqs.cancel_queued_message(session_id, msg_id)
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "queued_cancelled",
-                            "session_id": session_id,
-                            "msg_id": msg_id,
-                            "ok": ok,
-                        },
-                    )
-                    continue
-
-                if obj.get("type") == "edit_queued":
-                    msg_id = str(obj.get("msg_id", ""))
-                    new_text = str(obj.get("message", ""))
-                    ok = await iqs.update_queued_message(session_id, msg_id, new_text)
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "queued_updated",
-                            "session_id": session_id,
-                            "msg_id": msg_id,
-                            "ok": ok,
-                        },
-                    )
-                    continue
-
-                if obj.get("type") == "send_now":
-                    msg_id = str(obj.get("msg_id", ""))
-                    # Order matters: prioritize BEFORE cancelling. `_cancel_session`
-                    # awaits the task's cancellation and its finally drains the
-                    # queue, so a late prioritize would let the drain claim
-                    # whatever was first.
-                    ok = await iqs.prioritize_queued_message(session_id, msg_id)
-                    if ok:
-                        await _cancel_session(session_id)
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "send_now_ack",
-                            "session_id": session_id,
-                            "msg_id": msg_id,
-                            "ok": ok,
-                        },
-                    )
-                    continue
-
-                multi_modal_message_data: dict[str, Any] | None = obj.get(
-                    "multi_modal_message", None
-                )
-                if not multi_modal_message_data:
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "error",
-                            "session_id": session_id,
-                            "content": "Missing multi_modal_message",
-                        },
-                    )
-                    continue
-
-                multi_modal_message = MultiModalMessage(**multi_modal_message_data)
-
-                # the WsTurnExecutor resolves the reply socket through
-                # relation_register, so THIS connection must be registered under
-                # the session — otherwise every streamed chunk/done frame is
-                # silently dropped (_send_ws(None) is a no-op). Only generation
-                # frames register: stop/hitl arrive on separate sockets that
-                # never read stream frames.
-                relation_register.register_websocket(session_id, websocket)
-
-                text_preview = multi_modal_message.text[:50] if multi_modal_message.text else ""
-                image_count = (
-                    len(multi_modal_message.image_base64_list)
-                    if multi_modal_message.image_base64_list
-                    else 0
-                )
-                image_path_count = (
-                    len(multi_modal_message.image_path_list)
-                    if multi_modal_message.image_path_list
-                    else 0
-                )
-                logger.info(
-                    f"Agent WS request started: session_id={session_id}, "
-                    f"text_preview='{text_preview}', image_count={image_count}, image_path_count={image_path_count}"
-                )
-
-                # queue-then-drain. A busy session never gets its turn
-                # cancelled — the message is queued and executed FIFO when the
-                # current turn finishes (on_turn_finished → TurnRunner drain).
-                # The client may declare origin="user"; anything else is
-                # rejected (a client can never self-declare an internal
-                # origin) and the entry stamps the authoritative source.
-                client_origin = obj.get("origin")
-                if client_origin is not None and client_origin != "user":
-                    logger.warning(
-                        f"Agent WS ignoring unsupported origin={client_origin!r}: "
-                        f"session_id={session_id}"
-                    )
-                submit_result = await iqs.submit_user_input(
-                    session_id,
-                    multi_modal_message.text,
-                    "user",
-                    client_msg_id=obj.get("msg_id"),
-                )
-                if submit_result.status is iqs.SubmitStatus.QUEUE_FULL:
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "error",
-                            "session_id": session_id,
-                            "content": "Input queue full; please try again later",
-                        },
-                    )
-                    continue
-                if submit_result.status is iqs.SubmitStatus.DEDUPED:
-                    # Duplicate msg_id: silently ignored.
-                    continue
-                if submit_result.status is iqs.SubmitStatus.QUEUED:
-                    queue_size = await iqs.get_default_queue().count_active(session_id)
-                    await _send_ws(
-                        websocket,
-                        {
-                            "event": "queued",
-                            "session_id": session_id,
-                            "position": submit_result.position,
-                            "queue_size": queue_size,
-                            "message_id": obj.get("msg_id"),
-                        },
-                    )
-                    continue
-                # STARTED: submit inserted the CLAIMED placeholder row and
-                # dispatched the registered WsTurnExecutor — that dispatched
-                # executor IS this turn's execution; no inline turn here.
-                continue
+                await _dispatch_frame(websocket, session_id, obj)
             except (WebSocketDisconnect, ConnectionResetError):
                 # The socket is gone — propagate to the outer handler so the
                 # receive loop exits. Swallowing these here would hot-loop on
@@ -390,23 +451,4 @@ async def agent_ws_handler(websocket: WebSocketAdapter):
     except Exception as e:
         logger.warning(f"Agent WS client {websocket.id} disconnected: {e}")
 
-    # Capture the bound session before unregistering so the in-flight turn can
-    # be stopped; then release the session→socket binding. The unregister is
-    # last-writer-wins safe: a newer socket's binding survives this exit.
-    disconnected_session_id = relation_register.get_session_id_by_websocket(websocket)
-    relation_register.unregister_websocket_by_websocket(websocket)
-
-    # Cancel a still-running turn only when this socket was the session's last
-    # binding — a newer socket re-binding the same session keeps its turn alive.
-    if (
-        disconnected_session_id is not None
-        and relation_register.get_websocket_id_by_session_id(disconnected_session_id) is None
-    ):
-        task = _active_tasks.pop(disconnected_session_id, None)
-        if task is not None and not task.done():
-            task.cancel()
-        _clear_pending_args(disconnected_session_id)
-
-    for sid, task in list(_active_tasks.items()):
-        if task.done():
-            _active_tasks.pop(sid, None)
+    _release_socket(websocket)

@@ -4,15 +4,13 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-from ._shared import MAIN_ONLY, BrowserTool, SessionId, guard, resolve_manager
+from ._shared import MAIN_ONLY, BrowserPageInput, BrowserTool, guard, resolve_manager
 
 
-class EvaluateInput(BaseModel):
+class EvaluateInput(BrowserPageInput):
     """Arguments of ``browser_evaluate``."""
 
     expression: str = Field(description="JavaScript expression (JSON-serializable result).")
-    page: str | None = Field(default=None, description="Page id; omit for the session's page.")
-    session_id: SessionId = ""
 
 
 class BrowserEvaluateTool(BrowserTool):

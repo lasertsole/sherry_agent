@@ -149,7 +149,7 @@ async def steer_subagent_run(
             model_profile=resolve_role_model_profile(updated.spawned_by, updated.functional_role),
         )
     except Exception as e:
-        logger.error("Failed to rebuild child agent for steer {}: {}", run_id, e)
+        logger.exception("Failed to rebuild child agent for steer {}: {}", run_id, e)
         return updated
 
     restarted = updated.model_copy(

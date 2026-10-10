@@ -60,7 +60,7 @@ def vtt(video_path: str, query: str = "") -> str:
         _validate_video_duration(video_path)
     except ValueError as e:
         err_mes: str = f"[Error] {e}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         return err_mes
 
     # Primary path: send the raw video as base64 (works with some backends)
@@ -100,7 +100,7 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0) -> str:
         _validate_video_duration(video_path)
     except ValueError as e:
         err_mes: str = f"[Error] {e}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         return err_mes
 
     from pathlib import Path
@@ -146,7 +146,7 @@ def vtt_fackback(video_path: str, query: str, interval_sec: float = 1.0) -> str:
         return suc_mes
     except Exception as e:
         err_mes: str = f"[Error] {e}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         return err_mes
     finally:
         # Clean up extracted frame files

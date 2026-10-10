@@ -371,6 +371,6 @@ flow-2  | waiting | Wait for the upstream review              | 1/3   | agent:ma
 
 **子 Agent 边界。** 三个工具族都由各自的构建器打上 `metadata["scope"] = "main_only"` 标签（`build_taskflow_tools`、`build_todolist_tools`、`build_knowledge_tools`）。`apply_tool_policy`（`agent/tools/subagent/spawn/inherited_tool_policy.py`）会**最先且无条件**丢弃 `main_only` 工具——先于任何 allow/deny 列表，且 ORCHESTRATOR 解禁也无法覆盖——因此派生出的子 Agent 永远不会拿到 `taskflow_*`、`todowrite`/`todoread` 或 `knowledge` 工具。同样的标签模式此前已覆盖 `memory`、`skill_manage`、`sessions_kill`、`sessions_steer`。真实工具集断言由 `tests/agent/tools/taskflow/test_taskflow_tools.py` 锁定，`_build_child_agent` 边界由 `tests/agent/tools/subagent/test_max_tokens_boost_wiring.py` 锁定。
 
-**跨会话拒绝。** `taskflow_create` 遇到其他会话已占用的 `flow_id` 时只报告已存在、不泄露 revision；对其他会话的 flow 发起变更会得到与未知 id 相同的 "not found" 文本。`tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py` 与 `tests/server/DAO/test_clear_session.py` 覆盖读取/列表/更新/清除路径。
+**跨会话拒绝。** `taskflow_create` 遇到其他会话已占用的 `flow_id` 时只报告已存在、不泄露 revision；对其他会话的 flow 发起变更会得到与未知 id 相同的 "not found" 文本。`tests/agent/tools/taskflow/test_store_sqlite.py`、`test_taskflow_tools.py`、`test_dag_e2e.py` 与 `tests/server/service/test_session_cleanup_service.py` 覆盖读取/列表/更新/清除路径。
 
 

@@ -81,6 +81,6 @@ async def emit_ended_hook_once(run: SubagentRunRecord) -> None:
 
         update_run(run.run_id, ended_hook_emitted=True)
     except Exception as e:
-        logger.error("emit_ended_hook_once failed for run {}: {}", run.run_id, e)
+        logger.exception("emit_ended_hook_once failed for run {}: {}", run.run_id, e)
     finally:
         _ended_hook_in_flight.discard(run.run_id)

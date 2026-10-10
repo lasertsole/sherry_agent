@@ -286,12 +286,9 @@ async def read_state_messages(session_id: str) -> list[Any]:
     with the evicted tool results already previewed), so it is the one honest
     source for a "what is in the context right now" view.
     """
-    from agent import core as agent_core
-    from pub.func import build_agent_config
+    from agent.state_port import read_messages
 
-    async with agent_core.agent_lease() as graph:
-        snapshot = await graph.aget_state(config=build_agent_config(session_id))
-    return list((snapshot.values or {}).get("messages", []))
+    return await read_messages(session_id)
 
 
 def _tool_definitions(session_id: str) -> tuple[list[dict[str, Any]], int, bool]:

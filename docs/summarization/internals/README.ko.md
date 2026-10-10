@@ -51,7 +51,7 @@ TTL 레지스트리 자체(`record_first_seen` / `select_expired` / `truncate_ex
 
 **압축 시점 nudge**(`agent/middlewares/summarization/nudges.py::schedule_compression_nudges`): 메모리 리뷰(`_nudge_memory`)는 압축마다 디스패치됩니다; 플랜 추출은 같은 시점에 `_detect_todo_all_complete`를 평가합니다. 둘 다 NUDGE 레인에서 fire-and-forget으로 디스패치되어 모델 호출을 막지 않습니다. nudge 락이 잡혀 있는 동안 압축은 디스패치를 완전히 건너뜁니다(큐잉 없음). 단발 `nudge_plan_extraction_fired` 플래그는 완료 사이클당 1회 추출을 보장하며, 한 번도 압축하지 않는 세션은 플랜 추출을 발화하지 않습니다.
 
-**절단점 선택**(`_determine_cutoff`, compression.py:277): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, compression.py:70)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(compression.py:311)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입 core.py:421 / core.py:503에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
+**절단점 선택**(`_determine_cutoff`, compression.py:277): 히스토리를 턴으로 쪼개고, **최신에서 거꾸로** 걸으며 보존 예산 `clamp(window × 0.25, 2 000, 15 000)`(`_calculate_preserve_budget`, compression.py:70)에 맞춰 누적합니다; 통째로 안 들어가는 턴은 턴 중간에서 쪼개질 수 있습니다. `_adjust_for_orphan_pairs`(compression.py:311)가 절단점을 거꾸로 걸어 `ToolMessage`가 `AIMessage` 도구 호출과 떨어지는 경우가 없도록 합니다. 마지막 턴 비율 게이트가 발동하지 않는 한(마지막 사용자 턴 ≥ 전체 토큰의 `LAST_TURN_RATIO_THRESHOLD (0.5)` — `_check_last_turn_ratio`, wrap 진입의 `_plan_model_call`에서 호출), 절단점은 마지막 `HumanMessage`를 넘지 않습니다.
 
 모든 실패 모드는 fail-open입니다: `_apply_compression`이 예외를 던지면 로그만 남기고 원본 요청이 그대로 진행됩니다 — 깨진 압축이 턴을 망치는 일은 없습니다.
 
@@ -164,16 +164,16 @@ Respond ONLY to the latest user message that appears AFTER this summary.
 | 유효성 판정 | (`_record_compression`, thrash.py:117) | 메시지 수 감소 **또는** 토큰 축소 ≥ `MIN_EFFECTIVENESS_PCT (0.05)` | 성공한 비 LLM 전략(`dedup`/`prune`/`truncate`/`fallback`/`aggressive`)이 `skip_llm`을 다시 해제 |
 | 성능 저하 복구 예산 | `summarization_recovery_attempts` | `MAX_RECOVERY_ATTEMPTS = 2` | 성능 저하 모니터가 시작하는 강제 복구의 상한 |
 
-**성능 저하 모니터**(`_monitor_degradation`, thrash.py:131): 이번 호출에서 실제로 압축이 일어났을 때만 consult됩니다(`_compaction_just_happened` 플래그). 모델 응답에 텍스트가 없으면 카운터가 증가하고; `DEGRADATION_NO_TEXT_THRESHOLD (3)`회 연속 빈 응답 — 그리고 `summarization_recovery_attempts < 2`인 동안 — `force_recovery`를 설정하고 무효 연속 기록과 세션 압축 카운트를 지웁니다. 비어 있지 않은 응답은 카운터를 리셋합니다. 이것은 "압축 → 모델 혼란 → 빈 출력 → 재압축"의 병적 루프를 잡습니다. 상호작용에 주의: force 플래그는 wrap 진입(core.py:426)에서 `_should_skip_compression` **보다 먼저** 읽히고, 스킵 게이트는 카운터를 리셋하고 진행하며 그 플래그를 소비합니다(thrash.py:110–115) — 복구 압축은 정확히 한 번 실행됩니다.
+**성능 저하 모니터**(`_monitor_degradation`, thrash.py:131): 이번 호출에서 실제로 압축이 일어났을 때만 consult됩니다(`_compaction_just_happened` 플래그). 모델 응답에 텍스트가 없으면 카운터가 증가하고; `DEGRADATION_NO_TEXT_THRESHOLD (3)`회 연속 빈 응답 — 그리고 `summarization_recovery_attempts < 2`인 동안 — `force_recovery`를 설정하고 무효 연속 기록과 세션 압축 카운트를 지웁니다. 비어 있지 않은 응답은 카운터를 리셋합니다. 이것은 "압축 → 모델 혼란 → 빈 출력 → 재압축"의 병적 루프를 잡습니다. 상호작용에 주의: force 플래그는 wrap 진입(`core.py::_plan_model_call`)에서 `_should_skip_compression` **보다 먼저** 읽히고, 스킵 게이트는 카운터를 리셋하고 진행하며 그 플래그를 소비합니다(thrash.py:110–115) — 복구 압축은 정확히 한 번 실행됩니다.
 
 ## 🔄 시스템 프롬프트 갱신
 
-메인 에이전트 전용(`need_update_system_prompt=True`): 압축 후 미들웨어가 시스템 프롬프트를 재구축해 `system_prompt` 상태 키에 기록하므로, 다음 모델 호출은 페르소나 파일 / 장기 기억을 지금 현재 상태 그대로 봅니다. 두 전달 경로: 압축 직후의 `request.override(system_message=SystemMessage(...))`, 그리고 — T1 compact가 이미 일어났지만 안티-스래싱 게이트가 두 번째 압축을 막을 때 — 재구축된 프롬프트는 게이트 경로에서 여전히 전달됩니다(core.py:441–459). `@dynamic_prompt` 시스템 프롬프트 미들웨어가 없는 체인(서브에이전트 / nudge 파이프라인)은 이 미들웨어가 전달해 주기 때문입니다. 게이트 경로는 요청의 현재 system message와 **내용이 다를 때만** 주입합니다: 내용이 같으면 override도 새 `SystemMessage`도 만들지 않습니다(재주입하지 않음).
+메인 에이전트 전용(`need_update_system_prompt=True`): 압축 후 미들웨어가 시스템 프롬프트를 재구축해 `system_prompt` 상태 키에 기록하므로, 다음 모델 호출은 페르소나 파일 / 장기 기억을 지금 현재 상태 그대로 봅니다. 두 전달 경로: 압축 직후의 `request.override(system_message=SystemMessage(...))`, 그리고 — T1 compact가 이미 일어났지만 안티-스래싱 게이트가 두 번째 압축을 막을 때 — 재구축된 프롬프트는 게이트 경로에서 여전히 전달됩니다(`core.py::_refresh_system_prompt_if_needed`). `@dynamic_prompt` 시스템 프롬프트 미들웨어가 없는 체인(서브에이전트 / nudge 파이프라인)은 이 미들웨어가 전달해 주기 때문입니다. 게이트 경로는 요청의 현재 system message와 **내용이 다를 때만** 주입합니다: 내용이 같으면 override도 새 `SystemMessage`도 만들지 않습니다(재주입하지 않음).
 
 ## 📌 등록 지점
 
 ```python
-# agent/core.py:204 — 메인 에이전트 (Summarization은 마지막 미들웨어:
+# agent/core.py:324 — 메인 에이전트 (Summarization은 마지막 미들웨어:
 # 가장 안쪽 wrap 레이어, LLM에 가장 가까움)
 Summarization(
     need_update_system_prompt=True,
@@ -182,7 +182,7 @@ Summarization(
     trigger=[("tokens", int(main_llm_max_tokens * COMPRESSION_TRIGGER_RATIO))],
 )
 
-# agent/tools/subagent/spawn/core.py:909 — 워커 에이전트 (첫 미들웨어)
+# agent/tools/subagent/spawn/core.py:1106 — 워커 에이전트 (첫 미들웨어)
 Summarization(
     model=auxiliary_llm,
     main_llm_context_window=main_llm_max_tokens,

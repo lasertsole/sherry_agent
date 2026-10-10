@@ -199,7 +199,7 @@ class HeartbeatService:
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error("Heartbeat error: {}", e)
+                logger.exception("Heartbeat error: {}", e)
 
     async def _tick(self) -> None:
         """Execute a single heartbeat tick."""

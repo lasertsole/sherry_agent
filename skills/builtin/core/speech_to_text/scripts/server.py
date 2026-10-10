@@ -113,7 +113,7 @@ class _Handler(BaseHTTPRequestHandler):
             text = rich_transcription_postprocess(res[0]["text"])
             self._reply(200, {"text": text})
         except Exception as e:  # noqa: BLE001
-            logger.error(f"STT daemon error: {e}")
+            logger.exception(f"STT daemon error: {e}")
             self._reply(500, {"error": str(e)})
 
     def _reply(self, code: int, data: dict[str, object]) -> None:

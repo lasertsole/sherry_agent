@@ -10,26 +10,24 @@ which is what refuses the overwrite.
 
 import json
 import os
+from pathlib import Path
 from typing import override
 from pydantic import BaseModel, Field
 from langchain_core.tools import BaseTool
 from agent.tools.pub_base import SessionId
 from agent.tools.pub_base import (
     tool_error,
-    PathOutOfBoundsError,
-    _extract_session_id,
+    resolve_tool_session_id,
     _open_no_follow,
     decode_text,
     display_path,
     note_read,
-    resolve_external_path,
-    resolve_workspace_path,
+    resolve_tool_path,
     revision_id,
     safe_error_detail,
     sniff_text_encoding,
 )
 from langchain_core.callbacks import CallbackManagerForToolRun
-from runtime.session.project_dir import current_project_dir
 
 
 class ReadFileInput(BaseModel):
@@ -83,18 +81,32 @@ class ReadFileTool(BaseTool):
 
     # ── shared core ────────────────────────────────────────────────────────
 
-    def _core(self, file_path: str, offset: int = 1, limit: int = 500, session_id: str = "") -> str:
-        # redundant: path_guard middleware handles this — kept as the second line of defense
+    def _read_bytes(self, resolved: Path) -> tuple[bytes | None, os.stat_result | None, str | None]:
+        """Read every byte through a no-follow descriptor.
+
+        The descriptor also yields the revision of exactly the bytes about to
+        be read: a writer replacing the path mid-read cannot license content
+        this call never saw.
+        """
         try:
-            root = current_project_dir(session_id)
-            resolved = resolve_workspace_path(file_path, root)
-        except PathOutOfBoundsError:
+            fd = _open_no_follow(resolved, os.O_RDONLY)
             try:
-                resolved = resolve_external_path(
-                    file_path, session_id=session_id, action_desc="read file"
-                )
-            except PathOutOfBoundsError as e:
-                return tool_error(str(e))
+                read_stat = os.fstat(fd)
+                with os.fdopen(fd, "rb") as f:
+                    fd = -1
+                    data = f.read()
+            finally:
+                if fd >= 0:
+                    os.close(fd)
+        except Exception as e:
+            return None, None, tool_error(f"Failed to read file: {safe_error_detail(e)}")
+        return data, read_stat, None
+
+    def _core(self, file_path: str, offset: int = 1, limit: int = 500, session_id: str = "") -> str:
+        root, resolved, error = resolve_tool_path(file_path, session_id, "read file")
+        if error is not None or resolved is None or root is None:
+            return error or tool_error("Could not resolve the path")
+        root = root
 
         if not resolved.exists():
             return json.dumps(
@@ -111,27 +123,30 @@ class ReadFileTool(BaseTool):
         except OSError:
             file_size = 0
 
-        try:
-            fd = _open_no_follow(resolved, os.O_RDONLY)
-            try:
-                # The revision of exactly the bytes about to be read: same
-                # descriptor, so a writer replacing the path mid-read cannot
-                # license content this call never saw.
-                read_stat = os.fstat(fd)
-                with os.fdopen(fd, "rb") as f:
-                    fd = -1
-                    data = f.read()
-            finally:
-                if fd >= 0:
-                    os.close(fd)
-        except Exception as e:
-            return tool_error(f"Failed to read file: {safe_error_detail(e)}")
+        data, read_stat, error = self._read_bytes(resolved)
+        if error is not None or data is None or read_stat is None:
+            return error or tool_error("Failed to read file")
 
+        return self._paginate(resolved, root, data, read_stat, file_size, offset, limit, session_id)
+
+    def _paginate(
+        self,
+        resolved: Path,
+        root: Path,
+        data: bytes,
+        read_stat: os.stat_result,
+        file_size: int,
+        offset: int,
+        limit: int,
+        session_id: str,
+    ) -> str:
+        """Decode a window of the file and license a whole-file read.
+
+        A binary (or non-UTF-8/UTF-16) file is refused with its size and never
+        licensed, so write_file cannot replace it with text.
+        """
         encoding = sniff_text_encoding(data)
         if encoding is None:
-            # A resource file (image, archive) or text in a codec we do not
-            # edit: refuse with its size instead of returning mojibake — and
-            # never license it, so write_file cannot replace it with text.
             return json.dumps(
                 {
                     "error": (
@@ -193,7 +208,7 @@ class ReadFileTool(BaseTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(file_path, offset, limit, session_id)
 
     @override
@@ -205,7 +220,7 @@ class ReadFileTool(BaseTool):
         session_id: str = "",
         run_manager: CallbackManagerForToolRun | None = None,
     ) -> str:
-        session_id = session_id or _extract_session_id(run_manager)
+        session_id = resolve_tool_session_id(session_id, run_manager)
         return self._core(file_path, offset, limit, session_id)
 
 

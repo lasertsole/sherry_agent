@@ -59,5 +59,5 @@ async def query(question: str, parser: str = "mineru") -> str:
         return answer
     except Exception as e:
         err_mes: str = f"[Error] Query failed: {repr(e)}"
-        logger.error(err_mes)
+        logger.exception(err_mes)
         return err_mes

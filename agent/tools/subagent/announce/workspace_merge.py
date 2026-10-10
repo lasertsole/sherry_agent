@@ -56,11 +56,16 @@ async def merge_isolated_workspace_for_run(run: SubagentRunRecord) -> MergeRepor
 
 def _mark_merged_paths_stale(run: SubagentRunRecord, report: MergeReport) -> None:
     """The parent's verified evidence about a merged path is stale again."""
-    from agent.tools.todolist.evidence_recorder import mark_evidence_stale
+    from agent.tools.todolist.evidence_recorder import mark_evidence_stale_for_paths
 
     parent_session_id = normalize_session_key(run.spawned_by or run.requester_session_key)
-    for relpath in (*report.applied, *report.created, *report.deleted):
-        mark_evidence_stale(str(report.parent_root / relpath), parent_session_id)
+    mark_evidence_stale_for_paths(
+        (
+            str(report.parent_root / relpath)
+            for relpath in (*report.applied, *report.created, *report.deleted)
+        ),
+        parent_session_id,
+    )
 
 
 def attach_merge_report(run: SubagentRunRecord, report: MergeReport) -> SubagentRunRecord | None:

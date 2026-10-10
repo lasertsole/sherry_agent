@@ -92,7 +92,7 @@ default              -> "[tool] output {len} chars, first 100: ..."
 
 ## 🔄 Session Continuity
 
-When a session is cleared, `context_engine/session_continuity.py` persists an end-state so the next session can offer continuity. `server/DAO/messages.py::clear_session` calls `auto_save_on_session_end(session_id)` as **step 0**, before any deletion (`server/DAO/messages.py:27-33`). That function:
+When a session is cleared, `context_engine/session_continuity.py` persists an end-state so the next session can offer continuity. `server/service/session_cleanup_service.py::purge_session` calls `auto_save_on_session_end(session_id)` as **step 0**, before any deletion (`server/service/session_cleanup_service.py` step 0). That function:
 
 1. Resolves `channel_id`/`chat_id` through `runtime.session.relation_register` (`_get_channel_chat_for_session`, `session_continuity.py:167`).
 2. Reads the last 3 turns and clips the last AI reply to `_MAX_SUMMARY_CHARS = 500` (`session_continuity.py:28`).

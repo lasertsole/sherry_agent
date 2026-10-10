@@ -188,7 +188,7 @@ async def _attempt_resume(run: SubagentRunRecord) -> bool:
             return True
         return False
     except Exception as e:
-        logger.error("Orphan resume attempt failed for run {}: {}", run.run_id, e)
+        logger.exception("Orphan resume attempt failed for run {}: {}", run.run_id, e)
         return False
 
 
@@ -324,7 +324,7 @@ async def finalize_interrupted_run_with_retry(
             await run_subagent_announce_flow(updated)
             return updated
         except Exception as e:
-            logger.error(
+            logger.exception(
                 "Finalize interrupted run attempt {} failed for {}: {}", attempt + 1, run_id, e
             )
 

@@ -208,7 +208,7 @@ class TestClearSessionSave:
     async def test_clear_session_saves_state(self, continuity_dir, tmp_path, monkeypatch):
         """clear_session must persist the end state BEFORE deleting messages."""
         from context_engine import session_continuity
-        from server.DAO import messages as dao
+        from server.service import session_cleanup_service as dao
 
         calls: list[str] = []
         planning: list[str] = []
@@ -254,7 +254,7 @@ class TestClearSessionSave:
             _fake_delete_flows,
         )
 
-        await dao.clear_session("sess-clear")
+        await dao.purge_session("sess-clear")
 
         # Save ran BEFORE the message deletion; the planning stores are purged too.
         assert calls == ["get", "delete"]

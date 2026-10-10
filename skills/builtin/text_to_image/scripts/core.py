@@ -99,8 +99,8 @@ def generate_image(prompt: str) -> None:
                     logger.debug(f"Generated: {save_path}")
 
                 except Exception as decode_error:
-                    logger.error(f"Base64 decode failed: {decode_error}")
-                    logger.error(f"Base64 data length: {len(b64_data)}")
+                    logger.exception(f"Base64 decode failed: {decode_error}")
+                    logger.exception(f"Base64 data length: {len(b64_data)}")
 
             else:
                 logger.error(f"Unexpected API response format: {response_data}")
@@ -109,7 +109,7 @@ def generate_image(prompt: str) -> None:
             logger.error(f"Response body: {response.text}")
 
     except Exception as e:
-        logger.error(f"Error occurred: {e}")
+        logger.exception(f"Error occurred: {e}")
         import traceback
 
         traceback.print_exc()

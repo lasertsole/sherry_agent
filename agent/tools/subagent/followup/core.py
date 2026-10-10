@@ -28,7 +28,7 @@ async def _followup_loop() -> None:
         try:
             await _check_timeouts()
         except Exception as e:
-            logger.error("Followup error: {}", e)
+            logger.exception("Followup error: {}", e)
 
 
 async def _check_timeouts() -> None:

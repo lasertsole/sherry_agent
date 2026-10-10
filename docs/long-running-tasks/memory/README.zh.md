@@ -92,7 +92,7 @@ default              -> "[tool] output {len} chars, first 100: ..."
 
 ## 🔄 会话连续性
 
-会话被清除时，`context_engine/session_continuity.py` 会持久化一份结束状态，供下一个会话提供连续性。`server/DAO/messages.py::clear_session` 把 `auto_save_on_session_end(session_id)` 作为**第 0 步**，在任何删除之前调用（`server/DAO/messages.py:27-33`）。该函数会：
+会话被清除时，`context_engine/session_continuity.py` 会持久化一份结束状态，供下一个会话提供连续性。`server/service/session_cleanup_service.py::purge_session` 把 `auto_save_on_session_end(session_id)` 作为**第 0 步**，在任何删除之前调用（该函数第 0 步）。该函数会：
 
 1. 通过 `runtime.session.relation_register` 解析 `channel_id`/`chat_id`（`_get_channel_chat_for_session`，`session_continuity.py:167`）。
 2. 读取最近 3 个回合，并把最后一条 AI 回复裁剪到 `_MAX_SUMMARY_CHARS = 500`（`session_continuity.py:28`）。

@@ -690,7 +690,7 @@ def memory_tool(
         return json.dumps(result, ensure_ascii=False)
     except Exception as e:
         elapsed = time.time() - start_time
-        logger.error(
+        logger.exception(
             f"Memory tool failed: action={action}, target={target}, "
             f"duration={elapsed:.3f}s, error={str(e)}"
         )
