@@ -223,11 +223,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "lockedTitle": "システム必須（ロック）",
         "nudgeLabel": "nudge を有効化",
         "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
-        "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
-        "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
+        "hint": "切り替え可能なミドルウェアのみを表示します。Summarization はオフにできず、代わりに nudge オプションを公開します。",
         "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
       },
       "middleware": {

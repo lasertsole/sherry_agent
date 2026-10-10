@@ -223,11 +223,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "lockedTitle": "System-required (locked)",
         "nudgeLabel": "Enable nudge",
         "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-        "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
-        "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
+        "hint": "Only the switchable middlewares are listed; Summarization cannot be switched off and exposes its nudge option instead.",
         "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
       },
       "middleware": {

@@ -223,11 +223,9 @@
         "mcp": "MCP"
       },
       "middlewares": {
-        "lockedTitle": "系统必需（锁定）",
         "nudgeLabel": "启用 nudge",
         "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-        "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
-        "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
+        "hint": "只列出可关闭的中间件；压缩（Summarization）不可关闭，只暴露 nudge 选项。",
         "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
       },
       "middleware": {

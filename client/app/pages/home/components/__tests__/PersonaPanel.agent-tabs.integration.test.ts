@@ -234,11 +234,13 @@ describe('PersonaPanel agent-config tabs', () => {
     // …and each row carries the backend description as its hover tooltip.
     const row = panel.get('[data-test="agent-tool-read_file"]').element.closest('label');
     expect(row?.getAttribute('title')).toBe('Read a file with pagination.');
-    // …the gateable middleware has a switch and the required one is LOCKED (no
-    // switch, listed under the locked set instead).
+    // …the gateable middleware has a switch, and a system-required one is not
+    // rendered at ALL (nothing there is switchable — the compression row above
+    // is the one required entry that has an option of its own).
     expect(panel.find('[data-test="agent-middleware-TaskIntentMiddleware"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-middleware-HumanInTheLoop"]').exists()).toBe(false);
-    expect(panel.text()).toContain('HumanInTheLoop');
+    expect(panel.text()).not.toContain('HumanInTheLoop');
+    expect(panel.find('[data-test="agent-middleware-option-Summarization"]').exists()).toBe(true);
     // The 代理模型 tab leads with 主代理 and keeps the per-role pickers under 子代理.
     expect(panel.find('[data-test="agent-main-model"]').exists()).toBe(true);
     expect(panel.find('[data-test="agent-role-model-researcher"]').exists()).toBe(false);

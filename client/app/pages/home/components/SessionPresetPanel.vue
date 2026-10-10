@@ -292,20 +292,6 @@
                 disabled
                 :data-test="`session-preset-middleware-${entry.name}`" />
             </div>
-            <div class="mt-3">
-              <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                {{ t('config.agent.middlewares.lockedTitle') }}
-              </div>
-              <div class="flex flex-wrap gap-1">
-                <span
-                  v-for="entry in agentStore.middlewares.locked"
-                  :key="entry.name"
-                  class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400">
-                  <i class="pi pi-lock text-[9px]" />
-                  {{ entry.name }}
-                </span>
-              </div>
-            </div>
           </div>
         </TabPanel>
 

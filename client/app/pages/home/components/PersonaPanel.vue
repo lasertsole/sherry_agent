@@ -305,9 +305,10 @@
               </div>
             </TabPanel>
 
-            <!-- 中间件 tab: the optional chain entries can be switched off; the
-                 safety baseline is shown locked (the backend refuses to store a
-                 required name as disabled). -->
+            <!-- 中间件 tab: only the optional chain entries are listed, plus the
+                Summarization option row. The system-required baseline is NOT
+                 rendered at all (nothing there is switchable); the backend still
+                 refuses to store a required name as disabled. -->
             <TabPanel
               value="agentMiddlewares"
               :header="t('config.agent.tabs.middlewares')"
@@ -365,21 +366,6 @@
                       class="mt-1 text-[11px] text-amber-600 dark:text-amber-400"
                       data-test="agent-nudge-blocked">
                       {{ t('config.agent.middlewares.nudgeNeedMemory') }}
-                    </div>
-                  </div>
-                  <div class="mt-3">
-                    <div class="mb-1 text-xs font-semibold text-gray-500 dark:text-gray-400">
-                      {{ t('config.agent.middlewares.lockedTitle') }}
-                    </div>
-                    <div class="flex flex-wrap gap-1">
-                      <span
-                        v-for="entry in agentStore.middlewares.locked"
-                        :key="entry.name"
-                        class="inline-flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-500 dark:bg-gray-800 dark:text-gray-400"
-                        :title="t('config.agent.middlewares.lockedHint')">
-                        <i class="pi pi-lock text-[9px]" />
-                        {{ entry.name }}
-                      </span>
                     </div>
                   </div>
                 </div>
@@ -1637,11 +1623,9 @@ const handleApply = async () => {
           "mcp": "MCP"
         },
         "middlewares": {
-          "lockedTitle": "系统必需（锁定）",
           "nudgeLabel": "启用 nudge",
           "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
-          "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
-          "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
+          "hint": "只列出可关闭的中间件；压缩（Summarization）不可关闭，只暴露 nudge 选项。",
           "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
         },
         "middleware": {
@@ -1929,11 +1913,9 @@ const handleApply = async () => {
           "mcp": "MCP"
         },
         "middlewares": {
-          "lockedTitle": "System-required (locked)",
           "nudgeLabel": "Enable nudge",
           "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
-          "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
-          "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
+          "hint": "Only the switchable middlewares are listed; Summarization cannot be switched off and exposes its nudge option instead.",
           "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
         },
         "middleware": {
@@ -2221,11 +2203,9 @@ const handleApply = async () => {
           "mcp": "MCP"
         },
         "middlewares": {
-          "lockedTitle": "システム必須（ロック）",
           "nudgeLabel": "nudge を有効化",
           "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
-          "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
-          "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
+          "hint": "切り替え可能なミドルウェアのみを表示します。Summarization はオフにできず、代わりに nudge オプションを公開します。",
           "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
         },
         "middleware": {
@@ -2513,11 +2493,9 @@ const handleApply = async () => {
           "mcp": "MCP"
         },
         "middlewares": {
-          "lockedTitle": "시스템 필수(잠금)",
           "nudgeLabel": "nudge 사용",
           "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
-          "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
-          "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다",
+          "hint": "전환 가능한 미들웨어만 표시합니다. Summarization은 끌 수 없으며 대신 nudge 옵션을 노출합니다.",
           "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
         },
         "middleware": {

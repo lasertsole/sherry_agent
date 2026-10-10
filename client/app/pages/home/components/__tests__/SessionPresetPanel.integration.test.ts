@@ -287,11 +287,13 @@ describe('SessionPresetButton', () => {
     expect((readFile.element as HTMLInputElement).checked).toBe(false);
     // Hovering a row shows the backend's tool description.
     expect(readFile.element.closest('label')?.getAttribute('title')).toBe('Read a file with pagination.');
-    // Middlewares: a disabled switch mirroring the disabled set + the locked list.
+    // Middlewares: a disabled switch mirroring the disabled set; a
+    // system-required one is not rendered at all (only its option row exists).
     const switchEl = panel.get('[data-test="session-preset-middleware-TaskIntentMiddleware"]');
     expect(switchEl.attributes('disabled')).toBeDefined();
     expect((switchEl.element as HTMLInputElement).checked).toBe(false);
-    expect(panel.text()).toContain('HumanInTheLoop');
+    expect(panel.text()).not.toContain('HumanInTheLoop');
+    expect(panel.find('[data-test="session-preset-middleware-option-Summarization"]').exists()).toBe(true);
     // Neither write path was touched (read-only).
     expect((agentStoreState.current as { save: ReturnType<typeof vi.fn> }).save).not.toHaveBeenCalled();
   });
