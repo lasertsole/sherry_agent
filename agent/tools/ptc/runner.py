@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+from pathlib import Path
 import secrets
 import shutil
 import signal
@@ -55,7 +56,7 @@ class PtcSandboxUnavailableError(RuntimeError):
 
 
 def _resolve_sandboxed_argv(
-    argv: list[str], env: dict[str, str]
+    argv: list[str], env: dict[str, str], writable_roots: list[Path]
 ) -> tuple[list[str], dict[str, str]]:
     """Wrap ``argv`` with the OS-native backend per the ``SANDBOX_POLICY`` mapping.
 
@@ -85,7 +86,7 @@ def _resolve_sandboxed_argv(
             f"(policy={policy.value}) — degrading to unsandboxed execution"
         )
         return argv, env
-    return backend.wrap(argv, env)
+    return backend.wrap(argv, env, writable_roots)
 
 
 _SCRIPT_TEMPLATE = """\
@@ -265,7 +266,9 @@ async def run_ptc(
 
         argv: list[str] = [sys.executable, script_path]
         try:
-            argv, env = _resolve_sandboxed_argv(argv, env)
+            # The child's write surface is its own working directory (the
+            # session's project root, resolved by the tool before the call).
+            argv, env = _resolve_sandboxed_argv(argv, env, [Path(cwd or str(ROOT_DIR))])
         except PtcSandboxUnavailableError as exc:
             return _result("sandbox_unavailable", "", str(exc), -1, 0)
 

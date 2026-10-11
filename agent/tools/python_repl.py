@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Any, ClassVar
 
 import sys
+from pathlib import Path
 import json
 import textwrap
 import subprocess
@@ -120,8 +121,9 @@ def _run_with_timeout(
     timeout: int,
     sandbox: bool = True,
     cwd: str | None = None,
+    writable_roots: list[Path] | None = None,
     **_kwargs: Any,
-) -> str:
+) -> tuple[str, bool]:
     """Execute Python code in a subprocess with timeout. Kill on timeout.
 
     Spawn-point hardening ():
@@ -146,12 +148,18 @@ def _run_with_timeout(
 
     env = scrub_env()
     argv: list[str] = [sys.executable, "-c", script]
+    ran_sandboxed = False
     if sandbox:
         policy = read_policy()
         if policy is not SandboxPolicy.OFF:
             backend = get_backend(policy)
             if backend is not None:
-                argv, env = backend.wrap(argv, env)
+                # The sandbox's write surface: the session's project dir (the
+                # same root the cwd came from), falling back to the process root
+                # when no session is in scope.
+                roots = writable_roots or [Path(cwd or ROOT_DIR)]
+                argv, env = backend.wrap(argv, env, roots)
+                ran_sandboxed = True
             else:
                 logger.warning(
                     "python_repl: sandbox requested but no backend available "
@@ -176,17 +184,18 @@ def _run_with_timeout(
         logger.warning("python_repl timed out after {}s", timeout)
         return (
             f"Python REPL execution timed out after {timeout} seconds. "
-            "Please simplify your code or try a different approach."
+            "Please simplify your code or try a different approach.",
+            ran_sandboxed,
         )
 
     if proc.returncode != 0:
-        return f"Error: subprocess exited with code {proc.returncode}\n{stderr}"
+        return f"Error: subprocess exited with code {proc.returncode}\n{stderr}", ran_sandboxed
 
     try:
         result = json.loads(stdout)
         logger.debug("python_repl: result JSON decode failed", exc_info=True)
     except json.JSONDecodeError:
-        return f"Error: failed to parse output\n{stdout[:500]}"
+        return f"Error: failed to parse output\n{stdout[:500]}", ran_sandboxed
 
     if result["exc"]:
         parts = [f"Error: {result['exc']}"]
@@ -196,8 +205,8 @@ def _run_with_timeout(
             parts.append(f"stderr:\n{result['err']}")
         if result.get("tb"):
             parts.append(f"Traceback:\n{result['tb']}")
-        return "\n".join(parts)
-    return result["out"] or "(no output)"
+        return "\n".join(parts), ran_sandboxed
+    return result["out"] or "(no output)", ran_sandboxed
 
 
 class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
@@ -227,10 +236,17 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         session_id: SessionId = "",
     ) -> str:
         self._deny_sandbox_bypass(sandbox)
-        result = _run_with_timeout(
-            query, PYTHON_REPL_TIMEOUT, sandbox, _resolve_session_cwd(run_manager, session_id)
+        session_cwd = _resolve_session_cwd(run_manager, session_id)
+        result, ran_sandboxed = _run_with_timeout(
+            query,
+            PYTHON_REPL_TIMEOUT,
+            sandbox,
+            session_cwd,
+            [Path(session_cwd)] if session_cwd else None,
         )
-        record_verification_evidence(query, result, _extract_session_id(run_manager))
+        record_verification_evidence(
+            query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
+        )
         return result
 
     async def _arun(
@@ -243,14 +259,18 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
         import asyncio
 
         self._deny_sandbox_bypass(sandbox)
-        result = await asyncio.to_thread(
+        session_cwd = _resolve_session_cwd(run_manager, session_id)
+        result, ran_sandboxed = await asyncio.to_thread(
             _run_with_timeout,
             query,
             PYTHON_REPL_TIMEOUT,
             sandbox,
-            _resolve_session_cwd(run_manager, session_id),
+            session_cwd,
+            [Path(session_cwd)] if session_cwd else None,
         )
-        record_verification_evidence(query, result, _extract_session_id(run_manager))
+        record_verification_evidence(
+            query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed
+        )
         return result
 
 

@@ -6,7 +6,8 @@ execute a real bwrap).
 
 argv order is load-bearing:
 - ``--ro-bind / /`` first mounts the entire root read-only;
-- only ROOT_DIR / TEMP_DIR are then writable-mounted via ``--bind``
+- only the CALLER's roots (the session's project directory) plus TEMP_DIR are
+  then writable-mounted via ``--bind``; everything else stays read-only
   (writable surface = these two directories);
 - ``--clearenv`` must precede every ``--setenv`` — combined, the two implement
   env allowlist semantics (upstream env_scrub already cleaned the env; only
@@ -21,14 +22,15 @@ check is not enough — a smoke test is mandatory).
 
 from __future__ import annotations
 
+import os
 import subprocess
+from collections.abc import Sequence
 from pathlib import Path
 
-from config.path import ROOT_DIR, TEMP_DIR
 from config.features import TOOLS_TIMEOUTS
 
 try:  # Prefer the shared contract; fall back to a local ABC shape if it is unavailable
-    from agent.tools.pub_base.sandbox import SandboxBackend
+    from agent.tools.pub_base.sandbox import SandboxBackend, normalize_writable_roots
 except ImportError:  # pragma: no cover
     from abc import ABC, abstractmethod
 
@@ -39,7 +41,10 @@ except ImportError:  # pragma: no cover
         def probe(self) -> bool: ...
 
         @abstractmethod
-        def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]: ...
+        def wrap(self, cmd: list[str], env: dict, writable_roots) -> tuple[list[str], dict]: ...
+
+    def normalize_writable_roots(writable_roots):  # type: ignore[misc]
+        raise RuntimeError("the shared sandbox contract is unavailable")
 
 
 from agent.tools.pub_base.sandbox import _sensitive_read_paths  # noqa: E402
@@ -68,6 +73,97 @@ _EMPTY_MASK_DIR = Path("/var/empty")
 #: Source device for masking a sensitive *file* (a directory cannot be bound
 #: over a file); reading it yields EOF.
 _NULL_DEVICE = "/dev/null"
+
+
+#: System trees a sandboxed command legitimately needs to READ (binaries,
+#: libraries, DNS/TLS config, package metadata). Missing entries are skipped —
+#: bwrap cannot mount what the host does not have.
+_READ_ALLOW_SYSTEM_PATHS = (
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/lib",
+    "/lib64",
+    "/etc",
+    "/opt",
+    "/var",
+    "/dev",
+    "/proc",
+    "/sys",
+)
+
+#: Extra read paths from the environment (``os.pathsep``-separated). Default:
+#: the toolchain caches a project build needs (npm/pip/uv), which live under
+#: ``~/.cache`` — without them ``uv run``/``pip install`` fail inside the
+#: whitelist. ``~`` is expanded.
+_READ_EXTRA_ENV = "SANDBOX_READ_EXTRA"
+
+#: Enable the read whitelist (default OFF: see scripts/sandbox_smoke.py — the
+#: whitelist is only safe to switch on after it has been verified on the host).
+_READ_ALLOWLIST_ENV = "SANDBOX_READ_ALLOWLIST"
+
+_DEFAULT_READ_EXTRA = ("~/.cache",)
+
+
+def read_allowlist_enabled() -> bool:
+    """Whether the read whitelist replaces ``--ro-bind / /`` for this run."""
+    raw = os.environ.get(_READ_ALLOWLIST_ENV, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def read_extra_paths() -> list[Path]:
+    """The extra read paths for the whitelist (env, else the toolchain caches)."""
+    raw = os.environ.get(_READ_EXTRA_ENV, "")
+    entries = [item for item in raw.split(os.pathsep) if item.strip()]
+    if not entries:
+        entries = list(_DEFAULT_READ_EXTRA)
+    resolved: list[Path] = []
+    for entry in entries:
+        try:
+            path = Path(os.path.expanduser(entry.strip()))
+        except (OSError, RuntimeError):
+            continue
+        if path not in resolved:
+            resolved.append(path)
+    return resolved
+
+
+def _read_allow_args() -> list[str]:
+    """The mount base for the read whitelist: system trees + extras, read-only.
+
+    Everything the host does not have is skipped; the caller masks the REST of
+    the tree with ``--tmpfs`` (see :func:`_read_mask_args`), so the resulting
+    read surface is exactly this list plus the writable roots.
+    """
+    args: list[str] = []
+    for path in (*_READ_ALLOW_SYSTEM_PATHS, *(str(p) for p in read_extra_paths())):
+        if not Path(path).exists():
+            continue
+        args += ["--ro-bind", path, path]
+    return args
+
+
+def _read_mask_args() -> list[str]:
+    """Empty views over the trees the whitelist does not cover.
+
+    ``/home`` / ``/root`` / ``/mnt`` / ``/media`` / ``/srv`` / ``/run`` carry
+    user data; a ``--tmpfs`` over each means a command sees an empty directory
+    instead of the operator's files. Missing mount points are skipped (nothing
+    to hide).
+    """
+    args: list[str] = []
+    for path in ("/home", "/root", "/mnt", "/media", "/srv", "/run"):
+        if not Path(path).exists():
+            continue
+        args += ["--tmpfs", path]
+    return args
+
+
+def _read_base_args() -> list[str]:
+    """The read base: the whole root read-only, or the whitelist when enabled."""
+    if not read_allowlist_enabled():
+        return ["--ro-bind", "/", "/"]
+    return [*_read_allow_args(), *_read_mask_args()]
 
 
 def _read_shield_args() -> list[str]:
@@ -119,15 +215,21 @@ class BwrapBackend(SandboxBackend):
         BwrapBackend._probe_cache = ok
         return ok
 
-    def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]:
-        """Wrap cmd into a bwrap argv; the env allowlist is injected via --setenv."""
+    def wrap(
+        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+    ) -> tuple[list[str], dict]:
+        """Wrap cmd into a bwrap argv; the env allowlist is injected via --setenv.
+
+        The ONLY writable mounts are the caller's roots (plus TEMP_DIR, added by
+        ``normalize_writable_roots``): everything else stays read-only under the
+        ``--ro-bind / /`` base mount, so a command cannot write outside the
+        session's project directory.
+        """
         argv: list[str] = [
             "bwrap",
-            "--ro-bind",
-            "/",
-            "/",
+            *_read_base_args(),
         ]
-        for path in _writable_paths():
+        for path in _writable_paths(writable_roots):
             argv += ["--bind", path, path]
         argv += _read_shield_args()
         argv += [
@@ -148,7 +250,7 @@ class BwrapBackend(SandboxBackend):
         return argv, env
 
 
-def _writable_paths() -> list[str]:
-    """Writable directory list (as str), deduplicated when paths coincide (e.g. TEMP_DIR == ROOT_DIR)."""
-    root, temp = str(ROOT_DIR), str(TEMP_DIR)
-    return [root] if root == temp else [root, temp]
+def _writable_paths(writable_roots: Sequence[Path]) -> list[str]:
+    """The ``--bind`` list: the caller's roots + TEMP_DIR, deduplicated."""
+    roots = normalize_writable_roots(writable_roots)
+    return [str(root) for root in roots]

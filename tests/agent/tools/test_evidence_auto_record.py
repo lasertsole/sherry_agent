@@ -146,7 +146,7 @@ def test_python_repl_records_test_evidence(ledger_path, monkeypatch):
     monkeypatch.setattr(
         python_repl,
         "_run_with_timeout",
-        lambda command, timeout, sandbox, cwd=None: "ok",
+        lambda command, timeout, sandbox, cwd=None, writable_roots=None: ("ok", True),
     )
     tool = python_repl.build_python_repl_tool()
     query = "import subprocess; subprocess.run(['pytest', '-q'])"
@@ -161,7 +161,7 @@ def test_python_repl_non_verification_not_recorded(ledger_path, monkeypatch):
     monkeypatch.setattr(
         python_repl,
         "_run_with_timeout",
-        lambda command, timeout, sandbox, cwd=None: "2",
+        lambda command, timeout, sandbox, cwd=None, writable_roots=None: ("2", True),
     )
     tool = python_repl.build_python_repl_tool()
 

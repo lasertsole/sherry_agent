@@ -15,7 +15,12 @@ import pytest
 from agent.tools.pub_base.sandbox import SandboxBackend
 from agent.tools.pub_base import sandbox_seatbelt as seatbelt_mod
 from agent.tools.pub_base.sandbox_seatbelt import SeatbeltBackend
-from config.path import ROOT_DIR, TEMP_DIR
+from config.path import ROOT_DIR  # noqa: F401 - kept for path-shape assertions
+from agent.tools.pub_base import sandbox as sandbox_mod
+
+#: The caller's write surface for these profile tests (the contract's point:
+#: the allows come from HERE, not from ROOT_DIR).
+ROOTS = [Path("/tmp/sess-proj")]
 
 
 pytestmark = [pytest.mark.module]
@@ -76,7 +81,7 @@ def test_seatbelt_is_sandbox_backend_subclass():
 def test_seatbelt_wrap_command_structure():
     """wrap -> ["sandbox-exec", "-p", profile, "--", *cmd]; env passthrough."""
     env = {"PATH": "/usr/bin"}
-    wrapped, out_env = SeatbeltBackend().wrap(["echo", "hi"], env)
+    wrapped, out_env = SeatbeltBackend().wrap(["echo", "hi"], env, ROOTS)
     assert wrapped[0] == "sandbox-exec"
     assert wrapped[1] == "-p"
     assert isinstance(wrapped[2], str) and wrapped[2]  # profile text
@@ -86,43 +91,43 @@ def test_seatbelt_wrap_command_structure():
 
 
 def test_seatbelt_profile_contains_deny_file_write():
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
     assert "deny file-write*" in profile
 
 
 def test_seatbelt_profile_deny_after_allow_default():
     """Profile ORDER is load-bearing: (deny file-write*) after (allow default)."""
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
     assert profile.index("(allow default)") < profile.index("(deny file-write*)")
 
 
 def test_seatbelt_profile_allows_root_dir_subpath():
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
-    expected = f"(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))"
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
+    expected = f"(allow file-write* (subpath {json.dumps(str(ROOTS[0].resolve()))}))"
     assert expected in profile
 
 
 def test_seatbelt_profile_allows_temp_dir_subpath():
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
-    expected = f"(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))"
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
+    expected = f"(allow file-write* (subpath {json.dumps(str(sandbox_mod.TEMP_DIR.resolve()))}))"
     assert expected in profile
 
 
 def test_seatbelt_profile_allows_dev_null_literal():
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
     assert '(allow file-write* (literal "/dev/null"))' in profile
 
 
 def test_seatbelt_profile_allows_dev_tty_literal():
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
     assert '(allow file-write* (literal "/dev/tty"))' in profile
 
 
 def test_seatbelt_json_escaping_for_quote_containing_path(monkeypatch):
     """Path embedding must go through json.dumps (sbpl injection guard)."""
     weird = '/tmp/we"ird; (deny file-write*)'
-    monkeypatch.setattr(seatbelt_mod, "TEMP_DIR", weird)
-    profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+    monkeypatch.setattr(sandbox_mod, "TEMP_DIR", weird)
+    profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
     expected = f"(allow file-write* (subpath {json.dumps(weird)}))"
     assert expected in profile
     # Raw unescaped form (quote not preceded by backslash) must NOT appear.
@@ -137,17 +142,17 @@ def test_seatbelt_json_escaping_for_quote_containing_path(monkeypatch):
 class TestReadDenyRules:
     def test_sensitive_path_emits_subpath_deny(self, monkeypatch):
         monkeypatch.setattr(seatbelt_mod, "_sensitive_read_paths", lambda: [Path("/home/u/.ssh")])
-        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
         assert '(deny file-read* (subpath "/home/u/.ssh"))' in profile
 
     def test_env_family_denied_by_regex(self):
-        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
         assert r'(deny file-read* (regex #"(^|/)\.env$"))' in profile
         assert r'(deny file-read* (regex #"(^|/)\.env\."))' in profile
 
     def test_read_deny_placed_after_write_deny(self, monkeypatch):
         monkeypatch.setattr(seatbelt_mod, "_sensitive_read_paths", lambda: [Path("/home/u/.ssh")])
-        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
         write_deny = profile.index("(deny file-write*)")
         read_deny = profile.index("(deny file-read*")
         assert write_deny < read_deny
@@ -158,7 +163,7 @@ class TestReadDenyRules:
             "_sensitive_read_paths",
             lambda: [Path("/home/u/.no-such-dir-xyz")],
         )
-        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
         assert '(deny file-read* (subpath "/home/u/.no-such-dir-xyz"))' in profile
 
     def test_env_extension_and_tilde_expansion_reach_profile(self, tmp_path, monkeypatch):
@@ -167,7 +172,7 @@ class TestReadDenyRules:
         monkeypatch.setenv("USERPROFILE", str(home))
         monkeypatch.setenv("SHERRY_DENY_READ_PATHS", "~/custom-secret")
 
-        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
 
         assert f"(deny file-read* (subpath {json.dumps(str(home / 'custom-secret'))}))" in profile
         assert f"(deny file-read* (subpath {json.dumps(str(home / '.ssh'))}))" in profile
@@ -175,6 +180,6 @@ class TestReadDenyRules:
     def test_quote_in_sensitive_path_is_json_escaped(self, monkeypatch):
         weird = Path('/tmp/we"ird')
         monkeypatch.setattr(seatbelt_mod, "_sensitive_read_paths", lambda: [weird])
-        profile = SeatbeltBackend().wrap(["echo"], {})[0][2]
+        profile = SeatbeltBackend().wrap(["echo"], {}, ROOTS)[0][2]
         assert f"(deny file-read* (subpath {json.dumps(str(weird))}))" in profile
         assert 'we"ird' not in profile

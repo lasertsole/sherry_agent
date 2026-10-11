@@ -373,6 +373,18 @@ def _schedule_sweeper(event_loop) -> concurrent.futures.Future[None] | None:
     except Exception:
         logger.debug("boot session-dir sweep skipped", exc_info=True)
 
+    # The sandbox is the only write barrier the shell-ish tools have, so its
+    # availability is reported at boot (and, with SANDBOX_STRICT_BOOT=1, can
+    # refuse to start) instead of being discovered when a command is refused.
+    try:
+        from server.service.sandbox_health import check_sandbox_at_boot
+
+        check_sandbox_at_boot()
+    except RuntimeError:
+        raise  # SANDBOX_STRICT_BOOT=1: an unmet REQUIRED must stop the boot
+    except Exception:
+        logger.debug("boot sandbox check skipped", exc_info=True)
+
     sweeper_coro = start_sweeper()
     try:
         future = asyncio.run_coroutine_threadsafe(sweeper_coro, event_loop)

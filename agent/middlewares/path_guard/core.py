@@ -34,6 +34,7 @@ interrupt itself; the only approval flow remains the one inside the tools.
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -59,6 +60,11 @@ class _Rejection:
 
 
 _PATH_ARG_KEYS = frozenset({"file_path", "path", "directory", "dir"})
+
+#: Arguments that carry a COMMAND STRING (terminal / python_repl). They are not
+#: path arguments, so the path gate above never sees them; this separate screen
+#: only rejects the hard-deny floor inside them (see ``_screen_command_paths``).
+_COMMAND_ARG_KEYS = frozenset({"commands", "command", "query"})
 
 #: System credential files that are never a legitimate project read; a HITL
 #: prompt for them is at best noise. Mirrors the terminal sensitive-file set.
@@ -118,6 +124,43 @@ def _screen_path_arg(value: str, root: Path | None = None) -> str | None:
     return None
 
 
+#: Path-looking tokens inside a command string: absolute paths, ``~/…`` and
+#: relative paths carrying a traversal component. Deliberately shallow — no
+#: shell parsing, no quoting rules — because this screen is a mitigation.
+_COMMAND_PATH_RE = re.compile(
+    r"""(?P<path>~?/[\w.@+\-/]*|\.\.?/[\w.@+\-/]+)""",
+)
+
+
+def _screen_command_paths(command: str, root: Path | None = None) -> str | None:
+    """Rejection reason when a command string names a hard-denied path.
+
+    Hard-deny only: a command touching some OTHER external path is left alone
+    (the sandbox decides, and the file tools' HITL flow never covered shell
+    commands to begin with). base64 / variables / ``cd`` + relative paths can
+    all hide a path from this scan — that is why the OS sandbox is the barrier
+    and this is only noise reduction.
+
+    The command is scanned first with the raw text and then with the shell
+    quoting/escaping characters stripped, so ``cat '/etc/passwd'`` and
+    ``cat /etc/pas\\swd`` still hit the floor.
+    """
+    if not command.strip():
+        return None
+    candidates = {command}
+    stripped = command.replace("\\", "").replace('"', "").replace("'", "")
+    candidates.add(stripped)
+    for text in candidates:
+        for match in _COMMAND_PATH_RE.finditer(text):
+            value = match.group("path").rstrip("\"',;|&")
+            if not value or "://" in value:
+                continue
+            target = _external_target(value, root)
+            if target is not None and _is_hard_denied(target):
+                return "command names a path on the hard deny list (credentials / system files)"
+    return None
+
+
 def _session_project_root(request: ToolCallRequest) -> Path | None:
     """The calling session's project directory, or None when unknown.
 
@@ -141,6 +184,7 @@ class PathGuard(AgentMiddleware):
         args: Any = request.tool_call.get("args")
         if not isinstance(args, dict):
             return None
+        root = self._session_project_root(request)
         for key in sorted(_PATH_ARG_KEYS):
             value = args.get(key)
             if not isinstance(value, str):
@@ -148,9 +192,20 @@ class PathGuard(AgentMiddleware):
             candidate = value.strip()
             if not candidate or "://" in candidate:
                 continue
-            reason = _screen_path_arg(candidate, self._session_project_root(request))
+            reason = _screen_path_arg(candidate, root)
             if reason is not None:
                 return _Rejection(key=key, value=value, reason=reason)
+        # Command strings (terminal / python_repl) never carry a path argument,
+        # so they get their own hard-deny-only screen.
+        for key in sorted(_COMMAND_ARG_KEYS):
+            value = args.get(key)
+            texts = value if isinstance(value, list) else [value]
+            for text in texts:
+                if not isinstance(text, str):
+                    continue
+                reason = _screen_command_paths(text, root)
+                if reason is not None:
+                    return _Rejection(key=key, value=text, reason=reason)
         return None
 
     def _session_project_root(self, request: ToolCallRequest) -> Path | None:

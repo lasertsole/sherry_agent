@@ -175,7 +175,9 @@ def test_the_async_spawn_site_strips_escapes(tool, monkeypatch):
 def test_the_sync_wrapped_spawn_site_strips_escapes(tool, monkeypatch):
     """The sandboxed path has its own decode site; it strips too."""
     monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: _FakeProc())
-    monkeypatch.setattr(tool, "_resolve_sandbox_argv", lambda cmd, env: (["bwrap", cmd], env))
+    monkeypatch.setattr(
+        tool, "_resolve_sandbox_argv", lambda cmd, env, roots: (["bwrap", cmd], env)
+    )
 
     out = tool._run("echo red", sandbox=True)
 

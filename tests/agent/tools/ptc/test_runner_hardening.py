@@ -94,7 +94,9 @@ def test_available_backend_wraps_the_child_argv(monkeypatch: pytest.MonkeyPatch)
     wrap_calls: list[list[str]] = []
 
     class _Backend:
-        def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]:
+        def wrap(
+            self, cmd: list[str], env: dict, writable_roots: list | None = None
+        ) -> tuple[list[str], dict]:
             wrap_calls.append(list(cmd))
             return ["/fake/bwrap", "--", *cmd], env
 

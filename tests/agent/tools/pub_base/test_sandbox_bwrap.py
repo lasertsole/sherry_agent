@@ -14,9 +14,16 @@ from __future__ import annotations
 
 import os
 import subprocess
+from pathlib import Path
 from unittest import mock
 
 import pytest
+
+from agent.tools.pub_base import sandbox
+
+#: The caller's write surface for these argv tests (the contract's whole point:
+#: the binds come from HERE, not from ROOT_DIR).
+ROOTS = [Path("/tmp/sess-proj")]
 
 import agent.tools.pub_base.sandbox_bwrap as sandbox_bwrap
 from agent.tools.pub_base.sandbox import _sensitive_read_paths
@@ -52,12 +59,12 @@ def reset_probe_cache():
 
 
 def test_wrap_argv_starts_with_bwrap_ro_bind():
-    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {})
+    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {}, ROOTS)
     assert cmd[0:3] == ["bwrap", "--ro-bind", "/"]
 
 
 def test_wrap_contains_unshare_all_and_hardening_flags():
-    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {})
+    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {}, ROOTS)
     for flag in (
         "--unshare-all",
         "--die-with-parent",
@@ -72,45 +79,46 @@ def test_wrap_contains_unshare_all_and_hardening_flags():
 
 def test_wrap_setenv_count_matches_env_entries():
     env = {"PATH": "/usr/bin", "LANG": "C.UTF-8", "FOO": "bar"}
-    cmd, returned_env = BwrapBackend().wrap(["echo", "hi"], env)
+    cmd, returned_env = BwrapBackend().wrap(["echo", "hi"], env, ROOTS)
     assert cmd.count("--setenv") == len(env)
     # env is passed through unchanged (scrub happened upstream)
     assert returned_env == env
 
 
 def test_wrap_clearenv_precedes_all_setenv():
-    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {"PATH": "/usr/bin", "FOO": "bar"})
+    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {"PATH": "/usr/bin", "FOO": "bar"}, ROOTS)
     first_setenv = cmd.index("--setenv")
     assert "--clearenv" in cmd[:first_setenv]
     assert cmd[first_setenv : first_setenv + 3] == ["--setenv", "PATH", "/usr/bin"]
 
 
-def test_wrap_binds_root_and_temp_dirs_writable():
-    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {})
-    root, temp = str(sandbox_bwrap.ROOT_DIR), str(sandbox_bwrap.TEMP_DIR)
-    # exactly two writable binds (the --ro-bind token is not counted)
+def test_wrap_binds_the_callers_roots_and_temp_writable():
+    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {}, ROOTS)
+    root = str(ROOTS[0].resolve())
+    temp = str(sandbox.TEMP_DIR.resolve())
+    # one writable bind per root + the always-appended TEMP_DIR
     assert cmd.count("--bind") == 2
     assert ["--bind", root, root] == cmd[cmd.index("--bind") : cmd.index("--bind") + 3]
-    temp_pos = cmd.index(["--bind", temp, temp][1])
+    temp_pos = cmd.index(temp)
     assert cmd[temp_pos - 1 : temp_pos + 2] == ["--bind", temp, temp]
 
 
 def test_wrap_trailing_separator_and_original_command():
-    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {"PATH": "/usr/bin"})
+    cmd, _env = BwrapBackend().wrap(["echo", "hi"], {"PATH": "/usr/bin"}, ROOTS)
     sep = cmd.index("--")
     assert cmd[sep + 1 :] == ["echo", "hi"]
 
 
 def test_wrap_dedupes_writable_paths_when_equal(monkeypatch):
-    monkeypatch.setattr(sandbox_bwrap, "ROOT_DIR", "/same/dir")
-    monkeypatch.setattr(sandbox_bwrap, "TEMP_DIR", "/same/dir")
-    cmd, _env = BwrapBackend().wrap(["echo"], {})
+    """TEMP_DIR inside the root adds no second bind (they coincide)."""
+    monkeypatch.setattr(sandbox, "TEMP_DIR", ROOTS[0])
+    cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
     assert cmd.count("--bind") == 1
-    assert cmd.count("/same/dir") == 2  # --bind src dst
+    assert cmd.count(str(ROOTS[0].resolve())) == 2  # --bind src dst
 
 
 def test_wrap_return_type_is_tuple_of_list_and_dict():
-    result = BwrapBackend().wrap(["echo"], {"A": "1"})
+    result = BwrapBackend().wrap(["echo"], {"A": "1"}, ROOTS)
     assert isinstance(result, tuple)
     cmd, env = result
     assert isinstance(cmd, list)
@@ -138,7 +146,7 @@ class TestReadShield:
         monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret])
         monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", empty)
 
-        cmd, _env = BwrapBackend().wrap(["echo"], {})
+        cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
 
         mask_index = _sublist_index(cmd, ["--ro-bind", str(empty), str(secret)])
         assert mask_index != -1, f"missing read-shield mount in {cmd!r}"
@@ -151,7 +159,7 @@ class TestReadShield:
         monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret])
         monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", tmp_path / "absent")
 
-        cmd, _env = BwrapBackend().wrap(["echo"], {})
+        cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
 
         assert _sublist_index(cmd, ["--tmpfs", str(secret)]) != -1
 
@@ -160,7 +168,7 @@ class TestReadShield:
         secret.write_text("token", encoding="utf-8")
         monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret])
 
-        cmd, _env = BwrapBackend().wrap(["echo"], {})
+        cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
 
         assert _sublist_index(cmd, ["--ro-bind", "/dev/null", str(secret)]) != -1
 
@@ -168,7 +176,7 @@ class TestReadShield:
         missing = tmp_path / "does-not-exist"
         monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [missing])
 
-        cmd, _env = BwrapBackend().wrap(["echo"], {})
+        cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
 
         assert str(missing) not in cmd
 
@@ -184,7 +192,7 @@ class TestReadShield:
         monkeypatch.setenv("SHERRY_DENY_READ_PATHS", f"{custom}{os.pathsep}")
         monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", empty)
 
-        cmd, _env = BwrapBackend().wrap(["echo"], {})
+        cmd, _env = BwrapBackend().wrap(["echo"], {}, ROOTS)
 
         assert _sublist_index(cmd, ["--ro-bind", str(empty), str(custom)]) != -1
         assert _sublist_index(cmd, ["--ro-bind", str(empty), str(home / ".ssh")]) != -1
@@ -233,7 +241,7 @@ def test_real_bwrap_read_shield_smoke(tmp_path, monkeypatch):
     monkeypatch.setattr(sandbox_bwrap, "_sensitive_read_paths", lambda: [secret_dir])
     monkeypatch.setattr(sandbox_bwrap, "_EMPTY_MASK_DIR", empty)
 
-    cmd, _env = BwrapBackend().wrap(["/bin/sh", "-c", f"cat {secret_file}"], {})
+    cmd, _env = BwrapBackend().wrap(["/bin/sh", "-c", f"cat {secret_file}"], {}, ROOTS)
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
 
     assert result.returncode != 0, "masked secret must not be readable"

@@ -311,8 +311,11 @@ class HumanInTheLoop(AgentMiddleware):
             name=tool_name,
             args=tool_call.get("args", {}),
             description=(
-                "Sandbox bypass approval: this call requests sandbox=False "
-                "(executes directly after env scrubbing, with no OS sandbox isolation)."
+                "Sandbox bypass approval: ⚠ UNSANDBOXED — this call requests "
+                "sandbox=False, so it executes directly after env scrubbing with no OS "
+                "sandbox isolation. The OS sandbox is the only thing that keeps a shell "
+                "command inside the session's project directory, so approving this call "
+                "lets it read and write anywhere this process can."
                 + (f" {action_desc}" if action_desc else "")
             ),
         )

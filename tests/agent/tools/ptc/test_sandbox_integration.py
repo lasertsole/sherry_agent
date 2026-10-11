@@ -12,6 +12,8 @@ import json
 from contextlib import contextmanager
 from typing import Any
 
+from pathlib import Path
+
 import pytest
 from loguru import logger
 
@@ -19,6 +21,9 @@ from agent.tools.ptc import runner
 from agent.tools.ptc.runner import PtcSandboxUnavailableError, _resolve_sandboxed_argv
 from agent.tools.pub_base.sandbox import SandboxPolicy
 from config.features import PTC
+
+#: The caller's write surface (the contract's point).
+ROOTS = [Path("/tmp/sess-proj")]
 
 pytestmark = [pytest.mark.unit]
 
@@ -39,7 +44,9 @@ class _FakeBackend:
     def __init__(self) -> None:
         self.wrap_calls: list[tuple[list[str], dict]] = []
 
-    def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]:
+    def wrap(
+        self, cmd: list[str], env: dict, writable_roots: list | None = None
+    ) -> tuple[list[str], dict]:
         self.wrap_calls.append((list(cmd), dict(env)))
         return ["/fake/bwrap", "--", *cmd], env
 
@@ -53,7 +60,9 @@ def test_auto_with_backend_wraps_the_interpreter_argv(monkeypatch: pytest.Monkey
     _policy(monkeypatch, SandboxPolicy.AUTO)
     monkeypatch.setattr(runner, "get_backend", lambda _policy: backend)
 
-    argv, env = _resolve_sandboxed_argv(["/usr/bin/python", "/tmp/script.py"], {"PATH": "/bin"})
+    argv, env = _resolve_sandboxed_argv(
+        ["/usr/bin/python", "/tmp/script.py"], {"PATH": "/bin"}, ROOTS
+    )
     assert argv == ["/fake/bwrap", "--", "/usr/bin/python", "/tmp/script.py"]
     assert backend.wrap_calls[0][0] == ["/usr/bin/python", "/tmp/script.py"]
     assert env == {"PATH": "/bin"}
@@ -68,7 +77,7 @@ def test_off_never_consults_the_backend(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(runner, "get_backend", _fail)
     argv = ["/usr/bin/python", "/tmp/script.py"]
     with _loguru_warnings() as records:
-        resolved, env = _resolve_sandboxed_argv(argv, {"PATH": "/bin"})
+        resolved, env = _resolve_sandboxed_argv(argv, {"PATH": "/bin"}, ROOTS)
     assert resolved == argv
     assert env == {"PATH": "/bin"}
     assert records == []
@@ -84,7 +93,7 @@ def test_required_without_backend_refuses_with_actionable_hint(
 
     monkeypatch.setattr(runner, "get_backend", _raise)
     with pytest.raises(PtcSandboxUnavailableError) as excinfo:
-        _resolve_sandboxed_argv(["/usr/bin/python", "/tmp/script.py"], {"PATH": "/bin"})
+        _resolve_sandboxed_argv(["/usr/bin/python", "/tmp/script.py"], {"PATH": "/bin"}, ROOTS)
     message = str(excinfo.value)
     assert "SANDBOX_POLICY=required" in message
     assert "SANDBOX_POLICY=auto" in message
@@ -97,7 +106,7 @@ def test_auto_without_backend_degrades_with_exactly_one_warning(
     monkeypatch.setattr(runner, "get_backend", lambda _policy: None)
     argv = ["/usr/bin/python", "/tmp/script.py"]
     with _loguru_warnings() as records:
-        resolved, env = _resolve_sandboxed_argv(argv, {"PATH": "/bin"})
+        resolved, env = _resolve_sandboxed_argv(argv, {"PATH": "/bin"}, ROOTS)
     assert resolved == argv
     assert env == {"PATH": "/bin"}
     assert len(records) == 1

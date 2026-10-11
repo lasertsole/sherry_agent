@@ -50,6 +50,7 @@ def _bwrap_usable() -> bool:
         argv, _ = BwrapBackend().wrap(
             ["/bin/sh", "-c", "true"],
             {"PATH": os.environ.get("PATH", "/usr/bin:/bin")},
+            [Path.cwd()],
         )
         result = subprocess.run(argv, capture_output=True, timeout=10, check=False)
     except (OSError, subprocess.SubprocessError):

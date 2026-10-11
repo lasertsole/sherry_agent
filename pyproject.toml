@@ -199,6 +199,9 @@ ignore = [
 # print allowed in the eval harness (per-sample metric tables are the deliverable)
 "evals/**" = ["T20"]
 
+# Dev/maintenance scripts print their report; that IS the deliverable
+"scripts/**" = ["T20", "D100", "D103"]
+
 # --- docstring-existence debt registry (D100-D103): shrink as docstrings land ---
 "agent/**" = ["D100", "D101", "D102", "D103", "D200"]
 "models/**" = ["D100", "D101", "D102", "D103", "D200"]

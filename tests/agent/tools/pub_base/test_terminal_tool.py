@@ -117,7 +117,9 @@ class _FakeBackend:
     def probe(self) -> bool:
         return True
 
-    def wrap(self, cmd: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    def wrap(
+        self, cmd: list[str], env: dict[str, str], writable_roots: list | None = None
+    ) -> tuple[list[str], dict[str, str]]:
         self.calls.append((list(cmd), dict(env)))
         return [self._wrapper, *cmd], {**env, "WRAPPED": "1"}
 

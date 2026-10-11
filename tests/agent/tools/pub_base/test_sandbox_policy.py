@@ -279,7 +279,10 @@ def test_env_example_contains_sandbox_policy_line():
     matching = [line for line in content.splitlines() if line.strip().startswith("SANDBOX_POLICY")]
     assert matching, "SANDBOX_POLICY missing from .env.example"
     line = matching[-1].strip()
-    assert line.replace(" ", "") == "SANDBOX_POLICY=auto"
-    # semantics documented in the comment block
+    # Shipped default is fail-closed: auto silently runs unsandboxed, which is the
+    # write bypass the bypass-defense plan closes.
+    assert line.replace(" ", "") == "SANDBOX_POLICY=required"
+    # semantics documented in the comment block, including the auto warning
     lowered = content.lower()
     assert "required" in lowered and "auto" in lowered and "off" in lowered
+    assert "unsandboxed" in lowered

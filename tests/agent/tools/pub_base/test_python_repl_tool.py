@@ -98,7 +98,9 @@ class _FakeBackend:
     def probe(self) -> bool:  # pragma: no cover - contract completeness only
         return True
 
-    def wrap(self, cmd: list[str], env: dict[str, str]) -> tuple[list[str], dict[str, str]]:
+    def wrap(
+        self, cmd: list[str], env: dict[str, str], writable_roots: list | None = None
+    ) -> tuple[list[str], dict[str, str]]:
         self.wrap_inputs.append({"cmd": cmd, "env": env})
         wrapped_env = dict(env)
         wrapped_env["SANDBOX_FAKE"] = "1"
@@ -359,7 +361,7 @@ def test_run_with_timeout_absorbs_unexpected_kwargs():
     proc = _FakeProc(calls, [sys.executable, "-c", "pass"])
     with unittest.mock.patch.object(python_repl.subprocess, "Popen", return_value=proc):
         out = python_repl._run_with_timeout("pass", 5, True, future_flag="x")
-    assert isinstance(out, str)
+    assert isinstance(out, tuple) and isinstance(out[0], str)
 
 
 # ---------------------------------------------------------------------------
@@ -370,17 +372,17 @@ def test_run_with_timeout_absorbs_unexpected_kwargs():
 
 
 def test_open_is_unavailable_in_restricted_builtins():
-    out = python_repl._run_with_timeout('open("/etc/passwd")', 10, sandbox=False)
+    out, _sandboxed = python_repl._run_with_timeout('open("/etc/passwd")', 10, sandbox=False)
     assert "NameError" in out
     assert "open" in out
 
 
 def test_import_is_unavailable_in_restricted_builtins():
-    out = python_repl._run_with_timeout('__import__("os").getcwd()', 10, sandbox=False)
+    out, _sandboxed = python_repl._run_with_timeout('__import__("os").getcwd()', 10, sandbox=False)
     assert "NameError" in out
     assert "__import__" in out
 
 
 def test_benign_repl_code_still_executes():
-    out = python_repl._run_with_timeout("print(sum(range(5)))", 10, sandbox=False)
+    out, _sandboxed = python_repl._run_with_timeout("print(sum(range(5)))", 10, sandbox=False)
     assert out.strip() == "10"

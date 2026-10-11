@@ -45,8 +45,19 @@ def _parse_exit_code(result: str) -> int:
     return 0
 
 
-def record_verification_evidence(command: str, result: str, session_id: str) -> None:
+def record_verification_evidence(
+    command: str,
+    result: str,
+    session_id: str,
+    *,
+    sandboxed: bool | None = None,
+) -> None:
     """Append one evidence row for a recognized verification command.
+
+    ``sandboxed=False`` marks a command that ran WITHOUT the OS sandbox: the
+    shell-ish tools' only write barrier is the sandbox, so a bare run is a fact
+    the ledger has to carry (the caller reports what it actually did; ``None``
+    means "not applicable", e.g. an in-process check).
 
     Fail-open: an unclassified command or any ledger write error leaves the tool
     result untouched and only logs.
@@ -56,13 +67,16 @@ def record_verification_evidence(command: str, result: str, session_id: str) -> 
         if kind is None:
             return
         exit_code = _parse_exit_code(result)
-        EvidenceLedger.for_session(session_id).append(
-            kind=kind,
-            command=command,
-            exit_code=exit_code,
-            status="passed" if exit_code == 0 else "failed",
-            output_snippet=result[:_OUTPUT_SNIPPET_CHARS],
-        )
+        fields: dict = {
+            "kind": kind,
+            "command": command,
+            "exit_code": exit_code,
+            "status": "passed" if exit_code == 0 else "failed",
+            "output_snippet": result[:_OUTPUT_SNIPPET_CHARS],
+        }
+        if sandboxed is not None:
+            fields["sandboxed"] = sandboxed
+        EvidenceLedger.for_session(session_id).append(**fields)
     except Exception as exc:
         logger.warning("evidence auto-record failed: {}", exc)
 

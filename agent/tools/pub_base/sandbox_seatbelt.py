@@ -7,11 +7,13 @@ follow oh-my-openagent ``sandbox-platform.ts`` ``buildDarwinProfile``.
 """
 
 import json
+from pathlib import Path
+from collections.abc import Sequence
 import os
 import shutil
 
 from agent.tools.pub_base.sandbox import SandboxBackend, _sensitive_read_paths
-from config.path import ROOT_DIR, TEMP_DIR
+from .sandbox import normalize_writable_roots
 
 #: ``.env`` / ``.env.*`` basenames, denied at any depth via an sbpl regex
 #: (``(^|/)`` anchors the basename; the leading ``/`` of an absolute path also
@@ -20,6 +22,45 @@ _ENV_READ_DENY_RULES = (
     r'(deny file-read* (regex #"(^|/)\.env$"))',
     r'(deny file-read* (regex #"(^|/)\.env\."))',
 )
+
+
+#: Read whitelist switch (shared with the bwrap backend): default OFF because
+#: it is only safe to enable after scripts/sandbox_smoke.py has verified it on
+#: the host. When on, reads are denied by default and re-opened for the system
+#: trees, the toolchain caches and the writable roots.
+_READ_ALLOWLIST_ENV = "SANDBOX_READ_ALLOWLIST"
+
+_READ_ALLOW_SYSTEM_PATHS = (
+    "/usr",
+    "/bin",
+    "/sbin",
+    "/Library",
+    "/System",
+    "/private/etc",
+    "/private/var",
+    "/dev",
+    "/tmp",
+)
+
+
+def _read_allowlist_enabled() -> bool:
+    raw = os.environ.get(_READ_ALLOWLIST_ENV, "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def _read_allow_lines(writable_roots: Sequence[Path]) -> list[str]:
+    """The whitelist rules: no rule when the switch is off (default)."""
+    if not _read_allowlist_enabled():
+        return []
+    from .sandbox_bwrap import read_extra_paths
+
+    paths = [*_READ_ALLOW_SYSTEM_PATHS, *read_extra_paths(), *(str(r) for r in writable_roots)]
+    lines = ["(deny file-read*)"]
+    lines += [
+        f"(allow file-read* (subpath {json.dumps(os.path.expanduser(str(path)))}))"
+        for path in paths
+    ]
+    return lines
 
 
 def _read_deny_lines() -> list[str]:
@@ -55,7 +96,7 @@ class SeatbeltBackend(SandboxBackend):
         return cls._probe_result
 
     @staticmethod
-    def _build_profile() -> str:
+    def _build_profile(writable_roots: Sequence[Path]) -> str:
         """Build the sbpl profile string.
 
         Order is load-bearing: ``(deny file-write*)`` under ``(allow default)``
@@ -69,15 +110,28 @@ class SeatbeltBackend(SandboxBackend):
         lines = [
             "(version 1)",
             "(allow default)",
+            # Read whitelist (only when enabled; ordered before the write rules
+            # so the write allows below can never re-expose a read).
+            *_read_allow_lines(writable_roots),
             "(deny file-write*)",
             *_read_deny_lines(),
-            f"(allow file-write* (subpath {json.dumps(str(ROOT_DIR))}))",
-            f"(allow file-write* (subpath {json.dumps(str(TEMP_DIR))}))",
+            *(
+                f"(allow file-write* (subpath {json.dumps(str(root))}))"
+                for root in normalize_writable_roots(writable_roots)
+            ),
             '(allow file-write* (literal "/dev/null"))',
             '(allow file-write* (literal "/dev/tty"))',
         ]
         return "\n".join(lines)
 
-    def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]:
-        profile = self._build_profile()
+    def wrap(
+        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+    ) -> tuple[list[str], dict]:
+        """Wrap cmd into a sandbox-exec invocation over the caller's roots.
+
+        Only the caller's roots (plus TEMP_DIR) are re-opened for writing; the
+        whole profile is "allow everything except file writes", so the write
+        surface IS the sandbox.
+        """
+        profile = self._build_profile(writable_roots)
         return ["sandbox-exec", "-p", profile, "--", *cmd], env

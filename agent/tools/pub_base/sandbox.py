@@ -49,8 +49,11 @@ Notes:
 import os
 import platform
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from enum import Enum
 from pathlib import Path
+
+from config.path import TEMP_DIR
 
 __all__ = [
     "SandboxPolicy",
@@ -149,13 +152,52 @@ class SandboxBackend(ABC):
         ...
 
     @abstractmethod
-    def wrap(self, cmd: list[str], env: dict) -> tuple[list[str], dict]:
+    def wrap(
+        self, cmd: list[str], env: dict, writable_roots: Sequence[Path]
+    ) -> tuple[list[str], dict]:
         """Wrap a command argv + environment for sandboxed execution.
+
+        ``writable_roots`` is the only write surface the wrapped command gets:
+        the calling session's project directory (plus the process temp dir,
+        which backends append themselves because the sandbox needs a writable
+        ``/tmp``). The parameter is REQUIRED — a default would silently restore
+        the old "whole ROOT_DIR is writable" behaviour at any call site that
+        forgot to pass it, which is exactly the write bypass this contract
+        exists to close. An empty list is a caller bug and raises ``ValueError``
+        (fail-closed).
 
         Returns the (wrapped argv, scrubbed env) tuple to be exec'd directly
         (list form, no shell).
         """
         ...
+
+
+def normalize_writable_roots(writable_roots: Sequence[Path]) -> list[Path]:
+    """Validate + normalize the write surface for a sandboxed run.
+
+    Fail-closed contract shared by the backends: an empty list is a caller bug
+    (``ValueError``), every entry is resolved, duplicates collapse, and
+    ``TEMP_DIR`` is always present because the sandbox itself needs a writable
+    temp directory.
+    """
+    roots = [Path(root) for root in writable_roots if str(root).strip()]
+    if not roots:
+        raise ValueError(
+            "wrap() requires at least one writable root: refusing to sandbox "
+            "with an empty write surface (fail-closed)"
+        )
+    resolved: list[Path] = []
+    for root in roots:
+        try:
+            candidate = root.resolve()
+        except (OSError, RuntimeError):
+            candidate = root
+        if candidate not in resolved:
+            resolved.append(candidate)
+    temp = Path(TEMP_DIR).resolve() if str(TEMP_DIR).strip() else None
+    if temp is not None and temp not in resolved:
+        resolved.append(temp)
+    return resolved
 
 
 def get_backend(policy: SandboxPolicy) -> SandboxBackend | None:

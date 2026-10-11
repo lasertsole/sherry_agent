@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import locale
 import asyncio
+from pathlib import Path
 import re
 import subprocess
 from typing import Any, ClassVar
@@ -209,13 +210,37 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                 raise ToolException(_SENSITIVE_FILE_MESSAGE)
 
     @staticmethod
-    def _record_verification(command: str, result: str, run_manager: Any) -> str:
-        """Record verification evidence for a finished command, then return the result."""
-        record_verification_evidence(command, result, _extract_session_id(run_manager))
+    def _record_verification(
+        command: str, result: str, run_manager: Any, *, sandboxed: bool | None = None
+    ) -> str:
+        """Record verification evidence for a finished command, then return the result.
+
+        ``sandboxed=False`` marks a bare run (no backend, or the caller's
+        ``sandbox=False``); the ledger row then says so, which is the only
+        durable trace an unsandboxed command leaves.
+        """
+        record_verification_evidence(
+            command, result, _extract_session_id(run_manager), sandboxed=sandboxed
+        )
         return result
 
+    def _session_writable_roots(self, session_id: str | None) -> list[Path]:
+        """The sandbox's write surface for this call: the session's project root.
+
+        Same source as :meth:`_resolve_cwd`, so the command's cwd and its
+        writable面 are always the same directory — a project bound outside the
+        repository is writable (it used to be EROFS), and the repository is NOT
+        writable for a session bound elsewhere (it used to be, which made
+        ``terminal`` a way around the external-path gate).
+        """
+        cwd = self._resolve_cwd(session_id)
+        return [Path(cwd)] if cwd else []
+
     def _resolve_sandbox_argv(
-        self, cmd_str: str, env: dict[str, str]
+        self,
+        cmd_str: str,
+        env: dict[str, str],
+        writable_roots: list[Path],
     ) -> tuple[list[str] | None, dict[str, str]]:
         """Resolve the sandboxed argv for ``cmd_str`` (list-exec form).
 
@@ -242,7 +267,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         # List-exec form for the sandbox: ["/bin/sh", "-c", cmd] is
         # semantically identical to POSIX shell=True (and Windows never has a
         # backend, so cmd.exe is untouched).
-        return backend.wrap(["/bin/sh", "-c", cmd_str], env)
+        return backend.wrap(["/bin/sh", "-c", cmd_str], env, writable_roots)
 
     # ── Sync execution paths ────────────────────────────────────────────────
 
@@ -345,14 +370,16 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
-        cwd = self._resolve_cwd(resolve_tool_session_id(session_id, run_manager))
+        bound_session = resolve_tool_session_id(session_id, run_manager)
+        cwd = self._resolve_cwd(bound_session)
+        writable_roots = self._session_writable_roots(bound_session)
 
         env = scrub_env()
         if sandbox:
-            argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env)
+            argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
             if argv is not None:
                 return self._record_verification(
-                    cmd_str, self._run_wrapped(argv, wrapped_env, cwd), run_manager
+                    cmd_str, self._run_wrapped(argv, wrapped_env, cwd), run_manager, sandboxed=True
                 )
 
         # ShellTool._run delegates to BashProcess which uses subprocess.run(check=True)
@@ -363,6 +390,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             cmd_str,
             self._run_with_encoding(commands, encoding=self._encoding, env=env, cwd=cwd),
             run_manager,
+            sandboxed=False,  # no backend (or sandbox=False): a bare run
         )
 
     @override
@@ -386,13 +414,17 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         self._deny_sandbox_bypass(sandbox)
         self._check_dangerous(cmd_str)
         self._check_sensitive_file_access(cmd_str)
-        cwd = self._resolve_cwd(resolve_tool_session_id(session_id, run_manager))
+        bound_session = resolve_tool_session_id(session_id, run_manager)
+        cwd = self._resolve_cwd(bound_session)
+        writable_roots = self._session_writable_roots(bound_session)
 
         env = scrub_env()
         argv: list[str] | None = None
         spawn_env = env
+        ran_sandboxed = False
         if sandbox:
-            argv, spawn_env = self._resolve_sandbox_argv(cmd_str, env)
+            argv, spawn_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
+            ran_sandboxed = argv is not None
 
         proc = None
         try:
@@ -404,6 +436,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                     env=spawn_env,
                     cwd=cwd,
                 )
+                ran_sandboxed = True
             else:
                 proc = await asyncio.create_subprocess_shell(
                     cmd_str,
@@ -416,9 +449,12 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             output = strip_control_sequences(stdout_bytes.decode(self._encoding, errors="replace"))
             if proc.returncode != 0:
                 return self._record_verification(
-                    cmd_str, f"Exit code {proc.returncode}\n{output}", run_manager
+                    cmd_str,
+                    f"Exit code {proc.returncode}\n{output}",
+                    run_manager,
+                    sandboxed=ran_sandboxed,
                 )
-            return self._record_verification(cmd_str, output, run_manager)
+            return self._record_verification(cmd_str, output, run_manager, sandboxed=ran_sandboxed)
         except TimeoutError:
             if proc:
                 await areap_process(proc)
