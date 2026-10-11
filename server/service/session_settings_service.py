@@ -504,6 +504,30 @@ async def apply_search_backend_choice(session_id: str, backend: str | None) -> b
     )
 
 
+def _search_env_view() -> dict[str, Any]:
+    """The .env file as the 模型联网 panel edits it.
+
+    Those keys are WITHHELD from ``GET /env`` (a dedicated panel owns them), so
+    the panel reads them here instead. They are the FILE values — what a save
+    would produce and what the next boot reads — while the sibling ``searxng`` /
+    ``tavily_available`` fields report what THIS process loaded, which is how the
+    panel can say "saved, restart to apply".
+    """
+    from server.service.env import env_file_values
+
+    values = env_file_values()
+    return {
+        "searxng_url": values.get("SEARXNG_URL", ""),
+        "searxng_proxy": values.get("SEARXNG_PROXY", ""),
+        "searxng_engines": values.get("SEARXNG_ENGINES", ""),
+        "searxng_categories": values.get("SEARXNG_CATEGORIES", ""),
+        "searxng_verify_tls": values.get("SEARXNG_VERIFY_TLS", "true").strip().lower()
+        not in ("0", "false", "no", "off"),
+        #: A Tavily key sits in the file (the VALUE never leaves the server).
+        "tavily_key_present": bool(values.get("TAVILY_API_KEY", "").strip()),
+    }
+
+
 def get_search_backend_state(session_id: str) -> dict[str, Any]:
     """The panel's read model: the session's choice, what is effective, and what
     each provider's configuration looks like.
@@ -524,6 +548,7 @@ def get_search_backend_state(session_id: str) -> dict[str, Any]:
         raise ValueError("invalid session_id")
 
     searxng = searxng_status()
+    env_view = _search_env_view()
     if not session_id:
         return {
             "backend": None,
@@ -532,6 +557,7 @@ def get_search_backend_state(session_id: str) -> dict[str, Any]:
             "pending_value": None,
             "tavily_available": tavily_available(),
             "searxng": searxng,
+            "env": env_view,
         }
 
     # A park cannot outlive its turn (restart, missed hook): an idle read settles it.
@@ -547,6 +573,7 @@ def get_search_backend_state(session_id: str) -> dict[str, Any]:
         "pending_value": parked_value,
         "tavily_available": tavily_available(),
         "searxng": searxng,
+        "env": env_view,
     }
 
 

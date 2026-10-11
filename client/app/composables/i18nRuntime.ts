@@ -29,7 +29,7 @@
 
 /** Minimal structure of the vue-i18n global composer (this module only cares about t). */
 interface MinimalComposer {
-  t: (key: string) => string;
+  t: (key: string, params?: Record<string, unknown>) => string;
 }
 
 /** Minimal structure of a vue-i18n instance (createI18n return value): global holds the global composer. */
@@ -42,14 +42,23 @@ interface MinimalNuxtI18n {
   global?: MinimalComposer;
 }
 
-/** Runtime translation function (only single-key translation semantics are guaranteed). */
-export type RuntimeT = (key: string) => string;
+/**
+ * Runtime translation function.
+ *
+ * Named interpolation IS supported — pass the values as the second argument
+ * (`t('searchFallback.notice', { reason, name })`). Do NOT hand-roll
+ * placeholder replacement on the returned text: the message compiler consumes
+ * `{name}` interpolations at render time, so a template read without params
+ * comes back with them already empty.
+ */
+export type RuntimeT = (key: string, params?: Record<string, unknown>) => string;
 
 /**
  * Find the vue-i18n global composer by shape among the app-level provides.
  *
  * Reads key by key and tolerates getters that throw (provides may contain arbitrary
  * third-party injected values).
+ * @param provides
  */
 function findGlobalComposer(provides: Record<PropertyKey, unknown>): MinimalComposer | undefined {
   for (const key of Reflect.ownKeys(provides)) {
@@ -81,7 +90,7 @@ export function resolveRuntimeT(): RuntimeT | undefined {
 
     // 1) Shape-scan provides (the only reliable path under the current build; see module comment)
     const composer = findGlobalComposer(nuxtApp.vueApp._context.provides);
-    if (composer) return key => composer.t(key);
+    if (composer) return (key, params) => composer.t(key, params);
 
     // 2) Legacy-shape fallback: $i18n.global.t (nuxt-i18n v9 and documented behavior)
     const $i18n = nuxtApp?.$i18n;

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { setActivePinia } from 'pinia';
 import { createTestingPinia } from '@pinia/testing';
-import { useWebSearchStore } from '../web-search';
+import { fallbackNoticeText, useWebSearchStore } from '../web-search';
 
 const bridge = vi.hoisted(() => ({
   fetchSearchBackend: vi.fn(),
@@ -16,12 +16,13 @@ vi.mock('~/composables/bridge/session', () => bridge);
 const mittMocks = vi.hoisted(() => ({ on: vi.fn(), emit: vi.fn(), off: vi.fn() }));
 vi.mock('@/composables/mitt', () => mittMocks);
 
-/** The handler the store registered for the downgrade frame, once subscribed. */
-function fallbackHandler(): (payload: unknown) => void {
-  return mittMocks.on.mock.calls.find(call => call[0] === 'ws:search_backend_fallback')?.[1] as (
-    payload: unknown
-  ) => void;
-}
+// The downgrade notice is localized through the runtime resolver (a non-setup
+// context cannot call `useI18n`).
+const i18nRuntime = vi.hoisted(() => ({ resolveRuntimeT: vi.fn() }));
+vi.mock('@/composables/i18nRuntime', () => i18nRuntime);
+
+/** The notification store the store pushes into (Nuxt auto-import). */
+const notifications = vi.hoisted(() => ({ handleNotification: vi.fn() }));
 
 /** The wire shape `GET /sessions/search_backend` answers with. */
 const state = {
@@ -37,8 +38,23 @@ const state = {
     categories: '',
     proxy: '',
     verify_tls: true
+  },
+  env: {
+    searxng_url: 'http://localhost:8888',
+    searxng_proxy: '',
+    searxng_engines: '',
+    searxng_categories: '',
+    searxng_verify_tls: true,
+    tavily_key_present: true
   }
 };
+
+/** The handler the store registered for the downgrade frame, once subscribed. */
+function fallbackHandler(): (payload: unknown) => void {
+  return mittMocks.on.mock.calls.find(call => call[0] === 'ws:search_backend_fallback')?.[1] as (
+    payload: unknown
+  ) => void;
+}
 
 describe('stores/web-search', () => {
   beforeEach(() => {
@@ -47,6 +63,12 @@ describe('stores/web-search', () => {
     bridge.setSearchBackend.mockReset();
     mittMocks.on.mockClear();
     mittMocks.emit.mockClear();
+    i18nRuntime.resolveRuntimeT.mockReset();
+    notifications.handleNotification.mockReset();
+    vi.stubGlobal(
+      'useNotificationStore',
+      vi.fn(() => notifications)
+    );
   });
 
   it('stateFor() is null before the first read', () => {
@@ -54,7 +76,7 @@ describe('stores/web-search', () => {
     expect(store.stateFor('sid-1')).toBeNull();
   });
 
-  it('hydrate() mirrors the backend state', async () => {
+  it('hydrate() mirrors the backend state, env view included', async () => {
     const store = useWebSearchStore();
     bridge.fetchSearchBackend.mockResolvedValueOnce(state);
 
@@ -62,6 +84,7 @@ describe('stores/web-search', () => {
 
     expect(bridge.fetchSearchBackend).toHaveBeenCalledWith('sid-1');
     expect(store.stateFor('sid-1')).toEqual(state);
+    expect(store.stateFor('sid-1')?.env.tavily_key_present).toBe(true);
   });
 
   it('hydrate() keeps the last state when the read fails', async () => {
@@ -99,44 +122,6 @@ describe('stores/web-search', () => {
     expect(store.stateFor('sid-1')).toEqual(state);
   });
 
-  it('noteFallback() records the notice for the frame session and dismiss clears it', () => {
-    const store = useWebSearchStore();
-
-    store.noteFallback({
-      session_id: 'sid-1',
-      content: { backend: 'searxng', reason: 'tavily_auth_failed', message: 'Tavily 无法使用' }
-    });
-
-    expect(store.fallbackFor('sid-1')).toMatchObject({
-      backend: 'searxng',
-      reason: 'tavily_auth_failed'
-    });
-    expect(store.fallbackFor('sid-2')).toBeNull();
-
-    store.dismissFallback('sid-1');
-    expect(store.fallbackFor('sid-1')).toBeNull();
-  });
-
-  it('noteFallback() ignores a frame without a session id', () => {
-    const store = useWebSearchStore();
-
-    store.noteFallback({ content: { backend: 'searxng', reason: 'tavily_timeout' } });
-
-    expect(store.fallbackBySession).toEqual({});
-  });
-
-  it('noteFallback() replaces an older undismissed notice', () => {
-    const store = useWebSearchStore();
-
-    store.noteFallback({ session_id: 'sid-1', content: { backend: 'searxng', reason: 'tavily_timeout' } });
-    store.noteFallback({
-      session_id: 'sid-1',
-      content: { backend: 'searxng', reason: 'tavily_auth_failed' }
-    });
-
-    expect(store.fallbackFor('sid-1')?.reason).toBe('tavily_auth_failed');
-  });
-
   it('init() hydrates once and is idempotent', async () => {
     const store = useWebSearchStore();
     bridge.fetchSearchBackend.mockResolvedValue(state);
@@ -148,18 +133,55 @@ describe('stores/web-search', () => {
     expect(bridge.fetchSearchBackend).toHaveBeenCalledTimes(1);
   });
 
-  it('subscribe() routes the socket frame into a notice exactly once', () => {
+  it('subscribe() routes the socket frame into a 通知 entry exactly once', () => {
+    i18nRuntime.resolveRuntimeT.mockReturnValue((key: string, params?: Record<string, unknown>) =>
+      key === 'searchFallback.notice'
+        ? `Tavily 无法使用（${params?.reason}），已切换到 ${params?.name}`
+        : key === 'searchFallback.reason.tavily_timeout'
+          ? '请求超时'
+          : key
+    );
     const store = useWebSearchStore();
 
     store.subscribe();
     store.subscribe();
 
     expect(mittMocks.on.mock.calls.filter(call => call[0] === 'ws:search_backend_fallback')).toHaveLength(1);
+
     fallbackHandler()({
       event: 'search_backend_fallback',
       session_id: 'sid-9',
       content: { backend: 'searxng', reason: 'tavily_timeout', message: 'fallback' }
     });
-    expect(store.fallbackFor('sid-9')?.reason).toBe('tavily_timeout');
+
+    expect(notifications.handleNotification).toHaveBeenCalledWith(
+      'Tavily 无法使用（请求超时），已切换到 SearXNG',
+      'web_search'
+    );
+  });
+
+  it('handleFallbackFrame() ignores a frame without a session id', () => {
+    const store = useWebSearchStore();
+
+    store.handleFallbackFrame({ content: { backend: 'searxng', reason: 'tavily_timeout' } });
+
+    expect(notifications.handleNotification).not.toHaveBeenCalled();
+  });
+
+  it('fallbackNoticeText() falls back to the frame message without i18n', () => {
+    i18nRuntime.resolveRuntimeT.mockReturnValue(undefined);
+
+    expect(fallbackNoticeText('searxng', 'tavily_error', 'Tavily 无法使用')).toBe('Tavily 无法使用');
+    expect(fallbackNoticeText('searxng', 'tavily_error', '')).toBe('searxng (tavily_error)');
+  });
+
+  it('fallbackNoticeText() keeps an unknown reason verbatim', () => {
+    i18nRuntime.resolveRuntimeT.mockReturnValue((key: string, params?: Record<string, unknown>) =>
+      key === 'searchFallback.notice' ? `Tavily 无法使用（${params?.reason}），已切换到 ${params?.name}` : key
+    );
+
+    expect(fallbackNoticeText('searxng', 'tavily_quota', 'raw')).toBe(
+      'Tavily 无法使用（tavily_quota），已切换到 SearXNG'
+    );
   });
 });

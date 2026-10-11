@@ -12,9 +12,9 @@ from server.service.env import SPLIT_OUT_KEYS, read_env_file, write_env_file
 SAMPLE_ENV = """MAIN_LLM_PROVIDER = "openai"
 MAIN_LLM_API_KEY = "sk-live"
 
-# TAVILY_API_KEY is a regular .env key again (secret-class values live here,
-# NOT in the tracked sherry.jsonc):
+# Search-backend keys: owned by the 模型联网 panel, withheld from GET /env.
 TAVILY_API_KEY = "tvly-secret"
+SEARXNG_URL = "http://localhost:8888"
 
 # Legacy app-level keys that moved to sherry.jsonc:
 TOOL_CALL_TIMEOUT_MINUTES = 5
@@ -39,8 +39,6 @@ class TestSplitOutKeysExclusion:
         all_keys = {e["key"] for g in payload["groups"] for e in g["entries"]}
         assert all_keys.isdisjoint(SPLIT_OUT_KEYS)
         assert "MAIN_LLM_API_KEY" in all_keys
-        # TAVILY_API_KEY is back as a regular (secret-class) .env key.
-        assert "TAVILY_API_KEY" in all_keys
 
     def test_write_rejects_split_out_keys(self, env_file):
         with pytest.raises(ValueError, match="moved to sherry.jsonc"):
@@ -49,6 +47,46 @@ class TestSplitOutKeysExclusion:
     def test_write_still_accepts_regular_keys(self, env_file):
         write_env_file({"MAIN_LLM_API_KEY": "sk-rotated"})
         assert "sk-rotated" in env_file.read_text(encoding="utf-8")
+
+
+class TestPanelOwnedKeys:
+    """A DEDICATED panel owns the search keys (the 模型联网 tab).
+
+    They are withheld from the GET /env payload so there is exactly one editing
+    surface — but writes through the same PUT /env stay allowed, which is what
+    that panel uses. The panel's own read is ``env_file_values()``.
+    """
+
+    def test_hidden_keys_never_surface_in_the_read(self, env_file):
+        payload = read_env_file()
+        keys = {e["key"] for g in payload["groups"] for e in g["entries"]}
+
+        assert "TAVILY_API_KEY" not in keys
+        assert not any(key.startswith("SEARXNG_") for key in keys)
+        assert "MAIN_LLM_API_KEY" in keys
+
+    def test_hidden_keys_stay_writable_through_env(self, env_file):
+        write_env_file({"TAVILY_API_KEY": "tvly-new", "SEARXNG_URL": "http://localhost:9999"})
+        text = env_file.read_text(encoding="utf-8")
+
+        assert "tvly-new" in text
+        assert "http://localhost:9999" in text
+
+    def test_env_file_values_returns_the_hidden_keys(self, env_file):
+        from server.service.env import env_file_values
+
+        values = env_file_values()
+
+        assert values["TAVILY_API_KEY"] == "tvly-secret"
+        assert values["SEARXNG_URL"] == "http://localhost:8888"
+        assert values["MAIN_LLM_PROVIDER"] == "openai"
+
+    def test_env_file_values_yields_empty_without_a_file(self, tmp_path, monkeypatch):
+        from server.service.env import env_file_values
+
+        monkeypatch.setattr("server.service.env.ENV_PATH", tmp_path / "missing.env")
+
+        assert env_file_values() == {}
 
 
 class TestGroupOrder:

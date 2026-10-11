@@ -144,7 +144,7 @@ describe('SessionModelPicker.vue (integration, stores mocked)', () => {
     expect(thinkingApi.hydrate).toHaveBeenCalledWith('sid-1');
   });
 
-  it('sends null when 跟随环境配置 is chosen', async () => {
+  it('sends null when the follow-the-model-config entry is chosen', async () => {
     modelApi.currentId.mockReturnValue('p1');
     modelApi.overrideBySession = { 'sid-1': { id: 'p1', label: 'Kimi K2', model: 'kimi-k2' } };
     const wrapper = mount(SessionModelPicker, {
@@ -172,7 +172,7 @@ describe('SessionModelPicker.vue (integration, stores mocked)', () => {
 
     await wrapper.find('button.trigger').trigger('click');
 
-    expect(wrapper.findAll('button.opt').map(b => b.text())).toEqual(['跟随环境配置（glm-4.6）', 'kimi-k2']);
+    expect(wrapper.findAll('button.opt').map(b => b.text())).toEqual(['跟随模型配置（glm-4.6）', 'kimi-k2']);
   });
 
   it('allows switching while a turn is running (parked for the next turn)', async () => {

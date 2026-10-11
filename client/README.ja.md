@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 型定義
 │   │       ├── index/[sid].vue    # セッションごとのチャットページ（KeepAlive、HITL カード、タスクジャンプバー）
-│   │       └── components/        # 50 のページコンポーネント：
+│   │       └── components/        # 49 のページコンポーネント：
 │   │           ├── ChatBox.vue                # メッセージリスト（markdown-it + DOMPurify、メディアは /media 経由）
 │   │           ├── ChatTurnScrubber.vue       # 履歴の左に浮かぶターン スクラバー（直近 20 ターン内の任意のユーザーメッセージへ移動）
 │   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
@@ -148,7 +148,7 @@ client/
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
-│   │           ├── ConfigPanel.vue            # システム設定タブ（.env 編集、背景、言語など）
+│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定の .env 編集——検索キーは「モデル検索」タブ——背景、言語など）
 │   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .env には書き込みません）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
 │   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / ツール / ミドルウェア / エージェント モデル / スキル + プリセット管理）
@@ -158,8 +158,7 @@ client/
 │   │           ├── MemoryPanel.vue            # 長期メモリタブ（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md タブ + グローバル ハートビート スイッチ
 │   │           ├── CronPanel.vue              # 定期タスクタブ（/cron）
-│   │           ├── WebSearchPanel.vue         #「モデル検索」タブ：セッションの検索バックエンド（Tavily / SearXNG のラジオ）＋ SearXNG 接続フォーム（.env）＋ Tavily キー状態
-│   │           ├── SearchFallbackNotice.vue   # メッセージ一覧下の閉じられるバナー：web_search が Tavily から SearXNG に降格（search_backend_fallback フレーム）
+│   │           ├── WebSearchPanel.vue         #「モデル検索」タブ：セッションの検索バックエンド（Tavily / SearXNG のラジオ）＋ Tavily キーと SearXNG 接続のフォーム——これらの .env キーを編集する唯一の入口（GET /env からは除外）
 │   │           ├── SkillsPanel.vue            # スキル管理タブ（一覧 / アップロード / 切替 / ピン留め / 削除 / curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）

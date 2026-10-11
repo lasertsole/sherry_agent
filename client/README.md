@@ -123,7 +123,7 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 50 page components:
+│   │       └── components/        # 49 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
@@ -147,7 +147,7 @@ client/
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
-│   │           ├── ConfigPanel.vue            # System-config tab (.env editor, background, language, ...)
+│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 .env editor — search keys live in the 模型联网 tab — background, language, ...)
 │   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .env)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
@@ -157,8 +157,7 @@ client/
 │   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
 │   │           ├── CronPanel.vue              # Cron job tab (/cron)
-│   │           ├── WebSearchPanel.vue         # 模型联网 (Web Search) tab: the session's search backend (Tavily / SearXNG radio) + the SearXNG connection form (.env) + the Tavily key status
-│   │           ├── SearchFallbackNotice.vue   # Dismissible banner under the message list: web_search downgraded from Tavily to SearXNG (search_backend_fallback frame)
+│   │           ├── WebSearchPanel.vue         # 模型联网 (Web Search) tab: the session's search backend (Tavily / SearXNG radio) + the Tavily key and SearXNG connection forms — the ONLY surface editing those .env keys (withheld from GET /env)
 │   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)

@@ -33,8 +33,8 @@
     "pending": "다음 턴에 적용",
     "label": "메인 모델",
     "a11y": "이 세션의 메인 모델 전환",
-    "followEnv": "환경 설정 따르기",
-    "followEnvWith": "환경 설정 따르기 ({model})"
+    "followEnv": "모델 설정 따르기",
+    "followEnvWith": "모델 설정 따르기 ({model})"
   },
   "chatBox": {
     "defaultAiName": "셰리",
@@ -69,7 +69,7 @@
     "originSystem": "시스템 메시지",
     "tokenGuard": {
       "title": "모델 설정이 최소값 미만",
-      "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 환경 설정에서 수정하세요."
+      "detail": "MAIN_LLM_MAX_TOKEN 또는 AUXILIARY_LLM_MAX_TOKEN이 128K (131072) 미만입니다. 에이전트가 실행을 거부할 수 있습니다. 시스템 설정 → 모델 설정에서 수정하세요."
     }
   },
   "errors": {
@@ -189,8 +189,8 @@
       "models": {
         "scope_main": "메인 에이전트",
         "scope_subagent": "서브에이전트",
-        "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 환경 설정을 따릅니다.",
-        "followEnv": "환경 설정 따르기"
+        "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 모델 설정을 따릅니다.",
+        "followEnv": "모델 설정 따르기"
       },
       "tools": {
         "count": "{selected}/{total} 선택",
@@ -259,7 +259,7 @@
         "followTier": "역할 기본값 따르기",
         "tier": "역할 기본값: {tier}",
         "tierDepth": "역할 정의 없음: 깊이 기본값",
-        "hint": "기능 역할마다 사용할 모델(환경 구성 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
+        "hint": "기능 역할마다 사용할 모델(모델 설정 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
         "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
       },
       "role": {
@@ -290,7 +290,7 @@
       "agents": "운영 지침",
       "soul": "인격·영혼",
       "user": "사용자 정보",
-      "env": "환경 설정",
+      "env": "모델 설정",
       "sherry": "앱 설정",
       "memoryAgent": "메모리·Agent",
       "memoryUser": "메모리·사용자"
@@ -362,8 +362,8 @@
       "noFileChosen": "이미지 파일을 선택하세요"
     },
     "env": {
-      "loadError": "환경 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
-      "saveFailed": "환경 설정을 저장하지 못했습니다.",
+      "loadError": "모델 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+      "saveFailed": "모델 설정을 저장하지 못했습니다.",
       "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
       "noEnvFile": ".env 파일을 찾을 수 없습니다.",
       "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
@@ -575,5 +575,18 @@
     "empty": "(비어 있음)",
     "missing": "이 프리셋은 삭제되었습니다",
     "unboundHint": "이 세션은 프리셋 없이 만들어졌습니다"
+  },
+  "notification": {
+    "source": {
+      "web_search": "웹 검색 강등"
+    }
+  },
+  "searchFallback": {
+    "notice": "Tavily를 사용할 수 없어({reason}) {name}(으)로 전환했습니다",
+    "reason": {
+      "tavily_auth_failed": "키가 유효하지 않거나 만료됨",
+      "tavily_timeout": "요청 시간 초과",
+      "tavily_error": "요청 실패"
+    }
   }
 }

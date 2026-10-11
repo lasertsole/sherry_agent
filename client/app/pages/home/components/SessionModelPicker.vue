@@ -1,7 +1,7 @@
 <template>
   <div class="flex items-center gap-2 pl-2">
     <!-- Collapsed picker: the trigger names the current model; the option list
-         (跟随环境配置 + the env-config MAIN_LLM profiles) opens on click. The
+         (跟随模型配置 + the env-config MAIN_LLM profiles) opens on click. The
          control's own name is the list header, so the toolbar row stays narrow.
          Switching is allowed at any moment — a mid-turn choice is parked
          (clock icon) and lands on the next turn. -->
@@ -47,7 +47,7 @@ const { t } = useI18n();
 const store = useSessionModelStore();
 /** Thinking control: its MODE follows the model, so re-hydrate after a switch. */
 const thinking = useThinkingStore();
-/** The env-config profiles: the SAME option list the 环境配置 panel shows. */
+/** The env-config profiles: the SAME option list the 模型配置 panel shows. */
 const profiles = useLlmProfilesStore();
 
 /** Env-config group whose profiles the picker mirrors. */
@@ -123,7 +123,7 @@ const currentModel = computed(() => {
 
 /**
  * Trigger text: the model name only — the toolbar row is tight, so the
- * "跟随环境配置" wording lives in the menu entry instead. Long names are cut
+ * "跟随模型配置" wording lives in the menu entry instead. Long names are cut
  * short; the full name stays in the title/aria text.
  */
 const displayLabel = computed(() =>
@@ -141,7 +141,7 @@ const triggerTitle = computed(() =>
  */
 const triggerAriaLabel = computed(() => `${t('sessionModelPicker.a11y')}：${triggerTitle.value}`);
 
-/** Menu items: 跟随环境配置 first, then one entry per selectable profile. */
+/** Menu items: 跟随模型配置 first, then one entry per selectable profile. */
 const menuItems = computed(() => [
   {
     label: t('sessionModelPicker.followEnvWith', { model: envLabel.value }),

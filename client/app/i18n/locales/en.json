@@ -33,8 +33,8 @@
     "pending": "Applies next turn",
     "label": "Main model",
     "a11y": "Switch this session's main model",
-    "followEnv": "Follow env config",
-    "followEnvWith": "Follow env config ({model})"
+    "followEnv": "Follow the model config",
+    "followEnvWith": "Follow the model config ({model})"
   },
   "chatBox": {
     "defaultAiName": "Sherry",
@@ -69,7 +69,7 @@
     "originSystem": "System message",
     "tokenGuard": {
       "title": "Model Config Below Minimum",
-      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Environment."
+      "detail": "MAIN_LLM_MAX_TOKEN or AUXILIARY_LLM_MAX_TOKEN is below 128K (131072). The agent may refuse to run. Fix in System Config → Model Config."
     }
   },
   "errors": {
@@ -189,8 +189,8 @@
       "models": {
         "scope_main": "Main agent",
         "scope_subagent": "Subagent",
-        "mainHint": "The model the main agent runs on; follows the environment config by default.",
-        "followEnv": "Follow the environment config"
+        "mainHint": "The model the main agent runs on; follows the model config by default.",
+        "followEnv": "Follow the model config"
       },
       "tools": {
         "count": "{selected}/{total} selected",
@@ -259,7 +259,7 @@
         "followTier": "Follow the role default",
         "tier": "Role default: {tier}",
         "tierDepth": "No role definition: depth default",
-        "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier.",
+        "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
         "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
       },
       "role": {
@@ -290,7 +290,7 @@
       "agents": "Operating Instructions",
       "soul": "Soul",
       "user": "User Profile",
-      "env": "Environment",
+      "env": "Model Config",
       "sherry": "App Config",
       "memoryAgent": "Memory · Agent",
       "memoryUser": "Memory · User"
@@ -362,8 +362,8 @@
       "noFileChosen": "Select an image file"
     },
     "env": {
-      "loadError": "Failed to load environment config. Please check the backend service.",
-      "saveFailed": "Failed to save environment config.",
+      "loadError": "Failed to load model config. Please check the backend service.",
+      "saveFailed": "Failed to save model config.",
       "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
       "noEnvFile": "No .env file found.",
       "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
@@ -575,5 +575,18 @@
     "empty": "(empty)",
     "missing": "This preset has been deleted",
     "unboundHint": "This session was created without a preset"
+  },
+  "notification": {
+    "source": {
+      "web_search": "Web-search downgrade"
+    }
+  },
+  "searchFallback": {
+    "notice": "Tavily is unavailable ({reason}); switched to {name}",
+    "reason": {
+      "tavily_auth_failed": "the key is invalid or expired",
+      "tavily_timeout": "the request timed out",
+      "tavily_error": "the request failed"
+    }
   }
 }

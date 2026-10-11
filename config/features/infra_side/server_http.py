@@ -23,6 +23,7 @@ class ServerHttpConfig(TypedDict):
     env_group_prefixes: tuple[str, ...]
     env_model_group_prefixes: tuple[str, ...]
     env_split_out_keys: frozenset[str]
+    env_panel_hidden_prefixes: tuple[str, ...]
     memory_system_file_names: list[str]
     memory_max_content_length: int
 
@@ -106,10 +107,7 @@ SERVER_HTTP: ServerHttpConfig = {
         "RERANKER_",
         "EMBEDDING_",
         "STT_",
-        # The SearXNG search backend's connection (the Tavily key it alternates
-        # with has no prefix group of its own), then the feature switches —
-        # both render last, just before the catch-all "other".
-        "SEARXNG_",
+        # Feature switches render last, just before the catch-all "other".
         "SHERRY_BROWSER_",
     ),
     #: Groups rendered with the model-profile manager (provider / model /
@@ -126,6 +124,12 @@ SERVER_HTTP: ServerHttpConfig = {
         "EMBEDDING_",
         "STT_",
     ),
+    #: Prefixes the env-config payload WITHHOLDS from its panel because a
+    #: DEDICATED surface owns them (the 模型联网 tab edits both through the same
+    #: PUT /env, and reads them from GET /sessions/search_backend): a second
+    #: editor would only be a second way for the two to drift. Writes through
+    #: /env stay allowed — only the display is withheld.
+    "env_panel_hidden_prefixes": ("TAVILY_", "SEARXNG_"),
     "env_split_out_keys": frozenset(
         {
             "TOOL_CALL_TIMEOUT_MINUTES",

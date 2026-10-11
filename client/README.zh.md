@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 类型定义
 │   │       ├── index/[sid].vue    # 单会话聊天页（KeepAlive、HITL 卡片、任务跳转栏）
-│   │       └── components/        # 50 个页面组件：
+│   │       └── components/        # 49 个页面组件：
 │   │           ├── ChatBox.vue                # 消息列表（markdown-it + DOMPurify，媒体经 /media）
 │   │           ├── ChatTurnScrubber.vue       # 历史消息左侧的悬浮穿梭器（定位最近 20 轮内任意用户消息）
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
@@ -148,7 +148,7 @@ client/
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
-│   │           ├── ConfigPanel.vue            # 系统配置标签页（.env 编辑、背景、语言等）
+│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置 .env 编辑——搜索键在「模型联网」——背景、语言等）
 │   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .env）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
@@ -158,8 +158,7 @@ client/
 │   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页 + 全局心跳开关
 │   │           ├── CronPanel.vue              # 定时任务标签页（/cron）
-│   │           ├── WebSearchPanel.vue         #「模型联网」标签页：会话的搜索后端（Tavily / SearXNG 单选）+ SearXNG 连接表单（.env）+ Tavily 密钥状态
-│   │           ├── SearchFallbackNotice.vue   # 消息列表下方的可关闭横幅：web_search 从 Tavily 降级到 SearXNG（search_backend_fallback 帧）
+│   │           ├── WebSearchPanel.vue         #「模型联网」标签页：会话的搜索后端（Tavily / SearXNG 单选）+ Tavily 密钥与 SearXNG 连接表单——这些 .env 键的唯一编辑入口（GET /env 已隐藏它们）
 │   │           ├── SkillsPanel.vue            # 技能管理标签页（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）

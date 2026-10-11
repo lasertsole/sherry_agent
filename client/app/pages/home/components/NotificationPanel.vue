@@ -1,7 +1,8 @@
 <template>
-  <!-- Right-sidebar tab body: the heartbeat / cron completion notifications. All
-       state lives in the notification store (the unread badge keeps counting
-       while this tab is closed), so the panel only renders and clears. -->
+  <!-- Right-sidebar tab body: the push notifications — heartbeat / cron
+       completions and the web-search backend downgrades. All state lives in the
+       notification store (the unread badge keeps counting while this tab is
+       closed), so the panel only renders and clears. -->
   <div
     class="flex h-full min-h-0 flex-col gap-2 p-4"
     data-test="notification-panel">
@@ -21,17 +22,9 @@
           v-for="(item, index) in store.list"
           :key="index"
           class="flex items-start gap-2.5 rounded-lg border p-3"
-          :class="
-            item.source === 'heartbeat'
-              ? 'border-sky-200 bg-sky-50/60 dark:border-sky-800/60 dark:bg-sky-900/20'
-              : 'border-amber-200 bg-amber-50/60 dark:border-amber-800/60 dark:bg-amber-900/20'
-          "
+          :class="SOURCE_STYLES[item.source].card"
           data-test="notification-item">
-          <i
-            :class="[
-              'pi mt-0.5 text-sm',
-              item.source === 'heartbeat' ? 'pi-heart text-sky-500' : 'pi-calendar-clock text-amber-500'
-            ]" />
+          <i :class="['pi mt-0.5 text-sm', SOURCE_STYLES[item.source].icon]" />
           <div class="min-w-0 flex-1">
             <div class="flex items-center gap-2">
               <span class="text-xs font-medium text-gray-500 dark:text-gray-400">
@@ -71,8 +64,25 @@
 <script lang="ts" setup>
 import { onBeforeUnmount, onMounted } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { NotificationItem } from '~/stores/notification';
 
 const { t } = useI18n({ useScope: 'local' });
+
+/** Card + icon styling per source (the label comes from i18n). */
+const SOURCE_STYLES: Record<NotificationItem['source'], { card: string; icon: string }> = {
+  heartbeat: {
+    card: 'border-sky-200 bg-sky-50/60 dark:border-sky-800/60 dark:bg-sky-900/20',
+    icon: 'pi-heart text-sky-500'
+  },
+  cron: {
+    card: 'border-amber-200 bg-amber-50/60 dark:border-amber-800/60 dark:bg-amber-900/20',
+    icon: 'pi-calendar-clock text-amber-500'
+  },
+  web_search: {
+    card: 'border-violet-200 bg-violet-50/60 dark:border-violet-800/60 dark:bg-violet-900/20',
+    icon: 'pi-globe text-violet-500'
+  }
+};
 
 /** Shared notification state (the same store the top-bar badge reads). */
 const store = useNotificationStore();
@@ -88,11 +98,12 @@ onBeforeUnmount(() => store.setPanelVisible(false));
 {
   "zh": {
     "notification": {
-      "empty": "暂无通知。当心跳或定时任务完成时，通知会显示在这里。",
+      "empty": "暂无通知。心跳 / 定时任务完成、或联网搜索后端降级时，通知会显示在这里。",
       "clear": "清空",
       "source": {
         "heartbeat": "心跳任务",
-        "cron": "定时任务"
+        "cron": "定时任务",
+        "web_search": "联网搜索降级"
       },
       "merge": {
         "count": "{count} ×"
@@ -101,11 +112,12 @@ onBeforeUnmount(() => store.setPanelVisible(false));
   },
   "en": {
     "notification": {
-      "empty": "No notifications yet. Notifications will appear here when heartbeat or scheduled tasks complete.",
+      "empty": "No notifications yet. They appear here when heartbeat / scheduled tasks complete or when the web-search backend is downgraded.",
       "clear": "Clear",
       "source": {
         "heartbeat": "Heartbeat Task",
-        "cron": "Scheduled Task"
+        "cron": "Scheduled Task",
+        "web_search": "Web-search downgrade"
       },
       "merge": {
         "count": "{count} ×"
@@ -114,11 +126,12 @@ onBeforeUnmount(() => store.setPanelVisible(false));
   },
   "ja": {
     "notification": {
-      "empty": "通知はまだありません。ハートビートまたは定期タスクの完了時にここに表示されます。",
+      "empty": "通知はまだありません。ハートビート / 定期タスクの完了時、またはウェブ検索バックエンドの降格時にここに表示されます。",
       "clear": "クリア",
       "source": {
         "heartbeat": "ハートビートタスク",
-        "cron": "定期タスク"
+        "cron": "定期タスク",
+        "web_search": "ウェブ検索の降格"
       },
       "merge": {
         "count": "{count} ×"
@@ -127,11 +140,12 @@ onBeforeUnmount(() => store.setPanelVisible(false));
   },
   "ko": {
     "notification": {
-      "empty": "알림이 없습니다. 하트비트 또는 정기 태스크가 완료되면 여기에 표시됩니다.",
+      "empty": "알림이 없습니다. 하트비트/정기 작업이 완료되거나 웹 검색 백엔드가 강등될 때 여기에 표시됩니다.",
       "clear": "지우기",
       "source": {
         "heartbeat": "하트비트 태스크",
-        "cron": "정기 태스크"
+        "cron": "정기 태스크",
+        "web_search": "웹 검색 강등"
       },
       "merge": {
         "count": "{count} ×"

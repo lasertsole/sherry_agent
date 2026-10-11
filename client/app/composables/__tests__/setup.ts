@@ -383,6 +383,22 @@ vi.stubGlobal('useNotificationStore', () =>
   })
 );
 
+// `useWebSearchStore` mirrors the per-session search backend and turns the
+// downgrade frame into a 通知 entry; the shell subscribes to it on mount, so the
+// default stub carries the surface either side touches.
+vi.stubGlobal('useWebSearchStore', () =>
+  Vue.reactive({
+    stateBySession: {},
+    hydratingBySession: {},
+    stateFor: () => null,
+    hydrate: async () => {},
+    select: async () => {},
+    handleFallbackFrame: () => {},
+    subscribe: () => {},
+    init: () => {}
+  })
+);
+
 // `useNewSessionStore` gates session creation behind the mandatory preset dialog
 // (mounted in the shell); the default is a closed dialog a suite can open.
 vi.stubGlobal('useNewSessionStore', () =>

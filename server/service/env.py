@@ -17,6 +17,13 @@ from config.path import ENV_PATH
 GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_group_prefixes"]
 OTHER_GROUP = "other"
 
+# Key prefixes a DEDICATED panel owns: withheld from the GET /env payload so
+# there is exactly one editing surface for them (the 模型联网 tab writes them
+# through the same PUT /env, and reads them from
+# GET /sessions/search_backend). Writes stay allowed — only the display is
+# withheld.
+PANEL_HIDDEN_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_panel_hidden_prefixes"]
+
 # Keys split out of .env into the project-root sherry.jsonc (see
 # config/sherry_settings.py) — never surfaced or written here again.
 # TAVILY_API_KEY stays in .env on purpose: it is a secret-class value and .env
@@ -66,6 +73,11 @@ def _parse_dotenv(text: str) -> tuple[list[EnvEntry], list[str]]:
     return entries, lines
 
 
+def _hidden_from_panel(key: str) -> bool:
+    """Whether another panel owns this key (see ``PANEL_HIDDEN_PREFIXES``)."""
+    return key.startswith(PANEL_HIDDEN_PREFIXES)
+
+
 def _group_of(key: str) -> str:
     for prefix in GROUP_PREFIXES:
         if key.startswith(prefix):
@@ -96,7 +108,7 @@ def read_env_file() -> dict:
     # Preserve insertion order of groups while following the canonical ordering.
     groups: dict[str, list[EnvEntry]] = {}
     for entry in entries:
-        if entry.key in SPLIT_OUT_KEYS:
+        if entry.key in SPLIT_OUT_KEYS or _hidden_from_panel(entry.key):
             continue
         groups.setdefault(_group_of(entry.key), []).append(entry)
 
@@ -118,6 +130,23 @@ def read_env_file() -> dict:
         )
 
     return {"groups": ordered_groups}
+
+
+def env_file_values() -> dict[str, str]:
+    """Every ``KEY=value`` pair in ``.env`` — hidden-from-the-panel keys included.
+
+    This is the read side of the panels that OWN a hidden prefix (the 模型联网
+    tab edits the Tavily key and the SearXNG connection from the file itself,
+    because ``GET /env`` deliberately withholds them). A missing or unreadable
+    file yields an empty mapping rather than raising: the panel renders its
+    "not configured" state either way.
+    """
+    try:
+        text = ENV_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    entries, _lines = _parse_dotenv(text)
+    return {entry.key: entry.value for entry in entries}
 
 
 def write_env_file(changes: dict[str, str]) -> None:

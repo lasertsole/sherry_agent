@@ -266,6 +266,25 @@ export interface SearxngStatus {
 }
 
 /**
+ * The `.env` file as the 模型联网 panel edits it.
+ *
+ * Those keys are WITHHELD from `GET /env` (this panel owns them: there is one
+ * editing surface per setting), so the state payload carries their file values.
+ * They are what a save writes and what the next boot reads — while `searxng` /
+ * `tavily_available` report what THIS process loaded, which is what lets the
+ * panel say "saved, restart to apply".
+ */
+export interface SearchEnvView {
+  searxng_url: string;
+  searxng_proxy: string;
+  searxng_engines: string;
+  searxng_categories: string;
+  searxng_verify_tls: boolean;
+  /** A Tavily key sits in the file (only the flag travels; never the value). */
+  tavily_key_present: boolean;
+}
+
+/**
  * Per-session web-search backend state (`GET /sessions/search_backend`).
  *
  * `backend` is the session's explicit choice (`null` = follow the environment
@@ -280,9 +299,11 @@ export interface SearchBackendState {
   pending: boolean;
   /** The value the parked choice will apply (`null` = follow the default). */
   pending_value: SearchBackend | null;
-  /** `TAVILY_API_KEY` is present. */
+  /** `TAVILY_API_KEY` is live in this process (configured AND loaded at boot). */
   tavily_available: boolean;
   searxng: SearxngStatus;
+  /** The `.env` file view the panel edits. */
+  env: SearchEnvView;
 }
 
 /**
@@ -296,11 +317,17 @@ const toSearchBackend = (raw: unknown): SearchBackend | null => (raw === 'tavily
  * @param sessionId
  */
 export async function fetchSearchBackend(sessionId: string): Promise<SearchBackendState> {
-  const res = await fetchApiPayload<Partial<SearchBackendState> & { searxng?: Partial<SearxngStatus> }>({
+  const res = await fetchApiPayload<
+    Partial<SearchBackendState> & {
+      searxng?: Partial<SearxngStatus>;
+      env?: Partial<SearchEnvView>;
+    }
+  >({
     url: '/sessions/search_backend',
     opts: { session_id: sessionId },
     method: 'get'
   });
+  const env: Partial<SearchEnvView> = res.env ?? {};
   return {
     backend: toSearchBackend(res.backend),
     effective: toSearchBackend(res.effective) ?? 'tavily',
@@ -314,6 +341,14 @@ export async function fetchSearchBackend(sessionId: string): Promise<SearchBacke
       categories: String(res.searxng?.categories ?? ''),
       proxy: String(res.searxng?.proxy ?? ''),
       verify_tls: res.searxng?.verify_tls !== false
+    },
+    env: {
+      searxng_url: String(env.searxng_url ?? ''),
+      searxng_proxy: String(env.searxng_proxy ?? ''),
+      searxng_engines: String(env.searxng_engines ?? ''),
+      searxng_categories: String(env.searxng_categories ?? ''),
+      searxng_verify_tls: env.searxng_verify_tls !== false,
+      tavily_key_present: env.tavily_key_present === true
     }
   };
 }

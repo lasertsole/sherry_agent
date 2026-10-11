@@ -47,7 +47,7 @@
       <div
         class="shrink-0 flex items-center gap-2 px-3 h-15 box-border border-b border-solid border-gray-light dark:border-gray-dark">
         <!-- Maximize / restore, LEFT of the group pills: the panel fills the whole
-             viewport so a wide editor (环境配置, 预设, 技能) does not have to be read
+             viewport so a wide editor (模型配置, 预设, 技能) does not have to be read
              through its narrow column; the same button restores the previous
              layout (nothing else is mutated — the panel becomes a fixed overlay). -->
         <button

@@ -5,35 +5,47 @@ import type { SearchBackend, SearchBackendState } from '~/composables/bridge/ses
 // eslint-disable-next-line @typescript-eslint/no-restricted-imports
 import { fetchSearchBackend, setSearchBackend } from '~/composables/bridge/session';
 
-/** One backend downgrade the backend reported over the socket. */
-export interface SearchFallbackNotice {
-  /** The backend now serving searches. */
-  backend: SearchBackend;
-  /** Why the switch happened: `tavily_auth_failed` / `tavily_timeout` / `tavily_error`. */
-  reason: string;
-  /** The backend's own one-line message (rendered only when the reason is unknown). */
-  message: string;
-  /** Arrival time (ms) — kept so a reload/switch can order several notices. */
-  at: number;
+/**
+ * The localized one-line downgrade notice. Built here because the frame arrives
+ * on a non-component path (a store action), where `useI18n` is unavailable: the
+ * runtime resolver falls back to the frame's own message when i18n is not
+ * mounted (unit tests, a frame before boot).
+ * @param backend The backend now serving searches.
+ * @param reason The reason code the tool sent.
+ * @param message The backend's own message (the fallback text).
+ * @returns The notice to show in 通知.
+ */
+export function fallbackNoticeText(backend: SearchBackend, reason: string, message: string): string {
+  const t = resolveRuntimeT();
+  if (!t) return message || `${backend} (${reason})`;
+  const reasonKey = `searchFallback.reason.${reason}`;
+  const translated = t(reasonKey);
+  // A known reason is translated, anything else (a future code) is shown verbatim.
+  const reasonText = translated === reasonKey ? reason : translated;
+  const text = t('searchFallback.notice', {
+    reason: reasonText,
+    name: backend === 'searxng' ? 'SearXNG' : 'Tavily'
+  });
+  // An unresolved key comes back as the key itself (i18n has no such message).
+  return text === 'searchFallback.notice' ? message || `${backend} (${reason})` : text;
 }
 
 /**
- * Web-search state: the 模型联网 panel's per-session backend choice, and the
- * downgrade notices the tool pushes while it runs.
+ * Web-search state: the 模型联网 panel's per-session backend choice, plus the
+ * downgrade the tool reports while it runs.
  *
  * The backend owns the truth (the session state register + the .env providers);
- * this store mirrors the choice for the panel and holds the transient fallback
- * banner until the user dismisses it. The `search_backend_fallback` frame is
- * best-effort — a missed frame costs the banner, never the search, whose result
- * text names the backend it came from.
+ * this store mirrors the choice for the panel and turns the
+ * `search_backend_fallback` frame into a 通知 entry — that is where an operator
+ * looks for "something changed under me", and the badge keeps counting while
+ * the panel is closed. The frame is best-effort: a missed one costs the notice,
+ * never the search, whose result text names the backend it came from.
  */
 export const useWebSearchStore = defineStore('webSearch', () => {
   /** sid → last read state (absent until the first successful read). */
   const stateBySession = ref<Record<string, SearchBackendState>>({});
   /** sid → a read is in flight (keeps concurrent `init()` calls from double-firing). */
   const hydratingBySession = ref<Record<string, boolean>>({});
-  /** sid → the undismissed downgrade notice (cleared by `dismissFallback`). */
-  const fallbackBySession = ref<Record<string, SearchFallbackNotice>>({});
   /** Singleton guard: the socket listener is registered exactly once. */
   const subscribed = ref(false);
 
@@ -43,14 +55,6 @@ export const useWebSearchStore = defineStore('webSearch', () => {
    */
   function stateFor(sessionId: string): SearchBackendState | null {
     return stateBySession.value[sessionId] ?? null;
-  }
-
-  /**
-   * The session's undismissed downgrade notice, or null.
-   * @param sessionId
-   */
-  function fallbackFor(sessionId: string): SearchFallbackNotice | null {
-    return fallbackBySession.value[sessionId] ?? null;
   }
 
   /**
@@ -114,44 +118,26 @@ export const useWebSearchStore = defineStore('webSearch', () => {
   }
 
   /**
-   * Show a downgrade notice for a session (the `search_backend_fallback`
-   * frame). A later notice replaces an undismissed earlier one — the banner
-   * describes the CURRENT backend, and two stacked banners would say the same.
+   * Turn the `search_backend_fallback` frame into a 通知 entry. Identical
+   * consecutive downgrades merge into one counted item (the notification
+   * store's own rule), so a burst of retries reads as one line.
    * @param payload Raw frame payload (`{session_id, content: {backend, reason, message}}`).
    */
-  function noteFallback(payload: unknown): void {
+  function handleFallbackFrame(payload: unknown): void {
     const frame = payload as
       { session_id?: string; content?: { backend?: unknown; reason?: unknown; message?: unknown } } | null | undefined;
-    const sessionId = String(frame?.session_id ?? '');
-    if (!sessionId) return;
+    if (!String(frame?.session_id ?? '')) return;
     const backend: SearchBackend = frame?.content?.backend === 'tavily' ? 'tavily' : 'searxng';
-    fallbackBySession.value = {
-      ...fallbackBySession.value,
-      [sessionId]: {
-        backend,
-        reason: String(frame?.content?.reason ?? ''),
-        message: String(frame?.content?.message ?? ''),
-        at: Date.now()
-      }
-    };
-  }
-
-  /**
-   * Drop the session's notice (the banner's own dismiss action).
-   * @param sessionId
-   */
-  function dismissFallback(sessionId: string): void {
-    if (!sessionId) return;
-    const rest = { ...fallbackBySession.value };
-    delete rest[sessionId];
-    fallbackBySession.value = rest;
+    const reason = String(frame?.content?.reason ?? '');
+    const text = fallbackNoticeText(backend, reason, String(frame?.content?.message ?? ''));
+    useNotificationStore().handleNotification(text, 'web_search');
   }
 
   /** Register the socket listener once (singleton guard, like the todo store). */
   function subscribe(): void {
     if (subscribed.value) return;
     subscribed.value = true;
-    on('ws:search_backend_fallback', noteFallback);
+    on('ws:search_backend_fallback', handleFallbackFrame);
   }
 
   /**
@@ -168,13 +154,11 @@ export const useWebSearchStore = defineStore('webSearch', () => {
 
   return {
     stateBySession,
-    fallbackBySession,
+    hydratingBySession,
     stateFor,
-    fallbackFor,
     hydrate,
     select,
-    noteFallback,
-    dismissFallback,
+    handleFallbackFrame,
     subscribe,
     init
   };

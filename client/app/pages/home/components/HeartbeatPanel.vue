@@ -455,8 +455,8 @@ onMounted(() => {
         "models": {
           "scope_main": "主代理",
           "scope_subagent": "子代理",
-          "mainHint": "主代理（main agent）使用的模型；默认跟随环境配置。",
-          "followEnv": "跟随环境配置"
+          "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
+          "followEnv": "跟随模型配置"
         },
         "tools": {
           "count": "已选 {selected}/{total}",
@@ -527,7 +527,7 @@ onMounted(() => {
           "followTier": "跟随角色默认",
           "tier": "角色默认：{tier}",
           "tierDepth": "无角色定义：按深度默认",
-          "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
+          "hint": "为每类子代理指定使用的模型（来自模型配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
           "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
         },
         "role": {
@@ -558,7 +558,7 @@ onMounted(() => {
         "agents": "运行守则",
         "soul": "人格灵魂",
         "user": "用户信息",
-        "env": "环境配置",
+        "env": "模型配置",
         "sherry": "应用配置",
         "memoryAgent": "记忆·Agent",
         "memoryUser": "记忆·用户"
@@ -630,8 +630,8 @@ onMounted(() => {
         "noFileChosen": "可选择新图片文件"
       },
       "env": {
-        "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
-        "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
+        "loadError": "模型配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
         "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
         "noEnvFile": "未找到 .env 文件。",
         "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
@@ -747,8 +747,8 @@ onMounted(() => {
         "models": {
           "scope_main": "Main agent",
           "scope_subagent": "Subagent",
-          "mainHint": "The model the main agent runs on; follows the environment config by default.",
-          "followEnv": "Follow the environment config"
+          "mainHint": "The model the main agent runs on; follows the model config by default.",
+          "followEnv": "Follow the model config"
         },
         "tools": {
           "count": "{selected}/{total} selected",
@@ -819,7 +819,7 @@ onMounted(() => {
           "followTier": "Follow the role default",
           "tier": "Role default: {tier}",
           "tierDepth": "No role definition: depth default",
-          "hint": "Choose the model each functional role runs on (the environment-config profiles); \"follow the role default\" keeps its model_tier.",
+          "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
           "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
         },
         "role": {
@@ -850,7 +850,7 @@ onMounted(() => {
         "agents": "Operating Instructions",
         "soul": "Soul",
         "user": "User Profile",
-        "env": "Environment",
+        "env": "Model Config",
         "sherry": "App Config",
         "memoryAgent": "Memory · Agent",
         "memoryUser": "Memory · User"
@@ -922,8 +922,8 @@ onMounted(() => {
         "noFileChosen": "Select an image file"
       },
       "env": {
-        "loadError": "Failed to load environment config. Please check the backend service.",
-        "saveFailed": "Failed to save environment config.",
+        "loadError": "Failed to load model config. Please check the backend service.",
+        "saveFailed": "Failed to save model config.",
         "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
         "noEnvFile": "No .env file found.",
         "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
@@ -1039,8 +1039,8 @@ onMounted(() => {
         "models": {
           "scope_main": "メインエージェント",
           "scope_subagent": "サブエージェント",
-          "mainHint": "メインエージェントが使うモデル。既定では環境設定に従います。",
-          "followEnv": "環境設定に従う"
+          "mainHint": "メインエージェントが使うモデル。既定ではモデル設定に従います。",
+          "followEnv": "モデル設定に従う"
         },
         "tools": {
           "count": "{selected}/{total} 選択",
@@ -1111,7 +1111,7 @@ onMounted(() => {
           "followTier": "ロール既定に従う",
           "tier": "ロール既定: {tier}",
           "tierDepth": "ロール定義なし: 深度の既定",
-          "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
+          "hint": "機能ロールごとに使うモデル（モデル設定のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
           "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
         },
         "role": {
@@ -1142,7 +1142,7 @@ onMounted(() => {
         "agents": "操作指示",
         "soul": "人格・魂",
         "user": "ユーザー情報",
-        "env": "環境設定",
+        "env": "モデル設定",
         "sherry": "アプリ設定",
         "memoryAgent": "記憶・Agent",
         "memoryUser": "記憶・ユーザー"
@@ -1214,8 +1214,8 @@ onMounted(() => {
         "noFileChosen": "画像ファイルを選択"
       },
       "env": {
-        "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
-        "saveFailed": "環境設定の保存に失敗しました。",
+        "loadError": "モデル設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "モデル設定の保存に失敗しました。",
         "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
         "noEnvFile": ".env ファイルが見つかりません。",
         "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
@@ -1331,8 +1331,8 @@ onMounted(() => {
         "models": {
           "scope_main": "메인 에이전트",
           "scope_subagent": "서브에이전트",
-          "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 환경 설정을 따릅니다.",
-          "followEnv": "환경 설정 따르기"
+          "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 모델 설정을 따릅니다.",
+          "followEnv": "모델 설정 따르기"
         },
         "tools": {
           "count": "{selected}/{total} 선택",
@@ -1403,7 +1403,7 @@ onMounted(() => {
           "followTier": "역할 기본값 따르기",
           "tier": "역할 기본값: {tier}",
           "tierDepth": "역할 정의 없음: 깊이 기본값",
-          "hint": "기능 역할마다 사용할 모델(환경 구성 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
+          "hint": "기능 역할마다 사용할 모델(모델 설정 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
           "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
         },
         "role": {
@@ -1434,7 +1434,7 @@ onMounted(() => {
         "agents": "운영 지침",
         "soul": "인격·영혼",
         "user": "사용자 정보",
-        "env": "환경 설정",
+        "env": "모델 설정",
         "sherry": "앱 설정",
         "memoryAgent": "메모리·Agent",
         "memoryUser": "메모리·사용자"
@@ -1506,8 +1506,8 @@ onMounted(() => {
         "noFileChosen": "이미지 파일을 선택하세요"
       },
       "env": {
-        "loadError": "환경 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
-        "saveFailed": "환경 설정을 저장하지 못했습니다.",
+        "loadError": "모델 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "모델 설정을 저장하지 못했습니다.",
         "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
         "noEnvFile": ".env 파일을 찾을 수 없습니다.",
         "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",

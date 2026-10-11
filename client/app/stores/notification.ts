@@ -13,7 +13,7 @@ import dayjs from 'dayjs';
 
 /** One notification (identical consecutive pushes merge into a count). */
 export interface NotificationItem {
-  source: 'heartbeat' | 'cron';
+  source: 'heartbeat' | 'cron' | 'web_search';
   content: string;
   count: number;
   time: string;
@@ -36,12 +36,14 @@ function contentOf(payload: unknown): string {
 }
 
 /**
- * Determine the notification source (the server prefixes a marker; a payload
- * without one falls back to content keywords).
+ * Determine the notification source from the CONTENT (the server prefixes a
+ * marker; a payload without one falls back to content keywords). Client-side
+ * producers pass their source explicitly instead — see `handleNotification`.
  * @param content Notification text.
  * @returns Which produced it.
  */
 function sourceOf(content: string): NotificationItem['source'] {
+  if (/^search:\s*/i.test(content)) return 'web_search';
   if (/^(heartbeat|cron):\s*/.test(content)) return content.startsWith('heartbeat:') ? 'heartbeat' : 'cron';
   return /\b(cron|定时|定時)\b/i.test(content) ? 'cron' : 'heartbeat';
 }
@@ -66,19 +68,26 @@ export const useNotificationStore = defineStore('notification', () => {
   const unreadCount = computed<number>(() => (read.value ? 0 : items.value.reduce((sum, item) => sum + item.count, 0)));
 
   /**
-   * Merge one pushed notification: an identical push repeats the newest item
+   * Merge one notification: an identical push repeats the newest item
    * (count++), anything else appends. A push while the panel is closed marks the
    * list unread again, so the badge lights up.
-   * @param payload Raw `ws:notification` payload.
+   * @param payload Raw `ws:notification` payload (a string or an object).
+   * @param source Which feature produced it; omitted = sniffed from the content
+   *   (the server markers), which is how the heartbeat / cron frames arrive.
    */
-  function handleNotification(payload: unknown): void {
+  function handleNotification(payload: unknown, source?: NotificationItem['source']): void {
     const content = contentOf(payload);
     if (!content) return;
     const latest = items.value.length > 0 ? items.value[items.value.length - 1] : null;
     if (latest && latest.content === content) {
       latest.count += 1;
     } else {
-      items.value.push({ source: sourceOf(content), content, count: 1, time: dayjs().format('HH:mm:ss') });
+      items.value.push({
+        source: source ?? sourceOf(content),
+        content,
+        count: 1,
+        time: dayjs().format('HH:mm:ss')
+      });
     }
     if (!panelVisible.value) read.value = false;
   }

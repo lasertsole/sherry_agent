@@ -60,6 +60,23 @@ def registers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _env_file(tmp_path, monkeypatch):
+    """A throwaway .env for the panel's FILE view (never the real file)."""
+    path = tmp_path / ".env"
+    path.write_text(
+        'TAVILY_API_KEY = "tvly-secret"\n'
+        "SEARXNG_URL = http://localhost:9999\n"
+        "SEARXNG_PROXY = http://127.0.0.1:7890\n"
+        "SEARXNG_ENGINES = google,bing\n"
+        "SEARXNG_CATEGORIES = it\n"
+        "SEARXNG_VERIFY_TLS = false\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("server.service.env.ENV_PATH", path)
+    return path
+
+
+@pytest.fixture(autouse=True)
 def _providers(monkeypatch):
     """Both providers configured and the search tool's resolution stubbed out."""
     import agent.tools.web_search as web_search
@@ -114,6 +131,22 @@ def test_unset_choice_reports_the_availability_default(registers):
     assert state["pending"] is False
     assert state["tavily_available"] is True
     assert state["searxng"]["configured"] is True
+
+
+def test_the_file_view_carries_what_the_panel_edits(registers):
+    """The search keys are withheld from GET /env, so the state payload is the
+    panel's read side — and it must never carry the Tavily VALUE."""
+    state = service.get_search_backend_state("s1")
+
+    assert state["env"] == {
+        "searxng_url": "http://localhost:9999",
+        "searxng_proxy": "http://127.0.0.1:7890",
+        "searxng_engines": "google,bing",
+        "searxng_categories": "it",
+        "searxng_verify_tls": False,
+        "tavily_key_present": True,
+    }
+    assert "tvly-secret" not in json.dumps(state)
 
 
 def test_an_empty_session_id_answers_the_global_view(registers):
@@ -176,6 +209,8 @@ def test_get_reports_availability_for_the_panel(registers, monkeypatch):
     assert payload["effective"] == "tavily"
     assert payload["tavily_available"] is True
     assert payload["searxng"]["configured"] is True
+    assert payload["env"]["tavily_key_present"] is True
+    assert payload["env"]["searxng_url"] == "http://localhost:9999"
 
 
 def test_get_without_a_session_id_is_the_settings_tab_view(registers, monkeypatch):

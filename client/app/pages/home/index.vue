@@ -339,6 +339,9 @@ const resolvePageKey = (route: { path: string; params: Record<string, unknown> }
  * counting while the notification tab is closed (registered below).
  */
 const notifications = useNotificationStore();
+/** Web-search store: its socket listener (the Tavily downgrade → 通知) is
+ *  registered here, once per app shell. */
+const webSearchStore = useWebSearchStore();
 
 /**
  * Toolbar command registry: event → command (every entry opens a right-sidebar tab).
@@ -497,6 +500,10 @@ onMounted(() => {
   // established here — the notification TAB is lazily mounted and would
   // otherwise be the first to open it.
   notifications.subscribe();
+  // Same for the web-search downgrade frame: it arrives while a TURN runs, so
+  // the listener cannot live in the session page (the user may be looking at
+  // another session) nor in the 模型联网 tab (lazily mounted).
+  webSearchStore.subscribe();
   useWs();
 });
 </script>

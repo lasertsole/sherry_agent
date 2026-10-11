@@ -379,7 +379,7 @@ describe('SessionPresetButton', () => {
     // 主代理 is the SAME control as the toolbar's model switch: a picker bound to
     // the session-model store (the stub reports "env" with no model configured).
     expect(panel.get('[data-test="session-preset-models-scope-main"]').text()).toBe('主代理');
-    expect(panel.text()).toContain('跟随环境配置');
+    expect(panel.text()).toContain('跟随模型配置');
     const mainPicker = panel.get('[data-test="session-preset-main-model"]');
     expect((mainPicker.element as HTMLSelectElement).value).toBe('env');
     // 子代理 keeps the editable role pickers.

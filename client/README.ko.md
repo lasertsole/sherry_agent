@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 50 개의 페이지 컴포넌트:
+│   │       └── components/        # 49 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
@@ -148,7 +148,7 @@ client/
 │   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
-│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(.env 편집, 배경, 언어 등)
+│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 .env 편집 — 검색 키는 「모델 검색」 탭 — 배경, 언어 등)
 │   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .env에 쓰지 않음)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
 │   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
@@ -158,8 +158,7 @@ client/
 │   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
 │   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
-│   │           ├── WebSearchPanel.vue         #「모델 검색」탭: 세션의 검색 백엔드(Tavily / SearXNG 라디오) + SearXNG 연결 폼(.env) + Tavily 키 상태
-│   │           ├── SearchFallbackNotice.vue   # 메시지 목록 아래의 닫을 수 있는 배너: web_search가 Tavily에서 SearXNG로 강등(search_backend_fallback 프레임)
+│   │           ├── WebSearchPanel.vue         #「모델 검색」탭: 세션의 검색 백엔드(Tavily / SearXNG 라디오) + Tavily 키와 SearXNG 연결 폼 — 이 .env 키를 편집하는 유일한 창구(GET /env에서 숨김)
 │   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)

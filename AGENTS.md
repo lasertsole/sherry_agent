@@ -499,12 +499,14 @@ The fallback is announced, not silent: `agent/tools/web_search_push.py` pushes
 the best-effort `search_backend_fallback` frame
 (`{from, backend, reason, message}`, reason ∈ `tavily_auth_failed` /
 `tavily_timeout` / `tavily_error`; an auth failure skips the retries) to the
-session's websocket, exactly like the TaskFlow progress push. The client shows
-it as a dismissible banner under the message list
-(`pages/home/components/SearchFallbackNotice.vue`, reasons localized from the
-CODE) — the turn it belongs to keeps streaming, and the result text names its
-own backend ("SearXNG search results …"), so a client that misses the frame
-still shows the truth.
+session's websocket, exactly like the TaskFlow progress push. `client/app/stores/web-search.ts`
+turns it into a 通知 entry (source `web_search`, reasons localized from the
+CODE at push time through `resolveRuntimeT`, whose `t` takes named params) and
+the bell's unread badge lights up — the listener lives in the app shell
+(`pages/home/index.vue`), because the frame arrives while a TURN runs and the
+user may be looking at another session. The turn it belongs to keeps streaming,
+and the result text names its own backend ("SearXNG search results …"), so a
+client that misses the frame still shows the truth.
 
 SearXNG lives in `agent/tools/web_search_searxng.py`: the instance's JSON API
 (`GET {SEARXNG_URL}/search?q=…&format=json&pageno=1`), results ranked by score
@@ -513,9 +515,14 @@ for — an httpx proxy, engine/category passthrough, and a TLS-verification
 toggle for MITM proxies. It NEVER raises: every failure returns a readable line
 naming the status and whether the request went `via proxy …` or over a `direct
 connection`. `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` /
-`SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.env` (the
-`SEARXNG_` group renders as its own card in 环境配置); they are read at BOOT, so
-the 模型联网 panel's save says so — while the per-session radio applies at once.
+`SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.env`, and so
+does `TAVILY_API_KEY`: the 模型联网 tab is their ONLY editing surface
+(`SERVER_HTTP["env_panel_hidden_prefixes"]` withholds `TAVILY_`/`SEARXNG_` from
+`GET /env`, so the 模型配置 tab — `config.tabs.env`, renamed from 环境配置 —
+never shows a second, drift-prone editor; writes still go through `PUT /env`,
+reads through the state payload's `env` block, and the Tavily VALUE never leaves
+the server). They are read at BOOT, so the panel's save says so — while the
+per-session radio applies at once.
 `GET /sessions/search_backend` answers the panel's read model (choice, effective
 backend, `pending`, both providers' availability and SearXNG's status) and
 tolerates an EMPTY `session_id`, because the panel is a settings tab that opens
@@ -553,7 +560,7 @@ Everything in the ledger is fail-open: a metrics write never breaks a turn.
 ## Agent-Controllable Browser (`config/features/infra_side/browser_agent.py`)
 
 Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
-「环境配置」 panel grows a `SHERRY_BROWSER` group for its switches once the keys
+「模型配置」 panel grows a `SHERRY_BROWSER` group for its switches once the keys
 exist in `.env`). With the feature off no `browser_*` tool is registered, every
 `/browser/*` route answers 404 and no Chromium is ever spawned.
 

@@ -33,8 +33,8 @@
     "pending": "下一轮生效",
     "label": "主模型",
     "a11y": "切换当前会话的主模型",
-    "followEnv": "跟随环境配置",
-    "followEnvWith": "跟随环境配置（{model}）"
+    "followEnv": "跟随模型配置",
+    "followEnvWith": "跟随模型配置（{model}）"
   },
   "chatBox": {
     "defaultAiName": "雪莉",
@@ -69,7 +69,7 @@
     "originSystem": "系统消息",
     "tokenGuard": {
       "title": "模型配置不达标",
-      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 环境配置中修正。"
+      "detail": "MAIN_LLM_MAX_TOKEN 或 AUXILIARY_LLM_MAX_TOKEN 低于 128K (131072)，Agent 可能拒绝运行。请在系统配置 → 模型配置中修正。"
     }
   },
   "errors": {
@@ -189,8 +189,8 @@
       "models": {
         "scope_main": "主代理",
         "scope_subagent": "子代理",
-        "mainHint": "主代理（main agent）使用的模型；默认跟随环境配置。",
-        "followEnv": "跟随环境配置"
+        "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
+        "followEnv": "跟随模型配置"
       },
       "tools": {
         "count": "已选 {selected}/{total}",
@@ -259,7 +259,7 @@
         "followTier": "跟随角色默认",
         "tier": "角色默认：{tier}",
         "tierDepth": "无角色定义：按深度默认",
-        "hint": "为每类子代理指定使用的模型（来自环境配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
+        "hint": "为每类子代理指定使用的模型（来自模型配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
         "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
       },
       "role": {
@@ -290,7 +290,7 @@
       "agents": "运行守则",
       "soul": "人格灵魂",
       "user": "用户信息",
-      "env": "环境配置",
+      "env": "模型配置",
       "sherry": "应用配置",
       "memoryAgent": "记忆·Agent",
       "memoryUser": "记忆·用户"
@@ -362,8 +362,8 @@
       "noFileChosen": "可选择新图片文件"
     },
     "env": {
-      "loadError": "环境配置加载失败，请检查后端服务是否已启动。",
-      "saveFailed": "环境配置保存失败，请检查 key 与值是否合法。",
+      "loadError": "模型配置加载失败，请检查后端服务是否已启动。",
+      "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
       "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
       "noEnvFile": "未找到 .env 文件。",
       "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
@@ -575,5 +575,18 @@
     "empty": "（空）",
     "missing": "该预设已被删除",
     "unboundHint": "此会话创建时未选择预设"
+  },
+  "notification": {
+    "source": {
+      "web_search": "联网搜索降级"
+    }
+  },
+  "searchFallback": {
+    "notice": "Tavily 无法使用（{reason}），已切换到 {name}",
+    "reason": {
+      "tavily_auth_failed": "密钥无效或已过期",
+      "tavily_timeout": "请求超时",
+      "tavily_error": "请求失败"
+    }
   }
 }

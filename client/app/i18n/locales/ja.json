@@ -33,8 +33,8 @@
     "pending": "次のターンで反映",
     "label": "メインモデル",
     "a11y": "このセッションのメインモデルを切り替え",
-    "followEnv": "環境設定に従う",
-    "followEnvWith": "環境設定に従う（{model}）"
+    "followEnv": "モデル設定に従う",
+    "followEnvWith": "モデル設定に従う（{model}）"
   },
   "chatBox": {
     "defaultAiName": "シェリー",
@@ -69,7 +69,7 @@
     "originSystem": "システム メッセージ",
     "tokenGuard": {
       "title": "モデル設定が最小値未満",
-      "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 128K (131072) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → 環境設定で修正してください。"
+      "detail": "MAIN_LLM_MAX_TOKEN または AUXILIARY_LLM_MAX_TOKEN が 128K (131072) を下回っています。エージェントが実行を拒否する可能性があります。システム設定 → モデル設定で修正してください。"
     }
   },
   "errors": {
@@ -189,8 +189,8 @@
       "models": {
         "scope_main": "メインエージェント",
         "scope_subagent": "サブエージェント",
-        "mainHint": "メインエージェントが使うモデル。既定では環境設定に従います。",
-        "followEnv": "環境設定に従う"
+        "mainHint": "メインエージェントが使うモデル。既定ではモデル設定に従います。",
+        "followEnv": "モデル設定に従う"
       },
       "tools": {
         "count": "{selected}/{total} 選択",
@@ -259,7 +259,7 @@
         "followTier": "ロール既定に従う",
         "tier": "ロール既定: {tier}",
         "tierDepth": "ロール定義なし: 深度の既定",
-        "hint": "機能ロールごとに使うモデル（環境構成のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
+        "hint": "機能ロールごとに使うモデル（モデル設定のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
         "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
       },
       "role": {
@@ -290,7 +290,7 @@
       "agents": "操作指示",
       "soul": "人格・魂",
       "user": "ユーザー情報",
-      "env": "環境設定",
+      "env": "モデル設定",
       "sherry": "アプリ設定",
       "memoryAgent": "記憶・Agent",
       "memoryUser": "記憶・ユーザー"
@@ -362,8 +362,8 @@
       "noFileChosen": "画像ファイルを選択"
     },
     "env": {
-      "loadError": "環境設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
-      "saveFailed": "環境設定の保存に失敗しました。",
+      "loadError": "モデル設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+      "saveFailed": "モデル設定の保存に失敗しました。",
       "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
       "noEnvFile": ".env ファイルが見つかりません。",
       "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
@@ -575,5 +575,18 @@
     "empty": "（空）",
     "missing": "このプリセットは削除されました",
     "unboundHint": "このセッションはプリセット未選択で作成されました"
+  },
+  "notification": {
+    "source": {
+      "web_search": "ウェブ検索の降格"
+    }
+  },
+  "searchFallback": {
+    "notice": "Tavily を利用できません（{reason}）。{name} に切り替えました",
+    "reason": {
+      "tavily_auth_failed": "キーが無効か期限切れ",
+      "tavily_timeout": "リクエストがタイムアウト",
+      "tavily_error": "リクエストが失敗"
+    }
   }
 }
