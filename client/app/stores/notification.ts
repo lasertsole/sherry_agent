@@ -9,6 +9,10 @@ import dayjs from 'dayjs';
  * subscription used to sit in the permanently mounted dialog for the same
  * reason). `subscribe()` registers the mitt listener once; the shell calls it on
  * mount, so a push arriving with no tab open still updates the badge.
+ *
+ * Folding: consecutive pushes merge into one counted item — by identical content
+ * for the server sources (heartbeat / cron) and by TYPE for the web-search
+ * downgrade, whose wording carries a varying reason.
  */
 
 /** One notification (identical consecutive pushes merge into a count). */
@@ -78,12 +82,18 @@ export const useNotificationStore = defineStore('notification', () => {
   function handleNotification(payload: unknown, source?: NotificationItem['source']): void {
     const content = contentOf(payload);
     if (!content) return;
+    const resolved = source ?? sourceOf(content);
     const latest = items.value.length > 0 ? items.value[items.value.length - 1] : null;
-    if (latest && latest.content === content) {
+    // The web-search downgrade is ONE event ("Tavily → SearXNG"): its reason is a
+    // detail that varies between pushes, so repeats fold by TYPE and the newest
+    // wording wins — every other source keeps folding on identical content.
+    const folds = !!latest && (resolved === 'web_search' ? latest.source === 'web_search' : latest.content === content);
+    if (folds && latest) {
       latest.count += 1;
+      latest.content = content;
     } else {
       items.value.push({
-        source: source ?? sourceOf(content),
+        source: resolved,
         content,
         count: 1,
         time: dayjs().format('HH:mm:ss')

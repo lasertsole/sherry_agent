@@ -59,7 +59,7 @@ Sherry 가 무엇을 방어하고, 신뢰 경계가 어디에 있으며, 그리�
 
 | 성질 | 구현 |
 |---|---|
-| 범위 | `web_search`, `tavily_search`(API 키를 설정하면 같은 도구가 Tavily 자체 이름으로 출하됨), `message_search`, 모든 `mcp_` 도구, 그리고 모든 `browser_` 도구(페이지가 쓴 텍스트——특히 `browser_snapshot`) |
+| 범위 | `web_search`(백엔드가 무엇이든 같은 하나의 도구. `tavily_search`는 이름 변경 전의 이름으로, 오래된 기록을 위해 목록에 남겨 둡니다), `message_search`, 모든 `mcp_` 도구, 그리고 모든 `browser_` 도구(페이지가 쓴 텍스트——특히 `browser_snapshot`) |
 | 구분자 위조 | 페이로드 안의 닫는 태그는 감싸기 전에 `</untrusted-tool-result>` 로 바뀌어 블록을 일찍 닫을 수 없습니다 |
 | 순서 | 먼저 evict 후 감싸므로 펜스는 모델이 실제로 읽는 미리보기를 감쌉니다 |
 | 원문 | 펜스되는 것은 모델이 보는 모습뿐이며, 내부 영속화가 가진 메시지는 결코 변형되지 않습니다 |

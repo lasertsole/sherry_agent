@@ -44,11 +44,11 @@ __all__ = [
 #: pages and `message_search` replays stored conversation text (which may itself
 #: have arrived from a page or a terminal).
 #:
-#: ``web_search`` has TWO shipped shapes: without a Tavily key the fallback tool
-#: is named ``web_search``, with one ``build_web_search_tool`` returns the
-#: ``TavilySearch`` instance under its own default name ``tavily_search``. Both
-#: must be listed — naming only the fallback would silently drop the fence from
-#: web results in exactly the deployments that can actually fetch the web.
+#: ``web_search`` is ONE tool whatever backend serves it (the Tavily shape is a
+#: ``TavilySearch`` whose name is pinned to ``web_search``). ``tavily_search`` is
+#: kept listed because it is the name that tool carried before the rename: tool
+#: results persisted in older transcripts still replay through the fence, and a
+#: deployment that pins an older build keeps its protection.
 UNTRUSTED_TOOL_NAMES: frozenset[str] = frozenset({"web_search", "tavily_search", "message_search"})
 
 #: Prefix rule for tool families that are attacker-facing by construction. ``mcp_``

@@ -9,9 +9,9 @@ leak and not the subject of the work:
 
 * ``terminal`` / ``python_repl`` — they print env vars, ``curl -v`` traces and
   config dumps for a living;
-* the untrusted set (``web_search``/``tavily_search``/``message_search``/``mcp_*``/
-  ``browser_*``), because remote content is not something the local session must
-  read verbatim.
+* the untrusted set (``web_search`` — one tool, plus the ``tavily_search`` name
+  it carried before the rename — ``message_search``/``mcp_*``/``browser_*``),
+  because remote content is not something the local session must read verbatim.
 
 File tools (``read_file``/``patch_file``/``write_file``) are NOT in the set: the
 agent edits its own configuration, and masking a value there would make the

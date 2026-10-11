@@ -58,7 +58,7 @@ Sherry 防御什么、信任边界在哪里，以及同样重要的一点——�
 
 | 性质 | 做法 |
 |---|---|
-| 适用范围 | `web_search`、`tavily_search`（配好 API key 后同一个工具以 Tavily 自己的名字出厂）、`message_search`、任何 `mcp_` 工具，以及每个 `browser_` 工具（页面自产的文本——`browser_snapshot` 最典型） |
+| 适用范围 | `web_search`（无论后端是谁都是同一个工具；`tavily_search` 是它改名前的名字，为旧记录保留在名单里）、`message_search`、任何 `mcp_` 工具，以及每个 `browser_` 工具（页面自产的文本——`browser_snapshot` 最典型） |
 | 分隔符防伪 | 载荷里的闭合标签在包装前被改写成 `</untrusted-tool-result>`，无法提前结束该块 |
 | 顺序 | 先 evict 再包装，因此围栏包住的正是模型实际看到的那份预览 |
 | 原文 | 只有模型视图被围栏；内层持久化持有的消息对象从不被修改 |

@@ -61,8 +61,9 @@ def test_the_policy_covers_the_tools_that_actually_ship():
     shipped = {build_message_search_tool().name, build_web_search_tool().name}
 
     assert shipped <= UNTRUSTED_TOOL_NAMES, sorted(shipped - set(UNTRUSTED_TOOL_NAMES))
-    # The keyed web-search branch ships under TavilySearch's own name, so the
-    # policy must carry it even though this environment uses the fallback.
+    # ``tavily_search`` is the name the web-search tool carried before it was
+    # pinned to ``web_search``: it must stay listed so results persisted in older
+    # transcripts keep their fence.
     assert "tavily_search" in UNTRUSTED_TOOL_NAMES
 
 

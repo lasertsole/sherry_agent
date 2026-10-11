@@ -63,7 +63,7 @@ the content is data, not instructions.
 
 | Property | How |
 |---|---|
-| Scope | `web_search`, `tavily_search` (the same tool ships under Tavily's own name once an API key is configured), `message_search`, any `mcp_` tool, and every `browser_` tool (page-authored text — `browser_snapshot` most of all) |
+| Scope | `web_search` (one tool whichever backend serves it; `tavily_search` is the name it carried before the rename and stays listed for older transcripts), `message_search`, any `mcp_` tool, and every `browser_` tool (page-authored text — `browser_snapshot` most of all) |
 | Delimiter forgery | A closing tag inside the payload is rewritten to `</untrusted-tool-result>` before wrapping, so it cannot end the block early |
 | Ordering | Eviction runs first, so the block surrounds the preview the model is actually shown |
 | Raw text | Only the model view is fenced; the message the inner persistence layer holds is never mutated |

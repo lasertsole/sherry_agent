@@ -271,6 +271,13 @@ def build_web_search_tool():
         base = BackendAwareTavilySearch(
             tavily_api_key=_tavily_api_key(), max_results=5, args_schema=WebSearchInput
         )
+        # ONE tool name across every branch. TavilySearch's own default is
+        # ``tavily_search``, which would make the backend swap visible as a
+        # DIFFERENT tool (the per-session tool selection, the 工具 tab and the
+        # model's tool list all know this tool as ``web_search``). Transcripts
+        # persisted before this rename may still carry ``tavily_search`` — the
+        # untrusted-output / redaction sets keep covering that name.
+        base.name = "web_search"
         # The keyed branch used to return BEFORE the metadata assignment below,
         # so the shipped Tavily tool carried neither flag.
         base.handle_tool_error = True

@@ -481,8 +481,10 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
 
 ## Web Search Backends (`agent/tools/web_search.py`)
 
-`web_search` is ONE tool over two interchangeable providers, so the model never
-sees the swap. Which one serves a call is resolved per call
+`web_search` is ONE tool over two interchangeable providers — the Tavily branch
+pins `name = "web_search"` (TavilySearch's own default would ship the swap as a
+second tool name), so the model, the per-session tool selection and the 工具 tab
+all see the same tool whatever serves a call. Which one serves a call is resolved per call
 (`resolve_preferred_backend`): the session's explicit choice
 (`StateKey.SEARCH_BACKEND`, written by the 模型联网 panel through
 `PUT /sessions/search_backend` and parked/promoted at the turn boundary like the

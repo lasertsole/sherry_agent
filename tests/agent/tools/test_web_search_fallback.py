@@ -287,6 +287,30 @@ def test_neither_backend_answers_with_the_configuration_hint(
     assert "模型联网" in result
 
 
+# ── one tool name across every branch ────────────────────────────────────────
+
+
+def test_every_branch_ships_the_same_tool_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The backend swap must not show up as a SECOND tool.
+
+    ``TavilySearch``'s own default is ``tavily_search``; the builder pins the
+    name to ``web_search`` so the model's tool list, the per-session tool
+    selection and the 工具 tab all see one tool whichever provider serves a call.
+    """
+    # Keyed branch: the REAL library, so the name we would have shipped is visible.
+    monkeypatch.setattr(web_search, "_tavily_api_key", lambda: "tvly-test")
+    monkeypatch.setattr(web_search, "tavily_available", lambda: True)
+    keyed = web_search.build_web_search_tool()
+    assert keyed.name == "web_search"
+
+    # SearXNG-only and stub branches.
+    monkeypatch.setattr(web_search, "tavily_available", lambda: False)
+    monkeypatch.setattr(web_search, "searxng_available", lambda: True)
+    assert web_search.build_web_search_tool().name == "web_search"
+    monkeypatch.setattr(web_search, "searxng_available", lambda: False)
+    assert web_search.build_web_search_tool().name == "web_search"
+
+
 # ── the injected session id (per-session choice + notice) ────────────────────
 
 

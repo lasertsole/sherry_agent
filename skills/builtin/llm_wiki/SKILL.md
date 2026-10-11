@@ -134,7 +134,7 @@ src/data/wiki/
 | Modify a file | `patch_file` | Replace specified content in a file |
 | Run commands | `terminal` | Execute shell commands (create dirs, move files, ...) |
 | Run Python | `python_repl` | Execute Python code (call the scripts) |
-| Web search | `tavily_search` | Search the web |
+| Web search | `web_search` | Search the web |
 | Search memory | `_message_search_tool` | Search past conversation history |
 
 ## Resuming an Existing Wiki (CRITICAL — do this every session)
@@ -301,7 +301,7 @@ When new information conflicts with existing content:
 When the user provides a source (URL, file, paste), integrate it into the wiki:
 
 ① **Capture the raw source:**
-   - URL → use `tavily_search` to get content, then `save_source()` to store
+   - URL → use `web_search` to get content, then `save_source()` to store
    - Pasted text → use `save_source()` to store
    - Name the file descriptively
 

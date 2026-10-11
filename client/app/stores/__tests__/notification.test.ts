@@ -58,6 +58,31 @@ describe('stores/notification', () => {
     expect(store.unreadCount).toBe(3);
   });
 
+  it('folds consecutive web-search downgrades of the same type, newest wording wins', () => {
+    store.handleNotification('Tavily 无法使用（密钥无效或已过期），已切换到 SearXNG', 'web_search');
+    store.handleNotification('Tavily 无法使用（请求超时），已切换到 SearXNG', 'web_search');
+
+    expect(store.items).toHaveLength(1);
+    expect(store.items[0]).toMatchObject({
+      source: 'web_search',
+      // The newest reason wins: the count says how many, the text says what now.
+      content: 'Tavily 无法使用（请求超时），已切换到 SearXNG',
+      count: 2
+    });
+    expect(store.unreadCount).toBe(2);
+
+    // A different source after it still starts its own item.
+    store.handleNotification('heartbeat: 完成');
+    expect(store.items).toHaveLength(2);
+  });
+
+  it('keeps folding heartbeat / cron on identical content only', () => {
+    store.handleNotification('cron: 报告 A');
+    store.handleNotification('cron: 报告 B');
+
+    expect(store.items).toHaveLength(2);
+  });
+
   it('keeps counting while the panel is closed and stops re-flagging while it is open', () => {
     push('heartbeat: 完成');
     expect(store.unreadCount).toBe(1);
