@@ -10,7 +10,7 @@ import re
 import sys
 from typing import Any
 from pathlib import Path
-from config import ROOT_DIR, AUTO_SKILLS_DIR
+from config import AUTO_SKILLS_DIR, app_relative
 
 # ── Platform mapping ──────────────────────────────────────────────────────
 
@@ -219,7 +219,9 @@ def find_auto_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
         meta, _ = parse_frontmatter(content)
         name = str(meta.get("name", skill_file.parent.name))
         desc = str(meta.get("description", ""))
-        rel = skill_file.relative_to(ROOT_DIR)
+        # Same checkout-shaped location the loader reports (``./skills/auto/…``)
+        # whichever home the tree lives in.
+        rel = app_relative(skill_file)
         skills.append(
             {
                 "name": name,

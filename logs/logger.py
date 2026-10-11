@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from loguru import logger
 from dotenv import load_dotenv
-from config import ROOT_DIR, ENV_PATH
+from config import LOG_DIR, ENV_PATH
 from config.sherry_settings import get_sherry_setting
 
 load_dotenv(ENV_PATH, override=True)
@@ -33,7 +33,7 @@ def _resolve_level() -> str:
     return raw if raw in valid else "INFO"
 
 
-def init_logger(log_dir=ROOT_DIR / "logs/output", timeout_days: int = 7):
+def init_logger(log_dir=LOG_DIR, timeout_days: int = 7):
     """Initialize the global logging configuration."""
     # Create per-type log sub-directories: info/, error/, all/ (everything) and
     # json/ (machine-readable JSONL)

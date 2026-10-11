@@ -67,7 +67,9 @@ def scope_skills_dir(tmp_path, monkeypatch):
         "name: bogus_scope\ndescription: Invalid scope value\nscope: banana\n",
     )
     monkeypatch.setattr(loader_module, "SKILLS_DIR", skills_dir)
-    monkeypatch.setattr(loader_module, "ROOT_DIR", tmp_path)
+    # The scan walks BOTH roots; pointing the user root at the same tmp tree keeps
+    # the real checkout's skills out of the assertions.
+    monkeypatch.setattr(loader_module, "USER_SKILLS_DIR", skills_dir)
     return skills_dir
 
 

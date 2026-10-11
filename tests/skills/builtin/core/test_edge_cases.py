@@ -310,7 +310,7 @@ class TestLoaderBounds:
         skills_dir = tmp_path / "skills"
         skills_dir.mkdir(parents=True, exist_ok=True)
         (skills_dir / "skills_snapshot.json").write_text("{broken", encoding="utf-8")
-        monkeypatch.setattr(loader_mod, "SKILLS_DIR", skills_dir)
+        monkeypatch.setattr(loader_mod, "SKILLS_SNAPSHOT_FILE", skills_dir / "skills_snapshot.json")
         with pytest.raises(json.JSONDecodeError):
             loader_mod.read_skills_snapshot()
 
@@ -346,7 +346,9 @@ class TestSnapshotBounds:
         from skills.loader import read_skills_snapshot
         import skills.loader as lm
 
-        monkeypatch.setattr(lm, "SKILLS_DIR", tmp_path / "skills")
+        monkeypatch.setattr(
+            lm, "SKILLS_SNAPSHOT_FILE", tmp_path / "skills" / "skills_snapshot.json"
+        )
         assert read_skills_snapshot() is None
 
 

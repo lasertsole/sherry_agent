@@ -7,10 +7,11 @@ from typing import Any
 from xml.sax.saxutils import escape as _xml_escape
 from loguru import logger
 from config import (
-    ROOT_DIR,
     SKILLS_DIR,
+    SKILLS_SNAPSHOT_FILE,
     SKILLS_STATE_FILE,
     SKILL_DISCOVERY_ROOTS,
+    USER_SKILLS_DIR,
     is_allowed_skill_path,
 )
 
@@ -72,7 +73,7 @@ def read_skills_snapshot() -> list[dict[str, str]] | None:
     (its only consumer is scan_skills) so skills_snapshot can depend on the
     loader one-directionally instead of forming an import cycle.
     """
-    file_path = SKILLS_DIR / "skills_snapshot.json"
+    file_path = SKILLS_SNAPSHOT_FILE
     if not file_path.exists():
         return None
     with open(file_path, encoding="utf-8") as f:
@@ -141,42 +142,52 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     skills: list[dict[str, Any]] = []
     seen_paths = set()  # for deduplication
 
-    for skill_file in SKILLS_DIR.glob("**/SKILL.md"):
-        if not is_allowed_skill_path(skill_file, SKILLS_DIR):
-            logger.warning(
-                "Ignoring SKILL.md outside allowed roots "
-                f"({', '.join(SKILL_DISCOVERY_ROOTS)}): {skill_file}"
+    # Resolved from the MODULE names (not config directly): tests swap the tree
+    # by patching these attributes, and a packaged build only differs in where
+    # USER_SKILLS_DIR points.
+    roots = (SKILLS_DIR,) if USER_SKILLS_DIR == SKILLS_DIR else (SKILLS_DIR, USER_SKILLS_DIR)
+    for root in roots:
+        for skill_file in root.glob("**/SKILL.md"):
+            if not is_allowed_skill_path(skill_file, root):
+                logger.warning(
+                    "Ignoring SKILL.md outside allowed roots "
+                    f"({', '.join(SKILL_DISCOVERY_ROOTS)}): {skill_file}"
+                )
+                continue
+            if skill_file in seen_paths:
+                continue
+            seen_paths.add(skill_file)
+
+            content = skill_file.read_text(encoding="utf-8")
+            meta = parse_frontmatter(content)
+            name = str(meta.get("name", skill_file.parent.name))
+            desc = str(meta.get("description", ""))
+            scope = _normalize_scope(meta.get("scope"))
+            # Relative to the HOME the tree lives in (``root.parent`` is
+            # ``skills/``), so both trees report the checkout shape —
+            # ``./skills/builtin/...`` / ``./skills/auto/...`` /
+            # ``./skills/plugins/...`` — and every reader keeps working
+            # unchanged (``config.resolve_app_path`` maps it back).
+            rel = skill_file.relative_to(root.parent)
+            location = f"./{rel.as_posix()}"
+
+            if _is_third_party(location):
+                # Uploaded third-party skills default to inactive unless the state
+                # file explicitly marks them active.
+                active = bool(state.get(name, {}).get("active", False))
+            else:
+                # Builtin / auto skills are always active.
+                active = True
+
+            skills.append(
+                {
+                    "name": name,
+                    "description": desc,
+                    "location": location,
+                    "scope": scope,
+                    "active": active,
+                }
             )
-            continue
-        if skill_file in seen_paths:
-            continue
-        seen_paths.add(skill_file)
-
-        content = skill_file.read_text(encoding="utf-8")
-        meta = parse_frontmatter(content)
-        name = str(meta.get("name", skill_file.parent.name))
-        desc = str(meta.get("description", ""))
-        scope = _normalize_scope(meta.get("scope"))
-        rel = skill_file.relative_to(ROOT_DIR)
-        location = f"./{rel.as_posix()}"
-
-        if _is_third_party(location):
-            # Uploaded third-party skills default to inactive unless the state
-            # file explicitly marks them active.
-            active = bool(state.get(name, {}).get("active", False))
-        else:
-            # Builtin / auto skills are always active.
-            active = True
-
-        skills.append(
-            {
-                "name": name,
-                "description": desc,
-                "location": location,
-                "scope": scope,
-                "active": active,
-            }
-        )
 
     hidden = _feature_off_skill_names()
     if hidden:

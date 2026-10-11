@@ -396,6 +396,15 @@ pnpm tauri dev    # native desktop mode
 
 The client connects to the Python backend at `http://127.0.0.1:8080` by default (configurable via `VITE_API_BACK_URL` in `client/.env`). See the [client README](client/README.md) for details.
 
+**Packaging the desktop app** (`pnpm tauri build`) bundles the backend into the installer, so the target machine needs no Python, no venv and no checkout:
+
+```bash
+uv run --with pyinstaller python packaging/build_backend.py   # backend → client/src-tauri/sherry-backend/
+cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
+```
+
+Both steps are per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` — into the OS app-data directory (`SHERRY_HOME`, set by the shell), never into the read-only install tree. First run has no model configured yet: the window opens, 模型配置 writes the keys, and the next launch picks them up.
+
 ---
 
 ## 🧪 Testing

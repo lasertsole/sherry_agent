@@ -56,8 +56,14 @@ def skills_tree(tmp_path, monkeypatch):
     _write_skill(root, "skills/plugins/uploaded_two", "uploaded_two")
 
     monkeypatch.setattr(loader_mod, "SKILLS_DIR", root / "skills")
-    monkeypatch.setattr(loader_mod, "ROOT_DIR", root)
+    # One root: the shipped tree IS the user tree in a checkout (a packaged build
+    # points USER_SKILLS_DIR at the app-data dir; that split is exercised by
+    # tests/config/test_config_path.py).
+    monkeypatch.setattr(loader_mod, "USER_SKILLS_DIR", root / "skills")
     monkeypatch.setattr(loader_mod, "SKILLS_STATE_FILE", root / "skills_state.json")
+    # The scan is cache-first: without this the REAL snapshot short-circuits the
+    # fake tree and the tests would assert against the shipped skills.
+    monkeypatch.setattr(loader_mod, "SKILLS_SNAPSHOT_FILE", root / "skills_snapshot.json")
     return root
 
 
@@ -280,7 +286,9 @@ class TestScanSkillsBehavior:
 
 class TestReadSkillsSnapshot:
     def test_missing_file_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.setattr(loader_mod, "SKILLS_DIR", tmp_path / "skills")
+        monkeypatch.setattr(
+            loader_mod, "SKILLS_SNAPSHOT_FILE", tmp_path / "skills" / "skills_snapshot.json"
+        )
         assert loader_mod.read_skills_snapshot() is None
 
     def test_existing_file_returns_content(self, tmp_path, monkeypatch):
@@ -288,6 +296,7 @@ class TestReadSkillsSnapshot:
         skills_dir.mkdir(parents=True)
         payload = [{"name": "alpha", "location": "./skills/builtin/alpha/SKILL.md"}]
         (skills_dir / "skills_snapshot.json").write_text(json.dumps(payload), encoding="utf-8")
+        monkeypatch.setattr(loader_mod, "SKILLS_SNAPSHOT_FILE", skills_dir / "skills_snapshot.json")
         monkeypatch.setattr(loader_mod, "SKILLS_DIR", skills_dir)
 
         assert loader_mod.read_skills_snapshot() == payload
@@ -303,8 +312,9 @@ class TestAllowedSkillRoots:
         root = tmp_path / "repo"
         root.mkdir()
         monkeypatch.setattr(loader_mod, "SKILLS_DIR", root / "skills")
-        monkeypatch.setattr(loader_mod, "ROOT_DIR", root)
+        monkeypatch.setattr(loader_mod, "USER_SKILLS_DIR", root / "skills")
         monkeypatch.setattr(loader_mod, "SKILLS_STATE_FILE", root / "skills_state.json")
+        monkeypatch.setattr(loader_mod, "SKILLS_SNAPSHOT_FILE", root / "skills_snapshot.json")
         return root
 
     def test_allowed_roots_discovered(self, tmp_path, monkeypatch):

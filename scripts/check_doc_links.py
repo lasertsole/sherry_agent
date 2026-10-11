@@ -72,8 +72,15 @@ SKIP_DIRS = frozenset(
     }
 )
 # Generated/ignored trees that are absent on a clean checkout; skipped so a
-# local run and a CI run scan exactly the same file set.
-SKIP_PATHS = ("evals/results",)
+# local run and a CI run scan exactly the same file set. The desktop bundle (and
+# its copy cargo stages under target/) mirrors the repo's Markdown — vendored
+# package docs, the skills tree — and is never first-party documentation.
+SKIP_PATHS = (
+    "evals/results",
+    "build",
+    "client/src-tauri/sherry-backend",
+    "client/src-tauri/target",
+)
 
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*$")

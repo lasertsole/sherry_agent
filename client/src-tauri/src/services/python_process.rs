@@ -1,13 +1,37 @@
 //! Python backend process lifecycle manager.
 //!
-//! Optionally spawns the Python backend (`python -m server`) as a child
-//! process when the Tauri app starts, and kills it on exit.
+//! Spawns the backend as a child process when the Tauri app starts and kills it
+//! on exit. Two launch shapes:
+//!
+//! * **Packaged** — `<resource_dir>/sherry-backend/sherry-backend`, the
+//!   PyInstaller
+//!   build shipped inside the bundle. A packaged app ALWAYS starts this one: the
+//!   machine has no checkout, no venv and no `python` to fall back to.
+//! * **Checkout** — `python -m server` from the project root. Kept for
+//!   `pnpm tauri dev` and for an unpacked build next to the source tree; it is
+//!   used when the packaged binary is absent or `EMA_AUTO_START_BACKEND` asks
+//!   for it explicitly.
+//!
+//! Either way the child gets `SHERRY_HOME` pointing at the app-data directory:
+//! the backend keeps sessions, memory, logs, skills and its `.env` there
+//! (`config/path.py`), because the bundle itself is read-only and gets replaced
+//! by the next update.
 //!
 //! This module uses `std::process::Command` directly — it does not
 //! require the tauri-plugin-shell frontend API.
 
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Mutex;
+
+/// Which command starts the backend.
+#[derive(Debug, Clone)]
+pub enum BackendCommand {
+    /// The bundled PyInstaller executable (absolute path).
+    Packaged(PathBuf),
+    /// `python -m server`, run from the checkout.
+    Checkout { python: String, root: PathBuf },
+}
 
 /// Manages the Python backend subprocess.
 ///
@@ -15,26 +39,46 @@ use std::sync::Mutex;
 /// killed automatically when the manager is dropped.
 pub struct PythonProcessManager {
     child: Mutex<Option<Child>>,
-    /// Path to the project root (parent of `server/`).
-    project_root: String,
+    command: BackendCommand,
+    /// Directory the child runs in AND the value exported as `SHERRY_HOME`.
+    app_home: PathBuf,
 }
 
 impl PythonProcessManager {
     /// Create a new manager.
     ///
-    /// `project_root` should be the absolute path to the EMA_AI_agent
-    /// project root (the directory containing `server/__main__.py`).
-    pub fn new(project_root: String) -> Self {
+    /// `app_home` is the writable app-data directory: it becomes the child's
+    /// working directory and its `SHERRY_HOME` (so the backend writes sessions,
+    /// memory, logs, skills and `.env` there instead of into the bundle).
+    pub fn new(command: BackendCommand, app_home: PathBuf) -> Self {
         Self {
             child: Mutex::new(None),
-            project_root,
+            command,
+            app_home,
         }
     }
 
-    /// Spawn the Python backend process.
+    /// Whether this manager runs the bundled backend (vs the checkout one).
+    pub fn is_packaged(&self) -> bool {
+        matches!(self.command, BackendCommand::Packaged(_))
+    }
+
+    /// The packaged backend's path, when the bundle ships one.
     ///
-    /// Runs `python -m server` from the project root directory.
-    /// If a process is already running, this is a no-op.
+    /// `resource_dir` is Tauri's resource root; the bundle config maps the
+    /// PyInstaller output there as `sherry-backend/` (the onedir layout keeps
+    /// the executable inside a directory of the same name).
+    pub fn packaged_backend(resource_dir: &Path) -> Option<PathBuf> {
+        let exe = if cfg!(windows) {
+            "sherry-backend.exe"
+        } else {
+            "sherry-backend"
+        };
+        let candidate = resource_dir.join("sherry-backend").join(exe);
+        candidate.is_file().then_some(candidate)
+    }
+
+    /// Spawn the backend process. A second call while one is alive is a no-op.
     ///
     /// Returns `Ok(true)` if a new process was spawned,
     /// `Ok(false)` if one was already running.
@@ -57,17 +101,42 @@ impl PythonProcessManager {
             }
         }
 
-        // Spawn new process
-        tracing::info!(
-            project_root = %self.project_root,
-            "Spawning Python backend: python -m server"
-        );
+        // The backend creates its tree lazily, but the home itself must exist
+        // before the child starts writing into it.
+        if let Err(e) = std::fs::create_dir_all(&self.app_home) {
+            return Err(format!(
+                "Failed to create the app-data directory {}: {e}",
+                self.app_home.display()
+            ));
+        }
 
-        let child = Command::new("python")
-            .args(["-m", "server"])
-            .current_dir(&self.project_root)
+        let mut command = match &self.command {
+            BackendCommand::Packaged(exe) => {
+                tracing::info!(exe = %exe.display(), home = %self.app_home.display(), "Spawning bundled Python backend");
+                Command::new(exe)
+            }
+            BackendCommand::Checkout { python, root } => {
+                tracing::info!(python, root = %root.display(), home = %self.app_home.display(), "Spawning checkout Python backend: python -m server");
+                let mut c = Command::new(python);
+                c.args(["-m", "server"]);
+                c
+            }
+        };
+
+        // The writable root for everything the backend persists. `current_dir`
+        // is the same place so a relative path inside the backend can never
+        // resolve into the read-only bundle.
+        command
+            .env("SHERRY_HOME", &self.app_home)
+            // Tells the backend it is the packaged desktop app: it then serves
+            // even before a model is configured (first run), because refusing
+            // would leave a window nobody can configure.
+            .env("SHERRY_DESKTOP", "1")
+            .current_dir(&self.app_home)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+
+        let child = command
             .spawn()
             .map_err(|e| format!("Failed to spawn Python backend: {e}"))?;
 
@@ -113,21 +182,28 @@ impl Drop for PythonProcessManager {
 mod tests {
     use super::*;
 
+    fn checkout(root: &str) -> BackendCommand {
+        BackendCommand::Checkout {
+            python: "python".into(),
+            root: PathBuf::from(root),
+        }
+    }
+
     #[test]
     fn manager_starts_with_no_child() {
-        let mgr = PythonProcessManager::new("/tmp".into());
+        let mgr = PythonProcessManager::new(checkout("/tmp"), PathBuf::from("/tmp"));
         assert!(!mgr.is_running());
     }
 
     #[test]
     fn stop_on_empty_manager_is_safe() {
-        let mgr = PythonProcessManager::new("/tmp".into());
+        let mgr = PythonProcessManager::new(checkout("/tmp"), PathBuf::from("/tmp"));
         mgr.stop(); // Should not panic
     }
 
     #[test]
     fn start_with_invalid_path_returns_error() {
-        let mgr = PythonProcessManager::new("/nonexistent/path".into());
+        let mgr = PythonProcessManager::new(checkout("/nonexistent/path"), PathBuf::from("/tmp"));
         // python -m server will fail because the module doesn't exist there
         let result = mgr.start();
         // Either the spawn itself fails, or the process exits quickly.
@@ -137,5 +213,39 @@ mod tests {
             Err(msg) => assert!(msg.contains("Failed to spawn")),
         }
         mgr.stop();
+    }
+
+    #[test]
+    fn packaged_backend_is_found_only_when_it_exists() {
+        let tmp = std::env::temp_dir().join(format!("sherry-backend-probe-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let backend_dir = tmp.join("sherry-backend");
+        std::fs::create_dir_all(&backend_dir).unwrap();
+        assert!(PythonProcessManager::packaged_backend(&tmp).is_none());
+
+        let exe = if cfg!(windows) {
+            "sherry-backend.exe"
+        } else {
+            "sherry-backend"
+        };
+        std::fs::write(backend_dir.join(exe), b"#!/bin/sh\n").unwrap();
+
+        assert_eq!(
+            PythonProcessManager::packaged_backend(&tmp),
+            Some(backend_dir.join(exe))
+        );
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn the_child_is_pointed_at_the_app_home() {
+        // The writable root travels as SHERRY_HOME and as the working
+        // directory, so nothing the backend writes lands in the bundle.
+        let home = std::env::temp_dir().join("sherry-home-probe");
+        let mgr = PythonProcessManager::new(checkout("/tmp"), home.clone());
+        assert_eq!(mgr.app_home, home);
+        // start() is the only place that touches the filesystem; the manager
+        // itself must not create anything at construction time.
+        assert!(!mgr.is_running());
     }
 }

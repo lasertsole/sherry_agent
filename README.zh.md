@@ -396,6 +396,15 @@ pnpm tauri dev    # 原生桌面模式
 
 客户端默认连接 `http://127.0.0.1:8080` 的 Python 后端（可通过 `client/.env` 中的 `VITE_API_BACK_URL` 配置）。详见[客户端 README](client/README.md)。
 
+**打包桌面应用**（`pnpm tauri build`）会把后端一并打进安装包，目标机器不需要 Python、虚拟环境或源码：
+
+```bash
+uv run --with pyinstaller python packaging/build_backend.py   # 后端 → client/src-tauri/sherry-backend/
+cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
+```
+
+两步都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env`——写进系统的应用数据目录（`SHERRY_HOME`，由外壳注入），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
+
 ---
 
 ## 🧪 测试

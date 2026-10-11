@@ -1,10 +1,13 @@
 """Unit tests for config/path.py — path constants and resolution."""
 
+import os
+import subprocess
 import sys
 from pathlib import Path
 
-
 import pytest
+
+ROOT = Path(__file__).resolve().parents[2]
 
 pytestmark = [pytest.mark.unit]
 
@@ -196,3 +199,72 @@ class TestTemplateLangResolution:
         monkeypatch.setattr("config.path.DEFAULT_WORKSPACE_TEMPLATE_LANG", "zh")
         monkeypatch.setattr("config.path.WORKSPACE_TEMPLATE_DIR", tmp_path)
         assert resolve_workspace_template_dir("fr") == tmp_path / "zh"
+
+
+class TestAppHome:
+    """``SHERRY_HOME`` moves every writable path; unset keeps the old layout.
+
+    The constants are computed at import time, so both cases run in a
+    SUBPROCESS — importing ``config`` in-process would only ever exercise the
+    interpreter's own environment.
+    """
+
+    def _run(self, env_home: str | None, expression: str) -> str:
+        env = dict(os.environ)
+        env.pop("SHERRY_HOME", None)
+        if env_home is not None:
+            env["SHERRY_HOME"] = env_home
+        out = subprocess.run(
+            [sys.executable, "-c", expression],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=True,
+        )
+        return out.stdout.strip()
+
+    def test_unset_app_home_is_the_code_root(self):
+        out = self._run(
+            None,
+            "from config.path import APP_HOME, ROOT_DIR; print(APP_HOME == ROOT_DIR)",
+        )
+        assert out == "True"
+
+    def test_set_app_home_moves_the_writable_tree(self, tmp_path):
+        home = tmp_path / "home"
+        out = self._run(
+            str(home),
+            "from config.path import (APP_HOME, ENV_PATH, LOG_DIR, SRC_DIR, "
+            "USER_SKILLS_DIR, WORKSPACE_DIR, app_relative); "
+            "print(APP_HOME); print(ENV_PATH.parent); print(WORKSPACE_DIR.parent); "
+            "print(SRC_DIR.parent); print(LOG_DIR.parents[1]); print(USER_SKILLS_DIR.parent); "
+            "print(app_relative(USER_SKILLS_DIR / 'auto'))",
+        )
+        lines = out.splitlines()
+        assert all(line == str(home) for line in lines[:6]), out
+        # Locations keep the CHECKOUT shape whichever home they live in.
+        assert lines[6] == "skills/auto"
+
+    def test_first_run_seeds_env_and_sherry_jsonc(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        out = self._run(
+            str(home),
+            "from config.path import ENV_PATH; import config.sherry_settings as s; "
+            "print(ENV_PATH.read_text(encoding='utf-8') != ''); "
+            "print(s.SHERRY_CONFIG_PATH.read_text(encoding='utf-8') != '')",
+        )
+        assert out.splitlines() == ["True", "True"]
+        assert (home / ".env").is_file() and (home / "sherry.jsonc").is_file()
+
+    def test_the_skills_loader_scans_both_roots(self, tmp_path):
+        home = tmp_path / "home"
+        out = self._run(
+            str(home),
+            "from config.path import skills_loader_roots, SKILLS_DIR, USER_SKILLS_DIR; "
+            "print(len(skills_loader_roots())); print(SKILLS_DIR in skills_loader_roots()); "
+            "print(USER_SKILLS_DIR in skills_loader_roots())",
+        )
+        assert out.splitlines() == ["2", "True", "True"]

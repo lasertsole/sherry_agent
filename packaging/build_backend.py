@@ -1,0 +1,137 @@
+"""Build the bundled desktop backend (PyInstaller onedir) into the Tauri tree.
+
+    uv run --with pyinstaller python packaging/build_backend.py
+
+Writes ``client/src-tauri/sherry-backend/sherry-backend`` (the executable + its
+``_internal`` tree + the shipped data files). ``tauri build`` copies that
+directory into the app bundle as the ``backend`` resource, and the Rust shell
+spawns it (see ``client/src-tauri/src/services/python_process.rs``).
+
+ONEDIR on purpose: the dependency tree is measured in gigabytes, so a onefile
+build would unpack it on every launch.
+
+Per-OS by construction — PyInstaller cannot cross-compile: run this on each
+target (Linux/Windows/macOS) right before ``tauri build`` there.
+"""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+DIST_DIR = ROOT / "client" / "src-tauri"
+APP_DIR = DIST_DIR / "sherry-backend"
+WORK_DIR = ROOT / "build" / "pyinstaller"
+
+#: Ship data the backend reads from the code tree (the rest of the runtime tree
+#: is user data and lives in SHERRY_HOME). ``source:dest`` pairs, relative to the
+#: repo root; dest paths are where the loader/dir config expects them —
+#: ``skills/builtin`` and ``workspace/template`` are read by ``config/path``
+#: (ROOT_DIR = the bundle root), so the bundle must mirror the checkout layout.
+DATA = (
+    ("skills", "skills"),  # builtin playbooks (auto/plugins live in APP_HOME)
+    ("workspace/template", "workspace/template"),  # persona seeds for first run
+    ("plugins", "plugins"),  # channel adapters
+    ("sherry.jsonc", "sherry.jsonc"),
+    (".env.example", ".env.example"),
+    ("context_engine", "context_engine"),  # read by path, not imported
+)
+
+#: Packages whose data files PyInstaller's built-in hooks miss.
+COLLECT_ALL = ("robyn", "sniffio", "httpx", "websockets")
+
+#: OUR packages, collected whole. They resolve parts of themselves through
+#: ``importlib.import_module`` (``models/__init__`` and ``models/LLMs/__init__``
+#: expose lazy attributes that way, and the tool packages build tools lazily), so
+#: the freezer cannot see every module from the entry point alone — the first
+#: frozen runs died on ``No module named 'models.LLMs.auxiliary_llm'``.
+COLLECT_SUBMODULES = (
+    "agent",
+    "bus",
+    "channels",
+    "config",
+    "context_engine",
+    "logs",
+    "models",
+    "plugins",
+    "pub",
+    "runtime",
+    "server",
+    "skills",
+    "workspace",
+)
+
+#: Static analysers that only a subagent feature needs; excluding them keeps the
+#: bundle from dragging every tree-sitter grammar's sources in twice.
+EXCLUDES = ("tkinter", "matplotlib", "IPython", "jupyter", "pytest", "pandas.tests")
+
+
+def main() -> int:
+    # The directory is a generated artifact: wipe it (PyInstaller's --noconfirm
+    # removes it anyway) and re-copy the tracked README afterwards — the doc's
+    # home is this directory's README.md, next to the scripts it documents.
+    if APP_DIR.is_symlink():
+        print(f"refusing: {APP_DIR} is a symlink", file=sys.stderr)
+        return 1
+    if APP_DIR.exists():
+        shutil.rmtree(APP_DIR)
+    DIST_DIR.mkdir(parents=True, exist_ok=True)
+
+    # A symlinked resource target is a data-loss trap: ``tauri-build``'s
+    # build-time resource copy truncates each destination before reading its
+    # source, so ``target/release/sherry-backend -> here`` makes it empty this
+    # tree file by file (observed once: 7,634 zero-byte files).
+    stale_link = DIST_DIR / "target" / "release" / "sherry-backend"
+    if stale_link.is_symlink():
+        stale_link.unlink()
+        print(f"removed stale symlink {stale_link} — it would truncate the tree")
+
+    args: list[str] = [
+        sys.executable,
+        "-m",
+        "PyInstaller",
+        "--noconfirm",
+        "--clean",
+        "--onedir",
+        "--name",
+        "sherry-backend",
+        "--distpath",
+        str(DIST_DIR),
+        "--workpath",
+        str(WORK_DIR),
+        "--specpath",
+        str(WORK_DIR),
+        "--log-level",
+        "WARN",
+    ]
+    for source, dest in DATA:
+        args += ["--add-data", f"{ROOT / source}{__import__('os').pathsep}{dest}"]
+    for package in COLLECT_ALL:
+        args += ["--collect-all", package]
+    for package in COLLECT_SUBMODULES:
+        args += ["--collect-submodules", package]
+    for module in EXCLUDES:
+        args += ["--exclude-module", module]
+    args.append(str(ROOT / "packaging" / "backend_entry.py"))
+
+    print("building:", " ".join(args[:12]), "…")
+    result = subprocess.run(args, cwd=ROOT, check=False)
+    if result.returncode != 0:
+        return result.returncode
+
+    exe = APP_DIR / ("sherry-backend.exe" if sys.platform == "win32" else "sherry-backend")
+    if not exe.is_file():
+        print(f"expected the executable at {exe}", file=sys.stderr)
+        return 1
+    # Ship the doc with the artifact (PyInstaller wiped the directory).
+    shutil.copy2(ROOT / "packaging" / "README.md", APP_DIR / "README.md")
+    total = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file())
+    print(f"ok: {exe} ({total / (1024**3):.2f} GiB)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

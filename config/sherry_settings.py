@@ -20,12 +20,26 @@ default so the application always boots.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
 import json5
 
-SHERRY_CONFIG_PATH = Path(__file__).resolve().parents[1] / "sherry.jsonc"
+_CODE_ROOT = Path(__file__).resolve().parents[1]
+_APP_HOME_RAW = os.environ.get("SHERRY_HOME", "").strip()
+APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _CODE_ROOT
+
+SHERRY_CONFIG_PATH = APP_HOME / "sherry.jsonc"
+if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
+    # Seed the editable copy from the shipped file so the 应用配置 panel has the
+    # full key list (comments included) to write into.
+    template = _CODE_ROOT / "sherry.jsonc"
+    if template.exists():
+        try:
+            SHERRY_CONFIG_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
 
 # Single source of truth for accepted keys and their typed defaults. Nested
 # objects in sherry.jsonc are addressed with dotted paths ("GROUP.KEY").

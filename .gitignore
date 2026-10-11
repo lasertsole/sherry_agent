@@ -85,3 +85,8 @@ client/repros/
 .coverage
 .coverage.*
 htmlcov/
+
+# Packaged desktop backend (PyInstaller onedir) + its work dir — built per OS,
+# never committed (the tracked doc lives in packaging/README.md).
+/client/src-tauri/sherry-backend/
+/build/

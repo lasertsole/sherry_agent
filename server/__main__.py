@@ -41,7 +41,8 @@ else:
     )
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """Boot and serve (the packaged desktop entry calls this too)."""
     # Provider registry injection: config.schema must not import models, so the
     # registry (self-registering on import) is pulled in explicitly here as a
     # boot guarantee. Idempotent — import of models.providers already registers.
@@ -96,12 +97,28 @@ if __name__ == "__main__":
     _main_val = int(_main_raw) if _main_raw else None
     _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_tokens"]
 
+    # The DESKTOP app (the Tauri shell sets SHERRY_DESKTOP=1) ships with an
+    # empty configuration on purpose: the user's first run has no API keys yet,
+    # so refusing to serve would leave a window that can never be configured.
+    # An UNCONFIGURED model serves + warns (the 模型配置 panel writes the .env,
+    # and the next launch picks it up); a CONFIGURED-but-invalid one still
+    # aborts, exactly like a server.
+    _unconfigured = _main_val is None and not _aux_raw
+    _desktop = os.getenv("SHERRY_DESKTOP", "").strip().lower() in {"1", "true", "yes", "on"}
     try:
         assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
         assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
     except Exception as e:
-        logger.critical("STARTUP ABORTED: {}", e)
-        raise SystemExit(1) from e
+        if _desktop and _unconfigured:
+            logger.warning(
+                "Desktop first run: no model configured yet — serving so the UI can "
+                "open 模型配置. Chat turns fail with a configuration error until an "
+                "LLM is set up, and the backend must be restarted afterwards. ({})",
+                e,
+            )
+        else:
+            logger.critical("STARTUP ABORTED: {}", e)
+            raise SystemExit(1) from e
 
     # Explicit agent-core initialization: skills snapshot + memory store +
     # main tools. Moved out of agent.core import time so tests/tooling can
@@ -254,3 +271,7 @@ if __name__ == "__main__":
     app.serve_directory(route="/video", directory_path=os.path.join(os.getcwd(), str(video_dir)))
 
     app.start(host=API_HOST, port=API_PORT)
+
+
+if __name__ == "__main__":
+    main()

@@ -396,6 +396,15 @@ pnpm tauri dev    # ネイティブデスクトップモード
 
 クライアントはデフォルトで `http://127.0.0.1:8080` の Python バックエンドに接続します（`client/.env` の `VITE_API_BACK_URL` で変更可能）。詳細は[クライアント README](client/README.md) を参照。
 
+**デスクトップアプリのパッケージング**（`pnpm tauri build`）はバックエンドもインストーラーに同梱するため、配布先に Python も仮想環境もソースも不要です：
+
+```bash
+uv run --with pyinstaller python packaging/build_backend.py   # バックエンド → client/src-tauri/sherry-backend/
+cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
+```
+
+どちらも対象 OS ごとに実行が必要です（PyInstaller はクロスコンパイル不可）。アプリが所有するデータ——セッション、メモリ、ログ、学習したスキル、`.env`——は OS のアプリデータディレクトリ（`SHERRY_HOME`、シェルが注入）に書き込まれ、読み取り専用のインストール先には書き込みません。初回起動ではモデル未設定のままウィンドウが開き、「モデル設定」でキーを入力して再起動すると有効になります。
+
 ---
 
 ## 🧪 テスト

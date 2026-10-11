@@ -12,7 +12,28 @@ ROOT_DIR = Path(__file__).parent
 ROOT_DIR = ROOT_DIR / ".."
 ROOT_DIR = ROOT_DIR.resolve()
 
-ENV_PATH = ROOT_DIR / ".env"
+#: The WRITABLE app-data root. Unset (a checkout, a server, CI) keeps every
+#: directory below exactly where it always was — ``ROOT_DIR`` — so nothing
+#: changes for existing installs. A PACKAGED desktop build sets it (the Tauri
+#: shell points it at the OS app-data dir) because the code tree ships
+#: read-only: sessions, memory, uploads, logs and the ``.env`` must live
+#: somewhere the user can write, and must survive an app update.
+APP_HOME = (
+    Path(os.environ.get("SHERRY_HOME", "")).expanduser().resolve()
+    if os.environ.get("SHERRY_HOME", "").strip()
+    else ROOT_DIR
+)
+
+ENV_PATH = APP_HOME / ".env"
+if APP_HOME != ROOT_DIR and not ENV_PATH.exists():
+    # Seed the editable copy from the shipped template so the 模型配置 panel
+    # has the full key list to write into (secrets stay empty).
+    template = ROOT_DIR / ".env.example"
+    if template.exists():
+        try:
+            ENV_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
+        except OSError:
+            pass
 # Load environment variables early so the workspace template language below is
 # read from the .env file (idempotent; existing environment variables win).
 load_dotenv(ENV_PATH, override=False)
@@ -28,12 +49,12 @@ INTERPRETER_PATH = Path(sys.executable)
 CONTEXT_ENGINE_PATH = ROOT_DIR / "context_engine"
 PLUGINS_PATH = ROOT_DIR / "plugins"
 
-SRC_DIR = ROOT_DIR / "src"
-STATIC_DIR = ROOT_DIR / "static"
-TEMP_DIR = ROOT_DIR / "temp"
+SRC_DIR = APP_HOME / "src"
+STATIC_DIR = APP_HOME / "static"
+TEMP_DIR = APP_HOME / "temp"
 
-MODELS_DIR = ROOT_DIR / "models"
-WORKSPACE_DIR = ROOT_DIR / "workspace"
+MODELS_DIR = APP_HOME / "models"
+WORKSPACE_DIR = APP_HOME / "workspace"
 WORKSPACE_TEMPLATE_DIR = WORKSPACE_DIR / "template"
 KNOWLEDGE_DIR = WORKSPACE_DIR / "knowledge"
 # Plan-extraction knowledge namespace (Tier-1 prompt injection + Tier-2 tool
@@ -48,10 +69,18 @@ HEARTBEAT_TEMPLATE_PATH = WORKSPACE_TEMPLATE_DIR / "HEARTBEAT.md"
 # Session-scoped working tree: each session owns {session_id}/ under the
 # workspace (future home of {session_id}/plans/), keeping persona data in one root.
 SESSIONS_DIR = WORKSPACE_DIR / "sessions"
+#: Shipped skills (read-only in a packaged build).
 SKILLS_DIR = ROOT_DIR / "skills"
-AUTO_SKILLS_DIR = SKILLS_DIR / "auto/"
-PLUGIN_SKILLS_DIR = SKILLS_DIR / "plugins"
+#: Where the agent WRITES skills (curator / uploads / enable-state). In a
+#: checkout this IS ``SKILLS_DIR``; a packaged build points it into APP_HOME so
+#: learned and uploaded skills persist across updates. The loader scans BOTH
+#: roots (``skills_loader_roots()``).
+USER_SKILLS_DIR = APP_HOME / "skills"
+AUTO_SKILLS_DIR = USER_SKILLS_DIR / "auto/"
+PLUGIN_SKILLS_DIR = USER_SKILLS_DIR / "plugins"
 SKILLS_STATE_FILE = PLUGIN_SKILLS_DIR / ".state.json"
+#: Loader cache (written on every scan) — writable by definition.
+SKILLS_SNAPSHOT_FILE = USER_SKILLS_DIR / "skills_snapshot.json"
 # A SKILL.md is only discoverable when it lives under one of these top-level
 # roots beneath SKILLS_DIR. A SKILL.md directly under skills/ or under an
 # unexpected subdirectory is ignored by the loader and the skill index.
@@ -64,7 +93,54 @@ KNOWLEDGE_INDEX_DIR = KNOWLEDGE_DIR / "index"
 # Code intelligence symbol index (subagent-only tree-sitter tooling). The
 # directory is gitignored like .codegraph/; the SQLite file inside is created
 # lazily on first index build.
-CODE_INTEL_DIR = ROOT_DIR / ".codeintel"
+CODE_INTEL_DIR = APP_HOME / ".codeintel"
+
+#: Log tree (per-type sub-directories live under it).
+LOG_DIR = APP_HOME / "logs" / "output"
+
+
+def app_relative(path: Path) -> Path:
+    """The path relative to whichever home owns it (APP_HOME or ROOT_DIR).
+
+    User data lives under APP_HOME in a packaged build and under ROOT_DIR in a
+    checkout, so a caller that wants a short display path must not assume one
+    root: this returns the first relationship that holds, and the path itself
+    when neither does (a caller must never crash on a display string).
+    """
+    for home in (APP_HOME, ROOT_DIR):
+        try:
+            return path.relative_to(home)
+        except ValueError:
+            continue
+    return path
+
+
+def resolve_app_path(relative: str | Path) -> Path:
+    """Map an app-relative path (the shape the skills loader reports) to a file.
+
+    Both skill trees report the CHECKOUT shape (``skills/auto/…``) no matter
+    which home they live in, so a reader asks here: the file under APP_HOME
+    wins when it exists, else the shipped one under ROOT_DIR. In a checkout the
+    two are the same tree and this is a plain join.
+    """
+    rel = Path(str(relative).lstrip("./"))
+    candidate = APP_HOME / rel
+    if candidate.exists():
+        return candidate
+    return ROOT_DIR / rel
+
+
+def skills_loader_roots() -> tuple[Path, ...]:
+    """Every root the skill loader scans, deduplicated.
+
+    A checkout has one root; a packaged build has two — the shipped ``builtin``
+    tree (read-only) and the writable ``auto`` / ``plugins`` tree under
+    APP_HOME.
+    """
+    if USER_SKILLS_DIR == SKILLS_DIR:
+        return (SKILLS_DIR,)
+    return (SKILLS_DIR, USER_SKILLS_DIR)
+
 
 # i18n workspace templates (locale code -> subdirectory under WORKSPACE_TEMPLATE_DIR).
 # Kept in sync with the client locales: en (default), zh, ja, ko.

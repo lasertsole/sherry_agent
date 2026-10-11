@@ -95,6 +95,15 @@ SKIP_DIRS = frozenset(
     }
 )
 
+# Generated/ignored trees that are absent on a clean checkout; skipped so a
+# local run and a CI run discover exactly the same groups (the desktop bundle
+# and its copy cargo stages under target/ mirror the repo's README sets).
+SKIP_PATHS = (
+    "build",
+    "client/src-tauri/sherry-backend",
+    "client/src-tauri/target",
+)
+
 # Section-ratio band. Documents are cut at every heading line (fenced code
 # excluded from the counted body) and matching sections are compared by
 # stripped character count against English. A section fails when:
@@ -410,7 +419,11 @@ def discover_groups(root: Path) -> list[Path]:
     """Return every directory holding all four README language variants."""
     groups: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
+        relative = Path(dirpath).relative_to(root).as_posix()
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        if relative != "." and relative.startswith(SKIP_PATHS):
+            dirnames[:] = []
+            continue
         path = Path(dirpath)
         files = set(filenames)
         if REFERENCE in files and all(name in files for name in TRANSLATIONS):

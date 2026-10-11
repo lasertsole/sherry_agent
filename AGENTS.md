@@ -307,6 +307,50 @@ session shows no control at all (nothing to press, no empty picker) — and the
 persisted sidebar body falls back to the session list whenever the button goes
 away (last session closed, binding cleared).
 
+## Packaged Desktop App (Tauri) (`client/src-tauri/`)
+
+`pnpm tauri build` (client/) produces the installer: a static SPA plus a bundled
+Python backend that the Rust shell starts for you.
+
+- **Frontend**: `nuxt generate` (`pnpm build:desktop`) writes `.output/public`
+  — the `frontendDist` a bundled app can serve from disk (the `nuxt build`
+  output needs a Nitro server and is NOT it).
+- **Backend**: `packaging/build_backend.py` runs PyInstaller **onedir** into
+  `client/src-tauri/sherry-backend/`, shipped as the `sherry-backend` bundle
+  resource (per-OS build; PyInstaller cannot cross-compile). The entry
+  (`packaging/backend_entry.py`) imports `server.__main__` STATICALLY and calls
+  its `main()` — a `runpy.run_module` is invisible to the freezer, which is how
+  the first build shipped without the `server` package at all.
+- **Which backend runs**: `python_process.rs` spawns
+  `<resource_dir>/sherry-backend/sherry-backend` when present (a packaged app
+  ALWAYS starts it — there is no python to fall back to), else `python -m
+  server` from the checkout (the `pnpm tauri dev` path, opt-in through
+  `EMA_AUTO_START_BACKEND`).
+- **Never symlink the resource dir**: `tauri-build` copies `bundle.resources`
+  into `target/release/` at BUILD time with `std::fs::copy`, which truncates
+  the destination before reading the source — a `target/release/sherry-backend`
+  symlink pointing back at the source makes that copy empty every file
+  (observed: 7,634 zero-byte files in one build, and the bundler then shipped
+  an empty payload; `tauri-build`'s same-file guard only compares a
+  canonicalized source against a joined target string, so it does not catch
+  it). `packaging/build_backend.py` removes such a symlink before building; an
+  installed `/usr/lib/<product>/sherry-backend` symlink has the same hazard.
+- **`SHERRY_HOME` is the writable root** (`config/path.py`): the shell sets it
+  to the OS app-data dir, and every writable path derives from it — `src/`,
+  `workspace/` (sessions, memory), `temp/`, `logs/`, `models/`, `.codeintel/`,
+  `.env`, `sherry.jsonc`, and the WRITABLE half of the skills tree
+  (`USER_SKILLS_DIR`, i.e. `auto/` + `plugins/`, with the loader scanning both
+  it and the shipped `skills/builtin`). Unset (a checkout, a server, CI) every
+  path stays exactly where it was, so nothing changes for existing installs; a
+  first run seeds `.env` / `sherry.jsonc` from the shipped templates. Locations
+  reported to the UI keep the CHECKOUT shape (`./skills/auto/…`) whichever home
+  they live in (`app_relative` / `resolve_app_path` map between the two).
+- **First run without a model**: the boot's 128K token gate aborts a SERVER,
+  but `SHERRY_DESKTOP=1` (set by the shell) lets an UNCONFIGURED desktop app
+  serve anyway, so the window can open and 模型配置 can write the `.env`; a
+  CONFIGURED-but-invalid value still aborts. The backend must be restarted
+  (relaunch the app) after configuring — the runtime reads the file at boot.
+
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
 The 预设角色 panel (the 菜单 entry renamed from 预设; it leads the nine-grid, and the right

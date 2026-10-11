@@ -12,7 +12,7 @@ from pydantic import BaseModel, Field
 from typing import Literal, Any
 from typing import override
 from langchain_core.tools import BaseTool
-from config import AUTO_SKILLS_DIR, ROOT_DIR
+from config import AUTO_SKILLS_DIR, app_relative
 from config.features import TOOLS_TIMEOUTS
 from agent.tools.pub_base import fuzzy_find_and_replace, format_no_match_hint
 from pub.func import atomic_replace, has_traversal_component, validate_within_dir
@@ -978,8 +978,8 @@ class SkillManage(BaseTool):
     description: str = (
         "Manage skills (create, update, delete). Skills are your procedural "
         "memory — reusable approaches for recurring task types. "
-        f"New skills go to {AUTO_SKILLS_DIR.relative_to(ROOT_DIR)}/<skill-name>/; "
-        f"if you pass `category` (e.g. 'devops'), the path becomes {AUTO_SKILLS_DIR.relative_to(ROOT_DIR)}/<category>/<skill-name>/.\n\n"
+        f"New skills go to {app_relative(AUTO_SKILLS_DIR)}/<skill-name>/; "
+        f"if you pass `category` (e.g. 'devops'), the path becomes {app_relative(AUTO_SKILLS_DIR)}/<category>/<skill-name>/.\n\n"
         "IMPORTANT: This tool can ONLY operate on skills under the "
         f"'{AUTO_SKILLS_DIR.name}/' directory. Skills in 'builtin/' or 'plugins/' "
         "are read-only and cannot be modified or deleted through this tool.\n\n"
