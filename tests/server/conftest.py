@@ -50,8 +50,12 @@ def isolated_auth_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path
     # The gate caches "enabled/has_account"; a stale cache across tests would
     # make a fresh store look like the previous one.
     auth_service.clear_state_cache()
+    # The brute-force throttle is also process-global: a streak left by one test
+    # would lock the next one out with a 429 instead of the refusal it asserts.
+    auth_service.clear_login_throttle()
     yield db_path
     auth_service.clear_state_cache()
+    auth_service.clear_login_throttle()
 
 
 @pytest.fixture(autouse=True)

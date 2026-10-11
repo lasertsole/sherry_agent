@@ -117,7 +117,7 @@ client/
 │   ├── layouts/default.vue        # Default layout — full-view wrapper
 │   ├── pages/
 │   │   ├── index.vue              # Renders ChatInputBox (route / redirects to /home via routeRules)
-│   │   ├── login/index.vue        # Login page (username + password; shown only when the gate requires it)
+│   │   ├── login/index.vue        # Login page (PASSWORD ONLY — one account, no username; shown only when the gate requires it)
 │   │   └── home/
 │   │       ├── index.vue          # Main chat shell — SessionSidebar + toolbar + nested NuxtPage
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
@@ -161,7 +161,7 @@ client/
 │   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
-│   │           ├── AccountSettingsPanel.vue   # Account tab: set up / change / disable login protection (the current password is required)
+│   │           ├── AccountSettingsPanel.vue   # Account tab: set the password / replace it / disable login protection (the current password is required)
 │   │           ├── RightSidebar.vue           # Collapsible right sidebar — tabbed panels for every tool (viewers + settings editors)
 │   │           ├── FileViewerPanel.vue        # File viewer tab under 当前会话 (GET /project/file, text + image preview)
 │   │           ├── LogsPanel.vue              # Log-viewer tab (server logs + client logs, live stream)

@@ -7,9 +7,15 @@ Enforcement rules live here so the middleware stays a thin gate:
   deployment out of its own app is not a security win;
 * refresh tokens rotate on every use, and the superseded ``jti`` is blacklisted,
   so a stolen refresh token is worth one use at most;
-* failures are deliberately uniform (``invalid_credentials``) and a missing user
-  still pays one scrypt verification, so neither the message nor the timing
-  reveals whether a username exists.
+* failures are deliberately uniform (``invalid_credentials``) and a missing
+  account still pays one scrypt verification, so the message and the timing say
+  nothing about whether an account exists;
+* there is exactly ONE account and login takes a PASSWORD ONLY (no username to
+  enumerate, nothing to guess);
+* repeated failures from one client are throttled with an ESCALATING lockout
+  (``AUTH["login_max_attempts"]`` / ``login_lockout_base_seconds`` doubling to
+  ``login_lockout_max_seconds``), and every lockout is logged — a brute-force
+  campaign against a single password is otherwise cheap to run offline.
 """
 
 from __future__ import annotations
@@ -36,6 +42,7 @@ __all__ = [
     "consume_ws_ticket",
     "mint_ws_ticket",
     "start_blacklist_cleanup",
+    "clear_login_throttle",
     "current_user",
     "disable_auth",
     "enable_auth",
@@ -52,17 +59,19 @@ __all__ = [
 #: A password hash used only to keep failed logins as slow as successful ones.
 _DUMMY_HASH = hash_password("sherry-dummy-password-for-timing")
 
-_MAX_USERNAME_LENGTH = 64
-
 
 class AuthError(Exception):
     """A refusal carrying a client-safe code, message and HTTP status."""
 
-    def __init__(self, code: str, message: str, status: int = 400) -> None:
+    def __init__(
+        self, code: str, message: str, status: int = 400, *, retry_after: int | None = None
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status = status
+        #: Seconds the caller must wait (throttled login); ``None`` = not a wait.
+        self.retry_after = retry_after
 
 
 @dataclass(frozen=True)
@@ -103,13 +112,93 @@ async def _state() -> tuple[bool, bool]:
     return enabled, account
 
 
+# ── login throttle (brute force) ─────────────────────────────────────────────
+
+
+class _LoginThrottle:
+    """Escalating lockout per client key, in memory.
+
+    Deliberately process-local: it costs nothing on the happy path, needs no
+    schema, and a restart is not an attack vector here (the attacker would need
+    the ability to restart the backend, which already implies the host). A
+    failure streak older than ``login_attempt_window_seconds`` is forgotten, so
+    a typo tomorrow never inherits today's wait.
+    """
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        #: key → (failure streak, monotonic time of the last failure, blocked-until monotonic)
+        self._state: dict[str, tuple[int, float, float]] = {}
+
+    def retry_after(self, key: str) -> int:
+        """Seconds the key must still wait (0 = may try now)."""
+        now = time.monotonic()
+        with self._lock:
+            entry = self._state.get(key)
+            if entry is None:
+                return 0
+            _, last_at, blocked_until = entry
+            if now - last_at > AUTH["login_attempt_window_seconds"]:
+                self._state.pop(key, None)
+                return 0
+            return max(0, int(round(blocked_until - now)))
+
+    def record_failure(self, key: str) -> int:
+        """Count one failure; returns the seconds this key is now blocked for (0 = free)."""
+        now = time.monotonic()
+        with self._lock:
+            entry = self._state.get(key)
+            streak = (
+                0
+                if entry is None or now - entry[1] > AUTH["login_attempt_window_seconds"]
+                else entry[0]
+            )
+            streak += 1
+            blocked_until = 0.0
+            if streak > AUTH["login_max_attempts"]:
+                exponent = streak - AUTH["login_max_attempts"] - 1
+                delay = min(
+                    AUTH["login_lockout_base_seconds"] * (2**exponent),
+                    AUTH["login_lockout_max_seconds"],
+                )
+                blocked_until = now + delay
+            self._state[key] = (streak, now, blocked_until)
+            return max(0, int(round(blocked_until - now)))
+
+    def clear(self, key: str) -> None:
+        """Forget a key's streak (a successful login is proof of the password)."""
+        with self._lock:
+            self._state.pop(key, None)
+
+    def reset(self) -> None:
+        """Drop every streak (tests / a password change)."""
+        with self._lock:
+            self._state.clear()
+
+
+_throttle = _LoginThrottle()
+
+#: Key used when the caller's address is unknown (all such callers share one bucket).
+_UNKNOWN_CLIENT = "unknown"
+
+
+def _client_key(client: str | None) -> str:
+    """The throttle bucket for one caller (the socket address, normalized)."""
+    return (client or "").strip() or _UNKNOWN_CLIENT
+
+
+def clear_login_throttle() -> None:
+    """Forget every failure streak (called when the password changes)."""
+    _throttle.reset()
+
+
 async def is_enabled() -> bool:
     enabled, _ = await _state()
     return enabled
 
 
 async def has_account() -> bool:
-    return await auth_store.count_users() > 0
+    return await auth_store.account_exists()
 
 
 async def enforcement_active() -> bool:
@@ -124,7 +213,7 @@ async def enforcement_active() -> bool:
 
 async def sole_account() -> dict | None:
     """The one configured account (single-user product), or ``None``."""
-    user = await auth_store.get_first_user()
+    user = await auth_store.get_account()
     return _public_user(user) if user else None
 
 
@@ -147,24 +236,11 @@ async def status(*, remote_is_loopback: bool) -> dict:
 
 
 def _public_user(user: dict) -> dict:
+    """What a client may know about the account: an id and when it was made."""
     return {
         "id": int(user["id"]),
-        "username": str(user["username"]),
         "created_at": int(user["created_at"]),
     }
-
-
-def _validate_username(username: str) -> str:
-    name = (username or "").strip()
-    if not name:
-        raise AuthError("username_required", "username is required")
-    if len(name) > _MAX_USERNAME_LENGTH:
-        raise AuthError(
-            "username_too_long", f"username must be at most {_MAX_USERNAME_LENGTH} characters"
-        )
-    if any(ch.isspace() for ch in name):
-        raise AuthError("username_invalid", "username must not contain whitespace")
-    return name
 
 
 def _validate_password(password: str) -> str:
@@ -177,33 +253,56 @@ def _validate_password(password: str) -> str:
 # ── account lifecycle ────────────────────────────────────────────────────────
 
 
-async def setup_account(username: str, password: str) -> dict:
-    """First-time account setup; enables login protection on success.
+async def setup_account(password: str) -> dict:
+    """First-time setup: set THE password and enable login protection.
 
-    Only possible while no user exists — afterwards the account is changed
+    Only possible while no account exists — afterwards the account is changed
     through :func:`update_account`, which requires the current password.
     """
     if await has_account():
         raise AuthError("account_exists", "an account is already configured", 409)
-    name = _validate_username(username)
     _validate_password(password)
-    try:
-        user = await auth_store.create_user(name, hash_password(password))
-    except Exception as exc:  # sqlite3.IntegrityError on a duplicate username
-        raise AuthError("username_taken", "that username is already taken", 409) from exc
+    user = await auth_store.set_account_password(hash_password(password))
     await auth_store.set_auth_enabled(True)
     clear_state_cache()
-    logger.info("auth: account '{}' created; login protection enabled", name)
+    logger.info("auth: account created; login protection enabled")
     return _public_user(user)
 
 
-async def _verified_user(username: str, password: str) -> dict:
-    """Look up + verify; uniform refusal and uniform-ish timing for both misses."""
-    user = await auth_store.get_user_by_username(username or "")
+async def _verified_user(password: str, client: str | None) -> dict:
+    """Verify THE password; uniform refusal and uniform-ish timing for a miss.
+
+    The throttle is checked BEFORE any hashing (so a locked-out caller cannot
+    even make the process spin scrypt), and a missing account still pays one
+    dummy verification — an unconfigured backend must not answer faster than a
+    configured one.
+    """
+    key = _client_key(client)
+    waiting = _throttle.retry_after(key)
+    if waiting:
+        logger.warning("auth: login throttled for {} ({}s left)", key, waiting)
+        raise AuthError(
+            "too_many_attempts",
+            f"too many failed attempts — try again in {waiting}s",
+            429,
+            retry_after=waiting,
+        )
+    user = await auth_store.get_account()
     stored = user["password_hash"] if user else _DUMMY_HASH
     ok = verify_password(password or "", stored)
     if not user or not ok:
-        raise AuthError("invalid_credentials", "invalid username or password", 401)
+        blocked = _throttle.record_failure(key)
+        if blocked:
+            logger.warning("auth: login locked for {} after repeated failures ({}s)", key, blocked)
+            raise AuthError(
+                "too_many_attempts",
+                f"too many failed attempts — try again in {blocked}s",
+                429,
+                retry_after=blocked,
+            )
+        logger.warning("auth: failed login from {}", key)
+        raise AuthError("invalid_credentials", "incorrect password", 401)
+    _throttle.clear(key)
     return user
 
 
@@ -213,38 +312,24 @@ async def _full_user(user: dict) -> dict:
     Callers pass what they have — a session's public user or the sole account —
     and password verification must always run against the stored hash.
     """
-    row = await auth_store.get_user_by_id(int(user.get("id", 0)))
-    if row is None:
+    row = await auth_store.get_account()
+    if row is None or int(row["id"]) != int(user.get("id", 0)):
         raise AuthError("not_authenticated", "the account no longer exists", 401)
     return row
 
 
-async def update_account(
-    user: dict,
-    *,
-    password: str,
-    new_username: str | None = None,
-    new_password: str | None = None,
-) -> dict:
-    """Change the username and/or the password; both require the current password."""
+async def update_account(user: dict, *, password: str, new_password: str | None = None) -> dict:
+    """Change the password (the current one is required, and never throttled away)."""
     user = await _full_user(user)
     if not verify_password(password or "", user["password_hash"]):
         raise AuthError("invalid_password", "the current password is incorrect", 401)
-    if new_username is None and new_password is None:
-        raise AuthError("no_change_requested", "provide new_username or new_password")
-    if new_username is not None:
-        name = _validate_username(new_username)
-        if name != user["username"]:
-            try:
-                await auth_store.update_username(int(user["id"]), name)
-            except Exception as exc:  # duplicate username
-                raise AuthError("username_taken", "that username is already taken", 409) from exc
-    if new_password is not None:
-        _validate_password(new_password)
-        await auth_store.update_password(int(user["id"]), hash_password(new_password))
-    refreshed = await auth_store.get_user_by_id(int(user["id"]))
-    assert refreshed is not None
-    logger.info("auth: account '{}' updated", refreshed["username"])
+    if new_password is None:
+        raise AuthError("no_change_requested", "provide new_password")
+    _validate_password(new_password)
+    refreshed = await auth_store.set_account_password(hash_password(new_password))
+    # The old streak was proof of a wrong password; the new one is not.
+    clear_login_throttle()
+    logger.info("auth: account password updated")
     return _public_user(refreshed)
 
 
@@ -259,7 +344,7 @@ async def enable_auth(user: dict, password: str) -> None:
         raise AuthError("invalid_password", "the current password is incorrect", 401)
     await auth_store.set_auth_enabled(True)
     clear_state_cache()
-    logger.info("auth: login protection enabled by '{}'", user["username"])
+    logger.info("auth: login protection enabled")
 
 
 async def disable_auth(user: dict, password: str) -> None:
@@ -269,15 +354,15 @@ async def disable_auth(user: dict, password: str) -> None:
         raise AuthError("invalid_password", "the current password is incorrect", 401)
     await auth_store.set_auth_enabled(False)
     clear_state_cache()
-    logger.info("auth: login protection disabled by '{}'", user["username"])
+    logger.info("auth: login protection disabled")
 
 
 # ── sessions ─────────────────────────────────────────────────────────────────
 
 
-async def login(username: str, password: str) -> TokenPair:
-    """Verify credentials and issue a fresh pair."""
-    user = await _verified_user(username, password)
+async def login(password: str, *, client: str | None = None) -> TokenPair:
+    """Verify the password (throttled per client) and issue a fresh pair."""
+    user = await _verified_user(password, client)
     return _issue_pair(user)
 
 
@@ -293,7 +378,8 @@ async def refresh(refresh_token: str) -> TokenPair:
         logger.warning("auth: revoked refresh token presented again (jti={})", jti)
         raise AuthError("invalid_refresh_token", "the refresh token is invalid or expired", 401)
     user_id = jwt_utils.user_id_of(payload)
-    user = await auth_store.get_user_by_id(user_id) if user_id is not None else None
+    account = await auth_store.get_account() if user_id is not None else None
+    user = account if account is not None and int(account["id"]) == user_id else None
     if user is None:
         raise AuthError("invalid_refresh_token", "the refresh token is invalid or expired", 401)
     await auth_store.add_jwt_to_blacklist(jti, int(payload["exp"]))
@@ -302,9 +388,8 @@ async def refresh(refresh_token: str) -> TokenPair:
 
 def _issue_pair(user: dict) -> TokenPair:
     user_id = int(user["id"])
-    username = str(user["username"])
     return TokenPair(
-        access_token=jwt_utils.create_access_token(user_id, username),
+        access_token=jwt_utils.create_access_token(user_id),
         refresh_token=jwt_utils.create_refresh_token(user_id),
         expires_in=int(AUTH["session_ttl_seconds"]),
         user=_public_user(user),
@@ -333,8 +418,10 @@ async def current_user(access_token: str) -> dict | None:
     user_id = jwt_utils.user_id_of(payload)
     if user_id is None:
         return None
-    user = await auth_store.get_user_by_id(user_id)
-    return _public_user(user) if user else None
+    account = await auth_store.get_account()
+    if account is None or int(account["id"]) != int(user_id):
+        return None
+    return _public_user(account)
 
 
 # ── WebSocket tickets ────────────────────────────────────────────────────────

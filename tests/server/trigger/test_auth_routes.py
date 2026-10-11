@@ -52,8 +52,8 @@ def _cookie(response, name: str):
     return response.cookies.get(name)
 
 
-async def _account(username: str = "admin", password: str = "hunter2-long") -> None:
-    await auth_service.setup_account(username, password)
+async def _account(password: str = "hunter2-long") -> None:
+    await auth_service.setup_account(password)
 
 
 # ── status ───────────────────────────────────────────────────────────────────
@@ -99,13 +99,13 @@ def test_login_sets_the_two_httponly_cookies_and_no_token_in_the_body(
 
     response = _call(
         routes.auth_login_handler,
-        _FakeRequest(body={"username": "admin", "password": "hunter2-long"}),
+        _FakeRequest(body={"password": "hunter2-long"}),
     )
 
     assert response.status_code == 200
     payload = _payload(response)
     assert payload["success"] is True
-    assert payload["user"]["username"] == "admin"
+    assert payload["user"]["id"] == 1
     assert payload["expires_in"] == AUTH["session_ttl_seconds"]
     assert "token" not in json.dumps(payload).lower().replace('"access', "")
 
@@ -126,7 +126,7 @@ def test_login_refusal_is_401_with_a_code_and_no_cookies(isolated_auth_store) ->
 
     response = _call(
         routes.auth_login_handler,
-        _FakeRequest(body={"username": "admin", "password": "wrong-password"}),
+        _FakeRequest(body={"password": "wrong-password"}),
     )
 
     assert response.status_code == 401
@@ -137,7 +137,7 @@ def test_login_refusal_is_401_with_a_code_and_no_cookies(isolated_auth_store) ->
 def test_refresh_rotates_the_cookies(isolated_auth_store) -> None:
     async def _login() -> str:
         await _account()
-        pair = await auth_service.login("admin", "hunter2-long")
+        pair = await auth_service.login("hunter2-long")
         return f"{AUTH['refresh_cookie_name']}={pair.refresh_token}"
 
     cookie = asyncio.run(_login())
@@ -159,7 +159,7 @@ def test_refresh_without_a_cookie_is_401(isolated_auth_store) -> None:
 def test_logout_clears_both_cookies_and_revokes(isolated_auth_store) -> None:
     async def _login() -> tuple[str, str]:
         await _account()
-        pair = await auth_service.login("admin", "hunter2-long")
+        pair = await auth_service.login("hunter2-long")
         return pair.access_token, pair.refresh_token
 
     access_token, refresh_token = asyncio.run(_login())
@@ -181,18 +181,18 @@ def test_logout_clears_both_cookies_and_revokes(isolated_auth_store) -> None:
 def test_first_time_setup_over_loopback_needs_no_session(isolated_auth_store) -> None:
     response = _call(
         routes.auth_account_handler,
-        _FakeRequest(ip=LOCAL, body={"username": "admin", "password": "hunter2-long"}),
+        _FakeRequest(ip=LOCAL, body={"password": "hunter2-long"}),
     )
 
     assert response.status_code == 200
-    assert _payload(response)["user"]["username"] == "admin"
+    assert set(_payload(response)["user"]) == {"id", "created_at"}
     assert asyncio.run(auth_service.enforcement_active()) is True
 
 
 def test_setup_refuses_short_passwords(isolated_auth_store) -> None:
     response = _call(
         routes.auth_account_handler,
-        _FakeRequest(ip=LOCAL, body={"username": "admin", "password": "short"}),
+        _FakeRequest(ip=LOCAL, body={"password": "short"}),
     )
 
     assert response.status_code == 400
@@ -209,7 +209,7 @@ def test_local_operator_can_change_the_password_with_the_current_one(
     )
 
     assert response.status_code == 200
-    assert asyncio.run(auth_service.login("admin", "brand-new-pass")).user["username"] == "admin"
+    assert asyncio.run(auth_service.login("brand-new-pass")).user["id"] == 1
 
 
 def test_change_with_a_wrong_current_password_is_401(isolated_auth_store) -> None:
@@ -251,19 +251,19 @@ def test_disable_requires_the_password_and_turns_the_switch_off(isolated_auth_st
     assert ok.status_code == 200
     assert asyncio.run(auth_service.enforcement_active()) is False
     # The account survives: logging in still works while protection is off.
-    assert asyncio.run(auth_store.count_users()) == 1
+    assert asyncio.run(auth_store.account_exists()) is True
 
 
 def test_me_reports_the_session_user(isolated_auth_store) -> None:
     async def _login() -> str:
         await _account()
-        pair = await auth_service.login("admin", "hunter2-long")
+        pair = await auth_service.login("hunter2-long")
         return f"{AUTH['cookie_name']}={pair.access_token}"
 
     cookie = asyncio.run(_login())
 
     payload = _payload(_call(routes.auth_me_handler, _FakeRequest(cookie=cookie)))
-    assert payload["user"]["username"] == "admin"
+    assert payload["user"]["id"] == 1
 
     assert _call(routes.auth_me_handler, _FakeRequest()).status_code == 401
 
@@ -287,7 +287,7 @@ def test_remote_minting_requires_a_session(isolated_auth_store) -> None:
     assert _call(routes.auth_ws_ticket_handler, _FakeRequest(ip=REMOTE)).status_code == 401
 
     async def _login() -> str:
-        pair = await auth_service.login("admin", "hunter2-long")
+        pair = await auth_service.login("hunter2-long")
         return f"{AUTH['cookie_name']}={pair.access_token}"
 
     cookie = asyncio.run(_login())

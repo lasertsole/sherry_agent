@@ -46,10 +46,10 @@ def _run(request):
     return asyncio.run(auth_user.user_auth_middleware(request))
 
 
-async def _enable(username: str = "admin", password: str = "hunter2-long") -> str:
+async def _enable(password: str = "hunter2-long") -> str:
     """Configure an account and return a valid access token for it."""
-    await auth_service.setup_account(username, password)
-    pair = await auth_service.login(username, password)
+    await auth_service.setup_account(password)
+    pair = await auth_service.login(password)
     return pair.access_token
 
 
@@ -177,8 +177,8 @@ def test_public_paths_pass_without_a_session(isolated_auth_store) -> None:
 
 def test_a_revoked_access_token_is_refused(isolated_auth_store) -> None:
     async def _revoke() -> str:
-        await auth_service.setup_account("admin", "hunter2-long")
-        pair = await auth_service.login("admin", "hunter2-long")
+        await auth_service.setup_account("hunter2-long")
+        pair = await auth_service.login("hunter2-long")
         await auth_service.logout(pair.access_token)
         return pair.access_token
 
@@ -204,7 +204,7 @@ def test_ws_check_passes_when_nothing_enforces(isolated_auth_store) -> None:
 
 def test_ws_check_requires_a_single_use_ticket_once_enforced(isolated_auth_store) -> None:
     async def _scenario() -> tuple[str | None, str | None, str | None]:
-        await auth_service.setup_account("admin", "hunter2-long")
+        await auth_service.setup_account("hunter2-long")
         ticket, _ = await auth_service.mint_ws_ticket()
         missing = await auth_user.ws_user_check({})
         first = await auth_user.ws_user_check({"ticket": ticket})

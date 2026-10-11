@@ -200,7 +200,7 @@ if __name__ == "__main__":
             "auth: login protection {} (seeded={}, {} user account(s))",
             "ENABLED" if settings["enabled"] else "disabled",
             seeded,
-            asyncio.run(auth_store.count_users()),
+            asyncio.run(auth_store.account_exists()),
         )
     except Exception:
         logger.exception("auth: storage initialization failed; login protection unavailable")

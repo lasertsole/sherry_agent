@@ -58,6 +58,18 @@ class AuthConfig(TypedDict):
     #: Shortest accepted password (the plan's policy: length only, no character
     #: classes, to keep the UX friction low).
     min_password_length: int
+    #: Brute-force throttle: consecutive failures a client may accumulate BEFORE
+    #: the first lockout.
+    login_max_attempts: int
+    #: First lockout length in seconds. Each further failure DOUBLES it
+    #: (``base * 2**n``), capped by ``login_lockout_max_seconds`` — a linear
+    #: wait is cheap to spray through, an exponential one is not.
+    login_lockout_base_seconds: int
+    #: Ceiling of the escalating lockout (a legitimate user can always wait it out).
+    login_lockout_max_seconds: int
+    #: A failure older than this no longer counts toward the streak (a fresh
+    #: window means "typo", not "campaign").
+    login_attempt_window_seconds: int
 
 
 def _env_flag(source: Mapping[str, str], key: str, default: bool) -> bool:
@@ -98,6 +110,10 @@ def build_auth(env: Mapping[str, str] | None = None) -> AuthConfig:
         scrypt_r=8,
         scrypt_p=1,
         scrypt_dklen=32,
+        login_max_attempts=_env_int(source, "SHERRY_AUTH_LOGIN_MAX_ATTEMPTS", 5),
+        login_lockout_base_seconds=_env_int(source, "SHERRY_AUTH_LOCKOUT_BASE_SECONDS", 5),
+        login_lockout_max_seconds=_env_int(source, "SHERRY_AUTH_LOCKOUT_MAX_SECONDS", 900),
+        login_attempt_window_seconds=_env_int(source, "SHERRY_AUTH_ATTEMPT_WINDOW_SECONDS", 900),
         min_password_length=8,
     )
 

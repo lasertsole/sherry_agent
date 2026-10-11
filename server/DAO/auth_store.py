@@ -2,8 +2,11 @@
 
 Three tables in ``src/data/auth.db``:
 
-* ``auth_users`` — one row per account; the password column stores the scrypt
-  string, never a plaintext or reversible form.
+* ``auth_account`` — the SINGLE account (``CHECK (id = 1)``; login is
+  password-only, so there is nothing to identify it by). The password column
+  stores the scrypt string, never a plaintext or reversible form. A legacy
+  ``auth_users`` table from the username era is migrated into it at init and
+  then dropped.
 * ``auth_settings`` — a single row (``CHECK (id = 1)``) carrying the runtime
   switch the account menu writes. Absent row = disabled.
 * ``auth_jwt_blacklist`` — revoked ``jti``s (logout, refresh rotation), kept
@@ -23,20 +26,16 @@ from agent.tools.pub_base.sqlite_store import BaseSQLiteRepository
 from config.path import SRC_DIR
 
 __all__ = [
+    "account_exists",
     "add_jwt_to_blacklist",
     "cleanup_expired_blacklist",
-    "count_users",
-    "create_user",
-    "delete_user",
+    "delete_account",
     "ensure_db",
+    "get_account",
     "get_auth_settings",
-    "get_first_user",
-    "get_user_by_id",
-    "get_user_by_username",
     "is_jwt_blacklisted",
+    "set_account_password",
     "set_auth_enabled",
-    "update_password",
-    "update_username",
 ]
 
 _DB_DIR = SRC_DIR / "data"
@@ -49,19 +48,31 @@ _BUSY_TIMEOUT_S = _BUSY_TIMEOUT_MS / 1000.0
 # How long a non-owning event loop waits for the owner's schema init.
 _INIT_WAIT_TIMEOUT_S = 30.0
 
-_USERS_TABLE = "auth_users"
+_ACCOUNT_TABLE = "auth_account"
+_LEGACY_USERS_TABLE = "auth_users"
 _BLACKLIST_TABLE = "auth_jwt_blacklist"
 _SETTINGS_TABLE = "auth_settings"
 
-_CREATE_USERS_SQL = f"""
-CREATE TABLE IF NOT EXISTS {_USERS_TABLE} (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
+_CREATE_ACCOUNT_SQL = f"""
+CREATE TABLE IF NOT EXISTS {_ACCOUNT_TABLE} (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
     password_hash TEXT NOT NULL,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 )
 """
+
+#: One-shot migration from the username era, run at every init and idempotent:
+#: the copy keeps the LOWEST-id account (the only one this product ever
+#: supported), then the legacy table is dropped. Both statements are DDL-hook
+#: safe — on a fresh database ``auth_users`` does not exist, the SELECT raises,
+#: and the base treats that like a duplicate column (nothing to do).
+_MIGRATE_FROM_USERS_SQL = (
+    f"INSERT OR IGNORE INTO {_ACCOUNT_TABLE} (id, password_hash, created_at, updated_at)"
+    f" SELECT 1, password_hash, created_at, updated_at FROM {_LEGACY_USERS_TABLE}"
+    " WHERE id = (SELECT MIN(id) FROM " + _LEGACY_USERS_TABLE + ")",
+    f"DROP TABLE IF EXISTS {_LEGACY_USERS_TABLE}",
+)
 
 _CREATE_BLACKLIST_SQL = f"""
 CREATE TABLE IF NOT EXISTS {_BLACKLIST_TABLE} (
@@ -90,7 +101,10 @@ class _AuthRepository(BaseSQLiteRepository):
     wal_label = "auth db"
 
     def _table_ddls(self) -> tuple[str, ...]:
-        return (_CREATE_USERS_SQL, _CREATE_BLACKLIST_SQL, _CREATE_SETTINGS_SQL)
+        return (_CREATE_ACCOUNT_SQL, _CREATE_BLACKLIST_SQL, _CREATE_SETTINGS_SQL)
+
+    def _migration_ddls(self) -> tuple[str, ...]:
+        return _MIGRATE_FROM_USERS_SQL
 
     def _index_ddls(self) -> tuple[str, ...]:
         return _INDEX_DDL
@@ -116,103 +130,66 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _row_to_user(row) -> dict | None:
+def _row_to_account(row) -> dict | None:
     if row is None:
         return None
     return {
         "id": int(row[0]),
-        "username": str(row[1]),
-        "password_hash": str(row[2]),
-        "created_at": int(row[3]),
-        "updated_at": int(row[4]),
+        "password_hash": str(row[1]),
+        "created_at": int(row[2]),
+        "updated_at": int(row[3]),
     }
 
 
-_USER_COLUMNS = "id, username, password_hash, created_at, updated_at"
+_ACCOUNT_COLUMNS = "id, password_hash, created_at, updated_at"
 
 
-# ── users ────────────────────────────────────────────────────────────────────
+# ── the single account ───────────────────────────────────────────────────────
 
 
-async def create_user(username: str, password_hash: str) -> dict:
-    """Insert a user and return the stored row (raises on a duplicate name)."""
+async def get_account() -> dict | None:
+    """The configured account row (``None`` while none exists)."""
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(f"SELECT {_ACCOUNT_COLUMNS} FROM {_ACCOUNT_TABLE} WHERE id = 1")
+        return _row_to_account(await cursor.fetchone())
+
+
+async def account_exists() -> bool:
+    await ensure_db()
+    async with _connect() as db:
+        cursor = await db.execute(f"SELECT 1 FROM {_ACCOUNT_TABLE} WHERE id = 1 LIMIT 1")
+        return await cursor.fetchone() is not None
+
+
+async def set_account_password(password_hash: str) -> dict:
+    """Create the account or replace its password (the row never multiplies).
+
+    ``created_at`` survives a password change; ``updated_at`` moves.
+    """
     now = _now_ms()
     await ensure_db()
     async with _connect() as db:
-        cursor = await db.execute(
-            f"INSERT INTO {_USERS_TABLE} (username, password_hash, created_at, updated_at)"
-            " VALUES (?, ?, ?, ?)",
-            (username, password_hash, now, now),
+        await db.execute(
+            f"INSERT INTO {_ACCOUNT_TABLE} (id, password_hash, created_at, updated_at)"
+            " VALUES (1, ?, ?, ?)"
+            " ON CONFLICT(id) DO UPDATE SET password_hash = excluded.password_hash,"
+            " updated_at = excluded.updated_at",
+            (password_hash, now, now),
         )
         await db.commit()
-        user_id = int(cursor.lastrowid or 0)
-    created = await get_user_by_id(user_id)
-    assert created is not None
-    return created
+    account = await get_account()
+    assert account is not None
+    return account
 
 
-async def get_user_by_username(username: str) -> dict | None:
+async def delete_account() -> bool:
+    """Remove the account row (protection then has nothing to enforce with)."""
     await ensure_db()
     async with _connect() as db:
-        cursor = await db.execute(
-            f"SELECT {_USER_COLUMNS} FROM {_USERS_TABLE} WHERE username = ?", (username,)
-        )
-        return _row_to_user(await cursor.fetchone())
-
-
-async def get_user_by_id(user_id: int) -> dict | None:
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(
-            f"SELECT {_USER_COLUMNS} FROM {_USERS_TABLE} WHERE id = ?", (int(user_id),)
-        )
-        return _row_to_user(await cursor.fetchone())
-
-
-async def update_password(user_id: int, new_password_hash: str) -> bool:
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(
-            f"UPDATE {_USERS_TABLE} SET password_hash = ?, updated_at = ? WHERE id = ?",
-            (new_password_hash, _now_ms(), int(user_id)),
-        )
+        cursor = await db.execute(f"DELETE FROM {_ACCOUNT_TABLE} WHERE id = 1")
         await db.commit()
         return cursor.rowcount > 0
-
-
-async def update_username(user_id: int, new_username: str) -> bool:
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(
-            f"UPDATE {_USERS_TABLE} SET username = ?, updated_at = ? WHERE id = ?",
-            (new_username, _now_ms(), int(user_id)),
-        )
-        await db.commit()
-        return cursor.rowcount > 0
-
-
-async def delete_user(user_id: int) -> bool:
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(f"DELETE FROM {_USERS_TABLE} WHERE id = ?", (int(user_id),))
-        await db.commit()
-        return cursor.rowcount > 0
-
-
-async def get_first_user() -> dict | None:
-    """The lowest-id user — the single account this product supports."""
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(f"SELECT {_USER_COLUMNS} FROM {_USERS_TABLE} ORDER BY id LIMIT 1")
-        return _row_to_user(await cursor.fetchone())
-
-
-async def count_users() -> int:
-    await ensure_db()
-    async with _connect() as db:
-        cursor = await db.execute(f"SELECT COUNT(*) FROM {_USERS_TABLE}")
-        row = await cursor.fetchone()
-    return int(row[0]) if row else 0
 
 
 # ── runtime switch ───────────────────────────────────────────────────────────

@@ -430,6 +430,23 @@ manual reload. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
 handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 
+**ONE account, password only.** There is no username anywhere: the single
+``auth_account`` row (``CHECK (id = 1)`` — the schema cannot hold a second) is
+identified by nothing, login takes just the password, and a username-era
+``auth_users`` table is copied into it at init and dropped
+(``_MIGRATION_DDLS`` in ``server/DAO/auth_store.py``). The JWT carries only
+``sub``/``jti``/``typ`` — no personal data.
+
+**Brute force is throttled, injection has no surface.** ``_LoginThrottle``
+(``server/service/auth_service.py``) counts consecutive failures per CLIENT
+SOCKET ADDRESS and escalates: ``AUTH["login_max_attempts"]`` free tries, then
+``login_lockout_base_seconds`` doubling to ``login_lockout_max_seconds``
+(a locked client is refused BEFORE any hashing, 429 + ``retry_after``), and a
+success clears the streak. Every query in the store is parameterized
+(``?`` placeholders only — never string-built SQL), which the test suite pins
+with SQL-shaped passwords, and a missing account still pays one dummy scrypt
+verify so timing says nothing.
+
 **Who must log in.** Loopback clients never do (`request.ip_addr`, the socket
 address, not a header) unless `SHERRY_AUTH_REQUIRE_NON_LOOPBACK=0`; enforcement
 requires BOTH the runtime switch in SQLite AND an existing account, so an enabled
@@ -464,8 +481,8 @@ socket as "backend unreachable" (the `navigator.onLine` hint is unreliable in
 containers/webviews; it only fills in when there is no WS verdict yet) and stays
 silent while nobody is signed in (the socket cannot connect by design then).
 
-**Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_users`
-(unique username, scrypt hash), `auth_settings` (single row = the runtime
+**Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_account`
+(the single row: scrypt hash), `auth_settings` (single row = the runtime
 switch; `SHERRY_AUTH_ENABLED` only *seeds* a fresh row) and
 `auth_jwt_blacklist` (`expires_at` in JWT seconds). Server tests isolate it with
 the autouse `isolated_auth_store` fixture — no test may touch the real file.

@@ -68,27 +68,25 @@ describe('AccountSettingsPanel', () => {
 
     expect(wrapper.get('[data-test="auth-status"]').text()).toContain('未启用');
     expect(wrapper.find('[data-test="auth-setup-hint"]').exists()).toBe(true);
-    expect(wrapper.find('[data-test="auth-setup-username"]').exists()).toBe(true);
+    expect(wrapper.find('[data-test="auth-setup-password"]').exists()).toBe(true);
   });
 
   it('creates the account through the setup form', async () => {
-    bridge.setupAccountRequest.mockResolvedValue({ id: 1, username: 'admin' });
+    bridge.setupAccountRequest.mockResolvedValue({ id: 1 });
     const wrapper = await mountPanel();
 
-    await wrapper.get('[data-test="auth-setup-username"]').setValue('admin');
     await wrapper.get('[data-test="auth-setup-password"]').setValue('hunter2-long');
     await wrapper.get('[data-test="auth-setup-confirm"]').setValue('hunter2-long');
     await wrapper.get('[data-test="auth-setup-submit"]').trigger('click');
     await flushPromises();
 
-    expect(bridge.setupAccountRequest).toHaveBeenCalledWith('admin', 'hunter2-long');
+    expect(bridge.setupAccountRequest).toHaveBeenCalledWith('hunter2-long');
     expect(wrapper.get('[data-test="auth-success"]').text()).toContain('已启用');
   });
 
   it('keeps the setup button disabled until the confirmation matches', async () => {
     const wrapper = await mountPanel();
 
-    await wrapper.get('[data-test="auth-setup-username"]').setValue('admin');
     await wrapper.get('[data-test="auth-setup-password"]').setValue('hunter2-long');
     await wrapper.get('[data-test="auth-setup-confirm"]').setValue('different-one');
     await flushPromises();
@@ -102,12 +100,12 @@ describe('AccountSettingsPanel', () => {
       authEnabled: true,
       hasAccount: true
     });
-    bridge.fetchMe.mockResolvedValue({ id: 1, username: 'admin' });
+    bridge.fetchMe.mockResolvedValue({ id: 1 });
     const wrapper = await mountPanel();
 
     expect(wrapper.get('[data-test="auth-status"]').text()).toContain('已启用');
-    expect(wrapper.get('[data-test="auth-current-user"]').text()).toContain('admin');
-    expect(wrapper.find('[data-test="auth-new-username"]').exists()).toBe(true);
+    expect(wrapper.get('[data-test="auth-current-user"]').text()).toContain('已登录');
+    expect(wrapper.find('[data-test="auth-new-password"]').exists()).toBe(true);
     expect(wrapper.find('[data-test="auth-disable"]').exists()).toBe(true);
   });
 
@@ -117,8 +115,8 @@ describe('AccountSettingsPanel', () => {
       authEnabled: true,
       hasAccount: true
     });
-    bridge.fetchMe.mockResolvedValue({ id: 1, username: 'admin' });
-    bridge.updateAccountRequest.mockResolvedValue({ id: 1, username: 'admin' });
+    bridge.fetchMe.mockResolvedValue({ id: 1 });
+    bridge.updateAccountRequest.mockResolvedValue({ id: 1 });
     const wrapper = await mountPanel();
 
     await wrapper.get('[data-test="auth-new-password"]').setValue('brand-new-pass');
@@ -128,7 +126,6 @@ describe('AccountSettingsPanel', () => {
 
     expect(bridge.updateAccountRequest).toHaveBeenCalledWith({
       password: 'hunter2-long',
-      newUsername: undefined,
       newPassword: 'brand-new-pass'
     });
     expect(wrapper.get('[data-test="auth-success"]').text()).toContain('已保存');
@@ -140,7 +137,7 @@ describe('AccountSettingsPanel', () => {
       authEnabled: true,
       hasAccount: true
     });
-    bridge.fetchMe.mockResolvedValue({ id: 1, username: 'admin' });
+    bridge.fetchMe.mockResolvedValue({ id: 1 });
     bridge.updateAccountRequest.mockRejectedValue(
       Object.assign(new Error('the current password is incorrect'), { code: 'invalid_password' })
     );
@@ -160,7 +157,7 @@ describe('AccountSettingsPanel', () => {
       authEnabled: true,
       hasAccount: true
     });
-    bridge.fetchMe.mockResolvedValue({ id: 1, username: 'admin' });
+    bridge.fetchMe.mockResolvedValue({ id: 1 });
     bridge.disableAuthRequest.mockResolvedValue(undefined as never);
     bridge.enableAuthRequest.mockResolvedValue(undefined as never);
     const wrapper = await mountPanel();

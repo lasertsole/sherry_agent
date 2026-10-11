@@ -3,21 +3,24 @@
 **English** · [中文](README.zh.md) · [日本語](README.ja.md) · [한국어](README.ko.md)
 
 Sherry ships with **no login**: a fresh install has no account and login
-protection is off, so the desktop app and a local browser go straight in. Set up
-an account and remote access is gated; the local machine stays exempt.
+protection is off, so the desktop app and a local browser go straight in. Set a
+password and remote access is gated; the local machine stays exempt.
+
+There is exactly **one account and the login asks for a PASSWORD ONLY** — no
+username to configure, remember or enumerate.
 
 ## Enable or disable
 
 1. Open the app and go to the settings menu (the nine-grid) → **Account**.
-2. Enter a username, a password (at least 8 characters) and its confirmation,
-   then press **Enable login protection**. That creates the account and turns
-   protection on in one step.
-3. From then on, access from another machine asks for that username and
-   password; this machine keeps working without a login.
+2. Enter a password (at least 8 characters) and its confirmation, then press
+   **Enable login protection**. That creates the account and turns protection on
+   in one step.
+3. From then on, access from another machine asks for that password; this
+   machine keeps working without a login.
 
 Turning protection off (or back on) requires the **current password** — the
-account itself is kept, so re-enabling never needs a new password. Change the
-username or the password from the same panel with the current password.
+account itself is kept, so re-enabling never needs a new password. Replace the
+password from the same panel with the current one.
 
 ## What is protected
 
@@ -37,6 +40,14 @@ successful login.
   and every rotation invalidates the previous refresh token — a stolen copy is
   worth at most one use.
 * Logging out revokes both tokens immediately.
+* **Brute force is throttled**: after 5 wrong passwords a client waits 5 s, then
+  10 s, 20 s… (doubling, capped at 15 min), and a locked-out client is refused
+  without the server even hashing. A successful login clears the streak. Tune it
+  with `SHERRY_AUTH_LOGIN_MAX_ATTEMPTS` / `SHERRY_AUTH_LOCKOUT_BASE_SECONDS` /
+  `SHERRY_AUTH_LOCKOUT_MAX_SECONDS`.
+* **SQL injection has no surface here**: login takes one password and every query
+  is parameterized (the DB layer never builds SQL from input) — a password that
+  looks like SQL is simply the wrong password.
 
 ## Local network and remote access
 

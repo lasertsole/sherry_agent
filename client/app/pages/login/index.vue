@@ -13,21 +13,6 @@
         <div class="flex flex-col gap-1">
           <label
             class="text-xs text-gray-500 dark:text-gray-400"
-            for="auth-username"
-            >{{ t('auth.login.username') }}</label
-          >
-          <InputText
-            id="auth-username"
-            v-model="username"
-            data-test="login-username"
-            autocomplete="username"
-            :disabled="auth.busy"
-            class="w-full"
-            @update:model-value="auth.clearError()" />
-        </div>
-        <div class="flex flex-col gap-1">
-          <label
-            class="text-xs text-gray-500 dark:text-gray-400"
             for="auth-password"
             >{{ t('auth.login.password') }}</label
           >
@@ -48,7 +33,7 @@
           v-if="auth.errorMessage"
           class="m-0 break-all text-xs text-red-500 dark:text-red-400"
           data-test="login-error">
-          {{ t('auth.login.failed') }}
+          {{ errorText }}
         </p>
 
         <Button
@@ -56,7 +41,7 @@
           :label="t('auth.login.submit')"
           icon="pi pi-sign-in"
           :loading="auth.busy"
-          :disabled="!username.trim() || !password || auth.busy"
+          :disabled="!password || auth.busy"
           data-test="login-submit"
           class="mt-1 w-full" />
       </form>
@@ -65,20 +50,28 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 
 const { t } = useI18n();
 const auth = useAuthStore();
 const route = useRoute();
 
-const username = ref('');
 const password = ref('');
+
+/**
+ * The line under the form: the throttle's own message (it names the wait),
+ * otherwise the uniform "wrong password" text — a wrong password and a
+ * throttled client must not be told apart by anything else.
+ */
+const errorText = computed(() =>
+  auth.errorCode === 'too_many_attempts' && auth.errorMessage ? auth.errorMessage : t('auth.login.failed')
+);
 
 /** Sign in; on success the guard's /home target is where the user was headed. */
 async function submit(): Promise<void> {
-  if (!username.value.trim() || !password.value) return;
-  const ok = await auth.login(username.value.trim(), password.value);
+  if (!password.value) return;
+  const ok = await auth.login(password.value);
   if (!ok) return;
   const redirect = typeof route.query.redirect === 'string' ? route.query.redirect : '/home';
   await navigateTo(redirect);
@@ -87,47 +80,43 @@ async function submit(): Promise<void> {
 
 <i18n lang="json">
 {
-  "en": {
-    "auth": {
-      "login": {
-        "failed": "Wrong username or password",
-        "password": "Password",
-        "submit": "Sign in",
-        "subtitle": "Sign in to continue",
-        "username": "Username"
-      }
-    }
-  },
   "zh": {
     "auth": {
       "login": {
-        "failed": "用户名或密码错误",
+        "failed": "密码错误（多次失败会临时锁定）",
         "password": "密码",
         "submit": "登 录",
-        "subtitle": "请登录以继续",
-        "username": "用户名"
+        "subtitle": "请输入密码以继续"
+      }
+    }
+  },
+  "en": {
+    "auth": {
+      "login": {
+        "failed": "Wrong password — repeated failures lock this client out for a while",
+        "password": "Password",
+        "submit": "Sign in",
+        "subtitle": "Enter the password to continue"
       }
     }
   },
   "ja": {
     "auth": {
       "login": {
-        "failed": "ユーザー名またはパスワードが違います",
+        "failed": "パスワードが違います（失敗が続くと一時的にロックされます）",
         "password": "パスワード",
         "submit": "ログイン",
-        "subtitle": "続けるにはログインしてください",
-        "username": "ユーザー名"
+        "subtitle": "続けるにはパスワードを入力してください"
       }
     }
   },
   "ko": {
     "auth": {
       "login": {
-        "failed": "사용자 이름 또는 비밀번호가 올바르지 않습니다",
+        "failed": "비밀번호가 올바르지 않습니다 (반복 실패 시 일시적으로 잠깁니다)",
         "password": "비밀번호",
         "submit": "로그인",
-        "subtitle": "계속하려면 로그인하세요",
-        "username": "사용자 이름"
+        "subtitle": "계속하려면 비밀번호를 입력하세요"
       }
     }
   }

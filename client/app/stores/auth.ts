@@ -88,15 +88,14 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * Sign in and start the refresh timer.
-   * @param username
+   * Sign in with the password and start the refresh timer.
    * @param password
    */
-  async function login(username: string, password: string): Promise<boolean> {
+  async function login(password: string): Promise<boolean> {
     busy.value = true;
     clearError();
     try {
-      const result = await loginRequest(username, password);
+      const result = await loginRequest(password);
       user.value = result.user;
       authRequired.value = false;
       authEnabled.value = true;
@@ -136,15 +135,14 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * First-time setup: create the account and switch protection on.
-   * @param username
+   * First-time setup: set the password and switch protection on.
    * @param password
    */
-  async function setupAccount(username: string, password: string): Promise<boolean> {
+  async function setupAccount(password: string): Promise<boolean> {
     busy.value = true;
     clearError();
     try {
-      user.value = await setupAccountRequest(username, password);
+      user.value = await setupAccountRequest(password);
       authEnabled.value = true;
       hasAccount.value = true;
       return true;
@@ -158,16 +156,15 @@ export const useAuthStore = defineStore('auth', () => {
   }
 
   /**
-   * Change the username and/or password of the current account.
-   * @param password Current password (always required by the backend).
-   * @param newUsername
+   * Replace the password (the current one is always required by the backend).
+   * @param password Current password.
    * @param newPassword
    */
-  async function updateAccount(password: string, newUsername?: string, newPassword?: string): Promise<boolean> {
+  async function updateAccount(password: string, newPassword: string): Promise<boolean> {
     busy.value = true;
     clearError();
     try {
-      user.value = await updateAccountRequest({ password, newUsername, newPassword });
+      user.value = await updateAccountRequest({ password, newPassword });
       hasAccount.value = true;
       return true;
     } catch (e) {

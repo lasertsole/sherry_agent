@@ -60,12 +60,11 @@ describe('login page', () => {
     navigate.mockClear();
   });
 
-  it('keeps the submit button disabled until both fields are filled', async () => {
+  it('keeps the submit button disabled until the password is filled', async () => {
     const wrapper = await mountLogin();
 
     expect(wrapper.get('[data-test="login-submit"]').attributes('disabled')).toBeDefined();
 
-    await wrapper.get('[data-test="login-username"]').setValue('admin');
     await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
     await flushPromises();
 
@@ -73,30 +72,44 @@ describe('login page', () => {
   });
 
   it('signs in and navigates home', async () => {
-    bridge.loginRequest.mockResolvedValue({ user: { id: 1, username: 'admin' }, expiresIn: 43200 });
+    bridge.loginRequest.mockResolvedValue({ user: { id: 1 }, expiresIn: 43200 });
     const wrapper = await mountLogin();
 
-    await wrapper.get('[data-test="login-username"]').setValue('admin');
     await wrapper.get('[data-test="login-password"]').setValue('hunter2-long');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
 
-    expect(bridge.loginRequest).toHaveBeenCalledWith('admin', 'hunter2-long');
+    expect(bridge.loginRequest).toHaveBeenCalledWith('hunter2-long');
     expect(navigate).toHaveBeenCalledWith('/home');
   });
 
-  it('renders a uniform failure and stays put', async () => {
+  it('shows the throttle message while a lockout is in force', async () => {
     bridge.loginRequest.mockRejectedValue(
-      Object.assign(new Error('invalid username or password'), { code: 'invalid_credentials' })
+      Object.assign(new Error('too many failed attempts — try again in 5s'), {
+        code: 'too_many_attempts'
+      })
     );
     const wrapper = await mountLogin();
 
-    await wrapper.get('[data-test="login-username"]').setValue('admin');
     await wrapper.get('[data-test="login-password"]').setValue('wrong');
     await wrapper.get('form').trigger('submit');
     await flushPromises();
 
-    expect(wrapper.get('[data-test="login-error"]').text()).toContain('用户名或密码错误');
+    // The wait itself is actionable; a wrong password keeps the generic line.
+    expect(wrapper.get('[data-test="login-error"]').text()).toContain('try again in 5s');
+  });
+
+  it('renders a uniform failure and stays put', async () => {
+    bridge.loginRequest.mockRejectedValue(
+      Object.assign(new Error('incorrect password'), { code: 'invalid_credentials' })
+    );
+    const wrapper = await mountLogin();
+
+    await wrapper.get('[data-test="login-password"]').setValue('wrong');
+    await wrapper.get('form').trigger('submit');
+    await flushPromises();
+
+    expect(wrapper.get('[data-test="login-error"]').text()).toContain('密码错误');
     expect(navigate).not.toHaveBeenCalled();
   });
 });

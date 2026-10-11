@@ -1,9 +1,11 @@
-"""The auth store: users, the runtime switch and the JWT blacklist.
+"""The auth store: the single account, the runtime switch and the JWT blacklist.
 
-Contract under test: users are unique and updatable, the settings row is a
-singleton that reads as "disabled" when absent (fresh install), the boot seed
-writes it only once (the menu owns it afterwards), and blacklist entries expire
-out of the table at their own ``exp``.
+Contract under test: ONE account row exists at most (password-only login — the
+schema pins ``id = 1``, so a second INSERT cannot create a second account), a
+password change updates that row in place, the settings row is a singleton that
+reads as "disabled" when absent (fresh install), the boot seed writes it only
+once (the menu owns it afterwards), blacklist entries expire out of the table at
+their own ``exp``, and a username-era database is migrated at init.
 """
 
 from __future__ import annotations
@@ -18,60 +20,82 @@ pytestmark = [pytest.mark.unit]
 
 
 @pytest.mark.asyncio
-async def test_create_and_read_a_user(isolated_auth_store) -> None:
-    created = await auth_store.create_user("admin", "scrypt$stored")
+async def test_set_and_read_the_account(isolated_auth_store) -> None:
+    assert await auth_store.get_account() is None
+    assert await auth_store.account_exists() is False
 
-    assert created["id"] > 0
-    assert created["username"] == "admin"
+    created = await auth_store.set_account_password("scrypt$stored")
+
+    assert created["id"] == 1
     assert created["password_hash"] == "scrypt$stored"
     assert created["created_at"] > 0
-
-    by_name = await auth_store.get_user_by_username("admin")
-    by_id = await auth_store.get_user_by_id(created["id"])
-    assert by_name == by_id
-    assert by_name is not None and by_name["username"] == "admin"
-    assert await auth_store.get_user_by_username("nobody") is None
+    assert await auth_store.account_exists() is True
+    assert (await auth_store.get_account())["password_hash"] == "scrypt$stored"
 
 
 @pytest.mark.asyncio
-async def test_duplicate_usernames_are_refused(isolated_auth_store) -> None:
-    await auth_store.create_user("admin", "h1")
+async def test_a_second_write_updates_the_row_in_place(isolated_auth_store) -> None:
+    """The schema pins id = 1: the account can never multiply."""
+    first = await auth_store.set_account_password("h1")
+    second = await auth_store.set_account_password("h2")
 
-    with pytest.raises(Exception):
-        await auth_store.create_user("admin", "h2")
-
-
-@pytest.mark.asyncio
-async def test_update_password_and_username(isolated_auth_store) -> None:
-    user = await auth_store.create_user("admin", "h1")
-
-    assert await auth_store.update_password(user["id"], "h2") is True
-    assert await auth_store.update_username(user["id"], "root") is True
-
-    refreshed = await auth_store.get_user_by_id(user["id"])
-    assert refreshed is not None
-    assert refreshed["password_hash"] == "h2"
-    assert refreshed["username"] == "root"
-    assert refreshed["updated_at"] >= refreshed["created_at"]
+    assert second["id"] == first["id"]
+    assert second["password_hash"] == "h2"
+    # A password change keeps the "created" stamp — only "updated" moves.
+    assert second["created_at"] == first["created_at"]
+    assert second["updated_at"] >= first["updated_at"]
 
 
 @pytest.mark.asyncio
-async def test_delete_user_and_count(isolated_auth_store) -> None:
-    user = await auth_store.create_user("admin", "h")
+async def test_delete_account(isolated_auth_store) -> None:
+    await auth_store.set_account_password("h")
 
-    assert await auth_store.count_users() == 1
-    assert await auth_store.delete_user(user["id"]) is True
-    assert await auth_store.count_users() == 0
-    assert await auth_store.get_user_by_id(user["id"]) is None
-    assert await auth_store.delete_user(user["id"]) is False
+    assert await auth_store.account_exists() is True
+    assert await auth_store.delete_account() is True
+    assert await auth_store.account_exists() is False
+    assert await auth_store.get_account() is None
+    assert await auth_store.delete_account() is False
 
 
 @pytest.mark.asyncio
-async def test_first_user_is_the_single_account(isolated_auth_store) -> None:
-    assert await auth_store.get_first_user() is None
+async def test_a_username_era_database_is_migrated(isolated_auth_store, tmp_path) -> None:
+    """A legacy ``auth_users`` row (lowest id wins) becomes the account, and the
+    legacy table is dropped — the password keeps working across the upgrade."""
+    import sqlite3
 
-    first = await auth_store.create_user("admin", "h1")
-    assert (await auth_store.get_first_user())["id"] == first["id"]
+    legacy = tmp_path / "legacy.db"
+    con = sqlite3.connect(legacy)
+    con.execute(
+        "CREATE TABLE auth_users (id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " username TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,"
+        " created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL)"
+    )
+    con.execute(
+        "INSERT INTO auth_users (username, password_hash, created_at, updated_at)"
+        " VALUES ('admin', 'scrypt$old', 111, 222)"
+    )
+    con.commit()
+    con.close()
+
+    # Point the store at the legacy file and let its init run the migration.
+    import asyncio
+
+    from server.DAO import auth_store as store
+
+    isolated_auth_store.write_bytes(legacy.read_bytes())
+    store._initialized = False
+    store._init_loop = None
+    store._init_lock = asyncio.Lock()
+    store._sync_tables_ready = False
+
+    account = await store.get_account()
+    assert account is not None and account["password_hash"] == "scrypt$old"
+
+    con = sqlite3.connect(isolated_auth_store)
+    tables = {row[0] for row in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    con.close()
+    assert "auth_users" not in tables
+    assert "auth_account" in tables
 
 
 @pytest.mark.asyncio

@@ -118,7 +118,7 @@ client/
 │   ├── layouts/default.vue        # 기본 레이아웃 — 풀뷰 래퍼
 │   ├── pages/
 │   │   ├── index.vue              # ChatInputBox 렌더링(루트 / 는 routeRules에 의해 /home으로 301 리다이렉트)
-│   │   ├── login/index.vue        # 로그인 페이지(사용자 이름 + 비밀번호, 게이트가 요구할 때만 표시)
+│   │   ├── login/index.vue        # 로그인 페이지(**비밀번호만** — 계정 하나, 사용자 이름 없음; 게이트가 요구할 때만 표시)
 │   │   └── home/
 │   │       ├── index.vue          # 메인 채팅 셸 — SessionSidebar + 툴바 + 중첩 NuxtPage
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
@@ -162,7 +162,7 @@ client/
 │   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
-│   │           ├── AccountSettingsPanel.vue   # 계정 탭: 로그인 보호 설정 / 변경 / 해제(현재 비밀번호 필요)
+│   │           ├── AccountSettingsPanel.vue   # 계정 탭: 비밀번호 설정 / 교체 / 로그인 보호 해제(현재 비밀번호 필요)
 │   │           ├── RightSidebar.vue           # 접이식 오른쪽 패널 —— 모든 도구를 탭으로(뷰어 + 설정 편집기)
 │   │           ├── FileViewerPanel.vue        # 「현재 세션」아래 파일 뷰어 탭(GET /project/file, 텍스트 + 이미지 미리보기)
 │   │           ├── LogsPanel.vue              # 로그 보기 탭(서버 로그 + 클라이언트 로그, 실시간 스트림)

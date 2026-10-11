@@ -118,7 +118,7 @@ client/
 │   ├── layouts/default.vue        # 默认布局 —— 全屏视图容器
 │   ├── pages/
 │   │   ├── index.vue              # 渲染 ChatInputBox（路由 / 经 routeRules 301 重定向到 /home）
-│   │   ├── login/index.vue        # 登录页（用户名 + 密码；仅在网关要求登录时出现）
+│   │   ├── login/index.vue        # 登录页（**只输密码**——单账户、无用户名；仅在网关要求登录时出现）
 │   │   └── home/
 │   │       ├── index.vue          # 主聊天外壳 —— SessionSidebar + 工具栏 + 嵌套 NuxtPage
 │   │       ├── config.ts          # 媒体下拉条目与头部工具定义
@@ -162,7 +162,7 @@ client/
 │   │           ├── SkillsPanel.vue            # 技能管理标签页（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
-│   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 修改 / 关闭登录保护（需当前密码）
+│   │           ├── AccountSettingsPanel.vue   # 账户标签页：设置 / 更换密码 / 关闭登录保护（需当前密码）
 │   │           ├── RightSidebar.vue           # 可折叠右侧栏 —— 所有工具都以标签面板承载（查看器 + 设置编辑器）
 │   │           ├── FileViewerPanel.vue        # 「当前会话」下的文件查看标签页（GET /project/file，文本 + 图片预览）
 │   │           ├── LogsPanel.vue              # 日志查看标签页（服务端日志 + 客户端日志，实时流）

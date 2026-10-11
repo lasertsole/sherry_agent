@@ -15,10 +15,14 @@
 
 import { fetchApiRaw } from '../requestApi';
 
-/** The signed-in account as the backend reports it. */
+/**
+ * The signed-in account as the backend reports it.
+ *
+ * Password-only login and a single account: there is no name to carry, so the
+ * client knows an id and when the password was set.
+ */
 export interface AuthUser {
   id: number;
-  username: string;
   created_at?: number;
 }
 
@@ -92,12 +96,12 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
 }
 
 /**
- * Sign in; the cookies ride the response, so only the user comes back.
- * @param username
+ * Sign in with the password; the cookies ride the response, so only the user
+ * comes back.
  * @param password
  */
-export async function loginRequest(username: string, password: string): Promise<{ user: AuthUser; expiresIn: number }> {
-  const payload = await authRequest('/auth/login', 'post', { username, password });
+export async function loginRequest(password: string): Promise<{ user: AuthUser; expiresIn: number }> {
+  const payload = await authRequest('/auth/login', 'post', { password });
   return { user: payload.user as AuthUser, expiresIn: Number(payload.expires_in ?? 0) };
 }
 
@@ -123,31 +127,26 @@ export async function fetchMe(): Promise<AuthUser | null> {
 }
 
 /**
- * First-time setup (or a full re-setup when no account exists yet).
- * @param username
+ * First-time setup: set THE password (there is one account) and enable
+ * protection. Refused with `account_exists` once one is configured.
  * @param password
  */
-export async function setupAccountRequest(username: string, password: string): Promise<AuthUser> {
-  const payload = await authRequest('/auth/account', 'put', { username, password });
+export async function setupAccountRequest(password: string): Promise<AuthUser> {
+  const payload = await authRequest('/auth/account', 'put', { password });
   return payload.user as AuthUser;
 }
 
 /**
- * Change the current account (both halves require the current password).
+ * Replace the password (the current one is required).
  * @param options
  * @param options.password
- * @param options.newUsername
  * @param options.newPassword
  */
-export async function updateAccountRequest(options: {
-  password: string;
-  newUsername?: string;
-  newPassword?: string;
-}): Promise<AuthUser> {
-  const body: Record<string, unknown> = { password: options.password };
-  if (options.newUsername !== undefined) body.new_username = options.newUsername;
-  if (options.newPassword !== undefined) body.new_password = options.newPassword;
-  const payload = await authRequest('/auth/account', 'put', body);
+export async function updateAccountRequest(options: { password: string; newPassword: string }): Promise<AuthUser> {
+  const payload = await authRequest('/auth/account', 'put', {
+    password: options.password,
+    new_password: options.newPassword
+  });
   return payload.user as AuthUser;
 }
 

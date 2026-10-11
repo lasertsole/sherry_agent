@@ -118,7 +118,7 @@ client/
 │   ├── layouts/default.vue        # デフォルトレイアウト — フルビューのラッパー
 │   ├── pages/
 │   │   ├── index.vue              # ChatInputBox を描画（ルート / は routeRules により /home へ 301 リダイレクト）
-│   │   ├── login/index.vue        # ログインページ（ユーザー名 + パスワード。ゲートが要求したときだけ表示）
+│   │   ├── login/index.vue        # ログインページ（**パスワードのみ**——アカウントは 1 つでユーザー名なし。ゲートが要求したときだけ表示）
 │   │   └── home/
 │   │       ├── index.vue          # メインチャットシェル — SessionSidebar + ツールバー + ネストされた NuxtPage
 │   │       ├── config.ts          # メディア ドロップダウンの項目とヘッダーツール定義
@@ -162,7 +162,7 @@ client/
 │   │           ├── SkillsPanel.vue            # スキル管理タブ（一覧 / アップロード / 切替 / ピン留め / 削除 / curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
-│   │           ├── AccountSettingsPanel.vue   # アカウントタブ：ログイン保護の設定 / 変更 / 解除（現在のパスワードが必要）
+│   │           ├── AccountSettingsPanel.vue   # アカウントタブ：パスワードの設定 / 変更 / ログイン保護の解除（現在のパスワードが必要）
 │   │           ├── RightSidebar.vue           # 折りたたみ可能な右パネル —— すべてのツールをタブ化（ビューア + 設定エディタ）
 │   │           ├── FileViewerPanel.vue        # 「現在のセッション」のファイルビューアタブ（GET /project/file、テキスト + 画像プレビュー）
 │   │           ├── LogsPanel.vue              # ログ表示タブ（サーバーログ + クライアントログ、ライブストリーム）

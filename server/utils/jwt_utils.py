@@ -41,7 +41,7 @@ def jwt_secret() -> str:
     return AUTH["jwt_secret"] or _BOOT_SECRET
 
 
-def _encode(*, user_id: int, ttl_seconds: int, kind: str, username: str | None = None) -> str:
+def _encode(*, user_id: int, ttl_seconds: int, kind: str) -> str:
     now = int(time.time())
     payload: dict[str, object] = {
         # PyJWT validates that `sub` is a string (RFC 7519 §4.1.2), so the user
@@ -53,20 +53,16 @@ def _encode(*, user_id: int, ttl_seconds: int, kind: str, username: str | None =
         "iss": AUTH["jwt_issuer"],
         "typ": kind,
     }
-    if username is not None:
-        payload["username"] = username
     return jwt.encode(payload, jwt_secret(), algorithm=AUTH["jwt_algorithm"])
 
 
-def create_access_token(user_id: int, username: str) -> str:
+def create_access_token(user_id: int) -> str:
     """Issue an access token for ``user_id``."""
-    return _encode(
-        user_id=user_id, ttl_seconds=AUTH["session_ttl_seconds"], kind=ACCESS, username=username
-    )
+    return _encode(user_id=user_id, ttl_seconds=AUTH["session_ttl_seconds"], kind=ACCESS)
 
 
 def create_refresh_token(user_id: int) -> str:
-    """Issue a refresh token for ``user_id`` (no username: it is not needed to rotate)."""
+    """Issue a refresh token for ``user_id``."""
     return _encode(user_id=user_id, ttl_seconds=AUTH["refresh_ttl_seconds"], kind=REFRESH)
 
 

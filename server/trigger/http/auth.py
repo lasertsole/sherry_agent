@@ -10,6 +10,11 @@ Account management is a trusted-operator action: a caller that is NOT gated by
 the login middleware (loopback, or auth switched off) may manage the single
 account without a session — it must still prove the current password before any
 change, so that rule holds even for the local operator.
+
+Login is PASSWORD-ONLY (there is one account): the failures worth defending
+against are brute force and SQL injection, so the login route forwards the
+caller's socket address to the service's throttle and every query on the way
+down is parameterized (see ``server/DAO/auth_store.py``).
 """
 
 from __future__ import annotations
@@ -77,9 +82,10 @@ def _clear_session_cookies(response: Response) -> Response:
 
 
 def _auth_error(exc: AuthError) -> Response:
-    return to_text_response(
-        exc.status, {"success": False, "error": exc.code, "message": exc.message}
-    )
+    body: dict[str, object] = {"success": False, "error": exc.code, "message": exc.message}
+    if exc.retry_after is not None:
+        body["retry_after"] = exc.retry_after
+    return to_text_response(exc.status, body)
 
 
 def _access_token(request: Request) -> str:
@@ -117,11 +123,16 @@ async def auth_status_handler(request: Request):
 
 @app.post("/auth/login")
 async def auth_login_handler(request: Request):
-    """Verify credentials, then hand out the two HttpOnly cookies."""
+    """Verify the password, then hand out the two HttpOnly cookies.
+
+    The socket address keys the brute-force throttle (the same
+    ``request.ip_addr`` the login gate uses — a header cannot spoof it).
+    """
     body = read_body(request) or {}
     try:
         pair = await auth_service.login(
-            str(body.get("username") or ""), str(body.get("password") or "")
+            str(body.get("password") or ""),
+            client=str(getattr(request, "ip_addr", "") or ""),
         )
     except AuthError as exc:
         return _auth_error(exc)
@@ -162,16 +173,19 @@ async def auth_me_handler(request: Request):
 
 @app.put("/auth/account")
 async def auth_account_handler(request: Request):
-    """First-time setup, or change the username / password of the account."""
+    """First-time setup (``{password}``), a password change, or re-enabling the switch.
+
+    ``{password}`` with no account yet sets THE password and turns protection on;
+    afterwards the same body with ``{password, new_password}`` replaces it, and
+    ``{password, enabled: true}`` flips a disabled switch back on.
+    """
     body = read_body(request) or {}
-    username = str(body.get("username") or "")
     password = str(body.get("password") or "")
-    new_username = body.get("new_username")
     new_password = body.get("new_password")
     try:
-        if username:
+        if not await auth_service.has_account():
             # Setup path: only reachable while no account exists.
-            user = await auth_service.setup_account(username, password)
+            user = await auth_service.setup_account(password)
             return ok({"success": True, "user": user})
         acting = await _acting_user(request)
         if acting is None:
@@ -179,13 +193,12 @@ async def auth_account_handler(request: Request):
                 401, {"success": False, "error": "not_authenticated", "message": "not signed in"}
             )
         if body.get("enabled") is True:
-            # Re-enable a disabled switch; the account itself is unchanged.
+            # Re-enable a disabled switch; the password itself is unchanged.
             await auth_service.enable_auth(acting, password)
             return ok({"success": True, "user": acting})
         user = await auth_service.update_account(
             acting,
             password=password,
-            new_username=str(new_username) if new_username is not None else None,
             new_password=str(new_password) if new_password is not None else None,
         )
     except AuthError as exc:

@@ -20,12 +20,12 @@ pytestmark = [pytest.mark.unit]
 
 
 def test_access_token_carries_the_expected_claims() -> None:
-    token = jwt_utils.create_access_token(7, "admin")
+    token = jwt_utils.create_access_token(7)
     payload = jwt_utils.decode_token(token, kind=jwt_utils.ACCESS)
 
     assert payload is not None
     assert payload["sub"] == "7"
-    assert payload["username"] == "admin"
+    assert "username" not in payload
     assert payload["typ"] == "access"
     assert payload["iss"] == AUTH["jwt_issuer"]
     assert payload["exp"] - payload["iat"] == AUTH["session_ttl_seconds"]
@@ -41,7 +41,7 @@ def test_refresh_token_has_its_own_lifetime_and_kind() -> None:
 
 
 def test_token_kinds_are_not_interchangeable() -> None:
-    access = jwt_utils.create_access_token(1, "u")
+    access = jwt_utils.create_access_token(1)
     refresh = jwt_utils.create_refresh_token(1)
 
     assert jwt_utils.decode_token(access, kind=jwt_utils.REFRESH) is None
@@ -67,7 +67,7 @@ def test_a_token_signed_with_another_key_is_rejected() -> None:
 
 
 def test_a_hand_edited_token_is_rejected() -> None:
-    token = jwt_utils.create_access_token(1, "u")
+    token = jwt_utils.create_access_token(1)
     header, payload, signature = token.split(".")
     tampered = f"{header}.{payload[:-2]}AA.{signature}"
 
@@ -76,7 +76,7 @@ def test_a_hand_edited_token_is_rejected() -> None:
 
 def test_an_expired_token_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(AUTH, "session_ttl_seconds", -1)
-    expired = jwt_utils.create_access_token(1, "u")
+    expired = jwt_utils.create_access_token(1)
 
     assert jwt_utils.decode_token(expired, kind=jwt_utils.ACCESS) is None
 
@@ -127,7 +127,7 @@ def test_the_algorithm_is_pinned_so_none_is_never_accepted() -> None:
 
 def test_the_configured_secret_wins_over_the_boot_secret(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(AUTH, "jwt_secret", "fixed-test-secret-0123456789abcdef")
-    token = jwt_utils.create_access_token(1, "u")
+    token = jwt_utils.create_access_token(1)
 
     assert jwt_utils.jwt_secret() == "fixed-test-secret-0123456789abcdef"
     assert (
