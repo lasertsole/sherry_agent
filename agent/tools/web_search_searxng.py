@@ -6,9 +6,10 @@ its ``settings.yml``)::
     GET {SEARXNG_URL}/search?q=<query>&format=json&pageno=1
     → {"results": [{"title", "url", "content", "score", ...}, ...]}
 
-Adds what the plan calls for beyond a bare request: an httpx proxy (for a
-self-hosted instance reached across a MITM'd or filtered network), engine and
-category passthrough, and a TLS-verification toggle for MITM proxies.
+Beyond a bare request it carries the connection options a self-hosted instance
+needs: an httpx proxy (for an instance reached across a MITM'd or filtered
+network), engine and category passthrough, and a TLS-verification toggle for
+MITM proxies.
 
 The output string mirrors the shape Tavily returns (numbered entries with a
 title / URL / snippet), so the model sees one tool with one result format and

@@ -510,9 +510,9 @@ client that misses the frame still shows the truth.
 
 SearXNG lives in `agent/tools/web_search_searxng.py`: the instance's JSON API
 (`GET {SEARXNG_URL}/search?q=…&format=json&pageno=1`), results ranked by score
-and formatted like Tavily's, plus the three connection options the plan called
-for — an httpx proxy, engine/category passthrough, and a TLS-verification
-toggle for MITM proxies. It NEVER raises: every failure returns a readable line
+and formatted like Tavily's, plus the three connection options a self-hosted
+deployment needs — an httpx proxy, engine/category passthrough, and a
+TLS-verification toggle for MITM proxies. It NEVER raises: every failure returns a readable line
 naming the status and whether the request went `via proxy …` or over a `direct
 connection`. `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` /
 `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.env`, and so
