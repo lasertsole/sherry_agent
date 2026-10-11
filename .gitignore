@@ -14,8 +14,13 @@ evals/results/
 # Env / deps
 .venv
 __pycache__
-.env
-.env.bak
+# .env is TRACKED: it holds the non-secret application configuration only
+# (sandbox / gateway / login). The model and network credentials live in the
+# gitignored .models / .network below — never put an API key in .env.
+.models
+.models.bak
+.network
+.network.bak
 sherry.jsonc.bak
 # models/
 model_weight/

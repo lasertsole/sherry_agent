@@ -288,7 +288,9 @@ EMA_AI_agent/
 │   ├── sessions/           # セッション単位のランタイムワークスペースデータ
 │   └── memory/             # 長期記憶ストレージ
 │
-├── .env.example            # 環境変数テンプレート
+├── .env                    # アプリ設定・追跡対象（サンドボックス / ゲートウェイ / ログイン — キーは書かない）
+├── .models.example         # モデル設定テンプレート（初回起動で .models を生成）
+├── .network.example        # ネットワーク設定テンプレート（初回起動で .network を生成）
 ├── pyproject.toml          # Python 依存関係（uv 管理）
 ├── uv.lock                 # uv ロックファイル
 ├── start.sh                # バックエンド起動スクリプト
@@ -337,12 +339,16 @@ cd EMA_AI_agent
 uv sync   # .venv を作成し、uv.lock の依存関係を正確にインストール
 ```
 
-### 2. 環境変数の設定
-`.env` テンプレートをコピーし、少なくともメインチャットモデルと Tavily キーを設定してください：
+### 2. モデルとネットワークの設定ファイル
+設定は機密度で 3 つのファイルに分かれています：
 
-```bash
-cp .env.example .env
-```
+| ファイル | 追跡 | 内容 |
+| :--- | :--- | :---------- |
+| `.env` | ✅ コミット | 非機密のアプリ設定（サンドボックス方針、ゲートウェイ、ログイン）。キーは絶対に書かない。 |
+| `.models` | 対象外 | 各モデルファミリーの provider / エンドポイント / キー（初回起動で `.models.example` から生成） |
+| `.network` | 対象外 | Web 検索（Tavily / SearXNG）、ブラウザエージェントのスイッチ、LangSmith トレーシング（初回起動で `.network.example` から生成） |
+
+少なくとも `.models` にメインチャットモデルを、Web 検索を使う場合は `.network` に Tavily キーまたは SearXNG インスタンスを設定してください（「モデル設定 / モデル検索」パネルから編集できます）：
 
 | 変数 | 必須 | 説明 |
 | :------- | :------- | :---------- |
@@ -355,15 +361,16 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 検索用リランカーと埋め込みモデル（下記モデル注記を参照） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector セキュリティスキャンのスイッチ（デフォルトで有効） |
+| `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | オプトインのブラウザエージェント（既定は無効）。変更後は再起動でツールが登録されます |
 | `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 保存設定のみ（デフォルト 5）— ツール実行パスは消費しません。ログレベル（INFO） |
 | `WORKSPACE_TEMPLATE_LANG` | — | ペルソナテンプレートの言語：`en` / `zh` / `ja` / `ko`（初回使用時に遅延コピー） |
-| `"LANGSMITH"`（sherry.jsonc） | — | オプションの LangSmith トレーシング |
+| `LANGSMITH_TRACING_V2` / `LANGSMITH_API_KEY`（`.network`） | — | オプションの LangSmith トレーシング |
 
 ### 3. モデルに関する注意（HuggingFace 自動ダウンロード）
 **ローカル GGUF** モードに設定されたモデルは、初回使用時に Hugging Face から `models/<model>/model_weight/` へ自動ダウンロードされます。手動ダウンロードは不要です：
 
 - **埋め込みモデル**：`EMBEDDING_MODEL_LOCAL=true`（デフォルト）の場合、ローカルの `bge-m3` Q8_0 GGUF を初回実行時に自動ダウンロードします。
-- **リランカーモデル**：`.env` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
+- **リランカーモデル**：`.models` テンプレートのデフォルトは**クラウド API**（`RERANKER_MODEL_LOCAL=false`、OpenAI 互換の `bge-reranker-v2-m3`）。`true` に設定するとローカル GGUF リランカー（約 636 MB、自動ダウンロード）に切り替わります。
 - **ITTT / VTTT / Auxiliary LLM**：テンプレートのデフォルトはクラウド API。`*_MODEL_LOCAL=true` でローカル GGUF モデルに切り替え可能（同様に自動ダウンロード）。
 
 > 初回ダウンロードには huggingface.co へのアクセスが必要です（中国本土のユーザーはプロキシやミラーが必要な場合があります）。ダウンロードが中断された場合は次回起動時に再開されます。`models/<model>/model_weight/` を削除すると再ダウンロードを強制できます。
@@ -403,7 +410,7 @@ uv run --with pyinstaller python packaging/build_backend.py   # バックエン�
 cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
 ```
 
-どちらも対象 OS ごとに実行が必要です（PyInstaller はクロスコンパイル不可）。アプリが所有するデータ——セッション、メモリ、ログ、学習したスキル、`.env`——は OS のアプリデータディレクトリ（`SHERRY_HOME`、シェルが注入）に書き込まれ、読み取り専用のインストール先には書き込みません。初回起動ではモデル未設定のままウィンドウが開き、「モデル設定」でキーを入力して再起動すると有効になります。
+どちらも対象 OS ごとに実行が必要です（PyInstaller はクロスコンパイル不可）。アプリが所有するデータ——セッション、メモリ、ログ、学習したスキル、`.env` / `.models` / `.network`——は OS のアプリデータディレクトリ（`SHERRY_HOME`、シェルが注入）に書き込まれ、読み取り専用のインストール先には書き込みません。初回起動ではモデル未設定のままウィンドウが開き、「モデル設定」でキーを入力して再起動すると有効になります。
 
 ---
 

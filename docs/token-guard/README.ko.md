@@ -4,7 +4,7 @@
 
 > 에이전트가 두 LLM 모두에 128K 컨텍스트 윈도우 하한을 강제하는 방식: 하나의 공유 술어가 네 개의 적용 지점(서버 부팅, 그래프 빌드, 서브에이전트 스폰, `.env` 쓰기)에서 예외를 던지고, 프런트엔드는 차단하기 전에 경고하며, `GET /model-config`가 현재 판정을 노출합니다.
 
-사실 출처: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, 그리고 `.env.example`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조해 검증했습니다.
+사실 출처: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, `server/service/models_config.py`, 그리고 `.models`. 이 문서의 모든 줄 번호와 상수는 해당 코드와 대조해 검증했습니다.
 
 ## 목차
 
@@ -71,12 +71,12 @@ from config.features import (
 
 ## 📐 임계값과 설정
 
-| 환경 변수 | 의미 | 요구 | `.env.example` 기본값 |
+| 환경 변수 | 의미 | 요구 | `.models` 기본값 |
 | :------ | :------ | :------- | :--------------------- |
-| `MAIN_LLM_MAX_TOKEN` | 메인 모델 컨텍스트 윈도우 | `>= 131072` | `131072` (`.env.example` 8행) |
-| `AUXILIARY_LLM_MAX_TOKEN` | 보조 모델 컨텍스트 윈도우 | `>= 131072` | `131072` (`.env.example` 59행) |
+| `MAIN_LLM_MAX_TOKEN` | 메인 모델 컨텍스트 윈도우 | `>= 131072` | `131072` |
+| `AUXILIARY_LLM_MAX_TOKEN` | 보조 모델 컨텍스트 윈도우 | `>= 131072` | `131072` |
 
-두 키는 환경 쓰기 허용 목록 `TOKEN_KEYS`에도 등록되어 있습니다(`server/service/env.py:27`):
+두 키는 설정 쓰기 허용 목록 `TOKEN_KEYS`에도 등록되어 있습니다(`server/service/models_config.py`; `.env` 자체는 모델 키를 받지 않습니다):
 
 ```python
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
@@ -109,7 +109,7 @@ MAIN_LLM_MAX_TOKEN = 131072
 AUXILIARY_LLM_MAX_TOKEN = 131072
 ```
 
-3. 부팅 게이트를 다시 실행하도록 백엔드를 재시작합니다. 동봉된 `.env.example`은 이미 두 키 모두 `131072`입니다.
+3. 부팅 게이트를 다시 실행하도록 백엔드를 재시작합니다. 동봉된 `.models.example`은 이미 두 키 모두 `131072`입니다.
 
 > 로컬 `.env`가 아직 `100000`이라면, 서버는 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`와 함께 시작을 거부합니다. 실행 전에 `>= 131072`로 올리세요.
 
@@ -162,9 +162,9 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 | 부팅 게이트 | `server/__main__.py:95-100` | CRITICAL 로그 후 `SystemExit(1)` |
 | 빌드 게이트 | `agent/core.py:124` | `built_agent()`가 빌드 전 검증 |
 | 스폰 게이트 | `agent/tools/subagent/spawn/core.py:877` | 자식 LLM 구성 시 검증 |
-| 쓰기 게이트 | `server/service/env.py:157` | `write_env_file()`가 쓰기 전 거부 |
+| 쓰기 게이트 | `server/service/models_config.py` | `write_models_config()`가 쓰기 전 거부 |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | 프런트엔드 캐시 | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
 | 프런트엔드 경고 | `client/app/composables/use-chat-stream.ts:435` | 전송 시 비차단 toast |
 | 프런트엔드 다이얼로그 | `client/app/pages/home/components/ConfigPanel.vue` | 배너, 저장 전 검증, 캐시 무효화 |
-| 기본값 | `.env.example:8,59` | 두 키 모두 `131072` |
+| 기본값 | `.models.example` | 두 키 모두 `131072` |

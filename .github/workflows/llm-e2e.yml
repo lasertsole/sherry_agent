@@ -13,7 +13,8 @@
 # auxiliary model name is AUXILIARY_LLM_API_NAME (not AUXILIARY_LLM_NAME), and
 # the reasoner is configured through REASONER_LLM_* (see models/LLMs/).
 # Only non-empty secrets are exported (empty-string env can shadow config
-# defaults); provider defaults from .env.example apply otherwise.
+# defaults); an exported variable outranks the config files, and provider
+# defaults from the shipped .models.example (seeded to .models) apply otherwise.
 
 name: LLM e2e (manual)
 

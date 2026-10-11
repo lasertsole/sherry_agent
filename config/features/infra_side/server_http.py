@@ -94,9 +94,12 @@ SERVER_HTTP: ServerHttpConfig = {
         "delivery",
     ),
     # Display order of the environment-config groups (GET /env): the tuple order
-    # wins, so it must stay in step with the block order of .env / .env.example —
+    # wins, so it must stay in step with the block order of the tracked .env and
+    # the .models.example / .network.example templates —
     # the chat model first, then the auxiliary model it delegates simple work to,
-    # then the reasoner.
+    # then the reasoner. The trailing entries double as the group order for the
+    # network.jsonc groups (GET /network-config): the browser feature's switches
+    # and LangSmith tracing render after the model families.
     "env_group_prefixes": (
         "MAIN_LLM_",
         "AUXILIARY_LLM_",
@@ -109,6 +112,7 @@ SERVER_HTTP: ServerHttpConfig = {
         "STT_",
         # Feature switches render last, just before the catch-all "other".
         "SHERRY_BROWSER_",
+        "LANGSMITH_",
     ),
     #: Groups rendered with the model-profile manager (provider / model /
     #: api_key / profile rows). Everything else in ``env_group_prefixes`` is a
@@ -125,19 +129,20 @@ SERVER_HTTP: ServerHttpConfig = {
         "STT_",
     ),
     #: Prefixes the env-config payload WITHHOLDS from its panel because a
-    #: DEDICATED surface owns them (the 模型联网 tab edits both through the same
-    #: PUT /env, and reads them from GET /sessions/search_backend): a second
-    #: editor would only be a second way for the two to drift. Writes through
-    #: /env stay allowed — only the display is withheld.
+    #: DEDICATED surface owns them (the 模型联网 tab edits the search backends
+    #: through PUT /network-config and reads them from
+    #: GET /sessions/search_backend): a second editor would only be a second way
+    #: for the two to drift. Writes stay allowed — only the display is withheld.
     "env_panel_hidden_prefixes": ("TAVILY_", "SEARXNG_"),
+    #: Keys that left .env for sherry.jsonc (application settings). The model
+    #: and network keys that left for .models / .network are derived from their
+    #: registries (server/service/env.py), so those stay the single source of
+    #: truth.
     "env_split_out_keys": frozenset(
         {
             "TOOL_CALL_TIMEOUT_MINUTES",
             "LOG_LEVEL",
             "WORKSPACE_TEMPLATE_LANG",
-            "LANGSMITH_TRACING_V2",
-            "LANGSMITH_API_KEY",
-            "LANGSMITH_PROJECT",
         }
     ),
     "memory_system_file_names": ["MEMORY.md", "USER.md"],

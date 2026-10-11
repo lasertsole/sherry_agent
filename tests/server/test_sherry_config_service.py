@@ -19,11 +19,6 @@ SAMPLE = """// app settings
   "heartbeat": {
     "enabled": true
   },
-  "LANGSMITH": {
-    "TRACING_V2": false,
-    "API_KEY": "",
-    "PROJECT": "EMA_AI_agent"
-  },
   "curator": {
     "enabled": true,
     "interval_hours": 168,
@@ -79,7 +74,7 @@ class TestReadSherryConfig:
 
         by_key = {e["key"]: e["value"] for e in payload["entries"]}
         assert by_key["TOOL_CALL_TIMEOUT_MINUTES"] == "5"
-        assert by_key["LANGSMITH.TRACING_V2"] == "false"
+        assert by_key["heartbeat.enabled"] == "true"
         assert by_key["curator.interval_hours"] == "168"
         assert by_key["LOG_LEVEL"] == "INFO"
         assert all(e["value_edited"] is False for e in payload["entries"])
@@ -98,7 +93,7 @@ class TestWriteSherryConfig:
             {
                 "LOG_LEVEL": "DEBUG",
                 "TOOL_CALL_TIMEOUT_MINUTES": "9",
-                "LANGSMITH.TRACING_V2": "true",
+                "heartbeat.enabled": "false",
                 "curator.consolidate": "false",
             }
         )
@@ -112,15 +107,14 @@ class TestWriteSherryConfig:
         # Typed values are written as JSON scalars (no quotes on int/bool).
         assert '"TOOL_CALL_TIMEOUT_MINUTES": 9,' in text
         assert '"LOG_LEVEL": "DEBUG",' in text
-        assert '"TRACING_V2": true' in text
+        assert '"enabled": false' in text
         assert '"consolidate": false' in text
 
         # The trailing comma of the last entry stays absent; the file still parses.
         assert not text.rstrip().rstrip(",").endswith(",")
         data = json5.loads(text)
         assert data["TOOL_CALL_TIMEOUT_MINUTES"] == 9
-        assert data["LANGSMITH"]["TRACING_V2"] is True
-        assert data["LANGSMITH"]["PROJECT"] == "EMA_AI_agent"
+        assert data["heartbeat"]["enabled"] is False
         assert data["curator"]["consolidate"] is False
 
     def test_write_creates_a_dot_bak_backup(self, sherry_file):

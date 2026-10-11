@@ -1,11 +1,14 @@
 /**
  * The env panel renders a group by its declared KIND (backend-mocked).
  *
- * `GET /env` tags every group: model groups (MAIN_LLM, EMBEDDING, …) carry the
- * provider/model/api_key profile manager, everything else is a plain key/value
- * card. The browser feature's switches (`SHERRY_BROWSER_*`) are the first plain
- * group that is NOT the catch-all `other`, so the renderer must key off `kind`
- * — not off "the name is not other".
+ * The 模型配置 tab merges three files: the model families come from `.models`
+ * (GET /models-config), the browser / tracing groups from `.network`
+ * (GET /network-config) and the rest from `.env` (GET /env). Model groups
+ * (MAIN_LLM, EMBEDDING, …) render the provider/model/api_key profile manager,
+ * everything else is a plain key/value card — the browser feature's switches
+ * (`SHERRY_BROWSER_*`) are the first plain group that is NOT the catch-all
+ * `other`, so the renderer must key off `kind` — not off "the name is not
+ * other".
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { mount, flushPromises } from '@vue/test-utils';
@@ -15,7 +18,7 @@ import type { EnvConfigPayload, EnvGroup } from '@/composables/env';
 import ConfigPanel from '@/pages/home/components/ConfigPanel.vue';
 
 const envState = vi.hoisted(() => {
-  const groups: EnvGroup[] = [
+  const networkGroups: EnvGroup[] = [
     {
       name: 'SHERRY_BROWSER',
       kind: 'plain',
@@ -23,19 +26,25 @@ const envState = vi.hoisted(() => {
         { key: 'SHERRY_BROWSER_AGENT_ENABLED', value: '1', value_edited: false },
         { key: 'SHERRY_BROWSER_HEADLESS', value: '1', value_edited: false }
       ]
-    },
+    }
+  ];
+  const modelGroups: EnvGroup[] = [
     {
       name: 'MAIN_LLM',
       kind: 'model',
       entries: [{ key: 'MAIN_LLM_NAME', value: 'deepseek-flash', value_edited: false }]
     }
   ];
-  return { groups };
+  return { modelGroups, networkGroups };
 });
 
 vi.mock('@/composables/env', () => ({
-  readEnvConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.groups })),
-  writeEnvConfig: vi.fn(async () => true)
+  readEnvConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: [] })),
+  readModelsConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.modelGroups })),
+  readNetworkConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.networkGroups })),
+  writeEnvConfig: vi.fn(async () => true),
+  writeModelsConfig: vi.fn(async () => true),
+  writeNetworkConfig: vi.fn(async () => true)
 }));
 vi.mock('@/composables/model-config', () => ({ invalidateModelConfigCache: vi.fn() }));
 vi.mock('@/pages/home/components/AvatarCropDialog.vue', () => ({

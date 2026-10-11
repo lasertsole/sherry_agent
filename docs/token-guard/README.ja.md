@@ -4,7 +4,7 @@
 
 > エージェントが両方の LLM に 128K コンテキストウィンドウの下限をどう強制するか: 共有の述語が 4 つの適用ポイントで例外を投げ（サーバー起動、グラフ構築、サブエージェントのスポーン、`.env` 書き込み）、フロントエンドはブロックする前に警告し、`GET /model-config` が現在の判定を公開します。
 
-事実の出典: `config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、そして `.env.example`。本文書中のすべての行番号と定数は、そのコードに照らして検証済みです。
+事実の出典: `config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、`server/service/models_config.py`、そして `.models`。本文書中のすべての行番号と定数は、そのコードに照らして検証済みです。
 
 ## 目次
 
@@ -71,12 +71,12 @@ from config.features import (
 
 ## 📐 しきい値と設定
 
-| 環境変数 | 意味 | 要件 | `.env.example` の既定値 |
+| 環境変数 | 意味 | 要件 | `.models` の既定値 |
 | :------ | :------ | :------- | :--------------------- |
-| `MAIN_LLM_MAX_TOKEN` | メインモデルのコンテキストウィンドウ | `>= 131072` | `131072`（`.env.example` 8 行目） |
-| `AUXILIARY_LLM_MAX_TOKEN` | 補助モデルのコンテキストウィンドウ | `>= 131072` | `131072`（`.env.example` 59 行目） |
+| `MAIN_LLM_MAX_TOKEN` | メインモデルのコンテキストウィンドウ | `>= 131072` | `131072` |
+| `AUXILIARY_LLM_MAX_TOKEN` | 補助モデルのコンテキストウィンドウ | `>= 131072` | `131072` |
 
-両キーは環境書き込みの許可リスト `TOKEN_KEYS` にも登録されています（`server/service/env.py:27`）:
+両キーは設定書き込みの許可リスト `TOKEN_KEYS` にも登録されています（`server/service/models_config.py`。`.env` 自体はモデルキーを受け付けません）:
 
 ```python
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
@@ -109,7 +109,7 @@ MAIN_LLM_MAX_TOKEN = 131072
 AUXILIARY_LLM_MAX_TOKEN = 131072
 ```
 
-3. 起動ゲートを再実行するためバックエンドを再起動します。同梱の `.env.example` では両方ともすでに `131072` です。
+3. 起動ゲートを再実行するためバックエンドを再起動します。同梱の `.models.example` では両方ともすでに `131072` です。
 
 > ローカルの `.env` がまだ `100000` の場合、サーバーは `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked` とともに起動を拒否します。起動前に `>= 131072` へ引き上げてください。
 
@@ -162,9 +162,9 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 | 起動ゲート | `server/__main__.py:95-100` | CRITICAL ログの後 `SystemExit(1)` |
 | 構築ゲート | `agent/core.py:124` | `built_agent()` が構築前に検証 |
 | スポーンゲート | `agent/tools/subagent/spawn/core.py:877` | 子 LLM 構築時に検証 |
-| 書き込みゲート | `server/service/env.py:157` | `write_env_file()` が書き込み前に拒否 |
+| 書き込みゲート | `server/service/models_config.py` | `write_models_config()` が書き込み前に拒否 |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | フロントエンドキャッシュ | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |
 | フロントエンド警告 | `client/app/composables/use-chat-stream.ts:435` | 送信時の非ブロッキング toast |
 | フロントエンドパネル | `client/app/pages/home/components/ConfigPanel.vue` | バナー、保存前検証、キャッシュ無効化 |
-| 既定値 | `.env.example:8,59` | 両キーとも `131072` |
+| 既定値 | `.models.example` | 両キーとも `131072` |

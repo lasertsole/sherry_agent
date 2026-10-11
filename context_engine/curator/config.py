@@ -1,14 +1,13 @@
 from typing import Any
-from dotenv import load_dotenv
 
-from config import ENV_PATH
+from config.path import load_env
 from config.sherry_settings import get_sherry_setting
 from context_engine.curator.constants import (
     DEFAULT_INTERVAL_OVERRIDE_MAX_DAYS,
     DEFAULT_INTERVAL_OVERRIDE_MIN_DAYS,
 )
 
-load_dotenv(ENV_PATH, override=True)
+load_env()
 
 # Override interval is persisted in .curator_state under this key. A non-null
 # value (clamped to [MIN, MAX] days) overrides the ``curator.interval_hours``

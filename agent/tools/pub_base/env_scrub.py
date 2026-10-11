@@ -145,8 +145,8 @@ def _blocked_env_names() -> frozenset[str]:
     return _HIJACK_KEYS | _LOADER_KEYS if _STRICT_ENV_HIJACK else _HIJACK_KEYS
 
 
-# sherry_agent secret vars (loaded from .env at import time via
-# config/path.py load_dotenv), dropped by EXACT name.
+# sherry_agent secret vars (hydrated into the process environment from the
+# config files at import time via config/path.py), dropped by EXACT name.
 SHERRY_SECRET_NAMES = frozenset(
     {
         "MAIN_LLM_API_KEY",

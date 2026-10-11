@@ -19,9 +19,11 @@ cd client && pnpm tauri build --bundles deb                   # deb; also appima
   would unpack gigabytes on every launch). It collects our packages with
   `--collect-submodules` (their `__getattr__` uses `importlib.import_module`,
   invisible to the freezer), ships the data the backend reads from the code
-  tree (`skills/`, `workspace/template/`, `plugins/`, `sherry.jsonc`,
-  `.env.example`, `context_engine/`), and afterwards copies this document into
-  the artifact directory as its README. Most of the size is PyTorch.
+  tree (`skills/`, `workspace/template/`, `plugins/`, `sherry.jsonc`, `.env`,
+  `.models.example`, `.network.example`, `context_engine/`), and afterwards
+  copies this document into the artifact directory as its README. Most of the
+  size is PyTorch. A first run seeds the app-data home's `.env` from the tracked
+  one and its `.models` / `.network` from the two templates.
 - **`client/src-tauri/tauri.conf.json`** — `frontendDist` points at the
   `nuxt generate` output (`.output/public`; the `nuxt build` output needs a
   Nitro server and cannot be served from disk), built by

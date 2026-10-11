@@ -1,9 +1,8 @@
 import os
 from typing import Any
 from pathlib import Path
-from config import ENV_PATH
+from config.path import load_env
 from config.features import LLM_CLIENT_DEFAULTS
-from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
 from models.env_builder import ModelEnvBuilder
@@ -11,8 +10,8 @@ from models.env_builder import ModelEnvBuilder
 # Locate current directory
 current_dir = Path(__file__).parent.resolve()
 
-# Load environment variables
-load_dotenv(ENV_PATH, override=True)
+# Load environment variables (.env, then the network.jsonc overlay — which wins)
+load_env()
 max_tokens = os.getenv("REASONER_LLM_MAX_TOKEN")
 if max_tokens:
     try:

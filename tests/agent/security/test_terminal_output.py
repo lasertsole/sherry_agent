@@ -147,7 +147,11 @@ async def _awaitable(value):
 
 
 @pytest.fixture
-def tool():
+def tool(monkeypatch):
+    # Hermetic: this file exercises the output-stripping path through the
+    # main-agent ``sandbox=False`` bypass, which the shipped ``required`` policy
+    # refuses. Pin the policy instead of inheriting the machine's .env.
+    monkeypatch.setenv("SANDBOX_POLICY", "auto")
     return SafeShellTool()
 
 

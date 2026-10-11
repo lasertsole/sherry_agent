@@ -102,7 +102,7 @@ client/
 │   │   ├── messages.ts            # 历史接口（缓存优先的 /get_history_by_turn_page）+ 流中断事件
 │   │   ├── toast.ts               # 全局 Toast 层（PrimeVue Toast 注册）
 │   │   ├── clientLog.ts           # 客户端 console.* 捕获并持久化到 Dexie（all/log/error）
-│   │   ├── env.ts                 # 读写后端 .env（GET/PUT /env）
+│   │   ├── env.ts                 # 读写后端三个配置文件（.env / .models / .network）
 │   │   ├── workspace.ts           # 系统提示词处理器（/system_prompt GET/POST/PATCH）
 │   │   ├── defaultCharacter.ts    # 内置默认角色（名称 + /avatar/*.jpg 与 default.svg 占位头像）
 │   │   ├── sessionFilter.ts       # 客户端会话列表过滤（关键词 + 日期范围）
@@ -148,8 +148,8 @@ client/
 │   │           ├── FileTreeNode.vue           # 项目文件树的一行（展开 / 打开文件）
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
-│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置 .env 编辑——搜索键在「模型联网」——背景、语言等）
-│   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .env）
+│   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景、语言等）
+│   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
 │   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
@@ -158,7 +158,7 @@ client/
 │   │           ├── MemoryPanel.vue            # 长期记忆标签页（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 标签页 + 全局心跳开关
 │   │           ├── CronPanel.vue              # 定时任务标签页（/cron）
-│   │           ├── WebSearchPanel.vue         #「模型联网」标签页：会话的搜索后端（Tavily / SearXNG 单选）+ Tavily 密钥与 SearXNG 连接表单——这些 .env 键的唯一编辑入口（GET /env 已隐藏它们）
+│   │           ├── WebSearchPanel.vue         #「模型联网」标签页：会话的搜索后端（Tavily / SearXNG 单选）+ Tavily 密钥与 SearXNG 连接表单——这些 .network 键的唯一编辑入口（GET /network-config 已隐藏它们）
 │   │           ├── SkillsPanel.vue            # 技能管理标签页（列表/上传/启停/置顶/删除/curator）
 │   │           ├── ChannelSettingsDialog.vue  # 通道开关与单通道配置
 │   │           ├── NotificationPanel.vue      # 服务端推送通知标签页（状态在 store 中，标签页关闭时徽标仍计数）
@@ -218,7 +218,7 @@ client/
 │   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
 │   ├── tests/                     # Rust 测试占位（空 mod.rs + .gitkeep 目录）
 │   ├── benches/                   # 基准测试占位
-│   ├── .env.example               # 后端模型配置模板（MAIN_LLM_*、TAVILY_API_KEY、……）
+
 │   ├── Cargo.toml                 # Rust 清单（tauri 2、reqwest、ts-rs、tracing、插件、……）
 │   ├── Cargo.lock                 # Rust 锁文件
 │   ├── build.rs                   # Tauri 构建脚本
@@ -297,7 +297,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 | `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 通道设置                                                                               |
 | `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自动技能 curator 控制                                                                  |
 | `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 后端日志读取 + 实时 `/logs/ws` 流                                                      |
-| `readEnvConfig` / `writeEnvConfig`（`env.ts`）                                                     | 后端 `.env` 读取/更新（`GET/PUT /env`）                                                |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | 后端配置文件读取/更新（`GET/PUT /env`、`/models-config`、`/network-config`）              |
 | `checkHealth()`                                                                                    | 后端可达性（`system_health` IPC 或 `GET /system_prompt`）                              |
 
 浏览器模式聊天流细节：
@@ -342,7 +342,7 @@ REST（基础 URL `VITE_API_BACK_URL`，默认 `http://localhost:8080`）：
 | `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | 技能管理                           |
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | Curator 审查与设置                 |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | 通道开关与配置                     |
-| `/env`                                                                                           | GET / PUT                | 后端 `.env` 读取/更新              |
+| `/env`、`/models-config`、`/network-config`                                                        | GET / PUT                | 后端配置文件读取/更新             |
 | `/model-config`                                                                                  | GET                      | 模型配置与有效性                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | 日志文件列表与尾部读取             |
 | `/logs/ws`                                                                                       | WS                       | 实时日志流                         |
@@ -448,7 +448,7 @@ VITE_API_BACK_URL="http://localhost:8080"  # Python 后端基础 URL（REST + WS
 
 所有后端调用都会解析 `VITE_API_BACK_URL`，并硬编码回退到 `http://localhost:8080`。没有开发服务器代理 —— 前端直连后端，因此后端必须允许跨域请求（后端返回 `Access-Control-Allow-Origin: *`）。
 
-`src-tauri/.env.example` 单独保存**后端**模型配置模板（`MAIN_LLM_*`、`REASONER_*`、`SIMPLE_MAIN_LLM_*`、`ITTT_*`、`TTI_*`、`RERANKER_*`、`EMBEDDING_*`、`TAVILY_API_KEY`、`LANGSMITH_*`）。
+**后端**配置位于项目根目录的三个文件：入库的 `.env`（非敏感应用配置）、`.models`（各模型厂商；首次启动从 `.models.example` 生成）与 `.network`（联网搜索 / 浏览器代理 / LangSmith；从 `.network.example` 生成）——后两者不入库。
 
 ### 启动 Python 后端
 

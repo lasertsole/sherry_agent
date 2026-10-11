@@ -102,7 +102,7 @@ client/
 │   │   ├── messages.ts            # 履歴 API（キャッシュ優先の /get_history_by_turn_page）+ ストリーム中断イベント
 │   │   ├── toast.ts               # グローバル Toast レイヤー（PrimeVue Toast 登録）
 │   │   ├── clientLog.ts           # クライアント側 console.* 取得を Dexie に永続化（all/log/error）
-│   │   ├── env.ts                 # バックエンド .env の読み書き（GET/PUT /env）
+│   │   ├── env.ts                 # バックエンドの設定ファイル（.env / .models / .network）の読み書き
 │   │   ├── workspace.ts           # システムプロンプトハンドラ（/system_prompt GET/POST/PATCH）
 │   │   ├── defaultCharacter.ts    # 内蔵デフォルトキャラクター（名前 + /avatar/*.jpg と default.svg プレースホルダー）
 │   │   ├── sessionFilter.ts       # クライアント側セッションリストフィルタ（キーワード + 日付範囲）
@@ -148,8 +148,8 @@ client/
 │   │           ├── FileTreeNode.vue           # プロジェクトファイルツリーの 1 行（展開 / ファイルを開く）
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
-│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定の .env 編集——検索キーは「モデル検索」タブ——背景、言語など）
-│   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .env には書き込みません）
+│   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、言語など）
+│   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .models には書き込みません）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
 │   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / ツール / ミドルウェア / エージェント モデル / スキル + プリセット管理）
 │   │           ├── SessionPresetButton.vue    # トップバーの閲覧専用入口：現在のセッションのプリセットタブを開く
@@ -158,7 +158,7 @@ client/
 │   │           ├── MemoryPanel.vue            # 長期メモリタブ（workspace/memory/*）
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md タブ + グローバル ハートビート スイッチ
 │   │           ├── CronPanel.vue              # 定期タスクタブ（/cron）
-│   │           ├── WebSearchPanel.vue         #「モデル検索」タブ：セッションの検索バックエンド（Tavily / SearXNG のラジオ）＋ Tavily キーと SearXNG 接続のフォーム——これらの .env キーを編集する唯一の入口（GET /env からは除外）
+│   │           ├── WebSearchPanel.vue         #「モデル検索」タブ：セッションの検索バックエンド（Tavily / SearXNG のラジオ）＋ Tavily キーと SearXNG 接続のフォーム——これらの .network キーを編集する唯一の入口（GET /network-config からは除外）
 │   │           ├── SkillsPanel.vue            # スキル管理タブ（一覧 / アップロード / 切替 / ピン留め / 削除 / curator）
 │   │           ├── ChannelSettingsDialog.vue  # チャネル切替とチャネルごとの設定
 │   │           ├── NotificationPanel.vue      # サーバー push 通知タブ（状態は store にあり、タブを閉じてもバッジはカウントを続ける）
@@ -218,7 +218,7 @@ client/
 │   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
 │   ├── tests/                     # Rust テストプレースホルダー（空 mod.rs + .gitkeep ディレクトリ）
 │   ├── benches/                   # ベンチマークプレースホルダー
-│   ├── .env.example               # バックエンドモデル設定テンプレート（MAIN_LLM_*、TAVILY_API_KEY、...）
+
 │   ├── Cargo.toml                 # Rust マニフェスト（tauri 2、reqwest、ts-rs、tracing、プラグイン、...）
 │   ├── Cargo.lock                 # Rust ロックファイル
 │   ├── build.rs                   # Tauri ビルドスクリプト
@@ -297,7 +297,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 | `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | チャネル設定                                                                                                     |
 | `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 自動スキル curator の制御                                                                                        |
 | `listLogFiles` / `readLogFile` / `openLogStream`                                                   | バックエンドログの読み取り + ライブ `/logs/ws` ストリーム                                                        |
-| `readEnvConfig` / `writeEnvConfig`（`env.ts`）                                                     | バックエンド `.env` の読み取り/更新（`GET/PUT /env`）                                                            |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`（`env.ts`） | バックエンド設定ファイルの読み取り/更新（`GET/PUT /env`、`/models-config`、`/network-config`） |
 | `checkHealth()`                                                                                    | バックエンド到達性（`system_health` IPC または `GET /system_prompt`）                                            |
 
 ブラウザモードのチャットストリーミング詳細：
@@ -342,7 +342,7 @@ REST（ベース URL `VITE_API_BACK_URL`、デフォルト `http://localhost:808
 | `/skills`、`/skills/{path}`、`/skills/upload`、`/skills/toggle`、`/skills/delete`、`/skills/pin` | GET/POST                 | スキル管理                                           |
 | `/curator/run`、`/curator/settings`                                                              | POST / GET / PUT         | curator レビューと設定                               |
 | `/channels`、`/channels/{name}`、`/channels/{name}/config`                                       | GET / PUT                | チャネル切替と設定                                   |
-| `/env`                                                                                           | GET / PUT                | バックエンド `.env` の読み取り/更新                  |
+| `/env`、`/models-config`、`/network-config`                                                       | GET / PUT                | バックエンド設定ファイルの読み取り/更新             |
 | `/model-config`                                                                                  | GET                      | モデル設定と有効性                                   |
 | `/logs/files`、`/logs`                                                                           | GET                      | ログファイル一覧と末尾読み取り                       |
 | `/logs/ws`                                                                                       | WS                       | ライブログストリーム                                 |
@@ -448,7 +448,7 @@ VITE_API_BACK_URL="http://localhost:8080"  # Python バックエンドのベー�
 
 すべてのバックエンド呼び出しは `VITE_API_BACK_URL` を解決し、ハードコードされたフォールバック `http://localhost:8080` を持ちます。開発サーバーのプロキシはありません — フロントエンドはバックエンドに直接アクセスするため、バックエンドがクロスオリジンリクエストを許可している必要があります（バックエンドは `Access-Control-Allow-Origin: *` を返します）。
 
-`src-tauri/.env.example` には別途**バックエンド**のモデル設定テンプレート（`MAIN_LLM_*`、`REASONER_*`、`SIMPLE_MAIN_LLM_*`、`ITTT_*`、`TTI_*`、`RERANKER_*`、`EMBEDDING_*`、`TAVILY_API_KEY`、`LANGSMITH_*`）があります。
+**バックエンド**の設定はプロジェクトルートの 3 ファイルにあります：追跡対象の `.env`（非機密のアプリ設定）、`.models`（各モデルファミリー。`.models.example` から生成）、`.network`（Web 検索 / ブラウザエージェント / LangSmith。`.network.example` から生成）——後ろ 2 つは追跡対象外です。
 
 ### Python バックエンドの起動
 

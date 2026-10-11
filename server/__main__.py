@@ -5,10 +5,10 @@ import sys
 import nest_asyncio
 from logs import init_logger
 from loguru import logger
-from dotenv import load_dotenv
 from config import STATIC_DIR, SRC_DIR
-from config import API_HOST, API_PORT, ENV_PATH
-from config.sherry_settings import get_sherry_setting
+from config import API_HOST, API_PORT
+from config.network_settings import get_network_setting
+from config.path import load_env
 
 # Fix UnicodeEncodeError for emoji in Windows GBK terminal
 for _stream in (sys.stdout, sys.stderr):
@@ -25,19 +25,19 @@ nest_asyncio.apply()
 init_logger()
 
 # Load .env and init LangSmith (must be before any LangChain imports).
-# LangSmith settings live in sherry.jsonc (see config/sherry_settings.py).
-load_dotenv(ENV_PATH, override=True)
-if bool(get_sherry_setting("LANGSMITH.TRACING_V2")) and str(
-    get_sherry_setting("LANGSMITH.API_KEY")
+# LangSmith settings live in network.jsonc (see config/network_settings.py).
+load_env()
+if bool(get_network_setting("LANGSMITH_TRACING_V2")) and str(
+    get_network_setting("LANGSMITH_API_KEY")
 ):
     os.environ["LANGCHAIN_TRACING_V2"] = "true"
-    os.environ["LANGSMITH_API_KEY"] = str(get_sherry_setting("LANGSMITH.API_KEY"))
-    os.environ["LANGSMITH_PROJECT"] = str(get_sherry_setting("LANGSMITH.PROJECT"))
+    os.environ["LANGSMITH_API_KEY"] = str(get_network_setting("LANGSMITH_API_KEY"))
+    os.environ["LANGSMITH_PROJECT"] = str(get_network_setting("LANGSMITH_PROJECT"))
     logger.info("LangSmith tracing enabled -> project: {}", os.environ["LANGSMITH_PROJECT"])
 else:
     logger.debug(
-        "LangSmith not configured (set LANGSMITH.TRACING_V2=true and LANGSMITH.API_KEY "
-        "in sherry.jsonc to enable)"
+        "LangSmith not configured (set LANGSMITH_TRACING_V2=true and LANGSMITH_API_KEY "
+        "in network.jsonc to enable)"
     )
 
 

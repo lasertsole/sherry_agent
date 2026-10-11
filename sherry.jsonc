@@ -34,12 +34,9 @@
     "enabled": false
   },
 
-  // LangSmith tracing
-  "LANGSMITH": {
-    "TRACING_V2": false,
-    "API_KEY": "",
-    "PROJECT": "EMA_AI_agent"
-  },
+  // LangSmith 追踪已移至 .network 文件（LANGSMITH_* 键）——它属于网络服务配置，
+  // 而 .network 不入库（本文件入库，不能存放密钥）。LangSmith tracing lives in
+  // .network now (LANGSMITH_* keys).
 
   // Curator — background skill maintenance orchestrator for agent-created skills.
   "curator": {

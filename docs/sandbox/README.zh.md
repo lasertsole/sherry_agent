@@ -52,7 +52,7 @@
 | `auto` | 后端不可用 ⇒ 降级为无沙箱执行并记录一条警告（裸跑，会记入证据账本） |
 | `off` | 完全关闭沙箱 |
 
-`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但 `.env.example` 出厂值是 `required` —— 在后端根本无法运行的主机上，`auto` 会把每一条 shell 命令悄悄变成无沙箱执行。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
+`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但 `.env` 出厂值是 `required` —— 在后端根本无法运行的主机上，`auto` 会把每一条 shell 命令悄悄变成无沙箱执行。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
 
 `parse_policy` 先去空白、再大小写不敏感匹配，未知取值抛 `ValueError`：安全配置写错了必须大声失败，绝不静默回退。`read_policy()` **每次**调用都执行 `os.getenv`（不做导入期缓存），运行期修改变量立即生效。
 

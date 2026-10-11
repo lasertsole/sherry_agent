@@ -28,4 +28,13 @@ from .sherry_config import (
     read_sherry_config as read_sherry_config,
     write_sherry_config as write_sherry_config,
 )
+from .models_config import (
+    read_models_config as read_models_config,
+    write_models_config as write_models_config,
+)
+from .network_config import (
+    network_file_values as network_file_values,
+    read_network_config as read_network_config,
+    write_network_config as write_network_config,
+)
 from .memory import read_memory_files as read_memory_files, write_memory_files as write_memory_files

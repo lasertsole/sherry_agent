@@ -1,9 +1,10 @@
 <template>
   <!-- Right-sidebar tab body: the single editing surface for web search
-       (backend choice per session + both providers' configuration). The .env
-       keys it owns — TAVILY_API_KEY and the SEARXNG_* group — are WITHHELD from
-       the 模型配置 tab, so this panel reads them from the search state payload
-       and writes them through PUT /env. Mounted/unmounted with its tab. -->
+       (backend choice per session + both providers' configuration). The keys it
+       owns — TAVILY_API_KEY and the SEARXNG_* group — live in the gitignored
+       .network file and are WITHHELD from the 模型配置 tab, so this panel reads
+       them from the search state payload and writes them through
+       PUT /network-config. Mounted/unmounted with its tab. -->
   <div class="flex flex-col gap-3 h-full min-h-0 p-4">
     <div class="flex-1 min-h-0 overflow-y-auto flex flex-col gap-4">
       <!-- ── Section 1: backend choice (per session) ─────────────────────── -->
@@ -419,7 +420,7 @@ async function saveTavilyKey(): Promise<void> {
   if (!value) return;
   tavilyBusy.value = true;
   tavilyState.value = 'idle';
-  const written = await writeEnvConfig({ TAVILY_API_KEY: value });
+  const written = await writeNetworkConfig({ TAVILY_API_KEY: value });
   tavilyBusy.value = false;
   if (written) {
     tavilyDraft.value = '';
@@ -430,11 +431,11 @@ async function saveTavilyKey(): Promise<void> {
   }
 }
 
-/** Remove the Tavily key from `.env` (the tool falls back to SearXNG / the stub). */
+/** Remove the Tavily key from `.network` (the tool falls back to SearXNG / the stub). */
 async function clearTavilyKey(): Promise<void> {
   tavilyBusy.value = true;
   tavilyState.value = 'idle';
-  const written = await writeEnvConfig({ TAVILY_API_KEY: '' });
+  const written = await writeNetworkConfig({ TAVILY_API_KEY: '' });
   tavilyBusy.value = false;
   if (written) {
     tavilyDraft.value = '';
@@ -445,7 +446,7 @@ async function clearTavilyKey(): Promise<void> {
   }
 }
 
-/** Write the SearXNG form back to `.env` (only the keys that changed). */
+/** Write the SearXNG form back to `.network` (only the keys that changed). */
 async function saveSearxng(): Promise<void> {
   saving.value = true;
   saveState.value = 'idle';
@@ -464,7 +465,7 @@ async function saveSearxng(): Promise<void> {
     saveState.value = 'saved';
     return;
   }
-  const written = await writeEnvConfig(changes);
+  const written = await writeNetworkConfig(changes);
   saving.value = false;
   if (written) {
     original.value = { ...form.value };

@@ -69,11 +69,19 @@ SUBAGENT_ISOLATION: SubagentIsolationConfig = {
     "include_copy": [".omo"],
     "repo_marker_name": ".sherry-isolation-repo",
     # Secrets first (history keeps what was ever committed), then bulk, then the
-    # repository's own state. `.env.example` stays as the one intentional sample.
+    # repository's own state. The ``*.example`` templates stay as the intentional
+    # samples; ``.models`` / ``.network`` are this project's gitignored secret
+    # files (the model and network configuration).
     "deny_patterns": [
         ".env",
         ".env.*",
         "!.env.example",
+        ".models",
+        ".models.*",
+        "!.models.example",
+        ".network",
+        ".network.*",
+        "!.network.example",
         "*.pem",
         "*.key",
         "id_rsa*",

@@ -5,11 +5,12 @@ import sys
 import time
 from pathlib import Path
 from loguru import logger
-from dotenv import load_dotenv
-from config import LOG_DIR, ENV_PATH
+from config import LOG_DIR
+from config.path import load_env
 from config.sherry_settings import get_sherry_setting
 
-load_dotenv(ENV_PATH, override=True)
+# .env plus the network.jsonc overlay (log level / sinks can come from either)
+load_env()
 
 
 def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):

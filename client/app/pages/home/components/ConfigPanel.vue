@@ -235,7 +235,7 @@ import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { storeToRefs } from 'pinia';
 import AvatarCropDialog from './AvatarCropDialog.vue';
-import type { EnvGroup } from '@/composables/env';
+import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
 import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
 import LlmModelManager from './LlmModelManager.vue';
 import type { SherryEntry } from '@/composables/sherryConfig';
@@ -255,9 +255,13 @@ const activeTab = ref(0);
 const loading = ref(false);
 const saving = ref(false);
 
-// ── Env config state (.env) ──────────────────────────────────
-// Snapshot taken once on load; edits directly modify entry.value inside envGroups, and on save the changes are diffed against the snapshot and written back to the backend.
-const envGroups = ref<EnvGroup[]>([]);
+// ── Env config state (three files, one panel) ────────────────
+// The 模型配置 tab shows THREE sources merged — the model families from .models,
+// the browser / tracing groups from .network, and what remains in .env (sandbox /
+// gateway / login) — and every group carries its `source`, so a save writes each
+// group back through ITS OWN endpoint. Snapshot taken once on load; edits modify
+// entry.value in place, and on save the changes are diffed against the snapshot.
+const envGroups = ref<SourcedEnvGroup[]>([]);
 const originalEnvValues = ref<Record<string, string>>({});
 const envLoadError = ref('');
 
@@ -272,7 +276,7 @@ const envHasChanges = computed(() =>
 // ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
 const llmProfiles = useLlmProfilesStore();
 
-/** Live .env values per group (seed + active-inference input for the panels). */
+/** Live config values per group (seed + active-inference input for the panels). */
 const groupValues = computed<Record<string, Record<string, string>>>(() => {
   const all: Record<string, Record<string, string>> = {};
   for (const group of envGroups.value) {
@@ -284,8 +288,8 @@ const groupValues = computed<Record<string, Record<string, string>>>(() => {
 });
 
 /**
- * Apply a model profile: write its MAIN_LLM_* parameters into .env through the
- * existing write path, then sync the tab's draft/snapshot so the env diff stays
+ * Apply a model profile: write its MAIN_LLM_* parameters into .models through
+ * the env tab's write path, then sync the tab's draft/snapshot so the diff stays
  * clean. The green dot follows only a SUCCESSFUL write.
  * @param groupName
  * @param payload
@@ -293,7 +297,7 @@ const groupValues = computed<Record<string, Record<string, string>>>(() => {
  * @param payload.params
  */
 const applyModelProfile = async (groupName: string, payload: { id: string; params: Record<string, string> }) => {
-  const ok = await writeEnvConfig(payload.params);
+  const ok = await writeModelsConfig(payload.params);
   if (!ok) {
     envLoadError.value = t('config.env.saveFailed');
     return;
@@ -309,56 +313,83 @@ const applyModelProfile = async (groupName: string, payload: { id: string; param
   llmProfiles.setActive(groupName, payload.id);
 };
 
-/** Lazily loads the .env config when the env tab is opened (backend GET /env) */
+/** Lazily loads the three config files when the env tab is opened */
 const loadEnvConfig = async () => {
   if (envLoaded.value) return;
   envLoaded.value = true;
   envLoadError.value = '';
   try {
-    const payload = await readEnvConfig();
-    envGroups.value = payload.groups || [];
+    const [models, network, env] = await Promise.all([readModelsConfig(), readNetworkConfig(), readEnvConfig()]);
+    const tag = (groups: EnvGroup[], source: ConfigSource): SourcedEnvGroup[] => groups.map(g => ({ ...g, source }));
+    const modelGroups = tag(models.groups || [], 'models');
+    const networkGroups = tag(network.groups || [], 'network');
+    const envOnly = tag(env.groups || [], 'env');
+    // Canonical order: the model families, then the network groups, then what is
+    // left in .env — whose catch-all "other" card stays LAST.
+    const otherIndex = envOnly.findIndex(g => g.name === 'other');
+    envGroups.value =
+      otherIndex === -1
+        ? [...modelGroups, ...networkGroups, ...envOnly]
+        : [
+            ...modelGroups,
+            ...networkGroups,
+            ...envOnly.slice(0, otherIndex),
+            envOnly[otherIndex]!,
+            ...envOnly.slice(otherIndex + 1)
+          ];
     const snap: Record<string, string> = {};
     for (const g of envGroups.value) {
       for (const e of g.entries) snap[e.key] = e.value;
     }
     originalEnvValues.value = snap;
   } catch (e) {
-    logUtil.e('[ConfigPanel] Failed to load env config:', e);
+    logUtil.e('[ConfigPanel] Failed to load config:', e);
     envLoadError.value = t('config.env.loadError');
     envLoaded.value = false;
   }
 };
 
-/** Writes env changes back to the backend (.env PUT); returns true on success */
+/** Writes the diff back to each file's own endpoint; returns true on success */
 const persistEnvChanges = async (): Promise<boolean> => {
-  const changes: Record<string, string> = {};
+  const perSource: Record<ConfigSource, Record<string, string>> = { models: {}, network: {}, env: {} };
   for (const g of envGroups.value) {
     for (const e of g.entries) {
-      if (e.value !== originalEnvValues.value[e.key]) changes[e.key] = e.value;
+      if (e.value !== originalEnvValues.value[e.key]) perSource[g.source][e.key] = e.value;
     }
   }
-  if (Object.keys(changes).length === 0) return true;
+  const changedSources = (Object.keys(perSource) as ConfigSource[]).filter(
+    source => Object.keys(perSource[source]).length > 0
+  );
+  if (changedSources.length === 0) return true;
 
   // MAX_TOKEN guard: pre-validate before the PUT so a sub-128K value is rejected
-  // in the dialog (the backend write_env_file enforces the same floor).
-  for (const [key, value] of Object.entries(changes)) {
-    if ((MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key)) {
-      const num = parseInt(value, 10);
-      if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
-        envLoadError.value = t('config.env.maxTokenError', { key });
-        return false;
+  // in the dialog (the backend write_models_config enforces the same floor).
+  for (const source of changedSources) {
+    for (const [key, value] of Object.entries(perSource[source])) {
+      if ((MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key)) {
+        const num = parseInt(value, 10);
+        if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
+          envLoadError.value = t('config.env.maxTokenError', { key });
+          return false;
+        }
       }
     }
   }
 
-  const ok = await writeEnvConfig(changes);
-  if (ok) {
-    // Sync the snapshot to serve as the baseline for the next diff
-    for (const g of envGroups.value) {
-      for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
-    }
+  const writers: Record<ConfigSource, (changes: Record<string, string>) => Promise<boolean>> = {
+    models: writeModelsConfig,
+    network: writeNetworkConfig,
+    env: writeEnvConfig
+  };
+  for (const source of changedSources) {
+    const ok = await writers[source](perSource[source]);
+    if (!ok) return false;
   }
-  return ok;
+  // Sync the snapshot to serve as the baseline for the next diff
+  for (const g of envGroups.value) {
+    for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
+  }
+  return true;
 };
 
 /** Resets the env tab every time the dialog hides (cancel or save): reloads on next open */

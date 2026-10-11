@@ -307,6 +307,9 @@ def test_auto_init_never_commits_secrets_and_writes_its_marker(project):
     _seed(project)
     (project / ".env").write_text("API_KEY=sk-real-secret\n", encoding="utf-8")
     (project / ".env.example").write_text("API_KEY=\n", encoding="utf-8")
+    (project / ".models").write_text('{"MAIN_LLM_API_KEY": "sk-model-secret"}\n', encoding="utf-8")
+    (project / ".models.example").write_text('{"MAIN_LLM_API_KEY": ""}\n', encoding="utf-8")
+    (project / ".network").write_text('{"TAVILY_API_KEY": "tvly-secret"}\n', encoding="utf-8")
     (project / "cert.pem").write_text("-----BEGIN CERTIFICATE-----\n", encoding="utf-8")
 
     ws = create_isolated_workspace(project, "agent:main:subagent:init")
@@ -315,8 +318,11 @@ def test_auto_init_never_commits_secrets_and_writes_its_marker(project):
     committed = _git(project, "ls-tree", "-r", "--name-only", "HEAD").stdout.split()
     assert "a.txt" in committed
     assert ".env.example" in committed  # the intentional sample stays
+    assert ".models.example" in committed  # …and so do the config templates
     # …but no secret of any kind.
     assert ".env" not in committed
+    assert ".models" not in committed
+    assert ".network" not in committed
     assert "cert.pem" not in committed
     # And the child's tree does not carry them either (they were never checked out).
     manifest = json.loads((ws.meta_dir / SNAPSHOT_NAME).read_text(encoding="utf-8"))

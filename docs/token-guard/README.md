@@ -4,7 +4,7 @@
 
 > How the agent enforces a hard 128K context-window floor on both LLMs: one shared predicate raises at four enforcement points (server boot, graph build, subagent spawn, and `.env` write), the frontend warns before it blocks, and `GET /model-config` exposes the live verdict.
 
-Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, plus `.env.example`. Every line number and constant in this document was verified against that code.
+Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, `server/service/models_config.py`, plus `.models`. Every line number and constant in this document was verified against that code.
 
 ## Table of Contents
 
@@ -71,12 +71,12 @@ from config.features import (
 
 ## 📐 Threshold & Configuration
 
-| Env var | Meaning | Required | `.env.example` default |
+| Env var | Meaning | Required | `.models` default |
 | :------ | :------ | :------- | :--------------------- |
-| `MAIN_LLM_MAX_TOKEN` | Main model context window | `>= 131072` | `131072` (`.env.example` line 8) |
-| `AUXILIARY_LLM_MAX_TOKEN` | Auxiliary model context window | `>= 131072` | `131072` (`.env.example` line 59) |
+| `MAIN_LLM_MAX_TOKEN` | Main model context window | `>= 131072` | `131072` |
+| `AUXILIARY_LLM_MAX_TOKEN` | Auxiliary model context window | `>= 131072` | `131072` |
 
-Both keys are also registered in the env-write allow-list `TOKEN_KEYS` (`server/service/env.py:27`):
+Both keys are also registered in the config-write allow-list `TOKEN_KEYS` (`server/service/models_config.py`; `.env` itself no longer accepts the model keys):
 
 ```python
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
@@ -109,7 +109,7 @@ MAIN_LLM_MAX_TOKEN = 131072
 AUXILIARY_LLM_MAX_TOKEN = 131072
 ```
 
-3. Restart the backend so the boot gate re-runs. The shipped `.env.example` already has both at `131072`.
+3. Restart the backend so the boot gate re-runs. The shipped `.models.example` already has both at `131072`.
 
 > If your local `.env` still holds `100000`, the server refuses to start with `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`. Raise it to `>= 131072` before launching.
 
@@ -162,9 +162,9 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 | Boot gate | `server/__main__.py:95-100` | Critical log then `SystemExit(1)` |
 | Build gate | `agent/core.py:124` | `built_agent()` validates before building |
 | Spawn gate | `agent/tools/subagent/spawn/core.py:877` | Child LLM construction validates |
-| Write gate | `server/service/env.py:157` | `write_env_file()` rejects before writing |
+| Write gate | `server/service/models_config.py` | `write_models_config()` rejects before writing |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | Frontend cache | `client/app/composables/model-config.ts` | `fetchModelConfig`, `getModelConfigCached`, `invalidateModelConfigCache` |
 | Frontend warn | `client/app/composables/use-chat-stream.ts:435` | Non-blocking toast on send |
 | Frontend panel | `client/app/pages/home/components/ConfigPanel.vue` | Banner, pre-save validation, cache invalidation |
-| Defaults | `.env.example:8,59` | Both keys ship at `131072` |
+| Defaults | `.models.example` | Both keys ship at `131072` |

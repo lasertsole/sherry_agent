@@ -81,6 +81,75 @@ export async function writeEnvConfig(changes: Record<string, string>): Promise<b
   }
 }
 
+/** Which config FILE a panel group lives in (each has its own writer). */
+export type ConfigSource = 'models' | 'network' | 'env';
+
+/** A group tagged with its source file — the 模型配置 tab merges all three and
+ *  writes every group back through ITS OWN endpoint (see ConfigPanel). */
+export interface SourcedEnvGroup extends EnvGroup {
+  source: ConfigSource;
+}
+
+/**
+ * Read one grouped-config payload. Same caller-context requirement as
+ * `readEnvConfig` (setup scope — these share its `fetchApi`/`useFetch` seam).
+ * @param url
+ */
+async function readGroupedConfig(url: string): Promise<EnvConfigPayload> {
+  const res = await fetchApi<EnvConfigPayload>({
+    url,
+    opts: { _ts: Date.now() },
+    method: 'get'
+  });
+  return res || { groups: [] };
+}
+
+/** Read the model configuration file (`.models`, gitignored). */
+export async function readModelsConfig(): Promise<EnvConfigPayload> {
+  return readGroupedConfig('/models-config');
+}
+
+/** Read the network service configuration file (`.network`, gitignored). */
+export async function readNetworkConfig(): Promise<EnvConfigPayload> {
+  return readGroupedConfig('/network-config');
+}
+
+/**
+ * Shared writer for the grouped-config endpoints.
+ * @param url
+ * @param changes
+ */
+async function putGroupedConfig(url: string, changes: Record<string, string>): Promise<boolean> {
+  try {
+    await fetchApi({
+      url,
+      opts: { changes },
+      method: 'put'
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Update keys that already exist in `.models` (model providers, endpoints,
+ * keys, local-model switches). The 128K floor on the MAX_TOKEN keys applies.
+ * @param changes
+ */
+export async function writeModelsConfig(changes: Record<string, string>): Promise<boolean> {
+  return putGroupedConfig('/models-config', changes);
+}
+
+/**
+ * Update keys that already exist in `.network` (the Tavily / SearXNG search
+ * backends, the browser agent's switches, LangSmith tracing).
+ * @param changes
+ */
+export async function writeNetworkConfig(changes: Record<string, string>): Promise<boolean> {
+  return putGroupedConfig('/network-config', changes);
+}
+
 /** Result of one connectivity probe (the 环境配置 panels' 测试 button). */
 export interface ModelTestResult {
   /** Whether this group can be probed at all (media groups cannot). */

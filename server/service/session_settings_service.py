@@ -505,17 +505,18 @@ async def apply_search_backend_choice(session_id: str, backend: str | None) -> b
 
 
 def _search_env_view() -> dict[str, Any]:
-    """The .env file as the 模型联网 panel edits it.
+    """The network.jsonc file as the 模型联网 panel edits it.
 
-    Those keys are WITHHELD from ``GET /env`` (a dedicated panel owns them), so
-    the panel reads them here instead. They are the FILE values — what a save
-    would produce and what the next boot reads — while the sibling ``searxng`` /
-    ``tavily_available`` fields report what THIS process loaded, which is how the
-    panel can say "saved, restart to apply".
+    Those keys live in ``network.jsonc`` (they moved out of ``.env``) and are
+    WITHHELD from ``GET /env`` / ``GET /network-config`` (a dedicated panel owns
+    them), so the panel reads them here instead. They are the FILE values — what
+    a save would produce and what the next boot reads — while the sibling
+    ``searxng`` / ``tavily_available`` fields report what THIS process loaded,
+    which is how the panel can say "saved, restart to apply".
     """
-    from server.service.env import env_file_values
+    from server.service.network_config import network_file_values
 
-    values = env_file_values()
+    values = network_file_values()
     return {
         "searxng_url": values.get("SEARXNG_URL", ""),
         "searxng_proxy": values.get("SEARXNG_PROXY", ""),

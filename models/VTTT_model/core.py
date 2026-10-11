@@ -27,10 +27,9 @@ Note:
 import os
 from pathlib import Path
 
-from config import ENV_PATH
+from config.path import load_env
 from config.features import LLM_CLIENT_DEFAULTS
 from typing import Any
-from dotenv import load_dotenv
 from models.LLMs.base_local_llama import LocalMultimodalLlamaChatBase
 from models.env_builder import ModelEnvBuilder
 from models.utils import LazyInstance
@@ -40,8 +39,8 @@ from langchain_core.runnables import ConfigurableField
 # 1.  Locate model weight directory & read env
 # ---------------------------------------------------------------------------
 
-# .env is loaded from project root via config.path (ENV_PATH)
-load_dotenv(ENV_PATH, override=True)
+# .env is loaded from project root via config.path; the network.jsonc overlay wins
+load_env()
 
 # VTTT_model weight directory (side-by-side with this file)
 _MODEL_WEIGHT_DIR = Path(__file__).parent.resolve() / "model_weight"

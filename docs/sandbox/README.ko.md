@@ -52,7 +52,7 @@
 | `auto` | 백엔드 사용 불가 ⇒ 경고 한 줄과 함께 샌드박스 없이 실행으로 강등(베어 실행; 증거 원장에 기록) |
 | `off` | 샌드박싱 완전 비활성화 |
 
-환경 변수가 없을 때 `read_policy()`의 폴백은 여전히 `auto`입니다(구동 중인 설치가 자신의 설정을 유지하도록). 반면 `.env.example`의 출하 값은 `required`입니다 — 백엔드가 동작하지 않는 호스트에서 `auto`는 모든 셸 명령을 조용히 비샌드박스 실행으로 바꾸기 때문입니다. 이는 가정이 아니라 실측입니다: **커널이 user namespace를 지원하지 않는** 호스트(Ubuntu 24.04 기본 AppArmor 정책, PRoot/컨테이너 호스트)에서는 `bwrap` 바이너리가 있어도 동작하지 않습니다. 부팅 시 실제 정책과 백엔드를 출력하고(`sandbox: policy=… backend=… available=…`), `required`가 충족되지 않으면 ERROR와 함께 수정 명령을 안내하며, `SANDBOX_STRICT_BOOT=1`이면 시작을 거부합니다. 실행 중에는 `GET /sandbox/status`가 같은 상태를 돌려줍니다.
+환경 변수가 없을 때 `read_policy()`의 폴백은 여전히 `auto`입니다(구동 중인 설치가 자신의 설정을 유지하도록). 반면 `.env`의 출하 값은 `required`입니다 — 백엔드가 동작하지 않는 호스트에서 `auto`는 모든 셸 명령을 조용히 비샌드박스 실행으로 바꾸기 때문입니다. 이는 가정이 아니라 실측입니다: **커널이 user namespace를 지원하지 않는** 호스트(Ubuntu 24.04 기본 AppArmor 정책, PRoot/컨테이너 호스트)에서는 `bwrap` 바이너리가 있어도 동작하지 않습니다. 부팅 시 실제 정책과 백엔드를 출력하고(`sandbox: policy=… backend=… available=…`), `required`가 충족되지 않으면 ERROR와 함께 수정 명령을 안내하며, `SANDBOX_STRICT_BOOT=1`이면 시작을 거부합니다. 실행 중에는 `GET /sandbox/status`가 같은 상태를 돌려줍니다.
 
 `parse_policy`는 공백을 제거하고 대소문자를 무시하여 매칭하며, 모르는 값에는 `ValueError`를 던집니다: 잘못 입력된 안전 설정은 반드시 크게 실패해야지 조용히 기본값으로 떨어지면 안 됩니다. `read_policy()`는 **매번** `os.getenv`를 호출합니다(가져오기 시점 캐시 없음), 그래서 런타임 변경이 즉시 반영됩니다.
 

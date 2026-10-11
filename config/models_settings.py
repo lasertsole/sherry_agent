@@ -1,0 +1,294 @@
+"""Project-root ``.models`` — the model (LLM) configuration file.
+
+These settings used to live in the ``.env`` environment file: every model
+family's provider / endpoint / key, the local-model switches and the
+SkillSpector scanner's LLM selection. They are stored in ``.models``
+(``APP_HOME``, i.e. the repository root — or the app-data directory under
+``SHERRY_HOME``) as JSON5 (comments + trailing commas allowed) and read through
+this module. The environment file is no longer a source for these keys — what
+remains in ``.env`` is the non-secret application configuration (sandbox,
+gateway, login), which is tracked in git, while ``.models`` (like ``.network``)
+is gitignored because it holds API keys.
+
+Two access paths exist on purpose:
+
+* :func:`get_model_setting` — the typed read used by modules that only need a
+  value or two (the boot's MAX_TOKEN gate, the embed/reranker clients).
+* :func:`hydrate_model_env` — materialises every key into ``os.environ`` at
+  import, so the long tail of existing readers (``os.getenv("MAIN_LLM_API_KEY")``
+  in the model clients, the import-time feature snapshots in ``config/features``
+  and the subprocess env scrubbing) keeps observing these values exactly as it
+  did when they lived in ``.env``. It never overwrites a key that is already set
+  (an explicit process variable outranks the file), and it runs BEFORE the
+  environment file is (re)loaded — so ``.models`` wins over a legacy ``.env``
+  entry by order (see ``config.path.load_env``).
+
+An empty value is written through as an empty string (exactly what dotenv does
+for a bare ``KEY =`` line).
+
+A missing file is seeded from the shipped ``.models.example``, with values
+overlaid from a legacy ``.env`` (the pre-split spelling — including the old
+``ITTT_model_PROVIDER`` capitalisation) so an upgrade keeps its configuration.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+from collections.abc import MutableMapping
+from pathlib import Path
+from typing import Any
+
+import json5
+
+_CODE_ROOT = Path(__file__).resolve().parents[1]
+_APP_HOME_RAW = os.environ.get("SHERRY_HOME", "").strip()
+APP_HOME = Path(_APP_HOME_RAW).expanduser().resolve() if _APP_HOME_RAW else _CODE_ROOT
+
+MODELS_CONFIG_PATH = APP_HOME / ".models"
+MODELS_CONFIG_TEMPLATE = _CODE_ROOT / ".models.example"
+
+# Single source of truth for accepted keys and their typed defaults. The keys
+# mirror the historical ``.env`` spelling one-for-one, so a migration is a value
+# copy and the panels' prefix grouping keeps working.
+MODEL_SETTING_DEFAULTS: dict[str, Any] = {
+    # Main chat model
+    "MAIN_LLM_PROVIDER": "",
+    "MAIN_LLM_NAME": "",
+    "MAIN_LLM_API_BASE": "",
+    "MAIN_LLM_API_KEY": "",
+    "MAIN_LLM_MAX_TOKEN": 131072,
+    "MAIN_LLM_ENABLE_THINKING": False,
+    "MAIN_LLM_REASONING_EFFORT": "",
+    # Auxiliary model
+    "AUXILIARY_LLM_MODEL_LOCAL": False,
+    "AUXILIARY_LLM_PROVIDER": "",
+    "AUXILIARY_LLM_API_NAME": "",
+    "AUXILIARY_LLM_API_BASE": "",
+    "AUXILIARY_LLM_API_KEY": "",
+    "AUXILIARY_LLM_MAX_TOKEN": 131072,
+    # Reasoner model
+    "REASONER_LLM_PROVIDER": "",
+    "REASONER_LLM_NAME": "",
+    "REASONER_LLM_API_BASE": "",
+    "REASONER_LLM_API_KEY": "",
+    "REASONER_LLM_MAX_TOKEN": "",
+    # Image-to-Text model
+    "ITTT_MODEL_LOCAL": False,
+    "ITTT_MODEL_PROVIDER": "",
+    "ITTT_API_NAME": "",
+    "ITTT_API_BASE": "",
+    "ITTT_API_KEY": "",
+    # Video-Text-to-Text model
+    "VTTT_MODEL_LOCAL": False,
+    "VTTT_MODEL_PROVIDER": "",
+    "VTTT_API_NAME": "",
+    "VTTT_API_BASE": "",
+    "VTTT_API_KEY": "",
+    # Text-to-Image model
+    "TTI_MODEL_PROVIDER": "",
+    "TTI_API_NAME": "",
+    "TTI_API_BASE": "",
+    "TTI_API_KEY": "",
+    # Reranker model
+    "RERANKER_MODEL_LOCAL": False,
+    "RERANKER_MODEL_PROVIDER": "openai",
+    "RERANKER_API_NAME": "bge-reranker-v2-m3",
+    "RERANKER_API_BASE": "",
+    "RERANKER_API_KEY": "",
+    # Embedding model
+    "EMBEDDING_MODEL_LOCAL": True,
+    "EMBEDDING_MODEL_PROVIDER": "openai",
+    "EMBEDDING_API_NAME": "bge-m3",
+    "EMBEDDING_API_BASE": "",
+    "EMBEDDING_API_KEY": "",
+    # Speech-to-Text model
+    "STT_MODEL_PROVIDER": "",
+    "STT_API_NAME": "",
+    "STT_API_BASE": "",
+    "STT_API_KEY": "",
+    # SkillSpector scanner (its own LLM selection)
+    "SKILL_SCANNER_ENABLED": 1,
+    "SKILL_SCANNER_LLM": 0,
+    "SKILL_SCANNER_TIMEOUT": 120,
+    "SKILLSPECTOR_PROVIDER": "openai",
+    "SKILLSPECTOR_MODEL": "",
+}
+
+MODEL_SETTING_KEYS: tuple[str, ...] = tuple(MODEL_SETTING_DEFAULTS)
+
+_INT_KEYS = frozenset(
+    {
+        "MAIN_LLM_MAX_TOKEN",
+        "AUXILIARY_LLM_MAX_TOKEN",
+        "SKILL_SCANNER_ENABLED",
+        "SKILL_SCANNER_LLM",
+        "SKILL_SCANNER_TIMEOUT",
+    }
+)
+_BOOL_KEYS = frozenset(
+    {
+        "MAIN_LLM_ENABLE_THINKING",
+        "AUXILIARY_LLM_MODEL_LOCAL",
+        "ITTT_MODEL_LOCAL",
+        "VTTT_MODEL_LOCAL",
+        "RERANKER_MODEL_LOCAL",
+        "EMBEDDING_MODEL_LOCAL",
+    }
+)
+
+#: Legacy .env spellings that map onto a canonical key (the shipped
+#: .env.example wrote the ITTT provider key with a lowercase ``m`` while the
+#: reader always used the uppercase one).
+_LEGACY_ALIASES = {"ITTT_model_PROVIDER": "ITTT_MODEL_PROVIDER"}
+
+# ``"KEY": value,`` — the line shape of the template and of every write.
+_TEMPLATE_ASSIGN_RE = re.compile(r'^(\s*"([A-Za-z_][A-Za-z0-9_]*)"\s*:\s*)(.+?)(\s*,?\s*)$')
+# ``KEY = value`` — the legacy .env shape (quotes stripped on read).
+_DOTENV_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+_DOTENV_COMMENT_RE = re.compile(r"^\s*#")
+
+
+def _coerce(key: str, value: Any) -> Any:
+    """Coerce a parsed value to the key's declared type."""
+    if key in _INT_KEYS:
+        return int(value)
+    if key in _BOOL_KEYS:
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in ("1", "true", "yes", "on")
+    return str(value)
+
+
+def parse_model_value(key: str, raw: str) -> Any:
+    """Coerce a raw UI string into the key's typed value (write path)."""
+    if key not in MODEL_SETTING_DEFAULTS:
+        raise KeyError(f"Unknown models setting: {key!r}")
+    return _coerce(key, raw)
+
+
+def _legacy_env_values() -> dict[str, str]:
+    """Values of the moved keys as a legacy ``.env`` spells them (migration only)."""
+    try:
+        text = (APP_HOME / ".env").read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    found: dict[str, str] = {}
+    for line in text.splitlines():
+        if _DOTENV_COMMENT_RE.match(line):
+            continue
+        match = _DOTENV_ASSIGN_RE.match(line)
+        if not match:
+            continue
+        key = _LEGACY_ALIASES.get(match.group(1), match.group(1))
+        if key not in MODEL_SETTING_DEFAULTS:
+            continue
+        value = match.group(2).strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+            value = value[1:-1]
+        if value:
+            found[key] = value
+    return found
+
+
+def _seed_text() -> str:
+    """The template's text with legacy ``.env`` values overlaid (empty = keep)."""
+    try:
+        text = MODELS_CONFIG_TEMPLATE.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    legacy = _legacy_env_values()
+    if not legacy:
+        return text
+    out: list[str] = []
+    for line in text.splitlines():
+        match = _TEMPLATE_ASSIGN_RE.match(line)
+        if match is None or match.group(2) not in legacy:
+            out.append(line)
+            continue
+        key = match.group(2)
+        try:
+            rendered = json.dumps(_coerce(key, legacy[key]), ensure_ascii=False)
+        except (TypeError, ValueError):
+            out.append(line)  # a legacy value that does not fit the type is kept out
+            continue
+        out.append(f"{match.group(1)}{rendered}{match.group(4)}")
+    return "\n".join(out) + ("\n" if text.endswith("\n") else "")
+
+
+def ensure_models_config_file() -> None:
+    """Seed ``.models`` from the shipped template when it does not exist."""
+    if MODELS_CONFIG_PATH.exists():
+        return
+    text = _seed_text()
+    if not text:
+        return
+    try:
+        MODELS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        MODELS_CONFIG_PATH.write_text(text, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def load_model_settings() -> dict[str, Any]:
+    """Load every setting from ``.models`` merged over the typed defaults.
+
+    A missing or unparseable file silently yields the typed defaults — the
+    application must boot even when the config is absent or half-edited.
+    """
+    settings: dict[str, Any] = dict(MODEL_SETTING_DEFAULTS)
+    try:
+        text = MODELS_CONFIG_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return settings
+    try:
+        data = json5.loads(text)
+    except ValueError:
+        return settings
+    if not isinstance(data, dict):
+        return settings
+    for key in MODEL_SETTING_KEYS:
+        if key not in data:
+            continue
+        try:
+            settings[key] = _coerce(key, data[key])
+        except (TypeError, ValueError):
+            continue
+    return settings
+
+
+def get_model_setting(key: str) -> Any:
+    """Return one typed setting, falling back to its default."""
+    if key not in MODEL_SETTING_DEFAULTS:
+        raise KeyError(f"Unknown models setting: {key!r}")
+    return load_model_settings()[key]
+
+
+def render_model_value(value: Any) -> str:
+    """The value as an environment string (bools as ``true``/``false``)."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
+def hydrate_model_env(env: MutableMapping[str, str] | None = None) -> None:
+    """Materialise every setting into the process environment.
+
+    A key that is ALREADY set in the environment is left alone: an explicit
+    process variable (an operator's shell, CI, a test) outranks the file, and
+    this is also what keeps a later ``load_env()`` from clobbering it. The
+    ``.models`` value therefore wins over a legacy ``.env`` entry by ORDER —
+    the callers hydrate BEFORE (re)loading the environment file, and that load
+    never overwrites an already-set key. Idempotent.
+    """
+    target = env if env is not None else os.environ
+    settings = load_model_settings()
+    for key in MODEL_SETTING_KEYS:
+        if key in target:
+            continue
+        target[key] = render_model_value(settings[key])
+
+
+ensure_models_config_file()
+hydrate_model_env()

@@ -62,16 +62,16 @@ class TestReadEnvFileValue:
         assert read_env_file_value("K", env_path=p) == "first"
 
 
-class TestDedupWired:
-    """Both model modules must use the shared implementation.
+class TestConfigWiring:
+    """Both model modules read EMBEDDING_* / RERANKER_* from ``.models``.
 
-    Source-level pin instead of an import, kept for a source-level guarantee
-    independent of module caching: module import performs no download — the
-    eager GGUF download happens only in ``setup_embed_model()`` — but this pin
-    still asserts the shared reader is wired rather than re-implemented.
+    The keys moved out of ``.env`` (the duplicated ``_read_dotenv`` helpers and
+    the shared ``models.utils`` reader they pointed at are no longer the
+    production path — ``config/models_settings.get_model_setting`` is), so these
+    pins assert the new wiring.
     """
 
-    def test_embed_model_uses_shared(self):
+    def test_embed_model_reads_models_config(self):
         from pathlib import Path
 
         src = (
@@ -80,11 +80,19 @@ class TestDedupWired:
             / "embed_model"
             / "core.py"
         ).read_text(encoding="utf-8")
-        assert "from models.utils import read_env_file_value as _read_dotenv" in src
+        assert "from config.models_settings import get_model_setting" in src
         assert "def _read_dotenv(" not in src
 
-    def test_reranker_model_uses_shared(self):
-        from models import utils as models_utils
+    def test_reranker_model_reads_models_config(self, monkeypatch):
+        import config.models_settings as models_settings
         from models.reranker_model import core as reranker_core
 
-        assert reranker_core._read_dotenv is models_utils.read_env_file_value
+        monkeypatch.delenv("RERANKER_MODEL_LOCAL", raising=False)
+        monkeypatch.setattr(
+            models_settings,
+            "load_model_settings",
+            lambda: {**models_settings.MODEL_SETTING_DEFAULTS, "RERANKER_MODEL_LOCAL": False},
+        )
+
+        # False comes from .models, not from a stale environment entry.
+        assert reranker_core._is_local() is False

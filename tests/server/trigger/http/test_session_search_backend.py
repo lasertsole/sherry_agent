@@ -60,19 +60,21 @@ def registers(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
-def _env_file(tmp_path, monkeypatch):
-    """A throwaway .env for the panel's FILE view (never the real file)."""
-    path = tmp_path / ".env"
+def _network_file(tmp_path, monkeypatch):
+    """A throwaway .network for the panel's FILE view (never the real file)."""
+    path = tmp_path / ".network"
     path.write_text(
-        'TAVILY_API_KEY = "tvly-secret"\n'
-        "SEARXNG_URL = http://localhost:9999\n"
-        "SEARXNG_PROXY = http://127.0.0.1:7890\n"
-        "SEARXNG_ENGINES = google,bing\n"
-        "SEARXNG_CATEGORIES = it\n"
-        "SEARXNG_VERIFY_TLS = false\n",
+        "{\n"
+        '  "TAVILY_API_KEY": "tvly-secret",\n'
+        '  "SEARXNG_URL": "http://localhost:9999",\n'
+        '  "SEARXNG_PROXY": "http://127.0.0.1:7890",\n'
+        '  "SEARXNG_ENGINES": "google,bing",\n'
+        '  "SEARXNG_CATEGORIES": "it",\n'
+        '  "SEARXNG_VERIFY_TLS": false\n'
+        "}\n",
         encoding="utf-8",
     )
-    monkeypatch.setattr("server.service.env.ENV_PATH", path)
+    monkeypatch.setattr("server.service.network_config.NETWORK_CONFIG_PATH", path)
     return path
 
 
@@ -134,8 +136,9 @@ def test_unset_choice_reports_the_availability_default(registers):
 
 
 def test_the_file_view_carries_what_the_panel_edits(registers):
-    """The search keys are withheld from GET /env, so the state payload is the
-    panel's read side — and it must never carry the Tavily VALUE."""
+    """The search keys live in .network and are withheld from GET /env /
+    GET /network-config, so the state payload is the panel's read side — and it
+    must never carry the Tavily VALUE."""
     state = service.get_search_backend_state("s1")
 
     assert state["env"] == {

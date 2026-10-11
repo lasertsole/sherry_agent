@@ -26,17 +26,50 @@ APP_HOME = (
 
 ENV_PATH = APP_HOME / ".env"
 if APP_HOME != ROOT_DIR and not ENV_PATH.exists():
-    # Seed the editable copy from the shipped template so the 模型配置 panel
-    # has the full key list to write into (secrets stay empty).
-    template = ROOT_DIR / ".env.example"
+    # Seed the editable copy from the TRACKED .env (it is the shipped default:
+    # the file holds the non-secret application configuration only — model and
+    # network credentials live in .models / .network).
+    template = ROOT_DIR / ".env"
     if template.exists():
         try:
             ENV_PATH.write_text(template.read_text(encoding="utf-8"), encoding="utf-8")
         except OSError:
             pass
+# The model configuration (.models) and the network service configuration
+# (.network) live in their own project-root files (config/models_settings.py,
+# config/network_settings.py). Importing them seeds the files when missing AND
+# materialises their values into os.environ. They are imported BEFORE the
+# environment file is loaded on purpose: the hydration never overwrites a key
+# that is already set, so writing them FIRST makes the new files outrank a
+# legacy .env entry — while an operator's own environment variable (set before
+# the process started) still outranks both.
+from config.models_settings import hydrate_model_env  # noqa: E402
+from config.network_settings import hydrate_network_env  # noqa: E402
+
 # Load environment variables early so the workspace template language below is
-# read from the .env file (idempotent; existing environment variables win).
+# read from the .env file (idempotent; already-set variables win, which is what
+# shields the hydrated model / network values from a legacy .env line).
 load_dotenv(ENV_PATH, override=False)
+
+
+def load_env(override: bool = False) -> None:
+    """(Re)apply the configuration stack: ``.models`` / ``.network``, then ``.env``.
+
+    The replacement for bare ``load_dotenv(ENV_PATH, override=True)`` calls.
+    The ORDER defines precedence: the hydrations write the new files' values
+    first (skipping anything already set, which protects explicit process
+    variables), and the environment file then fills only the keys still unset —
+    a legacy ``.env`` copy of a moved key can never win. Runtime edits to ``.env``
+    are likewise not re-applied for an already-set key (the moved keys are
+    boot-read anyway); restart the process to pick one up.
+
+    ``override=True`` is available for a caller that wants the environment file
+    to win over the new files; nothing in the app does.
+    """
+    hydrate_model_env()
+    hydrate_network_env()
+    load_dotenv(ENV_PATH, override=override)
+
 
 # The interpreter actually running this process. Under every
 # supported launch mode (./start.sh or `uv run python -m server`) this IS the

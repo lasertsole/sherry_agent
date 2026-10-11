@@ -4,17 +4,18 @@ import WebSearchPanel from '@/pages/home/components/WebSearchPanel.vue';
 
 // The store is stubbed so the panel is exercised through its observable
 // surface (what it renders and what it writes) without a backend. Only the
-// WRITE side of the env bridge is mocked: the panel reads the .env view from
-// the search state payload (those keys are withheld from GET /env).
+// WRITE side of the network-config bridge is mocked: the panel reads the file
+// view from the search state payload (those keys are withheld from
+// GET /network-config).
 let storeApi: {
   stateFor: ReturnType<typeof vi.fn>;
   select: ReturnType<typeof vi.fn>;
   hydrate: ReturnType<typeof vi.fn>;
 };
-let envApi: { writeEnvConfig: ReturnType<typeof vi.fn> };
+let envApi: { writeNetworkConfig: ReturnType<typeof vi.fn> };
 
 vi.mock('@/composables/env', () => ({
-  writeEnvConfig: (...args: unknown[]) => envApi.writeEnvConfig(...args)
+  writeNetworkConfig: (...args: unknown[]) => envApi.writeNetworkConfig(...args)
 }));
 
 /** Route double: the panel resolves the active session from it. */
@@ -100,7 +101,7 @@ async function mountPanel(
     'useWebSearchStore',
     vi.fn(() => storeApi)
   );
-  envApi = { writeEnvConfig: vi.fn(async () => true) };
+  envApi = { writeNetworkConfig: vi.fn(async () => true) };
   const wrapper = mount(WebSearchPanel, { global: { stubs } });
   await wrapper.vm.$nextTick();
   return wrapper;
@@ -200,9 +201,9 @@ describe('WebSearchPanel.vue (integration, store + env mocked)', () => {
 
     await wrapper.find('[data-test="web-search-tavily-key"]').setValue('tvly-draft');
     await wrapper.find('[data-test="web-search-tavily-save"]').trigger('click');
-    await vi.waitFor(() => expect(envApi.writeEnvConfig).toHaveBeenCalled());
+    await vi.waitFor(() => expect(envApi.writeNetworkConfig).toHaveBeenCalled());
 
-    expect(envApi.writeEnvConfig).toHaveBeenCalledWith({ TAVILY_API_KEY: 'tvly-draft' });
+    expect(envApi.writeNetworkConfig).toHaveBeenCalledWith({ TAVILY_API_KEY: 'tvly-draft' });
     // The value is write-only: the field clears after a successful save.
     await vi.waitFor(() => expect(wrapper.find('[data-test="web-search-tavily-saved"]').exists()).toBe(true));
   });
@@ -211,9 +212,9 @@ describe('WebSearchPanel.vue (integration, store + env mocked)', () => {
     const wrapper = await mountPanel();
 
     await wrapper.find('[data-test="web-search-tavily-clear"]').trigger('click');
-    await vi.waitFor(() => expect(envApi.writeEnvConfig).toHaveBeenCalled());
+    await vi.waitFor(() => expect(envApi.writeNetworkConfig).toHaveBeenCalled());
 
-    expect(envApi.writeEnvConfig).toHaveBeenCalledWith({ TAVILY_API_KEY: '' });
+    expect(envApi.writeNetworkConfig).toHaveBeenCalledWith({ TAVILY_API_KEY: '' });
   });
 
   it('saves only the changed SearXNG keys and shows the restart hint', async () => {
@@ -226,15 +227,15 @@ describe('WebSearchPanel.vue (integration, store + env mocked)', () => {
     expect(wrapper.find('[data-test="web-search-restart-hint"]').exists()).toBe(true);
 
     await wrapper.find('[data-test="web-search-searxng-save"]').trigger('click');
-    await vi.waitFor(() => expect(envApi.writeEnvConfig).toHaveBeenCalled());
+    await vi.waitFor(() => expect(envApi.writeNetworkConfig).toHaveBeenCalled());
 
-    expect(envApi.writeEnvConfig).toHaveBeenCalledWith({ SEARXNG_URL: 'http://localhost:9999' });
+    expect(envApi.writeNetworkConfig).toHaveBeenCalledWith({ SEARXNG_URL: 'http://localhost:9999' });
     await vi.waitFor(() => expect(wrapper.find('[data-test="web-search-saved"]').exists()).toBe(true));
   });
 
   it('reports a refused save', async () => {
     const wrapper = await mountPanel();
-    envApi.writeEnvConfig.mockResolvedValue(false);
+    envApi.writeNetworkConfig.mockResolvedValue(false);
 
     await wrapper.find('[data-test="web-search-searxng-proxy"]').setValue('http://127.0.0.1:7890');
     await wrapper.find('[data-test="web-search-searxng-save"]').trigger('click');

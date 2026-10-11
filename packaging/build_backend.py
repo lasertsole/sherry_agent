@@ -36,7 +36,11 @@ DATA = (
     ("workspace/template", "workspace/template"),  # persona seeds for first run
     ("plugins", "plugins"),  # channel adapters
     ("sherry.jsonc", "sherry.jsonc"),
-    (".env.example", ".env.example"),
+    # The tracked .env (non-secret app config) and the two config templates a
+    # first run seeds into APP_HOME as .models / .network.
+    (".env", ".env"),
+    (".models.example", ".models.example"),
+    (".network.example", ".network.example"),
     ("context_engine", "context_engine"),  # read by path, not imported
 )
 

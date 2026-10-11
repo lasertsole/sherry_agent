@@ -2,7 +2,7 @@ from typing import Never
 import math
 from pathlib import Path
 from loguru import logger
-from models.utils import read_env_file_value as _read_dotenv
+from config.models_settings import get_model_setting
 from models.http_client import OpenAICompatibleClient
 from langchain_core.embeddings import Embeddings
 
@@ -28,17 +28,17 @@ def _detect_backend() -> tuple[str, bool, dict | None]:
     Detect backend mode and return configuration.
     Returns: (backend_type, has_local, remote_config_or_None)
     """
-    raw = _read_dotenv("EMBEDDING_MODEL_LOCAL", "true").strip().lower()
+    raw = str(get_model_setting("EMBEDDING_MODEL_LOCAL")).strip().lower()
     use_local = raw not in ("", "false", "0", "no")
 
     if use_local:
         return ("local", True, None)
 
-    # Remote mode → validate configuration
-    provider = _read_dotenv("EMBEDDING_MODEL_PROVIDER")
-    api_base = _read_dotenv("EMBEDDING_API_BASE")
-    api_key = _read_dotenv("EMBEDDING_API_KEY")
-    api_name = _read_dotenv("EMBEDDING_API_NAME")
+    # Remote mode → validate configuration (values come from .models)
+    provider = get_model_setting("EMBEDDING_MODEL_PROVIDER")
+    api_base = get_model_setting("EMBEDDING_API_BASE")
+    api_key = get_model_setting("EMBEDDING_API_KEY")
+    api_name = get_model_setting("EMBEDDING_API_NAME")
 
     if not api_base:
         _abort(

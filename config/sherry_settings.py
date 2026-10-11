@@ -7,10 +7,9 @@ this module instead of ``os.getenv`` — the environment file is no longer a
 source for them.
 
 Most settings are top-level keys. Grouped settings live in nested objects and
-are addressed with dotted paths: the ``"LANGSMITH"`` object holds the LangSmith
-tracing settings and the ``"curator"`` object holds the background
-skill-maintenance settings, so ``"LANGSMITH.TRACING_V2"`` resolves to the
-``TRACING_V2`` leaf inside the ``"LANGSMITH"`` object.
+are addressed with dotted paths: the ``"curator"`` object holds the background
+skill-maintenance settings, so ``"curator.enabled"`` resolves to the ``enabled``
+leaf inside the ``"curator"`` object.
 
 Values are typed: ``TOOL_CALL_TIMEOUT_MINUTES`` and the curator counters coerce
 to numbers, the boolean switches to ``bool``, everything else to ``str``. A
@@ -43,8 +42,8 @@ if APP_HOME != _CODE_ROOT and not SHERRY_CONFIG_PATH.exists():
 
 # Single source of truth for accepted keys and their typed defaults. Nested
 # objects in sherry.jsonc are addressed with dotted paths ("GROUP.KEY").
-# Secret-class keys (TAVILY_API_KEY) stay in the gitignored .env on purpose —
-# sherry.jsonc is git-tracked and must never hold API keys.
+# Secret-class keys live in the gitignored .env / .models / .network on purpose —
+# sherry.jsonc is git-tracked and must never hold an API key.
 SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     "TOOL_CALL_TIMEOUT_MINUTES": 5,
     "LOG_LEVEL": "INFO",
@@ -58,9 +57,8 @@ SHERRY_SETTING_DEFAULTS: dict[str, Any] = {
     # default: the periodic heartbeat is opt-in, and the boot path reads this
     # value, so a session that never touches the switch never wakes the agent.
     "heartbeat.enabled": False,
-    "LANGSMITH.TRACING_V2": False,
-    "LANGSMITH.API_KEY": "",
-    "LANGSMITH.PROJECT": "EMA_AI_agent",
+    # LangSmith tracing moved to the .network file (LANGSMITH_* keys) — it is a
+    # network service, and that file is gitignored while this one is tracked.
     "curator.enabled": True,
     "curator.interval_hours": 168,
     "curator.min_idle_hours": 2,
@@ -83,7 +81,6 @@ _INT_KEYS = frozenset(
 _FLOAT_KEYS = frozenset({"curator.min_idle_hours"})
 _BOOL_KEYS = frozenset(
     {
-        "LANGSMITH.TRACING_V2",
         "heartbeat.enabled",
         "curator.enabled",
         "curator.consolidate",

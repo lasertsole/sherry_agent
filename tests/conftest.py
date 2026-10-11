@@ -49,6 +49,22 @@ def _isolated_prompt_data_provider():
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_sandbox_policy(monkeypatch):
+    """Pin the sandbox policy for every test (CI parity).
+
+    The shipped, git-tracked ``.env`` sets ``SANDBOX_POLICY=required``, and every
+    command-executing surface (terminal / python_repl / execute_code / the PTC
+    runner) fails closed when no sandbox backend is usable — exactly the machine
+    state a test run must not inherit. CI has historically run with no ``.env`` at
+    all, where the unset fallback is ``auto``; pinning that keeps the suite
+    hermetic and identical between CI and a dev checkout. Tests that assert a
+    specific policy (the sandbox matrix, the REQUIRED denials) patch ``read_policy``
+    themselves — their patch lands after this fixture and wins.
+    """
+    monkeypatch.setenv("SANDBOX_POLICY", "auto")
+
+
+@pytest.fixture(autouse=True)
 def _isolated_skill_scan_cache(tmp_path):
     """Point the SkillSpector verdict cache at per-test tmp storage and freeze
     the scanner-version fingerprint.

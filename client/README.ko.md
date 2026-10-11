@@ -102,7 +102,7 @@ client/
 │   │   ├── messages.ts            # 히스토리 API(캐시 우선 /get_history_by_turn_page) + 스트림 중단 이벤트
 │   │   ├── toast.ts               # 전역 Toast 레이어(PrimeVue Toast 등록)
 │   │   ├── clientLog.ts           # 클라이언트 console.* 캡처를 Dexie에 영속화(all/log/error)
-│   │   ├── env.ts                 # 백엔드 .env 읽기/쓰기(GET/PUT /env)
+│   │   ├── env.ts                 # 백엔드 설정 파일(.env / .models / .network) 읽기/쓰기
 │   │   ├── workspace.ts           # 시스템 프롬프트 핸들러(/system_prompt GET/POST/PATCH)
 │   │   ├── defaultCharacter.ts    # 내장 기본 캐릭터(이름 + /avatar/*.jpg 및 default.svg 자리 표시자)
 │   │   ├── sessionFilter.ts       # 클라이언트 측 세션 목록 필터(키워드 + 날짜 범위)
@@ -148,8 +148,8 @@ client/
 │   │           ├── FileTreeNode.vue           # 프로젝트 파일 트리의 한 행(펼치기 / 파일 열기)
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
-│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 .env 편집 — 검색 키는 「모델 검색」 탭 — 배경, 언어 등)
-│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .env에 쓰지 않음)
+│   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 언어 등)
+│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .models에 쓰지 않음)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
 │   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
 │   │           ├── SessionPresetButton.vue    # 상단 바 보기 전용 진입점: 현재 세션의 프리셋 탭 열기
@@ -158,7 +158,7 @@ client/
 │   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
 │   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
-│   │           ├── WebSearchPanel.vue         #「모델 검색」탭: 세션의 검색 백엔드(Tavily / SearXNG 라디오) + Tavily 키와 SearXNG 연결 폼 — 이 .env 키를 편집하는 유일한 창구(GET /env에서 숨김)
+│   │           ├── WebSearchPanel.vue         #「모델 검색」탭: 세션의 검색 백엔드(Tavily / SearXNG 라디오) + Tavily 키와 SearXNG 연결 폼 — 이 .network 키를 편집하는 유일한 창구(GET /network-config에서 숨김)
 │   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
@@ -218,7 +218,7 @@ client/
 │   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
 │   ├── tests/                     # Rust 테스트 플레이스홀더(빈 mod.rs + .gitkeep 디렉터리)
 │   ├── benches/                   # 벤치마크 플레이스홀더
-│   ├── .env.example               # 백엔드 모델 설정 템플릿(MAIN_LLM_*, TAVILY_API_KEY, ...)
+
 │   ├── Cargo.toml                 # Rust 매니페스트(tauri 2, reqwest, ts-rs, tracing, 플러그인, ...)
 │   ├── Cargo.lock                 # Rust 락파일
 │   ├── build.rs                   # Tauri 빌드 스크립트
@@ -297,7 +297,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 | `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | 채널 설정                                                                                      |
 | `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | 자동 스킬 curator 제어                                                                         |
 | `listLogFiles` / `readLogFile` / `openLogStream`                                                   | 백엔드 로그 읽기 + 실시간 `/logs/ws` 스트림                                                    |
-| `readEnvConfig` / `writeEnvConfig`(`env.ts`)                                                       | 백엔드 `.env` 읽기/업데이트(`GET/PUT /env`)                                                    |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig`(`env.ts`) | 백엔드 설정 파일 읽기/업데이트(`GET/PUT /env`, `/models-config`, `/network-config`)              |
 | `checkHealth()`                                                                                    | 백엔드 도달 가능성(`system_health` IPC 또는 `GET /system_prompt`)                              |
 
 브라우저 모드 채팅 스트리밍 세부 사항:
@@ -342,7 +342,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 | `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST                 | 스킬 관리                                  |
 | `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | curator 리뷰 및 설정                       |
 | `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | 채널 토글 및 설정                          |
-| `/env`                                                                                           | GET / PUT                | 백엔드 `.env` 읽기/업데이트                |
+| `/env`, `/models-config`, `/network-config`                                                       | GET / PUT                | 백엔드 설정 파일 읽기/업데이트               |
 | `/model-config`                                                                                  | GET                      | 모델 설정 및 유효성                        |
 | `/logs/files`, `/logs`                                                                           | GET                      | 로그 파일 목록 및 꼬리 읽기                |
 | `/logs/ws`                                                                                       | WS                       | 실시간 로그 스트림                         |
@@ -448,7 +448,7 @@ VITE_API_BACK_URL="http://localhost:8080"  # Python 백엔드 베이스 URL(REST
 
 모든 백엔드 호출은 `VITE_API_BACK_URL`을 해석하며 하드코딩된 폴백 `http://localhost:8080`을 가집니다. 개발 서버 프록시가 없습니다 — 프런트엔드는 백엔드에 직접 접근하므로 백엔드가 크로스 오리진 요청을 허용해야 합니다(백엔드는 `Access-Control-Allow-Origin: *`를 반환).
 
-`src-tauri/.env.example`에는 별도로 **백엔드** 모델 설정 템플릿(`MAIN_LLM_*`, `REASONER_*`, `SIMPLE_MAIN_LLM_*`, `ITTT_*`, `TTI_*`, `RERANKER_*`, `EMBEDDING_*`, `TAVILY_API_KEY`, `LANGSMITH_*`)이 있습니다.
+**백엔드** 설정은 프로젝트 루트의 세 파일에 있습니다: 추적되는 `.env`(비민감 앱 설정), `.models`(모든 모델 패밀리; `.models.example`에서 생성), `.network`(웹 검색 / 브라우저 에이전트 / LangSmith; `.network.example`에서 생성) — 뒤의 둘은 무시됩니다.
 
 ### Python 백엔드 시작
 

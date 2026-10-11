@@ -288,7 +288,9 @@ EMA_AI_agent/
 │   ├── sessions/           # Per-session runtime workspace data
 │   └── memory/             # 장기 기억 저장소
 │
-├── .env.example            # 환경 변수 템플릿
+├── .env                    # 앱 설정, 추적됨 (샌드박스 / 게이트웨이 / 로그인 — 키는 넣지 마세요)
+├── .models.example         # 모델 설정 템플릿 (첫 실행 시 .models 생성)
+├── .network.example        # 네트워크 설정 템플릿 (첫 실행 시 .network 생성)
 ├── pyproject.toml          # Python 의존성(uv 관리)
 ├── uv.lock                 # uv 락파일
 ├── start.sh                # 백엔드 시작 스크립트
@@ -337,12 +339,16 @@ cd EMA_AI_agent
 uv sync   # .venv를 생성하고 uv.lock 기준으로 의존성을 정확히 설치
 ```
 
-### 2. 환경 변수 설정
-`.env` 예시 파일을 복사하고, 최소한 메인 채팅 모델과 Tavily 키를 채워 넣으세요:
+### 2. 모델 및 네트워크 설정 파일
+설정은 민감도에 따라 세 파일로 나뉩니다:
 
-```bash
-cp .env.example .env
-```
+| 파일 | 추적 | 내용 |
+| :--- | :--- | :---------- |
+| `.env` | ✅ 커밋됨 | 비민감 앱 설정(샌드박스 정책, 게이트웨이, 로그인). 키를 절대 넣지 마세요. |
+| `.models` | 무시됨 | 각 모델 패밀리의 provider / 엔드포인트 / 키 (첫 실행 시 `.models.example`에서 생성) |
+| `.network` | 무시됨 | 웹 검색(Tavily / SearXNG), 브라우저 에이전트 스위치, LangSmith 트레이싱 (첫 실행 시 `.network.example`에서 생성) |
+
+최소한 `.models`에 메인 채팅 모델을, 웹 검색을 쓴다면 `.network`에 Tavily 키나 SearXNG 인스턴스를 채우세요 — 「모델 설정 / 모델 검색」 패널에서 편집할 수 있습니다:
 
 | 변수 | 필수 | 설명 |
 | :------- | :------- | :---------- |
@@ -355,15 +361,16 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 이미지 / 비디오 / 이미지 생성 / 음성 모델 설정 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 검색용 리랭커 및 임베딩(아래 모델 참고 사항 확인) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 보안 스캐너 스위치(기본값 켜짐) |
+| `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | 선택적 브라우저 에이전트(기본 꺼짐). 변경 후 재시작해야 도구가 등록됩니다 |
 | `TOOL_CALL_TIMEOUT_MINUTES`(sherry.jsonc) / `LOG_LEVEL` | — | 저장 설정일 뿐(기본값 5) — 도구 실행 경로가 소비하지 않음; 로그 레벨(INFO) |
 | `WORKSPACE_TEMPLATE_LANG` | — | 페르소나 템플릿 언어: `en` / `zh` / `ja` / `ko`(첫 사용 시 지연 복사) |
-| `"LANGSMITH"` (sherry.jsonc) | — | 선택적 LangSmith 트레이싱 |
+| `LANGSMITH_TRACING_V2` / `LANGSMITH_API_KEY` (`.network`) | — | 선택적 LangSmith 트레이싱 |
 
 ### 3. 모델 참고 사항 (HuggingFace 자동 다운로드)
 **로컬 GGUF** 모드로 구성된 모델은 첫 사용 시 Hugging Face에서 `models/<model>/model_weight/`로 자동 다운로드됩니다 — 수동 다운로드가 필요 없습니다:
 
 - **임베딩**: `EMBEDDING_MODEL_LOCAL=true`(기본값)이면 로컬 `bge-m3` Q8_0 GGUF를 첫 실행 시 자동 다운로드합니다.
-- **리랭커**: `.env` 템플릿의 기본값은 **클라우드 API**(`RERANKER_MODEL_LOCAL=false`, OpenAI 호환 `bge-reranker-v2-m3`)입니다. `true`로 설정하면 로컬 GGUF 리랭커(자동 다운로드, 약 636 MB)로 전환됩니다.
+- **리랭커**: `.models` 템플릿의 기본값은 **클라우드 API**(`RERANKER_MODEL_LOCAL=false`, OpenAI 호환 `bge-reranker-v2-m3`)입니다. `true`로 설정하면 로컬 GGUF 리랭커(자동 다운로드, 약 636 MB)로 전환됩니다.
 - **ITTT / VTTT / Auxiliary LLM**: 템플릿 기본값은 클라우드 API이며, `*_MODEL_LOCAL=true`로 설정하면 로컬 GGUF 모델로 전환됩니다(역시 자동 다운로드).
 
 > 첫 다운로드 시 huggingface.co 접근이 필요합니다(중국 본토 사용자는 프록시나 미러가 필요할 수 있습니다). 중단된 다운로드는 다음 시작 시 재개되며, `models/<model>/model_weight/`를 삭제하면 강제로 다시 다운로드합니다.
@@ -403,7 +410,7 @@ uv run --with pyinstaller python packaging/build_backend.py   # 백엔드 → cl
 cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
 ```
 
-두 단계 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env`——는 OS 앱 데이터 디렉터리(`SHERRY_HOME`, 셸이 주입)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
+두 단계 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env` / `.models` / `.network`——는 OS 앱 데이터 디렉터리(`SHERRY_HOME`, 셸이 주입)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
 
 ---
 

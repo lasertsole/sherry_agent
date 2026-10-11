@@ -12,14 +12,13 @@ import os
 import json
 import base64
 import requests
-from dotenv import load_dotenv
-from config.path import STATIC_DIR
+from config.path import STATIC_DIR, load_env
 from models.http_client import verify_tls
 from pub.func import generate_tsid
 from pydantic import validate_call
 
-# Load environment variables
-load_dotenv(project_root / ".env", override=True)
+# .env plus the network.jsonc overlay (network keys outrank the environment file)
+load_env()
 
 
 @validate_call

@@ -24,7 +24,7 @@ class TestLoadSherrySettings:
         settings = sherry_settings.load_sherry_settings()
         assert settings == dict(sherry_settings.SHERRY_SETTING_DEFAULTS)
         assert settings["TOOL_CALL_TIMEOUT_MINUTES"] == 5
-        assert settings["LANGSMITH.TRACING_V2"] is False
+        assert settings["heartbeat.enabled"] is False
         assert settings["curator.interval_hours"] == 168
         # Secret-class keys are not part of sherry.jsonc at all.
         assert "TAVILY_API_KEY" not in settings
@@ -43,14 +43,14 @@ class TestLoadSherrySettings:
         assert settings["TOOL_CALL_TIMEOUT_MINUTES"] == 15
         assert settings["LOG_LEVEL"] == "DEBUG"
         # Untouched keys fall back to their typed defaults.
-        assert settings["LANGSMITH.TRACING_V2"] is False
+        assert settings["heartbeat.enabled"] is False
         assert settings["curator.enabled"] is True
 
     def test_group_values_are_coerced_to_declared_types(self, sherry_file):
         sherry_file.write_text(
             json.dumps(
                 {
-                    "LANGSMITH": {"TRACING_V2": "true"},
+                    "heartbeat": {"enabled": "true"},
                     "curator": {
                         "interval_hours": "24",
                         "min_idle_hours": "0.5",
@@ -61,7 +61,7 @@ class TestLoadSherrySettings:
             encoding="utf-8",
         )
         settings = sherry_settings.load_sherry_settings()
-        assert settings["LANGSMITH.TRACING_V2"] is True
+        assert settings["heartbeat.enabled"] is True
         assert settings["curator.interval_hours"] == 24
         assert isinstance(settings["curator.interval_hours"], int)
         assert settings["curator.min_idle_hours"] == 0.5
@@ -69,12 +69,11 @@ class TestLoadSherrySettings:
 
     def test_non_dict_group_falls_back_to_defaults(self, sherry_file):
         sherry_file.write_text(
-            json.dumps({"LANGSMITH": "oops", "curator": {"interval_hours": 24}}),
+            json.dumps({"heartbeat": "oops", "curator": {"interval_hours": 24}}),
             encoding="utf-8",
         )
         settings = sherry_settings.load_sherry_settings()
-        assert settings["LANGSMITH.TRACING_V2"] is False
-        assert settings["LANGSMITH.PROJECT"] == "EMA_AI_agent"
+        assert settings["heartbeat.enabled"] is False
         assert settings["curator.interval_hours"] == 24
 
     def test_unparseable_file_yields_defaults(self, sherry_file):
@@ -91,8 +90,8 @@ class TestGetSherrySetting:
 
     def test_parse_sherry_value_coerces_ui_strings(self):
         assert sherry_settings.parse_sherry_value("TOOL_CALL_TIMEOUT_MINUTES", "7") == 7
-        assert sherry_settings.parse_sherry_value("LANGSMITH.TRACING_V2", "false") is False
-        assert sherry_settings.parse_sherry_value("LANGSMITH.TRACING_V2", "true") is True
+        assert sherry_settings.parse_sherry_value("heartbeat.enabled", "false") is False
+        assert sherry_settings.parse_sherry_value("heartbeat.enabled", "true") is True
         assert sherry_settings.parse_sherry_value("curator.min_idle_hours", "2.5") == 2.5
         assert sherry_settings.parse_sherry_value("LOG_LEVEL", "DEBUG") == "DEBUG"
 

@@ -4,7 +4,7 @@
 
 > Agent 如何对两个 LLM 强制 128K 上下文窗口硬下限：一个共享断言在四个执法点抛出（服务启动、图构建、子 Agent 派生、`.env` 写入），前端在被拦截之前先告警，`GET /model-config` 对外暴露实时判定。
 
-事实来源：`config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`，以及 `.env.example`。本文档中的每一个行号与常量都已对照该代码核对。
+事实来源：`config/features/agent_side/token_guard.py`、`server/__main__.py`、`agent/core.py`、`agent/tools/subagent/spawn/core.py`、`server/service/env.py`、`server/trigger/http/model_config.py`、`client/app/composables/model-config.ts`、`client/app/composables/use-chat-stream.ts`、`client/app/pages/home/components/ConfigPanel.vue`、`server/service/models_config.py`，以及 `.models`。本文档中的每一个行号与常量都已对照该代码核对。
 
 ## 目录
 
@@ -71,12 +71,12 @@ from config.features import (
 
 ## 📐 阈值与配置
 
-| 环境变量 | 含义 | 要求 | `.env.example` 默认值 |
+| 环境变量 | 含义 | 要求 | `.models` 默认值 |
 | :------ | :------ | :------- | :--------------------- |
-| `MAIN_LLM_MAX_TOKEN` | 主模型上下文窗口 | `>= 131072` | `131072`（`.env.example` 第 8 行） |
-| `AUXILIARY_LLM_MAX_TOKEN` | 辅助模型上下文窗口 | `>= 131072` | `131072`（`.env.example` 第 59 行） |
+| `MAIN_LLM_MAX_TOKEN` | 主模型上下文窗口 | `>= 131072` | `131072` |
+| `AUXILIARY_LLM_MAX_TOKEN` | 辅助模型上下文窗口 | `>= 131072` | `131072` |
 
-两个键同时登记在环境写入白名单 `TOKEN_KEYS` 中（`server/service/env.py:27`）：
+两个键同时登记在配置写入白名单 `TOKEN_KEYS` 中（`server/service/models_config.py`；`.env` 本身已不再接受模型键）：
 
 ```python
 TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
@@ -109,7 +109,7 @@ MAIN_LLM_MAX_TOKEN = 131072
 AUXILIARY_LLM_MAX_TOKEN = 131072
 ```
 
-3. 重启后端，让启动闸门重新运行。仓库自带的 `.env.example` 里两个键已经是 `131072`。
+3. 重启后端，让启动闸门重新运行。仓库自带的 `.models.example` 里两个键已经是 `131072`。
 
 > 如果你的本地 `.env` 仍然是 `100000`，服务会拒绝启动并报 `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`。启动前把它调到 `>= 131072`。
 
@@ -162,9 +162,9 @@ cd client && pnpm test:unit -- modelConfig use-chat-stream.token ConfigPanel.tok
 | 启动闸门 | `server/__main__.py:95-100` | CRITICAL 日志后 `SystemExit(1)` |
 | 构建闸门 | `agent/core.py:124` | `built_agent()` 构建前校验 |
 | 派生闸门 | `agent/tools/subagent/spawn/core.py:877` | 子 LLM 构造时校验 |
-| 写入闸门 | `server/service/env.py:157` | `write_env_file()` 写盘前拒绝 |
+| 写入闸门 | `server/service/models_config.py` | `write_models_config()` 写盘前拒绝 |
 | API | `server/trigger/http/model_config.py` | `GET /model-config` |
 | 前端缓存 | `client/app/composables/model-config.ts` | `fetchModelConfig`、`getModelConfigCached`、`invalidateModelConfigCache` |
 | 前端告警 | `client/app/composables/use-chat-stream.ts:435` | 发送时的非阻断 toast |
 | 前端面板 | `client/app/pages/home/components/ConfigPanel.vue` | 横幅、保存前校验、缓存失效 |
-| 默认值 | `.env.example:8,59` | 两个键默认均为 `131072` |
+| 默认值 | `.models.example` | 两个键默认均为 `131072` |

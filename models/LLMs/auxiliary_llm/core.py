@@ -20,12 +20,11 @@ Usage:
 
 import os
 from pathlib import Path
-from dotenv import load_dotenv
 from typing import Any
 from collections.abc import Sequence
 from langchain_core.runnables import Runnable
 
-from config import ENV_PATH
+from config.path import load_env
 from config.features import LLM_CLIENT_DEFAULTS
 from models.LLMs.base_local_llama import LocalLlamaChatBase
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
@@ -37,7 +36,8 @@ from models.env_builder import ModelEnvBuilder, read_env
 # 1.  Read and prepare environment
 # ---------------------------------------------------------------------------
 
-load_dotenv(ENV_PATH, override=True)
+# .env plus the network.jsonc overlay (which wins for the network keys)
+load_env()
 
 
 # ---------------------------------------------------------------------------

@@ -3,12 +3,12 @@
 Mirrors :mod:`server.service.env` for the application-level settings that were
 split out of ``.env`` (key list and typing live in
 ``config/sherry_settings.py``). The file is a JSON5 object — flat
-``"KEY": value,`` lines plus one-level nested group objects (``"LANGSMITH"``,
+``"KEY": value,`` lines plus one-level nested group objects (``"heartbeat"``,
 ``"curator"``) — so edits are applied line-wise to preserve comments and
 ordering; values are coerced to their declared types (int / float / bool /
 str) before writing. Grouped entries are addressed with dotted keys
-(``"LANGSMITH.TRACING_V2"`` is the ``"TRACING_V2"`` line inside the
-``"LANGSMITH"`` object).
+(``"curator.interval_hours"`` is the ``"interval_hours"`` line inside the
+``"curator"`` object).
 """
 
 import json

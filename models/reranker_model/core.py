@@ -21,14 +21,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import numpy as np
-from models.utils import read_env_file_value as _read_dotenv
+from config.models_settings import get_model_setting
 from models.http_client import OpenAICompatibleClient
 
 
 def _is_local() -> bool:
     raw = os.environ.get("RERANKER_MODEL_LOCAL")
     if raw is None:
-        raw = _read_dotenv("RERANKER_MODEL_LOCAL", "true")
+        raw = str(get_model_setting("RERANKER_MODEL_LOCAL"))
     raw = str(raw).strip().lower()
     return raw not in ("", "false", "0", "no")
 
@@ -581,12 +581,12 @@ class CloudReranker:
         api_key: str | None = None,
         model: str | None = None,
     ) -> None:
-        self._api_base = (api_base or _read_dotenv("RERANKER_API_BASE", "")).rstrip("/")
-        self._api_key = api_key or _read_dotenv("RERANKER_API_KEY", "")
-        self._model = model or _read_dotenv("RERANKER_API_NAME", "bge-reranker-v2-m3")
+        self._api_base = (api_base or str(get_model_setting("RERANKER_API_BASE"))).rstrip("/")
+        self._api_key = api_key or str(get_model_setting("RERANKER_API_KEY"))
+        self._model = model or str(get_model_setting("RERANKER_API_NAME"))
         if not self._api_base or not self._api_key:
             raise RuntimeError(
-                "RERANKER_API_BASE and RERANKER_API_KEY must be set in .env "
+                "RERANKER_API_BASE and RERANKER_API_KEY must be set in .models "
                 "when RERANKER_MODEL_LOCAL=false"
             )
         self._http = OpenAICompatibleClient(self._api_base, self._api_key)

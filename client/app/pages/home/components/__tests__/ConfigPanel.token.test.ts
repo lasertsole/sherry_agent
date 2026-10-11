@@ -25,13 +25,21 @@ const envState = vi.hoisted(() => {
   ];
   return { groups };
 });
-const readEnvConfigMock = vi.hoisted(() => vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.groups })));
-const writeEnvConfigMock = vi.hoisted(() => vi.fn(async () => true));
+// The model families live in `.models` now (GET/PUT /models-config); the other
+// two sources are stubbed empty so the panel's merge yields just this group.
+const readModelsConfigMock = vi.hoisted(() =>
+  vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: envState.groups }))
+);
+const writeModelsConfigMock = vi.hoisted(() => vi.fn(async () => true));
 const invalidateModelConfigCacheMock = vi.hoisted(() => vi.fn());
 
 vi.mock('@/composables/env', () => ({
-  readEnvConfig: readEnvConfigMock,
-  writeEnvConfig: writeEnvConfigMock
+  readEnvConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: [] })),
+  readModelsConfig: readModelsConfigMock,
+  readNetworkConfig: vi.fn(async (): Promise<EnvConfigPayload> => ({ groups: [] })),
+  writeEnvConfig: vi.fn(async () => true),
+  writeModelsConfig: writeModelsConfigMock,
+  writeNetworkConfig: vi.fn(async () => true)
 }));
 
 vi.mock('@/composables/model-config', () => ({
@@ -97,8 +105,8 @@ async function mountWithEnvTab() {
 
 beforeEach(() => {
   envState.groups[0]!.entries[0]!.value = '131072';
-  readEnvConfigMock.mockClear();
-  writeEnvConfigMock.mockClear();
+  readModelsConfigMock.mockClear();
+  writeModelsConfigMock.mockClear();
   invalidateModelConfigCacheMock.mockClear();
   // Real stores (chat background) are consumed by ConfigPanel; actions are
   // stubbed so saving never touches Dexie.
@@ -137,7 +145,7 @@ describe('ConfigPanel MAX_TOKEN guard', () => {
 
     await vm.handleSave();
 
-    expect(writeEnvConfigMock).not.toHaveBeenCalled();
+    expect(writeModelsConfigMock).not.toHaveBeenCalled();
     expect(invalidateModelConfigCacheMock).not.toHaveBeenCalled();
     expect(vm.envLoadError).toBe(`${MAIN_TOKEN_KEY} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。`);
   });
@@ -148,8 +156,8 @@ describe('ConfigPanel MAX_TOKEN guard', () => {
 
     await vm.handleSave();
 
-    expect(writeEnvConfigMock).toHaveBeenCalledTimes(1);
-    expect(writeEnvConfigMock).toHaveBeenCalledWith({ [MAIN_TOKEN_KEY]: '262144' });
+    expect(writeModelsConfigMock).toHaveBeenCalledTimes(1);
+    expect(writeModelsConfigMock).toHaveBeenCalledWith({ [MAIN_TOKEN_KEY]: '262144' });
     expect(invalidateModelConfigCacheMock).toHaveBeenCalledTimes(1);
     expect(vm.envLoadError).toBe('');
   });

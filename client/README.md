@@ -101,7 +101,7 @@ client/
 │   │   ├── messages.ts            # History API (cache-first /get_history_by_turn_page) + stream abort event
 │   │   ├── toast.ts               # Global toast layer (PrimeVue Toast registration)
 │   │   ├── clientLog.ts           # Client-side console.* capture persisted to Dexie (all/log/error)
-│   │   ├── env.ts                 # Read/write backend .env (GET/PUT /env)
+│   │   ├── env.ts                 # Read/write the backend config files (.env / .models / .network)
 │   │   ├── workspace.ts           # System prompt handlers (/system_prompt GET/POST/PATCH)
 │   │   ├── defaultCharacter.ts    # Built-in default character (names + /avatar/*.jpg and the default.svg placeholder)
 │   │   ├── sessionFilter.ts       # Client-side session list filter (keyword + date range)
@@ -147,8 +147,8 @@ client/
 │   │           ├── FileTreeNode.vue           # One row of the project file tree (expand / open a file)
 │   │           ├── ModeSwitch.vue             # Dark/Light toggle (PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # "Extend" tab (channels / MCP)
-│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 .env editor — search keys live in the 模型联网 tab — background, language, ...)
-│   │           ├── LlmModelManager.vue        # Env-config model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .env)
+│   │           ├── ConfigPanel.vue            # System-config tab (the 模型配置 editor — merges .models / .network / .env into one tab — background, language, ...)
+│   │           ├── LlmModelManager.vue        # Model profiles (per-group panels, list/edit/add; a new profile starts empty, and 测试连通性 probes the endpoint via POST /model/test without writing .models)
 │   │           ├── LlmProfileRow.vue          # One model-profile row inside LlmModelManager (select / edit / delete)
 │   │           ├── PersonaPanel.vue           # System-prompt persona editor — the 预设角色 (Presets & Role) panel (role setup / operating instructions / soul / user profile / tools / middlewares / agent models / skills + presets)
 │   │           ├── SessionPresetButton.vue    # Top-bar view-only entry: opens the current session's preset tab
@@ -157,7 +157,7 @@ client/
 │   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
 │   │           ├── CronPanel.vue              # Cron job tab (/cron)
-│   │           ├── WebSearchPanel.vue         # 模型联网 (Web Search) tab: the session's search backend (Tavily / SearXNG radio) + the Tavily key and SearXNG connection forms — the ONLY surface editing those .env keys (withheld from GET /env)
+│   │           ├── WebSearchPanel.vue         # 模型联网 (Web Search) tab: the session's search backend (Tavily / SearXNG radio) + the Tavily key and SearXNG connection forms — the ONLY surface editing those .network keys (withheld from GET /network-config)
 │   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
@@ -217,7 +217,7 @@ client/
 │   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
 │   ├── tests/                     # Rust test placeholders (empty mod.rs + .gitkeep dirs)
 │   ├── benches/                   # Benchmark placeholder
-│   ├── .env.example               # Backend model config template (MAIN_LLM_*, TAVILY_API_KEY, ...)
+
 │   ├── Cargo.toml                 # Rust manifest (tauri 2, reqwest, ts-rs, tracing, plugins, ...)
 │   ├── Cargo.lock                 # Rust lockfile
 │   ├── build.rs                   # Tauri build script
@@ -297,7 +297,7 @@ app.vue (root: toast layer, connection banner, locale restore)
 | `listChannels` / `updateChannel` / `getChannelConfig` / `updateChannelConfig`                      | Channel settings                                                                               |
 | `runCuratorReview` / `getCuratorSettings` / `setCuratorSettings`                                   | Auto-skill curator control                                                                     |
 | `listLogFiles` / `readLogFile` / `openLogStream`                                                   | Backend log reading + live `/logs/ws` stream                                                   |
-| `readEnvConfig` / `writeEnvConfig` (`env.ts`)                                                      | Backend `.env` read/update (`GET/PUT /env`)                                                    |
+| `readEnvConfig` / `writeEnvConfig` / `readModelsConfig` / `writeModelsConfig` / `readNetworkConfig` / `writeNetworkConfig` (`env.ts`) | Backend config-file read/update (`GET/PUT /env`, `/models-config`, `/network-config`)           |
 | `checkHealth()`                                                                                    | Backend reachability (`system_health` IPC or `GET /system_prompt`)                             |
 
 Browser-mode chat streaming details:
@@ -342,7 +342,7 @@ REST (base URL `VITE_API_BACK_URL`, default `http://localhost:8080`):
 | `/skills`, `/skills/{path}`, `/skills/upload`, `/skills/toggle`, `/skills/delete`, `/skills/pin` | GET/POST                 | Skill management                           |
 | `/curator/run`, `/curator/settings`                                                              | POST / GET / PUT         | Curator review & settings                  |
 | `/channels`, `/channels/{name}`, `/channels/{name}/config`                                       | GET / PUT                | Channel toggles & config                   |
-| `/env`                                                                                           | GET / PUT                | Backend `.env` read/update                 |
+| `/env`, `/models-config`, `/network-config`                                                      | GET / PUT                | Backend config-file read/update            |
 | `/model-config`                                                                                  | GET                      | Model config + validity                    |
 | `/logs/files`, `/logs`                                                                           | GET                      | Log file list & tail read                  |
 | `/logs/ws`                                                                                       | WS                       | Live log stream                            |
@@ -447,7 +447,7 @@ VITE_API_BACK_URL="http://localhost:8080"  # Python backend base URL (REST + WS)
 
 All backend calls resolve `VITE_API_BACK_URL` with a hardcoded fallback of `http://localhost:8080`. There is no dev-server proxy — the frontend calls the backend directly, so the backend must allow cross-origin requests (it serves `Access-Control-Allow-Origin: *`).
 
-`src-tauri/.env.example` separately holds a template of the **backend** model configuration (`MAIN_LLM_*`, `REASONER_*`, `SIMPLE_MAIN_LLM_*`, `ITTT_*`, `TTI_*`, `RERANKER_*`, `EMBEDDING_*`, `TAVILY_API_KEY`, `LANGSMITH_*`).
+The **backend** configuration lives at the project root in three files: the tracked `.env` (non-secret app config), `.models` (every model family; seeded from `.models.example`) and `.network` (web search / browser agent / LangSmith; seeded from `.network.example`) — the last two are gitignored.
 
 ### Starting the Python Backend
 

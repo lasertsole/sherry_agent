@@ -14,12 +14,12 @@ import requests
 from PIL import Image
 from loguru import logger
 from models import ITTT_model
-from dotenv import load_dotenv
+from config.path import load_env
 from pub.func.validator import is_url
 from langchain_core.messages import HumanMessage
 
-# Load environment variables
-load_dotenv(project_root / ".env", override=True)
+# .env plus the network.jsonc overlay (network keys outrank the environment file)
+load_env()
 
 
 @validate_call

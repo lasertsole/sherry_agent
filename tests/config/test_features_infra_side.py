@@ -377,7 +377,11 @@ class TestCollectionFieldTypes:
             {"__pycache__", ".git", ".venv", "node_modules"}
         )
         assert fs.SERVER_HTTP["skills_skip_suffixes"] == frozenset({".pyc", ".pyo"})
-        assert "LANGSMITH_API_KEY" in fs.SERVER_HTTP["env_split_out_keys"]
+        # The .env-side split-out set holds only the sherry.jsonc keys now: the
+        # model and network keys are derived from their own registries.
+        assert fs.SERVER_HTTP["env_split_out_keys"] == frozenset(
+            {"TOOL_CALL_TIMEOUT_MINUTES", "LOG_LEVEL", "WORKSPACE_TEMPLATE_LANG"}
+        )
         assert fs.MESSAGE_PIPELINE["tool_output_dedup_default_protected_tools"] == frozenset()
 
     def test_tuples_are_tuples(self) -> None:

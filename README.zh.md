@@ -288,7 +288,9 @@ EMA_AI_agent/
 │   ├── sessions/           # Per-session runtime workspace data
 │   └── memory/             # 长期记忆存储
 │
-├── .env.example            # 环境变量模板
+├── .env                    # 应用配置，入库（沙箱 / 网关 / 登录——不放密钥）
+├── .models.example         # 模型配置模板（首次启动生成 .models）
+├── .network.example        # 网络配置模板（首次启动生成 .network）
 ├── pyproject.toml          # Python 依赖（uv 管理）
 ├── uv.lock                 # uv 锁文件
 ├── start.sh                # 后端启动脚本
@@ -337,12 +339,16 @@ cd EMA_AI_agent
 uv sync   # 创建 .venv 并按 uv.lock 精确安装依赖
 ```
 
-### 2. 配置环境变量
-复制 `.env` 模板，至少填写主聊天模型与 Tavily Key：
+### 2. 配置模型与网络文件
+配置按敏感度拆成三个文件：
 
-```bash
-cp .env.example .env
-```
+| 文件 | 是否入库 | 内容 |
+| :--- | :--- | :---------- |
+| `.env` | ✅ 入库 | 非敏感的应用配置（沙箱策略、网关、登录）。任何密钥都不要写在这里。 |
+| `.models` | 不入库 | 各模型厂商的 provider / 端点 / 密钥（首次启动时从 `.models.example` 生成） |
+| `.network` | 不入库 | 联网搜索（Tavily / SearXNG）、浏览器代理开关、LangSmith 追踪（首次启动时从 `.network.example` 生成） |
+
+至少在 `.models` 里填写主聊天模型；用联网搜索时在 `.network` 里填 Tavily Key 或 SearXNG 实例——「模型配置 / 模型联网」面板可以代你编辑这两个文件：
 
 | 变量 | 必填 | 说明 |
 | :------- | :------- | :---------- |
@@ -355,15 +361,16 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |
 | `RERANKER_*` / `EMBEDDING_*` | — | 检索所需的重排序与嵌入模型（见下方模型说明） |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector 安全扫描开关（默认开启） |
+| `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | 可选的浏览器代理（默认关闭）；改动后需重启才会注册工具 |
 | `TOOL_CALL_TIMEOUT_MINUTES`（sherry.jsonc）/ `LOG_LEVEL` | — | 仅存储设置（默认 5）——没有任何工具执行路径消费它；日志级别（INFO） |
 | `WORKSPACE_TEMPLATE_LANG` | — | 人设模板语言：`en` / `zh` / `ja` / `ko`（首次使用时懒拷贝） |
-| `"LANGSMITH"`（sherry.jsonc） | — | 可选的 LangSmith 追踪 |
+| `LANGSMITH_TRACING_V2` / `LANGSMITH_API_KEY`（`.network`） | — | 可选的 LangSmith 追踪 |
 
 ### 3. 模型说明（HuggingFace 自动下载）
 配置为**本地 GGUF** 模式的模型会在首次使用时自动从 Hugging Face 下载到 `models/<model>/model_weight/`，无需手动下载：
 
 - **嵌入模型**：`EMBEDDING_MODEL_LOCAL=true`（默认）使用本地 `bge-m3` Q8_0 GGUF，首次运行时自动下载。
-- **重排序模型**：`.env` 模板默认使用**云端 API**（`RERANKER_MODEL_LOCAL=false`，OpenAI 兼容的 `bge-reranker-v2-m3`）。设为 `true` 可切换为本地 GGUF 重排序模型（约 636 MB，自动下载）。
+- **重排序模型**：`.models` 模板默认使用**云端 API**（`RERANKER_MODEL_LOCAL=false`，OpenAI 兼容的 `bge-reranker-v2-m3`）。设为 `true` 可切换为本地 GGUF 重排序模型（约 636 MB，自动下载）。
 - **ITTT / VTTT / Auxiliary LLM**：模板默认云端 API；设 `*_MODEL_LOCAL=true` 切换为本地 GGUF 模型（同样自动下载）。
 
 > 首次下载需要访问 huggingface.co（中国大陆用户可能需要代理或镜像）。下载中断后下次启动会继续；删除 `models/<model>/model_weight/` 可强制重新下载。
@@ -403,7 +410,7 @@ uv run --with pyinstaller python packaging/build_backend.py   # 后端 → clien
 cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
 ```
 
-两步都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env`——写进系统的应用数据目录（`SHERRY_HOME`，由外壳注入），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
+两步都必须按目标系统分别执行（PyInstaller 不能交叉编译）。应用把属于自己的全部数据——会话、记忆、日志、学习到的技能、`.env` / `.models` / `.network`——写进系统的应用数据目录（`SHERRY_HOME`，由外壳注入），绝不写进只读的安装目录。首次运行尚未配置模型：窗口照常打开，在「模型配置」里填好密钥，重启应用即生效。
 
 ---
 

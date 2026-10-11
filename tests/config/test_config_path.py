@@ -212,6 +212,15 @@ class TestAppHome:
     def _run(self, env_home: str | None, expression: str) -> str:
         env = dict(os.environ)
         env.pop("SHERRY_HOME", None)
+        # Hermetic: the pytest process itself has hydrated the model / network
+        # keys from the repo's real .models / .network. An inherited value would
+        # outrank the file in the child (explicit process variables win), so drop
+        # them and let each test's fixtures decide.
+        from config.models_settings import MODEL_SETTING_KEYS
+        from config.network_settings import NETWORK_SETTING_KEYS
+
+        for key in (*MODEL_SETTING_KEYS, *NETWORK_SETTING_KEYS):
+            env.pop(key, None)
         if env_home is not None:
             env["SHERRY_HOME"] = env_home
         out = subprocess.run(
@@ -258,6 +267,48 @@ class TestAppHome:
         )
         assert out.splitlines() == ["True", "True"]
         assert (home / ".env").is_file() and (home / "sherry.jsonc").is_file()
+
+    def test_first_run_seeds_models_and_network_from_the_templates(self, tmp_path):
+        home = tmp_path / "home"
+        out = self._run(
+            str(home),
+            "from config.models_settings import MODELS_CONFIG_PATH; "
+            "from config.network_settings import NETWORK_CONFIG_PATH; "
+            "print(MODELS_CONFIG_PATH.parent.name, MODELS_CONFIG_PATH.name); "
+            "print(NETWORK_CONFIG_PATH.name); "
+            "print(MODELS_CONFIG_PATH.read_text(encoding='utf-8') != ''); "
+            "print(NETWORK_CONFIG_PATH.read_text(encoding='utf-8') != '')",
+        )
+        lines = out.splitlines()
+        assert lines[0].split() == ["home", ".models"]
+        assert lines[1] == ".network"
+        assert lines[2:] == ["True", "True"]
+
+    def test_legacy_env_values_migrate_into_the_seeded_files(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        # A pre-split install: the keys still sit in the app home's .env.
+        (home / ".env").write_text(
+            "MAIN_LLM_NAME = gpt-4o-legacy\nTAVILY_API_KEY = tvly-legacy\n", encoding="utf-8"
+        )
+        out = self._run(
+            str(home),
+            "from config.models_settings import get_model_setting; "
+            "from config.network_settings import get_network_setting; "
+            "print(get_model_setting('MAIN_LLM_NAME')); "
+            "print(get_network_setting('TAVILY_API_KEY'))",
+        )
+        assert out.splitlines() == ["gpt-4o-legacy", "tvly-legacy"]
+
+    def test_the_new_files_outrank_a_stale_env_key(self, tmp_path):
+        home = tmp_path / "home"
+        home.mkdir()
+        # Drift: the old file still carries a value for a moved key. The new
+        # file wins (the hydration runs after load_dotenv).
+        (home / ".env").write_text("MAIN_LLM_NAME = stale-name\n", encoding="utf-8")
+        (home / ".models").write_text('{ "MAIN_LLM_NAME": "fresh-name" }', encoding="utf-8")
+        out = self._run(str(home), "import os, config.path; print(os.environ['MAIN_LLM_NAME'])")
+        assert out == "fresh-name"
 
     def test_the_skills_loader_scans_both_roots(self, tmp_path):
         home = tmp_path / "home"

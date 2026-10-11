@@ -1,8 +1,7 @@
 import os
 from typing import Any
-from config import ENV_PATH
+from config.path import load_env
 from config.features import LLM_CLIENT_DEFAULTS
-from dotenv import load_dotenv
 from langchain.chat_models import init_chat_model
 from loguru import logger
 from models.LLMs.reasoning_normalizer import NormalizingChatModel
@@ -17,8 +16,8 @@ from models.LLMs.reasoning_payload import (
 )
 from models.env_builder import ModelEnvBuilder, clean_client_kwargs
 
-# Load environment variables
-load_dotenv(ENV_PATH, override=True)
+# Load environment variables (.env, then the network.jsonc overlay — which wins)
+load_env()
 # ``model_provider``/``api_name`` are read verbatim (no strip) because the
 # reasoning-payload dispatch consumes them directly; the builder below reads its
 # own copies of the four credential vars for the client config.

@@ -288,7 +288,9 @@ EMA_AI_agent/
 │   ├── sessions/           # Per-session runtime workspace data
 │   └── memory/             # Long-term memory storage
 │
-├── .env.example            # Environment variable template
+├── .env                    # App config, tracked (sandbox / gateway / login — never a key)
+├── .models.example         # Model-config template (seeds .models on first boot)
+├── .network.example        # Network-config template (seeds .network on first boot)
 ├── pyproject.toml          # Python dependencies (uv managed)
 ├── uv.lock                 # Lockfile for uv
 ├── start.sh                # Backend startup script
@@ -337,12 +339,16 @@ cd EMA_AI_agent
 uv sync   # creates .venv and installs the exact dependencies from uv.lock
 ```
 
-### 2. Configure Environment Variables
-Copy the `.env` example and fill in at least the main chat model and Tavily key:
+### 2. Configure the Model & Network Files
+Three files carry the configuration, split by sensitivity:
 
-```bash
-cp .env.example .env
-```
+| File | Tracked? | Contents |
+| :--- | :--- | :---------- |
+| `.env` | ✅ committed | Non-secret application configuration (sandbox policy, gateway, login). Never put a key here. |
+| `.models` | gitignored | Every model family's provider / endpoint / key (seeded from `.models.example` on first boot) |
+| `.network` | gitignored | Web search (Tavily / SearXNG), the browser agent's switches, LangSmith tracing (seeded from `.network.example` on first boot) |
+
+Fill in at least the main chat model in `.models` and, for web search, a Tavily key or a SearXNG instance in `.network` — the 模型配置 / 模型联网 panels edit both for you:
 
 | Variable | Required | Description |
 | :------- | :------- | :---------- |
@@ -355,15 +361,16 @@ cp .env.example .env
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |
 | `RERANKER_*` / `EMBEDDING_*` | — | Reranker & embedding for retrieval (see model notes below) |
 | `SKILL_SCANNER_ENABLED` / `SKILL_SCANNER_LLM` | — | SkillSpector security scanner switch (on by default); LLM semantic analysis is opt-in (off by default) and requires a provider supporting json_schema structured output |
+| `SHERRY_BROWSER_AGENT_ENABLED` / `SHERRY_BROWSER_HEADLESS` | — | Opt-in browser agent (off by default); needs a restart to register its tools |
 | `TOOL_CALL_TIMEOUT_MINUTES` (sherry.jsonc) / `LOG_LEVEL` | — | Stored setting only (default 5) — no tool-execution path consumes it; log level (INFO) |
 | `WORKSPACE_TEMPLATE_LANG` | — | Persona template language: `en` / `zh` / `ja` / `ko` (lazy-copied on first use) |
-| `"LANGSMITH"` (sherry.jsonc) | — | Optional LangSmith tracing |
+| `LANGSMITH_TRACING_V2` / `LANGSMITH_API_KEY` (`.network`) | — | Optional LangSmith tracing |
 
 ### 3. Model Notes (HuggingFace Auto-Download)
 Models configured for **local GGUF** mode are downloaded automatically from Hugging Face into `models/<model>/model_weight/` on first use — no manual download is required:
 
 - **Embedding**: `EMBEDDING_MODEL_LOCAL=true` (the default) uses the local `bge-m3` Q8_0 GGUF, auto-downloaded on first run.
-- **Reranker**: the `.env` template defaults to a **cloud API** (`RERANKER_MODEL_LOCAL=false`, OpenAI-compatible `bge-reranker-v2-m3`). Set it to `true` to run the local GGUF reranker instead, which is then auto-downloaded (~636 MB).
+- **Reranker**: the `.models` template defaults to a **cloud API** (`RERANKER_MODEL_LOCAL=false`, OpenAI-compatible `bge-reranker-v2-m3`). Set it to `true` to run the local GGUF reranker instead, which is then auto-downloaded (~636 MB).
 - **ITTT / VTTT / Auxiliary LLM**: default to cloud APIs in the template; set `*_MODEL_LOCAL=true` to switch to local GGUF models (also auto-downloaded).
 
 > Network access to huggingface.co is required for first-run downloads (users in China may need a proxy or a mirror). Interrupted downloads are resumed on the next start; delete `models/<model>/model_weight/` to force a re-download.
@@ -403,7 +410,7 @@ uv run --with pyinstaller python packaging/build_backend.py   # backend → clie
 cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
 ```
 
-Both steps are per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` — into the OS app-data directory (`SHERRY_HOME`, set by the shell), never into the read-only install tree. First run has no model configured yet: the window opens, 模型配置 writes the keys, and the next launch picks them up.
+Both steps are per-OS (PyInstaller cannot cross-compile). The app writes everything it owns — sessions, memory, logs, learned skills, `.env` / `.models` / `.network` — into the OS app-data directory (`SHERRY_HOME`, set by the shell), never into the read-only install tree. First run has no model configured yet: the window opens, 模型配置 writes the keys, and the next launch picks them up.
 
 ---
 

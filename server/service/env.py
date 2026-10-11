@@ -9,26 +9,32 @@ and unrelated variables are never clobbered.
 import re
 
 from config.features import MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
+from config.models_settings import MODEL_SETTING_KEYS
+from config.network_settings import NETWORK_SETTING_KEYS
 from config.path import ENV_PATH
 
 # Canonical display groups with a human-friendly order. Each group is matched by
 # an exact key prefix. Any key not belonging to a known group is attached to the
-# "other" group. The mapping is based on the reference keys in .env.example.
+# "other" group. The mapping is based on the reference keys in the tracked
+# .env and in the .models.example / .network.example templates.
 GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_group_prefixes"]
 OTHER_GROUP = "other"
 
-# Key prefixes a DEDICATED panel owns: withheld from the GET /env payload so
-# there is exactly one editing surface for them (the 模型联网 tab writes them
-# through the same PUT /env, and reads them from
-# GET /sessions/search_backend). Writes stay allowed — only the display is
-# withheld.
+# Keys a DEDICATED panel owns: withheld from the GET /env payload so
+# there is exactly one editing surface for them. Writes stay allowed — only the
+# display is withheld.
 PANEL_HIDDEN_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_panel_hidden_prefixes"]
 
-# Keys split out of .env into the project-root sherry.jsonc (see
-# config/sherry_settings.py) — never surfaced or written here again.
-# TAVILY_API_KEY stays in .env on purpose: it is a secret-class value and .env
-# is gitignored, unlike the tracked sherry.jsonc.
+# Keys split OUT of .env into their own project-root files — never surfaced or
+# written here again. Three destinations exist:
+#   * sherry.jsonc (application settings — config/sherry_settings.py),
+#   * .models (the model / LLM configuration — config/models_settings.py), and
+#   * .network (network services: the Tavily/SearXNG search backends, the
+#     browser agent's switches and LangSmith tracing — config/network_settings.py).
+# A legacy .env that still carries them is neither shown nor accepted here.
 SPLIT_OUT_KEYS = SERVER_HTTP["env_split_out_keys"]
+MODELS_SPLIT_OUT_KEYS = frozenset(MODEL_SETTING_KEYS)
+NETWORK_SPLIT_OUT_KEYS = frozenset(NETWORK_SETTING_KEYS)
 
 # Model groups (provider/model/api_key profiles) vs plain key/value groups; the
 # panel renders the former with its profile manager and the latter as a card.
@@ -108,7 +114,12 @@ def read_env_file() -> dict:
     # Preserve insertion order of groups while following the canonical ordering.
     groups: dict[str, list[EnvEntry]] = {}
     for entry in entries:
-        if entry.key in SPLIT_OUT_KEYS or _hidden_from_panel(entry.key):
+        if (
+            entry.key in SPLIT_OUT_KEYS
+            or entry.key in MODELS_SPLIT_OUT_KEYS
+            or entry.key in NETWORK_SPLIT_OUT_KEYS
+            or _hidden_from_panel(entry.key)
+        ):
             continue
         groups.setdefault(_group_of(entry.key), []).append(entry)
 
@@ -165,15 +176,21 @@ def write_env_file(changes: dict[str, str]) -> None:
 
     text = ENV_PATH.read_text(encoding="utf-8")
 
-    # Backup the current .env before applying changes so a later value can be
-    # restored (the backup holds the pre-write state; it is overwritten on every
-    # subsequent write, so it always reflects "the state before the last save").
-    backup_path = ENV_PATH.with_name(ENV_PATH.name + ".bak")
-    backup_path.write_text(text, encoding="utf-8")
-
     entries, lines = _parse_dotenv(text)
 
     known_keys = {e.key for e in entries}
+    moved_models = sorted(k for k in changes if k in MODELS_SPLIT_OUT_KEYS)
+    if moved_models:
+        raise ValueError(
+            "Keys moved to .models — edit them from the 模型配置 panel "
+            f"(or via /models-config): {', '.join(moved_models)}"
+        )
+    moved_network = sorted(k for k in changes if k in NETWORK_SPLIT_OUT_KEYS)
+    if moved_network:
+        raise ValueError(
+            "Keys moved to .network — edit them from the 模型联网 / 模型配置 "
+            f"panel (or via /network-config): {', '.join(moved_network)}"
+        )
     moved = sorted(k for k in changes if k in SPLIT_OUT_KEYS)
     if moved:
         raise ValueError(

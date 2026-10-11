@@ -21,9 +21,8 @@ import asyncio
 import random
 from typing import Annotated
 from loguru import logger
-from config import ENV_PATH
+from config.path import load_env
 from config.features import TOOLS_TIMEOUTS
-from dotenv import load_dotenv
 from langgraph.prebuilt.tool_node import InjectedState
 from pydantic import BaseModel, Field
 
@@ -52,9 +51,8 @@ def _tavily_api_key() -> str | None:
     same reason: importing a tool module must not mutate the process env, and a
     key edited while the process runs should be picked up on the next build.)
     """
-    load_dotenv(ENV_PATH, override=True)
-    # Secret-class value: TAVILY_API_KEY deliberately stays in the gitignored
-    # .env (NOT in the tracked sherry.jsonc).
+    load_env()
+    # Secret-class value: TAVILY_API_KEY lives in the gitignored network.jsonc.
     return os.getenv("TAVILY_API_KEY")
 
 

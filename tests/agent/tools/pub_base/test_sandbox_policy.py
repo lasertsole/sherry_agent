@@ -270,14 +270,14 @@ def test_get_backend_import_error_required_raises(monkeypatch):
 
 
 # --------------------------------------------------------------------------
-# .env.example documentation
+# .env (tracked config) documentation
 # --------------------------------------------------------------------------
 
 
-def test_env_example_contains_sandbox_policy_line():
-    content = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
+def test_env_contains_sandbox_policy_line():
+    content = (REPO_ROOT / ".env").read_text(encoding="utf-8")
     matching = [line for line in content.splitlines() if line.strip().startswith("SANDBOX_POLICY")]
-    assert matching, "SANDBOX_POLICY missing from .env.example"
+    assert matching, "SANDBOX_POLICY missing from .env"
     line = matching[-1].strip()
     # Shipped default is fail-closed: auto silently runs unsandboxed, which is the
     # write bypass the bypass-defense plan closes.

@@ -338,18 +338,57 @@ Python backend that the Rust shell starts for you.
 - **`SHERRY_HOME` is the writable root** (`config/path.py`): the shell sets it
   to the OS app-data dir, and every writable path derives from it — `src/`,
   `workspace/` (sessions, memory), `temp/`, `logs/`, `models/`, `.codeintel/`,
-  `.env`, `sherry.jsonc`, and the WRITABLE half of the skills tree
+  `.env`, `.models` / `.network` (gitignored; seeded from their templates),
+  `sherry.jsonc`, and the WRITABLE half of the skills tree
   (`USER_SKILLS_DIR`, i.e. `auto/` + `plugins/`, with the loader scanning both
   it and the shipped `skills/builtin`). Unset (a checkout, a server, CI) every
   path stays exactly where it was, so nothing changes for existing installs; a
-  first run seeds `.env` / `sherry.jsonc` from the shipped templates. Locations
+  first run seeds `.env` (from the tracked file) / `.models` / `.network` (from
+  their `.example` templates) and `sherry.jsonc`. Locations
   reported to the UI keep the CHECKOUT shape (`./skills/auto/…`) whichever home
   they live in (`app_relative` / `resolve_app_path` map between the two).
 - **First run without a model**: the boot's 128K token gate aborts a SERVER,
   but `SHERRY_DESKTOP=1` (set by the shell) lets an UNCONFIGURED desktop app
-  serve anyway, so the window can open and 模型配置 can write the `.env`; a
+  serve anyway, so the window can open and 模型配置 can write the files; a
   CONFIGURED-but-invalid value still aborts. The backend must be restarted
   (relaunch the app) after configuring — the runtime reads the file at boot.
+
+## Configuration Files (`.env` / `.models` / `.network`)
+
+The backend's user configuration is split by sensitivity into three project-root
+files (`APP_HOME`, so a packaged app keeps them in its app-data dir):
+
+- **`.env`** — TRACKED in git. Non-secret application configuration only
+  (`SANDBOX_*`, `SHERRY_GATEWAY_*`, `SHERRY_AUTH_*`). Never put a key here.
+- **`.models`** (gitignored; template `.models.example`) — the model families:
+  provider / endpoint / key / local-model switch for main, auxiliary, reasoner,
+  ITTT, VTTT, TTI, reranker, embedding and STT, plus the scanner's LLM
+  selection. Loaded by `config/models_settings.py`.
+- **`.network`** (gitignored; template `.network.example`) — network services:
+  `TAVILY_API_KEY` + the `SEARXNG_*` backends, the `SHERRY_BROWSER_*` switches
+  and `LANGSMITH_*` tracing (moved out of `sherry.jsonc`, which is tracked and
+  must not hold a key). Loaded by `config/network_settings.py`.
+
+Both files are JSON5 (flat ``"KEY": value,`` lines; comments and trailing commas
+allowed). The loaders SEED a missing file from its template, overlaying the
+values still found in a legacy `.env` (and, for the tracing keys, in
+sherry.jsonc's old `LANGSMITH` object), then `hydrate` every key into
+`os.environ` so the existing readers (`os.getenv`, the import-time feature
+snapshots, subprocess scrubbing) are unchanged. Precedence is **explicit process
+variable → `.models` / `.network` → legacy `.env` → registry default**: the
+hydration skips an already-set key, and `config.path` hydrates BEFORE it
+(re)loads the environment file — `config.path.load_env()` is the single reload
+seam (bare `load_dotenv(..., override=True)` calls were replaced by it).
+
+Drift is refused, not merged: `server/service/env.py` treats the moved keys as
+`SPLIT_OUT_KEYS` (the two registries are the source of truth) — a legacy `.env`
+line is neither shown by `GET /env` nor accepted by `PUT /env` (the error names
+the file to edit). `GET/PUT /models-config` and `GET/PUT /network-config`
+(mirroring `/sherry-config`) are the writers; the 模型配置 tab merges the three
+sources and routes each group's save back to its own endpoint, while the
+模型联网 tab writes Tavily / SearXNG through `PUT /network-config`.
+`.env` no longer gets a `.env.bak` (it is tracked — git is the backup);
+`.models` / `.network` keep one.
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
@@ -569,7 +608,7 @@ all see the same tool whatever serves a call. Which one serves a call is resolve
 thinking and model controls) → else `WEB_SEARCH_CONFIG["default_backend"]` →
 else availability (a default whose provider is unconfigured switches to the
 other one; an explicit choice counts only while its provider IS configured, so a
-session pinned to a backend that lost its `.env` entry cannot end up aiming at
+session pinned to a backend that lost its `.network` entry cannot end up aiming at
 nothing). Both unconfigured leaves the tool a stub whose result names the fix.
 Tavily keeps its bounded retry and then falls back to SearXNG when an instance
 is configured — the one thing SearXNG never does is fall back to Tavily (a
@@ -595,13 +634,13 @@ deployment needs — an httpx proxy, engine/category passthrough, and a
 TLS-verification toggle for MITM proxies. It NEVER raises: every failure returns a readable line
 naming the status and whether the request went `via proxy …` or over a `direct
 connection`. `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` /
-`SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.env`, and so
-does `TAVILY_API_KEY`: the 模型联网 tab is their ONLY editing surface
+`SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.network`, and
+so does `TAVILY_API_KEY`: the 模型联网 tab is their ONLY editing surface
 (`SERVER_HTTP["env_panel_hidden_prefixes"]` withholds `TAVILY_`/`SEARXNG_` from
-`GET /env`, so the 模型配置 tab — `config.tabs.env`, renamed from 环境配置 —
-never shows a second, drift-prone editor; writes still go through `PUT /env`,
-reads through the state payload's `env` block, and the Tavily VALUE never leaves
-the server). They are read at BOOT, so the panel's save says so — while the
+`GET /env` AND `GET /network-config`, so the 模型配置 tab — `config.tabs.env`,
+renamed from 环境配置 — never shows a second, drift-prone editor; writes go
+through `PUT /network-config`, reads through the state payload's `env` block,
+and the Tavily VALUE never leaves the server). They are read at BOOT, so the panel's save says so — while the
 per-session radio applies at once.
 `GET /sessions/search_backend` answers the panel's read model (choice, effective
 backend, `pending`, both providers' availability and SearXNG's status) and
@@ -640,8 +679,8 @@ Everything in the ledger is fail-open: a metrics write never breaks a turn.
 ## Agent-Controllable Browser (`config/features/infra_side/browser_agent.py`)
 
 Opt-in and OFF by default (`SHERRY_BROWSER_AGENT_ENABLED=1` + restart; the
-「模型配置」 panel grows a `SHERRY_BROWSER` group for its switches once the keys
-exist in `.env`). With the feature off no `browser_*` tool is registered, every
+「模型配置」 panel grows a `SHERRY_BROWSER` group for its switches (they live in
+`.network`)). With the feature off no `browser_*` tool is registered, every
 `/browser/*` route answers 404 and no Chromium is ever spawned.
 
 **Server side** — `server/service/browser_cdp.py` is a thin CDP transport (one
@@ -806,7 +845,7 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   writable_roots)` takes the caller's write surface, which each tool resolves from
   the SESSION's project directory (so a project bound outside the checkout is
   writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
-  an empty list raises. `.env.example` ships `SANDBOX_POLICY=required` (the unset
+  an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=required` (the unset
   fallback stays `auto` for running installs) — boot logs the effective policy +
   backend, an unusable `required` logs an ERROR with fix commands,
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
