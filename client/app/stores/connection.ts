@@ -83,6 +83,11 @@ export const useConnectionStore = defineStore('connection', () => {
    * ensures the disconnect event arriving repeatedly every 5s within a reconnect loop never re-pops a toast.
    */
   function handleWsDown(): void {
+    // Signed out while enforcement is on: the socket CANNOT connect (no session
+    // → no ticket), and its refusal says nothing about the backend. Reporting
+    // "backend unreachable" on the login page would be a lie the user cannot act on.
+    const auth = useAuthStore();
+    if (auth.authRequired === true && !auth.user) return;
     const offLine = typeof navigator !== 'undefined' && navigator.onLine === false;
     if (offLine) {
       isOnline.value = false;
@@ -112,16 +117,18 @@ export const useConnectionStore = defineStore('connection', () => {
    * Banner state for the global connectivity banner.
    *
    * Live evidence beats the browser hint: `navigator.onLine` is unreliable in
-   * embedded webviews (it can report offline while the app is fully reachable),
-   * so a live WS heartbeat (`backendStatus === 'ok'`) suppresses the banner
-   * entirely. Only with no positive evidence does an offline browser hint
-   * show the red "network lost" bar; a reachable browser with a dead backend
-   * shows the amber "backend unreachable" bar.
+   * embedded webviews and containers (it can report offline while the app is
+   * fully reachable — this host's Chromium always does), so a live WS heartbeat
+   * (`backendStatus === 'ok'`) suppresses the banner entirely, and a DEAD
+   * socket (`'down'`) is reported as the backend being unreachable — which is
+   * the actionable truth for a loopback backend, and the only thing the user
+   * can act on. The offline hint only fills in while the socket has no verdict
+   * yet (`'unknown'`).
    */
   const bannerState = computed<'hidden' | 'offline' | 'backend-down'>(() => {
     if (backendStatus.value === 'ok') return 'hidden';
-    if (isOnline.value === false) return 'offline';
     if (backendStatus.value === 'down') return 'backend-down';
+    if (isOnline.value === false) return 'offline';
     return 'hidden';
   });
 

@@ -62,14 +62,40 @@ describe('useAuthStore', () => {
     expect(bridge.fetchAuthStatus).toHaveBeenCalledTimes(2);
   });
 
-  it('treats an unreachable backend as "no login required" instead of trapping the app', async () => {
+  it('a probe that could not be answered decides nothing and stays retryable', async () => {
+    // The verdict is UNKNOWN (not "no login required"): the guard must not bounce
+    // /login on a failed probe, and the next navigation must probe again.
     bridge.fetchAuthStatus.mockRejectedValue(new Error('offline'));
     const store = useAuthStore();
 
     await store.checkAuthStatus();
 
-    expect(store.authRequired).toBe(false);
+    expect(store.authRequired).toBeNull();
+    expect(store.checked).toBe(false);
+
+    bridge.fetchAuthStatus.mockResolvedValue({
+      authRequired: true,
+      authEnabled: true,
+      hasAccount: true
+    });
+    await store.checkAuthStatus();
+
+    expect(store.authRequired).toBe(true);
     expect(store.checked).toBe(true);
+  });
+
+  it('markSessionLost() drops the stale user and demands a login', async () => {
+    bridge.fetchAuthStatus.mockResolvedValue({ authRequired: true, authEnabled: true, hasAccount: true });
+    bridge.fetchMe.mockResolvedValue({ id: 1, username: 'admin' });
+    const store = useAuthStore();
+    await store.checkAuthStatus();
+    await store.fetchUser();
+    expect(store.user?.username).toBe('admin');
+
+    store.markSessionLost();
+
+    expect(store.user).toBeNull();
+    expect(store.authRequired).toBe(true);
   });
 
   it('logs in, stores the user and schedules the rotation', async () => {

@@ -186,8 +186,8 @@ client/
 │   │   ├── running-commands.ts # Running background commands of a session (running tool rows, and only while the session is generating)
 │   │   ├── access-mode.ts      # Per-session access mode (confirm changes / auto edit / full access, mirrored from the backend)
 │   │   ├── llm-profiles.ts     # Model profiles from the env config (MAIN_LLM group), for the pickers
-│   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts
-│   │   ├── auth.ts             # Login session state (status / user / 401-refresh-once replay)
+│   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts; a dead socket reads as backend unreachable (the offline hint only fills in with no WS verdict) and says nothing while nobody is signed in
+│   │   ├── auth.ts             # Login session state (status / user / 401-refresh-once replay / markSessionLost on a refused rotation)
 │   │   ├── project-directory.ts # Per-session project directory (binding / parked choice / effective root)
 │   │   ├── file-viewer.ts      # File-viewer tabs (opened path + content cache)
 │   │   ├── new-session.ts      # Mandatory preset-choice dialog state (every 新建对话 entry)
@@ -197,7 +197,7 @@ client/
 │   │   ├── web-search.ts       # Web-search backend per session + the Tavily→SearXNG downgrade notice
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   ├── plugins/                   # Nuxt plugins
-│   │   ├── auth-guard.ts          # Global login guard (per-navigation decision from /auth/status)
+│   │   ├── auth-guard.ts          # Global login guard (per-navigation decision from /auth/status; routes to /login on auth:session-lost, never bounces /login on an unanswered probe)
 │   │   ├── client-log.ts          # Browser console.* capture into the client log store
 │   │   ├── directives.ts          # v-debounce / v-safe-html directive registration
 │   │   └── error-handler.ts       # Global error-handler installation (before the first route mounts)

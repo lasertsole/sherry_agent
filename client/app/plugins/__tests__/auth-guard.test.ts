@@ -26,6 +26,9 @@ vi.mock('~/composables/bridge/auth', () => bridge);
 
 const navigate = vi.hoisted(() => vi.fn((to: string) => `navigated:${to}`));
 const addMiddleware = vi.hoisted(() => vi.fn());
+/** The plugin's `auth:session-lost` subscription (the mitt bus). */
+const mittMocks = vi.hoisted(() => ({ on: vi.fn(), emit: vi.fn(), off: vi.fn() }));
+vi.mock('@/composables/mitt', () => mittMocks);
 
 /** Load the guard with the Nuxt globals it relies on stubbed. */
 async function loadMiddleware() {
@@ -51,6 +54,36 @@ describe('auth guard plugin', () => {
       hasAccount: false
     });
     bridge.fetchMe.mockResolvedValue(null);
+  });
+
+  it('never bounces /login away while the probe has no verdict', async () => {
+    // The probe failed (backend unreachable, stale gateway token): the guard must
+    // not decorate that as "no login required" — an expired session's user could
+    // otherwise never reach the form.
+    const guard = await loadMiddleware();
+    const auth = useAuthStore();
+    bridge.fetchAuthStatus.mockRejectedValue(new Error('offline'));
+    await auth.checkAuthStatus();
+
+    expect(auth.authRequired).toBeNull();
+    expect(await guard({ path: '/login' })).toBeUndefined();
+  });
+
+  it('routes to /login when the transport announces a refused session', async () => {
+    await loadMiddleware();
+    // The subscription lives in the plugin body (the guard itself is stateless).
+    const module = await import('@/plugins/auth-guard');
+    (module.default as unknown as () => void)();
+    const auth = useAuthStore();
+    auth.user = { id: 1, username: 'admin' };
+    const handler = mittMocks.on.mock.calls.find(call => call[0] === 'auth:session-lost')?.[1] as () => void;
+    expect(handler).toBeTypeOf('function');
+
+    handler();
+
+    expect(auth.user).toBeNull();
+    expect(auth.authRequired).toBe(true);
+    expect(navigate).toHaveBeenCalledWith('/login');
   });
 
   it('bounces /login home when nothing enforces a login', async () => {

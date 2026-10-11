@@ -68,11 +68,23 @@ export const useAuthStore = defineStore('auth', () => {
     try {
       _applyStatus(await fetchAuthStatus());
     } catch {
-      // A backend that cannot answer must not trap the app behind a login page:
-      // treat it as "no login required" and let the transport report failures.
-      authRequired.value = false;
-      checked.value = true;
+      // A probe that could not be answered decides NOTHING: the previous verdict
+      // (or "unknown") stands and the next navigation re-probes. Treating the
+      // failure as "no login required" used to send an expired session's user
+      // away from /login — the guard bounced it home because the probe failed,
+      // and the app then rendered 401s with no way back to the form.
+      checked.value = false;
     }
+  }
+
+  /**
+   * The backend refused the session (rotation or replay answered 401): drop the
+   * stale user so the guard shows /login, and demand a login from now on.
+   */
+  function markSessionLost(): void {
+    user.value = null;
+    authRequired.value = true;
+    clearSessionRefresh();
   }
 
   /**
@@ -226,6 +238,7 @@ export const useAuthStore = defineStore('auth', () => {
     fetchUser,
     login,
     logout,
+    markSessionLost,
     setupAccount,
     updateAccount
   };

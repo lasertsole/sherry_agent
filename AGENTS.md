@@ -422,7 +422,11 @@ configures it.
 per-boot token) is unchanged and still the outermost gate;
 `server/trigger/auth_user.py::user_auth_middleware` is the login gate and runs
 last, so an unlisted Origin or a hostile page is refused before a session is
-even looked at. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
+even looked at. The per-boot token is re-fetched by the CLIENT before every
+socket (re)connect (`requestApi.refreshGatewayToken`, called from
+`ws-ticket.ts::prepareWsTicket`), so a page that survives a backend restart
+heals within one reconnect cycle instead of replaying a dead token until a
+manual reload. `server/trigger/cors.py::cors_origin_echo` (an `after_request`
 handler) reflects the caller's Origin for allowlisted origins — credentialed
 cross-origin fetches are refused by the browser when the response says `*`.
 
@@ -446,6 +450,19 @@ answer `{expires_in, user}` and the browser keeps the cookies. Refresh ROTATES
 spends the single-use ticket (`?ticket=`). The client prefetches one per connect
 (`client/app/composables/ws-ticket.ts`, a lazy import so the socket layer does
 not pull the whole auth bridge into every page).
+
+**An expired session cannot strand the app.** A 401 that survives the transport's
+rotate-and-replay (`requestApi.rotateSession()` → `'refused'`, i.e. the backend
+ANSWERED and rejected; an unreachable backend never signs anyone out) emits
+`auth:session-lost`; the auth-guard plugin clears the stale user and routes to
+`/login`, so the form appears without waiting for the next navigation. The
+scheduled rotation does the same on a refusal. Two related rules keep the guard
+honest: a `/auth/status` probe that fails leaves the verdict UNKNOWN (never
+"no login required") and stays retryable — the guard must not bounce a user away
+from `/login` on a failed probe — and the connectivity banner reports a dead
+socket as "backend unreachable" (the `navigator.onLine` hint is unreliable in
+containers/webviews; it only fills in when there is no WS verdict yet) and stays
+silent while nobody is signed in (the socket cannot connect by design then).
 
 **Storage** is `src/data/auth.db` (`server/DAO/auth_store.py`): `auth_users`
 (unique username, scrypt hash), `auth_settings` (single row = the runtime

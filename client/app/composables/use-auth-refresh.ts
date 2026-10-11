@@ -8,7 +8,7 @@
  * next navigation, and the transport's own 401 replay starts a fresh attempt.
  *
  * The rotation itself (single-flight, shared with that 401 replay) lives in
- * `requestApi.refreshSessionOnce` and is consumed here as a bare auto-imported
+ * `requestApi.rotateSession` and is consumed here as a bare auto-imported
  * symbol — the repo bans relative imports of sibling composables.
  */
 
@@ -27,8 +27,17 @@ export function scheduleSessionRefresh(expiresIn: number): void {
   const seconds = Math.max(30, Math.floor(expiresIn) - REFRESH_LEEWAY_SECONDS);
   timer = setTimeout(() => {
     timer = null;
-    void refreshSessionOnce().then(ok => {
-      if (!ok) clearSessionRefresh();
+    void rotateSession().then(outcome => {
+      // Rotated: nothing more to schedule here (the login/refresh that produced
+      // this schedule already armed the next one via the caller).
+      if (outcome === 'rotated') return;
+      clearSessionRefresh();
+      if (outcome === 'refused') {
+        // The backend rejected the refresh cookie: the session is dead and the
+        // user must sign in again (an unreachable backend keeps the session and
+        // is retried by the next navigation / 401).
+        emit('auth:session-lost', undefined);
+      }
     });
   }, seconds * 1000);
 }

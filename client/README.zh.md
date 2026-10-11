@@ -187,8 +187,8 @@ client/
 │   │   ├── running-commands.ts # 会话内运行中的后台命令（运行中的工具行，且仅当会话正在生成时）
 │   │   ├── access-mode.ts      # 会话级访问模式（变更前确认 / 自动编辑 / 完全访问，与后端同步）
 │   │   ├── llm-profiles.ts     # 环境配置（MAIN_LLM 分组）的模型档案，供选择器使用
-│   │   ├── connection.ts       # 后端连通性（isOnline / backendStatus）+ 去重 Toast
-│   │   ├── auth.ts             # 登录会话状态（status / user / 401 单次续期重放）
+│   │   ├── connection.ts       # 后端连通性（isOnline / backendStatus）+ 去重 Toast；socket 断开按「后端不可用」呈现（offline 提示只在没有 WS 结论时兜底），未登录时保持沉默
+│   │   ├── auth.ts             # 登录会话状态（status / user / 401 单次续期重放 / 轮换被拒时 markSessionLost）
 │   │   ├── project-directory.ts # 每会话项目目录（绑定 / 续延选择 / 生效根）
 │   │   ├── file-viewer.ts      # 文件查看标签页（打开路径 + 内容缓存）
 │   │   ├── new-session.ts      # 新建会话必选预设对话框状态（所有「新建对话」入口）
@@ -198,7 +198,7 @@ client/
 │   │   ├── web-search.ts       # 每会话的搜索后端 + Tavily→SearXNG 降级通知
 │   │   └── chat-background.ts  # 全局聊天背景图片（Dexie 持久化）
 │   ├── plugins/                   # Nuxt 插件
-│   │   ├── auth-guard.ts          # 全局登录守卫（每次导航按 /auth/status 决策）
+│   │   ├── auth-guard.ts          # 全局登录守卫（每次导航按 /auth/status 决策；收到 auth:session-lost 直接跳 /login，探测无结论时绝不放逐 /login）
 │   │   ├── client-log.ts          # 浏览器 console.* 捕获写入客户端日志
 │   │   ├── directives.ts          # 注册 v-debounce / v-safe-html 指令
 │   │   └── error-handler.ts       # 全局错误处理安装（首个路由挂载之前）

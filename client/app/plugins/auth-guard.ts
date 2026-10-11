@@ -12,9 +12,13 @@
  * this client is not exempt. A loopback browser (the desktop app, a local dev
  * session) therefore never sees the login page.
  *
- * `/login` is the only public page: reaching it while signed in (or while no
- * login is required at all) bounces to /home so a stale bookmark cannot strand
- * the user on a form that has nothing to do.
+ * `/login` is the only public page: reaching it while signed in (or while the
+ * backend SAID no login is required) bounces to /home so a stale bookmark
+ * cannot strand the user on a form that has nothing to do.
+ *
+ * The plugin also listens for `auth:session-lost` (the transport announcing a
+ * session the backend refused): the current page may not navigate again for a
+ * long time, and without this the user would sit on a screen that only 401s.
  */
 
 import type { RouteMiddleware } from '#app';
@@ -25,9 +29,16 @@ export const authGuard: RouteMiddleware = async to => {
 
   const onLoginPage = to.path === '/login';
 
-  if (!auth.authRequired) {
-    // Nothing enforces a login for this client: /login is pointless.
+  if (auth.authRequired === false) {
+    // The backend ANSWERED that nothing enforces a login for this client:
+    // /login is pointless.
     if (onLoginPage && to.query?.force !== '1') return navigateTo('/home');
+    return;
+  }
+
+  if (auth.authRequired === null) {
+    // No verdict yet (the probe could not be answered): never bounce a user away
+    // from /login on a guess — that is what made an expired session unreachable.
     return;
   }
 
@@ -49,4 +60,18 @@ export const authGuard: RouteMiddleware = async to => {
 
 export default defineNuxtPlugin(() => {
   addRouteMiddleware('auth-guard', authGuard, { global: true });
+
+  // A refused session must reach the login form even when nothing navigates:
+  // drop the stale user, then route there (once per event — the transport emits
+  // per failed call, and a burst of them must not stack navigations).
+  let redirecting = false;
+  on('auth:session-lost', () => {
+    const auth = useAuthStore();
+    auth.markSessionLost();
+    if (redirecting || window.location.pathname === '/login') return;
+    redirecting = true;
+    void Promise.resolve(navigateTo('/login')).finally(() => {
+      redirecting = false;
+    });
+  });
 });

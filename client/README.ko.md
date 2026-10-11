@@ -187,8 +187,8 @@ client/
 │   │   ├── running-commands.ts # 세션에서 실행 중인 백그라운드 명령(실행 중 도구 행이며 세션이 생성 중일 때만)
 │   │   ├── access-mode.ts      # 세션별 접근 모드(변경 전 확인 / 자동 편집 / 전체 접근, 백엔드와 동기화)
 │   │   ├── llm-profiles.ts     # 환경 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
-│   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast
-│   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도)
+│   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast; 소켓 끊김은 '백엔드 도달 불가'로 표시(offline 힌트는 WS 판정이 없을 때만), 미로그인 상태에서는 침묵
+│   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도 / 회전 거부 시 markSessionLost)
 │   │   ├── project-directory.ts # 세션별 프로젝트 디렉터리(바인딩 / 보류된 선택 / 적용 루트)
 │   │   ├── file-viewer.ts      # 파일 뷰어 탭(연 경로 + 내용 캐시)
 │   │   ├── new-session.ts      # 새 세션 프리셋 선택 대화상자 상태(모든 「새 대화」 진입점)
@@ -198,7 +198,7 @@ client/
 │   │   ├── web-search.ts       # 세션별 검색 백엔드 + Tavily→SearXNG 강등 알림
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   ├── plugins/                   # Nuxt 플러그인
-│   │   ├── auth-guard.ts          # 전역 로그인 가드(내비게이션마다 /auth/status로 판정)
+│   │   ├── auth-guard.ts          # 전역 로그인 가드(내비게이션마다 /auth/status로 판정; auth:session-lost 시 /login으로, 판정 불가 시 /login을 밀어내지 않음)
 │   │   ├── client-log.ts          # 브라우저 console.* 캡처를 클라이언트 로그로 저장
 │   │   ├── directives.ts          # v-debounce / v-safe-html 디렉티브 등록
 │   │   └── error-handler.ts       # 전역 에러 핸들러 설치(첫 라우트 마운트 전)

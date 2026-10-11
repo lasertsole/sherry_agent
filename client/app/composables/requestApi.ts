@@ -28,6 +28,30 @@ interface Params {
 let memoryToken: string | null = null;
 
 /**
+ * Re-fetch the gateway token and hold it in memory (never persisted).
+ *
+ * Needed after a BACKEND RESTART: the token is per-boot, so a page that was
+ * already open holds a stale one and every handshake is refused until a fresh
+ * value lands. Every socket calls this before each (re)connect
+ * (``ws-ticket.ts::prepareWsTicket``), which is what makes a stale page heal
+ * itself instead of staying offline until a manual reload.
+ */
+export async function refreshGatewayToken(): Promise<string | null> {
+  try {
+    // Cache-busted: the token changes on every backend boot, and a cached
+    // response would keep a stale page broken forever.
+    const response = await fetch(`${API_BASE_URL}/auth/token?_ts=${Date.now()}`, { cache: 'no-store' });
+    const headerToken = response.headers.get('token');
+    const body: unknown = await response.json().catch(() => null);
+    const bodyToken = (body as { token?: unknown } | null)?.token;
+    memoryToken = headerToken || (typeof bodyToken === 'string' ? bodyToken : null);
+  } catch {
+    // Offline / backend down: keep whatever we hold — the reconnect loop retries.
+  }
+  return memoryToken;
+}
+
+/**
  * Make sure a gateway token is held in memory; returns it (or null when the
  * backend is unreachable).
  *
@@ -39,17 +63,7 @@ let memoryToken: string | null = null;
  */
 export async function ensureGatewayToken(): Promise<string | null> {
   if (memoryToken) return memoryToken;
-  try {
-    const response = await fetch(`${API_BASE_URL}/auth/token`);
-    const headerToken = response.headers.get('token');
-    const body: unknown = await response.json().catch(() => null);
-    const bodyToken = (body as { token?: unknown } | null)?.token;
-    memoryToken = headerToken || (typeof bodyToken === 'string' ? bodyToken : null);
-  } catch {
-    // Offline / backend down: leave the token unset — the WS reconnect path
-    // retries, and every HTTP response re-issues the header.
-  }
-  return memoryToken;
+  return refreshGatewayToken();
 }
 
 /**
@@ -83,9 +97,6 @@ function failureStatus(error: unknown): number | null {
   return candidate?.response?.status ?? candidate?.status ?? candidate?.statusCode ?? null;
 }
 
-/** The in-flight session rotation, shared by every 401 that races it. */
-let sessionRefreshInFlight: Promise<boolean> | null = null;
-
 /**
  * Rotate the session cookie once, no matter how many callers ask at the same
  * time. Rotation BURNS the presented refresh token, so a concurrent second
@@ -95,22 +106,45 @@ let sessionRefreshInFlight: Promise<boolean> | null = null;
  * transport — it must not re-enter retries, toasts or this very 401 path.
  * @returns True when the backend rotated the session.
  */
-export async function refreshSessionOnce(): Promise<boolean> {
-  if (sessionRefreshInFlight) return sessionRefreshInFlight;
-  sessionRefreshInFlight = (async () => {
+/** Outcome of one rotation attempt. */
+export type SessionRotateOutcome = 'rotated' | 'refused' | 'unreachable';
+
+let sessionRotateInFlight: Promise<SessionRotateOutcome> | null = null;
+
+/**
+ * Rotate the session cookie once and report WHAT happened.
+ *
+ * ``refused`` means the backend answered and rejected the refresh cookie — the
+ * session is dead and the user must sign in again; ``unreachable`` means no
+ * answer at all (backend restarting, offline), which must NOT sign the user out.
+ */
+export async function rotateSession(): Promise<SessionRotateOutcome> {
+  if (sessionRotateInFlight) return sessionRotateInFlight;
+  sessionRotateInFlight = (async () => {
     try {
       const response = await fetch(`${API_BASE_URL}/auth/refresh`, {
         method: 'POST',
         credentials: 'include'
       });
-      return response.ok;
+      return response.ok ? 'rotated' : 'refused';
     } catch {
-      return false;
+      return 'unreachable';
     } finally {
-      sessionRefreshInFlight = null;
+      sessionRotateInFlight = null;
     }
   })();
-  return sessionRefreshInFlight;
+  return sessionRotateInFlight;
+}
+
+/**
+ * The session is provably gone (the backend refused it): tell the app so the
+ * guard can show the login page.
+ *
+ * Emitted only for a REFUSAL. An unreachable backend must never sign a user out
+ * of the UI — a restart would otherwise bounce every open page to /login.
+ */
+function announceSessionLost(): void {
+  emit('auth:session-lost', undefined);
 }
 
 /** One-time removal of the legacy localStorage token left by older builds. */
@@ -341,12 +375,24 @@ async function requestBaseApi<T = Response>({
       // A 401 means the access cookie expired (or was revoked). Rotate once and
       // replay ONCE with the fresh cookie — the plan's belt-and-braces path for
       // when the scheduled refresh did not fire (laptop asleep, clock drift).
-      if (failureStatus(error) === 401 && !isAuthEndpoint(requestURL) && (await refreshSessionOnce())) {
-        networkFailed = false;
-        httpFailed = false;
-        requestFailed = false;
-        lastStatus = null;
-        raw = await dispatchOnce();
+      if (failureStatus(error) === 401 && !isAuthEndpoint(requestURL)) {
+        const outcome = await rotateSession();
+        if (outcome === 'rotated') {
+          networkFailed = false;
+          httpFailed = false;
+          requestFailed = false;
+          lastStatus = null;
+          try {
+            raw = await dispatchOnce();
+          } catch (replayError) {
+            // The rotated cookie was refused too: the session really is gone.
+            if (failureStatus(replayError) === 401) announceSessionLost();
+            throw replayError;
+          }
+        } else {
+          if (outcome === 'refused') announceSessionLost();
+          throw error;
+        }
       } else {
         throw error;
       }

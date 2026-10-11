@@ -187,8 +187,8 @@ client/
 │   │   ├── running-commands.ts # セッションで実行中のバックグラウンド コマンド（実行中のツール行、かつセッションが生成中のときのみ）
 │   │   ├── access-mode.ts      # セッション単位のアクセス モード（変更前に確認 / 自動編集 / フルアクセス、バックエンドと同期）
 │   │   ├── llm-profiles.ts     # 環境設定（MAIN_LLM グループ）のモデルプロファイル、ピッカー用
-│   │   ├── connection.ts       # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast
-│   │   ├── auth.ts             # ログインセッション状態（status / user / 401 で一度だけ更新して再送）
+│   │   ├── connection.ts       # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast；ソケット切断は「バックエンド到達不可」として表示（offline ヒントは WS の判定が無いときだけ）、未ログイン時は沈黙
+│   │   ├── auth.ts             # ログインセッション状態（status / user / 401 で一度だけ更新して再送 / ローテーション拒否時は markSessionLost）
 │   │   ├── project-directory.ts # セッションごとのプロジェクトディレクトリ（バインド / 保留中の選択 / 実効ルート）
 │   │   ├── file-viewer.ts      # ファイルビューアタブ（開いたパス + 内容キャッシュ）
 │   │   ├── new-session.ts      # 新規セッションのプリセット選択ダイアログ状態（すべての「新規チャット」入口）
@@ -198,7 +198,7 @@ client/
 │   │   ├── web-search.ts       # セッションごとの検索バックエンド + Tavily→SearXNG の降格通知
 │   │   └── chat-background.ts  # グローバルチャット背景画像（Dexie 永続化）
 │   ├── plugins/                   # Nuxt プラグイン
-│   │   ├── auth-guard.ts          # グローバル ログイン ガード（ナビゲーションごとに /auth/status で判定）
+│   │   ├── auth-guard.ts          # グローバル ログイン ガード（ナビゲーションごとに /auth/status で判定；auth:session-lost で /login へ、判定不能のときは /login を追い出さない）
 │   │   ├── client-log.ts          # ブラウザ console.* をクライアントログへ取り込む
 │   │   ├── directives.ts          # v-debounce / v-safe-html ディレクティブ登録
 │   │   └── error-handler.ts       # グローバル エラーハンドラの設置（最初のルート描画前）

@@ -5,6 +5,7 @@ import { toastInfo, toastWarn } from '~/composables/toast';
 import { emit } from '~/composables/mitt';
 import { _setClientFlag } from '~/utils/client';
 import { useConnectionStore } from '../connection';
+import { useAuthStore } from '../auth';
 
 /**
  * WS singleton mock: mutable state via vi.hoisted + getters simulates the /sessions/ws
@@ -247,12 +248,28 @@ describe('connection bannerState', () => {
     expect(mount(true, 'ok').bannerState).toBe('hidden');
   });
 
-  it('shows the red offline banner only without positive evidence', () => {
-    expect(mount(false, 'down').bannerState).toBe('offline');
-    expect(mount(false, 'unknown').bannerState).toBe('offline');
+  it('stays silent when the socket is refused only because nobody is signed in', () => {
+    // With login protection on and no session, the WS cannot connect by design
+    // (no session → no ticket): that refusal must not be reported as a backend
+    // outage on the login page.
+    const auth = useAuthStore();
+    auth.authRequired = true;
+    auth.user = null;
+    mount(true, 'unknown');
+
+    emit('ws:disconnected', undefined);
+
+    expect(store.backendStatus).toBe('unknown');
   });
 
-  it('shows the amber backend banner when the browser is online but the backend is down', () => {
+  it('reports a dead socket as the backend, even when the browser hint says offline', () => {
+    // navigator.onLine is unreliable in embedded webviews and containers (this
+    // host's Chromium ALWAYS reports false), and for a loopback backend a dead
+    // socket means the backend — the offline hint stays a fallback for the
+    // no-verdict-yet window, not the headline a stale credential used to hide
+    // behind.
+    expect(mount(false, 'down').bannerState).toBe('backend-down');
+    expect(mount(false, 'unknown').bannerState).toBe('offline');
     expect(mount(true, 'down').bannerState).toBe('backend-down');
     expect(mount(true, 'unknown').bannerState).toBe('hidden');
   });

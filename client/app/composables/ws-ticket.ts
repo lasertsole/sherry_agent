@@ -19,9 +19,22 @@ let cached: string | null = null;
 let inFlight: Promise<void> | null = null;
 
 /**
- * Make sure a ticket is ready for the next connect (no-op when none is needed).
+ * Prepare the next connect: refresh the gateway token, and mint a handshake
+ * ticket when login protection is on.
+ *
+ * The token refresh runs on EVERY connect — the per-boot gateway token changes
+ * whenever the backend restarts, and a page that was already open would
+ * otherwise replay the stale one and stay refused until a manual reload. It is
+ * fire-and-forget like the ticket mint, so the current attempt may still carry
+ * the old value; the reconnect after that one spends the fresh token.
  */
 export async function prepareWsTicket(): Promise<void> {
+  try {
+    void refreshGatewayToken();
+  } catch {
+    // A partial transport mock (tests) may not define it, and the refresh is a
+    // best-effort side effect: the socket path must never break on it.
+  }
   const auth = useAuthStore();
   if (auth.authRequired !== true || cached) return;
   if (!inFlight) {
