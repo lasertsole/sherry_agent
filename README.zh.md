@@ -92,7 +92,7 @@ Agent 的角色 **橘雪莉（Sherry）** 是一位自封的少女侦探：外�
 | **图谱 RAG** | 内置 vendored LightRAG + RAG-Anything（multimodal_rag 技能）、`snkv[vector]` 存储 |
 | **本地推理** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT 模型）、FunASR（STT） |
 | **文档解析** | mineru-vl-utils |
-| **联网搜索** | langchain-tavily（Tavily API） |
+| **联网搜索** | langchain-tavily（Tavily API）+ 自托管 SearXNG 作为备选后端，Tavily 失效时自动降级 |
 | **代码搜索** | ripgrep，随依赖一并安装（`ripgrep-bin`）；纯 Python 扫描始终作为兜底 |
 | **LLM 提供商** | langchain-openai、langchain-deepseek、langchain-community + 20+ 提供商注册表（OpenAI、Anthropic、DeepSeek、智谱 GLM、DashScope 通义、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、火山引擎、Azure OpenAI、Ollama、vLLM 等） |
 | **结构化输出** | instructor、json_repair |
@@ -349,6 +349,7 @@ cp .env.example .env
 | `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | 主聊天模型（需支持 JSON 输出与工具调用）；`MAIN_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 通用推理开关，按提供商映射（DeepSeek / OpenAI / GLM / Anthropic） |
 | `TAVILY_API_KEY` | 使用联网搜索时必填 | 启用联网搜索工具 |
+| `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | 自托管 SearXNG，作为联网搜索的后端（或 Tavily 的替代）；未配 `TAVILY_API_KEY` 时它是唯一后端。在「模型联网」面板中配置；Tavily 失效时自动降级到它 |
 | `AUXILIARY_LLM_*` | — | 轻量模型，用于摘要/简单任务（模板默认云端 API；设 `AUXILIARY_LLM_MODEL_LOCAL=true` 使用本地 GGUF 模型）；`AUXILIARY_LLM_MAX_TOKEN` 必须 >= 131072 (128K) |
 | `REASONER_LLM_*` | — | 思维链推理模型 |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 图像 / 视频 / 文生图 / 语音模型配置 |

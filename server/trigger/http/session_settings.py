@@ -60,6 +60,10 @@ from server.service.session_settings_service import (
     get_thinking_state,
     session_turn_active,
 )
+from server.service.session_settings_service import (
+    apply_search_backend_choice,
+    get_search_backend_state,
+)
 from server.trigger.core import app
 from server.trigger.http.helpers import bad_request, ok, read_body
 
@@ -154,3 +158,41 @@ async def put_session_model_handler(request):
         pending,
     )
     return ok({"success": True, "session_id": session_id, **state})
+
+
+@app.get("/sessions/search_backend")
+async def get_search_backend_handler(request):
+    """Return the session's web-search backend choice and provider availability.
+
+    ``session_id`` may be empty: the 模型联网 panel is a settings tab and opens
+    without a session, which still needs the availability + default view.
+    """
+    query = request.query_params or {}
+    session_id = query.get("session_id", "") or ""
+    try:
+        state = await asyncio.to_thread(get_search_backend_state, session_id)
+    except ValueError:
+        return bad_request("invalid session_id")
+    return ok({"success": True, "session_id": session_id, **state})
+
+
+@app.put("/sessions/search_backend")
+async def put_search_backend_handler(request):
+    """Persist the session's web-search backend choice (live or parked)."""
+    body = read_body(request)
+    if body is None:
+        return bad_request("JSON body required")
+    session_id = body.get("session_id") or ""
+    if not session_id:
+        return bad_request("session_id is required")
+    if "backend" not in body:
+        return bad_request("'backend' is required ('tavily', 'searxng', or null to clear)")
+    backend = body.get("backend")
+    try:
+        pending = await apply_search_backend_choice(session_id, backend)
+    except ValueError as exc:
+        return bad_request(str(exc))
+    logger.info(
+        "Search backend choice: session={} backend={} pending={}", session_id, backend, pending
+    )
+    return ok({"success": True, "session_id": session_id, "backend": backend, "pending": pending})

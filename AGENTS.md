@@ -17,6 +17,7 @@ uv run --no-sync pytest tests/ -m "not llm_e2e" --cov=agent --cov=server --cov=c
   --cov=pub --cov=runtime --cov=workspace --cov-report=term-missing   # coverage report (single process; use run_tests_split.py -- --cov-append for the gate grouping)
 uv run --no-sync python scripts/check_docs_parity.py # four-language README parity gate
 uv run --no-sync python scripts/check_doc_links.py   # Markdown dead-link + anchor gate
+uv run --no-sync python scripts/dev/mock_searxng.py 8888  # throwaway SearXNG stand-in (the exercise-the-fallback instance)
 uv run --no-sync lint-imports                        # import-linter contract check
 uv run --with ruff ruff check . && uv run --with ruff ruff format --check .  # lint + format
 uv run --no-sync basedpyright agent/                 # type check
@@ -40,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (62 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (63 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -478,6 +479,51 @@ panel — top-right overlay in `ChatBox.vue`, collapsed to a pill by default:
   client has one shape to render (`client/app/stores/taskflow.ts`,
   `pages/home/components/ProgressFloat.vue`).
 
+## Web Search Backends (`agent/tools/web_search.py`)
+
+`web_search` is ONE tool over two interchangeable providers, so the model never
+sees the swap. Which one serves a call is resolved per call
+(`resolve_preferred_backend`): the session's explicit choice
+(`StateKey.SEARCH_BACKEND`, written by the 模型联网 panel through
+`PUT /sessions/search_backend` and parked/promoted at the turn boundary like the
+thinking and model controls) → else `WEB_SEARCH_CONFIG["default_backend"]` →
+else availability (a default whose provider is unconfigured switches to the
+other one; an explicit choice counts only while its provider IS configured, so a
+session pinned to a backend that lost its `.env` entry cannot end up aiming at
+nothing). Both unconfigured leaves the tool a stub whose result names the fix.
+Tavily keeps its bounded retry and then falls back to SearXNG when an instance
+is configured — the one thing SearXNG never does is fall back to Tavily (a
+self-hosted deployment may have no key at all, and the pair must not ping-pong).
+
+The fallback is announced, not silent: `agent/tools/web_search_push.py` pushes
+the best-effort `search_backend_fallback` frame
+(`{from, backend, reason, message}`, reason ∈ `tavily_auth_failed` /
+`tavily_timeout` / `tavily_error`; an auth failure skips the retries) to the
+session's websocket, exactly like the TaskFlow progress push. The client shows
+it as a dismissible banner under the message list
+(`pages/home/components/SearchFallbackNotice.vue`, reasons localized from the
+CODE) — the turn it belongs to keeps streaming, and the result text names its
+own backend ("SearXNG search results …"), so a client that misses the frame
+still shows the truth.
+
+SearXNG lives in `agent/tools/web_search_searxng.py`: the instance's JSON API
+(`GET {SEARXNG_URL}/search?q=…&format=json&pageno=1`), results ranked by score
+and formatted like Tavily's, plus the three connection options the plan called
+for — an httpx proxy, engine/category passthrough, and a TLS-verification
+toggle for MITM proxies. It NEVER raises: every failure returns a readable line
+naming the status and whether the request went `via proxy …` or over a `direct
+connection`. `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` /
+`SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` live in the gitignored `.env` (the
+`SEARXNG_` group renders as its own card in 环境配置); they are read at BOOT, so
+the 模型联网 panel's save says so — while the per-session radio applies at once.
+`GET /sessions/search_backend` answers the panel's read model (choice, effective
+backend, `pending`, both providers' availability and SearXNG's status) and
+tolerates an EMPTY `session_id`, because the panel is a settings tab that opens
+without a session too. `scripts/dev/mock_searxng.py` implements exactly the call
+the provider makes, for exercising the fallback end-to-end without a real
+instance (and without a Tavily key: point `SEARXNG_URL` at it and set
+`TAVILY_API_KEY` to a dummy to watch the downgrade fire).
+
 ## Log Tracing & the Trajectory Ledger (`server/service/trajectory_store.py`)
 
 A turn is one greppable unit. `turn_runner.WsTurnExecutor._drive` opens
@@ -595,8 +641,8 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 | File | Contents |
 |---|---|
 | `config/features/agent_side/` | 36 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
-| `config/features/infra_side/` | 26 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 62 TypedDicts + instances re-exported |
+| `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...) |
+| `config/features/__init__.py` | Aggregator — all 63 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |

@@ -53,7 +53,13 @@ export type AgentWsEventType =
   | 'hitl_request'
   | 'queued'
   | 'todo_updated'
-  | 'taskflow_updated';
+  | 'taskflow_updated'
+  /**
+   * `web_search` had to swap backends mid-call (Tavily failed and SearXNG took
+   * over). Best-effort: the search itself already succeeded by the time it is
+   * sent, so the frame only feeds the non-blocking banner.
+   */
+  | 'search_backend_fallback';
 
 /** Chunk type — distinguishes conversational text from tool-call markers. */
 export type AgentChunkType = 'text' | 'reasoning' | 'tool_start' | 'tool_end' | 'tool_result';

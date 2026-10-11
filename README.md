@@ -92,7 +92,7 @@ Built on **Python 3.13** (dependency management via [uv](https://docs.astral.sh/
 | **Graph RAG** | Vendored LightRAG + RAG-Anything (multimodal_rag skill), `snkv[vector]` storage |
 | **Local Inference** | llama-cpp-python (GGUF: bge-m3 embedding, bge-reranker-v2-m3 reranker, auxiliary/ITTT/VTTT models), FunASR (STT) |
 | **Document Parsing** | mineru-vl-utils |
-| **Web Search** | langchain-tavily (Tavily API) |
+| **Web Search** | langchain-tavily (Tavily API) + a self-hosted SearXNG instance as the alternative backend, with automatic Tavily→SearXNG fallback |
 | **Code Search** | ripgrep, installed with the dependencies (`ripgrep-bin`), with the pure-Python scan as the always-available fallback |
 | **LLM Providers** | langchain-openai, langchain-deepseek, langchain-community + a 20+ provider registry (OpenAI, Anthropic, DeepSeek, Zhipu GLM, DashScope Qwen, Gemini, Moonshot Kimi, MiniMax, Groq, OpenRouter, SiliconFlow, Volcengine, Azure OpenAI, Ollama, vLLM, and more) |
 | **Structured Output** | instructor, json_repair |
@@ -349,6 +349,7 @@ cp .env.example .env
 | `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | Primary chat model (must support JSON output and tool calling); `MAIN_LLM_MAX_TOKEN` must be >= 131072 (128K) |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | Universal reasoning switch, mapped per provider (DeepSeek / OpenAI / GLM / Anthropic) |
 | `TAVILY_API_KEY` | ✅ for web search | Enables the web search tool |
+| `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | Self-hosted SearXNG as the (or an alternative) web-search backend; without `TAVILY_API_KEY` it is the only one. Configure it in the 模型联网 panel; Tavily failures fall back to it automatically |
 | `AUXILIARY_LLM_*` | — | Lightweight model for summarization / simple tasks (cloud API by default; set `AUXILIARY_LLM_MODEL_LOCAL=true` for a local GGUF model); `AUXILIARY_LLM_MAX_TOKEN` must be >= 131072 (128K) |
 | `REASONER_LLM_*` | — | Chain-of-thought reasoning model |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | Image / video / text-to-image / speech model configuration |

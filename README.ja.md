@@ -92,7 +92,7 @@ EMA AI Agent は、長期記憶と複雑な推論能力を備えた、高度に�
 | **グラフ RAG** | ベンダード LightRAG + RAG-Anything（multimodal_rag スキル）、`snkv[vector]` ストレージ |
 | **ローカル推論** | llama-cpp-python（GGUF：bge-m3 embedding、bge-reranker-v2-m3 reranker、auxiliary/ITTT/VTTT モデル）、FunASR（STT） |
 | **ドキュメント解析** | mineru-vl-utils |
-| **Web 検索** | langchain-tavily（Tavily API） |
+| **Web 検索** | langchain-tavily（Tavily API）＋セルフホストの SearXNG を代替バックエンドとして利用（Tavily 失敗時は自動的にフォールバック） |
 | **コード検索** | ripgrep（依存関係と一緒に入る `ripgrep-bin`）。純 Python 走査が常時のフォールバック |
 | **LLM プロバイダー** | langchain-openai、langchain-deepseek、langchain-community + 20 以上のプロバイダーレジストリ（OpenAI、Anthropic、DeepSeek、Zhipu GLM、DashScope Qwen、Gemini、Moonshot Kimi、MiniMax、Groq、OpenRouter、SiliconFlow、Volcengine、Azure OpenAI、Ollama、vLLM など） |
 | **構造化出力** | instructor、json_repair |
@@ -349,6 +349,7 @@ cp .env.example .env
 | `MAIN_LLM_PROVIDER` / `MAIN_LLM_NAME` / `MAIN_LLM_API_BASE` / `MAIN_LLM_API_KEY` / `MAIN_LLM_MAX_TOKEN` | ✅ | メインチャットモデル（JSON 出力とツール呼び出しに対応必須）。`MAIN_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
 | `MAIN_LLM_ENABLE_THINKING` / `MAIN_LLM_REASONING_EFFORT` | — | 汎用推論スイッチ。プロバイダーごとにマッピング（DeepSeek / OpenAI / GLM / Anthropic） |
 | `TAVILY_API_KEY` | Web 検索利用時は必須 | Web 検索ツールを有効化 |
+| `SEARXNG_URL` / `SEARXNG_PROXY` / `SEARXNG_ENGINES` / `SEARXNG_CATEGORIES` / `SEARXNG_VERIFY_TLS` | — | セルフホストの SearXNG を Web 検索のバックエンド（または Tavily の代替）として使用。`TAVILY_API_KEY` が無い場合は唯一のバックエンドになります。「モデル検索」パネルで設定し、Tavily の失敗時は自動的にここへフォールバックします |
 | `AUXILIARY_LLM_*` | — | 要約/単純タスク向けの軽量モデル（テンプレートのデフォルトはクラウド API。`AUXILIARY_LLM_MODEL_LOCAL=true` でローカル GGUF モデルに切替）。`AUXILIARY_LLM_MAX_TOKEN` は 131072 (128K) 以上が必要 |
 | `REASONER_LLM_*` | — | 思考連鎖（Chain-of-thought）推論モデル |
 | `ITTT_*` / `VTTT_*` / `TTI_*` / `STT_*` | — | 画像 / 動画 / 画像生成 / 音声モデルの設定 |

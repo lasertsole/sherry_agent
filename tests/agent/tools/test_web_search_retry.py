@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import asyncio
 import sys
-import types
 from typing import Any
 
 import pytest
@@ -40,11 +39,18 @@ class _FakeTavily:
 @pytest.fixture
 def keyed_env(monkeypatch: pytest.MonkeyPatch) -> Any:
     """Keyed branch with a fake ``langchain_tavily`` and instant backoff."""
-    fake_module = types.ModuleType("langchain_tavily")
-    fake_module.TavilySearch = _FakeTavily
-    monkeypatch.setitem(sys.modules, "langchain_tavily", fake_module)
+    # The fake is a PACKAGE: the builder also imports
+    # ``langchain_tavily.tavily_search.TavilySearchInput`` to declare the injected
+    # session id (the tool is class-based, so it never sees the graph state).
+    from tests.agent.tools.test_web_search_fallback import install_fake_tavily
+
+    install_fake_tavily(monkeypatch, _FakeTavily)
     # S4: the key is read by a function at BUILD time, not a module global.
     monkeypatch.setattr(web_search, "_tavily_api_key", lambda: "tvly-test")
+    # Hermetic: the retry-exhausted string is only reachable without a fallback,
+    # and a developer's .env may legitimately configure a SearXNG instance.
+    # (test_web_search_fallback.py covers the fallback branch explicitly.)
+    monkeypatch.setattr(web_search, "searxng_available", lambda: False)
 
     async def _no_sleep(_seconds: float) -> None:
         return None

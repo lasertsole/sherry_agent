@@ -30,6 +30,8 @@ export const HOME_TOOLBAR_EVENTS = [
   'notification',
   'extend',
   'account',
+  // The 模型联网 panel: the web-search backend + its provider settings.
+  'webSearch',
   // The toolbox (./config.ts `toolboxTools`): the browser and the user terminal.
   'browser',
   'terminal'
@@ -86,6 +88,7 @@ export function buildHomeToolbarCommands(context: HomeToolbarContext): Record<st
     notification: () => context.openRightTab('notification'),
     extend: () => context.openRightTab('extend'),
     account: () => context.openRightTab('account'),
+    webSearch: () => context.openRightTab('webSearch'),
     // The toolbox panels open a NEW tab per click: several browsers / terminals
     // side by side is the point (each keeps its own page / scrollback).
     browser: () => context.openRightTab('browser', { instance: nextToolboxInstance('browser') }),

@@ -123,7 +123,7 @@ client/
 │   │       ├── config.ts          # Media dropdown entries & header tool definitions
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem type definitions
 │   │       ├── index/[sid].vue    # Per-session chat page (KeepAlive, HITL card, task jump bar)
-│   │       └── components/        # 43 page components:
+│   │       └── components/        # 50 page components:
 │   │           ├── ChatBox.vue                # Message list (markdown-it + DOMPurify, media via /media)
 │   │           ├── ChatTurnScrubber.vue       # Floating turn scrubber over the chat history (jump to any user message of the last 20 turns)
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
@@ -157,6 +157,8 @@ client/
 │   │           ├── MemoryPanel.vue            # Long-term memory tab (workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md tab + the global heartbeat switch
 │   │           ├── CronPanel.vue              # Cron job tab (/cron)
+│   │           ├── WebSearchPanel.vue         # 模型联网 (Web Search) tab: the session's search backend (Tavily / SearXNG radio) + the SearXNG connection form (.env) + the Tavily key status
+│   │           ├── SearchFallbackNotice.vue   # Dismissible banner under the message list: web_search downgraded from Tavily to SearXNG (search_backend_fallback frame)
 │   │           ├── SkillsPanel.vue            # Skill-manager tab (list/upload/toggle/pin/delete/curator)
 │   │           ├── ChannelSettingsDialog.vue  # Channel toggles & per-channel config
 │   │           ├── NotificationPanel.vue      # Server-push notification tab (its state lives in the store, so the badge keeps counting while the tab is closed)
@@ -193,6 +195,7 @@ client/
 │   │   ├── notification.ts     # Notification list + unread badge (kept live while its tab is closed)
 │   │   ├── agent-config.ts     # Preset agent config (tools / middlewares / agent models / skills) per session; required tools and skills stay locked, the tasks/subagents groups move as a whole
 │   │   ├── taskflow.ts         # TaskFlow progress (per-session flows + waves, refreshed by taskflow_updated)
+│   │   ├── web-search.ts       # Web-search backend per session + the Tavily→SearXNG downgrade notice
 │   │   └── chat-background.ts  # Global chat background image (Dexie-persisted)
 │   ├── plugins/                   # Nuxt plugins
 │   │   ├── auth-guard.ts          # Global login guard (per-navigation decision from /auth/status)
@@ -375,7 +378,7 @@ The number comes from two sources that always agree: the live `tool_result` fram
 
 ### State & Events
 
-- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), file viewer (`file-viewer.ts`), new-session preset dialog (`new-session.ts`), notifications (`notification.ts`), TaskFlow progress (`taskflow.ts`)
+- **Pinia** (`stores/`): UI state (`ui.ts`: sidebar / todo-dock collapse persisted), background tasks (`subagent.ts`), session plan (`todo.ts`), connectivity (`connection.ts`), chat background (`chat-background.ts`), session controls (`thinking.ts` / `session-model.ts`), model profiles (`llm-profiles.ts`), right sidebar (`right-sidebar.ts`), context usage (`context-usage.ts`), running commands (`running-commands.ts`), access mode (`access-mode.ts`), login session (`auth.ts`), project directory (`project-directory.ts`), file viewer (`file-viewer.ts`), new-session preset dialog (`new-session.ts`), notifications (`notification.ts`), TaskFlow progress (`taskflow.ts`), web-search backend (`web-search.ts`)
 - **mitt event bus**: WS events, stream reconnection events, session stream abort (`session:abort-stream`), cross-component notifications
 - **connection store** (`stores/connection.ts`): watches the `/sessions/ws` heartbeat + browser online/offline events; exposes `isOnline` / `backendStatus` and drives the global connection banner in `app.vue`
 

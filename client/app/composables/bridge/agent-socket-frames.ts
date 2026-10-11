@@ -135,7 +135,10 @@ export function routeAgentFrame(event: MessageEvent, ctx: AgentFrameContext): vo
       ctx.flushStopResolvers();
     },
     todo_updated: data => emit('ws:todo_updated', data),
-    taskflow_updated: data => emit('ws:taskflow_updated', data)
+    taskflow_updated: data => emit('ws:taskflow_updated', data),
+    // Best-effort downgrade notice from `web_search` (the turn keeps streaming);
+    // the store renders it as a dismissible banner.
+    search_backend_fallback: data => emit('ws:search_backend_fallback', data)
   });
   try {
     handler(event);

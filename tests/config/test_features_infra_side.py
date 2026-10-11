@@ -13,6 +13,7 @@ from config.features import infra_side as fs
 from config.features.infra_side.auth import build_auth
 from config.features.infra_side.browser_agent import _build_browser_agent
 from config.features.infra_side.gateway import _build_gateway
+from config.features.infra_side.web_search import build_web_search_config
 
 pytestmark = [pytest.mark.unit]
 
@@ -457,3 +458,47 @@ class TestLaneConfig:
 
         with pytest.raises(ValueError, match=key):
             lane_system.validate_lane_config()
+
+
+class TestWebSearchBuilder:
+    """``WEB_SEARCH_CONFIG`` is env-sourced; verify defaults and injection.
+
+    The instance URL and the backend default come from the ``.env`` the 模型联网
+    panel writes, so the contract test builds it from an injected mapping instead
+    of asserting the process environment's snapshot (which differs between a
+    developer's machine and CI).
+    """
+
+    def test_defaults_without_env(self) -> None:
+        built = build_web_search_config({})
+
+        assert built["default_backend"] == "tavily"
+        assert built["searxng_url"] == ""
+        assert built["searxng_proxy"] == ""
+        assert built["searxng_engines"] == ""
+        assert built["searxng_categories"] == ""
+        assert built["searxng_verify_tls"] is True
+
+    def test_injected_env_values(self) -> None:
+        built = build_web_search_config(
+            {
+                "WEB_SEARCH_DEFAULT_BACKEND": "SearXNG",
+                "SEARXNG_URL": "  http://localhost:8888  ",
+                "SEARXNG_PROXY": "http://127.0.0.1:7890",
+                "SEARXNG_ENGINES": "google,bing",
+                "SEARXNG_CATEGORIES": "it",
+                "SEARXNG_VERIFY_TLS": "false",
+            }
+        )
+
+        assert built["default_backend"] == "searxng"
+        assert built["searxng_url"] == "http://localhost:8888"
+        assert built["searxng_proxy"] == "http://127.0.0.1:7890"
+        assert built["searxng_engines"] == "google,bing"
+        assert built["searxng_categories"] == "it"
+        assert built["searxng_verify_tls"] is False
+
+    def test_an_unknown_backend_name_degrades_to_tavily(self) -> None:
+        built = build_web_search_config({"WEB_SEARCH_DEFAULT_BACKEND": "google"})
+
+        assert built["default_backend"] == "tavily"

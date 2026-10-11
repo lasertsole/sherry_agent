@@ -124,7 +124,7 @@ client/
 │   │       ├── config.ts          # 미디어 드롭다운 항목과 헤더 도구 정의
 │   │       ├── type.ts            # SessionRecord / Tool / MessageItem 타입 정의
 │   │       ├── index/[sid].vue    # 세션별 채팅 페이지(KeepAlive, HITL 카드, 작업 점프 바)
-│   │       └── components/        # 43 개의 페이지 컴포넌트:
+│   │       └── components/        # 50 개의 페이지 컴포넌트:
 │   │           ├── ChatBox.vue                # 메시지 목록(markdown-it + DOMPurify, 미디어는 /media 경유)
 │   │           ├── ChatTurnScrubber.vue       # 기록 좌측의 떠 있는 턴 스크러버(최근 20턴 내 임의의 사용자 메시지로 이동)
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
@@ -158,6 +158,8 @@ client/
 │   │           ├── MemoryPanel.vue            # 장기 메모리 탭(workspace/memory/*)
 │   │           ├── HeartbeatPanel.vue         # HEARTBEAT.md 탭 + 전역 하트비트 스위치
 │   │           ├── CronPanel.vue              # 예약 작업 탭(/cron)
+│   │           ├── WebSearchPanel.vue         #「모델 검색」탭: 세션의 검색 백엔드(Tavily / SearXNG 라디오) + SearXNG 연결 폼(.env) + Tavily 키 상태
+│   │           ├── SearchFallbackNotice.vue   # 메시지 목록 아래의 닫을 수 있는 배너: web_search가 Tavily에서 SearXNG로 강등(search_backend_fallback 프레임)
 │   │           ├── SkillsPanel.vue            # 스킬 관리 탭(목록 / 업로드 / 토글 / 고정 / 삭제 / curator)
 │   │           ├── ChannelSettingsDialog.vue  # 채널 토글 및 채널별 설정
 │   │           ├── NotificationPanel.vue      # 서버 푸시 알림 탭(상태가 store에 있어 탭을 닫아도 배지가 계속 집계)
@@ -194,6 +196,7 @@ client/
 │   │   ├── notification.ts     # 알림 목록 + 미읽음 배지(탭을 닫아도 계속 집계)
 │   │   ├── agent-config.ts     # 프리셋의 agent 설정(도구 / 미들웨어 / 에이전트 모델 / 스킬)을 세션별로 보관; 필수 도구와 필수 스킬은 잠겨 해제 불가, 작업과 계획 / 서브에이전트 두 그룹은 일괄 선택만
 │   │   ├── taskflow.ts         # TaskFlow 진행(세션별 flow + wave, taskflow_updated로 갱신)
+│   │   ├── web-search.ts       # 세션별 검색 백엔드 + Tavily→SearXNG 강등 알림
 │   │   └── chat-background.ts  # 전역 채팅 배경 이미지(Dexie 영속화)
 │   ├── plugins/                   # Nuxt 플러그인
 │   │   ├── auth-guard.ts          # 전역 로그인 가드(내비게이션마다 /auth/status로 판정)
@@ -375,7 +378,7 @@ REST(베이스 URL `VITE_API_BACK_URL`, 기본 `http://localhost:8080`):
 
 ### 상태와 이벤트
 
-- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`)
+- **Pinia**(`stores/`): UI 상태(`ui.ts`: 사이드바 / todo 독 접기 영속화), 백그라운드 작업(`subagent.ts`), 세션 계획(`todo.ts`), 연결성(`connection.ts`), 채팅 배경(`chat-background.ts`), 세션 제어(`thinking.ts` / `session-model.ts`), 모델 프로필(`llm-profiles.ts`), 오른쪽 사이드바(`right-sidebar.ts`), 컨텍스트 계정(`context-usage.ts`), 실행 중 명령(`running-commands.ts`), 접근 모드(`access-mode.ts`), 로그인 세션(`auth.ts`), 프로젝트 디렉터리(`project-directory.ts`), 파일 뷰어(`file-viewer.ts`), 새 세션 프리셋 선택(`new-session.ts`), 알림(`notification.ts`), TaskFlow 진행(`taskflow.ts`), 웹 검색 백엔드(`web-search.ts`)
 - **mitt 이벤트 버스**: WS 이벤트, 스트림 재연결 이벤트, 세션 스트림 중단(`session:abort-stream`), 컴포넌트 간 알림
 - **connection 스토어**(`stores/connection.ts`): `/sessions/ws` 하트비트와 브라우저 online/offline 이벤트를 감시; `isOnline` / `backendStatus`를 노출하고 `app.vue`의 전역 연결 배너를 구동
 

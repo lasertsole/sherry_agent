@@ -250,6 +250,93 @@ export async function setAccessMode(sessionId: string, mode: AccessMode): Promis
   return toAccessMode(res.mode);
 }
 
+/** Web-search backends the 模型联网 panel can pick between. */
+export type SearchBackend = 'tavily' | 'searxng';
+
+/** The SearXNG side of a backend state: its connection and how it is built. */
+export interface SearxngStatus {
+  /** `SEARXNG_URL` is set — the instance can be reached at all. */
+  configured: boolean;
+  /** Instance base URL (empty when unconfigured). */
+  url: string;
+  engines: string;
+  categories: string;
+  proxy: string;
+  verify_tls: boolean;
+}
+
+/**
+ * Per-session web-search backend state (`GET /sessions/search_backend`).
+ *
+ * `backend` is the session's explicit choice (`null` = follow the environment
+ * default), while `effective` is what the tool will actually use — resolved
+ * with the same availability-aware rule the tool applies, so the panel can show
+ * "Tavily 降级到 SearXNG" without guessing.
+ */
+export interface SearchBackendState {
+  backend: SearchBackend | null;
+  effective: SearchBackend;
+  /** The choice was parked mid-turn and lands on the next turn. */
+  pending: boolean;
+  /** The value the parked choice will apply (`null` = follow the default). */
+  pending_value: SearchBackend | null;
+  /** `TAVILY_API_KEY` is present. */
+  tavily_available: boolean;
+  searxng: SearxngStatus;
+}
+
+/**
+ * Narrow a raw backend payload value to a :type:`SearchBackend` or null.
+ * @param raw
+ */
+const toSearchBackend = (raw: unknown): SearchBackend | null => (raw === 'tavily' || raw === 'searxng' ? raw : null);
+
+/**
+ * Read the session's web-search backend state (choice + availability).
+ * @param sessionId
+ */
+export async function fetchSearchBackend(sessionId: string): Promise<SearchBackendState> {
+  const res = await fetchApiPayload<Partial<SearchBackendState> & { searxng?: Partial<SearxngStatus> }>({
+    url: '/sessions/search_backend',
+    opts: { session_id: sessionId },
+    method: 'get'
+  });
+  return {
+    backend: toSearchBackend(res.backend),
+    effective: toSearchBackend(res.effective) ?? 'tavily',
+    pending: res.pending === true,
+    pending_value: toSearchBackend(res.pending_value),
+    tavily_available: res.tavily_available === true,
+    searxng: {
+      configured: res.searxng?.configured === true,
+      url: String(res.searxng?.url ?? ''),
+      engines: String(res.searxng?.engines ?? ''),
+      categories: String(res.searxng?.categories ?? ''),
+      proxy: String(res.searxng?.proxy ?? ''),
+      verify_tls: res.searxng?.verify_tls !== false
+    }
+  };
+}
+
+/**
+ * Choose the session's web-search backend (``null`` clears the override and
+ * follows the environment default). A choice made mid-turn is parked by the
+ * backend and lands on the next turn — `pending` says which it was.
+ * @param sessionId
+ * @param backend
+ */
+export async function setSearchBackend(
+  sessionId: string,
+  backend: SearchBackend | null
+): Promise<{ backend: SearchBackend | null; pending: boolean }> {
+  const res = await fetchApiPayload<{ backend?: unknown; pending?: unknown }>({
+    url: '/sessions/search_backend',
+    opts: { session_id: sessionId, backend },
+    method: 'put'
+  });
+  return { backend: toSearchBackend(res.backend), pending: res.pending === true };
+}
+
 export interface ContextUsage {
   /** Context window of the configured main LLM. */
   window: number;

@@ -89,6 +89,15 @@ export const headerTools: Tool[] = [
     event: 'account',
     label: 'toolbar.account'
   },
+  // The search-backend panel (Tavily / SearXNG): its own concern next to the
+  // model and tool editors, so it keeps its own menu entry.
+  {
+    toolName: 'toolbar.webSearch',
+    icon: 'pi pi-globe',
+    title: 'toolbar.webSearch',
+    event: 'webSearch',
+    label: 'toolbar.webSearch'
+  },
   {
     toolName: 'toolbar.systemConfig',
     icon: 'pi pi-sliders-h',

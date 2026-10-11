@@ -22,6 +22,8 @@ const TAB_EVENTS: ReadonlyArray<[string, RightSidebarPanelKind]> = [
   ['heartbeat', 'heartbeat'],
   ['cron', 'cron'],
   ['extend', 'extend'],
+  ['account', 'account'],
+  ['webSearch', 'webSearch'],
   ['notification', 'notification']
 ];
 

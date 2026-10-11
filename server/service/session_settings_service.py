@@ -57,6 +57,7 @@ _SETTINGS_KEYS: tuple[tuple[StateKey, StateKey], ...] = (
     (StateKey.LLM_THINKING_ENABLED, StateKey.LLM_THINKING_ENABLED_PENDING),
     (StateKey.LLM_MAIN_MODEL, StateKey.LLM_MAIN_MODEL_PENDING),
     (StateKey.AGENT_CONFIG, StateKey.AGENT_CONFIG_PENDING),
+    (StateKey.SEARCH_BACKEND, StateKey.SEARCH_BACKEND_PENDING),
 )
 
 
@@ -483,6 +484,70 @@ async def apply_thinking_choice(session_id: str, value: bool | str | None) -> bo
         value=value,
         write_live=lambda: set_thinking_value(session_id, value),
     )
+
+
+async def apply_search_backend_choice(session_id: str, backend: str | None) -> bool:
+    """HTTP entry for ``PUT /sessions/search_backend``; returns ``pending``.
+
+    ``None`` clears the override (back to the availability-aware global
+    default). Otherwise the value must be one of the two backend names.
+    """
+    if backend is not None and backend not in ("tavily", "searxng"):
+        raise ValueError("'backend' must be 'tavily', 'searxng', or null")
+
+    return await _apply_session_choice(
+        session_id,
+        live_key=StateKey.SEARCH_BACKEND,
+        pending_key=StateKey.SEARCH_BACKEND_PENDING,
+        value=backend,
+        write_live=lambda: _write_value(session_id, StateKey.SEARCH_BACKEND, backend),
+    )
+
+
+def get_search_backend_state(session_id: str) -> dict[str, Any]:
+    """The panel's read model: the session's choice, what is effective, and what
+    each provider's configuration looks like.
+
+    ``backend`` is the EFFECTIVE next-turn choice — a parked mid-turn selection
+    counts (that is what the user just picked), with ``pending`` saying it only
+    lands next turn. ``effective`` is what the running tool serves from now,
+    i.e. the availability-aware resolution over the LIVE keys.
+
+    An EMPTY session id is legal — 模型联网 is a settings tab and opens with no
+    session too; it then answers the availability + default view (no explicit
+    choice to report), which is what the panel's per-provider rows need.
+    """
+    from agent.tools.web_search import resolve_preferred_backend, tavily_available
+    from agent.tools.web_search_searxng import searxng_status
+
+    if session_id and not is_safe_session_id(session_id):
+        raise ValueError("invalid session_id")
+
+    searxng = searxng_status()
+    if not session_id:
+        return {
+            "backend": None,
+            "effective": resolve_preferred_backend(""),
+            "pending": False,
+            "pending_value": None,
+            "tavily_available": tavily_available(),
+            "searxng": searxng,
+        }
+
+    # A park cannot outlive its turn (restart, missed hook): an idle read settles it.
+    if not _session_turn_active(session_id):
+        promote_pending_settings_sync(session_id)
+    parked, parked_value = _pending_value(session_id, StateKey.SEARCH_BACKEND_PENDING)
+    chosen = parked_value if parked else _read_value(session_id, StateKey.SEARCH_BACKEND)
+    chosen = chosen if chosen in ("tavily", "searxng") else None
+    return {
+        "backend": chosen,
+        "effective": resolve_preferred_backend(session_id),
+        "pending": parked,
+        "pending_value": parked_value,
+        "tavily_available": tavily_available(),
+        "searxng": searxng,
+    }
 
 
 async def apply_main_model_choice(session_id: str, descriptor: dict | None) -> bool:

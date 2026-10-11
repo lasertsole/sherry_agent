@@ -175,7 +175,8 @@
     "settingsMenu": "菜单",
     "toolbox": "工具箱",
     "browser": "浏览器",
-    "terminal": "终端"
+    "terminal": "终端",
+    "webSearch": "模型联网"
   },
   "config": {
     "agent": {

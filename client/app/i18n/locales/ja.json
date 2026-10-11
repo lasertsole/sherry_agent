@@ -175,7 +175,8 @@
     "settingsMenu": "メニュー",
     "toolbox": "ツールボックス",
     "browser": "ブラウザ",
-    "terminal": "ターミナル"
+    "terminal": "ターミナル",
+    "webSearch": "モデル検索"
   },
   "config": {
     "agent": {

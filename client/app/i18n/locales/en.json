@@ -175,7 +175,8 @@
     "settingsMenu": "Menu",
     "toolbox": "Toolbox",
     "browser": "Browser",
-    "terminal": "Terminal"
+    "terminal": "Terminal",
+    "webSearch": "Web Search"
   },
   "config": {
     "agent": {

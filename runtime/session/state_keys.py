@@ -54,6 +54,14 @@ class StateKey(StrEnum):
     # middleware switches; promoted at the turn boundary (same twin pattern).
     AGENT_CONFIG_PENDING = "agent_config_pending"
 
+    # Per-session web-search backend (client UI → /sessions/search_backend):
+    # "tavily" | "searxng", absent = the global default (availability-aware).
+    # Read per call by the web_search tool, so a change applies immediately.
+    SEARCH_BACKEND = "search_backend"
+    # Choice made while a turn was running: the same park/promote pair the
+    # thinking and model controls use.
+    SEARCH_BACKEND_PENDING = "search_backend_pending"
+
     # Per-session project directory (client UI -> /sessions/project): the
     # absolute, validated working root every tool resolves paths against.
     # Absent = no explicit binding -> SHERRY_PROJECT_DIR / sherry.jsonc

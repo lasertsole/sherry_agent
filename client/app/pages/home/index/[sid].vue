@@ -16,6 +16,9 @@
           :loading-older="loadingOlder"
           @reach-top="loadOlderHistory"
           @release-head="onReleaseHead" />
+        <!-- Web-search downgrade notice (Tavily → SearXNG): informational and
+             dismissible, right under the message list it belongs to. -->
+        <SearchFallbackNotice :session-id="sessionId" />
         <!-- Image preview area (kept separate above the input box, so it does not squeeze the h-40 input box pushing the send button up / clipping the ✕ button) -->
         <template v-if="selectedImages.length > 0">
           <div
@@ -374,6 +377,7 @@ useErrorCaptured();
 
 // components
 import ChatBox from '../components/ChatBox.vue';
+import SearchFallbackNotice from '../components/SearchFallbackNotice.vue';
 import { ChatInputBox } from '#components';
 // function
 import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref, watch } from 'vue';

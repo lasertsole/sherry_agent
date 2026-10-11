@@ -23,6 +23,10 @@ from .session_dirs import (
     SessionDirsConfig as SessionDirsConfig,
     SESSION_DIRS as SESSION_DIRS,
 )
+from .web_search import (
+    WebSearchConfig as WebSearchConfig,
+    WEB_SEARCH_CONFIG as WEB_SEARCH_CONFIG,
+)
 from .trajectory import (
     TrajectoryConfig as TrajectoryConfig,
     TRAJECTORY as TRAJECTORY,

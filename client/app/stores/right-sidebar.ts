@@ -15,6 +15,8 @@ export type RightSidebarPanelKind =
   | 'heartbeat'
   | 'cron'
   | 'extend'
+  /** The web-search backends (Tavily / SearXNG) and their provider settings. */
+  | 'webSearch'
   | 'taskDetail'
   | 'fileViewer'
   | 'account'
@@ -55,6 +57,10 @@ const SCOPE_BY_KIND: Record<RightSidebarPanelKind, RightSidebarScope> = {
   heartbeat: 'global',
   cron: 'global',
   extend: 'global',
+  // The search-backend panel is a settings editor like the rest: its provider
+  // settings are global (.env), and the per-session choice reads the open
+  // session when there is one.
+  webSearch: 'global',
   taskDetail: 'global',
   // A file opened from the session's file tree belongs to that session, exactly
   // like the diff read from the same directory (gitDiff below).

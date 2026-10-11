@@ -106,7 +106,10 @@ SERVER_HTTP: ServerHttpConfig = {
         "RERANKER_",
         "EMBEDDING_",
         "STT_",
-        # Feature switches render last, just before the catch-all "other".
+        # The SearXNG search backend's connection (the Tavily key it alternates
+        # with has no prefix group of its own), then the feature switches —
+        # both render last, just before the catch-all "other".
+        "SEARXNG_",
         "SHERRY_BROWSER_",
     ),
     #: Groups rendered with the model-profile manager (provider / model /
