@@ -668,6 +668,22 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
 - file writes go through `file_write_lock` (`agent/tools/pub_base/file_lock.py`: in-process per-path `threading.Lock` → cross-process `flock`) plus `atomic_write_text_no_follow` (`atomic_write.py`); `patch_file` adds a two-layer CAS (fingerprint at read, `expected_revision` re-asserted just before the `os.replace`).
 - `write_file` needs a READ-BEFORE-WRITE LICENSE to overwrite an existing file: a complete `read_file`, or this session's own earlier whole-file write (`agent/tools/pub_base/read_state.py` — process-local, keyed by session + resolved path, advanced by the session's own append/patch, lost on restart). Its revision rides into the atomic write as `expected_revision`, so a file the session never read is refused and a change landing after the read is refused too; a partial read licenses nothing, `append` alone licenses nothing, a summarized-away read loses its license (`agent/middlewares/summarization/compression.py` drops the license of every read whose `read_file` result the compression discards — the preserved tail's later reads keep theirs, and the scan is fail-open), and a directory/symlink target skips the gate (its write fails with its own error).
 - `terminal` / `python_repl` / ast-grep rewrites bypass all of it (subprocesses take no lock) — that boundary is deliberate, not an oversight.
+- the sandbox IS the write barrier for `terminal` / `python_repl` / `execute_code`
+  (they never call `resolve_external_path`): `SandboxBackend.wrap(cmd, env,
+  writable_roots)` takes the caller's write surface, which each tool resolves from
+  the SESSION's project directory (so a project bound outside the checkout is
+  writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
+  an empty list raises. `.env.example` ships `SANDBOX_POLICY=required` (the unset
+  fallback stays `auto` for running installs) — boot logs the effective policy +
+  backend, an unusable `required` logs an ERROR with fix commands,
+  `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
+  same state. Every bare run is recorded: the evidence-ledger row carries
+  `sandboxed: false` and the bypass approval card is marked `⚠ UNSANDBOXED`.
+  `PathGuard` additionally screens the command-string arguments (`commands` /
+  `query`) against the hard-deny floor only. The read-surface whitelist
+  (`SANDBOX_READ_ALLOWLIST`, system trees + `SANDBOX_READ_EXTRA`, else the whole
+  fs is readable) is OFF until `scripts/sandbox_smoke.py` passes on a host whose
+  sandbox actually runs — neither backend has ever been verified on one.
 - An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); the docs page is `docs/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
@@ -692,6 +708,18 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   session + tool id, consumed once). Approval waits and queue time are OUTSIDE the window by construction — the clock
   starts when the tool actually executes. The client shows a live ticker while running and the measured value when
   settled (`formatToolDuration`: <1s → `850ms`, <10s → `1.2s`, else whole seconds), and nothing when unknown.
+- the code-intelligence index follows the SESSION's project directory
+  (`agent/tools/code_intel/roots.py::index_db_for_root` → `<root>/.codeintel/index.db`),
+  so alternating between projects no longer rebuilds one shared index (the stored
+  paths are project-relative); `code_intel_index_db_path` pins one and
+  `SHERRY_CODE_INTEL_DB` overrides the path, with the shared `CODE_INTEL_DIR`
+  as the no-root fallback. The index root itself is resolved PER CALL
+  (env override > session project dir > process default), like ast-grep and LSP
+- truncation is budgeted in TOKENS, CJK-aware (`pub/func/message/token_truncation.py`):
+  tool outputs, tool args, the summary body, the aggressive pass and every
+  SummaryDoc list item go through `truncate_by_tokens` (`evicted_refs` is exempt —
+  a clipped path is useless), so the same budget costs the same in every language
+  (the old character caps ÷ 4 keep English byte-identical)
 - two boot sweeps reconcile crash leftovers, both conservative and both run from
   the server assembly (`server/trigger/channels/core.py::_schedule_sweeper`, next
   to the sweeper start): `agent/tools/subagent/isolation/sweep.py` removes

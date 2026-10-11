@@ -27,6 +27,7 @@
 | **파일시스템 쓰기** | 자식이 에이전트 사용자가 쓸 수 있는 어디든 기록 | L2 OS 샌드박스 (Linux / macOS) |
 | **파일시스템 읽기** | 자식이 `~/.ssh`, `.env`, 각종 자격 증명 저장소를 읽음 | L2 리드 실드(민감 경로 마스킹, Linux / macOS) + terminal 민감 파일 정규식 |
 | **파일 도구 경로 인자** | 도구 호출이 `read_file`에 트래버설 또는 하드 거부 경로를 요청 | §5 외부 경로 게이트 + §6 세 개의 구조적 게이트 + §7 `PathGuard`(외부 경로는 여전히 HITL 경유) |
+| **셸 명령 인자** | `terminal(commands=…)` / `python_repl(query=…)`가 자격 증명 파일을 지목 — 이들은 경로 인자가 아니라 경로 게이트가 보지 못함 | §7 `PathGuard`의 명령 스크린(하드 거부 목록만; 나머지 외부 경로는 OS 샌드박스 담당) |
 | **프로세스 / 세션 범위** | 자식이 네임스페이스를 공유하고 부모보다 오래 살 수 있음 | L2 `--unshare-all`, `--die-with-parent` |
 | **의도적 우회** | 모델이 `sandbox=False`를 요청 | 사람 승인 게이트 (HITL) —— `full_access` 세션은 건너뜀 |
 | **프로그래매틱 도구 호출 (PTC)** | 생성된 `execute_code` 자식 스크립트가 실제 도구를 호출해 파일시스템에 직접 닿을 수 있음 | L1 환경 변수 세척 + L2 OS 샌드박스 래핑(`terminal` / `python_repl`과 같은 백엔드) + 제한 builtins + 임포트 허용 목록 |
@@ -47,9 +48,11 @@
 
 | 값 | 의미 |
 | :- | :--- |
-| `required` | 백엔드 사용 불가 ⇒ 명령을 거부, 샌드박스 없이 절대 실행하지 않음 |
-| `auto` (기본값) | 백엔드 사용 불가 ⇒ 경고 한 줄과 함께 샌드박스 없이 실행으로 강등 |
+| `required`(출하 기본값) | 백엔드 사용 불가 ⇒ 명령을 거부, 샌드박스 없이 절대 실행하지 않음 |
+| `auto` | 백엔드 사용 불가 ⇒ 경고 한 줄과 함께 샌드박스 없이 실행으로 강등(베어 실행; 증거 원장에 기록) |
 | `off` | 샌드박싱 완전 비활성화 |
+
+환경 변수가 없을 때 `read_policy()`의 폴백은 여전히 `auto`입니다(구동 중인 설치가 자신의 설정을 유지하도록). 반면 `.env.example`의 출하 값은 `required`입니다 — 백엔드가 동작하지 않는 호스트에서 `auto`는 모든 셸 명령을 조용히 비샌드박스 실행으로 바꾸기 때문입니다. 이는 가정이 아니라 실측입니다: **커널이 user namespace를 지원하지 않는** 호스트(Ubuntu 24.04 기본 AppArmor 정책, PRoot/컨테이너 호스트)에서는 `bwrap` 바이너리가 있어도 동작하지 않습니다. 부팅 시 실제 정책과 백엔드를 출력하고(`sandbox: policy=… backend=… available=…`), `required`가 충족되지 않으면 ERROR와 함께 수정 명령을 안내하며, `SANDBOX_STRICT_BOOT=1`이면 시작을 거부합니다. 실행 중에는 `GET /sandbox/status`가 같은 상태를 돌려줍니다.
 
 `parse_policy`는 공백을 제거하고 대소문자를 무시하여 매칭하며, 모르는 값에는 `ValueError`를 던집니다: 잘못 입력된 안전 설정은 반드시 크게 실패해야지 조용히 기본값으로 떨어지면 안 됩니다. `read_policy()`는 **매번** `os.getenv`를 호출합니다(가져오기 시점 캐시 없음), 그래서 런타임 변경이 즉시 반영됩니다.
 
@@ -58,7 +61,7 @@
 `SandboxBackend`는 모든 백엔드가 구현하는 ABC입니다:
 
 - `probe() -> bool`: 절대 예외를 던지지 않아야 합니다. 백엔드가 자체 프로브 예외를 잡고 `False`를 반환합니다.
-- `wrap(cmd, env) -> (argv, env)`: 감싸진 argv와 env를 반환하며, list 형태로 직접 exec됩니다(셸 없음).
+- `wrap(cmd, env, writable_roots) -> (argv, env)`: 감싸진 argv와 env를 반환하며, list 형태로 직접 exec됩니다(셸 없음). `writable_roots`는 그 명령이 얻는 **유일한** 쓰기 면입니다(호출 세션의 프로젝트 디렉터리이며, 공용 정규화 함수가 `TEMP_DIR`를 덧붙입니다 — 샌드박스 자체가 쓸 수 있는 임시 공간을 필요로 하기 때문입니다). 이 인자는 **필수**이며 빈 리스트는 `ValueError`를 던집니다. 기본값을 주면 인자를 빠뜨린 호출 지점이 '`ROOT_DIR` 전체가 쓰기 가능'이라는 옛 동작으로 조용히 되돌아가는데, 그것이 바로 이 계약이 막는 쓰기 우회입니다.
 
 `get_backend(policy)`의 디스패치:
 
@@ -70,7 +73,8 @@
 
 `SafeShellTool`(이름 `terminal`)과 `TimedPythonREPLTool`(이름 `python_repl`)은 모두 LLM이 보는 도구 호출 스키마에 `sandbox: bool = True` 파라미터를 노출하므로, 모델이 호출마다 선택합니다. PTC의 `ExecuteCodeTool`(이름 `execute_code`)에는 `sandbox` 파라미터가 전혀 없습니다 — executor 전용이며 항상 샌드박스를 요청합니다.
 
-- **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env)`(POSIX `shell=True`와 의미적으로 동일), python_repl은 `backend.wrap([sys.executable, "-c", script], env)`, PTC 자식은 `backend.wrap([sys.executable, script_path], env)`를 씁니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다.
+- **샌드박스 경로**: terminal은 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`(POSIX `shell=True`와 의미적으로 동일), python_repl과 PTC 자식도 같습니다. 감싸진 argv는 list로 exec되고 셸 kwargs는 전혀 없습니다. `roots`는 **세션의 프로젝트 디렉터리**(`current_project_dir(session_id)` / PTC 자식의 cwd)이며 명령의 cwd와 같은 출처입니다 — 그래서 쓰기 면과 작업 디렉터리가 어긋날 수 없습니다. 저장소 밖에 바인딩한 프로젝트 디렉터리는 쓰기 가능해지고(예전에는 EROFS), 저장소 자체는 쓰기 불가가 됩니다(예전에는 가능했고, 그것이 terminal로 외부 경로 게이트를 우회하는 길이었습니다).
+- **베어 실행은 기록됩니다**: 증거 원장 행이 `sandboxed: false`를 담고, 샌드박스 우회 승인 카드가 `⚠ UNSANDBOXED`와 그 의미를 표시합니다 — 승인하는 사람이 읽고, 나중에 원장을 감사해도 찾을 수 있습니다.
 - **폴백 경로(Windows / 백엔드 없음)**: terminal은 명령을 `" && "`로 연결해 `shell=True`로 띄우고, python_repl은 `[sys.executable, "-c", script]`를 list로 띄웁니다. Windows에는 OS 샌드박스 백엔드가 **없습니다**.
 - **모든 경로에서 무조건**: `env=scrub_env()`와 `cwd=str(ROOT_DIR)`(cwd 고정). 두 도구 모두 30초 타임아웃(`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`)을 강제하고 만료 시 자식을 죽입니다. PTC는 자체 `ptc_timeout_seconds`를 강제하고 자식의 프로세스 그룹에 SIGKILL합니다.
 - **오류 표면화**: `REQUIRED`인데 백엔드가 없으면 terminal은 `RuntimeError`를 `ToolException`으로 감싸고(`handle_tool_error=True`가 그대로 표면화), python_repl은 원시 `RuntimeError`를 그대로 던지며, PTC는 아무것도 spawn하기 전에 `status: "sandbox_unavailable"` 엔벨로프를 반환합니다.
@@ -91,10 +95,30 @@ SANDBOX_POLICY=auto      # required | auto | off (대소문자 무시, 기본값
 
 잘못된 값은 조용히 기본값을 쓰는 대신 처음 사용 시점에 `ValueError`를 던집니다. 이 변수는 도구 호출마다 다시 읽히므로 런타임에 바꿀 수 있습니다.
 
+### `SANDBOX_STRICT_BOOT`
+
+```bash
+# .env 또는 셸 환경
+SANDBOX_STRICT_BOOT=1    # SANDBOX_POLICY=required가 충족되지 않으면 시작 거부
+```
+
+기본값(미설정)은 경고만 하므로 동작하는 샌드박스가 없는 개발 호스트도 시작됩니다.
+
+### `SANDBOX_READ_ALLOWLIST` / `SANDBOX_READ_EXTRA`
+
+```bash
+# .env 또는 셸 환경
+SANDBOX_READ_ALLOWLIST=1              # 기본 OFF: 먼저 scripts/sandbox_smoke.py 실행
+SANDBOX_READ_EXTRA="~/.cache:~/.local/share"
+```
+
+켜면 읽기 면은 '파일시스템 전체 읽기 전용'이 아니게 됩니다: 시스템 디렉터리(`/usr`, `/bin`, `/lib`, `/etc` …), 해석된 `writable_roots`, 그리고 `SANDBOX_READ_EXTRA`(기본 `~/.cache` — npm/pip/uv 캐시)만 마운트하고 `/home` `/root` `/mnt` `/media` `/srv` `/run`은 빈 뷰로 덮습니다(bwrap). Seatbelt에서는 읽기를 기본 거부하고 위 경로만 다시 엽니다. **기본값은 OFF**입니다. 두 백엔드 모두 샌드박스가 실제로 동작하는 머신에서 검증된 적이 없기 때문입니다: 대상 호스트에서 먼저 `uv run --no-sync python scripts/sandbox_smoke.py`를 실행하세요(쓰기 면과 읽기 면을 점검하고, `SANDBOX_READ_ALLOWLIST=1`에서는 화이트리스트 밖 읽기가 실패하는지도 검증합니다). 켜지 않으면 샌드박스 안에서도 임의의 사용자 파일을 읽을 수 있습니다(자격 증명 경로 5개와 `.env` 파일만 차단).
+
+
 ### `SHERRY_DENY_READ_PATHS`
 
 ```bash
-# .env 또는 셸 환경 변수 (os.pathsep 구분; ~ 확장)
+# .env 또는 셸 환경 변수(os.pathsep 구분; ~ 확장)
 SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 ```
 
@@ -137,6 +161,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **민감 파일 정규식은 완화이지 방벽이 아닙니다.** 리터럴 명령 형태만 매칭하며, `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, 변수, 글롭, 히어도큐먼트는 계층 설계상 우회할 수 있습니다. 백엔드가 있는 곳에서 실제 읽기 방벽은 OS 리드 실드입니다.
 - **`python_repl`에는 민감 파일 정규식이 없습니다.** terminal 전용 게이트([격리 §3](isolation/README.ko.md#3-위험-명령-게이트-terminal-전용))가 그것을 덮지 않습니다. 대신 래퍼 스크립트가 빌트인을 제한합니다(안전한 부분집합은 `open` / `__import__`를 생략) — 다르고 더 좁은 통제입니다.
 - **PTC는 같은 백엔드의 주의점을 물려받습니다.** `execute_code`는 이제 쓸 수 있는 백엔드가 있으면 L2 백엔드로 자식을 감싸지만, `SANDBOX_POLICY=auto`(기본)이고 쓸 수 있는 백엔드가 없는 호스트에서는 경고 한 줄 뒤에 샌드박스 없이 실행되며, bwrap 구성의 `--unshare-all`은 네트워크 네임스페이스도 비공유로 만듭니다 — 실제 bwrap 아래에서 loopback RPC 브리지가 도달 가능한지는 미검증입니다. PTC의 일회용 RPC 토큰과 그 `/proc/<pid>/environ` 잔여 위험은 [PTC 페이지](../ptc/README.ko.md)에 적었습니다.
-- **강등 경로는 설계대로 샌드박스 없이 실행됩니다.** `auto` + 백엔드 없음 = 경고 한 줄 기록 후 평소처럼 샌드박스 없이 실행. 이것은 의도된 "가용성 우선" 선택이며, 반대가 필요하면 `SANDBOX_POLICY=required`를 고르세요.
+- **강등 경로는 설계대로 샌드박스 없이 실행됩니다.** `auto` + 백엔드 없음 = 경고 한 줄 기록 후 평소처럼 샌드박스 없이 실행(증거 원장에 `sandboxed: false`로 남고 부팅 로그에도 나옵니다). 이것은 의도된 "가용성 우선" 선택입니다. 출하 기본값은 이제 `required`이고, `SANDBOX_STRICT_BOOT=1`이면 시작 자체를 거부합니다.
+- **명령 경로 스크린은 완화층이며 장벽이 아닙니다.** 하드 거부 경로(자격 증명/시스템 파일, YOLO 거부 목록)를 **문자 그대로 지목한** 명령만 거부하고 나머지는 샌드박스에 맡깁니다. `base64 -d | sh`, 조각으로 만든 변수, `cd` + 상대 경로는 구조적으로 회피됩니다. 경계는 OS 샌드박스입니다.
 - **환경 변수 세척은 이름 기반입니다.** 차단 부분 문자열이 하나도 없는 이름(그리고 거부 목록에 없는 이름)으로 저장된 시크릿은 그대로 통과합니다. 값 스캔도 동적 시크릿 탐지도 없으며, 이는 의도된 것입니다.
 - **네트워크 샌드박싱, seccomp, AppArmor 프로파일은 주장하지도 구성하지도 않았습니다.** 격리는 [격리 §2](isolation/README.ko.md#2-os-네이티브-샌드박스-백엔드-l2)에 보여준 bwrap / Seatbelt 구성 정확히 그것뿐입니다.

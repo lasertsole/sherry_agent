@@ -287,6 +287,14 @@ Child Agent execution completed
                 │     └── fire_delivery_target_hook() — first non-None
                 │         return redirects the target session key
                 │
+                ├── 4a. TaskFlow auto-resume: if a flow dispatched this
+                │     child (a step's child_session_key matches), inject the
+                │     result BEFORE the announcement — the flow's own
+                │     auto_dispatch starts the wave it unlocked, so the AI
+                │     supervises exceptions instead of driving every step.
+                │     Fail-open: no flow, or a failing resume, keeps today's
+                │     behaviour (the AI resumes manually).
+                │
                 ├── 4. Mark IN_PROGRESS → run_announce_dispatch()
                 │     ├── Success → mark DELIVERED + record idempotency key
                 │     ├── Transient failure → retry up to announce_retry_max(3),

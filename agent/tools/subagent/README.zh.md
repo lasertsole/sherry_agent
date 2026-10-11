@@ -286,6 +286,13 @@ Registry 是整个系统的状态中枢，管理所有子 Agent 运行记录的�
                 │     └── fire_delivery_target_hook() — 首个返回非 None
                 │         的 hook 重定向目标会话键
                 │
+                ├── 4a. TaskFlow 自动 resume：若该子代理由某流程的步骤派发
+                │     （步骤的 child_session_key 匹配），先注入结果再投递：
+                │     流程自身的 auto_dispatch 会启动刚解锁的 wave，AI 只
+                │     监督异常（judge BLOCK / 失败 / 收尾）而不必逐步驱动。
+                │     失败开放：无流程或 resume 失败则保持原行为（AI 手动
+                │     resume）。
+                │
                 ├── 4. 标记 IN_PROGRESS → run_announce_dispatch()
                 │     ├── 成功 → 标记 DELIVERED + 记录幂等键
                 │     ├── 瞬时失败 → 重试至 announce_retry_max(3) 次，

@@ -27,6 +27,7 @@
 | **文件系统写入** | 子进程可以写到 agent 用户能写的任何地方 | L2 操作系统沙箱（Linux / macOS） |
 | **文件系统读取** | 子进程可以读 `~/.ssh`、`.env`、各类凭据库 | L2 读遮蔽（敏感路径掩蔽，Linux / macOS）+ terminal 敏感文件正则 |
 | **文件工具路径参数** | 工具调用让 `read_file` 读取穿越路径或硬拒绝路径 | §5 外部路径门禁 + §6 三道结构门 + §7 `PathGuard`（外部路径仍走 HITL） |
+| **Shell 命令参数** | `terminal(commands=…)` / `python_repl(query=…)` 里点名凭据文件 —— 这些不是路径参数，路径门禁看不到 | §7 `PathGuard` 的命令筛查（只挡硬拒绝名单；其余外部路径交给 OS 沙箱） |
 | **进程 / 会话作用域** | 子进程共享命名空间，且可能在父进程结束后存活 | L2 `--unshare-all`、`--die-with-parent` |
 | **主动绕过** | 模型请求 `sandbox=False` | 人工审批门（HITL）——处于 `full_access` 的会话跳过它 |
 | **程序化工具调用（PTC）** | 生成的 `execute_code` 子脚本调用真实工具，可能直接触达文件系统 | L1 环境变量清洗 + L2 操作系统沙箱包装（与 `terminal` / `python_repl` 同一后端）+ 受限内建 + 导入白名单 |
@@ -47,9 +48,11 @@
 
 | 取值 | 含义 |
 | :--- | :--- |
-| `required` | 后端不可用 ⇒ 拒绝命令，绝不无沙箱运行 |
-| `auto`（默认） | 后端不可用 ⇒ 降级为无沙箱执行并记录一条警告 |
+| `required`（出厂默认） | 后端不可用 ⇒ 拒绝命令，绝不无沙箱运行 |
+| `auto` | 后端不可用 ⇒ 降级为无沙箱执行并记录一条警告（裸跑，会记入证据账本） |
 | `off` | 完全关闭沙箱 |
+
+`read_policy()` 在环境变量未设置时仍回退 `auto`（已在运行的安装保持其既有配置）；但 `.env.example` 出厂值是 `required` —— 在后端根本无法运行的主机上，`auto` 会把每一条 shell 命令悄悄变成无沙箱执行。这不是假设，而是实测：**内核不支持 user namespace** 的主机（Ubuntu 24.04 默认 AppArmor 策略，或 PRoot/容器主机）里 `bwrap` 二进制在，却不可用。启动时会打印实际生效的策略与后端（`sandbox: policy=… backend=… available=…`），`required` 不可用会以 ERROR 打出修复命令，`SANDBOX_STRICT_BOOT=1` 则直接拒绝启动；运行期可用 `GET /sandbox/status` 查询同一份状态。
 
 `parse_policy` 先去空白、再大小写不敏感匹配，未知取值抛 `ValueError`：安全配置写错了必须大声失败，绝不静默回退。`read_policy()` **每次**调用都执行 `os.getenv`（不做导入期缓存），运行期修改变量立即生效。
 
@@ -58,7 +61,7 @@
 `SandboxBackend` 是所有后端实现的 ABC：
 
 - `probe() -> bool`：绝不抛异常；后端自己捕获探测异常并返回 `False`。
-- `wrap(cmd, env) -> (argv, env)`：返回包装后的 argv 与 env，以 list 形式直接 exec（不经 shell）。
+- `wrap(cmd, env, writable_roots) -> (argv, env)`：返回包装后的 argv 与 env，以 list 形式直接 exec（不经 shell）。`writable_roots` 是该命令**唯一**的可写面（即调用会话的项目目录；共享归一化函数会追加 `TEMP_DIR`，因为沙箱自身需要可写临时目录）。该参数**必填**，空列表抛 `ValueError` —— 给它默认值会让任何忘记传参的调用点悄悄退回「整个 `ROOT_DIR` 可写」，而那正是本契约要堵死的写绕过。
 
 `get_backend(policy)` 的分发逻辑：
 
@@ -70,7 +73,8 @@
 
 `SafeShellTool`（名称 `terminal`）与 `TimedPythonREPLTool`（名称 `python_repl`）都在 LLM 可见的工具调用 schema 中暴露 `sandbox: bool = True` 参数，由模型逐次调用时选择。PTC 的 `ExecuteCodeTool`（名称 `execute_code`）完全没有 `sandbox` 参数——它仅归 executor，且始终请求沙箱。
 
-- **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env)`（语义上等价于 POSIX `shell=True`），python_repl 走 `backend.wrap([sys.executable, "-c", script], env)`，PTC 子进程走 `backend.wrap([sys.executable, script_path], env)`。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。
+- **沙箱路径**：terminal 走 `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)`（语义上等价于 POSIX `shell=True`），python_repl 与 PTC 子进程同理。包装后的 argv 以 list 形式 exec，完全不带 shell 参数。`roots` 来自**会话的项目目录**（`current_project_dir(session_id)` / PTC 子进程的 cwd）—— 与命令的 cwd 同源，因此可写面与工作目录永不打架；绑定在仓库之外的项目目录可写（此前是 EROFS），而仓库本身不可写（此前可写，那正是 terminal 绕过外部路径门禁的通道）。
+- **裸跑会被记录**：证据账本里的命令行携带 `sandboxed: false`，而沙箱绕过审批卡片会标注 `⚠ UNSANDBOXED` 并说明含义 —— 人工审批时看得到，事后审计也查得到。
 - **回退路径（Windows / 无后端）**：terminal 用 `" && "` 拼接命令并以 `shell=True` 启动；python_repl 以 list 形式启动 `[sys.executable, "-c", script]`。Windows **没有**操作系统沙箱后端。
 - **所有路径都无条件执行**：`env=scrub_env()` 与 `cwd=str(ROOT_DIR)`（cwd 钳制）。两个工具都强制 30 秒超时（`TERMINAL_TIMEOUT`、`PYTHON_REPL_TIMEOUT`），超时即杀死子进程；PTC 强制执行自己的 `ptc_timeout_seconds` 并对子进程组发 SIGKILL。
 - **错误呈现**：`REQUIRED` 且无后端时，terminal 把 `RuntimeError` 包成 `ToolException`（经 `handle_tool_error=True` 原样呈现）；python_repl 直接抛出原始 `RuntimeError`；PTC 在派生子进程之前返回 `status: "sandbox_unavailable"` 信封。
@@ -79,6 +83,8 @@
   - `terminal: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed shell execution`
   - `python_repl: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
   - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
+
+  裸跑会被记录：该命令的证据账本行携带 `sandboxed: false`，而沙箱绕过审批卡片会把请求标注为 `⚠ UNSANDBOXED` 并写明含义。于是这个事实在两个方向上都留痕 —— 审批的人看得到，事后审计账本也查得到。
 
 ## 🛠️ 配置与使用
 
@@ -90,6 +96,25 @@ SANDBOX_POLICY=auto      # required | auto | off（大小写不敏感，默认�
 ```
 
 非法取值在首次使用时抛 `ValueError`，而不是静默使用默认值。该变量在每次工具调用时重新读取，可以运行期切换。
+
+### `SANDBOX_STRICT_BOOT`
+
+```bash
+# .env 或 shell 环境
+SANDBOX_STRICT_BOOT=1    # SANDBOX_POLICY=required 未满足时拒绝启动
+```
+
+默认（未设置）只告警，让没有可用沙箱的开发机仍能启动。
+
+### `SANDBOX_READ_ALLOWLIST` / `SANDBOX_READ_EXTRA`
+
+```bash
+# .env 或 shell 环境
+SANDBOX_READ_ALLOWLIST=1              # 默认关闭：先跑 scripts/sandbox_smoke.py
+SANDBOX_READ_EXTRA="~/.cache:~/.local/share"
+```
+
+开启后，读面不再是「整个文件系统只读挂载」：沙箱只挂载系统目录（`/usr`、`/bin`、`/lib`、`/etc` …）、解析出的 `writable_roots` 与 `SANDBOX_READ_EXTRA`（默认 `~/.cache`，npm/pip/uv 缓存所在），并用空视图盖掉 `/home` `/root` `/mnt` `/media` `/srv` `/run`（bwrap），或在 Seatbelt 里改为默认拒绝读取、只重开上述路径。**默认关闭**，因为两个后端都从未在「沙箱真能运行」的机器上验证过：请先在目标主机上执行 `uv run --no-sync python scripts/sandbox_smoke.py`（它会探测写面、读面，并在 `SANDBOX_READ_ALLOWLIST=1` 时验证未列入白名单的读取会失败）。不开白名单时，沙箱内仍可读取任意用户文件（只有 5 个凭据路径与 `.env` 文件被遮蔽）。
 
 ### `SHERRY_DENY_READ_PATHS`
 
@@ -137,6 +162,7 @@ SHERRY_DENY_READ_PATHS="~/.kube:~/.config/gcloud"
 - **敏感文件正则是缓解，不是屏障。** 它只匹配字面命令形态；`dd`、`sed`、`python -c "open(…)"`、`$(< file)`、变量与通配符都能绕过。后端存在时，真正的读屏障是操作系统读遮蔽。
 - **`python_repl` 没有对应的敏感文件正则。** terminal 专属门禁（[隔离 §3](isolation/README.zh.md#3-危险命令拦截仅-terminal)）不覆盖它；它的包装脚本则限制内建（安全子集省略了 `open` / `__import__`）——这是一道不同且更窄的控制。
 - **PTC 继承同一套后端的局限。** `execute_code` 现在会在后端可用时用 L2 后端包装子进程，但在 `SANDBOX_POLICY=auto`（默认）且无可用后端的主机上，仍会在一条警告后无沙箱运行；而且 bwrap 构造使用的 `--unshare-all` 同时隔离网络命名空间——在真实 bwrap 下 loopback RPC 桥是否仍可达尚未验证。PTC 的一次性 RPC token 及其 `/proc/<pid>/environ` 残余见 [PTC 页](../ptc/README.zh.md)。
-- **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行。这是"可用性优先于严格性"的有意取舍；需要相反语义请选 `SANDBOX_POLICY=required`。
+- **降级路径按设计就是无沙箱执行。** `auto` + 无后端 = 记录一条警告，然后照常无沙箱运行（证据账本记为 `sandboxed: false`，启动日志也会点名）。这是"可用性优先于严格性"的有意取舍；出厂默认已改为 `required`，并且 `SANDBOX_STRICT_BOOT=1` 会直接拒绝启动。
+- **命令路径筛查是缓解层，不是屏障。** 它只拒绝**字面点名**硬拒路径（凭据/系统文件、YOLO 拒绝名单）的命令，其余一律交给沙箱；`base64 -d | sh`、用碎片拼出的变量、以及 `cd` + 相对路径都天然绕过它。真正的边界是 OS 沙箱。
 - **环境变量清洗只看名字。** 存放在不含任何被拦截子串名字下（也不在拒绝名单里）的密钥会原样通过。没有值扫描，也没有动态密钥检测，这是有意为之。
 - **不宣称、也未配置任何网络隔离、seccomp 或 AppArmor profile。** 隔离能力就是 [隔离 §2](isolation/README.zh.md#2-操作系统原生沙箱后端l2) 展示的 bwrap / Seatbelt 构造，仅此而已。

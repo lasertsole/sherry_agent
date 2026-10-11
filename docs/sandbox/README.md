@@ -27,6 +27,7 @@ Source of truth: `agent/tools/pub_base/env_scrub.py`, `agent/tools/pub_base/sand
 | **Filesystem writes** | Child writes anywhere the agent user can write | L2 OS sandbox (Linux / macOS) |
 | **Filesystem reads** | Child reads `~/.ssh`, `.env`, credential stores | L2 read-shield (sensitive-path masking, Linux / macOS) + sensitive-file regex (terminal) |
 | **File-tool path arguments** | A tool call asks `read_file` for a traversal or hard-denied path | §5 external-path gate + §6 structural gates + §7 `PathGuard` (external paths still go through HITL) |
+| **Shell command arguments** | `terminal(commands=…)` / `python_repl(query=…)` name a credential file — those arguments are not paths, so the path gate never sees them | §7 `PathGuard`'s command screen (hard-deny floor only; every other external path is the OS sandbox's business) |
 | **Process / session scope** | Child shares namespaces and survives the parent | L2 `--unshare-all`, `--die-with-parent` |
 | **Deliberate bypass** | Model asks for `sandbox=False` | Human approval gate (HITL) — skipped by a session in `full_access` |
 | **Programmatic tool calls (PTC)** | A generated `execute_code` child script calls real tools and could reach the filesystem directly | L1 env scrub + L2 OS sandbox wrap (same backend as `terminal` / `python_repl`) + restricted builtins + import allowlist |
@@ -47,9 +48,11 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
 
 | Value | Meaning |
 | :---- | :------ |
-| `required` | Backend unavailable ⇒ reject the command, never run unsandboxed |
-| `auto` (default) | Backend unavailable ⇒ degrade to unsandboxed with one warning |
+| `required` (shipped default) | Backend unavailable ⇒ reject the command, never run unsandboxed |
+| `auto` | Backend unavailable ⇒ degrade to unsandboxed with one warning (a bare run, recorded in the ledger) |
 | `off` | Sandboxing disabled entirely |
+
+The unset-env fallback inside `read_policy()` is still `auto` (a running install keeps whatever it configured); the value shipped in `.env.example` is `required`, because `auto` silently turns every shell command into an unsandboxed one on a host where the backend cannot run — measured, not hypothetical: a kernel without user namespaces (Ubuntu 24.04's default AppArmor policy, or a PRoot/container host) leaves a `bwrap` binary present but non-functional. At boot the effective policy and backend are logged (`sandbox: policy=… backend=… available=…`), an unusable `required` logs an ERROR with the fix commands, and `SANDBOX_STRICT_BOOT=1` turns that into a refused start. `GET /sandbox/status` reports the same dict at runtime.
 
 `parse_policy` strips whitespace, matches case-insensitively, and raises `ValueError` on unknown values: a mistyped safety setting must fail loudly, never fall back silently. `read_policy()` calls `os.getenv` on **every** invocation (no import-time caching), so runtime changes take effect immediately.
 
@@ -58,7 +61,7 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
 `SandboxBackend` is the ABC every backend implements:
 
 - `probe() -> bool`: must never raise; backends catch their own probe exceptions and return `False`.
-- `wrap(cmd, env) -> (argv, env)`: returns the wrapped argv plus env, to be exec'd directly in list form (no shell).
+- `wrap(cmd, env, writable_roots) -> (argv, env)`: returns the wrapped argv plus env, to be exec'd directly in list form (no shell). `writable_roots` is the ONLY write surface the command gets (the calling session's project directory; `TEMP_DIR` is appended by the shared normalizer because the sandbox needs a writable temp). The parameter is required and an empty list raises `ValueError` — a default would silently restore the old "the whole `ROOT_DIR` is writable" behaviour at any call site that forgot it, which is the write bypass this contract closes.
 
 `get_backend(policy)` dispatches:
 
@@ -70,7 +73,7 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
 
 `SafeShellTool` (name `terminal`) and `TimedPythonREPLTool` (name `python_repl`) both expose a `sandbox: bool = True` parameter in their LLM-visible tool-call schema, so the model chooses per call. PTC's `ExecuteCodeTool` (name `execute_code`) has no `sandbox` parameter at all — it is executor-only and always requests the sandbox.
 
-- **Sandboxed path**: `backend.wrap(["/bin/sh", "-c", cmd_str], env)` for terminal (semantically identical to POSIX `shell=True`), `backend.wrap([sys.executable, "-c", script], env)` for python_repl, and `backend.wrap([sys.executable, script_path], env)` for the PTC child. The wrapped argv is exec'd as a list, with no shell kwarg at all.
+- **Sandboxed path**: `backend.wrap(["/bin/sh", "-c", cmd_str], env, roots)` for terminal (semantically identical to POSIX `shell=True`), the same for python_repl's interpreter argv, and for the PTC child. The wrapped argv is exec'd as a list, with no shell kwarg at all. `roots` is the session's project directory (`current_project_dir(session_id)` / the PTC child's cwd) — the same value the command's cwd comes from, so the write surface and the working directory can never disagree, and a project bound OUTSIDE the checkout is writable (it used to be EROFS) while the checkout itself is not (it used to be, which made terminal a way around the external-path gate).
 - **Fallback path (Windows / no backend)**: terminal joins commands with `" && "` and spawns with `shell=True`; python_repl spawns `[sys.executable, "-c", script]` as a list. Windows has **no** OS-sandbox backend.
 - **Unconditional on every path**: `env=scrub_env()` and `cwd=str(ROOT_DIR)` (cwd clamp). Both tools enforce a 30-second timeout (`TERMINAL_TIMEOUT`, `PYTHON_REPL_TIMEOUT`) and kill the child on expiry; PTC enforces its own `ptc_timeout_seconds` and SIGKILLs the child's process group.
 - **Error surfacing**: with `REQUIRED` and no backend, terminal wraps the `RuntimeError` into a `ToolException` (surfaced verbatim by `handle_tool_error=True`); python_repl surfaces the raw `RuntimeError`; PTC returns a `status: "sandbox_unavailable"` envelope before spawning anything.
@@ -79,6 +82,8 @@ Three states parsed from the `SANDBOX_POLICY` environment variable:
   - `terminal: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed shell execution`
   - `python_repl: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
   - `execute_code: sandbox requested but no backend available (policy=auto) — degrading to unsandboxed execution`
+
+  A bare run is recorded: the command's evidence-ledger row carries `sandboxed: false`, and the sandbox-bypass approval card marks the request `⚠ UNSANDBOXED` with what it means. So the fact is durable in both directions — the human approving a bypass reads it, and an audit of the ledger finds it.
 
 ## 🛠️ Configuration & Usage
 
@@ -90,6 +95,25 @@ SANDBOX_POLICY=auto      # required | auto | off (case-insensitive, default: aut
 ```
 
 Invalid values raise a `ValueError` at first use instead of silently using the default. The variable is re-read on every tool call, so you can flip it at runtime.
+
+### `SANDBOX_STRICT_BOOT`
+
+```bash
+# .env or shell environment
+SANDBOX_STRICT_BOOT=1    # refuse to start when SANDBOX_POLICY=required is unmet
+```
+
+Default (unset) warns instead, so a development host without a working sandbox still starts.
+
+### `SANDBOX_READ_ALLOWLIST` / `SANDBOX_READ_EXTRA`
+
+```bash
+# .env or shell environment
+SANDBOX_READ_ALLOWLIST=1              # default OFF: see scripts/sandbox_smoke.py
+SANDBOX_READ_EXTRA="~/.cache:~/.local/share"
+```
+
+With the allowlist ON, the read surface stops being "the whole filesystem read-only": the sandbox mounts only the system trees (`/usr`, `/bin`, `/lib`, `/etc`, …), the resolved `writable_roots`, and `SANDBOX_READ_EXTRA` (default `~/.cache`, where the npm/pip/uv caches live), then masks `/home` `/root` `/mnt` `/media` `/srv` `/run` with empty views (bwrap) or denies reads by default and re-opens exactly those paths (Seatbelt). It is OFF by default because neither backend was ever verified on a machine with a working sandbox: run `uv run --no-sync python scripts/sandbox_smoke.py` on your host first — it probes the write surface, the read surface and (with `SANDBOX_READ_ALLOWLIST=1`) that a non-whitelisted read fails. Without it, reading any user file stays possible inside the sandbox (only the five credential paths and `.env` files are shielded).
 
 ### `SHERRY_DENY_READ_PATHS`
 
@@ -137,6 +161,7 @@ Matrix tests patch `subprocess.Popen` globally, stub `get_backend` at the tool-m
 - **The sensitive-file regex is a mitigation, not a barrier.** It matches literal command shapes; `dd`, `sed`, `python -c "open(…)"`, `$(< file)`, variables, and globs bypass it by design of the layer. The OS read-shield is the actual read barrier where a backend exists.
 - **`python_repl` has no sensitive-file regex.** The terminal-only gates ([Isolation §3](isolation/README.md#3-dangerous-command-gate-terminal-only)) do not cover it; its wrapper script instead restricts builtins (the safe subset omits `open` / `__import__`) — a different, narrower control.
 - **PTC inherits the same backend caveats.** `execute_code` now wraps its child with the L2 backend whenever one is usable, but under `SANDBOX_POLICY=auto` (the default) a host without a usable backend runs the child unsandboxed after one warning, and the bwrap construction's `--unshare-all` also unshares the network namespace — whether the loopback RPC bridge stays reachable under a real bwrap is unverified. PTC's one-time RPC token and its `/proc/<pid>/environ` residual are documented on the [PTC page](../ptc/README.md).
-- **The degrade path executes unsandboxed by design.** `auto` + no backend = one logged warning, then a normal unsandboxed run. That is intentional availability-over-strictness; pick `SANDBOX_POLICY=required` if you need the opposite.
+- **The degrade path executes unsandboxed by design.** `auto` + no backend = one logged warning, then a normal unsandboxed run (recorded as `sandboxed: false` in the evidence ledger, and named in the boot log). That is intentional availability-over-strictness; the shipped default is now `required`, and `SANDBOX_STRICT_BOOT=1` additionally refuses to start.
+- **The command-path screen is a mitigation, not a barrier.** It refuses a command that literally names a hard-denied path (credential/system files, the YOLO deny list) and lets everything else through to the sandbox; `base64 -d | sh`, variable indirection built from pieces, and `cd` + relative paths all evade it by construction. The OS sandbox is the boundary.
 - **Env scrubbing is name-based.** A secret stored under a name without any blocked substring (and not on the deny list) passes through. There is no value scanning or dynamic secret detection, and that is deliberate.
 - **No network sandboxing, seccomp, or AppArmor profiles are claimed or configured.** Isolation comes from the bwrap / Seatbelt constructions exactly as shown in [Isolation §2](isolation/README.md#2-os-native-sandbox-backends-l2), nothing more.

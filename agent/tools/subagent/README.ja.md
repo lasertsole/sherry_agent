@@ -290,6 +290,13 @@ Registry はシステム全体の状態ハブであり、すべての子エー�
                 │     └── fire_delivery_target_hook() — 最初に非 None を
                 │         返したフックがターゲットセッションキーを差し替え
                 │
+                ├── 4a. TaskFlow 自動 resume：この子をフローのステップが
+                │     派遣した場合（child_session_key 一致）、通知の前に
+                │     結果を注入。フロー側の auto_dispatch が解錠された
+                │     wave を起動するため、AI は例外（judge BLOCK / 失敗 /
+                │     終盤）の監督に回る。失敗開放：フロー無し／resume 失敗
+                │     なら従来動作（AI が手動 resume）。
+                │
                 ├── 4. IN_PROGRESS にマーク → run_announce_dispatch()
                 │     ├── 成功 → DELIVERED にマーク + 冪等キーを記録
                 │     ├── 一時的失敗 → announce_retry_max(3) 回までリトライ、

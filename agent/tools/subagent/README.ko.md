@@ -289,6 +289,12 @@ Registry는 시스템 전체의 상태 허브로, 모든 자식 에이전트 런
                 │     └── fire_delivery_target_hook() — None이 아닌 값을
                 │         처음 반환한 훅이 타깃 세션 키를 교체
                 │
+                ├── 4a. TaskFlow 자동 resume: 이 자식을 플로우의 단계가
+                │     디스패치했다면(child_session_key 일치) 알림 전에 결과를
+                │     주입합니다 — 플로우의 auto_dispatch가 해제된 wave를
+                │     시작하므로 AI는 예외(judge BLOCK / 실패 / 마무리)만
+                │     감독합니다. 실패 개방: 플로우 없음/실패 시 기존 동작.
+                │
                 ├── 4. IN_PROGRESS로 마킹 → run_announce_dispatch()
                 │     ├── 성공 → DELIVERED로 마킹 + 멱등 키 기록
                 │     ├── 일시적 실패 → announce_retry_max(3)회까지 재시도,
