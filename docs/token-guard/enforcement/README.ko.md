@@ -15,7 +15,7 @@
 | 1 | `server/__main__.py` 부팅 게이트 | `logger.critical("STARTUP ABORTED: ...")` 후 `SystemExit(1)` | 프로세스 종료, 아무것도 서비스하지 않음 |
 | 2 | `agent/core.py::built_agent()` | `TokenGuardError`가 호출자에게 전파(WebSocket 에러 청크) | 해당 턴의 그래프가 빌드되지 않음 |
 | 3 | `agent/tools/subagent/spawn/core.py` 스폰 | `TokenGuardError`가 스폰 호출 밖으로 전파 | 자식 에이전트가 결코 구성되지 않음 |
-| 4 | `server/service/env.py::write_env_file()` | 파일을 건드리기 전에 `ValueError` | 저장 거부, `.env` 불변 |
+| 4 | `server/service/models_config.py::write_models_config()` | 파일을 건드리기 전에 `ValueError` | 저장 거부, `.models` 불변 |
 
 ### 1. 서버 부팅 게이트
 
@@ -75,20 +75,21 @@ assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 ```
 
-### 4. 환경 쓰기 게이트
+### 4. 설정 쓰기 게이트
 
-`server/service/env.py`(`write_env_file()`, 게이트는 154행)는 UI에서 128K 미만 값을 영속화할 수 없게 만듭니다. 비정수 또는 하한 미만 값은 `.env`를 건드리기 전에 `ValueError`를 던지므로, 백업과 쓰기가 모두 깨끗하게 유지됩니다:
+`server/service/models_config.py`(`write_models_config()`)는 UI에서 128K 미만 값을 영속화할 수 없게 만듭니다. 모델 키는 이제 `.models`에 있고(`PUT /env`는 거부합니다), 게이트가 형 변환보다 먼저 실행되므로 비정수 또는 하한 미만 값은 파일을 건드리기 전에 `ValueError`를 던져 백업과 쓰기가 모두 깨끗하게 유지됩니다:
 
 ```python
-if key in TOKEN_KEYS:
+for key, value in changes.items():
+    if key not in TOKEN_KEYS:
+        continue
     try:
         num = int(value)
-    except ValueError:
-        raise ValueError(f"{key} must be an integer, got: {value}")
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
-            f"Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
         )
 ```
 
@@ -185,6 +186,6 @@ for (const [key, value] of Object.entries(changes)) {
 | 키 | 위치 | 용도 |
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | toast 제목 |
-| `chat.tokenGuard.detail` | 같은 로케일 파일 | toast 본문(시스템 설정 → 환경 설정을 가리킴) |
+| `chat.tokenGuard.detail` | 같은 로케일 파일 | toast 본문(시스템 설정 → 모델 설정을 가리킴) |
 | `config.env.maxTokenHint` | `ConfigPanel.vue`의 `<i18n>` 블록 | 호박색 배너 문구 |
 | `config.env.maxTokenError` | `ConfigPanel.vue`의 `<i18n>` 블록 | 저장 전 거부 메시지. `{key}`가 문제 변수명으로 보간됨 |

@@ -150,7 +150,7 @@ export async function writeNetworkConfig(changes: Record<string, string>): Promi
   return putGroupedConfig('/network-config', changes);
 }
 
-/** Result of one connectivity probe (the 环境配置 panels' 测试 button). */
+/** Result of one connectivity probe (the 模型配置 panels' 测试 button). */
 export interface ModelTestResult {
   /** Whether this group can be probed at all (media groups cannot). */
   supported: boolean;

@@ -130,7 +130,7 @@ client/
 │   │           ├── ProgressFloat.vue          # 채팅 위의 계획 진행 패널(todo + TaskFlow wave, 기본은 알약으로 접힘·항상 표시, taskflow_updated로 실시간 갱신)
 │   │           ├── ThinkingToggle.vue         # 세션별 사고 컨트롤(토글 또는 低/高/最高 픽커, 다음 턴부터 적용)
 │   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
-│   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(환경 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
+│   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(모델 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
 │   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
 │   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 방패 트리거(변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
@@ -149,7 +149,7 @@ client/
 │   │           ├── ModeSwitch.vue             # 다크/라이트 전환(PrimeVue ToggleSwitch)
 │   │           ├── ExtendPanel.vue            # 「확장」탭(채널 / MCP)
 │   │           ├── ConfigPanel.vue            # 시스템 설정 탭(모델 설정 편집기 — .models / .network / .env를 한 탭으로 통합 — 배경, 언어 등)
-│   │           ├── LlmModelManager.vue        # 환경 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .models에 쓰지 않음)
+│   │           ├── LlmModelManager.vue        # 모델 설정 모델 프로필(그룹별 패널, 목록 / 편집 / 추가; 새 프로필은 기본값 없음, 연결 테스트는 POST /model/test로 시도하며 .models에 쓰지 않음)
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 내 단일 모델 프로필 행(선택 / 편집 / 삭제)
 │   │           ├── PersonaPanel.vue           # 시스템 프롬프트 페르소나 편집기——「프리셋과 역할」(역할 설정 / 운영 지침 / 인격·영혼 / 사용자 정보 / 도구 / 미들웨어 / 에이전트 모델 / 스킬 + 프리셋 관리)
 │   │           ├── SessionPresetButton.vue    # 상단 바 보기 전용 진입점: 현재 세션의 프리셋 탭 열기
@@ -186,7 +186,7 @@ client/
 │   │   ├── context-usage.ts    # 세션별 컨텍스트 계정(윈도 / 보고된 프롬프트 / 구성)
 │   │   ├── running-commands.ts # 세션에서 실행 중인 백그라운드 명령(실행 중 도구 행이며 세션이 생성 중일 때만)
 │   │   ├── access-mode.ts      # 세션별 접근 모드(변경 전 확인 / 자동 편집 / 전체 접근, 백엔드와 동기화)
-│   │   ├── llm-profiles.ts     # 환경 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
+│   │   ├── llm-profiles.ts     # 모델 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
 │   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast; 소켓 끊김은 '백엔드 도달 불가'로 표시(offline 힌트는 WS 판정이 없을 때만), 미로그인 상태에서는 침묵
 │   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도 / 회전 거부 시 markSessionLost)
 │   │   ├── project-directory.ts # 세션별 프로젝트 디렉터리(바인딩 / 보류된 선택 / 적용 루트)

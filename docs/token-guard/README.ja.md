@@ -101,7 +101,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 ### 不適合な設定を直す
 
-1. リポジトリルートの `.env` を開くか、UI の システム設定 → 環境設定 タブを使います。
+1. リポジトリルートの `.models` を開くか、UI の システム設定 → モデル設定 タブを使います。
 2. 両方のキーを `>= 131072` にします:
 
 ```bash
@@ -111,7 +111,7 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 
 3. 起動ゲートを再実行するためバックエンドを再起動します。同梱の `.models.example` では両方ともすでに `131072` です。
 
-> ローカルの `.env` がまだ `100000` の場合、サーバーは `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked` とともに起動を拒否します。起動前に `>= 131072` へ引き上げてください。
+> ローカルの `.models` がまだ `100000` の場合、サーバーは `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked` とともに起動を拒否します。起動前に `>= 131072` へ引き上げてください。
 
 ### 症状、原因、対処
 

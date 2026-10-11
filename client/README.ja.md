@@ -130,7 +130,7 @@ client/
 │   │           ├── ProgressFloat.vue          # チャット上の計画進捗パネル（todo + TaskFlow wave、既定はピルに折りたたみ・常時表示、taskflow_updated でライブ更新）
 │   │           ├── ThinkingToggle.vue         # セッション単位の思考コントロール（トグルまたは 低/高/最高 ピッカー、次ターンから有効）
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
-│   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（環境設定 MAIN_LLM プロファイル、次ターンから有効）
+│   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（モデル設定 MAIN_LLM プロファイル、次ターンから有効）
 │   │           ├── MediaMenu.vue              # 入力ツールバーの＋グリフのメディア ドロップダウン（画像 / 音声 / 動画）
 │   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：シールドのトリガー（変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
@@ -149,7 +149,7 @@ client/
 │   │           ├── ModeSwitch.vue             # ダーク/ライト切替（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「拡張」タブ（チャンネル / MCP）
 │   │           ├── ConfigPanel.vue            # システム設定タブ（モデル設定エディタ——.models / .network / .env を 1 タブに統合——背景、言語など）
-│   │           ├── LlmModelManager.vue        # 環境設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .models には書き込みません）
+│   │           ├── LlmModelManager.vue        # モデル設定のモデルプロファイル（グループ別パネル、一覧 / 編集 / 追加。新しいプロファイルは既定値なし、「接続テスト」は POST /model/test で試行し .models には書き込みません）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 内の 1 件のモデルプロファイル行（選択 / 編集 / 削除）
 │   │           ├── PersonaPanel.vue           # システムプロンプト人設エディタ——「プリセットと役割」（役割設定 / 操作指示 / 人格・魂 / ユーザー情報 / ツール / ミドルウェア / エージェント モデル / スキル + プリセット管理）
 │   │           ├── SessionPresetButton.vue    # トップバーの閲覧専用入口：現在のセッションのプリセットタブを開く
@@ -186,7 +186,7 @@ client/
 │   │   ├── context-usage.ts    # セッション単位のコンテキスト計量（ウィンドウ / 報告されたプロンプト / 内訳）
 │   │   ├── running-commands.ts # セッションで実行中のバックグラウンド コマンド（実行中のツール行、かつセッションが生成中のときのみ）
 │   │   ├── access-mode.ts      # セッション単位のアクセス モード（変更前に確認 / 自動編集 / フルアクセス、バックエンドと同期）
-│   │   ├── llm-profiles.ts     # 環境設定（MAIN_LLM グループ）のモデルプロファイル、ピッカー用
+│   │   ├── llm-profiles.ts     # モデル設定（MAIN_LLM グループ）のモデルプロファイル、ピッカー用
 │   │   ├── connection.ts       # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast；ソケット切断は「バックエンド到達不可」として表示（offline ヒントは WS の判定が無いときだけ）、未ログイン時は沈黙
 │   │   ├── auth.ts             # ログインセッション状態（status / user / 401 で一度だけ更新して再送 / ローテーション拒否時は markSessionLost）
 │   │   ├── project-directory.ts # セッションごとのプロジェクトディレクトリ（バインド / 保留中の選択 / 実効ルート）

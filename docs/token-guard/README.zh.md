@@ -101,7 +101,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 ### 修复不达标的配置
 
-1. 打开仓库根目录的 `.env`，或使用 UI 的 系统配置 然后 环境配置 标签。
+1. 打开仓库根目录的 `.models`，或使用 UI 的 系统配置 → 模型配置 标签。
 2. 把两个键都设为 `>= 131072`：
 
 ```bash

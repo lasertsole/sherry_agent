@@ -15,7 +15,7 @@
 | 1 | `server/__main__.py` 启动闸门 | `logger.critical("STARTUP ABORTED: ...")` 后 `SystemExit(1)` | 进程退出，不对外服务 |
 | 2 | `agent/core.py::built_agent()` | `TokenGuardError` 传播给调用方（WebSocket error chunk） | 该回合不构建图 |
 | 3 | `agent/tools/subagent/spawn/core.py` 派生 | `TokenGuardError` 从 spawn 调用向外传播 | 子 Agent 永不构造 |
-| 4 | `server/service/env.py::write_env_file()` | 在触碰文件之前抛出 `ValueError` | 保存被拒，`.env` 不变 |
+| 4 | `server/service/models_config.py::write_models_config()` | 在触碰文件之前抛出 `ValueError` | 保存被拒，`.models` 不变 |
 
 ### 1. 服务启动闸门
 
@@ -75,20 +75,21 @@ assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 ```
 
-### 4. 环境写入闸门
+### 4. 配置写入闸门
 
-`server/service/env.py`（`write_env_file()`，闸门在第 154 行）让 UI 无法持久化低于 128K 的值。非整数或低于下限的值会在触碰 `.env` 之前抛出 `ValueError`，因此备份与写入都保持干净：
+`server/service/models_config.py`（`write_models_config()`）让 UI 无法持久化低于 128K 的值。模型键现在住在 `.models`（`PUT /env` 直接拒绝它们），且闸门先于类型转换执行，因此非整数或低于下限的值会在触碰文件之前抛出 `ValueError`，备份与写入都保持干净：
 
 ```python
-if key in TOKEN_KEYS:
+for key, value in changes.items():
+    if key not in TOKEN_KEYS:
+        continue
     try:
         num = int(value)
-    except ValueError:
-        raise ValueError(f"{key} must be an integer, got: {value}")
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
-            f"Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
         )
 ```
 
@@ -185,6 +186,6 @@ for (const [key, value] of Object.entries(changes)) {
 | 键 | 位置 | 用途 |
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | Toast 标题 |
-| `chat.tokenGuard.detail` | 同上语言文件 | Toast 正文（指向 系统配置 然后 环境配置） |
+| `chat.tokenGuard.detail` | 同上语言文件 | Toast 正文（指向 系统配置 → 模型配置） |
 | `config.env.maxTokenHint` | `ConfigPanel.vue` 的 `<i18n>` 块 | 琥珀色横幅文案 |
 | `config.env.maxTokenError` | `ConfigPanel.vue` 的 `<i18n>` 块 | 保存前拒绝消息；`{key}` 插值出问题变量名 |

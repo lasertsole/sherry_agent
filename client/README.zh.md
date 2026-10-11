@@ -130,7 +130,7 @@ client/
 │   │           ├── ProgressFloat.vue          # 会话上方的计划进度悬浮框（todo + TaskFlow wave，默认折叠成胶囊、恒常显示，经 taskflow_updated 实时刷新）
 │   │           ├── ThinkingToggle.vue         # 会话级思考开关（开关或 低/高/最高 选择器，下一轮生效）
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
-│   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（环境配置 MAIN_LLM 档案，下一轮生效）
+│   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
 │   │           ├── AccessModePicker.vue       # 工具栏访问模式：盾牌触发（变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
@@ -149,7 +149,7 @@ client/
 │   │           ├── ModeSwitch.vue             # 深色/浅色切换（PrimeVue ToggleSwitch）
 │   │           ├── ExtendPanel.vue            # 「扩展」标签页（通道 / MCP）
 │   │           ├── ConfigPanel.vue            # 系统配置标签页（模型配置编辑——把 .models / .network / .env 合并成一个页签——背景、语言等）
-│   │           ├── LlmModelManager.vue        # 环境配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
+│   │           ├── LlmModelManager.vue        # 模型配置的模型档案（分组面板、列表 / 编辑 / 新增；新增档案不含任何默认值，「测试连通性」经 POST /model/test 试调且不写 .models）
 │   │           ├── LlmProfileRow.vue          # LlmModelManager 中的单条模型档案行（选择 / 编辑 / 删除）
 │   │           ├── PersonaPanel.vue           # 系统提示词人设编辑面板——「预设角色」（角色配置 / 运行守则 / 人格灵魂 / 用户信息 / 工具 / 中间件 / 代理模型 / 技能 + 预设管理）
 │   │           ├── SessionPresetButton.vue    # 顶栏只读入口：打开当前会话的预设标签页
@@ -186,7 +186,7 @@ client/
 │   │   ├── context-usage.ts    # 会话级上下文计量（窗口 / 上报的提示词大小 / 各部分）
 │   │   ├── running-commands.ts # 会话内运行中的后台命令（运行中的工具行，且仅当会话正在生成时）
 │   │   ├── access-mode.ts      # 会话级访问模式（变更前确认 / 自动编辑 / 完全访问，与后端同步）
-│   │   ├── llm-profiles.ts     # 环境配置（MAIN_LLM 分组）的模型档案，供选择器使用
+│   │   ├── llm-profiles.ts     # 模型配置（MAIN_LLM 分组）的模型档案，供选择器使用
 │   │   ├── connection.ts       # 后端连通性（isOnline / backendStatus）+ 去重 Toast；socket 断开按「后端不可用」呈现（offline 提示只在没有 WS 结论时兜底），未登录时保持沉默
 │   │   ├── auth.ts             # 登录会话状态（status / user / 401 单次续期重放 / 轮换被拒时 markSessionLost）
 │   │   ├── project-directory.ts # 每会话项目目录（绑定 / 续延选择 / 生效根）

@@ -190,7 +190,7 @@ lines are:
 | ``Potential security threat detected: <id>`` | The injection scanner fired on tool output |
 | sandbox / denial lines | A tool call was refused by a deny rule |
 
-**If you suspect a leak.** Rotate the credential first (环境配置 / ``.env``), then
+**If you suspect a leak.** Rotate the credential first (模型配置 / ``.models`` / ``.network``), then
 search the logs for its prefix — the redaction sentinel tells you a value of that
 shape *was* logged, and MesMemory holds the tool output it came from. A leak that
 never had a recognised shape is exactly what the heuristic cannot rule out; assume

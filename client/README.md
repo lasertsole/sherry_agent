@@ -129,7 +129,7 @@ client/
 │   │           ├── ProgressFloat.vue          # Floating plan-progress panel (todos + TaskFlow waves, collapsed to a pill and always on screen, live via taskflow_updated)
 │   │           ├── ThinkingToggle.vue         # Per-session thinking control (switch or 低/高/最高 picker, effective next turn)
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
-│   │           ├── SessionModelPicker.vue     # Per-session main-model picker (env-config MAIN_LLM profiles, effective next turn)
+│   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
 │   │           ├── AccessModePicker.vue       # Toolbar access mode: shield trigger (confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
@@ -185,7 +185,7 @@ client/
 │   │   ├── context-usage.ts    # Per-session context accounting (window / reported prompt / parts)
 │   │   ├── running-commands.ts # Running background commands of a session (running tool rows, and only while the session is generating)
 │   │   ├── access-mode.ts      # Per-session access mode (confirm changes / auto edit / full access, mirrored from the backend)
-│   │   ├── llm-profiles.ts     # Model profiles from the env config (MAIN_LLM group), for the pickers
+│   │   ├── llm-profiles.ts     # Model profiles from 模型配置 / Model Config (MAIN_LLM group), for the pickers
 │   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts; a dead socket reads as backend unreachable (the offline hint only fills in with no WS verdict) and says nothing while nobody is signed in
 │   │   ├── auth.ts             # Login session state (status / user / 401-refresh-once replay / markSessionLost on a refused rotation)
 │   │   ├── project-directory.ts # Per-session project directory (binding / parked choice / effective root)

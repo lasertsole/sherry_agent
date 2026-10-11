@@ -2,7 +2,7 @@
 
 [**English**](README.md) · [**中文**](README.zh.md) · [**한국어**](README.ko.md) · [**日本語**](README.ja.md)
 
-> How the agent enforces a hard 128K context-window floor on both LLMs: one shared predicate raises at four enforcement points (server boot, graph build, subagent spawn, and `.env` write), the frontend warns before it blocks, and `GET /model-config` exposes the live verdict.
+> How the agent enforces a hard 128K context-window floor on both LLMs: one shared predicate raises at four enforcement points (server boot, graph build, subagent spawn, and the `.models` write), the frontend warns before it blocks, and `GET /model-config` exposes the live verdict.
 
 Source of truth: `config/features/agent_side/token_guard.py`, `server/__main__.py`, `agent/core.py`, `agent/tools/subagent/spawn/core.py`, `server/service/env.py`, `server/trigger/http/model_config.py`, `client/app/composables/model-config.ts`, `client/app/composables/use-chat-stream.ts`, `client/app/pages/home/components/ConfigPanel.vue`, `server/service/models_config.py`, plus `.models`. Every line number and constant in this document was verified against that code.
 
@@ -101,7 +101,7 @@ Consequences worth memorizing:
 
 ### Fix a failing config
 
-1. Open `.env` at the repo root, or use System Config then the Environment tab in the UI.
+1. Open `.models` at the repo root, or use System Config then the 模型配置 (Model Config) tab in the UI.
 2. Set both keys to `>= 131072`:
 
 ```bash
@@ -111,7 +111,7 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 
 3. Restart the backend so the boot gate re-runs. The shipped `.models.example` already has both at `131072`.
 
-> If your local `.env` still holds `100000`, the server refuses to start with `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`. Raise it to `>= 131072` before launching.
+> If your local `.models` still holds `100000`, the server refuses to start with `STARTUP ABORTED: MAIN_LLM_MAX_TOKEN = 100000 is below the minimum 131072 (128K); agent startup is blocked`. Raise it to `>= 131072` before launching.
 
 ### Symptom, cause, fix
 
@@ -119,9 +119,9 @@ AUXILIARY_LLM_MAX_TOKEN = 131072
 | :------ | :---- | :-- |
 | Server exits immediately; log shows `STARTUP ABORTED: ...` | A key is unset or below `131072` | Set both keys to `>= 131072`, then restart |
 | Log shows `AUXILIARY_LLM_MAX_TOKEN = 121072 ...` | Aux key unset, so it fell back to `121072` | Set `AUXILIARY_LLM_MAX_TOKEN` explicitly |
-| WebSocket error chunk instead of a reply | A mid-run env edit dropped a value below the floor | Fix `.env`, then retry the turn |
+| WebSocket error chunk instead of a reply | A mid-run env edit dropped a value below the floor | Fix `.models`, then retry the turn |
 | Save in the env tab shows the maxToken error | Value is non-integer or `< 131072` | Enter an integer `>= 131072` |
-| Send shows the "Model Config Below Minimum" toast | `GET /model-config` reports `valid: false` | Fix `.env`; the cache refreshes after a successful save |
+| Send shows the "Model Config Below Minimum" toast | `GET /model-config` reports `valid: false` | Fix `.models`; the cache refreshes after a successful save |
 
 ## 🧪 Testing
 

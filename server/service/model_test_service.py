@@ -1,6 +1,6 @@
 """Connectivity checks for the env-config model groups (the 测试 button).
 
-The 环境配置 panels let a user type a provider / gateway / key / model for every
+The 模型配置 panels let a user type a provider / gateway / key / model for every
 online model the agent uses. This module answers the one question those fields
 cannot: *does that endpoint actually answer right now* — without writing
 anything to ``.env``, so a profile can be verified BEFORE it is applied.

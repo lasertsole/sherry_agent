@@ -23,6 +23,11 @@
 # Run:  docker run -p 8080:8080 --env-file .env <image>
 # The API binds API_HOST=0.0.0.0 inside the container (env-overridable, see
 # config/__init__.py); port via API_PORT (default 8080).
+# Configuration: the tracked .env holds the non-secret app settings, while the
+# model / network configuration lives in .models / .network (gitignored). Either
+# mount or COPY those two files into /app, or pass the keys as ENVIRONMENT
+# variables — an explicit environment variable outranks the files, so
+# `--env-file` with the model keys keeps working.
 
 FROM python:3.13-slim AS builder
 

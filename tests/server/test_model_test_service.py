@@ -1,4 +1,4 @@
-"""The env-config connectivity probe (the 环境配置 panels' 测试 button).
+"""The model-config connectivity probe (the 模型配置 panels' 测试 button).
 
 The probe must exercise the real clients — that is its whole point — so these
 tests stub only the OUTERMOST seam per path (the chat builder, the HTTP client,

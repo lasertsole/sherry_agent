@@ -1,6 +1,6 @@
 """Task 2 tests: sandbox policy parsing, backend contract and platform dispatch.
 
-Everything here is mocked -- no real probing (no bwrap / sandbox-exec / subprocess)
+Everything here is mocked -- no real sandbox probing (no bwrap / sandbox-exec run)
 is ever executed on this Windows development machine. Platform identity is faked
 via monkeypatched ``platform.system``; backends are stubbed by installing fake
 modules into ``sys.modules`` (this also exercises the lazy-import contract of
@@ -8,6 +8,7 @@ modules into ``sys.modules`` (this also exercises the lazy-import contract of
 """
 
 import platform
+import subprocess
 import sys
 import types
 from pathlib import Path
@@ -274,8 +275,32 @@ def test_get_backend_import_error_required_raises(monkeypatch):
 # --------------------------------------------------------------------------
 
 
+def _shipped_env_text() -> str:
+    """The SHIPPED ``.env``: the committed copy when the working tree is overridden.
+
+    ``.env`` is tracked now, so a developer (or a host without a usable sandbox
+    backend) may legitimately override a value in place. The default this test
+    pins is the one the repo SHIPS, so the committed copy wins when git can
+    produce it; a non-git checkout falls back to the working tree.
+    """
+    try:
+        committed = subprocess.run(
+            ["git", "show", "HEAD:.env"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            check=True,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        committed = ""
+    if committed.strip():
+        return committed
+    return (REPO_ROOT / ".env").read_text(encoding="utf-8")
+
+
 def test_env_contains_sandbox_policy_line():
-    content = (REPO_ROOT / ".env").read_text(encoding="utf-8")
+    content = _shipped_env_text()
     matching = [line for line in content.splitlines() if line.strip().startswith("SANDBOX_POLICY")]
     assert matching, "SANDBOX_POLICY missing from .env"
     line = matching[-1].strip()

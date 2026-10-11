@@ -101,7 +101,7 @@ _aux_val = int(_aux_raw) if _aux_raw else LLM_CLIENT_DEFAULTS["aux_remote_max_to
 
 ### 미달 설정 고치기
 
-1. 리포지토리 루트의 `.env`를 열거나, UI의 시스템 설정 → 환경 설정 탭을 사용합니다.
+1. 리포지토리 루트의 `.models`를 열거나, UI의 시스템 설정 → 모델 설정 탭을 사용합니다.
 2. 두 키를 모두 `>= 131072`로 설정합니다:
 
 ```bash

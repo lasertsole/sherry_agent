@@ -15,7 +15,7 @@ Four gates, one shared predicate. The table is the contract; details follow.
 | 1 | `server/__main__.py` boot gate | `logger.critical("STARTUP ABORTED: ...")` then `SystemExit(1)` | Process exits, nothing serves |
 | 2 | `agent/core.py::built_agent()` | `TokenGuardError` propagates to the caller (a WebSocket error chunk) | Graph not built for that turn |
 | 3 | `agent/tools/subagent/spawn/core.py` spawn | `TokenGuardError` propagates out of the spawn call | Child agent never constructed |
-| 4 | `server/service/env.py::write_env_file()` | `ValueError` before the file is touched | Save rejected, `.env` unchanged |
+| 4 | `server/service/models_config.py::write_models_config()` | `ValueError` before the file is touched | Save rejected, `.models` unchanged |
 
 ### 1. Server boot gate
 
@@ -75,20 +75,21 @@ assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 ```
 
-### 4. Env write gate
+### 4. Config write gate
 
-`server/service/env.py` (`write_env_file()`, gate at line 154) makes it impossible to persist a sub-128K value from the UI. A non-integer or below-floor value raises `ValueError` before the `.env` is touched, so the backup and the write both stay clean:
+`server/service/models_config.py` (`write_models_config()`) makes it impossible to persist a sub-128K value from the UI. The model keys live in `.models` now — `PUT /env` refuses them outright — and the gate below runs BEFORE the coercion loop, so a non-integer or below-floor value raises `ValueError` before the file is touched and the backup and the write both stay clean:
 
 ```python
-if key in TOKEN_KEYS:
+for key, value in changes.items():
+    if key not in TOKEN_KEYS:
+        continue
     try:
         num = int(value)
-    except ValueError:
-        raise ValueError(f"{key} must be an integer, got: {value}")
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
-            f"Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
         )
 ```
 

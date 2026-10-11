@@ -15,7 +15,7 @@
 | 1 | `server/__main__.py` 起動ゲート | `logger.critical("STARTUP ABORTED: ...")` の後 `SystemExit(1)` | プロセス終了、何も提供しない |
 | 2 | `agent/core.py::built_agent()` | `TokenGuardError` が呼び出し元へ伝播（WebSocket エラーチャンク） | そのターンのグラフは構築されない |
 | 3 | `agent/tools/subagent/spawn/core.py` スポーン | `TokenGuardError` がスポーン呼び出しから外へ伝播 | 子エージェントは決して構築されない |
-| 4 | `server/service/env.py::write_env_file()` | ファイルに触れる前に `ValueError` | 保存拒否、`.env` は不変 |
+| 4 | `server/service/models_config.py::write_models_config()` | ファイルに触れる前に `ValueError` | 保存拒否、`.models` は不変 |
 
 ### 1. サーバー起動ゲート
 
@@ -75,20 +75,21 @@ assert_max_token_valid("MAIN_LLM_MAX_TOKEN", _main_val)
 assert_max_token_valid("AUXILIARY_LLM_MAX_TOKEN", _aux_val)
 ```
 
-### 4. 環境書き込みゲート
+### 4. 設定書き込みゲート
 
-`server/service/env.py`（`write_env_file()`、ゲートは 154 行目）は、UI から 128K 未満の値を永続化できないようにします。非整数または下限未満の値は、`.env` に触れる前に `ValueError` を投げるので、バックアップも書き込みも汚れません:
+`server/service/models_config.py`（`write_models_config()`）は、UI から 128K 未満の値を永続化できないようにします。モデルキーは `.models` に移り（`PUT /env` は受け付けません）、ゲートは型変換より先に走るため、非整数または下限未満の値はファイルに触れる前に `ValueError` を投げ、バックアップも書き込みも汚れません:
 
 ```python
-if key in TOKEN_KEYS:
+for key, value in changes.items():
+    if key not in TOKEN_KEYS:
+        continue
     try:
         num = int(value)
-    except ValueError:
-        raise ValueError(f"{key} must be an integer, got: {value}")
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be an integer, got: {value}") from None
     if num < MIN_REQUIRED_MAX_TOKEN:
         raise ValueError(
-            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
-            f"Refusing to save."
+            f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. Refusing to save."
         )
 ```
 
@@ -185,6 +186,6 @@ for (const [key, value] of Object.entries(changes)) {
 | キー | 場所 | 用途 |
 | :-- | :---- | :------ |
 | `chat.tokenGuard.title` | `client/app/i18n/locales/{en,zh,ja,ko}.json` | toast のタイトル |
-| `chat.tokenGuard.detail` | 同上のロケールファイル | toast の本文（システム設定 → 環境設定 を指す） |
+| `chat.tokenGuard.detail` | 同上のロケールファイル | toast の本文（システム設定 → モデル設定 を指す） |
 | `config.env.maxTokenHint` | `ConfigPanel.vue` の `<i18n>` ブロック | 琥珀色バナーの文言 |
 | `config.env.maxTokenError` | `ConfigPanel.vue` の `<i18n>` ブロック | 保存前拒否メッセージ。`{key}` が問題の変数名に展開される |
