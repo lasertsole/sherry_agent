@@ -537,9 +537,12 @@ the model/thinking controls)::
   EXCEPT the memory store, the required skills plus `CODING_SKILLS` — code-wiki / taskflow /
   ulw-execute / todolist — and every optional middleware on), 情感陪伴 (the full role-play
   persona with the 任务与计划 / 子代理 tool groups off, every optional middleware off, the
-  mirror-image skill set — the required chain plus every skill 编程助手 does NOT pick — and the
+  mirror-image skill set — the required chain plus every skill 编程助手 does NOT pick — the
   task-orchestration sections stripped out of 运行守则 — `stripTaskSections`, a per-language
-  heading/label filter pinned by a test that reads the four shipped templates) and 全量 (the
+  heading/label filter pinned by a test that reads the four shipped templates — and the
+  couple-relationship line stripped out of SOUL — `stripRelationshipLines` plus
+  `COMPANION_DROPPED_RELATIONSHIP_MARKERS`, the same per-language-template pin, so a companion
+  session keeps the persona's warmth without the shipped templates' romantic pairing) and 全量 (the
   DEFAULT — the same full persona with everything on and every skill in the index).
   Their agent blocks are DERIVED from `GET /agent/catalog` at apply time
   (`builtinAgentConfig`), never hardcoded — a preset whose restriction cannot be computed

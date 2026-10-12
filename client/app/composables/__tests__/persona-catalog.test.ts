@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import {
   BUILTIN_PRESETS,
   COMPANION_DISABLED_TOOL_GROUPS,
+  COMPANION_DROPPED_RELATIONSHIP_MARKERS,
   DEFAULT_PRESET_ID,
   applyPresetPayload,
   builtinPayload,
@@ -15,6 +16,7 @@ import {
   entryName,
   loadPresetPayload,
   presetCatalogFacts,
+  stripRelationshipLines,
   stripTaskSections,
   userPresetEntryId
 } from '@/composables/persona-catalog';
@@ -282,6 +284,45 @@ describe('persona catalogue', () => {
     expect(builtinPayload('sherry', TEMPLATE_WITH_TASKS, t, NO_AGENT, 'zh').content['AGENTS.md']).toContain(
       '任务管理与编排'
     );
+  });
+
+  it('drops the relationship line out of 情感陪伴\u2019s SOUL and keeps the rest', () => {
+    const soul = [
+      '# SOUL.md',
+      '',
+      '## 人格',
+      '- 开朗',
+      '- 与远野汉娜组成"黄绿组合"，处于**恋爱关系**，愿为对方付出生命。',
+      '- 天然呆'
+    ].join('\n');
+    const withSoul = { ...TEMPLATE, 'SOUL.md': soul };
+
+    const payload = builtinPayload('companion', withSoul, t, FACTS, 'zh');
+
+    // Exactly the marked line goes; every other line survives verbatim.
+    expect(payload.content['SOUL.md']).not.toContain('恋爱关系');
+    expect(payload.content['SOUL.md']).toBe(['# SOUL.md', '', '## 人格', '- 开朗', '- 天然呆'].join('\n'));
+    // The other built-ins keep the template verbatim.
+    expect(builtinPayload('sherry', withSoul, t, FACTS, 'zh').content['SOUL.md']).toBe(soul);
+  });
+
+  it('reads the shipped SOUL templates and drops their relationship line in all four languages', () => {
+    // Self-guarding: a reworded template line turns this red instead of
+    // silently shipping the couple pairing to a companion session.
+    for (const lang of ['zh', 'en', 'ja', 'ko']) {
+      const marker = COMPANION_DROPPED_RELATIONSHIP_MARKERS[lang]!;
+      const path = join(process.cwd(), '..', 'workspace', 'template', lang, 'SOUL.md');
+      const template = readFileSync(path, 'utf8');
+      expect(template, lang).toContain(marker);
+
+      const stripped = stripRelationshipLines(template, lang);
+
+      expect(stripped, lang).not.toContain(marker);
+      // One line dropped, nothing else touched.
+      expect(template.split('\n').length - stripped.split('\n').length, lang).toBe(1);
+    }
+    // An unknown locale (or a template without the marker) comes back untouched.
+    expect(stripRelationshipLines('a\nb', 'fr')).toBe('a\nb');
   });
 
   it('reads the shipped templates and drops their task sections in all four languages', () => {

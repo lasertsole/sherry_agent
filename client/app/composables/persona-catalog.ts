@@ -186,6 +186,45 @@ export const COMPANION_DROPPED_SECTIONS: Record<string, { sections: string[]; bu
 };
 
 /**
+ * The SOUL.md line 情感陪伴 drops, per UI language: the couple relationship
+ * with 远野汉娜 that the shipped templates carry.
+ *
+ * The companion preset keeps the persona's warmth, curiosity and tone; only the
+ * romantic pairing goes, because a general companion setting should not colour
+ * every interaction with it.
+ *
+ * Matched by the literal bold marker the shipped templates use
+ * (`workspace/template/<lang>/SOUL.md`); `persona-catalog.test.ts` reads those
+ * files and fails when a reworded template stops matching.
+ */
+export const COMPANION_DROPPED_RELATIONSHIP_MARKERS: Record<string, string> = {
+  zh: '**恋爱关系**',
+  en: '**couple relationship**',
+  ja: '**恋人関係**',
+  ko: '**연인 관계**'
+};
+
+/**
+ * Strip the relationship line out of one SOUL template (see
+ * {@link COMPANION_DROPPED_RELATIONSHIP_MARKERS}).
+ *
+ * The whole line carrying the marker goes (a Markdown bullet is one line in
+ * every shipped template); unknown languages and templates without a match come
+ * back untouched.
+ * @param text The SOUL.md template.
+ * @param locale UI locale selecting the marker.
+ * @returns The text without the relationship line.
+ */
+export function stripRelationshipLines(text: string, locale: string): string {
+  const marker = COMPANION_DROPPED_RELATIONSHIP_MARKERS[locale.split('-')[0] ?? ''];
+  if (!marker) return text;
+  return text
+    .split('\n')
+    .filter(line => !line.includes(marker))
+    .join('\n');
+}
+
+/**
  * Strip the task / orchestration content out of one 运行守则 template (see
  * {@link COMPANION_DROPPED_SECTIONS}).
  *
@@ -355,7 +394,8 @@ export interface PersonaPresetPayload {
  * - 编程助手: the operating rules only — soul and user profile EMPTY, and BOTH
  *   role names empty (no role statement: the prompt gains no ROLE block);
  * - 情感陪伴: the full template with the task-orchestration content stripped
- *   from 运行守则 (a companion is not an orchestrator) plus the default names;
+ *   from 运行守则 (a companion is not an orchestrator) and the couple-relationship
+ *   line stripped from SOUL, plus the default names;
  * - 全量: the full template plus the shipped default names.
  * @param id Built-in entry id.
  * @param template The language template (`readSystemPromptTemplate`), already fetched.
@@ -391,7 +431,8 @@ export function builtinPayload(
   } else {
     content = {
       'AGENTS.md': id === 'companion' ? stripTaskSections(rules, locale) : rules,
-      'SOUL.md': template['SOUL.md'] ?? '',
+      'SOUL.md':
+        id === 'companion' ? stripRelationshipLines(template['SOUL.md'] ?? '', locale) : (template['SOUL.md'] ?? ''),
       'USER.md': template['USER.md'] ?? ''
     };
   }
