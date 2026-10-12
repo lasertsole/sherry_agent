@@ -23,8 +23,28 @@ def store(tmp_path: Path, monkeypatch):
     return fresh
 
 
+_MISSING = object()
+
+
+class _QueryParams(dict):
+    """dict + the runtime binding's ``QueryParams.get`` rules.
+
+    Both traps the live route hit are modelled here, because a plain dict hides
+    them: ``default`` is REQUIRED (a single-argument ``.get(key)`` raised
+    TypeError in production) and it must be a STRING (an int default raises
+    TypeError too, which silently turned a real ``limit`` into a 400).
+    """
+
+    def get(self, key, default=_MISSING):
+        if default is _MISSING:
+            raise TypeError("QueryParams.get() missing 1 required positional argument: 'default'")
+        if not isinstance(default, str):
+            raise TypeError("QueryParams.get() default must be a string")
+        return super().get(key, default)
+
+
 def _request(query: dict | None = None) -> SimpleNamespace:
-    return SimpleNamespace(query_params=query or {})
+    return SimpleNamespace(query_params=_QueryParams(query or {}))
 
 
 async def _call(store, session_id: str, query: dict | None = None) -> dict:

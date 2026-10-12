@@ -25,10 +25,13 @@ async def get_session_trajectory_handler(request, path_params):
     if not is_safe_session_id(session_id):
         return _bad_request("invalid session_id")
     query = request.query_params
-    turn_id = query.get("turn_id") or None
+    # Robyn's QueryParams.get REQUIRES the default positionally and only accepts
+    # a string for it (an int default raises TypeError) — a missing default made
+    # this route 500 on every call, so all three reads pass one.
+    turn_id = query.get("turn_id", "") or None
     try:
-        limit = max(1, min(int(query.get("limit", 50) or 50), 500))
-        offset = max(0, int(query.get("offset", 0) or 0))
+        limit = max(1, min(int(query.get("limit", "50") or "50"), 500))
+        offset = max(0, int(query.get("offset", "0") or "0"))
     except (TypeError, ValueError):
         return _bad_request("limit/offset must be integers")
     events = await get_trajectory_store().read(
