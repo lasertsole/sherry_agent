@@ -29,15 +29,26 @@ Sandbox-hardening additions (see docs/sandbox/README.md):
   ``env=`` added, plus one loguru warning line for the AUTO degrade.
 - REQUIRED + unavailable backend: ``get_backend``'s RuntimeError is wrapped
   into a ``ToolException`` so ``handle_tool_error=True`` surfaces it.
+- fd-direct-write stdout: BOTH spawn sites point the child's stdout at a FILE
+  (``.sherry-tmp-stdout-*.log`` in the session dir, stderr merged into it) and
+  wait on the process instead of draining a pipe, so an oversized output never
+  sits on the Python heap. Under ``TOOLS_TIMEOUTS["fd_write_threshold_bytes"]``
+  the file is read whole and removed; at or above it the file moves into the
+  session's ``evicted/`` directory and only a byte-bounded head/tail preview
+  comes back (see ``pub/func/message/eviction.py::build_file_preview``).
 """
 
 from __future__ import annotations
 
+import hashlib
 import locale
 import asyncio
+import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
+import tempfile
 from typing import Any, ClassVar
 from loguru import logger
 from pydantic import BaseModel, Field
@@ -55,8 +66,10 @@ from agent.tools.pub_base import (
     resolve_tool_session_id,
 )
 
+from agent.tools.pub_base.atomic_write import sweep_stale_temp_files
 from agent.tools.pub_base.env_scrub import scrub_env
 from agent.tools.pub_base.process_reap import areap_process, reap_process
+from pub.func.message.eviction import build_file_preview, get_eviction_dir
 from agent.security.terminal_output import strip_control_sequences
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
@@ -70,6 +83,23 @@ from agent.tools.todolist.evidence_recorder import record_verification_evidence
 
 # Bound to the feature registry (single source of truth); name preserved.
 TERMINAL_TIMEOUT = TOOLS_TIMEOUTS["terminal_timeout_seconds"]
+
+#: Terminal stdout at or above this many bytes never rides a pipe into the
+#: Python process: the child writes straight to a temp file and only a head/tail
+#: preview comes back (the file itself moves into the session's evicted/ dir).
+#: Below it the bytes are read back whole — the historical behaviour, and the
+#: only sane one for the small outputs nearly every command produces. 0 (or
+#: less) disables eviction entirely: every output is read back in memory.
+FD_WRITE_THRESHOLD = TOOLS_TIMEOUTS["fd_write_threshold_bytes"]
+
+#: Prefix for the fd-direct-write temp file. The sweep recognises this prefix
+#: (``.log`` suffix) and removes abandoned leftovers, so a hard kill cannot
+#: accumulate them (see ``agent/tools/pub_base/atomic_write.py``).
+_STDOUT_TMP_PREFIX = ".sherry-tmp-stdout-"
+_STDOUT_TMP_SUFFIX = ".log"
+#: Bytes hashed for the evicted file's name — hashing the whole payload would
+#: read it all back, which is exactly what the fd path exists to avoid.
+_EVICT_NAME_HASH_BYTES = 65_536
 
 # Raised as a ToolException instead of returned, so handle_tool_error=True
 # routes it through the error ToolMessage channel.
@@ -117,6 +147,100 @@ _SENSITIVE_FILE_PATTERNS = [
     re.compile(r"\b(?:cat|head|tail)\s+.*?~/.ssh/", re.IGNORECASE),
     re.compile(r"\b(?:cat|head|tail)\s+.*?~/.aws/", re.IGNORECASE),
 ]
+
+
+def _open_stdout_tmp(session_id: str) -> tuple[Path, Any]:
+    """Create the fd-direct-write stdout file; return ``(path, handle)``.
+
+    The file lives in the SESSION directory whenever the id is a safe path
+    segment, so the later ``rename`` into ``evicted/`` is a same-filesystem
+    move; an unsafe/empty id falls back to the OS temp directory (where the
+    move degrades to a streamed copy). Abandoned leftovers from a hard kill are
+    swept here — the same prefix contract the atomic writes use.
+    """
+    from config import SESSIONS_DIR
+    from config.path import is_safe_session_segment
+
+    directory: str | None = None
+    if session_id and is_safe_session_segment(session_id):
+        candidate = Path(SESSIONS_DIR) / session_id
+        try:
+            candidate.mkdir(parents=True, exist_ok=True)
+            sweep_stale_temp_files(candidate)
+            directory = str(candidate)
+        except OSError:
+            directory = None
+    fd, name = tempfile.mkstemp(prefix=_STDOUT_TMP_PREFIX, suffix=_STDOUT_TMP_SUFFIX, dir=directory)
+    return Path(name), os.fdopen(fd, "wb")
+
+
+def _read_or_evict_output(tmp_path: Path, session_id: str, encoding: str) -> str:
+    """Return the command's stdout: read whole under the threshold, else preview.
+
+    Over the threshold the file is MOVED into the session's ``evicted/``
+    directory (a same-filesystem rename when the temp file was created there)
+    and only a head/tail preview is returned — the payload never rides the
+    Python heap. Every failure path degrades to reading the file, because
+    losing a command's output is worse than one oversized read.
+    """
+    try:
+        size = tmp_path.stat().st_size
+    except OSError:
+        return ""
+    if FD_WRITE_THRESHOLD <= 0 or size < FD_WRITE_THRESHOLD:
+        data = b""
+        try:
+            data = tmp_path.read_bytes()
+        except OSError:
+            logger.debug("terminal: stdout temp file read failed", exc_info=True)
+        finally:
+            tmp_path.unlink(missing_ok=True)
+        return data.decode(encoding, errors="replace")
+
+    evict_dir = get_eviction_dir(session_id) if session_id else None
+    if evict_dir is not None:
+        try:
+            with tmp_path.open("rb") as handle:
+                digest = hashlib.sha256(handle.read(_EVICT_NAME_HASH_BYTES)).hexdigest()[:16]
+            dest = evict_dir / f"terminal-{digest}.log"
+            try:
+                tmp_path.rename(dest)
+            except OSError:
+                # Cross-filesystem (OS temp dir fallback): stream, never read whole.
+                shutil.copyfile(tmp_path, dest)
+                tmp_path.unlink(missing_ok=True)
+            logger.debug(
+                "terminal: stdout {} bytes > {} — evicted to {}",
+                size,
+                FD_WRITE_THRESHOLD,
+                dest,
+            )
+            return build_file_preview(dest, dest)
+        except OSError:
+            logger.warning("terminal: stdout eviction failed; reading it back", exc_info=True)
+
+    data = b""
+    try:
+        data = tmp_path.read_bytes()
+    except OSError:
+        logger.debug("terminal: stdout temp file read failed", exc_info=True)
+    finally:
+        tmp_path.unlink(missing_ok=True)
+    return data.decode(encoding, errors="replace")
+
+
+def _discard_stdout_tmp(handle: Any, path: Path | None) -> None:
+    """Close + unlink the fd stdout file on a failure path (never raises)."""
+    if handle is not None:
+        try:
+            handle.close()
+        except OSError:
+            pass
+    if path is not None:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 class SafeShellInput(ShellInput):
@@ -279,6 +403,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         env: dict[str, str] | None,
         encoding: str,
         cwd: str | None = None,
+        session_id: str = "",
     ) -> str:
         """Single sync spawn point: Popen with explicit encoding + timeout.
 
@@ -286,7 +411,15 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         execs a list (no shell kwarg at all).
         """
         proc: subprocess.Popen[bytes] | None = None
+        tmp_path: Path | None = None
+        tmp_handle: Any = None
         try:
+            # stdout (stderr merged into it, exactly as before) goes to a FILE,
+            # not a pipe: the kernel writes the child's output to disk, so this
+            # process never holds the payload on its heap. A pipe also meant the
+            # parent had to drain it to EOF — with a file that dependency is
+            # gone, so a timeout can simply kill and reap.
+            tmp_path, tmp_handle = _open_stdout_tmp(session_id)
             if shell:
                 # The terminal tool exists to run shell commands: this is the
                 # unsandboxed fallback path (SANDBOX_POLICY=off or no OS
@@ -295,7 +428,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                 proc = subprocess.Popen(
                     argv,
                     shell=True,  # nosec B602
-                    stdout=subprocess.PIPE,
+                    stdout=tmp_handle,
                     stderr=subprocess.STDOUT,
                     cwd=cwd,
                     env=env,
@@ -303,25 +436,29 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             else:
                 proc = subprocess.Popen(
                     argv,
-                    stdout=subprocess.PIPE,
+                    stdout=tmp_handle,
                     stderr=subprocess.STDOUT,
                     cwd=cwd or str(ROOT_DIR),
                     env=env,
                 )
-            stdout_bytes, _ = proc.communicate(timeout=TERMINAL_TIMEOUT)
+            # The child holds its own descriptor; drop ours so the file is
+            # complete the moment the child exits.
+            tmp_handle.close()
+            tmp_handle = None
+            proc.wait(timeout=TERMINAL_TIMEOUT)
             # A TUI/progress command emits ANSI escapes and cursor reports
             # that say nothing to a reader but cost context (and carry an
             # injection surface of their own).
-            output = strip_control_sequences(stdout_bytes.decode(encoding, errors="replace"))
+            output = strip_control_sequences(_read_or_evict_output(tmp_path, session_id, encoding))
+            tmp_path = None  # read or evicted: nothing left to clean
             if proc.returncode != 0:
                 return f"Exit code {proc.returncode}\n{output}"
             return output
         except subprocess.TimeoutExpired:
-            # Bounded cleanup: kill, then wait with a deadline. A bare
-            # communicate() here waits for EOF on a pipe a grandchild may hold,
-            # which turns a timed-out command into a hung tool call.
+            # Bounded cleanup: kill, then wait with a deadline.
             if proc:
                 reap_process(proc)
+            _discard_stdout_tmp(tmp_handle, tmp_path)
             logger.warning(
                 "terminal command timed out after {}s: {}",
                 TERMINAL_TIMEOUT,
@@ -332,6 +469,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
                 "The command was forcibly terminated. Please try a simpler command."
             )
         except Exception as e:
+            _discard_stdout_tmp(tmp_handle, tmp_path)
             logger.debug("terminal command failed: {!r}", argv[:1], exc_info=True)
             return f"Error: {e}"
 
@@ -341,6 +479,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         encoding: str,
         env: dict[str, str] | None = None,
         cwd: str | None = None,
+        session_id: str = "",
     ) -> str:
         """Run command with explicit encoding for stdout/stderr, with timeout.
 
@@ -349,11 +488,17 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         pre-sandbox-hardening path; the ONLY addition is ``env=``.
         """
         cmd_str = self._join_commands(commands)
-        return self._execute_sync(cmd_str, shell=True, env=env, encoding=encoding, cwd=cwd)
+        return self._execute_sync(
+            cmd_str, shell=True, env=env, encoding=encoding, cwd=cwd, session_id=session_id
+        )
 
-    def _run_wrapped(self, argv: list[str], env: dict[str, str], cwd: str) -> str:
+    def _run_wrapped(
+        self, argv: list[str], env: dict[str, str], cwd: str, session_id: str = ""
+    ) -> str:
         """Sandboxed sync path: list-exec of the backend-wrapped argv."""
-        return self._execute_sync(argv, shell=False, env=env, encoding=self._encoding, cwd=cwd)
+        return self._execute_sync(
+            argv, shell=False, env=env, encoding=self._encoding, cwd=cwd, session_id=session_id
+        )
 
     # ── Tool entry points ───────────────────────────────────────────────────
 
@@ -379,7 +524,10 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             argv, wrapped_env = self._resolve_sandbox_argv(cmd_str, env, writable_roots)
             if argv is not None:
                 return self._record_verification(
-                    cmd_str, self._run_wrapped(argv, wrapped_env, cwd), run_manager, sandboxed=True
+                    cmd_str,
+                    self._run_wrapped(argv, wrapped_env, cwd, session_id=bound_session),
+                    run_manager,
+                    sandboxed=True,
                 )
 
         # ShellTool._run delegates to BashProcess which uses subprocess.run(check=True)
@@ -388,7 +536,13 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         # use _run_with_encoding which has proper timeout and encoding handling.
         return self._record_verification(
             cmd_str,
-            self._run_with_encoding(commands, encoding=self._encoding, env=env, cwd=cwd),
+            self._run_with_encoding(
+                commands,
+                encoding=self._encoding,
+                env=env,
+                cwd=cwd,
+                session_id=bound_session,
+            ),
             run_manager,
             sandboxed=False,  # no backend (or sandbox=False): a bare run
         )
@@ -427,11 +581,17 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             ran_sandboxed = argv is not None
 
         proc = None
+        tmp_path: Path | None = None
+        tmp_handle: Any = None
         try:
+            # Same fd-direct-write contract as the sync path: stdout (merged
+            # with stderr) lands in a file, so nothing oversized sits on the
+            # event loop's heap and no pipe has to be drained to EOF.
+            tmp_path, tmp_handle = _open_stdout_tmp(bound_session)
             if argv is not None:
                 proc = await asyncio.create_subprocess_exec(
                     *argv,
-                    stdout=asyncio.subprocess.PIPE,
+                    stdout=tmp_handle,
                     stderr=asyncio.subprocess.STDOUT,
                     env=spawn_env,
                     cwd=cwd,
@@ -440,13 +600,18 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
             else:
                 proc = await asyncio.create_subprocess_shell(
                     cmd_str,
-                    stdout=asyncio.subprocess.PIPE,
+                    stdout=tmp_handle,
                     stderr=asyncio.subprocess.STDOUT,
                     cwd=cwd or str(ROOT_DIR),
                     env=env,
                 )
-            stdout_bytes, _ = await asyncio.wait_for(proc.communicate(), timeout=TERMINAL_TIMEOUT)
-            output = strip_control_sequences(stdout_bytes.decode(self._encoding, errors="replace"))
+            tmp_handle.close()
+            tmp_handle = None
+            await asyncio.wait_for(proc.wait(), timeout=TERMINAL_TIMEOUT)
+            output = strip_control_sequences(
+                _read_or_evict_output(tmp_path, bound_session, self._encoding)
+            )
+            tmp_path = None  # read or evicted: nothing left to clean
             if proc.returncode != 0:
                 return self._record_verification(
                     cmd_str,
@@ -458,6 +623,7 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         except TimeoutError:
             if proc:
                 await areap_process(proc)
+            _discard_stdout_tmp(tmp_handle, tmp_path)
             logger.warning(
                 "terminal command timed out after {}s: {}", TERMINAL_TIMEOUT, cmd_str[:120]
             )
@@ -472,11 +638,13 @@ class SafeShellTool(SandboxGuardMixin, ShellTool):
         except asyncio.CancelledError:
             if proc:
                 proc.kill()
+            _discard_stdout_tmp(tmp_handle, tmp_path)
             logger.warning("terminal command cancelled: {}", cmd_str[:120])
             return self._record_verification(
                 cmd_str, "Terminal command was cancelled.", run_manager
             )
         except Exception as e:
+            _discard_stdout_tmp(tmp_handle, tmp_path)
             logger.debug("terminal: command dispatch failed", exc_info=True)
             return self._record_verification(cmd_str, f"Error: {e}", run_manager)
 

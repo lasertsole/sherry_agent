@@ -61,25 +61,39 @@ def _scrub_stub(base_env: dict[str, str] | None = None) -> dict[str, str]:
 # Spawn-point fakes (never touch a real subprocess)
 # ─────────────────────────────────────────────────────────────────────────────
 class _FakeProc:
-    """Sync Popen stand-in: communicate() -> (b"ok", b""), returncode 0."""
+    """Sync Popen stand-in: writes b"ok" into the stdout FILE, returncode 0.
 
-    def __init__(self, out: bytes = b"ok", returncode: int = 0):
+    Since the fd-direct-write change stdout is a file handle (never a pipe the
+    parent drains), so the fake emits its bytes through ``kwargs["stdout"]``
+    and the tool waits with ``wait()``.
+    """
+
+    def __init__(self, *args: Any, out: bytes = b"ok", returncode: int = 0, **kwargs: Any):
         self._out = out
         self.returncode = returncode
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(out)
 
-    def communicate(self, timeout=None):
-        return (self._out, b"")
+    def wait(self, timeout=None):
+        return self.returncode
+
+    def kill(self):
+        pass
 
 
 class _FakeAsyncProc:
-    """Async subprocess stand-in: communicate() coroutine, returncode 0."""
+    """Async subprocess stand-in: writes b"ok" into the stdout FILE, returncode 0."""
 
-    def __init__(self, out: bytes = b"ok", returncode: int = 0):
+    def __init__(self, *args: Any, out: bytes = b"ok", returncode: int = 0, **kwargs: Any):
         self._out = out
         self.returncode = returncode
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(out)
 
-    async def communicate(self):
-        return (self._out, None)
+    async def wait(self):
+        return self.returncode
 
     def kill(self):
         pass
@@ -90,7 +104,7 @@ def _no_spawn_popen(record: list[dict[str, Any]]):
 
     def _popen(*args: Any, **kwargs: Any) -> _FakeProc:
         record.append({"args": args, "kwargs": kwargs})
-        return _FakeProc()
+        return _FakeProc(*args, **kwargs)
 
     return _popen
 
@@ -229,7 +243,7 @@ class TestEnvScrubWiring:
 
         async def fake_shell(*args: Any, **kwargs: Any) -> _FakeAsyncProc:
             record.append({"args": args, "kwargs": kwargs})
-            return _FakeAsyncProc()
+            return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
@@ -322,7 +336,7 @@ class TestSandboxBypassGuards:
 
         async def fake_shell(*args: Any, **kwargs: Any) -> _FakeAsyncProc:
             record.append({"args": args, "kwargs": kwargs})
-            return _FakeAsyncProc()
+            return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
@@ -475,7 +489,7 @@ class TestSensitiveFileAccess:
 
         async def fake_shell(*args: Any, **kwargs: Any) -> _FakeAsyncProc:
             record.append({"args": args, "kwargs": kwargs})
-            return _FakeAsyncProc()
+            return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
@@ -532,7 +546,7 @@ class TestWindowsFallback:
 
         async def fake_shell(*args: Any, **kwargs: Any) -> _FakeAsyncProc:
             record.append({"args": args, "kwargs": kwargs})
-            return _FakeAsyncProc()
+            return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)
@@ -617,7 +631,7 @@ class TestSandboxWrap:
 
         async def fake_exec(*args: Any, **kwargs: Any) -> _FakeAsyncProc:
             record.append({"args": args, "kwargs": kwargs})
-            return _FakeAsyncProc()
+            return _FakeAsyncProc(*args, **kwargs)
 
         monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
         monkeypatch.setattr(terminal, "scrub_env", _scrub_stub)

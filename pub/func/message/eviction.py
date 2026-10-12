@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage, ToolMessage
+from loguru import logger
 
 from config import SESSIONS_DIR
 from config.features.agent_side.tool_result_eviction import TOOL_RESULT_EVICTION
@@ -46,6 +47,7 @@ from config.path import is_safe_session_segment
 
 __all__ = [
     "EVICTED_TO_KEY",
+    "build_file_preview",
     "build_human_preview",
     "build_preview",
     "evict_human_message",
@@ -75,6 +77,21 @@ _PREVIEW_TEMPLATE = """\
 --- tail ({tail_n} lines) ---
 {tail}
 [full content: {total_chars} chars, evicted at {ts}]
+
+Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.]"""
+
+#: Same shape as ``_PREVIEW_TEMPLATE``, but for a payload that is ALREADY a file
+#: (the terminal tool's fd-direct-write stdout): the total is the file's byte
+#: size — an O(1) ``stat`` — because counting characters would mean decoding the
+#: whole file, which is exactly what the fd path exists to avoid.
+_FILE_PREVIEW_TEMPLATE = """\
+[evicted to: {path}]
+--- head ({head_n} lines) ---
+{head}
+{midline}
+--- tail ({tail_n} lines) ---
+{tail}
+[full content: {total_bytes} bytes, evicted at {ts}]
 
 Use read_file(file_path='{path}', offset=0, limit=100) to read the full content in chunks.]"""
 
@@ -320,4 +337,90 @@ def slice_read_file_result(msg: ToolMessage) -> ToolMessage:
         return msg
     return msg.model_copy(
         update={"content": content[:_READ_FILE_SLICE_CHARS] + _READ_FILE_SLICE_NOTICE}
+    )
+
+
+#: Byte budgets for :func:`_read_head_tail`. Lines bound the shape, these bound
+#: the cost: an output with NO newline (one giant line) would otherwise be read
+#: into memory whole — the exact payload the file-on-disk preview exists to keep
+#: out of the process. Every line is read with ``readline(cap)``, so a single
+#: 500 MB line contributes at most ``_PREVIEW_LINE_MAX_BYTES`` per head slot,
+#: the head stops at ``_PREVIEW_HEAD_MAX_BYTES`` and the tail walk stops at
+#: ``_PREVIEW_TAIL_MAX_BYTES``.
+_PREVIEW_HEAD_MAX_BYTES = 8_192
+_PREVIEW_LINE_MAX_BYTES = 2_048
+_PREVIEW_TAIL_MAX_BYTES = 8_192
+
+
+def _read_head_tail(path: Path, head_n: int, tail_n: int) -> tuple[str, str, str, int]:
+    """Head/tail text of a file ON DISK, without loading it whole.
+
+    The head is read line by line — each ``readline`` capped, the walk stopped
+    at a byte budget — and the tail is read backwards in 8 KiB blocks until
+    ``tail_n`` lines are collected or the byte budget is spent. Memory is
+    bounded by those chunks whatever the file's size, so a 500 MB output (even
+    a single newline-free line) costs the same as a 500 KB one.
+
+    :returns: ``(head, midline, tail, head_lines_kept)`` — ``midline`` is
+        ``"..."`` when the preview window did not reach the end of the file.
+    """
+    head_lines: list[str] = []
+    head_budget = _PREVIEW_HEAD_MAX_BYTES
+    try:
+        with path.open("rb") as f:
+            while len(head_lines) < head_n and head_budget > 0:
+                chunk = f.readline(min(_PREVIEW_LINE_MAX_BYTES, head_budget))
+                if not chunk:
+                    break
+                head_budget -= len(chunk)
+                head_lines.append(chunk.decode("utf-8", errors="replace").rstrip("\n"))
+    except OSError:
+        logger.debug("eviction: preview source unreadable at its head", exc_info=True)
+
+    tail_lines: list[str] = []
+    buf = b""
+    pos = 0
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            pos = f.tell()
+            while pos > 0 and len(tail_lines) < tail_n and len(buf) < _PREVIEW_TAIL_MAX_BYTES:
+                read_size = min(8192, pos)
+                pos -= read_size
+                f.seek(pos)
+                buf = f.read(read_size) + buf
+                tail_lines = buf.decode("utf-8", errors="replace").splitlines()
+    except OSError:
+        logger.debug("eviction: preview source unreadable at its tail", exc_info=True)
+
+    head = "\n".join(head_lines)
+    tail = "\n".join(tail_lines[-tail_n:])[-_PREVIEW_TAIL_MAX_BYTES:]
+    more = len(head_lines) >= head_n or (pos > 0 and len(tail_lines) >= tail_n)
+    midline = "..." if more else ""
+    return head, midline, tail, len(head_lines)
+
+
+def build_file_preview(source: Path, file_path: Path) -> str:
+    """Render the head/tail preview for a payload that already lives on disk.
+
+    ``source`` is the file to preview (the fd-direct-written output);
+    ``file_path`` is the path the model is told to read back (normally the same
+    file once it has been moved into the eviction directory).
+    """
+    head_n = TOOL_RESULT_EVICTION["preview_head_lines"]
+    tail_n = TOOL_RESULT_EVICTION["preview_tail_lines"]
+    head, midline, tail, _kept = _read_head_tail(source, head_n, tail_n)
+    try:
+        total_bytes = source.stat().st_size
+    except OSError:
+        total_bytes = 0
+    return _FILE_PREVIEW_TEMPLATE.format(
+        path=str(file_path),
+        head_n=head_n,
+        tail_n=tail_n,
+        head=head,
+        midline=midline,
+        tail=tail,
+        total_bytes=total_bytes,
+        ts=time.strftime("%Y-%m-%dT%H:%M:%S"),
     )

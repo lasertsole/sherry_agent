@@ -122,23 +122,33 @@ _RAW_BYTES = b"\x1b[31mred\x1b[0m\r\n\x1b[2K\x1b]0;t\x07done\x00\n"
 
 
 class _FakeProc:
-    """Sync Popen stand-in returning captured bytes with escapes."""
+    """Sync Popen stand-in: writes captured bytes with escapes into the stdout FILE.
 
-    def __init__(self, out: bytes = _RAW_BYTES):
+    stdout is a file handle (fd-direct-write), so the fake emits its bytes
+    through ``kwargs["stdout"]`` and the tool waits with ``wait()``.
+    """
+
+    def __init__(self, *args: object, out: bytes = _RAW_BYTES, **kwargs: object):
         self.returncode = 0
         self._out = out
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(out)
 
-    def communicate(self, timeout=None):
-        return self._out, b""
+    def wait(self, timeout=None):
+        return self.returncode
 
 
 class _FakeAsyncProc:
-    def __init__(self, out: bytes = _RAW_BYTES):
+    def __init__(self, *args: object, out: bytes = _RAW_BYTES, **kwargs: object):
         self.returncode = 0
         self._out = out
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(out)
 
-    async def communicate(self):
-        return self._out, b""
+    async def wait(self):
+        return self.returncode
 
 
 async def _awaitable(value):
@@ -156,7 +166,7 @@ def tool(monkeypatch):
 
 
 def test_the_sync_spawn_site_strips_escapes(tool, monkeypatch):
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: _FakeProc())
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: _FakeProc(*a, **kw))
 
     out = tool._run("echo red", sandbox=False)
 
@@ -167,7 +177,7 @@ def test_the_sync_spawn_site_strips_escapes(tool, monkeypatch):
 def test_the_async_spawn_site_strips_escapes(tool, monkeypatch):
     monkeypatch.setattr(
         "asyncio.create_subprocess_shell",
-        lambda *a, **kw: _awaitable(_FakeAsyncProc()),
+        lambda *a, **kw: _awaitable(_FakeAsyncProc(*a, **kw)),
     )
 
     out = asyncio.run(tool._arun("echo red", sandbox=False))
@@ -178,7 +188,7 @@ def test_the_async_spawn_site_strips_escapes(tool, monkeypatch):
 
 def test_the_sync_wrapped_spawn_site_strips_escapes(tool, monkeypatch):
     """The sandboxed path has its own decode site; it strips too."""
-    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: _FakeProc())
+    monkeypatch.setattr("subprocess.Popen", lambda *a, **kw: _FakeProc(*a, **kw))
     monkeypatch.setattr(
         tool, "_resolve_sandbox_argv", lambda cmd, env, roots: (["bwrap", cmd], env)
     )

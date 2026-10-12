@@ -127,15 +127,23 @@ def _unavailable_get_backend(policy: Any) -> Any:
 # Spawn-point mocks — GLOBAL subprocess.Popen patching (notepad rule)
 # ─────────────────────────────────────────────────────────────────────────────
 class _FakeShellProc:
-    """Stands in for terminal's subprocess.Popen[bytes]."""
+    """Stands in for terminal's subprocess.Popen[bytes].
+
+    stdout is a FILE the child writes into (never a pipe the parent drains), so
+    the fake emits its canned output through the ``stdout`` handle it is handed
+    and the flow waits with ``wait()`` instead of ``communicate()``.
+    """
 
     returncode = 0
 
     def __init__(self, recorder: list[dict[str, Any]], *args: Any, **kwargs: Any):
         recorder.append({"args": args, "kwargs": kwargs})
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(b"ok-out")
 
-    def communicate(self, timeout=None):
-        return (b"ok-out", b"")
+    def wait(self, timeout=None):
+        return self.returncode
 
     def kill(self):
         pass

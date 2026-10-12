@@ -21,6 +21,7 @@ from pub.func.message import eviction as eviction_module
 from pub.func.message.eviction import (
     _READ_FILE_SLICE_NOTICE,
     EVICTED_TO_KEY,
+    build_file_preview,
     build_human_preview,
     build_preview,
     evict_human_message,
@@ -318,3 +319,46 @@ class TestReadFileSlice:
 
         assert second is first
         assert first.content.count("Output was truncated due to eviction threshold") == 1
+
+
+class TestFilePreview:
+    """``build_file_preview`` renders a payload that already lives on disk.
+
+    The terminal tool's fd-direct-write path hands over an oversized stdout
+    FILE and needs a preview that never reads it into the process — including
+    when the output has no newline at all (one giant line), the shape that
+    makes a naive line-based reader load the whole payload.
+    """
+
+    def _preview(self, tmp_path: Path, data: bytes) -> str:
+        source = tmp_path / "terminal-x.log"
+        source.write_bytes(data)
+        return build_file_preview(source, source)
+
+    def test_multiline_payload_shows_head_and_tail_with_a_bytes_total(self, tmp_path: Path):
+        data = b"".join(f"line-{n}\n".encode() for n in range(1, 21))
+
+        preview = self._preview(tmp_path, data)
+
+        assert "line-1\n" in preview and "line-2\n" in preview
+        assert "line-19\n" in preview and "line-20\n" in preview
+        assert "line-11" not in preview
+        assert f"[full content: {len(data)} bytes," in preview, "total is bytes (stat), not chars"
+        assert "Use read_file(file_path=" in preview
+
+    def test_a_single_giant_line_preview_is_byte_bounded(self, tmp_path: Path):
+        payload = 4_000_000
+        preview = self._preview(tmp_path, b"x" * payload)
+
+        assert f"[full content: {payload} bytes," in preview
+        assert len(preview) < 25_000, (
+            "a newline-free output must be read in bounded chunks, never whole "
+            f"(preview was {len(preview)} chars)"
+        )
+
+    def test_missing_source_still_renders(self, tmp_path: Path):
+        missing = tmp_path / "gone.log"
+
+        preview = build_file_preview(missing, missing)
+
+        assert "[full content: 0 bytes," in preview

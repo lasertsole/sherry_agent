@@ -52,10 +52,13 @@ __all__ = [
     "sweep_stale_temp_files",
 ]
 
-#: Prefix/suffix of the same-directory temporary file. The dot keeps it out of
-#: globs; the name is what :func:`sweep_stale_temp_files` recognises.
+#: Prefix/suffixes of the temporary files this sweep recognises. The dot keeps
+#: them out of globs; the PREFIX is the contract. ``.swp`` is an atomic write's
+#: in-flight copy; ``.log`` is the terminal tool's fd-direct-write stdout (the
+#: child writes straight into it, and a hard kill can leave it behind).
 _TMP_PREFIX = ".sherry-tmp-"
 _TMP_SUFFIX = ".swp"
+_TMP_SUFFIXES = (_TMP_SUFFIX, ".log")
 
 #: Age at which a leftover temporary file counts as abandoned. Every failure
 #: path inside the write helper unlinks its temporary file, so only a hard kill
@@ -139,7 +142,7 @@ def _write_bytes_in_place_no_follow(path: Path, data: bytes) -> None:
 
 
 def sweep_stale_temp_files(directory: Path, *, now: float | None = None) -> int:
-    """Remove abandoned ``.sherry-tmp-*.swp`` files from *directory*.
+    """Remove abandoned ``.sherry-tmp-*`` (``.swp`` / ``.log``) files from *directory*.
 
     Called on the way into every write, so a directory a writer keeps returning
     to cleans itself one entry at a time; no startup hook or background task is
@@ -157,7 +160,7 @@ def sweep_stale_temp_files(directory: Path, *, now: float | None = None) -> int:
     try:
         with os.scandir(directory) as entries:
             for entry in entries:
-                if not (entry.name.startswith(_TMP_PREFIX) and entry.name.endswith(_TMP_SUFFIX)):
+                if not (entry.name.startswith(_TMP_PREFIX) and entry.name.endswith(_TMP_SUFFIXES)):
                     continue
                 try:
                     info = entry.stat(follow_symlinks=False)

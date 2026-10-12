@@ -88,7 +88,7 @@ def test_terminal_records_passed_pytest_evidence(ledger_path, no_sandbox, monkey
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None: "ok",
+        lambda self, commands, encoding, env, cwd=None, session_id="": "ok",
     )
     tool = terminal.build_terminal_tool()
 
@@ -105,7 +105,7 @@ def test_terminal_records_failed_exit_code(ledger_path, no_sandbox, monkeypatch)
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None: canned,
+        lambda self, commands, encoding, env, cwd=None, session_id="": canned,
     )
     tool = terminal.build_terminal_tool()
 
@@ -117,7 +117,7 @@ def test_terminal_non_verification_not_recorded(ledger_path, no_sandbox, monkeyp
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None: "files",
+        lambda self, commands, encoding, env, cwd=None, session_id="": "files",
     )
     tool = terminal.build_terminal_tool()
 
@@ -130,7 +130,7 @@ def test_terminal_result_survives_ledger_write_failure(ledger_path, no_sandbox, 
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None: "ok",
+        lambda self, commands, encoding, env, cwd=None, session_id="": "ok",
     )
     tool = terminal.build_terminal_tool()
 

@@ -11,6 +11,10 @@ class ToolsTimeoutsConfig(TypedDict):
     web_search_retry_backoff_max_s: int
     web_search_retry_max_attempts: int
     terminal_timeout_seconds: int
+    #: Terminal stdout at or above this many bytes skips the in-memory read:
+    #: the child writes straight to a temp file and only a head/tail preview
+    #: comes back (0 = always read in memory, the old behaviour).
+    fd_write_threshold_bytes: int
     python_repl_timeout_seconds: int
     ptc_timeout_seconds: int
     sandbox_bwrap_probe_timeout_seconds: int
@@ -46,6 +50,7 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "web_search_retry_backoff_max_s": 45,
     "web_search_retry_max_attempts": 3,
     "terminal_timeout_seconds": 30,
+    "fd_write_threshold_bytes": 100_000,
     "user_terminal_timeout_seconds": 120,
     "python_repl_timeout_seconds": 30,
     "ptc_timeout_seconds": 120,

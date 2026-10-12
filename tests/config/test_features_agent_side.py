@@ -173,6 +173,7 @@ SPOT_DEFAULTS = [
     (TODOLIST_INFRA, "stagnation_failure_reset_window_s", 300),
     (TOOLS_TIMEOUTS, "web_search_timeout_seconds", 15),
     (TOOLS_TIMEOUTS, "terminal_timeout_seconds", 30),
+    (TOOLS_TIMEOUTS, "fd_write_threshold_bytes", 100_000),
     (TOOLS_TIMEOUTS, "python_repl_timeout_seconds", 30),
     (TOOLS_TIMEOUTS, "ptc_timeout_seconds", 120),
     (TOOLS_TIMEOUTS, "message_search_max_session_chars", 100_000),
