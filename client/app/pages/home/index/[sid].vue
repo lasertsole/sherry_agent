@@ -619,6 +619,18 @@ watch([chatMessages, isSending], ([messages, sending]) => runningCommands.sync(m
   deep: false
 });
 
+/**
+ * The shield's mode is DERIVED server-side — plan mode mirrors the plan status
+ * — so a turn that enters or leaves plan mode changes it. Refresh at every
+ * turn boundary: the same refresh covers a plan just approved (the status
+ * flips to ready and the control falls back to the normal modes) and one the
+ * agent entered by itself.
+ */
+const accessModeStore = useAccessModeStore();
+watch(isSending, sending => {
+  if (!sending && sessionId.value) accessModeStore.hydrate(sessionId.value);
+});
+
 const chunks = useStreamChunks(chatMessages, drafts.allocateTempId, drafts);
 
 const hitl = useHitlApproval({
