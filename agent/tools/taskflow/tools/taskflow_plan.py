@@ -29,7 +29,8 @@ _SYSTEM_PROMPT = """You decompose a goal into a dependency-ordered step list for
 Return ONLY a JSON array of steps, in an order where dependencies come first:
 
 [{"step_id": "step-1", "task": "...", "depends_on": [], \
-"judge_criteria": "optional acceptance criteria", "response_schema": {optional JSON schema}}]
+"judge_criteria": "optional acceptance criteria", "response_schema": {optional JSON schema}, \
+"skills": ["optional", "skill-names"]}]
 
 Rules:
 * ``step_id`` values are unique and stable ("step-1", "step-2", ...).
@@ -39,6 +40,10 @@ create a cycle.
 what to produce. Include the concrete artefact or command when it is known.
 * Add ``judge_criteria`` when a step's result can be checked objectively; add \
 ``response_schema`` when the step must return structured JSON.
+* Add ``skills`` when an existing skill's SKILL.md should be handed to the \
+worker as its instructions (name the skill EXACTLY as the skills index spells \
+it). The system prepends those SKILL.md files to the step's task when it is \
+dispatched, so the task text itself should stay focused on the deliverable.
 * Prefer 3-8 steps. No prose, no markdown fence: the JSON array only.
 """
 
@@ -86,6 +91,9 @@ def _parse_plan(raw: str) -> list[dict]:
                 "depends_on": deps,
                 "judge_criteria": entry.get("judge_criteria"),
                 "response_schema": entry.get("response_schema"),
+                # Skill names whose SKILL.md the dispatch path prepends.
+                # ``None``/absent = no binding (the historical behaviour).
+                "skills": entry.get("skills"),
             }
         )
     if not plan:
@@ -147,6 +155,7 @@ async def taskflow_plan(
             status=StepStatus.BLOCKED if entry["depends_on"] else StepStatus.READY,
             response_schema=entry.get("response_schema"),
             judge_criteria=entry.get("judge_criteria"),
+            skills=entry.get("skills"),
         )
         for entry in plan
     ]

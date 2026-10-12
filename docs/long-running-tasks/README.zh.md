@@ -198,6 +198,10 @@
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 判别器提示词证据摘要 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 可插拔图包装链 |
 
+### step 挂载 skill（`skills`）
+
+step 可以声明 `skills: ["browser", "code-wiki"]`。dispatch 时系统会把每个具名技能的 SKILL.md —— 用与 cron 相同的 `[IMPORTANT: The user has invoked the "X" skill…]` 头部包起来 —— prepend 到该 step 的 task 文本之前，于是**子代理**直接拿到技能指令，主代理不必为了转述先在自身上下文里 `skill_view` 一遍（也不再经一轮 LLM 转述）。组装顺序为：技能 → step task → `## Upstream Results` → 输入参数 → judge 反馈。绑定已失效（技能被删或改名）时记日志并跳过：step 照常 dispatch（fail-open）。prepend 位于共享的 task 文本构造器内，因此所有 dispatch 路径（dispatch / run_task / resume / auto-dispatch / retry）都会带上它。`taskflow_plan` 的规划器可以产出该字段，`taskflow_update_steps` 可给已有 step 追加或修改。加载会为该技能的使用计数 +1（curator 可见其为活跃），拼装后的提示还会经过与 cron 相同的「仅告警」注入扫描。
+
 ### 合成聚合（`aggregate_deps`）
 
 `taskflow_run_task(aggregate_deps=true)` 标记一个合成步骤，其依赖结果会以 `## Upstream Results` 区块追加到派发任务中。`build_task_with_dep_results(step, steps, results)` 按 `depends_on` 顺序，将每个依赖的 `child_session_key` 与 flow 的 `{child_session_key, result, result_hash}` 记录匹配；结果缺失时回退为 `no result recorded` 占位符。聚合会在每次重派时从稳定结果重新推导，因此已存储的步骤任务永不被改写；省略该标志则保持旧有派发文本不变。

@@ -198,6 +198,10 @@
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 判定プロンプト用 evidence 要約 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | プラグ可能なグラフラッパーチェーン |
 
+### step への skill 紐付け（`skills`）
+
+step は `skills: ["browser", "code-wiki"]` を宣言できます。dispatch 時に、システムは各スキルの SKILL.md を——cron と同じ `[IMPORTANT: The user has invoked the "X" skill…]` ヘッダで包んで——task テキストの前に前置します。これにより**子エージェント**がスキルの指示を直接受け取り、オーケストレーターは中継のためだけに自分のコンテキストで `skill_view` する必要がなくなります（LLM による言い換えも挟みません）。順序はスキル → step の task → `## Upstream Results` → 入力パラメータ → judge フィードバック。読み込めなくなったバインディング（スキルが削除・改名）はログしてスキップし、step はそのまま dispatch されます（fail-open）。前置処理は共有の task テキストビルダー内にあるため、すべての dispatch 経路（dispatch / run_task / resume / auto-dispatch / retry）が持ちます。`taskflow_plan` のプランナーがこのフィールドを出力でき、`taskflow_update_steps` で既存 step に追加・変更できます。読み込むと使用テレメトリが +1 され（curator はそのスキルを active と見なします）、組み立てたプロンプトは cron と同じ警告のみのインジェクション走査を受けます。
+
 ### 合成集約（`aggregate_deps`）
 
 `taskflow_run_task(aggregate_deps=true)` は、依存結果を `## Upstream Results` ブロックとしてディスパッチされるタスクへ追記する合成ステップを指定します。`build_task_with_dep_results(step, steps, results)` は `depends_on` 順に各依存の `child_session_key` を flow の `{child_session_key, result, result_hash}` レコードに照合し、結果が無ければ `no result recorded` プレースホルダへフォールバックします。集約は再ディスパッチのたびに安定した結果から再導出されるため、保存済みステップタスクは決して書き換えられません。フラグを省略すれば従来のディスパッチ本文は不変です。

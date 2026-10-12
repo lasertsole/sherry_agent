@@ -190,6 +190,28 @@ not WHETHER you update.
      name only makes sense for today's task, it's wrong — fall back to
      (1), (2), or (3).
 
+### Frontmatter standard (the ONLY text the index shows)
+
+`<available_skills>` renders a skill's frontmatter, and those few lines are the
+model's entire basis for deciding whether to load the skill — the body is read
+only AFTER loading. So the fields are the trigger mechanism, not metadata:
+
+- `name` — class-level kebab-case identifier.
+- `description` — one-line capability summary (what the skill does).
+- `when_to_use` — **REQUIRED** on every skill you create or patch: the specific
+  scenarios, user intents, or triggers that should make the agent load this
+  skill. Not "when needed" — name the situation. Example: "When implementing
+  authentication that needs non-blocking bcrypt/scrypt verification, or when
+  synchronous hashing blocks the event loop."
+- `when_not_to_use` — optional but valuable: exclusions, alternatives, or
+  conditions where the approach does not apply. Example: "For simple CLI
+  scripts where blocking is acceptable, or when the project already uses
+  argon2."
+
+Keep each field short (~60 tokens for `description`, ~50 for the others — CJK
+characters cost about twice as many tokens per character). When patching a
+skill that lacks `when_to_use`, add it in the same patch.
+
 If you notice two existing skills that overlap, note it in your reply —
 the background curator handles consolidation at scale.
 

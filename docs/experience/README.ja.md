@@ -85,6 +85,8 @@ fork の結果メッセージはログのみ。メイングラフやその check
 
 ## Curator（スキルキュレーション）
 
+**frontmatter 契約（インデックスそのものがトリガー）。** `<available_skills>` が描画するのはスキルの frontmatter だけ——本文はロード後に読まれます——なので、これらのフィールドがルーティング信号です: `description`（能力の要約）、`when_to_use`（**必須**：これらの経路が作成・修正するすべてのスキルに、それを読み込むべき具体的なシナリオ／ユーザー意図を記載）、`when_not_to_use`（任意：除外条件と代替手段）。ローダーはこの 2 つのタグを CJK 対応のトークン予算（60 / 50 / 50 トークン）で描画し XML エスケープします。クライアントのスキルツールチップも同じ 3 フィールドを表示します。キュレーターはさらに狭い第 2 層を加えます: アンブレラの frontmatter がスキル全体を覆い、各 `##` サブ能力セクションは自身の `**When to use:**` 行で始まります（実際の除外がある場合のみ `**When NOT to use:**` も）。これによりモデルは `skill_view` 後に正しいセクションを選べます。決定的フォールバックも同じ形を書き、条件はマージ理由から抽出します。
+
 Curator（`context_engine/curator/`）は `skills/auto/` スキルライブラリのライフサイクルを担うバックグラウンドパスであり、まさに上記の抽出経路 2 の書込先である。読み書きするのはスキルだけ——MEMORY.md / USER.md / FACTS.md、plan 知識ディレクトリ、`todos.db` は対象外である。
 
 **何か。** 定時 cron ではなくアイドルトリガーのオーケストレーター。サービスエントリポイントが `context_engine.curator.init()` でデーモンスレッド（`curator-timer`）を起動する（`server/__main__.py:140`；HTTP-only モードではスキップ、`server/__main__.py:66-73`）。スレッドは 3600 秒ごとに起床し `maybe_run_curator(idle_for_seconds=...)` を呼ぶ（`context_engine/curator/__init__.py:122-140`）。パッケージのインポートは副作用なし——スレッドを起動するのは `init()` だけ（`context_engine/curator/__init__.py:151-165`）。

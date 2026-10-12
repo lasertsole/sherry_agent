@@ -14,6 +14,7 @@ from config import (
     USER_SKILLS_DIR,
     is_allowed_skill_path,
 )
+from pub.func.message.token_truncation import truncate_by_tokens
 
 
 def _xml_text(value: Any) -> str:
@@ -162,6 +163,11 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
             meta = parse_frontmatter(content)
             name = str(meta.get("name", skill_file.parent.name))
             desc = str(meta.get("description", ""))
+            # Trigger / exclusion signals (optional — a skill without them
+            # renders exactly as before). Written by the summarization nudge and
+            # the curator for skills they create; see ``get_skills_text``.
+            when_to_use = str(meta.get("when_to_use", "") or "").strip()
+            when_not_to_use = str(meta.get("when_not_to_use", "") or "").strip()
             scope = _normalize_scope(meta.get("scope"))
             # Relative to the HOME the tree lives in (``root.parent`` is
             # ``skills/``), so both trees report the checkout shape —
@@ -183,6 +189,8 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
                 {
                     "name": name,
                     "description": desc,
+                    "when_to_use": when_to_use,
+                    "when_not_to_use": when_not_to_use,
                     "location": location,
                     "scope": scope,
                     "active": active,
@@ -196,10 +204,37 @@ def scan_skills(use_cache: bool = True) -> list[dict[str, Any]]:
     return skills
 
 
-#: Longest skill description served to the client (same bound the tool
-#: catalogue uses: the UI shows it as a hover tooltip, and the full text stays
-#: in the SKILL.md).
-_DESCRIPTION_MAX_CHARS = 240
+#: Token budgets for the three frontmatter fields the index and the client
+#: catalogue render. TOKENS, not characters: a character cap costs twice as much
+#: context in CJK, so 60 tokens is ~240 ASCII chars OR ~120 CJK chars — the same
+#: price either way (``truncate_by_tokens``, CJK-aware). ``when_to_use`` /
+#: ``when_not_to_use`` are deliberately shorter than the capability summary:
+#: they are triggers, not prose. The full text always stays in SKILL.md.
+_DESCRIPTION_MAX_TOKENS = 60
+_WHEN_TO_USE_MAX_TOKENS = 50
+_WHEN_NOT_TO_USE_MAX_TOKENS = 50
+
+#: Omission marker style shared with the compressor's per-message clip.
+_OMISSION_TEMPLATE = "...[truncated {omitted} chars]..."
+
+
+def _bounded_field(value: Any, max_tokens: int) -> str:
+    """One frontmatter field, token-bounded and CJK-aware, for rendering.
+
+    Already-inside-budget text comes back unchanged (idempotent); longer text
+    keeps a head and a tail around an omission marker.
+    """
+    text = str(value if value is not None else "").strip()
+    if not text:
+        return ""
+    return truncate_by_tokens(
+        text,
+        max_tokens,
+        head_ratio=0.6,
+        tail_ratio=0.3,
+        omission_template=_OMISSION_TEMPLATE,
+    )
+
 
 #: Skills no session config may drop: the multimedia handling chain. A user can
 #: send an image / an audio clip / a video at any moment, and these are what turn
@@ -244,7 +279,11 @@ def skills_catalog(caller_scope: str = "main") -> list[dict[str, Any]]:
         catalog.append(
             {
                 "name": name,
-                "description": str(skill.get("description", ""))[:_DESCRIPTION_MAX_CHARS],
+                "description": _bounded_field(skill.get("description"), _DESCRIPTION_MAX_TOKENS),
+                "when_to_use": _bounded_field(skill.get("when_to_use"), _WHEN_TO_USE_MAX_TOKENS),
+                "when_not_to_use": _bounded_field(
+                    skill.get("when_not_to_use"), _WHEN_NOT_TO_USE_MAX_TOKENS
+                ),
                 "builtin": not _is_third_party(str(skill.get("location", ""))),
                 "required": skill_required(name),
             }
@@ -291,7 +330,20 @@ def get_skills_text(
     for s in final_skills:
         lines.append("  <skill>")
         lines.append(f"    <name>{_xml_text(s['name'])}</name>")
-        lines.append(f"    <description>{_xml_text(s['description'])}</description>")
+        lines.append(
+            f"    <description>"
+            f"{_xml_text(_bounded_field(s.get('description'), _DESCRIPTION_MAX_TOKENS))}"
+            f"</description>"
+        )
+        # Trigger / exclusion signals: the model sees WHEN to load the skill and
+        # when not to, instead of inferring it from a capability summary alone.
+        # Absent on the shipped built-ins — rendered only when present.
+        when_to_use = _bounded_field(s.get("when_to_use"), _WHEN_TO_USE_MAX_TOKENS)
+        if when_to_use:
+            lines.append(f"    <when_to_use>{_xml_text(when_to_use)}</when_to_use>")
+        when_not_to_use = _bounded_field(s.get("when_not_to_use"), _WHEN_NOT_TO_USE_MAX_TOKENS)
+        if when_not_to_use:
+            lines.append(f"    <when_not_to_use>{_xml_text(when_not_to_use)}</when_not_to_use>")
         lines.append("  </skill>")
     lines.append("</available_skills>")
     return "\n".join(lines)

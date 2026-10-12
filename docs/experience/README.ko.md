@@ -85,6 +85,8 @@ fork의 결과 메시지는 로그만 남깁니다. 메인 그래프나 그 chec
 
 ## Curator(스킬 큐레이션)
 
+**frontmatter 계약(인덱스 자체가 트리거).** `<available_skills>`는 스킬의 frontmatter만 렌더합니다 — 본문은 로드 후에 읽힙니다 — 따라서 이 필드들이 라우팅 신호입니다: `description`(능력 요약), `when_to_use`(**필수**: 이 경로들이 만들거나 고치는 모든 스킬에, 그것을 로드해야 하는 구체적 시나리오/사용자 의도를 명시), `when_not_to_use`(선택: 제외 조건과 대안). 로더는 두 태그를 CJK 인식 토큰 예산(60 / 50 / 50 토큰)으로 렌더하고 XML 이스케이프합니다. 클라이언트 스킬 툴팁도 같은 세 필드를 보여줍니다. 큐레이터는 더 좁은 두 번째 층을 더합니다: 엄브렐라의 frontmatter가 스킬 전체를 덮고, 각 `##` 하위 능력 섹션이 자체 `**When to use:**` 줄로 시작합니다(실제 제외가 있을 때만 `**When NOT to use:**`도). 그래서 모델은 `skill_view` 후 올바른 섹션을 고를 수 있습니다. 결정적 폴백도 같은 모양을 쓰며 조건은 병합 이유에서 추출합니다.
+
 Curator(`context_engine/curator/`)는 `skills/auto/` 스킬 라이브러리의 라이프사이클을 담당하는 백그라운드 패스이며, 바로 위의 추출 경로 2가 기록하는 대상입니다. 스킬만 읽고 씁니다. MEMORY.md / USER.md / FACTS.md, plan 지식 디렉터리, `todos.db`는 범위 밖입니다.
 
 **무엇인가.** 정기 cron이 아니라 유휴 트리거 오케스트레이터입니다. 서비스 엔트리포인트가 `context_engine.curator.init()`으로 데몬 스레드(`curator-timer`)를 시작합니다(`server/__main__.py:140`; HTTP-only 모드에서는 건너뜀, `server/__main__.py:66-73`). 스레드는 3600초마다 깨어나 `maybe_run_curator(idle_for_seconds=...)`를 호출합니다(`context_engine/curator/__init__.py:122-140`). 패키지 임포트는 부수 효과가 없으며 스레드를 시작하는 것은 `init()`뿐입니다(`context_engine/curator/__init__.py:151-165`).

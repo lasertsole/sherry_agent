@@ -816,16 +816,28 @@ const agentMainModelProfile = (): SessionModelProfile | null => {
 };
 
 /**
- * The hover text of one skill row: the SKILL.md description, plus the locked
- * explanation for a required skill.
+ * The hover text of one skill row: the SKILL.md description, the frontmatter's
+ * trigger / exclusion conditions when present, plus the locked explanation for a
+ * required skill.
  * @param skill Catalogue skill entry.
  * @param skill.name
  * @param skill.description
+ * @param skill.when_to_use
+ * @param skill.when_not_to_use
  * @param skill.required
  */
-const skillTooltip = (skill: { name: string; description?: string; required?: boolean }): string => {
-  const description = skill.description || skill.name;
-  return skill.required === true ? `${description}\n${t('config.agent.tools.requiredHint')}` : description;
+const skillTooltip = (skill: {
+  name: string;
+  description?: string;
+  when_to_use?: string;
+  when_not_to_use?: string;
+  required?: boolean;
+}): string => {
+  const parts = [skill.description || skill.name];
+  if (skill.when_to_use) parts.push(`${t('config.agent.skills.whenToUse')}: ${skill.when_to_use}`);
+  if (skill.when_not_to_use) parts.push(`${t('config.agent.skills.whenNotToUse')}: ${skill.when_not_to_use}`);
+  if (skill.required === true) parts.push(t('config.agent.tools.requiredHint'));
+  return parts.join('\n');
 };
 
 /**

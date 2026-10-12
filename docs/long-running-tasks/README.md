@@ -198,6 +198,10 @@ The compiled graph is wrapped by the **`agent/wrapper/`** package, which owns th
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | judge-prompt evidence summary |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | Pluggable graph-wrapper chain |
 
+### Step skill bindings (`skills`)
+
+A step may declare `skills: ["browser", "code-wiki"]`. At dispatch the system prepends each named skill's SKILL.md — wrapped in the same `[IMPORTANT: The user has invoked the "X" skill…]` header cron jobs use — to the step's task text, so the CHILD receives the skill's instructions directly and the orchestrator never spends its own context `skill_view`-ing a skill just to relay it (nor paraphrases it through a second LLM hop). The order is skills → step task → `## Upstream Results` → input parameters → judge feedback. A binding that no longer loads (the skill was deleted or renamed) is logged and skipped: the step still dispatches (fail-open). The prepend lives inside the shared task-text builder, so every dispatch path (dispatch / run_task / resume / auto-dispatch / retry) carries it. `taskflow_plan`'s planner may emit the field, and `taskflow_update_steps` can add or change it on an existing step. Loading a bound skill bumps its usage telemetry (the curator sees the skill as active), and the assembled prompt gets the same warning-only injection scan as cron.
+
 ### Synthesize aggregation (`aggregate_deps`)
 
 `taskflow_run_task(aggregate_deps=true)` marks a synthesis step whose dependency

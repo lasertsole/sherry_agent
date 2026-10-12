@@ -96,6 +96,7 @@ _OPTIONAL_STEP_FIELDS: tuple[str, ...] = (
     "priority",  # dispatch ordering hint
     "input_bindings",  # upstream structured fields bound as inputs
     "retry_policy",  # existing: failure retry policy
+    "skills",  # skill names whose SKILL.md is prepended at dispatch (see _skill_prepend)
 )
 
 
@@ -171,17 +172,25 @@ def deps_satisfied(step: dict, steps: list[dict]) -> bool:
 
 
 def build_task_with_dep_results(step: dict, steps: list[dict], results: list[dict]) -> str:
-    """Append dependency-step results to this step's task when ``aggregate_deps``.
+    """Base task text for a dispatch: bound skills, then the task, then deps.
 
-    A dependency's result is looked up by the dependency step's
-    ``child_session_key`` against the flow's recorded result entries (shape:
-    ``{child_session_key, result, result_hash}``). A dependency whose step is
-    unknown or has no recorded result contributes a ``no result recorded``
-    placeholder rather than raising. Returns the step's original task text
-    unchanged when ``aggregate_deps`` is falsy or the step has no dependencies,
-    so the default opt-out path stays byte-identical to the legacy dispatch.
+    The base text is the step's own task with its BOUND SKILLS prepended
+    (``skills: [...]`` → each SKILL.md ahead of the task, see ``_skill_prepend``)
+    — done HERE rather than at the call sites so every dispatch path (dispatch /
+    run_task / resume / auto-dispatch / retry) picks it up and none can forget.
+
+    When ``aggregate_deps`` is set AND the step has dependencies, each
+    dependency's result is appended under ``## Upstream Results``: looked up by
+    the dependency step's ``child_session_key`` against the flow's recorded
+    result entries (shape: ``{child_session_key, result, result_hash}``), with a
+    ``no result recorded`` placeholder for a dependency whose step is unknown or
+    has no recorded result. Without ``aggregate_deps`` (or without dependencies)
+    only the skills + task text comes back, byte-identical to the legacy
+    dispatch for a step that binds no skills.
     """
-    task = str(step.get("task") or "")
+    from agent.tools.taskflow.tools._skill_prepend import prepend_skills
+
+    task = prepend_skills(str(step.get("task") or ""), step.get("skills"))
     if not step.get("aggregate_deps"):
         return task
     depends_on = step.get("depends_on")

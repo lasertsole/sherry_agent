@@ -66,18 +66,119 @@ def _parse_multifile_umbrella(text: str) -> tuple[str, dict[str, str]]:
     return main, files
 
 
+#: Token budgets for the frontmatter conditions the fallback writes (the same
+#: currency as ``skills.loader``): CJK costs ~2 chars/token, ASCII ~4.
+_WHEN_TO_USE_MAX_TOKENS = 50
+_WHEN_NOT_TO_USE_MAX_TOKENS = 50
+
+
+def _bounded(text: str, max_tokens: int) -> str:
+    """Trim one condition line to its token budget (CJK-aware)."""
+    from pub.func.message.token_truncation import truncate_by_tokens
+
+    return truncate_by_tokens(
+        text.strip(),
+        max_tokens,
+        head_ratio=0.6,
+        tail_ratio=0.3,
+        omission_template="...[truncated {omitted} chars]...",
+    )
+
+
+def _extract_use_cases_from_reasons(reasons: list[str]) -> str:
+    """Heuristic ``when_to_use`` for the fallback: the merge reasons' triggers.
+
+    Looks for the wording merge reasons actually use ("when …", "use …",
+    "for …", "trigger") and keeps up to three distinct fragments; with nothing
+    to extract it states the umbrella's own scope so the field is never empty
+    (``when_to_use`` is REQUIRED on every skill).
+    """
+    triggers: list[str] = []
+    for reason in reasons:
+        lowered = reason.lower()
+        for marker in ("when ", "use ", "for ", "trigger"):
+            index = lowered.find(marker)
+            if index == -1:
+                continue
+            fragment = reason[index : index + 150].split(".")[0].strip()
+            if fragment and fragment not in triggers:
+                triggers.append(fragment)
+            break
+    if not triggers:
+        head = reasons[0].split(":")[0].strip() if reasons else ""
+        return _bounded(
+            f"Use when the task involves {head.lower()}"
+            if head
+            else "See the skill body for usage conditions.",
+            _WHEN_TO_USE_MAX_TOKENS,
+        )
+    return _bounded("; ".join(triggers[:3]), _WHEN_TO_USE_MAX_TOKENS)
+
+
+def _extract_exclusions_from_reasons(reasons: list[str]) -> str:
+    """Heuristic ``when_not_to_use`` for the fallback (``""`` when none found).
+
+    Optional by design — an empty result means the frontmatter field is left
+    out entirely rather than filled with a placeholder.
+    """
+    exclusions: list[str] = []
+    for reason in reasons:
+        lowered = reason.lower()
+        for marker in ("not ", "avoid ", "alternative", "except "):
+            index = lowered.find(marker)
+            if index == -1:
+                continue
+            fragment = reason[index : index + 150].split(".")[0].strip()
+            if fragment and fragment not in exclusions:
+                exclusions.append(fragment)
+            break
+    if not exclusions:
+        return ""
+    return _bounded("; ".join(exclusions[:3]), _WHEN_NOT_TO_USE_MAX_TOKENS)
+
+
 def _fallback_umbrella(umbrella: str, reasons: list[str], source_content: str) -> str:
-    """Deterministic umbrella SKILL.md used when LLM generation is unavailable."""
+    """Deterministic umbrella SKILL.md used when LLM generation is unavailable.
+
+    Two levels of conditions, mirroring what the LLM path is asked for: the
+    FRONTMATTER covers the whole umbrella (``when_to_use`` required,
+    ``when_not_to_use`` only when an exclusion was found), and every
+    sub-capability section opens with its own ``**When to use:**`` line so the
+    model can pick the right section after ``skill_view``.
+    """
+    use_cases = _extract_use_cases_from_reasons(reasons)
+    not_use_cases = _extract_exclusions_from_reasons(reasons)
+
+    frontmatter = [
+        "---",
+        f"name: {umbrella}",
+        f"description: Umbrella skill consolidating {len(reasons)} related skills.",
+        f"when_to_use: {use_cases}",
+    ]
+    if not_use_cases:
+        frontmatter.append(f"when_not_to_use: {not_use_cases}")
+    frontmatter.append("created_by: curator")
+
+    sections: list[str] = []
+    for reason in reasons:
+        name, _, detail = reason.partition(":")
+        sub_when = _extract_use_cases_from_reasons([reason])
+        sub_not_when = _extract_exclusions_from_reasons([reason])
+        section = f"## {name.strip() or reason[:50]}\n\n**When to use:** {sub_when}\n"
+        if sub_not_when:
+            section += f"\n**When NOT to use:** {sub_not_when}\n"
+        section += f"\n{detail.strip() or reason}\n"
+        sections.append(section)
+
+    body = f"# {umbrella}\n\n## When to use\n\n{use_cases}\n\n"
+    if not_use_cases:
+        body += f"## When NOT to use\n\n{not_use_cases}\n\n"
+    body += "\n".join(sections)
     return (
-        "---\n"
-        f"name: {umbrella}\n"
-        f"description: Umbrella skill consolidating {len(reasons)} related skills.\n"
-        "created_by: curator\n"
-        "---\n\n"
-        f"# {umbrella}\n\n"
-        "Consolidated from the following skills:\n\n"
-        + "\n".join(reasons)
-        + "\n\n"
+        "\n".join(frontmatter)
+        + "\n---\n\n"
+        + body
+        + "\n\n---\n\nConsolidated source content:\n\n"
         + source_content
         + "\n"
     )
@@ -114,7 +215,12 @@ def _generate_umbrella_skill(
         f"{allowed_subs}. Example: '<<<references/api.md>>>', '<<<examples/demo.py>>>', "
         f"'<<<scripts/helper.sh>>>', '<<<resources/data.json>>>'.\n"
         "- Do NOT wrap blocks in code fences.\n"
-        "- The frontmatter of SKILL.md must have: name, description, created_by: curator.\n\n"
+        "- The frontmatter of SKILL.md must have: name, description, when_to_use, created_by: curator.\n"
+        "  - description: one-line capability summary.\n"
+        "  - when_to_use: REQUIRED — the specific scenarios in which the agent should "
+        "load this whole skill.\n"
+        "  - when_not_to_use: optional — exclusions or alternatives; omit it when there "
+        "are none.\n\n"
         "LENGTH BUDGET (important):\n"
         f"- Keep SKILL.md itself concise and under ~{char_target:,} characters. "
         "It is loaded into the agent's prompt every time the skill is used, so bloating it "
@@ -131,7 +237,14 @@ def _generate_umbrella_skill(
         "- Organize SKILL.md with clear sections. Use ## headings for each concern area.\n"
         "- Preserve all useful code examples, but consolidate similar ones (dedupe or move "
         "to examples/ rather than repeating inline).\n"
-        "- Include a '## When to use' section at the top.\n"
+        "- Include a '## When to use' section at the top (elaborates the frontmatter "
+        "when_to_use).\n"
+        "- EVERY '##' sub-capability section MUST open with:\n"
+        "    **When to use:** <the scenario within the umbrella's scope that should "
+        "select THIS section — narrower than the frontmatter's when_to_use, never a "
+        "repeat of it>\n"
+        "  and MAY add:\n"
+        "    **When NOT to use:** <exclusions specific to this section, when any>"
         "- Reference the supporting files that were migrated from the original skills "
         f"(under references/, templates/, scripts/) with relative links.\n"
         "- Keep the result concise but complete — do NOT lose any substantive content."

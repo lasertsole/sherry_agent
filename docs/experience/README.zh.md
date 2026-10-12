@@ -85,6 +85,8 @@ fork 的结果消息只记录日志。任何内容都不会进入主图或其 ch
 
 ## Curator（技能策展）
 
+**frontmatter 契约（索引就是触发器）。** `<available_skills>` 只渲染技能的 frontmatter —— 正文要加载后才读 —— 所以这些字段就是路由信号：`description`（能力概述）、`when_to_use`（**必填**：这些路径创建或修补的每个技能都要写，写明应该加载它的具体场景／用户意图）与 `when_not_to_use`（可选：排除条件与替代方案）。加载器用 CJK 感知的 token 预算（60 / 50 / 50 token）渲染这两个附加标签并做 XML 转义；前端技能 tooltip 展示同样三个字段。curator 还加了更窄的第二层：伞状技能的 frontmatter 覆盖整个技能，而每个 `##` 子能力段落以自己的一行 `**When to use:**` 开头（确有排除时才加 `**When NOT to use:**`），模型 `skill_view` 后即可选对段落。它的确定性回退写出同样的形状，从合并理由里启发式提取这些条件。
+
 Curator（`context_engine/curator/`）是维护 `skills/auto/` 技能库生命周期的后台流程——正是上文抽取路径 2 的写入目标。它只读写技能；MEMORY.md / USER.md / FACTS.md、plan 知识目录与 `todos.db` 都不在其范围内。
 
 **是什么。** 它是空闲触发的编排器，而非定时 cron。服务入口通过 `context_engine.curator.init()` 启动守护线程（`curator-timer`）（`server/__main__.py:140`；HTTP-only 模式下跳过，`server/__main__.py:66-73`）。线程每 3600 秒唤醒一次并调用 `maybe_run_curator(idle_for_seconds=...)`（`context_engine/curator/__init__.py:122-140`）。导入该包无副作用——只有 `init()` 会启动线程（`context_engine/curator/__init__.py:151-165`）。

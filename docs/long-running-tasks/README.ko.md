@@ -198,6 +198,10 @@
 | `collect_evidence_summary` | `agent/tools/taskflow/evidence_collector.py:22` | 판정 프롬프트용 evidence 요약 |
 | `apply_graph_wrappers` | `agent/wrapper/registry.py:69` | 플러그 가능한 그래프 래퍼 체인 |
 
+### step의 skill 바인딩(`skills`)
+
+step은 `skills: ["browser", "code-wiki"]`를 선언할 수 있습니다. dispatch 시 시스템이 각 스킬의 SKILL.md를 — cron과 같은 `[IMPORTANT: The user has invoked the "X" skill…]` 헤더로 감싸 — task 텍스트 앞에 붙입니다. 그래서 **자식 에이전트**가 스킬 지시를 직접 받고, 오케스트레이터는 중계만을 위해 자기 컨텍스트에서 `skill_view`를 할 필요가 없습니다(LLM 재서술도 없음). 순서는 스킬 → step task → `## Upstream Results` → 입력 파라미터 → judge 피드백. 더 이상 로드되지 않는 바인딩(스킬 삭제/개명)은 로그 후 건너뛰고 step은 그대로 dispatch됩니다(fail-open). 이 전처리는 공유 task 텍스트 빌더 안에 있어 모든 dispatch 경로(dispatch / run_task / resume / auto-dispatch / retry)가 이를 갖습니다. `taskflow_plan`의 플래너가 이 필드를 낼 수 있고, `taskflow_update_steps`가 기존 step에 추가·변경할 수 있습니다. 로드 시 사용 텔레메트리가 +1 되고(curator가 그 스킬을 active로 봅니다), 조립된 프롬프트는 cron과 동일한 경고 전용 주입 스캔을 받습니다.
+
 ### 합성 집계(`aggregate_deps`)
 
 `taskflow_run_task(aggregate_deps=true)`는 의존성 결과를 `## Upstream Results` 블록으로 디스패치 작업에 덧붙이는 합성 단계를 표시합니다. `build_task_with_dep_results(step, steps, results)`는 `depends_on` 순서로 각 의존성의 `child_session_key`를 flow의 `{child_session_key, result, result_hash}` 레코드와 대조하고, 결과가 없으면 `no result recorded` 자리표시자로 폴백합니다. 집계는 재디스패치마다 안정적인 결과에서 다시 도출되므로 저장된 단계 작업은 절대 재작성되지 않습니다. 플래그를 생략하면 기존 디스패치 텍스트가 그대로 유지됩니다.

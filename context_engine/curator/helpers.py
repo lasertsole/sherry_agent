@@ -29,7 +29,8 @@ def _atomic_json_write(path: Path, data: dict[str, Any], indent: int = 2) -> Non
     tmp.replace(path)
 
 
-def _read_skill_description(skill_dir: Path) -> str:
+def _read_skill_frontmatter_field(skill_dir: Path, field: str) -> str:
+    """One frontmatter string field of a SKILL.md (``""`` when absent/unreadable)."""
     md = skill_dir / "SKILL.md"
     if not md.exists():
         return ""
@@ -43,9 +44,13 @@ def _read_skill_description(skill_dir: Path) -> str:
         import yaml
 
         meta = yaml.safe_load(parts[1]) or {}
-        return str(meta.get("description", ""))
+        return str(meta.get(field, "") or "")
     except Exception:
         return ""
+
+
+def _read_skill_description(skill_dir: Path) -> str:
+    return _read_skill_frontmatter_field(skill_dir, "description")
 
 
 def _needle_in_path_component(needle: str, path: str) -> bool:

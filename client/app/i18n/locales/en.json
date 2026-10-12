@@ -209,7 +209,9 @@
         "scope_builtin": "Built-in",
         "scope_thirdparty": "Third-party",
         "empty": "No skills yet",
-        "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index."
+        "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index.",
+        "whenToUse": "When to use",
+        "whenNotToUse": "Not for"
       },
       "toolGroup": {
         "files": "Files",

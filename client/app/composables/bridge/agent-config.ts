@@ -44,6 +44,10 @@ export interface AgentSkillEntry {
   name: string;
   /** The SKILL.md description (bounded) — the row's hover tooltip. */
   description?: string;
+  /** Trigger conditions from the frontmatter (bounded) — hover tooltip too. */
+  when_to_use?: string;
+  /** Exclusion conditions from the frontmatter (bounded; optional field). */
+  when_not_to_use?: string;
   /** False = an uploaded third-party skill (`skills/plugins/`). */
   builtin: boolean;
   /** Locked on: the multimedia chain, which no session config may drop. */

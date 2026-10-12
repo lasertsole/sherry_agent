@@ -15,6 +15,7 @@ from context_engine.curator.constants import (
 from context_engine.curator.helpers import (
     _ensure_dir,
     _read_skill_description,
+    _read_skill_frontmatter_field,
     _skill_dir,
     is_agent_created,
 )
@@ -176,6 +177,9 @@ def agent_created_report() -> list[dict[str, Any]]:
         rec = load_record(name)
         rec["name"] = name
         rec["description"] = _read_skill_description(entry)
+        # The trigger signal, so the reviewer sees WHEN a skill claims to be
+        # useful next to how often it actually was (see `_render_candidate_list`).
+        rec["when_to_use"] = _read_skill_frontmatter_field(entry, "when_to_use")
         rec["pinned"] = is_pinned(name)
         rec["_persisted"] = rec.get("_persisted", False)
         rows.append(rec)

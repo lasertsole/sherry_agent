@@ -75,11 +75,14 @@ def _render_candidate_list() -> str:
     for r in rows:
         desc = r.get("description", "")
         desc_part = f"  desc={desc}" if desc else ""
+        when = r.get("when_to_use", "")
+        when_part = f"  when={when}" if when else ""
         lines.append(
             f"- {r['name']}  state={r['state']}  "
             f"use={r.get('use_count', 0)}  "
             f"last_activity={r.get('last_activity_at') or 'never'}"
             f"{desc_part}"
+            f"{when_part}"
         )
     return "\n".join(lines)
 
