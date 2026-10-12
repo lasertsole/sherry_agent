@@ -7,6 +7,20 @@ Two independent components of the original design are fused here:
   prompt on the first qualifying turn, then a short reminder on later turns
   (module-level ``_armed_sessions`` ledger). ``rearm_after_compact`` clears the
   entry after context compression so the full prompt is injected again.
+
+Intent detection is TWO layers, in this order and for this reason:
+
+1. **Rules** (``_detect_task_intent``): zero latency, zero cost, and the only
+   layer an armed session ever runs. Question / chat patterns decide first;
+   then a keyword in ANY of the four UI languages (EN / ZH / JA / KO) decides
+   "task"; then length (> ``_LONG_MESSAGE_CHARS``) decides "task" for a long
+   message that is neither.
+2. **LLM fallback** (``_detect_task_intent_with_llm``): only for FIRST arming,
+   only when the rules were inconclusive — a 20-100 char message that carries
+   request phrasing (``してください`` / ``해줘`` / ``please`` / ``帮我`` …) but no
+   keyword. One auxiliary-LLM call (~50 tokens) picks up the short
+   Japanese/Korean request the keyword lists miss. Fail-open in every
+   direction: a failure returns False and the turn proceeds without steering.
 - **Plan-active steering** (mirrors omo ``ulw-execute-continuation``
   input hook): when the boulder file (``config.path.resolve_boulder_path``)
   holds an active/paused work whose plan file exists and contains a checkbox,
@@ -92,6 +106,46 @@ _TASK_KEYWORDS = {
     "增强",
     "重写",
     "转换",
+    # 日本語（漢字 + カタカナ + ひらがな）
+    "実装",
+    "修正",
+    "作成",
+    "追加",
+    "リファクタ",
+    "構築",
+    "デプロイ",
+    "テスト",
+    "更新",
+    "移行",
+    "記述",
+    "設定",
+    "最適化",
+    "デバッグ",
+    "解決",
+    "強化",
+    "書き直し",
+    "変換",
+    "統合",
+    # 한국어
+    "구현",
+    "수정",
+    "생성",
+    "추가",
+    "리팩토링",
+    "빌드",
+    "배포",
+    "테스트",
+    "업데이트",
+    "마이그레이션",
+    "작성",
+    "설정",
+    "통합",
+    "최적화",
+    "디버그",
+    "해결",
+    "개선",
+    "재작성",
+    "변환",
 }
 
 _QUESTION_PATTERNS = [
@@ -99,12 +153,71 @@ _QUESTION_PATTERNS = [
     r"^(什么是|怎么|为什么|哪里|谁|什么时候|能否|是否|是不是|能不能)",
     r"^(explain|describe|tell me about)",
     r"^(解释|说明|介绍一下)",
+    r"^(何が|どうやって|なぜ|どこに|誰が|いつ|できますか|ですか|教えて)",
+    r"^(説明|解説|紹介して)",
+    r"^(무엇이|어떻게|왜|어디에|누가|언제|할 수 있|인가요|알려주세요)",
+    r"^(설명|소개해)",
 ]
 
 _CHAT_PATTERNS = [
     r"^(hello|hi|hey|thanks|thank you|ok|good|great|bye)\b",
     r"^(你好|谢谢|好的|再见|嗯|哦)",
+    r"^(こんにちは|ありがとう|お疲れ様|はい|さようなら|うん|ええ|おはよう)",
+    r"^(안녕하세요|감사합니다|네|좋아요|안녕히|응)",
 ]
+
+#: A message longer than this is a work request on LENGTH alone: no keyword or
+#: pattern check applies (a long, specific message is a request in any
+#: language, and CJK packs more meaning per character than English).
+_LONG_MESSAGE_CHARS = 100
+
+#: The LLM-fallback window. Shorter than this and the rules have already
+#: decided (a keyword, a question/chat pattern, or simply not enough text to
+#: be a request); longer and ``_LONG_MESSAGE_CHARS`` decided.
+_LLM_FALLBACK_MIN_CHARS = 20
+
+#: Request phrasing in the four languages: a message carrying one of these is
+#: the shape the keyword lists can miss (a short JA/KO request), so the one
+#: auxiliary-LLM classification is worth its ~50 tokens.
+_REQUEST_MARKERS = (
+    "please",
+    "帮我",
+    "帮忙",
+    "看一下",
+    "处理一下",
+    # 日本語
+    "して",
+    "してください",
+    "お願い",
+    "やって",
+    "直して",
+    "してほしい",
+    # 한국어
+    "해줘",
+    "해주세요",
+    "부탁",
+    "처리",
+    "봐줘",
+)
+
+#: The classification prompt: one category name out, nothing else in.
+_INTENT_CLASSIFY_SYSTEM_PROMPT = (
+    "Classify the user's message into one category. Respond with ONLY the "
+    "category name, nothing else:\n"
+    "- work_request: asks to implement, fix, build, configure, or perform a "
+    "development task\n"
+    "- question: asks for explanation or information\n"
+    "- chat: greeting, thanks, or casual conversation"
+)
+
+#: Bound on the message text sent to the classifier (the window is already
+#: 20-100 chars; this is a hard ceiling, not a budget).
+_LLM_PROMPT_MESSAGE_CHARS = 500
+
+
+def _matches_any(patterns: list[str], text: str) -> bool:
+    """True when any anchored pattern matches *text*."""
+    return any(re.match(pattern, text) for pattern in patterns)
 
 
 def _detect_task_intent(content: str) -> bool:
@@ -113,25 +226,89 @@ def _detect_task_intent(content: str) -> bool:
     Strategy (conservative — a false negative only skips steering):
     1. question patterns (short messages only) → not a task;
     2. chat patterns (short messages only) → not a task;
-    3. a task keyword anywhere → task;
-    4. long messages (> 100 chars) that are neither question nor chat → task.
+    3. a task keyword in any of the four languages → task;
+    4. long messages (> ``_LONG_MESSAGE_CHARS``) that are neither question nor
+       chat → task.
     """
     text = content.strip().lower()
-    is_long = len(content) > 100
+    is_long = len(content) > _LONG_MESSAGE_CHARS
 
-    if not is_long:
-        for pattern in _QUESTION_PATTERNS:
-            if re.match(pattern, text):
-                return False
-        for pattern in _CHAT_PATTERNS:
-            if re.match(pattern, text):
-                return False
+    if not is_long and (
+        _matches_any(_QUESTION_PATTERNS, text) or _matches_any(_CHAT_PATTERNS, text)
+    ):
+        return False
 
     for keyword in _TASK_KEYWORDS:
         if keyword in text:
             return True
 
     return is_long
+
+
+def _looks_like_request(text: str) -> bool:
+    """True when *text* carries request phrasing (``~して`` / ``~해줘`` / please).
+
+    The phrasing is what a short JA/KO work request looks like when no keyword
+    matched, so it is the fallback's trigger — not a decision of its own.
+    """
+    lowered = text.lower()
+    return any(marker in lowered for marker in _REQUEST_MARKERS)
+
+
+def _should_try_llm(content: str) -> bool:
+    """True when the rules were inconclusive and one LLM call is worth it.
+
+    Only the uncertain window qualifies: 20-100 characters, no
+    question/chat pattern (those are decisive negatives), and request phrasing
+    present. Anything shorter was already decided by the rules, anything longer
+    by ``_LONG_MESSAGE_CHARS``.
+    """
+    text = content.strip()
+    if not (_LLM_FALLBACK_MIN_CHARS <= len(text) <= _LONG_MESSAGE_CHARS):
+        return False
+    lowered = text.lower()
+    if _matches_any(_QUESTION_PATTERNS, lowered) or _matches_any(_CHAT_PATTERNS, lowered):
+        return False
+    return _looks_like_request(text)
+
+
+async def _llm_classify_intent(content: str) -> bool:
+    """Ask the auxiliary LLM whether *content* is a work request.
+
+    Fail-open: any failure (no model configured, timeout, a model that answers
+    prose instead of a category) returns False, so the fallback can only ever
+    cause MISSING steering, never a broken turn.
+    """
+    try:
+        from models import build_auxiliary_llm
+
+        llm = build_auxiliary_llm(temperature=0)
+        response = await llm.ainvoke(
+            [
+                {"role": "system", "content": _INTENT_CLASSIFY_SYSTEM_PROMPT},
+                {"role": "user", "content": content[:_LLM_PROMPT_MESSAGE_CHARS]},
+            ]
+        )
+        raw = response.content if hasattr(response, "content") else str(response)
+        return "work_request" in str(raw).strip().lower()
+    except Exception:
+        logger.debug("task-intent LLM classification failed; treating as non-task", exc_info=True)
+        return False
+
+
+async def _detect_task_intent_with_llm(content: str, *, allow_llm: bool = True) -> bool:
+    """Two-layer detection: rules first, one bounded LLM call only if unsure.
+
+    ``allow_llm=False`` (an already-armed session, or a call path with no
+    session id to arm) keeps the decisions purely rule-based, so the fallback
+    fires at most once per session.
+    """
+    if _detect_task_intent(content):
+        return True
+    if not allow_llm or not _should_try_llm(content):
+        return False
+    logger.debug("task-intent: rules were inconclusive; asking the auxiliary model")
+    return await _llm_classify_intent(content)
 
 
 # ── Steering prompts ───────────────────────────────────────────────────────
@@ -211,16 +388,42 @@ _BOULDER_PATH: Path = resolve_boulder_path()
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 
+def _message_text(content: Any) -> str:
+    """The message's text, whatever shape the content arrived in.
+
+    The server builds each turn's ``HumanMessage`` from the client's multimodal
+    envelope, so the content is a LIST of blocks
+    (``[{"type": "text", "text": ...}]``) — an ``isinstance(content, str)``
+    check silently skipped every real turn (the middleware was inert in
+    production until 2026-10-12). Text blocks are joined in order; a payload
+    with no text block (an image with no caption) yields ``""``.
+    """
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        return ""
+    parts: list[str] = []
+    for block in content:
+        if isinstance(block, str):
+            parts.append(block)
+            continue
+        if isinstance(block, dict):
+            block_type, text = block.get("type"), block.get("text")
+        else:
+            block_type, text = getattr(block, "type", None), getattr(block, "text", None)
+        if block_type == "text" and isinstance(text, str):
+            parts.append(text)
+    return "\n".join(parts)
+
+
 def _is_system_directive(msg: Any) -> bool:
     """True when ``msg`` is a system-injected directive, not user input.
 
     Filters continuation prompts and steering directives so they can never be
     mistaken for a fresh user request (anti-loop).
     """
-    content = getattr(msg, "content", None)
-    if isinstance(content, str) and (
-        content.startswith("[SYSTEM DIRECTIVE") or content.startswith("<sherry-ulw-execute>")
-    ):
+    text = _message_text(getattr(msg, "content", None))
+    if text.startswith("[SYSTEM DIRECTIVE") or text.startswith("<sherry-ulw-execute>"):
         return True
     meta = getattr(msg, "metadata", None) or {}
     return bool(meta.get("internal"))
@@ -324,8 +527,10 @@ class TaskIntentMiddleware(AgentMiddleware):
             if last_human is not final:
                 return None
 
-            content = last_human.content
-            if not isinstance(content, str) or not content.strip():
+            # Multimodal turns arrive as a content BLOCK LIST, so the text is
+            # extracted before any detection runs.
+            content = _message_text(last_human.content)
+            if not content.strip():
                 return None
 
             session_id = str(state.get("session_id") or "")
@@ -336,14 +541,21 @@ class TaskIntentMiddleware(AgentMiddleware):
                 return {"messages": [_task_intent_message(_PLAN_ACTIVE_REMINDER.strip())]}
 
             # ── First arming / short reminder ──────────────────────────────
-            if not _detect_task_intent(content):
-                return None
-
             is_armed = bool(session_id) and session_id in _armed_sessions
             if is_armed:
+                # Already in orchestrator mode: the rules alone decide whether
+                # the reminder rides along. The LLM fallback serves FIRST
+                # arming only, so a long session never pays it twice.
+                if not _detect_task_intent(content):
+                    return None
                 steering = _task_intent_message(_TASK_STEERING_REMINDER)
                 logger.info("TaskIntentMiddleware: re-arming reminder for session {}", session_id)
             else:
+                # No session id means no ledger entry to arm, i.e. the one-shot
+                # guarantee does not hold — keep those calls rule-only rather
+                # than paying an LLM call on every turn.
+                if not await _detect_task_intent_with_llm(content, allow_llm=bool(session_id)):
+                    return None
                 if session_id:
                     _armed_sessions.add(session_id)
                 steering = _task_intent_message(_TASK_STEERING_PROMPT)

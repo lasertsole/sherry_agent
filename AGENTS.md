@@ -66,6 +66,12 @@ User message → Robyn WS → agent.core.built_agent() graph
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
   │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
+  │    (TaskIntent's intent detection is TWO layers: four-language rules — EN/ZH/JA/KO
+  │     keywords plus question/chat patterns, then a length fallback over 100 chars —
+  │     and an auxiliary-LLM classification that runs ONLY for first arming, ONLY in the
+  │     20-100 char window with request phrasing (してください / 해줘 / please / 帮我) and no
+  │     keyword; armed sessions and session-less calls stay rule-only, and every failure
+  │     path is fail-open to "not a task")
   │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
