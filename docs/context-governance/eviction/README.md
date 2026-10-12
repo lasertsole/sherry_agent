@@ -62,11 +62,36 @@ The ordering that makes this work: in the `wrap_tool_call` chain, `MessagePersis
 
 ## ✂️ `read_file` Slice (P2-4)
 
-`read_file` results are **not** offloaded — the file already lives on disk, so writing a second copy would be pure duplication. `slice_read_file_result` (`pub/func/message/eviction.py`) instead replaces the content with the first **`_READ_FILE_SLICE_CHARS` (4 000) characters** plus a recovery notice (`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`). No eviction file is written, and the helper is idempotent: an already-sliced result (notice present) is returned untouched.
+### Token-budgeted pagination (the tool budgets itself first)
+
+`read_file` is the FIRST cut, before any middleware sees the result: the window it returns is bounded by BOTH `TOOLS_TIMEOUTS["read_file_token_budget"]` (4 000, times `read_file_budget_ratio` 0.85) and the caller's line `limit` — the stricter wins. The budget is CJK-aware (CJK ≈ 2 chars/token, ASCII ≈ 4 — the ratios `token_truncation` uses), so the same number means the same context cost in every language: 2 000 lines of Chinese used to cost ~2.5× what 2 000 lines of English did. Truncation is always at a LINE boundary (numbering stays continuous), and one line longer than the whole budget — a minified bundle — is clipped inside itself with a `...[N chars clipped]...` marker and reported `truncated: true`, so it grants no write license. The line limits come from the registry (`file_tools_read_default_limit` / `file_tools_read_max_limit`, no longer hardcoded), and a budget of 0 restores the pure line-count window. A re-read of a file this session READ in full (the license exists, provenance `read`) and that has not changed answers with a pointer (`unchanged: true`) instead of the content — the model's own conversation already holds it; a ranged read (offset ≥ 2) always returns content.
+
+Because the tool budgets itself, the compression-time clip below is a FALLBACK: it skips a payload that already says `truncated: true` (the tool's page and its continuation hint are what the model needs) and still clips a `truncated: false` result that is merely long — a complete read can be up to the budget, which is larger than the middleware's own clip budget.
+
+`read_file` results are **not** offloaded — the file already lives on disk, so writing a second copy would be pure duplication. `slice_read_file_result` (`pub/func/message/eviction.py`) instead replaces the content with the first **`_READ_FILE_SLICE_CHARS` (4 000) characters** plus a recovery notice (`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`). No eviction file is written, and the helper is idempotent: an already-sliced result (notice present) is returned untouched. A page the tool already budgeted itself (`truncated: true`) is skipped: its window is the intended size and its own hint is the recovery path.
 
 This is the **execution-time** half of a two-stage reduction. The **compression-time** half lives in `pub/func/message/target_truncation.py::_truncate_read_file_content`: when compression clips context, it resolves each `ToolMessage` back to its `read_file` call by `tool_call_id` and keeps head 30 % + tail 30 % of `max_tool_output_tokens` (500 — ~2 000 ASCII characters, the CJK-aware equivalent), replacing the middle with a recovery notice that carries the **parser-derived, 1-based continuation offset** (`Use offset=<N> to continue reading…`; falls back to "re-read from the start" when the payload does not parse).
 
 The two stages are complementary by construction: when compression later clips an execution-sliced payload, the truncated JSON no longer parses, so the compression notice deterministically falls back to the restart form — no incorrect offset is ever emitted, and the execution-time slice helper never re-slices its own output.
+
+## 📄 Which Tool Outputs Ride a File (fd-direct-write)
+
+`terminal` writes its child's stdout straight to disk instead of into a pipe: both spawn sites hand the process a FILE (`.sherry-tmp-stdout-*.log` in the session directory, stderr merged into it) and wait for it, so an oversized payload never rides the parent's heap. Under `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]` (100 000 bytes) the file is read back whole and deleted; at or above it the file is renamed into `evicted/terminal-<sha256(first 64 KiB)[:16]>.log` and only a byte-bounded head/tail preview (`build_file_preview`: 8 KiB per side, the total is `stat().st_size` BYTES — lines are never counted) reaches the model. Timeout / cancel / failure delete their temp file; hard-kill leftovers are swept by the shared `.sherry-tmp-` + `.log` contract in `atomic_write.py`.
+
+That shape — **the whole stdout is bulk text the parent only previews** — is what decides whether fd-direct-write applies anywhere else. Judged against it, tool by tool:
+
+| Path | stdout shape | What bounds it | fd-direct-write? |
+| --- | --- | --- | --- |
+| `terminal` | raw bulk text, never parsed | the file + the eviction preview | ✅ implemented |
+| `python_repl` | ONE JSON envelope (`out`/`err` captured by the child wrapper) | nothing today: the child's `StringIO` is unbounded, the envelope is serialized whole, and the parent holds it through `communicate()` **and** `json.loads` (~3× the payload) | ❌ the bytes must be parsed, so a file would still be read whole and decoded — the fix is a CHILD-side cap before serialization |
+| `execute_code` (PTC) | JSON envelope; real tool calls ride the loopback RPC bridge | parent-side `_truncate(..., max_stdout)`, applied after the read | ❌ protocol payload, same reasoning as `python_repl` |
+| `search_files` (ripgrep) | streaming match lines, parsed as they arrive | per-call caps + `ProcessWatchdog` early kill | ❌ would REGRESS: with a file the parent cannot stop the search at its cap — rg would run to completion |
+| ast-grep | JSON records | `ast_grep_max_matches` / path / pattern caps, far below any threshold | ❌ already bounded |
+| LSP client | JSON-RPC frames | the protocol itself | ❌ not a text payload |
+| `web_search` / RAG | HTTP responses formatted per result | provider + per-result caps | ❌ no subprocess involved |
+| middleware eviction (P0-2 / P1-9 / P2-4) | messages already in memory | the middleware's own thresholds | ➖ not a producer: it runs AFTER the tool, on data already on the heap |
+
+The rule the table encodes: fd-direct-write needs a subprocess whose **entire stdout is bulk text** — no framing the parent must parse, no early-termination contract to lose. A pipe that is parsed, framed or cut short is the correct design there.
 
 ## 📥 Human-Message Eviction (P1-9)
 

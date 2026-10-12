@@ -53,10 +53,17 @@ class FileLicense:
     The encoding is carried along so a write lands in the file's OWN codec —
     a UTF-16 config keeps its BOM and byte order instead of silently turning
     into UTF-8 — and a write with no license (a new file) is UTF-8.
+
+    ``source`` records HOW the knowledge arrived: ``"read"`` (a complete
+    ``read_file``) or ``"overwrite"`` (this session wrote the whole file). Both
+    license a later write, but only a READ means the file's content is sitting
+    in the conversation — which is what ``read_file``'s re-read stub keys on
+    (a file the session merely wrote is still returned on request).
     """
 
     revision: str
     encoding: str = "utf-8"
+    source: str = "read"
 
 
 #: Upper bound on remembered licenses (one per session and resolved path). A
@@ -73,10 +80,10 @@ def _key(session_id: str, path: Path) -> tuple[str, str]:
     return (session_id, str(path))
 
 
-def _store(session_id: str, path: Path, revision: str, encoding: str) -> None:
+def _store(session_id: str, path: Path, revision: str, encoding: str, source: str) -> None:
     key = _key(session_id, path)
     with _LOCK:
-        _LICENSES[key] = FileLicense(revision=revision, encoding=encoding)
+        _LICENSES[key] = FileLicense(revision=revision, encoding=encoding, source=source)
         _LICENSES.move_to_end(key)
         while len(_LICENSES) > _MAX_LICENSES:
             _LICENSES.popitem(last=False)
@@ -84,12 +91,12 @@ def _store(session_id: str, path: Path, revision: str, encoding: str) -> None:
 
 def note_read(session_id: str, path: Path, revision: str, encoding: str = "utf-8") -> None:
     """Record that *session_id* has read the whole of *path* at *revision*."""
-    _store(session_id, path, revision, encoding)
+    _store(session_id, path, revision, encoding, "read")
 
 
 def note_overwrite(session_id: str, path: Path, revision: str, encoding: str = "utf-8") -> None:
     """Record a whole-file write by *session_id*: it knows the new *revision*."""
-    _store(session_id, path, revision, encoding)
+    _store(session_id, path, revision, encoding, "overwrite")
 
 
 def note_edit(session_id: str, path: Path, revision: str) -> None:
@@ -103,7 +110,11 @@ def note_edit(session_id: str, path: Path, revision: str) -> None:
     key = _key(session_id, path)
     with _LOCK:
         if key in _LICENSES:
-            _LICENSES[key] = FileLicense(revision=revision, encoding=_LICENSES[key].encoding)
+            _LICENSES[key] = FileLicense(
+                revision=revision,
+                encoding=_LICENSES[key].encoding,
+                source=_LICENSES[key].source,
+            )
             _LICENSES.move_to_end(key)
 
 

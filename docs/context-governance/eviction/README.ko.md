@@ -62,11 +62,36 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## ✂️ `read_file` 슬라이스 (P2-4)
 
-`read_file` 결과는 **축출되지 않는다** — 파일이 이미 디스크에 있으니 두 번째 사본을 쓰는 것은 순수한 중복이다. 대신 `slice_read_file_result`(`pub/func/message/eviction.py`)가 내용을 **앞 `_READ_FILE_SLICE_CHARS`(4 000)자**와 복구 안내(`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`)로 대체한다. 축출 파일은 쓰지 않으며, 헬퍼는 멱등하다: 이미 슬라이스된(안내가 있는) 결과는 그대로 반환된다.
+### 토큰 예산 페이지네이션 (도구가 먼저 스스로 상한을 정한다)
+
+`read_file`은 어떤 미들웨어보다 먼저 도는 **첫 번째** 컷입니다. 돌려주는 윈도는 `TOOLS_TIMEOUTS["read_file_token_budget"]`(4 000 × `read_file_budget_ratio` 0.85)과 호출자의 줄 `limit` 양쪽으로 제한되며 더 엄격한 쪽이 이깁니다. 예산은 CJK 인지(CJK ≈ 2자/token, ASCII ≈ 4, `token_truncation`과 같은 비율)라서 같은 숫자가 어느 언어에서나 같은 컨텍스트 비용을 뜻합니다 — 예전에는 중국어 2 000줄이 영어 2 000줄의 약 2.5배였습니다. 자르기는 항상 **줄 경계**이며(줄 번호 연속), 한 줄만으로 예산을 넘는 경우(압축된 번들)는 그 줄 내부에서 잘라 `...[N chars clipped]...`를 붙이고 `truncated: true`를 보고합니다 — 따라서 쓰기 라이선스는 나오지 않습니다. 줄 수 상한은 레지스트리(`file_tools_read_default_limit` / `file_tools_read_max_limit`)에서 읽고, 예산 0이면 순수 줄 수 윈도로 돌아갑니다. 이 세션이 **전체를 읽은**(라이선스가 있고 출처가 `read`) 변경되지 않은 파일을 처음부터 다시 읽으면 내용 대신 포인터(`unchanged: true`)를 돌려줍니다 — 내용은 이미 대화 안에 있습니다. 범위 읽기(offset ≥ 2)는 언제나 내용을 돌려줍니다.
+
+도구가 스스로 예산을 지키므로 아래의 압축 시점 클립은 **폴백**입니다: `truncated: true`를 선언한 페이로드는 건너뛰고(도구의 페이지와 이어읽기 힌트가 모델에게 필요한 것), `truncated: false`인 긴 결과는 그대로 클립합니다 — 완전 읽기는 예산까지 이를 수 있고, 그 예산은 미들웨어 자체 클립 예산보다 훨씬 큽니다.
+
+`read_file` 결과는 **축출되지 않는다** — 파일이 이미 디스크에 있으니 두 번째 사본을 쓰는 것은 순수한 중복이다. 대신 `slice_read_file_result`(`pub/func/message/eviction.py`)가 내용을 **앞 `_READ_FILE_SLICE_CHARS`(4 000)자**와 복구 안내(`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`)로 대체한다. 축출 파일은 쓰지 않으며, 헬퍼는 멱등하다: 이미 슬라이스된(안내가 있는) 결과는 그대로 반환된다. 도구가 이미 스스로 예산을 지킨 페이지(`truncated: true`)는 건너뛴다 — 그 윈도가 의도된 크기이고 자체 힌트가 복구 경로이기 때문이다.
 
 이것은 2단계 축소의 **실행 시점** 절반이다. **압축 시점** 절반은 `pub/func/message/target_truncation.py::_truncate_read_file_content`에 있다: 압축이 컨텍스트를 자를 때 각 `ToolMessage`를 `tool_call_id`로 `read_file` 호출에 되돌려 매핑하고, `max_tool_output_tokens`(500, ≈2 000 ASCII 문자, CJK 인식 등가)의 head 30% + tail 30%를 남기며, 중간을 **파서가 도출한 1-based 연속 오프셋**을 담은 복구 안내로 바꾼다(`Use offset=<N> to continue reading…`; 페이로드가 파싱되지 않으면 "처음부터 다시 읽기"로 폴백).
 
 두 단계는 구조적으로 상호 보완적이다: 압축 시점이 실행 시점에 슬라이스된 페이로드를 나중에 자르면 잘린 JSON이 더 이상 파싱되지 않으므로 압축 안내는 결정론적으로 재시작 형식으로 폴백한다 — 잘못된 오프셋이 방출되는 일은 결코 없고, 실행 시점 슬라이스 헬퍼가 자기 출력을 다시 슬라이스하는 일도 없다.
+
+## 📄 어떤 도구 출력이 파일로 가는가 (fd-direct-write)
+
+`terminal`은 자식 프로세스의 stdout을 파이프가 아니라 디스크에 곧바로 씁니다. 두 spawn 지점 모두 자식에게 FILE을 넘기고(세션 디렉터리의 `.sherry-tmp-stdout-*.log`, stderr는 그 안에 병합) 종료를 기다리므로, 거대한 출력이 부모 힙에 올라가지 않습니다. `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]`(100 000 바이트) 미만이면 임시 파일을 통째로 읽고 삭제하며, 이상이면 `evicted/terminal-<sha256(앞 64 KiB)[:16]>.log`로 이름을 바꾸고 바이트 상한이 있는 head/tail 프리뷰(`build_file_preview`: 한쪽 8 KiB, 총량은 `stat().st_size` **바이트** — 줄 수는 세지 않습니다)만 모델에 전달됩니다. 타임아웃/취소/실패는 자기 임시 파일을 지우고, 강제 종료 잔여물은 `atomic_write.py`의 동일한 `.sherry-tmp-` + `.log` 규약으로 청소됩니다.
+
+다른 경로에도 fd 직접 쓰기가 가능한지를 결정하는 것은 바로 이 모양 — **stdout 전체가 부모가 프리뷰만 하는 일괄 텍스트**인지입니다. 도구별 판정:
+
+| 경로 | stdout 모양 | 현재 제약 | fd 직접 쓰기? |
+| --- | --- | --- | --- |
+| `terminal` | 원시 일괄 텍스트, 파싱 없음 | 파일 + 축출 프리뷰 | ✅ 구현됨 |
+| `python_repl` | JSON 봉투 하나(`out`/`err`는 자식 래퍼가 수집) | 오늘은 제약이 없음: 자식의 `StringIO`는 무제한이고 봉투는 통째로 직렬화되며 부모는 `communicate()` **와** `json.loads`로 두 번 들고 있음(≈3배) | ❌ 올바른 지렛대가 아님 — 바이트를 파싱해야 하므로 파일로 써도 통읽기+디코딩은 그대로. 올바른 처방은 직렬화 **전** 자식 측 상한 |
+| `execute_code`(PTC) | JSON 봉투; 실제 도구 호출은 loopback RPC 브리지 | 부모 측 `_truncate(..., max_stdout)`(읽은 뒤에 적용) | ❌ 프로토콜 페이로드, 이유는 `python_repl`과 같음 |
+| `search_files`(ripgrep) | 도착하는 대로 파싱하는 스트리밍 매치 줄 | 호출별 상한 + `ProcessWatchdog` 조기 종료 | ❌ **퇴행**: 파일로 바꾸면 상한에서 검색을 멈출 수 없어 rg가 끝까지 돕니다 |
+| ast-grep | JSON 레코드 | `ast_grep_max_matches` / 경로 / 패턴 상한(임계값보다 훨씬 작음) | ❌ 이미 유계 |
+| LSP 클라이언트 | JSON-RPC 프레임 | 프로토콜 자체 | ❌ 텍스트 페이로드가 아님 |
+| `web_search` / RAG | 결과별로 포맷한 HTTP 응답 | 제공자 + 결과 단위 상한 | ❌ 자식 프로세스 없음 |
+| 미들웨어 축출(P0-2 / P1-9 / P2-4) | 이미 메모리에 있는 메시지 | 미들웨어 자체 임계값 | ➖ 생산자가 아님: 도구 **이후**에, 이미 힙에 있는 데이터를 처리 |
+
+표가 인코딩하는 규칙: fd 직접 쓰기에는 **stdout 전체가 일괄 텍스트**인 자식 프로세스가 필요하며, 부모가 파싱해야 할 프레이밍도, 잃으면 안 되는 조기 종료 계약도 없어야 합니다. 파싱되거나, 프레임화되거나, 일찍 끊기는 파이프야말로 각자의 올바른 설계입니다.
 
 ## 📥 인간 메시지 축출 (P1-9)
 

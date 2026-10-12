@@ -41,22 +41,29 @@ LINE = "x" * 40
 HUGE_TARGET = 100_000
 
 
-def _read_file_json(first_line: int, page_lines: int, total_lines: int = 500) -> str:
-    """Build a read_file result JSON payload with lines numbered from first_line."""
+def _read_file_json(
+    first_line: int, page_lines: int, total_lines: int = 500, *, truncated: bool = False
+) -> str:
+    """Build a read_file result JSON payload with lines numbered from first_line.
+
+    ``truncated=False`` (the default) is the payload shape that still reaches
+    the fallback clip: read_file budgeted its OWN page only when it says
+    ``truncated: true``, and a self-truncated page is left alone by the
+    dispatcher (see ``TestSelfTruncatedReadFile``).
+    """
     inner = "\n".join(f"{n}|{LINE}" for n in range(first_line, first_line + page_lines))
-    return json.dumps(
-        {
-            "content": inner,
-            "total_lines": total_lines,
-            "file_size": 30_000,
-            "truncated": True,
-            "hint": (
-                f"Use offset={first_line + page_lines} to continue reading "
-                f"(showing {first_line}-{first_line + page_lines - 1} of {total_lines} lines)"
-            ),
-        },
-        ensure_ascii=False,
-    )
+    payload = {
+        "content": inner,
+        "total_lines": total_lines,
+        "file_size": 30_000,
+        "truncated": truncated,
+    }
+    if truncated:
+        payload["hint"] = (
+            f"Use offset={first_line + page_lines} to continue reading "
+            f"(showing {first_line}-{first_line + page_lines - 1} of {total_lines} lines)"
+        )
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _messages(tool_name: str, tc_id: str, args: dict, content: str) -> list[BaseMessage]:
@@ -142,6 +149,32 @@ class TestReadFileRecoverableSlice:
         content = json.dumps({"error": "File not found: " + "x" * 3_000})
         result, _ = _clip(_messages("read_file", "r1", {"file_path": "a.md"}, content))
         assert "Re-read it from the start in chunks" in result[1].content
+
+
+class TestSelfTruncatedReadFile:
+    """A read_file page that already budgeted itself is NOT clipped again.
+
+    ``read_file`` caps every response at ``read_file_token_budget`` tokens and
+    its own recovery hint is what the model needs; a second clip would drop
+    content the tool chose to keep and duplicate the notice.
+    """
+
+    def test_self_truncated_page_is_left_untouched(self):
+        content = _read_file_json(1, 60, truncated=True)
+
+        result, reduced = _clip(_messages("read_file", "r1", {"file_path": "a.md"}, content))
+
+        assert result[1].content == content
+        assert reduced == 0
+
+    def test_a_complete_but_long_page_still_takes_the_fallback_clip(self):
+        # truncated=False + over the middleware threshold: the safety net holds.
+        content = _read_file_json(1, 60, truncated=False)
+
+        result, reduced = _clip(_messages("read_file", "r1", {"file_path": "a.md"}, content))
+
+        assert reduced > 0
+        assert "chars of read_file output" in result[1].content
 
 
 class TestGenericPathRegressionLock:

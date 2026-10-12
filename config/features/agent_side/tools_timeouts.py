@@ -29,6 +29,13 @@ class ToolsTimeoutsConfig(TypedDict):
     skill_manage_max_skill_file_bytes: int
     file_tools_read_default_limit: int
     file_tools_read_max_limit: int
+    #: Token budget for ONE read_file response. The window is CJK-aware (CJK
+    #: costs ~2 chars/token, ASCII ~4), so the same number means the same
+    #: context cost in every language; 0 restores the pure line-count window.
+    read_file_token_budget: int
+    #: Fraction of the budget a page may spend (the rest absorbs the line that
+    #: crosses the boundary, the line numbers and the JSON envelope).
+    read_file_budget_ratio: float
     file_tools_search_default_limit: int
     file_tools_search_max_limit: int
     file_tools_search_max_context: int
@@ -66,6 +73,8 @@ TOOLS_TIMEOUTS: ToolsTimeoutsConfig = {
     "skill_manage_max_skill_file_bytes": 1_048_576,
     "file_tools_read_default_limit": 500,
     "file_tools_read_max_limit": 2000,
+    "read_file_token_budget": 4000,
+    "read_file_budget_ratio": 0.85,
     "file_tools_search_default_limit": 50,
     "file_tools_search_max_limit": 200,
     "file_tools_search_max_context": 5,

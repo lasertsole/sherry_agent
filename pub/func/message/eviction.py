@@ -33,6 +33,7 @@ an unsafe id (empty, ``.`` / ``..``, or containing a separator) skips eviction.
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 import time
 from pathlib import Path
@@ -324,16 +325,39 @@ def load_evicted(file_path: str | Path) -> str | None:
         return None
 
 
+def _read_file_is_self_truncated(content: str) -> bool:
+    """True when a ``read_file`` payload declares its own truncation.
+
+    ``read_file`` budgets every page in tokens (``read_file_token_budget``) and
+    its own continuation hint is what the model needs; slicing such a page again
+    would cut away content the tool deliberately kept (a CJK page at the budget
+    is ~9 300 characters — the 4 000-character slice discarded more than half of
+    it) and duplicate the recovery notice. A payload that does not parse, or one
+    that says ``truncated: false``, still takes the slice.
+    """
+    try:
+        payload = json.loads(content)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("truncated") is True
+
+
 def slice_read_file_result(msg: ToolMessage) -> ToolMessage:
     """Slice a ``read_file`` result in place of offloading (P2-4).
 
     The file is still on disk, so no eviction file is written: the content
     becomes the first ``_READ_FILE_SLICE_CHARS`` characters plus a recovery
-    notice pointing the model back at ``read_file(offset, limit)``. Idempotent
-    — an already-sliced result (notice present) is returned untouched.
+    notice pointing the model back at ``read_file(offset, limit)``. A page the
+    tool already budgeted itself (``truncated: true``) is returned untouched —
+    the tool's own window is the intended size, and its hint is the recovery
+    path. Idempotent: an already-sliced result (notice present) is untouched.
     """
     content = msg.content if isinstance(msg.content, str) else str(msg.content)
-    if len(content) <= _READ_FILE_SLICE_CHARS or _READ_FILE_SLICE_NOTICE in content:
+    if (
+        len(content) <= _READ_FILE_SLICE_CHARS
+        or _READ_FILE_SLICE_NOTICE in content
+        or _read_file_is_self_truncated(content)
+    ):
         return msg
     return msg.model_copy(
         update={"content": content[:_READ_FILE_SLICE_CHARS] + _READ_FILE_SLICE_NOTICE}

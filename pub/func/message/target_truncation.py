@@ -124,6 +124,23 @@ def _read_file_next_offset(content: str, head_chars: int) -> int | None:
     return int(first.group(1)) + line_breaks
 
 
+def _read_file_is_self_truncated(content: str) -> bool:
+    """True when a ``read_file`` payload declares its own truncation.
+
+    ``read_file`` budgets every response in tokens now (``read_file_token_budget``),
+    so a page it already cut carries the recovery hint the model needs. Clipping
+    that page again would drop content the tool deliberately kept and duplicate
+    the notice. Only an explicit ``truncated: true`` opts out — a payload that
+    does not parse, or one that says ``truncated: false`` (a complete read that
+    is simply long), still takes the fallback clip.
+    """
+    try:
+        payload = json.loads(content)
+    except (ValueError, TypeError):
+        return False
+    return isinstance(payload, dict) and payload.get("truncated") is True
+
+
 def _truncate_read_file_content(content: str, max_tokens: int, file_path: str) -> str:
     """Head+tail clip a read_file result, middle replaced by a recovery notice.
 
@@ -190,6 +207,8 @@ def target_truncate_tool_outputs(
             break
         file_path = _read_file_arg(tool_call)
         if file_path is not None and len(content) > max_output_tokens * 4:
+            if _read_file_is_self_truncated(content):
+                continue  # read_file already budgeted itself; leave its page alone
             truncated = _truncate_read_file_content(content, max_output_tokens, file_path)
         else:
             truncated = _truncate_content(content, max_output_tokens)

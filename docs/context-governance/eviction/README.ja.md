@@ -62,11 +62,36 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## ✂️ `read_file` スライス（P2-4）
 
-`read_file` の結果は**退避されない** —— ファイルはすでにディスク上にあり、二つ目のコピーを書くのは純粋な重複である。代わりに `slice_read_file_result`（`pub/func/message/eviction.py`）が内容を**先頭 `_READ_FILE_SLICE_CHARS`（4 000）文字**と回復通知（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）に置き換える。退避ファイルは書かれず、ヘルパーは冪等である：すでにスライス済み（通知あり）の結果はそのまま返る。
+### トークン予算ページング（まずツール自身が上限を決める）
+
+`read_file` はミドルウェアより前の**最初の**カットです。返すウィンドウは `TOOLS_TIMEOUTS["read_file_token_budget"]`（4 000 × `read_file_budget_ratio` 0.85）と、呼び出し側の行 `limit` の両方で制約され、厳しい方が効きます。予算は CJK 対応（CJK ≈ 2 文字/token、ASCII ≈ 4、`token_truncation` と同じ比率）なので、同じ数値がどの言語でも同じコンテキスト費用を意味します——以前は中国語 2 000 行が英語 2 000 行の約 2.5 倍かかっていました。切断は常に**行境界**（行番号は連続）で、1 行だけで予算を超える場合（圧縮済みバンドル）はその行の内部で切って `...[N chars clipped]...` を付け `truncated: true` を報告します——したがって書き込みライセンスは出ません。行数上限はレジストリ（`file_tools_read_default_limit` / `file_tools_read_max_limit`）から読み、予算 0 で純粋な行数ウィンドウに戻ります。このセッションが**全体を読んだ**（ライセンスが存在し、由来が `read`）未変更のファイルを再度頭から読むと、内容ではなくポインタ（`unchanged: true`）を返します——内容はすでに会話の中にあります。範囲読み（offset ≥ 2）は常に内容を返します。
+
+ツール自身が予算を守るため、下の圧縮時クリップは**フォールバック**です: `truncated: true` を宣言したペイロードはスキップし（ツールのページと続きのヒントこそモデルに必要）、`truncated: false` の長い結果は従来どおりクリップします——完全読みは予算まで達し得て、その予算はミドルウェア自身のクリップ予算より大きいからです。
+
+`read_file` の結果は**退避されない** —— ファイルはすでにディスク上にあり、二つ目のコピーを書くのは純粋な重複である。代わりに `slice_read_file_result`（`pub/func/message/eviction.py`）が内容を**先頭 `_READ_FILE_SLICE_CHARS`（4 000）文字**と回復通知（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）に置き換える。退避ファイルは書かれず、ヘルパーは冪等である：すでにスライス済み（通知あり）の結果はそのまま返る。 ツール自身がすでに予算を守ったページ（`truncated: true`）はスキップされる——そのウィンドウが意図されたサイズで、自身のヒントが回復経路だからである。
 
 これは二段階縮小の**実行時**側である。**圧縮時**側は `pub/func/message/target_truncation.py::_truncate_read_file_content` にある：圧縮がコンテキストを切る際、各 `ToolMessage` を `tool_call_id` で `read_file` 呼び出しに解決し、`max_tool_output_tokens`（500、≈2 000 ASCII 文字、CJK 対応の等価値）の head 30% + tail 30% を残し、中間を**パーサ由来の 1-based 継続オフセット**を運ぶ回復通知に置き換える（`Use offset=<N> to continue reading…`；ペイロードが解析できないときは「先頭から読み直し」にフォールバック）。
 
 二段階は構造的に補完し合う：圧縮時が実行時スライス済みペイロードを後から切ると、切り詰められた JSON はもはや解析できず、圧縮通知は決定論的に再開形式へフォールバックする —— 誤ったオフセットが emit されることは決してなく、実行時スライスヘルパーが自らの出力を二度スライスすることもない。
+
+## 📄 どのツール出力がファイルに書かれるか（fd-direct-write）
+
+`terminal` は子プロセスの stdout をパイプではなく直接ディスクへ書きます。両方の spawn 点が子プロセスに FILE を渡し（セッションディレクトリの `.sherry-tmp-stdout-*.log` に stderr も統合）、その終了を待つため、巨大な出力が親プロセスのヒープに載ることはありません。`TOOLS_TIMEOUTS["fd_write_threshold_bytes"]`（100 000 バイト）未満なら一時ファイルを丸ごと読んで削除し、それ以上なら `evicted/terminal-<sha256(先頭 64 KiB)[:16]>.log` へリネームして、バイト上限付きの head/tail プレビュー（`build_file_preview`: 1 辺 8 KiB、総量は `stat().st_size` の**バイト**数——行数は決して数えません）だけがモデルに届きます。タイムアウト／キャンセル／失敗は自分の一時ファイルを削除し、強制終了の残骸は `atomic_write.py` の共通の `.sherry-tmp-` + `.log` 規約で掃除されます。
+
+他の経路にも fd 直書きが使えるかを決めるのは、まさにこの形 —— **stdout 全体が、親がプレビューするだけの一括テキスト**であることです。ツールごとの判定:
+
+| 経路 | stdout の形 | 現在の制約 | fd 直書き? |
+| --- | --- | --- | --- |
+| `terminal` | 生の一括テキスト、解析なし | ファイル + 退避プレビュー | ✅ 実装済み |
+| `python_repl` | 1 つの JSON エンベロープ（`out`/`err` は子のラッパーが収集） | 今は何も制約しない: 子の `StringIO` は無制限、エンベロープは丸ごと直列化され、親は `communicate()` **と** `json.loads` の両方で保持（≈3 倍） | ❌ 適切なレバーではない——バイト列は解析が必要で、ファイルにしても丸読み+デコードは同じ。正しい対処は直列化**前**の子側キャップ |
+| `execute_code`（PTC） | JSON エンベロープ。実ツール呼び出しは loopback RPC ブリッジ | 親側の `_truncate(..., max_stdout)`（読み取り後） | ❌ プロトコル用ペイロード。理由は `python_repl` と同じ |
+| `search_files`（ripgrep） | 逐次到着するマッチ行をその場で解析 | 呼び出しごとの上限 + `ProcessWatchdog` による早期終了 | ❌ **後退**する: ファイルにすると上限で検索を止められず、rg は最後まで走る |
+| ast-grep | JSON レコード | `ast_grep_max_matches` / パス / パターンの上限（閾値よりはるかに小さい） | ❌ すでに有界 |
+| LSP クライアント | JSON-RPC フレーム | プロトコル自体 | ❌ テキストペイロードではない |
+| `web_search` / RAG | 結果ごとに整形した HTTP レスポンス | プロバイダ + 結果単位の上限 | ❌ 子プロセスなし |
+| ミドルウェア退避（P0-2 / P1-9 / P2-4） | すでにメモリ上のメッセージ | ミドルウェア自身の閾値 | ➖ 生産者ではない: ツールの**後**に、すでにヒープにあるデータを処理 |
+
+表が示す規則: fd 直書きには「**stdout 全体が一括テキスト**」の子プロセスが必要で、親が解析すべきフレーミングも、失ってはならない早期終了契約もありません。解析され、フレーム化され、途中で打ち切られるパイプこそ、それぞれの正しい設計です。
 
 ## 📥 人間メッセージの退避（P1-9）
 

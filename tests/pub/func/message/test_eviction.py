@@ -10,6 +10,7 @@ state update, content/id preservation, human preview).
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -362,3 +363,48 @@ class TestFilePreview:
         preview = build_file_preview(missing, missing)
 
         assert "[full content: 0 bytes," in preview
+
+
+class TestReadFileSelfBudgetedSlice:
+    """A page ``read_file`` budgeted itself keeps its own window (see P2-4).
+
+    The tool caps every page at ``read_file_token_budget`` tokens and ships its
+    continuation hint; the 4 000-character slice would cut a CJK page at the
+    budget (~9 300 characters) in half and duplicate the recovery notice.
+    """
+
+    @staticmethod
+    def _payload(*, truncated: bool, lines: int = 200) -> str:
+        inner = "\n".join(f"{n}|{'x' * 40}" for n in range(1, lines + 1))
+        return json.dumps(
+            {
+                "content": inner,
+                "total_lines": lines,
+                "file_size": 30_000,
+                "truncated": truncated,
+            },
+            ensure_ascii=False,
+        )
+
+    def test_a_self_truncated_page_is_untouched(self):
+        content = self._payload(truncated=True)
+        assert len(content) > 4_000
+        message = ToolMessage(content=content, name="read_file", tool_call_id="r1")
+
+        assert slice_read_file_result(message) is message
+
+    def test_a_complete_but_long_page_still_takes_the_slice(self):
+        content = self._payload(truncated=False)
+        assert len(content) > 4_000
+        message = ToolMessage(content=content, name="read_file", tool_call_id="r1")
+
+        sliced = slice_read_file_result(message)
+
+        assert sliced is not message
+        assert sliced.content.endswith(_READ_FILE_SLICE_NOTICE)
+        assert len(sliced.content) < len(content)
+
+    def test_an_unparseable_payload_still_takes_the_slice(self):
+        message = ToolMessage(content="x" * 8_000, name="read_file", tool_call_id="r1")
+
+        assert slice_read_file_result(message) is not message

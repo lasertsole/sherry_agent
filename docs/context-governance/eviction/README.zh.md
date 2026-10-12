@@ -62,11 +62,36 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 ## ✂️ `read_file` 切片（P2-4）
 
-`read_file` 的结果**不**卸载 —— 文件本来就在磁盘上，再写一份纯属重复。`slice_read_file_result`（`pub/func/message/eviction.py`）则把内容替换为**前 `_READ_FILE_SLICE_CHARS`（4 000）个字符**加一条恢复提示（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）。不写驱逐文件，且该辅助函数幂等：已切片的（含提示的）结果原样返回。
+### token 预算分页（工具先给自己封顶）
+
+`read_file` 是**第一道**裁剪，早于任何中间件看到结果：它返回的窗口同时受 `TOOLS_TIMEOUTS["read_file_token_budget"]`（4 000，乘 `read_file_budget_ratio` 0.85）与调用方的行 `limit` 约束 —— 谁更严谁生效。预算按 CJK 感知（CJK ≈ 2 字符/token，ASCII ≈ 4，与 `token_truncation` 同一组比率），所以同一个数字在任何语言里都代表同样的上下文开销：过去 2 000 行中文的开销约为 2 000 行英文的 2.5 倍。截断永远落在**整行边界**（行号连续），而单行本身超过整份预算时（如压缩过的 bundle）就在该行内部裁切并打上 `...[N chars clipped]...` 标记、同时报 `truncated: true` —— 因此它不会发放写许可。行数上限从注册表读取（`file_tools_read_default_limit` / `file_tools_read_max_limit`，不再是硬编码），预算设为 0 即恢复纯行数口径。对已**完整读过**（许可存在且来源为 `read`）且未变化的文件再次通读，返回的是指针（`unchanged: true`）而不是内容 —— 内容本来就在模型的对话里；带 offset 的范围读（offset ≥ 2）始终返回内容。
+
+因为工具已经给自己封顶，下面的压缩期裁切是**兜底**：载荷自称 `truncated: true` 就跳过（工具那一页和它的续读提示正是模型需要的），而 `truncated: false` 但确实很长的结果照旧裁切 —— 一次完整读可以达到预算上限，而预算比中间件自己的裁切预算大得多。
+
+`read_file` 的结果**不**卸载 —— 文件本来就在磁盘上，再写一份纯属重复。`slice_read_file_result`（`pub/func/message/eviction.py`）则把内容替换为**前 `_READ_FILE_SLICE_CHARS`（4 000）个字符**加一条恢复提示（`"...[Output was truncated due to eviction threshold. Use read_file with offset and limit to retrieve specific portions.]"`）。不写驱逐文件，且该辅助函数幂等：已切片的（含提示的）结果原样返回。 工具已自行封顶的页（`truncated: true`）会被跳过：它的窗口就是预期大小，它自己的续读提示就是恢复路径。
 
 这是两级压缩中的**执行期**一半。**压缩期**一半位于 `pub/func/message/target_truncation.py::_truncate_read_file_content`：压缩裁切上下文时，它按 `tool_call_id` 把每条 `ToolMessage` 解析回其 `read_file` 调用，保留 `max_tool_output_tokens`（500，≈2 000 个 ASCII 字符，CJK 感知等价）的 head 30% + tail 30%，中间替换为携带**解析器推导的 1-based 续读偏移**的恢复提示（`Use offset=<N> to continue reading…`；载荷无法解析时退化为"从头重读"）。
 
 两级在构造上互补：压缩期后续裁切一条已被执行期切片的载荷时，截断的 JSON 不再可解析，压缩提示因此确定性地回退为重启形式 —— 永远不发出错误偏移，执行期切片辅助函数也绝不二次切片自己的输出。
+
+## 📄 哪些工具输出走文件（fd-direct-write）
+
+`terminal` 把子进程的 stdout 直接写到磁盘而不是管道：两个 spawn 点都把 FILE 交给子进程（会话目录下的 `.sherry-tmp-stdout-*.log`，stderr 合并其中）并等待它退出，超大载荷因此从不经过父进程的堆。小于 `TOOLS_TIMEOUTS["fd_write_threshold_bytes"]`（100 000 字节）时整读临时文件并删除；达到或超过时把文件改名进 `evicted/terminal-<sha256(前 64 KiB)[:16]>.log`，只有按字节封顶的头尾预览（`build_file_preview`：每侧 8 KiB，总量是 `stat().st_size` 的**字节**数——绝不数行）到达模型。超时/取消/失败都会删掉自己的临时文件；硬杀残留由 `atomic_write.py` 里同一套 `.sherry-tmp-` + `.log` 约定清扫。
+
+决定"其他路径能不能也 fd 直写"的正是这个形状 —— **整份 stdout 是父进程只做预览的批量文本**。逐工具对照：
+
+| 路径 | stdout 形状 | 现在的约束 | 能用 fd 直写吗 |
+| --- | --- | --- | --- |
+| `terminal` | 原始批量文本，从不解析 | 文件 + 驱逐预览 | ✅ 已实现 |
+| `python_repl` | 一个 JSON 信封（`out`/`err` 由子进程包装脚本收集） | 今天没有任何约束：子进程的 `StringIO` 无上限，信封整体序列化，父进程先后经 `communicate()` **和** `json.loads` 持有（≈3 倍载荷） | ❌ 不是对的杠杆——这些字节必须被解析，写文件也仍要整读并解码；正确做法是在序列化**之前**于子进程内封顶 |
+| `execute_code`（PTC） | JSON 信封；真正的工具调用走 loopback RPC 桥 | 父进程侧 `_truncate(..., max_stdout)`，读取之后才截 | ❌ 协议载荷，理由同 `python_repl` |
+| `search_files`（ripgrep） | 流式匹配行，边到边解析 | 每次调用的上限 + `ProcessWatchdog` 提前终止 | ❌ 会**倒退**：换成文件后父进程无法在上限处叫停搜索——rg 会跑到底 |
+| ast-grep | JSON 记录 | `ast_grep_max_matches` / 路径 / 模式上限，远低于任何阈值 | ❌ 已经有界 |
+| LSP 客户端 | JSON-RPC 帧 | 协议本身 | ❌ 根本不是文本载荷 |
+| `web_search` / RAG | 按结果格式化的 HTTP 响应 | 提供方 + 单结果上限 | ❌ 不涉及子进程 |
+| 中间件驱逐（P0-2 / P1-9 / P2-4） | 已在内存中的消息 | 中间件自身的阈值 | ➖ 它不是生产者：运行在工具**之后**，处理的数据已在堆上 |
+
+这张表编码的规则：fd 直写需要**整份 stdout 都是批量文本**的子进程 —— 没有父进程必须解析的封装，也没有会丢失的提前终止契约。要被解析、有封装、或会被提前掐断的管道，才是它们各自正确的设计。
 
 ## 📥 人类消息驱逐（P1-9）
 
