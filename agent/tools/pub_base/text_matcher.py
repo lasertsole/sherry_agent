@@ -55,6 +55,54 @@ def _strategy_exact(content: str, pattern: str) -> list[tuple[int, int]]:
     return matches
 
 
+#: Line-number prefixes a copied snippet may carry. ``N|`` is read_file's own
+#: format; ``N: `` and ``N<TAB>`` are the shapes other tools (and earlier
+#: transcripts) produce. The colon form demands the space on purpose: a
+#: timestamp like ``12:34`` must not read as line 12.
+_LINE_NUMBER_PREFIX_RES = (
+    re.compile(r"^(\d+)\|(.*)$"),
+    re.compile(r"^(\d+): (.*)$"),
+    re.compile(r"^(\d+)\t(.*)$"),
+)
+
+
+def _strip_line_number_prefix(text: str) -> str | None:
+    """Strip a line-number prefix from EVERY non-empty line, else return None.
+
+    A model that copies a numbered snippet into ``old_string`` carries the
+    numbering with it, and no other strategy can undo that. Blank lines are
+    allowed (they carry no prefix to strip); ONE unprefixed line means the text
+    is not a numbered paste, so the strategy stays out of the way — that
+    membership test is what keeps a log excerpt or a timestamped transcript from
+    being silently rewritten.
+    """
+    stripped: list[str] = []
+    seen = False
+    for line in text.split("\n"):
+        if not line.strip():
+            stripped.append(line)
+            continue
+        for regex in _LINE_NUMBER_PREFIX_RES:
+            match = regex.match(line)
+            if match:
+                stripped.append(match.group(2))
+                seen = True
+                break
+        else:
+            return None
+    if not seen:
+        return None
+    result = "\n".join(stripped)
+    return result if result != text else None
+
+
+def _strategy_line_number_prefix_stripped(content: str, pattern: str) -> list[tuple[int, int]]:
+    stripped = _strip_line_number_prefix(pattern)
+    if stripped is None:
+        return []
+    return _strategy_exact(content, stripped)
+
+
 def _strategy_line_trimmed(content: str, pattern: str) -> list[tuple[int, int]]:
     pattern_lines = [line.strip() for line in pattern.split("\n")]
     pattern_normalized = "\n".join(pattern_lines)
@@ -135,6 +183,23 @@ def _strategy_indentation_flexible(content: str, pattern: str) -> list[tuple[int
 
 def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
     unescaped = pattern.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
+    if unescaped == pattern:
+        return []
+    return _strategy_exact(content, unescaped)
+
+
+#: ``\uXXXX`` escapes, as an LLM writes them when it means a literal character
+#: (``it\u2019s`` for the file's ``it’s``).
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def _unescape_unicode(text: str) -> str:
+    r"""Replace every ``\uXXXX`` sequence with the character it names."""
+    return _UNICODE_ESCAPE_RE.sub(lambda match: chr(int(match.group(1), 16)), text)
+
+
+def _strategy_unicode_escape_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
+    unescaped = _unescape_unicode(pattern)
     if unescaped == pattern:
         return []
     return _strategy_exact(content, unescaped)
@@ -269,15 +334,35 @@ def _strategy_context_aware(content: str, pattern: str) -> list[tuple[int, int]]
 
 _STRATEGIES: list[tuple[str, Callable[[str, str], list[tuple[int, int]]]]] = [
     ("exact", _strategy_exact),
+    ("line_number_prefix_stripped", _strategy_line_number_prefix_stripped),
     ("line_trimmed", _strategy_line_trimmed),
     ("whitespace_normalized", _strategy_whitespace_normalized),
     ("indentation_flexible", _strategy_indentation_flexible),
     ("escape_normalized", _strategy_escape_normalized),
+    ("unicode_escape_normalized", _strategy_unicode_escape_normalized),
     ("trimmed_boundary", _strategy_trimmed_boundary),
     ("unicode_normalized", _strategy_unicode_normalized),
     ("block_anchor", _strategy_block_anchor),
     ("context_aware", _strategy_context_aware),
 ]
+
+#: Strategies that match by SIMILARITY instead of by a deterministic rewrite of
+#: the pattern. Each is lossy — a "close enough" block is not necessarily the
+#: block the model meant — so ``replace_all`` (apply at every occurrence) skips
+#: them: a global replace that lands on a lookalike is a bulk edit nobody asked
+#: for. The remaining strategies are reversible transforms of the pattern
+#: (exact / line-number strip / escape unescape / \u unescape), so every match
+#: is a place the model demonstrably described.
+BROAD_MATCHERS = frozenset(
+    {
+        "line_trimmed",
+        "whitespace_normalized",
+        "indentation_flexible",
+        "trimmed_boundary",
+        "block_anchor",
+        "context_aware",
+    }
+)
 
 
 def _detect_escape_drift(
@@ -335,6 +420,51 @@ def _reindent(file_region: str, old_string: str, new_string: str) -> str:
     return "\n".join(out)
 
 
+def _apply_curly_double_quotes(text: str) -> str:
+    """Turn each straight ``"`` into the curly quote its position implies."""
+    out: list[str] = []
+    for index, char in enumerate(text):
+        if char != '"':
+            out.append(char)
+            continue
+        prev = text[index - 1] if index > 0 else " "
+        out.append("\u201c" if prev in " \t\n\r([{" else "\u201d")
+    return "".join(out)
+
+
+def _apply_curly_single_quotes(text: str) -> str:
+    """Turn each straight ``'`` into an apostrophe or the quote it implies."""
+    out: list[str] = []
+    for index, char in enumerate(text):
+        if char != "'":
+            out.append(char)
+            continue
+        prev = text[index - 1] if index > 0 else " "
+        nxt = text[index + 1] if index + 1 < len(text) else " "
+        if prev.isalpha() and nxt.isalpha():
+            out.append("\u2019")  # apostrophe: it's
+        elif prev in " \t\n\r([{":
+            out.append("\u2018")  # opening quote
+        else:
+            out.append("\u2019")  # closing quote
+    return "".join(out)
+
+
+def _preserve_quote_style(file_region: str, new_string: str) -> str:
+    """Rewrite a replacement's straight quotes into the region's curly ones.
+
+    A file that typesets with “ ” / ’ should not grow ASCII quotes from one
+    edit. Each kind converts only when the matched region uses that kind
+    EXCLUSIVELY: a region mixing both (a comment's ’ beside a code string's
+    ``'``) is left alone, because rewriting quotes inside code would corrupt it.
+    """
+    if ("\u201c" in file_region or "\u201d" in file_region) and '"' not in file_region:
+        new_string = _apply_curly_double_quotes(new_string)
+    if ("\u2018" in file_region or "\u2019" in file_region) and "'" not in file_region:
+        new_string = _apply_curly_single_quotes(new_string)
+    return new_string
+
+
 def fuzzy_find_and_replace(
     content: str,
     old_string: str,
@@ -347,7 +477,11 @@ def fuzzy_find_and_replace(
     if old_string == new_string:
         return content, 0, None, "old_string and new_string are identical"
 
+    skipped_broad = False
     for name, fn in _STRATEGIES:
+        if replace_all and name in BROAD_MATCHERS:
+            skipped_broad = True
+            continue
         matches = fn(content, old_string)
         if not matches:
             continue
@@ -372,10 +506,28 @@ def fuzzy_find_and_replace(
         for start, end in sorted_matches:
             if name != "exact":
                 adjusted = _reindent(content[start:end], old_string, effective)
+                adjusted = _preserve_quote_style(content[start:end], adjusted)
             else:
                 adjusted = effective
             result = result[:start] + adjusted + result[end:]
         return result, len(matches), name, None
+
+    if skipped_broad:
+        fuzzy = sum(
+            len(fn(content, old_string)) for name, fn in _STRATEGIES if name in BROAD_MATCHERS
+        )
+        if fuzzy:
+            return (
+                content,
+                0,
+                None,
+                (
+                    "Could not find a precise match for old_string, and replace_all=True "
+                    f"accepts only precise matches ({fuzzy} fuzzy match(es) exist). "
+                    "Pass old_string exactly as the file spells it, or set replace_all=False "
+                    "to apply a single fuzzy match."
+                ),
+            )
 
     return content, 0, None, "Could not find a match for old_string in the file"
 

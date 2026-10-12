@@ -13,6 +13,7 @@ from __future__ import annotations
 import pytest
 
 from agent.tools.pub_base.text_matcher import (
+    _strip_line_number_prefix,
     find_closest_lines,
     format_no_match_hint,
     fuzzy_find_and_replace,
@@ -177,3 +178,197 @@ def test_no_match_hint_ignores_other_errors():
     # An ambiguity/empty-pattern error carries its own advice already.
     assert format_no_match_hint("old_string cannot be empty", 0, "", "") == ""
     assert format_no_match_hint("Found 2 matches for old_string.", 0, "x", "x\nx\n") == ""
+
+
+# ---------------------------------------------------------------------------
+# Gap 1 — a copied snippet carries its line numbers
+# ---------------------------------------------------------------------------
+
+
+def test_line_number_prefixes_are_stripped_before_matching():
+    content = "def foo() {\n    return bar;\n}\n"
+    old = "10|def foo() {\n11|    return bar;\n12|}"
+
+    out, count, strategy, error = fuzzy_find_and_replace(
+        content, old, "def foo() {\n    return 1;\n}"
+    )
+
+    assert error is None and count == 1 and strategy == "line_number_prefix_stripped", strategy
+    assert out == "def foo() {\n    return 1;\n}\n"
+
+
+@pytest.mark.parametrize(
+    "numbered",
+    [
+        "10|def foo() {\n11|    return bar;\n12|}",
+        "10\tdef foo() {\n11\t    return bar;\n12\t}",
+        "10: def foo() {\n11:     return bar;\n12: }",
+    ],
+)
+def test_every_supported_line_number_format_strips(numbered):
+    content = "def foo() {\n    return bar;\n}\n"
+
+    _out, count, strategy, error = fuzzy_find_and_replace(content, numbered, "x")
+
+    assert error is None and count == 1 and strategy == "line_number_prefix_stripped"
+
+
+def test_one_unprefixed_line_disables_the_strip():
+    # The block is not a numbered paste: the strip strategy must stay out of the
+    # way, and whatever the ladder does next is some OTHER strategy's business.
+    content = "def foo() {\n    return bar;\n}\n"
+    old = "10|def foo() {\n    return bar;\n}"
+
+    assert _strip_line_number_prefix(old) is None
+    _out, _count, strategy, _error = fuzzy_find_and_replace(content, old, "x")
+
+    assert strategy != "line_number_prefix_stripped"
+
+
+def test_timestamps_are_not_line_numbers():
+    # "12:" is not a line prefix without the space, so the strip strategy must
+    # not treat a log excerpt as line-numbered text.
+    assert _strip_line_number_prefix("12:34:56 error\n12:34:57 warn\n") is None
+
+    _out, _count, strategy, _error = fuzzy_find_and_replace(
+        "34:56 error\n", "12:34:56 error", "boom"
+    )
+
+    assert strategy != "line_number_prefix_stripped"
+
+
+def test_a_blank_line_does_not_break_the_strip():
+    content = "first\n\nsecond\n"
+
+    out, count, strategy, error = fuzzy_find_and_replace(
+        content, "1|first\n2|\n3|second\n", "gone\n"
+    )
+
+    assert error is None and count == 1 and strategy == "line_number_prefix_stripped", strategy
+    assert out == "gone\n"
+
+
+# ---------------------------------------------------------------------------
+# Gap 2 — \uXXXX escapes written as literal characters
+# ---------------------------------------------------------------------------
+
+
+def test_unicode_escapes_are_unescaped_before_matching():
+    content = "note = 'it\u2019s fine'\n"
+
+    out, count, strategy, error = fuzzy_find_and_replace(
+        content, "note = 'it\\u2019s fine'", "note = ok"
+    )
+
+    assert error is None and count == 1 and strategy == "unicode_escape_normalized", strategy
+    assert out == "note = ok\n"
+
+
+def test_unicode_escape_of_a_cjk_character():
+    content = "name = \u4e2d\u6587\n"
+
+    out, count, strategy, error = fuzzy_find_and_replace(
+        content, "name = \\u4e2d\\u6587", "name = en"
+    )
+
+    assert error is None and count == 1 and strategy == "unicode_escape_normalized"
+    assert out == "name = en\n"
+
+
+def test_a_pattern_without_escapes_does_not_trigger_the_unescape():
+    _out, count, strategy, _error = fuzzy_find_and_replace("plain\n", "plain\n", "other\n")
+
+    assert count == 1 and strategy == "exact"  # the ladder never claims the unescape
+
+
+# ---------------------------------------------------------------------------
+# Gap 3 — replace_all accepts only precise matches
+# ---------------------------------------------------------------------------
+
+
+def test_replace_all_refuses_a_fuzzy_pattern_instead_of_bulk_editing_lookalikes():
+    content = "x\t= 1\nx\t= 1\n"
+
+    out, count, strategy, error = fuzzy_find_and_replace(
+        content, "x = 1", "x = 2", replace_all=True
+    )
+
+    assert out == content and count == 0 and strategy is None
+    assert error is not None and error.startswith("Could not find a precise match")
+    assert "replace_all=True" in error and "fuzzy match(es) exist" in error
+
+
+def test_the_same_fuzzy_pattern_still_works_without_replace_all():
+    # The skip is specific to replace_all: a single fuzzy match is still applied.
+    out, count, strategy, error = fuzzy_find_and_replace("x\t= 1\n", "x = 1", "x = 2")
+
+    assert error is None and count == 1 and strategy == "whitespace_normalized"
+    assert out == "x = 2\n"
+
+
+def test_replace_all_still_runs_the_precise_strategies():
+    # The strip is a precise strategy, so replace_all keeps it in play.
+    content = "alpha\nbeta\ngamma\n"
+
+    out, count, strategy, error = fuzzy_find_and_replace(
+        content, "1|alpha\n2|beta\n3|gamma\n", "gone\n", replace_all=True
+    )
+
+    assert error is None and count == 1 and strategy == "line_number_prefix_stripped"
+    assert out == "gone\n"
+
+
+def test_replace_all_on_an_unmatched_pattern_reports_the_plain_miss():
+    # No fuzzy match exists either: the ordinary no-match error is the honest one.
+    _out, count, _strategy, error = fuzzy_find_and_replace("alpha\n", "zzz", "x", replace_all=True)
+
+    assert count == 0 and error == "Could not find a match for old_string in the file"
+
+
+# ---------------------------------------------------------------------------
+# Gap 4 — the replacement keeps the file's quote style
+# ---------------------------------------------------------------------------
+
+
+def test_a_curly_quote_file_gets_curly_quotes_back():
+    content = "Title = \u201cfirst draft\u201d\n"
+
+    out, count, _strategy, error = fuzzy_find_and_replace(
+        content, 'Title = "first draft"', 'Title = "second"'
+    )
+
+    assert error is None and count == 1
+    assert out == "Title = \u201csecond\u201d\n"
+
+
+def test_an_apostrophe_becomes_a_right_single_quote():
+    content = "label = \u2018draft\u2019\n"
+
+    out, _count, _strategy, error = fuzzy_find_and_replace(
+        content, "label = 'draft'", "label = 'it's ok'"
+    )
+
+    assert error is None
+    assert out == "label = \u2018it\u2019s ok\u2019\n"
+
+
+def test_a_region_with_straight_quotes_is_left_alone():
+    # A mixed region (a curly dash beside code quotes) must NOT have its code
+    # quotes rewritten — that would corrupt the file.
+    content = 'note = "x \u2014 y"\n'
+
+    out, count, _strategy, error = fuzzy_find_and_replace(content, 'note = "x - y"', 'note = "z"')
+
+    assert error is None and count == 1
+    assert out == 'note = "z"\n'
+
+
+def test_an_exact_match_keeps_the_new_string_verbatim():
+    # The style pass rides with the fuzzy strategies only: a byte-exact match
+    # means the caller already spelled the replacement itself.
+    content = "\u201cdraft\u201d end\n"
+
+    out, count, strategy, error = fuzzy_find_and_replace(content, "\u201cdraft\u201d", '"x"')
+
+    assert error is None and count == 1 and strategy == "exact"
+    assert out == '"x" end\n'
