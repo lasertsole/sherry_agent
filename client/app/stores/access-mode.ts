@@ -8,9 +8,10 @@ import { fetchAccessMode, setAccessMode } from '~/composables/bridge/session';
 /**
  * Per-session access mode (toolbar shield control).
  *
- * Three positions: ``confirm_all`` (strict — every command and every file change
- * asks), ``auto_edit`` (default — the normal approval gates) and ``full_access``
- * (bypass-all). The backend owns the truth: the modes live in the session state
+ * Four positions: ``plan`` (Plan-Then-Execute — read-only until the submitted
+ * plan is approved), ``confirm_all`` (strict — every command and every file
+ * change asks), ``auto_edit`` (default — the normal approval gates) and
+ * ``full_access`` (bypass-all). The backend owns the truth: the modes live in the session state
  * register the approval pipeline reads on every tool call, so a switch applies
  * from the next tool call on — including a session that answered an approval card
  * with "approve all" and is switched back to a stricter mode.

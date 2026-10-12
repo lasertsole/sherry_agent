@@ -75,6 +75,7 @@ TOOL_GROUPS: dict[str, tuple[str, ...]] = {
         "subagents_list",
     ),
     "interaction": ("question",),
+    "plan_mode": ("enter_plan_mode", "exit_plan_mode"),
     "web": ("web_search",),
     "browser": (
         "browser_navigate",
@@ -101,6 +102,7 @@ TOOL_ORDER: tuple[str, ...] = (
     "terminal",
     "files",
     "interaction",
+    "plan_mode",
     "memory",
     "tasks",
     "subagents",

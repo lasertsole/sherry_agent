@@ -237,6 +237,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` は有効集合に合流されます（ツール タブでは該当行がロック表示）: 必須項目を欠いた新しいペイロードはすでにサービスが拒否しますが、ツールが必須になる前に書かれたレジスタ値でも外せないようにする第二のガードです。
 
+**プランモードは同じ 2 つのフックに乗ります。** `StateKey.PLAN_STATUS` が `planning`/`needs_replan` の間（Plan-Then-Execute、`agent/tools/plan_mode/`）、ツール面は `PLAN_MODE["allowed_tools"]` に絞られます——読み取り専用ホワイトリストで、セッション自身の選択にも縛られますが `enter_plan_mode`/`exit_plan_mode` だけは常に到達可能——それでも呼ばれた書き込みツールは “Plan mode is active” で拒否されます。プランモードはセッション選択より優先されます。`docs/plan-mode/` を参照。
+
 未設定（または `tools: null`）= 全ツールで、従来の動作とバイト単位で同一。フェイル オープン: レジスタが読めない / ペイロードが壊れている場合はログしてそのまま通します。
 
 ### The per-session middleware switches

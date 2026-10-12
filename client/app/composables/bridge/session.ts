@@ -210,10 +210,10 @@ export type ThinkingMode = 'on_off' | 'levels';
 export type ThinkingValue = boolean | 'low' | 'high' | 'max';
 
 /** Toolbar shield control: how much the session may do unattended. */
-export type AccessMode = 'confirm_all' | 'auto_edit' | 'full_access';
+export type AccessMode = 'plan' | 'confirm_all' | 'auto_edit' | 'full_access';
 
 /** Modes the backend understands, for narrowing a raw payload value. */
-const ACCESS_MODES: AccessMode[] = ['confirm_all', 'auto_edit', 'full_access'];
+const ACCESS_MODES: AccessMode[] = ['plan', 'confirm_all', 'auto_edit', 'full_access'];
 
 /**
  * Narrow a raw ``mode`` payload value to an :type:`AccessMode`.

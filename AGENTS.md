@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (63 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (69 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -389,6 +389,58 @@ sources and routes each group's save back to its own endpoint, while the
 模型联网 tab writes Tavily / SearXNG through `PUT /network-config`.
 `.env` no longer gets a `.env.bak` (it is tracked — git is the backup);
 `.models` / `.network` keep one.
+
+## Plan-Then-Execute Plan Mode (`agent/tools/plan_mode/`)
+
+A session can DESIGN before it executes: the agent enters plan mode, works with
+read-only tools, submits a plan and waits for the user's approval before a
+single file is written. Two tools, `enter_plan_mode(reason, replan=False)` and
+`exit_plan_mode(plan)`, drive a small state machine stored in BOTH register
+tiers (mem for the hot path, DB so a restart keeps the mode) under
+`StateKey.PLAN_STATUS` — `needs_planning` / `planning` / `ready` /
+`needs_replan` — plus `PLAN_REVISION`, `PLAN_MUTATION_COUNT` and
+`PLAN_FILE_PATH`. The tunables live in
+`config/features/agent_side/plan_mode.py` (`PLAN_MODE`).
+
+- **The read-only guarantee** is `ToolSelectionMiddleware`, doubled exactly like
+  its per-session selection: `wrap_model_call` narrows `request.tools` to
+  `PLAN_MODE["allowed_tools"]` while the status is `planning`/`needs_replan`
+  (still bounded by the session's own set, except that `enter_plan_mode` /
+  `exit_plan_mode` always stay reachable — a mode the model cannot leave would
+  be a trap), and `wrap_tool_call` REFUSES a write tool that still gets called
+  (“Plan mode is active…”). `sessions_spawn` is deliberately NOT on the
+  whitelist: a child runs with its own session's state, so a spawned executor
+  could write before approval.
+- **The human can pin it too**: the toolbar's 访问模式 control gained a 计划模式
+  entry (`PUT /sessions/access_mode` `mode=plan`) which sets the same
+  `PLAN_STATUS`; the mode it reports is DERIVED from the plan status, so a plan
+  the agent entered by itself shows up in the control as well, and switching to
+  any other mode resets the status (leaving 计划模式 cancels the flow).
+- **The prompt** carries it too: `workspace/prompt_builder.py` appends
+  `_build_plan_mode_block()` on every call (never frozen, so entering/leaving
+  takes effect immediately and a compression cannot lose it) — the four-phase
+  workflow + “a turn may ONLY end with a `question` or an `exit_plan_mode`
+  call” while active, the approved plan's file path while `ready`.
+- **`exit_plan_mode`** persists the plan to
+  `SESSIONS_DIR/<session_id>/plans/plan-<revision>.md` (revision =
+  `sha256(plan)[:16]`, so the re-execution after a resume writes the same file)
+  and suspends the graph with a HITL `interrupt` (the `question` tool's
+  contract): approve → `ready` and the write tools return; reject WITH feedback
+  → back to `planning` with the feedback (mutation budget
+  `PLAN_MODE["max_mutations"]`, then the tool stops resubmitting); reject
+  without a message → `needs_planning`.
+- **Guards**: the revision binding (a stored revision or the plan FILE changing
+  during the approval discards it), the size cap
+  (`PLAN_MODE["max_plan_chars"]`, refused, never truncated) and the mutation
+  budget. `PLAN_MODE["enabled"] = False` unregisters both tools and nothing
+  else changes. The client renders the plan as an approval card in the input
+  slot ([sid].vue, `isPlanHitl`) with the plan text, a feedback field, 退回修改
+  and 批准 (the reject+message path is the “request changes” decision).
+- Chain membership and order are unchanged (no new middleware); the tools join
+  `_MAIN_TOOLS_BUILDERS` and the `plan_mode` catalogue group, so the 预设-工具
+  tab can switch them per session. Tests:
+  `tests/agent/tools/plan_mode/` + the plan-mode cases in
+  `tests/agent/middlewares/test_tool_selection.py`.
 
 ## Per-Session Agent Config (`server/service/agent_config_service.py`)
 
@@ -766,9 +818,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 36 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/agent_side/` | 42 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
 | `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 63 TypedDicts + instances re-exported |
+| `config/features/__init__.py` | Aggregator — all 69 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |

@@ -35,6 +35,12 @@ _DISABLED_REPLY = (
     "(预设 → 工具). Continue without it, or ask the user to enable it again."
 )
 
+_PLAN_MODE_REPLY = (
+    "Plan mode is active — only read-only tools are available. Explore with "
+    "read_file / search_files / message_search, ask the user with `question`, "
+    "then submit your plan with exit_plan_mode."
+)
+
 
 def _session_id_of(state: Any) -> str | None:
     """The session behind the current call (``None`` when absent)."""
@@ -43,6 +49,47 @@ def _session_id_of(state: Any) -> str | None:
         if isinstance(session_id, str) and session_id.strip():
             return session_id
     return None
+
+
+def _plan_active_statuses() -> tuple[str, ...]:
+    """The statuses that narrow the tool face (``()`` when the feature is absent)."""
+    try:
+        from config.features import PLAN_ACTIVE_STATUSES
+    except Exception:  # noqa: BLE001 - feature absent => no gating
+        return ()
+    return tuple(PLAN_ACTIVE_STATUSES)
+
+
+def _plan_allowed_tools(enabled: frozenset[str] | None) -> frozenset[str]:
+    """The plan-mode face: the read-only whitelist, bounded by the session's set.
+
+    The two plan tools are unioned back in — a mode the model cannot leave is a
+    trap, so ``exit_plan_mode`` stays reachable whatever the session says.
+    Fail-open: an unreadable config returns the caller's set untouched.
+    """
+    try:
+        from config.features import PLAN_MODE
+
+        allowed = {str(name) for name in PLAN_MODE["allowed_tools"]}
+    except Exception:  # noqa: BLE001 - fail-open
+        return enabled if enabled is not None else frozenset()
+    allowed |= {"enter_plan_mode", "exit_plan_mode"}
+    if enabled is not None:
+        allowed = (allowed & enabled) | {"enter_plan_mode", "exit_plan_mode"}
+    return frozenset(allowed)
+
+
+def _plan_status_of(session_id: str | None) -> str:
+    """The session's plan status (``""`` when idle/unreadable — fail-open)."""
+    if not session_id:
+        return ""
+    try:
+        from agent.tools.plan_mode.state import read_plan_status
+
+        return read_plan_status(session_id)
+    except Exception:  # noqa: BLE001 - never break a turn over the plan state
+        logger.debug("ToolSelection: plan status read failed", exc_info=True)
+        return ""
 
 
 def enabled_tool_names(session_id: str | None) -> frozenset[str] | None:
@@ -111,7 +158,13 @@ class ToolSelectionMiddleware(AgentMiddleware):
         return request.override(tools=kept)
 
     def _apply(self, request: Any) -> Any:
-        enabled = enabled_tool_names(_session_id_of(getattr(request, "state", None)))
+        session_id = _session_id_of(getattr(request, "state", None))
+        enabled = enabled_tool_names(session_id)
+        # Plan mode outranks the session selection: the face is the read-only
+        # whitelist (still bounded by the session's own set) until the plan is
+        # approved.
+        if _plan_status_of(session_id) in _plan_active_statuses():
+            return self._filtered_tools(request, _plan_allowed_tools(enabled))
         if enabled is None:
             return request
         return self._filtered_tools(request, enabled)
@@ -126,14 +179,30 @@ class ToolSelectionMiddleware(AgentMiddleware):
 
     def _rejection(self, request: ToolCallRequest) -> ToolMessage | None:
         """A refusal for a disabled tool, or ``None`` to run it."""
-        enabled = enabled_tool_names(_session_id_of(getattr(request, "state", None)))
+        session_id = _session_id_of(getattr(request, "state", None))
         name = str(request.tool_call.get("name") or "")
+        # Plan mode first: a stale checkpoint (or a hallucinated name) must not
+        # execute a write tool while a plan awaits approval.
+        if _plan_status_of(session_id) in _plan_active_statuses() and name:
+            if name not in _plan_allowed_tools(enabled_tool_names(session_id)):
+                logger.warning(
+                    "ToolSelectionMiddleware: refused '{}' during plan mode for session {}",
+                    name,
+                    session_id,
+                )
+                return ToolMessage(
+                    content=_PLAN_MODE_REPLY,
+                    tool_call_id=request.tool_call.get("id", ""),
+                    name=name,
+                    status="error",
+                )
+        enabled = enabled_tool_names(session_id)
         if enabled is None or not name or name in enabled:
             return None
         logger.warning(
             "ToolSelectionMiddleware: refused disabled tool '{}' for session {}",
             name,
-            _session_id_of(getattr(request, "state", None)),
+            session_id,
         )
         return ToolMessage(
             content=_DISABLED_REPLY.format(tool=name),

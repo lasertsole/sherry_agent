@@ -290,6 +290,40 @@
                   </div>
                 </div>
               </template>
+              <!-- exit_plan_mode: the plan for approval (approve / request changes) -->
+              <template v-else-if="isPlanHitl">
+                <div class="text-sm font-semibold">
+                  {{ t('hitl.planTitle') }}
+                  <span
+                    v-if="planRevision"
+                    class="text-xs text-gray-400 ml-2">
+                    {{ planRevision }}
+                  </span>
+                </div>
+                <pre
+                  class="flex-1 min-h-0 overflow-auto text-xs whitespace-pre-wrap bg-gray-50 dark:bg-gray-800 p-2 rounded-lg m-0"
+                  >{{ planText }}</pre>
+                <div class="flex items-center gap-2">
+                  <input
+                    v-model="planFeedback"
+                    type="text"
+                    class="flex-1 px-3 py-1.5 text-sm rounded-lg border border-solid border-gray-light dark:border-gray-dark bg-transparent outline-none focus:border-theme-main"
+                    :placeholder="t('hitl.planFeedbackPlaceholder')"
+                    @keydown.enter.prevent="revisePlan" />
+                  <Button
+                    :label="t('hitl.planRevise')"
+                    size="small"
+                    severity="warn"
+                    variant="text"
+                    :disabled="!planFeedback.trim()"
+                    @click="revisePlan" />
+                  <Button
+                    :label="t('hitl.planApprove')"
+                    icon="pi pi-check"
+                    size="small"
+                    @click="approvePlan" />
+                </div>
+              </template>
               <!-- other tools: generic approval card -->
               <template v-else>
                 <div class="text-sm font-semibold">{{ t('hitl.title') }}</div>
@@ -664,10 +698,38 @@ const submitCustomAnswer = () => {
   if (parts.length) submitQuestionAnswer(parts.join(', '));
 };
 
+// ── Plan-approval HITL view (exit_plan_mode: the plan + feedback) ──
+const isPlanHitl = computed(() => hitlRequest.value?.tool_name === 'exit_plan_mode');
+const planArgs = computed<Record<string, unknown>>(() => hitlRequest.value?.tool_args ?? {});
+const planText = computed(() => {
+  const p = planArgs.value['plan'];
+  return typeof p === 'string' ? p : (hitlRequest.value?.description ?? '');
+});
+const planRevision = computed(() => {
+  const r = planArgs.value['revision'];
+  return typeof r === 'string' ? r : '';
+});
+const planFeedback = ref('');
+
+/** Approve the plan: plan mode exits server-side and execution begins. */
+const approvePlan = () => {
+  planFeedback.value = '';
+  handleHitlDecision('approve');
+};
+
+/** Send the plan back with the typed feedback (reject + message = revise it). */
+const revisePlan = () => {
+  const message = planFeedback.value.trim();
+  if (!message) return;
+  planFeedback.value = '';
+  handleHitlDecision('reject', message);
+};
+
 // Reset the question-view state whenever a new HITL request arrives.
 watch(hitlRequest, () => {
   customAnswer.value = '';
   selectedQuestionOptions.value = [];
+  planFeedback.value = '';
 });
 
 // ── Media selection (per-kind picker slice; template owns the hidden inputs) ──
@@ -965,7 +1027,11 @@ onUnmounted(() => {
       "yolo": "同意所有操作",
       "yoloTooltip": "同意本次及本会话后续所有操作，不再弹出审批",
       "customPlaceholder": "输入自定义回答…",
-      "submit": "提交"
+      "submit": "提交",
+      "planTitle": "计划待审批",
+      "planApprove": "批准计划",
+      "planRevise": "退回修改",
+      "planFeedbackPlaceholder": "指出需要修改的地方…"
     }
   },
   "en": {
@@ -979,7 +1045,11 @@ onUnmounted(() => {
       "yolo": "Approve All (YOLO)",
       "yoloTooltip": "Approve this and all future actions in this session — no more approval prompts",
       "customPlaceholder": "Type a custom answer…",
-      "submit": "Submit"
+      "submit": "Submit",
+      "planTitle": "Plan Awaiting Approval",
+      "planApprove": "Approve Plan",
+      "planRevise": "Request Changes",
+      "planFeedbackPlaceholder": "What should change? …"
     }
   },
   "ja": {
@@ -993,7 +1063,11 @@ onUnmounted(() => {
       "yolo": "すべての操作を承認",
       "yoloTooltip": "今回とこのセッションの以後の操作をすべて承認し、確認ダイアログは表示されません",
       "customPlaceholder": "カスタム回答を入力…",
-      "submit": "送信"
+      "submit": "送信",
+      "planTitle": "計画の承認待ち",
+      "planApprove": "計画を承認",
+      "planRevise": "修正を依頼",
+      "planFeedbackPlaceholder": "修正すべき点を入力…"
     }
   },
   "ko": {
@@ -1007,7 +1081,11 @@ onUnmounted(() => {
       "yolo": "모든 작업 승인",
       "yoloTooltip": "이번 작업과 이 세션의 이후 모든 작업을 승인하며 확인 창이 다시 표시되지 않습니다",
       "customPlaceholder": "직접 답변 입력…",
-      "submit": "제출"
+      "submit": "제출",
+      "planTitle": "계획 승인 대기",
+      "planApprove": "계획 승인",
+      "planRevise": "수정 요청",
+      "planFeedbackPlaceholder": "수정할 점을 입력하세요…"
     }
   }
 }

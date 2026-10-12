@@ -1,10 +1,12 @@
 """Tests for the per-session access mode (toolbar shield control).
 
-The control has three positions: ``confirm_all`` (strict — every command and
+The control has four positions: ``plan`` (Plan-Then-Execute — read-only until
+the submitted plan is approved), ``confirm_all`` (strict — every command and
 every file change asks), ``auto_edit`` (default — the normal approval gates) and
 ``full_access`` (the session's HITL bypass-all flag). The strict and bypass flags
-are two ends of one setting and clear each other. All of them live in the session
-state register the approval pipeline reads on every tool call.
+are two ends of one setting and clear each other, and any non-plan mode resets
+the plan status so leaving 计划模式 cancels the planning flow. All of it lives in
+the session state register the approval pipeline reads on every tool call.
 """
 
 import asyncio
@@ -56,6 +58,12 @@ def register(monkeypatch):
     mem = _FakeRegister()
     monkeypatch.setattr(service, "state_register_mem", mem)
     monkeypatch.setattr(register_module, "state_register_mem", mem)
+    # The plan-mode state helper writes BOTH tiers; point both at the double so
+    # the access-mode tests never touch the real stores.
+    import agent.tools.plan_mode.state as plan_state
+
+    monkeypatch.setattr(plan_state, "state_register_mem", mem)
+    monkeypatch.setattr(plan_state, "state_register_db", mem)
     # The register stores the enum key (as the real one does).
     mem.yolo_key = StateKey.HITL_SESSION_YOLO
     mem.confirm_all_key = StateKey.HITL_SESSION_CONFIRM_ALL
@@ -175,3 +183,47 @@ def test_http_rejects_a_bad_mode(register):
 
     assert response.status_code == 400
     assert json.loads(response.description)["success"] is False
+
+
+# ---------------------------------------------------------------------------
+# plan mode (Plan-Then-Execute) as an access mode
+# ---------------------------------------------------------------------------
+
+
+def test_plan_mode_sets_the_plan_status_and_clears_the_flags(register):
+    service.set_access_mode("s1", service.FULL_ACCESS)
+
+    assert service.set_access_mode("s1", service.PLAN) == service.PLAN
+
+    assert service.get_access_mode("s1") == service.PLAN
+    # One mode at a time: the bypass does not linger behind plan mode.
+    assert register.data[("s1", register.yolo_key)] is False
+    assert register.data[("s1", register.confirm_all_key)] is False
+
+
+def test_an_agent_entered_plan_reports_plan_mode(register):
+    """The control is a view of state the agent's own tools set too."""
+    from agent.tools.plan_mode.enter_plan_mode import build_enter_plan_mode_tool
+
+    build_enter_plan_mode_tool()._run("multi-file change", session_id="s1")
+
+    assert service.get_access_mode("s1") == service.PLAN
+
+
+def test_leaving_plan_mode_resets_the_status(register):
+    service.set_access_mode("s1", service.PLAN)
+
+    assert service.set_access_mode("s1", service.AUTO_EDIT) == service.AUTO_EDIT
+
+    assert service.get_access_mode("s1") == service.AUTO_EDIT
+    # The planning flow is gone, not merely hidden: a fresh read says idle.
+    from agent.tools.plan_mode.state import read_plan_status
+
+    assert read_plan_status("s1") in ("", "needs_planning")
+
+
+def test_plan_mode_is_isolated_per_session(register):
+    service.set_access_mode("s1", service.PLAN)
+
+    assert service.get_access_mode("s1") == service.PLAN
+    assert service.get_access_mode("s2") == service.AUTO_EDIT

@@ -1,8 +1,9 @@
 <template>
   <!-- Access mode: how much this session may do without asking. The trigger shows
-       the CURRENT mode's shield (a question mark for the strict confirm-before-
-       changes mode, a check for the default auto-edit, an exclamation for full
-       access); the panel picks between them. -->
+       the CURRENT mode (a list for plan mode — read-only until the submitted
+       plan is approved, a question mark for the strict confirm-before-changes
+       mode, a check for the default auto-edit, an exclamation for full access);
+       the panel picks between them. -->
   <ToolbarPopover>
     <template #trigger="{ toggle }">
       <button
@@ -51,11 +52,13 @@ const { t } = useI18n({ useScope: 'local' });
 
 const store = useAccessModeStore();
 
-/** The three positions of the control, in presentation order (strictest first). */
-const OPTIONS: AccessMode[] = ['confirm_all', 'auto_edit', 'full_access'];
+/** The four positions of the control, in presentation order (plan mode first,
+ * then strictest to loosest — the ZCode-shaped ladder). */
+const OPTIONS: AccessMode[] = ['plan', 'confirm_all', 'auto_edit', 'full_access'];
 
 /** One shield glyph per mode, carrying its own colour. */
 const GLYPHS: Record<AccessMode, string> = {
+  plan: 'pi pi-list text-theme-main',
   confirm_all: 'shield-question-icon text-gray-500 dark:text-gray-400',
   auto_edit: 'shield-check-icon text-gray-500 dark:text-gray-400',
   full_access: 'shield-alert-icon text-amber-500'
@@ -108,6 +111,7 @@ const handleSelect = async (option: AccessMode) => {
   "zh": {
     "accessMode": {
       "label": "访问模式",
+      "plan": "计划模式",
       "confirm_all": "变更前确认",
       "auto_edit": "自动编辑",
       "full_access": "完全访问"
@@ -116,6 +120,7 @@ const handleSelect = async (option: AccessMode) => {
   "en": {
     "accessMode": {
       "label": "Access mode",
+      "plan": "Plan mode",
       "confirm_all": "Confirm changes",
       "auto_edit": "Auto edit",
       "full_access": "Full access"
@@ -124,6 +129,7 @@ const handleSelect = async (option: AccessMode) => {
   "ja": {
     "accessMode": {
       "label": "アクセスモード",
+      "plan": "プランモード",
       "confirm_all": "変更前に確認",
       "auto_edit": "自動編集",
       "full_access": "フルアクセス"
@@ -132,6 +138,7 @@ const handleSelect = async (option: AccessMode) => {
   "ko": {
     "accessMode": {
       "label": "접근 모드",
+      "plan": "플랜 모드",
       "confirm_all": "변경 전 확인",
       "auto_edit": "자동 편집",
       "full_access": "전체 접근"

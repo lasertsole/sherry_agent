@@ -86,6 +86,10 @@ EXPECTED_VALUES: dict[str, str] = {
     "CURRENT_TOOL_ID": "current_tool_id",
     "REQUESTER_SESSION_KEY": "requester_session_key",
     "CALLER_SCOPE": "caller_scope",
+    "PLAN_STATUS": "plan_status",
+    "PLAN_REVISION": "plan_revision",
+    "PLAN_MUTATION_COUNT": "plan_mutation_count",
+    "PLAN_FILE_PATH": "plan_file_path",
 }
 
 

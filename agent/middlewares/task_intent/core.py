@@ -143,11 +143,18 @@ This message appears to be a work request. Before responding, assess the scope:
 
 ## If this is a multi-step task (2+ steps):
 
-1. Load the ulw-execute skill to understand the orchestration workflow.
+1. Consider the plan gate for work that is hard to undo: a multi-file change, an
+   architectural decision, unclear requirements, or several valid approaches.
+   `enter_plan_mode` narrows you to read-only tools while you design, and
+   `exit_plan_mode` submits the plan for the user's approval before anything is
+   written. It is optional — a clear, well-scoped task can go straight to
+   orchestrating.
+
+2. Load the ulw-execute skill to understand the orchestration workflow.
    Use the skill_view tool to read skill files by name when you need their
    full instructions.
 
-2. You are an ORCHESTRATOR, not an implementer:
+3. You are an ORCHESTRATOR, not an implementer:
    - Create a session plan file under workspace/sessions/<session_id>/plans/
      or use todowrite to register tasks
    - Set proper category, delegation, flow_id/step_id fields
@@ -155,7 +162,7 @@ This message appears to be a work request. Before responding, assess the scope:
      block/unlock/parallel-dispatch — do NOT build a second DAG
    - DELEGATE implementation to subagents — you do NOT write code
 
-3. Workflow:
+4. Workflow:
    a. todowrite: register all tasks with atomic granularity
    b. For dependent steps: taskflow_run_task(..., depends_on=[...]); then
       taskflow_dispatch the ready ones and taskflow_wait_all

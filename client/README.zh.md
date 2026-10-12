@@ -132,7 +132,7 @@ client/
 │   │           ├── ContextUsageButton.vue     # 上下文占用环 + 占比面板（消息 / 系统提示词 / 工具调用）
 │   │           ├── SessionModelPicker.vue     # 会话级主模型选择器（模型配置 MAIN_LLM 档案，下一轮生效）
 │   │           ├── MediaMenu.vue              # 输入栏的加号媒体下拉（图片 / 音频 / 视频）
-│   │           ├── AccessModePicker.vue       # 工具栏访问模式：盾牌触发（变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
+│   │           ├── AccessModePicker.vue       # 工具栏访问模式：触发（计划模式 / 变更前确认 / 自动编辑 / 完全访问），下一个工具调用起生效
 │   │           ├── ToolbarPopover.vue         # 工具栏入口的向上弹层（上下文环 / 运行中任务共用）
 │   │           ├── TasksButton.vue            # 工具栏终端入口：本会话运行中的 subagent / 命令，弹框里点某项交给页面跳转（subagent 打开其实时任务视图，命令滚到它的工具卡）
 │   │           ├── ProjectDirectoryChip.vue   # 会话项目目录的工具栏条目（绑定 / 清除，带续延与拒绝提示）
@@ -185,7 +185,7 @@ client/
 │   │   ├── session-model.ts    # 会话级主模型覆盖（下一轮生效）
 │   │   ├── context-usage.ts    # 会话级上下文计量（窗口 / 上报的提示词大小 / 各部分）
 │   │   ├── running-commands.ts # 会话内运行中的后台命令（运行中的工具行，且仅当会话正在生成时）
-│   │   ├── access-mode.ts      # 会话级访问模式（变更前确认 / 自动编辑 / 完全访问，与后端同步）
+│   │   ├── access-mode.ts      # 会话级访问模式（计划模式 / 变更前确认 / 自动编辑 / 完全访问，与后端同步）
 │   │   ├── llm-profiles.ts     # 模型配置（MAIN_LLM 分组）的模型档案，供选择器使用
 │   │   ├── connection.ts       # 后端连通性（isOnline / backendStatus）+ 去重 Toast；socket 断开按「后端不可用」呈现（offline 提示只在没有 WS 结论时兜底），未登录时保持沉默
 │   │   ├── auth.ts             # 登录会话状态（status / user / 401 单次续期重放 / 轮换被拒时 markSessionLost）
@@ -306,7 +306,7 @@ app.vue（根：Toast 层、连接横幅、语言恢复）
 - Base64 媒体先经 `POST /images/upload`、`/audio/upload`、`/video/upload` 上传并以 URL 引用
 - 服务端帧：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；chunk 携带 `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）与工具元数据
 - 流中断后按指数退避重连（1s/2s/4s，经 `WS_RECONNECT_MAX_ATTEMPTS` 最多 3 次）；流中丢失会抛出 `StreamInterruptedError`，并经 mitt 发出 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed`
-- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）
+- HITL 中断携带 `HitlInterruptData`（工具名/参数/可选决定）；决定以 `hitl_response` 帧发送（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）。同一张卡片也渲染 Plan-Then-Execute 审批（`exit_plan_mode`）：计划正文、反馈输入、**退回修改**（reject + 反馈）与 **批准** —— 详见 `../docs/plan-mode/`
 - 本页从未发起过的轮次（计划续写的 auto-turn、子代理完成注入、cron 运行）**不带 `turn_started`**——auto-turn 不携带轮次身份——因此它的 chunk 无法流进本地行；`done` 处理器会重取最新一页历史，让最终回答无需刷新即可显示
 
 ### WebSocket 单例（ws.ts）

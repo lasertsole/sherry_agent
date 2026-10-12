@@ -48,23 +48,46 @@ describe('AccessModePicker.vue (integration, store mocked)', () => {
     expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 自动编辑');
   });
 
-  it('offers all three modes once opened, with the current one ticked', async () => {
+  it('offers all four modes once opened, with the current one ticked', async () => {
     const wrapper = mountPicker();
 
     await wrapper.find('button').trigger('click');
     await flushPromises();
 
     const rows = wrapper.findAll('button.row-button');
-    expect(rows.map(r => r.text())).toEqual(['变更前确认', '自动编辑', '完全访问']);
-    expect(rows[1]!.classes()).toContain('bg-theme-main/10');
-    expect(rows[1]!.findAll('i').length).toBe(2); // shield + tick
-    expect(rows[0]!.findAll('i').length).toBe(1); // shield only
-    expect(rows[2]!.findAll('i').length).toBe(1); // shield only
-    // The icons match the spec: a question in a shield, a check in a shield, an
-    // exclamation in a shield.
-    expect(rows[0]!.find('i').classes()).toContain('shield-question-icon');
-    expect(rows[1]!.find('i').classes()).toContain('shield-check-icon');
-    expect(rows[2]!.find('i').classes()).toContain('shield-alert-icon');
+    expect(rows.map(r => r.text())).toEqual(['计划模式', '变更前确认', '自动编辑', '完全访问']);
+    expect(rows[2]!.classes()).toContain('bg-theme-main/10');
+    expect(rows[2]!.findAll('i').length).toBe(2); // glyph + tick
+    expect(rows[0]!.findAll('i').length).toBe(1); // glyph only
+    expect(rows[1]!.findAll('i').length).toBe(1); // glyph only
+    expect(rows[3]!.findAll('i').length).toBe(1); // glyph only
+    // The glyphs match the spec: a list for plan mode, then a question / a
+    // check / an exclamation in a shield.
+    expect(rows[0]!.find('i').classes()).toContain('pi-list');
+    expect(rows[1]!.find('i').classes()).toContain('shield-question-icon');
+    expect(rows[2]!.find('i').classes()).toContain('shield-check-icon');
+    expect(rows[3]!.find('i').classes()).toContain('shield-alert-icon');
+  });
+
+  it('switches to plan mode and moves the trigger glyph', async () => {
+    const wrapper = mountPicker();
+    await wrapper.find('button').trigger('click');
+    await flushPromises();
+
+    await wrapper.findAll('button.row-button')[0]!.trigger('click');
+    await flushPromises();
+
+    expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'plan');
+    expect(wrapper.find('i.pi-list').exists()).toBe(true);
+    expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 计划模式');
+  });
+
+  it('shows plan mode when the backend reports it (an agent-entered plan too)', async () => {
+    modeApi.mode = 'plan';
+    const wrapper = mountPicker();
+
+    expect(wrapper.find('i.pi-list').exists()).toBe(true);
+    expect(wrapper.find('button').attributes('title')).toBe('访问模式 · 计划模式');
   });
 
   it('switches to strict (confirm-before-changes) mode and moves the trigger glyph', async () => {
@@ -72,7 +95,7 @@ describe('AccessModePicker.vue (integration, store mocked)', () => {
     await wrapper.find('button').trigger('click');
     await flushPromises();
 
-    await wrapper.findAll('button.row-button')[0]!.trigger('click');
+    await wrapper.findAll('button.row-button')[1]!.trigger('click');
     await flushPromises();
 
     expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'confirm_all');
@@ -85,7 +108,7 @@ describe('AccessModePicker.vue (integration, store mocked)', () => {
     await wrapper.find('button').trigger('click');
     await flushPromises();
 
-    await wrapper.findAll('button.row-button')[2]!.trigger('click');
+    await wrapper.findAll('button.row-button')[3]!.trigger('click');
     await flushPromises();
 
     expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'full_access');
@@ -99,7 +122,7 @@ describe('AccessModePicker.vue (integration, store mocked)', () => {
     await wrapper.find('button').trigger('click');
     await flushPromises();
 
-    await wrapper.findAll('button.row-button')[1]!.trigger('click');
+    await wrapper.findAll('button.row-button')[2]!.trigger('click');
 
     expect(modeApi.select).toHaveBeenCalledWith('sid-1', 'auto_edit');
   });

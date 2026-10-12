@@ -1,7 +1,11 @@
 """Per-session access mode for the chat toolbar's shield control.
 
-Three modes, mirroring what the approval pipeline already understands:
+Four modes — the ZCode-shaped ladder of "how much this session may do":
 
+  - ``plan`` — plan mode (Plan-Then-Execute): read-only tools only until the
+    user approves the plan the agent submits. It is derived from the session's
+    plan status, so an agent that entered plan mode with ``enter_plan_mode``
+    (or the user pinning 计划模式 from this control) reports it here;
   - ``confirm_all`` — strict: every command and every file change asks, no
     matter how ordinary (``hitl:session_confirm_all``);
   - ``auto_edit`` (default) — edits go through the normal gates: the agent edits
@@ -18,7 +22,10 @@ switch applies from the next tool call on.
 ``full_access`` is also what an approval card's "approve all" (YOLO) answer
 sets, which is why the mode is derived from the flags rather than stored
 separately: a session that answered a card that way reports (and switches back
-to) ``full_access``.
+to) ``full_access`` — and ``plan`` is derived the same way from the plan status
+(``StateKey.PLAN_STATUS``), so the control is a VIEW of state the rest of the
+system already owns. Switching to any other mode resets the plan status, so a
+user who leaves 计划模式 cancels the planning flow.
 """
 
 from agent.middlewares.humanInTheLoop.approval import (
@@ -32,13 +39,21 @@ from agent.middlewares.humanInTheLoop.types import (
     SESSION_CONFIRM_ALL_KEY,
     SESSION_YOLO_KEY,
 )
+from agent.tools.plan_mode.state import read_plan_status, set_plan_state
+from config.features import (
+    PLAN_ACTIVE_STATUSES,
+    PLAN_STATUS_IDLE,
+    PLAN_STATUS_PLANNING,
+)
 from runtime import state_register_mem
 
-#: The three modes the control offers, in presentation order (strictest first).
+#: The four modes the control offers, in presentation order (the read-only
+#: design mode first, then strictest to loosest).
+PLAN = "plan"
 CONFIRM_ALL = "confirm_all"
 AUTO_EDIT = "auto_edit"
 FULL_ACCESS = "full_access"
-ACCESS_MODES = (CONFIRM_ALL, AUTO_EDIT, FULL_ACCESS)
+ACCESS_MODES = (PLAN, CONFIRM_ALL, AUTO_EDIT, FULL_ACCESS)
 
 
 def _validate_session_id(session_id: str) -> str:
@@ -62,6 +77,11 @@ def get_access_mode(session_id: str) -> str:
     sid = _validate_session_id(session_id)
     from agent.middlewares.humanInTheLoop.approval import is_yolo_mode
 
+    # Plan mode first: while a plan is being designed the tool face is read-only
+    # whatever the approval flags say, so it IS the session's mode (the same
+    # state the agent's own enter_plan_mode sets).
+    if read_plan_status(sid) in PLAN_ACTIVE_STATUSES:
+        return PLAN
     # The session flags are the only source this endpoint reports on: the env /
     # default-based bypass is process-wide, not a per-session choice.
     if is_yolo_mode(HITLConfig(), sid) and state_register_mem.get_state(
@@ -82,6 +102,17 @@ def set_access_mode(session_id: str, mode: str) -> str:
     sid = _validate_session_id(session_id)
     if mode not in ACCESS_MODES:
         raise ValueError(f"mode must be one of {ACCESS_MODES}")
+    if mode == PLAN:
+        # Pin the mode the agent would otherwise enter by itself; the approval
+        # flags are irrelevant while it is on (read-only face), so both are
+        # cleared to keep one mode active at a time.
+        set_plan_state(sid, status=PLAN_STATUS_PLANNING)
+        clear_session_yolo(sid)
+        clear_session_confirm_all(sid)
+        return mode
+    # Any other mode leaves plan mode: an unapproved plan is dropped and an
+    # approved one stops being the session's reference.
+    set_plan_state(sid, status=PLAN_STATUS_IDLE)
     if mode == FULL_ACCESS:
         set_session_yolo(sid)
     elif mode == CONFIRM_ALL:

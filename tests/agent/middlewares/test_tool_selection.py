@@ -350,3 +350,116 @@ def test_a_disabled_todo_continuation_never_reads_the_plan(monkeypatch):
     asyncio.run(TodoContinuationEnforcer().aafter_agent({"session_id": SESSION, "messages": []}))
 
     assert calls == [], "a disabled continuation must not read the todo list"
+
+
+# ----------------------------------------------------------------------
+# plan mode (Plan-Then-Execute)
+# ----------------------------------------------------------------------
+
+
+def _enter_plan_mode(status: str = "planning") -> None:
+    state_register_mem.set_state(SESSION, StateKey.PLAN_STATUS, status)
+
+
+def _model_call_names(request: _Request) -> list[str]:
+    middleware = ToolSelectionMiddleware()
+    seen: dict = {}
+
+    def handler(req):
+        seen["names"] = [getattr(t, "name", None) for t in req.tools]
+        return req
+
+    middleware.wrap_model_call(request, handler)
+    return seen["names"]
+
+
+def test_plan_mode_narrows_the_face_to_the_read_only_whitelist():
+    _enter_plan_mode()
+    request = _Request(
+        {"session_id": SESSION},
+        [
+            _Tool(n)
+            for n in (
+                "read_file",
+                "search_files",
+                "write_file",
+                "terminal",
+                "question",
+                "exit_plan_mode",
+            )
+        ],
+    )
+
+    names = _model_call_names(request)
+
+    assert "read_file" in names and "search_files" in names
+    assert "question" in names and "exit_plan_mode" in names
+    assert "write_file" not in names and "terminal" not in names
+
+
+def test_plan_mode_bounds_the_whitelist_by_the_session_selection(monkeypatch):
+    """A whitelist entry the session disabled is not resurrected by plan mode.
+
+    The shipped whitelist is entirely REQUIRED tools, so the bound only shows
+    with an entry an operator added (here: web_search). The two plan tools are
+    the exception — the mode must stay leavable.
+    """
+    from config.features import PLAN_MODE
+
+    extended = {**PLAN_MODE, "allowed_tools": (*PLAN_MODE["allowed_tools"], "web_search")}
+    monkeypatch.setattr("config.features.PLAN_MODE", extended)
+    _enter_plan_mode()
+    _set_config({"tools": [name for name in ("read_file", "search_files", "question")]})
+    request = _Request(
+        {"session_id": SESSION},
+        [_Tool(n) for n in ("read_file", "web_search", "write_file", "exit_plan_mode")],
+    )
+
+    names = _model_call_names(request)
+
+    assert "web_search" not in names
+    assert "read_file" in names and "exit_plan_mode" in names
+
+
+def test_plan_mode_refuses_a_write_tool_at_execution():
+    _enter_plan_mode()
+    middleware = ToolSelectionMiddleware()
+
+    refusal = middleware.wrap_tool_call(_ToolCallRequest(SESSION, "write_file"), lambda _r: "ran")
+
+    assert getattr(refusal, "status", None) == "error"
+    assert "Plan mode is active" in refusal.content
+
+
+def test_plan_mode_allows_a_read_tool_at_execution():
+    _enter_plan_mode()
+    middleware = ToolSelectionMiddleware()
+
+    assert (
+        middleware.wrap_tool_call(_ToolCallRequest(SESSION, "read_file"), lambda _r: "ran") == "ran"
+    )
+
+
+def test_an_approved_plan_frees_the_write_tools_again():
+    _enter_plan_mode("ready")
+    middleware = ToolSelectionMiddleware()
+
+    request = _Request({"session_id": SESSION}, [_Tool(n) for n in ("read_file", "write_file")])
+    assert _model_call_names(request) == ["read_file", "write_file"]
+    assert (
+        middleware.wrap_tool_call(_ToolCallRequest(SESSION, "write_file"), lambda _r: "ran")
+        == "ran"
+    )
+
+
+def test_a_broken_plan_read_is_fail_open(monkeypatch):
+    """A register failure must never leave a session stuck in a narrow face."""
+    import agent.tools.plan_mode.state as plan_state
+
+    def _boom(*_a, **_k):
+        raise RuntimeError("register down")
+
+    monkeypatch.setattr(plan_state, "read_plan_status", _boom)
+    request = _Request({"session_id": SESSION}, [_Tool(n) for n in ("read_file", "write_file")])
+
+    assert _model_call_names(request) == ["read_file", "write_file"]

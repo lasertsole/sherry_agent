@@ -131,7 +131,7 @@ client/
 │   │           ├── ContextUsageButton.vue     # Context-window usage ring + breakdown popover (messages / system prompt / tool calls)
 │   │           ├── SessionModelPicker.vue     # Per-session main-model picker (模型配置 / Model Config MAIN_LLM profiles, effective next turn)
 │   │           ├── MediaMenu.vue              # Plus-glyph media dropdown of the input toolbar (image / audio / video)
-│   │           ├── AccessModePicker.vue       # Toolbar access mode: shield trigger (confirm changes / auto edit / full access), effective from the next tool call
+│   │           ├── AccessModePicker.vue       # Toolbar access mode: trigger (plan mode / confirm changes / auto edit / full access), effective from the next tool call
 │   │           ├── ToolbarPopover.vue         # Upward-opening panel for the toolbar entries (context ring / running tasks)
 │   │           ├── TasksButton.vue            # Toolbar terminal entry: running sub-agents / commands of the session; a popover row hands the jump to the page (a run opens its live task view, a command scrolls to its tool card)
 │   │           ├── ProjectDirectoryChip.vue   # Toolbar chip for the session's project directory (bind / clear, parked-choice and rejection hints)
@@ -184,7 +184,7 @@ client/
 │   │   ├── session-model.ts    # Per-session main-model override (effective next turn)
 │   │   ├── context-usage.ts    # Per-session context accounting (window / reported prompt / parts)
 │   │   ├── running-commands.ts # Running background commands of a session (running tool rows, and only while the session is generating)
-│   │   ├── access-mode.ts      # Per-session access mode (confirm changes / auto edit / full access, mirrored from the backend)
+│   │   ├── access-mode.ts      # Per-session access mode (plan mode / confirm changes / auto edit / full access, mirrored from the backend)
 │   │   ├── llm-profiles.ts     # Model profiles from 模型配置 / Model Config (MAIN_LLM group), for the pickers
 │   │   ├── connection.ts       # Backend connectivity (isOnline / backendStatus) + deduped toasts; a dead socket reads as backend unreachable (the offline hint only fills in with no WS verdict) and says nothing while nobody is signed in
 │   │   ├── auth.ts             # Login session state (status / user / 401-refresh-once replay / markSessionLost on a refused rotation)
@@ -306,7 +306,7 @@ Browser-mode chat streaming details:
 - Base64 media is uploaded first via `POST /images/upload`, `/audio/upload`, `/video/upload` and referenced by URL
 - Server frames: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; chunks carry a `type` (`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`) and tool metadata
 - Interrupted streams reconnect with exponential backoff (1s/2s/4s, max 3 attempts via `WS_RECONNECT_MAX_ATTEMPTS`); a mid-stream loss raises `StreamInterruptedError` and emits `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` via mitt
-- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`)
+- HITL interrupts carry `HitlInterruptData` (tool name/args/allowed decisions); decisions are sent as `hitl_response` frames (`approve` / `approve_dir` / `yolo` / `reject` / `edit`). The same card also renders the Plan-Then-Execute approval (`exit_plan_mode`): the plan text, a feedback field, **Request changes** (reject + the feedback) and **Approve** — `/proj`-free, see `../docs/plan-mode/`
 - A turn this page never sent (the plan-continuation auto-turn, a subagent-completion injection, a cron run) arrives with **no `turn_started`** — the auto-turn passes no turn identity — so its chunks cannot be streamed into a local row; the `done` handler refetches the newest turn page, which renders the finished answer without a reload
 
 ### WebSocket Singletons (ws.ts)

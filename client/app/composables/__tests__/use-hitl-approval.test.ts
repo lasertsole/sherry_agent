@@ -98,6 +98,14 @@ describe('useHitlApproval decision forwarding', () => {
     expect(state.sent).toEqual([{ decision: 'approve_dir', message: 'allow the reports folder' }]);
   });
 
+  it('forwards a reject WITH a message — the plan-approval "request changes" path', () => {
+    const { hitl } = makeHarness();
+
+    hitl.handleHitlDecision('reject', 'add a rollback step');
+
+    expect(state.sent).toEqual([{ decision: 'reject', message: 'add a rollback step' }]);
+  });
+
   it('treats approve_dir as a grant, not a rejection', () => {
     const { hitl } = makeHarness();
 

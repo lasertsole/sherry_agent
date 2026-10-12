@@ -235,6 +235,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` 会并回启用集合（预设角色-工具栏把这些行显示为锁定）：服务端已拒绝省略必需项的新载荷，这里是第二道保险——切换前写入的旧寄存器值同样无法把它剔掉。
 
+**计划模式复用同两个钩子。** 当 `StateKey.PLAN_STATUS` 为 `planning`/`needs_replan` 时（Plan-Then-Execute，`agent/tools/plan_mode/`），工具面收窄到 `PLAN_MODE["allowed_tools"]` —— 只读白名单，仍受会话自身选择约束，唯独 `enter_plan_mode`/`exit_plan_mode` 永远可达 —— 仍被调用的写工具会以 “Plan mode is active” 被拒绝。计划模式优先于会话选择；见 `docs/plan-mode/`。
+
 未配置（或 `tools: null`）= 全开，与旧行为逐字节一致。失败开放：寄存器读不到或载荷损坏时记日志并原样放行。
 
 ### The per-session middleware switches

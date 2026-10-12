@@ -132,7 +132,7 @@ client/
 │   │           ├── ContextUsageButton.vue     # 컨텍스트 사용량 링 + 내역 팝오버(메시지 / 시스템 프롬프트 / 도구)
 │   │           ├── SessionModelPicker.vue     # 세션별 메인 모델 픽커(모델 설정 MAIN_LLM 프로필, 다음 턴부터 적용)
 │   │           ├── MediaMenu.vue              # 입력 도구 모음의 + 글리프 미디어 드롭다운(이미지 / 오디오 / 비디오)
-│   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 방패 트리거(변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
+│   │           ├── AccessModePicker.vue       # 툴바 접근 모드: 트리거(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근), 다음 도구 호출부터 적용
 │   │           ├── ToolbarPopover.vue         # 툴바 항목용 위로 열리는 패널(컨텍스트 링 / 실행 중 작업)
 │   │           ├── TasksButton.vue            # 툴바 터미널 항목: 세션의 실행 중 서브에이전트 / 명령(팝오버 행은 페이지에 이동을 맡긴다: 실행은 라이브 작업 뷰, 명령은 도구 카드로 스크롤)
 │   │           ├── ProjectDirectoryChip.vue   # 세션 프로젝트 디렉터리 툴바 항목(바인딩 / 해제, 보류·거부 힌트 포함)
@@ -185,7 +185,7 @@ client/
 │   │   ├── session-model.ts    # 세션별 메인 모델 오버라이드(다음 턴부터 적용)
 │   │   ├── context-usage.ts    # 세션별 컨텍스트 계정(윈도 / 보고된 프롬프트 / 구성)
 │   │   ├── running-commands.ts # 세션에서 실행 중인 백그라운드 명령(실행 중 도구 행이며 세션이 생성 중일 때만)
-│   │   ├── access-mode.ts      # 세션별 접근 모드(변경 전 확인 / 자동 편집 / 전체 접근, 백엔드와 동기화)
+│   │   ├── access-mode.ts      # 세션별 접근 모드(플랜 모드 / 변경 전 확인 / 자동 편집 / 전체 접근, 백엔드와 동기화)
 │   │   ├── llm-profiles.ts     # 모델 설정(MAIN_LLM 그룹)의 모델 프로필, 선택기용
 │   │   ├── connection.ts       # 백엔드 연결성(isOnline / backendStatus) + 중복 제거 Toast; 소켓 끊김은 '백엔드 도달 불가'로 표시(offline 힌트는 WS 판정이 없을 때만), 미로그인 상태에서는 침묵
 │   │   ├── auth.ts             # 로그인 세션 상태(status / user / 401 시 한 번 갱신 후 재시도 / 회전 거부 시 markSessionLost)
@@ -306,7 +306,7 @@ app.vue(루트: Toast 레이어, 연결 배너, 로케일 복원)
 - Base64 미디어는 먼저 `POST /images/upload`, `/audio/upload`, `/video/upload`로 업로드되고 URL로 참조됨
 - 서버 프레임: `{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`; 청크는 `type`(`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`)과 도구 메타데이터를 포함
 - 스트림 중단 시 지수 백오프로 재연결(1s/2s/4s, `WS_RECONNECT_MAX_ATTEMPTS`로 최대 3회); 스트림 중 손실은 `StreamInterruptedError`를 발생시키고 mitt를 통해 `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` 이벤트를 발행
-- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송
+- HITL 인터럽트는 `HitlInterruptData`(도구 이름/인자/선택 가능한 결정)를 포함; 결정은 `hitl_response` 프레임(`approve` / `approve_dir` / `yolo` / `reject` / `edit`)으로 전송. 같은 카드가 Plan-Then-Execute 승인(`exit_plan_mode`)도 렌더링합니다: 계획 본문, 피드백 입력, **수정 요청**(reject + 피드백), **승인** — 자세히는 `../docs/plan-mode/`
 - 이 페이지가 보낸 적 없는 턴(계획 연속 auto-turn, 서브에이전트 완료 주입, cron 실행)에는 **`turn_started`가 오지 않습니다**——auto-turn은 턴 식별자를 전달하지 않습니다——그래서 청크를 로컬 행으로 스트리밍할 수 없습니다. `done` 핸들러가 최신 턴 페이지를 다시 가져와 새로고침 없이 최종 답변을 표시합니다
 
 ### WebSocket 싱글턴(ws.ts)

@@ -236,6 +236,8 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 `agent/tools/catalog.py::REQUIRED_TOOLS`는 활성 집합에 다시 합쳐집니다(도구 탭은 해당 행을 잠금 표시): 필수 항목을 빠뜨린 새 페이로드는 이미 서비스가 거부하지만, 도구가 필수가 되기 전에 기록된 레지스터 값으로도 벗겨낼 수 없게 하는 두 번째 가드입니다.
 
+**플랜 모드는 같은 두 훅을 씁니다.** `StateKey.PLAN_STATUS`가 `planning`/`needs_replan`인 동안(Plan-Then-Execute, `agent/tools/plan_mode/`), 도구 면은 `PLAN_MODE["allowed_tools"]`로 좁아집니다 — 읽기 전용 허용 목록이며 세션 자체 선택에도 묶이지만 `enter_plan_mode`/`exit_plan_mode`는 항상 도달 가능 — 그래도 호출된 쓰기 도구는 “Plan mode is active”로 거부됩니다. 플랜 모드는 세션 선택보다 우선합니다. `docs/plan-mode/` 참조.
+
 미설정(또는 `tools: null`) = 모든 도구, 기존 동작과 바이트 단위로 동일. 실패 개방: 레지스터를 읽지 못하거나 페이로드가 손상되면 로그 후 그대로 통과시킵니다.
 
 ### The per-session middleware switches

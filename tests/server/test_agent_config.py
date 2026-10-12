@@ -181,7 +181,7 @@ def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
             rendered.append(entry["group"])
     expected = [group for group in TOOL_ORDER if group in set(rendered)]
     assert rendered == expected, "the group order must follow TOOL_ORDER"
-    assert rendered[:5] == ["skills", "terminal", "files", "interaction", "memory"]
+    assert rendered[:6] == ["skills", "terminal", "files", "interaction", "plan_mode", "memory"]
 
     # Entirely-required groups: nothing there can be switched off.
     for group in ("skills", "terminal", "files", "interaction"):

@@ -98,6 +98,71 @@ def _build_todo_block(session_id: str) -> str:
         return ""
 
 
+def _build_plan_mode_block(session_id: str) -> str:
+    """Plan-Then-Execute: the workflow reminder, or the approved plan reference.
+
+    Rebuilt from live state on every call (never frozen), so entering or leaving
+    plan mode takes effect on the next model call and a context compression
+    cannot lose it. Fail-open: an unreadable register yields no block.
+    """
+    try:
+        from runtime import StateKey, state_register_db, state_register_mem
+
+        status = state_register_mem.get_state(session_id, StateKey.PLAN_STATUS, None)
+        if not isinstance(status, str):
+            status = ""
+        if not status:
+            db_status = state_register_db.get_state(session_id, StateKey.PLAN_STATUS, None)
+            status = db_status if isinstance(db_status, str) else ""
+        if status in ("planning", "needs_replan"):
+            replan = status == "needs_replan"
+            header = (
+                "## Plan Mode (Plan-Then-Execute) — RE-PLAN"
+                if replan
+                else "## Plan Mode (Plan-Then-Execute)"
+            )
+            extra = (
+                "The approved plan no longer fits execution: revise it with what you have learned."
+                if replan
+                else ""
+            )
+            lines = [
+                header,
+                extra,
+                "You are DESIGNING, not executing. Only read-only tools are "
+                "available: `read_file`, `search_files`, `message_search`, "
+                "`skill_list`, `skill_view`, `question` — plus `exit_plan_mode` to "
+                "submit. Write tools (`write_file`, `patch_file`, `terminal`, "
+                "`python_repl`) are refused until the user approves the plan.",
+                "Work in four phases: (1) explore the relevant files and search "
+                "the codebase; (2) design — weigh the options, pick one, note the "
+                "risks; (3) write the plan (goal / scope with must-have & "
+                "must-not / numbered steps, each with an acceptance criterion / "
+                "verification strategy / risks); (4) call `exit_plan_mode` with "
+                "the full plan.",
+                "A turn in plan mode may ONLY end with a `question` or an `exit_plan_mode` call.",
+            ]
+            return "\n\n".join(line for line in lines if line)
+        if status == "ready":
+            path = state_register_mem.get_state(session_id, StateKey.PLAN_FILE_PATH, None)
+            if not isinstance(path, str) or not path:
+                path = state_register_db.get_state(session_id, StateKey.PLAN_FILE_PATH, None)
+            if not isinstance(path, str) or not path:
+                return ""
+            return (
+                "## Approved Plan\n\n"
+                "A plan was approved for this session and is saved at "
+                f"`{path}`. Execute it (re-read the file with `read_file` when its "
+                "details are not in context). If execution shows the plan no "
+                "longer fits, call `enter_plan_mode(replan=True)` before drifting "
+                "from it."
+            )
+        return ""
+    except Exception:  # noqa: BLE001 - a broken register must not break the prompt
+        logger.debug("[prompt_builder] plan-mode block read failed", exc_info=True)
+        return ""
+
+
 def _build_project_dir_block(session_id: str) -> str:
     """Render the session's working directory. Returns "" only on failure.
 
@@ -366,6 +431,10 @@ def build_system_prompt(
             # sherry checkout is exactly what this block exists to surface.
             # Rebuilt every call (never frozen) because a session can switch
             # directories at a turn boundary.
+            # Plan mode outranks everything below: while a plan is being
+            # designed (or an approved one is being executed) this is the block
+            # that shapes the turn.
+            _build_plan_mode_block(session_id),
             _build_project_dir_block(session_id),
             _build_todo_block(session_id),
             _build_boulder_block(session_id),

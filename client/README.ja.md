@@ -132,7 +132,7 @@ client/
 │   │           ├── ContextUsageButton.vue     # コンテキスト使用量リング + 内訳ポップオーバー（メッセージ / システムプロンプト / ツール）
 │   │           ├── SessionModelPicker.vue     # セッション単位のメインモデルピッカー（モデル設定 MAIN_LLM プロファイル、次ターンから有効）
 │   │           ├── MediaMenu.vue              # 入力ツールバーの＋グリフのメディア ドロップダウン（画像 / 音声 / 動画）
-│   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：シールドのトリガー（変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
+│   │           ├── AccessModePicker.vue       # ツールバーのアクセスモード：トリガー（プランモード / 変更前に確認 / 自動編集 / フルアクセス）、次のツール呼び出しから有効
 │   │           ├── ToolbarPopover.vue         # ツールバー入口の上方向パネル（コンテキストリング / 実行中タスク）
 │   │           ├── TasksButton.vue            # ツールバーのターミナル入口：実行中のサブエージェント / コマンド（ポップオーバーの行はページにジャンプを委ねる：実行はライブのタスク ビュー、コマンドはツール カードへスクロール）
 │   │           ├── ProjectDirectoryChip.vue   # セッションのプロジェクトディレクトリ用ツールバー項目（バインド / 解除、保留と拒否のヒント付き）
@@ -185,7 +185,7 @@ client/
 │   │   ├── session-model.ts    # セッション単位のメインモデル上書き（次ターンから有効）
 │   │   ├── context-usage.ts    # セッション単位のコンテキスト計量（ウィンドウ / 報告されたプロンプト / 内訳）
 │   │   ├── running-commands.ts # セッションで実行中のバックグラウンド コマンド（実行中のツール行、かつセッションが生成中のときのみ）
-│   │   ├── access-mode.ts      # セッション単位のアクセス モード（変更前に確認 / 自動編集 / フルアクセス、バックエンドと同期）
+│   │   ├── access-mode.ts      # セッション単位のアクセス モード（プランモード / 変更前に確認 / 自動編集 / フルアクセス、バックエンドと同期）
 │   │   ├── llm-profiles.ts     # モデル設定（MAIN_LLM グループ）のモデルプロファイル、ピッカー用
 │   │   ├── connection.ts       # バックエンド接続性（isOnline / backendStatus）+ 重複排除 Toast；ソケット切断は「バックエンド到達不可」として表示（offline ヒントは WS の判定が無いときだけ）、未ログイン時は沈黙
 │   │   ├── auth.ts             # ログインセッション状態（status / user / 401 で一度だけ更新して再送 / ローテーション拒否時は markSessionLost）
@@ -306,7 +306,7 @@ app.vue（ルート：Toast レイヤー、接続バナー、ロケール復元�
 - Base64 メディアは先に `POST /images/upload`、`/audio/upload`、`/video/upload` でアップロードされ、URL で参照される
 - サーバーフレーム：`{ event: "chunk" | "done" | "error" | "stopped" | "hitl_request", ... }`；チャンクは `type`（`text`/`reasoning`/`tool_start`/`tool_end`/`tool_result`）とツールメタデータを保持
 - ストリーム切断時は指数バックオフで再接続（1s/2s/4s、`WS_RECONNECT_MAX_ATTEMPTS` により最大 3 回）；ストリーム中の損失は `StreamInterruptedError` を投げ、mitt 経由で `ws:conn-loss` / `stream:reconnecting` / `stream:reconnected` / `stream:reconnect:failed` を発行
-- HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）として送信
+- HITL 割り込みは `HitlInterruptData`（ツール名/引数/選択肢）を保持；判定は `hitl_response` フレーム（`approve` / `approve_dir` / `yolo` / `reject` / `edit`）として送信。同じカードが Plan-Then-Execute の承認（`exit_plan_mode`）も描画します：計画本文、フィードバック欄、**修正を依頼**（reject + フィードバック）、**承認** —— 詳細は `../docs/plan-mode/`
 - このページが送信していないターン（計画継続の auto-turn、サブエージェント完了の注入、cron 実行）には **`turn_started` が来ません**——auto-turn はターン識別を渡しません——そのためチャンクをローカル行へ流せません。`done` ハンドラーが最新ターンページを再取得し、リロードなしで最終回答を表示します
 
 ### WebSocket シングルトン（ws.ts）

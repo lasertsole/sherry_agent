@@ -120,6 +120,15 @@ class StateKey(StrEnum):
     NUDGE_REVIEW_MEMORY_LOCK = "nudge_review_memory_lock"
     COMPRESSION_TODO_UPDATE_LOCK = "compression_todo_update_lock"
     PLAN_REF = "plan_ref"
+    #: Plan-Then-Execute plan mode: needs_planning / planning / ready /
+    #: needs_replan (``config/features/agent_side/plan_mode.py``).
+    PLAN_STATUS = "plan_status"
+    #: sha256(plan)[:16] of the submitted plan — the approval binds to it.
+    PLAN_REVISION = "plan_revision"
+    #: Reject-with-feedback rounds spent on the current plan (mutation budget).
+    PLAN_MUTATION_COUNT = "plan_mutation_count"
+    #: The approved (or pending) plan file under the session's plans dir.
+    PLAN_FILE_PATH = "plan_file_path"
 
     HITL_PERMANENT = "hitl:permanent"
     HITL_SESSION_APPROVED = "hitl:session_approved"

@@ -237,6 +237,8 @@ Runs the session's own tool set (预设角色-工具 tab → `AGENT_CONFIG["tool
 
 `agent/tools/catalog.py::REQUIRED_TOOLS` is unioned back into the enabled set (the 工具 tab shows those rows locked): the service already refuses a payload that omits one, this is the second guard so a register value written before a tool became required cannot strip it either.
 
+**Plan mode rides the same two hooks.** While `StateKey.PLAN_STATUS` is `planning`/`needs_replan` (Plan-Then-Execute, `agent/tools/plan_mode/`), the face is narrowed to `PLAN_MODE["allowed_tools"]` — the read-only whitelist, still bounded by the session's own set except that `enter_plan_mode`/`exit_plan_mode` always stay reachable — and a write tool that still gets called is refused with "Plan mode is active". Plan mode outranks the session selection; see `docs/plan-mode/`.
+
 Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. Fail-open: an unreadable register or a malformed payload logs and passes the request through.
 
 ### The per-session middleware switches

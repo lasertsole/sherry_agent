@@ -2,10 +2,11 @@
 
 Endpoints:
     GET /sessions/access_mode?session_id=<sid>
-        -> {"success": true, "session_id": ..., "mode": "confirm_all"|"auto_edit"|"full_access"}
+        -> {"success": true, "session_id": ..., "mode": "plan"|"confirm_all"|"auto_edit"|"full_access"}
     PUT /sessions/access_mode  {"session_id": <sid>, "mode": <mode>}
         -> {"success": true, "mode": ...}
 
+``plan`` is plan mode (read-only until the submitted plan is approved);
 ``auto_edit`` is the default (the normal approval gates); ``confirm_all`` makes
 every command and every file change ask; ``full_access`` sets the session's HITL
 bypass-all flag, so no approval card is raised for that session. The strict and
