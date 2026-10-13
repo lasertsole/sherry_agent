@@ -71,7 +71,7 @@ def tool(monkeypatch: pytest.MonkeyPatch) -> SafeShellTool:
 
     Policy AUTO + no backend degrades to the direct spawn (one warning), which
     is the same ``_execute_sync`` body the sandboxed wrap uses — and it cannot
-    be refused by a machine whose ``.env`` pins ``SANDBOX_POLICY=required``.
+    be refused by an environment pinned to ``SANDBOX_POLICY=required``.
     """
     monkeypatch.setattr(sandbox_guard, "read_policy", lambda: SandboxPolicy.AUTO)
     monkeypatch.setattr(terminal, "read_policy", lambda: SandboxPolicy.AUTO)

@@ -304,9 +304,10 @@ def test_env_contains_sandbox_policy_line():
     matching = [line for line in content.splitlines() if line.strip().startswith("SANDBOX_POLICY")]
     assert matching, "SANDBOX_POLICY missing from .env"
     line = matching[-1].strip()
-    # Shipped default is fail-closed: auto silently runs unsandboxed, which is the
-    # write bypass the bypass-defense plan closes.
-    assert line.replace(" ", "") == "SANDBOX_POLICY=required"
+    # Shipped default is `auto`: the packaged desktop app runs on macOS/Windows,
+    # which have no OS sandbox backend, where `required` would refuse every command.
+    # `required` stays the fail-closed setting for a server deployment.
+    assert line.replace(" ", "") == "SANDBOX_POLICY=auto"
     # semantics documented in the comment block, including the auto warning
     lowered = content.lower()
     assert "required" in lowered and "auto" in lowered and "off" in lowered

@@ -48,10 +48,10 @@ from agent.tools.pub_base.sandbox import SandboxPolicy
 def _default_policy_auto(monkeypatch: pytest.MonkeyPatch):
     """Hermetic default policy for this file.
 
-    The shipped (tracked) ``.env`` sets ``SANDBOX_POLICY=required``, which denies
-    the main-agent ``sandbox=False`` bypass several tests here exercise. Tests
-    that assert the REQUIRED behaviour call ``_set_policy`` themselves — that
-    patch lands after this one and wins.
+    The shipped (tracked) ``.env`` sets ``SANDBOX_POLICY=auto``; a deployment can
+    set ``required``, which denies the main-agent ``sandbox=False`` bypass several
+    tests here exercise. Tests that assert the REQUIRED behaviour call
+    ``_set_policy`` themselves — that patch lands after this one and wins.
     """
     _set_policy(monkeypatch, SandboxPolicy.AUTO)
 

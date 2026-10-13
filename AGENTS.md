@@ -947,8 +947,11 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   writable_roots)` takes the caller's write surface, which each tool resolves from
   the SESSION's project directory (so a project bound outside the checkout is
   writable and the checkout itself is not), `TEMP_DIR` is appended centrally, and
-  an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=required` (the unset
-  fallback stays `auto` for running installs) — boot logs the effective policy +
+  an empty list raises. The tracked `.env` ships `SANDBOX_POLICY=auto` (the same
+  as the unset fallback: the packaged desktop app has no OS sandbox backend on
+  macOS/Windows, where `required` would refuse every command — a server
+  deployment that wants the hard guarantee sets `required` itself) — boot logs
+  the effective policy +
   backend, an unusable `required` logs an ERROR with fix commands,
   `SANDBOX_STRICT_BOOT=1` refuses to start, and `GET /sandbox/status` reports the
   same state. Every bare run is recorded: the evidence-ledger row carries
