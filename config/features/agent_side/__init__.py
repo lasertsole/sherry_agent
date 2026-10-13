@@ -67,6 +67,10 @@ from .todolist_infra import (
     TodoListInfraConfig as TodoListInfraConfig,
     TODOLIST_INFRA as TODOLIST_INFRA,
 )
+from .reminder_catalog import (
+    ReminderCatalogConfig as ReminderCatalogConfig,
+    REMINDER_CATALOG as REMINDER_CATALOG,
+)
 from .tools_timeouts import (
     ToolsTimeoutsConfig as ToolsTimeoutsConfig,
     TOOLS_TIMEOUTS as TOOLS_TIMEOUTS,

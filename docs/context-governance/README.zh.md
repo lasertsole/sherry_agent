@@ -113,6 +113,21 @@ session end → clear_session() removes the session folder (evicted/ + plans) an
 | **工具配对 / 净化器** | 所有替换都保留 `id` 与 `tool_call_id`；`sanitize_tool_use_result_pairing` 永远不需要为驱逐做修复，stub 依旧是合法的配对输入 |
 | **子代理会话** | 子代理管线**不**注册 `ContextEvictionMiddleware` 与 `MessagePersistenceMiddleware`：子转录保留完整工具结果，且只存在于 checkpoint |
 
+## 🧱 稳定系统提示词与提醒层
+
+系统提示词只承载**稳定**内容：persona 文件、memory 块与技能索引。所有**实时**视图——计划模式、工作目录、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引——改为在每轮首个模型调用时以 `<system-reminder source="…">` HumanMessage 注入（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` 目录）。两个原因：首个 token 每轮都变的提示词会让提供方的前缀缓存从那里起全部失效（persona 也被连累）；而只在缓存未命中时重建的提示词，在下一次重建之前展示的是**过期**的 todo 列表。
+
+| 关注点 | 规则 |
+|---|---|
+| 注入什么 | 每个 builder 返回文本的来源各注入一条提醒：按优先级排序，标记 `origin=<来源 id>`、`provenance="reminder_catalog"`、`internal=True` |
+| 预算 | 每次调用全部来源合计 `REMINDER_CATALOG["total_budget_chars"]`（30 000）——超预算时整条丢弃优先级最低者，绝不把一条提醒截成半句 |
+| 节流 | 来源可声明 `cooldown_turns`（TaskFlow 看板 / boulder：5）与 `only_if_changed`（内容相同不重复注入）；节流状态只为**真正注入过**的来源推进 |
+| 压缩之后 | 压缩会重置目录，于是下一轮从 live state 重新注入每个来源——提醒层不依赖历史是否幸存 |
+| 转义 | 载荷内嵌套的 `<system-reminder>` 标签（todo 文本可被用户影响）会被转义，否则载荷可提前闭合标签、冒充这一层 |
+| 轮内定位 | 只在每轮首个模型调用注入——与 TaskIntent 相同的「最后一条消息是真实用户消息」判定；遍历人类消息的扫描器（`split_into_turns`、HITL 无操作者判定、摘要标签）通过 `pub.func.message.system_reminder` 跳过提醒 |
+
+todo 列表还多一道保险：`PlanContinuationEnforcer`（由 `TodoContinuationEnforcer` 更名；它监督的"计划"= todos + TaskFlow flows）统计未调用 `todowrite` 的轮数，超过 `TODOLIST_INFRA["todo_write_nudge_turns"]`（10）就在续跑指令后追加 `[REMINDER: TODO TRACKING]` 提醒——这是基于快照的停滞检测唯一看不见的形态（模型推进 TaskFlow 会让 streak 清零，而 todo 列表在腐烂）。
+
 ## 🛠️ 配置
 
 `TOOL_RESULT_EVICTION`（`config/features/agent_side/tool_result_eviction.py`）：

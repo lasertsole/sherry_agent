@@ -329,18 +329,27 @@ def test_prompt_block_warns_when_unbound(monkeypatch):
     assert "default" in block
 
 
-def test_prompt_injection_includes_the_block(project: Path, monkeypatch):
+def test_the_block_reaches_the_turn_as_a_reminder(project: Path, monkeypatch):
+    """The working-directory block moved out of the system prompt.
+
+    It is live state (a session can rebind at any turn boundary), and a system
+    prompt that changes per turn invalidates the provider's prefix cache — so it
+    arrives as a ``<system-reminder source="project_dir_notice">`` reminder
+    instead, rendered from the same builder.
+    """
     from workspace import prompt_builder
+    from agent.middlewares.reminder_catalog import clear_session, resolve_injections
 
     svc.apply_project_choice(SESSION, str(project))
     monkeypatch.setattr(prompt_builder, "get_skills_text", lambda *a, **k: "")
     monkeypatch.setattr(prompt_builder, "_read_static_files", lambda names: [])
     monkeypatch.setattr(prompt_builder, "_read_todos_sync", lambda sid: [])
 
-    prompt = prompt_builder.build_system_prompt(session_id=SESSION)
+    clear_session(SESSION)
+    reminder = resolve_injections(SESSION, {}, current_turn=1).get("project_dir_notice", "")
 
-    assert "## Current Working Directory" in prompt
-    assert str(project.resolve()) in prompt
+    assert "## Current Working Directory" in reminder
+    assert str(project.resolve()) in reminder
 
 
 # ---------------------------------------------------------------------------

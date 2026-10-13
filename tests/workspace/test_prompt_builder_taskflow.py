@@ -15,6 +15,19 @@ import pytest
 # ---------------------------------------------------------------------------
 
 
+def _reminder(session_id: str, source_id: str) -> str:
+    """The text the reminder catalogue injects for one source (see the plan).
+
+    The TaskFlow board moved OUT of the system prompt into a
+    ``<system-reminder>`` message; the assertions below are unchanged apart
+    from where the text is read from.
+    """
+    from agent.middlewares.reminder_catalog import clear_session, resolve_injections
+
+    clear_session(session_id)
+    return resolve_injections(session_id, {}, current_turn=1).get(source_id, "")
+
+
 class FakeStateDB:
     """In-memory stand-in for state_register_db (get/set_state only)."""
 
@@ -124,11 +137,10 @@ def _steps_progress(*statuses):
 
 class TestTaskflowBlockInjection:
     def test_taskflow_block_injected_when_active(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
 
         prompt_env["flow_store"].flows = [_flow("deploy-v2")]
 
-        prompt = build_system_prompt(session_id="sess-main")
+        prompt = _reminder("sess-main", "taskflow_status")
 
         assert "## Pending TaskFlows" in prompt
         assert "deploy-v2" in prompt
@@ -139,17 +151,15 @@ class TestTaskflowBlockInjection:
 
         prompt_env["flow_store"].flows = []
 
+        assert _reminder("sess-main", "taskflow_status") == ""
         prompt = build_system_prompt(session_id="sess-main")
-
-        assert "Pending TaskFlows" not in prompt
         assert "AGENTS-PERSONA" in prompt
 
     def test_taskflow_block_absent_when_session_mismatch(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
 
         prompt_env["flow_store"].flows = [_flow("other-flow", session_id="someone-else")]
 
-        prompt = build_system_prompt(session_id="sess-main")
+        prompt = _reminder("sess-main", "taskflow_status")
 
         assert "Pending TaskFlows" not in prompt
         assert prompt_env["flow_store"].calls == 1
@@ -166,7 +176,6 @@ class TestTaskflowBlockInjection:
         assert prompt_env["flow_store"].calls == 0
 
     def test_taskflow_block_shows_step_progress(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
 
         prompt_env["flow_store"].flows = [
             _flow(
@@ -175,19 +184,18 @@ class TestTaskflowBlockInjection:
             )
         ]
 
-        prompt = build_system_prompt(session_id="sess-main")
+        prompt = _reminder("sess-main", "taskflow_status")
 
         assert "2/5 steps done" in prompt
         assert 'next: s3 "task 3"' in prompt
 
     def test_taskflow_block_max_three_flows(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
 
         prompt_env["flow_store"].flows = [
             _flow(f"flow-{index}", description=f"work {index}") for index in range(1, 6)
         ]
 
-        prompt = build_system_prompt(session_id="sess-main")
+        prompt = _reminder("sess-main", "taskflow_status")
 
         assert "flow-1" in prompt
         assert "flow-2" in prompt
@@ -202,9 +210,8 @@ class TestTaskflowFailOpen:
 
         prompt_env["flow_store"].error = RuntimeError("registry db unavailable")
 
+        assert _reminder("sess-main", "taskflow_status") == ""
         prompt = build_system_prompt(session_id="sess-main")
-
-        assert "Pending TaskFlows" not in prompt
         assert "AGENTS-PERSONA" in prompt
         assert "SKILLS-BLOCK" in prompt
 
@@ -222,11 +229,10 @@ class TestTaskflowGuards:
         assert "AGENTS-PERSONA" in prompt
 
     def test_legacy_flow_without_session_not_injected(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
 
         prompt_env["flow_store"].flows = [_flow("legacy-flow", session_id=None)]
 
-        prompt = build_system_prompt(session_id="sess-main")
+        prompt = _reminder("sess-main", "taskflow_status")
 
         assert "Pending TaskFlows" not in prompt
         assert "legacy-flow" not in prompt

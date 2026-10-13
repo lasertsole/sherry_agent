@@ -419,35 +419,18 @@ def build_system_prompt(
                 if content
             )
 
-    # --- Todo + boulder + taskflow + continuity blocks ----------------
-    # Rebuilt from live state on every call, so they survive context
-    # compression; skipped entirely when there is no session to scope them to.
-    # The taskflow/continuity blocks follow the memory-block rule: only injected
-    # when the caller did not filter to explicit files.
-    if session_id:
-        blocks = [
-            # Where the agent works: every file tool, terminal command and path
-            # check resolves against this root, and a silent fallback to the
-            # sherry checkout is exactly what this block exists to surface.
-            # Rebuilt every call (never frozen) because a session can switch
-            # directories at a turn boundary.
-            # Plan mode outranks everything below: while a plan is being
-            # designed (or an approved one is being executed) this is the block
-            # that shapes the turn.
-            _build_plan_mode_block(session_id),
-            _build_project_dir_block(session_id),
-            _build_todo_block(session_id),
-            _build_boulder_block(session_id),
-            _build_taskflow_block(session_id) if selected_file_names is None else "",
-            _build_knowledge_block(session_id) if selected_file_names is None else "",
-            _build_continuity_block(session_id) if selected_file_names is None else "",
-        ]
-    else:
-        blocks = []
-
     # --- Assembling the final prompt ----------------------------------
-    # Fold static files + memory + live blocks into one ordered list, then skills.
-    parts = [*file_paths, *blocks, skill_paths]
+    # STABLE content only: persona files + memory + the skills index. The live
+    # views (plan mode, working directory, todo list, boulder, TaskFlow board,
+    # continuity, knowledge index) are NOT built here any more — they change
+    # every turn, and a system prompt whose first tokens change invalidates the
+    # provider's prefix cache for everything after it (persona included).
+    # ``DynamicReminderMiddleware`` injects them as ``<system-reminder>``
+    # messages from live state on each turn's first model call; each live view
+    # keeps its builder above (``_build_todo_block`` etc.) — only the delivery
+    # changed. This prompt is therefore safe to CACHE per session, which is
+    # exactly what ``system_prompt_injection`` does.
+    parts = [*file_paths, skill_paths]
 
     # Join with blank-line separators, skipping any empty parts.
     return "\n\n".join(p for p in parts if p)

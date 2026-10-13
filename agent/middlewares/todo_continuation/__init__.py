@@ -1,5 +1,5 @@
-"""TodoContinuationEnforcer middleware package."""
+"""``PlanContinuationEnforcer`` middleware package (the plan = todos + flows)."""
 
-from .core import TodoContinuationEnforcer
+from .core import PlanContinuationEnforcer, TodoContinuationEnforcer
 
-__all__ = ["TodoContinuationEnforcer"]
+__all__ = ["PlanContinuationEnforcer", "TodoContinuationEnforcer"]

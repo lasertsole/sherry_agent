@@ -123,6 +123,21 @@ def _rearm_task_intent_after_compact(session_id: str) -> None:
         logger.debug("Task-intent re-arm after compact failed for session {}", session_id)
 
 
+def _reset_reminders_after_compact(session_id: str) -> None:
+    """Forget the reminder-catalogue throttle/hash state after a compression.
+
+    The compression rebuilt the system prompt and may have dropped the older
+    ``<system-reminder>`` messages, so the next turn must re-inject every source
+    from live state rather than believing its content was already shown.
+    """
+    try:
+        from agent.middlewares.reminder_catalog import reset_session
+
+        reset_session(session_id)
+    except Exception:
+        logger.debug("Reminder-catalogue reset after compact failed for session {}", session_id)
+
+
 def _get_taskflow_context_sync(session_id: str) -> str:
     """Render this session's active TaskFlow state for the summary prompt.
 
@@ -345,6 +360,7 @@ class Summarization(
         state_register_mem.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
         state_register_db.set_state(session_id, StateKey.SYSTEM_PROMPT, system_prompt)
         _rearm_task_intent_after_compact(session_id)
+        _reset_reminders_after_compact(session_id)
 
     # ------------------------------------------------------------------
     # Durable cooldown mirror (state_register_db seam lives here)

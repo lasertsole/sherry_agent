@@ -17,6 +17,13 @@ from loguru import logger
 
 __all__ = ["disabled_middlewares", "middleware_enabled", "middleware_option"]
 
+#: Middleware RENAMES: ``{current class name: former names}``. A preset payload
+#: written before a rename names the OLD string, and the switch matches by class
+#: name — without this map the switch would silently stop applying.
+_RENAMED_MIDDLEWARES: dict[str, frozenset[str]] = {
+    "PlanContinuationEnforcer": frozenset({"TodoContinuationEnforcer"}),
+}
+
 
 def disabled_middlewares(session_id: str | None) -> frozenset[str]:
     """Names the session turned off (empty when unset / unreadable)."""
@@ -84,4 +91,9 @@ def middleware_enabled(session_id: str | None, name: str) -> bool:
 
     if middleware_required(name):
         return True
-    return name not in disabled_middlewares(session_id)
+    disabled = disabled_middlewares(session_id)
+    if name in disabled:
+        return False
+    # A payload written before a rename names the OLD class name; honour it.
+    former_names = _RENAMED_MIDDLEWARES.get(name, frozenset())
+    return not (disabled & former_names)

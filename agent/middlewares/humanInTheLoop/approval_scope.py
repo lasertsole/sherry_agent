@@ -21,6 +21,7 @@ from contextvars import ContextVar, Token
 from typing import Any
 from collections.abc import Iterator
 
+from pub.func.message.system_reminder import is_system_reminder
 from pub.func.message.workspace_notice import is_workspace_notice
 
 # ContextVar default sentinel: distinguishes "no scope was ever set" (fall back
@@ -79,7 +80,7 @@ def _is_headless_turn(state: dict[str, Any]) -> bool:
     for msg in reversed(messages):
         if getattr(msg, "type", "") != "human":
             continue
-        if is_workspace_notice(msg):
+        if is_workspace_notice(msg) or is_system_reminder(msg):
             continue
         meta = getattr(msg, "metadata", None) or {}
         if str(meta.get("origin") or "").strip() == "cron":

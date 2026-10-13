@@ -33,7 +33,8 @@ _OTHER_MIDDLEWARE = (
     "HITLConfig",
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
-    "TodoContinuationEnforcer",
+    "DynamicReminderMiddleware",
+    "PlanContinuationEnforcer",
 )
 
 

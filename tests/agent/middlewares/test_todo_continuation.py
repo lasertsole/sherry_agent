@@ -452,3 +452,142 @@ async def test_a_broken_taskflow_read_degrades_to_the_todo_half(
     content = spy_auto_turn[0][1].content
     assert "build api" in content
     assert "TaskFlow board" not in content
+
+
+# ===========================================================================
+# todowrite-usage accounting + the tracking nudge (plan: todo_reminder)
+# ===========================================================================
+
+
+class TestTodowriteAccounting:
+    def test_turns_advance_and_todowrite_resets(self):
+        st.reset("s-usage")
+        for _ in range(3):
+            st.record_turn("s-usage")
+        assert st.turns_since_todowrite("s-usage") == 3
+
+        st.record_todowrite("s-usage")
+
+        assert st.turns_since_todowrite("s-usage") == 0
+
+    def test_reset_clears_the_counter(self):
+        st.record_turn("s-usage-reset")
+        st.reset("s-usage-reset")
+
+        assert st.turns_since_todowrite("s-usage-reset") == 0
+
+    def test_a_turn_is_detected_by_its_todowrite_tool_call(self):
+        from langchain_core.messages import AIMessage
+
+        assert tc._turn_used_todowrite({"messages": [AIMessage(content="")]}) is False
+        assert (
+            tc._turn_used_todowrite(
+                {
+                    "messages": [
+                        AIMessage(
+                            content="",
+                            tool_calls=[{"name": "todowrite", "args": {}, "id": "c1"}],
+                        )
+                    ]
+                }
+            )
+            is True
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_nudge_is_appended_once_the_threshold_is_crossed(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """10 turns without todowrite → the continuation directive gains the nudge."""
+        sid = "s-nudge"
+        _patch_todos(monkeypatch, [_todo("pending work", "pending")])
+        st.reset(sid)
+        # 9 prior turns + the turn ending now = the 10th turn without todowrite.
+        for _ in range(9):
+            st.record_turn(sid)
+
+        injected: list[str] = []
+
+        async def _capture(_self, _session_id: str, prompt: str) -> None:
+            injected.append(prompt)
+
+        monkeypatch.setattr(tc.PlanContinuationEnforcer, "_inject", _capture)
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_state(sid))
+
+        assert injected, "the continuation directive must fire"
+        assert "[REMINDER: TODO TRACKING]" in injected[0]
+        assert "10 turns" in injected[0]
+
+    @pytest.mark.asyncio
+    async def test_no_nudge_below_the_threshold(self, monkeypatch: pytest.MonkeyPatch):
+        sid = "s-nudge-low"
+        _patch_todos(monkeypatch, [_todo("pending work", "pending")])
+        st.reset(sid)
+        for _ in range(3):
+            st.record_turn(sid)
+
+        injected: list[str] = []
+
+        async def _capture(_self, _session_id: str, prompt: str) -> None:
+            injected.append(prompt)
+
+        monkeypatch.setattr(tc.PlanContinuationEnforcer, "_inject", _capture)
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_state(sid))
+
+        assert injected and "[REMINDER: TODO TRACKING]" not in injected[0]
+
+    @pytest.mark.asyncio
+    async def test_a_todowrite_this_turn_resets_the_counter(self, monkeypatch: pytest.MonkeyPatch):
+        from langchain_core.messages import AIMessage
+
+        sid = "s-nudge-reset"
+        _patch_todos(monkeypatch, [_todo("pending work", "pending")])
+        st.reset(sid)
+        for _ in range(10):
+            st.record_turn(sid)
+
+        injected: list[str] = []
+
+        async def _capture(_self, _session_id: str, prompt: str) -> None:
+            injected.append(prompt)
+
+        monkeypatch.setattr(tc.PlanContinuationEnforcer, "_inject", _capture)
+        state = _state(sid)
+        state["messages"] = [
+            AIMessage(content="", tool_calls=[{"name": "todowrite", "args": {}, "id": "c1"}])
+        ]
+
+        await tc.PlanContinuationEnforcer().aafter_agent(state)
+
+        assert st.turns_since_todowrite(sid) == 0
+        assert injected and "[REMINDER: TODO TRACKING]" not in injected[0]
+
+    @pytest.mark.asyncio
+    async def test_recovery_mode_carries_no_nudge(self, monkeypatch: pytest.MonkeyPatch):
+        """Recovery already tells the model to run todoread/todowrite — no stacking."""
+        sid = "s-nudge-recovery"
+        todos = [_todo("pending work", "pending")]
+        _patch_todos(monkeypatch, todos)
+        st.reset(sid)
+        for _ in range(10):
+            st.record_turn(sid)
+        # Force the stagnation streak to the threshold so recovery takes over.
+        rows = [{"content": t_["content"], "status": t_["status"]} for t_ in todos]
+        for _ in range(6):
+            st.check_stagnation(sid, rows)
+
+        injected: list[str] = []
+
+        async def _capture(_self, _session_id: str, prompt: str) -> None:
+            injected.append(prompt)
+
+        monkeypatch.setattr(tc.PlanContinuationEnforcer, "_inject", _capture)
+
+        await tc.PlanContinuationEnforcer().aafter_agent(_state(sid))
+
+        assert injected
+        assert "[REMINDER: TODO TRACKING]" not in injected[0], (
+            "the recovery directive carries its own todowrite guidance"
+        )

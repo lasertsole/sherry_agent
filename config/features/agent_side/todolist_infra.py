@@ -13,6 +13,10 @@ class TodoListInfraConfig(TypedDict):
     stagnation_max_cooldown_s: float
     stagnation_failure_reset_window_s: int
     stagnation_max_recovery_attempts: int
+    #: Turns without a ``todowrite`` call after which a continuation
+    #: directive carries the todo-tracking nudge (the model may be
+    #: advancing TaskFlow while the TODO list goes stale).
+    todo_write_nudge_turns: int
     #: How long a DEFERRED continuation waits for the ending turn to release its
     #: own busy signals (the enforcer's after_agent hook runs while the client's
     #: stream task is still live, so an immediate trigger would see "busy" and
@@ -30,6 +34,7 @@ TODOLIST_INFRA: TodoListInfraConfig = {
     "stagnation_max_cooldown_s": 60.0,
     "stagnation_failure_reset_window_s": 300,
     "stagnation_max_recovery_attempts": 2,
+    "todo_write_nudge_turns": 10,
     "continuation_self_idle_wait_s": 30.0,
     "continuation_self_idle_poll_s": 0.5,
 }

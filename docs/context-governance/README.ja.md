@@ -114,6 +114,21 @@ DOM、ピクセル、screencast フレーム——はメッセージストアに
 | **ツールペアリング / サニタイザ** | すべての置換が `id` と `tool_call_id` を保持する；`sanitize_tool_use_result_pairing` が退避のために修復することは決してなく、スタブは有効なペアリング入力であり続ける |
 | **サブエージェントセッション** | 子パイプラインは `ContextEvictionMiddleware` と `MessagePersistenceMiddleware` を**登録しない**：子トランスクリプトは完全なツール結果を保ち、checkpoint のみに存在する |
 
+## 🧱 安定したシステムプロンプトとリマインダー層
+
+システムプロンプトが載せるのは**安定**した内容だけです: persona ファイル、memory ブロック、スキル索引。すべての**ライブ**ビュー——プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引——は、各ターンの最初のモデル呼び出しで `<system-reminder source="…">` HumanMessage として注入されます（`DynamicReminderMiddleware` + `agent/middlewares/reminder_catalog/` のカタログ）。理由は 2 つ: 最初のトークンが毎ターン変わるプロンプトは、以降すべて（persona 含む）の prefix キャッシュを無効化する; キャッシュミス時しか再構築されないプロンプトは、次の再構築まで**古い** todo リストを見せる。
+
+| 関心事 | ルール |
+|---|---|
+| 何を注入するか | builder がテキストを返したソースごとに 1 件: 優先度順、`origin=<ソース ID>`、`provenance="reminder_catalog"`、`internal=True` |
+| 予算 | 呼び出しごとに全ソース合計で `REMINDER_CATALOG["total_budget_chars"]`（30 000）——超過時は最低優先度を丸ごと落とし、途中で切ることはしない |
+| スロットル | ソースは `cooldown_turns`（TaskFlow ボード / boulder: 5）と `only_if_changed`（同一内容は繰り返さない）を宣言できる。管理状態は実際に注入されたソースだけ進む |
+| 圧縮後 | 圧縮がカタログをリセットするため、次のターンに全ソースが live state から再注入される——リマインダー層は履歴の生存に依存しない |
+| エスケープ | ペイロード内のネストした `<system-reminder>` タグ（todo テキストはユーザーの影響を受けうる）はエスケープされる。さもなければタグを早期に閉じてこの層を装える |
+| ターン内の位置 | ターンの最初のモデル呼び出しのみ——TaskIntent と同じ「最後のメッセージが本物のユーザーメッセージ」判定。人間メッセージを走査するスキャナ（`split_into_turns`、HITL のオペレーター判定、要約ラベル）は `pub.func.message.system_reminder` 経由でリマインダーを飛ばす |
+
+todo リストにはもう 1 つの防護があります: `PlanContinuationEnforcer`（`TodoContinuationEnforcer` から改名。監督する「プラン」= todos + TaskFlow flows）は `todowrite` を呼ばないターン数を数え、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` を追記します——スナップショット方式の停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。
+
 ## 🛠️ 設定
 
 `TOOL_RESULT_EVICTION`（`config/features/agent_side/tool_result_eviction.py`）：

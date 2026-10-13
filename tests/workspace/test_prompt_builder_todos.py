@@ -1,8 +1,9 @@
-"""Unit tests for the todo + boulder injection blocks in workspace/prompt_builder.py.
+"""Unit tests for the todo + boulder reminder blocks in workspace/prompt_builder.py.
 
-The todo list (todos.db) and the active-work pointer (``src/data/boulder.json``) are
-rebuilt into the system prompt on EVERY call, so they survive context
-compression. Both builders must FAIL-OPEN: a broken store or boulder file must
+The todo list (todos.db) and the active-work pointer (``src/data/boulder.json``)
+are rendered by these builders and delivered as ``<system-reminder>`` messages
+once per turn (they used to sit in the system prompt, where a per-turn change
+invalidated the provider's prefix cache). Both builders must FAIL-OPEN: a broken store or boulder file must
 never prevent the persona prompt from being assembled.
 
 Tests are tests-after glue per the plan; they monkeypatch the sync store reader
@@ -121,11 +122,26 @@ def _todo(content, *, status="pending", priority="medium", category="quick", **e
 # ---------------------------------------------------------------------------
 
 
+def _reminder(session_id: str, source_id: str) -> str:
+    """The text the reminder catalogue would inject for one source this turn.
+
+    The live views (todo list, boulder, TaskFlow board, …) moved OUT of the
+    system prompt into ``<system-reminder>`` messages; the assertions below are
+    unchanged apart from where the text is read from.
+    """
+    from agent.middlewares.reminder_catalog import clear_session, resolve_injections
+
+    clear_session(session_id)
+    return resolve_injections(session_id, {}, current_turn=1).get(source_id, "")
+
+
 class TestEmptyState:
     def test_no_todos_and_no_boulder_renders_neither_block(self, prompt_env):
         from workspace.prompt_builder import build_system_prompt
 
         prompt = build_system_prompt(session_id="sess-empty")
+        assert _reminder("sess-empty", "todo_block") == ""
+        assert _reminder("sess-empty", "boulder_status") == ""
 
         assert "## Current Todo List" not in prompt
         assert "## Active Work" not in prompt
@@ -135,8 +151,6 @@ class TestEmptyState:
 
 class TestTodoBlock:
     def test_seeded_todos_render_header_and_item_text(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         _seed_todos(
             prompt_env,
             [
@@ -145,7 +159,7 @@ class TestTodoBlock:
             ],
         )
 
-        prompt = build_system_prompt(session_id="sess-todos")
+        prompt = _reminder("sess-todos", "todo_block")
 
         assert "## Current Todo List" in prompt
         assert "Implement the widget" in prompt
@@ -156,8 +170,6 @@ class TestTodoBlock:
         assert "(high)" in prompt
 
     def test_flow_and_step_are_tagged_when_present(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         _seed_todos(
             prompt_env,
             [
@@ -171,7 +183,7 @@ class TestTodoBlock:
             ],
         )
 
-        prompt = build_system_prompt(session_id="sess-flow")
+        prompt = _reminder("sess-flow", "todo_block")
 
         assert "flow-7" in prompt
         assert "step-2" in prompt
@@ -179,11 +191,9 @@ class TestTodoBlock:
         assert "subagent" in prompt
 
     def test_notice_lines_are_present_when_todos_exist(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         _seed_todos(prompt_env, [_todo("Tracked work")])
 
-        prompt = build_system_prompt(session_id="sess-notices")
+        prompt = _reminder("sess-notices", "todo_block")
 
         assert "tracked by the continuation system" in prompt
         assert "Sisyphus contract" in prompt
@@ -191,8 +201,6 @@ class TestTodoBlock:
 
 class TestBoulderBlock:
     def test_active_boulder_renders_plan_and_remaining_count(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         _write_boulder(
             prompt_env,
             work_id="w1",
@@ -208,7 +216,7 @@ class TestBoulderBlock:
             ],
         )
 
-        prompt = build_system_prompt(session_id="sess-boulder")
+        prompt = _reminder("sess-boulder", "boulder_status")
 
         assert "## Active Work" in prompt
         assert "workspace/sessions/sess-boulder/plans/todolist-phase1.md" in prompt
@@ -216,26 +224,22 @@ class TestBoulderBlock:
         assert "Remaining: 2" in prompt
 
     def test_paused_boulder_still_renders(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         _write_boulder(
             prompt_env, plan="workspace/sessions/sess-paused/plans/paused.md", status="paused"
         )
         _seed_todos(prompt_env, [_todo("still pending")])
 
-        prompt = build_system_prompt(session_id="sess-paused")
+        prompt = _reminder("sess-paused", "boulder_status")
 
         assert "## Active Work" in prompt
         assert "workspace/sessions/sess-paused/plans/paused.md" in prompt
 
     def test_completed_boulder_renders_nothing(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         _write_boulder(
             prompt_env, plan="workspace/sessions/sess-done/plans/done.md", status="completed"
         )
 
-        prompt = build_system_prompt(session_id="sess-done")
+        prompt = _reminder("sess-done", "boulder_status")
 
         assert "## Active Work" not in prompt
 
@@ -244,29 +248,25 @@ class TestBoulderPlanResolution:
     """The rendered plan path resolves to the real file (session-scoped first)."""
 
     def test_session_scoped_plan_renders_resolved_path(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         plan = prompt_env["dir"] / "workspace" / "sessions" / "sess-boulder" / "plans" / "new.md"
         plan.parent.mkdir(parents=True)
         plan.write_text("# Plan\n", encoding="utf-8")
         _write_boulder(prompt_env, plan="workspace/sessions/sess-boulder/plans/new.md")
         _seed_todos(prompt_env, [_todo("one", status="pending")])
 
-        prompt = build_system_prompt(session_id="sess-boulder")
+        prompt = _reminder("sess-boulder", "boulder_status")
 
         assert "## Active Work" in prompt
         assert str(plan) in prompt
 
     def test_external_orchestration_ref_is_not_resolved(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
-
         legacy = prompt_env["dir"] / ".omo" / "plans" / "moved.md"
         legacy.parent.mkdir(parents=True)
         legacy.write_text("# Plan\n", encoding="utf-8")
         _write_boulder(prompt_env, plan=".omo/plans/moved.md")
         _seed_todos(prompt_env, [_todo("one", status="pending")])
 
-        prompt = build_system_prompt(session_id="sess-boulder")
+        prompt = _reminder("sess-boulder", "boulder_status")
 
         assert "## Active Work" in prompt
         assert str(legacy) not in prompt
@@ -324,9 +324,10 @@ class TestSessionGuard:
 
 class TestProviderDegradation:
     def test_unregistered_provider_degrades_blocks_to_empty(self, prompt_env):
+        from workspace.prompt_builder import build_system_prompt
+
         """No registered provider -> dynamic blocks are empty, never a crash or a cross-package import."""
         from runtime import data_provider
-        from workspace.prompt_builder import build_system_prompt
 
         _seed_todos(prompt_env, [_todo("should not render")])
         data_provider.clear_prompt_data_provider()

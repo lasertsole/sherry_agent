@@ -33,6 +33,7 @@ from pub.func.message.token_truncation import truncate_by_tokens
 
 from config.features import SUMMARIZATION
 from pub.func.message.eviction import EVICTED_TO_KEY
+from pub.func.message.system_reminder import is_system_reminder
 from pub.func.message.workspace_notice import is_workspace_notice
 
 from .state_aliases import _SUMMARY_LC_SOURCE
@@ -213,7 +214,7 @@ def _serialize_for_summary(messages: list[AnyMessage]) -> str:
     lines: list[str] = []
     for msg in messages:
         content = msg.content if isinstance(msg.content, str) else str(msg.content)
-        if is_workspace_notice(msg):
+        if is_workspace_notice(msg) or is_system_reminder(msg):
             # A workspace notice is a HumanMessage by role but was never written
             # by the user: labelling it ``[User]`` would put "the branch moved"
             # into the summary as something the user said.

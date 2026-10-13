@@ -14,6 +14,7 @@ from typing import Any
 from loguru import logger
 
 from config.features import MEMORY_FLUSH
+from pub.func.message.system_reminder import is_system_reminder
 from pub.func.message.workspace_notice import is_workspace_notice
 
 _FLUSH_PROMPT = """\
@@ -157,11 +158,11 @@ def _msg_to_text(msg: Any) -> str:
 def _msg_type(msg: Any) -> str:
     """Return a short role label for a message.
 
-    A workspace notice is labelled ``system``: it is a HumanMessage by role but
-    the user never wrote it, and the flush prompt must not read "the branch
-    moved" as something the user said.
+    A workspace notice or a catalogue reminder is labelled ``system``: both are
+    HumanMessages by role that the user never wrote, and the flush prompt must
+    not read "the branch moved" or a todo list as something the user said.
     """
-    if is_workspace_notice(msg):
+    if is_workspace_notice(msg) or is_system_reminder(msg):
         return "system"
     label = getattr(msg, "type", "")
     return str(label) if label else type(msg).__name__.lower()

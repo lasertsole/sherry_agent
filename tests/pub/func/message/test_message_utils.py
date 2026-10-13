@@ -116,3 +116,59 @@ class TestEstimateMsgTokens:
     def test_real_langchain_message(self):
         msg = AIMessage(content="reasoned")
         assert estimate_msg_tokens(msg) == len("reasoned") // 4
+
+
+class TestSystemReminderCarriers:
+    """The reminder contract: injected HumanMessages are not user turns.
+
+    A ``<system-reminder>`` (todo list / TaskFlow board / …) is a HumanMessage
+    by role — the scanners that walk human messages must skip it, or it becomes
+    a phantom turn boundary / a "[User]" line in a summary / an operator-less
+    turn for HITL.
+    """
+
+    @staticmethod
+    def _reminder(source_id: str = "todo_block"):
+        from langchain_core.messages import HumanMessage
+
+        from pub.func.message.system_reminder import system_reminder_metadata
+
+        return HumanMessage(
+            content=f'<system-reminder source="{source_id}">\n## Todo\n</system-reminder>',
+            metadata=system_reminder_metadata(source_id),
+        )
+
+    def test_split_into_turns_does_not_break_on_a_reminder(self):
+        from langchain_core.messages import AIMessage, HumanMessage
+
+        from pub.func.message.turn_utils import split_into_turns
+
+        messages = [
+            HumanMessage(content="first ask"),
+            AIMessage(content="answer"),
+            self._reminder(),
+            HumanMessage(content="second ask"),
+            AIMessage(content="answer 2"),
+        ]
+
+        turns = split_into_turns(messages)
+
+        assert len(turns) == 2, "the reminder must not open a turn of its own"
+        assert turns[0].messages[0].content == "first ask"
+        assert turns[1].messages[-1].content == "answer 2"
+
+    def test_the_kind_is_recognised_and_other_carriers_are_not(self):
+        from langchain_core.messages import HumanMessage
+
+        from pub.func.message.system_reminder import is_system_reminder
+
+        assert is_system_reminder(self._reminder()) is True
+        # The workspace notice keeps its own provenance — not a reminder.
+        from pub.func.message.workspace_notice import workspace_notice_metadata
+
+        assert (
+            is_system_reminder(
+                HumanMessage(content="x", metadata=workspace_notice_metadata("git_head"))
+            )
+            is False
+        )

@@ -84,7 +84,8 @@ def patched_agent_core(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[Any, A
         "HITLConfig",
         "SubagentCompletionDrainMiddleware",
         "TaskIntentMiddleware",
-        "TodoContinuationEnforcer",
+        "DynamicReminderMiddleware",
+        "PlanContinuationEnforcer",
     ):
         monkeypatch.setattr(agent_core, middleware_name, lambda *_, **__: object())
 

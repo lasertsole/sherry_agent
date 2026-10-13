@@ -16,7 +16,7 @@ from agent import core as agent_core
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
 EXPECTED_ORDER = [
-    "TodoContinuationEnforcer",
+    "PlanContinuationEnforcer",
     "system_prompt_injection",
     "WorkspaceNoticeMiddleware",
     "ToolSelectionMiddleware",
@@ -28,6 +28,7 @@ EXPECTED_ORDER = [
     "PathGuard",
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
+    "DynamicReminderMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
     "ThinkingControlMiddleware",

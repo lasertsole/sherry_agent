@@ -42,9 +42,10 @@ from .middlewares.humanInTheLoop import HumanInTheLoop, HITLConfig
 from .middlewares.workspace_notice import WorkspaceNoticeMiddleware
 from .middlewares.tool_selection import ToolSelectionMiddleware
 from .middlewares.subagent_completion_drain import SubagentCompletionDrainMiddleware
+from .middlewares.reminder_catalog import DynamicReminderMiddleware
 from .middlewares.task_intent import TaskIntentMiddleware
 from .middlewares.thinking_control import ThinkingControlMiddleware
-from .middlewares.todo_continuation import TodoContinuationEnforcer
+from .middlewares.todo_continuation import PlanContinuationEnforcer
 from agent.wrapper.registry import apply_graph_wrappers
 from agent.prompt_data_provider import register_prompt_data_provider
 from agent.skill_write_provider import register_skill_write_provider
@@ -266,7 +267,7 @@ def _build_middlewares(
         # after_agent hooks execute in REVERSE list order, so the first
         # registered middleware sits closest to END (README "Hook
         # Ordering Semantics"). It must observe the truly finished turn.
-        TodoContinuationEnforcer(),
+        PlanContinuationEnforcer(),
         # @dynamic_prompt middleware INSTANCE (not a constructor):
         # the outermost wrap_model_call layer in this list.
         system_prompt_injection,
@@ -303,6 +304,12 @@ def _build_middlewares(
         PathGuard(),
         drain_middleware,
         TaskIntentMiddleware(),
+        # Live-view reminders (<system-reminder> tags): the todo list, plan mode,
+        # TaskFlow board, boulder, continuity, working directory and knowledge
+        # index, injected from live state once per turn. Registered AFTER
+        # TaskIntent (whose dedup needs the user message still last when it
+        # runs) and BEFORE everything that does not mind a trailing reminder.
+        DynamicReminderMiddleware(),
         OutputRepetitionGuard(),
         MaxTokensBoostMiddleware(),
         # Per-session thinking toggle: swaps the per-call model for the

@@ -14,6 +14,19 @@ import pytest
 pytestmark = [pytest.mark.unit]
 
 
+def _reminder(session_id: str, source_id: str) -> str:
+    """The text the reminder catalogue injects for one source (see the plan).
+
+    The TaskFlow board moved OUT of the system prompt into a
+    ``<system-reminder>`` message; the assertions below are unchanged apart
+    from where the text is read from.
+    """
+    from agent.middlewares.reminder_catalog import clear_session, resolve_injections
+
+    clear_session(session_id)
+    return resolve_injections(session_id, {}, current_turn=1).get(source_id, "")
+
+
 class FakeStateDB:
     """In-memory stand-in for state_register_db (get/set_state only)."""
 
@@ -244,16 +257,16 @@ class TestKnowledgeInSystemPrompt:
         )
         _write_summary(prompt_env["knowledge_dir"], "state-plan", method="state-method")
 
-        prompt = build_system_prompt(session_id="sess-main")
+        reminder = _reminder("sess-main", "knowledge_index")
 
-        assert "## Knowledge Summary: state-plan" in prompt
-        assert "state-method" in prompt
+        assert "## Knowledge Summary: state-plan" in reminder
+        assert "state-method" in reminder
+        prompt = build_system_prompt(session_id="sess-main")
         assert "AGENTS-PERSONA" in prompt
 
     def test_absent_without_plan_ref(self, prompt_env):
-        from workspace.prompt_builder import build_system_prompt
 
-        prompt = build_system_prompt(session_id="sess-main")
+        prompt = _reminder("sess-main", "knowledge_index")
 
         assert "Knowledge Summary" not in prompt
 

@@ -29,6 +29,11 @@ _last_snapshot: dict[str, str] = {}  # session_id → "content=status|..."
 _last_inject_time: dict[str, float] = {}  # session_id → last injection timestamp
 _last_failure_time: dict[str, float] = {}  # session_id → last stagnation timestamp
 _recovery_attempts: dict[str, int] = {}  # session_id → recovery attempts used
+#: How many turns the model has not touched ``todowrite``. A board the agent
+#: keeps advancing through TaskFlow can clear the stagnation streak (the plan
+#: snapshot changes) while the TODO list quietly rots: this counter is the only
+#: signal for that shape.
+_turns_since_todowrite: dict[str, int] = {}
 
 
 def _now() -> float:
@@ -94,6 +99,21 @@ def enter_recovery(session_id: str) -> None:
     _recovery_attempts[session_id] = _recovery_attempts.get(session_id, 0) + 1
 
 
+def record_turn(session_id: str) -> None:
+    """Count one more turn without a ``todowrite`` call (per agent turn)."""
+    _turns_since_todowrite[session_id] = _turns_since_todowrite.get(session_id, 0) + 1
+
+
+def record_todowrite(session_id: str) -> None:
+    """The model used ``todowrite``: the todo list just got refreshed."""
+    _turns_since_todowrite[session_id] = 0
+
+
+def turns_since_todowrite(session_id: str) -> int:
+    """Turns since the last ``todowrite`` for this session (0 = this turn)."""
+    return _turns_since_todowrite.get(session_id, 0)
+
+
 def reset(session_id: str) -> None:
     """Clear all tracker state for a session (user takeover / all todos done)."""
     _stagnation_count.pop(session_id, None)
@@ -101,6 +121,7 @@ def reset(session_id: str) -> None:
     _last_inject_time.pop(session_id, None)
     _last_failure_time.pop(session_id, None)
     _recovery_attempts.pop(session_id, None)
+    _turns_since_todowrite.pop(session_id, None)
 
 
 def is_abort_error(error: Exception) -> bool:

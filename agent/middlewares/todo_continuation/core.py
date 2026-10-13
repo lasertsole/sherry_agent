@@ -47,13 +47,30 @@ from loguru import logger
 
 from agent.tools.taskflow.waves import compute_waves, steps_of
 from agent.tools.taskflow.tools._shared import steps_summary
+from config.features import TODOLIST_INFRA
 from runtime import hooks
 
-__all__ = ["TodoContinuationEnforcer"]
+__all__ = ["PlanContinuationEnforcer", "TodoContinuationEnforcer"]
 
 # Continuation directive (behavior contract of this module).
 # Origin tag of every injected directive from this middleware.
 _ORIGIN = "todo_continuation"
+
+#: Turns without a ``todowrite`` after which the continuation directive carries
+#: the tracking nudge. ``todowrite`` is the model's only way to keep the TODO
+#: list honest, and an agent advancing TaskFlow clears the stagnation streak
+#: (the plan snapshot changes) while the list rots — that window is what this
+#: catches. The nudge is APPENDED to the continuation directive, never a
+#: directive of its own.
+_TODO_WRITE_NUDGE_TURNS = TODOLIST_INFRA["todo_write_nudge_turns"]
+
+_TODO_WRITE_NUDGE = """
+
+[REMINDER: TODO TRACKING]
+You have not used the todowrite tool in {n} turns. If task statuses have
+changed, use todowrite to keep the TODO list in sync — the list above may be
+stale. This is a gentle reminder; ignore it if the list is still accurate.
+"""
 
 _CONTINUATION_PROMPT = """[SYSTEM DIRECTIVE: TODO CONTINUATION]
 
@@ -236,7 +253,26 @@ def _resolve_hook(name: str) -> Callable[..., Any] | None:
     return fn
 
 
-class TodoContinuationEnforcer(AgentMiddleware):
+def _turn_used_todowrite(state: dict[str, Any]) -> bool:
+    """True when the turn's messages carry a ``todowrite`` tool call.
+
+    Read from the messages rather than hooked into the tool itself: the tool
+    layer must not know this middleware exists, and the turn's transcript is
+    right here. A tool call (AIMessage.tool_calls) is enough — a denied or
+    failed call still means the model TRIED to keep the list in sync, and the
+    nudge is about intent, not success.
+    """
+    try:
+        for msg in state.get("messages") or []:
+            for call in getattr(msg, "tool_calls", None) or []:
+                if isinstance(call, dict) and call.get("name") == "todowrite":
+                    return True
+    except Exception:  # noqa: BLE001 - accounting must never break the turn end
+        logger.debug("plan continuation: todowrite detection failed", exc_info=True)
+    return False
+
+
+class PlanContinuationEnforcer(AgentMiddleware):
     """Turn-end enforcer: inject a continuation prompt when todos remain.
 
     Async-only BY DESIGN: this hook fires from ``aafter_agent`` alone. The
@@ -273,6 +309,14 @@ class TodoContinuationEnforcer(AgentMiddleware):
             if error is not None and st.is_abort_error(error):
                 logger.info("plan continuation: abort error for session {}; skipping", session_id)
                 return None
+
+            # todowrite-usage accounting: one tick per finished turn, reset by a
+            # todowrite call in that turn. The nudge below uses it to catch the
+            # "advancing TaskFlow, forgetting the TODO list" shape, which the
+            # snapshot-based stagnation check cannot see (the board keeps moving).
+            st.record_turn(session_id)
+            if _turn_used_todowrite(state):
+                st.record_todowrite(session_id)
 
             todos = get_todos_sync(session_id)
             flows = _active_flows(session_id)
@@ -319,12 +363,23 @@ class TodoContinuationEnforcer(AgentMiddleware):
                 session_id,
                 len(incomplete),
             )
-            await self._inject(
-                session_id,
-                _CONTINUATION_PROMPT.format(
-                    todo_status=_build_status_block(todos), flow_status=flow_status
-                ),
+            prompt = _CONTINUATION_PROMPT.format(
+                todo_status=_build_status_block(todos), flow_status=flow_status
             )
+            turns_without = st.turns_since_todowrite(session_id)
+            if turns_without >= _TODO_WRITE_NUDGE_TURNS:
+                # Appended, never a directive of its own: the model receives
+                # "keep going" AND "your TODO list may be stale" in one turn.
+                # Recovery mode carries its own, stronger todowrite guidance, so
+                # the nudge stays out of that branch on purpose.
+                prompt += _TODO_WRITE_NUDGE.format(n=turns_without)
+                logger.info(
+                    "plan continuation: appending the todo-tracking nudge for session {} "
+                    "({} turns without todowrite)",
+                    session_id,
+                    turns_without,
+                )
+            await self._inject(session_id, prompt)
             return None
         except Exception:
             logger.exception("plan continuation: failed; continuing without injection")
@@ -357,3 +412,13 @@ class TodoContinuationEnforcer(AgentMiddleware):
                 "leaving the session retryable",
                 session_id,
             )
+
+
+#: Backwards-compatible alias: the class was ``TodoContinuationEnforcer`` before
+#: the rename, and the name is part of two published contracts — preset payloads
+#: store it in ``AGENT_CONFIG["middlewares_disabled"]`` (matched against
+#: ``type(self).__name__``) and ``message.metadata["origin"]`` keeps the string
+#: "todo_continuation", which is deliberately UNCHANGED so historical rows keep
+#: resolving. A payload that disables the old name stays effective through
+#: ``agent_switch``'s alias map; this alias keeps direct imports working.
+TodoContinuationEnforcer = PlanContinuationEnforcer

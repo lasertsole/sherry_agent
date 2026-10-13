@@ -1,7 +1,7 @@
 """Registration lock for the ``@dynamic_prompt`` system-prompt middleware.
 
 ``built_agent()`` must register ``system_prompt_injection`` exactly once, at
-position 1 — right after ``TodoContinuationEnforcer`` (which implements no
+position 1 — right after ``PlanContinuationEnforcer`` (which implements no
 model-call wrap) — making it the outermost ``wrap_model_call`` layer.
 """
 
@@ -12,7 +12,7 @@ from langchain.agents.middleware import AgentMiddleware
 
 from agent import core as agent_core
 from agent.middlewares.system_prompt.core import system_prompt_injection
-from agent.middlewares.todo_continuation import TodoContinuationEnforcer
+from agent.middlewares.todo_continuation import PlanContinuationEnforcer
 
 pytestmark = [pytest.mark.integration, pytest.mark.timeout(60)]
 
@@ -30,7 +30,8 @@ _OTHER_MIDDLEWARE = (
     "HITLConfig",
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
-    "TodoContinuationEnforcer",
+    "DynamicReminderMiddleware",
+    "PlanContinuationEnforcer",
 )
 
 
@@ -88,5 +89,5 @@ async def test_system_prompt_injection_is_outermost_wrap_layer(
     assert middleware[1] is system_prompt_injection
     assert isinstance(system_prompt_injection, AgentMiddleware)
     assert system_prompt_injection.name == "system_prompt_injection"
-    assert TodoContinuationEnforcer.wrap_model_call is AgentMiddleware.wrap_model_call
-    assert TodoContinuationEnforcer.awrap_model_call is AgentMiddleware.awrap_model_call
+    assert PlanContinuationEnforcer.wrap_model_call is AgentMiddleware.wrap_model_call
+    assert PlanContinuationEnforcer.awrap_model_call is AgentMiddleware.awrap_model_call

@@ -117,6 +117,21 @@ The interaction map:
 | **Tool pairing / sanitizer** | All replacements preserve `id` and `tool_call_id`; `sanitize_tool_use_result_pairing` never needs to repair an eviction, and the stubs remain valid pairing inputs |
 | **Subagent sessions** | Child pipelines do **not** register `ContextEvictionMiddleware` or `MessagePersistenceMiddleware`: child transcripts keep their full tool results and stay checkpoint-only |
 
+## 🧱 Stable System Prompt & the Reminder Layer
+
+The system prompt holds **stable** content only: persona files, the memory blocks and the skills index. Every LIVE view — plan mode, the working directory, the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index — is injected instead as a `<system-reminder source="…">` HumanMessage on each turn's first model call (`DynamicReminderMiddleware` + the catalogue in `agent/middlewares/reminder_catalog/`). Two reasons: a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it (persona included), and a prompt that is only rebuilt on a cache miss shows a STALE todo list between rebuilds.
+
+| Concern | Rule |
+|---|---|
+| What is injected | One reminder per source whose builder returned text: priority order, tagged `origin=<source id>`, `provenance="reminder_catalog"`, `internal=True` |
+| Budget | `REMINDER_CATALOG["total_budget_chars"]` (30 000) across all sources per call — the lowest priority is dropped whole, never truncated mid-thought |
+| Throttle | A source may declare `cooldown_turns` (TaskFlow board / boulder: 5) and `only_if_changed` (an identical payload is not repeated); the bookkeeping advances only for sources actually injected |
+| After compression | The compaction resets the catalogue, so the next turn re-injects every source from live state — the reminder layer does not depend on history surviving |
+| Escaping | Nested `<system-reminder>` tags inside a payload (todo text is user-influenced) are escaped, or the payload could close the tag and impersonate the layer |
+| Turn scoping | Injected on the first model call of a turn only — the same "last message is a genuine user message" test TaskIntent uses; the scanners that walk human messages (`split_into_turns`, HITL's headless check, the summarizer labels) skip reminders through `pub.func.message.system_reminder` |
+
+The todo list has one extra guard: `PlanContinuationEnforcer` (renamed from `TodoContinuationEnforcer`; it supervises the plan = todos + TaskFlow flows) counts turns without a `todowrite` call and, past `TODOLIST_INFRA["todo_write_nudge_turns"]` (10), appends a `[REMINDER: TODO TRACKING]` nudge to the continuation directive — the one shape the snapshot-based stagnation check cannot catch (an agent advancing TaskFlow clears the streak while the todo list rots).
+
 ## 🛠️ Configuration
 
 `TOOL_RESULT_EVICTION` (`config/features/agent_side/tool_result_eviction.py`):

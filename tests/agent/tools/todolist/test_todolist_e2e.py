@@ -155,10 +155,20 @@ def _block_text(prompt: str, header: str) -> str:
 
 
 def _build_prompt(session_id: str | None) -> str:
-    """Call the real prompt builder lazily (stub-tolerant import)."""
-    from workspace.prompt_builder import build_system_prompt
+    """Every dynamic block the reminder catalogue injects for this turn.
 
-    return build_system_prompt(session_id=session_id)
+    The live views (todo list / boulder / TaskFlow board / continuity) moved OUT
+    of the system prompt into ``<system-reminder>`` messages, so the block
+    assertions below read the reminder layer instead. No session -> nothing to
+    scope them to -> empty, and the builders are never consulted (the session
+    guard these tests pin is now enforced by NOT building anything).
+    """
+    if not session_id:
+        return ""
+    from agent.middlewares.reminder_catalog import clear_session, resolve_injections
+
+    clear_session(session_id)
+    return "\n\n".join(resolve_injections(session_id, {}, current_turn=1).values())
 
 
 async def _write_todos(tools: dict[str, Any], session_id: str, todos: list[dict]) -> str:
@@ -659,7 +669,9 @@ class TestTodolistFullPipeline:
         )
         assert flushed is True
         mem.load_from_disk()
-        prompt_after_flush = _build_prompt(sid)
+        from workspace.prompt_builder import build_system_prompt
+
+        prompt_after_flush = build_system_prompt(session_id=sid)
         assert "lifecycle uses uv" in prompt_after_flush
 
         print("\n[EVIDENCE test_e2e_full_lifecycle] final DB rows:")
@@ -882,8 +894,11 @@ class TestTodolistPromptBlocks:
 
         for header in _BLOCK_HEADERS:
             assert header not in prompt, f"unexpected block header: {header}"
-        assert "AGENTS-PERSONA" in prompt
-        assert "SKILLS-BLOCK" in prompt
+        from workspace.prompt_builder import build_system_prompt
+
+        stable = build_system_prompt(session_id="e2e-clean")
+        assert "AGENTS-PERSONA" in stable
+        assert "SKILLS-BLOCK" in stable
 
         print("\n[EVIDENCE test_prompt_clean_when_no_state] absent block headers:")
         for header in _BLOCK_HEADERS:

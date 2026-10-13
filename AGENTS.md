@@ -41,7 +41,7 @@ cd client && pnpm test:unit && pnpm test:integration && pnpm run dpdm  # fronten
 | `agent/trajectory_events.py` | Agent-side producers of trajectory events (reaches the server-side ledger through `runtime.hooks`) | `agent/trajectory_events.py` |
 | `server/service/trajectory_store.py` | The per-turn trajectory ledger: one row per tool call (start/end merged), plus turn/compact/error events | `server/service/trajectory_store.py` |
 | `config/` | Centralized configuration (paths, features TypedDicts, schema, settings) | `config/__init__.py` |
-| `config/features/` | Per-object feature config (69 TypedDicts) | `config/features/__init__.py` |
+| `config/features/` | Per-object feature config (70 TypedDicts) | `config/features/__init__.py` |
 | `server/` | Robyn HTTP/WS backend (trigger → service → queue/DAO → utils) | `server/__main__.py` |
 | `context_engine/` | Memory engine (MesMemory SQLite + curator) | `context_engine/store/db.py` |
 | `workspace/` | Live persona files (gitignored; templates in `workspace/template/`) | `workspace/prompt_builder.py::build_system_prompt()` |
@@ -65,7 +65,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   ├─ middleware chain (before_agent → before_model → LLM → tools → after_model → after_agent)
   │    system_prompt_injection (@dynamic_prompt) → WorkspaceNotice → ToolSelection → MultimodalProcessor → IterationBudget
   │    → ToolGuardrails → ContextEviction(P0-2/P2-4) → ToolCallNormalize → PathGuard → SubagentCompletionDrain
-  │    → TaskIntent(E7) → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
+  │    → TaskIntent(E7) → DynamicReminderMiddleware → OutputRepetitionGuard → MaxTokensBoost → ThinkingControl → HeartbeatStaleness → HITL
   │    (TaskIntent's intent detection is TWO layers: four-language rules — EN/ZH/JA/KO
   │     keywords plus question/chat patterns, then a length fallback over 100 chars —
   │     and an auxiliary-LLM classification that runs ONLY for first arming, ONLY in the
@@ -85,6 +85,20 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     message scanners skip them), and the human message keeps its LAST place
   │     for TaskIntent and ContextEviction. It replaced the old switch-time
   │     aupdate_state announcement, which fired per switch)
+  │    (DynamicReminderMiddleware injects the LIVE views as
+  │     `<system-reminder source="…">` messages once per turn's first model call:
+  │     plan mode, working directory, todo list, boulder, TaskFlow board,
+  │     continuity, knowledge index — the catalogue in
+  │     `agent/middlewares/reminder_catalog/` decides what, at which priority, with
+  │     which cooldown and under a 30 000-char total budget (lowest priority
+  │     dropped first). They used to be REBUILT INTO THE CACHED SYSTEM PROMPT,
+  │     which froze them until the next rebuild and made the prompt a bad cache
+  │     citizen; the prompt now holds only stable content (persona + memory +
+  │     skills index), each reminder is re-derived from live state every turn,
+  │     and a compaction resets the throttle state so nothing is lost with the
+  │     compressed history. The three older injectors (TaskIntent steering,
+  │     todo-continuation directives, workspace notices) keep their own paths —
+  │     the catalogue is an overlay, migration is batched.)
   │    (MessagePersistence flushes tool results the moment they return via
   │     wrap_tool_call; after_model nodes chain in reverse registration order, so it
   │     is also the first after_model hook — new human/ai/tool messages reach
@@ -827,9 +841,9 @@ Four process-level lanes, each an `asyncio.Semaphore` + active/queued counters, 
 
 | File | Contents |
 |---|---|
-| `config/features/agent_side/` | 42 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
+| `config/features/agent_side/` | 43 per-object TypedDicts (summarization, guardrails, tool_result_eviction, iteration, memory_flush, taskflow_infra, todolist_infra, tools_timeouts, step_judge, completion_judge, evidence_ledger, subagent_isolation, ...) |
 | `config/features/infra_side/` | 27 per-object TypedDicts (gateway, auth, bus, http_upload, retry_backoff, server_http, ws_stream, input_queue, heartbeat, cron, skill_scanner, mes_memory, curator, web_search, model_pricing, ...) |
-| `config/features/__init__.py` | Aggregator — all 69 TypedDicts + instances re-exported |
+| `config/features/__init__.py` | Aggregator — all 70 TypedDicts + instances re-exported |
 | `config/path.py` | All filesystem paths (ROOT_DIR, SKILLS_DIR, WORKSPACE_DIR, ...) |
 | `config/schema.py` | Pydantic Config (SHERRY_ env prefix, mostly unused at runtime) |
 | `config/sherry_settings.py` | sherry.jsonc loader (TOOL_CALL_TIMEOUT_MINUTES, LOG_LEVEL, curator.*, LANGSMITH.*) |
@@ -922,6 +936,8 @@ Markers: `unit`, `integration`, `module`, `system`, `regression`, `llm_e2e` (des
   sandbox actually runs — neither backend has ever been verified on one.
 - An opt-in `sessions_spawn(isolation=True)` gives a child its own GIT WORKTREE of the project (`agent/tools/subagent/isolation/`), cut from a dirty baseline (`git stash create`, so uncommitted edits are visible; untracked files are copied in, ignored paths materialized as links/copies per `SUBAGENT_ISOLATION`, and a non-repository project is auto-initialized with a deny-listed baseline commit) whose changed files merge back at announce time under a per-root `flock` with the same revision CAS — conflicts are reported by path and left untouched, symlinks/ignored caches never merge, and every merged code file is symbol-diffed before it is written so the completion reply carries an **Interface changes** section (renamed/added/removed functions, methods, classes — `agent/tools/code_intel/symbol_diff.py`, gated by `SUBAGENT_ISOLATION["interface_diff_enabled"]`, fail-open and capped); the docs page is `docs/file-safety/README.md`. A workspace no live run owns is cleaned by the stale-workspace sweep (`agent/tools/subagent/isolation/sweep.py`, every sweeper cycle and once at boot; conflict keeps expire after `SUBAGENT_ISOLATION` `stale_workspace_ttl_days`).
 - a revert never touches the conversation: it appends one `<revert>user had revert editing …</revert>` AIMessage per revert (an `aupdate_state` write the persistence layer mirrors into the store), and the agent reads what was undone on its next turn.
+- the todo-continuation middleware is named `PlanContinuationEnforcer` (it supervises the plan = todos + TaskFlow flows), and TWO strings are deliberately frozen: `message.metadata["origin"]` stays `"todo_continuation"` (historical rows keep resolving) and `agent_switch._RENAMED_MIDDLEWARES` maps `PlanContinuationEnforcer → {TodoContinuationEnforcer}` so a preset payload written before the rename still switches it off. Its turn-end hook also counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, threshold `TODOLIST_INFRA["todo_write_nudge_turns"]` = 10) and APPENDS a `[REMINDER: TODO TRACKING]` nudge to the continuation directive once it is crossed — the one shape the snapshot-based stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode carries its own todowrite guidance, so the nudge stays out of that branch.
+- the `<system-reminder>` layer's contract lives in `pub/func/message/system_reminder.py` (`provenance="reminder_catalog"` + `internal=True` + the source id as `origin`), mirroring the workspace-notice leaf so the scanners that walk human messages can skip both: `split_into_turns` (a reminder is not a turn boundary), HITL's headless-turn check and the summarizer / memory-flush serializers (`[System notice]` / `system`, never `[User]`). Wrapping escapes nested tags — todo text is user-influenced.
 - the TaskFlow loop closes itself: a child spawned by a flow resumes it
   automatically (`agent/tools/subagent/announce/delivery.py::_try_auto_resume_taskflow`
   finds the owning flow by scanning active flows' steps for the child key), and

@@ -284,9 +284,15 @@ class TestPromptBuilderInjection:
             lambda session_id: ("chan-pb", "chat-pb"),
         )
 
-        prompt = build_system_prompt(session_id="sess-new")
+        # The continuity block is live state: it arrives as a reminder message
+        # (<system-reminder source="continuity_context">), not in the cached
+        # system prompt — which now holds only stable content.
+        from agent.middlewares.reminder_catalog import clear_session, resolve_injections
 
-        assert "## Last Session (continuity)" in prompt
-        assert "previous work was mid-deploy" in prompt
-        assert "Related tasks: deploy-v2" in prompt
-        assert "AGENTS-PERSONA" in prompt
+        clear_session("sess-new")
+        reminder = resolve_injections("sess-new", {}, current_turn=1).get("continuity_context", "")
+
+        assert "## Last Session (continuity)" in reminder
+        assert "previous work was mid-deploy" in reminder
+        assert "Related tasks: deploy-v2" in reminder
+        assert "AGENTS-PERSONA" in build_system_prompt(session_id="sess-new")
