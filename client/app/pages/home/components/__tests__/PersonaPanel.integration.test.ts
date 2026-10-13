@@ -423,6 +423,40 @@ describe('PersonaPanel role tab', () => {
     expect(middleware.attributes('model-value')).toBe('false');
   });
 
+  it('keeps every middleware switch at full width and explains the nudge on click', async () => {
+    // The switch must never be squeezed by a long label: PrimeVue ToggleSwitch
+    // cannot take a fall-through class here (fragment root), so the row wraps it
+    // in a shrink-0 container — assert the container, which is the fix.
+    const wrapper = mount(PersonaPanel, { global: { stubs } });
+    await flushPromises();
+
+    const rows = wrapper.findAll('[data-test="agent-middlewares-tab"] .shrink-0');
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of wrapper.findAll('.mb-1.flex.items-center.justify-between')) {
+      const switchBox = row.find('span.shrink-0');
+      if (switchBox.exists()) expect(switchBox.classes()).toContain('shrink-0');
+    }
+
+    // The nudge explanation is a CLICK affordance (a hover tooltip is
+    // unreachable for a settings row): closed by default, toggled by the mark,
+    // and the mark sits right of the 启用 nudge label.
+    expect(wrapper.find('[data-test="agent-nudge-help-text"]').exists()).toBe(false);
+    const help = wrapper.get('[data-test="agent-nudge-help"]');
+    expect(help.text()).toBe('?');
+    expect(help.attributes('aria-expanded')).toBe('false');
+
+    await help.trigger('click');
+    await flushPromises();
+    const text = wrapper.get('[data-test="agent-nudge-help-text"]');
+    expect(text.text()).toContain('Nudge');
+    expect(text.text()).toContain('偏好');
+    expect(wrapper.get('[data-test="agent-nudge-help"]').attributes('aria-expanded')).toBe('true');
+
+    await help.trigger('click');
+    await flushPromises();
+    expect(wrapper.find('[data-test="agent-nudge-help-text"]').exists()).toBe(false);
+  });
+
   it('gates the Summarization nudge on the memory tool and stores it when off', async () => {
     // A catalogue whose memory tool can be toggled (and is on by default), with a
     // real switch stub: this suite renders PrimeVue components unresolved, so the

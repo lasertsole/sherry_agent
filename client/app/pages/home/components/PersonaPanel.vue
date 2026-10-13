@@ -332,10 +332,12 @@
                         {{ t(`config.agent.middleware.${entry.name}.desc`) }}
                       </div>
                     </div>
-                    <ToggleSwitch
-                      :model-value="agentMiddlewareEnabled(entry.name)"
-                      :data-test="`agent-middleware-${entry.name}`"
-                      @update:model-value="toggleMiddleware(entry.name)" />
+                    <span class="flex shrink-0 items-center">
+                      <ToggleSwitch
+                        :model-value="agentMiddlewareEnabled(entry.name)"
+                        :data-test="`agent-middleware-${entry.name}`"
+                        @update:model-value="toggleMiddleware(entry.name)" />
+                    </span>
                   </div>
                   <!-- Required, yet configurable: a REQUIRED middleware cannot be
                        switched off, so it exposes its own options here instead. -->
@@ -354,12 +356,33 @@
                       </div>
                       <label class="flex shrink-0 items-center gap-1.5 text-xs text-gray-600 dark:text-gray-300">
                         {{ t('config.agent.middlewares.nudgeLabel') }}
+                        <!-- A click-to-read explanation: hover tooltips are
+                             unreachable for this settings row, so the mark is a
+                             real button that toggles the hint below. It sits
+                             INSIDE the label but is interactive content, which
+                             browsers never label-activate — the switch does not
+                             move when it is clicked. -->
+                        <button
+                          type="button"
+                          class="flex h-4 w-4 shrink-0 cursor-pointer items-center justify-center rounded-full border border-solid border-gray-300 !p-0 text-[10px] leading-none text-gray-400 transition-colors hover:border-theme-main hover:text-theme-main dark:border-gray-600"
+                          data-test="agent-nudge-help"
+                          :aria-label="t('config.agent.middlewares.nudgeHelpLabel')"
+                          :aria-expanded="nudgeHelpOpen"
+                          @click.stop="nudgeHelpOpen = !nudgeHelpOpen">
+                          ?
+                        </button>
                         <ToggleSwitch
                           :model-value="agentNudgeActive"
                           :disabled="!agentMemoryToolOn"
                           data-test="agent-middleware-nudge"
                           @update:model-value="agentNudge = $event" />
                       </label>
+                    </div>
+                    <div
+                      v-if="nudgeHelpOpen"
+                      class="mt-1 whitespace-pre-line text-[11px] leading-relaxed text-gray-500 dark:text-gray-400"
+                      data-test="agent-nudge-help-text">
+                      {{ t('config.agent.middlewares.nudgeHint') }}
                     </div>
                     <div
                       v-if="!agentMemoryToolOn"
@@ -766,6 +789,8 @@ const agentRoleModels = ref<Record<string, string>>({});
 const agentSkills = ref<string[] | null>(null);
 /** Main-agent model for this preset (`ENV_MODEL_ID` = follow the env config). */
 const agentMainModel = ref<string>(ENV_MODEL_ID);
+const nudgeHelpOpen = ref(false);
+
 /** Whether the summarization nudges run (the Summarization middleware option). */
 const agentNudge = ref(true);
 
@@ -1638,7 +1663,9 @@ const handleApply = async () => {
           "nudgeLabel": "启用 nudge",
           "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
           "hint": "只列出可关闭的中间件；压缩（Summarization）不可关闭，只暴露 nudge 选项。",
-          "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
+          "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具",
+          "nudgeHelpLabel": "说明 nudge 的作用",
+          "nudgeHint": "Nudge（轻推）：每次压缩会话时，额外让模型回顾刚被压缩掉的对话，把值得长期记住的内容抽取出来写进记忆与技能库——例如用户的偏好、习惯、重要事实与决定；对话中反复出现的做法也会沉淀成技能。关闭后压缩不再做这次回顾（更省 token）。"
         },
         "middleware": {
           "PlanContinuationEnforcer": {
@@ -1932,7 +1959,9 @@ const handleApply = async () => {
           "nudgeLabel": "Enable nudge",
           "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
           "hint": "Only the switchable middlewares are listed; Summarization cannot be switched off and exposes its nudge option instead.",
-          "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
+          "nudgeNeedMemory": "Check the memory tool on the Tools tab first",
+          "nudgeHelpLabel": "What does the nudge do?",
+          "nudgeHint": "Nudge: on every compression the model also reviews the turns that were just compacted away and extracts what is worth keeping long-term into memory and the skill library — user preferences, habits, important facts and decisions; a procedure that keeps recurring can become a skill. Turning it off skips that review (cheaper)."
         },
         "middleware": {
           "PlanContinuationEnforcer": {
@@ -2226,7 +2255,9 @@ const handleApply = async () => {
           "nudgeLabel": "nudge を有効化",
           "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
           "hint": "切り替え可能なミドルウェアのみを表示します。Summarization はオフにできず、代わりに nudge オプションを公開します。",
-          "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
+          "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください",
+          "nudgeHelpLabel": "nudge の役割を説明",
+          "nudgeHint": "Nudge（ナッジ）: 圧縮のたびに、圧縮で消えた会話をもう一度モデルに確認させ、長く残す価値のある内容——ユーザーの好み、習慣、重要な事実や決定——を記憶とスキルライブラリへ抽出します。繰り返し現れる手順はスキルとして蓄積されることもあります。オフにするとこの確認を行いません（トークン節約）。"
         },
         "middleware": {
           "PlanContinuationEnforcer": {
@@ -2520,7 +2551,9 @@ const handleApply = async () => {
           "nudgeLabel": "nudge 사용",
           "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
           "hint": "전환 가능한 미들웨어만 표시합니다. Summarization은 끌 수 없으며 대신 nudge 옵션을 노출합니다.",
-          "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
+          "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요",
+          "nudgeHelpLabel": "nudge의 역할 설명",
+          "nudgeHint": "Nudge(넛지): 압축할 때마다 압축으로 사라진 대화를 모델이 다시 훑어, 오래 남길 가치가 있는 내용—사용자 선호, 습관, 중요한 사실과 결정—을 기억과 스킬 라이브러리에 추출합니다. 반복되는 절차는 스킬로 축적될 수 있습니다. 끄면 이 점검을 건너뜁니다(토큰 절약)."
         },
         "middleware": {
           "PlanContinuationEnforcer": {
