@@ -82,16 +82,16 @@ Use read_file(file_path='<path>', offset=0, limit=100) to read the full content 
 
 | 路径 | stdout 形状 | 现在的约束 | 能用 fd 直写吗 |
 | --- | --- | --- | --- |
-| `terminal` | 原始批量文本，从不解析 | 文件 + 驱逐预览 | ✅ 已实现 |
-| `python_repl` | 一个 JSON 信封（`out`/`err` 由子进程包装脚本收集） | 今天没有任何约束：子进程的 `StringIO` 无上限，信封整体序列化，父进程先后经 `communicate()` **和** `json.loads` 持有（≈3 倍载荷） | ❌ 不是对的杠杆——这些字节必须被解析，写文件也仍要整读并解码；正确做法是在序列化**之前**于子进程内封顶 |
-| `execute_code`（PTC） | JSON 信封；真正的工具调用走 loopback RPC 桥 | 父进程侧 `_truncate(..., max_stdout)`，读取之后才截 | ❌ 协议载荷，理由同 `python_repl` |
+| `terminal` | 原始批量文本，从不解析 | 文件 + 驱逐预览（`run_in_background` 时为**保留**文件） | ✅ 已实现 |
+| `python_repl` | 一对信封文件（stdout 信封 + stderr 兜底） | 在 `wait()` 之后读回文件；被杀掉的孙进程再也无法占住管道 | ✅ 已改 fd 直写（两个临时文件；超时路径用有界的 `reap_process`） |
+| `execute_code`（PTC） | 一对 JSON 信封；真正的工具调用走 loopback RPC 桥 | 文件在 `wait()` 之后读回；父侧 `_truncate(..., max_stdout)` 仍限制模型所见 | ✅ 已改 fd 直写（两个临时文件；超时 `reap_process`，杀进程组） |
 | `search_files`（ripgrep） | 流式匹配行，边到边解析 | 每次调用的上限 + `ProcessWatchdog` 提前终止 | ❌ 会**倒退**：换成文件后父进程无法在上限处叫停搜索——rg 会跑到底 |
 | ast-grep | JSON 记录 | `ast_grep_max_matches` / 路径 / 模式上限，远低于任何阈值 | ❌ 已经有界 |
 | LSP 客户端 | JSON-RPC 帧 | 协议本身 | ❌ 根本不是文本载荷 |
 | `web_search` / RAG | 按结果格式化的 HTTP 响应 | 提供方 + 单结果上限 | ❌ 不涉及子进程 |
 | 中间件驱逐（P0-2 / P1-9 / P2-4） | 已在内存中的消息 | 中间件自身的阈值 | ➖ 它不是生产者：运行在工具**之后**，处理的数据已在堆上 |
 
-这张表编码的规则：fd 直写需要**整份 stdout 都是批量文本**的子进程 —— 没有父进程必须解析的封装，也没有会丢失的提前终止契约。要被解析、有封装、或会被提前掐断的管道，才是它们各自正确的设计。
+这张表编码的规则：fd 直写适用于**整份 stdout 都是批量文本、或在进程退出后整体读回**的子进程 —— 没有父进程必须边跑边读到 EOF 的东西。必须**增量读取**或要在流中途掐断的管道（ripgrep 的提前终止），才是它们各自正确的设计。
 
 ## 📥 人类消息驱逐（P1-9）
 

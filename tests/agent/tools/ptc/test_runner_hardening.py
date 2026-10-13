@@ -35,15 +35,31 @@ def _loguru_warnings():
 
 
 class _FakeProc:
-    """Stand-in for a spawned child: reports a clean, empty envelope."""
+    """Stand-in for a spawned child on the fd-direct-write path.
+
+    stdout/stderr are FILE handles now (never pipes): the fake writes its
+    envelope into ``kwargs["stdout"]`` at construction and the runner waits
+    with ``wait(timeout)``. ``poll`` serves the cleanup guard.
+    """
 
     returncode = 0
 
-    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
-        return '{"out": "", "err": "", "exc": null}', ""
+    def __init__(self, *args: Any, **kwargs: Any):
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(b'{"out": "", "err": "", "exc": null}')
+
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:  # pragma: no cover
+        raise AssertionError("the fd-direct-write path must not drain a pipe")
 
     def poll(self) -> int:
         return 0
+
+    def kill(self) -> None:
+        pass
 
 
 @contextmanager
@@ -56,7 +72,7 @@ def _capture_spawn(monkeypatch: pytest.MonkeyPatch):
         stub_path = os.path.join(kwargs["env"]["PYTHONPATH"], "sherry_tools.py")
         with open(stub_path, encoding="utf-8") as handle:
             captured["stub"] = handle.read()
-        return _FakeProc()
+        return _FakeProc(**kwargs)
 
     monkeypatch.setattr(runner.subprocess, "Popen", _fake_popen)
     yield captured
@@ -117,3 +133,34 @@ def test_auto_degrade_emits_exactly_one_warning(monkeypatch: pytest.MonkeyPatch)
     degrade_warnings = [record for record in records if "execute_code" in record]
     assert len(degrade_warnings) == 1
     assert "policy=auto" in degrade_warnings[0]
+
+
+class TestGrandchildDoesNotHang:
+    """The runner waits on the DIRECT child only (stdout is a file, not a pipe)."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="POSIX job control only")
+    @pytest.mark.timeout(60)
+    async def test_a_backgrounded_grandchild_returns_immediately(self, tmp_path, monkeypatch):
+        import time
+
+        from agent.tools.ptc import runner as ptc_runner
+
+        monkeypatch.setattr(
+            ptc_runner, "_resolve_sandboxed_argv", lambda argv, env, roots: (argv, env)
+        )
+
+        from config.features import PTC
+
+        started = time.monotonic()
+        result = await ptc_runner.run_ptc(
+            "import os; os.system('sleep 3 & print(\"quick\", flush=True)')",
+            {},
+            "s-ptc-hang",
+            PTC,
+        )
+        elapsed = time.monotonic() - started
+
+        assert elapsed < 2.5, f"the runner must not wait for the grandchild ({elapsed:.1f}s)"
+        payload = json.loads(result)
+        assert payload.get("status") in {"ok", "error"}

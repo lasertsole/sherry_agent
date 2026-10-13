@@ -21,6 +21,7 @@ from typing import Any
 
 import asyncio
 import json
+import os
 import sys
 import unittest.mock
 
@@ -63,7 +64,13 @@ _OK_PAYLOAD = json.dumps({"out": "2\n", "err": "", "exc": None, "tb": None})
 
 
 class _FakeProc:
-    """Minimal Popen stand-in returning a valid _REPL_WRAPPER payload."""
+    """Minimal Popen stand-in writing a valid _REPL_WRAPPER payload into stdout.
+
+    The runner is fd-direct-write now: stdout/stderr are FILE handles (never
+    pipes) and the flow waits with ``wait()`` — the fake therefore emits its
+    envelope through ``kwargs["stdout"]`` at construction (before the parent
+    closes its own handle) and serves ``wait()``.
+    """
 
     _calls: list[dict[str, Any]]
     returncode: int
@@ -72,9 +79,15 @@ class _FakeProc:
         self._calls = calls
         calls.append({"args": args, "kwargs": kwargs})
         self.returncode = 0
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            handle.write(_OK_PAYLOAD.encode("utf-8"))
 
-    def communicate(self, timeout: float | None = None) -> tuple[str, str]:
-        return _OK_PAYLOAD, ""
+    def wait(self, timeout: float | None = None) -> int:
+        return self.returncode
+
+    def communicate(self, timeout: float | None = None) -> tuple[str, str]:  # pragma: no cover
+        raise AssertionError("the fd-direct-write path must not drain a pipe")
 
     def kill(self) -> None:
         pass
@@ -399,3 +412,74 @@ def test_import_is_unavailable_in_restricted_builtins():
 def test_benign_repl_code_still_executes():
     out, _sandboxed = python_repl._run_with_timeout("print(sum(range(5)))", 10, sandbox=False)
     assert out.strip() == "10"
+
+
+# ---------------------------------------------------------------------------
+# Anti-hang: a backgrounded grandchild must not hold the tool
+# ---------------------------------------------------------------------------
+
+
+class TestGrandchildDoesNotHang:
+    @pytest.mark.integration
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="POSIX job control only")
+    @pytest.mark.timeout(30)
+    def test_a_backgrounded_grandchild_returns_immediately(self):
+        """The child backgrounds a grandchild that outlives it.
+
+        With pipes this blocked: ``communicate()`` waits for EOF, and the
+        grandchild inherited the write end, so the call would hang until the
+        grandchild exited. stdout is a FILE now, so only the direct child's exit
+        matters — the tool returns while the grandchild still sleeps.
+        """
+        import time
+
+        from agent.tools.python_repl import build_python_repl_tool
+
+        tool = build_python_repl_tool()
+        started = time.monotonic()
+        result = tool._run(
+            "import os; os.system('sleep 3 & echo quick')", sandbox=False, session_id="s-repl-hang"
+        )
+        elapsed = time.monotonic() - started
+
+        assert "quick" in result
+        assert elapsed < 2.5, f"the call must not wait for the grandchild (took {elapsed:.1f}s)"
+
+    def test_the_timeout_path_reaps_instead_of_draining(self, monkeypatch):
+        """A timeout must use the bounded reap, never an unbounded communicate()."""
+        import subprocess as sp
+
+        import agent.tools.python_repl as repl_mod
+
+        calls: list[str] = []
+
+        class _HangingProc:
+            returncode = -9
+
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def wait(self, timeout=None):
+                calls.append("wait")
+                raise sp.TimeoutExpired("cmd", timeout or 0)
+
+            def communicate(self, timeout=None):  # pragma: no cover
+                calls.append("communicate")
+                raise AssertionError("the timeout path must not drain a pipe")
+
+            def kill(self):
+                calls.append("kill")
+
+            def terminate(self):
+                calls.append("terminate")
+
+            def poll(self):
+                return None
+
+        monkeypatch.setattr(repl_mod.subprocess, "Popen", lambda *a, **kw: _HangingProc())
+        monkeypatch.setattr(repl_mod, "reap_process", lambda proc, **kw: calls.append("reap"))
+
+        result, _ = repl_mod._run_with_timeout("1", timeout=1, sandbox=False)
+
+        assert "timed out" in result
+        assert "reap" in calls and "communicate" not in calls

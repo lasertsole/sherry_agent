@@ -125,8 +125,14 @@ class TestPythonReplPassesTheSessionRoot:
         class _Proc:
             returncode = 0
 
-            def communicate(self, timeout=None):
-                return '{"exc": null, "out": "", "err": "", "tb": null}', ""
+            def __init__(self, **_kwargs: object) -> None:
+                pass
+
+            def wait(self, timeout=None):  # fd-direct-write: the flow waits on the child
+                return self.returncode
+
+            def communicate(self, timeout=None):  # pragma: no cover
+                raise AssertionError("the fd-direct-write path must not drain a pipe")
 
         monkeypatch.setattr(python_repl.subprocess, "Popen", lambda *_a, **_kw: _Proc())
 

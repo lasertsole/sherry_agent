@@ -41,7 +41,9 @@ from loguru import logger
 
 from config.path import ROOT_DIR
 from agent.tools.pub_base.env_scrub import scrub_env
+from agent.tools.pub_base.process_reap import reap_process
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
+from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 
 from .builtins import render_allowed_modules, render_restricted_builtins
 from .rpc_server import PtcRpcServer
@@ -49,6 +51,9 @@ from .stub_generator import PTC_RPC_TOKEN_ENV, generate_stub, tool_specs_from_ba
 
 #: Prefix for the per-call temporary directory (also used by orphan checks).
 PTC_TMP_PREFIX = "sherry_ptc_"
+
+#: Temp-file prefix for the child's stdout/stderr envelopes (the shared sweep contract).
+_PTC_TMP_PREFIX = ".sherry-tmp-ptc-"
 
 
 class PtcSandboxUnavailableError(RuntimeError):
@@ -272,30 +277,49 @@ async def run_ptc(
         except PtcSandboxUnavailableError as exc:
             return _result("sandbox_unavailable", "", str(exc), -1, 0)
 
-        proc = subprocess.Popen(  # noqa: S603 - argv is fully controlled
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            cwd=cwd or str(ROOT_DIR),
-            start_new_session=True,
-        )
-
+        # fd-direct-write (the terminal tool's contract): the envelope and the
+        # stderr fallback go to FILES, never pipes. A pipe must be drained to
+        # EOF, and an unbounded post-kill ``communicate()`` hangs when the child
+        # left a grandchild holding the write end (or on an unkillable IO wait);
+        # ``wait()`` depends only on the direct child, and the timeout path uses
+        # the bounded ``reap_process`` escalation.
+        stdout_path, stdout_handle = open_stdout_tmp(session_id, prefix=_PTC_TMP_PREFIX)
+        stderr_path, stderr_handle = open_stdout_tmp(session_id, prefix=_PTC_TMP_PREFIX)
         try:
-            # communicate() blocks; run it off-loop so the RPC thread can still
-            # dispatch tool calls onto this event loop while the child runs.
-            stdout, stderr = await asyncio.to_thread(proc.communicate, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            _kill_process_tree(proc)
-            stdout, stderr = await asyncio.to_thread(proc.communicate)
-            return _result(
-                "timeout",
-                _truncate(stdout or "", max_stdout),
-                _truncate(stderr or "", max_stderr),
-                int(proc.returncode or -1),
-                server.calls_made,
+            proc = subprocess.Popen(  # noqa: S603 - argv is fully controlled
+                argv,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                env=env,
+                cwd=cwd or str(ROOT_DIR),
+                start_new_session=True,
             )
+            stdout_handle.close()
+            stderr_handle.close()
+
+            try:
+                # wait() blocks; run it off-loop so the RPC thread can still
+                # dispatch tool calls onto this event loop while the child runs.
+                await asyncio.to_thread(proc.wait, timeout)
+            except subprocess.TimeoutExpired:
+                _kill_process_tree(proc)
+                await asyncio.to_thread(reap_process, proc)
+                return _result(
+                    "timeout",
+                    _truncate(
+                        stdout_path.read_bytes().decode("utf-8", errors="replace"), max_stdout
+                    ),
+                    _truncate(
+                        stderr_path.read_bytes().decode("utf-8", errors="replace"), max_stderr
+                    ),
+                    int(proc.returncode or -1),
+                    server.calls_made,
+                )
+            stdout = stdout_path.read_bytes().decode("utf-8", errors="replace")
+            stderr = stderr_path.read_bytes().decode("utf-8", errors="replace")
+        finally:
+            discard_stdout_tmp(None, stdout_path)
+            discard_stdout_tmp(None, stderr_path)
 
         out, _err, error = _parse_envelope(stdout or "", stderr or "")
         exit_code = int(proc.returncode or 0)

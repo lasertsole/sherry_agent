@@ -89,6 +89,19 @@ async def purge_session(session_id: str) -> None:
     # (3) sqlite checkpointer — checkpoints + writes for this thread.
     await delete_thread_history(session_id=session_id)
 
+    # (3.5) Background terminal tasks: the processes are children of THIS
+    # process, so a deleted session's live commands must be terminated before
+    # the output files go away with the folder (best-effort — a dead pid is the
+    # common case, and the watcher already recorded that exit).
+    try:
+        from agent.tools.terminal_bg_registry import background_registry
+
+        killed = background_registry.kill_session_tasks(session_id)
+        if killed:
+            logger.debug(f"Terminated {killed} background terminal task(s) for {session_id}")
+    except Exception as e:
+        logger.warning(f"Failed to terminate background terminal tasks for {session_id}: {e}")
+
     # (4) Session folder under the sessions directory.
     path = Path(_session_folder(session_id))
     if path.exists() and path.is_dir():

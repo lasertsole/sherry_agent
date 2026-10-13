@@ -184,16 +184,23 @@ class _FakeShellProc:
 
 
 class _FakeReplProc:
-    """Stands in for python_repl's subprocess.Popen[str] (text=True)."""
+    """Stands in for python_repl's Popen on the fd-direct-write path.
+
+    stdout/stderr are FILE handles now: the fake writes the wrapper envelope
+    into ``kwargs["stdout"]`` and the flow waits with ``wait()``.
+    """
 
     returncode = 0
 
     def __init__(self, recorder: list[dict[str, Any]], *args: Any, **kwargs: Any):
         recorder.append({"args": args, "kwargs": kwargs})
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            payload = json.dumps({"out": "1\n", "err": "", "exc": None, "tb": None})
+            handle.write(payload.encode("utf-8"))
 
-    def communicate(self, timeout=None):
-        payload = json.dumps({"out": "1\n", "err": "", "exc": None, "tb": None})
-        return (payload, "")
+    def wait(self, timeout=None):
+        return self.returncode
 
     def kill(self):
         pass

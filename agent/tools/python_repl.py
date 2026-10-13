@@ -42,6 +42,8 @@ from agent.tools.pub_base import (
 )
 
 from agent.tools.pub_base.env_scrub import scrub_env
+from agent.tools.pub_base.process_reap import reap_process
+from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 from agent.tools.pub_base.sandbox import SandboxPolicy, get_backend, read_policy
 from agent.tools.pub_base.sandbox_guard import SandboxGuardMixin
 from agent.tools.pub_base.schema_utils import class_or_instance_schema
@@ -52,6 +54,11 @@ from agent.tools.todolist.evidence_recorder import record_verification_evidence
 
 # Bound to the feature registry (single source of truth); name preserved.
 PYTHON_REPL_TIMEOUT = TOOLS_TIMEOUTS["python_repl_timeout_seconds"]
+
+#: Temp-file prefix for the child's stdout/stderr (the shared ``.sherry-tmp-``
+#: sweep contract): the JSON envelope and the stderr fallback are files, never
+#: pipes, so a killed grandchild cannot keep a pipe open.
+_REPL_TMP_PREFIX = ".sherry-tmp-repl-"
 
 # Path-hardening assessment — deliberately NO deny-read scan here:
 # the wrapper's restricted builtins already omit `open` / `__import__`, so a
@@ -122,6 +129,7 @@ def _run_with_timeout(
     sandbox: bool = True,
     cwd: str | None = None,
     writable_roots: list[Path] | None = None,
+    session_id: str = "",
     **_kwargs: Any,
 ) -> tuple[str, bool]:
     """Execute Python code in a subprocess with timeout. Kill on timeout.
@@ -166,27 +174,42 @@ def _run_with_timeout(
                     f"(policy={policy.value}) — degrading to unsandboxed execution"
                 )
 
-    proc: subprocess.Popen[str] | None = None
+    proc: subprocess.Popen[bytes] | None = None
+    # fd-direct-write (the terminal tool's contract): the caller's code may fork
+    # grandchildren that inherit the write end — with pipes, an unbounded
+    # ``communicate()`` after a kill would block until those grandchildren exit
+    # (forever for `os.system("sleep 9999")`). The envelope and the stderr
+    # fallback land in temp files, so ``wait()`` depends only on this child and
+    # the timeout path uses the bounded ``reap_process`` escalation.
+    stdout_path, stdout_handle = open_stdout_tmp(session_id, prefix=_REPL_TMP_PREFIX)
+    stderr_path, stderr_handle = open_stdout_tmp(session_id, prefix=_REPL_TMP_PREFIX)
+    stdout = stderr = ""
     try:
-        proc = subprocess.Popen(
-            argv,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            env=env,
-            cwd=cwd or str(ROOT_DIR),
-        )
-        stdout, stderr = proc.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        if proc:
-            proc.kill()
-            proc.communicate()
-        logger.warning("python_repl timed out after {}s", timeout)
-        return (
-            f"Python REPL execution timed out after {timeout} seconds. "
-            "Please simplify your code or try a different approach.",
-            ran_sandboxed,
-        )
+        try:
+            proc = subprocess.Popen(
+                argv,
+                stdout=stdout_handle,
+                stderr=stderr_handle,
+                env=env,
+                cwd=cwd or str(ROOT_DIR),
+            )
+            stdout_handle.close()
+            stderr_handle.close()
+            proc.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if proc:
+                reap_process(proc)
+            logger.warning("python_repl timed out after {}s", timeout)
+            return (
+                f"Python REPL execution timed out after {timeout} seconds. "
+                "Please simplify your code or try a different approach.",
+                ran_sandboxed,
+            )
+        stdout = stdout_path.read_bytes().decode("utf-8", errors="replace")
+        stderr = stderr_path.read_bytes().decode("utf-8", errors="replace")
+    finally:
+        discard_stdout_tmp(None, stdout_path)
+        discard_stdout_tmp(None, stderr_path)
 
     if proc.returncode != 0:
         return f"Error: subprocess exited with code {proc.returncode}\n{stderr}", ran_sandboxed
@@ -243,6 +266,7 @@ class TimedPythonREPLTool(SandboxGuardMixin, PythonREPLTool):
             sandbox,
             session_cwd,
             [Path(session_cwd)] if session_cwd else None,
+            session_id=resolve_tool_session_id(session_id, run_manager),
         )
         record_verification_evidence(
             query, result, _extract_session_id(run_manager), sandboxed=ran_sandboxed

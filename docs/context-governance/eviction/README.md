@@ -82,16 +82,16 @@ That shape — **the whole stdout is bulk text the parent only previews** — is
 
 | Path | stdout shape | What bounds it | fd-direct-write? |
 | --- | --- | --- | --- |
-| `terminal` | raw bulk text, never parsed | the file + the eviction preview | ✅ implemented |
-| `python_repl` | ONE JSON envelope (`out`/`err` captured by the child wrapper) | nothing today: the child's `StringIO` is unbounded, the envelope is serialized whole, and the parent holds it through `communicate()` **and** `json.loads` (~3× the payload) | ❌ the bytes must be parsed, so a file would still be read whole and decoded — the fix is a CHILD-side cap before serialization |
-| `execute_code` (PTC) | JSON envelope; real tool calls ride the loopback RPC bridge | parent-side `_truncate(..., max_stdout)`, applied after the read | ❌ protocol payload, same reasoning as `python_repl` |
+| `terminal` | raw bulk text, never parsed | the file + the eviction preview (or a RETAINED file when `run_in_background`) | ✅ implemented |
+| `python_repl` | an envelope FILE pair (stdout envelope + stderr fallback) | the file is read back after `wait()`; a killed grandchild can no longer hold a pipe open | ✅ fd-direct-write (two temp files; the timeout path uses the bounded `reap_process`) |
+| `execute_code` (PTC) | JSON envelope pair; real tool calls ride the loopback RPC bridge | the files are read back after `wait()`; parent-side `_truncate(..., max_stdout)` still caps what the model sees | ✅ fd-direct-write (two temp files; `reap_process` on timeout, process group killed) |
 | `search_files` (ripgrep) | streaming match lines, parsed as they arrive | per-call caps + `ProcessWatchdog` early kill | ❌ would REGRESS: with a file the parent cannot stop the search at its cap — rg would run to completion |
 | ast-grep | JSON records | `ast_grep_max_matches` / path / pattern caps, far below any threshold | ❌ already bounded |
 | LSP client | JSON-RPC frames | the protocol itself | ❌ not a text payload |
 | `web_search` / RAG | HTTP responses formatted per result | provider + per-result caps | ❌ no subprocess involved |
 | middleware eviction (P0-2 / P1-9 / P2-4) | messages already in memory | the middleware's own thresholds | ➖ not a producer: it runs AFTER the tool, on data already on the heap |
 
-The rule the table encodes: fd-direct-write needs a subprocess whose **entire stdout is bulk text** — no framing the parent must parse, no early-termination contract to lose. A pipe that is parsed, framed or cut short is the correct design there.
+The rule the table encodes: fd-direct-write needs a subprocess whose **entire stdout is bulk text or a payload read back after exit** — nothing the parent must drain to EOF while the child (or its descendants) run. A pipe that must be read INCREMENTALLY or cut short mid-stream (ripgrep's early kill) is the correct design there.
 
 ## 📥 Human-Message Eviction (P1-9)
 

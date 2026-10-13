@@ -150,16 +150,23 @@ class _FakeShellProc:
 
 
 class _FakeReplProc:
-    """Stands in for python_repl's subprocess.Popen[str] (text=True)."""
+    """Stands in for python_repl's Popen on the fd-direct-write path.
+
+    stdout/stderr are FILE handles now: the fake writes the wrapper envelope
+    into ``kwargs["stdout"]`` and the flow waits with ``wait()``.
+    """
 
     returncode = 0
 
     def __init__(self, recorder: list[dict[str, Any]], *args: Any, **kwargs: Any):
         recorder.append({"args": args, "kwargs": kwargs})
+        handle = kwargs.get("stdout")
+        if hasattr(handle, "write"):
+            payload = json.dumps({"out": "1\n", "err": "", "exc": None, "tb": None})
+            handle.write(payload.encode("utf-8"))
 
-    def communicate(self, timeout=None):
-        payload = json.dumps({"out": "1\n", "err": "", "exc": None, "tb": None})
-        return (payload, "")
+    def wait(self, timeout=None):
+        return self.returncode
 
     def kill(self):
         pass
@@ -342,7 +349,9 @@ class TestCell1RequiredSandboxTrueBackendAvailable:
             "the backend-wrapped argv must be what reaches Popen"
         )
         kwargs = calls[0]["kwargs"]
-        assert kwargs.get("text") is True
+        # fd-direct-write: stdout is a FILE handle (no text mode, no pipe) — the
+        # envelope is read back from the file after wait().
+        assert hasattr(kwargs.get("stdout"), "fileno"), "stdout must be a FILE handle"
         assert kwargs["env"].get("FAKE_SANDBOX") == "1"
         _assert_scrubbed_env(kwargs["env"])
         assert kwargs["cwd"] == str(ROOT_DIR), "cwd clamp stays unconditional"
@@ -531,7 +540,7 @@ class TestCell5AutoSandboxTrueUnavailableDegradedOneWarning:
             "bare interpreter argv [exe, -c, script] without any wrapper"
         )
         kwargs = calls[0]["kwargs"]
-        assert kwargs.get("text") is True
+        assert hasattr(kwargs.get("stdout"), "fileno"), "stdout must be a FILE handle"
         _assert_scrubbed_env(kwargs.get("env"))  # env scrub must hold on the degrade path
         assert kwargs.get("cwd") == str(ROOT_DIR), "cwd clamp stays unconditional"
 

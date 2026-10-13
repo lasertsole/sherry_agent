@@ -67,6 +67,10 @@ from .todolist_infra import (
     TodoListInfraConfig as TodoListInfraConfig,
     TODOLIST_INFRA as TODOLIST_INFRA,
 )
+from .terminal_bg import (
+    TerminalBgConfig as TerminalBgConfig,
+    TERMINAL_BG as TERMINAL_BG,
+)
 from .reminder_catalog import (
     ReminderCatalogConfig as ReminderCatalogConfig,
     REMINDER_CATALOG as REMINDER_CATALOG,

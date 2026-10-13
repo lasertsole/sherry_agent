@@ -74,43 +74,52 @@ async def run_user_command(session_id: str, command: str) -> dict[str, object]:
     started = time.monotonic()
     exit_code = 0
     truncated = False
-    try:
-        proc = await asyncio.create_subprocess_shell(
-            line,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            cwd=cwd,
-            env=scrub_env(),
-        )
-    except OSError as error:  # a cwd that vanished, a shell that cannot fork
-        logger.warning("user terminal: spawn failed: {}", error)
-        return {
-            "cwd": cwd,
-            "command": line,
-            "exit_code": -1,
-            "output": f"could not start the command: {error}",
-            "truncated": False,
-            "duration_ms": 0,
-        }
+    # fd-direct-write (the terminal tool's contract): the child's output goes to
+    # a FILE, never a pipe. A pipe must be drained to EOF, and a command that
+    # forks a grandchild inheriting the write end would keep the parent's
+    # unbounded ``communicate()`` blocked after a kill; ``wait()`` depends only
+    # on the direct child, and the timeout path reaps with a bounded escalation.
+    from agent.tools.pub_base.process_reap import areap_process
+    from agent.tools.pub_base.stdout_fd import discard_stdout_tmp, open_stdout_tmp
 
+    output_path, output_handle = open_stdout_tmp(session_id, prefix=".sherry-tmp-userterm-")
     try:
-        raw, _ = await asyncio.wait_for(proc.communicate(), timeout=_TIMEOUT_S)
-        output = raw.decode("utf-8", errors="replace")
-        exit_code = int(proc.returncode or 0)
-    except TimeoutError:
-        # A wedged command must not hold the request thread: kill the process
-        # group and report what it managed to print.
         try:
-            proc.kill()
-            raw, _ = await proc.communicate()
-            partial = raw.decode("utf-8", errors="replace")
-        except Exception:  # noqa: BLE001 - the kill path is best effort
-            partial = ""
-        output = f"{partial}\n[timed out after {int(_TIMEOUT_S)}s]".strip()
-        exit_code = -1
-    except asyncio.CancelledError:
-        proc.kill()
-        raise
+            proc = await asyncio.create_subprocess_shell(
+                line,
+                stdout=output_handle,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=cwd,
+                env=scrub_env(),
+            )
+        except OSError as error:  # a cwd that vanished, a shell that cannot fork
+            logger.warning("user terminal: spawn failed: {}", error)
+            return {
+                "cwd": cwd,
+                "command": line,
+                "exit_code": -1,
+                "output": f"could not start the command: {error}",
+                "truncated": False,
+                "duration_ms": 0,
+            }
+        output_handle.close()  # the child holds its own descriptor
+
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=_TIMEOUT_S)
+            output = output_path.read_bytes().decode("utf-8", errors="replace")
+            exit_code = int(proc.returncode or 0)
+        except TimeoutError:
+            # A wedged command must not hold the request thread: kill it with
+            # the bounded escalation and report what it managed to print.
+            await areap_process(proc)
+            partial = output_path.read_bytes().decode("utf-8", errors="replace")
+            output = f"{partial}\n[timed out after {int(_TIMEOUT_S)}s]".strip()
+            exit_code = -1
+        except asyncio.CancelledError:
+            await areap_process(proc)
+            raise
+    finally:
+        discard_stdout_tmp(None, output_path)
 
     if len(output) > _MAX_OUTPUT_CHARS:
         output = output[:_MAX_OUTPUT_CHARS]

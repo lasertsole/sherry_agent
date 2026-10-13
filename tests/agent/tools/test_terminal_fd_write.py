@@ -2,11 +2,12 @@
 
 Two halves, and the second keeps the first honest:
 
-* the helper contract — ``_open_stdout_tmp`` places the file in the session
+* the helper contract (``agent/tools/pub_base/stdout_fd.py``, shared with the
+  sibling exec tools) — ``open_stdout_tmp`` places the file in the session
   directory (OS temp only for an unsafe id) and sweeps abandoned leftovers,
-  ``_read_or_evict_output`` reads small outputs whole but MOVES an oversized
+  ``read_or_evict_output`` reads small outputs whole but MOVES an oversized
   one into ``evicted/`` and returns a byte-labelled head/tail preview without
-  ever reading the payload into the parent, and ``_discard_stdout_tmp`` makes
+  ever reading the payload into the parent, and ``discard_stdout_tmp`` makes
   every failure path delete its temp file;
 * the wiring — both spawn sites (sync ``_run`` / async ``_arun``) hand the
   child a real FILE for stdout (stderr merged into it) and wait on the
@@ -29,13 +30,13 @@ import agent.tools.pub_base.sandbox_guard as sandbox_guard
 import agent.tools.terminal as terminal
 import pub.func.message.eviction as eviction_module
 from agent.tools.pub_base.sandbox import SandboxPolicy
-from agent.tools.terminal import (
+from agent.tools.pub_base.stdout_fd import (
     FD_WRITE_THRESHOLD,
-    SafeShellTool,
-    _discard_stdout_tmp,
-    _open_stdout_tmp,
-    _read_or_evict_output,
+    discard_stdout_tmp,
+    open_stdout_tmp,
+    read_or_evict_output,
 )
+from agent.tools.terminal import SafeShellTool
 from config.features import TOOLS_TIMEOUTS
 
 pytestmark = [
@@ -93,7 +94,7 @@ class TestStdoutTempFile:
 
     @pytest.mark.unit
     def test_temp_file_lands_in_the_session_dir(self, sessions_root: Path):
-        path, handle = _open_stdout_tmp(_SID)
+        path, handle = open_stdout_tmp(_SID)
         try:
             assert path.parent == sessions_root / _SID
             assert path.name.startswith(".sherry-tmp-stdout-")
@@ -106,7 +107,7 @@ class TestStdoutTempFile:
 
     @pytest.mark.unit
     def test_unsafe_session_id_falls_back_to_os_temp(self, sessions_root: Path):
-        path, handle = _open_stdout_tmp("../evil")
+        path, handle = open_stdout_tmp("../evil")
         try:
             assert path.parent != sessions_root
             assert sessions_root.parent not in path.parents or path.parent == sessions_root
@@ -125,7 +126,7 @@ class TestStdoutTempFile:
         long_ago = time.time() - 2 * 60 * 60
         os.utime(leftover, (long_ago, long_ago))
 
-        path, handle = _open_stdout_tmp(_SID)
+        path, handle = open_stdout_tmp(_SID)
         try:
             assert not leftover.exists(), "an old .sherry-tmp-*.log must be swept"
             assert path.exists()
@@ -135,11 +136,11 @@ class TestStdoutTempFile:
 
     @pytest.mark.unit
     def test_under_threshold_is_read_whole_and_unlinked(self, sessions_root: Path):
-        path, handle = _open_stdout_tmp(_SID)
+        path, handle = open_stdout_tmp(_SID)
         handle.write(b"small output")
         handle.close()
 
-        out = _read_or_evict_output(path, _SID, "utf-8")
+        out = read_or_evict_output(path, _SID, "utf-8")
 
         assert out == "small output"
         assert not path.exists(), "a read-back temp file must be removed"
@@ -149,12 +150,14 @@ class TestStdoutTempFile:
     def test_a_non_positive_threshold_disables_eviction(
         self, sessions_root: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        monkeypatch.setattr(terminal, "FD_WRITE_THRESHOLD", 0)
-        path, handle = _open_stdout_tmp(_SID)
+        import agent.tools.pub_base.stdout_fd as stdout_fd_mod
+
+        monkeypatch.setattr(stdout_fd_mod, "FD_WRITE_THRESHOLD", 0)
+        path, handle = open_stdout_tmp(_SID)
         handle.write(b"c" * _BIG_BYTES)
         handle.close()
 
-        out = _read_or_evict_output(path, _SID, "utf-8")
+        out = read_or_evict_output(path, _SID, "utf-8")
 
         assert out == "c" * _BIG_BYTES, "0 = always read back in memory (the old behaviour)"
         assert not path.exists()
@@ -164,14 +167,14 @@ class TestStdoutTempFile:
     def test_over_threshold_moves_the_file_and_previews_it(
         self, sessions_root: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        path, handle = _open_stdout_tmp(_SID)
+        path, handle = open_stdout_tmp(_SID)
         handle.write(b"a" * _BIG_BYTES)
         handle.close()
         # The oversized path must never read the payload into this process:
         # any whole-file read fails the test loudly.
         monkeypatch.setattr(Path, "read_bytes", lambda self: pytest.fail(f"read whole: {self}"))
 
-        out = _read_or_evict_output(path, _SID, "utf-8")
+        out = read_or_evict_output(path, _SID, "utf-8")
 
         assert not path.exists(), "the temp file is moved, not copied + deleted"
         evicted = list((sessions_root / _SID / "evicted").glob("terminal-*.log"))
@@ -182,11 +185,11 @@ class TestStdoutTempFile:
 
     @pytest.mark.unit
     def test_eviction_is_skipped_for_an_unsafe_id_and_read_back(self, sessions_root: Path):
-        path, handle = _open_stdout_tmp("")
+        path, handle = open_stdout_tmp("")
         handle.write(b"b" * _BIG_BYTES)
         handle.close()
 
-        out = _read_or_evict_output(path, "", "utf-8")
+        out = read_or_evict_output(path, "", "utf-8")
 
         assert out == "b" * _BIG_BYTES, "no session dir -> the historical whole-read"
         assert not path.exists()
@@ -194,10 +197,10 @@ class TestStdoutTempFile:
 
     @pytest.mark.unit
     def test_discard_helper_survives_a_closed_handle_and_missing_file(self, sessions_root: Path):
-        path, handle = _open_stdout_tmp(_SID)
+        path, handle = open_stdout_tmp(_SID)
         handle.close()
-        _discard_stdout_tmp(handle, path)
-        _discard_stdout_tmp(None, None)
+        discard_stdout_tmp(handle, path)
+        discard_stdout_tmp(None, None)
         assert not path.exists()
 
 
@@ -390,3 +393,50 @@ class TestRealChild:
 
         names = {Path(line.split("[evicted to: ", 1)[1].rstrip("]")).name for line in (a, b)}
         assert len(names) == 2, "the name hashes the content, so two outputs cannot collide"
+
+
+# ---------------------------------------------------------------------------
+# Per-call timeout (the model decides how long a command may run)
+# ---------------------------------------------------------------------------
+
+
+class TestPerCallTimeout:
+    def test_the_resolver_defaults_clamps_and_rejects_nonsense(self):
+        from agent.tools.terminal import (
+            TERMINAL_MAX_TIMEOUT,
+            TERMINAL_TIMEOUT,
+            _resolve_timeout,
+        )
+
+        assert _resolve_timeout(None) == TERMINAL_TIMEOUT
+        assert _resolve_timeout(0) == TERMINAL_TIMEOUT, "0 means 'unset', not 'instant'"
+        assert _resolve_timeout(-5) == TERMINAL_TIMEOUT
+        assert _resolve_timeout(60) == 60
+        assert _resolve_timeout(TERMINAL_MAX_TIMEOUT + 5) == TERMINAL_MAX_TIMEOUT
+
+    def test_the_schema_exposes_the_field_to_the_model(self):
+        from agent.tools.terminal import SafeShellInput
+
+        field = SafeShellInput.model_fields["timeout"]
+
+        assert field.default is None
+        assert "max" in field.description.lower() and "600" in field.description
+
+    @pytest.mark.integration
+    def test_a_short_timeout_cuts_a_long_command(self, tool: SafeShellTool, sessions_root: Path):
+        import time
+
+        started = time.monotonic()
+        out = tool._run(["sleep 30"], session_id=_SID, timeout=2)
+        elapsed = time.monotonic() - started
+
+        assert "timed out after 2 seconds" in out
+        assert elapsed < 10, f"the per-call timeout must bound the wait (took {elapsed:.1f}s)"
+
+    @pytest.mark.integration
+    def test_a_longer_timeout_lets_a_longer_command_finish(
+        self, tool: SafeShellTool, sessions_root: Path
+    ):
+        out = tool._run(["sleep 1; echo finished-under-5s"], session_id=_SID, timeout=5)
+
+        assert "finished-under-5s" in out

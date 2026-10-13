@@ -88,7 +88,7 @@ def test_terminal_records_passed_pytest_evidence(ledger_path, no_sandbox, monkey
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None, session_id="": "ok",
+        lambda self, commands, encoding, env, cwd=None, session_id="", timeout=None: "ok",
     )
     tool = terminal.build_terminal_tool()
 
@@ -105,7 +105,7 @@ def test_terminal_records_failed_exit_code(ledger_path, no_sandbox, monkeypatch)
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None, session_id="": canned,
+        lambda self, commands, encoding, env, cwd=None, session_id="", timeout=None: canned,
     )
     tool = terminal.build_terminal_tool()
 
@@ -117,7 +117,7 @@ def test_terminal_non_verification_not_recorded(ledger_path, no_sandbox, monkeyp
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None, session_id="": "files",
+        lambda self, commands, encoding, env, cwd=None, session_id="", timeout=None: "files",
     )
     tool = terminal.build_terminal_tool()
 
@@ -130,7 +130,7 @@ def test_terminal_result_survives_ledger_write_failure(ledger_path, no_sandbox, 
     monkeypatch.setattr(
         terminal.SafeShellTool,
         "_run_with_encoding",
-        lambda self, commands, encoding, env, cwd=None, session_id="": "ok",
+        lambda self, commands, encoding, env, cwd=None, session_id="", timeout=None: "ok",
     )
     tool = terminal.build_terminal_tool()
 
@@ -146,7 +146,10 @@ def test_python_repl_records_test_evidence(ledger_path, monkeypatch):
     monkeypatch.setattr(
         python_repl,
         "_run_with_timeout",
-        lambda command, timeout, sandbox, cwd=None, writable_roots=None: ("ok", True),
+        lambda command, timeout, sandbox, cwd=None, writable_roots=None, session_id="": (
+            "ok",
+            True,
+        ),
     )
     tool = python_repl.build_python_repl_tool()
     query = "import subprocess; subprocess.run(['pytest', '-q'])"
@@ -161,7 +164,7 @@ def test_python_repl_non_verification_not_recorded(ledger_path, monkeypatch):
     monkeypatch.setattr(
         python_repl,
         "_run_with_timeout",
-        lambda command, timeout, sandbox, cwd=None, writable_roots=None: ("2", True),
+        lambda command, timeout, sandbox, cwd=None, writable_roots=None, session_id="": ("2", True),
     )
     tool = python_repl.build_python_repl_tool()
 
