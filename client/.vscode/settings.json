@@ -1,0 +1,62 @@
+{
+  "git.enableSmartCommit": true,
+  "editor.renderWhitespace": "none",
+  "git.confirmSync": false,
+  "javascript.validate.enable": false,
+  "git.autofetch": true,
+  "eslint.validate": [
+    "javascript",
+    "vue",
+    "vue-html",
+    "typescript",
+    "typescriptreact",
+    "html",
+    "css",
+    "scss",
+    "less",
+    "json",
+    "jsonc",
+    "json5",
+    "markdown"
+  ],
+  "eslint.options": {
+    "overrideConfigFile": "eslint.config.mjs"
+  },
+  "editor.quickSuggestions": {
+    "strings": true
+  },
+  "diffEditor.ignoreTrimWhitespace": false,
+  "breadcrumbs.enabled": true,
+  "typescript.preferences.quoteStyle": "single",
+  "javascript.preferences.quoteStyle": "single",
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "prettier.configPath": "prettier.config.mjs",
+  "[javascript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[html]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "[vue]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode"
+  },
+  "workbench.editor.wrapTabs": true,
+  // 是否启用鼠标滚轮缩放编辑器
+  "editor.mouseWheelZoom": true,
+  // 是否启用鼠标滚轮缩放终端
+  "terminal.integrated.mouseWheelZoom": true,
+  // TS Server 内存增大到  4G
+  "typescript.tsserver.maxTsServerMemory": 4096,
+  // 在列120字符处显示竖线，超过就建议换行
+  "editor.rulers": [120]
+}

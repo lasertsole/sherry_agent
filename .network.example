@@ -1,0 +1,45 @@
+// 网络服务配置（联网搜索 / 浏览器代理 / LangSmith 追踪）。
+// Network service configuration — the web-search backends, the browser agent's
+// switches and LangSmith tracing. Split out of .env / .env.example (search +
+// browser) and sherry.jsonc (tracing); JSON5: comments and trailing commas are
+// allowed. 模型（LLM）相关配置仍在 .env 中，不在本文件。
+//
+// 编辑方式：前端「模型联网」与「模型配置」面板（经 GET/PUT /network-config），
+// 或直接编辑本文件 —— 修改后重启后端生效（进程启动时读取一次）。
+// Edit it from the 模型联网 / 模型配置 panels (GET/PUT /network-config) or by
+// hand. Read once at boot — restart the backend after a change.
+{
+  // ── 联网搜索 / Web search ────────────────────────────────────────────────
+  // Tavily API key (https://tavily.com). Required for the Tavily backend.
+  "TAVILY_API_KEY": "",
+  // SearXNG — the self-hosted alternative. With both configured the 模型联网
+  // panel picks one per session; a Tavily failure falls back to SearXNG
+  // automatically. With only SearXNG configured it is the sole backend.
+  // SEARXNG_URL: instance base URL, e.g. http://localhost:8888 (empty = off).
+  // SEARXNG_PROXY: optional HTTP(S) proxy for reaching the instance.
+  // SEARXNG_ENGINES: optional engine allow-list, comma separated
+  //   (e.g. google,bing,duckduckgo; empty = the instance's own engine set).
+  // SEARXNG_CATEGORIES: optional search category (general / it / news / ...).
+  // SEARXNG_VERIFY_TLS: false only behind a MITM HTTPS proxy.
+  "SEARXNG_URL": "",
+  "SEARXNG_PROXY": "",
+  "SEARXNG_ENGINES": "",
+  "SEARXNG_CATEGORIES": "",
+  "SEARXNG_VERIFY_TLS": true,
+
+  // ── 浏览器代理 / Browser agent (opt-in; drives a real Chromium over CDP) ──
+  // The feature is off until SHERRY_BROWSER_AGENT_ENABLED = 1 (restart needed;
+  // no browser_* tool registers while it is off).
+  "SHERRY_BROWSER_AGENT_ENABLED": 0,
+  // 1 = headless; 0 = headed (needs DISPLAY). Empty = auto (headless when no DISPLAY).
+  "SHERRY_BROWSER_HEADLESS": "",
+  // Explicit Chromium/Chrome binary; empty probes the usual names.
+  "SHERRY_BROWSER_EXECUTABLE": "",
+  // 1 = the browser_evaluate escape hatch registers (off by default).
+  "SHERRY_BROWSER_ALLOW_EVALUATE": 0,
+
+  // ── LangSmith 追踪 / tracing ─────────────────────────────────────────────
+  "LANGSMITH_TRACING_V2": false,
+  "LANGSMITH_API_KEY": "",
+  "LANGSMITH_PROJECT": "EMA_AI_agent"
+}

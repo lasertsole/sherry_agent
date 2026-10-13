@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <!-- 深色圆角品牌底色 -->
+  <rect width="32" height="32" rx="7" fill="#0f172a"/>
+  <!-- 桔子本体：橙色圆 -->
+  <circle cx="16" cy="17" r="11" fill="#f97316"/>
+  <!-- 桔子顶部凹陷（深色圆 + 描边） -->
+  <circle cx="16" cy="7" r="2.6" fill="#0f172a"/>
+  <path d="M14.5 5.5 Q16 4.5 17.5 5.5" fill="none" stroke="#ea580c" stroke-width="1" stroke-linecap="round"/>
+  <!-- 叶片 -->
+  <path d="M16 5 C14.5 1.5 18 0.5 19.5 2.5 C20.5 3.8 18.5 6 16 5 Z" fill="#22c55e"/>
+  <!-- 桔瓣纹路 -->
+  <path d="M16 18 L10 13.5 M16 18 L22 13.5 M16 18 L10 22.5 M16 18 L22 22.5" stroke="#ea580c" stroke-width="0.9" stroke-linecap="round"/>
+  <!-- 边缘高光 -->
+  <circle cx="11.5" cy="14" r="2.2" fill="#fdba74" opacity="0.85"/>
+</svg>

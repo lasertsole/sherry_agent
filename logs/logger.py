@@ -1,0 +1,129 @@
+"""Loguru logging configuration (console + rotating file sinks)."""
+
+import os
+import sys
+import time
+from pathlib import Path
+from loguru import logger
+from config import LOG_DIR
+from config.path import load_env
+from config.sherry_settings import get_sherry_setting
+
+# .env plus the network.jsonc overlay (log level / sinks can come from either)
+load_env()
+
+
+def _clean_expired_logs(log_dir: Path, timeout_days: int = 7):
+    """Recursively delete log files older than `days` under `log_dir`.
+
+    Walks ``log_dir`` including type sub-directories (``info/``, ``error/``)
+    so archived logs in every per-type folder are pruned.
+    """
+    cutoff = time.time() - timeout_days * 86400
+    if not log_dir.is_dir():
+        return
+    for p in log_dir.rglob("*"):
+        if p.is_file() and p.suffix in (".log", ".zip") and p.stat().st_mtime < cutoff:
+            p.unlink(missing_ok=True)
+
+
+def _resolve_level() -> str:
+    """Read LOG_LEVEL from sherry.jsonc, fall back to INFO on invalid values."""
+    raw = str(get_sherry_setting("LOG_LEVEL")).strip().upper()
+    valid = {"TRACE", "DEBUG", "INFO", "SUCCESS", "WARNING", "ERROR", "CRITICAL"}
+    return raw if raw in valid else "INFO"
+
+
+def init_logger(log_dir=LOG_DIR, timeout_days: int = 7):
+    """Initialize the global logging configuration."""
+    # Create per-type log sub-directories: info/, error/, all/ (everything) and
+    # json/ (machine-readable JSONL)
+    log_dir = Path(log_dir)
+    info_dir = log_dir / "info"
+    error_dir = log_dir / "error"
+    all_dir = log_dir / "all"
+    json_dir = log_dir / "json"
+    for d in (log_dir, info_dir, error_dir, all_dir, json_dir):
+        if not os.path.exists(d):
+            os.makedirs(d)
+
+    # 0. Delete expired logs (walk each per-type sub-directory recursively)
+    _clean_expired_logs(log_dir, timeout_days)
+
+    level = _resolve_level()
+
+    # 1. Clear Loguru's default configuration
+    logger.remove()
+
+    # 1a. Redact secrets BEFORE any sink formats or writes a record. Installed
+    #     here (the single place sinks are configured) so the guarantee holds for
+    #     every sink added below and any added later: a log file outlives the
+    #     session and is read by people who never saw the credential.
+    from agent.security.redact_formatter import install_log_redaction
+
+    install_log_redaction()
+
+    # 2. Console output
+    logger.add(
+        sys.stderr,
+        level=level,
+        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level: <8}</level> | <cyan>{name}</cyan>:<cyan>{function}</cyan>:<cyan>{line}</cyan> - <level>{message}</level>",
+        enqueue=True,
+    )
+
+    # 3. Normal activity log (captures INFO only for day-to-day review;
+    #    WARNING/ERROR/CRITICAL go to the error log, TRACE/DEBUG to the full log)
+    logger.add(
+        os.path.join(info_dir, f"info_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
+        level="INFO",
+        filter=lambda record: record["level"].name == "INFO",
+        rotation="100 MB",
+        retention="30 days",
+        compression="zip",
+        encoding="utf-8",
+        enqueue=True,
+    )
+
+    # 4. Full log (records every level, including TRACE/DEBUG/WARNING, for thorough troubleshooting)
+    logger.add(
+        os.path.join(all_dir, f"all_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
+        level="TRACE",
+        rotation="100 MB",
+        retention="30 days",
+        compression="zip",
+        encoding="utf-8",
+        enqueue=True,
+    )
+
+    # 4b. Machine-readable JSONL twin of the full log: one JSON object per line
+    #     with ``text`` (the message) and ``record.extra`` (the fields a
+    #     ``logger.bind``/``logger.contextualize`` scope attached — turn_id,
+    #     session_id, middleware, hook, …). The text sinks above stay the
+    #     human-readable channel; this one exists so a whole turn can be pulled
+    #     out with a single ``jq 'select(.record.extra.turn_id == "…")'``.
+    #     The redaction patcher runs before every sink, this one included.
+    logger.add(
+        os.path.join(json_dir, f"json_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
+        level="TRACE",
+        rotation="100 MB",
+        retention="30 days",
+        compression="zip",
+        encoding="utf-8",
+        enqueue=True,
+        serialize=True,
+    )
+
+    # 5. Exception/error log (captures ERROR and CRITICAL only, with the failing
+    #    source line of every frame — no `diagnose` variable dump: frame values
+    #    are printed verbatim and hold identifiers no redaction family knows)
+    logger.add(
+        os.path.join(error_dir, f"error_{{time:YYYY-MM-DD}}_{os.getpid()}.log"),
+        level="ERROR",
+        rotation="50 MB",
+        retention="60 days",
+        compression="zip",
+        encoding="utf-8",
+        enqueue=True,
+        backtrace=True,
+        diagnose=False,
+    )

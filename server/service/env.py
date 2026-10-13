@@ -1,0 +1,252 @@
+"""Read/write the project root ``.env`` file in a safe, structured way.
+
+The ``.env`` holds live secrets (API keys) plus model/provider configuration.
+We parse it preserving comment lines and the original key order, group entries by
+their shared prefix, and only ever write back known/allowlisted keys so comments
+and unrelated variables are never clobbered.
+"""
+
+import re
+
+from config.features import MIN_REQUIRED_MAX_TOKEN, SERVER_HTTP
+from config.models_settings import MODEL_SETTING_KEYS
+from config.network_settings import NETWORK_SETTING_KEYS
+from config.path import ENV_PATH
+
+# Canonical display groups with a human-friendly order. Each group is matched by
+# an exact key prefix. Any key not belonging to a known group is attached to the
+# "other" group. The mapping is based on the reference keys in the tracked
+# .env and in the .models.example / .network.example templates.
+GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_group_prefixes"]
+OTHER_GROUP = "other"
+
+# Keys a DEDICATED panel owns: withheld from the GET /env payload so
+# there is exactly one editing surface for them. Writes stay allowed — only the
+# display is withheld.
+PANEL_HIDDEN_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_panel_hidden_prefixes"]
+
+# Keys split OUT of .env into their own project-root files — never surfaced or
+# written here again. Three destinations exist:
+#   * sherry.jsonc (application settings — config/sherry_settings.py),
+#   * .models (the model / LLM configuration — config/models_settings.py), and
+#   * .network (network services: the Tavily/SearXNG search backends, the
+#     browser agent's switches and LangSmith tracing — config/network_settings.py).
+# A legacy .env that still carries them is neither shown nor accepted here.
+SPLIT_OUT_KEYS = SERVER_HTTP["env_split_out_keys"]
+MODELS_SPLIT_OUT_KEYS = frozenset(MODEL_SETTING_KEYS)
+NETWORK_SPLIT_OUT_KEYS = frozenset(NETWORK_SETTING_KEYS)
+
+# Model groups (provider/model/api_key profiles) vs plain key/value groups; the
+# panel renders the former with its profile manager and the latter as a card.
+MODEL_GROUP_PREFIXES: tuple[str, ...] = SERVER_HTTP["env_model_group_prefixes"]
+
+# MAX_TOKEN keys whose saved values must satisfy token_guard's 128K floor.
+TOKEN_KEYS = frozenset({"MAIN_LLM_MAX_TOKEN", "AUXILIARY_LLM_MAX_TOKEN"})
+
+# Simple env-line parser: KEY = VALUE  (allow surrounding whitespace, quoted values).
+_ASSIGN_RE = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$")
+_COMMENT_RE = re.compile(r"^\s*#")
+
+
+class EnvEntry:
+    """A single ``KEY = value`` line located in the original file."""
+
+    __slots__ = ("key", "value", "raw")
+
+    def __init__(self, key: str, value: str, raw: str) -> None:
+        self.key = key
+        # Strip outer double or single quotes so the UI edits the bare value; we
+        # re-quote on write when the original was quoted.
+        self.value = value.strip()
+        if len(self.value) >= 2 and self.value[0] == self.value[-1] and self.value[0] in "\"'":
+            self.value = self.value[1:-1]
+        # Preserve whether the original value was quoted so we can restore it.
+        self.raw = raw
+
+
+def _parse_dotenv(text: str) -> tuple[list[EnvEntry], list[str]]:
+    """Split the raw file into env entries and non-assignment lines (comments/blank)."""
+    entries: list[EnvEntry] = []
+    lines: list[str] = []
+    for line in text.splitlines():
+        lines.append(line)
+        if _COMMENT_RE.match(line):
+            continue
+        m = _ASSIGN_RE.match(line)
+        if not m:
+            continue
+        entries.append(EnvEntry(m.group(1), m.group(2), m.group(0)))
+    return entries, lines
+
+
+def _hidden_from_panel(key: str) -> bool:
+    """Whether another panel owns this key (see ``PANEL_HIDDEN_PREFIXES``)."""
+    return key.startswith(PANEL_HIDDEN_PREFIXES)
+
+
+def _group_of(key: str) -> str:
+    for prefix in GROUP_PREFIXES:
+        if key.startswith(prefix):
+            return prefix[:-1]
+    return OTHER_GROUP
+
+
+def read_env_file() -> dict:
+    """Return the .env contents grouped by prefix, preserving file order.
+
+    Response shape::
+
+        {
+          "groups": [
+            {"name": "MAIN_LLM", "entries": [{"key": "...", "value": "..."}, ...]},
+            ...
+          ]
+        }
+
+    Raises ``FileNotFoundError`` when ``.env`` does not exist yet.
+    """
+    if not ENV_PATH.exists():
+        raise FileNotFoundError(f"Environment file not found: {ENV_PATH}")
+
+    text = ENV_PATH.read_text(encoding="utf-8")
+    entries, _lines = _parse_dotenv(text)
+
+    # Preserve insertion order of groups while following the canonical ordering.
+    groups: dict[str, list[EnvEntry]] = {}
+    for entry in entries:
+        if (
+            entry.key in SPLIT_OUT_KEYS
+            or entry.key in MODELS_SPLIT_OUT_KEYS
+            or entry.key in NETWORK_SPLIT_OUT_KEYS
+            or _hidden_from_panel(entry.key)
+        ):
+            continue
+        groups.setdefault(_group_of(entry.key), []).append(entry)
+
+    ordered_groups: list[dict] = []
+    ordered_names = [p[:-1] for p in GROUP_PREFIXES] + (
+        [OTHER_GROUP] if OTHER_GROUP in groups else []
+    )
+    for name in ordered_names:
+        if name not in groups:
+            continue
+        ordered_groups.append(
+            {
+                "name": name,
+                "kind": ("model" if name + "_" in MODEL_GROUP_PREFIXES else "plain"),
+                "entries": [
+                    {"key": e.key, "value": e.value, "value_edited": False} for e in groups[name]
+                ],
+            }
+        )
+
+    return {"groups": ordered_groups}
+
+
+def env_file_values() -> dict[str, str]:
+    """Every ``KEY=value`` pair in ``.env`` — hidden-from-the-panel keys included.
+
+    This is the read side of the panels that OWN a hidden prefix (the 模型联网
+    tab edits the Tavily key and the SearXNG connection from the file itself,
+    because ``GET /env`` deliberately withholds them). A missing or unreadable
+    file yields an empty mapping rather than raising: the panel renders its
+    "not configured" state either way.
+    """
+    try:
+        text = ENV_PATH.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    entries, _lines = _parse_dotenv(text)
+    return {entry.key: entry.value for entry in entries}
+
+
+def write_env_file(changes: dict[str, str]) -> None:
+    """Apply value updates to the ``.env`` file.
+
+    ``changes`` maps key -> new value. Only keys already present in the file are
+    accepted; unknown keys raise ``ValueError``. Comments, blank lines, and the
+    original ordering are preserved. Values are written unquoted for empty input
+    and quoted (double) otherwise to keep parseability consistent.
+    """
+    if not isinstance(changes, dict):
+        raise ValueError("changes must be a mapping of key to value")
+
+    if not ENV_PATH.exists():
+        raise FileNotFoundError(f"Environment file not found: {ENV_PATH}")
+
+    text = ENV_PATH.read_text(encoding="utf-8")
+
+    entries, lines = _parse_dotenv(text)
+
+    known_keys = {e.key for e in entries}
+    moved_models = sorted(k for k in changes if k in MODELS_SPLIT_OUT_KEYS)
+    if moved_models:
+        raise ValueError(
+            "Keys moved to .models — edit them from the 模型配置 panel "
+            f"(or via /models-config): {', '.join(moved_models)}"
+        )
+    moved_network = sorted(k for k in changes if k in NETWORK_SPLIT_OUT_KEYS)
+    if moved_network:
+        raise ValueError(
+            "Keys moved to .network — edit them from the 模型联网 / 模型配置 "
+            f"panel (or via /network-config): {', '.join(moved_network)}"
+        )
+    moved = sorted(k for k in changes if k in SPLIT_OUT_KEYS)
+    if moved:
+        raise ValueError(
+            f"Keys moved to sherry.jsonc — edit them there (or via /sherry-config): {', '.join(moved)}"
+        )
+    unknown = [k for k in changes if k not in known_keys]
+    if unknown:
+        raise ValueError(f"Unknown environment keys: {', '.join(sorted(unknown))}")
+
+    by_key = {e.key: e for e in entries}
+
+    # MAX_TOKEN guard: refuse to persist a sub-128K context window, so the
+    # .env can never be saved into a state that blocks the next server boot.
+    for key, value in changes.items():
+        if key in TOKEN_KEYS:
+            try:
+                num = int(value)
+            except ValueError:
+                raise ValueError(f"{key} must be an integer, got: {value}")
+            if num < MIN_REQUIRED_MAX_TOKEN:
+                raise ValueError(
+                    f"{key} must be >= {MIN_REQUIRED_MAX_TOKEN} (128K); got {num}. "
+                    f"Refusing to save."
+                )
+
+    for key, value in changes.items():
+        # Always write the value as-is (the UI edits the bare, unquoted value).
+        # Values that need quoting (spaces or special chars) are quoted here so
+        # the resulting .env remains parseable by dotenv on the next boot.
+        entry = by_key[key]
+        clean: str = value
+        needs_quote = bool(clean) and not re.fullmatch(r"[A-Za-z0-9_.\-:/%]+", clean)
+        if needs_quote:
+            clean = f'"{clean}"'
+
+        # Preserve original key indentation; write `KEY = VALUE`.
+        indent = entry.raw[: len(entry.raw) - len(entry.raw.lstrip())]
+        entry.raw = f"{indent}{key} = {clean}"
+
+    # Rebuild the file: iterate original lines, swapping in updated assignment lines.
+    # We need to replace lines that were assignments and are present in changes.
+    updated_keys = set(changes.keys())
+    out: list[str] = []
+    for line in lines:
+        if _COMMENT_RE.match(line):
+            out.append(line)
+            continue
+        m = _ASSIGN_RE.match(line)
+        if m and m.group(1) in updated_keys:
+            out.append(by_key[m.group(1)].raw)
+            updated_keys.remove(m.group(1))
+        else:
+            out.append(line)
+    # Any updated key not found in a raw line (shouldn't happen for known keys) —
+    # defensively append at the end to avoid dropping data.
+    for key in updated_keys:
+        out.append(f"{key} = {changes[key]}")
+
+    ENV_PATH.write_text("\n".join(out) + ("\n" if text.endswith("\n") else ""), encoding="utf-8")
