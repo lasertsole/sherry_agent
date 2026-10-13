@@ -11,6 +11,9 @@
     <NuxtPage />
   </NuxtLayout>
   <ImagePreviewOverlay />
+  <!-- First run of a packaged desktop app: the shell downloads the Python backend
+       (see composables/use-backend-download.ts) and this card reports it. -->
+  <BackendDownloadOverlay />
   <Toast position="bottom-right" />
   <!-- Global confirm dialog (ConfirmationService is auto-registered along with components by
        @primevue/nuxt-module): destructive operations such as deleting a session/background task

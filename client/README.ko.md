@@ -14,7 +14,7 @@
 - **다크/라이트 모드 + i18n** — `@nuxtjs/color-mode` 테마와 4개 로케일(`zh` / `en` / `ja` / `ko`)
 - **듀얼 모드 브리지** — `bridge.ts`가 Tauri 데스크톱과 일반 브라우저를 자동 감지하여 적절한 전송 방식을 선택합니다
 
-> **개발 상태**: 활발히 개발 중입니다. 브라우저 코드 경로(Python 백엔드로의 직접 HTTP/WS)는 완전히 구현되어 있습니다. `src-tauri/`의 Rust 측은 현재 플레이스홀더 모듈만 포함합니다([아키텍처](#아키텍처) 참조).
+> **개발 상태**: 활발히 개발 중입니다. 브라우저 코드 경로(Python 백엔드로의 직접 HTTP/WS)는 완전히 구현되어 있습니다. `src-tauri/`는 데스크톱 셸입니다——Python 백엔드의 프로세스 수명 주기, 최초 실행 시 다운로드, 브리지가 호출하는 IPC 커맨드([아키텍처](#아키텍처) 참조).
 
 ---
 
@@ -34,8 +34,8 @@
    ofetch HTTP REST +            invoke() IPC 커맨드
    네이티브 WebSocket             + Tauri Events(agent:stream:*)
               |                            |
-              |                 src-tauri/(Rust 셸, 현재는
-              |                 플레이스홀더 모듈만 존재)
+              |                 src-tauri/(Rust 셸: 백엔드
+              |                 프로세스 + 최초 다운로드)
               |                            |
               +-------------+--------------+
                             |
@@ -64,7 +64,7 @@
     -> 반응형 UI 업데이트
 ```
 
-**Tauri 모드 참고 사항**: `bridge.ts`에는 Tauri IPC 코드 경로(`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`)가 `app/types/backend/*`(ts-rs 생성)와 대응되어 그대로 남아 있습니다. 그러나 `src-tauri/src/`는 현재 **빈 플레이스홀더 모듈만** 포함하며(`config/`, `core/`, `database/`, `prompts/`, `rag/`, `runtime/`, `sessions/`, `skills/`, `tools/`, `types/` — 각각 빈 `mod.rs`), Rust 엔트리 포인트와 IPC 커맨드 구현은 현재 코드 트리에 존재하지 않습니다. 또한 일부 흐름(하트비트, cron, 스킬, 채널, curator, 로그, `/env`, 서브에이전트 스티어)은 Rust를 완전히 우회하며 두 모드 모두에서 항상 `fetchApi`를 거칩니다.
+**Tauri 모드 참고 사항**: `bridge.ts`에는 Tauri IPC 코드 경로(`agent_chat`, `agent_stop`, `session_clear`, `session_history`, `system_prompt_*`, `memory_*`, `system_health`, `subagent_runs`, `subagent_run_delete`)가 `app/types/backend/*`(ts-rs 생성)와 대응되어 남아 있습니다. `src-tauri/src/`는 데스크톱 셸을 구현합니다: `services/python_process.rs`가 `SHERRY_HOME`을 앱 데이터 디렉터리로 향하게 하여 Python 백엔드를 실행하고, `services/backend_downloader.rs`는 패키지 빌드의 최초 실행 시 그 백엔드를 내려받으며(GitHub 릴리스 자산 + Tauri 진행 이벤트), `services/python_bridge.rs`가 HTTP로 백엔드와 통신하고, `commands/`가 IPC 진입점입니다. 또한 일부 흐름(하트비트, cron, 스킬, 채널, curator, 로그, `/env`, 서브에이전트 스티어)은 Rust를 완전히 우회하며 두 모드 모두에서 항상 `fetchApi`를 거칩니다.
 
 ---
 
@@ -213,9 +213,9 @@ client/
 │   ├── capabilities/default.json  # 권한(core:default, shell:*, notification,
 │   │                              #   global-shortcut:default, window-state:default)
 │   ├── icons/                     # 앱 아이콘
-│   ├── resources/                 # 번들 리소스 플레이스홀더(skills/, templates/)
-│   ├── src/                       # 빈 플레이스홀더 모듈만 존재: config/ core/ database/
-│   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
+│   ├── resources/                 # 플레이스홀더 디렉터리(skills/, templates/)——번들 리소스가 아님
+│   ├── src/                       # 데스크톱 셸: services/(python_process, backend_downloader,
+│   │                              #   python_bridge), commands/ —— 그 외 플레이스홀더 모듈
 │   ├── tests/                     # Rust 테스트 플레이스홀더(빈 mod.rs + .gitkeep 디렉터리)
 │   ├── benches/                   # 벤치마크 플레이스홀더
 
@@ -249,7 +249,7 @@ client/
 | **E2E repro**             | [@playwright/test](https://playwright.dev/) ^1.62                                                     | 개발 서버 대상 repro 테스트(Desktop Edge)                                |
 | **Lint / 포맷**           | ESLint ^10(flat config) + Prettier                                                                    | 코드 품질                                                                |
 | **타입 체크**             | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                             | `pnpm typecheck`                                                         |
-| **백엔드 언어**           | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94)                                            | Tauri 셸(src-tauri/, 현재는 플레이스홀더 모듈)                           |
+| **백엔드 언어**           | [Rust](https://www.rust-lang.org/) 2021 edition(MSRV 1.94)                                            | Tauri 셸(백엔드 프로세스 + 최초 다운로드)                                 |
 
 ### 주요 설정
 

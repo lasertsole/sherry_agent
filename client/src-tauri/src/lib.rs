@@ -2,7 +2,8 @@ mod commands;
 mod services;
 mod utils;
 
-use commands::{agent, session, system, system_prompt};
+use commands::{agent, backend, session, system, system_prompt};
+use services::backend_downloader::{ensure_and_launch, BackendDownloader, BackendDownloadState};
 use services::python_bridge::PythonBridge;
 use services::python_process::{BackendCommand, PythonProcessManager};
 use utils::config::AppConfig;
@@ -62,6 +63,9 @@ pub fn run() {
             // System
             system::system_info,
             system::system_health,
+            // Backend download (first run of a packaged app)
+            backend::backend_download_status,
+            backend::retry_backend_download,
         ])
         .setup(|app| {
             // ── System tray ──────────────────────────────────────
@@ -138,22 +142,13 @@ pub fn run() {
                 tracing::warn!(dir = %app_home.display(), "Failed to create the app-data directory: {e}");
             }
 
-            // Packaged builds ship the backend next to the app (see the bundle's
-            // `resources`); a checkout run has no such file and uses `python -m
-            // server` instead. EMA_AUTO_START_BACKEND can force the checkout
-            // path in a dev build.
-            let resource_dir = app
-                .path()
-                .resource_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
-            let packaged = PythonProcessManager::packaged_backend(&resource_dir);
-            tracing::info!(
-                resources = %resource_dir.display(),
-                found = packaged.is_some(),
-                "backend resource probe"
-            );
-            let project_root = std::env::var("EMA_PROJECT_ROOT")
-                .unwrap_or_else(|_| {
+            if cfg!(dev) {
+                // Development run (`pnpm tauri dev`, or a plain `cargo build`):
+                // the frozen backend is neither shipped nor downloaded here — the
+                // backend is the checkout's `python -m server`, started only with
+                // the EMA_AUTO_START_BACKEND opt-in, so a dev run behaves exactly
+                // as it always did.
+                let project_root = std::env::var("EMA_PROJECT_ROOT").unwrap_or_else(|_| {
                     // Default: two levels up from src-tauri/
                     std::env::current_dir()
                         .ok()
@@ -161,44 +156,45 @@ pub fn run() {
                         .map(|p| p.to_string_lossy().to_string())
                         .unwrap_or_else(|| ".".to_string())
                 });
-            let auto_start_requested = std::env::var("EMA_AUTO_START_BACKEND")
-                .map(|v| v == "true" || v == "1")
-                .unwrap_or(false);
-
-            let command = match packaged {
-                Some(exe) => {
-                    tracing::info!(exe = %exe.display(), "Using the bundled Python backend");
-                    BackendCommand::Packaged(exe)
-                }
-                None => BackendCommand::Checkout {
+                let command = BackendCommand::Checkout {
                     python: std::env::var("EMA_PYTHON").unwrap_or_else(|_| "python".to_string()),
                     root: std::path::PathBuf::from(&project_root),
-                },
-            };
-            let process_mgr = PythonProcessManager::new(command, app_home.clone());
-
-            // A packaged backend ALWAYS starts (there is no other way for the
-            // app to work); the checkout path needs the env opt-in or an
-            // explicit request, so a dev run stays exactly as it was.
-            let bundled = process_mgr.is_packaged();
-            if bundled || auto_start_requested {
-                match process_mgr.start() {
-                    Ok(true) => tracing::info!(
-                        home = %app_home.display(),
-                        bundled,
-                        "Python backend auto-started"
-                    ),
-                    Ok(false) => tracing::info!("Python backend already running"),
-                    Err(e) => tracing::warn!("Failed to auto-start Python backend: {e}"),
+                };
+                let process_mgr = PythonProcessManager::new(command, app_home.clone());
+                let auto_start_requested = std::env::var("EMA_AUTO_START_BACKEND")
+                    .map(|v| v == "true" || v == "1")
+                    .unwrap_or(false);
+                if auto_start_requested {
+                    match process_mgr.start() {
+                        Ok(true) => tracing::info!(
+                            home = %app_home.display(),
+                            "Checkout Python backend auto-started"
+                        ),
+                        Ok(false) => tracing::info!("Python backend already running"),
+                        Err(e) => tracing::warn!("Failed to auto-start Python backend: {e}"),
+                    }
+                } else {
+                    tracing::info!(
+                        "Development build without EMA_AUTO_START_BACKEND — expecting an externally started backend on 127.0.0.1:8080"
+                    );
                 }
+                app.manage(process_mgr);
             } else {
-                tracing::info!(
-                    "No bundled backend and EMA_AUTO_START_BACKEND is unset — expecting an externally started backend on 127.0.0.1:8080"
-                );
+                // Packaged desktop app: the installer ships only the SPA + this
+                // shell, so the backend lives in the app-data home — downloaded
+                // from GitHub Releases on the first launch (or when the installer
+                // is newer than the installed tree) and spawned from there. There
+                // is no other way for the app to work, so it ALWAYS starts.
+                let downloader = BackendDownloader::new(app_home.clone());
+                app.manage(BackendDownloadState::default());
+                app.manage(PythonProcessManager::new(
+                    BackendCommand::Packaged(downloader.backend_path()),
+                    app_home.clone(),
+                ));
+                if let Err(e) = ensure_and_launch(app.handle()) {
+                    tracing::warn!("Failed to ensure the Python backend: {e}");
+                }
             }
-
-            // Store the process manager as app state for cleanup
-            app.manage(process_mgr);
 
             Ok(())
         })

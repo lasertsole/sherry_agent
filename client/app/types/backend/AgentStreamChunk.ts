@@ -25,8 +25,7 @@ export type AgentStreamChunk = {
    */
   content: string;
   /**
-   * Chunk type: "text" (conversational), "tool_start" (tool begins), "tool_end" (tool completes),
-   * "tool_result" (tool execution result).
+   * Chunk type: "text" (conversational), "tool_start" (tool begins), "tool_end" (tool completes).
    */
   chunk_type: string;
 };

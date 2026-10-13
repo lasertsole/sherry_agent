@@ -404,14 +404,14 @@ pnpm tauri dev    # 네이티브 데스크톱 모드
 
 클라이언트는 기본적으로 `http://127.0.0.1:8080`의 Python 백엔드에 연결됩니다(`client/.env`의 `VITE_API_BACK_URL`로 설정 가능). 자세한 내용은 [클라이언트 README](client/README.md)를 참조하세요.
 
-**데스크톱 앱 패키징**(`pnpm tauri build`)은 백엔드까지 설치 파일에 넣으므로 대상 머신에 Python도, 가상환경도, 소스도 필요하지 않습니다:
+**데스크톱 앱 패키징**은 두 가지 산출물을 만듭니다. 설치 파일(프런트엔드 + Rust 셸——대상 머신에 Python도, 가상환경도, 소스도 필요하지 않음)과 최초 실행 시 내려받는 백엔드 아카이브입니다——GitHub 릴리스 자산은 파일당 2 GiB가 상한이고 백엔드는 이를 크게 넘기 때문입니다:
 
 ```bash
 uv run --with pyinstaller python packaging/build_backend.py   # 백엔드 → client/src-tauri/sherry-backend/
-cd client && pnpm tauri build                                 # → deb / AppImage / msi / dmg
+cd client && pnpm tauri build                                 # → deb / rpm / AppImage / msi / dmg
 ```
 
-두 단계 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env` / `.models` / `.network`——는 OS 앱 데이터 디렉터리(`SHERRY_HOME`, 셸이 주입)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
+`.github/workflows/desktop-build.yml`이 세 플랫폼에서 둘 다 빌드합니다. 두 단계 모두 대상 OS에서 각각 실행해야 합니다(PyInstaller는 크로스 컴파일 불가). 앱이 소유한 모든 데이터——세션, 메모리, 로그, 학습한 스킬, `.env` / `.models` / `.network`——는 OS 앱 데이터 디렉터리(`SHERRY_HOME`, 셸이 주입)에 기록되며 읽기 전용 설치 트리에는 쓰지 않습니다. 첫 실행에는 모델이 설정되지 않은 채 창이 열리고, 「모델 설정」에서 키를 입력한 뒤 앱을 다시 시작하면 적용됩니다.
 
 ---
 

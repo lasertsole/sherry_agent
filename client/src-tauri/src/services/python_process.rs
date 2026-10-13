@@ -3,14 +3,15 @@
 //! Spawns the backend as a child process when the Tauri app starts and kills it
 //! on exit. Two launch shapes:
 //!
-//! * **Packaged** — `<resource_dir>/sherry-backend/sherry-backend`, the
-//!   PyInstaller
-//!   build shipped inside the bundle. A packaged app ALWAYS starts this one: the
-//!   machine has no checkout, no venv and no `python` to fall back to.
+//! * **Packaged** — `<app_home>/sherry-backend/sherry-backend`, the PyInstaller
+//!   build the shell downloads from the repository's GitHub releases on the
+//!   first launch of a packaged app (see [`super::backend_downloader`]). A
+//!   packaged app ALWAYS starts this one: the machine has no checkout, no venv
+//!   and no `python` to fall back to.
 //! * **Checkout** — `python -m server` from the project root. Kept for
-//!   `pnpm tauri dev` and for an unpacked build next to the source tree; it is
-//!   used when the packaged binary is absent or `EMA_AUTO_START_BACKEND` asks
-//!   for it explicitly.
+//!   `pnpm tauri dev`: a development build neither ships nor downloads the
+//!   frozen backend, and starting the checkout server is opt-in through
+//!   `EMA_AUTO_START_BACKEND`.
 //!
 //! Either way the child gets `SHERRY_HOME` pointing at the app-data directory:
 //! the backend keeps sessions, memory, logs, skills and its `.env` there
@@ -20,14 +21,14 @@
 //! This module uses `std::process::Command` directly — it does not
 //! require the tauri-plugin-shell frontend API.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Child, Command};
 use std::sync::Mutex;
 
 /// Which command starts the backend.
 #[derive(Debug, Clone)]
 pub enum BackendCommand {
-    /// The bundled PyInstaller executable (absolute path).
+    /// The downloaded PyInstaller executable (absolute path in the app home).
     Packaged(PathBuf),
     /// `python -m server`, run from the checkout.
     Checkout { python: String, root: PathBuf },
@@ -56,26 +57,6 @@ impl PythonProcessManager {
             command,
             app_home,
         }
-    }
-
-    /// Whether this manager runs the bundled backend (vs the checkout one).
-    pub fn is_packaged(&self) -> bool {
-        matches!(self.command, BackendCommand::Packaged(_))
-    }
-
-    /// The packaged backend's path, when the bundle ships one.
-    ///
-    /// `resource_dir` is Tauri's resource root; the bundle config maps the
-    /// PyInstaller output there as `sherry-backend/` (the onedir layout keeps
-    /// the executable inside a directory of the same name).
-    pub fn packaged_backend(resource_dir: &Path) -> Option<PathBuf> {
-        let exe = if cfg!(windows) {
-            "sherry-backend.exe"
-        } else {
-            "sherry-backend"
-        };
-        let candidate = resource_dir.join("sherry-backend").join(exe);
-        candidate.is_file().then_some(candidate)
     }
 
     /// Spawn the backend process. A second call while one is alive is a no-op.
@@ -216,25 +197,13 @@ mod tests {
     }
 
     #[test]
-    fn packaged_backend_is_found_only_when_it_exists() {
-        let tmp = std::env::temp_dir().join(format!("sherry-backend-probe-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        let backend_dir = tmp.join("sherry-backend");
-        std::fs::create_dir_all(&backend_dir).unwrap();
-        assert!(PythonProcessManager::packaged_backend(&tmp).is_none());
-
-        let exe = if cfg!(windows) {
-            "sherry-backend.exe"
-        } else {
-            "sherry-backend"
-        };
-        std::fs::write(backend_dir.join(exe), b"#!/bin/sh\n").unwrap();
-
-        assert_eq!(
-            PythonProcessManager::packaged_backend(&tmp),
-            Some(backend_dir.join(exe))
-        );
-        let _ = std::fs::remove_dir_all(&tmp);
+    fn a_packaged_command_keeps_its_path() {
+        let exe = PathBuf::from("/tmp/sherry-backend/sherry-backend");
+        let mgr = PythonProcessManager::new(BackendCommand::Packaged(exe.clone()), PathBuf::from("/tmp"));
+        match &mgr.command {
+            BackendCommand::Packaged(path) => assert_eq!(path, &exe),
+            other => panic!("expected a packaged command, got {other:?}"),
+        }
     }
 
     #[test]

@@ -148,3 +148,7 @@ export { listLogFiles, readLogFile, openLogStream } from './bridge/logs';
 
 // ── Health ──────────────────────────────────────────────
 export { checkHealth } from './bridge/health';
+
+// ── Backend download (packaged desktop first run) ───────
+export type { BackendDownloadHandlers } from './bridge/backend-download';
+export { fetchBackendDownloadStatus, retryBackendDownload, subscribeBackendDownload } from './bridge/backend-download';

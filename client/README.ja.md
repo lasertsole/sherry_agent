@@ -14,7 +14,7 @@
 - **ダーク/ライトモード + i18n** — `@nuxtjs/color-mode` によるテーマと 4 ロケール（`zh` / `en` / `ja` / `ko`）
 - **デュアルモードブリッジ** — `bridge.ts` が Tauri デスクトップと通常のブラウザを自動判定し、適切なトランスポートを選択
 
-> **開発ステータス**：活発に開発中。ブラウザコードパス（Python バックエンドへの直接 HTTP/WS）は完全に実装済み。`src-tauri/` の Rust 側は現時点でプレースホルダーモジュールのみです（[アーキテクチャ](#アーキテクチャ)を参照）。
+> **開発ステータス**：活発に開発中。ブラウザコードパス（Python バックエンドへの直接 HTTP/WS）は完全に実装済み。`src-tauri/` はデスクトップシェルです——Python バックエンドのプロセス管理、初回起動時のダウンロード、ブリッジが呼ぶ IPC コマンド（[アーキテクチャ](#アーキテクチャ)を参照）。
 
 ---
 
@@ -34,8 +34,8 @@
    ofetch HTTP REST +            invoke() IPC コマンド
    ネイティブ WebSocket           + Tauri Events（agent:stream:*）
               |                            |
-              |                 src-tauri/（Rust シェル、現在は
-              |                 プレースホルダーのみ）
+              |                 src-tauri/（Rust シェル：バックエンド
+              |                 プロセス + 初回ダウンロード）
               |                            |
               +-------------+--------------+
                             |
@@ -64,7 +64,7 @@
     -> リアクティブな UI 更新
 ```
 
-**Tauri モードに関する注記**：`bridge.ts` には Tauri IPC コードパス（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`）が `app/types/backend/*`（ts-rs 生成）と対応して完全に残っています。しかし `src-tauri/src/` は現時点で**空のプレースホルダーモジュールのみ**（`config/`、`core/`、`database/`、`prompts/`、`rag/`、`runtime/`、`sessions/`、`skills/`、`tools/`、`types/` — それぞれ空の `mod.rs`）であり、Rust エントリポイントと IPC コマンド実装は現在のコードツリーに存在しません。さらに、一部のフロー（ハートビート、cron、スキル、チャネル、curator、ログ、`/env`、サブエージェントのステア）は Rust を完全にバイパスし、両モードで常に `fetchApi` を経由します。
+**Tauri モードに関する注記**：`bridge.ts` には Tauri IPC コードパス（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`）が `app/types/backend/*`（ts-rs 生成）と対応して残っています。`src-tauri/src/` はデスクトップシェルを実装します：`services/python_process.rs` が `SHERRY_HOME` をアプリデータディレクトリに向けて Python バックエンドを起動し、`services/backend_downloader.rs` がパッケージ版の初回起動時にそのバックエンドをダウンロードし（GitHub リリース資産 + Tauri 進捗イベント）、`services/python_bridge.rs` が HTTP でバックエンドと通信し、`commands/` が IPC エントリポイントです。さらに、一部のフロー（ハートビート、cron、スキル、チャネル、curator、ログ、`/env`、サブエージェントのステア）は Rust を完全にバイパスし、両モードで常に `fetchApi` を経由します。
 
 ---
 
@@ -213,9 +213,9 @@ client/
 │   ├── capabilities/default.json  # 権限（core:default、shell:*、notification、
 │   │                              #   global-shortcut:default、window-state:default）
 │   ├── icons/                     # アプリアイコン
-│   ├── resources/                 # バンドルリソースのプレースホルダー（skills/、templates/）
-│   ├── src/                       # 空のプレースホルダーモジュールのみ: config/ core/ database/
-│   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
+│   ├── resources/                 # プレースホルダーディレクトリ（skills/、templates/）——バンドルリソースではありません
+│   ├── src/                       # デスクトップシェル：services/（python_process、backend_downloader、
+│   │                              #   python_bridge）、commands/ —— ほかにプレースホルダーモジュール
 │   ├── tests/                     # Rust テストプレースホルダー（空 mod.rs + .gitkeep ディレクトリ）
 │   ├── benches/                   # ベンチマークプレースホルダー
 
@@ -249,7 +249,7 @@ client/
 | **E2E repro**                    | [@playwright/test](https://playwright.dev/) ^1.62                                                        | 開発サーバーに対する repro テスト（Desktop Edge）                                          |
 | **Lint / フォーマット**          | ESLint ^10（flat config）+ Prettier                                                                      | コード品質                                                                                 |
 | **型チェック**                   | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                                | `pnpm typecheck`                                                                           |
-| **バックエンド言語**             | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri シェル（src-tauri/、現在はプレースホルダーモジュール）                               |
+| **バックエンド言語**             | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri シェル（バックエンドプロセス + 初回ダウンロード）                     |
 
 ### 主要な設定
 

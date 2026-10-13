@@ -1,11 +1,20 @@
-"""Build the bundled desktop backend (PyInstaller onedir) into the Tauri tree.
+"""Build the desktop backend tree (PyInstaller onedir) for the release archive.
 
     uv run --with pyinstaller python packaging/build_backend.py
 
-Writes ``client/src-tauri/sherry-backend/sherry-backend`` (the executable + its
-``_internal`` tree + the shipped data files). ``tauri build`` copies that
-directory into the app bundle as the ``backend`` resource, and the Rust shell
-spawns it (see ``client/src-tauri/src/services/python_process.rs``).
+Writes ``client/src-tauri/sherry-backend/`` — the executable, its ``_internal``
+tree, the shipped data files and a ``VERSION`` marker. That directory's
+CONTENTS become the per-platform release archive
+(``sherry-backend-<os>-<arch>.tar.gz|.zip``, built by
+``.github/workflows/desktop-build.yml``), which the desktop shell downloads on
+its first launch into ``<app_home>/sherry-backend/`` and spawns (see
+``client/src-tauri/src/services/backend_downloader.rs``).
+
+The ``VERSION`` marker is what keeps that download to once per release: it holds
+the installer's own version (``client/src-tauri/tauri.conf.json``, the field the
+shell reports as ``package_info().version``), and a tree whose marker differs is
+re-downloaded. Do not derive it from a git tag or a branch name — the shell
+compares it against the version it was built with.
 
 ONEDIR on purpose: the dependency tree is measured in gigabytes, so a onefile
 build would unpack it on every launch.
@@ -16,6 +25,7 @@ target (Linux/Windows/macOS) right before ``tauri build`` there.
 
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import sys
@@ -25,6 +35,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DIST_DIR = ROOT / "client" / "src-tauri"
 APP_DIR = DIST_DIR / "sherry-backend"
 WORK_DIR = ROOT / "build" / "pyinstaller"
+TAURI_CONF = DIST_DIR / "tauri.conf.json"
 
 #: Ship data the backend reads from the code tree (the rest of the runtime tree
 #: is user data and lives in SHERRY_HOME). ``source:dest`` pairs, relative to the
@@ -71,6 +82,25 @@ COLLECT_SUBMODULES = (
 #: Static analysers that only a subagent feature needs; excluding them keeps the
 #: bundle from dragging every tree-sitter grammar's sources in twice.
 EXCLUDES = ("tkinter", "matplotlib", "IPython", "jupyter", "pytest", "pandas.tests")
+
+
+def installer_version() -> str:
+    """The version the Tauri installer reports — ``tauri.conf.json``'s ``version``.
+
+    The shell re-downloads the backend when this differs from the tree's
+    ``VERSION`` marker, and the value it compares against is the config the
+    installer was built from, so the marker must come from the same field.
+    """
+    data = json.loads(TAURI_CONF.read_text(encoding="utf-8"))
+    version = str(data.get("version", "")).strip()
+    return version or "0.0.0"
+
+
+def write_version_marker(app_dir: Path, version: str | None = None) -> Path:
+    """Write ``VERSION`` into the built tree and return its path."""
+    marker = app_dir / "VERSION"
+    marker.write_text(f"{version or installer_version()}\n", encoding="utf-8")
+    return marker
 
 
 def main() -> int:
@@ -130,10 +160,13 @@ def main() -> int:
     if not exe.is_file():
         print(f"expected the executable at {exe}", file=sys.stderr)
         return 1
+    # The version marker the shell compares against its own build version.
+    version = installer_version()
+    write_version_marker(APP_DIR, version)
     # Ship the doc with the artifact (PyInstaller wiped the directory).
     shutil.copy2(ROOT / "packaging" / "README.md", APP_DIR / "README.md")
     total = sum(f.stat().st_size for f in APP_DIR.rglob("*") if f.is_file())
-    print(f"ok: {exe} ({total / (1024**3):.2f} GiB)")
+    print(f"ok: {exe} ({total / (1024**3):.2f} GiB, VERSION={version})")
     return 0
 
 

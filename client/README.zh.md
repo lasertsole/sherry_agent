@@ -14,7 +14,7 @@
 - **深色/浅色模式 + 国际化** — `@nuxtjs/color-mode` 主题与 4 种语言（`zh` / `en` / `ja` / `ko`）
 - **双模式桥接** — `bridge.ts` 自动检测 Tauri 桌面环境与普通浏览器，并选择对应的传输方式
 
-> **开发状态**：积极开发中。浏览器代码路径（直连 Python 后端的 HTTP/WS）已完整实现；`src-tauri/` 的 Rust 侧目前仅包含占位模块（见[架构](#架构)）。
+> **开发状态**：积极开发中。浏览器代码路径（直连 Python 后端的 HTTP/WS）已完整实现；`src-tauri/` 是桌面外壳——Python 后端的进程生命周期、首次启动下载，以及桥接层调用的 IPC 命令（见[架构](#架构)）。
 
 ---
 
@@ -34,8 +34,8 @@
    ofetch HTTP REST +            invoke() IPC 命令
    原生 WebSocket                + Tauri Events（agent:stream:*）
               |                            |
-              |                 src-tauri/（Rust 外壳，目前
-              |                 仅含占位模块）
+              |                 src-tauri/（Rust 外壳：后端
+              |                 进程 + 首次启动下载）
               |                            |
               +-------------+--------------+
                             |
@@ -64,7 +64,7 @@
     -> 响应式 UI 更新
 ```
 
-**关于 Tauri 模式的说明**：`bridge.ts` 仍保留了完整的 Tauri IPC 代码路径（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`），与 `app/types/backend/*`（ts-rs 生成）一一对应。但 `src-tauri/src/` 目前**仅包含空的占位模块**（`config/`、`core/`、`database/`、`prompts/`、`rag/`、`runtime/`、`sessions/`、`skills/`、`tools/`、`types/` —— 各为一个空的 `mod.rs`）；当前代码树中不存在 Rust 入口与 IPC 命令实现。此外，若干流程（心跳、定时任务、技能、通道、curator、日志、`/env`、子智能体操控）完全绕过 Rust，在两种模式下都始终走 `fetchApi`。
+**关于 Tauri 模式的说明**：`bridge.ts` 保留了 Tauri IPC 代码路径（`agent_chat`、`agent_stop`、`session_clear`、`session_history`、`system_prompt_*`、`memory_*`、`system_health`、`subagent_runs`、`subagent_run_delete`），与 `app/types/backend/*`（ts-rs 生成）一一对应。`src-tauri/src/` 实现了桌面外壳：`services/python_process.rs` 启动 Python 后端并把 `SHERRY_HOME` 指向应用数据目录，`services/backend_downloader.rs` 在打包版首次启动时下载该后端（GitHub Release 资产 + Tauri 进度事件），`services/python_bridge.rs` 通过 HTTP 与后端通信，`commands/` 是 IPC 入口。此外，若干流程（心跳、定时任务、技能、通道、curator、日志、`/env`、子智能体操控）完全绕过 Rust，在两种模式下都始终走 `fetchApi`。
 
 ---
 
@@ -213,9 +213,9 @@ client/
 │   ├── capabilities/default.json  # 权限（core:default、shell:*、notification、
 │   │                              #   global-shortcut:default、window-state:default）
 │   ├── icons/                     # 应用图标
-│   ├── resources/                 # 打包资源占位（skills/、templates/）
-│   ├── src/                       # 仅含空占位模块：config/ core/ database/
-│   │                              #   prompts/ rag/ runtime/ sessions/ skills/ tools/ types/
+│   ├── resources/                 # 占位目录（skills/、templates/）——已不是打包资源
+│   ├── src/                       # 桌面外壳：services/（python_process、backend_downloader、
+│   │                              #   python_bridge）、commands/ —— 另有占位模块
 │   ├── tests/                     # Rust 测试占位（空 mod.rs + .gitkeep 目录）
 │   ├── benches/                   # 基准测试占位
 
@@ -249,7 +249,7 @@ client/
 | **E2E repro**       | [@playwright/test](https://playwright.dev/) ^1.62                                                        | 面向开发服务器的 repro 测试（Desktop Edge）                            |
 | **Lint / 格式化**   | ESLint ^10（flat config）+ Prettier                                                                      | 代码质量                                                               |
 | **类型检查**        | [vue-tsc](https://github.com/vuejs/language-tools) ^3.3.9                                                | `pnpm typecheck`                                                       |
-| **后端语言**        | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri 外壳（src-tauri/，目前为占位模块）                               |
+| **后端语言**        | [Rust](https://www.rust-lang.org/) 2021 edition（MSRV 1.94）                                             | Tauri 外壳（后端进程 + 首次启动下载）                                  |
 
 ### 关键配置
 

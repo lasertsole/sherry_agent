@@ -1,0 +1,212 @@
+# Desktop builds: three-platform Tauri installers + the Python backend archives.
+#
+# The installer ships ONLY the front end + the Rust shell (~30 MiB). The backend
+# tree (a PyInstaller onedir, gigabytes) is built as its own artifact, published
+# as a `sherry-backend-<os>-<arch>` release asset, and downloaded by the shell on
+# the app's first launch — see `client/src-tauri/src/services/backend_downloader.rs`
+# and `packaging/README.md`.
+#
+#   push to main / a v* tag / manual dispatch -> build and upload artifacts
+#   a v* tag additionally creates the GitHub Release (assets from a branch push
+#   are temporary: 90 days, Actions storage)
+#
+# The two halves are PARALLEL jobs that share nothing: the Tauri job never needs
+# Python, the backend job never needs Rust. That is also what keeps each job's
+# disk footprint inside a hosted runner's budget.
+#
+# Two constraints shape the backend job:
+#
+#  * GitHub caps a release asset at 2 GiB. The Linux wheel of PyTorch on PyPI
+#    drags ~5 GiB of CUDA/cuDNN/nccl payload (the lock's torch dependencies for
+#    Linux), which both blows that cap and triples what a user downloads on first
+#    launch — so Linux swaps in PyTorch's CPU build. macOS and Windows wheels are
+#    already CPU-only.
+#  * PyInstaller cannot cross-compile, so each OS builds its own tree.
+
+name: Desktop build
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+# Never cancel a build in flight: a tag push must be able to publish, and a
+# half-uploaded 2 GiB artifact is worse than a slow queue.
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ── The Python backend tree (slow: dependency install + PyInstaller) ──────
+  build-backend:
+    name: Backend (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+            arch: x86_64
+            archive: tar.gz
+          - os: windows-latest
+            platform: windows
+            arch: x86_64
+            archive: zip
+          - os: macos-latest
+            platform: macos
+            arch: arm64
+            archive: tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv + Python 3.13
+        uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      # Everything the backend imports at runtime, at the versions uv.lock pins.
+      - name: Install locked dependencies
+        run: uv sync --frozen
+
+      - name: Swap in CPU-only PyTorch (Linux)
+        if: matrix.platform == 'linux'
+        run: |
+          # Drop the CUDA family the lock installs for Linux, then re-install
+          # torch/torchvision from PyTorch's CPU index. The index proxies PyPI for
+          # every other name, so only the two torch packages change wheels.
+          uv pip freeze | grep -Ei '^(nvidia-|cuda-|triton)' | cut -d= -f1 | xargs -r uv pip uninstall
+          uv pip uninstall torch torchvision
+          uv pip install --index-url https://download.pytorch.org/whl/cpu "torch==2.14.0" "torchvision==0.29.0"
+
+      - name: Install PyInstaller
+        run: uv pip install pyinstaller
+
+      # `--no-sync` is load-bearing: a plain `uv run` would re-sync the venv from
+      # the lock and silently put CUDA PyTorch back on Linux.
+      - name: Build the backend tree
+        run: uv run --no-sync python packaging/build_backend.py
+
+      # The archive holds the tree's CONTENTS at its root (`cd sherry-backend &&
+      # tar czf … .`): that is the layout the shell's installer expects.
+      - name: Compress the backend (Linux/macOS)
+        if: matrix.archive == 'tar.gz'
+        shell: bash
+        run: |
+          cd client/src-tauri/sherry-backend
+          tar czf "${{ github.workspace }}/sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}.tar.gz" .
+
+      - name: Compress the backend (Windows)
+        if: matrix.archive == 'zip'
+        shell: pwsh
+        run: |
+          cd client/src-tauri/sherry-backend
+          7z a -tzip "${{ github.workspace }}\sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}.zip" .
+
+      # The archive is what ships; the tree and PyInstaller's work dir are only
+      # build residue and would otherwise sit on the runner through the upload.
+      - name: Drop the build residue
+        shell: bash
+        run: rm -rf client/src-tauri/sherry-backend build/pyinstaller
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}
+          path: sherry-backend-${{ matrix.platform }}-${{ matrix.arch }}.${{ matrix.archive }}
+          retention-days: 90
+          if-no-files-found: error
+
+  # ── The installers (fast: SPA + Rust shell, no backend) ──────────────────
+  build-tauri:
+    name: Installer (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+    steps:
+      - uses: actions/checkout@v4
+
+      # Tauri's Linux webview + bundler prerequisites (Ubuntu 24.04 names).
+      - name: Install Linux system dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
+            libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: client/src-tauri
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: client/pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        working-directory: client
+        run: pnpm install --frozen-lockfile
+
+      # `beforeBuildCommand` runs `nuxt generate` (the static SPA the bundle
+      # serves from disk), then the Rust shell is compiled and bundled. The
+      # backend is NOT part of the bundle — every platform's bundler is asked for
+      # its native targets (deb/rpm/appimage, nsis/msi, dmg/app).
+      - name: Build the installers
+        working-directory: client
+        run: pnpm tauri build
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tauri-installer-${{ matrix.platform }}
+          path: |
+            client/src-tauri/target/release/bundle/deb/*.deb
+            client/src-tauri/target/release/bundle/rpm/*.rpm
+            client/src-tauri/target/release/bundle/appimage/*.AppImage
+            client/src-tauri/target/release/bundle/nsis/*.exe
+            client/src-tauri/target/release/bundle/msi/*.msi
+            client/src-tauri/target/release/bundle/dmg/*.dmg
+          retention-days: 90
+          if-no-files-found: error
+
+  # ── Publish (tag pushes only) ────────────────────────────────────────────
+  # A release is what a user downloads from: the installers for their platform
+  # plus the backend archive the app fetches on first launch. `latest` is the
+  # release the shell's default URL resolves to, so publish the tag as latest.
+  release:
+    name: Publish the release
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [build-backend, build-tauri]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          make_latest: true
+          files: artifacts/**/*
