@@ -72,7 +72,7 @@ User message → Robyn WS → agent.core.built_agent() graph
   │     20-100 char window with request phrasing (してください / 해줘 / please / 帮我) and no
   │     keyword; armed sessions and session-less calls stay rule-only, and every failure
   │     path is fail-open to "not a task")
-  │    → MessagePersistence → LLMRetry → Summarization → TodoContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload)
+  │    → MessagePersistence → LLMRetry → Summarization → PlanContinuationEnforcer(E3; gates the plan = todos + open TaskFlow flows; delivered through the auto-turn trigger, which DEFERS past the ending turn's own `ws_task`/`answering` busy signals — up to `TODOLIST_INFRA["continuation_self_idle_wait_s"]` (30 s) — because the enforcer's hook runs while that stream is still draining; a directive still refused at the cap means a real user turn took over and is dropped. The client cannot stream that turn (it sends no `turn_started`), so `use-chat-stream.ts` refetches the newest turn page on its `done` — without that, the continuation ran but stayed invisible until a manual reload)
   │    (WorkspaceNotice is a before_agent node: once per turn it compares the
   │     session's effective root with PROJECT_DIR_ANNOUNCED and the root's git
   │     branch+HEAD with GIT_HEAD_ANNOUNCED — what the agent was last told about
@@ -520,8 +520,10 @@ the model/thinking controls)::
   a display/run-time condition, so nothing extra is stored and re-enabling memory brings the
   nudge back. Of the built-ins only 全量 leaves it alone (absent = on): 纯净 / 编程助手 /
   情感陪伴 pin `nudge: false`.
-- **Middlewares**: three optional entries are switchable (`TodoContinuationEnforcer`,
-  `TaskIntentMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
+- **Middlewares**: FOUR optional entries are switchable (`PlanContinuationEnforcer`
+  — renamed from `TodoContinuationEnforcer`, which old preset payloads still name via
+  `agent_switch._RENAMED_MIDDLEWARES` — `TaskIntentMiddleware`,
+  `DynamicReminderMiddleware`, `SubagentCompletionDrainMiddleware`); each hook early-returns through
   `agent/middlewares/agent_switch.py::middleware_enabled`, and that helper answers `True` for
   every REQUIRED name (a payload written before an entry was promoted cannot switch it off).
   `WorkspaceNoticeMiddleware` and `MultimodalProcessor` joined the required set: the chain

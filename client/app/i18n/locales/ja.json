@@ -223,7 +223,8 @@
         "interaction": "対話",
         "web": "ウェブ",
         "browser": "ブラウザ",
-        "mcp": "MCP"
+        "mcp": "MCP",
+        "plan_mode": "プランモード"
       },
       "middlewares": {
         "nudgeLabel": "nudge を有効化",
@@ -232,10 +233,6 @@
         "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
       },
       "middleware": {
-        "TodoContinuationEnforcer": {
-          "name": "計画の継続",
-          "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
-        },
         "TaskIntentMiddleware": {
           "name": "タスク意図の誘導",
           "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
@@ -255,6 +252,14 @@
         "Summarization": {
           "name": "要約圧縮",
           "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
+        },
+        "PlanContinuationEnforcer": {
+          "name": "プラン継続",
+          "desc": "プラン（todo / TaskFlow）が未完了のとき自動で次のターンを続行"
+        },
+        "DynamicReminderMiddleware": {
+          "name": "ライブリマインダー",
+          "desc": "毎ターン、ライブビュー（todo / TaskFlow ボード / 作業ディレクトリ等）を system-reminder として注入"
         }
       },
       "subagents": {

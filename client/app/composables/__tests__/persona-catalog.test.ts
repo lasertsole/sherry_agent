@@ -109,7 +109,12 @@ const FACTS = {
     { name: 'todoread', group: 'tasks' },
     { name: 'sessions_spawn', group: 'subagents' }
   ],
-  gateableMiddlewares: ['TodoContinuationEnforcer', 'TaskIntentMiddleware', 'SubagentCompletionDrainMiddleware'],
+  gateableMiddlewares: [
+    'PlanContinuationEnforcer',
+    'TaskIntentMiddleware',
+    'DynamicReminderMiddleware',
+    'SubagentCompletionDrainMiddleware'
+  ],
   // The required multimedia chain first (the backend serves it that way), then
   // the four work-flow skills 编程助手 picks and two it does not.
   skills: [

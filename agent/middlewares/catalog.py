@@ -29,7 +29,7 @@ __all__ = [
 
 #: Registration order of the main-agent chain (``agent/core.py::_build_middlewares``).
 MIDDLEWARE_ORDER: tuple[str, ...] = (
-    "TodoContinuationEnforcer",
+    "PlanContinuationEnforcer",
     "system_prompt_injection",
     "WorkspaceNoticeMiddleware",
     "ToolSelectionMiddleware",
@@ -41,6 +41,7 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
     "PathGuard",
     "SubagentCompletionDrainMiddleware",
     "TaskIntentMiddleware",
+    "DynamicReminderMiddleware",
     "OutputRepetitionGuard",
     "MaxTokensBoostMiddleware",
     "ThinkingControlMiddleware",
@@ -57,8 +58,9 @@ MIDDLEWARE_ORDER: tuple[str, ...] = (
 #: without them and the service rejects a payload that tries to disable one.
 GATEABLE_MIDDLEWARES: frozenset[str] = frozenset(
     {
-        "TodoContinuationEnforcer",
+        "PlanContinuationEnforcer",
         "TaskIntentMiddleware",
+        "DynamicReminderMiddleware",
         "SubagentCompletionDrainMiddleware",
     }
 )

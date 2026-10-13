@@ -223,7 +223,8 @@
         "interaction": "交互",
         "web": "网络",
         "browser": "浏览器",
-        "mcp": "MCP"
+        "mcp": "MCP",
+        "plan_mode": "计划模式"
       },
       "middlewares": {
         "nudgeLabel": "启用 nudge",
@@ -232,10 +233,6 @@
         "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
       },
       "middleware": {
-        "TodoContinuationEnforcer": {
-          "name": "计划续跑",
-          "desc": "计划（待办/任务流）未完成时自动继续下一轮"
-        },
         "TaskIntentMiddleware": {
           "name": "任务意图引导",
           "desc": "识别工作型请求并注入编排提示"
@@ -255,6 +252,14 @@
         "Summarization": {
           "name": "摘要压缩",
           "desc": "上下文压缩、溢出处理与压缩后的 nudge"
+        },
+        "PlanContinuationEnforcer": {
+          "name": "计划续跑",
+          "desc": "计划（待办/任务流）未完成时自动继续下一轮"
+        },
+        "DynamicReminderMiddleware": {
+          "name": "动态提醒",
+          "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
         }
       },
       "subagents": {

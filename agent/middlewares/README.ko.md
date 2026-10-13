@@ -27,7 +27,8 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
   - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [TaskIntentMiddleware](#taskintentmiddleware)
-  - [TodoContinuationEnforcer](#todocontinuationenforcer)
+  - [PlanContinuationEnforcer](#plancontinuationenforcer)
+  - [DynamicReminderMiddleware](#dynamicremindermiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
@@ -90,7 +91,7 @@ EMA AI Agent의 미들웨어 계층: 모델 호출과 도구 호출의 모든 �
 middleware = [
     # after_agent 후크는 리스트 역순으로 실행됩니다: 가장 먼저 등록된
     # enforcer가 턴 종료 시 가장 마지막에 실행되어, 진짜 끝난 턴을 관측합니다.
-    TodoContinuationEnforcer(),
+    PlanContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt: 시스템 프롬프트 주입
     # 작업 디렉터리 변경 알림: 턴 시작 시 프로젝트 디렉터리가 마지막으로 알린
     # 루트와 다르면 HumanMessage 바로 앞에 AIMessage 하나를 삽입한다
@@ -104,6 +105,7 @@ middleware = [
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
+    DynamicReminderMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     # per-session thinking toggle (client switch → /sessions/thinking):
@@ -159,7 +161,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 요약 트리거가 토큰 전용이 아니라 메시지 수(40) **또는** 토큰 수(컨텍스트 윈도우의 80%).
 - 더 타이트한 반복 예산(90 대신 60).
-- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `WorkspaceNoticeMiddleware`, `TodoContinuationEnforcer`도 없음.
+- `system_prompt_injection`(`@dynamic_prompt`), `MultimodalProcessor`, `HumanInTheLoop`, `LLMRetryMiddleware` 없음 (자식 에이전트에는 분류 기반 재시도/폴백 루프가 없음). `PathGuard`, `TaskIntentMiddleware`, `WorkspaceNoticeMiddleware`, `PlanContinuationEnforcer`도 없음.
 - `MessagePersistenceMiddleware` 없음: 자식 세션은 클라이언트에 보이는 MesMemory 이력의 일부가 아닙니다 — 트랜스크립트는 체크포인트에만 남고, 부모에게 보이는 완료 캐리어만 `origin='subagent_completion'`으로 영속화됩니다.
 - `ContextEvictionMiddleware` 없음: 자식 트랜스크립트는 완전한 도구 결과를 유지하며(퇴거 파일도 read_file 슬라이스도 없음), 거대한 인간 메시지도 태깅/뷰 절단 대상이 되지 않습니다.
 - `OutputRepetitionGuard`는 여기서 실제 미들웨어로 동작.
@@ -176,7 +178,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `wrap_model_call` (최외곽 → 최내곽) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization이 LLM에 가장 가까움. LLMRetry는 Summarization의 T4/T5 복구 링을 바깥에서 감싸고 MaxTokensBoost 안쪽에 위치하여 진짜 잘림만 목격함) |
 | `after_model` (역순) | MessagePersistenceMiddleware → HumanInTheLoop (영속화가 먼저: 이 후크를 구현하는 마지막 미들웨어이며 스스로 fail-open이므로, HITL의 거부 재작성도 `GraphInterrupt`도 플러시를 건너뛸 수 없음) |
 | `wrap_tool_call` (최외곽 → 최내곽) | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (최내곽, 도구에 가장 가까움: 반환된 `ToolMessage`를 플러시. HITL의 interrupt/거부 단락은 이를 우회하며, 그 거부들은 다음 모델 경계에서 영속화됨. 퇴거는 영속화 바깥에 있어 원문이 먼저 플러시되고 미리보기만 state로 진행됨) |
-| `after_agent` (역순) | HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄) |
+| `after_agent` (역순) | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness가 마지막에 등록된 `after_agent` 구현자라 가장 먼저 실행되고, 가장 먼저 등록된 enforcer가 마지막에 실행되어 끝난 턴을 봄) |
 
 해당 페이즈의 후크를 구현한 미들웨어만 행에 표시합니다.
 
@@ -189,7 +191,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **모듈:** `agent/middlewares/system_prompt/core.py` · **미들웨어:** `system_prompt_injection` (LangChain `@dynamic_prompt`가 생성하는 `AgentMiddleware` 인스턴스)
 **후크:** `wrap_model_call` / `awrap_model_call`
 
-리스트의 두 번째, `TodoContinuationEnforcer`(모델 호출 래핑을 구현하지 않음) 바로 뒤에 위치하여 최외곽 **래핑** 계층입니다. 데코레이터가 생성하는 클래스는 `wrap_model_call`과 `awrap_model_call`을 모두 등록합니다(피장식 함수는 동기이며 비동기 래퍼에서도 호출됩니다).
+리스트의 두 번째, `PlanContinuationEnforcer`(모델 호출 래핑을 구현하지 않음) 바로 뒤에 위치하여 최외곽 **래핑** 계층입니다. 데코레이터가 생성하는 클래스는 `wrap_model_call`과 `awrap_model_call`을 모두 등록합니다(피장식 함수는 동기이며 비동기 래퍼에서도 호출됩니다).
 
 **시스템 프롬프트 주입**
 
@@ -246,7 +248,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 끌 수 있음 | 끄면 |
 | --- | --- |
-| `TodoContinuationEnforcer` | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
+| `PlanContinuationEnforcer` | 계획(todo / 플로우)이 미완이어도 턴을 이어가지 않음 |
 | `TaskIntentMiddleware` | 작업 의도 유도 메시지를 주입하지 않음 |
 | `SubagentCompletionDrainMiddleware` | 서브에이전트 완료 결과를 주입하지 않음 |
 
@@ -366,9 +368,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 주입은 턴의 첫 모델 호출에서만 발생합니다(마지막 비지시 `HumanMessage`가 마지막 메시지여야 함). 드레인된 완료 캐리어(`metadata.internal` + `provenance == "subagent_completion"`), `[SYSTEM DIRECTIVE` / `<sherry-ulw-execute>` 지시, `metadata.internal` 메시지는 스티어링을 트리거하지 않으므로 주입된 지시가 미들웨어를 재무장시킬 수 없습니다. fail-open: 내부 예외는 로그로 남기고 후크는 `None`을 반환합니다.
 
-### TodoContinuationEnforcer
+### PlanContinuationEnforcer
 
-**모듈:** `agent/middlewares/todo_continuation/core.py` · **클래스:** `TodoContinuationEnforcer(AgentMiddleware)`
+**모듈:** `agent/middlewares/todo_continuation/core.py` · **클래스:** `PlanContinuationEnforcer(AgentMiddleware)`
 **후크:** `aafter_agent` 전용(비동기 턴 종료 후크)
 
 메인 에이전트 리스트에서 **가장 먼저** 등록되므로 `after_agent`는 **가장 마지막**에 실행됩니다 — `after_agent` 후크는 리스트 역순으로 실행되며, enforcer는 진짜 끝난 턴을 관측해야 합니다. 게이트 대상은 **계획 전체**입니다. 세션 todo 목록(`pending` / `in_progress`)과 **미종료 TaskFlow 플로**(`ready` / `blocked` / `dispatched` 단계, 그리고 모든 단계가 정리됐지만 닫히지 않은 플로) — 어느 하나라도 남으면 턴이 이어지고, 지시문이 남은 웨이브/단계와 마무리에 필요한 보드 호출을 함께 명시합니다. 주입은 서버 소유 자동 턴 후크(`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, 호출 시점 해석; 미등록이면 세션을 재시도 가능한 상태로 두는 no-op으로 열화)를 통해 fire-and-forget으로 수행됩니다.
@@ -376,6 +378,19 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 중단류 턴 오류(사용자 취소 / 타임아웃, `stagnation_tracker.is_abort_error`)는 절대 연속하지 않으며, 비어 있거나 전부 완료된 목록은 정체 추적기를 리셋합니다.
 - 정체 처리(`agent/tools/todolist/stagnation_tracker.py`): 여러 시도 후에도 목록이 변하지 않으면 복구 모드에 들어가 `_RECOVERY_PROMPT`를 주입합니다. `is_in_cooldown`이 반복 주입을 제한하고, 전달 성공 후에만 `mark_injected`로 기록합니다.
 - fail-open: 예외는 로그로 남기고 턴은 정상 종료됩니다.
+- **todowrite 넛지**: 훅은 `todowrite`를 호출하지 않은 턴 수를 세고(`stagnation_tracker.record_turn` / `record_todowrite`, 그 턴에 `todowrite`를 호출하면 0으로), `TODOLIST_INFRA["todo_write_nudge_turns"]`(10)를 넘으면 계속 지시문 뒤에 `[REMINDER: TODO TRACKING]` 블록을 **덧붙입니다** — 스냅샷 정체 감지가 볼 수 없는 유일한 형태입니다(TaskFlow를 진행하면 streak이 지워지고 todo 목록은 썩습니다). 복구 모드는 자체의 더 강한 todowrite 안내를 가지며 넛지는 붙지 않습니다.
+
+### DynamicReminderMiddleware
+
+**모듈:** `agent/middlewares/reminder_catalog/`(`core.py` = 카탈로그, `sources.py` = 등록된 라이브 뷰, `dynamic.py` = 훅) · **클래스:** `DynamicReminderMiddleware(AgentMiddleware)`
+**훅:** `abefore_model`(비동기; 동기 쌍둥이는 최선 노력 폴백)
+
+`TaskIntentMiddleware` 바로 뒤에 등록됩니다(그 턴 내 중복 제거는 실행 시 사용자 메시지가 마지막이어야 합니다). 턴의 **첫 모델 호출**에 **라이브 뷰**를 `<system-reminder source="…">` HumanMessage로 주입합니다: 플랜 모드, 작업 디렉터리, todo 목록, 활성 작업 포인터, TaskFlow 보드, 연속성 컨텍스트, 지식 인덱스. 시스템 프롬프트 자체는 이제 안정적 내용(persona + memory + 스킬 인덱스)만 담습니다 — 첫 토큰이 매 턴 바뀌는 프롬프트는 그 뒤 모든 것의 prefix 캐시를 무효화합니다; 설정 변경/압축 때만 재구성되는 프롬프트는 그 사이 **오래된** todo 목록을 보여줍니다.
+
+- **카탈로그가 결정합니다**: 소스는 builder, 소스별 상한, 우선순위, `cooldown_turns`(TaskFlow 보드 / boulder: 5턴에 한 번), `only_if_changed`(동일 내용은 반복하지 않음)를 선언합니다. 총량은 `REMINDER_CATALOG["total_budget_chars"]`(30 000)로 제한되며, 초과 시 최저 우선순위를 **통째로** 버리고 문장 중간을 자르지 않습니다. 스로틀 상태는 실제로 주입된 소스만 진행됩니다.
+- **태그 계약**은 `pub/func/message/system_reminder.py`(provenance `reminder_catalog`, `internal=True`, 소스 id를 `origin`으로)에 있습니다; 페이로드 내부의 중첩 태그는 이스케이프됩니다(todo 텍스트는 사용자 영향 가능). 인간 메시지를 훑는 스캐너는 `is_system_reminder`로 리마인더를 건너뜁니다: 턴 분할, HITL의 운영자 판정, 요약 / memory_flush 라벨.
+- **압축 후** 카탈로그가 리셋되어 다음 턴에 모든 소스가 live state에서 재도출됩니다 — 이 층은 오래된 리마인더의 생존에 의존하지 않습니다.
+- 다른 선택 항목과 같이 **스위치로 게이트**되며(`middleware_enabled`), 전체가 fail-open입니다: builder 실패나 레지스트리 판독 불가는 리마인더 1건 손실로 끝나고 턴은 깨지지 않습니다.
 
 ### HeartbeatStaleness
 
@@ -880,10 +895,10 @@ agent = create_agent(
 │         (최내곽 wrap. HITL 거부는 우회하며 다음 경계에서 영속화)
 │
 └─ after_agent (역순)
-    HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer
+    HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer
     · HeartbeatStaleness  하트비트 타이머 중지
     · MultimodalProcessor  mutil_temp 청소(7일 초과 / 숫자 아닌 파일명)
-    · TodoContinuationEnforcer  미완료 todo가 남아 있으면 연속 프롬프트를 fire-and-forget으로 주입
+    · PlanContinuationEnforcer  미완료 todo가 남아 있으면 연속 프롬프트를 fire-and-forget으로 주입
     · (system_prompt_injection는 라이프사이클 후크를 구현하지 않습니다; 메시지 영속화는
        자체 after_model 후크에서 실행되고, 메모리 리뷰 / 플랜 추출 nudge는 대신
        Summarization의 압축 경로 안에서 발화합니다.)
@@ -1001,9 +1016,14 @@ agent/middlewares/
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # TaskIntentMiddleware 익스포트
 │   └── core.py                  # TaskIntentMiddleware
-├── todo_continuation/           # TodoContinuationEnforcer
-│   ├── __init__.py              # TodoContinuationEnforcer 익스포트
-│   └── core.py                  # TodoContinuationEnforcer
+├── reminder_catalog/            # DynamicReminderMiddleware(+ 리마인더 소스)
+│   ├── __init__.py              # 내보내기 + 기본 소스 등록
+│   ├── core.py                  # 카탈로그: register / resolve_injections / 예산
+│   ├── dynamic.py               # before_model 훅
+│   └── sources.py               # 주입 가능한 라이브 뷰
+├── todo_continuation/           # PlanContinuationEnforcer
+│   ├── __init__.py              # PlanContinuationEnforcer 익스포트
+│   └── core.py                  # PlanContinuationEnforcer
 ├── tool_call_normalize/         # ToolCallNormalize
 │   ├── __init__.py              # ToolCallNormalize 익스포트
 │   └── core.py                  # ToolCallNormalize
@@ -1043,6 +1063,6 @@ from agent.middlewares import (
 )
 # 공유 헬퍼도 익스포트됩니다: BeforeAgentHooksMixin,
 # AfterAgentHooksMixin, require_session_id, args_hash.
-# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / TodoContinuationEnforcer
+# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / PlanContinuationEnforcer
 # 는 agent/core.py가 각 하위 모듈에서 임포트합니다 — 패키지는 재익스포트하지 않습니다.
 ```

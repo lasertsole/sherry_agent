@@ -615,9 +615,13 @@ onMounted(() => {
           "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
         },
         "middleware": {
-          "TodoContinuationEnforcer": {
+          "PlanContinuationEnforcer": {
             "name": "计划续跑",
             "desc": "计划（待办/任务流）未完成时自动继续下一轮"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "动态提醒",
+            "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
           },
           "TaskIntentMiddleware": {
             "name": "任务意图引导",
@@ -907,9 +911,13 @@ onMounted(() => {
           "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
         },
         "middleware": {
-          "TodoContinuationEnforcer": {
+          "PlanContinuationEnforcer": {
             "name": "Plan continuation",
             "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "Live reminders",
+            "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
           },
           "TaskIntentMiddleware": {
             "name": "Task-intent steering",
@@ -1199,9 +1207,13 @@ onMounted(() => {
           "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
         },
         "middleware": {
-          "TodoContinuationEnforcer": {
+          "PlanContinuationEnforcer": {
             "name": "計画の継続",
             "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "ライブリマインダー",
+            "desc": "毎ターン、ライブビュー（todo / TaskFlow ボード / 作業ディレクトリ等）を system-reminder として注入"
           },
           "TaskIntentMiddleware": {
             "name": "タスク意図の誘導",
@@ -1491,9 +1503,13 @@ onMounted(() => {
           "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
         },
         "middleware": {
-          "TodoContinuationEnforcer": {
+          "PlanContinuationEnforcer": {
             "name": "계획 이어가기",
             "desc": "계획(todo / 플로우)이 끝나지 않은 동안 턴을 이어갑니다"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "실시간 리마인더",
+            "desc": "매 턴 라이브 뷰(todo / TaskFlow 보드 / 작업 디렉터리 등)를 system-reminder로 주입"
           },
           "TaskIntentMiddleware": {
             "name": "작업 의도 유도",

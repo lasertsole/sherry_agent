@@ -27,7 +27,8 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
   - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [TaskIntentMiddleware](#taskintentmiddleware)
-  - [TodoContinuationEnforcer](#todocontinuationenforcer)
+  - [PlanContinuationEnforcer](#plancontinuationenforcer)
+  - [DynamicReminderMiddleware](#dynamicremindermiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
@@ -90,7 +91,7 @@ EMA AI Agent のミドルウェア層：モデル呼び出しとツール呼び�
 middleware = [
     # after_agent フックはリスト逆順に走る: 最初に登録された enforcer が
     # ターン終了時に最後に実行され、本当に終わったターンを観測する。
-    TodoContinuationEnforcer(),
+    PlanContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt：システムプロンプト注入
     # 作業ディレクトリ変更通知: ターン開始時に、プロジェクト ディレクトリが前回
     # 伝えたルートから動いていれば HumanMessage の直前に AIMessage を挿入する
@@ -105,6 +106,7 @@ middleware = [
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
+    DynamicReminderMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     # per-session thinking toggle (client switch → /sessions/thinking):
@@ -160,7 +162,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 要約トリガーはトークンのみではなく、メッセージ数（40）**または**トークン数（コンテキストウィンドウの 80 %）。
 - より厳しい反復予算（90 ではなく 60）。
-- `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`WorkspaceNoticeMiddleware`、`TodoContinuationEnforcer` もなし。
+- `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware` はなし（子エージェントには分類済みリトライ/フォールバックループがない）。`PathGuard`、`TaskIntentMiddleware`、`WorkspaceNoticeMiddleware`、`PlanContinuationEnforcer` もなし。
 - `MessagePersistenceMiddleware` なし：子セッションはクライアント可視の MesMemory 履歴には含まれません —— トランスクリプトはチェックポイントにのみ存在し、親から見える完了キャリアだけが `origin='subagent_completion'` で永続化されます。
 - `ContextEvictionMiddleware` なし：子トランスクリプトは完全なツール結果を保持し（退避ファイルも read_file スライスもなし）、巨大な人間メッセージもタグ付け・ビュー切り詰めの対象になりません。
 - `OutputRepetitionGuard` はここでは本物のミドルウェアとして動作。
@@ -177,7 +179,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `wrap_model_call`（最外層 → 最内層） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization（Summarization が LLM に最も近い。LLMRetry は Summarization の T4/T5 リカバリを外側から包み、MaxTokensBoost の内側に位置するため、本当の切断だけを目にする） |
 | `after_model`（逆順） | MessagePersistenceMiddleware → HumanInTheLoop（永続化が先：このフックを実装する最後のミドルウェアであり、自身は fail-open なので、HITL の拒否書き換えも `GraphInterrupt` もフラッシュを飛ばせない） |
 | `wrap_tool_call`（最外層 → 最内層） | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内層でツールに最も近い：返された `ToolMessage` をフラッシュ。HITL の interrupt/拒否短絡はこれを迂回し、それらの拒否は次のモデル境界で永続化される。退避は永続化の外側にあり、原文が先にフラッシュされ、プレビューだけが state へ進む） |
-| `after_agent`（逆順） | HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する） |
+| `after_agent`（逆順） | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness が最後に登録された `after_agent` 実装者なので最初に走る。最初に登録された enforcer は最後に走り、終了したターンを観測する） |
 
 そのフェーズに該当するフックを実装しているミドルウェアだけを行に記載しています。
 
@@ -190,7 +192,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **モジュール：** `agent/middlewares/system_prompt/core.py` · **ミドルウェア：** `system_prompt_injection`（LangChain `@dynamic_prompt` が生成する `AgentMiddleware` インスタンス）
 **フック：** `wrap_model_call` / `awrap_model_call`
 
-リストの 2 番目、`TodoContinuationEnforcer`（モデル呼び出しラップを実装しない）の直後に位置し、したがって最外層の **ラップ** 層です。デコレータが生成するクラスは `wrap_model_call` と `awrap_model_call` の両方を登録します（被装飾関数は同期で、非同期ラッパーからも呼ばれます）。
+リストの 2 番目、`PlanContinuationEnforcer`（モデル呼び出しラップを実装しない）の直後に位置し、したがって最外層の **ラップ** 層です。デコレータが生成するクラスは `wrap_model_call` と `awrap_model_call` の両方を登録します（被装飾関数は同期で、非同期ラッパーからも呼ばれます）。
 
 **システムプロンプト注入**
 
@@ -247,7 +249,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 無効化可能 | オフにしたときの効果 |
 | --- | --- |
-| `TodoContinuationEnforcer` | 計画（todo / フロー）が未完了でもターンを継続しない |
+| `PlanContinuationEnforcer` | 計画（todo / フロー）が未完了でもターンを継続しない |
 | `TaskIntentMiddleware` | タスク意図の誘導メッセージを注入しない |
 | `SubagentCompletionDrainMiddleware` | サブエージェントの完了結果を注入しない |
 
@@ -367,9 +369,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 注入はターンの最初のモデル呼び出しでのみ発生します（最後の非ディレクティブ `HumanMessage` が末尾メッセージであること）。ドレイン済みの完了キャリア（`metadata.internal` + `provenance == "subagent_completion"`）、`[SYSTEM DIRECTIVE` / `<sherry-ulw-execute>` 指令、`metadata.internal` メッセージはステアリングを発火させないため、注入された指令が再アーミングを起こすことはありません。fail-open：内部例外はログに記録され、フックは `None` を返します。
 
-### TodoContinuationEnforcer
+### PlanContinuationEnforcer
 
-**モジュール：** `agent/middlewares/todo_continuation/core.py` · **クラス：** `TodoContinuationEnforcer(AgentMiddleware)`
+**モジュール：** `agent/middlewares/todo_continuation/core.py` · **クラス：** `PlanContinuationEnforcer(AgentMiddleware)`
 **フック：** `aafter_agent` のみ（非同期ターン終了フック）
 
 メインエージェントのリストで**最初**に登録されるため、`after_agent` は**最後**に実行されます — `after_agent` フックはリスト逆順に走り、enforcer は本当に終わったターンを観測する必要があるためです。ゲートの対象は**計画全体**です。セッションの todo リスト（`pending` / `in_progress`）**と**未終了の TaskFlow フロー（`ready` / `blocked` / `dispatched` のステップ、および全ステップが決着したのに未クローズのフロー）——どちらかが残ればターンは続き、残りのウェーブ/ステップと収束に必要なボード呼び出しを指示に明記します。注入はサーバー側の自動ターンフック（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`、呼び出し時に解決。未登録なら no-op に劣化しセッションは再試行可能なまま）を通じて fire-and-forget で行います。
@@ -377,6 +379,19 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 中断クラスのターンエラー（ユーザーキャンセル / タイムアウト、`stagnation_tracker.is_abort_error`）では決して継続しません。空または全完了のリストは停滞トラッカーをリセットします。
 - 停滞処理（`agent/tools/todolist/stagnation_tracker.py`）：複数回の試行後もリストが変わらない場合は復帰モードに入り `_RECOVERY_PROMPT` を注入します。`is_in_cooldown` が繰り返し注入を抑制し、配信成功後にのみ `mark_injected` で記録します。
 - fail-open：例外はログに記録され、ターンは通常どおり終了します。
+- **todowrite ナッジ**: フックは `todowrite` を呼ばないターン数を数え（`stagnation_tracker.record_turn` / `record_todowrite`。そのターンに `todowrite` を呼べばリセット）、`TODOLIST_INFRA["todo_write_nudge_turns"]`（10）を超えると継続指令に `[REMINDER: TODO TRACKING]` ブロックを**追記**します——スナップショット停滞検出が見逃す唯一の形（TaskFlow を進めると streak が消え、todo リストは腐る）です。リカバリモードは独自のより強い todowrite ガイダンスを持ち、ナッジは付きません。
+
+### DynamicReminderMiddleware
+
+**モジュール:** `agent/middlewares/reminder_catalog/`（`core.py` = カタログ、`sources.py` = 登録済みライブビュー、`dynamic.py` = フック） · **クラス:** `DynamicReminderMiddleware(AgentMiddleware)`
+**フック:** `abefore_model`（非同期。同期版はベストエフォートのフォールバック）
+
+`TaskIntentMiddleware` の直後に登録されます（そのターン内重複排除は、実行時にユーザーメッセージが最後のままである必要があります）。ターンの**最初のモデル呼び出し**で、**ライブビュー**を `<system-reminder source="…">` HumanMessage として注入します: プランモード、作業ディレクトリ、todo リスト、アクティブ作業ポインタ、TaskFlow ボード、継続コンテキスト、知識索引。システムプロンプト自体は安定した内容（persona + memory + スキル索引）だけを載せます——最初のトークンが毎ターン変わるプロンプトは、以降すべての prefix キャッシュを無効化します; 設定変更 / 圧縮でしか再構築されないプロンプトは、その間**古い** todo リストを見せ続けます。
+
+- **カタログが決めます**: ソースは builder、ソース単位の上限、優先度、`cooldown_turns`（TaskFlow ボード / boulder: 5 ターンに 1 回まで）、`only_if_changed`（同一内容は繰り返さない）を宣言します。総量は `REMINDER_CATALOG["total_budget_chars"]`（30 000）で制限され、超過時は最低優先度を**丸ごと**落とし、途中で切ることはしません。スロットル状態は実際に注入されたソースだけ進みます。
+- **タグ契約**は `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、ソース ID を `origin` に）にあります; ペイロード内のネストしたタグはエスケープされます（todo テキストはユーザーの影響を受けます）。人間メッセージを走査するスキャナは `is_system_reminder` でリマインダーを飛ばします: ターン分割、HITL のオペレーター判定、要約 / memory_flush のラベル。
+- **圧縮後**はカタログがリセットされ、次のターンにすべてのソースが live state から再導出されます——この層は古いリマインダーの生存に依存しません。
+- 他のオプション項目と同様に**スイッチで門控**され（`middleware_enabled`）、全体がフェイルオープンです: builder の失敗やレジストリ不可読はリマインダー 1 件の損失で済み、ターンは壊れません。
 
 ### HeartbeatStaleness
 
@@ -884,10 +899,10 @@ agent = create_agent(
 │         （最内層 wrap。HITL 拒否は迂回し、次の境界で永続化）
 │
 └─ after_agent（逆順）
-    HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer
+    HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer
     · HeartbeatStaleness  ハートビートタイマーを停止
     · MultimodalProcessor  mutil_temp を清掃（7 日超 / 非数値ファイル名）
-    · TodoContinuationEnforcer  未完了の todo が残っていれば継続プロンプトを fire-and-forget で注入
+    · PlanContinuationEnforcer  未完了の todo が残っていれば継続プロンプトを fire-and-forget で注入
     · （system_prompt_injection はライフサイクルフックを実装しません；メッセージ永続化は
        専用の after_model フックで走り、メモリレビュー / プラン抽出 nudge は代わりに
        Summarization の圧縮パス内で発火します。）
@@ -1005,9 +1020,14 @@ agent/middlewares/
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # TaskIntentMiddleware をエクスポート
 │   └── core.py                  # TaskIntentMiddleware
-├── todo_continuation/           # TodoContinuationEnforcer
-│   ├── __init__.py              # TodoContinuationEnforcer をエクスポート
-│   └── core.py                  # TodoContinuationEnforcer
+├── reminder_catalog/            # DynamicReminderMiddleware（＋リマインダーソース）
+│   ├── __init__.py              # エクスポートと既定ソースの登録
+│   ├── core.py                  # カタログ: register / resolve_injections / 予算
+│   ├── dynamic.py               # before_model フック
+│   └── sources.py               # 注入可能なライブビュー
+├── todo_continuation/           # PlanContinuationEnforcer
+│   ├── __init__.py              # PlanContinuationEnforcer をエクスポート
+│   └── core.py                  # PlanContinuationEnforcer
 ├── tool_call_normalize/         # ToolCallNormalize
 │   ├── __init__.py              # ToolCallNormalize をエクスポート
 │   └── core.py                  # ToolCallNormalize
@@ -1047,6 +1067,6 @@ from agent.middlewares import (
 )
 # 共有ヘルパーもエクスポートされています：BeforeAgentHooksMixin、
 # AfterAgentHooksMixin、require_session_id、args_hash。
-# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / TodoContinuationEnforcer
+# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / PlanContinuationEnforcer
 # は agent/core.py が各サブモジュールからインポートします — パッケージは再エクスポートしません。
 ```

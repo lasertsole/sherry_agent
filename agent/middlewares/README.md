@@ -27,7 +27,8 @@ The middleware layer of the EMA AI Agent: `AgentMiddleware` components that shap
   - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [TaskIntentMiddleware](#taskintentmiddleware)
-  - [TodoContinuationEnforcer](#todocontinuationenforcer)
+  - [PlanContinuationEnforcer](#plancontinuationenforcer)
+  - [DynamicReminderMiddleware](#dynamicremindermiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
@@ -90,7 +91,7 @@ Details in [Shared State System](#shared-state-system).
 middleware = [
     # after_agent hooks run in reverse list order: registered FIRST, the
     # enforcer runs LAST at turn end and observes the truly finished turn.
-    TodoContinuationEnforcer(),
+    PlanContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt: system prompt injection
     # working-directory change notice: at each turn start, splice an AIMessage
     # in front of the human message when the project directory moved since the
@@ -105,6 +106,7 @@ middleware = [
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
+    DynamicReminderMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     # per-session thinking toggle (client switch → /sessions/thinking):
@@ -160,7 +162,7 @@ Differences vs the main agent:
 
 - Summarization triggers on message count (40) **or** tokens (80 % of the context window) instead of only tokens.
 - A tighter iteration budget (60 instead of 90).
-- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `TodoContinuationEnforcer`, no `WorkspaceNoticeMiddleware`.
+- No `system_prompt_injection` (`@dynamic_prompt`), no `MultimodalProcessor`, no `HumanInTheLoop`, no `LLMRetryMiddleware` (children do not get the classified retry/fallback loop), no `PathGuard`, no `TaskIntentMiddleware`, no `PlanContinuationEnforcer`, no `WorkspaceNoticeMiddleware`.
 - No `MessagePersistenceMiddleware`: child sessions are not part of the client-visible MesMemory history — their transcript stays checkpoint-only, and only the parent-visible completion carrier is persisted (with `origin='subagent_completion'`).
 - No `ContextEvictionMiddleware`: child transcripts keep their full tool results (no eviction files, no read_file slice) and oversized human messages are never tagged/truncated.
 - `OutputRepetitionGuard` runs as a real middleware here.
@@ -177,7 +179,7 @@ Differences vs the main agent:
 | `wrap_model_call` (outermost → innermost) | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization (Summarization sits closest to the LLM; LLMRetry wraps Summarization's T4/T5 recovery from the outside and sits inside MaxTokensBoost so it only sees genuine truncations) |
 | `after_model` (reverse order) | MessagePersistenceMiddleware → HumanInTheLoop (persistence runs first: it is the last registered middleware implementing the hook, and it is fail-open, so neither HITL's denial rewrite nor a `GraphInterrupt` can skip the flush) |
 | `wrap_tool_call` (outermost → innermost) | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware (innermost, closest to the tool: it flushes the returned `ToolMessage`s; HITL's interrupt/denial short-circuit skips it, and those denials persist at the next model boundary. Eviction sits outside persistence, so the raw result is flushed first and only the preview travels on to state) |
-| `after_agent` (reverse order) | HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn) |
+| `after_agent` (reverse order) | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer (HeartbeatStaleness is the last registered `after_agent` implementer, so it runs first; the enforcer registered first runs last and sees the finished turn) |
 
 Only the middlewares that implement a given hook appear in that phase's row.
 
@@ -190,7 +192,7 @@ Only the middlewares that implement a given hook appear in that phase's row.
 **Module:** `agent/middlewares/system_prompt/core.py` · **Middleware:** `system_prompt_injection` (an `AgentMiddleware` instance created by LangChain's `@dynamic_prompt`)
 **Hooks:** `wrap_model_call` / `awrap_model_call`
 
-Second in the list, right after `TodoContinuationEnforcer` (which implements no model-call wrap), therefore the outermost **wrap** layer. The decorator's generated class registers both `wrap_model_call` and `awrap_model_call` (the decorated function is sync and is also called from the async wrapper).
+Second in the list, right after `PlanContinuationEnforcer` (which implements no model-call wrap), therefore the outermost **wrap** layer. The decorator's generated class registers both `wrap_model_call` and `awrap_model_call` (the decorated function is sync and is also called from the async wrapper).
 
 **System-prompt injection**
 
@@ -247,7 +249,7 @@ Unset config (or `tools: null`) = every tool, byte-for-byte the old behaviour. F
 
 | Gateable | Effect of turning it off |
 | --- | --- |
-| `TodoContinuationEnforcer` | the plan (todos / flows) no longer keeps the turn alive |
+| `PlanContinuationEnforcer` | the plan (todos / flows) no longer keeps the turn alive |
 | `TaskIntentMiddleware` | no task-intent steering message |
 | `SubagentCompletionDrainMiddleware` | a finished subagent's result is not injected |
 
@@ -367,9 +369,9 @@ Registered in the main agent immediately after `SubagentCompletionDrainMiddlewar
 
 Injection happens only on the first model call of a turn (the last non-directive `HumanMessage` must be the final message). A drained completion carrier (`metadata.internal` + `provenance == "subagent_completion"`), `[SYSTEM DIRECTIVE` / `<sherry-ulw-execute>` directives, and `metadata.internal` messages never trigger steering, so injected directives cannot re-arm the middleware. Fail-open: any internal error is logged and the hook returns `None`.
 
-### TodoContinuationEnforcer
+### PlanContinuationEnforcer
 
-**Module:** `agent/middlewares/todo_continuation/core.py` · **Class:** `TodoContinuationEnforcer(AgentMiddleware)`
+**Module:** `agent/middlewares/todo_continuation/core.py` · **Class:** `PlanContinuationEnforcer(AgentMiddleware)`
 **Hooks:** `aafter_agent` only (async turn-end hook)
 
 Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `after_agent` hooks execute in reverse list order, and the enforcer must observe the truly finished turn. It gates the whole **plan**: the session's todo list (`pending` / `in_progress`) AND its non-terminal TaskFlow flows (`ready` / `blocked` / `dispatched` steps, plus a flow whose steps are all settled but which was never closed) — either surface keeps the turn alive, and the directive names the remaining waves/steps together with the board call that closes them. Delivery is fire-and-forget through the server-owned auto-turn hook (`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`, resolved at call time; an unregistered hook degrades to a no-op that leaves the session retryable).
@@ -377,6 +379,19 @@ Registered FIRST in the main-agent list, so its `after_agent` runs LAST — `aft
 - Abort-class turn errors (user cancel / timeout, `stagnation_tracker.is_abort_error`) never continue; an empty or fully complete todo list resets the stagnation tracker.
 - Stagnation handling (`agent/tools/todolist/stagnation_tracker.py`): an unchanged list across attempts enters recovery mode with `_RECOVERY_PROMPT`; `is_in_cooldown` throttles repeat injections; the trigger is recorded via `mark_injected` only after a successful delivery.
 - Fail-open: any error is logged and the turn ends normally.
+- **todowrite nudge**: the hook counts turns without a `todowrite` (`stagnation_tracker.record_turn` / `record_todowrite`, reset by a `todowrite` call in the turn) and, past `TODOLIST_INFRA["todo_write_nudge_turns"]` (10), APPENDS a `[REMINDER: TODO TRACKING]` block to the continuation directive — the one shape the snapshot stagnation check cannot see (an agent advancing TaskFlow clears the streak while the todo list rots). Recovery mode keeps its own, stronger todowrite guidance and gets no nudge.
+
+### DynamicReminderMiddleware
+
+**Module:** `agent/middlewares/reminder_catalog/` (`core.py` = the catalogue, `sources.py` = the registered live views, `dynamic.py` = the hook) · **Class:** `DynamicReminderMiddleware(AgentMiddleware)`
+**Hooks:** `abefore_model` (async; the sync twin is a best-effort fallback)
+
+Registered immediately AFTER `TaskIntentMiddleware` (whose per-turn dedup needs the user message still last when it runs). On the turn's FIRST model call it injects the LIVE views as `<system-reminder source="…">` HumanMessages: plan mode, the working directory, the todo list, the active-work pointer, the TaskFlow board, continuity context, the knowledge index. The system prompt itself now carries only stable content (persona + memory + skills index) — a prompt whose first tokens change per turn invalidates the provider's prefix cache for everything after it, and a prompt only rebuilt on a config change / compaction showed a STALE todo list in between.
+
+- **The catalogue decides**: each source declares a builder, a per-source cap, a priority, `cooldown_turns` (the TaskFlow board / boulder: at most once per 5 turns) and `only_if_changed` (an identical payload is not repeated). The total is bounded by `REMINDER_CATALOG["total_budget_chars"]` (30 000) — over budget the lowest priority is dropped WHOLE, never truncated mid-thought. The throttle advances only for sources actually injected.
+- **The tag contract** lives in `pub/func/message/system_reminder.py` (provenance `reminder_catalog`, `internal=True`, the source id as `origin`); nested tags inside a payload are escaped (todo text is user-influenced). The human-message scanners skip reminders through `is_system_reminder`: turn splitting, HITL's headless-turn check, the summarizer / memory-flush labels.
+- **After a compaction** the catalogue is reset, so the next turn re-derives every source from live state — the layer never depends on the older reminders surviving the compression.
+- **Gated** like the other optional entries (`middleware_enabled`), and fail-open throughout: a broken builder or an unreadable register costs a reminder, never a turn.
 
 ### HeartbeatStaleness
 
@@ -883,10 +898,10 @@ user turn arrives
 │         (innermost wrap layer; HITL denials bypass it and persist at the next boundary)
 │
 └─ after_agent (reverse order)
-    HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer
+    HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer
     · HeartbeatStaleness  stop heartbeat timer
     · MultimodalProcessor  clean mutil_temp (> 7 days / non-numeric stems)
-    · TodoContinuationEnforcer  fire-and-forget a continuation prompt if todos remain
+    · PlanContinuationEnforcer  fire-and-forget a continuation prompt if todos remain
     · (system_prompt_injection overrides no lifecycle hooks; message persistence
        runs in its own after_model hook and the memory-review / plan-extraction
        nudges fire inside Summarization's compact path instead.)
@@ -1004,9 +1019,14 @@ agent/middlewares/
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # exports TaskIntentMiddleware
 │   └── core.py                  # TaskIntentMiddleware
-├── todo_continuation/           # TodoContinuationEnforcer
-│   ├── __init__.py              # exports TodoContinuationEnforcer
-│   └── core.py                  # TodoContinuationEnforcer
+├── reminder_catalog/            # DynamicReminderMiddleware (+ the reminder sources)
+│   ├── __init__.py              # exports + registers the default sources
+│   ├── core.py                  # the catalogue: register / resolve_injections / budgets
+│   ├── dynamic.py               # the before_model hook
+│   └── sources.py               # the live views it can inject
+├── todo_continuation/           # PlanContinuationEnforcer
+│   ├── __init__.py              # exports PlanContinuationEnforcer
+│   └── core.py                  # PlanContinuationEnforcer
 ├── tool_call_normalize/         # ToolCallNormalize
 │   ├── __init__.py              # exports ToolCallNormalize
 │   └── core.py                  # ToolCallNormalize
@@ -1046,7 +1066,7 @@ from agent.middlewares import (
 )
 # Shared helpers are exported as well: BeforeAgentHooksMixin,
 # AfterAgentHooksMixin, require_session_id, args_hash.
-# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / TodoContinuationEnforcer
+# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / PlanContinuationEnforcer
 # are imported from their submodules by agent/core.py — the package does not re-export them.
 ```
 

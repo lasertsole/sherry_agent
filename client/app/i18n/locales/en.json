@@ -223,7 +223,8 @@
         "interaction": "Interaction",
         "web": "Web",
         "browser": "Browser",
-        "mcp": "MCP"
+        "mcp": "MCP",
+        "plan_mode": "Plan mode"
       },
       "middlewares": {
         "nudgeLabel": "Enable nudge",
@@ -232,10 +233,6 @@
         "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
       },
       "middleware": {
-        "TodoContinuationEnforcer": {
-          "name": "Plan continuation",
-          "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
-        },
         "TaskIntentMiddleware": {
           "name": "Task-intent steering",
           "desc": "Detects work requests and injects the orchestration prompt"
@@ -255,6 +252,14 @@
         "Summarization": {
           "name": "Summarization",
           "desc": "Context compression, overflow handling and the post-compression nudges"
+        },
+        "PlanContinuationEnforcer": {
+          "name": "Plan continuation",
+          "desc": "Continues the plan (todos / TaskFlow flows) while it is incomplete"
+        },
+        "DynamicReminderMiddleware": {
+          "name": "Live reminders",
+          "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
         }
       },
       "subagents": {

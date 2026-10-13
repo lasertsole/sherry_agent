@@ -27,7 +27,8 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
   - [PathGuard](#pathguard)
   - [SubagentCompletionDrainMiddleware](#subagentcompletiondrainmiddleware)
   - [TaskIntentMiddleware](#taskintentmiddleware)
-  - [TodoContinuationEnforcer](#todocontinuationenforcer)
+  - [PlanContinuationEnforcer](#plancontinuationenforcer)
+  - [DynamicReminderMiddleware](#dynamicremindermiddleware)
   - [HeartbeatStaleness](#heartbeatstaleness)
   - [HumanInTheLoop](#humanintheloop)
   - [MessagePersistenceMiddleware](#messagepersistencemiddleware)
@@ -90,7 +91,7 @@ EMA AI Agent 的中间件层：作用于每一次模型调用与工具调用的 
 middleware = [
     # after_agent 钩子按列表逆序执行：最先注册的 enforcer 在回合结束时
     # 最后运行，从而观察到真正结束的回合。
-    TodoContinuationEnforcer(),
+    PlanContinuationEnforcer(),
     system_prompt_injection,  # @dynamic_prompt：系统提示词注入
     # 工作目录变更通知：每轮开始时若项目目录与上次告知 Agent 的根不同，
     # 就在 HumanMessage 之前插入一条 AIMessage（只发一条，写最终根）
@@ -104,6 +105,7 @@ middleware = [
     PathGuard(),
     SubagentCompletionDrainMiddleware(),
     TaskIntentMiddleware(),
+    DynamicReminderMiddleware(),
     OutputRepetitionGuard(),
     MaxTokensBoostMiddleware(),
     # per-session thinking toggle (client switch → /sessions/thinking):
@@ -158,7 +160,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 - 摘要触发条件改为消息数（40）**或** token 数（上下文窗口的 80 %），而非仅 token。
 - 更紧的迭代预算（60 而非 90）。
-- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`TodoContinuationEnforcer`、`WorkspaceNoticeMiddleware`。
+- 没有 `system_prompt_injection`（`@dynamic_prompt`）、`MultimodalProcessor`、`HumanInTheLoop`、`LLMRetryMiddleware`（子 Agent 没有分类式重试/回退循环）、`PathGuard`、`TaskIntentMiddleware`、`PlanContinuationEnforcer`、`WorkspaceNoticeMiddleware`。
 - 没有 `MessagePersistenceMiddleware`：子会话不属于客户端可见的 MesMemory 历史 —— 其对话只存在于检查点，仅父会话可见的完成载体以 `origin='subagent_completion'` 落库。
 - 没有 `ContextEvictionMiddleware`：子会话保留完整的工具结果（不写驱逐文件、不做 read_file 切片），超长人类消息也不打标、不截断视图。
 - `OutputRepetitionGuard` 在这里作为真正的中间件运行。
@@ -175,7 +177,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 | `wrap_model_call`（最外层 → 最内层） | system_prompt_injection → MultimodalProcessor → IterationBudget → ContextEvictionMiddleware → OutputRepetitionGuard → MaxTokensBoostMiddleware → HeartbeatStaleness → LLMRetryMiddleware → Summarization（Summarization 最贴近 LLM；LLMRetry 从外部包住 Summarization 的 T4/T5 恢复环，并位于 MaxTokensBoost 内层，因此只看到真正的截断） |
 | `after_model`（逆序） | MessagePersistenceMiddleware → HumanInTheLoop（落库先跑：它是列表里最后一个实现该钩子的中间件，且自身 fail-open，因此 HITL 的拒绝改写与 `GraphInterrupt` 都无法跳过落库） |
 | `wrap_tool_call`（最外层 → 最内层） | IterationBudget → ToolGuardrails → ContextEvictionMiddleware → PathGuard → HeartbeatStaleness → HumanInTheLoop → MessagePersistenceMiddleware（最内层、最贴近工具：工具返回即落库其 `ToolMessage`；HITL 的中断/拒绝短路会跳过它，这些拒绝在下一次模型边界落库。驱逐位于落库外层：先落库原文，只有预览继续进入 state） |
-| `after_agent`（逆序） | HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合） |
+| `after_agent`（逆序） | HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer（HeartbeatStaleness 是最后一个注册 `after_agent` 的实现者，因此最先运行；最先注册的 enforcer 最后运行，看到已结束的回合） |
 
 表中只列出在该阶段实现了对应钩子的中间件。
 
@@ -188,7 +190,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 **模块：** `agent/middlewares/system_prompt/core.py` · **中间件：** `system_prompt_injection`（由 LangChain `@dynamic_prompt` 创建的 `AgentMiddleware` 实例）
 **钩子：** `wrap_model_call` / `awrap_model_call`
 
-列表中的第二个，紧跟 `TodoContinuationEnforcer`（后者不实现任何模型调用包装），因此是最外层的 **wrap** 层。装饰器生成的类同时注册 `wrap_model_call` 与 `awrap_model_call`（被装饰函数是同步的，异步包装器同样调用它）。
+列表中的第二个，紧跟 `PlanContinuationEnforcer`（后者不实现任何模型调用包装），因此是最外层的 **wrap** 层。装饰器生成的类同时注册 `wrap_model_call` 与 `awrap_model_call`（被装饰函数是同步的，异步包装器同样调用它）。
 
 **系统提示词注入**
 
@@ -245,7 +247,7 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 | 可关闭项 | 关闭后的效果 |
 | --- | --- |
-| `TodoContinuationEnforcer` | 计划（待办 / 任务流）未完成也不再自动续跑 |
+| `PlanContinuationEnforcer` | 计划（待办 / 任务流）未完成也不再自动续跑 |
 | `TaskIntentMiddleware` | 不再注入任务意图引导 |
 | `SubagentCompletionDrainMiddleware` | 子代理完成结果不再注入主会话 |
 
@@ -365,9 +367,9 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 
 注入只发生在一个回合的第一次模型调用（最后一条非指令 `HumanMessage` 必须是末条消息）。被消化的完成载体（`metadata.internal` + `provenance == "subagent_completion"`）、`[SYSTEM DIRECTIVE` / `<sherry-ulw-execute>` 指令以及 `metadata.internal` 消息都不会触发引导，因此注入的指令不会重新武装该中间件。Fail-open：任何内部异常都会记录日志并返回 `None`。
 
-### TodoContinuationEnforcer
+### PlanContinuationEnforcer
 
-**模块：** `agent/middlewares/todo_continuation/core.py` · **类：** `TodoContinuationEnforcer(AgentMiddleware)`
+**模块：** `agent/middlewares/todo_continuation/core.py` · **类：** `PlanContinuationEnforcer(AgentMiddleware)`
 **钩子：** 仅 `aafter_agent`（异步回合结束钩子）
 
 在主 Agent 列表中注册在**第一位**，因此其 `after_agent` **最后**运行——`after_agent` 钩子按列表逆序执行，enforcer 必须观察真正结束的回合。它门控的是整个**计划**：会话的 todo 列表（`pending` / `in_progress`）**以及**未终结的 TaskFlow 流程（`ready` / `blocked` / `dispatched` 步骤，以及步骤都已落定却从未关闭的流程）——任一存在都会让回合继续，指令会列出剩余波次/步骤以及收口所需的看板调用。注入通过服务器侧的自动回合钩子（`runtime.hooks.MAYBE_TRIGGER_AUTO_TURN`，调用时解析；钩子未注册时降级为 no-op，会话保持可重试）以 fire-and-forget 方式完成。
@@ -375,6 +377,19 @@ child_agent = RepetitionGuardWrapper(child_graph, phantom_stream_guard=True)
 - 中止类回合错误（用户取消 / 超时，`stagnation_tracker.is_abort_error`）绝不续作；空列表或全部完成的列表会重置停滞追踪器。
 - 停滞处理（`agent/tools/todolist/stagnation_tracker.py`）：列表在多次尝试后仍未变化则进入恢复模式并注入 `_RECOVERY_PROMPT`；`is_in_cooldown` 限制重复注入；只有成功投递后才通过 `mark_injected` 记录触发。
 - Fail-open：任何异常都会记录日志，回合正常结束。
+- **todowrite 提醒**：钩子统计未调用 `todowrite` 的轮数（`stagnation_tracker.record_turn` / `record_todowrite`，本轮调用了 todowrite 即清零），超过 `TODOLIST_INFRA["todo_write_nudge_turns"]`（10）就在续跑指令后**追加** `[REMINDER: TODO TRACKING]` 块——这是快照式停滞检测唯一看不见的形态（推进 TaskFlow 会清零 streak，而 todo 列表在腐烂）。恢复模式自带更强的 todowrite 指引，不追加该提醒。
+
+### DynamicReminderMiddleware
+
+**模块：** `agent/middlewares/reminder_catalog/`（`core.py` = 目录，`sources.py` = 注册的实时视图，`dynamic.py` = 钩子）· **类：** `DynamicReminderMiddleware(AgentMiddleware)`
+**钩子：** `abefore_model`（异步；同步孪生仅为尽力而为的兜底）
+
+紧跟在 `TaskIntentMiddleware` 之后注册（后者的轮内去重需要它运行时用户消息仍在最后）。在每轮**首次模型调用**时把**实时视图**以 `<system-reminder source="…">` HumanMessage 注入：计划模式、工作目录、todo 列表、活动工作指针、TaskFlow 看板、连续性上下文、知识索引。系统提示词本身现在只承载稳定内容（persona + memory + 技能索引）——首 token 每轮变化的提示词会让提供方的前缀缓存从那里起全部失效；而只在配置变更/压缩时重建的提示词，其间展示的是**过期**的 todo 列表。
+
+- **目录说了算**：每个来源声明 builder、单项上限、优先级、`cooldown_turns`（TaskFlow 看板 / boulder：每 5 轮最多一次）与 `only_if_changed`（内容相同不重复注入）。总量受 `REMINDER_CATALOG["total_budget_chars"]`（30 000）约束——超预算时**整条**丢弃优先级最低者，绝不截成半句。节流状态只为真正注入过的来源推进。
+- **标签契约**位于 `pub/func/message/system_reminder.py`（provenance `reminder_catalog`、`internal=True`、来源 id 记入 `origin`）；载荷内嵌套的标签会被转义（todo 文本可被用户影响）。遍历人类消息的扫描器通过 `is_system_reminder` 跳过提醒：轮切分、HITL 无操作者判定、摘要 / memory_flush 标签。
+- **压缩之后**目录被重置，因此下一轮会从 live state 重新推导每个来源——这一层从不依赖旧提醒是否幸存。
+- 与其他可选项一样**受开关门控**（`middleware_enabled`），且全程 fail-open：builder 出错或注册表不可读只损失一条提醒，不会影响回合。
 
 ### HeartbeatStaleness
 
@@ -869,10 +884,10 @@ agent = create_agent(
 │         （最内层 wrap；HITL 拒绝会绕过它，改在下一边界落库）
 │
 └─ after_agent（逆序）
-    HeartbeatStaleness → MultimodalProcessor → TodoContinuationEnforcer
+    HeartbeatStaleness → MultimodalProcessor → PlanContinuationEnforcer
     · HeartbeatStaleness  停止心跳定时器
     · MultimodalProcessor  清理 mutil_temp（> 7 天 / 非数字文件名）
-    · TodoContinuationEnforcer  仍有未完成 todo 时以 fire-and-forget 注入续作提示
+    · PlanContinuationEnforcer  仍有未完成 todo 时以 fire-and-forget 注入续作提示
     · （system_prompt_injection 不实现任何生命周期钩子；消息持久化在自己的
        after_model 钩子中运行，记忆复盘 / 计划提取 nudge 改在 Summarization
        的压缩路径内触发。）
@@ -990,9 +1005,14 @@ agent/middlewares/
 ├── task_intent/                 # TaskIntentMiddleware
 │   ├── __init__.py              # 导出 TaskIntentMiddleware
 │   └── core.py                  # TaskIntentMiddleware
-├── todo_continuation/           # TodoContinuationEnforcer
-│   ├── __init__.py              # 导出 TodoContinuationEnforcer
-│   └── core.py                  # TodoContinuationEnforcer
+├── reminder_catalog/            # DynamicReminderMiddleware（及提醒来源）
+│   ├── __init__.py              # 导出并注册默认来源
+│   ├── core.py                  # 目录：register / resolve_injections / 预算
+│   ├── dynamic.py               # before_model 钩子
+│   └── sources.py               # 可注入的实时视图
+├── todo_continuation/           # PlanContinuationEnforcer
+│   ├── __init__.py              # 导出 PlanContinuationEnforcer
+│   └── core.py                  # PlanContinuationEnforcer
 ├── tool_call_normalize/         # ToolCallNormalize
 │   ├── __init__.py              # 导出 ToolCallNormalize
 │   └── core.py                  # ToolCallNormalize
@@ -1032,6 +1052,6 @@ from agent.middlewares import (
 )
 # 共享辅助函数同样导出：BeforeAgentHooksMixin、
 # AfterAgentHooksMixin、require_session_id、args_hash。
-# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / TodoContinuationEnforcer
+# SubagentCompletionDrainMiddleware / TaskIntentMiddleware / PlanContinuationEnforcer
 # 由 agent/core.py 从各自子模块导入——包不再导出它们。
 ```
