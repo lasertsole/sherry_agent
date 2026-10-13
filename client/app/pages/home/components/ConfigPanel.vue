@@ -1,0 +1,1905 @@
+<template>
+  <!-- Right-sidebar tab body: mounted and unmounted with its tab, which drives
+       loadContent / onHide; the sidebar owns the tab label and its close button. -->
+  <div class="flex flex-col gap-3 h-full min-h-0 p-4">
+    <div
+      v-if="loading"
+      class="flex items-center justify-center py-8">
+      <ProgressSpinner style="width: 2rem; height: 2rem" />
+    </div>
+    <template v-else>
+      <TabView
+        v-model:activeIndex="activeTab"
+        class="flex-1 min-h-0">
+        <TabPanel
+          value="background"
+          :header="t('config.background.title')">
+          <div class="flex flex-col gap-5">
+            <!-- Background image: shown in both light/dark themes; the slider below controls the themed overlay (light=white / dark=black) -->
+            <div class="flex items-center justify-between gap-3">
+              <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+                {{ t('config.background.bothThemes') }}
+              </p>
+              <Button
+                v-if="backgroundUrl"
+                :label="t('config.background.clear')"
+                icon="pi pi-times"
+                severity="secondary"
+                size="small"
+                @click="backgroundUrl = ''" />
+            </div>
+
+            <!-- Background preview: displayed at the window's aspect ratio; scrolls inside the container when the browser window is too short; a themed overlay is stacked on top to preview the slider effect in real time -->
+            <div
+              v-if="backgroundUrl"
+              class="relative w-full rounded-lg border border-solid border-gray-300 dark:border-gray-700 overflow-y-auto"
+              :style="{ aspectRatio: String(backgroundAspect), maxHeight: '60vh' }">
+              <img
+                :src="backgroundUrl"
+                alt="chat background"
+                class="w-full h-full object-cover" />
+              <div
+                class="absolute inset-0 pointer-events-none"
+                :style="backgroundPreviewOverlayStyle" />
+            </div>
+            <div
+              v-else
+              class="w-full rounded-lg border border-dashed border-gray-300 dark:border-gray-600 flex items-center justify-center text-gray-400"
+              :style="{ aspectRatio: String(backgroundAspect) }">
+              <i class="pi pi-image mr-2" />
+              <span class="text-sm">{{ t('config.background.title') }}</span>
+            </div>
+
+            <div class="flex items-center gap-3">
+              <FileUpload
+                mode="basic"
+                :choose-label="t('config.background.upload')"
+                accept="image/*"
+                customUpload
+                :auto="false"
+                @select="onBackgroundSelect">
+                <!-- filelabel shows the browser-native "No file chosen" when no file is selected by default;
+                       replaced with localized text: file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to choose an image -->
+                <template #filelabel="{ files }">
+                  <span class="text-xs text-gray-400">
+                    {{ fileLabelText(Array.isArray(files) ? files : []) }}
+                  </span>
+                </template>
+              </FileUpload>
+            </div>
+
+            <!-- Overlay opacity: light theme=white overlay / dark theme=black overlay; the further left, the clearer the photo; the further right, the more it fades until fully covered by pure white/black -->
+            <div
+              v-if="backgroundUrl"
+              class="flex flex-col gap-2">
+              <label class="text-sm font-medium text-[#111827] dark:text-[#E5E7EB]">
+                {{ t('config.background.opacity') }}
+                <span class="ml-1 text-xs text-gray-400">({{ backgroundOpacityValue }})</span>
+              </label>
+              <Slider
+                v-model="backgroundOpacityValue"
+                :min="0"
+                :max="100"
+                :step="5"
+                class="w-full" />
+              <p class="m-0 text-xs text-gray-400">
+                {{ t('config.background.opacityHint') }}
+              </p>
+            </div>
+          </div>
+        </TabPanel>
+
+        <!-- Env config tab: reads/edits the project root .env, grouped by prefix; only existing keys can be modified.
+               Loading is driven by the setup-scoped watch below (@show runs in an event context where
+               getCurrentInstance() is null, so Nuxt useFetch never actually sends the request) -->
+        <TabPanel
+          value="env"
+          :header="t('config.tabs.env')">
+          <div class="flex flex-col gap-4">
+            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('config.env.restartHint') }}
+            </p>
+
+            <div
+              v-if="envLoadError"
+              class="flex">
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ envLoadError }}</p>
+            </div>
+
+            <template v-else-if="envGroups.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.env.noEnvFile') }}</p>
+            </template>
+
+            <template v-else>
+              <template
+                v-for="group in envGroups"
+                :key="group.name">
+                <!-- Model groups: profile manager (list + parameters + save/apply);
+                       everything else (the catch-all "other", the browser feature's
+                       switches) stays a plain key/value card. -->
+                <LlmModelManager
+                  v-if="group.kind !== 'plain' && group.name !== 'other'"
+                  :group="group.name"
+                  :keys="group.entries.map(e => e.key)"
+                  :values="groupValues[group.name] ?? {}"
+                  :group-title="group.name"
+                  @apply="payload => applyModelProfile(group.name, payload)" />
+                <div
+                  v-else
+                  class="flex flex-col gap-2 rounded-lg border border-gray-100 dark:border-gray-800 p-3"
+                  :data-test="`env-group-${group.name}`">
+                  <p class="m-0 text-xs font-semibold text-gray-500 dark:text-gray-400">
+                    {{ group.name }}
+                  </p>
+                  <div
+                    v-for="entry in group.entries"
+                    :key="entry.key"
+                    class="flex flex-col gap-1">
+                    <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                    <InputText
+                      v-model="entry.value"
+                      :class="entry.value !== originalEnvValues[entry.key] ? 'border-amber-400' : ''"
+                      class="w-full font-mono text-xs"
+                      autocomplete="off"
+                      spellcheck="false" />
+                  </div>
+                  <!-- Non-model keys save on their own (the model groups carry
+                         their own 保存/应用 inside the panel). -->
+                  <div class="mt-1 flex justify-start">
+                    <Button
+                      :label="t('config.save')"
+                      icon="pi pi-save"
+                      size="small"
+                      :loading="saving"
+                      :disabled="!envHasChanges"
+                      @click="handleSave" />
+                  </div>
+                </div>
+              </template>
+            </template>
+          </div>
+        </TabPanel>
+
+        <!-- Sherry config tab: reads/edits the project root sherry.jsonc (app-level settings
+               split out of .env). Same lazy-load + snapshot/diff save flow as the env tab. -->
+        <TabPanel
+          value="sherry"
+          :header="t('config.tabs.sherry')">
+          <div class="flex flex-col gap-4">
+            <p class="m-0 text-xs font-medium text-gray-500 dark:text-gray-400">
+              {{ t('config.sherry.restartHint') }}
+            </p>
+
+            <div
+              v-if="sherryLoadError"
+              class="flex">
+              <p class="m-0 text-sm text-red-600 dark:text-red-400">{{ sherryLoadError }}</p>
+            </div>
+
+            <template v-else-if="sherryEntries.length === 0">
+              <p class="m-0 text-sm text-gray-400">{{ t('config.sherry.noConfigFile') }}</p>
+            </template>
+
+            <template v-else>
+              <div
+                v-for="entry in sherryEntries"
+                :key="entry.key"
+                class="flex flex-col gap-1">
+                <span class="text-xs text-gray-500 dark:text-gray-400">{{ entry.key }}</span>
+                <InputText
+                  v-model="entry.value"
+                  :class="entry.value !== originalSherryValues[entry.key] ? 'border-amber-400' : ''"
+                  class="w-full font-mono text-xs"
+                  autocomplete="off"
+                  spellcheck="false" />
+              </div>
+            </template>
+          </div>
+        </TabPanel>
+      </TabView>
+    </template>
+
+    <!-- Footer: pinned to the panel's bottom-right (the tab body above it is what
+         scrolls), and only the background / sherry tabs use it — every env item
+         saves or applies on its own inside its own group card.
+         (角色配置 moved to the 预设 panel together with the persona presets.) -->
+    <div
+      v-if="activeTab !== 1"
+      class="shrink-0 flex gap-2 justify-end">
+      <Button
+        :label="t('config.cancel')"
+        icon="pi pi-times"
+        severity="secondary"
+        @click="onHide" />
+      <Button
+        :label="t('config.save')"
+        icon="pi pi-check"
+        :loading="saving"
+        :disabled="!canSave"
+        @click="saveDialogSettings" />
+    </div>
+
+    <AvatarCropDialog
+      v-model="cropVisible"
+      :src="cropSource"
+      :aspect-ratio="cropAspectRatio"
+      :output-width="cropOutput.width"
+      :output-height="cropOutput.height"
+      :header="cropVisible ? cropTitle : ''"
+      @cropped="onCropConfirmed" />
+  </div>
+</template>
+
+<script lang="ts" setup>
+import { ref, computed, watch, onMounted, onBeforeUnmount } from 'vue';
+import { useI18n } from 'vue-i18n';
+import { storeToRefs } from 'pinia';
+import AvatarCropDialog from './AvatarCropDialog.vue';
+import type { ConfigSource, EnvGroup, SourcedEnvGroup } from '@/composables/env';
+import { MAX_TOKEN_GUARD_KEYS, MIN_REQUIRED_MAX_TOKEN } from '@/constants/env';
+import LlmModelManager from './LlmModelManager.vue';
+import type { SherryEntry } from '@/composables/sherryConfig';
+import { useChatBackgroundStore } from '~/stores/chat-background';
+import { logUtil } from '~/utils/log';
+
+/** Global chat-area background singleton: setBackground updates the reactive state and persists it synchronously, taking effect immediately after save */
+const chatBackgroundStore = useChatBackgroundStore();
+const { backgroundOpacity } = storeToRefs(chatBackgroundStore);
+const setBackground = chatBackgroundStore.setBackground;
+
+const { t } = useI18n({ useScope: 'local' });
+
+const emits = defineEmits<{ saved: [] }>();
+
+const activeTab = ref(0);
+const loading = ref(false);
+const saving = ref(false);
+
+// ── Env config state (three files, one panel) ────────────────
+// The 模型配置 tab shows THREE sources merged — the model families from .models,
+// the browser / tracing groups from .network, and what remains in .env (sandbox /
+// gateway / login) — and every group carries its `source`, so a save writes each
+// group back through ITS OWN endpoint. Snapshot taken once on load; edits modify
+// entry.value in place, and on save the changes are diffed against the snapshot.
+const envGroups = ref<SourcedEnvGroup[]>([]);
+const originalEnvValues = ref<Record<string, string>>({});
+const envLoadError = ref('');
+
+/** Whether the env config has already been loaded (avoids duplicate GETs) */
+const envLoaded = ref(false);
+
+/** Computes whether the env config has changes (used for canSave and save decisions) */
+const envHasChanges = computed(() =>
+  envGroups.value.some(group => group.entries.some(entry => entry.value !== originalEnvValues.value[entry.key]))
+);
+
+// ── MAIN_LLM model profiles (the panel owns its own profile list) ──────────
+const llmProfiles = useLlmProfilesStore();
+
+/** Live config values per group (seed + active-inference input for the panels). */
+const groupValues = computed<Record<string, Record<string, string>>>(() => {
+  const all: Record<string, Record<string, string>> = {};
+  for (const group of envGroups.value) {
+    const values: Record<string, string> = {};
+    for (const entry of group.entries) values[entry.key] = entry.value;
+    all[group.name] = values;
+  }
+  return all;
+});
+
+/**
+ * Apply a model profile: write its MAIN_LLM_* parameters into .models through
+ * the env tab's write path, then sync the tab's draft/snapshot so the diff stays
+ * clean. The green dot follows only a SUCCESSFUL write.
+ * @param groupName
+ * @param payload
+ * @param payload.id
+ * @param payload.params
+ */
+const applyModelProfile = async (groupName: string, payload: { id: string; params: Record<string, string> }) => {
+  const ok = await writeModelsConfig(payload.params);
+  if (!ok) {
+    envLoadError.value = t('config.env.saveFailed');
+    return;
+  }
+  envLoadError.value = '';
+  const group = envGroups.value.find(g => g.name === groupName);
+  for (const entry of group?.entries ?? []) {
+    if (entry.key in payload.params) entry.value = payload.params[entry.key]!;
+  }
+  for (const [key, value] of Object.entries(payload.params)) {
+    originalEnvValues.value[key] = value;
+  }
+  llmProfiles.setActive(groupName, payload.id);
+};
+
+/** Lazily loads the three config files when the env tab is opened */
+const loadEnvConfig = async () => {
+  if (envLoaded.value) return;
+  envLoaded.value = true;
+  envLoadError.value = '';
+  try {
+    const [models, network, env] = await Promise.all([readModelsConfig(), readNetworkConfig(), readEnvConfig()]);
+    const tag = (groups: EnvGroup[], source: ConfigSource): SourcedEnvGroup[] => groups.map(g => ({ ...g, source }));
+    const modelGroups = tag(models.groups || [], 'models');
+    const networkGroups = tag(network.groups || [], 'network');
+    const envOnly = tag(env.groups || [], 'env');
+    // Canonical order: the model families, then the network groups, then what is
+    // left in .env — whose catch-all "other" card stays LAST.
+    const otherIndex = envOnly.findIndex(g => g.name === 'other');
+    envGroups.value =
+      otherIndex === -1
+        ? [...modelGroups, ...networkGroups, ...envOnly]
+        : [
+            ...modelGroups,
+            ...networkGroups,
+            ...envOnly.slice(0, otherIndex),
+            envOnly[otherIndex]!,
+            ...envOnly.slice(otherIndex + 1)
+          ];
+    const snap: Record<string, string> = {};
+    for (const g of envGroups.value) {
+      for (const e of g.entries) snap[e.key] = e.value;
+    }
+    originalEnvValues.value = snap;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to load config:', e);
+    envLoadError.value = t('config.env.loadError');
+    envLoaded.value = false;
+  }
+};
+
+/** Writes the diff back to each file's own endpoint; returns true on success */
+const persistEnvChanges = async (): Promise<boolean> => {
+  const perSource: Record<ConfigSource, Record<string, string>> = { models: {}, network: {}, env: {} };
+  for (const g of envGroups.value) {
+    for (const e of g.entries) {
+      if (e.value !== originalEnvValues.value[e.key]) perSource[g.source][e.key] = e.value;
+    }
+  }
+  const changedSources = (Object.keys(perSource) as ConfigSource[]).filter(
+    source => Object.keys(perSource[source]).length > 0
+  );
+  if (changedSources.length === 0) return true;
+
+  // MAX_TOKEN guard: pre-validate before the PUT so a sub-128K value is rejected
+  // in the dialog (the backend write_models_config enforces the same floor).
+  for (const source of changedSources) {
+    for (const [key, value] of Object.entries(perSource[source])) {
+      if ((MAX_TOKEN_GUARD_KEYS as readonly string[]).includes(key)) {
+        const num = parseInt(value, 10);
+        if (Number.isNaN(num) || num < MIN_REQUIRED_MAX_TOKEN) {
+          envLoadError.value = t('config.env.maxTokenError', { key });
+          return false;
+        }
+      }
+    }
+  }
+
+  const writers: Record<ConfigSource, (changes: Record<string, string>) => Promise<boolean>> = {
+    models: writeModelsConfig,
+    network: writeNetworkConfig,
+    env: writeEnvConfig
+  };
+  for (const source of changedSources) {
+    const ok = await writers[source](perSource[source]);
+    if (!ok) return false;
+  }
+  // Sync the snapshot to serve as the baseline for the next diff
+  for (const g of envGroups.value) {
+    for (const e of g.entries) originalEnvValues.value[e.key] = e.value;
+  }
+  return true;
+};
+
+/** Resets the env tab every time the dialog hides (cancel or save): reloads on next open */
+const resetEnvState = () => {
+  envGroups.value = [];
+  originalEnvValues.value = {};
+  envLoadError.value = '';
+  envLoaded.value = false;
+};
+
+// ── Sherry config state (sherry.jsonc) ───────────────────────
+// Mirrors the env tab: snapshot taken once on load; edits directly modify
+// entry.value inside sherryEntries; on save the changes are diffed against
+// the snapshot and PUT to /sherry-config (backend coerces types).
+const sherryEntries = ref<SherryEntry[]>([]);
+const originalSherryValues = ref<Record<string, string>>({});
+const sherryLoadError = ref('');
+const sherryLoaded = ref(false);
+
+const sherryHasChanges = computed(() =>
+  sherryEntries.value.some(entry => entry.value !== originalSherryValues.value[entry.key])
+);
+
+/** Lazily loads the sherry.jsonc config when the sherry tab is opened (backend GET /sherry-config) */
+const loadSherryConfig = async () => {
+  if (sherryLoaded.value) return;
+  sherryLoaded.value = true;
+  sherryLoadError.value = '';
+  try {
+    const payload = await readSherryConfig();
+    sherryEntries.value = payload.entries || [];
+    const snap: Record<string, string> = {};
+    for (const e of sherryEntries.value) snap[e.key] = e.value;
+    originalSherryValues.value = snap;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to load sherry config:', e);
+    sherryLoadError.value = t('config.sherry.loadError');
+    sherryLoaded.value = false;
+  }
+};
+
+/** Writes sherry changes back to the backend (sherry.jsonc PUT); returns true on success */
+const persistSherryChanges = async (): Promise<boolean> => {
+  const changes: Record<string, string> = {};
+  for (const e of sherryEntries.value) {
+    if (e.value !== originalSherryValues.value[e.key]) changes[e.key] = e.value;
+  }
+  if (Object.keys(changes).length === 0) return true;
+  const ok = await writeSherryConfig(changes);
+  if (ok) {
+    // Sync the snapshot to serve as the baseline for the next diff
+    for (const e of sherryEntries.value) originalSherryValues.value[e.key] = e.value;
+  }
+  return ok;
+};
+
+/** Resets the sherry tab every time the dialog hides (cancel or save): reloads on next open */
+const resetSherryState = () => {
+  sherryEntries.value = [];
+  originalSherryValues.value = {};
+  sherryLoadError.value = '';
+  sherryLoaded.value = false;
+};
+
+// ── Env config load trigger (setup scope) ──────────────
+// Previously loadEnvConfig was called from the PrimeVue TabPanel @show event: event callbacks run in a
+// non-setup context where getCurrentInstance() is null, so Nuxt useFetch(server:true) never sent a request
+// in pure SPA mode and data stayed undefined forever → the || { groups: [] } fallback kicked in and rendered
+// the misleading "No .env file found" message.
+// Instead, the env tab (activeTab===1) is watched in setup scope; the callback runs
+// in a setup context where getCurrentInstance() stays alive → useFetch actually issues GET /env and loads the real .env groups.
+watch(
+  activeTab,
+  tab => {
+    if (tab === 1) void loadEnvConfig();
+    if (tab === 2) void loadSherryConfig();
+  },
+  // The panel mounts on the first tab, so no immediate trigger is needed; resetEnvState already resets envLoaded on unmount
+  { flush: 'post' }
+);
+
+/**
+ * Reads an uploaded image file as a base64 data URL
+ * @param file
+ */
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+
+/**
+ * Footer save availability. The footer is hidden on the env tab (every item
+ * there saves/applies on its own), so only the background / sherry tabs reach this.
+ */
+const canSave = computed(() => {
+  if (loading.value || saving.value) return false;
+  // Sherry config: saveable only when there are changes.
+  if (activeTab.value === 2) return sherryHasChanges.value;
+  // Background: nothing extra to validate.
+  return true;
+});
+
+// ── Image crop handling (background only; the role avatars moved to the 预设 panel) ──
+// After an image is selected, the crop dialog opens; the background is cropped and
+// output at the **actual aspect ratio of the current chat window/screen** so it fits
+// any ratio (16:9, 16:10, 3:2, 21:9…); since rendering uses `background-size: cover`,
+// edges get cut off under cover unless the crop ratio == the window ratio.
+// The ratio/size are **snapshotted** once at the moment the dialog opens (avoids the crop box jumping while the window is being dragged).
+const cropVisible = ref(false);
+const cropSource = ref('');
+
+/** Crop box aspect ratio and output size (snapshotted when the crop box opens) */
+const cropAspectRatio = ref(1);
+const cropOutput = ref({ width: 512, height: 512 });
+
+/**
+ * Background crop size: generated from the current window's physical pixels (aspect ratio == chat window aspect ratio).
+ * Based on the window's real physical resolution (logical width/height × devicePixelRatio) so any screen gets a sharp full fill.
+ */
+const getBackgroundCrop = () => {
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  const innerW = (typeof window !== 'undefined' && window.innerWidth) || 1920;
+  const innerH = (typeof window !== 'undefined' && window.innerHeight) || 1080;
+  const w = Math.max(512, Math.round(innerW * dpr));
+  const h = Math.max(288, Math.round(innerH * dpr));
+  return { width: w, height: h };
+};
+/** Crop dialog title */
+const cropTitle = computed(() => t('config.background.cropTitle'));
+
+const openCrop = async (file: File) => {
+  try {
+    // Snapshot the crop ratio/output size when the dialog opens: background adapts to the current window ratio
+    const { width, height } = getBackgroundCrop();
+    cropAspectRatio.value = width / height;
+    cropOutput.value = { width, height };
+    cropSource.value = await readFileAsDataUrl(file);
+    cropVisible.value = true;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Image read failed:', e);
+  }
+};
+
+const onCropConfirmed = (dataUrl: string) => {
+  backgroundUrl.value = dataUrl;
+  cropVisible.value = false;
+};
+
+// ── Background settings state ────────────────────────────────
+// The chat-area background image is saved locally on the frontend only: written to the single global row in Dexie (GLOBAL_SESSION_KEY),
+// for the main chat page to read and render under light/dark themes (photo + themed overlay).
+const backgroundUrl = ref('');
+const originalBackgroundUrl = ref('');
+/** Overlay opacity (0-100 integer, light=white / dark=black). Local edit state: snapshotted from the singleton when the dialog opens, written back on save */
+const backgroundOpacityValue = ref(0);
+
+const colorMode = useColorMode();
+
+/**
+ * Preview overlay style: identical to the real chat-area overlay — light=white / dark=black, with opacity tracking the slider in real time,
+ * letting users see the true effect of "dragging the slider fades the photo to white/black" right on the preview image.
+ */
+const backgroundPreviewOverlayStyle = computed(() => {
+  const overlayColor = colorMode.value === 'light' ? '#ffffff' : '#000000';
+  return {
+    backgroundColor: overlayColor,
+    opacity: (backgroundOpacityValue.value || 0) / 100
+  };
+});
+
+/** Reactive window size (window is not reactive, so a ref + resize listener drives the placeholder box's aspect ratio to follow window changes) */
+const windowSize = ref(getWindowSize());
+function getWindowSize() {
+  if (typeof window === 'undefined') return { width: 1920, height: 1080 };
+  return { width: window.innerWidth, height: window.innerHeight };
+}
+function onWindowResize() {
+  windowSize.value = getWindowSize();
+}
+onMounted(() => window.addEventListener('resize', onWindowResize));
+onBeforeUnmount(() => window.removeEventListener('resize', onWindowResize));
+
+/** Empty-state background placeholder box aspect ratio == current window aspect ratio (matches the crop preview for an intuitive look at the chat background ratio) */
+const backgroundAspect = computed(() => {
+  const innerW = windowSize.value.width;
+  const innerH = windowSize.value.height;
+  return Number((innerW / innerH).toFixed(4));
+});
+
+/**
+ * Opens the crop dialog after a background image is selected; only the cropped result becomes the background
+ * @param event
+ * @param event.files
+ */
+const onBackgroundSelect = (event: { files: File[] }) => {
+  const file = event.files?.[0];
+  if (!file) return;
+  void openCrop(file);
+};
+
+/**
+ * Localized label for the background FileUpload (`#filelabel` slot, replacing the browser-native "No file chosen"):
+ * file selected → show the file name; background already set → prompt that a background exists; otherwise → prompt to upload a new background.
+ * @param files
+ */
+const fileLabelText = (files: File[]): string => {
+  if (files.length > 0) return files[0]?.name ?? '';
+  if (backgroundUrl.value) return t('config.background.current');
+  return t('config.background.noFileChosen');
+};
+
+const loadContent = async () => {
+  loading.value = true;
+  try {
+    // Read the global background config from local Dexie (falls back to empty string + opacity 0 when unset)
+    const bgConfig = (await readBackgroundConfig()) ?? { backgroundUrl: '', backgroundOpacity: 0 };
+    backgroundUrl.value = bgConfig.backgroundUrl;
+    originalBackgroundUrl.value = bgConfig.backgroundUrl;
+    backgroundOpacityValue.value = bgConfig.backgroundOpacity;
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to load content:', e);
+  } finally {
+    loading.value = false;
+  }
+};
+
+/**
+ * Env tab, non-model group (``other``): write the diffed ``.env`` changes.
+ * The model groups carry their own 保存/应用 inside the panel, so the env tab
+ * needs no footer button at all.
+ */
+const handleSave = async () => {
+  if (loading.value || saving.value) return;
+  saving.value = true;
+  try {
+    if (!envHasChanges.value) return;
+    const ok = await persistEnvChanges();
+    if (!ok) {
+      // persistEnvChanges may already have set a specific validation error
+      // (MAX_TOKEN guard); only fall back to the generic save-failed message.
+      if (!envLoadError.value) envLoadError.value = t('config.env.saveFailed');
+      return;
+    }
+    invalidateModelConfigCache();
+    emits('saved');
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to save env config:', e);
+  } finally {
+    saving.value = false;
+  }
+};
+
+const saveDialogSettings = async () => {
+  if (loading.value || saving.value) return;
+  saving.value = true;
+  try {
+    // Background image: only when changed, write to the local Dexie global row
+    // (an empty string clears the background). setBackground updates the shared
+    // singleton reactively, so the change takes effect without a refresh.
+    const bgUrlChanged = backgroundUrl.value !== originalBackgroundUrl.value;
+    const bgOpacityChanged = backgroundOpacityValue.value !== backgroundOpacity.value;
+    if (bgUrlChanged || bgOpacityChanged) {
+      await setBackground(backgroundUrl.value, backgroundOpacityValue.value);
+      originalBackgroundUrl.value = backgroundUrl.value;
+    }
+
+    // Sherry config: same contract as the env tab — abort on save failure
+    // without closing the dialog.
+    if (activeTab.value === 2 && sherryHasChanges.value) {
+      const ok = await persistSherryChanges();
+      if (!ok) {
+        sherryLoadError.value = t('config.sherry.saveFailed');
+        return;
+      }
+    }
+
+    emits('saved');
+  } catch (e) {
+    logUtil.e('[ConfigPanel] Failed to save settings:', e);
+  } finally {
+    saving.value = false;
+  }
+};
+
+const onHide = () => {
+  activeTab.value = 0;
+  backgroundOpacityValue.value = backgroundOpacity.value;
+  // Env config changes are kept only after a successful save; canceling / closing on a non-env tab always discards them → reloaded on next open
+  resetEnvState();
+  resetSherryState();
+};
+
+// The tab's lifetime drives the load and the reset (the dialog's @show/@hide).
+onMounted(loadContent);
+onBeforeUnmount(onHide);
+</script>
+
+<i18n lang="json">
+{
+  "zh": {
+    "config": {
+      "agent": {
+        "tabs": {
+          "tools": "工具",
+          "middlewares": "中间件",
+          "subagents": "代理模型",
+          "skills": "技能"
+        },
+        "models": {
+          "scope_main": "主代理",
+          "scope_subagent": "子代理",
+          "mainHint": "主代理（main agent）使用的模型；默认跟随模型配置。",
+          "followEnv": "跟随模型配置"
+        },
+        "tools": {
+          "count": "已选 {selected}/{total}",
+          "requiredHint": "必需，不可取消",
+          "scope_builtin": "内置",
+          "scope_mcp": "MCP",
+          "mcpEmpty": "暂无 MCP 工具（在 扩展-MCP 中添加服务器）",
+          "clearAll": "全部禁用",
+          "clearGroup": "清空",
+          "hint": "勾选 main agent 可用的工具（全选 = 默认，不写配置）。被关掉的工具不会出现在模型的工具列表里，旧调用也会被拒绝执行。",
+          "selectAll": "全部启用",
+          "selectGroup": "全选"
+        },
+        "skills": {
+          "count": "已选 {selected}/{total}",
+          "scope_builtin": "内置",
+          "scope_thirdparty": "第三方",
+          "empty": "暂无技能",
+          "hint": "勾选进入系统提示词技能索引的条目（全选 = 默认，不写配置）。取消的条目不会出现在技能索引里。"
+        },
+        "toolGroup": {
+          "files": "文件读写",
+          "terminal": "终端与代码",
+          "tasks": "任务与计划",
+          "memory": "记忆与检索",
+          "skills": "技能",
+          "subagents": "子代理",
+          "interaction": "交互",
+          "web": "网络",
+          "browser": "浏览器",
+          "mcp": "MCP"
+        },
+        "middlewares": {
+          "lockedTitle": "系统必需（锁定）",
+          "nudgeLabel": "启用 nudge",
+          "nudgeDesc": "压缩后让模型自检是否保存记忆（使用 memory 工具）",
+          "hint": "关掉可选项会立即改变该会话的行为；带锁的为系统必需项，不可关闭。",
+          "lockedHint": "安全兜底或逻辑必需，关掉会让系统失去保护，故不可关闭",
+          "nudgeNeedMemory": "需先在「工具」页勾选 memory 工具"
+        },
+        "middleware": {
+          "PlanContinuationEnforcer": {
+            "name": "计划续跑",
+            "desc": "计划（待办/任务流）未完成时自动继续下一轮"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "动态提醒",
+            "desc": "每轮把实时视图（待办/任务流看板/工作目录等）作为 system-reminder 注入对话"
+          },
+          "TaskIntentMiddleware": {
+            "name": "任务意图引导",
+            "desc": "识别工作型请求并注入编排提示"
+          },
+          "WorkspaceNoticeMiddleware": {
+            "name": "工作区变更通知",
+            "desc": "工作目录或 git 分支/HEAD 变化时在用户消息前插入一条通知"
+          },
+          "MultimodalProcessor": {
+            "name": "多模态预处理",
+            "desc": "上传的图片/音频/视频入库与降级处理"
+          },
+          "SubagentCompletionDrainMiddleware": {
+            "name": "子代理完成注入",
+            "desc": "子代理完成后把结果注入主会话"
+          },
+          "Summarization": {
+            "name": "摘要压缩",
+            "desc": "上下文压缩、溢出处理与压缩后的 nudge"
+          }
+        },
+        "subagents": {
+          "followTier": "跟随角色默认",
+          "tier": "角色默认：{tier}",
+          "tierDepth": "无角色定义：按深度默认",
+          "hint": "为每类子代理指定使用的模型（来自模型配置的模型档案）；跟随角色默认 = 按角色定义里的 model_tier。",
+          "sessionHint": "修改后于 main agent 的下一轮生效（与切换主模型相同）"
+        },
+        "role": {
+          "general": "通用",
+          "researcher": "研究员",
+          "executor": "执行者",
+          "reviewer": "审查者",
+          "librarian": "图书管理员"
+        },
+        "viewer": {
+          "tools": "工具 {selected}/{total}",
+          "middlewares": "关闭的中间件：{names}",
+          "middlewaresNone": "中间件：全部开启",
+          "models": "子代理模型：{names}"
+        },
+        "readonlyHint": "只读：如需修改请到「菜单-预设角色」"
+      },
+      "save": "保存",
+      "cancel": "取消",
+      "language": {
+        "zh": "简体中文",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "tabs": {
+        "role": "角色配置",
+        "agents": "运行守则",
+        "soul": "人格灵魂",
+        "user": "用户信息",
+        "env": "模型配置",
+        "sherry": "应用配置",
+        "memoryAgent": "记忆·Agent",
+        "memoryUser": "记忆·用户"
+      },
+      "role": {
+        "aiLine": "你将扮演{name}。",
+        "userLine": "用户将扮演{name}。",
+        "assistant": "AI 角色",
+        "userRole": "用户角色",
+        "charNote": "名字与头像修改仅在新建会话后生效，旧会话不受影响；角色名字同时写入系统提示词。",
+        "noFileChosen": "可选择新的头像图片",
+        "resetAvatar": "重置头像",
+        "aiName": "AI 名称",
+        "userName": "用户名称"
+      },
+      "persona": {
+        "preset": {
+          "builtinPureName": "纯净",
+          "builtinCompanionName": "情感陪伴",
+          "defaultName": "全量",
+          "defaultBadge": "默认",
+          "builtinCodingName": "编程助手",
+          "builtinBadge": "内置",
+          "savePreset": "保存预设",
+          "apply": "应用",
+          "editingBadge": "编辑中",
+          "nameDialog": {
+            "title": "保存为预设",
+            "placeholder": "输入预设名称",
+            "confirm": "保存"
+          },
+          "nameError": {
+            "duplicate": "名称已存在",
+            "required": "名称不能为空"
+          },
+          "confirmDelete": {
+            "title": "删除预设",
+            "message": "确定删除预设「{name}」吗？此操作不可恢复"
+          },
+          "toast": {
+            "presetSaved": "预设已保存",
+            "presetDeleted": "预设已删除",
+            "applyFailed": "应用失败，请检查后端连接",
+            "presetSaveFailed": "预设保存失败",
+            "applySuccess": "应用成功"
+          },
+          "emptyList": "暂无预设",
+          "title": "预设角色"
+        },
+        "restoreDefault": "恢复默认"
+      },
+      "crop": {
+        "confirm": "确定",
+        "preview": "裁剪预览",
+        "rotate": "旋转",
+        "zoomIn": "放大",
+        "zoomOut": "缩小",
+        "title": "裁剪头像"
+      },
+      "background": {
+        "title": "背景图片",
+        "upload": "上传背景",
+        "clear": "清除背景",
+        "bothThemes": "背景图片在浅色/深色主题下均会显示；通过下方滑块调整遮罩强度。",
+        "opacity": "遮罩强度",
+        "opacityHint": "浅色主题叠加白色遮罩、深色主题叠加黑色遮罩：越靠右照片越被冲淡成纯白/纯黑，直至完全遮蔽。",
+        "cropTitle": "裁剪背景",
+        "current": "已设置背景图",
+        "noFileChosen": "可选择新图片文件"
+      },
+      "env": {
+        "loadError": "模型配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "模型配置保存失败，请检查 key 与值是否合法。",
+        "restartHint": "修改 API Key 等敏感配置后，需重启后端服务才能生效。",
+        "noEnvFile": "未找到 .env 文件。",
+        "maxTokenError": "{key} 必须 >= 131072 (128K)，当前值不满足要求，无法保存。",
+        "maxTokenHint": "必须 >= 131072 (128K)，否则 Agent 将拒绝启动。"
+      },
+      "sherry": {
+        "loadError": "应用配置加载失败，请检查后端服务是否已启动。",
+        "saveFailed": "应用配置保存失败，请检查值是否合法。",
+        "restartHint": "修改后需重启后端服务才能生效；配置持久化于项目根目录 sherry.jsonc。",
+        "noConfigFile": "未找到 sherry.jsonc 文件。"
+      },
+      "cron": {
+        "addJob": "新建任务",
+        "empty": "暂无定时任务。点击「新建任务」添加。",
+        "run": "运行",
+        "edit": "编辑",
+        "delete": "删除",
+        "addTitle": "新建定时任务",
+        "editTitle": "编辑定时任务",
+        "name": "任务名称",
+        "namePlaceholder": "例如：每日早安问候",
+        "scheduleType": "调度方式",
+        "typeAt": "指定时刻",
+        "typeEvery": "每隔多久",
+        "typeCron": "Cron 表达式",
+        "atTime": "执行时刻",
+        "everyInterval": "执行间隔",
+        "intervalValue": "数值",
+        "intervalTooSmall": "间隔最小为 1 秒",
+        "cronExpr": "Cron 表达式",
+        "message": "任务消息",
+        "messagePlaceholder": "请输入要执行的任务内容",
+        "skills": "绑定技能（可选）",
+        "skillsEmpty": "暂无可用技能",
+        "skillsHint": "选中的技能会在执行前预加载 — 定时任务决定何时执行，技能决定如何执行",
+        "deliver": "推送到渠道",
+        "channel": "渠道名称",
+        "channelPlaceholder": "例如：default",
+        "to": "接收人/群",
+        "toPlaceholder": "可选",
+        "deleteAfterRun": "运行后自动删除",
+        "nextRun": "下次运行",
+        "lastStatus": "上次状态",
+        "descAt": "在 {time} 执行",
+        "descAtEmpty": "未设定时刻",
+        "everySeconds": "每 {n} 秒",
+        "everyMinutes": "每 {n} 分钟",
+        "everyHours": "每 {n} 小时",
+        "everyDays": "每 {n} 天"
+      },
+      "heartbeat": {
+        "addTask": "添加任务",
+        "globalSwitch": "全局心跳",
+        "globalSwitchHint": "开启中：每 {minutes} 分钟检查一次任务",
+        "globalSwitchOff": "已关闭：定时心跳不会触发（重启后仍然关闭）",
+        "effectiveHint": "此文件每30分钟被检查一次。请在下方添加希望 Agent 定期处理的任务。若仅剩标题/注释（没有任务），则将跳过心跳。",
+        "activeEmpty": "暂无活动任务。请在下方添加新任务。",
+        "completedEmpty": "暂无已完成任务。",
+        "deleteTask": "删除任务",
+        "complete": "完成任务",
+        "reactivate": "重新激活"
+      },
+      "llm": {
+        "add": "添加模型",
+        "save": "保存",
+        "apply": "应用",
+        "saved": "已保存",
+        "applied": "已应用到 .env",
+        "empty": "暂无模型，点击“添加模型”创建",
+        "unnamed": "未命名模型",
+        "collapse": "收起",
+        "count": "{n} / {max}",
+        "delete": "删除",
+        "deleteConfirm": "确定删除模型“{name}”？",
+        "expand": "展开",
+        "localModel": "本地模型",
+        "localUnused": "本地模式不使用",
+        "maxModels": "每个分组最多 {max} 个模型",
+        "requiredMissing": "提供商与模型 API 名为必填项",
+        "test": "测试连通性",
+        "testHint": "用当前填写的参数试调一次，不写入 .env",
+        "testUnsupported": "该分组需要图片 / 音频输入，暂不支持连通性测试",
+        "testOk": "连通正常（{ms} ms）",
+        "testFailed": "连通失败（{ms} ms）",
+        "testRequestFailed": "请求失败：后端未响应"
+      },
+      "memory": {
+        "addEntry": "添加条目",
+        "deleteEntry": "删除条目",
+        "empty": "暂无条目，请在下方添加。",
+        "effectiveHint": "提示：修改后仅在系统压缩或重启时生效。"
+      },
+      "desc": {
+        "memoryAgent": "Agent长期记忆笔记（workspace/memory/MEMORY.md）",
+        "memoryUser": "用户长期记忆信息（workspace/memory/USER.md）",
+        "role": "AI 与用户各自的扮演角色（名字与头像）",
+        "agents": "Agent 的运行守则与安全边界",
+        "soul": "Agent人格、语气、性格",
+        "user": "用户信息和偏好"
+      },
+      "uploadAvatar": "上传头像"
+    }
+  },
+  "en": {
+    "config": {
+      "agent": {
+        "tabs": {
+          "tools": "Tools",
+          "middlewares": "Middlewares",
+          "subagents": "Agent models",
+          "skills": "Skills"
+        },
+        "models": {
+          "scope_main": "Main agent",
+          "scope_subagent": "Subagent",
+          "mainHint": "The model the main agent runs on; follows the model config by default.",
+          "followEnv": "Follow the model config"
+        },
+        "tools": {
+          "count": "{selected}/{total} selected",
+          "requiredHint": "Required — cannot be disabled",
+          "scope_builtin": "Built-in",
+          "scope_mcp": "MCP",
+          "mcpEmpty": "No MCP tools yet (add a server under Extend → MCP)",
+          "clearAll": "Disable all",
+          "clearGroup": "Clear",
+          "hint": "Pick the tools the main agent may use (all checked = the default; no config is stored). A disabled tool is not offered to the model, and a stale call to it is refused.",
+          "selectAll": "Enable all",
+          "selectGroup": "All"
+        },
+        "skills": {
+          "count": "{selected}/{total} selected",
+          "scope_builtin": "Built-in",
+          "scope_thirdparty": "Third-party",
+          "empty": "No skills yet",
+          "hint": "Check the skills whose index entries enter the system prompt (all checked = default, nothing stored). Unchecked ones never reach the skill index."
+        },
+        "toolGroup": {
+          "files": "Files",
+          "terminal": "Terminal & code",
+          "tasks": "Tasks & planning",
+          "memory": "Memory & search",
+          "skills": "Skills",
+          "subagents": "Subagents",
+          "interaction": "Interaction",
+          "web": "Web",
+          "browser": "Browser",
+          "mcp": "MCP"
+        },
+        "middlewares": {
+          "lockedTitle": "System-required (locked)",
+          "nudgeLabel": "Enable nudge",
+          "nudgeDesc": "After a compression, asks the model to review what is worth saving (the memory tool)",
+          "hint": "Turning an optional entry off changes this session immediately; the locked ones are system-required.",
+          "lockedHint": "A safety net or a logical necessity — disabling it would strip protection",
+          "nudgeNeedMemory": "Check the memory tool on the Tools tab first"
+        },
+        "middleware": {
+          "PlanContinuationEnforcer": {
+            "name": "Plan continuation",
+            "desc": "Keeps the turn going while the plan (todos / flows) is unfinished"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "Live reminders",
+            "desc": "Injects the live views (todos / TaskFlow board / working directory …) as system-reminder messages each turn"
+          },
+          "TaskIntentMiddleware": {
+            "name": "Task-intent steering",
+            "desc": "Detects work requests and injects the orchestration prompt"
+          },
+          "WorkspaceNoticeMiddleware": {
+            "name": "Workspace-change notice",
+            "desc": "Inserts a notice before the user message when the working directory or the git branch/HEAD moved"
+          },
+          "MultimodalProcessor": {
+            "name": "Multimodal preprocessing",
+            "desc": "Persists and prepares uploaded images / audio / video"
+          },
+          "SubagentCompletionDrainMiddleware": {
+            "name": "Completion injection",
+            "desc": "Injects a finished subagent's result into the main session"
+          },
+          "Summarization": {
+            "name": "Summarization",
+            "desc": "Context compression, overflow handling and the post-compression nudges"
+          }
+        },
+        "subagents": {
+          "followTier": "Follow the role default",
+          "tier": "Role default: {tier}",
+          "tierDepth": "No role definition: depth default",
+          "hint": "Choose the model each functional role runs on (the model-config profiles); \"follow the role default\" keeps its model_tier.",
+          "sessionHint": "Takes effect on the main agent's next turn (same as switching the main model)"
+        },
+        "role": {
+          "general": "General",
+          "researcher": "Researcher",
+          "executor": "Executor",
+          "reviewer": "Reviewer",
+          "librarian": "Librarian"
+        },
+        "viewer": {
+          "tools": "Tools {selected}/{total}",
+          "middlewares": "Disabled middlewares: {names}",
+          "middlewaresNone": "Middlewares: all on",
+          "models": "Subagent models: {names}"
+        },
+        "readonlyHint": "Read-only — change it in 菜单-预设角色 (Presets & Role)"
+      },
+      "save": "Save",
+      "cancel": "Cancel",
+      "language": {
+        "zh": "简体中文",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "tabs": {
+        "role": "Character Setup",
+        "agents": "Operating Instructions",
+        "soul": "Soul",
+        "user": "User Profile",
+        "env": "Model Config",
+        "sherry": "App Config",
+        "memoryAgent": "Memory · Agent",
+        "memoryUser": "Memory · User"
+      },
+      "role": {
+        "aiLine": "You will play {name}.",
+        "userLine": "The user will play {name}.",
+        "assistant": "AI Role",
+        "userRole": "User Role",
+        "charNote": "Name and avatar changes only take effect in new sessions; existing sessions are not affected. The role names are also written into the system prompt.",
+        "noFileChosen": "Select an avatar image file",
+        "resetAvatar": "Reset avatar",
+        "aiName": "AI Name",
+        "userName": "User Name"
+      },
+      "persona": {
+        "preset": {
+          "builtinPureName": "Pure",
+          "builtinCompanionName": "Companion",
+          "defaultName": "Full",
+          "defaultBadge": "Default",
+          "builtinCodingName": "Coding Assistant",
+          "builtinBadge": "Built-in",
+          "savePreset": "Save Preset",
+          "apply": "Apply",
+          "editingBadge": "Editing",
+          "nameDialog": {
+            "title": "Save as Preset",
+            "placeholder": "Enter preset name",
+            "confirm": "Save"
+          },
+          "nameError": {
+            "duplicate": "Name already exists",
+            "required": "Name is required"
+          },
+          "confirmDelete": {
+            "title": "Delete Preset",
+            "message": "Delete preset \"{name}\"? This cannot be undone"
+          },
+          "toast": {
+            "presetSaved": "Preset saved",
+            "presetDeleted": "Preset deleted",
+            "applyFailed": "Apply failed, check backend connection",
+            "presetSaveFailed": "Failed to save preset",
+            "applySuccess": "Applied successfully"
+          },
+          "emptyList": "No presets yet",
+          "title": "Presets & Role"
+        },
+        "restoreDefault": "Restore Default"
+      },
+      "crop": {
+        "confirm": "Confirm",
+        "preview": "Crop Preview",
+        "rotate": "Rotate",
+        "zoomIn": "Zoom In",
+        "zoomOut": "Zoom Out",
+        "title": "Crop Avatar"
+      },
+      "background": {
+        "title": "Background Image",
+        "upload": "Upload Background",
+        "clear": "Clear Background",
+        "bothThemes": "The background image shows in both light and dark themes; adjust the overlay strength with the slider below.",
+        "opacity": "Overlay Strength",
+        "opacityHint": "A white overlay is used in light theme, black in dark theme: the further right, the more the photo fades to solid white/black until fully covered.",
+        "cropTitle": "Crop Background",
+        "current": "Background image set",
+        "noFileChosen": "Select an image file"
+      },
+      "env": {
+        "loadError": "Failed to load model config. Please check the backend service.",
+        "saveFailed": "Failed to save model config.",
+        "restartHint": "After changing sensitive values (e.g. API keys), restart the backend service for the changes to take effect.",
+        "noEnvFile": "No .env file found.",
+        "maxTokenError": "{key} must be >= 131072 (128K); current value does not meet the requirement, cannot save.",
+        "maxTokenHint": "Must be >= 131072 (128K), otherwise the agent will refuse to start."
+      },
+      "sherry": {
+        "loadError": "Failed to load app config. Please check the backend service.",
+        "saveFailed": "Failed to save app config.",
+        "restartHint": "Restart the backend service for changes to take effect. Persisted in sherry.jsonc at the project root.",
+        "noConfigFile": "No sherry.jsonc file found."
+      },
+      "cron": {
+        "addJob": "New task",
+        "empty": "No cron tasks yet. Click \"New task\" to add one.",
+        "run": "Run",
+        "edit": "Edit",
+        "delete": "Delete",
+        "addTitle": "New Cron Task",
+        "editTitle": "Edit Cron Task",
+        "name": "Task name",
+        "namePlaceholder": "e.g. Daily good-morning greeting",
+        "scheduleType": "Schedule type",
+        "typeAt": "Specific time",
+        "typeEvery": "Repeat every",
+        "typeCron": "Cron expression",
+        "atTime": "Execution time",
+        "everyInterval": "Interval",
+        "intervalValue": "Value",
+        "intervalTooSmall": "Interval must be at least 1 second",
+        "cronExpr": "Cron expression",
+        "message": "Task message",
+        "messagePlaceholder": "Enter the task content to execute",
+        "skills": "Skills (optional)",
+        "skillsEmpty": "No skills installed",
+        "skillsHint": "Selected skills are loaded before the prompt runs — the cron sets when, the skill sets how",
+        "deliver": "Push to channel",
+        "channel": "Channel",
+        "channelPlaceholder": "e.g. default",
+        "to": "Recipient / group",
+        "toPlaceholder": "Optional",
+        "deleteAfterRun": "Delete after run",
+        "nextRun": "Next run",
+        "lastStatus": "Last status",
+        "descAt": "Run at {time}",
+        "descAtEmpty": "No time set",
+        "everySeconds": "Every {n} seconds",
+        "everyMinutes": "Every {n} minutes",
+        "everyHours": "Every {n} hours",
+        "everyDays": "Every {n} days"
+      },
+      "heartbeat": {
+        "addTask": "Add task",
+        "globalSwitch": "Global heartbeat",
+        "globalSwitchHint": "On: checks the tasks every {minutes} minutes",
+        "globalSwitchOff": "Off: the periodic heartbeat does not fire (and stays off after a restart)",
+        "effectiveHint": "This file is checked every 30 minutes. Add tasks below for the agent to work on periodically. If no tasks remain (only the headers and comments), the heartbeat is skipped.",
+        "activeEmpty": "No active tasks. Add new tasks below.",
+        "completedEmpty": "No completed tasks yet.",
+        "deleteTask": "Delete task",
+        "complete": "Complete",
+        "reactivate": "Reactivate"
+      },
+      "llm": {
+        "add": "Add model",
+        "save": "Save",
+        "apply": "Apply",
+        "saved": "Saved",
+        "applied": "Applied to .env",
+        "empty": "No models yet — click “Add model”",
+        "unnamed": "Unnamed model",
+        "collapse": "Collapse",
+        "count": "{n} / {max}",
+        "delete": "Delete",
+        "deleteConfirm": "Delete model “{name}”?",
+        "expand": "Expand",
+        "localModel": "Local model",
+        "localUnused": "Unused in local mode",
+        "maxModels": "Up to {max} models per group",
+        "requiredMissing": "Provider and model API name are required",
+        "test": "Test connection",
+        "testHint": "Probe once with the parameters on screen — nothing is written to .env",
+        "testUnsupported": "This group needs an image / audio payload, so it cannot be probed",
+        "testOk": "Reachable ({ms} ms)",
+        "testFailed": "Unreachable ({ms} ms)",
+        "testRequestFailed": "request failed: the backend did not answer"
+      },
+      "memory": {
+        "addEntry": "Add entry",
+        "deleteEntry": "Delete entry",
+        "empty": "No entries yet. Add one below.",
+        "effectiveHint": "Note: Changes only take effect after compression or restart."
+      },
+      "desc": {
+        "memoryAgent": "Agent long-term memory notes (workspace/memory/MEMORY.md)",
+        "memoryUser": "User long-term memory info (workspace/memory/USER.md)",
+        "role": "Who the AI and the user each play (names and avatars)",
+        "agents": "The agent's operating instructions and safety boundaries",
+        "soul": "Agent personality, tone, character",
+        "user": "User info and preferences"
+      },
+      "uploadAvatar": "Upload Avatar"
+    }
+  },
+  "ja": {
+    "config": {
+      "agent": {
+        "tabs": {
+          "tools": "ツール",
+          "middlewares": "ミドルウェア",
+          "subagents": "エージェントモデル",
+          "skills": "スキル"
+        },
+        "models": {
+          "scope_main": "メインエージェント",
+          "scope_subagent": "サブエージェント",
+          "mainHint": "メインエージェントが使うモデル。既定ではモデル設定に従います。",
+          "followEnv": "モデル設定に従う"
+        },
+        "tools": {
+          "count": "{selected}/{total} 選択",
+          "requiredHint": "必須（解除できません）",
+          "scope_builtin": "内蔵",
+          "scope_mcp": "MCP",
+          "mcpEmpty": "MCP ツールはまだありません（拡張-MCP でサーバーを追加）",
+          "clearAll": "すべて無効",
+          "clearGroup": "クリア",
+          "hint": "main agent が使えるツールを選択（すべて選択 = 既定、設定は保存されません）。無効なツールはモデルに提示されず、古い呼び出しも拒否されます。",
+          "selectAll": "すべて有効",
+          "selectGroup": "全選択"
+        },
+        "skills": {
+          "count": "{selected}/{total} 選択",
+          "scope_builtin": "内蔵",
+          "scope_thirdparty": "サードパーティ",
+          "empty": "スキルはまだありません",
+          "hint": "システムプロンプトのスキル索引に入れる項目を選択します（すべて選択 = 既定、設定は保存されません）。外した項目はスキル索引に現れません。"
+        },
+        "toolGroup": {
+          "files": "ファイル",
+          "terminal": "ターミナルとコード",
+          "tasks": "タスクと計画",
+          "memory": "記憶と検索",
+          "skills": "スキル",
+          "subagents": "サブエージェント",
+          "interaction": "対話",
+          "web": "ウェブ",
+          "browser": "ブラウザ",
+          "mcp": "MCP"
+        },
+        "middlewares": {
+          "lockedTitle": "システム必須（ロック）",
+          "nudgeLabel": "nudge を有効化",
+          "nudgeDesc": "圧縮後にモデルへ記憶の保存可否を自己点検させます（memory ツール）",
+          "hint": "任意項目をオフにするとこのセッションの挙動が変わります。ロック付きはシステム必須です。",
+          "lockedHint": "安全網または論理上の必需 — 無効にすると保護が失われます",
+          "nudgeNeedMemory": "先に「ツール」タブで memory ツールを選択してください"
+        },
+        "middleware": {
+          "PlanContinuationEnforcer": {
+            "name": "計画の継続",
+            "desc": "計画（todo / フロー）が未完了の間ターンを継続します"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "ライブリマインダー",
+            "desc": "毎ターン、ライブビュー（todo / TaskFlow ボード / 作業ディレクトリ等）を system-reminder として注入"
+          },
+          "TaskIntentMiddleware": {
+            "name": "タスク意図の誘導",
+            "desc": "作業依頼を検出してオーケストレーション プロンプトを注入します"
+          },
+          "WorkspaceNoticeMiddleware": {
+            "name": "ワークスペース変更通知",
+            "desc": "作業ディレクトリまたは git ブランチ/HEAD が変わったときユーザー メッセージの前に通知を挿入します"
+          },
+          "MultimodalProcessor": {
+            "name": "マルチモーダル前処理",
+            "desc": "アップロードされた画像 / 音声 / 動画を保存・前処理します"
+          },
+          "SubagentCompletionDrainMiddleware": {
+            "name": "完了結果の注入",
+            "desc": "サブエージェントの完了結果をメイン セッションに注入します"
+          },
+          "Summarization": {
+            "name": "要約圧縮",
+            "desc": "コンテキスト圧縮・オーバーフロー処理・圧縮後の nudge"
+          }
+        },
+        "subagents": {
+          "followTier": "ロール既定に従う",
+          "tier": "ロール既定: {tier}",
+          "tierDepth": "ロール定義なし: 深度の既定",
+          "hint": "機能ロールごとに使うモデル（モデル設定のモデル プロファイル）を指定します。「ロール既定に従う」は model_tier のままです。",
+          "sessionHint": "変更は main agent の次のターンで反映されます（メインモデルの切替と同じ）"
+        },
+        "role": {
+          "general": "汎用",
+          "researcher": "リサーチャー",
+          "executor": "実行者",
+          "reviewer": "レビュアー",
+          "librarian": "ライブラリアン"
+        },
+        "viewer": {
+          "tools": "ツール {selected}/{total}",
+          "middlewares": "無効なミドルウェア: {names}",
+          "middlewaresNone": "ミドルウェア: すべて有効",
+          "models": "サブエージェント モデル: {names}"
+        },
+        "readonlyHint": "読み取り専用 — 変更は「メニュー-プリセットと役割」で行います"
+      },
+      "save": "保存",
+      "cancel": "キャンセル",
+      "language": {
+        "zh": "简体中文",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "tabs": {
+        "role": "キャラクター設定",
+        "agents": "操作指示",
+        "soul": "人格・魂",
+        "user": "ユーザー情報",
+        "env": "モデル設定",
+        "sherry": "アプリ設定",
+        "memoryAgent": "記憶・Agent",
+        "memoryUser": "記憶・ユーザー"
+      },
+      "role": {
+        "aiLine": "あなたは{name}を演じます。",
+        "userLine": "ユーザーは{name}を演じます。",
+        "assistant": "AI ロール",
+        "userRole": "ユーザーロール",
+        "charNote": "名前とアバターの変更は新しいセッション作成後にのみ反映され、既存のセッションには影響しません。役割名はシステムプロンプトにも書き込まれます。",
+        "noFileChosen": "新しいアバター画像を選択できます",
+        "resetAvatar": "アバターをリセット",
+        "aiName": "AI 名前",
+        "userName": "ユーザー名"
+      },
+      "persona": {
+        "preset": {
+          "builtinPureName": "純粋",
+          "builtinCompanionName": "寄り添い",
+          "defaultName": "フル",
+          "defaultBadge": "デフォルト",
+          "builtinCodingName": "コーディングアシスタント",
+          "builtinBadge": "内蔵",
+          "savePreset": "プリセット保存",
+          "apply": "適用",
+          "editingBadge": "編集中",
+          "nameDialog": {
+            "title": "プリセットとして保存",
+            "placeholder": "プリセット名を入力",
+            "confirm": "保存"
+          },
+          "nameError": {
+            "duplicate": "名前は既に存在します",
+            "required": "名前は必須です"
+          },
+          "confirmDelete": {
+            "title": "プリセットを削除",
+            "message": "プリセット「{name}」を削除しますか？元に戻せません"
+          },
+          "toast": {
+            "presetSaved": "プリセットを保存しました",
+            "presetDeleted": "プリセットを削除しました",
+            "applyFailed": "適用に失敗しました。バックエンド接続を確認してください",
+            "presetSaveFailed": "プリセットの保存に失敗しました",
+            "applySuccess": "適用しました"
+          },
+          "emptyList": "プリセットなし",
+          "title": "プリセットと役割"
+        },
+        "restoreDefault": "デフォルトに戻す"
+      },
+      "crop": {
+        "confirm": "確定",
+        "preview": "トリミングプレビュー",
+        "rotate": "回転",
+        "zoomIn": "拡大",
+        "zoomOut": "縮小",
+        "title": "アバターをトリミング"
+      },
+      "background": {
+        "title": "背景画像",
+        "upload": "背景をアップロード",
+        "clear": "背景をクリア",
+        "bothThemes": "背景画像はライト/ダークテーマの両方で表示されます。下のスライダーでオーバーレイの強さを調整します。",
+        "opacity": "オーバーレイの強さ",
+        "opacityHint": "ライトテーマでは白、ダークテーマでは黒のオーバーレイを重ねます。右に行くほど写真が真っ白/真っ黒に薄れ、完全に覆われます。",
+        "cropTitle": "背景をトリミング",
+        "current": "背景画像が設定されています",
+        "noFileChosen": "画像ファイルを選択"
+      },
+      "env": {
+        "loadError": "モデル設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "モデル設定の保存に失敗しました。",
+        "restartHint": "APIキーなどの機密設定を変更した場合、反映にはバックエンドの再起動が必要です。",
+        "noEnvFile": ".env ファイルが見つかりません。",
+        "maxTokenError": "{key} は 131072 (128K) 以上である必要があります。現在の値は要件を満たしていません。保存できません。",
+        "maxTokenHint": "131072 (128K) 以上である必要があります。そうでない場合、エージェントは起動を拒否します。"
+      },
+      "sherry": {
+        "loadError": "アプリ設定の読み込みに失敗しました。バックエンドサービスを確認してください。",
+        "saveFailed": "アプリ設定の保存に失敗しました。",
+        "restartHint": "変更を反映するにはバックエンドの再起動が必要です。設定はプロジェクトルートの sherry.jsonc に保存されます。",
+        "noConfigFile": "sherry.jsonc ファイルが見つかりません。"
+      },
+      "cron": {
+        "addJob": "新規タスク",
+        "empty": "クーロンタスクはまだありません。「新規タスク」をクリックして追加してください。",
+        "run": "実行",
+        "edit": "編集",
+        "delete": "削除",
+        "addTitle": "新しいクーロンタスク",
+        "editTitle": "クーロンタスクを編集",
+        "name": "タスク名",
+        "namePlaceholder": "例：毎朝の挨拶",
+        "scheduleType": "スケジュール方式",
+        "typeAt": "指定時刻",
+        "typeEvery": "間隔で繰り返し",
+        "typeCron": "Cron 式",
+        "atTime": "実行時刻",
+        "everyInterval": "実行間隔",
+        "intervalValue": "値",
+        "intervalTooSmall": "間隔は1秒以上にしてください",
+        "cronExpr": "Cron 式",
+        "message": "タスク内容",
+        "messagePlaceholder": "実行するタスクの内容を入力",
+        "skills": "スキル（任意）",
+        "skillsEmpty": "利用可能なスキルがありません",
+        "skillsHint": "選択したスキルは実行前にロードされます — クーロンが実行タイミングを、スキルが実行方法を決定します",
+        "deliver": "チャネルへ配信",
+        "channel": "チャネル名",
+        "channelPlaceholder": "例：default",
+        "to": "受信者 / グループ",
+        "toPlaceholder": "任意",
+        "deleteAfterRun": "実行後に自動削除",
+        "nextRun": "次回実行",
+        "lastStatus": "前回の状態",
+        "descAt": "{time} に実行",
+        "descAtEmpty": "時刻が未設定",
+        "everySeconds": "{n} 秒ごと",
+        "everyMinutes": "{n} 分ごと",
+        "everyHours": "{n} 時間ごと",
+        "everyDays": "{n} 日ごと"
+      },
+      "heartbeat": {
+        "addTask": "タスクを追加",
+        "globalSwitch": "グローバル ハートビート",
+        "globalSwitchHint": "{minutes} 分ごとにタスクを確認します",
+        "globalSwitchOff": "オフ：定期ハートビートは実行されません（再起動後もオフのまま）",
+        "effectiveHint": "このファイルは30分ごとにチェックされます。Agentが定期的に処理してほしいタスクを下に追加してください。見出し/コメントのみ（タスクがない）場合はハートビートをスキップします。",
+        "activeEmpty": "アクティブなタスクはありません。下に新しいタスクを追加してください。",
+        "completedEmpty": "完了済みのタスクはまだありません。",
+        "deleteTask": "タスクを削除",
+        "complete": "完了にする",
+        "reactivate": "再アクティブ化"
+      },
+      "llm": {
+        "add": "モデルを追加",
+        "save": "保存",
+        "apply": "適用",
+        "saved": "保存しました",
+        "applied": ".env に適用済み",
+        "empty": "モデルがありません。「モデルを追加」をクリック",
+        "unnamed": "名称未設定のモデル",
+        "collapse": "折りたたむ",
+        "count": "{n} / {max}",
+        "delete": "削除",
+        "deleteConfirm": "モデル「{name}」を削除しますか？",
+        "expand": "展開",
+        "localModel": "ローカルモデル",
+        "localUnused": "ローカルでは未使用",
+        "maxModels": "1グループにつき最大 {max} モデル",
+        "requiredMissing": "プロバイダーとモデル API 名は必須です",
+        "test": "接続テスト",
+        "testHint": "画面のパラメータで 1 回だけ試します（.env には書き込みません）",
+        "testUnsupported": "このグループは画像 / 音声入力が必要なため、接続テストはできません",
+        "testOk": "接続 OK（{ms} ms）",
+        "testFailed": "接続失敗（{ms} ms）",
+        "testRequestFailed": "リクエスト失敗: バックエンドが応答しません"
+      },
+      "memory": {
+        "addEntry": "項目を追加",
+        "deleteEntry": "項目を削除",
+        "empty": "項目はまだありません。下から追加してください。",
+        "effectiveHint": "注意：変更は圧縮時または再起動時にのみ反映されます。"
+      },
+      "desc": {
+        "memoryAgent": "Agent 長期記憶ノート（workspace/memory/MEMORY.md）",
+        "memoryUser": "ユーザー長期記憶情報（workspace/memory/USER.md）",
+        "role": "AI とユーザーがそれぞれ演じる役割（名前とアバター）",
+        "agents": "Agent の操作指示と安全境界",
+        "soul": "Agent 人格、トーン、性格",
+        "user": "ユーザー情報と好み"
+      },
+      "uploadAvatar": "アバターをアップロード"
+    }
+  },
+  "ko": {
+    "config": {
+      "agent": {
+        "tabs": {
+          "tools": "도구",
+          "middlewares": "미들웨어",
+          "subagents": "에이전트 모델",
+          "skills": "스킬"
+        },
+        "models": {
+          "scope_main": "메인 에이전트",
+          "scope_subagent": "서브에이전트",
+          "mainHint": "메인 에이전트가 사용하는 모델입니다. 기본값은 모델 설정을 따릅니다.",
+          "followEnv": "모델 설정 따르기"
+        },
+        "tools": {
+          "count": "{selected}/{total} 선택",
+          "requiredHint": "필수 — 해제할 수 없음",
+          "scope_builtin": "내장",
+          "scope_mcp": "MCP",
+          "mcpEmpty": "아직 MCP 도구가 없습니다(확장-MCP에서 서버 추가)",
+          "clearAll": "모두 끄기",
+          "clearGroup": "지우기",
+          "hint": "main agent가 사용할 도구를 선택하세요(모두 선택 = 기본, 설정을 저장하지 않음). 꺼진 도구는 모델에 제공되지 않고 이전 호출도 거부됩니다.",
+          "selectAll": "모두 켜기",
+          "selectGroup": "전체"
+        },
+        "skills": {
+          "count": "{selected}/{total} 선택",
+          "scope_builtin": "내장",
+          "scope_thirdparty": "서드파티",
+          "empty": "아직 스킬이 없습니다",
+          "hint": "시스템 프롬프트의 스킬 색인에 들어갈 항목을 선택하세요(모두 선택 = 기본, 설정 저장 안 함). 해제한 항목은 스킬 색인에 나타나지 않습니다."
+        },
+        "toolGroup": {
+          "files": "파일",
+          "terminal": "터미널과 코드",
+          "tasks": "작업과 계획",
+          "memory": "기억과 검색",
+          "skills": "스킬",
+          "subagents": "서브에이전트",
+          "interaction": "상호작용",
+          "web": "웹",
+          "browser": "브라우저",
+          "mcp": "MCP"
+        },
+        "middlewares": {
+          "lockedTitle": "시스템 필수(잠금)",
+          "nudgeLabel": "nudge 사용",
+          "nudgeDesc": "압축 후 모델이 저장할 만한 내용을 스스로 점검합니다(memory 도구)",
+          "hint": "선택 항목을 끄면 이 세션의 동작이 바로 바뀝니다. 자물쇠 항목은 시스템 필수입니다.",
+          "lockedHint": "안전망 또는 논리적 필수 — 끄면 보호가 사라집니다",
+          "nudgeNeedMemory": "먼저 「도구」 탭에서 memory 도구를 선택하세요"
+        },
+        "middleware": {
+          "PlanContinuationEnforcer": {
+            "name": "계획 이어가기",
+            "desc": "계획(todo / 플로우)이 끝나지 않은 동안 턴을 이어갑니다"
+          },
+          "DynamicReminderMiddleware": {
+            "name": "실시간 리마인더",
+            "desc": "매 턴 라이브 뷰(todo / TaskFlow 보드 / 작업 디렉터리 등)를 system-reminder로 주입"
+          },
+          "TaskIntentMiddleware": {
+            "name": "작업 의도 유도",
+            "desc": "작업 요청을 감지해 오케스트레이션 프롬프트를 주입합니다"
+          },
+          "WorkspaceNoticeMiddleware": {
+            "name": "워크스페이스 변경 알림",
+            "desc": "작업 디렉터리나 git 브랜치/HEAD가 바뀌면 사용자 메시지 앞에 알림을 삽입합니다"
+          },
+          "MultimodalProcessor": {
+            "name": "멀티모달 전처리",
+            "desc": "업로드된 이미지 / 오디오 / 비디오를 저장하고 전처리합니다"
+          },
+          "SubagentCompletionDrainMiddleware": {
+            "name": "완료 결과 주입",
+            "desc": "서브에이전트 완료 결과를 메인 세션에 주입합니다"
+          },
+          "Summarization": {
+            "name": "요약 압축",
+            "desc": "컨텍스트 압축, 오버플로 처리, 압축 후 nudge"
+          }
+        },
+        "subagents": {
+          "followTier": "역할 기본값 따르기",
+          "tier": "역할 기본값: {tier}",
+          "tierDepth": "역할 정의 없음: 깊이 기본값",
+          "hint": "기능 역할마다 사용할 모델(모델 설정 모델 프로필)을 지정하세요. \"역할 기본값 따르기\"는 model_tier를 유지합니다.",
+          "sessionHint": "변경은 main agent의 다음 턴에 적용됩니다(메인 모델 전환과 동일)"
+        },
+        "role": {
+          "general": "범용",
+          "researcher": "리서처",
+          "executor": "실행자",
+          "reviewer": "리뷰어",
+          "librarian": "사서"
+        },
+        "viewer": {
+          "tools": "도구 {selected}/{total}",
+          "middlewares": "꺼진 미들웨어: {names}",
+          "middlewaresNone": "미들웨어: 모두 켜짐",
+          "models": "서브에이전트 모델: {names}"
+        },
+        "readonlyHint": "읽기 전용 — 변경은 「메뉴-프리셋과 역할」에서 하세요"
+      },
+      "save": "저장",
+      "cancel": "취소",
+      "language": {
+        "zh": "简体中文",
+        "en": "English",
+        "ja": "日本語",
+        "ko": "한국어"
+      },
+      "tabs": {
+        "role": "캐릭터 설정",
+        "agents": "운영 지침",
+        "soul": "인격·영혼",
+        "user": "사용자 정보",
+        "env": "모델 설정",
+        "sherry": "앱 설정",
+        "memoryAgent": "메모리·Agent",
+        "memoryUser": "메모리·사용자"
+      },
+      "role": {
+        "aiLine": "당신은 {name} 역할을 연기합니다.",
+        "userLine": "사용자는 {name} 역할을 연기합니다.",
+        "assistant": "AI 역할",
+        "userRole": "사용자 역할",
+        "charNote": "이름과 아바타 변경은 새 세션 생성 후에만 적용되며, 기존 세션에는 영향을 주지 않습니다. 역할 이름은 시스템 프롬프트에도 기록됩니다.",
+        "noFileChosen": "새 아바타 이미지를 선택할 수 있습니다",
+        "resetAvatar": "아바타 초기화",
+        "aiName": "AI 이름",
+        "userName": "사용자 이름"
+      },
+      "persona": {
+        "preset": {
+          "builtinPureName": "순수",
+          "builtinCompanionName": "감정 동반",
+          "defaultName": "전체",
+          "defaultBadge": "기본",
+          "builtinCodingName": "코딩 어시스턴트",
+          "builtinBadge": "내장",
+          "savePreset": "프리셋 저장",
+          "apply": "적용",
+          "editingBadge": "편집 중",
+          "nameDialog": {
+            "title": "프리셋으로 저장",
+            "placeholder": "프리셋 이름 입력",
+            "confirm": "저장"
+          },
+          "nameError": {
+            "duplicate": "이름이 이미 존재합니다",
+            "required": "이름은 필수입니다"
+          },
+          "confirmDelete": {
+            "title": "프리셋 삭제",
+            "message": "프리셋 \"{name}\"을(를) 삭제하시겠습니까? 되돌릴 수 없습니다"
+          },
+          "toast": {
+            "presetSaved": "프리셋이 저장되었습니다",
+            "presetDeleted": "프리셋이 삭제되었습니다",
+            "applyFailed": "적용 실패, 백엔드 연결을 확인하세요",
+            "presetSaveFailed": "프리셋 저장 실패",
+            "applySuccess": "적용됨"
+          },
+          "emptyList": "프리셋 없음",
+          "title": "프리셋과 역할"
+        },
+        "restoreDefault": "기본값 복원"
+      },
+      "crop": {
+        "confirm": "확인",
+        "preview": "자르기 미리보기",
+        "rotate": "회전",
+        "zoomIn": "확대",
+        "zoomOut": "축소",
+        "title": "아바타 자르기"
+      },
+      "background": {
+        "title": "배경 이미지",
+        "upload": "배경 업로드",
+        "clear": "배경 지우기",
+        "bothThemes": "배경 이미지는 라이트/다크 테마 모두에서 표시됩니다. 아래 슬라이더로 오버레이 강도를 조정하세요.",
+        "opacity": "오버레이 강도",
+        "opacityHint": "라이트 테마는 흰색, 다크 테마는 검은색 오버레이를 덮습니다. 오른쪽으로 갈수록 사진이 순백/순흑으로 바래다 완전히 가려집니다.",
+        "cropTitle": "배경 자르기",
+        "current": "배경 이미지가 설정됨",
+        "noFileChosen": "이미지 파일을 선택하세요"
+      },
+      "env": {
+        "loadError": "모델 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "모델 설정을 저장하지 못했습니다.",
+        "restartHint": "API 키 등 민감한 설정을 변경한 경우, 적용하려면 백엔드를 재시작해야 합니다.",
+        "noEnvFile": ".env 파일을 찾을 수 없습니다.",
+        "maxTokenError": "{key}는 131072 (128K) 이상이어야 합니다. 현재 값이 요구사항을 충족하지 않아 저장할 수 없습니다.",
+        "maxTokenHint": "131072 (128K) 이상이어야 합니다. 그렇지 않으면 에이전트가 시작을 거부합니다."
+      },
+      "sherry": {
+        "loadError": "앱 설정을 불러오지 못했습니다. 백엔드 서비스를 확인하세요.",
+        "saveFailed": "앱 설정을 저장하지 못했습니다.",
+        "restartHint": "변경 사항을 적용하려면 백엔드를 재시작해야 합니다. 설정은 프로젝트 루트의 sherry.jsonc에 저장됩니다.",
+        "noConfigFile": "sherry.jsonc 파일을 찾을 수 없습니다."
+      },
+      "cron": {
+        "addJob": "새 작업",
+        "empty": "크론 작업이 없습니다. \"새 작업\"을 클릭하여 추가하세요.",
+        "run": "실행",
+        "edit": "편집",
+        "delete": "삭제",
+        "addTitle": "새 크론 작업",
+        "editTitle": "크론 작업 편집",
+        "name": "작업 이름",
+        "namePlaceholder": "예: 매일 아침 인사",
+        "scheduleType": "스케줄 방식",
+        "typeAt": "지정 시각",
+        "typeEvery": "간격 반복",
+        "typeCron": "Cron 표현식",
+        "atTime": "실행 시각",
+        "everyInterval": "실행 간격",
+        "intervalValue": "값",
+        "intervalTooSmall": "간격은 1초 이상이어야 합니다",
+        "cronExpr": "Cron 표현식",
+        "message": "작업 내용",
+        "messagePlaceholder": "실행할 작업 내용을 입력하세요",
+        "skills": "스킬 (선택)",
+        "skillsEmpty": "사용 가능한 스킬이 없습니다",
+        "skillsHint": "선택한 스킬은 실행 전에 로드됩니다 — 크론이 실행 시점을, 스킬이 실행 방법을 결정합니다",
+        "deliver": "채널로 전송",
+        "channel": "채널 이름",
+        "channelPlaceholder": "예: default",
+        "to": "수신자 / 그룹",
+        "toPlaceholder": "선택 사항",
+        "deleteAfterRun": "실행 후 자동 삭제",
+        "nextRun": "다음 실행",
+        "lastStatus": "마지막 상태",
+        "descAt": "{time}에 실행",
+        "descAtEmpty": "시각 미설정",
+        "everySeconds": "매 {n}초",
+        "everyMinutes": "매 {n}분",
+        "everyHours": "매 {n}시간",
+        "everyDays": "매 {n}일"
+      },
+      "heartbeat": {
+        "addTask": "작업 추가",
+        "globalSwitch": "전역 하트비트",
+        "globalSwitchHint": "{minutes}분마다 작업을 확인합니다",
+        "globalSwitchOff": "꺼짐: 주기 하트비트가 실행되지 않습니다(재시작 후에도 꺼진 상태 유지)",
+        "effectiveHint": "이 파일은 30분마다 확인됩니다. 에이전트가 주기적으로 처리하길 원하는 작업을 아래에 추가하세요. 헤더/주석만 남고 작업이 없으면 하트비트를 건너뜁니다.",
+        "activeEmpty": "활성 작업이 없습니다. 아래에서 새 작업을 추가하세요.",
+        "completedEmpty": "완료된 작업이 아직 없습니다.",
+        "deleteTask": "작업 삭제",
+        "complete": "완료로 이동",
+        "reactivate": "다시 활성화"
+      },
+      "llm": {
+        "add": "모델 추가",
+        "save": "저장",
+        "apply": "적용",
+        "saved": "저장됨",
+        "applied": ".env에 적용됨",
+        "empty": "모델이 없습니다. “모델 추가”를 클릭하세요",
+        "unnamed": "이름 없는 모델",
+        "collapse": "접기",
+        "count": "{n} / {max}",
+        "delete": "삭제",
+        "deleteConfirm": "모델 “{name}”을(를) 삭제할까요?",
+        "expand": "펼치기",
+        "localModel": "로컬 모델",
+        "localUnused": "로컬 모드에서 미사용",
+        "maxModels": "그룹당 최대 {max}개 모델",
+        "requiredMissing": "제공자와 모델 API 이름은 필수입니다",
+        "test": "연결 테스트",
+        "testHint": "화면의 파라미터로 한 번 호출합니다(.env에 쓰지 않습니다)",
+        "testUnsupported": "이 그룹은 이미지 / 오디오 입력이 필요해 연결 테스트를 할 수 없습니다",
+        "testOk": "연결 정상({ms} ms)",
+        "testFailed": "연결 실패({ms} ms)",
+        "testRequestFailed": "요청 실패: 백엔드가 응답하지 않음"
+      },
+      "memory": {
+        "addEntry": "항목 추가",
+        "deleteEntry": "항목 삭제",
+        "empty": "항목이 없습니다. 아래에서 추가하세요.",
+        "effectiveHint": "참고: 변경 사항은 압축 또는 재시작 시에만 적용됩니다."
+      },
+      "desc": {
+        "memoryAgent": "Agent 장기 기억 메모 (workspace/memory/MEMORY.md)",
+        "memoryUser": "사용자 장기 기억 정보 (workspace/memory/USER.md)",
+        "role": "AI와 사용자가 각각 맡는 역할(이름과 아바타)",
+        "agents": "Agent의 운영 지침과 안전 경계",
+        "soul": "Agent 인격, 어조, 성격",
+        "user": "사용자 정보 및 선호도"
+      },
+      "uploadAvatar": "아바타 업로드"
+    }
+  }
+}
+</i18n>
+
+<style scoped>
+/* The tab strip keeps its height and the tab body scrolls inside it, so the
+   save / cancel row below stays pinned at the bottom-right of the panel instead
+   of scrolling away with a long form. */
+:deep(.p-tabview) {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* This PrimeVue version renders the strip as .p-tabview-tablist-container
+   (there is no .p-tabview-nav): keep it at its own height so the panels area
+   below is the only thing that scrolls. */
+:deep(.p-tabview-tablist-container) {
+  flex-shrink: 0;
+}
+
+:deep(.p-tabview-panels) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+</style>

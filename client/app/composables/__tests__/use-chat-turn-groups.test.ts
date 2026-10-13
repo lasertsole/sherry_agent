@@ -1,0 +1,129 @@
+import { describe, it, expect } from 'vitest';
+import { ref } from 'vue';
+import { useChatTurnGroups } from '../use-chat-turn-groups';
+import { CHAT_ROLE } from '@/types/chat-role';
+import type { MessageItem } from '@/pages/home/type';
+
+const msg = (over: Partial<MessageItem>): MessageItem => ({
+  session_id: 'default',
+  role: CHAT_ROLE.USER,
+  content: 'x',
+  id: 1,
+  turn_num: 0,
+  timestamp: 't',
+  ...over
+});
+
+describe('useChatTurnGroups', () => {
+  it('drops AI empty placeholders but keeps empty AI rows that carry reasoning', () => {
+    const { filteredMessages } = useChatTurnGroups(() => [
+      msg({ id: 1, role: CHAT_ROLE.AI, content: '' }),
+      msg({ id: 2, role: CHAT_ROLE.AI, content: '', reasoning: 'thinking' }),
+      msg({ id: 3, role: CHAT_ROLE.USER, content: '' })
+    ]);
+    expect(filteredMessages.value.map(m => m.id)).toEqual([2, 3]);
+  });
+
+  it('treats a trailing USER message as a turn boundary even when the AI placeholder is filtered', () => {
+    // Original sequence: userA, empty AI placeholder, userB -> B is the first message
+    // of a new turn, so it must NOT be marked consecutive with userA.
+    const { isConsecutive } = useChatTurnGroups(() => [
+      msg({ id: 1, role: CHAT_ROLE.USER }),
+      msg({ id: 2, role: CHAT_ROLE.AI, content: '' }),
+      msg({ id: 3, role: CHAT_ROLE.USER })
+    ]);
+    expect(isConsecutive(1)).toBe(false);
+    expect(isConsecutive(3)).toBe(false);
+  });
+
+  it('marks same-role adjacency in the ORIGINAL sequence, skipping TOOL rows', () => {
+    const { isConsecutive } = useChatTurnGroups(() => [
+      msg({ id: 1, role: CHAT_ROLE.AI }),
+      msg({ id: 2, role: CHAT_ROLE.TOOL, content: '' }),
+      msg({ id: 3, role: CHAT_ROLE.AI })
+    ]);
+    // TOOL rows are skipped: ids 1 and 3 are adjacent AI rows.
+    expect(isConsecutive(1)).toBe(false);
+    expect(isConsecutive(3)).toBe(true);
+  });
+
+  it('groups by turn: USER starts a group, consecutive AI/TOOL rows merge', () => {
+    const { turnGroups } = useChatTurnGroups(() => [
+      msg({ id: 1, role: CHAT_ROLE.USER }),
+      msg({ id: 2, role: CHAT_ROLE.AI }),
+      msg({ id: 3, role: CHAT_ROLE.TOOL, content: '' }),
+      msg({ id: 4, role: CHAT_ROLE.AI }),
+      msg({ id: 5, role: CHAT_ROLE.USER })
+    ]);
+    expect(turnGroups.value.map(g => g.map(m => m.id))).toEqual([[1], [2, 3, 4], [5]]);
+  });
+
+  it('turnSpacingClass is true only for multi-row groups not starting with a USER', () => {
+    const { turnSpacingClass } = useChatTurnGroups(() => []);
+    expect(turnSpacingClass([msg({ id: 1, role: CHAT_ROLE.AI }), msg({ id: 2, role: CHAT_ROLE.AI })])).toBe(true);
+    expect(turnSpacingClass([msg({ id: 1, role: CHAT_ROLE.AI })])).toBe(false);
+    expect(turnSpacingClass([msg({ id: 1, role: CHAT_ROLE.USER }), msg({ id: 2, role: CHAT_ROLE.AI })])).toBe(false);
+  });
+
+  it('splits injected carriers (a non-user origin) out of the bubble flow', () => {
+    const { isBackgroundTask, regularMessages, backgroundCarriers } = useChatTurnGroups(() => []);
+    const carrier = msg({ id: 1, origin: 'subagent_completion' });
+    const legacy = msg({ id: 2, origin: undefined });
+    const explicitUser = msg({ id: 3, origin: 'user' });
+    const ai = msg({ id: 4, role: CHAT_ROLE.AI });
+    // Both workspace notices are USER rows carrying a non-user origin (the
+    // middleware emits HumanMessages) — they must render as cards, never as
+    // bubbles the user wrote.
+    const dirNotice = msg({ id: 5, origin: 'project_dir' });
+    const gitNotice = msg({ id: 6, origin: 'git_head' });
+    // Legacy shape: rows stored while the notice was still an AIMessage keep
+    // rendering as cards too.
+    const legacyAiNotice = msg({ id: 7, role: CHAT_ROLE.AI, origin: 'project_dir' });
+
+    expect(isBackgroundTask(carrier)).toBe(true);
+    expect(isBackgroundTask(legacy)).toBe(false);
+    expect(isBackgroundTask(explicitUser)).toBe(false);
+    expect(isBackgroundTask(ai)).toBe(false);
+    expect(isBackgroundTask(dirNotice)).toBe(true);
+    expect(isBackgroundTask(gitNotice)).toBe(true);
+    expect(isBackgroundTask(legacyAiNotice)).toBe(true);
+
+    const group = [carrier, legacy, explicitUser, ai, dirNotice, gitNotice, legacyAiNotice];
+    expect(backgroundCarriers(group).map(m => m.id)).toEqual([1, 5, 6, 7]);
+    expect(regularMessages(group).map(m => m.id)).toEqual([2, 3, 4]);
+  });
+
+  it('gives every carrier its own turn group, so a notice stays right above its human message', () => {
+    // Realistic tail of a session: the notice rows sort immediately BEFORE the
+    // human row of the same turn — they must NOT merge into the previous answer's
+    // group, because ChatBox hoists a group's carriers to the top: merging put the
+    // card above the previous answer and detached it from the request it explains.
+    const { turnGroups } = useChatTurnGroups(() => [
+      msg({ id: 70, role: CHAT_ROLE.AI, turn_num: 72, content: '上一轮回答' }),
+      msg({ id: 71, origin: 'project_dir', turn_num: 73, content: '目录已切换' }),
+      msg({ id: 76, origin: 'git_head', turn_num: 73, content: '分支已切换' }),
+      msg({ id: 72, role: CHAT_ROLE.USER, turn_num: 73, content: '现在呢' }),
+      msg({ id: 73, role: CHAT_ROLE.AI, turn_num: 73, content: '' }),
+      msg({ id: 74, role: CHAT_ROLE.TOOL, turn_num: 74, content: 'pwd' }),
+      msg({ id: 75, role: CHAT_ROLE.AI, turn_num: 75, content: '/tmp' })
+    ]);
+
+    expect(turnGroups.value.map(g => g.map(m => m.id))).toEqual([[70], [71], [76], [72], [74, 75]]);
+
+    // A USER carrier keeps its own group exactly as before (it never shared one).
+    const { turnGroups: withUserCarrier } = useChatTurnGroups(() => [
+      msg({ id: 1, role: CHAT_ROLE.AI, content: '回答' }),
+      msg({ id: 2, origin: 'subagent_completion', content: '完成载体' }),
+      msg({ id: 3, role: CHAT_ROLE.AI, content: '下一轮' })
+    ]);
+    expect(withUserCarrier.value.map(g => g.map(m => m.id))).toEqual([[1], [2], [3]]);
+  });
+
+  it('reacts to a messages getter backed by a ref', () => {
+    const source = ref<MessageItem[]>([msg({ id: 1, role: CHAT_ROLE.USER })]);
+    const { turnGroups } = useChatTurnGroups(() => source.value);
+    expect(turnGroups.value).toHaveLength(1);
+    source.value = [msg({ id: 1, role: CHAT_ROLE.USER }), msg({ id: 2, role: CHAT_ROLE.AI })];
+    expect(turnGroups.value.map(g => g.map(m => m.id))).toEqual([[1], [2]]);
+  });
+});
