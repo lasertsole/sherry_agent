@@ -141,3 +141,23 @@ def test_the_run_route_refuses_a_missing_session_or_command(monkeypatch):
 
     assert missing.status_code == 400
     assert empty.status_code == 400
+
+
+class TestGrandchildDoesNotHang:
+    @pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="POSIX job control only")
+    @pytest.mark.timeout(30)
+    def test_a_backgrounded_grandchild_returns_immediately(self, project):
+        """The console backgrounds a grandchild that outlives the direct child.
+
+        stdout is a FILE now (never a pipe): the request returns when the DIRECT
+        child exits, so the grandchild's `sleep` cannot hold it (with a pipe the
+        read waited for EOF and hung until that sleep finished).
+        """
+        import time
+
+        started = time.monotonic()
+        result = asyncio.run(service.run_user_command("s1", "sh -c 'sleep 3 & echo quick'"))
+        elapsed = time.monotonic() - started
+
+        assert "quick" in str(result["output"])
+        assert elapsed < 2.5, f"the console must not wait for the grandchild ({elapsed:.1f}s)"

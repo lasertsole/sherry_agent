@@ -184,8 +184,16 @@ def test_the_catalog_orders_the_groups_and_flags_the_required_tools():
     assert rendered[:6] == ["skills", "terminal", "files", "interaction", "plan_mode", "memory"]
 
     # Entirely-required groups: nothing there can be switched off.
-    for group in ("skills", "terminal", "files", "interaction"):
+    for group in ("skills", "files", "interaction"):
         assert all(tool_required(name) for name in TOOL_GROUPS[group]), group
+
+    # 终端与代码: the two exec tools are locked; the background-task queries ride
+    # the same group but stay optional (a session that never backgrounds anything
+    # may switch them off).
+    assert tool_required("terminal") is True
+    assert tool_required("python_repl") is True
+    assert tool_required("terminal_bg_list") is False
+    assert tool_required("terminal_bg_output") is False
 
     # 记忆与检索: `message_search` is locked, `memory` stays switchable.
     assert tool_required("message_search") is True
