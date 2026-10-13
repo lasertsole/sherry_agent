@@ -1,0 +1,314 @@
+"""LangChain tool wrappers for the code intelligence index — RESEARCHER only.
+
+The five tools (``explore`` / ``callers`` / ``callees`` / ``impact`` /
+``semantic_code_search``) are never registered in ``_MAIN_TOOLS_BUILDERS``;
+``agent/tools/subagent/spawn/core.py`` injects them into a child agent only when
+its functional role is RESEARCHER. Each carries
+``metadata={"scope": "researcher_only"}`` so the tag is visible to policy
+layers, and the outputs are JSON strings, matching the rest of the tool surface.
+
+``semantic_code_search`` is the embedding-backed, concept-level search
+over the same symbol table. It is fail-open — an unavailable embedding model or
+reranker degrades the result instead of failing the call.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from pathlib import Path
+from typing import Any
+
+from langchain_core.tools import BaseTool
+from loguru import logger
+from pydantic import BaseModel, Field, PrivateAttr
+
+from config.features.agent_side import (
+    CODE_INTEL,
+    CODE_INTEL_SEMANTIC,
+    CodeIntelConfig,
+    CodeIntelSemanticConfig,
+)
+from config.path import CODE_INTEL_DIR
+
+from .roots import index_db_for_root, resolve_root, root_for_call
+
+from .query import CalleeInfo, CallerInfo, CodeQuery, ExploreResult, ImpactResult
+from .semantic import SemanticSearch, build_semantic_search_tool
+
+_DB_ENV_KEY = "SHERRY_CODE_INTEL_DB"
+_SCOPE_METADATA: dict[str, Any] = {"scope": "researcher_only", "idempotent": True}
+
+
+def _resolve_db_path(config: CodeIntelConfig, session_id: str, explicit_root: Path | None) -> str:
+    """The index DB for this spawn, resolved against the session's own root."""
+    root = root_for_call(explicit_root, session_id, resolve_root())
+    return index_db_for_root(root, config["code_intel_index_db_path"], CODE_INTEL_DIR)
+
+
+class ExploreInput(BaseModel):
+    """Input for the ``explore`` tool."""
+
+    query: str = Field(description="Concept, symbol name, or natural-language intent to explore.")
+
+
+class CallersInput(BaseModel):
+    """Input for the ``callers`` tool."""
+
+    symbol: str = Field(description="Symbol name whose callers should be listed.")
+
+
+class CalleesInput(BaseModel):
+    """Input for the ``callees`` tool."""
+
+    symbol: str = Field(description="Symbol name whose outgoing calls should be listed.")
+
+
+class ImpactInput(BaseModel):
+    """Input for the ``impact`` tool."""
+
+    symbol: str = Field(description="Symbol name whose blast radius should be analysed.")
+
+
+class _CodeIntelTool(BaseTool):
+    """Shared engine/root/config wiring for the four tools."""
+
+    model_config = {"arbitrary_types_allowed": True}
+
+    _engine: CodeQuery = PrivateAttr()
+    _config: CodeIntelConfig = PrivateAttr()
+    _root: Path = PrivateAttr()
+    _explicit_root: Path | None = PrivateAttr(default=None)
+    _session_id: str = PrivateAttr(default="")
+
+    def __init__(
+        self,
+        engine: CodeQuery,
+        config: CodeIntelConfig,
+        root: Path,
+        session_id: str = "",
+        explicit_root: Path | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        self._engine = engine
+        self._config = config
+        self._root = root
+        self._explicit_root = explicit_root
+        self._session_id = session_id
+
+    def _session_root(self) -> Path:
+        """The project directory this call runs against (see :func:`_root_for_call`)."""
+        return root_for_call(self._explicit_root, self._session_id, self._root)
+
+    def _run(self, **kwargs: Any) -> str:  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    async def _arun(self, **kwargs: Any) -> str:
+        """Run the blocking index/query work off the event loop."""
+        return await asyncio.to_thread(lambda: self._run(**kwargs))
+
+    def _json(self, payload: dict[str, Any]) -> str:
+        return json.dumps(payload, ensure_ascii=False)
+
+
+class ExploreTool(_CodeIntelTool):
+    """Fuzzy intent → symbol source + immediate call paths."""
+
+    name: str = "explore"
+    description: str = (
+        "Find code related to a concept, function name, or natural language query. "
+        "Returns source code plus immediate callers/callees for the most relevant symbols. "
+        "Use FIRST when you need to understand how something works, where it is defined, or "
+        "what calls it. Falls back to terminal when no symbol matches. "
+        'Example: explore("database connection pooling")'
+    )
+    args_schema: type[BaseModel] = ExploreInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, query: str) -> str:
+        result = self._engine.explore(query, self._session_root())
+        return self._json(_explore_payload(result))
+
+
+class CallersTool(_CodeIntelTool):
+    """List functions/methods that call a symbol."""
+
+    name: str = "callers"
+    description: str = (
+        "Find all functions/methods that call the given symbol. "
+        "Returns caller name, file, line, and the call site line. "
+        'Example: callers("built_agent")'
+    )
+    args_schema: type[BaseModel] = CallersInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, symbol: str) -> str:
+        rows = self._engine.callers(symbol, self._session_root())
+        return self._json(_callers_payload(symbol, rows))
+
+
+class CalleesTool(_CodeIntelTool):
+    """List functions/methods called by a symbol."""
+
+    name: str = "callees"
+    description: str = (
+        "Find all functions/methods called by the given symbol. "
+        "Returns callee name, resolved target file/line when known, and the call site line. "
+        'Example: callees("built_agent")'
+    )
+    args_schema: type[BaseModel] = CalleesInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, symbol: str) -> str:
+        rows = self._engine.callees(symbol, self._session_root())
+        return self._json(_callees_payload(symbol, rows))
+
+
+class ImpactTool(_CodeIntelTool):
+    """Blast radius of modifying a symbol."""
+
+    name: str = "impact"
+    description: str = (
+        "Analyse the blast radius of modifying the given symbol by traversing the call graph "
+        "upward (callers direction) to the configured depth. Use before refactoring to "
+        'understand what might break. Example: impact("build_main_tools")'
+    )
+    args_schema: type[BaseModel] = ImpactInput
+    metadata: dict[str, Any] = _SCOPE_METADATA
+
+    def _run(self, symbol: str) -> str:
+        result = self._engine.impact(symbol, self._session_root())
+        return self._json(_impact_payload(result))
+
+
+def _explore_payload(result: ExploreResult) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "query": result.query,
+        "count": len(result.entries),
+        "truncated": result.truncated,
+        "results": [
+            {
+                "name": entry.symbol.name,
+                "kind": entry.symbol.kind,
+                "file": entry.symbol.file_path,
+                "line_start": entry.symbol.line_start,
+                "line_end": entry.symbol.line_end,
+                "score": entry.symbol.score,
+                "doc": entry.symbol.doc_string,
+                "source": entry.source,
+                "callers": entry.callers,
+                "callees": entry.callees,
+            }
+            for entry in result.entries
+        ],
+    }
+    if result.suggestion:
+        payload["suggestion"] = result.suggestion
+    return payload
+
+
+def _callers_payload(symbol: str, rows: list[CallerInfo]) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "count": len(rows),
+        "callers": [
+            {
+                "name": row.name,
+                "kind": row.kind,
+                "file": row.file_path,
+                "line": row.line_start,
+                "call_line": row.call_line,
+            }
+            for row in rows
+        ],
+    }
+
+
+def _callees_payload(symbol: str, rows: list[CalleeInfo]) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "count": len(rows),
+        "callees": [
+            {
+                "name": row.name,
+                "target_file": row.target_file,
+                "target_line": row.target_line,
+                "call_line": row.call_line,
+                "resolved": row.resolved,
+            }
+            for row in rows
+        ],
+    }
+
+
+def _impact_payload(result: ImpactResult) -> dict[str, Any]:
+    return {
+        "symbol": result.root_symbol,
+        "max_depth": result.max_depth,
+        "count": len(result.entries),
+        "truncated": result.truncated,
+        "affected": [
+            {
+                "name": entry.symbol.name,
+                "kind": entry.symbol.kind,
+                "file": entry.symbol.file_path,
+                "line": entry.symbol.line_start,
+                "depth": entry.depth,
+                "via": entry.via,
+            }
+            for entry in result.entries
+        ],
+    }
+
+
+def build_code_intel_tools(
+    session_id: str,
+    *,
+    config: CodeIntelConfig | None = None,
+    semantic_config: CodeIntelSemanticConfig | None = None,
+    root: Path | None = None,
+    db_path: str | None = None,
+    embed_model: object | None = None,
+    reranker: object | None = None,
+) -> list[BaseTool]:
+    """Build the five RESEARCHER-only code intelligence tools.
+
+    Optional overrides exist for tests; production callers pass only
+    ``session_id`` and resolve the root from the process environment. The
+    semantic tool's model/reranker are injected (tests) or resolved lazily from
+    the existing ``models`` wrappers on first use.
+    """
+    cfg = config or CODE_INTEL
+    explicit_root = Path(root).resolve() if root is not None else None
+    # The index DB follows the SESSION's project root: one index per project, so
+    # switching projects does not rebuild a shared one (see roots.py).
+    resolved_db = db_path or _resolve_db_path(cfg, session_id, explicit_root)
+    try:
+        engine = CodeQuery(resolved_db, cfg)
+    except Exception as exc:  # noqa: BLE001 - missing tooling must not break a spawn
+        logger.warning("code_intel: tools unavailable: {}", exc)
+        return []
+    resolved_root = resolve_root()
+    tools: list[BaseTool] = [
+        ExploreTool(engine, cfg, resolved_root, session_id, explicit_root),
+        CallersTool(engine, cfg, resolved_root, session_id, explicit_root),
+        CalleesTool(engine, cfg, resolved_root, session_id, explicit_root),
+        ImpactTool(engine, cfg, resolved_root, session_id, explicit_root),
+    ]
+    try:
+        semantic = SemanticSearch(
+            resolved_db,
+            cfg,
+            semantic_config or CODE_INTEL_SEMANTIC,
+            embed_model=embed_model,
+            reranker=reranker,
+        )
+        tools.append(
+            build_semantic_search_tool(
+                semantic, resolved_root, session_id, explicit_root=explicit_root
+            )
+        )
+    except Exception as exc:  # noqa: BLE001 - semantic layer is additive, never fatal
+        logger.warning("code_intel: semantic search unavailable: {}", exc)
+    return tools

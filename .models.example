@@ -1,0 +1,95 @@
+// 模型配置（从 .env 拆分而来）。模型厂商 / 端点 / 密钥 / 本地模型开关 / 扫描器模型。
+// Model configuration (split out of .env) — provider, endpoint, key, local-model
+// switches and the scanner's LLM selection. JSON5: comments and trailing commas
+// are allowed. .env 中不再有这些键；联网（搜索 / 浏览器 / 追踪）配置在 .network 里。
+//
+// 编辑方式：前端「模型配置」面板（经 GET/PUT /models-config，模型组用档案管理器），
+// 或直接编辑本文件 —— 修改后重启后端生效（进程启动时读取一次）。
+// Edit it from the 模型配置 panel (GET/PUT /models-config) or by hand.
+// Read once at boot — restart the backend after a change.
+{
+  // ── 主模型 Main chat model — must support JSON generation and tool calling ──
+  "MAIN_LLM_PROVIDER": "",
+  "MAIN_LLM_NAME": "",
+  "MAIN_LLM_API_BASE": "",
+  "MAIN_LLM_API_KEY": "",
+  // Context window; drives the summarization trigger threshold.
+  // MUST be >= 131072 (128K) — the server refuses to start below this.
+  "MAIN_LLM_MAX_TOKEN": 131072,
+  // Universal reasoning/thinking switch (maps to the right payload per provider).
+  "MAIN_LLM_ENABLE_THINKING": false,
+  // Optional reasoning effort for OpenAI-family models (low / medium / high).
+  "MAIN_LLM_REASONING_EFFORT": "",
+
+  // ── 辅助模型 Auxiliary model — simple tasks, must support JSON generation ──
+  // true = local GGUF model, false = cloud API.
+  "AUXILIARY_LLM_MODEL_LOCAL": false,
+  "AUXILIARY_LLM_PROVIDER": "",
+  "AUXILIARY_LLM_API_NAME": "",
+  "AUXILIARY_LLM_API_BASE": "",
+  "AUXILIARY_LLM_API_KEY": "",
+  // MUST be >= 131072 (128K): an unset value falls back to 121072 (<128K),
+  // which blocks startup too (the floor applies in local mode as well).
+  "AUXILIARY_LLM_MAX_TOKEN": 131072,
+
+  // ── 推理模型 Reasoner model ──────────────────────────────────────────────
+  "REASONER_LLM_PROVIDER": "",
+  "REASONER_LLM_NAME": "",
+  "REASONER_LLM_API_BASE": "",
+  "REASONER_LLM_API_KEY": "",
+  "REASONER_LLM_MAX_TOKEN": "",
+
+  // ── 图生文 Image-to-Text model ───────────────────────────────────────────
+  "ITTT_MODEL_LOCAL": false,
+  "ITTT_MODEL_PROVIDER": "",
+  "ITTT_API_NAME": "",
+  "ITTT_API_BASE": "",
+  "ITTT_API_KEY": "",
+
+  // ── 视频生文 Video-Text-to-Text model ────────────────────────────────────
+  "VTTT_MODEL_LOCAL": false,
+  "VTTT_MODEL_PROVIDER": "",
+  "VTTT_API_NAME": "",
+  "VTTT_API_BASE": "",
+  "VTTT_API_KEY": "",
+
+  // ── 文生图 Text-to-Image model ───────────────────────────────────────────
+  "TTI_MODEL_PROVIDER": "",
+  "TTI_API_NAME": "",
+  "TTI_API_BASE": "",
+  "TTI_API_KEY": "",
+
+  // ── 重排模型 Reranker model ──────────────────────────────────────────────
+  "RERANKER_MODEL_LOCAL": false,
+  "RERANKER_MODEL_PROVIDER": "openai",
+  "RERANKER_API_NAME": "bge-reranker-v2-m3",
+  "RERANKER_API_BASE": "",
+  "RERANKER_API_KEY": "",
+
+  // ── 向量模型 Embedding model ─────────────────────────────────────────────
+  "EMBEDDING_MODEL_LOCAL": true,
+  "EMBEDDING_MODEL_PROVIDER": "openai",
+  "EMBEDDING_API_NAME": "bge-m3",
+  "EMBEDDING_API_BASE": "",
+  "EMBEDDING_API_KEY": "",
+
+  // ── 语音转文字 Speech-to-Text model ──────────────────────────────────────
+  "STT_MODEL_PROVIDER": "",
+  "STT_API_NAME": "",
+  "STT_API_BASE": "",
+  "STT_API_KEY": "",
+
+  // ── 技能安全扫描器 SkillSpector scanner (its own LLM selection) ─────────
+  // SKILL_SCANNER_ENABLED: master switch (1 = scan uploaded skills).
+  // SKILL_SCANNER_LLM: opt-in AI analysis (1 = on). Requires a provider that
+  //   supports `json_schema` strict structured output — some Chinese
+  //   OpenAI-compatible endpoints accept the request but stall indefinitely.
+  //   The model used is the auxiliary model (AUXILIARY_LLM_*) unless
+  //   SKILLSPECTOR_PROVIDER / SKILLSPECTOR_MODEL override it.
+  // SKILL_SCANNER_TIMEOUT: seconds the SkillSpector CLI may run.
+  "SKILL_SCANNER_ENABLED": 1,
+  "SKILL_SCANNER_LLM": 0,
+  "SKILL_SCANNER_TIMEOUT": 120,
+  "SKILLSPECTOR_PROVIDER": "openai",
+  "SKILLSPECTOR_MODEL": ""
+}

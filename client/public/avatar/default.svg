@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Default avatar">
+  <!-- Neutral placeholder avatar: a gray head-and-shoulders silhouette on a plain
+       disc (the "unknown caller" shape). Rendered wherever a role has no avatar of
+       its own — the target of the role tab's per-avatar reset. -->
+  <defs>
+    <clipPath id="avatar-disc">
+      <circle cx="64" cy="64" r="64" />
+    </clipPath>
+  </defs>
+  <circle cx="64" cy="64" r="64" fill="#d1d5db" />
+  <g clip-path="url(#avatar-disc)" fill="#9ca3af">
+    <circle cx="64" cy="48" r="21" />
+    <ellipse cx="64" cy="122" rx="45" ry="42" />
+  </g>
+</svg>
