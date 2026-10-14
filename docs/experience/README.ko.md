@@ -31,7 +31,7 @@
 `_nudge_memory`(`agent/middlewares/summarization/nudges.py`)는 `_create_memory_review_agent`로 리뷰 agent를 만들고, 렌더링된 `_MEMORY_REVIEW_PROMPT`를 `HumanMessage`로 버려질 슬라이스에 덧붙여 호출합니다. **구조적으로 캐시 온존:** 압축 절단은 프리픽스 절단이고, 버려질 슬라이스는 시스템 프롬프트 바로 뒤에 위치하는 부분 그 자체입니다——같은 모델 구성(`_build_session_model`: 세션의 provider/model/thinking/temperature. 그래프는 턴마다 재구축되고 클라이언트가 닫히므로 구성에서 **새 인스턴스**를 구축), 같은 시스템 프롬프트, 같은 도구 면으로 되돌려 보내면 메인 모델 자신의 프리픽스를 재현하고 제공자는 프리픽스 캐시에서 응답합니다; 새 입력은 리뷰 지시뿐이고 리뷰가 읽는 것은 **실제 원문 그대로**입니다. 프롬프트는 지속적인 사용자 특성(persona, 선호, 개인 정보)과 행동 기대치를 `user` 대상에, 모듈에 얽매이지 않는 광범위한 함정을 `facts` 대상에 `memory` 도구로 저장하라고 요구합니다. 렌더링 시 현재 FACTS.md 내용과 문자 상한(`_render_prompt_facts`)을 함께 전달하고, 편집자처럼 유지할 것——같은 함정을 병합하고, 오래된 항목을 교체하며, 파일을 부풀리느니 아무것도 저장하지 않기를 우선할 것——을 지시합니다. 저장할 것이 없으면 "Nothing to save."라고 답하고 멈춥니다.
 
 - 리뷰 agent는 **보조 LLM** 위의 별도 `create_agent`이며, 미들웨어는 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`, checkpointer 없음.
-- `_NudgeLimitTool`(`allowed_metadata_key` 미지정)은 metadata에 `nudge: True`가 있는 도구만 통과시킵니다. `memory`와 `knowledge`가 이 마커를 가지므로(대화형 `question`과 플랜 모드 두 도구 포함) memory review는 memory를 쓸 수 있지만 임의의 메인 도구는 호출할 수 없습니다. 스킬 3종(`skill_list` / `skill_view` / `skill_manage`)은 **의도적으로 미마커**——스킬 추출은 플랜 완료 패스의 담당이며, 그쪽은 마커 대신 명시적인 4도구 면을 바인딩합니다.
+- `_NudgeLimitTool`(`allowed_metadata_key` 미지정)은 metadata에 `nudge: True`가 있는 도구만 통과시킵니다. `memory`와 `knowledge`가 이 마커를 가지므로(대화형 `question`과 플랜 모드 두 도구 포함) memory review는 memory를 쓸 수 있지만 임의의 메인 도구는 호출할 수 없습니다. 스킬 3종(`skill_list` / `skill_view` / `skill_manage`)은 **의도적으로 미마커**——스킬 추출은 플랜 완료 패스의 담당이며, 그쪽은 마커 대신 명시적인 도구 면을 바인딩합니다.
 - fork의 메시지는 로그만 남깁니다. `res["messages"]`의 어떤 내용도 메인 그래프로 들어가지 않습니다.
 
 ### 2. plan extraction(todo 완료, 턴 경계)

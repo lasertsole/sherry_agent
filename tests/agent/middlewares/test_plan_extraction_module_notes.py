@@ -86,7 +86,9 @@ class TestPromptGuidance:
         assert "target: 'facts'" in prompt
         assert "{facts_limit}" in prompt
         assert "{facts_block}" in prompt
-        assert "'<module>-notes' skill" in prompt
+        # Skill extraction is the plan-completion pass's job — the review prompt
+        # carries no skill guidance at all (its tool face cannot touch skills).
+        assert "skill" not in prompt.lower()
 
 
 # ---------------------------------------------------------------------------

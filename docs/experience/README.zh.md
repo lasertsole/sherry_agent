@@ -31,7 +31,7 @@
 `_nudge_memory`（`agent/middlewares/summarization/nudges.py`）通过 `_create_memory_review_agent` 构建复盘 agent，并把渲染后的 `_MEMORY_REVIEW_PROMPT` 作为 `HumanMessage` 追加到被丢弃段后调用。**构造上就是缓存命中：** 压缩切点是前缀切点，被丢弃段恰是请求中紧跟系统提示词的那部分——用同一模型配置（`_build_session_model`：会话的 provider/model/思考/temperature；因图在每轮重建后会关闭客户端，故按配置**新建实例**）、同一系统提示词与同一工具面把它发回去，就复现了主模型自己的前缀，提供商随后从前缀缓存作答；新增输入只有那条复盘指令，而复盘读到的仍是**真实原文**。两道防爆不变：只传被丢弃段而非整段对话（绝不传保留段），且绝不阻塞本轮（fire-and-forget，跑在 NUDGE 车道上）——这次复盘恰好在上下文最满时运行。该提示要求 agent 用 `memory` 工具把持久的用户特征（persona、偏好、个人细节）与行为期望写入 `user` 目标，把不绑定模块的广泛坑写入 `facts` 目标。提示渲染时会带上当前 FACTS.md 内容与字符上限（`_render_prompt_facts`），并要求 agent 像编辑一样维护该文件——合并同类、替换过时条目、宁缺毋滥。若无内容可存，则回复 "Nothing to save." 并停止。
 
 - 复盘 agent 是**辅助 LLM** 上独立的 `create_agent`，中间件为 `[_NudgeLimitTool(), ToolCallNormalize(), ToolGuardrails(), IterationBudget(90)]`，无 checkpointer。
-- `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory` 与 `knowledge` 带该标记（另有交互式 `question` 与两个计划模式工具），因此记忆复盘能写 memory，但无法调用任意主工具。技能三件套（`skill_list` / `skill_view` / `skill_manage`）**刻意不带**——技能抽取归计划完成通道，它不靠该标记，而是显式绑定自己的四工具面。
+- `_NudgeLimitTool`（未指定 `allowed_metadata_key`）只放行 metadata 带 `nudge: True` 的工具。`memory` 与 `knowledge` 带该标记（另有交互式 `question` 与两个计划模式工具），因此记忆复盘能写 memory，但无法调用任意主工具。技能三件套（`skill_list` / `skill_view` / `skill_manage`）**刻意不带**——技能抽取归计划完成通道，它不靠该标记，而是显式绑定自己的工具面。
 - fork 的消息只记录日志。`res["messages"]` 中的任何内容都不会进入主图。
 
 ### 2. plan extraction（todo 完成，在轮次边界）
