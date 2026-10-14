@@ -28,8 +28,8 @@ importers:
         specifier: ^4.5.4
         version: 4.5.4
       '@tanstack/vue-virtual':
-        specifier: ^3.13.39
-        version: 3.13.39(vue@3.5.43(typescript@5.9.3))
+        specifier: ^3.13.40
+        version: 3.13.40(vue@3.5.43(typescript@5.9.3))
       '@tauri-apps/api':
         specifier: ^2.11.1
         version: 2.11.1
@@ -2303,11 +2303,11 @@ packages:
     peerDependencies:
       vite: ^5.2.0 || ^6 || ^7 || ^8
 
-  '@tanstack/virtual-core@3.17.11':
-    resolution: {integrity: sha512-+ILjvtHup6Y2hzQ6YzwMgX1Q+oQpxEGOXCEsCNaPoIP0VxMbizIBTmYTDtkerkIQS8/CbP1BRuyt8V/8BCsy1g==}
+  '@tanstack/virtual-core@3.18.0':
+    resolution: {integrity: sha512-8frWsyfyBwLGoDQ6wN6Lq3CoT8j4BPJUzE6nH4P9mruLhxPOamk82prC3JxRMLJzYnNa9ISaZ8NtfxEiOGkHEQ==}
 
-  '@tanstack/vue-virtual@3.13.39':
-    resolution: {integrity: sha512-AG8sI+6nfrDvN6ixuHJL9LaJTf3//0V5VITZYW3UOaIuSVexnEzsbMu4LH/JhMfRTxwhUXPnLqkl1DlzkZbRtg==}
+  '@tanstack/vue-virtual@3.13.40':
+    resolution: {integrity: sha512-Cw7qcJx2EMFR8uBnqJPQFYNCXK4eNW7gEdXdkoL47adKK9V4AWYvbIKwVk4h7bPTO9IWZjzotSTkaaukzvve3Q==}
     peerDependencies:
       vue: ^2.7.0 || ^3.0.0
 
@@ -8795,11 +8795,11 @@ snapshots:
       tailwindcss: 4.3.3
       vite: 8.3.2(@types/node@26.6.4)(esbuild@0.28.2)(jiti@2.7.0)(sass@1.105.1)(terser@5.51.2)(yaml@2.9.1)
 
-  '@tanstack/virtual-core@3.17.11': {}
+  '@tanstack/virtual-core@3.18.0': {}
 
-  '@tanstack/vue-virtual@3.13.39(vue@3.5.43(typescript@5.9.3))':
+  '@tanstack/vue-virtual@3.13.40(vue@3.5.43(typescript@5.9.3))':
     dependencies:
-      '@tanstack/virtual-core': 3.17.11
+      '@tanstack/virtual-core': 3.18.0
       vue: 3.5.43(typescript@5.9.3)
 
   '@tauri-apps/api@2.11.1': {}
