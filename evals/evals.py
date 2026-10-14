@@ -24,6 +24,7 @@ SUITES: dict[str, str] = {
     "long_running_task": "evals.long_running_task.suite",
     "session_memory": "evals.session_memory.suite",
     "nudge_extraction": "evals.nudge_extraction.suite",
+    "coding_capability": "evals.coding_capability.suite",
 }
 
 
